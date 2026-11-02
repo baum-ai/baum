@@ -101,8 +101,8 @@ const STOPS: Stop[] = [
     title: "Act on it",
     body: (
       <>
-        <B>Ask</B> questions about the change, <B>Regenerate review</B> after new commits,{" "}
-        <B>Merge…</B> when it's ready.
+        <B>Ask</B> questions about the change, <B>Merge…</B> when it's ready. The version menu
+        regenerates the review after new commits.
       </>
     ),
     target: "[data-tour=review-actions]",

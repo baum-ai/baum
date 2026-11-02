@@ -136,6 +136,31 @@ func TestTmuxPaneOnTheClientUsedForItsSession(t *testing.T) {
 	}
 }
 
+// On macOS the kitty running the tmux client is activated by its process: of
+// two kitty instances, open -a would bring either forward.
+func TestTmuxOnMacActivatesTheClientsKitty(t *testing.T) {
+	m := tmuxInKitty()
+	kitty := "/Applications/kitty.app/Contents/MacOS/kitty"
+	m.exes = map[int]string{300: kitty, 400: kitty}
+	m.answers["osascript -l JavaScript"] = answer{out: "true\n"}
+	result := m.focuser("darwin", nil).Focus(context.Background(), "claude-code", "s1", tmuxTerminal(m))
+	last := m.calls[len(m.calls)-1]
+	if result != (Result{Precision: Session}) || !strings.HasPrefix(last, "osascript -l JavaScript -e ") || !strings.HasSuffix(last, " 300") {
+		t.Fatalf("result = %+v, calls:\n%s", result, strings.Join(m.calls, "\n"))
+	}
+}
+
+// When the process cannot be activated, its application bundle is.
+func TestMacFallsBackToTheApplicationBundle(t *testing.T) {
+	m := tmuxInKitty()
+	m.exes = map[int]string{300: "/Applications/kitty.app/Contents/MacOS/kitty"}
+	m.answers["osascript -l JavaScript"] = answer{out: "false\n"}
+	result := m.focuser("darwin", nil).Focus(context.Background(), "claude-code", "s1", tmuxTerminal(m))
+	if result != (Result{Precision: Session}) || m.calls[len(m.calls)-1] != "open -a /Applications/kitty.app" {
+		t.Fatalf("result = %+v, calls:\n%s", result, strings.Join(m.calls, "\n"))
+	}
+}
+
 func TestTmuxWithNoClientOnItsSessionSwitchesTheLastUsed(t *testing.T) {
 	m := tmuxInKitty()
 	m.answers["tmux -S /tmp/tmux-1000/default display-message"] = answer{out: "$3\t/dev/pts/12\n"}
@@ -317,10 +342,11 @@ func TestHyprlandConfiguredInLua(t *testing.T) {
 func TestKittenFromKittysBundle(t *testing.T) {
 	m, terminal := kittyShell()
 	m.exes = map[int]string{300: "/Applications/kitty.app/Contents/MacOS/kitty"}
+	m.answers["osascript -l JavaScript"] = answer{out: "true\n"}
 	terminal.Env["KITTY_LISTEN_ON"] = "unix:/tmp/kitty-300"
 	result := m.focuser("darwin", nil).Focus(context.Background(), "codex", "s1", terminal)
 	kitten := filepath.Join(filepath.Dir(m.exes[300]), "kitten")
-	want := []string{kitten + " @ --to unix:/tmp/kitty-300 focus-window --match pid:101", "open -a /Applications/kitty.app"}
+	want := []string{kitten + " @ --to unix:/tmp/kitty-300 focus-window --match pid:101", "osascript -l JavaScript -e " + activateScript + " 300"}
 	if result != (Result{Precision: Session}) || !reflect.DeepEqual(m.calls, want) {
 		t.Fatalf("result = %+v, calls:\n%s", result, strings.Join(m.calls, "\n"))
 	}

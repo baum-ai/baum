@@ -167,16 +167,22 @@ it("lists a pull request's decisions by session and marks the provisional ones",
   const sessions = section.querySelectorAll(".local-decisions-session");
   // A session never captured and without decisions is left out.
   expect(sessions).toHaveLength(2);
-  expect(sessions[0]!.querySelector("h4")!.textContent).toBe(
+  expect(sessions[0]!.querySelector("h3")!.textContent).toBe(
     "Claude CodeAdd a retry budgetIn progress",
   );
-  const rows = sessions[0]!.querySelectorAll("li");
+  const rows = sessions[0]!.querySelectorAll("li.local-decision");
   expect(rows[0]!.textContent).not.toContain("Provisional");
   expect(rows[1]!.textContent).toContain("Provisional");
-  expect(rows[0]!.textContent).toContain("Behavior · You decided");
+  // A row shows its kind; opened, its files.
+  expect(rows[0]!.textContent).toContain("Behavior");
+  expect(rows[0]!.textContent).not.toContain("retry.go");
+  await act(async () => rows[0]!.querySelector<HTMLButtonElement>("button")!.click());
   expect(rows[0]!.textContent).toContain("retry.go");
-  expect(sessions[1]!.querySelector("h4")!.textContent).toBe("CodexPort the store");
-  expect(sessions[1]!.textContent).toContain("Dependency · Agent proposed, you approved");
+  expect(sessions[1]!.querySelector("h3")!.textContent).toBe("CodexPort the store");
+  expect(sessions[1]!.textContent).toContain("Dependency");
+  // Decisions are grouped by who made them; one the person approved is theirs.
+  expect(sessions[1]!.querySelector('section[aria-label="Decided by you"]')).not.toBeNull();
+  expect(sessions[1]!.querySelector('section[aria-label="Decided by the agent"]')).toBeNull();
 });
 
 it("shows a session whose first capture is in flight on the pull request", async () => {

@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/baum-ai/baum/plugins"
 )
 
 func stubPluginAgent(t *testing.T, dir, agent string) string {
@@ -62,6 +64,10 @@ func TestHooksCommandsUseNativeMarketplaceAndReportTrustSeparately(t *testing.T)
 	}
 	if !body.Agents[0].Installed || !body.Agents[0].Enabled || body.Agents[0].Plugin != "baum@baum" {
 		t.Fatalf("status=%+v", body)
+	}
+	// The stub reports 1.0.0, older than the plugin this build shipped.
+	if got := body.Agents[0]; got.Latest != plugins.Version("claude-code") || !got.UpdateAvailable {
+		t.Fatalf("status=%+v, want an update to %s", got, plugins.Version("claude-code"))
 	}
 	if _, _, err := runCLI(t, "hooks", "uninstall", "--user", "--agent", "claude-code"); err != nil {
 		t.Fatal(err)
@@ -210,5 +216,24 @@ func TestCodexConnectionAndUpdateConfigureTerminalFocus(t *testing.T) {
 	}
 	if got := readHookTestFile(t, path); got != before {
 		t.Fatalf("uninstall changed terminal preferences: %s", got)
+	}
+}
+
+func TestOlderVersionOffersUpdatesOnlyForReadableOlderVersions(t *testing.T) {
+	for _, c := range []struct {
+		installed, latest string
+		want              bool
+	}{
+		{"1.2.0", "1.2.1", true},
+		{"v1.2.0", "1.10.0", true},
+		{"1.2.1", "1.2.1", false},
+		{"1.3.0", "1.2.1", false},
+		{"", "1.2.1", false},
+		{"1.2.0", "", false},
+		{"local", "1.2.1", false},
+	} {
+		if got := olderVersion(c.installed, c.latest); got != c.want {
+			t.Errorf("olderVersion(%q, %q) = %v, want %v", c.installed, c.latest, got, c.want)
+		}
 	}
 }

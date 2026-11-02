@@ -1245,13 +1245,20 @@ keeps the last answer on screen while it does.
   server cut the transcript short. `?turn=<n>` opens it at that prompt; the
   parameter is cleared with the selection. The document's own sessions have
   no transcript.
+- A commit opened alone (`?pane=commit&commit=<sha>`) asks `GET /api/commit`
+  for its message body and changed files, only then, and shows them under the
+  commit: the totals ("+N −M across K files"), the body as plain text, and the
+  files folded, each file's diff read from `GET /api/commit-patch` when it is
+  opened and drawn with `CodeDiff`, as the Files pane draws a file (see "Local
+  commits"). Loading, a failure with Retry and "No diff to show" are its
+  states; the list shows a commit's totals once it has been read.
 
 ### How `baum internal view` serves it
 
 `internal/viewserver` is the host. `baum internal view` loads one document file (or the
 embedded `schema.Example` for `--sample`), binds `127.0.0.1` on the given port
 or a free one, and prints the URL. It never contacts a server or fetches
-anything. The server has six API routes and an asset fallback:
+anything. The server has ten API routes and an asset fallback:
 
 | Route | Serves |
 | --- | --- |
@@ -1261,6 +1268,10 @@ anything. The server has six API routes and an asset fallback:
 | `GET /api/sessions` | the sessions on this machine linked to the document's pull request, as below; `no-store` |
 | `GET /api/sessions/{id}` | the redacted transcript of one of those sessions, as below; `no-store` |
 | `GET /api/patch?path=&version=` | the patch of one file the document, or another saved version of its pull request, cites, as below; `no-store` |
+| `GET /api/commits` | the commits of the `/api/sessions` answer, each with its linked sessions; `no-store` |
+| `GET /api/commit?oid=` | one of those commits' message body and changed files, as below; `no-store` |
+| `GET /api/commit-patch?oid=&path=` | the patch of one file one of those commits changed, as below; `no-store` |
+| `GET /api/file?path=` | one file the document cites, as it is at the document's head, as below; `no-store` |
 | any other `GET` | the embedded file of that name, or `index.html` for a path that names none, so the app's own URLs work as deep links |
 
 Only the embedded files and the one document are ever served; a request path
@@ -1546,6 +1557,81 @@ keeps them reachable with refs that live exactly as long as their versions:
   reads each member's head and its comparison's `base_revision` from the
   group document, and nothing retains those commits, so a gc after a force
   push can leave a group's patches unavailable (`{"patch": null}`).
+
+### Local commits
+
+A commit opened alone in the Commits pane shows its message body, its changed
+files and, file by file, their diffs. `GET /api/commit?oid=<full id>` answers
+`locallink.ReadCommit` and `GET /api/commit-patch?oid=<full id>&path=<path>`
+answers `locallink.CommitPatch`, over the same clone and remote matching as
+the patches (`viewserver.Options.Commit` and `CommitPatch`).
+
+- Only an `oid` that is the `oid` of a commit in the current `/api/sessions`
+  answer (what `/api/commits` lists) is answered, compared exactly; anything
+  else, including an abbreviated id, a ref name, a revision expression or an
+  unavailable sessions answer, is 404 and runs nothing. A request never names
+  a revision of its own.
+- `/api/commit` is `200 {"oid","body","files":[{"path","old_path"?,"status",
+  "additions"?,"deletions"?}]}`. `body` is the message after its subject line
+  and the blank lines after it. The files are the commit's change against its
+  first parent (a merge commit too), or the empty tree for a root commit
+  (`gitlocal.Repo.CommitChanges`: `git log -1 --format=%P%x1f%B` bounded to
+  1 MiB, then `git diff-tree -r -z -M -l1000 --raw` and `--numstat`, bounded
+  like the comparison). `status` is `added`, `modified`, `deleted` or
+  `renamed` (a type change is `modified`); `old_path` is a renamed file's old
+  name; `additions` and `deletions` are left out for a binary file. A commit
+  this machine cannot read (no clone, no matching remote, the commit missing,
+  a partial clone, too large) is `200` with `"files": null` and a `code`.
+- `/api/commit-patch` answers only for a `path` that is one of that commit's
+  files, by its path or a renamed file's old path, else 404. The patch is
+  `git diff-tree -p` of the commit against its first parent (`--root` for a
+  root commit) with the flags and `:(literal)` pathspecs of `/api/patch`, the
+  old path included for a rename (`gitlocal.Repo.CommitFilePatch`), cut to the
+  file's diff from its first `@@` line and masked as the stored hunks are.
+  The answer is `/api/patch`'s:
+  `{"patch":"..."}`, or `{"patch":null}` for a binary file, a submodule, a
+  rename without an edit or a patch over 1 MiB.
+- Both share `/api/patch`'s bounds: at most four git reads at once (one pool),
+  the one-minute limit, 500 for a failure and 503 while stopping. A commit's
+  answer and each file's patch are kept per document while they hold (the
+  commit read, or too large); the rest are read again. A document reload
+  drops them.
+- The app's `/api/commit`, `/api/commit-patch`, `/api/facts/commit` and
+  `/api/facts/commit-patch` route to the same handlers through the per-document
+  viewer cache (see "Pull request facts").
+
+### Local files
+
+A Summary context chip for a file the pull request does not change opens the
+file in the app (see the app README). `GET /api/file?path=<path>` answers
+`locallink.ReadFile` over the same clone and remote matching as the patches
+(`viewserver.Options.File`).
+
+- Only a `path` the current document cites is answered (`citedFiles`): a
+  context reference (`summary.context.<part>.refs[].path`), a hunk's `path` or
+  `old_path`, or the `path` of an anchor of type `file` anywhere in the
+  document. Anything else, including a missing, empty or over-long path, is
+  404 and runs nothing.
+- The file is read at the document's head (`review.head`), never the working
+  tree: `git rev-parse` resolves the head, then `gitlocal.Repo.ReadBlob`
+  (`git ls-tree -z -l <head> -- :(literal)<path>` and `git cat-file blob`, the
+  path checked by `validGitPath`, the blob capped at 10 MiB).
+- The answer is `200 {"path","content","truncated"}`. `content` is at most
+  512 KiB of the file's text with invalid UTF-8 dropped, and `truncated` says
+  the file goes on. It is `null` for a directory, a submodule, a path the head
+  lacks, a binary file (a NUL byte), a blob over the cap, a clone that cannot
+  answer, and the built-in sample.
+- It shares `/api/patch`'s bounds: the four-read pool, the one-minute limit,
+  500 for a failure and 503 while stopping. A stable answer (the text, or no
+  text at the head) is kept per document; a document reload drops it.
+- The app routes `/api/file` to the same handler through the per-document
+  viewer cache (`internal/uiserver/api.go`).
+- A group review's files come from `GET /api/groups/{id}/file?version=&path=`
+  (`internal/reviewgroups/http.go`), with the same answer and the same guard
+  (`locallink.CitedFiles` over the group's document), read at the review's
+  head, or its top member's for a stack whose document names none, from a
+  registered clone; it shares the group's patch reads' pool and a 20-second
+  limit.
 
 ### Local session linkage
 
@@ -2820,9 +2906,11 @@ errors to `{code, message}`: `head_moved` and `conflict` and `not_open` are
 `method_not_allowed` are `422`, `forbidden` is `403`, anything else `502`. After
 a merge GitHub accepted, the daemon records it (`discovery.Service.Merged`:
 the pull request leaves the cached open ones and is observed `MERGED` at the
-merged head, with no read), runs `Service.PollNow` for the repository and
-publishes an index change, so the inbox shows it merged at once rather than
-when the background refresh next reads it.
+merged head, with no read) and publishes an index change, so the inbox shows
+it merged at once rather than when the background refresh next reads it. It
+then answers, and runs `Service.PollNow` for the repository in the background,
+publishing another index change when that read succeeds: on a busy repository
+the read takes seconds, and it may wait behind a background poll.
 
 Submitting a review is the app's other write outside discovery.
 `POST /api/prs/review` takes `{repository, pr, head_sha, event, body,
@@ -2858,8 +2946,9 @@ names a run) and posts `.../actions/runs/{id}/rerun-failed-jobs` for each. It
 answers `{rerun, refused}`: an error only when no run started. Errors are
 `{code, message}`: `head_moved`, `conflict`, `not_open` and `up_to_date` are
 `409`, `blocked`, `no_runs`, `fork` and `no_clone` are `422`, `forbidden` is `403`,
-anything else `502`. After either write the daemon runs `Service.PollNow` and
-publishes an index change.
+anything else `502`. After either write the daemon publishes an index change
+and answers, then runs `Service.PollNow` in the background and publishes another
+when that read succeeds, as after a merge.
 
 The same handler lists and resolves review threads for the Inbox's panel. `GET
 /api/prs/review-threads?repository=&pr=&unresolved=` answers `{threads,
@@ -2973,8 +3062,9 @@ of the background refresh) only facts already held for that head answer,
 else `503` with `{"code":"rate_limited","resume_at"}`; a build that is
 rate-limited extends the shared pause (`Service.Limited`). A pull request
 without a registered clone gets none (the selector is a clone ID).
-`/api/facts/sessions`, `/api/facts/sessions/{id}`, `/api/facts/patch` and
-`/api/facts/commits` serve what the version routes serve, through the same
+`/api/facts/sessions`, `/api/facts/sessions/{id}`, `/api/facts/patch`,
+`/api/facts/commits`, `/api/facts/commit` and `/api/facts/commit-patch` serve
+what the version routes serve, through the same
 per-document viewer cache, for the facts last built, and never read GitHub.
 They take the `head` of the facts the page shows and answer `404` when the
 facts last built describe another, so a page is never answered for facts it

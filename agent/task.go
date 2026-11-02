@@ -150,7 +150,7 @@ func (g *Generator) RunTask(ctx context.Context, task Task) (outcome Outcome, do
 		if err != nil {
 			return outcome, nil, err
 		}
-		result, callErr := g.call(ctx, budgets, Request{Directory: task.Directory, Prompt: text, Schema: task.Schema, Logger: logger, Endpoint: task.Endpoint, Task: task.Framing == TaskFraming, PersistSession: task.PersistSession}, &outcome, &stalls)
+		result, callErr := g.call(ctx, budgets, Request{Directory: task.Directory, Prompt: text, Schema: task.Schema, Logger: logger, Endpoint: task.Endpoint, Task: task.Framing == TaskFraming, PersistSession: task.PersistSession, Stage: task.Label, Pass: pass.Number}, &outcome, &stalls)
 		if callErr != nil {
 			if pass.Number > 1 {
 				outcome.RejectedDocument = RetainedDocument(document)

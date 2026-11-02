@@ -120,6 +120,7 @@ type Updater interface {
 	RerunJob(ctx context.Context, repository github.Repository, number int, expectedHead string, job int64) error
 	AllChecks(ctx context.Context, repository github.Repository, number int, head string) (prupdate.CheckList, error)
 	Conflicts(ctx context.Context, repository github.Repository, number int) (prupdate.ConflictFiles, error)
+	Description(ctx context.Context, repository github.Repository, number int) (prupdate.Description, error)
 }
 
 // RecordMerges records each merge m makes.

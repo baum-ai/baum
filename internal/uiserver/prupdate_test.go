@@ -42,6 +42,11 @@ func (f *fakeUpdater) AllChecks(_ context.Context, _ github.Repository, _ int, h
 	return prupdate.CheckList{HeadSHA: "abc", Checks: []prupdate.CheckStatus{{Name: "build", Status: "in_progress"}, {Name: "test", Status: "completed", Conclusion: "failure", JobID: 21}}}, f.err
 }
 
+func (f *fakeUpdater) Description(_ context.Context, r github.Repository, number int) (prupdate.Description, error) {
+	f.calls = append(f.calls, fmt.Sprintf("description %s#%d", r, number))
+	return prupdate.Description{Body: "## Validation", URL: "https://github.com/acme/bare/pull/7"}, f.err
+}
+
 func (f *fakeUpdater) Conflicts(_ context.Context, r github.Repository, number int) (prupdate.ConflictFiles, error) {
 	f.calls = append(f.calls, fmt.Sprintf("conflicts %s#%d", r, number))
 	return prupdate.ConflictFiles{HeadSHA: "abc", BaseRef: "main", BaseSHA: "def", Files: []string{"a.go"}}, f.err
@@ -193,7 +198,11 @@ func TestUpdateHandlerReviewThreads(t *testing.T) {
 	if w := do("GET", "/api/prs/conflicts?repository=acme/bare&pr=7", ""); w.Code != 200 || w.Body.String() != `{"head_sha":"abc","base_ref":"main","base_sha":"def","files":["a.go"]}`+"\n" || strings.Join(updater.calls, ",") != "conflicts acme/bare#7" {
 		t.Fatalf("conflicts: %d %s %v", w.Code, w.Body.String(), updater.calls)
 	}
-	for _, path := range []string{"/api/prs/checks", "/api/prs/conflicts"} {
+	updater.calls = nil
+	if w := do("GET", "/api/prs/description?repository=acme/bare&pr=7", ""); w.Code != 200 || w.Body.String() != `{"body":"## Validation","url":"https://github.com/acme/bare/pull/7"}`+"\n" || strings.Join(updater.calls, ",") != "description acme/bare#7" {
+		t.Fatalf("description: %d %s %v", w.Code, w.Body.String(), updater.calls)
+	}
+	for _, path := range []string{"/api/prs/checks", "/api/prs/conflicts", "/api/prs/description"} {
 		if w := do("GET", path+"?repository=acme/other&pr=7", ""); w.Code != 404 {
 			t.Fatalf("%s unpicked: %d", path, w.Code)
 		}

@@ -218,6 +218,7 @@ export function ReviewSection({
 
         {showAttention && (
           <AttentionCallout
+            document={document}
             attention={attention}
             section={section}
             onJump={(ref) => scrollToItem(itemId(ref))}
@@ -447,26 +448,66 @@ function resolveRef(section: Section, ref: string): AttentionRef {
   return { ref, kind: "Reference", text: ref, listed: false };
 }
 
+/** Evidence statuses that only restate an attention: no proof found, a claim
+ *  merely stated, or one that could not be read. */
+const RESTATED_EVIDENCE = new Set(["missing", "asserted", "unavailable"]);
+
+/** The code an attention points at: the changed lines and files its risks,
+ *  decisions and evidence cite, once each, in the order cited. */
+function attentionPlaces(section: Section, refs: string[]): Anchor[] {
+  const cited: Anchor[] = [];
+  for (const ref of refs) {
+    const item =
+      section.risks.find((risk) => risk.id === ref) ??
+      section.evidence.find((evidence) => evidence.id === ref) ??
+      section.blocks
+        .filter((block) => block.kind === "decisions")
+        .flatMap((block) => (block as Extract<Block, { kind: "decisions" }>).items)
+        .find((decision) => decision.id === ref);
+    cited.push(...((item?.anchors ?? []) as Anchor[]));
+  }
+  const seen = new Set<string>();
+  return cited.filter((anchor) => {
+    if (anchor.type !== "hunk" && anchor.type !== "file") return false;
+    const key = JSON.stringify(anchor);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
 /** One flat callout: a single risk supplies its own explanation instead of
- *  repeating the attention summary, with evidence directly below it. */
+ *  repeating the attention summary, with evidence directly below it, and the
+ *  code it points at. */
 function AttentionCallout({
+  document,
   attention,
   section,
   onJump,
   risks,
 }: {
+  document: ReviewDocument;
   attention: NonNullable<Section["attention"]>;
   section: Section;
   onJump: (ref: string) => void;
   risks: ReactNode[];
 }) {
+  // Evidence that only restates the attention (no proof was found, or the
+  // claim is merely stated) is left out: the attention already says so. What
+  // is shown points at something to open or act on.
   const refs = attention.refs
     .filter((ref) => !section.risks.some((risk) => risk.id === ref))
+    .filter((ref) => {
+      const evidence = section.evidence.find((item) => item.id === ref);
+      return !evidence || !RESTATED_EVIDENCE.has(evidence.status);
+    })
     .map((ref) => resolveRef(section, ref));
+  const places = attentionPlaces(section, attention.refs);
   return (
     <section
       aria-label="Attention"
-      className="min-w-0 border-l-2 border-(--status-caution) py-1 pl-4"
+      data-review-block=""
+      className="min-w-0 rounded-r-(--radius-sm) border-l-2 border-(--status-caution) py-1 pl-4 outline-none data-[review-block-active]:bg-(--surface-wash)"
     >
       <div className="mb-2 flex items-center gap-2">
         <span aria-hidden className="flex text-(--status-critical)">
@@ -481,6 +522,14 @@ function AttentionCallout({
           {attention.text}
         </Markdown>
       )}
+      {places.length > 0 ? (
+        <div className="mb-2 flex flex-wrap items-center gap-2">
+          <span className="text-3xs font-semibold tracking-[0.08em] uppercase text-(--text-tertiary)">
+            Where to look
+          </span>
+          <AnchorChips document={document} anchors={places} />
+        </div>
+      ) : null}
       {risks.length > 0 && <ol className="space-y-3">{risks}</ol>}
       {refs.length > 0 && (
         <ul

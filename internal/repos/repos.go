@@ -78,6 +78,9 @@ type DecisionPreferences struct {
 type AppearancePreferences struct {
 	Theme    string `json:"theme,omitempty"`
 	KeyHints *bool  `json:"key_hints,omitempty"`
+	// PageModifier is the key held with 1 to 8 to open the sidebar's pages:
+	// "meta", "ctrl" or "alt"; empty is the platform's command key.
+	PageModifier string `json:"page_modifier,omitempty"`
 }
 
 // PlanUsagePreferences are the plans the person chose to show or hide in plan

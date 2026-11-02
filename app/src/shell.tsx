@@ -19,6 +19,7 @@ import { appURL } from "./api";
 import type { Inbox } from "./inboxes";
 import { PAGES, type Page } from "./pages";
 import { PlanUsageRail } from "./plan-usage";
+import { usePreferences } from "./preferences";
 import { NineDots } from "./nine-dots";
 import {
   pageKeyLabel,
@@ -86,6 +87,7 @@ export function Sidebar({
   Link: ComponentType<ViewerLinkProps>;
 }) {
   const [fold, setFold] = useState(folded);
+  const modifier = usePreferences().preferences.page_modifier;
   const nested = inboxes && (inboxes.list.length > 0 || inboxes.footer);
   const badges: Partial<Record<Page, { badge: ReactNode; tone?: "warn" | "caution" }>> = {
     inbox: { badge: inbox > 0 ? inbox : null },
@@ -105,14 +107,14 @@ export function Sidebar({
       <Link
         key={target}
         href={href()}
-        title={`${label} (${pageKeyLabel(target)})${target === "settings" && settingsWarning ? ": " + settingsWarning : ""}`}
+        title={`${label} (${pageKeyLabel(target, modifier)})${target === "settings" && settingsWarning ? ": " + settingsWarning : ""}`}
         aria-description={target === "settings" ? (settingsWarning ?? undefined) : undefined}
         aria-current={
           page === target && !(target === "inbox" && (inboxes?.selected || inboxes?.elsewhere))
             ? "page"
             : undefined
         }
-        aria-keyshortcuts={pageKeyShortcut(target)}
+        aria-keyshortcuts={pageKeyShortcut(target, modifier)}
         className="local-rail-link"
       >
         <Icon size={18} className="local-rail-glyph" />
@@ -123,7 +125,7 @@ export function Sidebar({
           </span>
         ) : null}
         <kbd aria-hidden="true" className="key-hint local-rail-key">
-          {pageKeyLabel(target)}
+          {pageKeyLabel(target, modifier)}
         </kbd>
       </Link>
     );

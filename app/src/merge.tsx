@@ -63,7 +63,8 @@ export function MergeDialog({
 }: {
   entry: Entry;
   close: () => void;
-  /** Called once GitHub has merged the pull request. */
+  /** Called once GitHub has merged the pull request. The dialog closes
+   *  without waiting for it: the reload it starts can take seconds. */
   merged: () => Promise<void>;
 }) {
   const pr = entry.pull_request;
@@ -109,7 +110,7 @@ export function MergeDialog({
         method,
         head_sha: pr.head_sha,
       });
-      await merged();
+      void merged();
       close();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Local request failed.");

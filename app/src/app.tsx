@@ -2,6 +2,7 @@ import { SavedStateNotice } from "./ui-state";
 import { PreferencesProvider } from "./preferences";
 import { formatCount } from "@baum/viewer/components/format";
 import { UsageDetails } from "./usage";
+import { JobTiming, jobOrigin, jobTarget, jobType } from "./job-info";
 import { useCallback, useEffect, useRef, useState, type MouseEvent, type ReactNode } from "react";
 import { LogoMark } from "@baum/viewer/components/editorial";
 import { CircleCheckIcon, CircleCrossIcon, CircleDashedIcon } from "@baum/viewer/components/icons";
@@ -102,7 +103,6 @@ import {
   startFix,
   filtered,
   rowKey,
-  automaticLabel,
   jobReasonText,
   parseLive,
   parseAgentRequests,
@@ -1103,6 +1103,8 @@ function Workspace({ url }: { url: UrlState }) {
               repositories={picked}
               loading={loading}
               automatic={automatic}
+              entries={snapshot.entries}
+              jobs={jobs}
               changed={reload}
             />
           ) : page === "settings" || page === "diagnostics" ? (
@@ -1203,6 +1205,10 @@ function Workspace({ url }: { url: UrlState }) {
           ) : page === "jobs" && url.search.get("job") ? (
             <JobPage
               job={jobs.find((j) => j.id === url.search.get("job")) ?? null}
+              title={jobPRTitle(
+                snapshot.entries,
+                jobs.find((j) => j.id === url.search.get("job")),
+              )}
               loading={loading}
               Link={LocalLink}
             />
@@ -1214,7 +1220,7 @@ function Workspace({ url }: { url: UrlState }) {
                 actions={<RefreshButton refresh={(run) => reload({ restart: run.restart })} />}
               />
               <div className="local-page-body local-list-page">
-                <Jobs jobs={jobs} loading={loading} changed={reload} />
+                <Jobs jobs={jobs} entries={snapshot.entries} loading={loading} changed={reload} />
               </div>
             </>
           ) : inboxWaiting ? (
@@ -1241,6 +1247,7 @@ function Workspace({ url }: { url: UrlState }) {
                   jobs={jobs}
                   clones={clones}
                   cloneFor={cloneFor}
+                  live={live}
                   revision={revision}
                   changed={reload}
                   refresh={(press) =>
@@ -1726,10 +1733,14 @@ function ForkConfirmation({
  *  opens the job's pull request or group and `t` its transcript. */
 function Jobs({
   jobs,
+  entries,
   loading,
   changed,
 }: {
   jobs: Job[];
+  /** The pull requests baum knows, for their titles; a job of one it no longer
+   *  lists shows its number alone. */
+  entries: Entry[];
   loading: boolean;
   changed: () => Promise<void>;
 }) {
@@ -1774,19 +1785,14 @@ function Jobs({
   // A job's actions, behind its ⋯ and a right click on it.
   const menu = useContextMenu();
   const actionsFor = (job: Job): MenuItem[] => {
-    const items: MenuItem[] = [];
-    const href = jobTarget(job);
-    if (href)
+    const items: MenuItem[] = [
+      { label: "Open job", hint: "↵", onSelect: () => navigate(jobHref(job)) },
+    ];
+    const target = jobTarget(job);
+    if (target)
       items.push({
         label: job.group ? "Open review group" : "Open pull request",
-        hint: "↵",
-        onSelect: () => navigate(href),
-      });
-    if (job.has_transcript)
-      items.push({
-        label: isActiveJob(job) ? "Watch" : "Transcript",
-        hint: "t",
-        onSelect: () => navigate(jobHref(job)),
+        onSelect: () => navigate(target),
       });
     items.push({
       label: usage.has(job.id) ? "Hide usage" : "Show usage",
@@ -1855,6 +1861,7 @@ function Jobs({
               <JobRow
                 key={job.id}
                 job={job}
+                title={jobPRTitle(entries, job)}
                 focused={rows.focused === job.id}
                 cancelling={cancelling.has(job.id)}
                 usage={usage.has(job.id)}
@@ -1892,15 +1899,14 @@ function JobState({ job }: { job: Job }) {
     </span>
   );
 }
-/** Where a job's row opens: its pull request or review group. A feature
- *  build has neither. */
-function jobTarget(job: Job) {
-  if (job.kind === "feature_build") return null;
-  return appURL(
-    job.group
-      ? `?group=${encodeURIComponent(job.group)}`
-      : `?${job.clone ? `clone=${encodeURIComponent(job.clone)}` : `repository=${encodeURIComponent(job.repository)}`}&pr=${job.pr}`,
-  );
+/** The title of a job's pull request, when baum still lists it. */
+function jobPRTitle(entries: Entry[], job: Job | undefined) {
+  if (!job || job.group || job.kind === "feature_build") return undefined;
+  return entries.find(
+    (entry) =>
+      entry.pull_request.number === job.pr &&
+      entry.pull_request.repository.toLowerCase() === job.repository.toLowerCase(),
+  )?.pull_request.title;
 }
 /** How a job is named to assistive technology and in its menu. */
 function jobLabel(job: Job) {
@@ -1910,12 +1916,15 @@ function jobLabel(job: Job) {
 }
 function JobRow({
   job,
+  title,
   focused,
   cancelling,
   usage,
   actions,
 }: {
   job: Job;
+  /** The pull request's title, when baum knows it. */
+  title?: string;
   focused: boolean;
   cancelling: boolean;
   /** Whether its usage shows under it. */
@@ -1923,11 +1932,8 @@ function JobRow({
   /** The row's ⋯ button. */
   actions: ReactNode;
 }) {
-  const started = automaticLabel(job);
-  const href = jobTarget(job);
-  const calls = `${formatCount(job.calls)} ${job.calls === 1 ? "call" : "calls"}${
-    job.repairs ? ` · ${formatCount(job.repairs)} ${job.repairs === 1 ? "repair" : "repairs"}` : ""
-  }`;
+  const href = jobHref(job);
+  const origin = jobOrigin(job);
   return (
     <li
       id={`job-${job.id}`}
@@ -1937,43 +1943,43 @@ function JobRow({
     >
       <JobState job={job} />
       <div className="min-w-0">
-        {!href ? (
-          <span className="local-job-title">
-            Feature build <span>· {job.repository}</span>
-          </span>
-        ) : (
+        <div className="local-job-heading">
+          <span className="local-job-type">{jobType(job)}</span>
+          {job.kind === "feature_build" ? null : (
+            <span className="local-job-repository">{job.repository}</span>
+          )}
+        </div>
+        {job.kind === "feature_build" ? (
           <LocalLink data-row-link="" href={href} className="local-job-title">
-            {job.group ? (
-              <>
-                Review group: {job.group_name || job.group} <span>{job.repository}</span>
-              </>
-            ) : (
-              <>
-                {job.repository} <span>#{job.pr}</span>
-              </>
-            )}
+            {job.repository}
+          </LocalLink>
+        ) : job.group ? (
+          <LocalLink data-row-link="" href={href} className="local-job-title">
+            {job.group_name || job.group}
+          </LocalLink>
+        ) : (
+          <LocalLink data-row-link="" href={href} className="local-job-title" title={title}>
+            <span>#{job.pr}</span>
+            {title ? ` ${title}` : null}
           </LocalLink>
         )}
         <p className="local-job-meta">
-          {job.kind === "fix" || job.kind === "chat" || job.kind === "details"
-            ? `${jobName(job)} · `
-            : null}
-          {started ?? (job.automatic ? null : "Started by you")}
+          {origin}
+          {job.kind === "fix" && job.commit ? (
+            <>
+              {origin ? " · " : null}Pushed{" "}
+              <a href={job.commit_url} target="_blank" rel="noreferrer">
+                <code>{job.commit.slice(0, 7)}</code>
+              </a>
+              {job.fix?.head_ref ? (
+                <>
+                  {" "}
+                  to <code>{job.fix.head_ref}</code>
+                </>
+              ) : null}
+            </>
+          ) : null}
         </p>
-        {job.kind === "fix" && job.commit ? (
-          <p className="local-job-meta">
-            Pushed{" "}
-            <a href={job.commit_url} target="_blank" rel="noreferrer">
-              <code>{job.commit.slice(0, 7)}</code>
-            </a>
-            {job.fix?.head_ref ? (
-              <>
-                {" "}
-                to <code>{job.fix.head_ref}</code>
-              </>
-            ) : null}
-          </p>
-        ) : null}
         {job.reason ? (
           <p role="status" className="local-job-meta">
             {jobReasonText(job.reason, job.kind)}
@@ -1986,7 +1992,7 @@ function JobRow({
         ) : null}
         {job.kind === "fix" ? <FixDetails job={job} /> : null}
       </div>
-      <span className="local-job-figure">{calls}</span>
+      <JobTiming job={job} />
       <span className="local-job-figure">{formatCount(job.tokens)} tokens</span>
       <div className="local-job-actions">{actions}</div>
       {usage ? (

@@ -1,6 +1,7 @@
 import pluralize from "pluralize";
 import type { ReactNode } from "react";
 
+import { harnessName } from "../agent-names";
 import { humanize } from "../review-document";
 import { HarnessName } from "./brand-logo";
 import {
@@ -11,6 +12,7 @@ import {
   formatSHA,
   formatTime,
 } from "./format";
+import { CommitIcon } from "./icons";
 import { Item, JumpLink } from "./review-parts";
 import { commitLabel, sessionLabel } from "./list-labels";
 import type { ReviewViewerActions } from "./review-viewer";
@@ -71,7 +73,8 @@ function SessionCard({
     <Item id={`session-${session.id}`} className="space-y-2">
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
         <HarnessName vendor={session.vendor} className="font-medium" />
-        {session.outcome ? (
+        {/* An outcome nobody could tell says nothing. */}
+        {session.outcome && session.outcome !== "unknown" ? (
           <Badge size="compact" tone={session.outcome === "committed" ? "positive" : "neutral"}>
             {humanize(session.outcome)}
           </Badge>
@@ -158,6 +161,48 @@ export function SessionList({
   const shown = selected ? sessions.filter((session) => session.id === selected) : sessions;
   const single = Boolean(selected) && shown.length > 0;
   const count = pluralize("session", sessions.length, true);
+  // One session opened with the host's own view of it (its transcript, which
+  // names its agent, branch, times and size): the pane is headed by the
+  // session and keeps only its linked commits, rather than a card repeating
+  // what the transcript says.
+  if (single && renderSession) {
+    const session = shown[0]!;
+    const commits = session.commits ?? [];
+    const seconds = durationSeconds(session.startedAt, session.endedAt);
+    const facts = [
+      harnessName(session.vendor),
+      session.branch,
+      session.startedAt
+        ? `${formatDate(session.startedAt)} ${formatTime(session.startedAt)}`
+        : null,
+      seconds === null ? null : formatDuration(seconds),
+      session.editedFiles ? `${pluralize("file", session.editedFiles, true)} edited` : null,
+    ].filter(Boolean);
+    return (
+      <>
+        <CardHeader size="pane" title={sessionLabel(session)} detail={facts.join(" · ")} />
+        {commits.length > 0 ? (
+          <ul aria-label="Linked commits" className="flex flex-col gap-0.5 pb-3">
+            {commits.map((commit) => (
+              <li key={commit.id} className="flex min-w-0 items-center gap-2 text-xs">
+                <CommitIcon size={13} className="flex-none text-(--text-tertiary)" />
+                <span className="flex-none font-mono text-(--text-tertiary)" title={commit.id}>
+                  {formatSHA(commit.id)}
+                </span>
+                <JumpLink
+                  className="min-w-0 [overflow-wrap:anywhere]"
+                  onClick={() => actions.select({ kind: "commit", id: commit.id })}
+                >
+                  {commitLabel(commit)}
+                </JumpLink>
+              </li>
+            ))}
+          </ul>
+        ) : null}
+        <div className="min-h-0 flex-1 xl:overflow-y-auto">{renderSession(session)}</div>
+      </>
+    );
+  }
   return (
     <>
       <CardHeader
@@ -196,7 +241,6 @@ export function SessionList({
             ))}
           </ol>
         )}
-        {single && renderSession ? renderSession(shown[0]!) : null}
       </div>
     </>
   );

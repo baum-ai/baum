@@ -1,6 +1,9 @@
-import { createContext, useContext, useEffect, useState } from "react";
-import { formatRelative, formatDateTime } from "@baum/viewer/components/format";
-import { Badge } from "@baum/viewer/components/ui";
+import { createContext, useContext, useEffect, useId, useState } from "react";
+import { formatRelative, formatDateTime, formatTime } from "@baum/viewer/components/format";
+import { ChevronRightIcon } from "@baum/viewer/components/icons";
+import { InlineMarkdown } from "@baum/viewer/components/markdown";
+import { Item } from "@baum/viewer/components/review-parts";
+import { Badge, CardHeader } from "@baum/viewer/components/ui";
 import {
   agentName,
   request,
@@ -74,11 +77,6 @@ export function captureState(s: SessionDecisions, now: number): string {
   return [state, off].filter(Boolean).join(" · ");
 }
 
-const who: Record<string, string> = {
-  human: "You decided",
-  agent: "Agent decided",
-  agent_proposed_human_approved: "Agent proposed, you approved",
-};
 const label = (value: string) =>
   value ? value[0]!.toUpperCase() + value.slice(1).replaceAll("_", " ") : value;
 
@@ -114,61 +112,125 @@ export function LiveSessionDecisions({ session }: { session: LiveSession }) {
   );
 }
 
+/** A session's decisions split by who made them: the person's own and those
+ *  they approved first, then the agent's alone; a group with none is left
+ *  out, and each keeps the session's order. */
+function decisionGroups(decisions: CapturedDecision[]) {
+  const yours = decisions.filter((d) => d.who !== "agent");
+  const agent = decisions.filter((d) => d.who === "agent");
+  return [
+    { key: "you", title: "Decided by you", decisions: yours },
+    { key: "agent", title: "Decided by the agent", decisions: agent },
+  ].filter((group) => group.decisions.length > 0);
+}
+
+/** One decision as a row to scan: its title, kind and time, with its summary
+ *  on a line under it; opened, the whole summary, why it was made and the
+ *  files it touched. Who decided is the group it is listed under. */
 function DecisionRow({ decision: d }: { decision: CapturedDecision }) {
-  const details = [d.rationale, d.rejected_alternative && `Rejected: ${d.rejected_alternative}`]
-    .filter(Boolean)
-    .join(" ");
+  const [open, setOpen] = useState(false);
+  const id = useId();
+  const title = d.title || d.summary;
+  const summary = d.title && d.summary ? d.summary : "";
   return (
-    <li className="local-decision">
-      <div className="local-decision-head">
-        <span className="local-decision-title">{d.title || d.summary}</span>
-        {d.provisional ? (
-          <Badge
-            tone="caution"
-            size="compact"
-            title="Made after the saved review was generated; the review has not seen it."
+    <li className="local-decision" data-review-block="">
+      <button
+        type="button"
+        className="local-decision-head"
+        aria-expanded={open}
+        aria-controls={id}
+        onClick={() => setOpen((value) => !value)}
+      >
+        <ChevronRightIcon size={12} className="local-decision-chevron" />
+        <span className="local-decision-text">
+          <span className="local-decision-title">
+            <InlineMarkdown>{title}</InlineMarkdown>
+          </span>
+          {summary && !open ? (
+            <span className="local-decision-glance">
+              <InlineMarkdown>{summary}</InlineMarkdown>
+            </span>
+          ) : null}
+        </span>
+        <span className="local-decision-tags">
+          {d.provisional ? (
+            <Badge
+              tone="caution"
+              size="compact"
+              title="Made after the saved review was generated; the review has not seen it."
+            >
+              Provisional
+            </Badge>
+          ) : null}
+          {d.superseded ? (
+            <Badge size="compact" title="A later decision in the session replaced it.">
+              Superseded
+            </Badge>
+          ) : null}
+          <Badge size="compact">{label(d.category)}</Badge>
+          <time
+            className="local-decision-when"
+            dateTime={d.decided_at}
+            title={formatDateTime(d.decided_at)}
           >
-            Provisional
-          </Badge>
-        ) : null}
-        {d.superseded ? (
-          <Badge size="compact" title="A later decision in the session replaced it.">
-            Superseded
-          </Badge>
-        ) : null}
-      </div>
-      {d.title && d.summary ? <p className="local-decision-summary">{d.summary}</p> : null}
-      {details ? <p className="local-decision-why">{details}</p> : null}
-      <p className="local-decision-meta">
-        {label(d.category)} · {who[d.who] ?? label(d.who)} · {formatDateTime(d.decided_at)}
-        {d.files.length
-          ? ` · ${d.files.length === 1 ? d.files[0] : `${d.files.length} files`}`
-          : ""}
-      </p>
+            {formatTime(d.decided_at)}
+          </time>
+        </span>
+      </button>
+      {open ? (
+        <div id={id} className="local-decision-body">
+          {summary ? (
+            <p className="local-decision-summary">
+              <InlineMarkdown>{summary}</InlineMarkdown>
+            </p>
+          ) : null}
+          <dl className="local-decision-facts">
+            {d.rationale ? (
+              <div>
+                <dt>Why</dt>
+                <dd>
+                  <InlineMarkdown>{d.rationale}</InlineMarkdown>
+                </dd>
+              </div>
+            ) : null}
+            {d.files.length ? (
+              <div>
+                <dt>{d.files.length === 1 ? "File" : "Files"}</dt>
+                <dd className="local-decision-files">
+                  {d.files.map((file) => (
+                    <code key={file} title={file}>
+                      {file}
+                    </code>
+                  ))}
+                </dd>
+              </div>
+            ) : null}
+          </dl>
+        </div>
+      ) : null}
     </li>
   );
 }
 
-/** The decisions of the sessions linked to a pull request, on its page,
- *  behind a closed disclosure: those in progress and those its saved review
- *  links. A decision made after the saved review was generated is
- *  provisional. Nothing is drawn until a session has decisions or a capture
- *  state worth showing. */
-export function PullRequestDecisionsList({
-  repository,
-  number,
-  live,
-  revision,
-}: {
-  repository: string;
-  number: number;
-  /** Titles of the sessions in progress, which the answer leaves out. */
-  live: LiveSession[];
-  /** Changes when the page's linked sessions or its latest saved review
-   *  may have changed. */
-  revision: number | string;
-}) {
-  const now = useNow();
+/** What `api/decisions` answers for a pull request: its sessions with
+ *  decisions or a capture state worth showing, and the decisions counted. */
+export type PullRequestDecisionsRead = {
+  sessions: NonNullable<ReturnType<typeof parsePullRequest>>["sessions"];
+  total: number;
+  /** Those made after the saved review was generated, which it has not seen. */
+  provisional: number;
+  reviewGeneratedAt?: string;
+};
+
+/** The decisions of the sessions linked to a pull request: those in progress
+ *  and those its saved review links. Null until read, and while no session has
+ *  decisions or a capture state worth showing. `revision` changes when the
+ *  page's linked sessions or its latest saved review may have changed. */
+export function usePullRequestDecisions(
+  repository: string,
+  number: number,
+  revision: number | string,
+): PullRequestDecisionsRead | null {
   const answer = useDecisions(
     `api/decisions?repository=${encodeURIComponent(repository)}&pr=${number}`,
     parsePullRequest,
@@ -178,34 +240,133 @@ export function PullRequestDecisionsList({
     (s) => s.decisions.length > 0 || s.coverage || s.capturing,
   );
   if (sessions.length === 0) return null;
-  const total = sessions.reduce((n, s) => n + s.decisions.length, 0);
-  const provisional = sessions.reduce(
-    (n, s) => n + s.decisions.filter((d) => d.provisional).length,
-    0,
+  return {
+    sessions,
+    total: sessions.reduce((n, s) => n + s.decisions.length, 0),
+    provisional: sessions.reduce((n, s) => n + s.decisions.filter((d) => d.provisional).length, 0),
+    reviewGeneratedAt: answer?.review_generated_at ?? undefined,
+  };
+}
+
+/** The decisions of several pull requests' sessions, as a stack's page shows
+ *  them: a session several members link is one, with its decisions merged by
+ *  id. One read per member; a member whose read fails is left out while
+ *  another answers. Null until read and while nothing is worth showing. */
+export function useGroupDecisions(
+  repository: string,
+  numbers: number[],
+  revision: number | string,
+): PullRequestDecisionsRead | null {
+  const events = useContext(DecisionsRevision);
+  const key = `${repository}\n${numbers.join(",")}`;
+  const [answer, setAnswer] = useState<{ key: string; reads: PullRequestDecisions[] } | null>(null);
+  useEffect(() => {
+    if (numbers.length === 0) return;
+    const abort = new AbortController();
+    void Promise.allSettled(
+      numbers.map((number) =>
+        request<unknown>(
+          `api/decisions?repository=${encodeURIComponent(repository)}&pr=${number}`,
+          undefined,
+          "GET",
+          abort.signal,
+        ).then(parsePullRequest),
+      ),
+    ).then((results) => {
+      if (abort.signal.aborted) return;
+      const reads = results.flatMap((r) => (r.status === "fulfilled" && r.value ? [r.value] : []));
+      // Every read failing keeps what is shown.
+      if (reads.length > 0) setAnswer({ key, reads });
+    });
+    return () => abort.abort();
+    // `key` stands for repository and numbers.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key, events, revision]);
+  if (answer?.key !== key) return null;
+  const merged = new Map<string, PullRequestDecisions["sessions"][number]>();
+  for (const read of answer.reads) {
+    for (const s of read.sessions) {
+      const id = `${s.agent}:${s.session_id}`;
+      const have = merged.get(id);
+      if (!have) {
+        merged.set(id, { ...s, decisions: [...s.decisions] });
+        continue;
+      }
+      const known = new Set(have.decisions.map((d) => d.decision_id));
+      have.decisions.push(...s.decisions.filter((d) => !known.has(d.decision_id)));
+      have.live = have.live || s.live;
+      have.capturing = have.capturing || s.capturing;
+      have.title ||= s.title;
+      if (!have.coverage && s.coverage) {
+        have.coverage = s.coverage;
+        have.skip_reason = s.skip_reason;
+      }
+    }
+  }
+  const sessions = [...merged.values()].filter(
+    (s) => s.decisions.length > 0 || s.coverage || s.capturing,
   );
+  if (sessions.length === 0) return null;
+  const generated = answer.reads
+    .map((read) => read.review_generated_at)
+    .filter((at): at is string => Boolean(at))
+    .sort()
+    .at(-1);
+  return {
+    sessions,
+    total: sessions.reduce((n, s) => n + s.decisions.length, 0),
+    provisional: sessions.reduce((n, s) => n + s.decisions.filter((d) => d.provisional).length, 0),
+    reviewGeneratedAt: generated,
+  };
+}
+
+/** A pull request's decisions, session by session, as its page's Decisions
+ *  pane shows them. A decision made after the saved review was generated is
+ *  provisional, and said so. */
+export function PullRequestDecisionsPane({
+  read,
+  live,
+  heading = false,
+  scope = "this pull request",
+}: {
+  read: PullRequestDecisionsRead;
+  /** Titles of the sessions in progress, which the answer leaves out. */
+  live: LiveSession[];
+  /** Headed as a pane of its own, as Commits is. */
+  heading?: boolean;
+  /** What the sessions are linked to, in the heading. */
+  scope?: string;
+}) {
+  const now = useNow();
+  const { sessions, total, provisional, reviewGeneratedAt } = read;
   return (
-    <section aria-labelledby="pr-decisions-heading" className="mb-3 local-panel local-decisions">
-      {/* Closed until asked for: a pull request's sessions can carry dozens of decisions. */}
-      <details>
-        <summary>
-          <h3 id="pr-decisions-heading">Decisions from sessions ({total})</h3>
-        </summary>
-        {provisional ? (
-          <p className="local-decisions-note">
-            {provisional === 1 ? "One decision was" : `${provisional} decisions were`} made after
-            the saved review was generated
-            {answer?.review_generated_at ? ` (${formatDateTime(answer.review_generated_at)})` : ""}:
-            the review has not seen {provisional === 1 ? "it" : "them"}.
-          </p>
-        ) : null}
+    <div className="local-decisions">
+      {heading ? (
+        <CardHeader
+          size="pane"
+          title="Decisions"
+          detail={`${total === 1 ? "1 decision" : `${total} decisions`} from ${
+            sessions.length === 1 ? "1 session" : `${sessions.length} sessions`
+          } linked to ${scope}.`}
+        />
+      ) : null}
+      {provisional ? (
+        <p className="local-decisions-note">
+          {provisional === 1 ? "One decision was" : `${provisional} decisions were`} made after the
+          saved review was generated
+          {reviewGeneratedAt ? ` (${formatDateTime(reviewGeneratedAt)})` : ""}: the review has not
+          seen {provisional === 1 ? "it" : "them"}.
+        </p>
+      ) : null}
+      <ol className="local-decisions-sessions">
         {sessions.map((s) => {
           const title =
             s.title ||
             live.find((l) => l.agent === s.agent && l.session_id === s.session_id)?.title ||
             s.session_id;
           return (
-            <div key={`${s.agent}:${s.session_id}`} className="local-decisions-session">
-              <h4>
+            <Item key={`${s.agent}:${s.session_id}`} className="local-decisions-session">
+              <h3>
                 <span>{agentName(s.agent)}</span>
                 <span className="local-decisions-session-title">{title}</span>
                 {s.live ? (
@@ -213,18 +374,52 @@ export function PullRequestDecisionsList({
                     In progress
                   </Badge>
                 ) : null}
-              </h4>
+              </h3>
               <p className="local-decisions-state">{captureState(s, now)}</p>
-              {s.decisions.length ? (
-                <ul>
-                  {s.decisions.map((d) => (
-                    <DecisionRow key={d.decision_id} decision={d} />
-                  ))}
-                </ul>
-              ) : null}
-            </div>
+              {decisionGroups(s.decisions).map((group) => (
+                <section key={group.key} className="local-decisions-group" aria-label={group.title}>
+                  <h4>
+                    {group.title}
+                    <span className="local-decisions-group-count">{group.decisions.length}</span>
+                  </h4>
+                  <ul className="local-decisions-list">
+                    {group.decisions.map((d) => (
+                      <DecisionRow key={d.decision_id} decision={d} />
+                    ))}
+                  </ul>
+                </section>
+              ))}
+            </Item>
           );
         })}
+      </ol>
+    </div>
+  );
+}
+
+/** The same decisions behind a closed disclosure, for a page with no
+ *  Decisions pane, such as the walkthrough. */
+export function PullRequestDecisionsList({
+  repository,
+  number,
+  live,
+  revision,
+}: {
+  repository: string;
+  number: number;
+  live: LiveSession[];
+  revision: number | string;
+}) {
+  const read = usePullRequestDecisions(repository, number, revision);
+  if (!read) return null;
+  return (
+    <section aria-labelledby="pr-decisions-heading" className="mb-3 local-panel">
+      {/* Closed until asked for: a pull request's sessions can carry dozens of decisions. */}
+      <details className="local-decisions-disclosure">
+        <summary>
+          <h3 id="pr-decisions-heading">Decisions from sessions ({read.total})</h3>
+        </summary>
+        <PullRequestDecisionsPane read={read} live={live} />
       </details>
     </section>
   );

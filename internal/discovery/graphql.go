@@ -27,13 +27,50 @@ const inboxQuery = `query LocalInbox($owner: String!, $name: String!, $cursor: S
     reviewRequests(first: 100) { nodes { requestedReviewer { __typename ... on User { login } ... on Team { databaseId } } } pageInfo { hasNextPage } }
     reviewDecision latestOpinionatedReviews(first: 100) { nodes { state } pageInfo { hasNextPage } }
     latestReviews: reviews(last: 100) { nodes { state } pageInfo { hasPreviousPage } }
-    commits(last: 1) { nodes { commit { statusCheckRollup { state } } } }
+    commits(last: 1) { nodes { commit { statusCheckRollup { state contexts(first: 1) { checkRunCountsByState { state count } statusContextCountsByState { state count } } } } } }
     mergeable mergeStateStatus
     reviewThreads(first: 100) { nodes { isResolved } pageInfo { hasNextPage } }
    }
   }
  }
 }`
+
+// rollup is a commit's checks: GitHub's combined state, and how many of its
+// check runs and commit statuses are in each state.
+type rollup struct {
+	State    string
+	Contexts *struct {
+		CheckRunCountsByState      []stateCount
+		StatusContextCountsByState []stateCount
+	}
+}
+
+type stateCount struct {
+	State string
+	Count int
+}
+
+// failedRuns are the check run and commit status states that fail a commit's
+// checks, as the fix reads them (internal/fix).
+var failedRuns = map[string]bool{
+	"FAILURE": true, "TIMED_OUT": true, "STARTUP_FAILURE": true, "ACTION_REQUIRED": true, "ERROR": true,
+}
+
+// failed is whether any check run or commit status already failed, while
+// others may still run.
+func (r *rollup) failed() bool {
+	if r.Contexts == nil {
+		return false
+	}
+	for _, counts := range [][]stateCount{r.Contexts.CheckRunCountsByState, r.Contexts.StatusContextCountsByState} {
+		for _, c := range counts {
+			if c.Count > 0 && failedRuns[c.State] {
+				return true
+			}
+		}
+	}
+	return false
+}
 
 type pageInfo struct {
 	HasNextPage bool
@@ -78,7 +115,7 @@ type gqlPR struct {
 	}
 	Commits *struct {
 		Nodes []struct {
-			Commit struct{ StatusCheckRollup *struct{ State string } }
+			Commit struct{ StatusCheckRollup *rollup }
 		}
 	}
 	Mergeable, MergeStateStatus string
@@ -170,7 +207,12 @@ func (pr gqlPR) states() (review, checks, merge string, unresolved *int, capped 
 			case "FAILURE", "ERROR":
 				checks = "failing"
 			case "PENDING", "EXPECTED":
+				// GitHub waits for every check before calling the rollup
+				// failed; one that already failed is failing now.
 				checks = "running"
+				if rollup.failed() {
+					checks = "failing"
+				}
 			}
 		}
 	}
