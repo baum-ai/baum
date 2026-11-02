@@ -108,7 +108,7 @@ func Publish(ctx context.Context, versions Versions, key store.Key, o Options, c
 	result.Metadata.RecordedCostUSD, result.Metadata.CostReason = list.BackendAccountingCost(result.Metadata.Backend, result.Metadata.Accounting)
 	if cost != nil {
 		result.Metadata.RecordedCostUSD = cost(result)
-		if result.Metadata.RecordedCostUSD != nil {
+		if result.Metadata.RecordedCostUSD != nil && result.Metadata.CostReason != "estimated_from_configured_model" {
 			result.Metadata.CostReason = ""
 		} else if result.Metadata.CostReason == "" {
 			result.Metadata.CostReason = "cost_not_calculated"

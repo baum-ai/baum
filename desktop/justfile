@@ -19,6 +19,11 @@ test *args: frontend sidecar
 frontend:
     {{ heavy }} --workdir /oss/app ui-test pnpm build
 
+# Build the viewer the bundled baum embeds, which frontend leaves out
+[private]
+viewer:
+    {{ heavy }} --workdir /oss/viewer ui-test pnpm build:app
+
 # The Rust target triple of this machine, for the sidecar the host app runs
 host_target := arch() + if os() == "macos" { "-apple-darwin" } else { "-unknown-linux-gnu" }
 
@@ -35,6 +40,10 @@ build bundles="deb": frontend sidecar
 # defaults to a snapshot's.
 bundle version="0.0.0": frontend sidecar
     {{ heavy }} desktop-test scripts/bundle.sh linux-amd64 {{ version }} target/release-bundles
+
+# Build an ad hoc signed macOS DMG into target/local-dmg (--install also installs it)
+dmg *args: frontend viewer (sidecar "aarch64-apple-darwin") (sidecar "x86_64-apple-darwin")
+    scripts/macos-local.sh {{ args }}
 
 # Regenerate ../third_party/rust.txt, the licences of the crates in the app
 # (just third-party-notices does the rest)

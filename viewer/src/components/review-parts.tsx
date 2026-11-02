@@ -551,6 +551,7 @@ export function JumpLink({
   return (
     <button
       type="button"
+      data-block-open=""
       onClick={onClick}
       className={cn(
         "cursor-pointer rounded-(--radius-sm) text-left hover:underline",

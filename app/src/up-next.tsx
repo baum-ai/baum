@@ -923,6 +923,31 @@ export function UpNextPage({
   );
   const { query, set: setQuery } = quick;
   const filtering = scope ? quick.dirty : query !== "";
+  useEffect(() => {
+    const create = (event: KeyboardEvent) => {
+      if (
+        event.key !== "Enter" ||
+        !(event.metaKey || event.ctrlKey) ||
+        event.altKey ||
+        event.shiftKey ||
+        event.isComposing ||
+        event.defaultPrevented ||
+        !saveAsInbox ||
+        document.querySelector("dialog[open]")
+      )
+        return;
+      const text =
+        event.target instanceof HTMLTextAreaElement && event.target.closest(".filter-menu")
+          ? event.target.value
+          : query;
+      if (queryProblem(text, true)) return;
+      event.preventDefault();
+      if (event.target instanceof HTMLTextAreaElement) event.target.blur();
+      saveAsInbox(text, scope ?? undefined);
+    };
+    window.addEventListener("keydown", create);
+    return () => window.removeEventListener("keydown", create);
+  }, [query, saveAsInbox, scope]);
   const inScope = (item: { kind: UpNextKind; entry: Entry }) =>
     matchesQuery(query, item.entry, item.kind);
   const queue = all.queue.filter(inScope);
@@ -1193,7 +1218,12 @@ export function UpNextPage({
               ]
             : []),
           ...(saveAsInbox
-            ? [{ label: "Create inbox", onSelect: () => saveAsInbox(query, scope ?? undefined) }]
+            ? [
+                {
+                  label: "Create inbox",
+                  onSelect: () => saveAsInbox(query, scope ?? undefined),
+                },
+              ]
             : []),
           ...(scope ? [{ label: "Discard changes", onSelect: () => quick.reset() }] : []),
         ];

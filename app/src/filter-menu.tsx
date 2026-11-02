@@ -23,6 +23,7 @@ import {
   type Op,
   type Option,
 } from "./pr-filter";
+import { COMMAND, MAC, useShortcuts } from "./shortcuts";
 import "./filter-menu.css";
 
 type Field = ReturnType<typeof fieldsFor>[number];
@@ -62,7 +63,7 @@ export function FilterButton({
   /** An inbox's page: `waiting` is offered too. */
   inbox?: boolean;
   footer?: ReactNode;
-  /** Opens the menu with the query's box focused; `onOpened` clears it. */
+  /** Opens the menu with Add filter focused; `onOpened` clears it. */
   openRequest?: boolean;
   onOpened?: () => void;
   onClosed?: () => void;
@@ -71,6 +72,13 @@ export function FilterButton({
   const focusQuery = () =>
     panel.current?.querySelector<HTMLTextAreaElement>(".filter-menu-query textarea")?.focus();
   const [focusOnOpen, setFocusOnOpen] = useState(false);
+  useShortcuts((event) => {
+    if (event.key !== "/") return;
+    event.preventDefault();
+    if (detailsProps.ref.current) detailsProps.ref.current.open = true;
+    detailsProps.onToggle();
+    panel.current?.querySelector<HTMLInputElement>(".filter-menu-search")?.focus();
+  });
   useEffect(() => {
     if (!openRequest) return;
     if (detailsProps.ref.current) detailsProps.ref.current.open = true;
@@ -100,12 +108,20 @@ export function FilterButton({
     };
   }, [open]);
   const wasOpen = useRef(false);
+  const positioned = place !== null;
+  useLayoutEffect(() => {
+    if (open && positioned)
+      panel.current?.querySelector<HTMLInputElement>(".filter-menu-search")?.focus();
+  }, [open, positioned]);
   useEffect(() => {
     if (open && focusOnOpen) {
-      focusQuery();
+      panel.current?.querySelector<HTMLInputElement>(".filter-menu-search")?.focus();
       setFocusOnOpen(false);
     }
-    if (!open && wasOpen.current) onClosed?.();
+    if (!open && wasOpen.current) {
+      detailsProps.ref.current?.querySelector("summary")?.blur();
+      onClosed?.();
+    }
     wasOpen.current = open;
   }, [open, focusOnOpen]);
   const ids = useId();
@@ -158,14 +174,17 @@ export function FilterButton({
     ? sub.field.values(entries).filter((one) => !sub.field.check?.(one.value, op))
     : [];
   const live = entries.filter((entry) => passes(query, entry));
-  // What the page would show with the value picked: a value already in is
-  // counted as it stands, another as one more choice of its field's term.
+  // Count matches belonging to this option, not the union of every selected
+  // value of its field. Other fields still narrow the count.
   const count = (field: Field, option: Option, with_: Op = "=") =>
     formatCount(
       hasValue(query, field.key, option.value, with_)
-        ? live.length
-        : entries.filter((entry) =>
-            passes(toggleValue(query, field.key, option.value, with_), entry),
+        ? live.filter((entry) => passes(toggleValue("", field.key, option.value, with_), entry))
+            .length
+        : entries.filter(
+            (entry) =>
+              passes(toggleValue(query, field.key, option.value, with_), entry) &&
+              passes(toggleValue("", field.key, option.value, with_), entry),
           ).length,
     );
   // Added only when the query still reads with it.
@@ -200,6 +219,7 @@ export function FilterButton({
     panel.current?.querySelector<HTMLElement>(`[data-filter-row="${index}"]`) ?? null;
 
   const onKeyDown = (event: React.KeyboardEvent) => {
+    if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) return;
     const inValues = sub && inSub >= 0;
     const length = inValues ? values.length : rows.length;
     const move = (step: number) => {
@@ -304,6 +324,27 @@ export function FilterButton({
     <details
       {...detailsProps}
       className="filter-menu"
+      onKeyDownCapture={(event) => {
+        if (
+          !open ||
+          event.key.toLowerCase() !== "c" ||
+          !(event.metaKey || event.ctrlKey) ||
+          event.altKey ||
+          event.shiftKey ||
+          event.nativeEvent.isComposing
+        )
+          return;
+        event.preventDefault();
+        event.stopPropagation();
+        const clear = panel.current?.querySelector<HTMLButtonElement>(".filter-bar-text-button");
+        if (clear) clear.click();
+        else onChange("");
+        setSearch("");
+        setActive(0);
+        setSub(null);
+        setInSub(-1);
+        panel.current?.querySelector<HTMLInputElement>(".filter-menu-search")?.focus();
+      }}
       // Tab past its last control (or before its first) leaves the menu,
       // which then closes, as a pointer elsewhere does.
       onBlur={(event) => {
@@ -313,12 +354,21 @@ export function FilterButton({
     >
       <summary
         aria-label={lit ? "Filter, in force" : "Filter"}
-        title={lit ? `Filter: ${query}` : "Filter"}
+        title={lit ? `Filter: ${query} (/)` : "Filter (/)"}
+        aria-keyshortcuts="/"
         className={
           lit ? "local-icon-button filter-menu-button on" : "local-icon-button filter-menu-button"
         }
+        onClick={(event) => {
+          event.preventDefault();
+          if (detailsProps.ref.current) detailsProps.ref.current.open = !open;
+          detailsProps.onToggle();
+        }}
       >
         <FilterIcon size={16} />
+        <kbd aria-hidden="true" className="key-hint">
+          /
+        </kbd>
         {lit ? <span aria-hidden="true" className="filter-menu-dot" /> : null}
       </summary>
       {/* Drawn only while open: a closed menu's controls are no Tab stops. */}
@@ -520,6 +570,9 @@ export function FilterBar({
         ? 1
         : 0;
 
+  if (!query.trim() && !text.trim())
+    return actions ? <div className="filter-bar-actions">{actions}</div> : null;
+
   return (
     <div className="filter-bar">
       <div role="search" className="filter-bar-field">
@@ -540,7 +593,6 @@ export function FilterBar({
           aria-describedby={error ? `${id}-error` : undefined}
           autoComplete="off"
           spellCheck={false}
-          placeholder="repo=acme/app is!=draft review=approved OR risk>=4"
           value={text}
           onChange={(event) =>
             edit(event.target.value, event.target.selectionStart ?? event.target.value.length)
@@ -558,6 +610,7 @@ export function FilterBar({
             apply(text, true);
           }}
           onKeyDown={(event) => {
+            if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) return;
             if (event.key === "Tab" && !event.shiftKey && tabTakes) {
               event.preventDefault();
               take(tabTakes - 1);
@@ -604,12 +657,16 @@ export function FilterBar({
         <button
           type="button"
           className="filter-bar-text-button"
+          aria-keyshortcuts={`${MAC ? "Meta" : "Control"}+c`}
           onClick={() => {
             edit("", 0, false);
             apply("", true);
           }}
         >
           Clear
+          <kbd aria-hidden="true" className="key-hint">
+            {COMMAND}C
+          </kbd>
         </button>
         {actions}
       </div>
@@ -640,6 +697,11 @@ export function SaveButton({ options }: { options: SaveOption[] }) {
         onClick={first.onSelect}
       >
         {first.label}
+        {first.label === "Create inbox" ? (
+          <kbd aria-hidden="true" className="key-hint">
+            {COMMAND}↵
+          </kbd>
+        ) : null}
       </button>
       {rest.length ? (
         <details {...detailsProps} className="filter-save-more">
@@ -660,6 +722,11 @@ export function SaveButton({ options }: { options: SaveOption[] }) {
                   }}
                 >
                   {option.label}
+                  {option.label === "Create inbox" ? (
+                    <span aria-hidden="true" className="key-hint filter-menu-key">
+                      {COMMAND}↵
+                    </span>
+                  ) : null}
                 </button>
               ))}
             </div>

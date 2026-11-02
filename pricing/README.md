@@ -6,6 +6,11 @@ pricing-sync command updates it and the publishing workflow signs it at the
 existing v2 URL. Local refresh/cache handling and backend cost accounting use the
 same `List` and active-list state as the core token-cost calculations.
 
+Accounting prices each attempt using its reported model, or its configured
+model when the actual model was not reported. A total using any configured
+model carries `estimated_from_configured_model`; missing usage or other
+required pricing inputs still leaves the total unknown.
+
 `oss/internal/pricing` is an import facade for local consumers; it owns no
 price list or mutable state. Hosted fixture-model coverage stays in the
 platform so the standalone module does not need hosted fixtures.

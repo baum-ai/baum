@@ -13,6 +13,7 @@ import (
 
 	"github.com/baum-ai/baum/internal/discovery"
 	"github.com/baum-ai/baum/internal/github"
+	"github.com/baum-ai/baum/internal/prlink"
 	"github.com/baum-ai/baum/internal/repos"
 )
 
@@ -21,13 +22,14 @@ type registry struct{ clones []repos.Clone }
 func (r registry) List(context.Context) ([]repos.Clone, error) { return r.clones, nil }
 
 type cache struct {
-	prs   []discovery.PullRequest
-	calls int
+	prs          []discovery.PullRequest
+	observations []discovery.Observation
+	calls        int
 }
 
 func (c *cache) Cached(_ context.Context, repo github.Repository) (discovery.Snapshot, error) {
 	c.calls++
-	return discovery.Snapshot{Repository: repo.String(), PullRequests: c.prs}, nil
+	return discovery.Snapshot{Repository: repo.String(), PullRequests: c.prs, Observations: c.observations}, nil
 }
 
 func git(t *testing.T, dir string, args ...string) {
@@ -248,5 +250,57 @@ func TestResolverLinksRecordedCommitsAndPushes(t *testing.T) {
 	}
 	if _, ok := r.LinkCommit(ctx, filepath.Join(root, "gone"), "fix", head); ok {
 		t.Error("a directory in no clone linked")
+	}
+}
+
+func TestResolverLinksMergedOrClosedHead(t *testing.T) {
+	for _, state := range []string{"MERGED", "CLOSED"} {
+		t.Run(state, func(t *testing.T) {
+			cached := &cache{observations: []discovery.Observation{{Number: 1040, HeadSHA: "abc", State: state}}}
+			resolver := &Resolver{Discovery: cached}
+			work := prlink.Work{Repository: "acme/demo", Branch: "feature", Head: "abc"}
+			got, ok := resolver.resolve(context.Background(), "acme/demo", work)
+			if !ok || got.PR != 1040 || got.Method != "head" || got.PRState != state {
+				t.Fatalf("link %+v, ok %v", got, ok)
+			}
+			work.Head = "different"
+			if got, _ := resolver.resolve(context.Background(), "acme/demo", work); got.PR != 0 {
+				t.Fatalf("reused branch linked old PR: %+v", got)
+			}
+			work.Head, work.Repository = "abc", "other/fork"
+			if got, _ := resolver.resolve(context.Background(), "acme/demo", work); got.PR != 0 {
+				t.Fatalf("different head repository linked old PR: %+v", got)
+			}
+		})
+	}
+}
+
+func TestResolverRefusesAmbiguousClosedHead(t *testing.T) {
+	cached := &cache{observations: []discovery.Observation{{Number: 1, HeadSHA: "abc", State: "MERGED"}, {Number: 2, HeadSHA: "abc", State: "CLOSED"}}}
+	resolver := &Resolver{Discovery: cached}
+	got, _ := resolver.resolve(context.Background(), "acme/demo", prlink.Work{Repository: "acme/demo", Head: "abc"})
+	if got.PR != 0 || got.Status != "ambiguous" {
+		t.Fatalf("ambiguous head %+v", got)
+	}
+}
+
+func TestPRStateChangeNotifiesSessionUI(t *testing.T) {
+	cached := &cache{prs: []discovery.PullRequest{{Number: 1040, HeadRef: "feature", HeadSHA: "abc"}}}
+	resolver := &Resolver{Discovery: cached}
+	work := prlink.Work{Repository: "acme/demo", Branch: "feature", Head: "abc"}
+	open, _ := resolver.resolve(context.Background(), "acme/demo", work)
+	if open.PRState != "OPEN" {
+		t.Fatalf("open state %+v", open)
+	}
+	item := &entry{}
+	now := time.Now()
+	item.setLink(open, now)
+	before := item.Session
+	cached.prs = nil
+	cached.observations = []discovery.Observation{{Number: 1040, HeadSHA: "abc", State: "MERGED"}}
+	merged, _ := resolver.resolve(context.Background(), "acme/demo", work)
+	item.setLink(merged, now)
+	if item.PR != 1040 || item.PRState != "MERGED" || !significant(before, item.Session, true, true) {
+		t.Fatalf("merged state not published: %+v", item.Session)
 	}
 }

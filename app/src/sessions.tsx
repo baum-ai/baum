@@ -22,7 +22,7 @@ import {
   PaperPlaneIcon,
   WarningIcon,
 } from "@baum/viewer/components/icons";
-import { Button, LiveDot } from "@baum/viewer/components/ui";
+import { Badge, Button, LiveDot } from "@baum/viewer/components/ui";
 import type { ViewerLinkProps } from "@baum/viewer/navigation";
 import {
   agentName,
@@ -218,12 +218,25 @@ function SessionPR({
 }) {
   if (!s.pr) return null;
   const href = prHref(s);
-  return href ? (
-    <Link href={href} className="local-session-pr">
+  const state =
+    s.pr_state === "MERGED"
+      ? { label: "Merged", tone: "merged" as const }
+      : s.pr_state === "CLOSED"
+        ? { label: "Closed", tone: "critical" as const }
+        : s.pr_state === "OPEN"
+          ? { label: "Open", tone: "positive" as const }
+          : { label: "Status unknown", tone: "neutral" as const };
+  const pill = (
+    <Badge tone={state.tone} size="compact" title={`PR #${s.pr} · ${state.label}`}>
       PR #{s.pr}
+    </Badge>
+  );
+  return href ? (
+    <Link href={href} className="local-session-pr" aria-label={`PR #${s.pr}, ${state.label}`}>
+      {pill}
     </Link>
   ) : (
-    <span className="local-session-pr">PR #{s.pr}</span>
+    <span className="local-session-pr">{pill}</span>
   );
 }
 

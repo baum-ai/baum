@@ -443,6 +443,7 @@ export type LiveSession = {
   branch?: string;
   /** Absent while the branch has no unique matching pull request. */
   pr?: number;
+  pr_state?: "OPEN" | "MERGED" | "CLOSED";
   link_status?:
     | "resolved"
     | "unmatched"

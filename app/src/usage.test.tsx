@@ -61,3 +61,11 @@ it("shows a cost with unpriced calls as a lower bound", () => {
   expect(html).toContain("≥ ");
   expect(html).toContain("at least the amount shown");
 });
+it("labels costs based on configured models as estimates", () => {
+  const html = renderToStaticMarkup(
+    <UsageDetails charged={110} amount={1.5} reason="estimated_from_configured_model" />,
+  );
+  expect(html).toContain("$1.50 (estimated)");
+  expect(html).toContain("configured model&#x27;s API rates");
+  expect(html).not.toContain("Unknown");
+});

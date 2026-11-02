@@ -3969,6 +3969,7 @@ dialog.local-message-reader[open] {
   color: var(--status-positive);
 }
 .local-job-detail,
+.local-job-output pre,
 .local-job-tool pre {
   max-height: 16rem;
   overflow: auto;
@@ -3982,6 +3983,11 @@ dialog.local-message-reader[open] {
   line-height: 1.5;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+.local-job-output > summary {
+  cursor: pointer;
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
 }
 /* The agent's prose: the summary and its messages. */
 .local-job-summary,
@@ -4013,10 +4019,14 @@ dialog.local-message-reader[open] {
 }
 .local-job-transcript {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 1rem;
   margin: 0;
   padding: 1.25rem 1.5rem;
   list-style: none;
+}
+.local-job-transcript > li {
+  min-width: 0;
 }
 .local-job-reasoning {
   max-width: 72ch;
@@ -4069,6 +4079,7 @@ dialog.local-message-reader[open] {
    folded above it. */
 .local-job-tools {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 0.125rem;
   padding-left: 0.75rem;
   border-left: 2px solid var(--border-subtle);
@@ -4098,6 +4109,7 @@ dialog.local-message-reader[open] {
 }
 .local-job-tools-earlier ol {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 0.125rem;
   margin: 0;
   padding: 0;

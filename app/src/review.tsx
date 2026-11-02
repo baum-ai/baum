@@ -420,9 +420,6 @@ export function LocalReview({
     } else if (event.key === "f" && fix && fixLabelText && !fixing && !fixStarting) {
       event.preventDefault();
       fix();
-    } else if (event.key === "g" && !generating && !entry.needs_clone) {
-      event.preventDefault();
-      generate();
     } else if (event.key === "t" && watchable) {
       event.preventDefault();
       navigate(jobHref(watchable));

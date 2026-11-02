@@ -4177,11 +4177,17 @@ replace it.
   (`Discovery.Cached`, never GitHub) whose head branch (`head_ref`, new in the
   cache, which refetches responses cached without it) is the branch and that
   is not a fork's (a fork's branch of the same name is another branch); the
-  newest when several. When no head has the branch's name, the head branch
+  none when several match. When no head has the branch's name, the head branch
   named by the branch's upstream (`branch.<name>.merge`, when its remote is the
   same repository) is tried, then the pull request whose head commit is the
   commit checked out, which covers a detached HEAD and a push to a branch of
-  another name. Without one the session is still tracked against its
+  another name. If no open PR matches, a unique cached merged or closed PR
+  with the exact same head commit in the same repository is still linked.
+  A closed PR is never inferred from a branch name alone, and ambiguous
+  matches remain unlinked. The live-session response includes `pr_state`
+  (`OPEN`, `MERGED` or `CLOSED`) from that match, and a state change notifies
+  the UI even when the PR number stays the same.
+  Without one the session is still tracked against its
   repository and branch, and only a PR page it does not match omits it. The
   clone list is read at most every 30 seconds and a directory that fails to
   link is not looked up again for a minute, since listing and opening a clone

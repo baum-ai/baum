@@ -451,7 +451,12 @@ its transcript on that page, its panels in the inbox's light sand on its darker
 sand: the job's phase while it runs, then its summary or failure, above the
 agent's messages, collapsed reasoning, tool calls (a status mark, expandable to
 their output) and errors.
-The summary, messages and reasoning are Markdown, without raw HTML. Consecutive
+The summary, messages and reasoning are Markdown, without raw HTML. Complete
+JSON objects and arrays are folded under "Structured output" ("Review output"
+for `baum.review/1`), with indented JSON in a bounded, scrollable area when
+expanded, including in older transcripts. Long tool commands stay within the
+transcript width and truncate with an ellipsis.
+Consecutive
 tool calls form one run (`groupEntries`; reasoning does not break it) that shows
 only its latest call, with the earlier ones folded behind "N earlier tool
 calls" above it. A call shows its tool once (Claude's titles start with the
@@ -696,9 +701,7 @@ On Pull requests, `j`/`↓` and `k`/`↑` move a row focus through the
 rows as drawn (group rows count; rows of collapsed buckets and collapsed groups
 are skipped), `Enter` or `o` opens the focused pull request or group, `x` toggles
 its selection, `Space` opens or closes its peek (on a group's row, shows or hides its pull requests), `m` opens Merge and `f` starts the fix where the row offers them (Merge wins
-where both could), `g` generates the pull request's review through the same path
-as the PR page's Generate (so the same confirmations and the instant "Starting"
-state), `t` opens its fix transcript, `r` refreshes from GitHub at once rather than after the polling backoff,
+where both could), `t` opens its fix transcript, `r` refreshes from GitHub at once rather than after the polling backoff,
 `h`/`←` and `l`/`→` move to the previous and next tab (Open, the saved tabs, Closed),
 and `Esc` clears the focus. On a pull request's or group's page, `h`/`←` and
 `l`/`→` move to the previous and next place in the review rail, as it shows
@@ -732,8 +735,8 @@ to a section, and `Enter`, `l` or `→` go into the shown section, where `j` and
 `Esc`, `h` or `←` go back to the list (`Esc` in a text field or select gives
 it up first, and `j` and `k` go on from it). On a pull request or group page `j`
 and `k` step to the next and previous place in reading order, as the
-navigator's arrows do (`ReviewViewer`'s `steps` ref), `m`, `f` and `g`
-merge, fix and generate or regenerate where the header offers them, and `t`
+navigator's arrows do (`ReviewViewer`'s `steps` ref), `m` and `f`
+merge and fix where the header offers them, and `t`
 opens the fix transcript (its hint is on the notice's Watch or Transcript, else
 on the runs' fold). On any
 page, `?` (or the `?` button in Pull
@@ -995,10 +998,10 @@ after the last key, and at Enter or leaving the box; one longer than 500
 characters is not applied and says so.
 
 In the Inbox (all) the save is **Create inbox**, which appends an inbox named
-"Filtered" (or "Filtered 2"…) holding the query, saved at once, and opens its
-edit page ("Created and added to the sidebar. Adjust anything below."); it is
-not offered at 20 inboxes or with an older daemon, and the
-Inbox's filter stays as it was. In a saved inbox the menu starts from the
+"Filtered" (or "Filtered 2"…) holding the query. First it opens an unsaved
+name form with the suggested name selected. Save creates it and opens its
+queue, clearing the source page's temporary filter (a saved inbox returns to
+its saved query). It is not offered at 20 inboxes or with an older daemon. In a saved inbox the menu starts from the
 inbox's own query, its values ticked; a change is a draft that narrows the
 queue (kept per inbox) until the save, as GitHub's merge button: **Update
 inbox** gives the inbox the query, and the arrow beside it offers **Create
@@ -1836,7 +1839,9 @@ and interrupted providers show reported subtotals rather than exact totals.
 Saved review usage follows the version selected in history. Its cost reads
 "At API prices": what the usage would cost at API prices, not what a
 subscription charges. Unknown costs show a reason; configured model identity
-is distinguished from a provider report. Each attempt is priced independently
+is distinguished from a provider report. When only the configured model is known,
+its rates are used and the cost is labelled "estimated" with an explanation.
+Each attempt is priced independently
 when its model and pricing inputs are known. A cost with `unpriced_calls` (a
 feature build some of whose calls could not be priced) is a lower bound, shown
 "≥" with a note. Pricing only reports: no budget, cap, confirmation or decision
@@ -1902,3 +1907,45 @@ The warning clears after a successful ready result; a failed request retains
 the previous warning. Older daemons without this endpoint show no new global
 badge. Onboarding rechecks on focus or Check again. Checking never trusts a
 hook, restarts Codex or starts a conversation.
+
+On Inbox and Pull requests, `/` opens the filter with Add filter focused.
+Escape closes the filter without leaving a focus ring on its button.
+The query box appears only with an actual filter and has no placeholder.
+Organisation option counts show each organisation’s matching pull requests.
+On Inbox, Command+Enter or Control+Enter creates an inbox from the current filter.
+When creating an inbox, Command+Enter (Control+Enter on other keyboards) saves it.
+
+While the filter menu is open, Command+C or Control+C clears its filters and
+returns focus to Add filter. Holding Option/Alt reveals the filter, Clear and
+Create inbox button shortcuts.
+
+New inboxes choose a colour not used by another inbox, preserving their template’s
+preferred colour when available; once all colours are used, that preference repeats.
+Ctrl+J/K or Ctrl+Down/Up moves between the global Inbox and saved inboxes in
+sidebar order (global Inbox first), stopping at either end. Typing fields and dialogs keep their keys.
+While navigating inboxes, Ctrl+K takes precedence over Go to.
+Enter is drawn as ↵ in button shortcut hints.
+
+On PR and stack review pages, `]` toggles the right-hand Details/Activity
+sidebar, or its sheet on narrow windows. It is listed in the review shortcut hints.
+
+The page shortcut bar labels H/L as sections and lists only page actions;
+Go to (Command/Control+K) and help (?) remain available globally.
+
+J/K moves through the Summary’s text, context, intent, risk score and change/risk
+items as well as other review sections. Generate has no keyboard shortcut; use
+the visible Generate/Regenerate action or its menu item.
+
+Enter on a Summary item with a section jump link opens that section, just as
+clicking its link does.
+
+Session PR links also match cached merged or closed PRs by their exact head
+commit in the same repository, so merging does not by itself hide the PR.
+Branch names alone never recover a closed PR, and ambiguous heads stay unlinked.
+
+Session PR links are compact numbered pills: green for Open, purple for Merged
+and red for Closed, with status in the tooltip and accessible link label. If the daemon omits session PR state, the UI uses
+its matching indexed PR’s known state. Only missing metadata uses a neutral pill with a Status unknown tooltip.
+
+Transcript continuation summaries and standalone system reminders are folded
+to a short label by default. Expand them to inspect the original text and activity.

@@ -711,11 +711,22 @@ just desktop::test          # tests only; pass cargo test arguments after it
 just desktop::sidecar       # build binaries/baum-<target triple>; pass a triple to cross-build
 just desktop::build         # Linux bundle (deb by default) in target/release/bundle
 just desktop::bundle        # the release's Linux deb and AppImage in target/release-bundles
+just desktop::dmg           # macOS: ad hoc signed DMG in target/local-dmg (--install also installs it)
 just desktop::updater-test  # updater manifest checks reject tampered releases
 just desktop::run           # run the app on this Wayland session's display
 just desktop::dev           # native host app, with Vite hot reload in Docker
 just desktop::icons         # resolve palette tokens and regenerate native icons
 ```
+
+`dmg` builds the frontend, the viewer and both darwin sidecars in Docker, then runs
+`scripts/macos-local.sh` on the host: `bundle.sh` and `macos-finalize.sh` as the
+release runs them, without a Developer ID, so the app is signed ad hoc and not
+notarised. This is a host execution exception, because the bundle needs Apple's
+`lipo`, `codesign` and `hdiutil`. The host needs Rust with the
+`aarch64-apple-darwin` and `x86_64-apple-darwin` targets, the Xcode command line
+tools and the Tauri CLI version the Dockerfile pins. With `--install` it
+replaces `/Applications/baum.app`; quit the app first with Quit and stop
+background reviews, so the next launch starts a daemon from the new binary.
 
 `run` starts the container's own daemon in the container's home directory,
 not yours. Set `BAUM_DESKTOP_BAUM` to run a different `baum` binary than the

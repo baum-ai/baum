@@ -34,3 +34,8 @@ minisign-verify = "0.3"
 codegen-units = 1
 lto = true
 strip = true
+
+# Proc macros and build scripts run only while compiling. Stripped, they no
+# longer load on Xcode 27 (dyld: "mis-aligned LINKEDIT string pool").
+[profile.release.build-override]
+strip = false

@@ -12,6 +12,7 @@ import type {
   TranscriptSource,
 } from "../transcript";
 import { SessionCard } from "./session-card";
+import { SessionTranscript } from "./transcript";
 
 declare global {
   var IS_REACT_ACT_ENVIRONMENT: boolean;
@@ -499,4 +500,61 @@ describe("SessionCard", () => {
     );
     expect(container.textContent).toContain("This session has more prompts than are shown here.");
   });
+});
+
+for (const [text, label] of [
+  [
+    "This session is being continued from a previous conversation that ran out of context.\n\nSummary: earlier work",
+    "Context summary",
+  ],
+  ["<system-reminder>Internal context</system-reminder>", "System reminder"],
+] as const) {
+  it(`collapses ${label.toLowerCase()} turns by default`, () => {
+    render(
+      createElement(SessionTranscript, {
+        session: session({
+          prompts: [prompt(2, text, { effects: { ...effects, tool_calls: 0 } })],
+        }),
+        replies: "ready",
+      }),
+    );
+    const folded = container.querySelector<HTMLDetailsElement>("details[data-system-turn]")!;
+    expect(folded.open).toBe(false);
+    expect(folded.querySelector("summary")?.textContent).toContain(label);
+    expect(folded.textContent).toContain(
+      text.includes("Summary:") ? "earlier work" : "Internal context",
+    );
+    act(() => folded.querySelector("summary")!.click());
+    expect(folded.open).toBe(true);
+  });
+}
+
+it("keeps ordinary prompts mentioning context visible", () => {
+  render(
+    createElement(SessionTranscript, {
+      session: session({ prompts: [prompt(1, "Explain how context summaries work")] }),
+      replies: "ready",
+    }),
+  );
+  expect(container.querySelector("[data-system-turn]")).toBeNull();
+});
+
+it("keeps real agent replies visible after a folded context summary", () => {
+  render(
+    createElement(SessionTranscript, {
+      session: session({
+        prompts: [
+          prompt(
+            1,
+            "This session is being continued from a previous conversation that ran out of context.",
+          ),
+        ],
+      }),
+      replies: "ready",
+    }),
+  );
+  const folded = container.querySelector<HTMLDetailsElement>("details[data-system-turn]")!;
+  expect(folded.open).toBe(false);
+  expect(folded.textContent).not.toContain("The budget is wired.");
+  expect(container.textContent).toContain("The budget is wired.");
 });

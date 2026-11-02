@@ -5,6 +5,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { App } from "./app";
 import type { Entry } from "./api";
 import type { Inbox } from "./inboxes";
+import { COMMAND } from "./shortcuts";
 
 const entry = (
   number: number,
@@ -388,7 +389,7 @@ it("starts a saved inbox's filter from its query and keeps a change as a draft u
   await typeQuery("");
   expect(titles()).toHaveLength(4);
   await click(node.querySelector("summary.filter-save-arrow"));
-  expect(saves()).toEqual(["Update inbox", "Create inbox", "Discard changes"]);
+  expect(saves()).toEqual(["Update inbox", `Create inbox${COMMAND}↵`, "Discard changes"]);
   await click(
     Array.from(node.querySelectorAll<HTMLElement>(".filter-save-menu [role=menuitem]")).find(
       (one) => one.textContent === "Discard changes",
@@ -592,3 +593,46 @@ it("moves j and k only through the inbox's own rows", async () => {
   await press("k");
   expect(panelTitle()).toBe("Change 3");
 });
+
+it("creates an inbox with Control+Enter from the inbox filter", async () => {
+  await render("?inbox=Merges");
+  await act(async () => {
+    document.body.dispatchEvent(
+      new KeyboardEvent("keydown", {
+        key: "Enter",
+        ctrlKey: true,
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+  });
+  expect(node.querySelector("h1")?.textContent).toBe("New inbox");
+  const name = node.querySelector<HTMLInputElement>(".inbox-name")!;
+  expect(name.value).toBe("Merges 2");
+  expect(name.selectionStart).toBe(0);
+  expect(name.selectionEnd).toBe(name.value.length);
+  expect(puts).toHaveLength(0);
+});
+
+for (const [key, start, expected] of [
+  ["j", "Reviews", "Merges"],
+  ["k", "Merges", "Reviews"],
+  ["ArrowDown", "Reviews", "Merges"],
+  ["ArrowUp", "Merges", "Reviews"],
+  ["k", "Reviews", "Up next"],
+  ["ArrowUp", "Reviews", "Up next"],
+  ["j", "", "Reviews"],
+  ["ArrowDown", "", "Reviews"],
+  ["k", "", "Up next"],
+]) {
+  it(`switches inboxes with Control+${key} from ${start}`, async () => {
+    await render(start ? `?inbox=${start}` : "");
+    await act(async () => {
+      document.body.dispatchEvent(
+        new KeyboardEvent("keydown", { key, ctrlKey: true, bubbles: true, cancelable: true }),
+      );
+    });
+    expect(node.querySelector("h1")?.textContent).toBe(expected);
+    expect(node.querySelector("[data-go-to]")).toBeNull();
+  });
+}

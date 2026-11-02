@@ -12,7 +12,6 @@ export type InboxAction =
   | "peek"
   | "merge"
   | "fix"
-  | "generate"
   | "transcript"
   | "refresh";
 
@@ -38,7 +37,6 @@ export const INBOX_SHORTCUTS: Shortcut<{ action: InboxAction }>[] = [
   },
   { keys: ["m"], action: "merge", label: "Merge, where offered", short: "merge" },
   { keys: ["f"], action: "fix", label: "Fix, where offered", short: "fix" },
-  { keys: ["g"], action: "generate", label: "Generate the review", short: "generate" },
   { keys: ["t"], action: "transcript", label: TRANSCRIPT_LABEL },
   { keys: ["r"], action: "refresh", label: "Refresh from GitHub" },
 ];
@@ -762,12 +760,17 @@ function shortcutGroups(
         { keys: ["Escape"], label: "Close this list" },
       ],
     },
-    { place: "inbox", title: "Inbox", rows: UP_NEXT_SHORTCUTS },
+    {
+      place: "inbox",
+      title: "Inbox",
+      rows: [...UP_NEXT_SHORTCUTS, { keys: ["/"], label: "Open the filter" }],
+    },
     {
       place: "pulls",
       title: "Pull requests",
       rows: [
         ...INBOX_SHORTCUTS,
+        { keys: ["/"], label: "Open the filter" },
         { keys: ["Escape"], label: "Clear the row focus" },
         { keys: VIEW_KEYS.previous, label: "Previous view", short: "views" },
         { keys: VIEW_KEYS.next, label: "Next view", short: "views" },
@@ -779,8 +782,8 @@ function shortcutGroups(
       rows: [
         { keys: ["j", "ArrowDown"], label: "Next item in the section", short: "move" },
         { keys: ["k", "ArrowUp"], label: "Previous item in the section", short: "move" },
-        { keys: ["l", "ArrowRight"], label: "Next place in the sidebar", short: "sidebar" },
-        { keys: ["h", "ArrowLeft"], label: "Previous place in the sidebar", short: "sidebar" },
+        { keys: ["l", "ArrowRight"], label: "Next section", short: "sections" },
+        { keys: ["h", "ArrowLeft"], label: "Previous section", short: "sections" },
         {
           keys: [" "],
           label: "Open or close the item's details, or the selected group in the sidebar",
@@ -789,13 +792,13 @@ function shortcutGroups(
         { keys: ["Enter"], label: "Open the item, such as a commit in the list", short: "open" },
         { keys: ["m"], label: "Merge, where offered", short: "merge" },
         { keys: ["f"], label: "Fix, where offered", short: "fix" },
-        { keys: ["g"], label: "Generate or regenerate the review", short: "generate" },
         { keys: ["t"], label: TRANSCRIPT_LABEL },
         {
           keys: ["a"],
           label: "Ask the review's agent a question; Esc in the panel closes it",
           short: "ask",
         },
+        { keys: ["]"], label: "Toggle the right-hand sidebar", short: "sidebar" },
         back,
       ],
     },
@@ -897,7 +900,6 @@ export function KeyBar({ place, className }: { place: ShortcutsPlace; className?
     else items.push({ keys: [row.keys[0]!], short: row.short });
   }
   if (LISTS.includes(place)) items.push({ keys: [`${COMMAND}.`], short: "actions" });
-  items.push({ keys: [`${COMMAND}K`], short: "go to" }, { keys: ["?"], short: "all keys" });
   return (
     <footer
       aria-hidden="true"

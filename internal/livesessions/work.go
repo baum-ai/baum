@@ -200,6 +200,7 @@ func (t *Tracker) readWork(ctx context.Context, work []workItem, fallback bool) 
 			l := w.link
 			if link, ok := recorded.Relink(ctx, Session{Repository: l.Repository, Branch: l.Branch, HeadSHA: l.HeadSHA, Upstream: l.Upstream, HeadRepository: l.HeadRepository, UpstreamRepository: l.UpstreamRepository}); ok {
 				w.link.PR, w.link.Method, w.link.Status = link.PR, link.Method, link.Status
+				w.link.PRState = link.PRState
 				out = append(out, *w)
 			}
 		}

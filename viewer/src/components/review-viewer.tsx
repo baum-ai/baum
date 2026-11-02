@@ -503,6 +503,34 @@ function ReviewWorkspace<F extends ReviewFile>({
   // pane has the width when the talk is not the point.
   const [chosenCollapsed, setChatCollapsed] = useConversationCollapsed();
   const chatCollapsed = chosenCollapsed || foldSidePane;
+  const paneChoice = useRef({ chosenCollapsed, foldSidePane });
+  paneChoice.current = { chosenCollapsed, foldSidePane };
+  useEffect(() => {
+    const toggle = (event: KeyboardEvent) => {
+      if (
+        event.key !== "]" ||
+        event.defaultPrevented ||
+        event.ctrlKey ||
+        event.metaKey ||
+        event.altKey ||
+        event.shiftKey ||
+        event.isComposing ||
+        window.document.querySelector("dialog[open]")
+      )
+        return;
+      if (
+        event.target instanceof HTMLElement &&
+        event.target.closest('input, textarea, select, [contenteditable], [role="textbox"]')
+      )
+        return;
+      event.preventDefault();
+      if (window.matchMedia("(width >= 80rem)").matches) {
+        if (!paneChoice.current.foldSidePane) setChatCollapsed(!paneChoice.current.chosenCollapsed);
+      } else setSheet((currentSheet) => (currentSheet === "aside" ? null : "aside"));
+    };
+    window.document.addEventListener("keydown", toggle);
+    return () => window.document.removeEventListener("keydown", toggle);
+  }, [setChatCollapsed]);
   // Which of its tabs the side pane shows: the host's conversation, the pull
   // request's details, or how it came about. Without a conversation the
   // details stand in for it.
@@ -1158,6 +1186,8 @@ function ReviewWorkspace<F extends ReviewFile>({
       <span className="box-content hidden h-9 flex-none items-center border-b border-(--border-subtle) xl:flex">
         <IconButton
           label={conversation ? "Collapse conversation" : "Collapse side pane"}
+          title="Collapse side pane (])"
+          aria-keyshortcuts="]"
           onClick={() => setChatCollapsed(true)}
         >
           <ChevronRightIcon />
@@ -1737,6 +1767,8 @@ function ReviewWorkspace<F extends ReviewFile>({
               >
                 <IconButton
                   label={conversation ? "Expand conversation" : "Expand side pane"}
+                  title="Expand side pane (])"
+                  aria-keyshortcuts="]"
                   className="h-9 w-9 text-(--text-secondary)"
                   onClick={() => setChatCollapsed(false)}
                 >

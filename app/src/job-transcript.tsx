@@ -187,14 +187,36 @@ function ToolRun({ tools }: { tools: TranscriptEntry[] }) {
   );
 }
 
+function MessageView({ text }: { text: string }) {
+  const json = text.trim().replace(/^```(?:json)?\s*\n([\s\S]*?)\n```$/, "$1");
+  try {
+    const output: unknown = JSON.parse(json);
+    if (output !== null && typeof output === "object") {
+      return (
+        <details className="local-job-output">
+          <summary>
+            {"schema" in output && output.schema === "baum.review/1"
+              ? "Review output"
+              : "Structured output"}
+          </summary>
+          <pre>{JSON.stringify(output, null, 2)}</pre>
+        </details>
+      );
+    }
+  } catch {
+    // Prose and incomplete streamed JSON remain readable as messages.
+  }
+  return (
+    <Markdown html={false} className="local-job-message">
+      {text}
+    </Markdown>
+  );
+}
+
 export function EntryView({ entry }: { entry: TranscriptEntry }) {
   switch (entry.kind) {
     case "message":
-      return (
-        <Markdown html={false} className="local-job-message">
-          {entry.text ?? ""}
-        </Markdown>
-      );
+      return <MessageView text={entry.text ?? ""} />;
     case "reasoning":
       return (
         <details className="local-job-reasoning">

@@ -3,7 +3,15 @@ import { PreferencesProvider } from "./preferences";
 import { formatCount } from "@baum/viewer/components/format";
 import { UsageDetails } from "./usage";
 import { JobTiming, jobOrigin, jobTarget, jobType } from "./job-info";
-import { useCallback, useEffect, useRef, useState, type MouseEvent, type ReactNode } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type MouseEvent,
+  type ReactNode,
+} from "react";
 import { LogoMark } from "@baum/viewer/components/editorial";
 import { CircleCheckIcon, CircleCrossIcon, CircleDashedIcon } from "@baum/viewer/components/icons";
 import { Alert, Button, LiveDot } from "@baum/viewer/components/ui";
@@ -27,6 +35,7 @@ import {
 } from "./inbox-pages";
 import {
   freeName,
+  unusedInboxColor,
   fromQuery,
   withQuery,
   inboxBadgeCount,
@@ -351,7 +360,22 @@ function Workspace({ url }: { url: UrlState }) {
   const [automatic, setAutomatic] = useState<Automatic | null>(null);
   const [github, setGitHub] = useState<GitHubConnection | null>(null);
   const [defaults, setDefaults] = useState<ReviewDefaults | null>(null);
-  const [live, setLive] = useState<LiveSession[]>([]);
+  const [rawLive, setLive] = useState<LiveSession[]>([]);
+  const live = useMemo<LiveSession[]>(() => {
+    const indexedPRStates = new Map(
+      snapshot.entries.map(({ pull_request: pr }) => [
+        `${pr.repository.toLowerCase()}#${pr.number}`,
+        pr.state,
+      ]),
+    );
+    return rawLive.map((session) => {
+      if (session.pr_state || !session.pr) return session;
+      const state = indexedPRStates.get(`${session.repository.toLowerCase()}#${session.pr}`);
+      return state === "OPEN" || state === "MERGED" || state === "CLOSED"
+        ? { ...session, pr_state: state }
+        : session;
+    });
+  }, [rawLive, snapshot.entries]);
   // Whether the sessions have been read, or the first read failed.
   const [liveRead, setLiveRead] = useState<"loading" | "loaded" | "failed">("loading");
   // A later read of the sessions that failed: they stay as they were.
@@ -372,8 +396,8 @@ function Workspace({ url }: { url: UrlState }) {
   // Why the groups could not be read, so a group is not called missing then.
   const [groupsError, setGroupsError] = useState("");
   const inboxes = useInboxes();
-  // The inbox just made from a template, whose page says so.
-  const [freshInbox, setFreshInbox] = useState<string | null>(null);
+  const [draftInboxSource, setDraftInboxSource] = useState<string | null>(null);
+  const draftSourceFilter = usePageFilter(draftInboxSource ?? "inbox");
   // An inbox started from a template, not saved until its edit page's Save.
   const [draftInbox, setDraftInbox] = useState<SavedInbox | null>(null);
   // Deleting an inbox says so on any page, with a way back.
@@ -721,6 +745,46 @@ function Workspace({ url }: { url: UrlState }) {
     railPage === "inbox"
       ? (inboxes.inboxes.find((candidate) => candidate.id === url.search.get("inbox")) ?? null)
       : null;
+  useEffect(() => {
+    const switchInbox = (event: KeyboardEvent) => {
+      if (
+        inboxes.inboxes.length === 0 ||
+        page !== "inbox" ||
+        selectedEntry ||
+        groupId ||
+        !event.ctrlKey ||
+        event.metaKey ||
+        event.altKey ||
+        event.shiftKey ||
+        event.isComposing ||
+        document.querySelector("dialog[open]")
+      )
+        return;
+      if (
+        event.target instanceof HTMLElement &&
+        event.target.closest("input, textarea, select, [contenteditable], .filter-menu[open]")
+      )
+        return;
+      const step =
+        event.key === "j" || event.key === "ArrowDown"
+          ? 1
+          : event.key === "k" || event.key === "ArrowUp"
+            ? -1
+            : 0;
+      if (!step) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      const index = selectedInbox
+        ? inboxes.inboxes.findIndex((inbox) => inbox.id === selectedInbox.id) + 1
+        : 0;
+      const nextIndex = Math.max(0, Math.min(inboxes.inboxes.length, index + step));
+      if (nextIndex === index) return;
+      const next = inboxes.inboxes[nextIndex - 1];
+      navigate(next ? appURL(`?inbox=${encodeURIComponent(next.id)}`) : appURL());
+    };
+    window.addEventListener("keydown", switchInbox, true);
+    return () => window.removeEventListener("keydown", switchInbox, true);
+  }, [selectedInbox, page, selectedEntry, groupId, inboxes.inboxes, navigate]);
   // Undo reads the list as it is then, not as it was at the delete.
   const currentInboxes = useRef(inboxes.inboxes);
   currentInboxes.current = inboxes.inboxes;
@@ -755,9 +819,11 @@ function Workspace({ url }: { url: UrlState }) {
     return () => clearTimeout(timer);
   }, [inboxToast?.id]);
   useEffect(() => {
-    if (freshInbox && page !== "inbox-edit") setFreshInbox(null);
-    if (draftInbox && page !== "inbox-edit") setDraftInbox(null);
-  }, [freshInbox, draftInbox, page]);
+    if (draftInbox && page !== "inbox-edit") {
+      setDraftInbox(null);
+      setDraftInboxSource(null);
+    }
+  }, [draftInbox, page]);
   // The pages that show the diagnostics run them themselves.
   // The diagnostics dialog runs them itself while it is open.
   const diagnostics = useDiagnosticProblems(page !== "diagnostics");
@@ -1059,19 +1125,24 @@ function Workspace({ url }: { url: UrlState }) {
     go: navigate,
     Link: LocalLink,
   };
-  // The Inbox's filter as an inbox of its own, opened to be named.
+  // The Inbox's filter as an inbox of its own.
   const saveAsInbox =
     inboxes.status === "ready" && inboxes.inboxes.length < MAX_INBOXES
       ? (query: string, base?: SavedInbox) => {
           // From an inbox: a copy of it, named so no other inbox has the name.
           const made = base
             ? withQuery(
-                { ...base, id: newInboxId(), name: freeName(base.name, inboxes.inboxes) },
+                {
+                  ...base,
+                  id: newInboxId(),
+                  name: freeName(base.name, inboxes.inboxes),
+                  color: unusedInboxColor(inboxes.inboxes, base.color),
+                },
                 query,
               )
             : fromQuery(query, inboxes.inboxes);
-          inboxes.save([...inboxes.inboxes, made]);
-          setFreshInbox(made.id);
+          setDraftInbox(made);
+          setDraftInboxSource(base ? `inbox:${base.id}` : "inbox");
           navigate(editInboxHref(made.id));
         }
       : undefined;
@@ -1381,6 +1452,7 @@ function Workspace({ url }: { url: UrlState }) {
             <NewInboxPage
               {...inboxPageProps}
               start={(inbox) => {
+                setDraftInboxSource(null);
                 setDraftInbox(inbox);
                 navigate(editInboxHref(inbox.id));
               }}
@@ -1389,7 +1461,11 @@ function Workspace({ url }: { url: UrlState }) {
             <EditInboxPage
               {...inboxPageProps}
               id={url.search.get("inbox") ?? ""}
-              fresh={freshInbox === url.search.get("inbox")}
+              fresh={false}
+              onCreated={() => {
+                if (draftInboxSource) draftSourceFilter.reset();
+                setDraftInboxSource(null);
+              }}
               remove={askRemoveInbox}
               draft={draftInbox}
               setDraft={setDraftInbox}
