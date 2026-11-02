@@ -82,16 +82,28 @@ type Stop = {
   follow?: string;
   /** Clicked once when it shows, to pick what the stop is about. */
   select?: string;
+  /** The opening card: larger, centred, with Stumpy. */
+  welcome?: boolean;
 };
 
 const STOPS: Stop[] = [
   {
+    title: "You're all set!",
+    body: (
+      <>
+        Welcome to baum. Press <kbd>?</kbd> anytime to see how to navigate the app. Let's start with
+        a little tour{inSample() ? ", in a sample project." : "."}
+      </>
+    ),
+    at: href("inbox"),
+    welcome: true,
+  },
+  {
     title: "Your Inbox",
     body: (
       <>
-        {inSample() ? "Welcome to baum, here in a sample project. " : "Welcome to baum. "}
-        Pull requests waiting on you, grouped by what to do: review, merge or hand to an agent. Next
-        opens the selected one.
+        {inSample() ? "This sample project's pull requests" : "Pull requests"} waiting on you,
+        grouped by what to do: review, merge or hand to an agent.
       </>
     ),
     target: ".upnext-list",
@@ -108,8 +120,8 @@ const STOPS: Stop[] = [
         with its lines. <B>Ask</B> about it, or <B>Merge…</B> when it's ready.
       </>
     ),
-    // The review and its Details sidebar.
-    target: "#review-section, #review-aside",
+    // The whole page but the app's sidebar, the review's Details too.
+    target: ".local-main",
     at: "review",
   },
   {
@@ -148,8 +160,9 @@ function place(target: DOMRect | null, width: number, height: number) {
   return { left: vw - width - 2 * GAP, top: vh - height - 2 * GAP };
 }
 
-/** The app's first-run tour: a small card that steps through the Inbox, a
- *  pull request's review, the Timeline and Sessions, pointing at each. It goes to each page itself. Finishing or skipping it is remembered
+/** The app's first-run tour: a welcome, then a small card that steps
+ *  through the Inbox, a pull request's review, the Timeline and Sessions,
+ *  pointing at each. It goes to each page itself. Finishing or skipping it is remembered
  *  on this computer. */
 export function Tour({ close }: { close: () => void }) {
   const [index, setIndex] = useState(0);
@@ -264,7 +277,7 @@ export function Tour({ close }: { close: () => void }) {
         ref={card}
         role="dialog"
         aria-labelledby="tour-title"
-        className="tour-card"
+        className={stop.welcome ? "tour-card tour-welcome" : "tour-card"}
         style={position}
         // Enter and Space press the tour's buttons; every other key reaches
         // the page, so the keys it teaches work.
@@ -281,37 +294,59 @@ export function Tour({ close }: { close: () => void }) {
         >
           <CloseIcon size={14} />
         </Button>
-        <div className="tour-head">
-          <Stumpy size={28} />
-          <h2 id="tour-title">{stop.title}</h2>
-        </div>
-        <p>{stop.body}</p>
-        <div className="tour-foot">
-          <span className="tour-count">
-            {index + 1} of {STOPS.length}
-          </span>
-          {index > 0 ? (
-            <button type="button" className={SECONDARY} onClick={() => go(index - 1)}>
-              Back
+        {stop.welcome ? (
+          <div className="tour-band" aria-hidden="true">
+            {LEAVES.map((leaf) => (
+              <svg key={leaf.left} className="tour-leaf" viewBox="2 -31 21 19" style={leaf}>
+                <path d="M3 -18 C7 -30 22 -30 21 -22 C20 -15 9 -13 3 -18 Z" />
+              </svg>
+            ))}
+            <span className="tour-stumpy">
+              <Stumpy size={150} followPointer />
+            </span>
+          </div>
+        ) : null}
+        <div className={stop.welcome ? "tour-welcome-body" : undefined}>
+          <div className="tour-head">
+            {stop.welcome ? null : <Stumpy size={28} />}
+            <h2 id="tour-title">{stop.title}</h2>
+          </div>
+          <p>{stop.body}</p>
+          <div className="tour-foot">
+            <span className="tour-count">
+              {index + 1} of {STOPS.length}
+            </span>
+            {index > 0 ? (
+              <button type="button" className={SECONDARY} onClick={() => go(index - 1)}>
+                Back
+              </button>
+            ) : (
+              <button type="button" className={SECONDARY} onClick={close}>
+                Skip
+              </button>
+            )}
+            <button
+              ref={next}
+              type="button"
+              className={PRIMARY}
+              onClick={() => (last ? close() : go(index + 1))}
+            >
+              {stop.welcome ? "Start the tour" : last ? "Done" : "Next"}
             </button>
-          ) : (
-            <button type="button" className={SECONDARY} onClick={close}>
-              Skip
-            </button>
-          )}
-          <button
-            ref={next}
-            type="button"
-            className={PRIMARY}
-            onClick={() => (last ? close() : go(index + 1))}
-          >
-            {last ? "Done" : "Next"}
-          </button>
+          </div>
         </div>
       </div>
     </div>
   );
 }
+
+/** Leaves drifting around Stumpy on the welcome card. */
+const LEAVES = [
+  { left: "12%", top: "16%", transform: "rotate(-20deg)" },
+  { left: "80%", top: "22%", transform: "rotate(30deg) scale(0.8)" },
+  { left: "20%", top: "64%", transform: "rotate(50deg) scale(0.7)" },
+  { left: "74%", top: "68%", transform: "rotate(-35deg) scale(0.95)" },
+];
 
 /** Go to's entry that starts the tour again. */
 export const TOUR_HREF = () => appURL("?tour=1");

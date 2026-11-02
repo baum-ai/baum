@@ -156,7 +156,7 @@ closes. There `SampleGuard`
 `X-Baum-Sample: refused` header) into a toast and holds back links out of the
 app; elsewhere it does nothing. Its pull request pages link the sample's own
 sessions, from its home folder (`LocalAPI.Sessions`), never this computer's,
-with the decisions captured from them. In the sample the tour's first stop
+with the decisions captured from them. In the sample the tour's Inbox stop
 picks the person's own pull request, written with their agent, so Next opens
 that one.
 

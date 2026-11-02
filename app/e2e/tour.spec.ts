@@ -29,7 +29,7 @@ async function walk(
   keys = false,
 ) {
   await page.goto(start);
-  await expect(page.getByRole("dialog", { name: "Your Inbox" })).toBeVisible({
+  await expect(page.getByRole("dialog", { name: "You're all set!" })).toBeVisible({
     timeout: 15000,
   });
   const titles: string[] = [];
@@ -37,8 +37,8 @@ async function walk(
     const tour = page.locator(".tour-card");
     titles.push((await tour.locator("h2").textContent()) ?? "");
     await expect(tour).toBeInViewport();
-    // Every stop points at what it talks about.
-    await expect(page.locator(".tour-spot"), titles.at(-1)).toBeVisible();
+    // Every stop after the welcome points at what it talks about.
+    if (stop > 1) await expect(page.locator(".tour-spot"), titles.at(-1)).toBeVisible();
     // The review's stop takes in its Details sidebar, where one is shown.
     const aside = page.locator("#review-aside");
     if (titles.at(-1) === "A pull request's review" && (await aside.isVisible())) {
@@ -61,7 +61,7 @@ async function walk(
       });
     }
     await act?.[titles.at(-1)!]?.();
-    const next = tour.getByRole("button", { name: /^(Next|Done)$/ });
+    const next = tour.getByRole("button", { name: /^(Start the tour|Next|Done)$/ });
     const done = (await next.textContent()) === "Done";
     if (keys) await page.keyboard.press("Enter");
     else await next.click();
@@ -69,7 +69,13 @@ async function walk(
     if (titles.at(-1) === "Your Inbox") await expect(page).toHaveURL(/[?&]pr=\d+/);
   }
   await expect(page.locator(".tour-card")).toHaveCount(0);
-  expect(titles).toEqual(["Your Inbox", "A pull request's review", "Timeline", "Sessions"]);
+  expect(titles).toEqual([
+    "You're all set!",
+    "Your Inbox",
+    "A pull request's review",
+    "Timeline",
+    "Sessions",
+  ]);
 }
 
 /** The address of the app's own data, under its namespace. */
@@ -159,7 +165,7 @@ test("the tour shows on the first launch only, and Go to opens it again", async 
     const base = new URL(page.url()).pathname;
     await page.reload();
     // The first tour is the sample's, even with pull requests of its own.
-    await expect(card).toContainText("Your Inbox", { timeout: 15000 });
+    await expect(card).toContainText("You're all set!", { timeout: 15000 });
     await expect(page).toHaveURL(/\/sample\//);
     await card.getByRole("button", { name: "Skip" }).click();
     await expect(page).toHaveURL((url) => url.pathname === base);
@@ -173,7 +179,7 @@ test("the tour shows on the first launch only, and Go to opens it again", async 
       await page.keyboard.press("ControlOrMeta+k");
       await page.keyboard.type("Take the tour");
       await page.keyboard.press("Enter");
-      await expect(card).toContainText("Your Inbox");
+      await expect(card).toContainText("You're all set!");
       await expect(page).not.toHaveURL(/\/sample\//);
       // The second time Escape closes it, wherever the focus is.
       if (replay) {
