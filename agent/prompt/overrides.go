@@ -22,7 +22,9 @@ const (
 )
 
 // Overrides maps a prompt to the text that replaces its built-in text. A nil
-// map, a missing ID and an empty text all mean the built-in text.
+// map, a missing ID and an empty text all mean the built-in text. Callers
+// must Validate every override text before composing with it: composition
+// does not re-validate.
 type Overrides map[ID]string
 
 // CustomSuffix is appended to a built-in version when the composition used an

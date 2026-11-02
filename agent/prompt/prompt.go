@@ -103,6 +103,7 @@ var submitCursor string
 // Prompts implements agent.Prompts with this module's public review prompt.
 type Prompts struct {
 	// Overrides replaces built-in texts; Prompts uses the review entry.
+	// Callers must Validate the text first; composition does not.
 	Overrides Overrides
 }
 
@@ -127,7 +128,8 @@ func (p Prompts) Instructions(_ context.Context, backend string) (agent.Prompt, 
 // inserted before its Submitting heading, then the backend's submit block.
 type GroupPrompts struct {
 	// Overrides replaces built-in texts; GroupPrompts uses the review and
-	// review-group entries.
+	// review-group entries. Callers must Validate the text first;
+	// composition does not.
 	Overrides Overrides
 }
 
@@ -180,7 +182,8 @@ const (
 // staged review prompts.
 type StagedPrompts struct {
 	// Overrides replaces built-in texts; StagedPrompts uses the
-	// review-staged-* entries.
+	// review-staged-* entries. Callers must Validate the text first;
+	// composition does not.
 	Overrides Overrides
 }
 

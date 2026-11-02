@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -198,7 +199,7 @@ func TestCatalogue(t *testing.T) {
 	var ids []prompt.ID
 	for _, e := range prompt.Catalogue() {
 		ids = append(ids, e.ID)
-		if got, ok := prompt.Lookup(e.ID); !ok || got.ID != e.ID || got.Default != e.Default {
+		if got, ok := prompt.Lookup(e.ID); !ok || !reflect.DeepEqual(got, e) {
 			t.Errorf("Lookup(%s)", e.ID)
 		}
 		if e.Title == "" || e.UsedBy == "" || e.Default == "" || e.DefaultVersion == "" {
@@ -256,24 +257,32 @@ func TestCatalogue(t *testing.T) {
 }
 
 func TestSafetyRulesPerEntry(t *testing.T) {
-	rules := func(id prompt.ID) []string {
-		e, _ := prompt.Lookup(id)
-		var out []string
+	want := map[prompt.ID][]string{
+		prompt.IDReview:              {"review.untrusted-data", "review.no-secrets", "review.run-directory", "review.restricted-sessions"},
+		prompt.IDReviewGroup:         {"review-group.untrusted-member-reviews"},
+		prompt.IDReviewStagedShared:  {"review-staged-shared.untrusted-data", "review-staged-shared.no-secrets", "review-staged-shared.run-directory", "review-staged-shared.restricted-sessions"},
+		prompt.IDReviewStagedOutline: {"review-staged-outline.no-injected-instructions"},
+		prompt.IDReviewStagedDetails: {"review-staged-details.no-injected-instructions"},
+		prompt.IDReviewStagedContext: {"review-staged-context.no-injected-instructions"},
+		prompt.IDFix:                 {"fix.untrusted-data", "fix.no-git-writes", "fix.no-secrets"},
+		prompt.IDFixConflicts:        nil,
+		prompt.IDFixChecks:           nil,
+		prompt.IDFixThreads:          {"fix-threads.untrusted-comments"},
+		prompt.IDFixChat:             {"fix-chat.untrusted-conversation"},
+		prompt.IDExtraction:          {"extraction.output-format", "extraction.masked-text"},
+	}
+	entries := prompt.Catalogue()
+	if len(entries) != len(want) {
+		t.Fatalf("%d entries, want %d", len(entries), len(want))
+	}
+	for _, e := range entries {
+		var got []string
 		for _, r := range e.SafetyRules {
-			out = append(out, r.ID)
+			got = append(got, r.ID)
 		}
-		return out
-	}
-	if got := rules(prompt.IDFix); !slices.Equal(got, []string{"fix.untrusted-data", "fix.no-git-writes", "fix.no-secrets"}) {
-		t.Errorf("fix: %v", got)
-	}
-	for _, id := range []prompt.ID{prompt.IDReview, prompt.IDReviewStagedShared, prompt.IDReviewGroup, prompt.IDReviewStagedOutline, prompt.IDReviewStagedDetails, prompt.IDReviewStagedContext, prompt.IDFixThreads, prompt.IDFixChat, prompt.IDExtraction} {
-		if len(rules(id)) == 0 {
-			t.Errorf("%s has no safety rules", id)
+		if !slices.Equal(got, want[e.ID]) {
+			t.Errorf("%s: rules %v, want %v", e.ID, got, want[e.ID])
 		}
-	}
-	if len(rules(prompt.IDReview)) < 2 || !strings.HasSuffix(rules(prompt.IDReview)[0], "untrusted-data") {
-		t.Error("review lacks its untrusted-data rule")
 	}
 }
 
@@ -318,7 +327,19 @@ func TestValidate(t *testing.T) {
 		{"submitting plain", prompt.IDReviewStagedDetails, "Intro\n## Submitting\n", "Submitting"},
 		{"submitting h3 crlf", prompt.IDReviewStagedShared, "Intro\r\n### Submitting  \r\nx", "Submitting"},
 		{"submitting group", prompt.IDReviewGroup, "# Submitting", "Submitting"},
-		{"submitting in prose", prompt.IDReview, "Say how Submitting works.\n## Submitting results later\n", ""},
+		{"submitting feedback", prompt.IDReview, "## Submitting feedback\n", "Submitting"},
+		{"submitting colon", prompt.IDReview, "### Submitting:\n", "Submitting"},
+		{"submitting upper closed", prompt.IDReviewStagedOutline, "## SUBMITTING ##\n", "Submitting"},
+		{"submitting indented", prompt.IDReview, " ## Submitting\n", "Submitting"},
+		{"submitting numbered", prompt.IDReview, "## 3.2 Submitting\n", "Submitting"},
+		{"heading ending in the word", prompt.IDReview, "## Results Submitting\n", ""},
+		{"code-indented heading", prompt.IDReview, "    ## Submitting\n", ""},
+		{"open backtick fence", prompt.IDFix, "Run:\n```sh\nmake\n", "fenced"},
+		{"open tilde fence", prompt.IDExtraction, "~~~\ncode", "fenced"},
+		{"closed fence", prompt.IDFix, "```sh\nmake\n```\n", ""},
+		{"closed longer fence", prompt.IDFix, "````\n```\n````\n", ""},
+		{"fence closed by wrong char", prompt.IDFix, "```\ncode\n~~~\n", "fenced"},
+		{"submitting in prose", prompt.IDReview, "Say how Submitting works.\n", ""},
 		{"submitting allowed in fix", prompt.IDFix, "## Submitting\n", ""},
 		{"submitting allowed in extraction", prompt.IDExtraction, "## Submitting\n", ""},
 	}
@@ -338,6 +359,9 @@ func TestNewExtractorWith(t *testing.T) {
 	same := decisions.NewExtractorWith(decisions.PublicPrompt())
 	if same.PromptVersion() != public.PromptVersion() || same.SystemPrompt() != public.SystemPrompt() {
 		t.Error("the public text must give the public extractor")
+	}
+	if empty := decisions.NewExtractorWith(""); empty.PromptVersion() != public.PromptVersion() || empty.SystemPrompt() != public.SystemPrompt() {
+		t.Error("an empty prompt must give the public extractor")
 	}
 	custom := decisions.NewExtractorWith("Extract decisions my way.")
 	if !strings.HasPrefix(custom.PromptVersion(), "decisions-public-v1+custom-") || custom.PromptVersion() == public.PromptVersion() || custom.SystemPrompt() != "Extract decisions my way." {

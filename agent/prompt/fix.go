@@ -39,7 +39,8 @@ func Fix(conflicts, checks, threads, chat bool) string {
 // fix-threads and fix-chat entries replace the built-in text of the shared
 // rules and of the sections included. The version is FixVersion, with
 // CustomSuffix when an included part was overridden; an override of a section
-// that is not included does not count.
+// that is not included does not count. Callers must Validate override text
+// first; FixWith does not.
 func FixWith(o Overrides, conflicts, checks, threads, chat bool) (text, version string) {
 	custom := false
 	part := func(id ID, builtin string) string {

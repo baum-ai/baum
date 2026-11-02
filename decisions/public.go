@@ -27,12 +27,12 @@ func PublicPrompt() string { return publicPrompt }
 const CustomVersionPrefix = PublicPromptName + "+custom"
 
 // NewExtractorWith returns an Extractor that sends system. The published
-// prompt's text gives exactly NewPublicExtractor's Extractor. Any other text
+// prompt's text, or an empty one, gives exactly NewPublicExtractor's Extractor. Any other text
 // gives NewExtractor's, with a PromptVersion of CustomVersionPrefix, "-" and
 // NewExtractor's hash, so an extraction under a custom prompt is never taken
 // for one under the published prompt.
 func NewExtractorWith(system string) *Extractor {
-	if system == publicPrompt {
+	if system == "" || system == publicPrompt {
 		return NewPublicExtractor()
 	}
 	extractor := NewExtractor(system)
