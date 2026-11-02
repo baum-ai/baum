@@ -3852,6 +3852,9 @@ endpoint.
   start hooks without one), and `processes`, the hook's ancestors, parent
   first, as `pid`, `start` (`/proc` starttime on Linux, `kern.proc.pid` start
   time on macOS) and `name`, at most 24 (see "Focus" under "Live sessions").
+  Git's `post-commit` and `pre-push` carry `terminal` with `processes` alone
+  (`focus.Ancestors`), so live sessions can tell which agent committed or
+  pushed (see "Linkage" under "Live sessions").
   `Event.Bound` cuts fields at character boundaries and keeps only
   `TerminalEnv`, then trims Git lines, drops `terminal` and halves the longest
   fields until the escaped encoding fits one control line. The daemon ignores fields it does not know and records
@@ -4160,6 +4163,27 @@ replace it.
   after, since the branch changes while it runs and a pull request appears
   once pushed; a lookup that fails keeps the last link. Failing to list the
   registered clones is not retried for 30 seconds either.
+- **Commits and pushes.** An agent often works away from its directory: it
+  commits in another worktree of the clone, or creates a branch, pushes it and
+  checks its directory back out on `main`. The tracker also follows Git's
+  `post-commit` and `pre-push` (one that let the push go) events, whose
+  `terminal.processes` are the hook's ancestors: the session whose agent is
+  the nearest of them (the parent its own start and prompt events recorded,
+  matched by `pid` and `start`) made the commit or push; a process two open
+  sessions name is neither's, and Git run by no session's agent belongs to
+  none. A commit is looked up like a directory, at once, since its branch is
+  what that worktree has checked out just after it; a push (`LinkPush`) is the
+  pushed branch and commit in the repository the remote's push URL names, as
+  refresh on hook events reads a push. When the session's directory links to
+  no pull request (and not to several), the session takes the repository,
+  branch and pull request of its latest commit or push that has one, with
+  `link_method` `commit` or `push`; each later lookup checks the cache again,
+  so a pull request opened after the push is found within 30 seconds and one
+  closed falls back to an older one. At most 16 commits and pushes are kept
+  per session; the record's within a day are replayed on a rebuild, and the
+  state file keeps those looked up (repository, branch, commit, pull request
+  and event id, no directory), so a restart after the record rotated keeps
+  them.
 - **API.** `GET /api/live-sessions` (a `LocalAPI.Live` provider, behind the
   same auth as every application route; a daemon with no record answers
   `{"available":false,"code":"live_sessions_unavailable"}`) answers

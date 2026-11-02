@@ -247,13 +247,6 @@ func (s *Service) Step(ctx context.Context) {
 	s.forget()
 }
 
-// push is one branch a pre-push hook names.
-type push struct {
-	branch string
-	// old is the head GitHub had before a push, new the pushed one.
-	old, new string
-}
-
 // plan maps events to registered clones and to the pull requests of the
 // branches they name, as the discovery cache knows them.
 func (s *Service) plan(ctx context.Context, batch []hookevents.Record) {
@@ -284,7 +277,7 @@ func (s *Service) plan(ctx context.Context, batch []hookevents.Record) {
 			// remote's name; baum's hook drops it, and anything left that
 			// reads as a URL, an scp-style address or a path names no remote
 			// either: where it went is unknown, and no git runs for it.
-			if len(e.Git.Args) == 0 || !remoteName(e.Git.Args[0]) {
+			if len(e.Git.Args) == 0 || !hookevents.RemoteName(e.Git.Args[0]) {
 				continue
 			}
 			remote = e.Git.Args[0]
@@ -325,15 +318,15 @@ func (s *Service) plan(ctx context.Context, batch []hookevents.Record) {
 			}
 			continue
 		}
-		pushes := pushedRefs(e.Git.Lines)
+		pushes := hookevents.Pushes(e.Git.Lines)
 		// A hook's clock ahead of the daemon's must not hold the refresh
 		// back.
 		due := minTime(maxTime(now, e.Time.Add(PushDelay)), now.Add(PushDelay))
 		for _, pr := range snapshot.PullRequests {
 			for _, p := range pushes {
 				// A fork's branch of the same name is another branch.
-				if (!pr.Fork && pr.HeadRef != "" && pr.HeadRef == p.branch) || (p.old != "" && pr.HeadSHA == p.old) {
-					s.add(clone, pr, p.new, e.Time, due)
+				if (!pr.Fork && pr.HeadRef != "" && pr.HeadRef == p.Branch) || (p.Old != "" && pr.HeadSHA == p.Old) {
+					s.add(clone, pr, p.New, e.Time, due)
 				}
 			}
 		}
@@ -421,50 +414,6 @@ func within(root, path string) bool {
 	rel, err := filepath.Rel(root, path)
 	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && !filepath.IsAbs(rel)
 }
-
-// pushedRefs reads a pre-push hook's lines, "<local ref> <local oid> <remote
-// ref> <remote oid>", keeping branch updates and creations; a deletion moves
-// no pull request head.
-func pushedRefs(lines []string) []push {
-	var pushes []push
-	for _, line := range lines {
-		fields := strings.Fields(line)
-		if len(fields) != 4 || !validOID(fields[1]) || !validOID(fields[3]) || zero(fields[1]) {
-			continue
-		}
-		branch, ok := strings.CutPrefix(fields[2], "refs/heads/")
-		if !ok || branch == "" {
-			continue
-		}
-		p := push{branch: branch, new: fields[1]}
-		if !zero(fields[3]) {
-			p.old = fields[3]
-		}
-		pushes = append(pushes, p)
-	}
-	return pushes
-}
-
-// remoteName reports whether a pre-push hook's first argument can be a
-// remote's name rather than a URL, an scp-style address or a path.
-func remoteName(name string) bool {
-	return name != "" && !strings.Contains(name, "://") && !strings.ContainsAny(name, ":@\\") &&
-		!strings.HasPrefix(name, "/") && !strings.HasPrefix(name, ".") && !strings.HasPrefix(name, "-")
-}
-
-func validOID(s string) bool {
-	if len(s) != 40 && len(s) != 64 {
-		return false
-	}
-	for _, r := range s {
-		if (r < '0' || r > '9') && (r < 'a' || r > 'f') {
-			return false
-		}
-	}
-	return true
-}
-
-func zero(oid string) bool { return strings.Trim(oid, "0") == "" }
 
 // add schedules a refresh of pr at due, but never sooner than Window after
 // its last one; later events postpone it, by at most maxDelay.

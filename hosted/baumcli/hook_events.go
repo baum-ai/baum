@@ -246,6 +246,17 @@ func agentSession(event string, fields map[string]string) *hookevents.Session {
 // captureTerminal is a seam for tests: where an agent hook ran.
 var captureTerminal = focus.Capture
 
+// captureAncestors is a seam for tests: the processes a Git hook ran under.
+var captureAncestors = focus.Ancestors
+
+// tiesToSession reports the Git hooks whose events carry the hook's ancestors
+// (Terminal.Processes, nothing else of the terminal), so the daemon can tell
+// which agent session committed or pushed: the agent is one of them when its
+// own command ran Git.
+func tiesToSession(hook string) bool {
+	return hook == "post-commit" || hook == "pre-push"
+}
+
 // locatesTerminal reports the agent hook events that record where the agent
 // runs (Terminal): a session's start, and its prompts, so a session started
 // before the daemon recorded it, or resumed elsewhere, is located from its

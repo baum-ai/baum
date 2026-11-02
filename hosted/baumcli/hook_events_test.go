@@ -188,6 +188,33 @@ func TestGitHookEventLeavesOutTheRemoteURL(t *testing.T) {
 	}
 }
 
+// A commit's and a push's events carry the processes the hook ran under, and
+// nothing else of where it ran, so the daemon can tell which agent session
+// made them; other Git hooks' do not.
+func TestGitHookEventNamesItsAncestorsOnCommitAndPush(t *testing.T) {
+	paths := useTestHookDaemon(t)
+	stubEntireBinary(t, "#!/bin/sh\ncat >/dev/null\n")
+	old := captureAncestors
+	captureAncestors = func() []hookevents.Process {
+		return []hookevents.Process{{PID: 9, Start: "1", Name: "git"}, {PID: 7, Start: "9", Name: "claude"}}
+	}
+	t.Cleanup(func() { captureAncestors = old })
+	for _, args := range [][]string{{"post-commit"}, {"pre-push", "origin", "https://github.com/acme/demo.git"}, {"commit-msg", "message-file"}} {
+		if _, _, err := runCLIWithInput(t, "", append([]string{"hooks", "git"}, args...)...); err != nil {
+			t.Fatalf("%s: %v", args[0], err)
+		}
+	}
+	events, _ := spooledHookEvents(t, paths)
+	named := map[string]bool{}
+	for _, e := range events {
+		named[e.Name] = e.Terminal != nil && len(e.Terminal.Processes) == 2 && e.Terminal.Processes[1].Name == "claude" &&
+			e.Terminal.TTY == "" && len(e.Terminal.Env) == 0
+	}
+	if want := map[string]bool{"post-commit": true, "pre-push": true, "commit-msg": false}; !maps.Equal(named, want) {
+		t.Errorf("named = %v, want %v", named, want)
+	}
+}
+
 // A daemon that takes the connection but never answers costs a hook at most
 // hookevents.Budget; the event is spooled.
 func TestHookReturnsWithinBudgetWhenTheDaemonHangs(t *testing.T) {

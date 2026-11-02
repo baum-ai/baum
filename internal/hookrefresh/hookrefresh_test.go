@@ -584,18 +584,6 @@ func TestOnlyRegisteredClonesAndTheirOwnRepositoryCount(t *testing.T) {
 	}
 }
 
-func TestRemoteName(t *testing.T) {
-	for name, want := range map[string]bool{
-		"origin": true, "upstream/team": true, "": false,
-		"https://github.com/acme/app.git": false, "git@github.com:acme/app.git": false,
-		"github.com:acme/app": false, "/srv/git/app.git": false, "../app": false, `C:\repos\app`: false, "-x": false,
-	} {
-		if got := remoteName(name); got != want {
-			t.Errorf("remoteName(%q) = %t", name, got)
-		}
-	}
-}
-
 func TestNothingRegisteredDoesNothing(t *testing.T) {
 	h := newHarness(t)
 	h.registry.edit(func(r *registry) { r.clones = nil })
@@ -614,21 +602,6 @@ func TestOldSpooledEventsAreLeftToThePeriodicRefresh(t *testing.T) {
 	h.service.Receive(hookevents.Record{Received: h.now, Via: hookevents.ViaSpool, Event: e})
 	h.run(time.Minute)
 	h.wantRefreshes(7, 0)
-}
-
-func TestPushedRefs(t *testing.T) {
-	got := pushedRefs([]string{
-		pushLine("feature", newHead, oldHead),
-		pushLine("new-branch", newHead, zeroOID),
-		"refs/heads/gone " + zeroOID + " refs/heads/gone " + oldHead,
-		"refs/tags/v1 " + newHead + " refs/tags/v1 " + zeroOID,
-		"refs/heads/x " + newHead + " refs/heads/x",
-		"refs/heads/x NOTANOID refs/heads/x " + oldHead,
-	})
-	want := []push{{branch: "feature", old: oldHead, new: newHead}, {branch: "new-branch", new: newHead}}
-	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
-		t.Fatalf("pushed refs %+v", got)
-	}
 }
 
 // The record hands events to the worker without waiting: while a refresh
