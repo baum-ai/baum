@@ -167,7 +167,7 @@ func (s *Store) List() []Note {
 
 // The open pull requests, each a branch from main after pull request 9.
 var (
-	tags = pull{number: 12, branch: "tags", title: "Add tags to notes", author: sam, opened: 2 * day, updated: 5 * time.Hour,
+	tags = pull{number: 12, branch: "tags", title: "Add tags to notes", author: sam, opened: 2 * day, updated: 4 * time.Hour,
 		body: `Closes NOTES-8.
 
 Notes can carry tags, and the store and the command line can list the notes with one.
@@ -183,7 +183,7 @@ Notes can carry tags, and the store and the command line can list the notes with
 
 Written with Claude Code.`,
 		commits: []commit{
-			{sam, 2*day + 2*time.Hour + 45*time.Minute, "Add tags to notes, with an index for ByTag", map[string]string{
+			{sam, 2*day + 2*time.Hour + 46*time.Minute, "Add tags to notes, with an index for ByTag", map[string]string{
 				"note.go": `package notes
 
 import "time"
@@ -263,7 +263,7 @@ func (s *Store) List() []Note {
 	return list
 }
 `}},
-			{sam, 2*day + 2*time.Hour + 39*time.Minute, "List the notes with a tag from the command line", map[string]string{
+			{sam, 2*day + 2*time.Hour + 40*time.Minute, "List the notes with a tag from the command line", map[string]string{
 				"cmd/notes/main.go": `// Command notes lists the notes saved in a file, newest first, or only
 // those with a tag.
 package main
@@ -305,7 +305,7 @@ func main() {
 	}
 }
 `}},
-			{sam, 5*time.Hour + 27*time.Minute, "Clean the tag ByTag is asked for as saved tags are", map[string]string{
+			{sam, 5*time.Hour + 28*time.Minute, "Clean the tag ByTag is asked for as saved tags are", map[string]string{
 				"tags.go": `package notes
 
 import (
@@ -341,7 +341,7 @@ func (s *Store) ByTag(tag string) []Note {
 	return found
 }
 `}},
-			{sam, 5*time.Hour + 15*time.Minute, "Test tags and mention them in the README", map[string]string{
+			{sam, 5*time.Hour + 16*time.Minute, "Test tags and mention them in the README", map[string]string{
 				"tags_test.go": `package notes
 
 import (

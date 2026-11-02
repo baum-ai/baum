@@ -57,7 +57,7 @@ func linkSessions(ctx context.Context, p project, decided *decisionlog.Store, no
 				paths = append(paths, path)
 			}
 		}
-		commits := []decisionlog.PullCommit{{SHA: head, CommittedAt: now.Add(-pl.updated)}}
+		commits := []decisionlog.PullCommit{{SHA: head, CommittedAt: now.Add(-pl.commits[len(pl.commits)-1].ago)}}
 		if err := decided.SetPullPaths(ctx, repository, pl.number, head, paths, commits); err != nil {
 			return err
 		}

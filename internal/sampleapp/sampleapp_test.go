@@ -78,8 +78,8 @@ func TestWorkspaceServesEveryPage(t *testing.T) {
 	if !strings.Contains(patch.Patch, "func CleanTags") {
 		t.Fatalf("patch of tags.go = %q", patch.Patch)
 	}
-	// The pull request the tour opens links its author's sessions, from the
-	// Entire checkpoints its commits name, and their decisions.
+	// The pull request the tour opens links the person's sessions that made
+	// its commits, and their decisions.
 	var linked struct {
 		Sessions []struct{ ID string }
 		Commits  []struct{ Links []struct{ Session string } }
