@@ -1,0 +1,164 @@
+package repos
+
+import (
+	"context"
+	"database/sql"
+	"errors"
+	"fmt"
+	"strings"
+	"time"
+
+	"github.com/baum-ai/baum/agent/prompt"
+)
+
+// ErrInvalidPrompt wraps the reason prompt.Validate (or an unknown id)
+// rejected a custom prompt, fit to show the author; a host maps it to 400.
+var ErrInvalidPrompt = errors.New("invalid prompt")
+
+// PromptOverride is a custom prompt text stored locally for one scope.
+type PromptOverride struct {
+	ID   prompt.ID
+	Text string
+	// BasedOn is the built-in version (Entry.DefaultVersion) current when the
+	// text was saved, so a later change of the built-in can be flagged.
+	BasedOn   string
+	UpdatedAt time.Time
+}
+
+// PromptSource says where a prompt's effective text comes from.
+type PromptSource string
+
+const (
+	PromptSourceDefault    PromptSource = "default"
+	PromptSourceGlobal     PromptSource = "global"
+	PromptSourceRepository PromptSource = "repository"
+)
+
+// promptScope is the stored scope: "" is global, else the lowercase identity.
+func promptScope(repository string) string { return strings.ToLower(repository) }
+
+// PromptOverrides reads the overrides stored for one scope: repository ""
+// is the global scope. A database without the table has none.
+func (r *Registry) PromptOverrides(ctx context.Context, repository string) (map[prompt.ID]PromptOverride, error) {
+	out := map[prompt.ID]PromptOverride{}
+	if r.noSchema || r.noPrompts {
+		return out, nil
+	}
+	rows, e := r.db.QueryContext(ctx, `SELECT prompt_id, text, based_on, updated_at FROM prompt_overrides WHERE repository=?`, promptScope(repository))
+	if e != nil {
+		return nil, e
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var o PromptOverride
+		var id, at string
+		if e = rows.Scan(&id, &o.Text, &o.BasedOn, &at); e != nil {
+			return nil, e
+		}
+		o.ID = prompt.ID(id)
+		if o.UpdatedAt, e = time.Parse(time.RFC3339Nano, at); e != nil {
+			return nil, e
+		}
+		if _, known := prompt.Lookup(o.ID); known {
+			out[o.ID] = o
+		}
+	}
+	return out, rows.Err()
+}
+
+// requirePicked fails with ErrNotPicked unless a non-empty repository is
+// picked, read in tx so an unpick in between is not undone.
+func requirePicked(ctx context.Context, tx *sql.Tx, repository string) error {
+	if repository == "" {
+		return nil
+	}
+	var one int
+	e := tx.QueryRowContext(ctx, `SELECT 1 FROM picked WHERE identity=?`, repository).Scan(&one)
+	if errors.Is(e, sql.ErrNoRows) {
+		return ErrNotPicked
+	}
+	return e
+}
+
+// SetPromptOverride validates and stores text as the override of id for a
+// scope ("" is global), recording the current built-in version as BasedOn. A
+// non-empty repository must be picked (ErrNotPicked). A rejected text fails
+// with an error wrapping ErrInvalidPrompt.
+func (r *Registry) SetPromptOverride(ctx context.Context, repository string, id prompt.ID, text string) (PromptOverride, error) {
+	if e := prompt.Validate(id, text); e != nil {
+		return PromptOverride{}, fmt.Errorf("%w: %s", ErrInvalidPrompt, e.Error())
+	}
+	entry, _ := prompt.Lookup(id)
+	scope := promptScope(repository)
+	o := PromptOverride{ID: id, Text: text, BasedOn: entry.DefaultVersion, UpdatedAt: time.Now().UTC().Truncate(time.Microsecond)}
+	tx, e := r.db.BeginTx(ctx, nil)
+	if e != nil {
+		return PromptOverride{}, e
+	}
+	defer func() { _ = tx.Rollback() }()
+	if e = requirePicked(ctx, tx, scope); e != nil {
+		return PromptOverride{}, e
+	}
+	if _, e = tx.ExecContext(ctx, `INSERT INTO prompt_overrides VALUES (?,?,?,?,?) ON CONFLICT(repository,prompt_id) DO UPDATE SET text=excluded.text, based_on=excluded.based_on, updated_at=excluded.updated_at`,
+		scope, string(id), text, o.BasedOn, o.UpdatedAt.Format(time.RFC3339Nano)); e != nil {
+		return PromptOverride{}, e
+	}
+	return o, tx.Commit()
+}
+
+// DeletePromptOverride removes the override of id for a scope; a missing one
+// is not an error. An unknown id fails with ErrInvalidPrompt and a
+// non-empty repository must be picked (ErrNotPicked).
+func (r *Registry) DeletePromptOverride(ctx context.Context, repository string, id prompt.ID) error {
+	if _, ok := prompt.Lookup(id); !ok {
+		return fmt.Errorf("%w: unknown prompt %q", ErrInvalidPrompt, id)
+	}
+	scope := promptScope(repository)
+	tx, e := r.db.BeginTx(ctx, nil)
+	if e != nil {
+		return e
+	}
+	defer func() { _ = tx.Rollback() }()
+	if e = requirePicked(ctx, tx, scope); e != nil {
+		return e
+	}
+	if _, e = tx.ExecContext(ctx, `DELETE FROM prompt_overrides WHERE repository=? AND prompt_id=?`, scope, string(id)); e != nil {
+		return e
+	}
+	return tx.Commit()
+}
+
+// ResolvePrompts picks, for every catalogue prompt, the repository's
+// override, else the global one, else the built-in text. Overrides holds only
+// the overridden prompts; sources has every catalogue id. A repository that
+// is not picked (or "") gets only the global overrides: its rows, kept after
+// an unpick, apply again once it is picked.
+func (r *Registry) ResolvePrompts(ctx context.Context, repository string) (prompt.Overrides, map[prompt.ID]PromptSource, error) {
+	global, e := r.PromptOverrides(ctx, "")
+	if e != nil {
+		return nil, nil, e
+	}
+	var own map[prompt.ID]PromptOverride
+	if repository != "" {
+		_, picked, e := r.RepositorySettings(ctx, repository)
+		if e != nil {
+			return nil, nil, e
+		}
+		if picked {
+			if own, e = r.PromptOverrides(ctx, repository); e != nil {
+				return nil, nil, e
+			}
+		}
+	}
+	overrides := prompt.Overrides{}
+	sources := map[prompt.ID]PromptSource{}
+	for _, entry := range prompt.Catalogue() {
+		sources[entry.ID] = PromptSourceDefault
+		if o, ok := own[entry.ID]; ok {
+			overrides[entry.ID], sources[entry.ID] = o.Text, PromptSourceRepository
+		} else if o, ok := global[entry.ID]; ok {
+			overrides[entry.ID], sources[entry.ID] = o.Text, PromptSourceGlobal
+		}
+	}
+	return overrides, sources, nil
+}

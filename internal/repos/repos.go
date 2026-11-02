@@ -318,6 +318,8 @@ type Registry struct {
 	noPicked bool
 	// noPreferences marks a read-only registry without saved preferences.
 	noPreferences bool
+	// noPrompts marks a read-only registry without the prompt_overrides table.
+	noPrompts bool
 }
 
 func Path() (string, error) { return appdb.Path() }
@@ -328,7 +330,7 @@ func Open(path string) (*Registry, error) {
 	if e != nil {
 		return nil, e
 	}
-	_, e = db.Exec(`CREATE TABLE IF NOT EXISTS repositories(identity TEXT PRIMARY KEY,settings TEXT NOT NULL); CREATE TABLE IF NOT EXISTS clones(id TEXT PRIMARY KEY,path TEXT NOT NULL UNIQUE,common_dir TEXT NOT NULL,repository TEXT NOT NULL REFERENCES repositories(identity)); CREATE TABLE IF NOT EXISTS preferences(key TEXT PRIMARY KEY,value TEXT NOT NULL); CREATE TABLE IF NOT EXISTS picked(identity TEXT PRIMARY KEY REFERENCES repositories(identity) ON DELETE CASCADE); CREATE TABLE IF NOT EXISTS aliases(alias TEXT PRIMARY KEY,repository TEXT NOT NULL);`)
+	_, e = db.Exec(`CREATE TABLE IF NOT EXISTS repositories(identity TEXT PRIMARY KEY,settings TEXT NOT NULL); CREATE TABLE IF NOT EXISTS clones(id TEXT PRIMARY KEY,path TEXT NOT NULL UNIQUE,common_dir TEXT NOT NULL,repository TEXT NOT NULL REFERENCES repositories(identity)); CREATE TABLE IF NOT EXISTS preferences(key TEXT PRIMARY KEY,value TEXT NOT NULL); CREATE TABLE IF NOT EXISTS picked(identity TEXT PRIMARY KEY REFERENCES repositories(identity) ON DELETE CASCADE); CREATE TABLE IF NOT EXISTS aliases(alias TEXT PRIMARY KEY,repository TEXT NOT NULL); CREATE TABLE IF NOT EXISTS prompt_overrides(repository TEXT NOT NULL,prompt_id TEXT NOT NULL,text TEXT NOT NULL,based_on TEXT NOT NULL,updated_at TEXT NOT NULL,PRIMARY KEY(repository,prompt_id));`)
 
 	if e == nil {
 		e = loadAliases(db)
@@ -349,7 +351,7 @@ func OpenReadOnly(path string) (*Registry, error) {
 	if e != nil {
 		return nil, e
 	}
-	var tables, preferences, picked int
+	var tables, preferences, picked, prompts int
 	if e = db.QueryRow(`SELECT count(*) FROM sqlite_master WHERE type='table' AND name IN ('clones','repositories')`).Scan(&tables); e != nil {
 		_ = db.Close()
 		return nil, e
@@ -362,9 +364,13 @@ func OpenReadOnly(path string) (*Registry, error) {
 		_ = db.Close()
 		return nil, e
 	}
+	if e = db.QueryRow(`SELECT count(*) FROM sqlite_master WHERE type='table' AND name='prompt_overrides'`).Scan(&prompts); e != nil {
+		_ = db.Close()
+		return nil, e
+	}
 	// A registry from before aliases has none to load.
 	_ = loadAliases(db)
-	return &Registry{db: db, noSchema: tables < 2, noPreferences: preferences == 0, noPicked: picked == 0}, nil
+	return &Registry{db: db, noSchema: tables < 2, noPreferences: preferences == 0, noPicked: picked == 0, noPrompts: prompts == 0}, nil
 }
 
 func (r *Registry) Close() error { return r.db.Close() }
@@ -473,6 +479,8 @@ func (r *Registry) AddForwarded(ctx context.Context, path, repository, alias str
 	// name's default.
 	if e = r.exec(ctx, []string{
 		`UPDATE repositories SET settings=(SELECT settings FROM repositories WHERE identity=?1) WHERE identity=?2 AND settings='{"automatic":null}' AND EXISTS (SELECT 1 FROM picked WHERE identity=?1)`,
+		// Custom prompts follow the same way, only onto a name with none.
+		`INSERT INTO prompt_overrides SELECT ?2, prompt_id, text, based_on, updated_at FROM prompt_overrides WHERE repository=?1 AND NOT EXISTS (SELECT 1 FROM prompt_overrides WHERE repository=?2) AND EXISTS (SELECT 1 FROM picked WHERE identity=?1)`,
 		"UPDATE clones SET repository=?2 WHERE repository=?1", "DELETE FROM picked WHERE identity=?1",
 	}, earlier, current); e != nil {
 		return Clone{}, e
