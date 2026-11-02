@@ -568,8 +568,9 @@ has moved. The daemon accepts only picked repositories and never retries. A
 refusal (head moved, conflicts, required checks or branch protection, no
 permission, method not allowed) comes back as `{code, message}` with a 409, 422
 or 403 status and shows inline in the dialog, in words; on success the daemon
-records the merge and re-reads the repository's pull requests, so the lists
-drop it at once.
+records the merge, so the lists drop it at once, and the dialog closes without
+waiting for the reload. The daemon then re-reads the repository's pull requests
+in the background and the lists reload again when that read lands.
 
 Refreshing a page: the Inbox, Pull requests, Timeline, Sessions, Analytics,
 Repositories, Jobs, and a pull request's or review group's page end their bar

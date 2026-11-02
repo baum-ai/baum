@@ -2906,9 +2906,11 @@ errors to `{code, message}`: `head_moved` and `conflict` and `not_open` are
 `method_not_allowed` are `422`, `forbidden` is `403`, anything else `502`. After
 a merge GitHub accepted, the daemon records it (`discovery.Service.Merged`:
 the pull request leaves the cached open ones and is observed `MERGED` at the
-merged head, with no read), runs `Service.PollNow` for the repository and
-publishes an index change, so the inbox shows it merged at once rather than
-when the background refresh next reads it.
+merged head, with no read) and publishes an index change, so the inbox shows
+it merged at once rather than when the background refresh next reads it. It
+then answers, and runs `Service.PollNow` for the repository in the background,
+publishing another index change when that read succeeds: on a busy repository
+the read takes seconds, and it may wait behind a background poll.
 
 Submitting a review is the app's other write outside discovery.
 `POST /api/prs/review` takes `{repository, pr, head_sha, event, body,
@@ -2944,8 +2946,9 @@ names a run) and posts `.../actions/runs/{id}/rerun-failed-jobs` for each. It
 answers `{rerun, refused}`: an error only when no run started. Errors are
 `{code, message}`: `head_moved`, `conflict`, `not_open` and `up_to_date` are
 `409`, `blocked`, `no_runs`, `fork` and `no_clone` are `422`, `forbidden` is `403`,
-anything else `502`. After either write the daemon runs `Service.PollNow` and
-publishes an index change.
+anything else `502`. After either write the daemon publishes an index change
+and answers, then runs `Service.PollNow` in the background and publishes another
+when that read succeeds, as after a merge.
 
 The same handler lists and resolves review threads for the Inbox's panel. `GET
 /api/prs/review-threads?repository=&pr=&unresolved=` answers `{threads,
