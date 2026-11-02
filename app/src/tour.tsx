@@ -14,8 +14,9 @@ import "./tour.css";
  *  asks for it (`?tour=1`). Closing it clears that request, so asking again
  *  opens it.
  *
- *  It runs on the person's own pull requests when they have any, and else in
- *  the sample project, which it leaves again when it closes. */
+ *  The first tour always runs in the sample project; a later one runs on the
+ *  person's own pull requests when they have any, and else in the sample too.
+ *  Closing it leaves the sample again. */
 export function useTour(asked: boolean, pullRequests: boolean | undefined) {
   const saved = useUIState(uiState("api/ui-state/tour", () => ({ seen: false })));
   const firstRun = saved.ready && !saved.error && !saved.value.seen;
@@ -27,10 +28,13 @@ export function useTour(asked: boolean, pullRequests: boolean | undefined) {
     if (inSample() && !askedFirst.current) location.replace(ownBase());
   }, []);
   useEffect(() => {
-    if ((!firstRun && !asked) || (!inSample() && pullRequests === undefined)) return;
-    if (inSample() || pullRequests) setOpen(true);
-    else location.replace(`${ownBase()}sample/?tour=1`);
-  }, [firstRun, asked, pullRequests]);
+    if (!firstRun && !asked) return;
+    if (inSample()) return setOpen(true);
+    // Until the saved state says whether this is the first tour, wait.
+    if (!saved.ready && !saved.error) return;
+    if (firstRun || pullRequests === false) location.replace(`${ownBase()}sample/?tour=1`);
+    else if (pullRequests) setOpen(true);
+  }, [firstRun, asked, pullRequests, saved.ready, saved.error]);
   // Leaving the sample reloads the page, so the tour's state is saved first;
   // a save that fails still leaves, and the tour shows again next time.
   useEffect(() => {
@@ -64,106 +68,45 @@ type Stop = {
 
 const STOPS: Stop[] = [
   {
-    title: "Welcome to baum",
-    body: inSample()
-      ? "A quick look around, in a sample project until you have pull requests of your own."
-      : "A quick look around. Most of your day is the Inbox and a pull request.",
-    at: href("inbox"),
-  },
-  {
     title: "Your Inbox",
-    body: "What waits on you, grouped by what to do: review, merge or hand to an agent.",
-    target: ".upnext-list",
-    at: href("inbox"),
-  },
-  {
-    title: "Why it's here",
     body: (
       <>
-        Who's waiting, what changed and how risky it is. <B>Open</B> takes you to the full review.
-      </>
-    ),
-    target: ".upnext-panel",
-    at: href("inbox"),
-  },
-  {
-    title: "Use the keys",
-    body: (
-      <>
-        <kbd>j</kbd> <kbd>k</kbd> move, <kbd>Enter</kbd> opens, <kbd>?</kbd> lists every key.
+        {inSample() ? "Welcome to baum, here in a sample project. " : "Welcome to baum. "}
+        Pull requests waiting on you, grouped by what to do: review, merge or hand to an agent. Next
+        opens the selected one.
       </>
     ),
     target: ".upnext-list",
-    at: href("inbox"),
-  },
-  {
-    title: "Open a pull request",
-    body: "Next opens this one.",
-    target: ".upnext-panel .upnext-primary",
     at: href("inbox"),
     follow: ".upnext-panel .upnext-primary",
   },
   {
-    title: "Start with the summary",
-    body: "What it does and its riskiest part, before any diff.",
+    title: "A pull request's review",
+    body: (
+      <>
+        What the change does and its riskiest part come first, then each change, riskiest first,
+        with its lines. <B>Ask</B> about it, or <B>Merge…</B> when it's ready.
+      </>
+    ),
     target: "#review-section",
     at: "review",
   },
   {
-    title: "Changes, riskiest first",
-    body: "Each cites its lines and the agent session that wrote them.",
-    // In a narrow window the list is a sheet, and its button stands for it.
-    target: "#review-rail, [aria-controls=review-rail]",
-    at: "review",
-  },
-  {
-    title: "Act on it",
-    body: (
-      <>
-        <B>Ask</B> questions about the change, <B>Regenerate review</B> after new commits,{" "}
-        <B>Merge…</B> when it's ready.
-      </>
-    ),
-    target: "[data-tour=review-actions]",
-    at: "review",
-  },
-  {
     title: "Timeline",
-    body: "Each feature you're building: its status, people and pull requests.",
+    body: "Each feature you're building, read from your agent sessions: its status, the people on it and its pull requests. All decisions shows the choices behind the code.",
     target: ".local-main",
     at: href("timeline"),
-  },
-  {
-    title: "Decisions",
-    body: "The decisions behind the code, why they were made and the prompt behind each.",
-    target: ".local-main",
-    at: `${href("timeline")}&tab=all`,
   },
   {
     title: "Sessions",
     body: (
       <>
-        Every agent session on this computer. <B>Focus session</B> jumps straight back into a
-        running one.
+        Every agent session on this computer, running, waiting or ended. <B>Focus session</B> jumps
+        back into a running one. Take this tour again from Go to (<kbd>{COMMAND}K</kbd>).
       </>
     ),
     target: ".local-main",
     at: href("sessions"),
-  },
-  {
-    title: "Analytics",
-    body: "Usage, cost and what landed, from your sessions.",
-    target: ".local-main",
-    at: href("analytics"),
-  },
-  {
-    title: "That's the tour",
-    body: (
-      <>
-        Take it again from Go to (<kbd>{COMMAND}K</kbd>).
-      </>
-    ),
-    at: href("inbox"),
   },
 ];
 
@@ -184,9 +127,8 @@ function place(target: DOMRect | null, width: number, height: number) {
   return { left: vw - width - 2 * GAP, top: vh - height - 2 * GAP };
 }
 
-/** The app's first-run tour: a small card that steps through the Inbox and
- *  a pull request, then the Timeline, Sessions and Analytics, pointing at
- *  each. It goes to each page itself. Finishing or skipping it is remembered
+/** The app's first-run tour: a small card that steps through the Inbox, a
+ *  pull request's review, the Timeline and Sessions, pointing at each. It goes to each page itself. Finishing or skipping it is remembered
  *  on this computer. */
 export function Tour({ close }: { close: () => void }) {
   const [index, setIndex] = useState(0);
@@ -238,6 +180,34 @@ export function Tour({ close }: { close: () => void }) {
     if (element) setPosition(place(rect, element.offsetWidth, element.offsetHeight));
   }, [rect, index]);
   useEffect(() => next.current?.focus({ preventScroll: true }), [index]);
+
+  // ← and → step between the cards and Enter presses Next or Done, wherever the focus is,
+  // ahead of the page's own keys. A text field and the card's other buttons
+  // keep theirs. They are the tour's alone, so the key list leaves them out.
+  const step = useRef<(key: string) => void>(() => {});
+  step.current = (key) => {
+    if (key === "ArrowLeft") {
+      if (index > 0) go(index - 1);
+    } else if (!last) go(index + 1);
+    // Enter on the last card is Done; → stays there.
+    else if (key === "Enter") close();
+  };
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (!["ArrowLeft", "ArrowRight", "Enter"].includes(event.key)) return;
+      if (event.metaKey || event.ctrlKey || event.altKey || event.shiftKey || event.isComposing)
+        return;
+      const target = event.target instanceof Element ? event.target : null;
+      if (target?.closest("input, textarea, select, [contenteditable]")) return;
+      const button = target?.closest("button, a[href]");
+      if (event.key === "Enter" && button && button !== next.current) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      step.current(event.key);
+    };
+    addEventListener("keydown", onKeyDown, true);
+    return () => removeEventListener("keydown", onKeyDown, true);
+  }, []);
 
   // The target may be taller than the window; the spotlight keeps to it.
   const spot = rect && {
@@ -295,7 +265,7 @@ export function Tour({ close }: { close: () => void }) {
             className={PRIMARY}
             onClick={() => (last ? close() : go(index + 1))}
           >
-            {index === 0 ? "Start" : last ? "Done" : "Next"}
+            {last ? "Done" : "Next"}
           </button>
         </div>
       </div>

@@ -149,8 +149,9 @@ server needs no fallback route.
 
 The tour's sample project is served under `sample/` within the namespace
 (`internal/sampleapp`), and `appBase()` keeps that segment, so the whole app
-runs on it unchanged. The tour moves there, with a reload, when the person's
-own index has no pull requests, and back when it closes. There `SampleGuard`
+runs on it unchanged. The tour moves there, with a reload, for its first run
+and later when the person's own index has no pull requests, and back when it
+closes. There `SampleGuard`
 (`src/sample.tsx`) turns the daemon's refusal of a change (its
 `X-Baum-Sample: refused` header) into a toast and holds back links out of the
 app; elsewhere it does nothing.

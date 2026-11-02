@@ -19,15 +19,17 @@ const tourState = (page: Page, value?: { seen: boolean }) =>
   }, value);
 
 /** Walks the tour from start, its address, to Done, checking each stop; at a
- *  stop of `act`'s, `act` runs first. Pictures are named after `name`. */
+ *  stop of `act`'s, `act` runs first. With `keys` it moves on with Enter
+ *  rather than the button. Pictures are named after `name`. */
 async function walk(
   page: Page,
   start: string,
   name: string,
   act?: Record<string, () => Promise<void>>,
+  keys = false,
 ) {
   await page.goto(start);
-  await expect(page.getByRole("dialog", { name: "Welcome to baum" })).toBeVisible({
+  await expect(page.getByRole("dialog", { name: "Your Inbox" })).toBeVisible({
     timeout: 15000,
   });
   const titles: string[] = [];
@@ -35,9 +37,8 @@ async function walk(
     const tour = page.locator(".tour-card");
     titles.push((await tour.locator("h2").textContent()) ?? "");
     await expect(tour).toBeInViewport();
-    // Every stop but the first and last points at what it talks about.
-    if (stop > 1 && titles.at(-1) !== "That's the tour")
-      await expect(page.locator(".tour-spot"), titles.at(-1)).toBeVisible();
+    // Every stop points at what it talks about.
+    await expect(page.locator(".tour-spot"), titles.at(-1)).toBeVisible();
     if (pictures && name) {
       await page.waitForTimeout(400);
       await page.screenshot({
@@ -45,17 +46,15 @@ async function walk(
       });
     }
     await act?.[titles.at(-1)!]?.();
-    const next = tour.getByRole("button", { name: /^(Start|Next|Done)$/ });
-    if ((await next.textContent()) === "Done") {
-      await next.click();
-      break;
-    }
-    await next.click();
-    if (titles.at(-1) === "Open a pull request") await expect(page).toHaveURL(/[?&]pr=\d+/);
+    const next = tour.getByRole("button", { name: /^(Next|Done)$/ });
+    const done = (await next.textContent()) === "Done";
+    if (keys) await page.keyboard.press("Enter");
+    else await next.click();
+    if (done) break;
+    if (titles.at(-1) === "Your Inbox") await expect(page).toHaveURL(/[?&]pr=\d+/);
   }
   await expect(page.locator(".tour-card")).toHaveCount(0);
-  expect(titles).toContain("Start with the summary");
-  expect(titles.at(-1)).toBe("That's the tour");
+  expect(titles).toEqual(["Your Inbox", "A pull request's review", "Timeline", "Sessions"]);
 }
 
 /** The address of the app's own data, under its namespace. */
@@ -77,15 +76,24 @@ test("the tour walks the Inbox, a pull request and the other pages", async ({ pa
   for (const { scheme, width } of passes) {
     await page.emulateMedia({ colorScheme: scheme });
     await page.setViewportSize({ width, height: 900 });
-    await walk(page, `${base}?tour=1`, width === 1280 ? `own-${scheme}` : "", {
-      // The keys it teaches reach the page.
-      "Use the keys": async () => {
-        await page.keyboard.press("?");
-        await expect(page.locator("dialog[data-shortcuts-sheet]")).toBeVisible();
-        await page.keyboard.press("Escape");
-        await expect(page.locator(".tour-card")).toBeVisible();
+    await walk(
+      page,
+      `${base}?tour=1`,
+      width === 1280 ? `own-${scheme}` : "",
+      {
+        // ← and → step between the cards, wherever the focus is.
+        Timeline: async () => {
+          const title = page.locator(".tour-card h2");
+          await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+          await page.keyboard.press("ArrowLeft");
+          await expect(title).toHaveText("A pull request's review");
+          await expect(page).toHaveURL(/[?&]pr=\d+/);
+          await page.keyboard.press("ArrowRight");
+          await expect(title).toHaveText("Timeline");
+        },
       },
-    });
+      width !== 1280,
+    );
   }
 });
 
@@ -95,25 +103,24 @@ test("with no pull requests of its own, the tour shows the sample project", asyn
   for (const scheme of pictures ? (["light", "dark"] as const) : (["light"] as const)) {
     await page.emulateMedia({ colorScheme: scheme });
     await walk(page, `${base}sample/?tour=1`, `sample-${scheme}`, {
+      // Its pull requests do not open on GitHub, where they do not exist,
+      // and what would change something says it cannot, and nothing changes.
+      // The pictures leave those out, as the notice stays on the pages after.
       "Your Inbox": async () => {
         await expect(page.locator(".upnext-list")).toContainText("Add tags to notes");
-      },
-      // What would change something says it cannot, and nothing changes;
-      // the pictures leave it out, as its notice stays on the pages after.
-      ...(pictures
-        ? {}
-        : {
-            "Act on it": async () => {
-              await page.getByRole("button", { name: "Regenerate review" }).click();
-              await expect(page.locator(".local-toast")).toContainText("Not in the sample project");
-            },
-          }),
-      // Nor do its pull requests open on GitHub, where they do not exist.
-      "That's the tour": async () => {
+        if (pictures) return;
         await page.locator(".upnext-panel").getByText("Open on GitHub").click();
         await expect(page.locator(".local-toast")).toContainText("Not in the sample project");
         expect(page.context().pages()).toHaveLength(1);
       },
+      ...(pictures
+        ? {}
+        : {
+            "A pull request's review": async () => {
+              await page.getByRole("button", { name: "Regenerate review" }).click();
+              await expect(page.locator(".local-toast")).toContainText("Not in the sample project");
+            },
+          }),
     });
     // Closing the tour leaves the sample for the app's own data.
     await expect(page).toHaveURL((url) => url.pathname === base);
@@ -128,9 +135,13 @@ test("the tour shows on the first launch only, and Go to opens it again", async 
   const card = page.locator(".tour-card");
   await tourState(page, { seen: false });
   try {
+    const base = new URL(page.url()).pathname;
     await page.reload();
-    await expect(card).toContainText("Welcome to baum");
+    // The first tour is the sample's, even with pull requests of its own.
+    await expect(card).toContainText("Your Inbox", { timeout: 15000 });
+    await expect(page).toHaveURL(/\/sample\//);
     await card.getByRole("button", { name: "Skip" }).click();
+    await expect(page).toHaveURL((url) => url.pathname === base);
     await expect(card).toHaveCount(0);
     await expect.poll(() => tourState(page)).toEqual({ seen: true });
     await page.reload();
@@ -141,7 +152,8 @@ test("the tour shows on the first launch only, and Go to opens it again", async 
       await page.keyboard.press("ControlOrMeta+k");
       await page.keyboard.type("Take the tour");
       await page.keyboard.press("Enter");
-      await expect(card).toContainText("Welcome to baum");
+      await expect(card).toContainText("Your Inbox");
+      await expect(page).not.toHaveURL(/\/sample\//);
       await card.getByRole("button", { name: replay ? "Close the tour" : "Skip" }).click();
       await expect(card).toHaveCount(0);
       await expect(page).not.toHaveURL(/[?&]tour=/);
