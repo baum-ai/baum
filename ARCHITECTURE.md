@@ -3219,7 +3219,7 @@ group) has a queued or running job (it never joins or supersedes one),
 automatic job a daemon stop or restart interrupted, which `Interrupted` lists
 and which may run once more; failed and cancelled jobs are final). Jobs
 record `automatic` and `trigger` (`new_head`, `review_requested`,
-`ready_for_review`, `retry`, `stack_reviewed`). A job an older baum cancelled with reason
+`ready_for_review`, `retry`, `stack_reviewed`, `setup`). A job an older baum cancelled with reason
 `daily_cap`, for the spending cap baum no longer has, loads as an ordinary
 cancelled job. The executor's recheck of the confirmed inputs, before any model call, also refuses an automatic job whose
 pull request GitHub now reports as a draft (the queue marks its inputs
@@ -3745,7 +3745,8 @@ it and `Queue.SubmitAutomatic` decides each job.
   first snapshot `Observe` gets that was fetched at or after that time records
   each open PR's head, whether the user's review is requested, whether team
   membership was readable and whether it is a draft, and queues nothing: PRs
-  open at first launch, registration or re-enabling are not caught up. An older
+  open at first launch, registration or re-enabling are not caught up
+  (except by the setup catch-up below). An older
   (cached) snapshot is not a baseline; the next poll's is.
 - **Triggers.** Afterwards, a PR whose head differs from the recorded one (a
   new PR included), whose review request turned on (not merely because team
@@ -3762,6 +3763,19 @@ it and `Queue.SubmitAutomatic` decides each job.
   that head. A PR
   that closes, moves to another head while ineligible, or stops being eligible
   loses its pending head.
+- **Setup catch-up.** `POST /api/automatic/catch-up`
+  (`Scheduler.CatchUp`), which the desktop app sends once when first-run
+  setup finishes, answers 202 and then, apart from the request, records the
+  enabling of each repository automatic generation covers, polls it at once
+  (that poll is its baseline when it had none, and goes through background
+  discovery's handling, so the stack groups are current) and makes the three most
+  recently updated eligible open pull requests across them pending with
+  trigger `setup`, unless their head is already pending or handled. A pull
+  request in a stack group counts with its group as one, and the group's
+  eligible members are made pending together, so the group's review follows
+  theirs. The pass submits them like any other pending head: a head already
+  reviewed is skipped, the switches and Drain apply, and an interrupted run
+  is retried once. A repository whose poll fails is left out.
 - **Interrupted runs.** Each pass asks `Queue.Interrupted` for automatic jobs
   a daemon stop or restart cut short that are the only job for their head; if
   the PR is still open at that head and eligible, the head is pending again
@@ -4727,9 +4741,10 @@ the window's close and quit behaviour and start at login; the daemon serves
 `app/` to it like any loopback client, including the PR page's facts before
 any review exists (see "Pull request facts") and the draft of a review being
 written in stages (see "Persistent generation jobs"). Besides `ensure` and `stop`, the tray
-reads `GET /api/jobs`, `/api/automatic` and `/api/diagnostics` and sets
-`PUT /api/automatic` with the launch token as a bearer, over the app API the
-window uses. It also owns first-run setup
+reads `GET /api/jobs`, `/api/automatic` and `/api/diagnostics`, sets
+`PUT /api/automatic` and, once when first-run setup finishes, sends
+`POST /api/automatic/catch-up` (see "Setup catch-up"), with the launch token
+as a bearer, over the app API the window uses. It also owns first-run setup
 (`src/onboarding.rs`, `src/install.rs`, `../app/src/desktop/setup.tsx`): a bundled screen,
 with its own narrow capability, from which the user installs the bundled
 `baum` as the `baum` command on the login shell's `PATH` (a symbolic link to a

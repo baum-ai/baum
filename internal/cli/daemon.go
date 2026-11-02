@@ -436,6 +436,7 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 			scheduler.Observe(ctx, snapshot)
 			notify.Observe(ctx, snapshot)
 		}
+		scheduler.Discovered = worker.Discovered
 		chats := &chat.Service{Registry: registry, Config: cfg, Log: log}
 		// Feature builds run on the feature worker made below.
 		builds := &featureBuilder{}

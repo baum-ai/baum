@@ -454,9 +454,12 @@ Two channels, each the least that does the job:
    `GET /api/diagnostics` every 5 minutes (it runs the doctor's checks),
    `GET /api/plan-usage?refresh=1` every 5 minutes (a fresh reading; the
    daemon reads again at most once a minute), and
-   `PUT /api/automatic`. This is the credential the app already reads for the
-   window and the health check, accepted on `/api/` routes only; the request
-   that changes state sends the daemon's own origin and JSON, as the daemon
+   `PUT /api/automatic`, and once, when first-run setup finishes,
+   `POST /api/automatic/catch-up`, which queues automatic reviews of the
+   latest open pull requests so they run during the tour (best effort: a
+   daemon not attached then, or a failed request, only skips it). This is the
+   credential the app already reads for the window and the health check,
+   accepted on `/api/` routes only; the requests that change state send the daemon's own origin and JSON, as the daemon
    requires. It is polled rather than streamed: the events stream carries only
    change notices, so the tray would fetch the same data anyway.
 

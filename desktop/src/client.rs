@@ -135,6 +135,25 @@ pub fn set_automatic(launch: &Launch, enabled: bool) -> Result<(), String> {
     Ok(())
 }
 
+/// Asks the daemon to queue automatic reviews of the latest pull requests
+/// open when setup finished; it answers before it polls the repositories.
+pub fn catch_up(launch: &Launch) -> Result<(), String> {
+    let response = request(
+        launch,
+        "POST",
+        "/api/automatic/catch-up",
+        Some("{}"),
+        POLL_TIMEOUT,
+    )?;
+    if response.status != 202 {
+        return Err(format!(
+            "/api/automatic/catch-up answered {}",
+            response.status
+        ));
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

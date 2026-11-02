@@ -359,6 +359,7 @@ export function automaticLabel(job: Job): string | null {
         : job.trigger === "ready_for_review"
           ? "the pull request was marked ready for review"
           : "";
+  if (job.trigger === "setup") return "Started automatically when baum was set up";
   if (job.trigger === "retry")
     return "Started automatically again: the daemon stopped during the previous automatic run";
   return why ? `Started automatically because ${why}` : "Started automatically";
