@@ -10,7 +10,7 @@ configuration is still read from `config.toml`.
 
 | Tables / document bucket and key | Owner and contents |
 | --- | --- |
-| `repositories`, `clones`, `picked`, `aliases`, `preferences` | `repos`: picked repositories, clones, settings and global preferences |
+| `repositories`, `clones`, `picked`, `aliases`, `preferences`, `prompt_overrides` | `repos`: picked repositories, clones, settings and global preferences |
 | `groups`, `versions` | `reviewgroups`: group definitions and combined review versions |
 | `capture_session`, `decision`, `decision_file`, `capture_attempt`, feature/PR/link/search tables | `decisionlog`: decisions, coverage, call ledger and feature history |
 | `state/jobs` | `jobs`: queue/history, progress, accounting and fix outcomes |

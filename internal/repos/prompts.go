@@ -34,6 +34,9 @@ const (
 	PromptSourceRepository PromptSource = "repository"
 )
 
+// GlobalPrompts is the repository argument naming the global scope.
+const GlobalPrompts = ""
+
 // promptScope is the stored scope: "" is global, else the lowercase identity.
 func promptScope(repository string) string { return strings.ToLower(repository) }
 
@@ -41,11 +44,16 @@ func promptScope(repository string) string { return strings.ToLower(repository) 
 // is the global scope. A database without the table has none.
 func (r *Registry) PromptOverrides(ctx context.Context, repository string) (map[prompt.ID]PromptOverride, error) {
 	out := map[prompt.ID]PromptOverride{}
-	if r.noSchema || r.noPrompts {
+	if r.noSchema {
 		return out, nil
 	}
 	rows, e := r.db.QueryContext(ctx, `SELECT prompt_id, text, based_on, updated_at FROM prompt_overrides WHERE repository=?`, promptScope(repository))
 	if e != nil {
+		// A read-only registry of an older database may lack the table; it
+		// is looked for on every read, so a writer creating it is seen.
+		if strings.Contains(e.Error(), "no such table: prompt_overrides") {
+			return out, nil
+		}
 		return nil, e
 	}
 	defer func() { _ = rows.Close() }()
@@ -132,14 +140,16 @@ func (r *Registry) DeletePromptOverride(ctx context.Context, repository string, 
 // override, else the global one, else the built-in text. Overrides holds only
 // the overridden prompts; sources has every catalogue id. A repository that
 // is not picked (or "") gets only the global overrides: its rows, kept after
-// an unpick, apply again once it is picked.
+// an unpick, apply again once it is picked. Stored texts that fail
+// prompt.Validate are skipped. Pass the repository's current lower-case name;
+// earlier alias names are not followed.
 func (r *Registry) ResolvePrompts(ctx context.Context, repository string) (prompt.Overrides, map[prompt.ID]PromptSource, error) {
-	global, e := r.PromptOverrides(ctx, "")
+	global, e := r.PromptOverrides(ctx, GlobalPrompts)
 	if e != nil {
 		return nil, nil, e
 	}
 	var own map[prompt.ID]PromptOverride
-	if repository != "" {
+	if repository != GlobalPrompts {
 		_, picked, e := r.RepositorySettings(ctx, repository)
 		if e != nil {
 			return nil, nil, e
@@ -154,9 +164,11 @@ func (r *Registry) ResolvePrompts(ctx context.Context, repository string) (promp
 	sources := map[prompt.ID]PromptSource{}
 	for _, entry := range prompt.Catalogue() {
 		sources[entry.ID] = PromptSourceDefault
-		if o, ok := own[entry.ID]; ok {
+		// A stored text that no longer passes Validate (a rule tightened by a
+		// later release) is skipped, not used.
+		if o, ok := own[entry.ID]; ok && prompt.Validate(o.ID, o.Text) == nil {
 			overrides[entry.ID], sources[entry.ID] = o.Text, PromptSourceRepository
-		} else if o, ok := global[entry.ID]; ok {
+		} else if o, ok := global[entry.ID]; ok && prompt.Validate(o.ID, o.Text) == nil {
 			overrides[entry.ID], sources[entry.ID] = o.Text, PromptSourceGlobal
 		}
 	}

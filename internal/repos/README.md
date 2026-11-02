@@ -51,19 +51,30 @@ its HTTP handler uses.
   file's and does not block saving other preferences.
 
 - `prompt_overrides(repository, prompt_id, text, based_on, updated_at)`:
-  custom review, fix and extraction prompts (ids from `agent/prompt`),
-  stored only here and never read from repository content. `repository` is `''`
-  for the global scope, else the lowercase identity. `SetPromptOverride`
-  runs `prompt.Validate` (a rejection wraps `ErrInvalidPrompt`), records the
-  prompt's built-in version in `based_on`, and requires a picked repository
-  (`ErrNotPicked`, checked in the transaction); `DeletePromptOverride` does
-  too, and a missing row is no error. `ResolvePrompts` picks per prompt id the
-  repository's text, else the global one, else the built-in (absent from the
-  returned `prompt.Overrides`), with a `PromptSource` for every id; a
-  repository that is not picked gets only the global texts. `Unpick` keeps
-  the rows, so a re-pick sees them. `AddForwarded` copies the earlier name's
-  rows to the current name only when it has none and the earlier name is still
-  picked. A read-only open of a database without the table reads no overrides.
+  custom review, fix and extraction prompts (ids from `agent/prompt`). They
+  are stored only here and never read from repository content.
+  - `repository` is `''` (`GlobalPrompts`) for the global scope, else the
+    repository's current lowercase identity. Callers pass that name; earlier
+    alias names are not followed, as with `RepositorySettings`.
+  - `SetPromptOverride` runs `prompt.Validate`; a rejection wraps
+    `ErrInvalidPrompt`. It stores the prompt's built-in version in `based_on`.
+  - `SetPromptOverride` and `DeletePromptOverride` require a picked
+    repository (`ErrNotPicked`, checked in the transaction); the global scope
+    needs none. `DeletePromptOverride` fails with `ErrInvalidPrompt` for an
+    unknown id; deleting a missing row is no error.
+  - `ResolvePrompts` picks per prompt id the repository's text, else the
+    global one, else the built-in (absent from the returned
+    `prompt.Overrides`), and reports a `PromptSource` for every id. A
+    repository that is not picked gets only the global texts. A stored text
+    that no longer passes `prompt.Validate` is skipped.
+  - `Unpick` keeps the rows, so a re-pick sees them.
+  - `AddForwarded` copies the earlier name's rows to the current name when the
+    earlier name is still picked and the current name has no overrides
+    (deliberately unlike settings, which copy only while they are the
+    default). It then deletes the earlier name's rows in any case, because it
+    is unpicked and another repository may later take the name.
+  - A read-only registry reads no overrides while the table is missing, and
+    sees them once a writer has created it.
 
 A repository is picked exactly when it has a `picked` row. Adding a clone also
 picks its repository, and removing the clone keeps it picked with zero clones.

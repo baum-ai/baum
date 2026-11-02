@@ -29,7 +29,7 @@ func TestPromptOverrideSetGetDelete(t *testing.T) {
 	if e != nil || len(got) != 1 || got[prompt.IDFix].Text != "second" || got[prompt.IDFix].BasedOn != entry.DefaultVersion {
 		t.Fatalf("%+v %v", got, e)
 	}
-	if g, _ := r.PromptOverrides(ctx, ""); len(g) != 0 {
+	if g, _ := r.PromptOverrides(ctx, GlobalPrompts); len(g) != 0 {
 		t.Fatalf("global %+v", g)
 	}
 	if e = r.DeletePromptOverride(ctx, "owner/repo", prompt.IDFix); e != nil {
@@ -41,7 +41,7 @@ func TestPromptOverrideSetGetDelete(t *testing.T) {
 	if got, _ = r.PromptOverrides(ctx, "owner/repo"); len(got) != 0 {
 		t.Fatalf("%+v", got)
 	}
-	if e = r.DeletePromptOverride(ctx, "", "nope"); !errors.Is(e, ErrInvalidPrompt) {
+	if e = r.DeletePromptOverride(ctx, GlobalPrompts, "nope"); !errors.Is(e, ErrInvalidPrompt) {
 		t.Fatalf("unknown id delete: %v", e)
 	}
 }
@@ -58,12 +58,12 @@ func TestPromptOverrideValidation(t *testing.T) {
 		"too large":  {prompt.IDFix, strings.Repeat("a", prompt.MaxOverrideBytes+1)},
 		"submitting": {prompt.IDReview, "Review.\n\n## Submitting\nDo it."},
 	} {
-		_, e := r.SetPromptOverride(ctx, "", c.id, c.text)
+		_, e := r.SetPromptOverride(ctx, GlobalPrompts, c.id, c.text)
 		if !errors.Is(e, ErrInvalidPrompt) || e.Error() == ErrInvalidPrompt.Error() {
 			t.Errorf("%s: %v", name, e)
 		}
 	}
-	if got, _ := r.PromptOverrides(ctx, ""); len(got) != 0 {
+	if got, _ := r.PromptOverrides(ctx, GlobalPrompts); len(got) != 0 {
 		t.Fatalf("stored %+v", got)
 	}
 }
@@ -77,7 +77,7 @@ func TestPromptOverrideRequiresPickedRepository(t *testing.T) {
 	if e := r.DeletePromptOverride(ctx, "owner/repo", prompt.IDFix); !errors.Is(e, ErrNotPicked) {
 		t.Fatalf("delete: %v", e)
 	}
-	if _, e := r.SetPromptOverride(ctx, "", prompt.IDFix, "x"); e != nil {
+	if _, e := r.SetPromptOverride(ctx, GlobalPrompts, prompt.IDFix, "x"); e != nil {
 		t.Fatalf("global needs no pick: %v", e)
 	}
 }
@@ -94,7 +94,7 @@ func TestResolvePrompts(t *testing.T) {
 		repo string
 		id   prompt.ID
 		text string
-	}{{"owner/a", prompt.IDFix, "repo fix"}, {"", prompt.IDReview, "global review"}} {
+	}{{"owner/a", prompt.IDFix, "repo fix"}, {GlobalPrompts, prompt.IDReview, "global review"}} {
 		if _, e := r.SetPromptOverride(ctx, s.repo, s.id, s.text); e != nil {
 			t.Fatal(e)
 		}
@@ -126,7 +126,7 @@ func TestResolvePrompts(t *testing.T) {
 	globalSrc := map[prompt.ID]PromptSource{prompt.IDReview: PromptSourceGlobal}
 	check("OWNER/A", ownText, ownSrc)
 	check("owner/b", globalText, globalSrc)
-	check("", globalText, globalSrc)
+	check(GlobalPrompts, globalText, globalSrc)
 	// A repository that is not picked gets only the global overrides.
 	check("owner/unpicked", globalText, globalSrc)
 	// Unpick keeps the rows; re-picking applies them again.
@@ -186,7 +186,7 @@ func TestOpenReadOnlyWithoutPromptTable(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	if _, e = w.SetPromptOverride(ctx, "", prompt.IDFix, "x"); e != nil {
+	if _, e = w.SetPromptOverride(ctx, GlobalPrompts, prompt.IDFix, "x"); e != nil {
 		t.Fatal(e)
 	}
 	if _, e = w.db.Exec(`DROP TABLE prompt_overrides`); e != nil {
@@ -198,7 +198,7 @@ func TestOpenReadOnlyWithoutPromptTable(t *testing.T) {
 		t.Fatal(e)
 	}
 	defer func() { _ = ro.Close() }()
-	if got, e := ro.PromptOverrides(ctx, ""); e != nil || len(got) != 0 {
+	if got, e := ro.PromptOverrides(ctx, GlobalPrompts); e != nil || len(got) != 0 {
 		t.Fatalf("%v %v", got, e)
 	}
 	ov, sources, e := ro.ResolvePrompts(ctx, "owner/repo")
