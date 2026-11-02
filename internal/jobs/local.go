@@ -589,6 +589,12 @@ func (b *trackedBackend) Run(ctx context.Context, r agent.Request) (agent.Result
 		name, keep := callName(r), b.transcript
 		r.Transcript = func(entry agent.TranscriptEntry) {
 			entry.Call = name
+			// Each call can reuse its backend's step IDs, so they are
+			// namespaced by the call to keep later calls from replacing
+			// earlier ones' steps.
+			if entry.ID != "" && entry.Kind != "call" {
+				entry.ID = id + "/" + entry.ID
+			}
 			keep(entry)
 		}
 		r.Emit(agent.TranscriptEntry{Kind: "call", ID: id, Title: name, Status: "running"})

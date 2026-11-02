@@ -210,6 +210,7 @@ func TestReviewTranscriptMarksEachCall(t *testing.T) {
 	var kept []agent.TranscriptEntry
 	b := &trackedBackend{Backend: &generatetest.Backend{RunFunc: func(_ context.Context, r agent.Request, _ int) (agent.Result, error) {
 		r.Emit(agent.TranscriptEntry{Kind: "message", Text: "Reading the diff."})
+		r.Emit(agent.TranscriptEntry{Kind: "tool", ID: "item_0"})
 		if r.Pass > 1 {
 			return agent.Result{}, errors.New("provider down")
 		}
@@ -228,9 +229,11 @@ func TestReviewTranscriptMarksEachCall(t *testing.T) {
 	want := []string{
 		"call|call-1|Outline|running|Outline",
 		"message||||Outline",
+		"tool|call-1/item_0|||Outline",
 		"call|call-1||completed|Outline",
 		"call|call-2|Details · repair 1|running|Details · repair 1",
 		"message||||Details · repair 1",
+		"tool|call-2/item_0|||Details · repair 1",
 		"call|call-2||failed|Details · repair 1",
 	}
 	if !slices.Equal(got, want) {
