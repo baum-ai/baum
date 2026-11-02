@@ -105,7 +105,7 @@ authenticated host and origin checks. JSON is decoded strictly.
 | `POST /api/repositories` `{"repository","settings"}` | pick (400 on a bad name or settings) |
 | `DELETE /api/repositories/{owner}/{name}` | unpick (204, 404) |
 | `PUT /api/repositories/{owner}/{name}/settings` | replace settings (404 unless picked) |
-| `GET /api/repositories/{owner}/{name}/prompts` | `{"prompts":[...]}`, one entry per catalogue prompt with the repository's own `custom_text`/`based_on`/`outdated`, `source` and `inherited_text` (404 unless picked) |
+| `GET /api/repositories/{owner}/{name}/prompts` | `{"prompts":[...]}`, one entry per catalogue prompt with the repository's own `custom_text`/`based_on`/`outdated`/`invalid`/`invalid_reason`, `source` (what a run uses, as `ResolvePrompts`) and `inherited_text` (the valid global text, else the built-in; 404 unless picked) |
 | `PUT /api/repositories/{owner}/{name}/prompts/{id}` `{"text": string\|null}` | set the repository's override; null or `""` resets to inherit; answers the entry (400 `{"message"}` invalid text or body, 404 unknown id or not picked, 413 too large) |
 
 Only `POST` validates the name. `DELETE` and `PUT` only lowercase it and look

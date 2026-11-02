@@ -15,19 +15,23 @@ import (
 // PromptEntry is one catalogue prompt as the app shows it in a scope: the
 // global one, or one repository's (then Source and InheritedText are set).
 type PromptEntry struct {
-	ID             string             `json:"id"`
-	Title          string             `json:"title"`
-	Group          string             `json:"group"`
-	UsedBy         string             `json:"used_by"`
-	DefaultText    string             `json:"default_text"`
-	DefaultVersion string             `json:"default_version"`
-	CustomText     *string            `json:"custom_text"`
-	BasedOn        *string            `json:"based_on"`
-	Outdated       bool               `json:"outdated"`
-	SafetyRules    []PromptSafetyRule `json:"safety_rules"`
-	MissingRules   []string           `json:"missing_safety_rules"`
-	Source         PromptSource       `json:"source,omitempty"`
-	InheritedText  *string            `json:"inherited_text,omitempty"`
+	ID             string  `json:"id"`
+	Title          string  `json:"title"`
+	Group          string  `json:"group"`
+	UsedBy         string  `json:"used_by"`
+	DefaultText    string  `json:"default_text"`
+	DefaultVersion string  `json:"default_version"`
+	CustomText     *string `json:"custom_text"`
+	BasedOn        *string `json:"based_on"`
+	Outdated       bool    `json:"outdated"`
+	// Invalid marks a stored text that no longer passes validation: it is
+	// shown but not used by runs.
+	Invalid       bool               `json:"invalid"`
+	InvalidReason *string            `json:"invalid_reason"`
+	SafetyRules   []PromptSafetyRule `json:"safety_rules"`
+	MissingRules  []string           `json:"missing_safety_rules"`
+	Source        PromptSource       `json:"source,omitempty"`
+	InheritedText *string            `json:"inherited_text,omitempty"`
 }
 
 // PromptSafetyRule is a safety rule of a prompt, for display.
@@ -43,29 +47,23 @@ type PromptSafetyRule struct {
 // override's text, else the built-in text, and source says which text a run
 // uses. The repository must be picked (ErrNotPicked).
 func (r *Registry) PromptEntries(ctx context.Context, repository string) ([]PromptEntry, error) {
-	var sources map[prompt.ID]PromptSource
-	var global map[prompt.ID]PromptOverride
-	if repository != GlobalPrompts {
-		_, picked, e := r.RepositorySettings(ctx, repository)
-		if e != nil {
-			return nil, e
-		}
-		if !picked {
-			return nil, ErrNotPicked
-		}
-		if global, e = r.PromptOverrides(ctx, GlobalPrompts); e != nil {
-			return nil, e
-		}
-		if _, sources, e = r.ResolvePrompts(ctx, repository); e != nil {
-			return nil, e
-		}
-	}
-	own, e := r.PromptOverrides(ctx, repository)
+	global, own, picked, e := r.promptSnapshot(ctx, repository)
 	if e != nil {
 		return nil, e
 	}
+	repo := repository != GlobalPrompts
+	if repo && !picked {
+		return nil, ErrNotPicked
+	}
+	// The scope's own rows: the repository's, or for the global view the
+	// global ones, which then have nothing to inherit from.
+	mine, upper := own, global
+	if !repo {
+		mine, upper = global, nil
+	}
 	out := []PromptEntry{}
 	for _, c := range prompt.Catalogue() {
+		res := resolvePrompt(c, upper, mine)
 		entry := PromptEntry{
 			ID: string(c.ID), Title: c.Title, Group: c.Group, UsedBy: c.UsedBy,
 			DefaultText: c.Default, DefaultVersion: c.DefaultVersion,
@@ -74,22 +72,21 @@ func (r *Registry) PromptEntries(ctx context.Context, repository string) ([]Prom
 		for _, rule := range c.SafetyRules {
 			entry.SafetyRules = append(entry.SafetyRules, PromptSafetyRule{ID: rule.ID, Label: rule.Label, Text: rule.Text})
 		}
-		effective := c.Default
-		if repository != GlobalPrompts {
-			inherited := c.Default
-			if g, ok := global[c.ID]; ok {
-				inherited = g.Text
-			}
-			entry.InheritedText, entry.Source = &inherited, sources[c.ID]
-			effective = inherited
+		if repo {
+			inherited := res.Inherited
+			entry.InheritedText, entry.Source = &inherited, res.Source
 		}
-		if o, ok := own[c.ID]; ok {
+		if o, ok := mine[c.ID]; ok {
 			text, based := o.Text, o.BasedOn
 			entry.CustomText, entry.BasedOn = &text, &based
 			entry.Outdated = based != c.DefaultVersion
-			effective = text
+			if res.OwnInvalid != nil {
+				entry.Invalid = true
+				reason := strings.TrimPrefix(res.OwnInvalid.Error(), ErrInvalidPrompt.Error()+": ")
+				entry.InvalidReason = &reason
+			}
 		}
-		entry.MissingRules = append([]string{}, prompt.MissingSafetyRules(c.ID, effective)...)
+		entry.MissingRules = append([]string{}, prompt.MissingSafetyRules(c.ID, res.Text)...)
 		out = append(out, entry)
 	}
 	return out, nil

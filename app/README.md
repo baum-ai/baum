@@ -1566,7 +1566,7 @@ api/settings/prompts` and, for a picked repository, `GET
 api/repositories/{owner}/{name}/prompts`: `{"prompts": [...]}`, one entry per
 catalogue prompt in catalogue order (`id`, `title`, `group`, `used_by`,
 `default_text`, `default_version`, `custom_text` and `based_on` (null unless
-this scope has its own text), `outdated`, `safety_rules`, `missing_safety_rules`
+this scope has its own text), `outdated`, `invalid` and `invalid_reason` (a stored text that no longer validates is shown but runs skip it), `safety_rules`, `missing_safety_rules`
 for the text in force in that scope). A repository entry adds `source`
 (`repository`, `global` or `default`) and `inherited_text`. `PUT
 api/settings/prompts/{id}` and `PUT api/repositories/{owner}/{name}/prompts/{id}`

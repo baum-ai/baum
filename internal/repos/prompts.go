@@ -40,14 +40,24 @@ const GlobalPrompts = ""
 // promptScope is the stored scope: "" is global, else the lowercase identity.
 func promptScope(repository string) string { return strings.ToLower(repository) }
 
+// promptQuerier is what reads rows: the database or one transaction.
+type promptQuerier interface {
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+}
+
 // PromptOverrides reads the overrides stored for one scope: repository ""
 // is the global scope. A database without the table has none.
 func (r *Registry) PromptOverrides(ctx context.Context, repository string) (map[prompt.ID]PromptOverride, error) {
+	return r.promptRows(ctx, r.db, repository)
+}
+
+func (r *Registry) promptRows(ctx context.Context, q promptQuerier, repository string) (map[prompt.ID]PromptOverride, error) {
 	out := map[prompt.ID]PromptOverride{}
 	if r.noSchema {
 		return out, nil
 	}
-	rows, e := r.db.QueryContext(ctx, `SELECT prompt_id, text, based_on, updated_at FROM prompt_overrides WHERE repository=?`, promptScope(repository))
+	rows, e := q.QueryContext(ctx, `SELECT prompt_id, text, based_on, updated_at FROM prompt_overrides WHERE repository=?`, promptScope(repository))
 	if e != nil {
 		// A read-only registry of an older database may lack the table; it
 		// is looked for on every read, so a writer creating it is seen.
@@ -72,6 +82,69 @@ func (r *Registry) PromptOverrides(ctx context.Context, repository string) (map[
 		}
 	}
 	return out, rows.Err()
+}
+
+// promptSnapshot reads the global rows, and for a repository its picked
+// state and own rows, in one transaction so a concurrent change is not
+// mixed in. An unpicked repository has no own rows here: they are kept
+// after an unpick and apply again once it is picked.
+func (r *Registry) promptSnapshot(ctx context.Context, repository string) (global, own map[prompt.ID]PromptOverride, picked bool, e error) {
+	if r.noSchema {
+		return map[prompt.ID]PromptOverride{}, map[prompt.ID]PromptOverride{}, false, nil
+	}
+	tx, e := r.db.BeginTx(ctx, nil)
+	if e != nil {
+		return nil, nil, false, e
+	}
+	defer func() { _ = tx.Rollback() }()
+	if global, e = r.promptRows(ctx, tx, GlobalPrompts); e != nil {
+		return nil, nil, false, e
+	}
+	own = map[prompt.ID]PromptOverride{}
+	if repository == GlobalPrompts {
+		return global, own, true, nil
+	}
+	var one int
+	e = tx.QueryRowContext(ctx, `SELECT 1 FROM repositories r WHERE r.identity=? AND (`+r.pickedSQL()+`)`, strings.ToLower(repository)).Scan(&one)
+	if errors.Is(e, sql.ErrNoRows) {
+		return global, own, false, nil
+	}
+	if e != nil {
+		return nil, nil, false, e
+	}
+	if own, e = r.promptRows(ctx, tx, repository); e != nil {
+		return nil, nil, false, e
+	}
+	return global, own, true, nil
+}
+
+// resolvedPrompt is what a repository's run uses for one prompt.
+type resolvedPrompt struct {
+	Source PromptSource
+	// Text is the effective text.
+	Text string
+	// Inherited is the text without the repository's own row: the global
+	// override if it validates, else the built-in text.
+	Inherited string
+	// OwnInvalid is why the repository's own row is skipped, else nil.
+	OwnInvalid error
+}
+
+// resolvePrompt picks the repository's valid override, else the valid global
+// one, else the built-in text. A stored text that no longer passes Validate
+// (a rule tightened by a later release) is skipped, not used. It is the one
+// place jobs (ResolvePrompts) and the app's entries agree on.
+func resolvePrompt(c prompt.Entry, global, own map[prompt.ID]PromptOverride) resolvedPrompt {
+	out := resolvedPrompt{Source: PromptSourceDefault, Text: c.Default, Inherited: c.Default}
+	if o, ok := global[c.ID]; ok && prompt.Validate(o.ID, o.Text) == nil {
+		out.Source, out.Text, out.Inherited = PromptSourceGlobal, o.Text, o.Text
+	}
+	if o, ok := own[c.ID]; ok {
+		if out.OwnInvalid = prompt.Validate(o.ID, o.Text); out.OwnInvalid == nil {
+			out.Source, out.Text = PromptSourceRepository, o.Text
+		}
+	}
+	return out
 }
 
 // requirePicked fails with ErrNotPicked unless a non-empty repository is
@@ -144,32 +217,17 @@ func (r *Registry) DeletePromptOverride(ctx context.Context, repository string, 
 // prompt.Validate are skipped. Pass the repository's current lower-case name;
 // earlier alias names are not followed.
 func (r *Registry) ResolvePrompts(ctx context.Context, repository string) (prompt.Overrides, map[prompt.ID]PromptSource, error) {
-	global, e := r.PromptOverrides(ctx, GlobalPrompts)
+	global, own, _, e := r.promptSnapshot(ctx, repository)
 	if e != nil {
 		return nil, nil, e
-	}
-	var own map[prompt.ID]PromptOverride
-	if repository != GlobalPrompts {
-		_, picked, e := r.RepositorySettings(ctx, repository)
-		if e != nil {
-			return nil, nil, e
-		}
-		if picked {
-			if own, e = r.PromptOverrides(ctx, repository); e != nil {
-				return nil, nil, e
-			}
-		}
 	}
 	overrides := prompt.Overrides{}
 	sources := map[prompt.ID]PromptSource{}
 	for _, entry := range prompt.Catalogue() {
-		sources[entry.ID] = PromptSourceDefault
-		// A stored text that no longer passes Validate (a rule tightened by a
-		// later release) is skipped, not used.
-		if o, ok := own[entry.ID]; ok && prompt.Validate(o.ID, o.Text) == nil {
-			overrides[entry.ID], sources[entry.ID] = o.Text, PromptSourceRepository
-		} else if o, ok := global[entry.ID]; ok && prompt.Validate(o.ID, o.Text) == nil {
-			overrides[entry.ID], sources[entry.ID] = o.Text, PromptSourceGlobal
+		res := resolvePrompt(entry, global, own)
+		sources[entry.ID] = res.Source
+		if res.Source != PromptSourceDefault {
+			overrides[entry.ID] = res.Text
 		}
 	}
 	return overrides, sources, nil
