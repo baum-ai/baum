@@ -784,8 +784,9 @@ button.list-heading-label:hover {
 .list-row[data-focused]:hover {
   background: var(--surface-hover);
 }
-.list-row[data-focused] a:focus-visible {
+.list-row[data-focused] :is(a, [data-row-link]):focus-visible {
   outline: none;
+  box-shadow: none;
 }
 /* The PR page's commits, drawn as the app's list rows inside the review pane:
    the subject, then its id, author and time, then the session linked to it.
@@ -1504,11 +1505,16 @@ dialog.local-dialog-wide {
 .repo-review .review-section:first-child {
   padding-top: 0;
 }
+/* A repository's row: its name and clone, then what it has going on (a
+   running review, or automatic reviews that are off), its open pull requests
+   and its latest review in columns that line up across rows, then its ⋯. */
 .local-repo-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) auto 6.5rem 10rem auto;
   align-items: center;
-  gap: 0.75rem 1rem;
+  gap: 0.5rem 1rem;
+  padding-top: 0.65rem;
+  padding-bottom: 0.65rem;
 }
 /* The picker opens above the list, ruled off from it. */
 .local-repo-adding {
@@ -1518,14 +1524,14 @@ dialog.local-dialog-wide {
 .local-repo-row h3 {
   margin: 0;
   font-size: var(--text-base);
-  font-weight: 600;
+  font-weight: 500;
 }
 /* The name opens the repository's settings, as a link reads. */
 .local-repo-name {
   padding: 0;
   border: 0;
   background: none;
-  color: inherit;
+  color: var(--text-primary);
   font: inherit;
   text-align: left;
   cursor: pointer;
@@ -1533,24 +1539,41 @@ dialog.local-dialog-wide {
 .local-repo-name:hover {
   text-decoration: underline;
 }
-.local-repo-actions {
-  align-self: start;
+.local-repo-main {
+  min-width: 0;
 }
 .local-repo-main p {
   margin: 0.125rem 0 0;
   font-size: var(--text-xs);
   color: var(--text-tertiary);
 }
-.local-repo-main .local-repo-summary {
+.local-repo-main :is(.local-repo-missing, .repository-warning) {
+  color: var(--status-caution);
+}
+.local-repo-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: var(--text-xs);
   color: var(--text-secondary);
 }
-.local-repo-main .local-repo-missing {
-  color: var(--status-caution);
+.local-repo-figure {
+  white-space: nowrap;
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
 }
 .local-repo-actions {
   display: flex;
   align-items: center;
-  gap: 0.25rem;
+}
+@media (width < 48rem) {
+  .local-repo-row {
+    grid-template-columns: minmax(0, 1fr) auto auto;
+  }
+  .local-repo-figure {
+    display: none;
+  }
 }
 /* What opens under a row, across its width: the clone choices of a
    repository without one, or the registered clones of one that has. */
@@ -1585,11 +1608,6 @@ dialog.local-dialog-wide {
 .local-repo-clones code {
   min-width: 0;
   flex: 1;
-}
-@media (max-width: 40rem) {
-  .local-repo-row {
-    grid-template-columns: minmax(0, 1fr);
-  }
 }
 .local-dialog-actions {
   display: flex;
