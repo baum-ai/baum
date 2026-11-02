@@ -660,3 +660,15 @@ export function SaveButton({ options }: { options: SaveOption[] }) {
     </div>
   );
 }
+
+/** Why the page's filter could not be saved, with Retry. */
+export function FilterSaveError({ error, retry }: { error: string; retry: () => Promise<void> }) {
+  return error ? (
+    <p role="alert" className="upnext-filter-error">
+      {error}{" "}
+      <button type="button" onClick={() => void retry()}>
+        Retry
+      </button>
+    </p>
+  ) : null;
+}

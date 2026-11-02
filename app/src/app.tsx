@@ -37,13 +37,20 @@ import {
   type Inbox as SavedInbox,
 } from "./inboxes";
 import { UpNextPage, useUpNext } from "./up-next";
-import { FilterBar, FilterButton, SaveButton, type SaveOption } from "./filter-menu";
+import {
+  FilterBar,
+  FilterButton,
+  FilterSaveError,
+  SaveButton,
+  type SaveOption,
+} from "./filter-menu";
 import {
   matchesQuery,
   MAX_TABS,
   queryProblem,
   quote,
   usePageFilter,
+  useFilterDraft,
   useSavedTabs,
   type SavedTab,
 } from "./pr-filter";
@@ -142,6 +149,54 @@ function tabName(text: string) {
     .slice(0, 40)
     .trim();
 }
+/** A saved tab's name being typed, at the filter menu's foot: Enter or the
+ *  button takes it, trimmed as the daemon keeps it, and Esc leaves it. */
+function TabNameForm({
+  name,
+  action,
+  focus = false,
+  onName,
+  onSubmit,
+  onCancel,
+}: {
+  name: string;
+  action: string;
+  focus?: boolean;
+  onName: (name: string) => void;
+  onSubmit: (name: string) => void;
+  onCancel?: () => void;
+}) {
+  return (
+    <form
+      className="local-tab-name"
+      onSubmit={(event) => {
+        event.preventDefault();
+        const kept = tabName(name);
+        if (kept) onSubmit(kept);
+      }}
+    >
+      <input
+        aria-label="Tab name"
+        className="local-field filter-bar-name"
+        // biome-ignore lint/a11y/noAutofocus: asked for by Create tab
+        autoFocus={focus}
+        maxLength={40}
+        value={name}
+        onChange={(event) => onName(event.target.value)}
+        onKeyDown={(event) => {
+          if (event.key === "Escape" && onCancel) {
+            event.preventDefault();
+            onCancel();
+          }
+        }}
+      />
+      <Button size="tiny" type="submit" disabled={!tabName(name)}>
+        {action}
+      </Button>
+    </form>
+  );
+}
+
 /** Pull requests' own tabs: Open first, Closed last, saved tabs between. */
 const VIEWS = [
   ["open", "Open"],
@@ -502,19 +557,16 @@ function Workspace({ url }: { url: UrlState }) {
   // The page's filter. On a saved tab it starts as the tab's query, and a
   // change is a draft that narrows the tab until Update tab saves it (kept
   // per tab; none kept is the saved query).
-  const pullsFilter = usePageFilter(savedTab ? `tab:${savedTab.id}` : "pulls");
+  const pullsFilter = useFilterDraft(
+    savedTab ? `tab:${savedTab.id}` : "pulls",
+    savedTab ? savedTab.query : null,
+  );
   const viewFilter = usePageFilter("pulls");
-  const savedQuery = savedTab?.query ?? "";
-  const pullsQuery = savedTab ? (pullsFilter.draft ?? savedQuery) : pullsFilter.query;
-  const pullsDirty =
-    !!savedTab && pullsFilter.draft !== undefined && pullsFilter.draft !== savedQuery;
+  const pullsQuery = pullsFilter.query;
   const setPullsQuery = (query: string) => {
     if (query === pullsQuery || queryProblem(query, false)) return;
     setSelection(new Set());
-    // On a saved tab "" is a draft that shows everything; its own query is none.
-    if (!savedTab) pullsFilter.set(query);
-    else if (query === savedQuery) pullsFilter.reset();
-    else pullsFilter.keep(query);
+    pullsFilter.set(query);
   };
   // A saved tab's name changes while it is edited (Edit in its right-click
   // menu), at the filter menu's foot; `name` is the draft.
@@ -577,7 +629,7 @@ function Workspace({ url }: { url: UrlState }) {
     filtered(indexedEntries, view).filter((e) => matchesQuery(query, e));
   const rows = filteredPulls(view, pullsQuery);
   // Saving the filter: into the saved tab shown, or as a new tab (named next).
-  const changed = savedTab ? pullsDirty : pullsFilter.query !== "";
+  const changed = savedTab ? pullsFilter.dirty : pullsQuery !== "";
   const tabSaves: SaveOption[] =
     !changed || queryProblem(pullsQuery, false) || editing
       ? []
@@ -1465,6 +1517,7 @@ function Workspace({ url }: { url: UrlState }) {
               refreshing={listBusy}
               reviewGroups={groups}
               saveAsInbox={saveAsInbox}
+              inboxSaves={inboxes.saves}
               updateInbox={
                 selectedInbox && inboxes.status === "ready"
                   ? (patch) =>
@@ -1570,80 +1623,39 @@ function Workspace({ url }: { url: UrlState }) {
                           entries={filterBase}
                           actions={
                             editing ? (
-                              <form
-                                className="local-tab-name"
-                                onSubmit={(event) => {
-                                  event.preventDefault();
-                                  const name = tabName(editing.name);
-                                  if (!name) return;
+                              <TabNameForm
+                                name={editing.name}
+                                action="Done"
+                                onName={(name) => setEditingTab({ id: savedTab!.id, name })}
+                                onSubmit={(name) => {
                                   if (name !== savedTab!.name) savedTabs.rename(savedTab!.id, name);
                                   setEditingTab(null);
                                 }}
-                              >
-                                <input
-                                  aria-label="Tab name"
-                                  className="local-field filter-bar-name"
-                                  maxLength={40}
-                                  value={editing.name}
-                                  onChange={(event) =>
-                                    setEditingTab({ id: savedTab!.id, name: event.target.value })
-                                  }
-                                />
-                                <Button size="tiny" type="submit" disabled={!tabName(editing.name)}>
-                                  Done
-                                </Button>
-                              </form>
+                              />
                             ) : namingTab !== null ? (
-                              <form
-                                className="local-tab-name"
-                                onSubmit={(event) => {
-                                  event.preventDefault();
-                                  const name = tabName(namingTab);
-                                  if (!name) return;
+                              <TabNameForm
+                                name={namingTab}
+                                action="Save"
+                                focus
+                                onName={setNamingTab}
+                                onCancel={() => setNamingTab(null)}
+                                onSubmit={(name) => {
                                   const id = newInboxId();
                                   // From a saved tab, the new one holds its query and the filter.
                                   savedTabs.add(
-                                    savedTab
-                                      ? { id, name, view: savedTab.view, query: pullsQuery }
-                                      : { id, name, view, query: pullsQuery },
+                                    { id, name, view: savedTab?.view ?? view, query: pullsQuery },
                                     savedTab ? `tab:${savedTab.id}` : "pulls",
                                   );
                                   setNamingTab(null);
                                   openTab(`tab:${id}`);
                                 }}
-                              >
-                                <input
-                                  aria-label="Tab name"
-                                  className="local-field filter-bar-name"
-                                  // biome-ignore lint/a11y/noAutofocus: asked for by Create tab
-                                  autoFocus
-                                  maxLength={40}
-                                  value={namingTab}
-                                  onChange={(event) => setNamingTab(event.target.value)}
-                                  onKeyDown={(event) => {
-                                    if (event.key === "Escape") {
-                                      event.preventDefault();
-                                      setNamingTab(null);
-                                    }
-                                  }}
-                                />
-                                <Button size="tiny" type="submit" disabled={!tabName(namingTab)}>
-                                  Save
-                                </Button>
-                              </form>
+                              />
                             ) : (
                               <SaveButton options={tabSaves} />
                             )
                           }
                         />
-                        {pullsFilter.error ? (
-                          <p role="alert" className="upnext-filter-error">
-                            {pullsFilter.error}{" "}
-                            <button type="button" onClick={() => void pullsFilter.retry()}>
-                              Retry
-                            </button>
-                          </p>
-                        ) : null}
+                        <FilterSaveError error={pullsFilter.error} retry={pullsFilter.retry} />
                       </>
                     }
                   />

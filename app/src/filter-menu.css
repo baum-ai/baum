@@ -241,11 +241,6 @@
 .filter-bar-name {
   width: 10rem;
 }
-.upnext-filter {
-  display: grid;
-  gap: 0.3rem;
-  margin-top: 0.6rem;
-}
 .upnext-filter-error {
   margin: 0;
   color: var(--status-critical);
@@ -259,12 +254,6 @@
   font: inherit;
   text-decoration: underline;
   cursor: pointer;
-}
-/* Pull requests: the bar under the views, on the page's gutter. */
-.local-pulls-filter {
-  display: grid;
-  gap: 0.3rem;
-  padding: 0.5rem 1.5rem 0;
 }
 .local-tab-name {
   display: flex;

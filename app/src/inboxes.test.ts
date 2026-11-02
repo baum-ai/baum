@@ -5,6 +5,7 @@ import {
   inboxBadgeCount,
   inboxesOf,
   matches,
+  folded,
   parseInboxes,
   sentence,
   type Inbox,
@@ -80,6 +81,23 @@ it("leaves out bots when asked", () => {
   expect(matches(inbox({ no_bots: true }), item("merge", { author_bot: false }))).toBe(true);
   expect(matches(inbox({ no_bots: true }), item("merge"))).toBe(true);
   expect(matches(inbox({ no_bots: false }), item("merge", { author_bot: true }))).toBe(true);
+});
+
+it("folds an inbox's parts into its query, unless that would not fit or its query does not read", () => {
+  const many = Array.from({ length: 30 }, (_, n) => `acme/repository-number-${n}`);
+  const long = inbox({ what: "review", repositories: many });
+  // Too long for the daemon: the parts stay as they are, and still match.
+  expect(folded(long)).toBe(long);
+  expect(matches(long, item("review", { repository: "acme/repository-number-3" }))).toBe(true);
+  expect(matches(long, item("merge", { repository: "acme/repository-number-3" }))).toBe(false);
+  // A query that does not read keeps the parts, which still narrow.
+  const broken = inbox({ what: "review", query: "risk>=none" });
+  expect(folded(broken)).toBe(broken);
+  expect(matches(broken, item("merge"))).toBe(false);
+  expect(folded(inbox({ what: "review", query: "is!=draft" }))).toMatchObject({
+    what: "any",
+    query: "waiting=review is!=draft",
+  });
 });
 
 it("matches its query on top of the rest", () => {

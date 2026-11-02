@@ -118,6 +118,11 @@ it("says why a query does not read, and then narrows nothing", () => {
     expect(matchesQuery(query, entry())).toBe(true);
   }
   expect(parseQuery("   ")).toEqual({ expr: null, error: "" });
+  // waiting= is an inbox's queue alone: refused elsewhere.
+  expect(queryProblem("waiting=review")).toBe("");
+  expect(queryProblem("is=draft OR -waiting=merge", false)).toBe(
+    "waiting works only in an inbox's queue.",
+  );
   // Too long to save, though it still reads and matches.
   expect(queryProblem("a".repeat(501))).toBe("A filter is at most 500 characters.");
   expect(parseQuery("a".repeat(501)).error).toBe("");

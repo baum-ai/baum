@@ -175,6 +175,18 @@ test("filters Pull requests, saves and edits a tab, and reads a repository from 
   await page.getByRole("combobox", { name: "Add filter" }).fill("assig");
   await page.keyboard.press("Enter");
   await page.keyboard.press("Enter");
+  // Tab moves the operator the values are picked with, and back.
+  const assignee = page.getByRole("listbox", { name: "Assignee" });
+  await page.keyboard.press("Tab");
+  await expect(assignee.getByRole("radio", { name: "is not" })).toHaveAttribute(
+    "aria-checked",
+    "true",
+  );
+  await page.keyboard.press("Shift+Tab");
+  await expect(assignee.getByRole("radio", { name: "is", exact: true })).toHaveAttribute(
+    "aria-checked",
+    "true",
+  );
   await shot(page, "6-pull-requests-menu");
   const box = (await panel.boundingBox())!;
   expect(box.x + box.width).toBeLessThanOrEqual(page.viewportSize()!.width);

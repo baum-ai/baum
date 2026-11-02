@@ -1,6 +1,12 @@
 import { uiState, useUIState } from "./ui-state";
-import { FilterBar, FilterButton, SaveButton, type SaveOption } from "./filter-menu";
-import { matchesQuery, queryProblem, usePageFilter } from "./pr-filter";
+import {
+  FilterBar,
+  FilterButton,
+  FilterSaveError,
+  SaveButton,
+  type SaveOption,
+} from "./filter-menu";
+import { matchesQuery, queryProblem, useFilterDraft } from "./pr-filter";
 import {
   Fragment,
   useEffect,
@@ -40,6 +46,7 @@ import {
   fixLabel,
   isActiveJob,
   jobHref,
+  agentName,
   jobReasonText,
   joinAnd,
   liveFor,
@@ -61,11 +68,13 @@ import {
   inboxesOf,
   nameProblem,
   type Inbox,
+  type InboxColor,
 } from "./inboxes";
 import { useDisclosure } from "@baum/viewer/components/use-disclosure";
 import { MenuButton, useContextMenu, type MenuItem } from "./context-menu";
 import { ListSection, type ListTone } from "./list";
 import { useNow } from "./live";
+import { transcriptHref } from "./sessions";
 import {
   canMerge,
   defaultMergeMethod,
@@ -100,8 +109,8 @@ export type UpNextItem = {
   why: string;
   /** The reading estimate of a review; null when there is none. */
   minutes: number | null;
-  /** Agent sessions working on its branch now. */
-  working: number;
+  /** The agent sessions working on its branch now. */
+  working: LiveSession[];
   /** The latest fix of a pull request in the queue as a fix, when it failed. */
   failedFix?: Job;
 };
@@ -315,12 +324,12 @@ export function upNext(
       continue;
     }
     const last = kind === "fix" ? fixJob(entry, jobs) : undefined;
-    const working = liveFor(live, entry.pull_request).filter((s) => s.state === "running").length;
+    const working = liveFor(live, entry.pull_request).filter((s) => s.state === "running");
     items.push({
       key,
       kind,
       entry,
-      why: why(kind, entry, working),
+      why: why(kind, entry, working.length),
       minutes: kind === "review" ? (entry.review_minutes ?? null) : null,
       working,
       ...(last?.state === "failed" ? { failedFix: last } : {}),
@@ -704,6 +713,40 @@ export function InboxTag({ inbox }: { inbox: Inbox }) {
   return <span className={`upnext-tag inbox-${inbox.color}`}>{inbox.name}</span>;
 }
 
+/** The six inbox colours as a radio group; `pick` hears a new one. */
+export function ColourSwatches({
+  color: current,
+  pick,
+  className,
+}: {
+  color: InboxColor;
+  pick: (color: InboxColor) => void;
+  className?: string;
+}) {
+  return (
+    <div
+      role="radiogroup"
+      aria-label="Colour"
+      className={className ? `inbox-swatches ${className}` : "inbox-swatches"}
+    >
+      {INBOX_COLORS.map((color) => (
+        <button
+          key={color}
+          type="button"
+          role="radio"
+          aria-checked={current === color}
+          aria-label={COLOR_NAMES[color]}
+          title={COLOR_NAMES[color]}
+          className={`inbox-swatch inbox-${color}`}
+          onClick={() => {
+            if (current !== color) pick(color);
+          }}
+        />
+      ))}
+    </div>
+  );
+}
+
 /** An inbox's colour and name at the head of its queue, each changed in
  *  place: the dot opens the six colours, and the name becomes a field (Enter
  *  or leaving it saves, Esc keeps the old name). */
@@ -742,23 +785,14 @@ function InboxHeadEdit({
           <span aria-hidden="true" className="inbox-dot inbox-dot-large" />
         </summary>
         {colours.open ? (
-          <div role="radiogroup" aria-label="Colour" className="inbox-swatches inbox-head-swatches">
-            {INBOX_COLORS.map((color) => (
-              <button
-                key={color}
-                type="button"
-                role="radio"
-                aria-checked={inbox.color === color}
-                aria-label={COLOR_NAMES[color]}
-                title={COLOR_NAMES[color]}
-                className={`inbox-swatch inbox-${color}`}
-                onClick={() => {
-                  colours.close();
-                  if (inbox.color !== color) update({ color });
-                }}
-              />
-            ))}
-          </div>
+          <ColourSwatches
+            color={inbox.color}
+            className="inbox-head-swatches"
+            pick={(color) => {
+              colours.close();
+              update({ color });
+            }}
+          />
         ) : null}
       </details>
       {draft === null ? (
@@ -828,6 +862,7 @@ export function UpNextPage({
   entries = [],
   saveAsInbox,
   updateInbox,
+  inboxSaves = 0,
   Link,
 }: {
   inbox: UpNextState;
@@ -862,6 +897,8 @@ export function UpNextPage({
   /** Changes the inbox shown: its query (the page's filter added), name or
    *  colour. */
   updateInbox?: (patch: Partial<Inbox>) => void;
+  /** How many inbox saves the daemon has accepted. */
+  inboxSaves?: number;
   Link: ComponentType<ViewerLinkProps>;
 }) {
   const [merging, setMerging] = useState<Entry | null>(null);
@@ -879,18 +916,14 @@ export function UpNextPage({
   // The page's filter. In a saved inbox it starts as the inbox's own query,
   // and a change is a draft that narrows the queue until Update inbox saves it
   // (kept per inbox; none kept is the saved query).
-  const quick = usePageFilter(scope ? `inbox:${scope.id}` : "inbox");
   const saved = scope ? foldedQuery(scope) : "";
-  const query = scope ? (quick.draft ?? saved) : quick.query;
-  // In a saved inbox "" is a draft that shows everything; its own query is none.
-  const setQuery = (next: string) =>
-    !scope ? quick.set(next) : next === saved ? quick.reset() : quick.keep(next);
-  const dirty = scope ? quick.draft !== undefined && quick.draft !== saved : false;
-  const filtering = scope ? dirty : quick.query !== "";
-  // Once the inbox holds the draft (Update inbox saved it), it is no draft.
-  useEffect(() => {
-    if (scope && quick.draft !== undefined && quick.draft === saved) quick.reset();
-  }, [saved, quick.draft]);
+  const quick = useFilterDraft(
+    scope ? `inbox:${scope.id}` : "inbox",
+    scope ? saved : null,
+    inboxSaves,
+  );
+  const { query, set: setQuery } = quick;
+  const filtering = scope ? quick.dirty : query !== "";
   const inScope = (item: { kind: UpNextKind; entry: Entry }) =>
     matchesQuery(query, item.entry, item.kind);
   const queue = all.queue.filter(inScope);
@@ -1187,14 +1220,7 @@ export function UpNextPage({
             inbox
             actions={<SaveButton options={saveOptions} />}
           />
-          {quick.error ? (
-            <p role="alert" className="upnext-filter-error">
-              {quick.error}{" "}
-              <button type="button" onClick={() => void quick.retry()}>
-                Retry
-              </button>
-            </p>
-          ) : null}
+          <FilterSaveError error={quick.error} retry={quick.retry} />
         </>
       }
     />
@@ -1443,7 +1469,7 @@ export function UpNextPage({
                 {formatCount(hidden)} pull {hidden === 1 ? "request is" : "requests are"} hidden by
                 it.
               </p>
-              <Button onClick={() => (scope ? quick.reset() : quick.set(""))}>
+              <Button onClick={() => quick.reset()}>
                 {scope ? "Discard the changes" : "Clear the filter"}
               </Button>
             </div>
@@ -2031,10 +2057,25 @@ function Panel({
           {block.more ? <p className="upnext-block-more">{block.more}</p> : null}
         </section>
       ))}
-      {item && item.working > 0 ? (
+      {item && item.working.length > 0 ? (
         <p className="upnext-agents">
           <LiveDot className="text-(--status-positive)" />
-          {plural(item.working, "agent session")} working on its branch right now
+          {/* Each opens on Sessions with that session selected. */}
+          {item.working.length === 1 ? (
+            <Link href={transcriptHref(item.working[0]!)}>
+              1 agent session working on its branch right now
+            </Link>
+          ) : (
+            <span>
+              {plural(item.working.length, "agent session")} working on its branch right now:{" "}
+              {item.working.map((session, index) => (
+                <Fragment key={transcriptHref(session)}>
+                  {index > 0 ? " · " : ""}
+                  <Link href={transcriptHref(session)}>{agentName(session.agent)}</Link>
+                </Fragment>
+              ))}
+            </span>
+          )}
         </p>
       ) : null}
     </article>

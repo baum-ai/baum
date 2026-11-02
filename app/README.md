@@ -827,7 +827,8 @@ saved review is read when its pull request is selected, and again only for a
 new version. A pull request back in the queue as a Fix whose latest fix job
 failed says "The last fix failed: <reason>", with **See what the agent did**
 (the transcript, else the job in the list). Agent sessions working on its
-branch are counted at the foot of the panel.
+branch are counted at the foot of the panel, as a link to Sessions with that
+session selected (with several, each by its agent's name).
 
 Snooze offers 1 hour, this afternoon (3 PM, while that is more than an hour
 away), tomorrow morning (9 AM) and **Until it changes**, which hides the pull

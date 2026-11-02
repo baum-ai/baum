@@ -166,7 +166,7 @@ function joinOr(parts: string[]) {
 /** The three parts of an inbox's sentence, in lower case: what it holds,
  *  where, and at what risk. `login` is the signed-in GitHub account, whose
  *  own repositories read as such. */
-export function sentenceParts(inbox: Inbox, login?: string) {
+function sentenceParts(inbox: Inbox, login?: string) {
   return {
     what: WHAT_WORDS[inbox.what] ?? WHAT_WORDS.any,
     where:

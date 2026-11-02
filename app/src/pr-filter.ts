@@ -1,4 +1,5 @@
 import type { Entry } from "./api";
+import { useEffect } from "react";
 import { uiState, useUIState } from "./ui-state";
 
 /** A filter over pull requests, written like a GitHub search:
@@ -133,7 +134,7 @@ function riskTest(value: string, entry: Entry, op: Op): boolean {
           : score === n;
 }
 
-export const FIELDS: Field[] = [
+const FIELDS: Field[] = [
   {
     key: "repo",
     label: "Repository",
@@ -201,7 +202,7 @@ export const FIELDS: Field[] = [
 ];
 const fieldOf = (key: string) => FIELDS.find((one) => one.key === key.toLowerCase());
 
-export const OPERATORS = ["AND", "OR", "NOT"] as const;
+const OPERATORS = ["AND", "OR", "NOT"] as const;
 
 type Token =
   | { kind: "(" | ")" | "AND" | "OR" | "NOT"; start: number; end: number }
@@ -446,7 +447,7 @@ export function hasValue(query: string, key: string, value: string, op: Op = "="
 export const tidyQuery = (query: string) => query.replace(/[\p{Cc}\s]+/gu, " ").trim();
 const tidy = tidyQuery;
 /** The daemon's limit on a query. */
-export const MAX_QUERY = 500;
+const MAX_QUERY = 500;
 
 /** The query with the value required, or no longer required: a term of the
  *  field and operator that must hold gains or loses it as one more choice
@@ -697,6 +698,28 @@ export function usePageFilter(page: FilterPage) {
     reset() {
       if (stored !== undefined) write(null);
     },
+  };
+}
+
+/** A page's filter, or over a saved inbox or tab (`saved`, its query; null
+ *  for a page of neither) a draft of that query: it starts as the saved one,
+ *  and a change narrows the page until saved into it. "" is then a draft that
+ *  shows everything. A draft the saved query caught up with is dropped once
+ *  `confirmed` (a count of saves the daemon accepted) moves, so a save shown
+ *  before the daemon answers, and then refused, keeps it. */
+export function useFilterDraft(page: FilterPage, saved: string | null, confirmed = 0) {
+  const filter = usePageFilter(page);
+  const own = saved !== null;
+  const dirty = own && filter.draft !== undefined && filter.draft !== saved;
+  useEffect(() => {
+    if (own && filter.draft !== undefined && filter.draft === saved) filter.reset();
+  }, [confirmed]);
+  return {
+    ...filter,
+    query: own ? (filter.draft ?? saved) : filter.query,
+    dirty,
+    set: (next: string) =>
+      !own ? filter.set(next) : next === saved ? filter.reset() : filter.keep(next),
   };
 }
 

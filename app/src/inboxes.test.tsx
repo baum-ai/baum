@@ -360,6 +360,58 @@ it("closes an inbox's menu when the sidebar scrolls, giving focus back to its bu
   expect(document.activeElement).toBe(more("Acme"));
 });
 
+it("starts a saved inbox's filter from its query and keeps a change as a draft until it is saved", async () => {
+  await render("?inbox=Merges");
+  expect(titles()).toEqual(["Change 3", "Change 4"]);
+  await click(node.querySelector("summary.filter-menu-button"));
+  const box = () => node.querySelector<HTMLTextAreaElement>(".filter-menu-query textarea")!;
+  const typeQuery = (value: string) =>
+    act(async () => {
+      box().focus();
+      const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!;
+      setter.call(box(), value);
+      box().dispatchEvent(new Event("input", { bubbles: true }));
+      box().blur();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+  const saves = () => [
+    node.querySelector(".filter-save-main")?.textContent,
+    ...Array.from(node.querySelectorAll(".filter-save-menu [role=menuitem]")).map(
+      (one) => one.textContent,
+    ),
+  ];
+  expect(box().value).toBe("waiting=merge");
+  // Nothing to save while it is the inbox's own query.
+  expect(node.querySelector(".filter-save-main")).toBeNull();
+
+  // Emptied, the draft shows the whole queue; Discard changes goes back.
+  await typeQuery("");
+  expect(titles()).toHaveLength(4);
+  await click(node.querySelector("summary.filter-save-arrow"));
+  expect(saves()).toEqual(["Update inbox", "Create inbox", "Discard changes"]);
+  await click(
+    Array.from(node.querySelectorAll<HTMLElement>(".filter-save-menu [role=menuitem]")).find(
+      (one) => one.textContent === "Discard changes",
+    ),
+  );
+  expect(titles()).toEqual(["Change 3", "Change 4"]);
+  expect(box().value).toBe("waiting=merge");
+
+  // A save that fails keeps the draft; one that goes through ends it.
+  await typeQuery("waiting=merge -#4");
+  expect(titles()).toEqual(["Change 3"]);
+  readStatus = 500;
+  await click(node.querySelector(".filter-save-main"));
+  expect(puts).toHaveLength(1);
+  expect(box().value).toBe("waiting=merge -#4");
+  expect(node.querySelector(".filter-save-main")!.textContent).toBe("Update inbox");
+  readStatus = 0;
+  await click(node.querySelector(".filter-save-main"));
+  expect(puts.at(-1)!.inboxes.find((one) => one.id === "Merges")!.query).toBe("waiting=merge -#4");
+  expect(node.querySelector(".filter-save-main")).toBeNull();
+  expect(titles()).toEqual(["Change 3"]);
+});
+
 it("opens an inbox's menu from its ⋯ and from a right click, and closes it with Esc", async () => {
   await render();
   await act(async () => {

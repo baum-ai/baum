@@ -2,13 +2,11 @@ import { useEffect, useId, useRef, useState, type ComponentType } from "react";
 import type { ViewerLinkProps } from "@baum/viewer/navigation";
 import { appURL } from "./api";
 import {
-  COLOR_NAMES,
   sentence,
   templateInbox,
   countOf,
   fromTemplate,
   inboxesOf,
-  INBOX_COLORS,
   matches,
   MAX_INBOXES,
   nameProblem,
@@ -20,7 +18,7 @@ import { MenuButton, useContextMenu, type MenuItem } from "./context-menu";
 import { FilterBar, FilterButton } from "./filter-menu";
 import { PageBar } from "./shell";
 import { SettingRow } from "./settings";
-import { GROUPS, InboxTag, type UpNextItem } from "./up-next";
+import { ColourSwatches, GROUPS, InboxTag, type UpNextItem } from "./up-next";
 import { DANGER, PRIMARY, SECONDARY } from "./action-classes";
 
 /** What the three inbox pages share: the person's inboxes and the unsnoozed
@@ -308,22 +306,7 @@ function EditInbox({
                   }
                 }}
               />
-              <div role="radiogroup" aria-label="Colour" className="inbox-swatches">
-                {INBOX_COLORS.map((color) => (
-                  <button
-                    key={color}
-                    type="button"
-                    role="radio"
-                    aria-checked={inbox.color === color}
-                    aria-label={COLOR_NAMES[color]}
-                    title={COLOR_NAMES[color]}
-                    className={`inbox-swatch inbox-${color}`}
-                    onClick={() => {
-                      if (inbox.color !== color) change({ color });
-                    }}
-                  />
-                ))}
-              </div>
+              <ColourSwatches color={inbox.color} pick={(color) => change({ color })} />
             </div>
             {nameError ? (
               <p id={`${ids}-name-error`} role="alert" className="inbox-name-error">
