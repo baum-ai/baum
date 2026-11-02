@@ -25,7 +25,7 @@ const repository = (name: string, automatic: boolean | null = null): Repository 
   clones: [
     {
       id: name,
-      path: `/Users/someone/work/${name}`,
+      path: `/home/dev/work/${name}`,
       repository: name,
       available: true,
       settings: { automatic },

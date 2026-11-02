@@ -2113,7 +2113,9 @@ function repositoryActivity(repository: string, entries: Entry[], jobs: Job[]): 
     .sort()
     .at(-1);
   return {
-    open: own.filter((e) => !e.historical).length,
+    // The index lists a pull request once per clone store, so count each
+    // pull request once however many registered clones see it.
+    open: new Set(own.filter((e) => !e.historical).map((e) => e.pull_request.number)).size,
     reviewed: reviewed ?? null,
     running: jobs.filter(
       (job) => !job.kind && isActiveJob(job) && sameRepository(job.repository, repository),
