@@ -1499,8 +1499,11 @@ stays.
   run a command", "wants to edit a file", "wants to use X"), the session's title and
   branch, the agent's last message, what the request would do (`code` rows in a dark
   mono block) and the buttons Allow once, one Always allow per suggestion, and Deny. A
-  `question` request shows its options as buttons (toggles and Submit for
-  multi-select or several questions). A button disables the card and shows "Sending…"
+  `question` request shows its options as numbered rows, each with its description
+  under its label and "(Recommended)" as a tag (toggles and Submit for
+  multi-select or several questions). Several questions show one at a time under a
+  tab each, ticked once answered; a single choice moves on to the next unanswered
+  question, and Back, Next and Submit sit under it. A button disables the card and shows "Sending…"
   at once; the card says "Sent" until the next `live` refresh drops the request, and a
   409 `request_gone` shows "Already answered in the terminal". A green notice says
   what was done, and when nobody waits it reads "Nobody is waiting on you." with the
