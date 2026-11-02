@@ -617,7 +617,8 @@ func (s *Scheduler) CatchUp(ctx context.Context, n int) error {
 			continue
 		}
 		pr := rs.PRs[c.pr.Number]
-		if pr == nil || pr.Head != c.pr.HeadSHA || pr.Pending != "" || pr.Done == pr.Head {
+		// A newer snapshot may have seen it turn ineligible at the same head.
+		if pr == nil || pr.Head != c.pr.HeadSHA || !pr.Eligible || pr.Pending != "" || pr.Done == pr.Head {
 			continue
 		}
 		// The baseline marked the head retried; an interrupted catch-up run

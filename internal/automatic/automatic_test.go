@@ -1297,3 +1297,25 @@ func TestCatchUpTakesAStackGroupWhole(t *testing.T) {
 	h.pass()
 	h.want(append(members, "org/repo#group@1@a1,2@b1:stack_reviewed")...)
 }
+
+// A newer snapshot that shows a chosen pull request no longer covered, at the
+// same head, while the catch-up is still polling leaves it out.
+func TestCatchUpSkipsAPullRequestThatTurnedIneligible(t *testing.T) {
+	h := newHarness(t)
+	h.registry.prefs.PullRequests = repos.PullRequestsRequested
+	open := []pr{{number: 1, head: "a1", requested: true}, {number: 2, head: "b1", requested: true}}
+	h.scheduler.Discover = func(context.Context, github.Repository) (discovery.Snapshot, error) {
+		return h.snapshot(open...), nil
+	}
+	h.scheduler.Discovered = func(ctx context.Context, snapshot discovery.Snapshot) {
+		h.scheduler.Observe(ctx, snapshot)
+		newer := h.snapshot(pr{number: 1, head: "a1"}, open[1])
+		newer.FetchedAt = snapshot.FetchedAt.Add(time.Second)
+		h.scheduler.Observe(ctx, newer)
+	}
+	if err := h.scheduler.CatchUp(context.Background(), SetupCatchUp); err != nil {
+		t.Fatal(err)
+	}
+	h.pass()
+	h.want("org/repo#2@b1:setup")
+}
