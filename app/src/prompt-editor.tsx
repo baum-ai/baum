@@ -1,5 +1,5 @@
 import { Alert, Badge, Button } from "@baum/viewer/components/ui";
-import { Fragment, useLayoutEffect, useRef, useState } from "react";
+import { Fragment, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { request, type PromptEntry, type RepositoryPromptEntry } from "./api";
 
 const errorText = (error: unknown) =>
@@ -34,8 +34,20 @@ export type DiffLine = { kind: "same" | "add" | "del"; text: string };
 /** A line diff from `before` to `after`, by the longest common subsequence of
  *  lines. Null when the texts are too large to compare cheaply. */
 export function lineDiff(before: string, after: string): DiffLine[] | null {
-  const a = lf(before).split("\n");
-  const b = lf(after).split("\n");
+  const all = lf(before).split("\n");
+  const bll = lf(after).split("\n");
+  // Lines both texts share at either end need no comparing.
+  let head = 0;
+  while (head < all.length && head < bll.length && all[head] === bll[head]) head++;
+  let tail = 0;
+  while (
+    tail < all.length - head &&
+    tail < bll.length - head &&
+    all[all.length - 1 - tail] === bll[bll.length - 1 - tail]
+  )
+    tail++;
+  const a = all.slice(head, all.length - tail);
+  const b = bll.slice(head, bll.length - tail);
   if (a.length * b.length > 4_000_000) return null;
   const width = b.length + 1;
   const table = new Uint32Array((a.length + 1) * width);
@@ -58,7 +70,11 @@ export function lineDiff(before: string, after: string): DiffLine[] | null {
   }
   while (i < a.length) out.push({ kind: "del", text: a[i++]! });
   while (j < b.length) out.push({ kind: "add", text: b[j++]! });
-  return out;
+  return [
+    ...all.slice(0, head).map((text) => ({ kind: "same" as const, text })),
+    ...out,
+    ...all.slice(all.length - tail).map((text) => ({ kind: "same" as const, text })),
+  ];
 }
 
 /** The text cut into plain runs and runs that are a safety rule's text. */
@@ -142,7 +158,6 @@ function HighlightedTextarea({
         className="prompt-text prompt-input"
         spellCheck={false}
         value={value}
-        rows={18}
         onChange={(event) => onChange(event.target.value)}
         onScroll={(event) => {
           if (mirror.current) mirror.current.scrollTop = event.currentTarget.scrollTop;
@@ -160,12 +175,13 @@ function HighlightedTextarea({
   );
 }
 
-function Diff({ lines }: { lines: DiffLine[] | null }) {
+function Diff({ before, after }: { before: string; after: string }) {
+  const lines = useMemo(() => lineDiff(before, after), [before, after]);
   if (!lines) return <p className="settings-footnote">The texts are too large to compare.</p>;
   if (lines.every((line) => line.kind === "same"))
     return <p className="settings-footnote">No changes.</p>;
   return (
-    <pre className="prompt-view prompt-diff" aria-label="Changes">
+    <pre className="prompt-view prompt-diff" role="region" aria-label="Changes">
       {lines.map((line, index) => (
         <span key={index} data-kind={line.kind}>
           {line.kind === "add" ? "+ " : line.kind === "del" ? "- " : "  "}
@@ -187,6 +203,8 @@ export function PromptEditor({
   baselineName,
   resetLabel,
   saveLabel,
+  draft,
+  setDraft,
   saved,
   close,
 }: {
@@ -199,16 +217,23 @@ export function PromptEditor({
   baselineName: string;
   resetLabel: string;
   saveLabel: string;
+  /** The text typed and not yet saved, kept by the list so closing the editor
+   *  or opening another does not drop it; undefined when there is none. */
+  draft: string | undefined;
+  setDraft: (update: (current: string | undefined) => string | undefined) => void;
   /** Receives the entry the daemon returns. */
   saved: (entry: PromptEntry) => void;
   close: () => void;
 }) {
   const stored = entry.custom_text;
-  const [text, setText] = useState(stored ?? baseline);
+  const text = draft ?? stored ?? baseline;
+  const setText = (next: string) =>
+    setDraft(() => (next === (stored ?? baseline) ? undefined : next));
   const [view, setView] = useState<"" | "default" | "changes">("");
   const [busy, setBusy] = useState<"" | "save" | "reset">("");
   const [error, setError] = useState("");
-  const [done, setDone] = useState("");
+  // What the last save stored; "Saved" shows only while the text is still it.
+  const [savedText, setSavedText] = useState<string | null>(null);
   const working = useRef(false);
   const rulesId = `prompt-rules-${entry.id}`;
   const missing = missingRules(text, entry.safety_rules);
@@ -217,12 +242,18 @@ export function PromptEditor({
     working.current = true;
     setBusy(kind);
     setError("");
-    setDone("");
+    setSavedText(null);
     try {
       const next = await request<PromptEntry>(path, { text: body }, "PUT");
       saved(next);
-      if (kind === "reset") close();
-      else setDone("Saved");
+      if (kind === "reset") {
+        setDraft(() => undefined);
+        close();
+      } else {
+        setSavedText(body);
+        // The text may have changed while the save ran.
+        setDraft((current) => (current === body ? undefined : current));
+      }
     } catch (e) {
       setError(errorText(e));
     } finally {
@@ -245,10 +276,7 @@ export function PromptEditor({
         value={text}
         rules={entry.safety_rules}
         describedBy={rulesId}
-        onChange={(next) => {
-          setText(next);
-          setDone("");
-        }}
+        onChange={setText}
       />
       <div id={rulesId}>
         {entry.safety_rules.length > 0 ? (
@@ -318,21 +346,21 @@ export function PromptEditor({
           Close
         </Button>
         <p role="status" className="settings-saved">
-          {done}
+          {savedText === text ? "Saved" : ""}
         </p>
       </div>
       {empty ? (
         <p className="settings-footnote">An empty prompt cannot be saved. Reset it instead.</p>
       ) : null}
       {view === "default" ? (
-        <pre className="prompt-view" aria-label="The default prompt">
+        <pre className="prompt-view" role="region" aria-label="The default prompt">
           {entry.default_text}
         </pre>
       ) : null}
       {view === "changes" ? (
         <>
           <p className="settings-footnote">Changes from {baselineName}.</p>
-          <Diff lines={lineDiff(baseline, text)} />
+          <Diff before={baseline} after={text} />
         </>
       ) : null}
     </div>
@@ -351,15 +379,14 @@ export function PromptList({
   entries,
   repository,
   replace,
-  heading = "h3",
 }: {
   entries: (PromptEntry | RepositoryPromptEntry)[];
   repository?: string;
   replace: (entry: PromptEntry) => void;
-  heading?: "h3" | "h4";
 }) {
   const [open, setOpen] = useState("");
-  const Heading = heading;
+  const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const Heading = "h3";
   return (
     <>
       {groups.map((group) => {
@@ -400,6 +427,11 @@ export function PromptList({
                           </Badge>
                         </span>
                         <div className="settings-row-detail">{entry.used_by}</div>
+                        {drafts[entry.id] !== undefined ? (
+                          <div className="settings-row-detail settings-caution">
+                            Unsaved changes
+                          </div>
+                        ) : null}
                         {entry.outdated ? (
                           <div className="settings-row-detail settings-caution">
                             Written for {entry.based_on}; the default is now {entry.default_version}
@@ -418,7 +450,10 @@ export function PromptList({
                         entry.missing_safety_rules.length > 0 ? (
                           <div className="settings-row-detail settings-caution">
                             No longer contains a safety rule:{" "}
-                            {entry.missing_safety_rules.join(", ")}.
+                            {entry.missing_safety_rules
+                              .map((id) => entry.safety_rules.find((r) => r.id === id)?.label ?? id)
+                              .join(", ")}
+                            .
                           </div>
                         ) : null}
                       </div>
@@ -448,6 +483,14 @@ export function PromptList({
                         }
                         resetLabel={repository ? "Use inherited" : "Reset to default"}
                         saveLabel={repository ? "Save for this repository" : "Save"}
+                        draft={drafts[entry.id]}
+                        setDraft={(update) =>
+                          setDrafts((all) => {
+                            const { [entry.id]: current, ...rest } = all;
+                            const next = update(current);
+                            return next === undefined ? rest : { ...rest, [entry.id]: next };
+                          })
+                        }
                         saved={replace}
                         close={() => setOpen("")}
                       />

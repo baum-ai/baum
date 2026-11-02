@@ -118,18 +118,18 @@ export const settingsSections = [
   "general",
   "reviews",
   "fixes",
-  "prompts",
   "connections",
   "computer",
+  "prompts",
 ] as const;
 export type SettingsSection = (typeof settingsSections)[number];
 const sectionTitles: Record<SettingsSection, string> = {
   general: "General",
   reviews: "Reviews",
   fixes: "Fixes",
-  prompts: "Prompts",
   connections: "Connections",
   computer: "This computer",
+  prompts: "Prompts",
 };
 
 /** The controls the keyboard steps through in the shown section, in reading
@@ -464,7 +464,7 @@ export function RepositoryPrompts({ repository }: { repository: string }) {
       </summary>
       <p className="settings-footnote">
         Prompt changes save at once. They are not part of Save repository settings, and Cancel does
-        not undo them.
+        not undo them. Unsaved prompt text is discarded when you close this dialog.
       </p>
       {error ? (
         <Alert>
@@ -478,7 +478,6 @@ export function RepositoryPrompts({ repository }: { repository: string }) {
         <PromptList
           entries={entries}
           repository={repository}
-          heading="h4"
           replace={(entry) =>
             setEntries(
               (all) =>
@@ -1202,15 +1201,6 @@ export function SettingsPage({
       tone: fix && !fix.fixable ? "caution" : undefined,
     },
     {
-      id: "prompts",
-      sub: prompts.entries
-        ? `${prompts.entries.filter(isCustom).length} custom`
-        : prompts.error
-          ? "Unavailable"
-          : "Reading…",
-      tone: prompts.entries && promptsNeedAttention(prompts.entries) ? "caution" : undefined,
-    },
-    {
       id: "connections",
       sub: setup.desktop ? "GitHub and agent hooks" : "GitHub",
       tone:
@@ -1225,6 +1215,15 @@ export function SettingsPage({
             ? "Diagnostics, CLI, environment"
             : "Diagnostics, environment",
       tone: problems > 0 ? "critical" : undefined,
+    },
+    {
+      id: "prompts",
+      sub: prompts.entries
+        ? `${prompts.entries.filter(isCustom).length} custom`
+        : prompts.error
+          ? "Unavailable"
+          : "Reading…",
+      tone: prompts.entries && promptsNeedAttention(prompts.entries) ? "caution" : undefined,
     },
   ];
   const keys = useSettingsKeys(

@@ -10,7 +10,8 @@ test("replaces a global prompt, overrides it for a repository and resets both", 
 }) => {
   test.setTimeout(90000);
   await page.setViewportSize({ width: 1280, height: 1100 });
-  {
+  let id = "";
+  try {
     await page.goto(await launchURL());
     await page.getByRole("link", { name: "Settings" }).click();
     await page.getByRole("button", { name: /^Prompts/ }).click();
@@ -19,7 +20,7 @@ test("replaces a global prompt, overrides it for a repository and resets both", 
     await expect(section.getByRole("region", { name: "Fixes" })).toBeVisible();
     await expect(section.getByRole("region", { name: "Data extraction" })).toBeVisible();
     const first = section.locator("[data-prompt]").first();
-    const id = (await first.getAttribute("data-prompt"))!;
+    id = (await first.getAttribute("data-prompt"))!;
     const title = (await first.locator(".settings-row-label").innerText()).replace(
       /\s+(Default|Custom)$/,
       "",
@@ -34,7 +35,6 @@ test("replaces a global prompt, overrides it for a repository and resets both", 
     const seeded = await editor.inputValue();
     expect(seeded.length).toBeGreaterThan(20);
     await editor.fill(`${seeded}\nAlways answer in the language of the pull request.`);
-    await page.screenshot({ path: "test-results/prompts-editor.png", fullPage: false });
     await row(page, id).getByRole("button", { name: "Save", exact: true }).click();
     await expect(row(page, id).getByRole("status")).toHaveText("Saved");
     await expect(row(page, id)).toContainText("Custom");
@@ -65,13 +65,28 @@ test("replaces a global prompt, overrides it for a repository and resets both", 
     await row(page, id).getByRole("button", { name: "Use inherited" }).click();
     await expect(row(page, id)).toContainText("Uses global");
     await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
-
-    // Leave the fixture as it was.
     await page.goto(await launchURL());
     await page.getByRole("link", { name: "Settings" }).click();
     await page.getByRole("button", { name: /^Prompts/ }).click();
     await row(page, id).getByRole("button", { name: /^Edit/ }).click();
     await row(page, id).getByRole("button", { name: "Reset to default" }).click();
     await expect(row(page, id)).toContainText("Default");
+  } finally {
+    // Leave the fixture as it was, whatever failed above.
+    if (id) {
+      await page.goto(await launchURL());
+      await expect(page.getByRole("link", { name: "Settings" })).toBeVisible();
+      await page.evaluate(async (prompt) => {
+        for (const path of [
+          `api/repositories/acme/demo/prompts/${prompt}`,
+          `api/settings/prompts/${prompt}`,
+        ])
+          await fetch(new URL(path, location.href), {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ text: null }),
+          });
+      }, id);
+    }
   }
 });

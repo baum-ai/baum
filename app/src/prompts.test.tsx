@@ -35,7 +35,7 @@ const entry = (
   custom_text: null,
   based_on: null,
   outdated: false,
-  safety_rules: [{ id: "no-run", label: "No commands", text: RULE }],
+  safety_rules: [{ id: "review.no-run", label: "No commands", text: RULE }],
   missing_safety_rules: [],
   ...over,
 });
@@ -87,7 +87,7 @@ it("lists every prompt grouped, staged ones included, with its state", async () 
     custom_text: "mine",
     based_on: "v1",
     outdated: true,
-    missing_safety_rules: ["No commands"],
+    missing_safety_rules: ["review.no-run"],
   });
   stub(
     () => ({ prompts: list }),
@@ -142,7 +142,7 @@ it("warns when a safety rule is removed, still saves, and keeps the text on fail
         ? new Response(JSON.stringify({ message: "too big" }), { status: 413 })
         : entry("review", "reviews", {
             custom_text: body.text,
-            missing_safety_rules: ["No commands"],
+            missing_safety_rules: ["review.no-run"],
           }),
   );
   act(() => root.render(<Section />));
@@ -277,4 +277,106 @@ it("marks a review version made with custom prompts", () => {
   expect(host.textContent).toContain("Custom prompt (global)");
   render("repository");
   expect(host.textContent).toContain("Custom prompt (this repository)");
+});
+
+it("keeps a draft when another prompt is opened, and marks the row unsaved", async () => {
+  stub(
+    () => ({ prompts: all() }),
+    () => ({}),
+  );
+  act(() => root.render(<Section />));
+  await flush();
+  act(() => byLabel("Customise: Title review").click());
+  await type("A draft I have not saved");
+  act(() => byLabel("Customise: Title fix").click());
+  expect(area().value).toBe(all()[2]!.default_text);
+  expect(host.querySelector('[data-prompt="review"]')!.textContent).toContain("Unsaved changes");
+  expect(host.querySelector('[data-prompt="fix"]')!.textContent).not.toContain("Unsaved changes");
+  act(() => byLabel("Customise: Title review").click());
+  expect(area().value).toBe("A draft I have not saved");
+  // Typing the seeded text back is no change.
+  await type(all()[0]!.default_text);
+  expect(host.querySelector('[data-prompt="review"]')!.textContent).not.toContain(
+    "Unsaved changes",
+  );
+});
+
+it("sends one save at a time and shows Saved only while the text is the saved one", async () => {
+  let release: (() => void) | undefined;
+  const calls = stub(
+    () => ({ prompts: [entry("review", "reviews")] }),
+    () => ({}),
+  );
+  vi.mocked(fetch).mockImplementation(async (url, init) => {
+    const method = (init as RequestInit | undefined)?.method ?? "GET";
+    if (method === "GET") return Response.json({ prompts: [entry("review", "reviews")] });
+    calls.push({ method, path: String(url), body: JSON.parse(String((init as RequestInit).body)) });
+    await new Promise<void>((r) => (release = r));
+    return Response.json(entry("review", "reviews", { custom_text: "one" }));
+  });
+  act(() => root.render(<Section />));
+  await flush();
+  act(() => byLabel("Customise: Title review").click());
+  await type("one");
+  const save = button("Save");
+  act(() => {
+    save.click();
+    save.click();
+  });
+  expect(calls.filter((c) => c.method === "PUT")).toHaveLength(1);
+  await type("one and more");
+  await act(async () => release?.());
+  await flush();
+  expect(host.querySelector(".settings-saved")!.textContent).toBe("");
+  expect(button("Save").disabled).toBe(false);
+});
+
+it("lets Esc leave the field without closing a dialog around it", async () => {
+  stub(
+    () => ({ prompts: [entry("review", "reviews")] }),
+    () => ({}),
+  );
+  act(() => root.render(<Section />));
+  await flush();
+  act(() => byLabel("Customise: Title review").click());
+  area().focus();
+  const event = new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true });
+  act(() => void area().dispatchEvent(event));
+  expect(event.defaultPrevented).toBe(true);
+  expect(document.activeElement).not.toBe(area());
+});
+
+it("seeds a repository prompt from the inherited text again after Use inherited", async () => {
+  let row = repoEntry("review", "repository", { custom_text: "Own" });
+  stub(
+    () => ({ prompts: [row] }),
+    () => {
+      row = { ...row, custom_text: null, source: "global", inherited_text: "Global now" };
+      return row;
+    },
+  );
+  act(() => root.render(<RepositoryPrompts repository="acme/demo" />));
+  await flush();
+  act(() => byLabel("Edit: Title review").click());
+  expect(area().value).toBe("Own");
+  act(() => button("Use inherited").click());
+  await flush();
+  act(() => byLabel("Customise for this repository: Title review").click());
+  expect(area().value).toBe("Global now");
+});
+
+it("names the safety rules a prompt lacks by label, not id", async () => {
+  stub(
+    () => ({
+      prompts: [
+        entry("review", "reviews", { custom_text: "x", missing_safety_rules: ["review.no-run"] }),
+      ],
+    }),
+    () => ({}),
+  );
+  act(() => root.render(<Section />));
+  await flush();
+  const text = host.querySelector('[data-prompt="review"]')!.textContent!;
+  expect(text).toContain("No longer contains a safety rule: No commands.");
+  expect(text).not.toContain("review.no-run");
 });

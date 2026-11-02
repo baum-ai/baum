@@ -1602,7 +1602,7 @@ The repository dialog has a **Prompts** part (folded) listing the same entries
 with their source, "Uses default", "Uses global" or "Custom for this repository":
 **Customise for this repository** seeds the editor with `inherited_text`, and
 **Use inherited** sends `null`. These save at once through their own `PUT`s and
-are not part of **Save repository settings**, which the part says. On a review, the "Generated
+are not part of **Save repository settings**, which the part says. Typed text not yet saved is kept per prompt while the list is open (a row shows "Unsaved changes"), so opening another prompt or folding the part does not drop it; closing the dialog or leaving the section discards it, and the dialog says so. On a review, the "Generated
 with" line adds "Custom prompt (global)" or "Custom prompt (this repository)"
 when the saved version's `prompt_source` (from `api/versions`) says so.
 Analytics counts the decisions captured under baum's work.

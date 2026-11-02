@@ -2325,6 +2325,7 @@ dialog.local-dialog-wide {
 }
 .prompt-field {
   position: relative;
+  overflow: hidden;
   border: 1px solid var(--border-default);
   border-radius: var(--radius-md);
   background: var(--surface-card);
@@ -2350,6 +2351,7 @@ dialog.local-dialog-wide {
 .prompt-mirror {
   position: absolute;
   inset: 0;
+  height: auto;
   overflow: hidden;
   color: transparent;
   pointer-events: none;
@@ -2365,8 +2367,10 @@ dialog.local-dialog-wide {
   background: transparent;
   color: var(--text-primary);
 }
-.prompt-input:focus-visible {
+.prompt-field .prompt-input:focus,
+.prompt-field .prompt-input:focus-visible {
   outline: none;
+  box-shadow: none;
 }
 .prompt-subhead {
   margin: 0 0 0.25rem;

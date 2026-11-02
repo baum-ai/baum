@@ -1119,9 +1119,8 @@ it("moves through Settings' sections and their controls from the keyboard", asyn
   await key("j");
   expect(location.search).toBe("?page=settings&section=reviews");
   expect(document.activeElement).toBe(current());
-  await key("5");
+  await key("4");
   expect(location.search).toBe("?page=settings&section=connections");
-  await key("k");
   await key("k");
   await key("k");
   expect(location.search).toBe("?page=settings&section=reviews");
