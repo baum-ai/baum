@@ -726,7 +726,7 @@ list and `p` opens the focused session's pull request; on Jobs `t` opens the
 transcript (Watch while a fix runs); on Repositories `a` opens or closes the
 picker and `/` searches it (the search takes the focus when the picker opens,
 and `Esc` in an empty search leaves it). Settings' section list is its
-selection, as Up next's list is: `j`/`↓` and `k`/`↑` move it, `1` to `5` jump
+selection, as Up next's list is: `j`/`↓` and `k`/`↑` move it, `1` to `6` jump
 to a section, and `Enter`, `l` or `→` go into the shown section, where `j` and
 `k` step through its controls, `Space` or `Enter` changes the focused one and
 `Esc`, `h` or `←` go back to the list (`Esc` in a text field or select gives
@@ -1574,7 +1574,37 @@ take `{"text": string|null}` (null or `""` resets, to the built-in or the global
 text) and answer the updated entry. Errors are `{"message"}`: 400 for a text
 that fails validation or a malformed body, 404 for an unknown id or a
 repository that is not picked, 413 for a body over about twice the 64 KiB text
-limit.
+limit. An entry may also carry `invalid` and `invalid_reason`: a stored text that
+no longer passes validation after an upgrade, which jobs skip.
+
+**Settings › Prompts** (`PromptsSection`, `src/prompt-editor.tsx`) lists every
+prompt, staged review ones included, under Reviews, Fixes and Data extraction.
+Each row has its title, what uses it, **Default** or **Custom**, and a note when
+the custom text was "Written for <based_on>; the default is now
+<default_version>", when it no longer contains a safety rule, or when it is not in
+use (`invalid`: "This custom prompt is not in use: <reason>. Edit and save it, or
+reset it."; such a prompt counts as not custom). The section list reads "N custom"
+and shows an attention dot when any prompt is outdated, invalid or a custom one
+lacks a safety rule. **Customise** opens the editor in the row, seeded with the
+effective text (the built-in one globally); nothing is saved until **Save**
+(`PUT api/settings/prompts/{id}`), and one save or reset runs at a time. **Reset
+to default** sends `null`, **Show default** shows the built-in text read only and
+**Show changes** a line diff (longest common subsequence) of the editor's text
+against it. The editor is a monospace textarea over a transparent mirror of its
+text, so the text of each safety rule is marked where it stands; the mirror is
+hidden from assistive technology, which gets the rules as a list ("Present" or
+"Missing", computed as the text is typed, CRLF read as LF) and a warning, "This
+prompt no longer contains: …", beside the field. Saving stays possible and
+nothing is added back; the editor says baum adds the output format and the
+delimiting of pull request data itself. A failed save shows its message and keeps
+the text. `Esc` in the field gives it up first, without closing a dialog around it.
+The repository dialog has a **Prompts** part (folded) listing the same entries
+with their source, "Uses default", "Uses global" or "Custom for this repository":
+**Customise for this repository** seeds the editor with `inherited_text`, and
+**Use inherited** sends `null`. These save at once through their own `PUT`s and
+are not part of **Save repository settings**, which the part says. On a review, the "Generated
+with" line adds "Custom prompt (global)" or "Custom prompt (this repository)"
+when the saved version's `prompt_source` (from `api/versions`) says so.
 Analytics counts the decisions captured under baum's work.
 
 Every list page draws its list one way: Pull requests, the Inbox's queue, Sessions,

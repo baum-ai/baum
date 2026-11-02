@@ -2306,6 +2306,122 @@ dialog.local-dialog-wide {
   font-size: var(--text-xs);
   color: var(--text-tertiary);
 }
+/* Prompts: the editor is a textarea over a transparent mirror of its text,
+   so safety rules' text can be marked without a second copy on screen. */
+.prompt-group {
+  display: grid;
+  gap: 0.5rem;
+}
+.prompt-item + .prompt-item {
+  border-top: 1px solid var(--border-subtle);
+}
+.prompt-item > .settings-row + .settings-row {
+  border-top: 0;
+}
+.prompt-editor {
+  display: grid;
+  gap: 0.75rem;
+  padding: 0 1.25rem 1.25rem;
+}
+.prompt-field {
+  position: relative;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  background: var(--surface-card);
+}
+.prompt-field:focus-within {
+  box-shadow: var(--focus-ring);
+}
+.prompt-text {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  height: 24rem;
+  margin: 0;
+  padding: 0.5rem 0.65rem;
+  border: 0;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  tab-size: 2;
+}
+.prompt-mirror {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  color: transparent;
+  pointer-events: none;
+}
+.prompt-mirror mark {
+  border-radius: 2px;
+  background: var(--status-info-bg);
+  color: transparent;
+}
+.prompt-input {
+  position: relative;
+  resize: vertical;
+  background: transparent;
+  color: var(--text-primary);
+}
+.prompt-input:focus-visible {
+  outline: none;
+}
+.prompt-subhead {
+  margin: 0 0 0.25rem;
+  font-size: var(--text-base);
+  font-weight: 600;
+}
+.prompt-rules {
+  display: grid;
+  gap: 0.25rem;
+  margin: 0 0 0.5rem;
+  padding: 0;
+  list-style: none;
+  font-size: var(--text-xs);
+}
+.prompt-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+.prompt-view {
+  max-height: 24rem;
+  margin: 0;
+  padding: 0.5rem 0.65rem;
+  overflow: auto;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--surface-wash);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+}
+.prompt-diff span {
+  display: block;
+  color: var(--text-tertiary);
+}
+.prompt-diff span[data-kind="add"] {
+  background: var(--status-positive-bg);
+  color: var(--text-primary);
+}
+.prompt-diff span[data-kind="del"] {
+  background: var(--status-critical-bg);
+  color: var(--text-primary);
+}
+.repository-prompts {
+  display: grid;
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+}
+.repository-prompts > summary {
+  cursor: pointer;
+  font-weight: 600;
+}
 @media (max-width: 760px) {
   .settings-layout {
     grid-template-columns: minmax(0, 1fr);

@@ -33,6 +33,8 @@ import {
   type Repository,
   type DiagnosticReport,
   type DecisionSettings,
+  type PromptEntry,
+  type RepositoryPromptEntry,
 } from "./api";
 import {
   RepositoryPicker,
@@ -81,6 +83,7 @@ import {
 } from "./desktop/setup-model";
 import { useModal } from "./modal";
 import { LoadingStatus } from "./nine-dots";
+import { isCustom, PromptList, promptsNeedAttention } from "./prompt-editor";
 
 /** The harness and model reviews use, and the ones fixes use: an empty
  *  `fix_backend` follows the review's. */
@@ -111,12 +114,20 @@ const fixHarnesses = ["claude", "codex"];
  *  with a default decision model. */
 const extractionHarnesses = Object.keys(decisionModelDefaults);
 
-export const settingsSections = ["general", "reviews", "fixes", "connections", "computer"] as const;
+export const settingsSections = [
+  "general",
+  "reviews",
+  "fixes",
+  "prompts",
+  "connections",
+  "computer",
+] as const;
 export type SettingsSection = (typeof settingsSections)[number];
 const sectionTitles: Record<SettingsSection, string> = {
   general: "General",
   reviews: "Reviews",
   fixes: "Fixes",
+  prompts: "Prompts",
   connections: "Connections",
   computer: "This computer",
 };
@@ -134,7 +145,7 @@ const SECTION_CONTROLS = [
 
 /** Settings' keys (`SETTINGS_SHORTCUTS`), beside Tab (`useTabStops`):
  *  the section list is the selection, as Up next's list is: j/↓ and k/↑ move
- *  it, 1 to 5 jump to a section, and Enter, l or → goes into the shown
+ *  it, 1 to 6 jump to a section, and Enter, l or → goes into the shown
  *  section. There j/↓ and k/↑ step through its controls, Enter or Space
  *  changes the focused one, and Esc, h or ← go back to the list. Esc in a text
  *  field or select gives it up first (`useEscapeBlurs`), leaving the place in
@@ -379,6 +390,107 @@ function useAutoSave(changed: () => Promise<void>, path = "api/automatic") {
     </p>
   );
   return { save, error, status, failures };
+}
+
+/** The prompts baum uses, read once and kept in step with each save so the
+ *  section list and the section agree. */
+export function usePrompts() {
+  const [entries, setEntries] = useState<PromptEntry[] | null>(null);
+  const [error, setError] = useState("");
+  const load = () =>
+    request<{ prompts: PromptEntry[] }>("api/settings/prompts")
+      .then((body) => {
+        setEntries(body.prompts ?? []);
+        setError("");
+      })
+      .catch((e: unknown) => setError(errorText(e)));
+  // biome-ignore lint/correctness/useExhaustiveDependencies: read once; saves return their entry
+  useEffect(() => {
+    void load();
+  }, []);
+  const replace = (entry: PromptEntry) =>
+    setEntries((all) => all?.map((e) => (e.id === entry.id ? entry : e)) ?? all);
+  return { entries, error, load, replace };
+}
+
+/** Settings › Prompts: every prompt baum uses for reviews, fixes and data
+ *  extraction, replaceable as a whole. */
+export function PromptsSection({ prompts }: { prompts: ReturnType<typeof usePrompts> }) {
+  return (
+    <section aria-labelledby="settings-prompts-heading" className="settings-section">
+      <SectionHead
+        id="settings-prompts-heading"
+        title="Prompts"
+        detail="The instructions baum gives its agents. A custom prompt replaces the built-in one for every repository, unless a repository has its own (set in the repository's settings). Custom prompts stay on this computer."
+      />
+      {prompts.error ? (
+        <Alert>
+          {prompts.error}{" "}
+          <Button variant="secondary" size="compact" onClick={() => void prompts.load()}>
+            Try again
+          </Button>
+        </Alert>
+      ) : null}
+      {prompts.entries ? (
+        <PromptList entries={prompts.entries} replace={prompts.replace} />
+      ) : prompts.error ? null : (
+        <LoadingStatus block>Reading the prompts…</LoadingStatus>
+      )}
+    </section>
+  );
+}
+
+/** The prompts as one repository sees them, with the editors' saves going
+ *  straight to the daemon rather than through the dialog's Save. */
+export function RepositoryPrompts({ repository }: { repository: string }) {
+  const [entries, setEntries] = useState<RepositoryPromptEntry[] | null>(null);
+  const [error, setError] = useState("");
+  const load = () =>
+    request<{ prompts: RepositoryPromptEntry[] }>(`api/repositories/${repository}/prompts`)
+      .then((body) => {
+        setEntries(body.prompts ?? []);
+        setError("");
+      })
+      .catch((e: unknown) => setError(errorText(e)));
+  // biome-ignore lint/correctness/useExhaustiveDependencies: read once; saves return their entry
+  useEffect(() => {
+    void load();
+  }, [repository]);
+  const custom = entries?.filter(isCustom).length ?? 0;
+  return (
+    <details className="repository-prompts">
+      <summary>
+        Prompts{entries ? (custom ? ` · ${custom} custom for this repository` : "") : ""}
+      </summary>
+      <p className="settings-footnote">
+        Prompt changes save at once. They are not part of Save repository settings, and Cancel does
+        not undo them.
+      </p>
+      {error ? (
+        <Alert>
+          {error}{" "}
+          <Button variant="secondary" size="compact" onClick={() => void load()}>
+            Try again
+          </Button>
+        </Alert>
+      ) : null}
+      {entries ? (
+        <PromptList
+          entries={entries}
+          repository={repository}
+          heading="h4"
+          replace={(entry) =>
+            setEntries(
+              (all) =>
+                all?.map((e) => (e.id === entry.id ? (entry as RepositoryPromptEntry) : e)) ?? all,
+            )
+          }
+        />
+      ) : error ? null : (
+        <LoadingStatus block>Reading the prompts…</LoadingStatus>
+      )}
+    </details>
+  );
 }
 
 /** The harness and model a desktop app or daemon page shows, as one select
@@ -1061,6 +1173,7 @@ export function SettingsPage({
   codexTrust?: ReturnType<typeof useCodexHookTrust>;
 }) {
   const setup = useDesktopSetup(codexTrust?.recheck);
+  const prompts = usePrompts();
   // Only the desktop app can ask the agent CLIs whether they are signed in.
   const signedOut = setup.desktop && setup.view ? signedOutHarnesses(setup.view.hooks.agents) : [];
   const gh = githubHealth(github);
@@ -1087,6 +1200,15 @@ export function SettingsPage({
       id: "fixes",
       sub: defaults?.fix_backend ? harnessName(defaults.fix_backend) : "Same as reviews",
       tone: fix && !fix.fixable ? "caution" : undefined,
+    },
+    {
+      id: "prompts",
+      sub: prompts.entries
+        ? `${prompts.entries.filter(isCustom).length} custom`
+        : prompts.error
+          ? "Unavailable"
+          : "Reading…",
+      tone: prompts.entries && promptsNeedAttention(prompts.entries) ? "caution" : undefined,
     },
     {
       id: "connections",
@@ -1207,6 +1329,8 @@ export function SettingsPage({
             ) : (
               loading
             )
+          ) : section === "prompts" ? (
+            <PromptsSection prompts={prompts} />
           ) : section === "connections" ? (
             <section aria-labelledby="settings-connections-heading" className="settings-section">
               <SectionHead
@@ -2424,6 +2548,7 @@ function RepositoryDialog({
         </div>
       </div>
       {error ? <Alert>{error}</Alert> : null}
+      <RepositoryPrompts repository={clone.repository} />
       <RepositorySettings
         clone={clone}
         automatic={automatic}

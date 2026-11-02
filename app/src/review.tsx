@@ -1373,7 +1373,7 @@ function StatusMenu({ entry, items }: { entry: Entry; items: MenuItem[] }) {
   );
 }
 
-function GeneratedBy({
+export function GeneratedBy({
   saved,
   entry,
   version,
@@ -1391,6 +1391,12 @@ function GeneratedBy({
     <p className="local-generated-by">
       Generated with {latest && entry.latest ? `${entry.latest.backend} · ` : ""}
       {saved.model}
+      {saved.prompt_source ? (
+        <>
+          {" · "}
+          Custom prompt ({saved.prompt_source === "repository" ? "this repository" : "global"})
+        </>
+      ) : null}
       {made ? (
         <>
           {" · "}

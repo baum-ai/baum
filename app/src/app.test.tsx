@@ -1063,6 +1063,45 @@ it("opens on General and marks sections needing attention", async () => {
   expect(node.querySelector("#fix-agent")).not.toBeNull();
   expect(nav.querySelector('[aria-current="page"]')!.textContent).toContain("Fixes");
 });
+it("summarises the prompts in the section list and marks outdated ones", async () => {
+  history.replaceState(null, "", "/s/test-ns/?page=settings&section=prompts");
+  stubDiagnostics(async () => Response.json({ local: true, report: diagnosticsReport }));
+  stubAutomatic();
+  const stubbed = vi.mocked(fetch).getMockImplementation()!;
+  const prompt = (id: string, over: object = {}) => ({
+    id,
+    title: `Prompt ${id}`,
+    group: "reviews",
+    used_by: "Reviews",
+    default_text: "default",
+    default_version: "v2",
+    custom_text: null,
+    based_on: null,
+    outdated: false,
+    safety_rules: [],
+    missing_safety_rules: [],
+    ...over,
+  });
+  vi.mocked(fetch).mockImplementation((...args) =>
+    String(args[0]).endsWith("api/settings/prompts")
+      ? Promise.resolve(
+          Response.json({
+            prompts: [
+              prompt("a", { custom_text: "mine", based_on: "v1", outdated: true }),
+              prompt("b"),
+            ],
+          }),
+        )
+      : stubbed(...args),
+  );
+  await act(async () => root.render(<App />));
+  const item = node.querySelector('nav[aria-label="Settings sections"] [data-section="prompts"]')!;
+  expect(item.textContent).toContain("1 custom");
+  expect(item.querySelector('[aria-label="Needs attention"]')).not.toBeNull();
+  expect(node.querySelector('[aria-labelledby="settings-prompts-heading"]')!.textContent).toContain(
+    "Written for v1; the default is now v2.",
+  );
+});
 it("moves through Settings' sections and their controls from the keyboard", async () => {
   history.replaceState(null, "", "/s/test-ns/?page=settings");
   stubDiagnostics(async () => Response.json({ local: true, report: diagnosticsReport }));
@@ -1080,8 +1119,9 @@ it("moves through Settings' sections and their controls from the keyboard", asyn
   await key("j");
   expect(location.search).toBe("?page=settings&section=reviews");
   expect(document.activeElement).toBe(current());
-  await key("4");
+  await key("5");
   expect(location.search).toBe("?page=settings&section=connections");
+  await key("k");
   await key("k");
   await key("k");
   expect(location.search).toBe("?page=settings&section=reviews");
