@@ -107,6 +107,15 @@ it("offers only the allowed methods, preselects GitHub's default and merges the 
   expect(close).toHaveBeenCalledOnce();
 });
 
+it("closes once GitHub merged, without waiting for the reload", async () => {
+  const merged = vi.fn(() => new Promise<void>(() => {}));
+  const close = vi.fn();
+  await render(merged, close);
+  await act(async () => button("Merge pull request").click());
+  expect(merged).toHaveBeenCalledOnce();
+  expect(close).toHaveBeenCalledOnce();
+});
+
 it("shows GitHub's refusal in the dialog and stays open", async () => {
   mergeAnswer = Response.json(
     { code: "blocked", message: "Required checks have not passed yet." },

@@ -128,7 +128,8 @@ function UnblockDialog<Options extends { head_sha: string }, Result>({
         pr: pr.number,
         head_sha: pr.head_sha,
       });
-      await done();
+      // The reload runs behind the outcome: it can take seconds.
+      void done();
       const next = finished(result);
       if (next) {
         setOutcome(next);
@@ -213,7 +214,7 @@ export function UpdateBranchDialog({
 }: {
   entry: Entry;
   close: () => void;
-  /** Called once GitHub has accepted the update. */
+  /** Called once GitHub has accepted the update; the dialog does not wait for it. */
   updated: () => Promise<void>;
 }) {
   return (
