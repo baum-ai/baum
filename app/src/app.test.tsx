@@ -1537,6 +1537,63 @@ it("shows a repository set to On as paused while the global switch is off", asyn
     "Automatic reviews are paused by the global switch, although this repository is set to On.",
   );
 });
+it("shows a job's pull request title, when it started and how long it took", async () => {
+  history.replaceState(null, "", "/s/test-ns/?page=jobs");
+  entries = [entry(1)];
+  const original = vi.mocked(fetch).getMockImplementation()!;
+  vi.mocked(fetch).mockImplementation((...args) =>
+    String(args[0]) === "/s/test-ns/api/jobs"
+      ? Promise.resolve(
+          Response.json({
+            jobs: [
+              {
+                id: "done",
+                clone: "clone",
+                repository: "acme/demo",
+                pr: 1,
+                state: "completed",
+                phase: "finished",
+                calls: 3,
+                tokens: 10,
+                repairs: 1,
+                actual_cost_usd: null,
+                created_at: "2026-10-20T10:00:00Z",
+                started_at: "2026-10-20T10:01:00Z",
+                updated_at: "2026-10-20T10:05:30Z",
+              },
+              {
+                id: "gone",
+                clone: "clone",
+                repository: "acme/demo",
+                pr: 9,
+                state: "cancelled",
+                phase: "finished",
+                calls: 0,
+                tokens: 0,
+                repairs: 0,
+                actual_cost_usd: null,
+                created_at: "2026-10-20T10:00:00Z",
+                updated_at: "2026-10-20T10:02:00Z",
+              },
+            ],
+          }),
+        )
+      : original(...args),
+  );
+  await act(async () => root.render(<App />));
+  const done = node.querySelector("#job-done")!;
+  expect(done.querySelector(".local-job-type")!.textContent).toBe("Review");
+  expect(done.querySelector(".local-job-repository")!.textContent).toBe("acme/demo");
+  expect(done.querySelector(".local-job-title")!.textContent).toBe("#1 Change 1");
+  expect(done.querySelector(".local-job-timing")!.textContent).toMatch(/^Started .+Took 4m 30s$/);
+  expect(done.textContent).not.toContain("calls");
+  // A job of a pull request baum no longer lists shows its number; one
+  // cancelled in the queue never ran.
+  const gone = node.querySelector("#job-gone")!;
+  expect(gone.querySelector(".local-job-title")!.textContent).toBe("#9");
+  expect(gone.querySelector(".local-job-timing")!.textContent).toMatch(/^Queued /);
+  expect(gone.querySelector(".local-job-timing")!.textContent).not.toContain("Took");
+});
 it("marks automatically started jobs in the jobs list", async () => {
   history.replaceState(null, "", "/s/test-ns/?page=jobs");
   const original = vi.mocked(fetch).getMockImplementation()!;
@@ -1616,7 +1673,11 @@ it("names a feature build by its repository in the jobs list", async () => {
   );
   await act(async () => root.render(<App />));
   const row = node.querySelector("#job-build")!;
-  expect(row.querySelector(".local-job-title")!.textContent).toBe("Feature build · acme/demo");
+  expect(row.querySelector(".local-job-type")!.textContent).toBe("Feature build");
+  expect(row.querySelector(".local-job-title")!.textContent).toBe("acme/demo");
+  expect(row.querySelector(".local-job-title")!.getAttribute("href")).toBe(
+    "/s/test-ns/?page=jobs&job=build",
+  );
   expect(row.textContent).not.toContain("#0");
 });
 it("shows a diagnostics error with a retry that recovers", async () => {

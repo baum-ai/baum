@@ -1,6 +1,11 @@
-import { useEffect, useState, type ComponentType } from "react";
+import { useEffect, useState, type ComponentType, type ReactNode } from "react";
 import { Alert, LiveDot } from "@baum/viewer/components/ui";
-import { ChevronRightIcon, CircleCheckIcon, CircleCrossIcon } from "@baum/viewer/components/icons";
+import {
+  ChevronLeftIcon,
+  ChevronRightIcon,
+  CircleCheckIcon,
+  CircleCrossIcon,
+} from "@baum/viewer/components/icons";
 import { Markdown } from "@baum/viewer/components/markdown";
 import type { ViewerLinkProps } from "@baum/viewer/navigation";
 import {
@@ -10,14 +15,16 @@ import {
   jobReasonText,
   LocalRequestError,
   request,
+  threadOutcomesSummary,
   type Job,
 } from "./api";
-import { phaseText } from "./fix";
+import { phaseText, ThreadOutcomes } from "./fix";
+import { jobOrigin, jobTarget, jobType, useJobTimes } from "./job-info";
+import { UsageBar } from "./usage";
 import { LoadingStatus } from "./nine-dots";
 import { ReadFailed } from "./page-state";
 import { PageBar } from "./shell";
 import { useFollowScroll } from "./session-transcript";
-import { SMALL } from "./action-classes";
 
 /** One line of a fix agent's transcript, from `api/jobs/{id}/transcript`.
  *  Entries are append-only; a tool's later entry with the same `id` updates
@@ -25,12 +32,15 @@ import { SMALL } from "./action-classes";
 export type TranscriptEntry = {
   seq: number;
   time: string;
-  kind: "message" | "reasoning" | "tool" | "error";
+  kind: "message" | "reasoning" | "tool" | "error" | "call";
   id?: string;
   tool?: string;
   title?: string;
   text?: string;
   status?: "running" | "completed" | "failed";
+  /** Which of a review's calls the entry belongs to, as its "call" entry's
+   *  title names it. */
+  call?: string;
 };
 type Page = { entries: TranscriptEntry[]; next: number; more: boolean; done: boolean };
 
@@ -196,6 +206,14 @@ export function EntryView({ entry }: { entry: TranscriptEntry }) {
       return <Alert>{entry.text || entry.title}</Alert>;
     case "tool":
       return <ToolRun tools={[entry]} />;
+    case "call":
+      return (
+        <p className="local-job-call">
+          <ToolStatus status={entry.status} />
+          <strong>{entry.title}</strong>
+          <span className="sr-only">{entry.status ?? "running"}</span>
+        </p>
+      );
   }
 }
 
@@ -205,6 +223,8 @@ const entryKey = (entry: TranscriptEntry) =>
 type Item = { kind: "entry"; entry: TranscriptEntry } | { kind: "tools"; tools: TranscriptEntry[] };
 
 const isReasoning = (item: Item) => item.kind === "entry" && item.entry.kind === "reasoning";
+
+const itemCall = (item: Item) => (item.kind === "tools" ? item.tools[0]!.call : item.entry.call);
 
 /** Entries with each run of consecutive tool calls gathered into one item.
  *  Reasoning does not break a run: the run moves below it and goes on.
@@ -219,7 +239,8 @@ export function groupEntries(entries: TranscriptEntry[]): Item[] {
     let at = items.length - 1;
     while (at >= 0 && isReasoning(items[at]!)) at--;
     const run = items[at];
-    if (run?.kind === "tools") {
+    // Calls of a review that run at once interleave: a run stays one call's.
+    if (run?.kind === "tools" && run.tools[0]!.call === entry.call) {
       items.splice(at, 1);
       run.tools.push(entry);
       items.push(run);
@@ -230,11 +251,32 @@ export function groupEntries(entries: TranscriptEntry[]): Item[] {
   return items;
 }
 
-/** What a fix job is doing or did: its phase while it runs, its result once
- *  it is done. */
+/** What a job is called on its page: a fix, question or details job by its
+ *  own name, any other by its kind. */
+function pageName(job: Job) {
+  return job.kind && job.kind !== "feature_build" ? jobName(job) : jobType(job);
+}
+const endings: Record<string, string> = {
+  cancelled: "was cancelled",
+  interrupted: "was interrupted",
+  failed: "failed",
+};
+/** What a job is doing or did: its phase while it runs, its result once it
+ *  is done. */
 function JobHeader({ job }: { job: Job }) {
-  const name = jobName(job);
+  const name = pageName(job);
   const active = isActiveJob(job);
+  const times = useJobTimes(job);
+  const meta = [
+    jobOrigin(job),
+    times.took
+      ? times.running
+        ? `Running for ${times.took}`
+        : `Ran ${times.took}${times.finished ? `, finished ${times.finished}` : ""}`
+      : times.queued
+        ? `Queued ${times.queued}`
+        : null,
+  ].filter(Boolean);
   return (
     <section aria-label="Job" className="local-panel local-job-head">
       {active ? (
@@ -255,15 +297,14 @@ function JobHeader({ job }: { job: Job }) {
                 <code>{job.commit.slice(0, 7)}</code>
               </a>
             </>
-          ) : job.state === "failed" ? (
-            `${name} failed`
           ) : job.state === "completed" ? (
-            `${name} was answered`
+            `${name} ${job.kind === "chat" ? "was answered" : "completed"}`
           ) : (
-            `${name} was ${job.state}`
+            `${name} ${endings[job.state] ?? `was ${job.state}`}`
           )}
         </p>
       )}
+      {meta.length ? <p className="local-job-head-meta">{meta.join(" · ")}</p> : null}
       {!active && job.reason ? <p>{jobReasonText(job.reason, job.kind)}</p> : null}
       {!active && job.detail ? <pre className="local-job-detail">{job.detail}</pre> : null}
       {!active && job.summary ? (
@@ -271,12 +312,118 @@ function JobHeader({ job }: { job: Job }) {
           {job.summary}
         </Markdown>
       ) : null}
+      {job.thread_outcomes?.length ? (
+        <div aria-label="Review threads" role="group" className="local-job-threads">
+          <h2>{threadOutcomesSummary(job.thread_outcomes)}</h2>
+          <ThreadOutcomes job={job} />
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+function Fact({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <div>
+      <dt>{label}</dt>
+      <dd>{children}</dd>
+    </div>
+  );
+}
+/** Everything the daemon keeps about a job beyond its outcome: what it ran
+ *  on, who started it, when, and with which agent. */
+function JobFacts({
+  job,
+  title,
+  Link,
+}: {
+  job: Job;
+  title?: string;
+  Link: ComponentType<ViewerLinkProps>;
+}) {
+  const times = useJobTimes(job);
+  const target = jobTarget(job);
+  return (
+    <section aria-label="Details" className="local-panel local-job-section local-job-facts">
+      <h2>Details</h2>
+      <dl>
+        {target ? (
+          <Fact label={job.group ? "Review group" : "Pull request"}>
+            <Link href={target}>
+              {job.group ? job.group_name || job.group : `#${job.pr}${title ? ` ${title}` : ""}`}
+            </Link>
+          </Fact>
+        ) : null}
+        <Fact label="Repository">{job.repository}</Fact>
+        {job.kind === "fix" && job.fix?.head_ref ? (
+          <Fact label="Branch">
+            <code>{job.fix.head_ref}</code>
+          </Fact>
+        ) : null}
+        {job.head_sha ? (
+          <Fact label="Head commit">
+            <code>{job.head_sha.slice(0, 7)}</code>
+          </Fact>
+        ) : null}
+        {job.version ? <Fact label="Review version">{job.version}</Fact> : null}
+        {times.queued ? <Fact label="Queued">{times.queued}</Fact> : null}
+        {times.started ? <Fact label="Started">{times.started}</Fact> : null}
+        {times.finished ? <Fact label="Finished">{times.finished}</Fact> : null}
+        {times.took ? (
+          <Fact label="Run time">{times.running ? `${times.took} so far` : times.took}</Fact>
+        ) : null}
+        {job.backend ? <Fact label="Agent">{job.backend}</Fact> : null}
+        {job.model ? <Fact label="Model">{job.model}</Fact> : null}
+        <Fact label="Model calls">
+          {job.calls}
+          {job.repairs ? ` (${job.repairs} ${job.repairs === 1 ? "repair" : "repairs"})` : ""}
+        </Fact>
+        {job.failed_sections?.length ? (
+          <Fact label="Published without details">{job.failed_sections.join(", ")}</Fact>
+        ) : null}
+        {job.context_failed ? <Fact label="Codebase context">Missing</Fact> : null}
+        <Fact label="Job ID">
+          <code title={job.id}>{job.id}</code>
+        </Fact>
+      </dl>
     </section>
   );
 }
 
 /** A fix agent's transcript, following the end while the reader is there. */
-export function JobTranscript({ job }: { job: Job }) {
+export function JobTranscript({
+  job,
+  usage,
+  children,
+}: {
+  job: Job;
+  /** What the job used, above its state. */
+  usage?: ReactNode;
+  children?: ReactNode;
+}) {
+  return (
+    <>
+      {usage}
+      <JobHeader job={job} />
+      {children}
+      {job.has_transcript ? (
+        <TranscriptView job={job} />
+      ) : (
+        <section aria-label="Transcript" className="local-panel local-job-section">
+          <h2>Transcript</h2>
+          <p>
+            {isActiveJob(job)
+              ? "The agent's transcript shows here once it starts."
+              : job.kind === "feature_build"
+                ? "A feature build doesn't keep a transcript."
+                : "No transcript was kept for this job. Reviews keep one from this version of baum on."}
+          </p>
+        </section>
+      )}
+    </>
+  );
+}
+function TranscriptView({ job }: { job: Job }) {
   const [attempt, setAttempt] = useState(0);
   const state = useJobTranscript(job.id, attempt);
   const entries = state.kind === "ready" || state.kind === "failed" ? state.entries : [];
@@ -289,7 +436,6 @@ export function JobTranscript({ job }: { job: Job }) {
   );
   return (
     <>
-      <JobHeader job={job} />
       {state.kind === "loading" ? (
         <LoadingStatus block>Reading the agent's transcript…</LoadingStatus>
       ) : state.kind === "missing" ? (
@@ -306,24 +452,35 @@ export function JobTranscript({ job }: { job: Job }) {
       ) : (
         <section aria-label="Transcript" className="local-transcript">
           {state.kind === "failed" ? <Alert>{state.message}</Alert> : null}
-          <p className="local-transcript-note">Secrets are masked.</p>
           <ol className="local-panel local-job-transcript">
             {entries.length === 0 ? (
               <li className="local-job-tool-empty">Nothing yet.</li>
             ) : (
-              groupEntries(entries).map((item) =>
-                item.kind === "tools" ? (
+              groupEntries(entries).map((item, i, items) => {
+                const call = itemCall(item);
+                // Where calls running at once interleave, a step names its
+                // call when the one before it was another's.
+                const named =
+                  call &&
+                  !(item.kind === "entry" && item.entry.kind === "call") &&
+                  i > 0 &&
+                  itemCall(items[i - 1]!) !== call ? (
+                    <span className="local-job-call-tag">{call}</span>
+                  ) : null;
+                return item.kind === "tools" ? (
                   // Keyed by the run's first call, so a run that grows keeps
                   // its open or closed state.
                   <li key={entryKey(item.tools[0]!)}>
+                    {named}
                     <ToolRun tools={item.tools} />
                   </li>
                 ) : (
                   <li key={entryKey(item.entry)}>
+                    {named}
                     <EntryView entry={item.entry} />
                   </li>
-                ),
-              )
+                );
+              })
             )}
           </ol>
         </section>
@@ -332,14 +489,17 @@ export function JobTranscript({ job }: { job: Job }) {
   );
 }
 
-/** `?page=jobs&job=<id>`: the job, then the agent's transcript. `job` is null
- *  when the list does not have it. */
+/** `?page=jobs&job=<id>`: what the job is doing or did, everything kept
+ *  about it, its usage, then the agent's transcript. `job` is null when the
+ *  list does not have it; `title` is its pull request's, when baum knows it. */
 export function JobPage({
   job,
+  title,
   loading,
   Link,
 }: {
   job: Job | null;
+  title?: string;
   loading: boolean;
   Link: ComponentType<ViewerLinkProps>;
 }) {
@@ -349,17 +509,46 @@ export function JobPage({
   return (
     <>
       <PageBar
-        title={job ? jobName(job) : "Job"}
-        detail={job ? `${job.repository} #${job.pr}` : "Agent run on this computer"}
-        actions={
-          <Link href={appURL("?page=jobs")} className={SMALL}>
-            Back to jobs
+        title={job ? jobType(job) : "Job"}
+        detail={
+          !job
+            ? "Agent run on this computer"
+            : job.kind === "feature_build"
+              ? job.repository
+              : job.group
+                ? `${job.group_name || job.group} · ${job.repository}`
+                : `${job.repository} #${job.pr}${title ? ` ${title}` : ""}`
+        }
+        back={
+          <Link
+            href={appURL("?page=jobs")}
+            className="local-page-back"
+            aria-label="Back to jobs"
+            title="Back to jobs (Esc)"
+          >
+            <ChevronLeftIcon size={18} />
+            <kbd aria-hidden="true" className="key-hint">
+              Esc
+            </kbd>
           </Link>
         }
       />
       <div className="local-page-body local-job-page">
         {job ? (
-          <JobTranscript key={job.id} job={job} />
+          <JobTranscript
+            key={job.id}
+            job={job}
+            usage={
+              <UsageBar
+                accounting={job.accounting}
+                charged={job.tokens}
+                amount={job.actual_cost_usd}
+                reason={job.cost_reason}
+              />
+            }
+          >
+            <JobFacts job={job} title={title} Link={Link} />
+          </JobTranscript>
         ) : loading ? (
           <LoadingStatus block>Loading job…</LoadingStatus>
         ) : (

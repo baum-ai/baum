@@ -257,44 +257,44 @@ export function useDismissedFixes(): [string[], (id: string) => void] {
   return [ids, dismiss];
 }
 
+/** What became of each review thread a fix answered. */
+export function ThreadOutcomes({ job }: { job: Job }) {
+  const threads = new Map((job.fix_threads ?? []).map((thread) => [thread.ref, thread]));
+  return (
+    <ul className="local-fix-outcomes">
+      {(job.thread_outcomes ?? []).map((outcome) => {
+        const thread = threads.get(outcome.ref);
+        return (
+          <li key={outcome.ref}>
+            <code>{thread ? threadPlace(thread) : outcome.ref}</code>{" "}
+            <span className={`local-fix-outcome local-fix-outcome-${outcome.outcome}`}>
+              {threadOutcomeText(outcome.outcome)}
+            </span>
+            {outcome.summary ? <span>: {outcome.summary}</span> : null}
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
 /** What the agent said it did, what became of each review thread, and a
  *  failure's own words. */
 export function FixDetails({ job }: { job: Job }) {
   const outcomes = job.thread_outcomes ?? [];
-  const threads = new Map((job.fix_threads ?? []).map((thread) => [thread.ref, thread]));
+  if (!outcomes.length && !job.summary && !job.detail) return null;
+  // One fold: what happened to the threads names it, the agent's account follows.
   return (
-    <>
-      {outcomes.length ? (
-        <details className="local-fix-details">
-          <summary>{threadOutcomesSummary(outcomes)}</summary>
-          <ul className="local-fix-outcomes">
-            {outcomes.map((outcome) => {
-              const thread = threads.get(outcome.ref);
-              return (
-                <li key={outcome.ref}>
-                  <code>{thread ? threadPlace(thread) : outcome.ref}</code>{" "}
-                  <span className={`local-fix-outcome local-fix-outcome-${outcome.outcome}`}>
-                    {threadOutcomeText(outcome.outcome)}
-                  </span>
-                  {outcome.summary ? <span>: {outcome.summary}</span> : null}
-                </li>
-              );
-            })}
-          </ul>
-        </details>
-      ) : null}
-      {job.summary ? (
-        <details className="local-fix-details">
-          <summary>What the agent did</summary>
-          <p>{job.summary}</p>
-        </details>
-      ) : null}
-      {job.detail ? (
-        <details className="local-fix-details">
-          <summary>What happened</summary>
-          <pre>{job.detail}</pre>
-        </details>
-      ) : null}
-    </>
+    <details className="local-fix-details">
+      <summary>
+        {outcomes.length
+          ? threadOutcomesSummary(outcomes)
+          : job.summary
+            ? "What the agent did"
+            : "What happened"}
+      </summary>
+      {outcomes.length ? <ThreadOutcomes job={job} /> : null}
+      {job.summary ? <p>{job.summary}</p> : null}
+      {job.detail ? <pre>{job.detail}</pre> : null}
+    </details>
   );
 }

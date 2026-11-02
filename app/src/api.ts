@@ -200,9 +200,13 @@ export type Job = {
   fix?: FixInputs;
   /** The conversation turn a chat job answers. */
   chat?: { conversation: string; turn: number; version: number };
-  /** The fix agent's transcript can be read from `api/jobs/{id}/transcript`. */
+  /** The agent's transcript (a fix's, question's or review's) can be read
+   *  from `api/jobs/{id}/transcript`. */
   has_transcript?: boolean;
   created_at?: string;
+  /** When the job first left the queue to run; absent before it ran and on
+   *  jobs saved before it was recorded. */
+  started_at?: string;
   head_sha?: string;
   backend?: string;
   model?: string;
@@ -788,11 +792,9 @@ export function navigate(href: string) {
   writeHistory(href);
   dispatchEvent(new PopStateEvent("popstate"));
 }
-/** A fix job's transcript when it has one, else the job in the list. */
+/** A job's own page: everything kept about it and its transcript. */
 export function jobHref(job: Job) {
-  return job.has_transcript
-    ? appURL(`?page=jobs&job=${encodeURIComponent(job.id)}`)
-    : appURL(`?page=jobs#job-${encodeURIComponent(job.id)}`);
+  return appURL(`?page=jobs&job=${encodeURIComponent(job.id)}`);
 }
 /** Where a pull request or group page goes back to: Pull requests, with its
  *  view, when the page was opened from there, else the Inbox. `prefix` starts

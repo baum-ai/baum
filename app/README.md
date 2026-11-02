@@ -389,9 +389,10 @@ fix agent Settings chooses, else the review's harness and model. A fix it refuse
 which `request` turns into the reason in words (`jobReasonText`); the app
 shows "Couldn't start the fix: …" where it was asked for: under the PR page's
 header, in the Inbox panel, or below Pull requests.
-The fix is a job like a review: the Jobs list labels it with the fix's name
-and, once done, links the pushed commit and keeps the agent's summary behind
-**What the agent did**; the PR page shows its phase with **Cancel fix**, then
+The fix is a job like a review: the Jobs list tags it with the fix's name
+and, once done, links the pushed commit and keeps the thread replies and the
+agent's summary behind one fold (**What the agent did** when no thread was
+answered); the PR page shows its phase with **Cancel fix**, then
 the pushed commit or the failure in words, and the button reads **Fixing…**
 meanwhile. Both summarise the replies on review threads ("Replied and
 resolved 3 of 4 threads", from `thread_outcomes`) and list each thread's
@@ -410,12 +411,26 @@ combined with conflicts, CI or review comments. Refusals such as
 request. The job’s `fix.chat` is the conversation’s id.
 
 The Jobs page lists a repository's first feature build (`kind:
-"feature_build"`, `pr` 0) as "Feature build · <repository>", with no link; it
+"feature_build"`, `pr` 0) tagged "Feature build" beside its repository, with no link; it
 starts at once when asked for, like any other run.
 
-A fix can be watched live. A fix job with `has_transcript` has a transcript
-page, `?page=jobs&job=<id>` (`JobPage` and `JobTranscript` in
-`src/job-transcript.tsx`), its panels in the inbox's light sand on its darker
+Every job has a page, `?page=jobs&job=<id>` (`JobPage` and `JobTranscript` in
+`src/job-transcript.tsx`), which a Jobs row opens (its menu still opens the
+pull request or group). Under the job's state it lists what the daemon keeps:
+kind, repository, pull request or group, branch, head commit, review version,
+who or what started it, when it was queued, started and finished, its run
+time, agent and model, model calls and repairs, sections published without
+details and the job id; then a fix's thread replies, open, and its usage.
+Fix, question, review and details jobs keep the agent's transcript (a feature
+build does not). A review's has every model call it made, each marked by a
+`call` entry named for its stage and repair ("Outline", "Details · repair 1",
+"Codebase context"; "Review" for a one-pass review), and each step names its
+`call`; where stages run at once their steps interleave, so a step whose call
+differs from the one before it shows its call's name, and a run of tool calls
+never spans two calls. The Anthropic API backend reports no steps, so its
+review's transcript holds only the call marks. Jobs from before reviews kept
+transcripts say none was kept. A fix can be watched live. A fix job with `has_transcript` shows
+its transcript on that page, its panels in the inbox's light sand on its darker
 sand: the job's phase while it runs, then its summary or failure, above the
 agent's messages, collapsed reasoning, tool calls (a status mark, expandable to
 their output) and errors.
@@ -684,7 +699,7 @@ button or link. `Enter` opens the marked block where it opens somewhere (its
 `data-block-open` control, as a commit row's subject; `openActiveBlock`). The
 arrows then no longer scroll the review. Sessions, Jobs and Repositories share the list keys
 (`useRowFocus` and `listKeys`): `j`/`↓` and `k`/`↑` move, `Enter` or `o` opens
-the row (a session's transcript, a job's pull request or group, a repository's
+the row (a session's transcript, a job's page, a repository's
 settings) and `Esc` clears the focus. On Sessions the three sections are one
 list and `p` opens the focused session's pull request; on Jobs `t` opens the
 transcript (Watch while a fix runs); on Repositories `a` opens or closes the
@@ -1084,7 +1099,7 @@ group offers Regenerate. A pull request's page links the stacks and groups it
 belongs to on the line under its title, after the repository and the time to
 review (the viewer's `header.subtitle`), each as its kind and name ("Stack ·
 Treat local Entire checkpoint sessions as candidates"),
-and the Jobs page labels a group job "Review group: <name>". Groups across
+and the Jobs page tags a group job "Review group" above its name. Groups across
 repositories are not supported yet.
 
 The sidebar keeps plan usage in view above Jobs and Settings: per provider,
@@ -1314,6 +1329,14 @@ reviews on disk. Change local clone offers the existing clone registrations and
 lets the person remove one or register another folder. Explicit unpicks are
 remembered locally across picker reopens and app reloads; picking it again is
 always available.
+
+Each Jobs row tags its kind (Review, Review group, the fix's name, Question,
+Details, Feature build) beside the repository, then names the pull request by
+number and, when baum still lists it, its title, cut to one line. In place of
+calls it shows when the job started (`started_at`, set when it first leaves
+the queue and kept across a requeue) and how long it took or has taken so far;
+a job still queued, or cancelled before it ran, shows when it was queued.
+Jobs saved before `started_at` count from when they were queued.
 
 The jobs list and the PR page mark an automatic job "Started
 automatically because new commits were pushed" (or "because your review was
@@ -1674,8 +1697,9 @@ cache-creation buckets, with available TTL, speed, prompt range and model-call
 reports. Jobs save each update before publishing progress, including failed and
 cancelled attempts. Provider-controlled model and speed strings appear only
 after secret masking; progress retains numeric buckets while masking runs.
-The charged-token budget counter excludes cache reads;
-total processed tokens includes them. Missing older accounting remains unknown,
+Budget tokens (the charged-token budget counter) exclude cache reads;
+processed tokens include them. TTL, speed and prompt range appear only when
+the provider reported them. Missing older accounting remains unknown,
 and interrupted providers show reported subtotals rather than exact totals.
 Saved review usage follows the version selected in history. Its cost reads
 "At API prices": what the usage would cost at API prices, not what a

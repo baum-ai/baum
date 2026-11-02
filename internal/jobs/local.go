@@ -406,6 +406,13 @@ func (l *Local) Execute(ctx context.Context, p Prepared, progress func(Progress)
 	// even when it is newer than the one the job was prepared with.
 	list := pricing.Active()
 	backend := &trackedBackend{Backend: selected.Backend, progress: progress, prices: list}
+	// A review keeps its agent's transcript like a fix's, every call of it.
+	if target, ok := transcriptTargetOf(ctx); ok {
+		if writer, err := openTranscript(target.Dir, target.JobID); err == nil {
+			defer writer.Close()
+			backend.transcript = func(entry agent.TranscriptEntry) { writer.Add(ctx, entry) }
+		}
+	}
 	assembler := &assemble.Assembler{GitHub: l.Client, Git: clone, Fetcher: clone, Sessions: assemble.LocalSessions{Dir: clone.Dir(), Warn: io.Discard}, Images: assemble.NewHTTPImageFetcher(nil), Warn: io.Discard}
 	// An assembly which observes a changed head must stop before calling a model.
 	var guarded generate.Assembler = headAssembler{Assembler: assembler, head: p.HeadSHA}
@@ -559,6 +566,10 @@ type trackedBackend struct {
 	calls, tokens, repairs int
 	accounting             *agent.Accounting
 	phase                  string
+	// transcript, when set, keeps every call's steps, each call marked by a
+	// "call" entry; marked counts them.
+	transcript func(agent.TranscriptEntry)
+	marked     int
 }
 
 // ConcurrentCalls forwards the backend's agent.ConcurrentCaller, so a staged
@@ -568,8 +579,28 @@ func (b *trackedBackend) ConcurrentCalls() bool { return generate.ConcurrentCall
 func (b *trackedBackend) Run(ctx context.Context, r agent.Request) (agent.Result, error) {
 	b.mu.Lock()
 	b.report("generating", nil)
+	id := ""
+	if b.transcript != nil && r.Transcript == nil {
+		b.marked++
+		id = fmt.Sprintf("call-%d", b.marked)
+	}
 	b.mu.Unlock()
+	if id != "" {
+		name, keep := callName(r), b.transcript
+		r.Transcript = func(entry agent.TranscriptEntry) {
+			entry.Call = name
+			keep(entry)
+		}
+		r.Emit(agent.TranscriptEntry{Kind: "call", ID: id, Title: name, Status: "running"})
+	}
 	result, e := b.Backend.Run(ctx, r)
+	if id != "" {
+		status := "completed"
+		if e != nil {
+			status = "failed"
+		}
+		r.Emit(agent.TranscriptEntry{Kind: "call", ID: id, Status: status})
+	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.calls += result.Calls
@@ -583,6 +614,27 @@ func (b *trackedBackend) Run(ctx context.Context, r agent.Request) (agent.Result
 	b.accounting = next
 	b.report("validating", nil)
 	return result, e
+}
+
+// callName is a call's name in a review's transcript: its stage, or the
+// review for a one-pass one, and which repair it is.
+func callName(r agent.Request) string {
+	name := "Review"
+	switch r.Stage {
+	case agent.StageOutline:
+		name = "Outline"
+	case agent.StageDetails:
+		name = "Details"
+	case agent.StageContext:
+		name = "Codebase context"
+	case "":
+	default:
+		name = r.Stage
+	}
+	if r.Pass > 1 {
+		name += fmt.Sprintf(" · repair %d", r.Pass-1)
+	}
+	return name
 }
 
 // repaired is generate.Options.OnRepairs.
@@ -609,7 +661,7 @@ func (b *trackedBackend) finish(result generate.Result, staged bool) {
 	b.accounting = result.Outcome.Accounting.Clone()
 	b.redacted = true
 	b.phase = "publishing"
-	p := Progress{Phase: b.phase, Calls: b.calls, Tokens: b.tokens, Repairs: b.repairs, Accounting: b.accounting.Clone(), CostReason: b.reason()}
+	p := Progress{Phase: b.phase, Calls: b.calls, Tokens: b.tokens, Repairs: b.repairs, Accounting: b.accounting.Clone(), CostReason: b.reason(), HasTranscript: b.transcript != nil}
 	if staged {
 		p.Gaps, p.FailedSections, p.ContextFailed = true, result.FailedSections, result.ContextFailed
 	}
@@ -628,7 +680,7 @@ func (b *trackedBackend) report(phase string, draft []byte) {
 	if !b.redacted {
 		safe.ClearStrings()
 	}
-	b.progress(Progress{Phase: phase, Calls: b.calls, Tokens: b.tokens, Repairs: b.repairs, Accounting: safe, CostReason: reason, Draft: draft})
+	b.progress(Progress{Phase: phase, Calls: b.calls, Tokens: b.tokens, Repairs: b.repairs, Accounting: safe, CostReason: reason, Draft: draft, HasTranscript: b.transcript != nil})
 }
 
 // reason is why the usage so far has no price, if it has none. The caller
