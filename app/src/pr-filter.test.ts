@@ -125,6 +125,9 @@ it("adds a picked value to the field's term, takes it out again, and wraps an OR
   // The term that holds the value loses it, and parentheses left empty go.
   expect(toggleValue("is:draft is:bot", "is", "bot")).toBe("is:draft");
   expect(toggleValue("(review:approved) flaky", "review", "approved")).toBe("flaky");
+  expect(toggleValue("((review:approved)) flaky", "review", "approved")).toBe("flaky");
+  expect(toggleValue("review:approved AND flaky", "review", "approved")).toBe("flaky");
+  expect(toggleValue("flaky AND review:approved", "review", "approved")).toBe("flaky");
   // Typed text that would read as syntax is quoted.
   expect(withText("", "OR")).toBe('"OR"');
   expect(withText("", "-wip")).toBe('"-wip"');
@@ -148,6 +151,8 @@ it("suggests fields, then their values, then the operators", () => {
   expect(labels("colour:")).toEqual([]);
   // Inside a word, nothing: taking one would drop the rest of the word.
   expect(labels("review:approved,none", 10)).toEqual([]);
+  // At a word's start, nothing either: a field would join onto it.
+  expect(labels("repo:x is:draft", 7)).toEqual([]);
   expect(labels("is:draft")).toEqual([]);
   // Taking a value replaces the word at the caret and leaves a space after it.
   const [value] = suggest("is:draft repo:we checks:none", 16, entries);

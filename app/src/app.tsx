@@ -476,7 +476,7 @@ function Workspace({ url }: { url: UrlState }) {
   const view = savedTab?.view ?? (filter.startsWith("tab:") ? "inbox" : filter);
   const pullsQuery = savedTab ? savedTab.query : pullsFilter.query;
   const setPullsQuery = (query: string) => {
-    if (query === pullsQuery) return;
+    if (query === pullsQuery || parseQuery(query).error) return;
     setSelection(new Set());
     if (savedTab) savedTabs.setQuery(savedTab.id, query);
     else pullsFilter.set(query);
@@ -489,6 +489,8 @@ function Workspace({ url }: { url: UrlState }) {
     ...savedTabs.tabs.map((tab) => `tab:${tab.id}`),
   ];
   const activeTab = savedTab ? `tab:${savedTab.id}` : view;
+  // Until the saved tabs are read, a tab's filter is not known to edit.
+  const tabsPending = filter.startsWith("tab:") && !savedTabs.ready;
   const [namingTab, setNamingTab] = useState<string | null>(null);
   // A link from before the filter names one repository (`repo=`): it becomes
   // the page's filter once the saved filters are read. Analytics and Timeline
@@ -1430,17 +1432,19 @@ function Workspace({ url }: { url: UrlState }) {
                     </button>
                   ))}
                 </div>
-                <FilterButton
-                  query={pullsQuery}
-                  onChange={setPullsQuery}
-                  entries={filtered(indexedEntries, view)}
-                  onWrite={() => {
-                    setWritingPulls(true);
-                    setWritePullsRequest((n) => n + 1);
-                  }}
-                />
+                {tabsPending ? null : (
+                  <FilterButton
+                    query={pullsQuery}
+                    onChange={setPullsQuery}
+                    entries={filtered(indexedEntries, view)}
+                    onWrite={() => {
+                      setWritingPulls(true);
+                      setWritePullsRequest((n) => n + 1);
+                    }}
+                  />
+                )}
               </div>
-              {pullsQuery || writingPulls || savedTab ? (
+              {!tabsPending && (pullsQuery || writingPulls || savedTab) ? (
                 <div className="local-pulls-filter">
                   <FilterBar
                     key={activeTab}
@@ -1473,11 +1477,15 @@ function Workspace({ url }: { url: UrlState }) {
                           className="local-tab-name"
                           onSubmit={(event) => {
                             event.preventDefault();
-                            const name = namingTab.trim().slice(0, 40);
+                            // Trimmed as the daemon trims, control characters too.
+                            const name = namingTab
+                              .replace(/\p{Cc}/gu, " ")
+                              .trim()
+                              .slice(0, 40)
+                              .trim();
                             if (!name) return;
                             const id = newInboxId();
-                            savedTabs.add({ id, name, view, query: pullsQuery });
-                            pullsFilter.set("");
+                            savedTabs.add({ id, name, view, query: pullsQuery }, "pulls");
                             setNamingTab(null);
                             url.update((current) => {
                               current.set("filter", `tab:${id}`);

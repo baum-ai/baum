@@ -387,11 +387,18 @@ export function toggleValue(query: string, key: string, value: string): string {
       ? term.values.filter((one) => !same(one, value))
       : [...term.values, value];
     const text = values.length ? `${key}:${values.map(quote).join(",")}` : "";
-    const before = query.slice(0, term.start);
-    const after = query.slice(term.end);
-    // A term that was alone in parentheses takes them with it.
-    if (!text && /\(\s*$/.test(before) && /^\s*\)/.test(after))
-      return tidy(`${before.replace(/\(\s*$/, "")}${after.replace(/^\s*\)/, "")}`);
+    let before = query.slice(0, term.start);
+    let after = query.slice(term.end);
+    if (!text) {
+      // A term alone in parentheses takes them with it, and an AND beside it
+      // goes too.
+      while (/\(\s*$/.test(before) && /^\s*\)/.test(after)) {
+        before = before.replace(/\(\s*$/, "");
+        after = after.replace(/^\s*\)/, "");
+      }
+      if (/(^|\s)AND\s*$/.test(before)) before = before.replace(/AND\s*$/, "");
+      else after = after.replace(/^\s*AND(?=\s|$)/, "");
+    }
     return tidy(`${before}${text}${after}`);
   }
   const base = !error && expr?.kind === "or" ? `(${query.trim()})` : query.trim();
@@ -423,9 +430,10 @@ export function suggest(query: string, caret: number, entries: Entry[]): Suggest
   const token = tokenize(query).find(
     (one) => one.kind === "word" && one.start < caret && caret <= one.end,
   ) as Extract<Token, { kind: "word" }> | undefined;
-  // Inside a word there is nothing to complete: taking a suggestion would
-  // drop the rest of it.
+  // Inside a word, or at its start, there is nothing to complete: taking a
+  // suggestion would drop or join the rest of it.
   if (token && caret < token.end) return [];
+  if (tokenize(query).some((one) => one.kind === "word" && one.start === caret)) return [];
   const start = token?.start ?? caret;
   const end = token?.end ?? caret;
   const typed = query.slice(start, caret);
@@ -564,7 +572,14 @@ export function useSavedTabs() {
   return {
     tabs: readable(saved.value).tabs,
     ready: saved.ready,
-    add: (tab: SavedTab) => change((tabs) => [...tabs, tab].slice(0, MAX_TABS)),
+    /** Adds the tab and, in the same save, clears the page whose filter
+     *  moved into it. */
+    add: (tab: SavedTab, from: FilterPage) =>
+      saved.update((value) => {
+        const current = readable(value);
+        const { [from]: _, ...pages } = current.pages;
+        return { pages, tabs: [...current.tabs, tab].slice(0, MAX_TABS) };
+      }),
     remove: (id: string) => change((tabs) => tabs.filter((one) => one.id !== id)),
     setQuery: (id: string, query: string) => {
       const text = tidy(query);

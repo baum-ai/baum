@@ -82,6 +82,12 @@ func decode(raw []byte, kind, key string) (Record, error) {
 		return Record{}, ErrUnreadable
 	}
 	if validRecord(kind, record) != nil {
+		// Filters are only how pages were last narrowed: a document in an
+		// older shape reads as none, and the next save replaces it.
+		if kind == "filters" {
+			record.Value = json.RawMessage("null")
+			return record, nil
+		}
 		return Record{}, ErrUnreadable
 	}
 	return record, nil

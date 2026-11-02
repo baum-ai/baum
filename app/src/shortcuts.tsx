@@ -650,9 +650,10 @@ export function useTabStops() {
     const down = (event: KeyboardEvent) => {
       if (event.ctrlKey || event.metaKey || event.altKey || event.isComposing) return;
       const focused = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+      if (focused?.closest('[role="menu"], .local-rail-menu')) return;
       // A box that completes what is typed takes Tab while it has something
       // to complete (the filter bar's `data-own-tab`).
-      if (focused?.closest('[role="menu"], .local-rail-menu, [data-own-tab]')) return;
+      if (event.key === "Tab" && !event.shiftKey && focused?.closest("[data-own-tab]")) return;
       const dialog = Array.from(document.querySelectorAll<HTMLDialogElement>("dialog[open]")).at(
         -1,
       );

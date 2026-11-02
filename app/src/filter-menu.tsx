@@ -357,8 +357,12 @@ export function FilterBar({
   useEffect(() => {
     if (tidyQuery(text) !== query) setText(query);
   }, [query]);
+  // Only a request made after the bar appeared: a bar that mounts again (on
+  // another page) leaves the focus where it is.
+  const asked = useRef(focus);
   useEffect(() => {
-    if (focus) input.current?.focus();
+    if (focus > asked.current) input.current?.focus();
+    asked.current = focus;
   }, [focus]);
   // An edit still waiting for its moment goes out when the bar goes.
   const pending = useRef<(() => void) | null>(null);
@@ -402,9 +406,9 @@ export function FilterBar({
   // Tab takes the highlighted suggestion, or the first while a word is being
   // typed (its index here, 0 for none); otherwise it moves on.
   const tabTakes =
-    state.active >= 0
+    state.active >= 0 && options[state.active]
       ? state.active + 1
-      : options.length > 0 && /[^\s(]$/.test(text.slice(0, caret))
+      : options.length > 0 && /[^\s()]$/.test(text.slice(0, caret))
         ? 1
         : 0;
 
@@ -434,7 +438,13 @@ export function FilterBar({
           onChange={(event) =>
             edit(event.target.value, event.target.selectionStart ?? event.target.value.length)
           }
-          onSelect={(event) => setCaret(event.currentTarget.selectionStart ?? 0)}
+          onSelect={(event) => {
+            const at = event.currentTarget.selectionStart ?? 0;
+            if (at === caret) return;
+            // The highlight belonged to the suggestions at the old caret.
+            setCaret(at);
+            setState((now) => ({ ...now, active: -1 }));
+          }}
           onFocus={() => setState({ open: true, active: -1 })}
           onBlur={() => {
             setState(CLOSED);

@@ -19,7 +19,8 @@ and a page without a filter is left out (the app drops the least recently
 changed beyond 60). A query is one line of at most 500 characters; the daemon
 never parses it. A tab has a 32-hex `id` (unique), a trimmed `name` of 1 to 40
 characters, a `view` (`inbox`, `requested`, `mine`, `other`, `no_review`,
-`history`) and a query; at most 20 tabs.
+`history`) and a query; at most 20 tabs. A stored filters document in another shape
+reads as none (at its revision), and the next save replaces it.
 
 A walkthrough key is `owner/repository#number@vversion` (optionally prefixed
 with an Enterprise host). The latest 40 saved review versions are retained.

@@ -81,6 +81,15 @@ func TestFiltersArePerPageQueriesAndSavedTabs(t *testing.T) {
 			t.Errorf("%s: %v", name, err)
 		}
 	}
+	// A stored document in another shape reads as none, and a save at its
+	// revision replaces it.
+	if err := appdb.Write(s.Path, "ui", "filters", []byte(`{"revision":1,"value":{"pages":{"inbox":{"owners":[]}}}}`)); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := s.Read("filters", ""); err != nil || string(got.Value) != "null" || got.Revision != 1 {
+		t.Fatalf("older shape: %+v %v", got, err)
+	}
+	save(t, s, "filters", "", 1, "mutation-00000003", `{"pages":{}}`)
 }
 func TestCommittedMutationRetryDoesNotOverwriteLaterChanges(t *testing.T) {
 	s := store(t)
