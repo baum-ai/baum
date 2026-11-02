@@ -1244,6 +1244,22 @@ it("peeks at a session under its row with Space: its summary and latest response
   expect(node.querySelector("[data-focused]")).not.toBeNull();
 });
 
+it("shows the pull request of a waiting session after its branch", async () => {
+  await render([
+    session({
+      state: "idle",
+      waiting_reason: "turn_finished",
+      waiting_since: ago(60),
+      branch: "fix-dialog",
+      pr: 1035,
+    }),
+  ]);
+  const head = node.querySelector('[aria-label="Waiting for you"] li .local-feed-head')!;
+  expect(
+    [...head.querySelectorAll(".local-feed-branch, .local-session-pr")].map((e) => e.textContent),
+  ).toEqual(["fix-dialog", "PR #1035"]);
+});
+
 it("shows ambiguous and stale PR associations explicitly", async () => {
   await render([session({ link_status: "ambiguous" })]);
   expect(node.textContent).toContain("Several pull requests match");
