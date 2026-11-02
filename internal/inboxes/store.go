@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/baum-ai/baum/internal/appdb"
@@ -21,6 +22,7 @@ const (
 	MaxNameLength   = 40
 	MaxOwners       = 50
 	MaxRepositories = 50
+	MaxQueryLength  = 500
 )
 
 var (
@@ -55,6 +57,7 @@ type Inbox struct {
 	Owners       []string `json:"owners"`
 	Risk         string   `json:"risk"`
 	Repositories []string `json:"repositories"`
+	Query        string   `json:"query"`
 	NoBots       bool     `json:"no_bots"`
 	Badge        bool     `json:"badge"`
 }
@@ -206,6 +209,10 @@ func normalize(in []Inbox, known map[string]bool) ([]Inbox, error) {
 		if inbox.Repositories, err = cleanList(inbox.Repositories, MaxRepositories, repositoryPattern, inbox.Name, "repositories", "owner/name"); err != nil {
 			return nil, err
 		}
+		inbox.Query = strings.TrimSpace(inbox.Query)
+		if !ValidQuery(inbox.Query) {
+			return nil, invalid(CodeInvalidInbox, "Inbox %q: the query must be one line of at most %d characters.", inbox.Name, MaxQueryLength)
+		}
 		// An id the list no longer holds is kept when it has the daemon's
 		// shape: it is an inbox deleted and brought back by Undo, whose links
 		// should still lead to it.
@@ -222,6 +229,16 @@ func normalize(in []Inbox, known map[string]bool) ([]Inbox, error) {
 		out = append(out, inbox)
 	}
 	return out, nil
+}
+
+// ValidQuery reports whether a filter query is one line of valid UTF-8 text
+// of at most MaxQueryLength characters. The daemon never parses it: the app
+// does.
+func ValidQuery(query string) bool {
+	if !utf8.ValidString(query) || utf8.RuneCountInString(query) > MaxQueryLength {
+		return false
+	}
+	return strings.IndexFunc(query, unicode.IsControl) < 0
 }
 
 func oneOf(v string, allowed []string) bool {

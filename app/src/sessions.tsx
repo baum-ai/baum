@@ -117,6 +117,11 @@ export function needsYou(sessions: LiveSession[]): LiveSession[] {
 export const sessionKey = (s: Pick<LiveSession, "agent" | "session_id">) =>
   `${s.agent}:${s.session_id}`;
 
+/** Sessions with the session's card open: its peek, and its reply where it
+ *  takes one, as a click on the card does. */
+export const peekHref = (s: Pick<LiveSession, "agent" | "session_id">) =>
+  appURL(`?page=sessions&peek=${encodeURIComponent(sessionKey(s))}`);
+
 /** Where a session's transcript opens in the app. */
 export const transcriptHref = (s: LiveSession) =>
   appURL(`?page=sessions&session=${encodeURIComponent(sessionKey(s))}`);
@@ -1449,7 +1454,10 @@ export function SessionsPage({
   prHref,
   Link,
   navigate = (href) => window.location.assign(href),
+  peekKey = null,
 }: {
+  /** A session's key (`peek=`) whose card opens as the page shows it. */
+  peekKey?: string | null;
   sessions: LiveSession[];
   requests?: AgentRequests;
   prHref: (session: LiveSession) => string | null;
@@ -1545,6 +1553,33 @@ export function SessionsPage({
     setReplying(sessionKey(s));
     return true;
   };
+  // A link that names a session opens its card once it is listed.
+  const opened = useRef<string | null>(null);
+  useEffect(() => {
+    if (!peekKey || opened.current === peekKey) return;
+    const s = sessions.find((x) => sessionKey(x) === peekKey);
+    if (!s) return;
+    // A collapsed section opens first, so the card is there to open.
+    const holds = (w: Waiting) => waitingKey(w) === peekKey;
+    const section: Section = asking.some(holds)
+      ? "needs"
+      : idle.some(holds)
+        ? "waiting"
+        : s.state === "ended"
+          ? "ended"
+          : "running";
+    if (collapsed[section]) {
+      toggle(section);
+      return;
+    }
+    opened.current = peekKey;
+    rows.setFocused(peekKey);
+    setPeeking(peekKey);
+    reply(s);
+    document
+      .querySelector(`[data-row-id="${CSS.escape(peekKey)}"]`)
+      ?.scrollIntoView?.({ block: "nearest" });
+  }, [peekKey, sessions, collapsed]);
   useShortcuts((event) => {
     // Escape closes a peek before it clears the row.
     if (event.key === "Escape" && peeking) {

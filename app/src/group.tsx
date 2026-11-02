@@ -137,18 +137,22 @@ export function NameDialog({
     </dialog>
   );
 }
-function ConfirmDialog({
+/** Asks before an action that cannot simply be taken back. */
+export function ConfirmDialog({
   title,
   children,
   action,
   pending,
   confirm,
   close,
+  danger = false,
 }: {
   title: string;
   children: string;
   action: string;
   pending: boolean;
+  /** The action removes something: drawn in the critical tone. */
+  danger?: boolean;
   confirm: () => void;
   close: () => void;
 }) {
@@ -161,7 +165,12 @@ function ConfirmDialog({
         <Button variant="ghost" size="compact" disabled={pending} onClick={close}>
           Cancel
         </Button>
-        <Button size="compact" disabled={pending} onClick={confirm}>
+        <Button
+          size="compact"
+          variant={danger ? "danger" : "primary"}
+          disabled={pending}
+          onClick={confirm}
+        >
           {action}
         </Button>
       </div>

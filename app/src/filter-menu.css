@@ -1,0 +1,355 @@
+/* The filter over pull requests: an icon whose menu lists the fields, each
+   opening its values beside it, and a bar that holds the query as text. */
+.filter-menu {
+  position: relative;
+}
+.filter-menu-button {
+  list-style: none;
+}
+.filter-menu-button::-webkit-details-marker {
+  display: none;
+}
+.filter-menu-button.on,
+.filter-menu[open] > .filter-menu-button {
+  background: var(--surface-pressed);
+  color: var(--text-primary);
+}
+/* Left of the head's refresh, which then gives up its push to the end. */
+.upnext-list-heading > .filter-menu,
+.upnext-list-title > .filter-menu {
+  margin: -6px 0 -6px auto;
+}
+:is(.upnext-list-heading, .upnext-list-title) > .filter-menu + .local-refresh {
+  margin-left: 0;
+}
+.filter-menu-panel {
+  position: fixed;
+  z-index: 30;
+  display: grid;
+  width: min(23rem, calc(100vw - 2rem));
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  background: var(--surface-card);
+  box-shadow: var(--shadow-overlay);
+}
+.filter-menu-search {
+  min-width: 0;
+  padding: 0.7rem 0.8rem;
+  border: 0;
+  border-bottom: 1px solid var(--border-default);
+  border-radius: var(--radius-md) var(--radius-md) 0 0;
+  background: none;
+  color: var(--text-primary);
+  font-size: var(--text-base);
+}
+.filter-menu-search:focus {
+  outline: none;
+}
+.filter-menu-rows,
+.filter-menu-sub {
+  display: grid;
+  align-content: start;
+  max-height: min(26rem, calc(100vh - 12rem));
+  padding: 0.3rem;
+  overflow-y: auto;
+}
+.filter-menu-sub {
+  position: absolute;
+  z-index: 31;
+  width: 16rem;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  background: var(--surface-card);
+  box-shadow: var(--shadow-overlay);
+}
+.filter-menu-sub.right {
+  left: calc(100% + 0.25rem);
+}
+.filter-menu-sub.left {
+  right: calc(100% + 0.25rem);
+}
+/* No room on either side, as on a phone: the values take the list's place. */
+.filter-menu-sub.inside {
+  position: static;
+  width: auto;
+  border: 0;
+  box-shadow: none;
+}
+.filter-menu-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-height: 2rem;
+  padding: 0.25rem 0.55rem;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--text-secondary);
+  font-size: var(--text-base);
+  text-align: left;
+  cursor: pointer;
+}
+.filter-menu-row.active,
+.filter-menu-row[aria-expanded="true"] {
+  background: var(--surface-pressed);
+  color: var(--text-primary);
+}
+.filter-menu-row.disabled {
+  color: var(--text-tertiary);
+  cursor: default;
+}
+.filter-menu-write {
+  margin-top: 0.25rem;
+  border-top: 1px solid var(--border-default);
+  border-radius: 0 0 var(--radius-sm) var(--radius-sm);
+  color: var(--text-tertiary);
+}
+.filter-menu-back {
+  color: var(--text-tertiary);
+}
+.filter-menu-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.filter-menu-key {
+  color: var(--text-tertiary);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+}
+.filter-menu-chevron {
+  flex: none;
+  color: var(--text-tertiary);
+}
+.filter-menu-tick {
+  display: inline-grid;
+  flex: none;
+  place-items: center;
+  width: 1rem;
+  height: 1rem;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-xs);
+  color: var(--text-primary);
+}
+.filter-menu-count {
+  flex: none;
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+}
+.filter-menu-empty {
+  margin: 0;
+  padding: 0.4rem 0.55rem;
+  color: var(--text-tertiary);
+  font-size: var(--text-base);
+}
+
+/* The query as text, with Clear and the page's save at its end. */
+.filter-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem 0.6rem;
+  min-width: 0;
+  padding: 0.3rem 0.3rem 0.3rem 0.6rem;
+  border-radius: var(--radius-md);
+  background: var(--surface-wash);
+}
+.filter-bar-field {
+  position: relative;
+  display: flex;
+  flex: 1 1 14rem;
+  align-items: flex-start;
+  gap: 0.45rem;
+  min-width: 0;
+}
+.filter-bar-input {
+  flex: 1;
+  min-width: 0;
+  min-height: 1.9rem;
+  padding: 0.3rem 0;
+  overflow: hidden;
+  resize: none;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  line-height: 1.3;
+  border: 0;
+  background: none;
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: var(--text-base);
+}
+.filter-bar-input:focus {
+  outline: none;
+}
+.filter-bar-input::placeholder {
+  color: var(--text-tertiary);
+}
+.filter-bar-field:focus-within {
+  border-radius: var(--radius-sm);
+  box-shadow: 0 1px 0 var(--border-strong);
+}
+.filter-bar-suggestions {
+  position: absolute;
+  top: calc(100% + 0.35rem);
+  left: 0;
+  z-index: 30;
+  display: grid;
+  width: min(22rem, 100%);
+  max-height: 18rem;
+  padding: 0.3rem;
+  overflow-y: auto;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  background: var(--surface-card);
+  box-shadow: var(--shadow-overlay);
+}
+.filter-bar-suggestions[hidden] {
+  display: none;
+}
+.filter-bar-suggestions code {
+  font-family: var(--font-mono);
+}
+.filter-bar-actions {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 0.4rem;
+  margin-left: auto;
+}
+.filter-bar-text-button {
+  padding: 0.2rem 0.45rem;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--text-secondary);
+  font-size: var(--text-base);
+  cursor: pointer;
+}
+.filter-bar-text-button:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+.filter-bar-error {
+  flex-basis: 100%;
+  margin: 0;
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+}
+.filter-bar-name {
+  width: 10rem;
+}
+.upnext-filter-error {
+  margin: 0;
+  color: var(--status-critical);
+  font-size: var(--text-xs);
+}
+.upnext-filter-error button {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
+.local-tab-name {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+/* The open field's operator, above its values: is, is not, at least… */
+.filter-menu-ops {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.2rem;
+  padding: 0.15rem 0.15rem 0.35rem;
+  margin-bottom: 0.2rem;
+  border-bottom: 1px solid var(--border-default);
+}
+.filter-menu-op {
+  padding: 0.15rem 0.5rem;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+  cursor: pointer;
+}
+.filter-menu-op:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+.filter-menu-op.on {
+  border-color: var(--border-default);
+  background: var(--surface-pressed);
+  color: var(--text-primary);
+}
+/* The lit icon's mark: a filter is in force. */
+.filter-menu-button {
+  position: relative;
+}
+.filter-menu-dot {
+  position: absolute;
+  top: 0.3rem;
+  right: 0.3rem;
+  width: 0.4rem;
+  height: 0.4rem;
+  border-radius: 999px;
+  background: var(--action-primary);
+}
+/* The query at the menu's foot, its suggestions opening above it. */
+.filter-menu-query {
+  display: grid;
+  gap: 0.3rem;
+  padding: 0.4rem;
+  border-top: 1px solid var(--border-default);
+}
+.filter-menu-query .filter-bar-suggestions {
+  top: auto;
+  bottom: calc(100% + 0.35rem);
+}
+/* Save, with its other ways behind the arrow, as GitHub's merge button. */
+.filter-save {
+  position: relative;
+  display: inline-flex;
+}
+.filter-save > .filter-save-main:not(:last-child) {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+.filter-save-more > summary {
+  list-style: none;
+  height: 100%;
+  border-left: 1px solid color-mix(in srgb, var(--text-inverse) 30%, transparent);
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+  padding-inline: 0.35rem;
+}
+.filter-save-more > summary::-webkit-details-marker {
+  display: none;
+}
+.filter-save-menu {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 0.3rem);
+  z-index: 32;
+  display: grid;
+  min-width: 10rem;
+  padding: 0.3rem;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  background: var(--surface-card);
+  box-shadow: var(--shadow-overlay);
+}
+/* The edit page: the filter icon beside the inbox's whole query. */
+.inbox-query {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.4rem;
+}
+.inbox-query > .filter-bar {
+  flex: 1;
+}

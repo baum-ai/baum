@@ -156,11 +156,11 @@ it("keeps API, event and navigation URLs under the session namespace", async () 
   await act(async () => rail("Pull requests").click());
   await act(async () => {
     [...node.querySelectorAll<HTMLButtonElement>('[aria-label="Show"] button')]
-      .find((button) => button.textContent?.startsWith("Mine"))!
+      .find((button) => button.textContent?.startsWith("Closed"))!
       .click();
   });
   expect(location.pathname).toBe("/s/test-ns/");
-  expect(location.search).toBe("?page=pulls&filter=mine");
+  expect(location.search).toBe("?page=pulls&filter=history");
 });
 it("says it is loading, not empty, until the first read of jobs and repositories finishes", async () => {
   const original = vi.mocked(fetch).getMockImplementation()!;
@@ -422,14 +422,10 @@ it.each([
     else expect(node.textContent).not.toContain("showing cached data");
   },
 );
-it("filters by requested, authored, review state, repository and saved history", () => {
+it("splits the pull requests into Open and Closed", () => {
   const rows = [entry(1, "outdated"), entry(2), entry(3, "current", true)];
-  expect(filtered(rows, "requested", "").map((e) => e.pull_request.number)).toEqual([1]);
-  expect(filtered(rows, "mine", "").map((e) => e.pull_request.number)).toEqual([2]);
-  expect(filtered(rows, "outdated", "").length).toBe(1);
-  expect(filtered(rows, "no_review", "").length).toBe(1);
-  expect(filtered(rows, "all", "other/repo")).toEqual([]);
-  expect(filtered(rows, "history", "").map((e) => e.pull_request.number)).toEqual([3]);
+  expect(filtered(rows, "open").map((e) => e.pull_request.number)).toEqual([1, 2]);
+  expect(filtered(rows, "history").map((e) => e.pull_request.number)).toEqual([3]);
   expect(cost(null)).toBe("—");
   expect(cost(0)).toBe("$0.0000");
 });
@@ -568,34 +564,29 @@ it("groups requested PRs first, splits the person's own by what they need, and k
     ["history", [5, 4]],
   ]);
 });
-it("opens Pull requests on For you, with only review requests and the person's own, and the rest under Others", async () => {
+it("opens Pull requests on Open, with Closed last, and comes back to the tab last shown", async () => {
+  localStorage.clear();
   history.replaceState(null, "", "/s/test-ns/?page=pulls");
   entries = [entry(1), entry(2), entry(3)];
   await act(async () => root.render(<App />));
   const titles = () =>
-    Array.from(node.querySelectorAll(".inbox-pr-title")).map((link) => link.textContent);
-  expect(titles()).toEqual(["Change 1", "Change 2"]);
-  const tab = (name: string) =>
-    Array.from(node.querySelectorAll<HTMLButtonElement>('[aria-label="Show"] button')).find(
-      (button) => button.textContent?.startsWith(name),
-    )!;
-  expect(tab("For you").getAttribute("aria-pressed")).toBe("true");
-  expect(tab("Others").textContent).toBe("Others1");
-  await act(async () => tab("Others").click());
-  expect(titles()).toEqual(["Change 3"]);
-  entries = [entry(3)];
-  const original = vi.mocked(fetch).getMockImplementation()!;
-  vi.mocked(fetch).mockImplementation((...args) =>
-    String(args[0]) === "/s/test-ns/api/repos"
-      ? Promise.resolve(Response.json([{ id: "clone", repository: "acme/demo", path: "/c" }]))
-      : original(...args),
-  );
+    Array.from(node.querySelectorAll(".inbox-pr-title"))
+      .map((link) => link.textContent)
+      .sort();
+  expect(titles()).toEqual(["Change 1", "Change 2", "Change 3"]);
+  const tabs = () =>
+    Array.from(node.querySelectorAll<HTMLButtonElement>('[aria-label="Show"] button'));
+  expect(tabs().map((one) => one.textContent)).toEqual(["Open3", "Closed0"]);
+  expect(tabs()[0]!.getAttribute("aria-pressed")).toBe("true");
+  await act(async () => tabs()[1]!.click());
+  expect(location.search).toBe("?page=pulls&filter=history");
+  // Back from another page without a tab named, Closed shows again.
   history.replaceState(null, "", "/s/test-ns/?page=pulls");
   await act(async () => root.unmount());
   root = createRoot(node);
   await act(async () => root.render(<App />));
-  expect(node.textContent).toContain("Nothing is waiting on you");
-  expect(tab("For you").className).toContain("empty");
+  expect(tabs()[1]!.getAttribute("aria-pressed")).toBe("true");
+  localStorage.clear();
 });
 it("keeps collapsed selections and selects only expanded visible rows", async () => {
   entries = [entry(1), entry(2), entry(3)];

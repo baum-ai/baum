@@ -1,7 +1,8 @@
 # Durable desktop reading state
 
-`uistate` owns the Inbox's bookkeeping, review walkthrough drafts and whether
-the first-run tour was seen in the shared private application database
+`uistate` owns the Inbox's bookkeeping, review walkthrough drafts, each page's
+filter and saved Pull requests tabs, and whether the first-run tour was seen
+in the shared private application database
 (`internal/appdb`). It imports no legacy
 browser storage. Original coding-session transcripts and submitted GitHub
 reviews are outside this store.
@@ -9,8 +10,16 @@ reviews are outside this store.
 | Document | Contents |
 | --- | --- |
 | `ui/inbox` | local day; per-PR seen/cleared records; time-based snoozes; head-based snoozes |
+| `ui/filters` | each page's filter query and the saved Pull requests tabs (`{pages: {<page>: query}, tabs: [{id, name, view, query}]}`) |
 | `ui/tour` | whether this computer has finished or skipped the app's first-run tour (`{seen}`) |
 | `ui/walkthrough` | per repository/PR/review-version seen stops, draft comments per stop, and overall comment |
+
+A filter page is `inbox`, `inbox:<inbox id>` or `pulls`, at most 64 of them,
+and a page without a filter is left out (the app drops the least recently
+changed beyond 60). A query is one line of at most 500 characters; the daemon
+never parses it. A tab has a 32-hex `id` (unique), a trimmed `name` of 1 to 40
+characters, a `view` (`open` or `history`, Closed) and a query; at most 20 tabs. A stored filters document in another shape
+reads as none (at its revision), and the next save replaces it.
 
 A walkthrough key is `owner/repository#number@vversion` (optionally prefixed
 with an Enterprise host). The latest 40 saved review versions are retained.
@@ -26,6 +35,8 @@ JSON-content checks. These routes grant no filesystem access.
 
 - `GET /api/ui-state/inbox`
 - `PUT /api/ui-state/inbox`
+- `GET /api/ui-state/filters`
+- `PUT /api/ui-state/filters`
 - `GET /api/ui-state/tour`
 - `PUT /api/ui-state/tour`
 - `GET /api/ui-state/walkthrough?key=<URL-encoded review key>`

@@ -1,28 +1,25 @@
-import { useEffect, useId, useRef, useState, type ComponentType, type ReactNode } from "react";
+import { useEffect, useId, useRef, useState, type ComponentType } from "react";
 import type { ViewerLinkProps } from "@baum/viewer/navigation";
 import { appURL } from "./api";
 import {
-  choices,
+  sentence,
+  templateInbox,
   countOf,
   fromTemplate,
   inboxesOf,
-  INBOX_COLORS,
   matches,
   MAX_INBOXES,
   nameProblem,
   ownersOf,
-  sentence,
-  sentenceParts,
   templates,
-  type Choice,
   type Inbox,
-  type InboxColor,
 } from "./inboxes";
 import { MenuButton, useContextMenu, type MenuItem } from "./context-menu";
+import { FilterBar, FilterButton } from "./filter-menu";
 import { PageBar } from "./shell";
 import { SettingRow } from "./settings";
-import { GROUPS, InboxTag, type UpNextItem } from "./up-next";
-import { DANGER, SECONDARY } from "./action-classes";
+import { ColourSwatches, GROUPS, InboxTag, type UpNextItem } from "./up-next";
+import { DANGER, PRIMARY, SECONDARY } from "./action-classes";
 
 /** What the three inbox pages share: the person's inboxes and the unsnoozed
  *  queue they are matched against, the same items the sidebar counts. */
@@ -45,15 +42,6 @@ export const manageInboxesHref = () => appURL("?page=inboxes");
 export const editInboxHref = (id: string) =>
   appURL(`?page=inbox-edit&inbox=${encodeURIComponent(id)}`);
 
-const COLOR_NAMES: Record<InboxColor, string> = {
-  blue: "Blue",
-  green: "Green",
-  red: "Red",
-  amber: "Amber",
-  purple: "Purple",
-  grey: "Grey",
-};
-
 /** "Saved" for two seconds after each save the daemon accepts. */
 function useSavedMark(saves: number) {
   const [shown, setShown] = useState(false);
@@ -72,8 +60,6 @@ function useSavedMark(saves: number) {
   );
 }
 
-const plural = (n: number, one: string, many: string) => (n === 1 ? one : many);
-
 /** A pull request a bit of the page names: its title and where it is. */
 function prLine(item: UpNextItem) {
   const pr = item.entry.pull_request;
@@ -87,19 +73,17 @@ export function NewInboxPage({
   items,
   login,
   repositories,
-  save,
-  go,
-  created,
+  start,
   Link,
-}: InboxPageProps & { created: (id: string) => void }) {
-  const full = inboxes.length >= MAX_INBOXES;
+}: InboxPageProps & {
+  /** Opens a template as an inbox not saved yet, on its edit page. */
+  start: (inbox: Inbox) => void;
+}) {
   const owners = ownersOf(repositories, login);
+  const full = inboxes.length >= MAX_INBOXES;
   return (
     <section>
-      <PageBar
-        title="What should this inbox catch?"
-        detail="Start from one of these. You can change anything afterwards."
-      />
+      <PageBar title="What should this inbox catch?" />
       <div className="local-page-body inbox-page">
         <Link href={appURL()} className="inbox-back">
           ← Inbox
@@ -119,19 +103,17 @@ export function NewInboxPage({
                   type="button"
                   disabled={full}
                   className={`inbox-template inbox-${template.color}`}
-                  onClick={() => {
-                    const inbox = fromTemplate(template, inboxes);
-                    save([...inboxes, inbox]);
-                    created(inbox.id);
-                    go(editInboxHref(inbox.id));
-                  }}
+                  onClick={() => start(fromTemplate(template, inboxes))}
                 >
                   <span className="inbox-template-head">
                     <span aria-hidden="true" className="inbox-dot" />
                     <span className="inbox-template-name">{made.name}</span>
                     <span className="inbox-template-count">{count} now</span>
                   </span>
-                  <span className="inbox-template-sentence">{sentence(made, login)}</span>
+                  <span className="inbox-template-sentence">
+                    {template.description ??
+                      sentence(templateInbox(template, inboxes, "preview"), login)}
+                  </span>
                 </button>
               </li>
             );
@@ -145,34 +127,6 @@ export function NewInboxPage({
   );
 }
 
-/** A choice of one part of an inbox's sentence, with how many pull requests
- *  picking it would show. */
-function Chip({
-  on,
-  label,
-  count,
-  onClick,
-}: {
-  on: boolean;
-  label: string;
-  count?: number;
-  onClick: () => void;
-}) {
-  return (
-    <button type="button" aria-pressed={on} className="inbox-chip" onClick={onClick}>
-      {label}
-      {count === undefined ? null : (
-        <>
-          <span aria-hidden="true" className="inbox-chip-count">
-            {count}
-          </span>
-          <span className="sr-only"> ({count} now)</span>
-        </>
-      )}
-    </button>
-  );
-}
-
 type Diff = { added: Set<string>; removed: UpNextItem[] };
 
 /** `?page=inbox-edit&inbox=<id>`: one inbox, saved as it is changed, beside
@@ -181,16 +135,33 @@ export function EditInboxPage({
   id,
   fresh,
   remove,
+  draft,
+  setDraft,
   ...page
 }: InboxPageProps & {
   /** The id in the address. */
   id: string;
-  /** Just created from a template. */
+  /** Just created. */
   fresh: boolean;
-  remove: (inbox: Inbox) => void;
+  /** Deletes the inbox once confirmed, then runs `after`. */
+  remove: (inbox: Inbox, after?: () => void) => void;
+  /** An inbox started from a template on New inbox, not saved until Save. */
+  draft: Inbox | null;
+  setDraft: (inbox: Inbox | null) => void;
 }) {
   const { inboxes, Link } = page;
-  const inbox = inboxes.find((one) => one.id === id);
+  const saved = inboxes.find((one) => one.id === id);
+  const unsaved = !saved && draft?.id === id ? draft : null;
+  // A Save of an inbox not saved yet goes to its queue once the daemon has
+  // it; one refused leaves the draft here to try again.
+  const [saving, setSaving] = useState<number | null>(null);
+  useEffect(() => {
+    if (saving === null || page.saves <= saving) return;
+    setSaving(null);
+    setDraft(null);
+    page.go(appURL(`?inbox=${encodeURIComponent(id)}`));
+  }, [page.saves]);
+  const inbox = saved ?? unsaved;
   if (!inbox)
     return (
       <section>
@@ -205,28 +176,48 @@ export function EditInboxPage({
         </div>
       </section>
     );
-  return <EditInbox key={inbox.id} inbox={inbox} fresh={fresh} remove={remove} {...page} />;
+  return (
+    <EditInbox
+      key={inbox.id}
+      inbox={inbox}
+      fresh={fresh || !!unsaved}
+      remove={remove}
+      keepDraft={unsaved ? setDraft : undefined}
+      saveDraft={(made) => {
+        setDraft(made);
+        page.save([...inboxes, made]);
+        setSaving(page.saves);
+      }}
+      {...page}
+    />
+  );
 }
 
 function EditInbox({
   inbox,
   fresh,
   remove,
+  keepDraft,
+  saveDraft,
   inboxes,
   items,
-  login,
-  repositories,
   saves,
   save,
   go,
   Link,
-}: InboxPageProps & { inbox: Inbox; fresh: boolean; remove: (inbox: Inbox) => void }) {
+}: InboxPageProps & {
+  inbox: Inbox;
+  fresh: boolean;
+  remove: (inbox: Inbox, after?: () => void) => void;
+  /** Takes each change while the inbox is not saved yet; Save then adds it. */
+  keepDraft?: (inbox: Inbox | null) => void;
+  /** Adds the inbox not saved yet. */
+  saveDraft?: (inbox: Inbox) => void;
+}) {
   const saved = useSavedMark(saves);
   const ids = useId();
   const [draft, setDraft] = useState(inbox.name);
   const [nameError, setNameError] = useState("");
-  const [open, setOpen] = useState<"what" | "where" | "risk" | null>(null);
-  const [fine, setFine] = useState(inbox.repositories.length > 0 || inbox.no_bots);
   const [diff, setDiff] = useState<Diff | null>(null);
   const nameField = useRef<HTMLInputElement>(null);
   // A new inbox opens with its name to type over.
@@ -241,13 +232,13 @@ function EditInbox({
     return () => clearTimeout(timer);
   }, [diff]);
 
-  const owners = ownersOf(repositories, login);
   const mine = items.filter((item) => matches(inbox, item));
 
   /** Saves a change, and notes what it added to and took out of the preview. */
   const change = (patch: Partial<Inbox>) => {
     const next = { ...inbox, ...patch };
-    save(inboxes.map((one) => (one.id === inbox.id ? next : one)));
+    if (keepDraft) keepDraft(next);
+    else save(inboxes.map((one) => (one.id === inbox.id ? next : one)));
     const was = new Set(mine.map((item) => item.key));
     const after = items.filter((item) => matches(next, item));
     const now = new Set(after.map((item) => item.key));
@@ -265,46 +256,7 @@ function EditInbox({
     if (name !== inbox.name) change({ name });
   };
 
-  const options = choices(inbox, owners, login);
-  const parts = sentenceParts(inbox, login);
-  const part = (key: "what" | "where" | "risk", text: string) => (
-    <button
-      type="button"
-      className="inbox-part"
-      aria-expanded={open === key}
-      aria-controls={`${ids}-${key}`}
-      onClick={() => setOpen(open === key ? null : key)}
-    >
-      {key === "what" ? `${text.charAt(0).toUpperCase()}${text.slice(1)}` : text}
-    </button>
-  );
-  const choiceList = (key: "what" | "where" | "risk", label: string) =>
-    open === key ? (
-      <div id={`${ids}-${key}`} role="group" aria-label={label} className="inbox-choices">
-        {options[key].map((choice: Choice) => (
-          <Chip
-            key={choice.key}
-            on={choice.on}
-            label={choice.label}
-            count={countOf({ ...inbox, ...choice.patch }, items)}
-            onClick={() => {
-              setOpen(null);
-              if (!choice.on) change(choice.patch);
-            }}
-          />
-        ))}
-      </div>
-    ) : null;
-
-  const repositoryChips = Array.from(new Set([...repositories, ...inbox.repositories])).sort(
-    (a, b) => a.localeCompare(b),
-  );
-  const toggleRepository = (repository: string) =>
-    change({
-      repositories: inbox.repositories.some((r) => r.toLowerCase() === repository.toLowerCase())
-        ? inbox.repositories.filter((r) => r.toLowerCase() !== repository.toLowerCase())
-        : [...inbox.repositories, repository],
-    });
+  const kinds = new Map(items.map((item) => [item.entry, item.kind] as const));
 
   // The preview: what matches now, plus what the last change took out until
   // it fades, in the queue's groups.
@@ -318,13 +270,27 @@ function EditInbox({
 
   return (
     <section>
-      <PageBar title="Edit inbox" detail="Changes save as you make them" actions={saved} />
+      <PageBar
+        title={keepDraft ? "New inbox" : "Edit inbox"}
+        detail={keepDraft ? "Save adds it to the sidebar" : "Changes save as you make them"}
+        actions={keepDraft ? null : saved}
+      />
       <div className="local-page-body inbox-page inbox-edit">
-        <Link href={appURL(`?inbox=${encodeURIComponent(inbox.id)}`)} className="inbox-back">
-          ← {inbox.name}
-        </Link>
+        {keepDraft ? (
+          <Link href={newInboxHref()} className="inbox-back">
+            ← New inbox
+          </Link>
+        ) : (
+          <Link href={appURL(`?inbox=${encodeURIComponent(inbox.id)}`)} className="inbox-back">
+            ← {inbox.name}
+          </Link>
+        )}
         <div className={`inbox-form inbox-${inbox.color} local-panel`}>
-          {fresh ? (
+          {keepDraft ? (
+            <p role="status" className="inbox-fresh">
+              Not saved yet. Adjust anything below, then Save.
+            </p>
+          ) : fresh ? (
             <p role="status" className="inbox-fresh">
               Created and added to the sidebar. Adjust anything below.
             </p>
@@ -357,22 +323,12 @@ function EditInbox({
                   }
                 }}
               />
-              <div role="radiogroup" aria-label="Colour" className="inbox-swatches">
-                {INBOX_COLORS.map((color) => (
-                  <button
-                    key={color}
-                    type="button"
-                    role="radio"
-                    aria-checked={inbox.color === color}
-                    aria-label={COLOR_NAMES[color]}
-                    title={COLOR_NAMES[color]}
-                    className={`inbox-swatch inbox-${color}`}
-                    onClick={() => {
-                      if (inbox.color !== color) change({ color });
-                    }}
-                  />
-                ))}
-              </div>
+              <ColourSwatches
+                color={inbox.color}
+                pick={(color) => {
+                  if (color !== inbox.color) change({ color });
+                }}
+              />
             </div>
             {nameError ? (
               <p id={`${ids}-name-error`} role="alert" className="inbox-name-error">
@@ -382,59 +338,22 @@ function EditInbox({
           </div>
           <div className="inbox-block">
             <h2 className="settings-row-label">What it catches</h2>
-            <p className="inbox-sentence">
-              {part("what", parts.what)} {part("where", parts.where)}, {part("risk", parts.risk)}.
-            </p>
-            {choiceList("what", "What it holds")}
-            {choiceList("where", "Where")}
-            {choiceList("risk", "Risk")}
-            <button
-              type="button"
-              className="inbox-disclosure"
-              aria-expanded={fine}
-              onClick={() => setFine(!fine)}
-            >
-              Fine-tune
-            </button>
-            {fine ? (
-              <div className="inbox-fine">
-                <div role="group" aria-labelledby={`${ids}-repositories`}>
-                  <h3 id={`${ids}-repositories`} className="inbox-fine-title">
-                    Only these repositories
-                    <span> · none picked means all that match above</span>
-                  </h3>
-                  <div className="inbox-choices">
-                    {repositoryChips.map((repository) => (
-                      <Chip
-                        key={repository}
-                        label={repository}
-                        on={inbox.repositories.some(
-                          (r) => r.toLowerCase() === repository.toLowerCase(),
-                        )}
-                        onClick={() => toggleRepository(repository)}
-                      />
-                    ))}
-                    {repositoryChips.length === 0 ? (
-                      <span className="settings-row-detail">
-                        Pick repositories in Repositories first.
-                      </span>
-                    ) : null}
-                  </div>
-                </div>
-                <fieldset className="inbox-leave-out">
-                  <legend className="inbox-fine-title">Leave out</legend>
-                  <label className="inbox-check">
-                    <input
-                      type="checkbox"
-                      checked={inbox.no_bots}
-                      onChange={(event) => change({ no_bots: event.target.checked })}
-                    />
-                    <span>Bots</span>
-                    <span className="inbox-check-note">· Renovate, Dependabot</span>
-                  </label>
-                </fieldset>
-              </div>
-            ) : null}
+            {/* The inbox's query, picked from the filter menu or typed. */}
+            <div className="inbox-query">
+              <FilterButton
+                query={inbox.query}
+                onChange={(query) => change({ query })}
+                entries={items.map((item) => item.entry)}
+                kindOf={(entry) => kinds.get(entry)}
+                inbox
+              />
+              <FilterBar
+                query={inbox.query}
+                onChange={(query) => change({ query })}
+                entries={items.map((item) => item.entry)}
+                inbox
+              />
+            </div>
           </div>
           <div className="settings-list inbox-badge-block">
             <SettingRow
@@ -456,25 +375,46 @@ function EditInbox({
               />
             </SettingRow>
           </div>
-          <div className="inbox-block inbox-delete">
-            <p className="settings-row-detail">
-              Deleting an inbox leaves its pull requests in Inbox.
-            </p>
-            <button
-              type="button"
-              className={DANGER}
-              onClick={() => {
-                remove(inbox);
-                go(appURL());
-                // The button goes with the page: focus lands on Inbox.
-                document
-                  .querySelector<HTMLElement>(`.local-rail a.local-rail-link[href="${appURL()}"]`)
-                  ?.focus();
-              }}
-            >
-              Delete inbox
-            </button>
-          </div>
+          {keepDraft ? (
+            <div className="inbox-block inbox-delete">
+              <p className="settings-row-detail">Nothing is saved until you save it.</p>
+              <button
+                type="button"
+                className={PRIMARY}
+                onClick={() => {
+                  // The name as typed, checked as leaving its field would.
+                  const problem = nameProblem(draft, inboxes, inbox.id);
+                  setNameError(problem);
+                  if (!problem) saveDraft?.({ ...inbox, name: draft.trim() });
+                }}
+              >
+                Save
+              </button>
+            </div>
+          ) : (
+            <div className="inbox-block inbox-delete">
+              <p className="settings-row-detail">
+                Deleting an inbox leaves its pull requests in Inbox.
+              </p>
+              <button
+                type="button"
+                className={DANGER}
+                onClick={() =>
+                  remove(inbox, () => {
+                    go(appURL());
+                    // The button goes with the page: focus lands on Inbox.
+                    document
+                      .querySelector<HTMLElement>(
+                        `.local-rail a.local-rail-link[href="${appURL()}"]`,
+                      )
+                      ?.focus();
+                  })
+                }
+              >
+                Delete inbox
+              </button>
+            </div>
+          )}
         </div>
         <aside aria-label="Preview" className="inbox-preview local-panel">
           <div className="inbox-preview-head">
@@ -536,15 +476,7 @@ function EditInbox({
 
 /** `?page=inboxes`: every inbox in the sidebar's order, to reorder, switch in
  *  or out of the badge, and open. */
-export function ManageInboxesPage({
-  inboxes,
-  items,
-  login,
-  saves,
-  save,
-  go,
-  Link,
-}: InboxPageProps) {
+export function ManageInboxesPage({ inboxes, items, saves, save, go, Link }: InboxPageProps) {
   const saved = useSavedMark(saves);
   const move = (index: number, by: -1 | 1) => {
     const next = inboxes.slice();
@@ -570,7 +502,6 @@ export function ManageInboxesPage({
     });
     return choices;
   };
-  const uncovered = items.filter((item) => inboxesOf(item, inboxes).length === 0).length;
   const newLink = (
     <Link href={newInboxHref()} className={SECONDARY}>
       New inbox
@@ -622,50 +553,14 @@ export function ManageInboxesPage({
                         {inbox.badge ? "" : " · not counted in the badge"}
                       </span>
                     </span>
-                    <span className="settings-row-detail">{sentence(inbox, login)}</span>
                   </div>
                   <MenuButton label={inbox.name} items={() => actions(inbox, index)} menu={menu} />
                 </li>
               ))}
             </ul>
-            <div className="local-list-note">
-              <p className={`inbox-coverage ${uncovered > 0 ? "caution" : "ok"}`}>
-                {uncovered > 0
-                  ? `${uncovered} ${plural(uncovered, "pull request isn’t", "pull requests aren’t")} in any inbox right now. ${plural(uncovered, "It shows", "They show")} only under Inbox and always ${plural(uncovered, "counts", "count")} in its badge.`
-                  : "Every open pull request is in at least one inbox."}
-              </p>
-            </div>
           </>
         )}
       </div>
     </section>
-  );
-}
-
-/** The sidebar's two links under the inboxes. */
-export function RailLinks({
-  page,
-  Link,
-}: {
-  page: string;
-  Link: ComponentType<ViewerLinkProps>;
-}): ReactNode {
-  const link = (current: boolean, href: string, label: string, plus?: boolean) => (
-    <Link
-      href={href}
-      aria-current={current ? "page" : undefined}
-      className="local-rail-sub local-rail-extra"
-    >
-      <span aria-hidden="true" className="local-rail-plus">
-        {plus ? "+" : ""}
-      </span>
-      <span className="local-rail-label">{label}</span>
-    </Link>
-  );
-  return (
-    <>
-      {link(page === "inbox-new", newInboxHref(), "New inbox", true)}
-      {link(page === "inboxes", manageInboxesHref(), "Manage inboxes")}
-    </>
   );
 }

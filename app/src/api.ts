@@ -51,6 +51,8 @@ export type PR = GitHubState & {
   fork: boolean;
   authored_by_me: boolean;
   review_requested_from_me: boolean;
+  /** The person is among its first 20 assignees; absent in data from an older daemon. */
+  assigned_to_me?: boolean;
   author_has_write: boolean | null;
   team_membership_known: boolean;
   head_ref?: string;
@@ -802,10 +804,8 @@ export function jobHref(job: Job) {
 export function backTo(search: URLSearchParams): { href: string; label: string; prefix: string } {
   if (search.get("page") !== "pulls") return { href: appURL(), label: "Inbox", prefix: "" };
   const back = new URLSearchParams({ page: "pulls" });
-  for (const key of ["filter", "repo"]) {
-    const value = search.get(key);
-    if (value) back.set(key, value);
-  }
+  const filter = search.get("filter");
+  if (filter) back.set("filter", filter);
   return { href: appURL(`?${back}`), label: "Pull requests", prefix: "page=pulls&" };
 }
 /** Requests `path`, relative to the namespace, as `api/repos`. */
@@ -941,28 +941,10 @@ export function groupDocumentRequest(id: string, version?: number, signal?: Abor
 export function rowKey(row: Entry) {
   return `${row.clone_id ?? ""}:${row.pull_request.repository}:${row.pull_request.number}`;
 }
-/** The inbox view holds what is the person's to check now: pull requests
- *  asking for their review and their own. Everyone else's are under "other";
- *  "all" is every open pull request. */
-export function filtered(entries: Entry[], filter: string, repository: string) {
-  const yours = (e: Entry) =>
-    e.pull_request.review_requested_from_me || e.pull_request.authored_by_me;
-  return entries.filter(
-    (e) =>
-      (!repository || e.pull_request.repository === repository) &&
-      (filter === "history" ? e.historical : !e.historical) &&
-      (filter === "inbox"
-        ? yours(e)
-        : filter === "other"
-          ? !yours(e)
-          : filter === "requested"
-            ? e.pull_request.review_requested_from_me
-            : filter === "mine"
-              ? e.pull_request.authored_by_me
-              : filter === "outdated" || filter === "no_review"
-                ? e.status === filter
-                : true),
-  );
+/** A Pull requests view's pull requests: `history` those closed, merged or no
+ *  longer listed whose reviews were saved, any other the open ones. */
+export function filtered(entries: Entry[], filter: string) {
+  return entries.filter((e) => (filter === "history" ? e.historical : !e.historical));
 }
 export function cost(value: number | null | undefined) {
   return formatUSD(value);
