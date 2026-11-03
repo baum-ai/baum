@@ -387,7 +387,7 @@ The daemon outlives the app, so the app's presence is a tray icon.
   line per readable plan window ("Claude Code · 5-hour: 62% left · resets in
   3 h"); Open baum; Pause or Resume automatic reviews; Start at login;
   a Notifications submenu (see
-  "Notifications"); Quit; Quit and stop background reviews. Plan usage shows
+  "Notifications"); Report a problem…; Quit; Quit and stop background reviews. Plan usage shows
   only the plans the daemon could read and the person has not hidden in
   Settings (by default those of the backends baum uses), and nothing when
   none remain. The menu is rebuilt whenever a "resets in" text would
@@ -474,6 +474,33 @@ the tray's last view (`tray_panel`), fit the window to its height
 (`tray_panel_height`) and run Open, pause or resume, Quit and stop or open a
 waiting session, or only hide the panel (`close`) (`tray_action`, which
 refuses any other menu id).
+
+## Report a problem
+
+The app sends no telemetry or crash reports, so **Report a problem…** opens a
+new bug report in the public repository (`baum-ai/baum`) in the default
+browser. In the app (the sidebar's `?` menu and Diagnostics' button) it first
+opens a dialog (`src/report-problem.tsx` in the local app) where the user
+writes what happened and chooses what to attach: **Nothing**, **Versions
+only** (baum's version, the OS and each tool's version, no paths or details)
+or **All diagnostics** (the summary below), with a preview of exactly what
+the link carries. The dialog builds the link from the redacted parts in the
+`/api/diagnostics` answer (`report_issue`, `doctor.Report.PublicIssueParts`)
+and fits it the same way. The tray menu and the macOS window menu's Help open
+the link directly, with the whole summary. The daemon builds that link in its
+`/api/diagnostics` answer
+(`report_issue_url`) with the version, OS and a redacted summary of the
+Diagnostics report (`doctor.Report.PublicSummary`): home directories become
+`~`, secret-shaped values and e-mail addresses are masked, and the
+configuration's load error, the `PATH` entries, the per-repository store
+checks and non-github.com host names are left out. The
+summary loses whole lines from its end, with a note, to keep the link under
+about 6.5 KB, as GitHub refuses longer ones. The user reads and edits the form
+in the browser, and nothing is sent until they submit it. The tray menu asks the
+daemon for the link on each click (the checks take a few seconds), opens it only
+when it starts with `https://github.com/baum-ai/baum/issues/new?`, and otherwise
+(no daemon, failed checks) opens the repository's issue chooser. The tray panel
+has no such item; its right click keeps the full menu.
 
 ## Start at login
 

@@ -1,4 +1,13 @@
-import { useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import { CLOSED, comboboxKey, type ComboboxState } from "@baum/viewer/combobox";
 import { formatCount } from "@baum/viewer/components/format";
 import {
@@ -35,6 +44,10 @@ type Row =
 
 /** How far a menu row's values reach beside the menu. */
 const SUBMENU_WIDTH = 256;
+
+/** Whether the menu's "Write a query…" asked for the query box, so a
+ *  `FilterBar` in its footer shows the box even with no filter. */
+const WritingQuery = createContext(false);
 
 /** The filter icon and its menu, as Linear draws one: a search box over the
  *  fields, each opening its values beside the menu, and the query itself at
@@ -134,6 +147,8 @@ export function FilterButton({
   const [inSub, setInSub] = useState(-1);
   // The operator the open field's values are picked with.
   const [op, setOp] = useState<Op>("=");
+  // An empty query has no box until "Write a query…" shows it.
+  const [writing, setWriting] = useState(false);
   useEffect(() => {
     if (open) return;
     setSearch("");
@@ -141,7 +156,11 @@ export function FilterButton({
     setSub(null);
     setInSub(-1);
     setOp("=");
+    setWriting(false);
   }, [open]);
+  useEffect(() => {
+    if (writing) focusQuery();
+  }, [writing]);
 
   const fields = fieldsFor(inbox);
   const passes = (text: string, entry: Entry) => matchesQuery(text, entry, kindOf?.(entry));
@@ -213,7 +232,10 @@ export function FilterButton({
       if (!addable(row.text)) return;
       onChange(withText(query, row.text));
       close();
-    } else focusQuery();
+    } else {
+      setWriting(true);
+      focusQuery();
+    }
   };
   const rowElement = (index: number) =>
     panel.current?.querySelector<HTMLElement>(`[data-filter-row="${index}"]`) ?? null;
@@ -477,7 +499,11 @@ export function FilterButton({
             </div>
           )}
           {sub && sub.side !== "inside" ? valueList : null}
-          {footer ? <div className="filter-menu-query">{footer}</div> : null}
+          {footer ? (
+            <div className="filter-menu-query">
+              <WritingQuery.Provider value={writing}>{footer}</WritingQuery.Provider>
+            </div>
+          ) : null}
         </div>
       ) : null}
     </details>
@@ -505,6 +531,7 @@ export function FilterBar({
   actions?: ReactNode;
 }) {
   const id = useId();
+  const writing = useContext(WritingQuery);
   const input = useRef<HTMLTextAreaElement>(null);
   // The box grows with the query, which wraps rather than scrolling sideways.
   useLayoutEffect(() => {
@@ -570,7 +597,7 @@ export function FilterBar({
         ? 1
         : 0;
 
-  if (!query.trim() && !text.trim())
+  if (!writing && !query.trim() && !text.trim())
     return actions ? <div className="filter-bar-actions">{actions}</div> : null;
 
   return (

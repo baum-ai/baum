@@ -907,6 +907,18 @@ its panel a tag for each; in an inbox the panel tags the other inboxes it is
 also in. Colours are six palette names (`--inbox-*` in `src/style.css`, with
 dark variants).
 
+A `?` beside Settings opens a help menu (`HelpButton` in `src/shell.tsx`):
+**Show shortcuts** opens the shortcuts sheet, **Report a problem** opens the
+Report a problem dialog (`src/report-problem.tsx`, also Diagnostics' button:
+what happened, what to attach with a preview, then **Open issue**, which opens
+a new issue in baum-ai/baum on GitHub; see the
+[desktop README](../desktop/README.md#report-a-problem)), and **Open the docs** opens https://docs.usebaum.com/ in a new
+window (the desktop app hands it to the browser). The `?` key opens the same
+menu with the keys on Show shortcuts, so `?` then Enter shows the sheet; with
+the sheet open `?` hides it. Opened by the key, the menu gives the keys back to
+where they were rather than to the button. With the glyph-only rail the button
+sits under the Settings glyph.
+
 In the sidebar a chevron beside Inbox folds the inboxes nested under it
 (remembered in `localStorage`; hidden with the glyph-only rail). The pages and
 inboxes scroll within the sidebar, so with many inboxes plan usage, Jobs and

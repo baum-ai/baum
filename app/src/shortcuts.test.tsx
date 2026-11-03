@@ -985,7 +985,14 @@ it("draws a place's key bar from the sheet's table, keys sharing a name together
     return [...node.querySelectorAll(".key-bar > span")].map((item) => item.textContent);
   };
   const command = MAC ? "⌘" : "Ctrl+";
-  expect(await bar("jobs")).toEqual(["jk move", "↵ open", "t transcript", `${command}. actions`]);
+  expect(await bar("jobs")).toEqual([
+    "jk move",
+    "↵ open",
+    "t transcript",
+    `${command}. actions`,
+    `${command}K go to`,
+    "? help",
+  ]);
   // The Inbox's bar is what its foot always said; Settings has no row menu.
   expect(await bar("inbox")).toEqual([
     "jk move",
@@ -994,6 +1001,8 @@ it("draws a place's key bar from the sheet's table, keys sharing a name together
     "f fix",
     "s snooze",
     "u undo",
+    `${command}K go to`,
+    "? help",
   ]);
   expect(await bar("settings")).not.toContain(`${command}. actions`);
   // It shows only while Alt is held, and is for the eye alone.

@@ -696,7 +696,7 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 				}
 				return agentplugins.New().CodexTrust(ctx, dirs)
 			},
-			Diagnostics: uiDiagnostics}.Handler()
+			Diagnostics: uiDiagnostics, Version: version()}.Handler()
 		// The tour's sample project, written when first asked for.
 		sample := &sampleapp.Workspace{Dir: filepath.Join(state, "sample"), Own: api}
 		return daemon.App{

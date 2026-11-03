@@ -752,7 +752,7 @@ function shortcutGroups(
         MAC
           ? { keys: ["⌘[", "⌘]"], label: "Back, forward" }
           : { keys: ["Alt+←", "Alt+→"], label: "Back, forward" },
-        { keys: ["?"], label: "Show or hide this list" },
+        { keys: ["?"], label: "Help menu (then Enter shows this list), or hide this list" },
         {
           keys: [MAC ? "⌥ Option" : "Alt"],
           label: "Hold to show the page's keys and those on buttons",
@@ -900,6 +900,7 @@ export function KeyBar({ place, className }: { place: ShortcutsPlace; className?
     else items.push({ keys: [row.keys[0]!], short: row.short });
   }
   if (LISTS.includes(place)) items.push({ keys: [`${COMMAND}.`], short: "actions" });
+  items.push({ keys: [`${COMMAND}K`], short: "go to" }, { keys: ["?"], short: "help" });
   return (
     <footer
       aria-hidden="true"

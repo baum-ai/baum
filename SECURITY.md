@@ -229,7 +229,16 @@ It never prints a token or an API key, or a prefix, length or hash of one. For a
 GitHub token it prints only where it was found (an environment variable's name,
 the config file, `hosts.yml` or the keyring), and for `ANTHROPIC_API_KEY` only
 whether it is set. It does print paths, tool versions and the `PATH` entries,
-so look at a report before pasting it into a public issue.
+so look at a report before pasting it into a public issue. The desktop app's
+"Report a problem" attaches nothing, only the versions (of baum, the OS and
+each tool, without paths), or a shorter summary, as you choose with a preview
+in the app (the Help and tray menus attach the summary). In the summary home directories
+become `~`, secret-shaped values, e-mail addresses and @mentions are masked,
+the configuration's load error, the `PATH` entries, the per-repository store
+checks (which name your clones) and the names of GitHub hosts other than
+github.com are left out, and each line is clipped. It still lists tool versions
+and paths, and a machine or host name inside a tool's error text is not
+recognised, so review the form before submitting.
 
 ## What `baum internal view` shows
 
