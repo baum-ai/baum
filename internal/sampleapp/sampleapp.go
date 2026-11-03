@@ -131,8 +131,15 @@ func (w *Workspace) build(ctx context.Context, now time.Time) (http.Handler, err
 	if err := os.MkdirAll(w.Dir, 0o700); err != nil {
 		return nil, err
 	}
-	home, appDB := filepath.Join(w.Dir, "home"), filepath.Join(w.Dir, "app.sqlite")
-	p, err := writeProject(ctx, filepath.Join(w.Dir, "projects", "notes"), now)
+	// The sessions' working directories must match the paths git reports for
+	// the clone and its worktrees, which have symlinks resolved; macOS's
+	// temporary directory is under one.
+	dir, err := filepath.EvalSymlinks(w.Dir)
+	if err != nil {
+		return nil, err
+	}
+	home, appDB := filepath.Join(dir, "home"), filepath.Join(dir, "app.sqlite")
+	p, err := writeProject(ctx, filepath.Join(dir, "projects", "notes"), now)
 	if err != nil {
 		return nil, fmt.Errorf("writing the project: %w", err)
 	}
@@ -148,12 +155,12 @@ func (w *Workspace) build(ctx context.Context, now time.Time) (http.Handler, err
 	if err := writeReviews(ctx, p, clone.CommonDir, now); err != nil {
 		return nil, fmt.Errorf("writing the reviews: %w", err)
 	}
-	events, err := hookevents.OpenStore(filepath.Join(w.Dir, "events"), nil)
+	events, err := hookevents.OpenStore(filepath.Join(dir, "events"), nil)
 	if err != nil {
 		return nil, err
 	}
 	w.closers = append(w.closers, func() { _ = events.Close() })
-	decided, err := decisionlog.Open(filepath.Join(w.Dir, "decisions.sqlite"), decisionlog.OpenOptions{})
+	decided, err := decisionlog.Open(filepath.Join(dir, "decisions.sqlite"), decisionlog.OpenOptions{})
 	if err != nil {
 		return nil, err
 	}
@@ -168,18 +175,18 @@ func (w *Workspace) build(ctx context.Context, now time.Time) (http.Handler, err
 		return nil, fmt.Errorf("linking the sessions: %w", err)
 	}
 
-	live := &livesessions.Tracker{Source: events, Linker: linker(p), StateDir: filepath.Join(w.Dir, "live")}
+	live := &livesessions.Tracker{Source: events, Linker: linker(p), StateDir: filepath.Join(dir, "live")}
 	live.Rebuild(ctx)
 	live.ResolvePending(ctx)
 	transcripts := &livesessions.Transcripts{Tracker: live, Render: transcript.NewRenderer("").Render, Home: home, Focus: focuser{}}
-	queue, err := jobs.Open(filepath.Join(w.Dir, "jobs", "jobs.sqlite"), refusing{}, 1, nil)
+	queue, err := jobs.Open(filepath.Join(dir, "jobs", "jobs.sqlite"), refusing{}, 1, nil)
 	if err != nil {
 		return nil, err
 	}
 	w.closers = append(w.closers, func() { _ = queue.Shutdown(context.Background()) })
 	cfg := config.Default()
 	cfg.Backend, cfg.Model = config.BackendClaude, "claude-sonnet-4-5"
-	queue.SetChat(&chat.Service{Registry: registry, Config: cfg, Root: filepath.Join(w.Dir, "review-runs")})
+	queue.SetChat(&chat.Service{Registry: registry, Config: cfg, Root: filepath.Join(dir, "review-runs")})
 	groups, err := reviewgroups.Open(appDB)
 	if err != nil {
 		return nil, err

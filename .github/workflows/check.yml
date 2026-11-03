@@ -29,7 +29,8 @@ jobs:
           - os: windows
             runner: windows-2025
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 15
+    # The race-enabled tests run several times slower on Windows.
+    timeout-minutes: ${{ matrix.os == 'windows' && 30 || 15 }}
     defaults:
       run:
         shell: bash
