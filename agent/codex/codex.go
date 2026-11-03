@@ -49,6 +49,13 @@ const (
 	Container
 )
 
+// standardSpeed is the pricing speed of every Codex call baum makes. Codex's
+// JSON events never report a service tier, but Run fixes it: it ignores the
+// user's config.toml and sets no service_tier, so Codex sends none and the API
+// bills the standard tier. A change that lets a run choose a tier (Codex's
+// "priority", shown as Fast) must record that tier here instead.
+const standardSpeed = "standard"
+
 // Backend runs the Codex CLI over a request's directory.
 //
 // The child runs in its own process group, so a terminal's Ctrl-C (SIGINT) does
@@ -186,6 +193,9 @@ func (c *Backend) run(ctx context.Context, request agent.Request, fix bool, extr
 	if !request.KeepsSession() {
 		args = append(args, "--ephemeral")
 	}
+	// --ignore-user-config also drops any service_tier the user configured,
+	// and no argument below sets one, so every request runs at the standard
+	// tier that standardSpeed records.
 	args = append(args, "--ignore-user-config", "--ignore-rules",
 		"--disable", "hooks", "--disable", "apps", "--disable", "multi_agent")
 	if request.ResumeSession != "" {
@@ -376,6 +386,7 @@ func (c *Backend) run(ctx context.Context, request agent.Request, fix bool, extr
 				Output:      int64(event.Usage.Output),
 				CacheRead:   int64(event.Usage.CachedInput),
 				CacheCreate: int64(event.Usage.CacheWrite),
+				Speed:       new(standardSpeed),
 			})
 			result.Events = append(result.Events, agent.Event{Kind: "model_usage", Input: event.Usage.Input, Output: event.Usage.Output,
 				CacheRead: event.Usage.CachedInput, CacheCreate: event.Usage.CacheWrite})
@@ -386,7 +397,7 @@ func (c *Backend) run(ctx context.Context, request agent.Request, fix bool, extr
 				}
 				reportedTurns++
 				result.Tokens += max(event.Usage.Input-event.Usage.CachedInput, 0) + event.Usage.Output
-				result.Usage.Add(agent.Usage{Input: int64(max(event.Usage.Input-event.Usage.CachedInput-event.Usage.CacheWrite, 0)), Output: int64(event.Usage.Output), CacheRead: int64(event.Usage.CachedInput), CacheCreate: int64(event.Usage.CacheWrite)})
+				result.Usage.Add(agent.Usage{Input: int64(max(event.Usage.Input-event.Usage.CachedInput-event.Usage.CacheWrite, 0)), Output: int64(event.Usage.Output), CacheRead: int64(event.Usage.CachedInput), CacheCreate: int64(event.Usage.CacheWrite), Speed: new(standardSpeed)})
 			} else {
 				result.Usage.Unreported = true
 			}

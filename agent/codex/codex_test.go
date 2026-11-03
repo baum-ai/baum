@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -59,10 +60,15 @@ printf '%s\n' '{"type":"turn.completed","usage":{"input_tokens":100,"cached_inpu
 		t.Fatalf("events=%+v", result.Events)
 	}
 	// Codex's input_tokens includes the 40 cached and 20 cache-write tokens.
-	if want := (agent.Usage{Input: 40, Output: 10, CacheRead: 40, CacheCreate: 20}); result.Usage != want {
+	// The speed is standard because the run sets no service tier (see the
+	// argument check below).
+	if want := (agent.Usage{Input: 40, Output: 10, CacheRead: 40, CacheCreate: 20, Speed: new("standard")}); !reflect.DeepEqual(result.Usage, want) {
 		t.Fatalf("usage = %+v, want %+v", result.Usage, want)
 	}
 	args, _ := os.ReadFile(filepath.Join(dir, "arguments.txt"))
+	if !bytes.Contains(args, []byte("--ignore-user-config\n")) || bytes.Contains(args, []byte("service_tier")) {
+		t.Fatalf("a run must not take a service tier from config or arguments: %s", args)
+	}
 	for _, flag := range []string{"exec\n", "--json\n", "--ephemeral\n", "--sandbox\ndanger-full-access\n", "-c\nweb_search=\"disabled\"\n", "--skip-git-repo-check\n", "--model\ntest-model\n", "--output-schema\n", "-c\nopenai_base_url=\"https://proxy.example/openai\"\n"} {
 		if !bytes.Contains(args, []byte(flag)) {
 			t.Fatalf("missing %q in %s", flag, args)
