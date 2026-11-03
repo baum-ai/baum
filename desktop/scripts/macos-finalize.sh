@@ -143,10 +143,27 @@ else
   codesign --verify --strict --deep "$app"
 fi
 
+# stapler fetches the ticket from Apple's CloudKit service, which now and then
+# drops the connection or does not have a ticket yet just after notarisation
+# (error 68), so a failed attempt is tried again a little later.
+staple() {
+  local attempt
+  for attempt in 1 2 3 4; do
+    if xcrun stapler staple "$1"; then
+      return 0
+    fi
+    if [ "$attempt" = 4 ]; then
+      exit 1
+    fi
+    echo "stapler staple failed (attempt $attempt); trying again" >&2
+    sleep $((attempt * 20))
+  done
+}
+
 if [ "$notarize" = true ]; then
   ditto -c -k --keepParent "$app" "$work/baum.zip"
   notarize_file "$work/baum.zip"
-  xcrun stapler staple "$app"
+  staple "$app"
   xcrun stapler validate "$app"
   spctl --assess --type execute --verbose=2 "$app"
 fi
@@ -196,7 +213,7 @@ if [ -n "$identity" ]; then
 fi
 if [ "$notarize" = true ]; then
   notarize_file "$out/$name.dmg"
-  xcrun stapler staple "$out/$name.dmg"
+  staple "$out/$name.dmg"
   xcrun stapler validate "$out/$name.dmg"
   spctl --assess --type open --context context:primary-signature --verbose=2 "$out/$name.dmg"
 fi
