@@ -812,6 +812,7 @@ just desktop::sidecar       # build binaries/baum-<target triple>; pass a triple
 just desktop::build         # Linux bundle (deb by default) in target/release/bundle
 just desktop::bundle        # the release's Linux deb and AppImage in target/release-bundles
 just desktop::dmg           # macOS: ad hoc signed DMG in target/local-dmg (--install also installs it)
+just desktop::dmg-layout    # regenerate the DMG window layout and background in macos/
 just desktop::updater-test  # updater manifest checks reject tampered releases
 just desktop::run           # run the app on this Wayland session's display
 just desktop::dev           # native host app, with Vite hot reload in Docker
@@ -827,6 +828,14 @@ notarised. This is a host execution exception, because the bundle needs Apple's
 tools and the Tauri CLI version the Dockerfile pins. With `--install` it
 replaces `/Applications/baum.app`; quit the app first with Quit and stop
 background reviews, so the next launch starts a daemon from the new binary.
+
+The disk image opens as a small window with 128 px icons, `baum.app` beside
+the `Applications` link with an arrow between them, and mounts with the app
+icon (`icons/icon.icns`) as its volume icon. The window layout is
+`macos/dmg.DS_Store` and the arrow is the background
+`macos/dmg-background.tiff`, which `macos-finalize.sh` copies into the image;
+regenerate both in Docker with `just desktop::dmg-layout` after changing
+`scripts/dmg-layout.py`.
 
 `run` starts the container's own daemon in the container's home directory,
 not yours. Set `BAUM_DESKTOP_BAUM` to run a different `baum` binary than the

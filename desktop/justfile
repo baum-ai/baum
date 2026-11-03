@@ -45,6 +45,16 @@ bundle version="0.0.0": frontend sidecar
 dmg *args: frontend viewer (sidecar "aarch64-apple-darwin") (sidecar "x86_64-apple-darwin")
     scripts/macos-local.sh {{ args }}
 
+dmg_layout_packages := "ds-store==1.3.3 mac-alias==2.2.3 numpy==2.5.4 pillow==13.0.0 tifffile==2026.10.15"
+
+# Regenerate macos/dmg.DS_Store and macos/dmg-background.tiff, the Finder
+# window layout of the macOS DMG
+dmg-layout:
+    docker run --rm ${BAUM_DEV_CPUSET:+--cpuset-cpus="$BAUM_DEV_CPUSET"} \
+        --user "$(id -u):$(id -g)" -e HOME=/tmp -v "{{ source_directory() }}:/desktop" -w /desktop \
+        python:3.12-slim@sha256:b18b261e1b4974b4f321451ad5251ded85abb22c2b8b262da527dda1d031ab30 \
+        sh -ec 'pip install --quiet --disable-pip-version-check --target /tmp/py {{ dmg_layout_packages }} && PYTHONPATH=/tmp/py python scripts/dmg-layout.py'
+
 # Regenerate ../third_party/rust.txt, the licences of the crates in the app
 # (just third-party-notices does the rest)
 notices:
