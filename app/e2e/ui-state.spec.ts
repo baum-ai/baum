@@ -12,13 +12,28 @@ test("keeps inbox snoozes after clearing browser storage and opening a fresh con
   const title = (await row.locator(".upnext-row-title").textContent())!;
   await row.click();
   await page.getByRole("button", { name: /^Snooze/ }).click();
+  const choices = page.locator('.upnext-menu [role="menuitem"]');
+  await expect(choices.first()).toBeFocused();
+  for (const [key, index] of [
+    ["ArrowDown", 1],
+    ["ArrowUp", 0],
+    ["j", 1],
+    ["k", 0],
+    ["Control+n", 1],
+    ["Control+p", 0],
+  ] as const) {
+    await page.keyboard.press(key);
+    await expect(choices.nth(index)).toBeFocused();
+    await expect(row).toHaveAttribute("aria-current", "true");
+  }
   const saved = page.waitForResponse(
     (response) =>
       response.url().includes("api/ui-state/inbox") &&
       response.request().method() === "PUT" &&
       response.status() === 200,
   );
-  await page.getByRole("menuitem", { name: /Tomorrow morning/ }).click();
+  await page.getByRole("menuitem", { name: /Tomorrow morning/ }).focus();
+  await page.keyboard.press("Enter");
   await saved;
   await page.evaluate(() => localStorage.clear());
   await page.reload();

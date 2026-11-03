@@ -1597,6 +1597,7 @@ function Workspace({ url }: { url: UrlState }) {
           ) : page !== "pulls" ? (
             <UpNextPage
               inbox={inbox}
+              jobs={jobs}
               inboxes={inboxes.inboxes}
               selected={selectedInbox}
               onEdit={selectedInbox ? () => navigate(editInboxHref(selectedInbox.id)) : undefined}
