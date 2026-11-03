@@ -88,7 +88,7 @@ import {
   type PullRequests,
   type ReviewSettings,
 } from "./desktop/setup-model";
-import { useCopy } from "./desktop/terminal-setup";
+import { CommandText, useCopy } from "./desktop/terminal-setup";
 import { useModal } from "./modal";
 import { LoadingStatus } from "./nine-dots";
 
@@ -865,7 +865,7 @@ function TerminalSetupRow({ text, command }: { text: string; command: string }) 
     <div id="terminal-setup" className="border-t border-(--border-subtle) px-5 py-4">
       <p className="text-xs text-(--text-secondary)">{text}</p>
       <div className="terminal-command">
-        <code id="terminal-setup-command">{command}</code>
+        <CommandText command={command} />
         <Button
           size="compact"
           variant="secondary"

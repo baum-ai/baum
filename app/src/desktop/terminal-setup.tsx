@@ -32,13 +32,25 @@ export function TerminalSetup({ text, command }: { text: string; command: string
   );
 }
 
+/** The command as text. A long path wraps where it must, but the last word
+ *  (`desktop-setup`) stays whole rather than breaking at its hyphen. */
+export function CommandText({ command }: { command: string }) {
+  const last = command.lastIndexOf(" ") + 1;
+  return (
+    <code id="terminal-setup-command">
+      {command.slice(0, last)}
+      <span className="terminal-command-word">{command.slice(last)}</span>
+    </code>
+  );
+}
+
 /** The command and its Copy button. */
 export function TerminalCommand({ command }: { command: string }) {
   const { copied, copy } = useCopy();
   return (
     <>
       <div className="terminal-command">
-        <code id="terminal-setup-command">{command}</code>
+        <CommandText command={command} />
         <button
           id="terminal-setup-copy"
           type="button"

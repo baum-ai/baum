@@ -21,3 +21,6 @@
   overflow-wrap: anywhere;
   user-select: all;
 }
+.terminal-command-word {
+  white-space: nowrap;
+}
