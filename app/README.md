@@ -753,9 +753,10 @@ on buttons (class `key-hint`) show only while Alt, Option on a Mac, is held:
 the window loses focus. Every page also shows its own keys then, in one line
 along the foot of its panel (`KeyBar` in `src/shortcuts.tsx`): the keys of its
 group in the sheet that carry a short name, those sharing one together ("j k
-move"), then ⌘. for the row menu on a list, Go to and `?`. The bar reads the
-sheet's table, so it names only keys that work. The Inbox draws it at the foot
-of its list instead. The focused row has an
+move"), then ⌘. for the row menu on a list. Footer mnemonics are specific to
+the current page; app-wide keys such as Go to and `?` stay in the shortcuts
+sheet. The bar reads the sheet's table, so it names only keys that work. The
+Inbox draws it at the foot of its list instead. The focused row has an
 accent bar and a faint fill, distinct from hover and selection; focus moves to
 the row's own link, so screen readers follow, and the row scrolls into view.
 Each list (Pull requests, Inbox, Sessions, Jobs, Repositories) keeps its

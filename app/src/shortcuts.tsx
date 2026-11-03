@@ -888,8 +888,9 @@ const LISTS: ShortcutsPlace[] = ["pulls", "sessions", "jobs", "repositories"];
 /** The keys of where the person is, in one line along the foot of the page,
  *  shown while Alt (Option on a Mac) is held, with the keys on buttons
  *  (`useKeyHints`): each key the place's group names `short`, keys sharing a
- *  name together ("j k move"), then the row menu's key on a list, Go to and
- *  the sheet. It is drawn for the eye; the sheet (`?`) says the same aloud. */
+ *  name together ("j k move"), then the row menu's key on a list. Only keys
+ *  for this page belong here. It is drawn for the eye; the sheet (`?`) lists
+ *  these and the app-wide keys aloud. */
 export function KeyBar({ place, className }: { place: ShortcutsPlace; className?: string }) {
   const items: { keys: string[]; short: string }[] = [];
   // Page keys have no `short`, so the bar does not depend on their modifier.
@@ -900,7 +901,6 @@ export function KeyBar({ place, className }: { place: ShortcutsPlace; className?
     else items.push({ keys: [row.keys[0]!], short: row.short });
   }
   if (LISTS.includes(place)) items.push({ keys: [`${COMMAND}.`], short: "actions" });
-  items.push({ keys: [`${COMMAND}K`], short: "go to" }, { keys: ["?"], short: "help" });
   return (
     <footer
       aria-hidden="true"
