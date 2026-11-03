@@ -2,7 +2,9 @@
 //! a menu but with meters, which a left click on the icon opens on macOS and
 //! Windows. It shows what the tray menu does: what the daemon is doing,
 //! anything waiting on the user, what is left of the agents' plans, and
-//! Open, pause and Quit and stop. Linux tray hosts report no clicks, so
+//! pause and Quit and stop. It has no Open item: the Inbox's count opens the
+//! app, and what the daemon is doing opens the jobs list while reviews run or
+//! wait. Linux tray hosts report no clicks, so
 //! Linux has the menu only.
 //!
 //! The page is the bundled `tray.html`. Its capability allows exactly the
@@ -15,11 +17,11 @@ use std::time::{Duration, Instant};
 
 use serde::Serialize;
 use tauri::{
-    AppHandle, Manager, PhysicalPosition, Rect, WebviewUrl, WebviewWindowBuilder, Window,
-    WindowEvent,
+    AppHandle, LogicalPosition, Manager, PhysicalPosition, Rect, WebviewUrl, WebviewWindowBuilder,
+    Window, WindowEvent,
 };
 
-use crate::status::{self, NeedsYou, Plan};
+use crate::status::{self, Alert, NeedsYou, Plan};
 use crate::{navigation, tray};
 
 pub const LABEL: &str = "tray-panel";
@@ -36,8 +38,13 @@ static HIDDEN_AT: Mutex<Option<Instant>> = Mutex::new(None);
 #[derive(Debug, Serialize)]
 pub struct Panel {
     pub summary: String,
+    /// Reviews run or wait, so the summary opens the jobs list (`summary`).
+    pub jobs: bool,
+    /// The Inbox's row, which opens the app: its count, or that it is empty
+    /// once the daemon counted none. `None` while the count is unknown.
     pub waiting: Option<String>,
-    pub attention: Vec<String>,
+    /// What the icon is red for, each an action (`alert:…`).
+    pub attention: Vec<Alert>,
     pub needs: Vec<NeedsYou>,
     /// The global automatic switch; `None` while unknown.
     pub automatic: Option<bool>,
@@ -46,10 +53,20 @@ pub struct Panel {
     pub plans: Vec<Plan>,
 }
 
+/// The Inbox's row. The panel has no Open item, so it shows even when the
+/// Inbox is empty, as mail apps say so; an unknown count shows nothing.
+fn inbox_line(view: &status::View) -> Option<String> {
+    match view.waiting {
+        Some(0) => Some("Your Inbox is empty".to_string()),
+        _ => view.waiting_label(),
+    }
+}
+
 fn panel(view: &status::View, plans: Vec<Plan>) -> Panel {
     Panel {
         summary: view.summary.clone(),
-        waiting: view.waiting_label(),
+        jobs: view.running + view.queued > 0,
+        waiting: inbox_line(view),
         attention: view.attention.clone(),
         needs: view.needs.clone(),
         automatic: view.automatic,
@@ -98,39 +115,125 @@ pub fn toggle(app: &AppHandle, icon: Rect) {
     if just_hidden {
         return;
     }
-    let scale = window.scale_factor().unwrap_or(1.0);
-    let position = icon.position.to_physical::<f64>(scale);
-    let size = icon.size.to_physical::<f64>(scale);
+    // The tray reports the icon in physical pixels of the icon's screen.
+    let current = window.scale_factor().unwrap_or(1.0);
+    let position = icon.position.to_physical::<f64>(current);
+    let size = icon.size.to_physical::<f64>(current);
     let icon = Area {
         x: position.x,
         y: position.y,
         width: size.width,
         height: size.height,
     };
-    let screen = app
-        .monitor_from_point(icon.x + icon.width / 2.0, icon.y + icon.height / 2.0)
-        .ok()
-        .flatten()
-        .map(|monitor| {
-            let area = monitor.work_area();
-            Area {
-                x: f64::from(area.position.x),
-                y: f64::from(area.position.y),
-                width: f64::from(area.size.width),
-                height: f64::from(area.size.height),
-            }
-        });
-    if let (Some(screen), Ok(panel)) = (screen, window.outer_size()) {
+    // `monitor_from_point` is not used: on macOS it compares the point with
+    // the displays' bounds in points, not pixels, so on a Retina screen it
+    // missed the icon and the panel opened wherever it last was, often the
+    // middle of the screen.
+    let screens: Vec<Screen> = app
+        .available_monitors()
+        .unwrap_or_default()
+        .iter()
+        .map(|m| Screen {
+            bounds: Area {
+                x: f64::from(m.position().x),
+                y: f64::from(m.position().y),
+                width: f64::from(m.size().width),
+                height: f64::from(m.size().height),
+            },
+            work: Area {
+                x: f64::from(m.work_area().position.x),
+                y: f64::from(m.work_area().position.y),
+                width: f64::from(m.work_area().size.width),
+                height: f64::from(m.work_area().size.height),
+            },
+            scale: m.scale_factor(),
+        })
+        .collect();
+    let Ok(panel) = window.outer_size() else {
+        return show(&window);
+    };
+    // The panel's size in points, as it is drawn on any screen.
+    let panel = (
+        f64::from(panel.width) / current,
+        f64::from(panel.height) / current,
+    );
+    if cfg!(target_os = "macos") {
+        // Every macOS rectangle here is in points times its own screen's
+        // scale, so a pixel of one screen is not a pixel of another and
+        // their rectangles can overlap. The cursor, which is on the icon at
+        // the click, is in points times the primary screen's scale: back in
+        // points, it says which screen the icon is on.
+        let primary = app
+            .primary_monitor()
+            .ok()
+            .flatten()
+            .map_or(current, |m| m.scale_factor());
+        let cursor = app.cursor_position().ok().map_or(
+            (
+                (icon.x + icon.width / 2.0) / primary,
+                (icon.y + icon.height / 2.0) / primary,
+            ),
+            |p| (p.x / primary, p.y / primary),
+        );
+        let points: Vec<Area> = screens
+            .iter()
+            .map(|s| s.bounds.scaled(1.0 / s.scale))
+            .collect();
+        let Some(screen) = screen_of(cursor, &points).map(|i| &screens[i]) else {
+            eprintln!("baum desktop: no screen found for the tray icon");
+            return show(&window);
+        };
+        let (x, y) = place(
+            &icon.scaled(1.0 / screen.scale),
+            panel,
+            &screen.work.scaled(1.0 / screen.scale),
+            GAP,
+        );
+        let _ = window.set_position(LogicalPosition::new(x, y));
+    } else {
+        // Elsewhere the icon and the screens share one pixel space.
+        let centre = (icon.x + icon.width / 2.0, icon.y + icon.height / 2.0);
+        let bounds: Vec<Area> = screens.iter().map(|s| s.bounds).collect();
+        let Some(screen) = screen_of(centre, &bounds).map(|i| &screens[i]) else {
+            eprintln!("baum desktop: no screen found for the tray icon");
+            return show(&window);
+        };
         let (x, y) = place(
             &icon,
-            (f64::from(panel.width), f64::from(panel.height)),
-            &screen,
-            GAP * scale,
+            (panel.0 * screen.scale, panel.1 * screen.scale),
+            &screen.work,
+            GAP * screen.scale,
         );
         let _ = window.set_position(PhysicalPosition::new(x, y));
     }
+    show(&window);
+}
+
+fn show(window: &tauri::WebviewWindow) {
     let _ = window.show();
     let _ = window.set_focus();
+}
+
+/// A monitor: its whole rectangle, the part windows may use, and its scale.
+struct Screen {
+    bounds: Area,
+    work: Area,
+    scale: f64,
+}
+
+/// The screen a point is on: the one containing it, else the nearest, so the
+/// panel never stays where it last was. `None` only without screens.
+pub fn screen_of((cx, cy): (f64, f64), monitors: &[Area]) -> Option<usize> {
+    let distance = |m: &Area| {
+        let dx = (m.x - cx).max(cx - (m.x + m.width)).max(0.0);
+        let dy = (m.y - cy).max(cy - (m.y + m.height)).max(0.0);
+        dx * dx + dy * dy
+    };
+    monitors
+        .iter()
+        .enumerate()
+        .min_by(|(_, a), (_, b)| distance(a).total_cmp(&distance(b)))
+        .map(|(i, _)| i)
 }
 
 fn hide(window: &tauri::WebviewWindow) {
@@ -154,13 +257,24 @@ pub fn on_window_event(window: &Window, event: &WindowEvent) {
     }
 }
 
-/// A rectangle in physical pixels.
+/// A rectangle, in pixels or points.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Area {
     pub x: f64,
     pub y: f64,
     pub width: f64,
     pub height: f64,
+}
+
+impl Area {
+    fn scaled(&self, by: f64) -> Area {
+        Area {
+            x: self.x * by,
+            y: self.y * by,
+            width: self.width * by,
+            height: self.height * by,
+        }
+    }
 }
 
 /// Where the panel goes: centred on the icon and kept on its screen, below
@@ -198,8 +312,9 @@ pub fn tray_panel_height(app: AppHandle, height: f64) {
     }
 }
 
-/// The panel's actions: the tray menu's, of which it offers Open, pause or
-/// resume, Quit and stop, and the waiting sessions, and `close` (Escape),
+/// The panel's actions: the tray menu's, of which it offers `open` (the
+/// Inbox's count), `summary` (the busy status), pause or
+/// resume, Quit and stop, the alerts and the waiting sessions, and `close` (Escape),
 /// which only hides the panel. Anything else is refused.
 #[tauri::command]
 pub fn tray_action(app: AppHandle, id: String) -> Result<(), String> {
@@ -216,7 +331,8 @@ pub fn tray_action(app: AppHandle, id: String) -> Result<(), String> {
 }
 
 fn allowed(id: &str) -> bool {
-    matches!(id, "open" | "pause" | "quit-stop" | "close")
+    matches!(id, "open" | "summary" | "pause" | "quit-stop" | "close")
+        || status::is_alert(id)
         || id
             .strip_prefix(tray::SESSION_PREFIX)
             .is_some_and(|key| !key.is_empty())
@@ -280,13 +396,70 @@ mod tests {
     }
 
     #[test]
+    fn the_point_finds_its_screen_in_points() {
+        // A 2x built-in screen of 1512x982 points and an external 1x screen
+        // to its right, as macOS reports them: points times each one's scale.
+        let built_in = Area {
+            x: 0.0,
+            y: 0.0,
+            width: 3024.0,
+            height: 1964.0,
+        };
+        let external = Area {
+            x: 1512.0,
+            y: 0.0,
+            width: 2560.0,
+            height: 1440.0,
+        };
+        // In those pixels the screens overlap; in points they do not.
+        let points = [built_in.scaled(0.5), external];
+        assert_eq!(screen_of((1180.0, 12.0), &points), Some(0));
+        assert_eq!(screen_of((2000.0, 12.0), &points), Some(1));
+    }
+
+    #[test]
+    fn a_point_on_no_screen_goes_to_the_nearest_and_none_without_screens() {
+        assert_eq!(screen_of((1500.0, -30.0), &[SCREEN]), Some(0));
+        let right = Area {
+            x: 1440.0,
+            ..SCREEN
+        };
+        assert_eq!(screen_of((3000.0, 10.0), &[SCREEN, right]), Some(1));
+        assert_eq!(screen_of((10.0, 10.0), &[]), None);
+    }
+
+    #[test]
+    fn a_panel_placed_in_points_hangs_under_a_retina_menu_bar_icon() {
+        // The icon at 1180 points on a 2x screen, reported in pixels.
+        let icon = Area {
+            x: 2360.0,
+            y: 0.0,
+            width: 48.0,
+            height: 48.0,
+        };
+        let work = Area {
+            x: 0.0,
+            y: 74.0,
+            width: 3024.0,
+            height: 1890.0,
+        };
+        let (x, y) = place(&icon.scaled(0.5), (340.0, 400.0), &work.scaled(0.5), GAP);
+        assert_eq!((x, y), (1022.0, 43.0));
+    }
+
+    #[test]
     fn the_page_reaches_only_the_panels_actions() {
         for id in [
             "open",
+            "summary",
             "pause",
             "quit-stop",
             "close",
             "session:claude-code:a",
+            "alert:job:6e280a68",
+            "alert:jobs",
+            "alert:diagnostics",
+            "alert:daemon",
         ] {
             assert!(allowed(id), "{id}");
         }
@@ -295,6 +468,8 @@ mod tests {
             "login",
             "setup",
             "session:",
+            "alert:job:",
+            "alert:other",
             "notifications:review_finished",
             "",
         ] {
@@ -308,6 +483,29 @@ mod tests {
         let shown = panel(&view, Vec::new());
         assert_eq!(shown.summary, view.summary);
         assert_eq!(shown.pause_label, "Pause automatic reviews");
+        assert!(!shown.jobs);
+        // An unknown count shows no Inbox row; zero says the Inbox is empty.
+        assert_eq!(shown.waiting, None);
+        let inbox = |waiting| {
+            panel(
+                &status::View {
+                    waiting,
+                    ..status::View::default()
+                },
+                Vec::new(),
+            )
+            .waiting
+        };
+        assert_eq!(inbox(Some(0)).as_deref(), Some("Your Inbox is empty"));
+        assert_eq!(
+            inbox(Some(12)).as_deref(),
+            Some("12 pull requests in your Inbox")
+        );
+        let busy = status::View {
+            running: 1,
+            ..status::View::default()
+        };
+        assert!(panel(&busy, Vec::new()).jobs);
         assert!(shown.plans.is_empty());
         let json = serde_json::to_value(&shown).unwrap();
         assert_eq!(json["plans"], serde_json::json!([]));

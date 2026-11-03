@@ -283,6 +283,11 @@ type Job struct {
 	// it. Jobs saved before it was recorded, and those that never ran, have none.
 	StartedAt *time.Time `json:"started_at,omitempty"`
 	UpdatedAt time.Time  `json:"updated_at"`
+	// SeenAt is when the user first looked at this failed job from a client
+	// that flags failures, such as the desktop tray (POST
+	// /api/jobs/{id}/seen). A failed job never runs again, so once seen it is
+	// never flagged again. Other states have none.
+	SeenAt *time.Time `json:"seen_at,omitempty"`
 }
 type Progress struct {
 	Accounting             *agent.Accounting
@@ -1003,6 +1008,32 @@ func (q *Queue) Cancel(jobID string) (Job, error) {
 			}
 			copy := *j
 			notification = &copy
+		}
+		result := *j
+		result.Accounting = result.Accounting.Clone()
+		return result, nil
+	}
+	return Job{}, os.ErrNotExist
+}
+
+// Seen records that the user has looked at a failed job, keeping the first
+// time. A job in any other state is returned unchanged: only failures are
+// flagged. A missing job is os.ErrNotExist.
+func (q *Queue) Seen(jobID string) (Job, error) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	for i := range q.jobs {
+		j := &q.jobs[i]
+		if j.ID != jobID {
+			continue
+		}
+		if j.State == "failed" && j.SeenAt == nil {
+			now := time.Now().UTC()
+			j.SeenAt = &now
+			if e := q.save(); e != nil {
+				j.SeenAt = nil
+				return Job{}, e
+			}
 		}
 		result := *j
 		result.Accounting = result.Accounting.Clone()

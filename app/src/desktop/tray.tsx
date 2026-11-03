@@ -13,8 +13,11 @@ import { invoke } from "./native";
 /** What the tray panel draws: the tray's last view, from `tray_panel`. */
 export type Panel = {
   summary: string;
+  /** Reviews run or wait, so the summary opens the jobs list. */
+  jobs: boolean;
   waiting: string | null;
-  attention: string[];
+  /** What the icon is red for, each going where to look (`alert:…`). */
+  attention: { id: string; text: string; action: string }[];
   needs: { key: string; title: string; detail: string }[];
   automatic: boolean | null;
   pause_label: string;
@@ -65,13 +68,46 @@ export function TrayPanelView({
 }) {
   const plans = readablePlans(panel.plans);
   const paused = panel.automatic === false;
+  // What the daemon is doing, after a dot of the icon's state: as the menu
+  // bar's own items do, the panel names no app, since its icon already does.
+  const summary = (
+    <>
+      <span
+        className={`tray-dot${panel.attention.length > 0 ? " attention" : paused ? " paused" : ""}`}
+        aria-hidden="true"
+      />
+      <span>{paused ? "Automatic reviews paused" : panel.summary}</span>
+    </>
+  );
   return (
     <div className="tray-menu" role="menu" aria-label="baum">
-      <div className="tray-status">
-        <strong>baum</strong>
-        <span className={`tray-dot${paused ? " paused" : ""}`} aria-hidden="true" />
-        <span>{paused ? "Automatic reviews paused" : panel.summary}</span>
-      </div>
+      {/* While reviews run or wait, the summary opens the jobs list. The
+          panel has no Open item: the Inbox's row below, shown even when
+          it is empty, opens baum. */}
+      {panel.jobs ? (
+        <button
+          type="button"
+          role="menuitem"
+          className="tray-item tray-summary"
+          onClick={() => act("summary")}
+        >
+          {summary}
+        </button>
+      ) : (
+        <p className="tray-summary">{summary}</p>
+      )}
+      {panel.attention.map((alert) => (
+        <button
+          key={alert.id}
+          type="button"
+          role="menuitem"
+          className="tray-item tray-alert"
+          onClick={() => act(alert.id)}
+        >
+          <strong>{alert.text}</strong>
+          <span>{alert.action}</span>
+        </button>
+      ))}
       {panel.needs.map((needs) => (
         <button
           key={needs.key}
@@ -89,11 +125,6 @@ export function TrayPanelView({
           {panel.waiting}
         </button>
       ) : null}
-      {panel.attention.map((line) => (
-        <p key={line} className="tray-attention">
-          {line}
-        </p>
-      ))}
       {plans.length > 0 ? (
         <>
           <hr />
@@ -136,9 +167,6 @@ export function TrayPanelView({
         </>
       ) : null}
       <hr />
-      <button type="button" role="menuitem" className="tray-item" onClick={() => act("open")}>
-        Open baum
-      </button>
       <button
         type="button"
         role="menuitem"
@@ -209,10 +237,7 @@ export function TrayPanel() {
         <TrayPanelView panel={panel} now={now} act={act} />
       ) : (
         <div className="tray-menu">
-          <div className="tray-status">
-            <strong>baum</strong>
-            <span>Connecting to baum…</span>
-          </div>
+          <p className="tray-summary">Connecting to baum…</p>
         </div>
       )}
     </div>
