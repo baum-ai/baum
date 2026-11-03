@@ -125,6 +125,26 @@ pub fn bundled_cli_path() -> Result<PathBuf, Failure> {
     Ok(exe.with_file_name(name))
 }
 
+/// The PATH every baum the app runs gets, when it differs from the app's: an
+/// AppImage's runtime puts its own mount (`$APPDIR/usr/bin`) first, which
+/// holds the bundled baum that vanishes when the app quits. Left in, the
+/// daemon would inherit it whenever the login shell cannot be read, and
+/// setup would report that baum as a different one in the way.
+pub fn child_path() -> Option<std::ffi::OsString> {
+    if !crate::onboarding::running_as_appimage() {
+        return None;
+    }
+    let appdir = std::env::var_os("APPDIR")?;
+    let path = std::env::var_os("PATH")?;
+    Some(without_dir(&path, Path::new(&appdir)))
+}
+
+/// `path` without the entries inside `dir`.
+fn without_dir(path: &std::ffi::OsStr, dir: &Path) -> std::ffi::OsString {
+    let kept = std::env::split_paths(path).filter(|entry| !entry.starts_with(dir));
+    std::env::join_paths(kept).unwrap_or_else(|_| path.to_owned())
+}
+
 /// Starts the daemon if needed and returns the URL to load.
 pub fn ensure(cli: &Path, timeout: Duration) -> Result<Launch, Failure> {
     let output = run(cli, &["daemon", "ensure", "--json"], timeout)?;
@@ -159,6 +179,9 @@ pub struct Output {
 /// app up once the command itself has exited.
 pub fn run(cli: &Path, args: &[&str], timeout: Duration) -> Result<Output, Failure> {
     let mut command = Command::new(cli);
+    if let Some(path) = child_path() {
+        command.env("PATH", path);
+    }
     command
         .args(args)
         .stdin(Stdio::null())
@@ -459,6 +482,18 @@ mod tests {
             use std::os::unix::fs::PermissionsExt;
             fs::set_permissions(path, fs::Permissions::from_mode(0o600)).unwrap();
         }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn child_path_drops_the_appimage_mount() {
+        let path = std::ffi::OsStr::new(
+            "/tmp/.mount_baum-dfeJFK/usr/bin:/home/user/.local/bin:/tmp/.mount_baum-dfeJFK:/tmp/.mount_baum-dfeJFKG/usr/bin:/usr/bin",
+        );
+        assert_eq!(
+            without_dir(path, Path::new("/tmp/.mount_baum-dfeJFK")),
+            "/home/user/.local/bin:/tmp/.mount_baum-dfeJFKG/usr/bin:/usr/bin"
+        );
     }
 
     #[test]

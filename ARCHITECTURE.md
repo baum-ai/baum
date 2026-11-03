@@ -3682,7 +3682,12 @@ shell gets only the session variables (`HOME`, `USER`, `LOGNAME`, `TMPDIR`,
 and `BAUM_RESOLVING_ENVIRONMENT=1`, and runs `baum daemon print-env <marker>`,
 which prints the environment as JSON between two copies of a random marker,
 so whatever startup files print is ignored; once it has, whatever is left of
-the shell's process group is killed. `shellenv.Merge` then keeps only:
+the shell's process group is killed. When the interactive shell prints no
+environment before the timeout (a `.bashrc` that runs `exec tmux` exits with
+"not a terminal"), the same command runs once more as `-l -c`, a login shell
+that is not interactive, within the same 10 s; the result then carries why
+(`Result.Fallback`), which the daemon logs and `baum daemon login-path`
+reports as `warning`. `shellenv.Merge` then keeps only:
 `PATH`, `HOME`, `USER`, `LOGNAME`, `SHELL`, `TMPDIR`, `LANG`, `LC_*`, `TZ`,
 the XDG directories, `SSH_AUTH_SOCK`, `GIT_SSH_COMMAND`, `GIT_SSH`,
 `DBUS_SESSION_BUS_ADDRESS`, `DISPLAY`,

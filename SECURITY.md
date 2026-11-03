@@ -1131,8 +1131,11 @@ daemon records; a session end or push naming a registered clone makes it run
 the bounded GitHub reads above, never a job by itself.
 
 The daemon does not use the environment of whatever started it. It runs your
-login shell (`$SHELL -i -l -c`, without a terminal, for at most 10 seconds)
-with only session variables and reads the environment your startup files set,
+login shell (`$SHELL -i -l -c`, without a terminal, for at most 10 seconds;
+`$SHELL -l -c` within the same time if that prints nothing, as when a startup
+file runs `exec tmux`) with only session variables and reads the environment
+your startup files set (they can test `BAUM_RESOLVING_ENVIRONMENT` to skip
+work that needs a terminal),
 then keeps only `PATH`, locale, proxy and certificate settings, the SSH agent
 socket and ssh command git uses, the desktop session bus and display,
 GitHub tokens (`GITHUB_TOKEN`, `GH_TOKEN`, `GH_ENTERPRISE_TOKEN`,

@@ -358,11 +358,13 @@ fn login_path(cli: &Path) -> install::LoginPath {
         last_json(&out.stdout)
     });
     read.unwrap_or_else(|why| install::LoginPath {
-        path: std::env::var_os("PATH")
+        path: crate::daemon::child_path()
+            .or_else(|| std::env::var_os("PATH"))
             .map(|p| std::env::split_paths(&p).collect())
             .unwrap_or_default(),
         baum: None,
         error: Some(format!("The baum command could not read your PATH: {why}")),
+        warning: None,
     })
 }
 
@@ -981,7 +983,7 @@ fn run_with_path(
     path: Option<&OsStr>,
 ) -> Result<Output, String> {
     let mut command = Command::new(cli);
-    if let Some(path) = path {
+    if let Some(path) = path.map(OsStr::to_owned).or_else(crate::daemon::child_path) {
         command.env("PATH", path);
     }
     let mut child = command

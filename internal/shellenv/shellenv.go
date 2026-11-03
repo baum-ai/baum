@@ -6,7 +6,8 @@
 // The shell runs as an interactive login shell in its own session, without a
 // terminal, with a timeout. It is given only the session's own variables (see
 // Session) and a default PATH, so its output depends on the user's startup
-// files rather than on whoever started baum. A program printed between two
+// files rather than on whoever started baum. If it prints nothing, a login
+// shell that is not interactive is asked instead. A program printed between two
 // random markers reports the resulting environment as JSON, so whatever the
 // startup files print is ignored. Values are never logged.
 //
@@ -73,11 +74,16 @@ type Options struct {
 type Result struct {
 	Shell string
 	Env   map[string]string
+	// Fallback is why the interactive login shell printed no environment,
+	// when a login shell that is not interactive printed Env instead.
+	Fallback string
 }
 
-// Resolve runs the login shell and returns the environment it set up. A shell
-// that is slow, fails or prints no environment is an error; callers fall back
-// to the inherited environment.
+// Resolve runs the login shell and returns the environment it set up. When
+// the interactive shell prints no environment, a login shell that is not
+// interactive is asked within the same timeout (see Result.Fallback). A shell
+// that is slow, or prints no environment either way, is an error; callers
+// fall back to the inherited environment.
 func Resolve(ctx context.Context, opts Options) (Result, error) {
 	environ := opts.Environ
 	if environ == nil {
@@ -116,8 +122,36 @@ func Resolve(ctx context.Context, opts Options) (Result, error) {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	command := quoteAll(append(append([]string{}, printer...), marker))
-	cmd := exec.CommandContext(ctx, shell, append(Arguments(shell), command)...)
-	cmd.Env = shellEnvironment(environ, shell)
+	env, err := run(ctx, shell, append(Arguments(shell), command), shellEnvironment(environ, shell), marker)
+	if err == nil {
+		return Result{Shell: shell, Env: env}, nil
+	}
+	if ctx.Err() != nil {
+		return Result{Shell: shell}, fmt.Errorf("login shell %s did not finish within %s", shell, timeout)
+	}
+	interactive := fmt.Errorf("login shell %s failed without a terminal (%w): a startup file may start a program such as tmux, or exit; it can skip that when %s is set", shell, err, ResolvingVariable)
+	// A login shell that is not interactive skips what only works with a
+	// terminal (`exec tmux` in .bashrc), usually with the rest of .bashrc or
+	// .zshrc. csh reads .cshrc only when interactive.
+	if args := Arguments(shell); slices.Contains(args, "-l") {
+		args = slices.DeleteFunc(slices.Clone(args), func(a string) bool { return a == "-i" })
+		env, err = run(ctx, shell, append(args, command), shellEnvironment(environ, shell), marker)
+		if err == nil {
+			fallback := interactive.Error() + "; the environment was read from a login shell that is not interactive instead, which may miss settings in ~/.bashrc or ~/.zshrc"
+			return Result{Shell: shell, Env: env, Fallback: fallback}, nil
+		}
+		if ctx.Err() != nil {
+			return Result{Shell: shell}, fmt.Errorf("login shell %s did not finish within %s", shell, timeout)
+		}
+	}
+	return Result{Shell: shell}, interactive
+}
+
+// run runs shell with args and returns the environment it printed between
+// the two copies of marker.
+func run(ctx context.Context, shell string, args, env []string, marker string) (map[string]string, error) {
+	cmd := exec.CommandContext(ctx, shell, args...)
+	cmd.Env = env
 	cmd.Dir = lookup(cmd.Env, "HOME")
 	if cmd.Dir == "" {
 		cmd.Dir = "/"
@@ -131,18 +165,12 @@ func Resolve(ctx context.Context, opts Options) (Result, error) {
 	// Startup files may leave background processes behind (an ssh-agent, a
 	// version manager's daemon); none of them belongs to baum.
 	killGroup(cmd)
-	if ctx.Err() != nil {
-		return Result{Shell: shell}, fmt.Errorf("login shell %s did not finish within %s", shell, timeout)
-	}
-	env, parseErr := parse(out.Bytes(), marker)
-	if parseErr != nil {
-		if runErr != nil {
-			return Result{Shell: shell}, fmt.Errorf("login shell %s failed: %w", shell, runErr)
-		}
-		return Result{Shell: shell}, fmt.Errorf("login shell %s: %w", shell, parseErr)
+	resolved, parseErr := parse(out.Bytes(), marker)
+	if parseErr != nil && runErr != nil {
+		return nil, runErr
 	}
 	// Startup files may exit non-zero after the environment was printed.
-	return Result{Shell: shell, Env: env}, nil
+	return resolved, parseErr
 }
 
 // Arguments are the flags that make shell an interactive login shell running
