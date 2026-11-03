@@ -46,9 +46,9 @@ test("makes an inbox from a template, edits it, counts it in the badge and delet
   await page.keyboard.press("Control+Enter");
   await expect(page).toHaveURL(/\?inbox=[0-9a-f]{32}/);
   await expect(inboxLink).toBeVisible();
-  await page.keyboard.press("Control+k");
+  await page.keyboard.press("Shift+K");
   await expect(page.getByRole("heading", { name: "Up next", exact: true })).toBeVisible();
-  await page.keyboard.press("Control+j");
+  await page.keyboard.press("Shift+J");
   await expect(page.locator(".upnext-list-title h1")).toHaveText("For an agent");
   await page.locator(".upnext-list-title h1").click({ button: "right" });
   await page.getByRole("menuitem", { name: "Edit…" }).click();

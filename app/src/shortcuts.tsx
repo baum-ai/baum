@@ -796,7 +796,14 @@ function shortcutGroups(
     {
       place: "inbox",
       title: "Inbox",
-      rows: [...UP_NEXT_SHORTCUTS, { keys: ["/"], label: "Open the filter" }],
+      rows: [
+        ...UP_NEXT_SHORTCUTS,
+        { keys: ["/"], label: "Open the filter" },
+        {
+          keys: MAC ? ["⇧J", "⇧K", "⌃↓", "⌃↑"] : ["Shift+J", "Shift+K", "Ctrl+↓", "Ctrl+↑"],
+          label: "Next, previous inbox",
+        },
+      ],
     },
     {
       place: "pulls",

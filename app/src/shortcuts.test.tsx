@@ -479,6 +479,10 @@ it("lists exactly the keys that work in the sheet", async () => {
     "s",
     "u",
     "/",
+    "Shift+J",
+    "Shift+K",
+    "Ctrl+↓",
+    "Ctrl+↑",
   ]);
   expect(listed("Pull requests")).toEqual([
     "j",
