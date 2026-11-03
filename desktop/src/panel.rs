@@ -2,7 +2,9 @@
 //! a menu but with meters, which a left click on the icon opens on macOS and
 //! Windows. It shows what the tray menu does: what the daemon is doing,
 //! anything waiting on the user, what is left of the agents' plans, and
-//! Open, pause and Quit and stop. Linux tray hosts report no clicks, so
+//! pause and Quit and stop. It has no Open item: the Inbox's count opens the
+//! app, and what the daemon is doing opens the jobs list while reviews run or
+//! wait. Linux tray hosts report no clicks, so
 //! Linux has the menu only.
 //!
 //! The page is the bundled `tray.html`. Its capability allows exactly the
@@ -38,6 +40,8 @@ pub struct Panel {
     pub summary: String,
     /// Reviews run or wait, so the summary opens the jobs list (`summary`).
     pub jobs: bool,
+    /// The Inbox's row, which opens the app: its count, or that it is empty
+    /// once the daemon counted none. `None` while the count is unknown.
     pub waiting: Option<String>,
     /// What the icon is red for, each an action (`alert:…`).
     pub attention: Vec<Alert>,
@@ -49,11 +53,20 @@ pub struct Panel {
     pub plans: Vec<Plan>,
 }
 
+/// The Inbox's row. The panel has no Open item, so it shows even when the
+/// Inbox is empty, as mail apps say so; an unknown count shows nothing.
+fn inbox_line(view: &status::View) -> Option<String> {
+    match view.waiting {
+        Some(0) => Some("Your Inbox is empty".to_string()),
+        _ => view.waiting_label(),
+    }
+}
+
 fn panel(view: &status::View, plans: Vec<Plan>) -> Panel {
     Panel {
         summary: view.summary.clone(),
         jobs: view.running + view.queued > 0,
-        waiting: view.waiting_label(),
+        waiting: inbox_line(view),
         attention: view.attention.clone(),
         needs: view.needs.clone(),
         automatic: view.automatic,
@@ -299,7 +312,8 @@ pub fn tray_panel_height(app: AppHandle, height: f64) {
     }
 }
 
-/// The panel's actions: the tray menu's, of which it offers Open, pause or
+/// The panel's actions: the tray menu's, of which it offers `open` (the
+/// Inbox's count), `summary` (the busy status), pause or
 /// resume, Quit and stop, the alerts and the waiting sessions, and `close` (Escape),
 /// which only hides the panel. Anything else is refused.
 #[tauri::command]
@@ -470,6 +484,23 @@ mod tests {
         assert_eq!(shown.summary, view.summary);
         assert_eq!(shown.pause_label, "Pause automatic reviews");
         assert!(!shown.jobs);
+        // An unknown count shows no Inbox row; zero says the Inbox is empty.
+        assert_eq!(shown.waiting, None);
+        let inbox = |waiting| {
+            panel(
+                &status::View {
+                    waiting,
+                    ..status::View::default()
+                },
+                Vec::new(),
+            )
+            .waiting
+        };
+        assert_eq!(inbox(Some(0)).as_deref(), Some("Your Inbox is empty"));
+        assert_eq!(
+            inbox(Some(12)).as_deref(),
+            Some("12 pull requests in your Inbox")
+        );
         let busy = status::View {
             running: 1,
             ..status::View::default()

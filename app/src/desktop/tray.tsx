@@ -68,9 +68,10 @@ export function TrayPanelView({
 }) {
   const plans = readablePlans(panel.plans);
   const paused = panel.automatic === false;
-  const status = (
+  // What the daemon is doing, after a dot of the icon's state: as the menu
+  // bar's own items do, the panel names no app, since its icon already does.
+  const summary = (
     <>
-      <strong>baum</strong>
       <span
         className={`tray-dot${panel.attention.length > 0 ? " attention" : paused ? " paused" : ""}`}
         aria-hidden="true"
@@ -80,18 +81,20 @@ export function TrayPanelView({
   );
   return (
     <div className="tray-menu" role="menu" aria-label="baum">
-      {/* While reviews run or wait, the status opens the jobs list. */}
+      {/* While reviews run or wait, the summary opens the jobs list. The
+          panel has no Open item: the Inbox's row below, shown even when
+          it is empty, opens baum. */}
       {panel.jobs ? (
         <button
           type="button"
           role="menuitem"
-          className="tray-item tray-status"
+          className="tray-item tray-summary"
           onClick={() => act("summary")}
         >
-          {status}
+          {summary}
         </button>
       ) : (
-        <div className="tray-status">{status}</div>
+        <p className="tray-summary">{summary}</p>
       )}
       {panel.attention.map((alert) => (
         <button
@@ -164,9 +167,6 @@ export function TrayPanelView({
         </>
       ) : null}
       <hr />
-      <button type="button" role="menuitem" className="tray-item" onClick={() => act("open")}>
-        Open baum
-      </button>
       <button
         type="button"
         role="menuitem"
@@ -237,10 +237,7 @@ export function TrayPanel() {
         <TrayPanelView panel={panel} now={now} act={act} />
       ) : (
         <div className="tray-menu">
-          <div className="tray-status">
-            <strong>baum</strong>
-            <span>Connecting to baum…</span>
-          </div>
+          <p className="tray-summary">Connecting to baum…</p>
         </div>
       )}
     </div>

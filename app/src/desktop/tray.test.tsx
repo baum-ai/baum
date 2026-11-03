@@ -47,24 +47,31 @@ it("draws the status, a waiting session, each plan window and the actions", () =
   expect(html).toContain("26% left · resets in 2 d");
   expect(html).toContain("7% left · resets in 30 h");
   expect(html).toContain("var(--status-critical)");
-  expect(html).toContain("Open baum");
+  // The Inbox's row opens baum, so there is no Open item.
+  expect(html).not.toContain("Open baum");
   expect(html).toContain("Pause automatic reviews");
   expect(html).toContain("Quit and stop background reviews");
 });
 
-it("opens the jobs list from the status only while reviews run or wait", () => {
+it("opens the jobs list from the status while reviews run or wait, and is plain text idle", () => {
   const act = vi.fn();
+  const status = (view: ReturnType<typeof TrayPanelView>) =>
+    (view.props as { children: { type: string; props: { onClick?: () => void } }[] }).children[0];
   const busy = TrayPanelView({ panel, now, act });
-  const status = (busy.props as { children: { type: string; props: { onClick?: () => void } }[] })
-    .children[0];
-  expect(status?.type).toBe("button");
-  status?.props.onClick?.();
-  expect(act).toHaveBeenCalledWith("summary");
-  const idle = renderToStaticMarkup(
-    <TrayPanelView panel={{ ...panel, summary: "Idle", jobs: false }} now={now} act={act} />,
+  expect(status(busy)?.type).toBe("button");
+  status(busy)?.props.onClick?.();
+  expect(act).toHaveBeenLastCalledWith("summary");
+  // No title and no Open item: the state's dot and the summary come first.
+  const markup = renderToStaticMarkup(busy);
+  expect(markup).not.toContain("<strong>baum</strong>");
+  expect(markup).toContain(
+    '<div class="tray-menu" role="menu" aria-label="baum"><button type="button" role="menuitem" class="tray-item tray-summary"><span class="tray-dot" aria-hidden="true"></span><span>1 running</span></button>',
   );
-  expect(idle).toContain('<div class="tray-status">');
-  expect(idle).not.toContain('class="tray-item tray-status"');
+  const idle = TrayPanelView({ panel: { ...panel, summary: "Idle", jobs: false }, now, act });
+  expect(status(idle)?.type).toBe("p");
+  expect(renderToStaticMarkup(idle)).toContain(
+    '<p class="tray-summary"><span class="tray-dot" aria-hidden="true"></span><span>Idle</span></p>',
+  );
 });
 
 it("offers each alert as an item that runs it, above the waiting sessions", () => {
@@ -133,22 +140,20 @@ it("moves through the menu's items with the arrows, wrapping, and closes with Es
   const focused = () => document.activeElement?.textContent;
   // From nothing, down starts at the first item and up at the last.
   press("ArrowDown");
-  expect(focused()).toBe("baum1 running");
+  expect(focused()).toBe("1 running");
   press("ArrowUp");
   expect(focused()).toBe("Quit and stop background reviews");
   press("ArrowUp");
   // Pause is disabled while the daemon's state is unknown, so it is skipped.
-  expect(focused()).toBe("Open baum");
+  expect(focused()).toContain("Claude needs your permission");
   press("ArrowDown");
   expect(focused()).toBe("Quit and stop background reviews");
   press("ArrowDown");
-  expect(focused()).toBe("baum1 running");
+  expect(focused()).toBe("1 running");
   press("End");
   expect(focused()).toBe("Quit and stop background reviews");
   press("Home");
-  expect(focused()).toBe("baum1 running");
-  // The running status opens the jobs list, so it is an item; the waiting
-  // session follows it.
+  expect(focused()).toBe("1 running");
   press("ArrowDown");
   expect(focused()).toContain("Claude needs your permission");
   expect(close).not.toHaveBeenCalled();

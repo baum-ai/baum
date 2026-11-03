@@ -396,11 +396,15 @@ The daemon outlives the app, so the app's presence is a tray icon.
   read differently, which the 3–10 s polls check.
 - **Tray panel (macOS and Windows):** a left click on the icon opens a small
   borderless window under the icon (above it, on a bottom taskbar), drawn
-  like a menu: the status line (its dot red while the icon is; an item that
-  opens the jobs list while reviews run or wait, as in the menu), the alerts
-  and the waiting sessions as highlighted rows that open them, the plan usage
-  left as coloured meters, Open baum, Pause or Resume automatic reviews and
-  Quit and stop background reviews. It is placed on the icon's screen, found
+  like a menu, with no title row (the icon names the app, as for the menu
+  bar's own items) and no Open item: first a status dot (red while the icon
+  is) with what the daemon is doing, which opens the jobs list while reviews
+  run or wait (as in the menu) and is plain text otherwise; the Inbox's
+  count, or "Your Inbox is empty" once the daemon counted none (nothing
+  while the count is unknown), which opens the app; the alerts and the waiting sessions as highlighted rows that
+  open them; the plan usage left as coloured meters; Pause or Resume
+  automatic reviews; and Quit and stop background reviews. It is placed on
+  the icon's screen, found
   from the cursor in points on macOS (whose monitors report pixels at each
   screen's own scale) and from the icon's pixels elsewhere. It hides
   when it loses focus or on Escape. As in a native menu, `↓` and `↑` move

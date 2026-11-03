@@ -52,19 +52,18 @@ body {
   font-size: var(--text-xs);
 }
 
-.tray-status {
+/* What the daemon is doing, after the state's dot: plain text, or an item
+ * opening the jobs list while reviews run or wait. */
+.tray-summary {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 8px 10px 6px;
-}
-.tray-status > span:last-child {
-  min-width: 0;
-  overflow: hidden;
-  font-size: var(--text-xs);
+  margin: 0;
+  padding: 6px 10px;
   color: var(--text-secondary);
-  text-overflow: ellipsis;
-  white-space: nowrap;
+}
+.tray-item.tray-summary {
+  justify-content: flex-start;
 }
 .tray-dot {
   flex: none;
@@ -104,10 +103,6 @@ body {
 }
 .tray-item:active:not(:disabled) {
   background: var(--surface-pressed);
-}
-.tray-item.tray-status {
-  justify-content: flex-start;
-  padding: 8px 10px 6px;
 }
 .tray-item:disabled {
   color: var(--text-secondary);
