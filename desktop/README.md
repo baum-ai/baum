@@ -894,8 +894,7 @@ GitHub release. Pushing the tag to baum-ai/baum runs
 test, viewer-dist, desktop-test          checks of the tagged release commit
   └─ release                             parent on main? goreleaser: CLI archives, draft release
        └─ desktop (desktop.yml)          unsigned bundles per platform; no secrets
-            ├─ sign-macos    ┐
-            ├─ sign-windows  ├─ environment "release": sign what desktop built
+            ├─ sign-macos    ┐ environment "release": sign what desktop built
             └─ sign-linux    ┘
                  └─ desktop-manifest     latest.json, desktop-checksums.txt; read-only
                       └─ desktop-publish attach files, latest.json last, publish the draft
@@ -917,14 +916,15 @@ test, viewer-dist, desktop-test          checks of the tagged release commit
   on Linux in this directory's Docker image. This is where third-party code
   runs: hundreds of crates' build scripts and macros, and the bundler's
   downloads (linuxdeploy, NSIS). It has no secrets, and `bundle.sh` refuses to
-  run if a signing variable is set. It produces the deb and AppImage, the
-  unsigned macOS app (as a tar) and the unsigned Windows installer.
-- The three sign jobs use the `release` environment, the only place the
-  signing secrets live. Each waits for a reviewer's approval (all three
+  run if a signing variable is set. It produces the deb and AppImage and the
+  unsigned macOS app (as a tar). The Windows installer is not released for
+  now: the release calls `desktop.yml` with `windows: false`, so only Check's
+  snapshots build it (see "Windows" below).
+- The two sign jobs use the `release` environment, the only place the
+  signing secrets live. Each waits for a reviewer's approval (both
   together), and the environment accepts only `v*` tags. They compile
   nothing: they run Apple's tools (`codesign`, `notarytool`, `stapler`,
-  `hdiutil`) through `scripts/macos-finalize.sh`, Microsoft's `signtool`
-  through `scripts/windows-sign.ps1`, and minisign 0.12 (the official binary,
+  `hdiutil`) through `scripts/macos-finalize.sh`, and minisign 0.12 (the official binary,
   pinned by SHA-256 in `scripts/install-minisign.sh`) through
   `scripts/updater-sign.sh`, which signs each updater bundle for the release
   version. OS signing comes first, so the updater signature covers the final
@@ -1012,7 +1012,6 @@ snapshot bundles are kept as workflow artifacts for 14 days.
 | `baum-desktop-linux-amd64.AppImage` (`.sig`) | Linux x86_64 AppImage; also what the updater installs |
 | `baum-desktop-linux-amd64.deb` | Debian and Ubuntu package (no self-update) |
 | `baum-desktop-linux-arm64.AppImage` (`.sig`), `.deb` | Linux arm64, when that build succeeds |
-| `baum-desktop-windows-amd64-setup.exe` (`.sig`) | Windows x64 installer; also what the updater runs |
 | `desktop-checksums.txt` | SHA-256 of the desktop files |
 | `latest.json` | the updater manifest |
 
@@ -1020,11 +1019,10 @@ The desktop files also carry a GitHub build provenance attestation
 (`gh attestation verify FILE --repo baum-ai/baum`).
 
 A macOS bundle that is not signed with a Developer ID is named
-`…-unsigned.dmg` (signed but not notarised: `…-unnotarized.dmg`); an unsigned
-Windows installer is `…-unsigned-setup.exe`. Gatekeeper and SmartScreen warn
-about those. `latest.json` lists `darwin-aarch64` and `darwin-x86_64` (both
-the universal app), `linux-x86_64`, `windows-x86_64` and, when built,
-`linux-aarch64`, each at
+`…-unsigned.dmg` (signed but not notarised: `…-unnotarized.dmg`); Gatekeeper
+warns about those. `latest.json` lists `darwin-aarch64` and `darwin-x86_64`
+(both the universal app), `linux-x86_64` and, when built, `linux-aarch64`,
+each at
 `https://github.com/baum-ai/baum/releases/download/vVERSION/<its file>`.
 
 ### Signing
@@ -1039,8 +1037,6 @@ never as repository secrets.
 | `TAURI_SIGNING_PRIVATE_KEY` (the content of the key file `tauri signer generate` writes), `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | updater signatures and `latest.json`. Without them the bundles are published without a manifest, and installed apps are not offered the release. |
 | `APPLE_CERTIFICATE` (the Developer ID Application certificate and key as a base64 `.p12`), `APPLE_CERTIFICATE_PASSWORD`, `APPLE_SIGNING_IDENTITY` (for example `Developer ID Application: Name (TEAMID)`) | macOS signing with the hardened runtime, of the app and the bundled `baum` |
 | `APPLE_API_ISSUER`, `APPLE_API_KEY` (key ID), `APPLE_API_PRIVATE_KEY` (the `.p8` contents) — or `APPLE_ID`, `APPLE_PASSWORD` (an app-specific password), `APPLE_TEAM_ID` | notarisation and stapling of the app and the disk image; needs the signing secrets |
-| `WINDOWS_CERTIFICATE` (base64 `.pfx`), `WINDOWS_CERTIFICATE_PASSWORD` | Windows signing with a code signing certificate |
-| `AZURE_TENANT_ID`, `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET`, `AZURE_TRUSTED_SIGNING_ENDPOINT`, `AZURE_TRUSTED_SIGNING_ACCOUNT`, `AZURE_TRUSTED_SIGNING_PROFILE` | Windows signing with Azure Artifact Signing instead |
 
 The updater key's public half is `plugins.updater.pubkey` in
 `tauri.conf.json`; a test fails if it is not a minisign key or the manifest
@@ -1101,6 +1097,18 @@ published when that build succeeds. Linux bundles are not OS-signed; the
 AppImage carries the updater signature.
 
 ### Windows
+
+Not released for now. Check still builds the installer for every pull
+request, so it keeps compiling, but the release skips it and has no Windows
+sign job. Releasing it again means restoring that job and the Windows entries
+in `desktop-manifest` and `desktop-publish`, passing `windows: true` (the
+default) to `desktop.yml`, and requiring `windows-x86_64` in
+`updater-manifest.sh` again; it was removed in one change, which reverting
+restores. Its signing secrets are `WINDOWS_CERTIFICATE` (base64 `.pfx`) and
+`WINDOWS_CERTIFICATE_PASSWORD`, or for Azure Artifact Signing
+`AZURE_TENANT_ID`, `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET`,
+`AZURE_TRUSTED_SIGNING_ENDPOINT`, `AZURE_TRUSTED_SIGNING_ACCOUNT` and
+`AZURE_TRUSTED_SIGNING_PROFILE`.
 
 An NSIS installer for the current user (no administrator rights), which
 installs the WebView2 runtime with Microsoft's bootstrapper when it is

@@ -151,8 +151,21 @@ for field in version url platform; do
   fail "carriage return in $field" "FAIL" "$manifest" verify "$dir"
 done
 
+edit 'del(.platforms["linux-x86_64"])'
+fail "missing Linux" "has no linux-x86_64" "$manifest" verify "$dir"
+
+# Windows is not released for now: a manifest without it is complete, and a
+# release without the installer writes one.
 edit 'del(.platforms["windows-x86_64"])'
-fail "missing Windows" "has no windows-x86_64" "$manifest" verify "$dir"
+pass "$manifest" verify "$dir"
+mv "$dir/baum-desktop-windows-amd64-setup.exe" "$dir/baum-desktop-windows-amd64-setup.exe.sig" "$work/"
+pass "$manifest" write 1.2.3 "$dir"
+keys=$(jq -cj '.platforms | keys' "$dir/latest.json")
+if [ "$keys" != '["darwin-aarch64","darwin-x86_64","linux-x86_64"]' ]; then
+  echo "FAIL a release without the Windows installer lists $keys" >&2
+  status=1
+fi
+mv "$work/baum-desktop-windows-amd64-setup.exe" "$work/baum-desktop-windows-amd64-setup.exe.sig" "$dir/"
 
 cp "$work/good.json" "$dir/latest.json"
 mv "$dir/baum-desktop-windows-amd64-setup.exe.sig" "$work/windows.sig"
