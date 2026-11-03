@@ -16,7 +16,12 @@ import (
 // they are; login-path, which the desktop app reads, then puts that directory
 // first.
 func TestDesktopSetupRecordsTheTerminalsAgents(t *testing.T) {
-	terminal := t.TempDir()
+	// Resolved: the record keeps the directory with symlinks resolved, and
+	// macOS's temporary directory is under the /var symlink.
+	terminal, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
 	writeScript(t, filepath.Join(terminal, "codex"), `[ "$1" = --version ] && echo "codex-cli 0.166.0"`, 0o755)
 	writeScript(t, filepath.Join(terminal, "claude"), `[ "$1" = --version ] && echo "2.1.100 (Claude Code)"`, 0o755)
 	stubLoginShell(t, "/usr/bin:/bin", nil)
@@ -43,8 +48,7 @@ func TestDesktopSetupRecordsTheTerminalsAgents(t *testing.T) {
 	if err != nil || len(record.Agents) != 2 || record.Agents[1].Version != "0.166.0" {
 		t.Fatalf("%+v, %v", record, err)
 	}
-	dir, _ := filepath.EvalSymlinks(terminal)
-	if report := loginPathJSON(t); !slices.Equal(report.Path, []string{dir, "/usr/bin", "/bin"}) {
+	if report := loginPathJSON(t); !slices.Equal(report.Path, []string{terminal, "/usr/bin", "/bin"}) {
 		t.Fatalf("login PATH %q", report.Path)
 	}
 
