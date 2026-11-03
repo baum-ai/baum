@@ -394,7 +394,7 @@ mod tests {
 
     #[test]
     fn an_entry_starts_the_appimage_by_try_exec_or_its_exec_program() {
-        let image = Path::new("/home/a b/x\\y.AppImage");
+        let image = Path::new("/home/user/a b/x\\y.AppImage");
         let ours = menu_entry(image, None).unwrap();
         assert!(starts(&ours, image));
         // Our escaping round-trips through Exec alone and TryExec alone.
