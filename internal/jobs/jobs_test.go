@@ -175,6 +175,7 @@ func TestQueuedReplacementBatchEstimateAndNoParallelPR(t *testing.T) {
 	default:
 	}
 }
+
 // startWait bounds how long a test waits for a queued job to start. Each
 // start saves the journal to SQLite, which a loaded Windows runner under
 // -race can take seconds to do.
