@@ -48,6 +48,10 @@ struct AppHost {
     app: AppHandle,
     /// The daemon the app is attached to, once it is.
     endpoint: Mutex<Option<Endpoint>>,
+    /// Where the window shows the app: the daemon's origin, or under
+    /// `desktop::dev` Vite's, which the window may navigate to and the
+    /// daemon's is not.
+    frontend: Mutex<Option<url::Origin>>,
 }
 
 impl AppHost {
@@ -56,6 +60,26 @@ impl AppHost {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
+
+    fn frontend(&self) -> Option<url::Origin> {
+        self.frontend
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
+    }
+}
+
+/// `url` on the window's origin: the same path and query, where the window
+/// shows the app.
+fn on_frontend(url: &Url, frontend: &url::Origin) -> Option<Url> {
+    let url::Origin::Tuple(scheme, host, port) = frontend else {
+        return None;
+    };
+    let mut moved = url.clone();
+    moved.set_scheme(scheme).ok()?;
+    moved.set_host(Some(&host.to_string())).ok()?;
+    moved.set_port(Some(*port)).ok()?;
+    Some(moved)
 }
 
 /// The pull request a URL on the daemon's origin shows, as clone and number.
@@ -92,9 +116,10 @@ fn session_of(url: &Url, daemon: &url::Origin) -> Option<String> {
 }
 
 impl AppHost {
-    /// The window's page while it has focus, with the daemon's origin.
+    /// The window's page while it has focus, with the origin it shows the
+    /// app on.
     fn focused_url(&self) -> Option<(Url, url::Origin)> {
-        let origin = self.endpoint().as_ref()?.origin();
+        let origin = self.frontend()?;
         let window = self.app.get_webview_window(MAIN_WINDOW)?;
         if !window.is_focused().unwrap_or(false) || window.is_minimized().unwrap_or(false) {
             return None;
@@ -125,11 +150,20 @@ impl Host for AppHost {
                 return;
             }
         };
+        // The daemon names the page on its own origin; the window may only
+        // go where it shows the app, which `desktop::dev` serves from Vite.
+        let Some(url) = self
+            .frontend()
+            .and_then(|frontend| on_frontend(&route.url(&base), &frontend))
+        else {
+            eprintln!("baum desktop: cannot open the notification's page: no app origin");
+            return;
+        };
         let Some(window) = self.app.get_webview_window(MAIN_WINDOW) else {
             return;
         };
         crate::lifecycle::show_window(&self.app);
-        if let Err(e) = window.navigate(route.url(&base)) {
+        if let Err(e) = window.navigate(url) {
             eprintln!("baum desktop: cannot open the notification's page: {e}");
         }
     }
@@ -148,6 +182,7 @@ pub fn install(app: &AppHandle) -> tauri::Result<()> {
     let host = Arc::new(AppHost {
         app: app.clone(),
         endpoint: Mutex::new(None),
+        frontend: Mutex::new(None),
     });
     let notifier = Arc::new(Notifier::new(
         host.clone(),
@@ -242,8 +277,15 @@ pub fn open(app: &AppHandle, route: Route) {
 }
 
 /// Starts reading the attached daemon's events until `stop` returns true (the
-/// app attached to another daemon, or gave up on this one).
-pub fn attach(app: &AppHandle, launch: &Launch, stop: impl Fn() -> bool + Send + 'static) {
+/// app attached to another daemon, or gave up on this one). `frontend` is
+/// where the window shows the app, to which notifications and the tray open
+/// their pages.
+pub fn attach(
+    app: &AppHandle,
+    launch: &Launch,
+    frontend: &Url,
+    stop: impl Fn() -> bool + Send + 'static,
+) {
     let Some(service) = app.try_state::<Service>() else {
         return;
     };
@@ -252,6 +294,11 @@ pub fn attach(app: &AppHandle, launch: &Launch, stop: impl Fn() -> bool + Send +
         return;
     };
     *service.host.endpoint() = Some(endpoint.clone());
+    *service
+        .host
+        .frontend
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(frontend.origin());
     let notifier = service.notifier.clone();
     thread::spawn(move || {
         events::run(&endpoint, &stop, &mut |event| {
@@ -266,6 +313,22 @@ mod tests {
 
     fn origin() -> url::Origin {
         Url::parse("http://127.0.0.1:4100/").unwrap().origin()
+    }
+
+    #[test]
+    fn a_page_opens_where_the_window_shows_the_app() {
+        let base = Url::parse("http://127.0.0.1:4100/s/ns/").unwrap();
+        let page = Route::Job { id: "6e28".into() }.url(&base);
+        // Released, the window shows the daemon's own pages.
+        assert_eq!(on_frontend(&page, &origin()).unwrap(), page);
+        // Under `desktop::dev` it shows Vite's, which proxy the daemon.
+        let vite = Url::parse("http://127.0.0.1:1420/").unwrap().origin();
+        assert_eq!(
+            on_frontend(&page, &vite).unwrap().as_str(),
+            "http://127.0.0.1:1420/s/ns/?page=jobs&job=6e28"
+        );
+        let opaque = Url::parse("data:text/plain,x").unwrap().origin();
+        assert_eq!(on_frontend(&page, &opaque), None);
     }
 
     #[test]
