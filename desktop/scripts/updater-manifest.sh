@@ -6,8 +6,9 @@
 #
 # write reads the signed updater bundles in DIR (each FILE with its FILE.sig
 # from scripts/updater-sign.sh), writes DIR/latest.json and verifies it. The
-# macOS universal app, the Linux x86_64 AppImage and the Windows x86_64
-# installer are required; the Linux arm64 AppImage is listed when it is there.
+# macOS universal app and the Linux x86_64 AppImage are required; the Linux
+# arm64 AppImage and the Windows x86_64 installer (not released for now) are
+# listed when they are there.
 #
 # verify checks every platform of DIR/latest.json the way the app does before
 # it installs anything, and more:
@@ -93,7 +94,7 @@ verify() {
   local status=0
   local platforms
   platforms=$(jq -ej '.platforms | keys | join(" ")' "$manifest")
-  for required in darwin-aarch64 darwin-x86_64 linux-x86_64 windows-x86_64; do
+  for required in darwin-aarch64 darwin-x86_64 linux-x86_64; do
     if [[ " $platforms " != *" $required "* ]]; then
       echo "FAIL latest.json has no $required" >&2
       status=1

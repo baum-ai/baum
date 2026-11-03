@@ -27,6 +27,10 @@ on:
         description: Also run macos-finalize.sh (ad hoc signing, disk image, updater archive) in the bundle job
         type: boolean
         default: false
+      windows:
+        description: Also build the Windows installer; the release skips it while Windows is not released
+        type: boolean
+        default: true
 
 permissions:
   contents: read
@@ -36,24 +40,16 @@ jobs:
     name: Desktop bundle (${{ matrix.platform }})
     strategy:
       fail-fast: false
+      # A plain list rather than include entries, because exclude applies
+      # before include and could not drop an included platform.
       matrix:
-        include:
-          - platform: linux-amd64
-            runner: ubuntu-24.04
-            optional: false
-          # Free for public repositories; a failure here does not hold up
-          # the other platforms or the updater manifest.
-          - platform: linux-arm64
-            runner: ubuntu-24.04-arm
-            optional: true
-          - platform: darwin-universal
-            runner: macos-15
-            optional: false
-          - platform: windows-amd64
-            runner: windows-2025
-            optional: false
-    runs-on: ${{ matrix.runner }}
-    continue-on-error: ${{ matrix.optional }}
+        platform: [linux-amd64, linux-arm64, darwin-universal, windows-amd64]
+        exclude:
+          - platform: ${{ !inputs.windows && 'windows-amd64' || 'none' }}
+    runs-on: ${{ fromJSON('{"linux-amd64":"ubuntu-24.04","linux-arm64":"ubuntu-24.04-arm","darwin-universal":"macos-15","windows-amd64":"windows-2025"}')[matrix.platform] }}
+    # linux-arm64 runners are free for public repositories; a failure there
+    # does not hold up the other platforms or the updater manifest.
+    continue-on-error: ${{ matrix.platform == 'linux-arm64' }}
     timeout-minutes: 75
     defaults:
       run:
