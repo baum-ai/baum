@@ -37,14 +37,19 @@ const EVENT_LABELS: Record<ReviewEvent, string> = {
  *  the daemon keeps them, and the changes to them. */
 export function usePendingReview(entry: Entry) {
   const state = useUIState(pendingReviewState(entry.pull_request));
-  const add = (target: CommentTarget, place: CommentPlace | null, head: string, body: string) =>
-    state.update((current) => ({
-      ...current,
-      comments: [
-        ...current.comments,
-        { id: crypto.randomUUID(), target, body, place, head, created: Date.now() },
-      ],
-    }));
+  const add = (target: CommentTarget, place: CommentPlace | null, head: string, body: string) => {
+    // Made once, outside the change: a change is replayed on every render,
+    // save and conflict, and each replay must add the same comment.
+    const comment: PendingComment = {
+      id: crypto.randomUUID(),
+      target,
+      body,
+      place,
+      head,
+      created: Date.now(),
+    };
+    state.update((current) => ({ ...current, comments: [...current.comments, comment] }));
+  };
   const edit = (id: string, body: string) =>
     state.update((current) => ({
       ...current,

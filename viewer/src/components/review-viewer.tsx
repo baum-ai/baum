@@ -203,6 +203,10 @@ export type ReviewConversationContext = {
   revealLine: (path: string, side: "LEFT" | "RIGHT", line: number) => void;
 };
 
+/** What asks for the focus in the side pane's tab on show; a tab kept
+ *  mounted while hidden may hold another. */
+const SHOWN_AUTOFOCUS = '[role="tabpanel"]:not([hidden]) [data-autofocus]';
+
 /** The side pane's Comments tab: what the reader has written for their own
  *  review of the pull request, which the host keeps and sends. */
 export type ReviewCommentsSlot = {
@@ -942,7 +946,7 @@ function ReviewWorkspace<F extends ReviewFile>({
           ? '[aria-pressed="true"][aria-controls~="review-section"]'
           : '[role="tab"][aria-selected="true"]',
       );
-      const first = pane.querySelector<HTMLElement>("[data-autofocus]") ?? start;
+      const first = pane.querySelector<HTMLElement>(SHOWN_AUTOFOCUS) ?? start;
       first?.focus({ preventScroll: true });
       first?.scrollIntoView({ block: "nearest" });
     }
@@ -968,7 +972,7 @@ function ReviewWorkspace<F extends ReviewFile>({
   useEffect(() => {
     if (!commentsShown) return;
     conversationPane.current
-      ?.querySelector<HTMLElement>("[data-autofocus]")
+      ?.querySelector<HTMLElement>(SHOWN_AUTOFOCUS)
       ?.focus({ preventScroll: true });
   }, [commentsShown]);
   // Reading order, for the navigator's previous and next: the Summary, then
@@ -2011,7 +2015,9 @@ function ReviewWorkspace<F extends ReviewFile>({
                     {...tabPanelProps("conversation", "comments", barTab === "comments")}
                     className="@container min-h-0 flex-1 overflow-y-auto xl:-mr-2 xl:pr-2"
                   >
-                    {barTab === "comments" ? comments.render(conversationContext) : null}
+                    {/* Kept mounted while another tab shows, so a comment
+                    being written survives a look at Details or Activity. */}
+                    {comments.render(conversationContext)}
                   </div>
                 ) : null}
               </div>
