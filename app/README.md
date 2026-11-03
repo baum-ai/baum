@@ -1188,7 +1188,10 @@ one notice covers every repository GitHub could not refresh, says whether
 GitHub is disconnected or needs attention, and links to Settings' Connections; another
 covers an exhausted GitHub allowance. Neither appears merely because the cache
 is old. Refresh asks
-GitHub through the local server. While anything is selected a dark bar over
+GitHub through the local server, which gives up on a repository after 45 s
+and answers it as not refreshed; the app gives up on an answer after 60 s
+and names the repository as one baum did not answer for in time, so a
+connection that drops mid-refresh cannot leave the loader running. While anything is selected a dark bar over
 the list counts it and offers **Merge N** for the selected pull requests that
 can merge (one opens its Merge confirmation; more open the Inbox's Merge all
 confirmation), **Generate reviews (N)**, **Review together (N)** for two or

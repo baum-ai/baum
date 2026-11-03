@@ -3666,7 +3666,10 @@ rather than using it), gives the generation queue `ShutdownTimeout` (20 s) to
 cancel running jobs, which are recorded as interrupted (a backend that does
 not return in time leaves its job running in the journal, and the next start
 records it as interrupted), stops background work and the app server, removes
-its files and releases the lock. The client waits until the lock is free.
+its files and releases the lock. Background work and control requests get 10 s
+more between them; one that ignores its cancellation (a stalled network read)
+is left behind and logged, so a stop ends well inside the client's 35 s wait.
+The client waits until the lock is free.
 SIGINT and SIGTERM stop it the same way.
 
 ### Environment

@@ -458,7 +458,10 @@ The daemon outlives the app, so the app's presence is a tray icon.
   again until the app or `baum daemon ensure` does. When a review is running
   the app first asks, saying it will be interrupted (queued reviews have not
   started and are not mentioned as interrupted). If the daemon will not stop,
-  the app shows the error and stays open.
+  the app shows the error and offers **Quit anyway**, which quits and leaves
+  the daemon as it is; Cancel keeps the app open. The daemon's own stop is
+  bounded (see the [daemon README](../internal/daemon/README.md)), so this is
+  for a daemon that does not answer at all.
 - **Pause automatic reviews** sets the daemon's global automatic switch
   (`PUT /api/automatic {"enabled":false}`), the same switch as the app's
   settings, so queued automatic jobs are cancelled and running ones finish.
