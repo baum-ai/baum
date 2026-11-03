@@ -711,8 +711,9 @@ are skipped), `Enter` or `o` opens the focused pull request or group, `x` toggle
 its selection, `Space` opens or closes its peek (on a group's row, shows or hides its pull requests), `m` opens Merge and `f` starts the fix where the row offers them (Merge wins
 where both could), `t` opens its fix transcript, `r` refreshes from GitHub at once rather than after the polling backoff,
 `h`/`←` and `l`/`→` move to the previous and next tab (Open, the saved tabs, Closed),
-and `Esc` clears the focus. On a pull request's or group's page, `h`/`←` and
-`l`/`→` move to the previous and next place in the review rail, as it shows
+and `Esc` clears the focus. On a pull request's or group's page, `Shift+K`
+(`Shift+↑`, `←`) and `Shift+J` (`Shift+↓`, `→`) move to the previous and next
+place in the review rail, as it shows
 them: Summary, Changes and, while it is open, each change, Files changed,
 Decisions, and Sessions and Commits with theirs while open (the viewer's
 `ReviewSteps` `rail`); a folded group is one place. `Space` on a selected group
@@ -2060,10 +2061,9 @@ Enter is drawn as ↵ in button shortcut hints.
 On PR and stack review pages, `]` toggles the right-hand Details/Activity
 sidebar, or its sheet on narrow windows. It is listed in the review shortcut hints.
 Opening it with `]` gives it the keys: `h` and `l` then step through Details,
-Activity and Comments instead of the sections, until Esc (or a click in the
-review) gives them back.
+Activity and Comments, until Esc (or a click in the review) gives them back.
 
-The page shortcut bar labels H/L as sections and lists only page actions;
+The page shortcut bar labels Shift+J/K as sections and lists only page actions;
 Go to (Command/Control+K) and help (?) remain available globally.
 
 J/K moves through the Summary’s text, context, intent, risk score and change/risk
