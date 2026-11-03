@@ -961,24 +961,26 @@ function AgentHooksPanel({ setup }: { setup: DesktopSetup }) {
             </Button>
           }
         />
-        {view ? null : checkingAgents.map((agent) => (
-          <div
-            key={agent.agent}
-            className="flex flex-wrap items-center justify-between gap-4 border-t border-(--border-subtle) px-5 py-4"
-          >
-            <div className="flex min-w-0 flex-[1_1_16rem] items-center gap-3">
-              <BrandMark
-                brand={agent.agent === "codex" ? "openai" : "claude"}
-                size={24}
-                className="shrink-0"
-              />
-              <h3 className="text-base font-medium">{agent.name}</h3>
-              <div className="text-xs text-(--text-tertiary)">
-                <LoadingStatus>Checking…</LoadingStatus>
+        {view
+          ? null
+          : checkingAgents.map((agent) => (
+              <div
+                key={agent.agent}
+                className="flex flex-wrap items-center justify-between gap-4 border-t border-(--border-subtle) px-5 py-4"
+              >
+                <div className="flex min-w-0 flex-[1_1_16rem] items-center gap-3">
+                  <BrandMark
+                    brand={agent.agent === "codex" ? "openai" : "claude"}
+                    size={24}
+                    className="shrink-0"
+                  />
+                  <h3 className="text-base font-medium">{agent.name}</h3>
+                  <div className="text-xs text-(--text-tertiary)">
+                    <LoadingStatus>Checking…</LoadingStatus>
+                  </div>
+                </div>
               </div>
-            </div>
-          </div>
-        ))}
+            ))}
         {view?.hooks.agents.map((agent) => (
           <div
             key={agent.agent}
@@ -995,8 +997,8 @@ function AgentHooksPanel({ setup }: { setup: DesktopSetup }) {
                   <h3 className="text-base font-medium">{agent.name}</h3>
                   {checking ? (
                     <div className="text-xs text-(--text-tertiary)">
-                <LoadingStatus>Checking…</LoadingStatus>
-              </div>
+                      <LoadingStatus>Checking…</LoadingStatus>
+                    </div>
                   ) : (
                     connectedState(
                       agentBadge(agent),
@@ -1247,10 +1249,10 @@ export function SettingsPage({
           : cliMissing
             ? "baum CLI not installed"
             : update
-            ? "Update available"
-            : setup.desktop
-              ? "Diagnostics, CLI, environment"
-              : "Diagnostics, environment",
+              ? "Update available"
+              : setup.desktop
+                ? "Diagnostics, CLI, environment"
+                : "Diagnostics, environment",
       tone: problems > 0 ? "critical" : cliMissing ? "caution" : undefined,
       count: update ? 1 : undefined,
     },
