@@ -445,8 +445,24 @@ export function PageBar({
   /** The way back to where the page was opened from, before its name. */
   back?: ReactNode;
 }) {
+  // The bar stays at the top of the panel as the page scrolls under it; what
+  // else sticks there sits below it (`--page-bar-height`).
+  const bar = useRef<HTMLElement>(null);
+  useLayoutEffect(() => {
+    const element = bar.current;
+    const main = element?.closest<HTMLElement>(".local-main");
+    if (!element || !main || typeof ResizeObserver !== "function") return;
+    const observer = new ResizeObserver(() =>
+      main.style.setProperty("--page-bar-height", `${element.offsetHeight}px`),
+    );
+    observer.observe(element);
+    return () => {
+      observer.disconnect();
+      main.style.removeProperty("--page-bar-height");
+    };
+  }, []);
   return (
-    <header className="local-page-bar">
+    <header ref={bar} className="local-page-bar">
       {back}
       <div className="local-page-title">
         <h1>{title}</h1>
@@ -455,6 +471,26 @@ export function PageBar({
       {actions ? <div className="local-page-actions">{actions}</div> : null}
     </header>
   );
+}
+
+/** Where the app's pages scroll: the panel under the notices
+ *  (`.local-main`), or the window where there is none. */
+export function pageScroll() {
+  const main = document.querySelector<HTMLElement>(".local-main");
+  if (main)
+    return {
+      top: main.scrollTop,
+      height: main.scrollHeight,
+      view: main.clientHeight,
+      to: (top: number, behavior?: ScrollBehavior) => main.scrollTo?.({ top, behavior }),
+    };
+  const page = document.scrollingElement ?? document.documentElement;
+  return {
+    top: window.scrollY,
+    height: page.scrollHeight,
+    view: window.innerHeight,
+    to: (top: number, behavior?: ScrollBehavior) => window.scrollTo({ top, behavior }),
+  };
 }
 
 /** One press of a page's refresh. `signal` aborts when the page's refresh

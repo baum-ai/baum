@@ -99,6 +99,7 @@ const SUMMARY_WEIGHT = {
 export function DecisionRow({
   decision,
   expanded,
+  focused = false,
   onToggle,
   children,
   rowRef,
@@ -107,6 +108,8 @@ export function DecisionRow({
 }: {
   decision: DecisionSummary;
   expanded: boolean;
+  /** The host's keys are on this row. */
+  focused?: boolean;
   onToggle: () => void;
   /** The detail, rendered only while expanded. */
   children: ReactNode;
@@ -126,6 +129,7 @@ export function DecisionRow({
       data-who={decision.who}
       // A row the app's keys move through, opened by its button.
       data-row-id={decision.id}
+      data-focused={focused || undefined}
       className={cn(
         "border-b border-(--border-subtle) last:border-b-0",
         expanded && "bg-(--surface-wash)",

@@ -190,9 +190,6 @@
 .filter-bar-input:focus {
   outline: none;
 }
-.filter-bar-input::placeholder {
-  color: var(--text-tertiary);
-}
 .filter-bar-field:focus-within {
   border-radius: var(--radius-sm);
   box-shadow: 0 1px 0 var(--border-strong);

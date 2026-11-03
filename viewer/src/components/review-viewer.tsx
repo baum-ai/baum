@@ -78,6 +78,7 @@ import { ReviewSummary, type SummaryDestination } from "./review-summary";
 import { SideNavButton, SideNavDisclosure, SideNavGroup, SideNavNest } from "./side-nav";
 import { Empty, Failed, Skeleton } from "./states";
 import { tabIds, tabPanelProps } from "./tabs";
+import { scrollerOf } from "./scroller";
 import {
   Alert,
   Badge,
@@ -364,36 +365,45 @@ function OwnHistory<F extends ReviewFile>(props: ReviewViewerProps<F>) {
  *  does not move the text. */
 const PANE_WIDTH = "mx-auto w-full max-w-[1480px]";
 
-/** Keeps `--review-visible` on the element at the height of the window below
- *  its top, or below the bar once it has scrolled under it. A sticky column
- *  that height ends at the window's bottom however much of the head is still
- *  showing, so the composer is never below the fold; CSS alone can only size
- *  it for the head being gone. */
+/** Keeps `--review-visible` on the element at the height of what scrolls it
+ *  (the window, or a host's panel that scrolls on its own) below its top, or
+ *  below the bar once it has scrolled under it. A sticky column that height
+ *  ends at the bottom however much of the head is still showing, so the
+ *  composer is never below the fold; CSS alone can only size it for the head
+ *  being gone. */
 function useVisibleHeight<T extends HTMLElement>() {
   const ref = useRef<T>(null);
   useEffect(() => {
     const element = ref.current;
     if (!element) return;
+    const scroller = scrollerOf(element);
+    const page = scroller === (document.scrollingElement ?? document.documentElement);
     let frame = 0;
     const measure = () => {
       frame = 0;
+      const area = page ? { top: 0, bottom: window.innerHeight } : scroller.getBoundingClientRect();
       // The columns start inside the workspace's border, not at its edge.
-      const top = Math.max(element.getBoundingClientRect().top + element.clientTop, REVIEW_BAR_PX);
-      element.style.setProperty("--review-visible", `${window.innerHeight - top}px`);
+      const top = Math.max(
+        element.getBoundingClientRect().top + element.clientTop,
+        area.top + REVIEW_BAR_PX,
+      );
+      element.style.setProperty("--review-visible", `${area.bottom - top}px`);
     };
     const schedule = () => {
       if (!frame) frame = requestAnimationFrame(measure);
     };
     measure();
-    window.addEventListener("scroll", schedule, { passive: true });
+    // Captured, so a panel's own scroll, which does not bubble, is heard too.
+    window.addEventListener("scroll", schedule, { capture: true, passive: true });
     window.addEventListener("resize", schedule);
     // The head grows as its facts arrive, which moves the top without a scroll.
     const resized = new ResizeObserver(schedule);
-    resized.observe(document.body);
+    for (const content of page ? [document.body] : Array.from(scroller.children))
+      resized.observe(content);
     return () => {
       resized.disconnect();
       cancelAnimationFrame(frame);
-      window.removeEventListener("scroll", schedule);
+      window.removeEventListener("scroll", schedule, { capture: true });
       window.removeEventListener("resize", schedule);
     };
   }, []);
@@ -882,7 +892,7 @@ function ReviewWorkspace<F extends ReviewFile>({
     // No offset parent: the bar is not displayed, as from xl.
     if (bar?.offsetParent) {
       const below = bar.getBoundingClientRect().bottom;
-      if (top < below) window.scrollBy({ top: top - below });
+      if (top < below) scrollerOf(pane).scrollBy({ top: top - below });
     } else if (top < REVIEW_BAR_PX) pane.scrollIntoView({ block: "start" });
   }, [paneKey]);
   // A sheet has done its job once the reader has gone somewhere, including
@@ -1459,7 +1469,7 @@ function ReviewWorkspace<F extends ReviewFile>({
               // column beside the pane, under the head's bar.
               className={cn(
                 "fixed inset-x-0 bottom-0 z-(--z-sheet) max-h-[80dvh] min-w-0 overflow-x-hidden overflow-y-auto border-t border-(--border-default) bg-(--surface-card) px-4 pt-4 pb-[max(1rem,env(safe-area-inset-bottom))] shadow-(--shadow-overlay)",
-                "xl:sticky xl:inset-x-auto xl:top-12 xl:bottom-auto xl:z-auto xl:block xl:h-[calc(100dvh-3rem)] xl:max-h-none xl:self-start xl:border-t-0 xl:bg-transparent xl:p-4 xl:shadow-none",
+                "xl:sticky xl:inset-x-auto xl:top-12 xl:bottom-auto xl:z-auto xl:block xl:h-[calc(100cqh-3rem)] xl:max-h-none xl:self-start xl:border-t-0 xl:bg-transparent xl:p-4 xl:shadow-none",
                 sheetOpen ? "block" : "hidden",
               )}
             >

@@ -17,6 +17,7 @@ import { cn, FOCUS_RING } from "./classnames";
 import { formatDate, formatLinesCompact, formatRelative } from "./format";
 import { BranchIcon, ChevronLeftIcon, GitHubIcon, MergeIcon } from "./icons";
 import { ChangeKindTag, Lines, RiskScoreBadge } from "./review-parts";
+import { scrollerOf } from "./scroller";
 import { Badge, LiveDot } from "./ui";
 
 /** The review page's own gutter. Narrower than a dashboard's: the page is a
@@ -293,7 +294,7 @@ export function ReviewHeader({
           {risk ? <RiskScoreBadge view={risk} className="flex-none" /> : null}
           <button
             type="button"
-            onClick={() => window.scrollTo({ top: 0 })}
+            onClick={(event) => scrollerOf(event.currentTarget).scrollTo({ top: 0 })}
             title="Back to the top"
             className={cn(
               "min-w-0 cursor-pointer truncate rounded-(--radius-sm) text-left text-base font-medium",

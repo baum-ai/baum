@@ -29,13 +29,14 @@ import {
   tidyQuery,
   toggleValue,
   withText,
+  type Field,
   type Op,
+  type PageFilter,
   type Option,
 } from "./pr-filter";
 import { COMMAND, MAC, useShortcuts } from "./shortcuts";
 import "./filter-menu.css";
 
-type Field = ReturnType<typeof fieldsFor>[number];
 type Row =
   | { kind: "field"; field: Field }
   | { kind: "value"; field: Field; option: Option }
@@ -66,9 +67,13 @@ export function FilterButton({
   openRequest = false,
   onOpened,
   onClosed,
+  page,
+  slashOpens = true,
 }: {
   query: string;
   onChange: (next: string) => void;
+  /** The pull requests before the filter, which the counts are of; a page
+   *  with its own `fields` passes none and shows no counts. */
   entries: Entry[];
   active?: boolean;
   /** What a pull request waits for in an inbox's queue, for `waiting`. */
@@ -80,13 +85,18 @@ export function FilterButton({
   openRequest?: boolean;
   onOpened?: () => void;
   onClosed?: () => void;
+  /** Another page's filter, in place of the pull requests'. */
+  page?: PageFilter;
+  /** `/` opens the menu; false on a page whose `/` goes to its own search. */
+  slashOpens?: boolean;
 }) {
   const { detailsProps, close, open } = useDisclosure();
+  const given = page?.fields;
   const focusQuery = () =>
     panel.current?.querySelector<HTMLTextAreaElement>(".filter-menu-query textarea")?.focus();
   const [focusOnOpen, setFocusOnOpen] = useState(false);
   useShortcuts((event) => {
-    if (event.key !== "/") return;
+    if (!slashOpens || event.key !== "/") return;
     event.preventDefault();
     if (detailsProps.ref.current) detailsProps.ref.current.open = true;
     detailsProps.onToggle();
@@ -140,6 +150,9 @@ export function FilterButton({
   const ids = useId();
   const panel = useRef<HTMLDivElement>(null);
   const [search, setSearch] = useState("");
+  useEffect(() => {
+    if (open) page?.typed?.(null, search.trim());
+  }, [open, search]);
   const [active, setActive] = useState(0);
   // The field whose values show beside the menu, where they hang, and
   // whether the keys move through them.
@@ -162,7 +175,11 @@ export function FilterButton({
     if (writing) focusQuery();
   }, [writing]);
 
-  const fields = fieldsFor(inbox);
+  const fields = given ?? fieldsFor(inbox);
+  const on = (text: string, key: string, value: string, with_: Op = "=") =>
+    hasValue(text, key, value, with_, given);
+  const toggle = (key: string, value: string, with_: Op = "=") =>
+    toggleValue(query, key, value, with_, given);
   const passes = (text: string, entry: Entry) => matchesQuery(text, entry, kindOf?.(entry));
   const words = search.trim().toLowerCase();
   const fits = (option: Option) =>
@@ -196,18 +213,21 @@ export function FilterButton({
   // Count matches belonging to this option, not the union of every selected
   // value of its field. Other fields still narrow the count.
   const count = (field: Field, option: Option, with_: Op = "=") =>
-    formatCount(
-      hasValue(query, field.key, option.value, with_)
-        ? live.filter((entry) => passes(toggleValue("", field.key, option.value, with_), entry))
-            .length
-        : entries.filter(
-            (entry) =>
-              passes(toggleValue(query, field.key, option.value, with_), entry) &&
-              passes(toggleValue("", field.key, option.value, with_), entry),
-          ).length,
-    );
+    given
+      ? null
+      : formatCount(
+          on(query, field.key, option.value, with_)
+            ? live.filter((entry) => passes(toggleValue("", field.key, option.value, with_), entry))
+                .length
+            : entries.filter(
+                (entry) =>
+                  passes(toggle(field.key, option.value, with_), entry) &&
+                  passes(toggleValue("", field.key, option.value, with_), entry),
+              ).length,
+        );
   // Added only when the query still reads with it.
-  const addable = (text: string) => !queryProblem(withText(query, text), inbox);
+  const addable = (text: string) =>
+    !(page ? page.problem : (one: string) => queryProblem(one, inbox))(withText(query, text));
 
   const openSub = (field: Field, row: HTMLElement | null, keys: boolean, hover = false) => {
     const box = panel.current?.getBoundingClientRect();
@@ -227,7 +247,7 @@ export function FilterButton({
   };
   const pick = (row: Row, element: HTMLElement | null, keys: boolean) => {
     if (row.kind === "field") openSub(row.field, element, keys);
-    else if (row.kind === "value") onChange(toggleValue(query, row.field.key, row.option.value));
+    else if (row.kind === "value") onChange(toggle(row.field.key, row.option.value));
     else if (row.kind === "add") {
       if (!addable(row.text)) return;
       onChange(withText(query, row.text));
@@ -274,7 +294,7 @@ export function FilterButton({
     } else if (event.key === "Enter") {
       event.preventDefault();
       const option = inValues ? values[inSub] : undefined;
-      if (sub && option) onChange(toggleValue(query, sub.field.key, option.value, op));
+      if (sub && option) onChange(toggle(sub.field.key, option.value, op));
       else if (rows[active]) pick(rows[active]!, rowElement(active), true);
     }
   };
@@ -300,6 +320,7 @@ export function FilterButton({
         role="radiogroup"
         aria-label={`How ${sub.field.label} compares`}
         className="filter-menu-ops"
+        hidden={ops.length < 2}
       >
         {ops.map((one) => (
           <button
@@ -316,20 +337,20 @@ export function FilterButton({
         ))}
       </div>
       {values.map((option, index) => {
-        const on = hasValue(query, sub.field.key, option.value, op);
+        const ticked = on(query, sub.field.key, option.value, op);
         return (
           <div
             key={option.value}
             id={`${ids}-value-${index}`}
             role="option"
-            aria-selected={on}
+            aria-selected={ticked}
             tabIndex={-1}
             className={index === inSub ? "filter-menu-row active" : "filter-menu-row"}
             onMouseEnter={() => setInSub(index)}
             onMouseDown={(event) => event.preventDefault()}
-            onClick={() => onChange(toggleValue(query, sub.field.key, option.value, op))}
+            onClick={() => onChange(toggle(sub.field.key, option.value, op))}
           >
-            <span className="filter-menu-tick">{on ? <CheckIcon size={13} /> : null}</span>
+            <span className="filter-menu-tick">{ticked ? <CheckIcon size={13} /> : null}</span>
             <span className="filter-menu-label">{option.label}</span>
             {option.label !== option.value ? (
               <code className="filter-menu-key">{option.value}</code>
@@ -476,7 +497,7 @@ export function FilterButton({
                     ) : row.kind === "value" ? (
                       <>
                         <span className="filter-menu-tick">
-                          {hasValue(query, row.field.key, row.option.value) ? (
+                          {on(query, row.field.key, row.option.value) ? (
                             <CheckIcon size={13} />
                           ) : null}
                         </span>
@@ -487,7 +508,11 @@ export function FilterButton({
                       </>
                     ) : row.kind === "add" ? (
                       <span className="filter-menu-label">
-                        {row.text.includes(":") ? "Add " : "Titles containing "}
+                        {row.text.includes(":")
+                          ? "Add "
+                          : given
+                            ? "Containing "
+                            : "Titles containing "}
                         <q>{row.text}</q>
                       </span>
                     ) : (
@@ -520,6 +545,7 @@ export function FilterBar({
   entries,
   inbox = false,
   actions,
+  page,
 }: {
   query: string;
   onChange: (next: string) => void;
@@ -529,6 +555,8 @@ export function FilterBar({
   inbox?: boolean;
   /** Saving the filter, at the end of the bar. */
   actions?: ReactNode;
+  /** Another page's filter, in place of the pull requests'. */
+  page?: PageFilter;
 }) {
   const id = useId();
   const writing = useContext(WritingQuery);
@@ -542,6 +570,13 @@ export function FilterBar({
   });
   const [text, setText] = useState(query);
   const [caret, setCaret] = useState(query.length);
+  // The value being typed, for a page that reads a field's values by prefix.
+  useEffect(() => {
+    const at = /(?:^|[\s(])-?([A-Za-z][A-Za-z-]*)(?:!=|=|:)(?:[^\s,]*,)*"?([^\s,"]*)$/.exec(
+      text.slice(0, caret),
+    );
+    if (at) page?.typed?.(at[1]!.toLowerCase(), at[2]!);
+  }, [text, caret]);
   const [state, setState] = useState<ComboboxState>(CLOSED);
   const timer = useRef<ReturnType<typeof setTimeout>>(undefined);
   // The filter can change from outside (the menu, Clear, another window); the
@@ -559,13 +594,16 @@ export function FilterBar({
     [],
   );
 
-  const error = queryProblem(text, inbox);
-  const options = state.open ? suggest(text, caret, entries, inbox).slice(0, 12) : [];
+  const problem = (one: string) => (page ? page.problem(one) : queryProblem(one, inbox));
+  const error = problem(text);
+  const options = state.open
+    ? suggest(text, caret, entries, inbox, page?.fields, !page).slice(0, 12)
+    : [];
   const apply = (next: string, now = false) => {
     clearTimeout(timer.current);
     pending.current = null;
     const tidy = tidyQuery(next);
-    if (tidy === query || queryProblem(tidy, inbox)) return;
+    if (tidy === query || problem(tidy)) return;
     const send = () => {
       pending.current = null;
       onChange(tidy);
@@ -604,7 +642,7 @@ export function FilterBar({
     <div className="filter-bar">
       <div role="search" className="filter-bar-field">
         <label htmlFor={id} className="sr-only">
-          Filter pull requests
+          {page?.label ?? "Filter pull requests"}
         </label>
         <textarea
           ref={input}

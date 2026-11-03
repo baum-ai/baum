@@ -24,9 +24,12 @@ body {
      browser's blue. */
   accent-color: var(--action-primary);
 }
+/* The window holds the sidebar and the page's panel, which stay in place:
+   the panel's notices and each page's bar stay at its top and only what is
+   under them scrolls (`.local-main`). */
 .local-shell {
   display: flex;
-  min-height: 100vh;
+  height: 100vh;
 }
 .local-connecting {
   display: grid;
@@ -453,6 +456,7 @@ body {
   flex: 1;
   flex-direction: column;
   min-width: 0;
+  min-height: 0;
   margin: 0.5rem 0.5rem 0.5rem 0;
   background: var(--surface-card);
   border: 1px solid var(--border-default);
@@ -465,9 +469,15 @@ body {
   gap: 0.5rem;
   padding: 0.75rem 1.5rem 0;
 }
+/* What scrolls, a size container so a pane held beside the page (the
+   review's rail) can fill the panel's height rather than the window's. */
 .local-main {
+  flex: 1;
   min-width: 0;
+  min-height: 0;
   padding-bottom: 3rem;
+  overflow-y: auto;
+  container-type: size;
 }
 .local-page-bar {
   display: flex;
@@ -478,6 +488,10 @@ body {
   min-height: 2.25rem;
   padding: 0.625rem 1.5rem;
   border-bottom: 1px solid var(--border-subtle);
+  position: sticky;
+  z-index: 4;
+  top: 0;
+  background: var(--frame-surface, var(--surface-card));
 }
 .local-page-title {
   display: flex;
@@ -1256,7 +1270,7 @@ select.local-field {
 .inbox-selection-bar {
   position: sticky;
   z-index: 2;
-  top: 0;
+  top: var(--page-bar-height, 0px);
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -1489,7 +1503,7 @@ dialog::backdrop {
   background: var(--surface-scrim);
 }
 @media (width >= 64rem) {
-  html:has([data-review-page]) {
+  .local-main:has([data-review-page]) {
     scroll-padding-top: calc(48px + 0.5rem);
   }
 }
@@ -4004,6 +4018,7 @@ dialog.local-message-reader[open] {
    it. The agent's prose keeps a readable measure, its tool calls quiet beside
    it. */
 .local-frame:has(.local-job-page) {
+  --frame-surface: var(--surface-sunken);
   background: var(--surface-sunken);
 }
 .local-job-page .local-panel {
@@ -6744,7 +6759,7 @@ a.upnext-done-text:hover {
 }
 .inbox-preview {
   position: sticky;
-  top: 1.25rem;
+  top: calc(var(--page-bar-height, 0px) + 1.25rem);
   display: grid;
   gap: 0.75rem;
 }
