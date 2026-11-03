@@ -703,25 +703,42 @@ it("creates an inbox with Control+Enter from the inbox filter", async () => {
   expect(puts).toHaveLength(0);
 });
 
-for (const [key, start, expected] of [
-  ["j", "Reviews", "Merges"],
-  ["k", "Merges", "Reviews"],
-  ["ArrowDown", "Reviews", "Merges"],
-  ["ArrowUp", "Merges", "Reviews"],
-  ["k", "Reviews", "Up next"],
-  ["ArrowUp", "Reviews", "Up next"],
-  ["j", "", "Reviews"],
-  ["ArrowDown", "", "Reviews"],
-  ["k", "", "Up next"],
+for (const [modifier, key, start, expected] of [
+  ["Shift", "J", "Reviews", "Merges"],
+  ["Shift", "K", "Merges", "Reviews"],
+  ["Control", "ArrowDown", "Reviews", "Merges"],
+  ["Control", "ArrowUp", "Merges", "Reviews"],
+  ["Shift", "K", "Reviews", "Up next"],
+  ["Control", "ArrowUp", "Reviews", "Up next"],
+  ["Shift", "J", "", "Reviews"],
+  ["Control", "ArrowDown", "", "Reviews"],
+  ["Shift", "K", "", "Up next"],
 ]) {
-  it(`switches inboxes with Control+${key} from ${start}`, async () => {
+  it(`switches inboxes with ${modifier}+${key} from ${start}`, async () => {
     await render(start ? `?inbox=${start}` : "");
     await act(async () => {
       document.body.dispatchEvent(
-        new KeyboardEvent("keydown", { key, ctrlKey: true, bubbles: true, cancelable: true }),
+        new KeyboardEvent("keydown", {
+          key,
+          shiftKey: modifier === "Shift",
+          ctrlKey: modifier === "Control",
+          bubbles: true,
+          cancelable: true,
+        }),
       );
     });
     expect(node.querySelector("h1")?.textContent).toBe(expected);
     expect(node.querySelector("[data-go-to]")).toBeNull();
   });
 }
+
+it("leaves Control+K to Go to on an inbox", async () => {
+  await render("?inbox=Reviews");
+  await act(async () => {
+    document.body.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "k", ctrlKey: true, bubbles: true, cancelable: true }),
+    );
+  });
+  expect(node.querySelector("h1")?.textContent).toBe("Reviews");
+  expect(node.querySelector("[data-go-to]")).not.toBeNull();
+});

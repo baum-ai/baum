@@ -755,10 +755,8 @@ function Workspace({ url }: { url: UrlState }) {
         page !== "inbox" ||
         selectedEntry ||
         groupId ||
-        !event.ctrlKey ||
         event.metaKey ||
         event.altKey ||
-        event.shiftKey ||
         event.isComposing ||
         document.querySelector("dialog[open]")
       )
@@ -768,12 +766,11 @@ function Workspace({ url }: { url: UrlState }) {
         event.target.closest("input, textarea, select, [contenteditable], .filter-menu[open]")
       )
         return;
-      const step =
-        event.key === "j" || event.key === "ArrowDown"
-          ? 1
-          : event.key === "k" || event.key === "ArrowUp"
-            ? -1
-            : 0;
+      // Shift+J and Shift+K, or Ctrl+↓ and Ctrl+↑. Ctrl+K stays Go to's.
+      const steps: Record<string, number> = event.shiftKey
+        ? { j: 1, k: -1 }
+        : { arrowdown: 1, arrowup: -1 };
+      const step = event.shiftKey === event.ctrlKey ? 0 : (steps[event.key.toLowerCase()] ?? 0);
       if (!step) return;
       event.preventDefault();
       event.stopImmediatePropagation();

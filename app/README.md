@@ -2014,9 +2014,9 @@ Create inbox button shortcuts.
 
 New inboxes choose a colour not used by another inbox, preserving their template’s
 preferred colour when available; once all colours are used, that preference repeats.
-Ctrl+J/K or Ctrl+Down/Up moves between the global Inbox and saved inboxes in
+Shift+J/K or Ctrl+Down/Up moves between the global Inbox and saved inboxes in
 sidebar order (global Inbox first), stopping at either end. Typing fields and dialogs keep their keys.
-While navigating inboxes, Ctrl+K takes precedence over Go to.
+Ctrl+K always opens Go to.
 Enter is drawn as ↵ in button shortcut hints.
 
 On PR and stack review pages, `]` toggles the right-hand Details/Activity
