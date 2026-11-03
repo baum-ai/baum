@@ -313,6 +313,18 @@ impl Updates {
         std::mem::take(&mut inner.cancel)
     }
 
+    /// Moves a waiting install to installing, unless it was cancelled; under
+    /// the lock `request_cancel` takes, so an accepted cancel always wins.
+    fn begin_install(&self) -> bool {
+        let mut inner = self.lock();
+        if std::mem::take(&mut inner.cancel) {
+            return false;
+        }
+        inner.view.phase = Phase::Installing;
+        inner.view.jobs = 0;
+        true
+    }
+
     fn fail(&self, phase: Phase, error: String) {
         eprintln!("baum desktop: {error}");
         self.edit(|inner| {
@@ -448,17 +460,25 @@ fn check<R: Runtime>(app: &AppHandle<R>, updates: &Updates) {
 /// Installs the downloaded update once no generation job runs, then
 /// restarts the app.
 fn install<R: Runtime>(app: &AppHandle<R>, updates: &Updates) {
-    let Some((update, bytes)) = updates.edit(|inner| inner.ready.take()) else {
+    // A check that ran since the request may have shown the update as ready
+    // again; from here the install is waiting, and can be cancelled.
+    let Some((update, bytes)) = updates.edit(|inner| {
+        let ready = inner.ready.take()?;
+        inner.view.phase = Phase::Waiting;
+        Some(ready)
+    }) else {
         updates.fail(Phase::Idle, "no update is ready to install".into());
         return;
     };
     loop {
         let jobs = running_jobs();
-        if jobs == 0 {
-            break;
-        }
-        updates.edit(|inner| inner.view.jobs = jobs);
-        if updates.cancelled(JOBS_POLL) {
+        let cancelled = if jobs == 0 {
+            !updates.begin_install()
+        } else {
+            updates.edit(|inner| inner.view.jobs = jobs);
+            updates.cancelled(JOBS_POLL)
+        };
+        if cancelled {
             updates.edit(|inner| {
                 inner.ready = Some((update, bytes));
                 inner.view.phase = Phase::Ready;
@@ -466,11 +486,10 @@ fn install<R: Runtime>(app: &AppHandle<R>, updates: &Updates) {
             });
             return;
         }
+        if jobs == 0 {
+            break;
+        }
     }
-    updates.edit(|inner| {
-        inner.view.phase = Phase::Installing;
-        inner.view.jobs = 0;
-    });
     // Windows: the installer closes the app and the updated app starts
     // the daemon, so stop it now rather than leave the old version
     // running from the app's copy of baum.exe (or, for installs from
@@ -667,6 +686,24 @@ mod tests {
         assert_eq!(updates.next_request(Duration::ZERO), Some(Request::Install));
         updates.request_cancel();
         assert!(updates.cancelled(Duration::ZERO));
+        assert!(!updates.cancelled(Duration::ZERO));
+    }
+
+    #[test]
+    fn a_cancel_accepted_while_jobs_are_counted_stops_the_install() {
+        let updates = Updates::new("1.2.3".into(), true, true);
+        updates.edit(|inner| inner.view.phase = Phase::Ready);
+        updates.request_install().unwrap();
+        // The last job finishes while the click is on its way.
+        updates.request_cancel();
+        assert!(!updates.begin_install());
+
+        updates.edit(|inner| inner.view.phase = Phase::Ready);
+        updates.request_install().unwrap();
+        assert!(updates.begin_install());
+        assert_eq!(updates.view().phase, Phase::Installing);
+        // Too late to cancel once installing.
+        updates.request_cancel();
         assert!(!updates.cancelled(Duration::ZERO));
     }
 
