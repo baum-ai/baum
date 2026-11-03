@@ -504,17 +504,10 @@ export function useUpNext(
   };
   const snoozed = [
     ...items.filter((item) => snoozedNow(item.entry)),
-    ...waiting.filter(snoozedNow).map((entry): UpNextItem => {
-      const key = upNextKey(entry.pull_request);
-      return {
-        key,
-        entry,
-        kind: state.seen[key]?.kind ?? "merge",
-        why: "",
-        minutes: null,
-        working: [],
-      };
-    }),
+    ...waiting.filter(snoozedNow).map((entry) => ({
+      key: upNextKey(entry.pull_request),
+      entry,
+    })),
   ];
   const queue = items.filter((item) => !snoozedNow(item.entry));
   const update = (change: (state: Stored) => Stored) =>
@@ -1052,7 +1045,7 @@ export function UpNextPage({
     window.addEventListener("keydown", create);
     return () => window.removeEventListener("keydown", create);
   }, [query, saveAsInbox, scope]);
-  const inScope = (item: { kind: UpNextKind; entry: Entry }) =>
+  const inScope = (item: { kind?: UpNextKind; entry: Entry }) =>
     matchesQuery(query, item.entry, item.kind);
   const queue = all.queue.filter(inScope);
   const snoozed = all.snoozed.filter(inScope);

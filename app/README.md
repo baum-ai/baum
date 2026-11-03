@@ -872,7 +872,9 @@ away), tomorrow morning (9 AM) and **Until it changes**, which hides the pull
 request until its head moves. A snooze selects the next pull request and shows
 a toast with **Undo**; **Bring back**, in a snoozed row's menu under Snoozed,
 ends one early. Waiting pull requests, including those waiting on another
-member of their stack, offer Snooze too. Snoozes still apply when a pull
+member of their stack, offer Snooze too. Snoozed waiting PRs keep their
+waiting classification, so the same inbox filters apply before and after
+snoozing. Snoozes still apply when a pull
 request moves between needing an action and waiting; a stack disappears
 from the active queue when all its pull requests are snoozed. A snoozed pull
 request stays under Snoozed when its Fix clears, rather than Done today. Keys:
