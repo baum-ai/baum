@@ -27,7 +27,7 @@ import {
 } from "./pending-review-model";
 import type { CommentPlace, ReviewEvent } from "./walkthrough-model";
 
-const EVENT_LABELS: Record<ReviewEvent, string> = {
+export const EVENT_LABELS: Record<ReviewEvent, string> = {
   APPROVE: "Approve",
   COMMENT: "Comment",
   REQUEST_CHANGES: "Request changes",

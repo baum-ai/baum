@@ -51,6 +51,7 @@ import {
   joinAnd,
   liveFor,
   navigate,
+  openExternal,
   request,
   reviewJob,
   sameRepository,
@@ -94,7 +95,7 @@ import { RefreshButton, type RefreshRun } from "./shell";
 import { ReviewThreads } from "./threads";
 import { canUpdateBranch, UpdateBranchDialog } from "./unblock";
 import { PRIMARY, SECONDARY, SMALL, SMALL_PRIMARY } from "./action-classes";
-import { ReviewButton, ReviewDialog, usePendingReview } from "./pending-review";
+import { EVENT_LABELS, ReviewButton, ReviewDialog, usePendingReview } from "./pending-review";
 import { reviewable } from "./pending-review-model";
 import type { ReviewEvent } from "./walkthrough-model";
 import { cn } from "@baum/viewer/components/classnames";
@@ -1304,8 +1305,70 @@ export function UpNextPage({
   ) : null;
   // A snoozed pull request's actions, behind its ⋯ and a right click on it.
   const actionsMenu = useContextMenu();
-  const snoozedName = (item: (typeof snoozed)[number]) =>
-    `${item.entry.pull_request.repository} #${item.entry.pull_request.number}`;
+  const prName = (pr: { repository: string; number: number }) => `${pr.repository} #${pr.number}`;
+  const snoozedName = (item: (typeof snoozed)[number]) => prName(item.entry.pull_request);
+  // A queued pull request's actions, behind a right click on its row (or ⌘.
+  // on it): what its panel's buttons and its keys do, with the key beside
+  // each. Snooze… picks the row and opens the panel's snooze choices.
+  const rowActions = (row: Row): MenuItem[] => {
+    const { entry, item, job, waiting } = row;
+    const pr = entry.pull_request;
+    const items: MenuItem[] = [
+      { label: "Open", hint: "↵", onSelect: () => navigate(prHref(entry, cloneFor)) },
+    ];
+    const watchable = inbox.watchable(entry);
+    const run = job ?? watchable;
+    if (run)
+      items.push({
+        label: isActiveJob(run) ? "Watch the agent" : "Fix transcript",
+        hint: watchable ? "t" : undefined,
+        onSelect: () => navigate(jobHref(run)),
+      });
+    if (!job && !waiting) {
+      const label = fixLabel(entry);
+      if (item?.kind === "merge")
+        items.push({ label: "Merge…", hint: "m", onSelect: () => setMerging(entry) });
+      else if (item?.kind === "update")
+        items.push({ label: "Update the branch…", onSelect: () => setUpdating(entry) });
+      else if (item?.kind === "fix" && label && cloneFor(entry) && !fixState(entry).starting)
+        items.push({ label, hint: "f", onSelect: () => fix(entry) });
+    }
+    if (reviewable(entry))
+      for (const event of pr.authored_by_me
+        ? (["COMMENT"] as const)
+        : (["APPROVE", "COMMENT", "REQUEST_CHANGES"] as const))
+        items.push({
+          label: `${EVENT_LABELS[event]}…`,
+          onSelect: () => setReviewing({ entry, event }),
+        });
+    items.push({
+      label: "Snooze…",
+      hint: "s",
+      onSelect: () => {
+        select(row.key);
+        setMenu(true);
+      },
+    });
+    if (pr.url) items.push({ label: "Open on GitHub", onSelect: () => openExternal(pr.url) });
+    return items;
+  };
+  const groupActions = (line: GroupRow): MenuItem[] => [
+    {
+      label: "Open",
+      hint: "↵",
+      onSelect: () => navigate(appURL(`?group=${encodeURIComponent(line.group.id)}`)),
+    },
+    {
+      label: groupOpen(line) ? "Hide pull requests" : "Show pull requests",
+      hint: "Space",
+      onSelect: () => toggleGroup(line),
+    },
+  ];
+  // A done one's page while the app still lists it, and its GitHub page.
+  const doneActions = ({ entry, url }: (typeof cleared)[number]): MenuItem[] => [
+    ...(entry ? [{ label: "Open", onSelect: () => navigate(prHref(entry, cloneFor)) }] : []),
+    ...(url ? [{ label: "Open on GitHub", onSelect: () => openExternal(url) }] : []),
+  ];
   const snoozedActions = (item: (typeof snoozed)[number]): MenuItem[] => [
     {
       label: "Bring back",
@@ -1434,6 +1497,9 @@ export function UpNextPage({
                   data-row={row.key}
                   data-focused={row.key === line?.key || undefined}
                   className={`list-row upnext-item${group ? " upnext-member" : ""}`}
+                  onContextMenu={(event) =>
+                    actionsMenu.open(event, rowActions(row), prName(row.entry.pull_request))
+                  }
                 >
                   <ListRow
                     row={row}
@@ -1470,6 +1536,9 @@ export function UpNextPage({
                           data-row={entry.key}
                           data-focused={entry.key === line?.key || undefined}
                           className="list-row upnext-item"
+                          onContextMenu={(event) =>
+                            actionsMenu.open(event, groupActions(entry), entry.group.name)
+                          }
                         >
                           <GroupListRow
                             line={entry}
@@ -1534,6 +1603,9 @@ export function UpNextPage({
                     key={item.key}
                     title={`${item.repository} #${item.number}`}
                     className="list-row"
+                    onContextMenu={(event) =>
+                      actionsMenu.open(event, doneActions(item), prName(item))
+                    }
                   >
                     <span aria-hidden="true" className="upnext-done-check">
                       ✓

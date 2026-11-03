@@ -88,8 +88,8 @@ export function useMenuFocus(open: boolean, close: () => void) {
  *  under the focused element when the keyboard asked, with the Menu key,
  *  Shift+F10 or ⌘.) in place of the browser's; `openFrom` hangs them under a
  *  row's ⋯ button (`MenuButton`); and `menu` is the element to render. The
- *  browser's own stays where it is useful: in a field, over selected text,
- *  and when there is nothing to offer. A list keeps one for all its rows, so
+ *  browser's own stays where it is useful: in a field and over selected
+ *  text; elsewhere `blockBrowserMenu` keeps it off. A list keeps one for all its rows, so
  *  a right click and the ⋯ button offer the same choices. */
 export function useContextMenu() {
   const [state, setState] = useState<Open | null>(null);

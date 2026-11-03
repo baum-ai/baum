@@ -41,6 +41,7 @@ import {
   jobHref,
   liveFor,
   navigate,
+  openExternal,
   rowKey,
   sameRepository,
   watchableFix,
@@ -753,14 +754,6 @@ function StatusColumns({ entry }: { entry: Entry }) {
 }
 /** How a row is named to assistive technology and in its menu. */
 const rowName = (entry: Entry) => `${entry.pull_request.repository} #${entry.pull_request.number}`;
-/** Opens a page outside the app, as a link to it would. */
-function openExternal(url: string) {
-  Object.assign(document.createElement("a"), {
-    href: url,
-    target: "_blank",
-    rel: "noreferrer",
-  }).click();
-}
 const PEEK_SECTIONS = 4;
 /** A look at the saved review under its row: the summary and the first
  *  sections with their lines, and a way in. The row already shows the risk. */

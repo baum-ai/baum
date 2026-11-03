@@ -1067,7 +1067,12 @@ but are not sidebar pages of their own, so they have no number key and ⌘1 stil
 opens Inbox (`src/inbox-pages.tsx`; routed in `src/app.tsx` by `?page=`). A
 right click on Inbox in the sidebar offers **New inbox…** and **Manage
 inboxes…**; a right click on an inbox's row, like its ⋯, offers **Edit inbox**
-and **Delete inbox**, and on its queue head **Edit…**. Deleting an inbox, from
+and **Delete inbox**, and on its queue head **Edit…**. A right click on a pull request in
+an inbox's queue (or ⌘. on it) offers what its panel and keys do: **Open**, the
+agent's transcript, **Merge…**, **Update the branch…** or the fix, the review
+verdicts, **Snooze…** (which picks the row and opens its snooze choices) and
+**Open on GitHub**; on a group's row, **Open** and Show or Hide its pull requests; on a
+row under Done today, **Open** and **Open on GitHub**. Deleting an inbox, from
 there or its edit page, first asks, saying only the view goes and its pull
 requests, reviews and snoozes stay; then it is deleted with Undo. With an
 older daemon none of these links, pages or Go to entries exist, and a direct
@@ -1679,7 +1684,9 @@ it opens under the focused card. Ctrl+N and Ctrl+P (`useReadlineArrows`) move as
 and ↑ in every list and menu of the app, and in Go to, but not in a plain text field. In the menu the arrows move, Enter chooses, and a click
 elsewhere or a scroll closes it; Escape closes it wherever the keys are and gives them
 back to the row that opened it. In a field, or over selected text, the browser's menu
-stays.
+stays; everywhere else that offers no menu of its own, a right click does nothing
+(`blockBrowserMenu` in `src/native-menu.ts`, installed by every window: the app, setup,
+the tray and the connecting screen).
 
 - "Needs you" (`SessionsPage` in `src/sessions.tsx`) shows only while something asks
   the person for a permission or an answer (`asks`), and "Waiting for you", after it,
