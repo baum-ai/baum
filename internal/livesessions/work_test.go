@@ -149,9 +149,10 @@ func TestSessionLinksToThePullRequestOfItsPush(t *testing.T) {
 	}
 }
 
-// The directory's own pull request comes first, and Git run by another
-// process, or by a process two sessions name, belongs to no session.
-func TestWorkOnlyFillsAMissingLinkOfItsOwnSession(t *testing.T) {
+// The session's own work comes before its directory's pull request, and Git
+// run by another process, or by a process two sessions name, belongs to no
+// session.
+func TestOwnWorkComesBeforeTheDirectory(t *testing.T) {
 	c := &clock{t0}
 	l := newWorkLinker()
 	l.pushes["topic"] = 33
@@ -174,9 +175,36 @@ func TestWorkOnlyFillsAMissingLinkOfItsOwnSession(t *testing.T) {
 	// newLinker's directory, which resolves to a pull request of its own.
 	e.Session.Cwd = "/work/demo"
 	apply(cwd, e)
+	if s := only(t, cwd); s.PR != 7 {
+		t.Fatalf("a session with no work of its own lost its directory's pull request: %+v", s)
+	}
 	apply(cwd, gitHook("pre-push", workDir("main"), t0.Add(time.Minute), claude, pushOf("topic")))
-	if s := only(t, cwd); s.PR != 7 || s.LinkMethod == MethodPush {
-		t.Fatalf("the push replaced the directory's pull request: %+v", s)
+	if s := only(t, cwd); s.PR != 33 || s.Branch != "topic" || s.LinkMethod != MethodPush {
+		t.Fatalf("the directory's pull request hid the session's push: %+v", s)
+	}
+}
+
+// A session whose directory another session or a subagent switches to another
+// pull request's branch keeps the pull request of its own commit, at every
+// later lookup.
+func TestOwnCommitSurvivesTheDirectorySwitchingBranch(t *testing.T) {
+	c := &clock{t0}
+	l := newWorkLinker()
+	tr := newTracker(c, l)
+	e := prompt("s-1", t0, claude)
+	e.Session.Cwd = workDir("trees/fix")
+	apply(tr, e)
+	if s := only(t, tr); s.PR != 99 {
+		t.Fatalf("before the commit: %+v", s)
+	}
+	apply(tr, commit(workDir("trees/fix"), "fix", t0.Add(time.Minute), claude))
+	for i := range 3 {
+		if s := only(t, tr); s.PR != 12 || s.Branch != "fix" || s.LinkMethod != MethodCommit {
+			t.Fatalf("lookup %d after the commit: %+v", i, s)
+		}
+		c.advance(RelinkEvery)
+		tr.Sweep()
+		tr.ResolvePending(context.Background())
 	}
 }
 

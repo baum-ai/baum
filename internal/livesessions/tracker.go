@@ -881,7 +881,9 @@ func (t *Tracker) ResolvePending(ctx context.Context) bool {
 				link = Link{Repository: link.Repository, Status: "unknown_history"}
 			}
 		}
-		read := t.readWork(ctx, r.work, ok && link.PR == 0 && link.Status != "ambiguous")
+		// The session's own work comes before its directory's pull request,
+		// so its pull requests are checked again whatever the directory has.
+		read := t.readWork(ctx, r.work, ok)
 		now := t.now()
 		t.mu.Lock()
 		delete(t.pending, r.k)

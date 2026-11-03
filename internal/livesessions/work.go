@@ -13,8 +13,8 @@ import (
 // commits in another worktree of the clone, or on a branch it creates and
 // then leaves. Git's post-commit and pre-push hooks carry their ancestors, and
 // the session whose agent is among them made the commit or the push, so a
-// session whose own directory links to no pull request links to the one its
-// latest commit or push reaches.
+// session links to the pull request its latest commit or push reaches before
+// the one its directory has checked out.
 
 // maxWork bounds the commits and pushes kept of a session.
 const maxWork = 16
@@ -223,13 +223,11 @@ func (s *entry) storeWork(read []workItem) bool {
 	return slices.ContainsFunc(s.work, func(w workItem) bool { return !w.read && w.dir != "" })
 }
 
-// withWork is link, or, when its directory gives no pull request (and does not
-// give several), the pull request of the session's latest commit or push
-// that has one.
+// withWork is the pull request of the session's latest commit or push that
+// has one, or, when none has, link, its directory's. The session's own work
+// comes first: its directory is shared with whatever else runs Git there, so
+// what it has checked out now may be another session's branch.
 func withWork(link Link, work []workItem) Link {
-	if link.PR != 0 || link.Status == "ambiguous" {
-		return link
-	}
 	for i := len(work) - 1; i >= 0; i-- {
 		if w := work[i]; w.read && w.link.PR != 0 {
 			found := w.link

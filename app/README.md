@@ -1931,10 +1931,12 @@ ended sessions can acquire a PR after ending, using their saved Git observation
 rather than the current checkout. Active observations are also saved without
 notification message text or local paths for restart recovery.
 
-A session whose directory has no PR shows the PR of its agent's latest commit
-or push that has one, wherever the agent ran Git (another worktree, or a branch
-it left), with `link_method` `commit` or `push` (see "Commits and pushes" under
-"Live sessions" in ARCHITECTURE.md). Its branch chip names that branch.
+A session shows the PR of its agent's latest commit or push that has one,
+wherever the agent ran Git (another worktree, or a branch it left), with
+`link_method` `commit` or `push`, even when its directory has since checked
+out another PR's branch (see "Commits and pushes" under "Live sessions" in
+ARCHITECTURE.md). Its branch chip names that branch. Only a session with no
+such commit or push shows its directory's PR.
 
 A session retains up to 32 timestamped Git work observations across branch
 changes; these are context associations, not asserted code contributions.
