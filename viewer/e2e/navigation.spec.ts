@@ -56,3 +56,32 @@ test("on a phone the rail is a sheet behind a bar that steps through the review"
   await expect(page).toHaveURL(/section=sec_retry/);
   await expect(rail).toBeHidden();
 });
+
+for (const width of [1440, 390]) {
+  test(`] toggles the right sidebar at width ${width}`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 900 });
+    await page.goto("/");
+    await expect(page.getByRole("heading", { level: 2, name: "Summary" })).toBeVisible();
+    if (width >= 1280) {
+      await page.keyboard.press("]");
+      await expect(
+        page.getByRole("button", { name: "Expand side pane", exact: true }),
+      ).toBeVisible();
+      await page.reload();
+      await expect(
+        page.getByRole("button", { name: "Expand side pane", exact: true }),
+      ).toBeVisible();
+      await page.keyboard.press("]");
+      await expect(
+        page.getByRole("button", { name: "Collapse side pane", exact: true }),
+      ).toBeVisible();
+    } else {
+      const aside = page.getByRole("region", { name: "Side pane", exact: true });
+      await expect(aside).toBeHidden();
+      await page.keyboard.press("]");
+      await expect(aside).toBeVisible();
+      await page.keyboard.press("]");
+      await expect(aside).toBeHidden();
+    }
+  });
+}

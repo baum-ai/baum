@@ -1,5 +1,7 @@
 package agent
 
+import "strings"
+
 // The failure reasons below are text hosts may store and match when read
 // back, so it must not change.
 const (
@@ -23,6 +25,13 @@ func Exceeds(used, limit int) bool { return limit > 0 && used > limit }
 // authentication_error, invalid_request, refusal or context_window_exceeded.
 func ProviderRejectedReason(status string) string {
 	return "the model provider rejected the request: " + status
+}
+
+// SignInRejected reports whether err, or the text a host kept of it, is the
+// provider refusing the harness's sign-in: none, expired or revoked. A host
+// matches the text because the error's type does not survive its redaction.
+func SignInRejected(err error) bool {
+	return err != nil && strings.Contains(err.Error(), ProviderRejectedReason("authentication_error"))
 }
 
 // RejectedError is a backend failure the loop does not retry: a rejected key,

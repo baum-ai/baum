@@ -80,7 +80,7 @@ func TestRoundTripOrderAndIDs(t *testing.T) {
 
 	// Reorder, rename one and add a third: ids stay with their entries.
 	a, z := first[0]["id"].(string), first[1]["id"].(string)
-	update := `{"revision":1,"inboxes":[{"id":"` + z + `","name":"Alpha 2","color":"red","what":"review","owners":["Baum-AI","baum-ai"],"risk":"4","repositories":["baum-ai/baum"],"no_bots":true,"badge":false},{"id":"` + a + `","name":" Zeta ","color":"grey","what":"mine","owners":[],"risk":"3","repositories":[],"no_bots":false,"badge":true},` + entry("New") + `]}`
+	update := `{"revision":1,"inboxes":[{"id":"` + z + `","name":"Alpha 2","color":"red","what":"review","owners":["Baum-AI","baum-ai"],"risk":"4","repositories":["baum-ai/baum"],"query":"  checks:failing OR -is:draft ","no_bots":true,"badge":false},{"id":"` + a + `","name":" Zeta ","color":"grey","what":"mine","owners":[],"risk":"3","repositories":[],"no_bots":false,"badge":true},` + entry("New") + `]}`
 	code, body = h.put(update)
 	if code != 200 || body["revision"] != float64(2) {
 		t.Fatalf("%d %v", code, body)
@@ -91,6 +91,10 @@ func TestRoundTripOrderAndIDs(t *testing.T) {
 	}
 	if owners := got[0]["owners"].([]any); len(owners) != 1 || owners[0] != "Baum-AI" {
 		t.Fatalf("owners not deduplicated keeping case: %v", owners)
+	}
+	// The query is kept as text, trimmed; an inbox saved without one has none.
+	if got[0]["query"] != "checks:failing OR -is:draft" || got[1]["query"] != "" {
+		t.Fatalf("query: %v", got)
 	}
 
 	_, read := h.do(http.MethodGet, "")
@@ -178,6 +182,8 @@ func TestValidation(t *testing.T) {
 		"repo dots":       {`[` + with(`"repositories":[]`, `"repositories":["a/.."]`) + `]`, "invalid_inbox"},
 		"too many owners": {`[` + with(`"owners":[]`, owners) + `]`, "invalid_inbox"},
 		"too many repos":  {`[` + with(`"repositories":[]`, repos) + `]`, "invalid_inbox"},
+		"long query":      {`[` + with(`"repositories":[]`, `"repositories":[],"query":"`+strings.Repeat("é", 501)+`"`) + `]`, "invalid_inbox"},
+		"query lines":     {`[` + with(`"repositories":[]`, `"repositories":[],"query":"a\nb"`) + `]`, "invalid_inbox"},
 		"foreign id":      {`[{"id":"nope","name":"B","color":"blue","what":"any","owners":[],"risk":"any","repositories":[],"no_bots":false,"badge":true}]`, "invalid_inbox"},
 		"duplicate id":    {`[{"id":"` + id + `","name":"B","color":"blue","what":"any","owners":[],"risk":"any","repositories":[],"no_bots":false,"badge":true},{"id":"` + id + `","name":"C","color":"blue","what":"any","owners":[],"risk":"any","repositories":[],"no_bots":false,"badge":true}]`, "duplicate_id"},
 	} {

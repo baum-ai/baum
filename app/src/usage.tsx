@@ -4,6 +4,8 @@ const reasons: Record<string, string> = {
   metadata_pending_redaction: "Model metadata will appear after its secret masking finishes.",
   actual_model_not_reported:
     "The provider did not report the actual model; only the configured model is known.",
+  estimated_from_configured_model:
+    "Estimated using the configured model's API rates because the provider did not report the actual model.",
   usage_not_reported: "Provider usage was not reported.",
   usage_incomplete: "Provider usage is incomplete; shown counts are reported subtotals.",
   model_not_reported: "The provider did not report a model.",
@@ -41,7 +43,9 @@ function Figures({ accounting, charged, amount, reason }: UsageProps) {
       <Stat
         label="At API prices"
         value={
-          amount == null ? "Unknown" : `${reason === "unpriced_calls" ? "≥ " : ""}${cost(amount)}`
+          amount == null
+            ? "Unknown"
+            : `${reason === "unpriced_calls" ? "≥ " : ""}${cost(amount)}${reason === "estimated_from_configured_model" ? " (estimated)" : ""}`
         }
       />
       <Stat label="Budget tokens" value={formatCount(charged)} />
@@ -71,8 +75,8 @@ function Notes({ accounting, amount, reason }: UsageProps) {
   const note =
     amount == null
       ? (reasons[reason ?? ""] ?? "Exact pricing is unavailable for this record.")
-      : reason === "unpriced_calls"
-        ? reasons.unpriced_calls
+      : reason === "unpriced_calls" || reason === "estimated_from_configured_model"
+        ? reasons[reason]
         : null;
   // Only what the provider reported; unknown extras are left out rather than listed.
   const extras = usage

@@ -156,11 +156,11 @@ it("keeps API, event and navigation URLs under the session namespace", async () 
   await act(async () => rail("Pull requests").click());
   await act(async () => {
     [...node.querySelectorAll<HTMLButtonElement>('[aria-label="Show"] button')]
-      .find((button) => button.textContent?.startsWith("Mine"))!
+      .find((button) => button.textContent?.startsWith("Closed"))!
       .click();
   });
   expect(location.pathname).toBe("/s/test-ns/");
-  expect(location.search).toBe("?page=pulls&filter=mine");
+  expect(location.search).toBe("?page=pulls&filter=history");
 });
 it("says it is loading, not empty, until the first read of jobs and repositories finishes", async () => {
   const original = vi.mocked(fetch).getMockImplementation()!;
@@ -422,14 +422,10 @@ it.each([
     else expect(node.textContent).not.toContain("showing cached data");
   },
 );
-it("filters by requested, authored, review state, repository and saved history", () => {
+it("splits the pull requests into Open and Closed", () => {
   const rows = [entry(1, "outdated"), entry(2), entry(3, "current", true)];
-  expect(filtered(rows, "requested", "").map((e) => e.pull_request.number)).toEqual([1]);
-  expect(filtered(rows, "mine", "").map((e) => e.pull_request.number)).toEqual([2]);
-  expect(filtered(rows, "outdated", "").length).toBe(1);
-  expect(filtered(rows, "no_review", "").length).toBe(1);
-  expect(filtered(rows, "all", "other/repo")).toEqual([]);
-  expect(filtered(rows, "history", "").map((e) => e.pull_request.number)).toEqual([3]);
+  expect(filtered(rows, "open").map((e) => e.pull_request.number)).toEqual([1, 2]);
+  expect(filtered(rows, "history").map((e) => e.pull_request.number)).toEqual([3]);
   expect(cost(null)).toBe("—");
   expect(cost(0)).toBe("$0.0000");
 });
@@ -568,34 +564,29 @@ it("groups requested PRs first, splits the person's own by what they need, and k
     ["history", [5, 4]],
   ]);
 });
-it("opens Pull requests on For you, with only review requests and the person's own, and the rest under Others", async () => {
+it("opens Pull requests on Open, with Closed last, and comes back to the tab last shown", async () => {
+  localStorage.clear();
   history.replaceState(null, "", "/s/test-ns/?page=pulls");
   entries = [entry(1), entry(2), entry(3)];
   await act(async () => root.render(<App />));
   const titles = () =>
-    Array.from(node.querySelectorAll(".inbox-pr-title")).map((link) => link.textContent);
-  expect(titles()).toEqual(["Change 1", "Change 2"]);
-  const tab = (name: string) =>
-    Array.from(node.querySelectorAll<HTMLButtonElement>('[aria-label="Show"] button')).find(
-      (button) => button.textContent?.startsWith(name),
-    )!;
-  expect(tab("For you").getAttribute("aria-pressed")).toBe("true");
-  expect(tab("Others").textContent).toBe("Others1");
-  await act(async () => tab("Others").click());
-  expect(titles()).toEqual(["Change 3"]);
-  entries = [entry(3)];
-  const original = vi.mocked(fetch).getMockImplementation()!;
-  vi.mocked(fetch).mockImplementation((...args) =>
-    String(args[0]) === "/s/test-ns/api/repos"
-      ? Promise.resolve(Response.json([{ id: "clone", repository: "acme/demo", path: "/c" }]))
-      : original(...args),
-  );
+    Array.from(node.querySelectorAll(".inbox-pr-title"))
+      .map((link) => link.textContent)
+      .sort();
+  expect(titles()).toEqual(["Change 1", "Change 2", "Change 3"]);
+  const tabs = () =>
+    Array.from(node.querySelectorAll<HTMLButtonElement>('[aria-label="Show"] button'));
+  expect(tabs().map((one) => one.textContent)).toEqual(["Open3", "Closed0"]);
+  expect(tabs()[0]!.getAttribute("aria-pressed")).toBe("true");
+  await act(async () => tabs()[1]!.click());
+  expect(location.search).toBe("?page=pulls&filter=history");
+  // Back from another page without a tab named, Closed shows again.
   history.replaceState(null, "", "/s/test-ns/?page=pulls");
   await act(async () => root.unmount());
   root = createRoot(node);
   await act(async () => root.render(<App />));
-  expect(node.textContent).toContain("Nothing is waiting on you");
-  expect(tab("For you").className).toContain("empty");
+  expect(tabs()[1]!.getAttribute("aria-pressed")).toBe("true");
+  localStorage.clear();
 });
 it("keeps collapsed selections and selects only expanded visible rows", async () => {
   entries = [entry(1), entry(2), entry(3)];
@@ -802,6 +793,37 @@ it("shows the home directory in diagnostics paths as ~", async () => {
   expect(text).toContain("hooks run this baum (~/bin/baum)");
   expect(text).toContain("~/.local/bin/baum");
   expect(text).not.toContain("/home/alice");
+});
+it("reports a problem from Diagnostics with the parts it already has", async () => {
+  history.replaceState(null, "", "/s/test-ns/?page=diagnostics");
+  Object.defineProperty(HTMLDialogElement.prototype, "showModal", {
+    configurable: true,
+    value(this: HTMLDialogElement) {
+      this.open = true;
+    },
+  });
+  const reportButton = () =>
+    [
+      ...node.querySelectorAll<HTMLButtonElement>("[aria-labelledby=diagnostics-heading] button"),
+    ].find((b) => b.textContent === "Report a problem");
+  const parts = {
+    version: "1.2.3",
+    os: "darwin/arm64",
+    versions: "- gh: 2.60.0",
+    diagnostics: "Overall: problem",
+    max_url: 6500,
+    truncation_note: "(truncated)",
+  };
+  stubDiagnostics(async () =>
+    Response.json({ local: true, report: diagnosticsReport, report_issue: parts }),
+  );
+  await act(async () => root.render(<App />));
+  expect(node.textContent).toContain("nothing is sent until you submit it");
+  await act(async () => reportButton()!.click());
+  const dialog = node.querySelector("dialog.report-problem")!;
+  expect(dialog.querySelector("[aria-label='What is attached']")!.textContent).toContain(
+    "- gh: 2.60.0",
+  );
 });
 it("shows diagnostics loading, then re-runs on Check again and disables it meanwhile", async () => {
   history.replaceState(null, "", "/s/test-ns/?page=diagnostics");
@@ -1760,6 +1782,55 @@ it("shows a diagnostics error with a retry that recovers", async () => {
   expect(node.textContent).toContain("Fix: Connect GitHub in baum Settings.");
 });
 
+it("marks signed-out agents in desktop Settings and says how to sign in", async () => {
+  history.replaceState(null, "", "/s/test-ns/?page=settings&section=reviews");
+  stubDiagnostics(async () => Response.json({ local: true, report: diagnosticsReport }));
+  stubAutomatic();
+  const agent = { detected: true, installed: true, enabled: true, plugin: "baum@baum" };
+  const view = {
+    first_run: false,
+    command: {
+      installed: true,
+      target: "/app/baum",
+      plan: { link: "/home/user/bin/baum", on_path: true, admin: false },
+    },
+    hooks: {
+      agents: [
+        { ...agent, agent: "codex", name: "Codex", signed_in: false },
+        { ...agent, agent: "claude-code", name: "Claude Code", signed_in: true },
+      ],
+    },
+  };
+  const invoke = vi.fn(async (command: string) =>
+    command === "setup_state" ? view : { ok: true, lines: [] },
+  );
+  Object.defineProperty(window, "__TAURI_INTERNALS__", { configurable: true, value: { invoke } });
+  try {
+    await act(async () => root.render(<App />));
+    const reviews = () => node.querySelector('[aria-labelledby="settings-reviews-heading"]')!;
+    const select = node.querySelector<HTMLSelectElement>("#review-agent")!;
+    expect([...select.options].map((o) => o.textContent)).toEqual([
+      "Claude Code",
+      "Codex (not signed in)",
+    ]);
+    expect(reviews().querySelector(".settings-caution")).toBeNull();
+    await choose(select, "codex");
+    expect(reviews().textContent).toContain(
+      "Codex isn't signed in, so reviews will fail. Run codex login in a terminal.",
+    );
+    // A fix agent of its own gets the same warning.
+    await act(async () =>
+      node.querySelector<HTMLButtonElement>('button[data-section="fixes"]')!.click(),
+    );
+    const fixes = () => node.querySelector('[aria-labelledby="settings-fixes-heading"]')!;
+    expect(fixes().querySelector(".settings-caution")).toBeNull();
+    await choose(node.querySelector<HTMLSelectElement>("#fix-agent")!, "codex");
+    expect(fixes().textContent).toContain("Codex isn't signed in, so fixes will fail.");
+  } finally {
+    Reflect.deleteProperty(window, "__TAURI_INTERNALS__");
+  }
+});
+
 it("manages CLI and hooks inline in desktop Settings", async () => {
   history.replaceState(null, "", "/s/test-ns/?page=settings");
   const view = {
@@ -2024,7 +2095,7 @@ const press = (key: string, init: KeyboardEventInit = {}) =>
   act(async () => {
     document.body.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, ...init }));
   });
-it("toggles the shortcuts sheet with ? and from its button", async () => {
+it("opens the help menu with ?, the sheet with Enter on it, and hides the sheet with ?", async () => {
   entries = [entry(1)];
   // jsdom has no modal dialogs.
   Object.defineProperty(HTMLDialogElement.prototype, "showModal", {
@@ -2035,13 +2106,56 @@ it("toggles the shortcuts sheet with ? and from its button", async () => {
   });
   await act(async () => root.render(<App />));
   await press("?");
+  expect(node.querySelector('button[aria-label="Help"]')!.getAttribute("aria-expanded")).toBe(
+    "true",
+  );
+  // The keys are on Show shortcuts; Enter presses it, as a click does here.
+  const focused = document.activeElement as HTMLElement;
+  expect(focused.getAttribute("role")).toBe("menuitem");
+  expect(focused.textContent).toBe("Show shortcuts");
+  await act(async () => focused.click());
+  expect(node.querySelector('[role="menu"]')).toBeNull();
   expect(node.querySelector("dialog")?.textContent).toContain("Keyboard shortcuts");
   await press("?");
   expect(node.querySelector("dialog")).toBeNull();
+  expect(node.querySelector('[role="menu"]')).toBeNull();
+  // The keys go back to where they were, not to `?`, which would draw its ring.
+  expect(document.activeElement?.getAttribute("aria-label")).not.toBe("Help");
   await act(async () =>
     node.querySelector<HTMLElement>('button[aria-label="Keyboard shortcuts"]')!.click(),
   );
   expect(node.querySelector("dialog")?.textContent).toContain("Refresh from GitHub");
+});
+it("offers the shortcuts, a problem report and the docs from the ? beside Settings", async () => {
+  entries = [entry(1)];
+  Object.defineProperty(HTMLDialogElement.prototype, "showModal", {
+    configurable: true,
+    value(this: HTMLDialogElement) {
+      this.open = true;
+    },
+  });
+  const open = vi.fn();
+  vi.stubGlobal("open", open);
+  await act(async () => root.render(<App />));
+  const help = () => node.querySelector<HTMLButtonElement>('button[aria-label="Help"]')!;
+  const choose = async (label: string) => {
+    await act(async () => help().click());
+    expect(help().getAttribute("aria-expanded")).toBe("true");
+    const items = [...node.querySelectorAll<HTMLElement>('[role="menu"] [role^=menuitem]')];
+    expect(items.map((item) => item.textContent)).toEqual([
+      "Show shortcuts",
+      "Report a problem",
+      "Open the docs",
+    ]);
+    await act(async () => items.find((item) => item.textContent?.startsWith(label))!.click());
+  };
+  await choose("Show shortcuts");
+  expect(node.querySelector("dialog")?.textContent).toContain("Keyboard shortcuts");
+  await press("?");
+  await choose("Open the docs");
+  expect(open).toHaveBeenCalledWith("https://docs.usebaum.com/", "_blank", "noopener,noreferrer");
+  await choose("Report a problem");
+  expect(node.querySelector("dialog.report-problem h2")!.textContent).toBe("Report a problem");
 });
 it("goes back to the inbox from a pull request page with u or Escape, keeping the filter", async () => {
   entries = [{ ...entry(42), clone_id: undefined, needs_clone: true }];

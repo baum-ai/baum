@@ -90,6 +90,8 @@ const chatReasons: Record<string, string> = {
   needs_clone: "The repository has no local clone, which the agent needs to read the code.",
   budget: "The agent reached its time or size limit before it could answer.",
   backend: "The agent couldn't run, or its provider was unavailable.",
+  signed_out:
+    "The agent isn't signed in, or its sign-in expired. Sign in to Claude Code with /login or to Codex with codex login in a terminal, then ask again.",
   validation:
     "The agent's answer didn't pass baum's checks, such as a citation to code that isn't there, even after a repair.",
   input:

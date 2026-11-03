@@ -7,9 +7,16 @@ import {
   WarningIcon,
 } from "@baum/viewer/components/icons";
 import { Alert, Badge, type BadgeTone, Button } from "@baum/viewer/components/ui";
-import { request, type DiagnosticCheck, type DiagnosticReport, type Diagnostics } from "./api";
+import {
+  request,
+  type DiagnosticCheck,
+  type DiagnosticReport,
+  type Diagnostics,
+  type IssueParts,
+} from "./api";
 import { displayPath } from "./desktop/setup-model";
 import { LoadingStatus } from "./nine-dots";
+import { ReportProblemDialog } from "./report-problem";
 
 const statusText: Record<DiagnosticCheck["status"], string> = {
   ok: "OK",
@@ -173,6 +180,8 @@ export function DiagnosticsSection({
 } = {}) {
   const [report, setReport] = useState<DiagnosticReport | null | undefined>();
   const [home, setHome] = useState<string>();
+  const [issueParts, setIssueParts] = useState<IssueParts | null>(null);
+  const [reporting, setReporting] = useState(false);
   const [error, setError] = useState("");
   const [running, setRunning] = useState(true);
   const [copied, setCopied] = useState("");
@@ -204,6 +213,7 @@ export function DiagnosticsSection({
       if (mine === sequence.current) {
         setReport(body.report);
         setHome(body.home);
+        setIssueParts(body.report_issue ?? null);
         reported.current?.(body.report);
       }
     } catch (e) {
@@ -226,6 +236,9 @@ export function DiagnosticsSection({
       <h2 id="diagnostics-heading" className="sr-only">
         Diagnostics
       </h2>
+      {reporting ? (
+        <ReportProblemDialog parts={issueParts} close={() => setReporting(false)} />
+      ) : null}
       {error ? (
         <Alert>
           {error}{" "}
@@ -261,6 +274,10 @@ export function DiagnosticsSection({
           <p className="m-0 text-xs text-(--text-tertiary)">
             {report ? `${report.checks.length} checks. ` : ""}Credential values are never shown.
           </p>
+          <p className="m-0 text-xs text-(--text-tertiary)">
+            “Report a problem” opens a new GitHub issue in your browser with as much of a redacted
+            summary as you choose; nothing is sent until you submit it there.
+          </p>
         </div>
         <div className="flex flex-none gap-2">
           <Button
@@ -271,6 +288,9 @@ export function DiagnosticsSection({
             onClick={() => void copy()}
           >
             <span aria-live="polite">{copied || "Copy"}</span>
+          </Button>
+          <Button variant="secondary" size="compact" onClick={() => setReporting(true)}>
+            Report a problem
           </Button>
           <Button variant="secondary" size="compact" disabled={running} onClick={() => void run()}>
             {running ? "Checking…" : "Check again"}

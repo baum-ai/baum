@@ -112,9 +112,13 @@ Desktop setup requires a GitHub connection and at least one picked repository
 before continuing or opening a later step from the rail. The GitHub step has no
 skip action. Adding the baum CLI to the terminal and connecting agent hooks
 remain optional; the app runs its own CLI to start the daemon.
-The onboarding agent picker offers Claude Code and Codex, with a note below
-the model explaining that the agent and model can be customised per task in Settings.
-Missing agent CLIs are marked Not installed and cannot be selected. A saved
+The onboarding agent picker offers Claude Code and Codex. A line under
+Reviews and extraction and under Fixes says what each agent does, and a single
+note below the card explains that the agent and model can be customised per
+task in Settings, and automatic reviews per repository.
+Missing agent CLIs are marked Not installed and cannot be selected; one that
+reports no sign-in (`signed_in` false from `baum hooks status`) is marked Not
+signed in, stays selectable and says how to sign in. A saved
 choice is kept only if detected; otherwise setup chooses an installed agent,
 preferring Claude Code. When neither is detected, setup shows official install
 guides and Check again, and waits for an agent before advancing to the final
@@ -124,7 +128,7 @@ Onboarding sets two models: one for reviews and data extraction, and one for
 fixes, which defaults to Same as reviews. Each compact model row includes an
 effort selector, using the model-specific CLI levels documented in
 [desktop setup](../desktop/README.md#model-effort-choices). Default leaves the
-choice to the agent; unknown custom models offer Default only. Changing a model
+choice to the agent; other and custom models offer Low to Max. Changing a model
 clears an effort it does not support. A fix agent that is no longer installed
 falls back to Same as reviews. The native setup bridge saves the review and fix
 choices, and saves extraction as the review choice only when onboarding
@@ -150,6 +154,19 @@ so the bundle's own assets load relative to the page. Navigation keeps the
 path at the namespace root and changes only the query string (`?page=jobs`,
 `?clone=…&pr=…`), so a reload or a copied link opens the same view and the
 server needs no fallback route.
+
+The tour's sample project is served under `sample/` within the namespace
+(`internal/sampleapp`), and `appBase()` keeps that segment, so the whole app
+runs on it unchanged. The tour moves there, with a reload, for its first run
+and later when the person's own index has no pull requests, and back when it
+closes. There `SampleGuard`
+(`src/sample.tsx`) turns the daemon's refusal of a change (its
+`X-Baum-Sample: refused` header) into a toast and holds back links out of the
+app; elsewhere it does nothing. Its pull request pages link the sample's own
+sessions, from its home folder (`LocalAPI.Sessions`), never this computer's,
+with the decisions captured from them. In the sample the tour's Inbox stop
+picks the person's own pull request, written with their agent, so Next opens
+that one.
 
 The PR page reuses the same `@baum/viewer` `ReviewViewer`, header, section/risk
 navigation, version menu/comparison, Markdown/code renderers, session cards,
@@ -438,7 +455,12 @@ its transcript on that page, its panels in the inbox's light sand on its darker
 sand: the job's phase while it runs, then its summary or failure, above the
 agent's messages, collapsed reasoning, tool calls (a status mark, expandable to
 their output) and errors.
-The summary, messages and reasoning are Markdown, without raw HTML. Consecutive
+The summary, messages and reasoning are Markdown, without raw HTML. Complete
+JSON objects and arrays are folded under "Structured output" ("Review output"
+for `baum.review/1`), with indented JSON in a bounded, scrollable area when
+expanded, including in older transcripts. Long tool commands stay within the
+transcript width and truncate with an ellipsis.
+Consecutive
 tool calls form one run (`groupEntries`; reasoning does not break it) that shows
 only its latest call, with the earlier ones folded behind "N earlier tool
 calls" above it. A call shows its tool once (Claude's titles start with the
@@ -683,10 +705,8 @@ On Pull requests, `j`/`↓` and `k`/`↑` move a row focus through the
 rows as drawn (group rows count; rows of collapsed buckets and collapsed groups
 are skipped), `Enter` or `o` opens the focused pull request or group, `x` toggles
 its selection, `Space` opens or closes its peek (on a group's row, shows or hides its pull requests), `m` opens Merge and `f` starts the fix where the row offers them (Merge wins
-where both could), `g` generates the pull request's review through the same path
-as the PR page's Generate (so the same confirmations and the instant "Starting"
-state), `t` opens its fix transcript, `r` refreshes from GitHub at once rather than after the polling backoff,
-`h`/`←` and `l`/`→` move to the previous and next view (For you, Requested, …),
+where both could), `t` opens its fix transcript, `r` refreshes from GitHub at once rather than after the polling backoff,
+`h`/`←` and `l`/`→` move to the previous and next tab (Open, the saved tabs, Closed),
 and `Esc` clears the focus. On a pull request's or group's page, `h`/`←` and
 `l`/`→` move to the previous and next place in the review rail, as it shows
 them: Summary, Changes and, while it is open, each change, Files changed,
@@ -719,8 +739,8 @@ to a section, and `Enter`, `l` or `→` go into the shown section, where `j` and
 `Esc`, `h` or `←` go back to the list (`Esc` in a text field or select gives
 it up first, and `j` and `k` go on from it). On a pull request or group page `j`
 and `k` step to the next and previous place in reading order, as the
-navigator's arrows do (`ReviewViewer`'s `steps` ref), `m`, `f` and `g`
-merge, fix and generate or regenerate where the header offers them, and `t`
+navigator's arrows do (`ReviewViewer`'s `steps` ref), `m` and `f`
+merge and fix where the header offers them, and `t`
 opens the fix transcript (its hint is on the notice's Watch or Transcript, else
 on the runs' fold). On any
 page, `?` (or the `?` button in Pull
@@ -831,7 +851,10 @@ saved review is read when its pull request is selected, and again only for a
 new version. A pull request back in the queue as a Fix whose latest fix job
 failed says "The last fix failed: <reason>", with **See what the agent did**
 (the transcript, else the job in the list). Agent sessions working on its
-branch are counted at the foot of the panel.
+branch are counted at the foot of the panel, as a link to Sessions
+(`?page=sessions&peek=<agent:id>`) that opens that session's card there, its
+peek and its reply where it takes one, as a click on it does (with several,
+each by its agent's name).
 
 Snooze offers 1 hour, this afternoon (3 PM, while that is more than an hour
 away), tomorrow morning (9 AM) and **Until it changes**, which hides the pull
@@ -857,26 +880,30 @@ independently of the browser origin, and start again each local day, snoozes
 excepted. Initial bookkeeping waits until saved state has loaded. Failed reads
 or saves show a retry action and preserve unsaved changes in the window. The
 sidebar's Inbox badge counts the queue without snoozed pull
-requests. It is not the desktop tray's waiting count, which counts only review
-requests and the person's blocked pull requests.
+requests. The daemon counts the same queue for the desktop tray and dock badge
+(`internal/inboxcount`), so a change to these rules belongs there too; it does
+not yet apply inboxes left out of the badge.
 
 **Inboxes** are saved filters over this same queue, defined in the daemon (see
 its [inboxes README](../internal/inboxes/README.md)) and matched here
 (`src/inboxes.ts`): the app never builds a second queue. An inbox holds the
-queue items that fit all of its parts: what (any; reviews, which are Review and
-Clone items; things ready to merge; things an agent can fix, which are Fix and
-Update items and the pull requests a fix agent is working on now; or the
-person's own), owners (the repository's owner, ignoring case; none means any),
-risk (3 or more, or 4 or more, from the baum review's score; a pull request with
-no score yet never matches a risk filter, and "at least N" counts as N),
-repositories (none means any) and whether bots are left out. A pull request can
+queue items that match its query (see the filter below; one that does not read
+narrows nothing). The daemon's older parts of an inbox read as part of it
+(`foldedQuery`): what it holds as `waiting=review` (Review and Clone items),
+`waiting=merge` (Merge items), `waiting=agent` (Fix and Update items and the
+pull requests a fix agent is working on now) or, for the person's own,
+`author=@me`; owners as `org=`; risk as `risk>=3` or `risk>=4`; repositories as
+`repo=`; and leaving out bots as `is!=bot`, each before the query, which is
+parenthesised when it has an `OR`. The next save writes the inbox with only the
+query. A pull request can
 be in several inboxes. An inbox's queue is `?inbox=<id>` on the app root (an
 unknown id shows the Inbox): the same page, with only the matching items, the
 same groups, order, panel, keys, snoozes and **Merge all N** (which counts only
-that inbox's Merge items). Its header shows the inbox's name beside its colour
-dot and a sentence saying what it holds ("Anything waiting on me in any
-repository, whatever the risk."), and an empty one says "Nothing here right
-now." Snoozed lists only the inbox's pull requests. **Done today**, the header's
+that inbox's Merge items). Its header shows the inbox's colour dot and name:
+the dot opens its six colours, and a click on the name renames it in place
+(Enter or leaving saves, Esc keeps the old name, a blank or taken name is
+refused there); a right click on the head offers **Edit…**. An empty one says
+"Nothing here right now." Snoozed lists only the inbox's pull requests. **Done today**, the header's
 done count and progress bar, and the group of the person's own pull requests
 that wait on checks or reviews are only in the Inbox (all). In the Inbox a row
 carries a small tag with the colour and name of the first inbox it is in, and
@@ -884,20 +911,33 @@ its panel a tag for each; in an inbox the panel tags the other inboxes it is
 also in. Colours are six palette names (`--inbox-*` in `src/style.css`, with
 dark variants).
 
+A `?` beside Settings opens a help menu (`HelpButton` in `src/shell.tsx`):
+**Show shortcuts** opens the shortcuts sheet, **Report a problem** opens the
+Report a problem dialog (`src/report-problem.tsx`, also Diagnostics' button:
+what happened, what to attach with a preview, then **Open issue**, which opens
+a new issue in baum-ai/baum on GitHub; see the
+[desktop README](../desktop/README.md#report-a-problem)), and **Open the docs** opens https://docs.usebaum.com/ in a new
+window (the desktop app hands it to the browser). The `?` key opens the same
+menu with the keys on Show shortcuts, so `?` then Enter shows the sheet; with
+the sheet open `?` hides it. Opened by the key, the menu gives the keys back to
+where they were rather than to the button. With the glyph-only rail the button
+sits under the Settings glyph.
+
 In the sidebar a chevron beside Inbox folds the inboxes nested under it
 (remembered in `localStorage`; hidden with the glyph-only rail). The pages and
 inboxes scroll within the sidebar, so with many inboxes plan usage, Jobs and
 Settings stay in view; a row's menu is placed against the window, under its row
 or above it near the bottom, and closes when the sidebar scrolls. Each row links
 to `?inbox=<id>`, is the current page when selected (then Inbox is not), and
-shows a dot, the name and how many unsnoozed items match, none when 0. The `⋯`
-button opens a short list of buttons, focused on the first, to leave the inbox
-out of the Inbox badge (its count is then muted, and says so to screen readers)
-or count it, and **Delete inbox**. Esc, a click elsewhere or choosing closes it
-and returns focus to the `⋯` button (after a delete, to the neighbouring inbox,
-or Inbox); focus never drops to the page. The menu's first button is **Edit inbox**,
-which opens the inbox's edit page. Delete toasts "Deleted <name>. Its
-pull requests stay in Inbox." with **Undo**, which puts back only that inbox,
+shows a dot, the name and how many unsnoozed items match, none when 0 (muted,
+and said so to screen readers, when the inbox is left out of the badge). The
+`⋯` button, or a right click on the row, opens a short list of buttons,
+focused on the first: **Edit inbox**, which opens the inbox's edit page, and
+**Delete inbox**. Esc, a click elsewhere or choosing closes it and returns
+focus to the `⋯` button (after a delete, to the neighbouring inbox, or Inbox;
+after a cancelled one, to the `⋯`); focus never drops to the page. Delete first
+asks (only the view goes), then toasts "Deleted <name>. Its pull requests stay
+in Inbox." with **Undo**, which puts back only that inbox,
 with its id so links to it still work, into the list as it is then, at its old
 place (or the end), so a change made while the toast was up is kept; an inbox
 with that id already there is left alone. The chevron is labelled "Inboxes",
@@ -915,61 +955,141 @@ until a read succeeds, and later saves still go out. Entries the daemon sends
 are read defensively (missing lists are empty, unknown values the plain ones,
 entries without an id and name dropped).
 
+**The filter** narrows the Inbox, each inbox's queue and Pull requests. It is a
+query written like a GitHub search, parsed and matched in `src/pr-filter.ts`.
+A term is a field, an operator and a value:
+
+| Write | Keeps pull requests |
+| --- | --- |
+| `repo=acme/app`, `repo=app` | in the repository (whole name, or the part after the owner) |
+| `org=acme` | whose repository's owner is acme (an Enterprise one's too) |
+| `author=@me`, `author=sam` | by the person, or by that login |
+| `assignee=@me`, `review-requested=@me` | assigned to the person (first 20 assignees), asking for their review |
+| `review=approved`, `changes_requested`, `none` | with GitHub's review decision (none: neither) |
+| `checks=passing`, `failing`, `running`, `none` | with that state of checks |
+| `is=draft`, `mergeable`, `conflict`, `blocked`, `behind`, `bot` | drafts, GitHub's merge state, behind their base, by a bot |
+| `risk=4`, `risk>=3`, `risk<3`, `risk=none` | by the baum review's score (1 to 5); without a score only `risk=none` |
+| `base=main` | merging into the branch |
+| `waiting=review`, `merge`, `agent` | in an inbox's queue only: waiting for the person's review, to merge, or for an agent's fix |
+| any other word, or a "quoted phrase" | with it in the title or repository, or that `#number` |
+
+The operators are `=` and `!=` (not any of the values), and for risk also
+`>=`, `<=`, `>` and `<`; `:` reads as `=` (`risk:>=3` as `risk>=3`), and a
+comparison takes scores only. Keys and values ignore case. `key=a,b` takes
+either value, `-` or `NOT` before a term leaves it out, terms side by side must
+all hold (`AND` may be written), `OR` takes either side and binds looser than
+`AND`, and parentheses group. A query that does not read leaves the last one
+in force, and the bar says why ("Not applied: …").
+
+The filter icon (`FilterButton`, `src/filter-menu.tsx`) sits left of the
+refresh in the Inbox's and an inbox's head, and at the end of Pull requests'
+tabs; it is lit, with a dot, while a query is in force, and no query line
+shows on the page. Its menu, as Linear's, sits on the window under the icon,
+kept on screen: an "Add filter…" box over the fields (Repository,
+Organization, Author, Assignee, Review requested, Review, Checks, State, and in
+an inbox's queue Waiting for, then Risk, Base branch); pointing at one, or
+Enter or → on it, opens its values beside the menu (or in its place when
+neither side has room, where pointing alone does not open it), under the
+operator they are picked with: **is** or **is not**, and for Risk also **≥**
+and **≤** (Tab moves it along). Each value is ticked while the query requires
+it with that operator and counted by how many of the page's pull requests
+picking it would leave. Picking a value adds it to the term of that field and
+operator as one more choice, or takes it out (with an `AND` beside it and
+parentheses left empty), and adds a term when there is none (around a query
+with `OR`, in parentheses); the menu stays open. Typed text also lists
+matching values of every field, then adds the text itself (a phrase to look
+for, quoted when it would read as syntax, or a query that reads); **Write a
+query…** puts the focus in the query. Esc or ← steps out of the values, then
+closes the menu.
+
+The menu's foot holds the query as text (`FilterBar`), wrapping onto more
+lines as it grows, with **Clear** and the page's save. As it is typed it
+suggests, one part at a time, the fields that start with the word at the caret
+(`-` for not), then the field's operators, then its values, and `AND`, `OR`
+and `NOT` after a term, above the box; nothing is suggested inside a word or
+at its start. The arrows move through them, Enter or a click takes one, Tab
+takes the highlighted or first while a word is being typed (otherwise it moves
+on), and Esc closes them, then the menu. Each edit that reads applies a moment
+after the last key, and at Enter or leaving the box; one longer than 500
+characters is not applied and says so.
+
+In the Inbox (all) the save is **Create inbox**, which appends an inbox named
+"Filtered" (or "Filtered 2"…) holding the query. First it opens an unsaved
+name form with the suggested name selected. Save creates it and opens its
+queue, clearing the source page's temporary filter (a saved inbox returns to
+its saved query). It is not offered at 20 inboxes or with an older daemon. In a saved inbox the menu starts from the
+inbox's own query, its values ticked; a change is a draft that narrows the
+queue (kept per inbox) until the save, as GitHub's merge button: **Update
+inbox** gives the inbox the query, and the arrow beside it offers **Create
+inbox**, a copy of the inbox with it, and **Discard changes** (all only while
+the draft differs; the draft goes once the inbox holds it, so a failed save
+keeps it). **Clear** there empties the draft, which then shows the whole queue.
+`waiting=` is refused outside an inbox's queue. With nothing matching while
+the filter hides something, the queue's panel says "Nothing matches the
+filter", how many it hides, and **Clear the filter** (in a saved inbox,
+**Discard the changes**). Tabbing out of the menu closes it. Each page keeps its own filter or draft (`inbox`,
+`inbox:<id>`, `pulls` or a saved tab's `tab:<id>`) in the daemon's
+`ui/filters` document (see the [uistate README](../internal/uistate/README.md)),
+across windows and restarts; a failed save says so with **Retry**.
+
 Inboxes are made and changed on three pages that sit under Inbox in the sidebar
 but are not sidebar pages of their own, so they have no number key and ⌘1 still
-opens Inbox (`src/inbox-pages.tsx`; routed in `src/app.tsx` by `?page=`). The
-nested list always ends with **New inbox** and **Manage inboxes** (shown even
-with no inboxes), and an inbox's queue header carries an **Edit** link. With an
+opens Inbox (`src/inbox-pages.tsx`; routed in `src/app.tsx` by `?page=`). A
+right click on Inbox in the sidebar offers **New inbox…** and **Manage
+inboxes…**; a right click on an inbox's row, like its ⋯, offers **Edit inbox**
+and **Delete inbox**, and on its queue head **Edit…**. Deleting an inbox, from
+there or its edit page, first asks, saying only the view goes and its pull
+requests, reviews and snoozes stay; then it is deleted with Undo. With an
 older daemon none of these links, pages or Go to entries exist, and a direct
 address to them shows Inbox, but only for an older daemon (the read answers 404
 or `available: false`): before the first read has answered the page shows
 "Loading inboxes…" rather than Inbox, and after a first read that failed it
-shows the read error with Retry. On New inbox and Manage inboxes the sidebar's
-current page is that entry alone, and Inbox is only the section (as when an
-inbox's row is selected); the edit page keeps the inbox's own row current.
+shows the read error with Retry. On New inbox and Manage inboxes Inbox is only
+the section, not the current page (as when an inbox's row is selected); the
+edit page keeps the inbox's own row current.
 Every control is a real button, link or input with
 a label, with no key of its own, reached with Tab.
 
 - **New inbox** (`?page=inbox-new`): "What should this inbox catch?" and six
   templates, each a button with a colour dot, name, sentence and how many
-  unsnoozed pull requests it would show now. Urgent (red) is any repository at
-  risk 4 or 5; Work (blue) is every owner of the person's repositories except
-  their login (empty when there is none); Personal (green) is the login's own
-  repositories with the badge off; Needs my review (purple), Quick merges
-  (amber) and For an agent (grey) pick that kind. A name another inbox has
-  becomes "Urgent 2", "Urgent 3"… Picking one appends it to the list with an id
-  the app makes in the daemon's shape (so its page opens at once), and opens its
-  edit page with "Created and added to the sidebar. Adjust anything below.", its
-  Name input focused. At
-  20 inboxes the templates are disabled, with a line saying so.
+  unsnoozed pull requests it would show now. Custom (blue) has no filter and
+  says "Start from nothing and set the filters yourself.";
+  Urgent (red) is any repository at risk 4 or 5; Work (blue) is every owner of
+  the person's repositories except their login (empty when there is none);
+  Personal (green) is the login's own repositories with the badge off; Quick
+  merges (amber) and For an agent (grey) pick that kind. A name another inbox
+  has becomes "Urgent 2", "Urgent 3"… Picking one saves nothing: it opens the
+  edit page, titled New inbox, on an inbox not saved yet ("Not saved yet.
+  Adjust anything below, then Save.", its Name input focused, "← New inbox"
+  back), whose changes stay in the page; **Save**, in Delete inbox's place,
+  checks the name as typed, appends the inbox to the list with an id the app
+  makes in the daemon's shape and, once the daemon has it, opens its queue (a
+  refused save leaves the unsaved inbox on the page). Leaving the inbox pages
+  drops it. At 20 inboxes the templates are
+  disabled, with a line saying so.
 - **Edit** (`?page=inbox-edit&inbox=<id>`): "← <name>" back to its queue, a
   "Saved" mark after each save the daemon accepted, and "Changes save as you
   make them". The name is an input saved on blur or Enter; a blank or
   too-long name, or one another inbox has (ignoring case), is refused in place
   and not sent. Six colour swatches have radio semantics. "What it catches" is
-  the sentence with its three parts (what, where, risk) as buttons; one opens its
-  options as buttons, each with how many pull requests it would show, and
-  picking one saves. Where offers any repository, the person's own, each other
-  owner of their repositories and, when the inbox holds a set the list lacks,
-  that set. Fine-tune holds repository chips (none picked means all that match
-  above) and "Leave out: Bots" (`no_bots`). A switch counts the inbox in the
-  Inbox badge. **Delete inbox** is the sidebar's delete with Undo, then goes to
-  Inbox with focus on the sidebar's Inbox link. The right-hand preview is "Would show right now" with the same
-  unsnoozed queue items and `matches` as the queue, grouped like it, each row
-  with its repository and tags of the other inboxes it is in. A change that
-  alters the matches says "N added", "N removed" or "N added · N removed" (a
-  zero half is left out) for four seconds, in a live region that is always on
-  the page and empty otherwise, the removed rows struck through and fading out
+the inbox's whole query: the filter icon with its menu (Waiting for among the
+fields) beside the query as text, each change saved a moment after it reads. A
+switch counts the inbox in the Inbox badge. **Delete inbox** asks, then
+deletes with Undo and goes to Inbox with focus on the sidebar's Inbox link.
+The right-hand preview is "Would show right now" with the same unsnoozed queue
+items and `matches` as the queue, grouped like it, each row with its
+repository and tags of the other inboxes it is in. A change that alters the
+matches says "N added", "N removed" or "N added · N removed" (a zero half is
+left out) for four seconds, in a live region that is always on
+the page and empty otherwise, the removed rows struck through and fading out
   over the last moments (no fade with reduced motion). An unknown id says "This inbox no longer
   exists" and links to Inbox.
 - **Manage** (`?page=inboxes`): the inboxes in the sidebar's order, each with
-  its colour dot, name (a link to edit it), how many are in it now ("not
-  counted in the badge" when it is left out), and sentence. Its menu holds
+  its colour dot, name (a link to edit it) and how many are in it now ("not
+  counted in the badge" when it is left out). Its menu holds
   Edit…, Move up and Move down (each only where the inbox can move) and
   **Count in the Inbox badge**, an on-or-off choice; a save sends the whole
-  list in its new order. A tinted note says how many queue items
-  are in no inbox (they show only under Inbox and always count in its badge; in
-  the caution tone), or that every one is in some (in the positive tone). With none, it leads to New inbox.
+  list in its new order. With none, it leads to New inbox.
 
 Pull requests (`?page=pulls`, `src/inbox.tsx`) lists every open pull request
 of the picked repositories, with or without a local clone, with Risk,
@@ -1011,14 +1131,26 @@ colour. Collapsible groups say who acts next, with each row in one group:
 Review requested; the person's own pull requests as Needs changes (changes
 requested, failing checks or a conflict), Ready to merge (GitHub's merge state
 is ready) and Your pull requests (the rest); Other pull requests; and Saved
-history. The list opens on the For you view (`filter=inbox`), which holds only
-what is the person's to check now: pull requests asking for their review and their own.
-Everyone else's open pull requests are under Others, so Other pull requests
-appears only there; Requested, Mine, Not reviewed and Saved history are the
-other views, and a view with nothing in it is dimmed.
+history. Its tabs are **Open**, every open pull request, then the saved tabs,
+then **Closed** (`filter=history`), the saved reviews of pull requests closed,
+merged or no longer listed, always last; a tab with nothing in it is dimmed,
+and h and l walk them in that order. Without `filter=` the page opens on the
+tab last shown in this browser, else Open. The filter (see above) narrows Open
+and Closed and their counts. Saving it there is **Create tab**, which asks for
+a name and saves a tab of that view and query (`filter=tab:<id>`, at most 20,
+in `ui/filters`); the query moves into the tab, so the view's own filter is
+cleared. On a saved tab the menu starts from its query, its values ticked,
+and a change is a draft until **Update tab** saves it into the tab (the arrow
+offers **Create tab** from it too). A right click on a saved tab offers
+**Edit…**, which opens the menu with the tab's name and **Done** at its foot,
+and **Delete…**, which asks (only the tab goes; its pull requests stay under
+Open or Closed), then returns to Open or Closed; an unknown tab opens Open. A
+link to Pull requests with `repo=` (Analytics and Timeline keep their own
+`repo=`), once the saved filters are read, replaces the page's filter with
+`repo=<that repository>`, and the address drops `repo=`.
 Collapsing keeps selections, and Select all selects only currently expanded
-visible rows. Requested, authored, outdated, no-review, repository and
-saved-history filters do not discard cached reviews. Unknown team membership
+visible rows. The views, the filter and saved tabs do not discard cached
+reviews. Unknown team membership
 remains explicit. Refresh events share the active read and queue one follow-up,
 so a completed inbox snapshot is shown even while more updates arrive.
 Cached discovery keeps the inbox readable when refresh fails;
@@ -1188,13 +1320,19 @@ the loaded list does not hold (further down, filtered out, archived or gone)
 shows above the list as the opened feature. With no features yet, the page
 explains that features appear as pull requests and sessions are placed and
 offers **Build feature history** (in a view of one repository) and All
-decisions. The feature build below belongs to a view of one repository. When
-the repository has features at all (whatever the filters), the kebab menu at the
-end of the filter bar offers a quieter **Rebuild feature history**. Either starts a
-`feature_build` job for the repository's clone at once, as every run the person
+decisions. The feature build below belongs to a view of one repository. The
+kebab menu at the end of the filter bar offers a quieter **Rebuild feature
+history**: over several repositories always, over one when it has features at
+all (whatever the filters). Over several it starts one build for each
+repository with a local clone, and says for how many of them when some have
+none; a start the daemon refuses names its repository and the others still
+start. While a build of any repository shown runs, the item is disabled and
+says so on hover, as it does when no repository shown has a clone. Either
+starts a `feature_build` job for each clone at once, as every run the person
 asks for starts (`src/feature-build.tsx`, `POST api/jobs` with `kind:
-"feature_build"`): there is no dialog, no estimate and nothing about the price
-stops it. The build places the merged and open pull requests of the
+"feature_build"`, one request per repository): there is no dialog, no estimate
+and nothing about the price stops it. A rebuild of a repository whose build
+stopped resumes it, as **Resume build** does. The build places the merged and open pull requests of the
 repository's whole history, discovering its features first when it has none
 newer, and the weekly consolidation pass takes the new features right after
 they become current. The button reads "Starting…" while the request is under
@@ -1214,7 +1352,7 @@ job shows again. One the person cancelled shows nothing.
 Feature builds' reasons have their own words, here and in Jobs (`jobReasonText`
 with the job's kind). A failed read of the build state keeps what was shown.
 The current features stay listed throughout, and the lists are read again when
-the build finishes. Without a local clone the build buttons are disabled. The
+a build finishes. Without a local clone the build buttons are disabled. The
 page also says when the daemon has no decision store, when the decisions switch
 is off, and which picked repositories have their decisions turned off.
 
@@ -1295,7 +1433,10 @@ default) or Claude Code
 or Codex with a model and a reasoning effort, sent as `fix_backend`,
 `fix_model` and `fix_effort` (`""` returns to the reviews', effort included)
 and reported by `GET api/settings`. A chosen fix agent applies
-in every repository. **Connections** holds the GitHub connection and, in the
+in every repository. In the desktop app, the agent selects of Reviews, Fixes
+and Data extraction label a CLI that reports no sign-in "(not signed in)",
+and while the agent a section uses is one, its row says that section's jobs
+will fail and how to sign in. **Connections** holds the GitHub connection and, in the
 desktop app, the Agent hooks card with installation, enablement, update
 (to the latest plugin, without removing it first; shown with the installed
 plugin version) and removal for each agent. **This computer** holds the diagnostics, the background
@@ -1717,7 +1858,9 @@ and interrupted providers show reported subtotals rather than exact totals.
 Saved review usage follows the version selected in history. Its cost reads
 "At API prices": what the usage would cost at API prices, not what a
 subscription charges. Unknown costs show a reason; configured model identity
-is distinguished from a provider report. Each attempt is priced independently
+is distinguished from a provider report. When only the configured model is known,
+its rates are used and the cost is labelled "estimated" with an explanation.
+Each attempt is priced independently
 when its model and pricing inputs are known. A cost with `unpriced_calls` (a
 feature build some of whose calls could not be priced) is a lower bound, shown
 "≥" with a note. Pricing only reports: no budget, cap, confirmation or decision
@@ -1739,6 +1882,11 @@ branch/upstream/HEAD evidence. Ambiguous matches have no selected PR. Recently
 ended sessions can acquire a PR after ending, using their saved Git observation
 rather than the current checkout. Active observations are also saved without
 notification message text or local paths for restart recovery.
+
+A session whose directory has no PR shows the PR of its agent's latest commit
+or push that has one, wherever the agent ran Git (another worktree, or a branch
+it left), with `link_method` `commit` or `push` (see "Commits and pushes" under
+"Live sessions" in ARCHITECTURE.md). Its branch chip names that branch.
 
 A session retains up to 32 timestamped Git work observations across branch
 changes; these are context associations, not asserted code contributions.
@@ -1778,3 +1926,45 @@ The warning clears after a successful ready result; a failed request retains
 the previous warning. Older daemons without this endpoint show no new global
 badge. Onboarding rechecks on focus or Check again. Checking never trusts a
 hook, restarts Codex or starts a conversation.
+
+On Inbox and Pull requests, `/` opens the filter with Add filter focused.
+Escape closes the filter without leaving a focus ring on its button.
+The query box appears only with an actual filter and has no placeholder.
+Organisation option counts show each organisation’s matching pull requests.
+On Inbox, Command+Enter or Control+Enter creates an inbox from the current filter.
+When creating an inbox, Command+Enter (Control+Enter on other keyboards) saves it.
+
+While the filter menu is open, Command+C or Control+C clears its filters and
+returns focus to Add filter. Holding Option/Alt reveals the filter, Clear and
+Create inbox button shortcuts.
+
+New inboxes choose a colour not used by another inbox, preserving their template’s
+preferred colour when available; once all colours are used, that preference repeats.
+Ctrl+J/K or Ctrl+Down/Up moves between the global Inbox and saved inboxes in
+sidebar order (global Inbox first), stopping at either end. Typing fields and dialogs keep their keys.
+While navigating inboxes, Ctrl+K takes precedence over Go to.
+Enter is drawn as ↵ in button shortcut hints.
+
+On PR and stack review pages, `]` toggles the right-hand Details/Activity
+sidebar, or its sheet on narrow windows. It is listed in the review shortcut hints.
+
+The page shortcut bar labels H/L as sections and lists only page actions;
+Go to (Command/Control+K) and help (?) remain available globally.
+
+J/K moves through the Summary’s text, context, intent, risk score and change/risk
+items as well as other review sections. Generate has no keyboard shortcut; use
+the visible Generate/Regenerate action or its menu item.
+
+Enter on a Summary item with a section jump link opens that section, just as
+clicking its link does.
+
+Session PR links also match cached merged or closed PRs by their exact head
+commit in the same repository, so merging does not by itself hide the PR.
+Branch names alone never recover a closed PR, and ambiguous heads stay unlinked.
+
+Session PR links are compact numbered pills: green for Open, purple for Merged
+and red for Closed, with status in the tooltip and accessible link label. If the daemon omits session PR state, the UI uses
+its matching indexed PR’s known state. Only missing metadata uses a neutral pill with a Status unknown tooltip.
+
+Transcript continuation summaries and standalone system reminders are folded
+to a short label by default. Expand them to inspect the original text and activity.

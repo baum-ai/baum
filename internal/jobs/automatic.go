@@ -21,6 +21,9 @@ const (
 	// TriggerStackReviewed generates a stack group's review once every
 	// member has a saved review of its current head.
 	TriggerStackReviewed = "stack_reviewed"
+	// TriggerSetup reviews one of the pull requests open when desktop setup
+	// finished (automatic.Scheduler.CatchUp).
+	TriggerSetup = "setup"
 )
 
 // Reasons SubmitAutomatic refuses an item for good: a person has to generate

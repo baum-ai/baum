@@ -16,6 +16,7 @@ import { ChevronDownIcon, RefreshIcon } from "@baum/viewer/components/icons";
 import { Stumpy } from "@baum/viewer/components/stumpy";
 import type { ViewerLinkProps } from "@baum/viewer/navigation";
 import { appURL } from "./api";
+import { useContextMenu, type MenuItem } from "./context-menu";
 import type { Inbox } from "./inboxes";
 import { PAGES, type Page } from "./pages";
 import { PlanUsageRail } from "./plan-usage";
@@ -39,13 +40,13 @@ export type RailInboxes = {
   /** A page under Inbox that is not a queue (New inbox, Manage inboxes) is
    *  the current one, so Inbox is only the section. */
   elsewhere?: boolean;
-  toggleBadge: (inbox: Inbox) => void;
-  remove: (inbox: Inbox) => void;
+  /** Deletes the inbox once confirmed, then runs `after`. */
+  remove: (inbox: Inbox, after?: () => void) => void;
   /** Opens the inbox's edit page. */
   edit: (inbox: Inbox) => void;
-  /** More entries at the foot of the nested list: where "New inbox" and
-   *  "Manage inboxes" go. */
-  footer?: ReactNode;
+  /** New inbox and Manage inboxes, in the right-click menu of Inbox. */
+  create: () => void;
+  manage: () => void;
 };
 
 const FOLD_KEY = "baum.inbox.folded.v1";
@@ -71,6 +72,7 @@ export function Sidebar({
   problems,
   settingsWarning,
   inboxes,
+  help,
   Link,
 }: {
   page: Page;
@@ -84,11 +86,16 @@ export function Sidebar({
   problems: number;
   settingsWarning?: string | null;
   inboxes?: RailInboxes;
+  /** What the `?` beside Settings offers besides the docs. */
+  help?: RailHelp;
   Link: ComponentType<ViewerLinkProps>;
 }) {
   const [fold, setFold] = useState(folded);
   const modifier = usePreferences().preferences.page_modifier;
-  const nested = inboxes && (inboxes.list.length > 0 || inboxes.footer);
+  const nested = inboxes && inboxes.list.length > 0;
+  // A right click on Inbox makes or manages inboxes.
+  const inboxMenu = useContextMenu();
+  const helpMenu = useContextMenu();
   const badges: Partial<Record<Page, { badge: ReactNode; tone?: "warn" | "caution" }>> = {
     inbox: { badge: inbox > 0 ? inbox : null },
     sessions: {
@@ -116,6 +123,19 @@ export function Sidebar({
         }
         aria-keyshortcuts={pageKeyShortcut(target, modifier)}
         className="local-rail-link"
+        onContextMenu={
+          target === "inbox" && inboxes
+            ? (event) =>
+                inboxMenu.open(
+                  event,
+                  [
+                    { label: "New inbox…", onSelect: inboxes.create },
+                    { label: "Manage inboxes…", onSelect: inboxes.manage },
+                  ],
+                  "Inbox",
+                )
+            : undefined
+        }
       >
         <Icon size={18} className="local-rail-glyph" />
         <span className="local-rail-label">{label}</span>
@@ -132,6 +152,8 @@ export function Sidebar({
   };
   return (
     <aside data-tab-region="" className="local-rail">
+      {inboxMenu.menu}
+      {helpMenu.menu}
       <Link href={appURL()} className="local-rail-mark" title="Inbox">
         <Stumpy size={28} className="flex-none" />
         <Wordmark size="sidebar" className="local-rail-label" />
@@ -172,10 +194,94 @@ export function Sidebar({
       <div className="local-rail-foot">
         <PlanUsageRail />
         <nav aria-label="More" className="local-rail-nav">
-          {PAGES.filter((item) => item.foot).map(link)}
+          {PAGES.filter((item) => item.foot).map((item) =>
+            item.page === "settings" ? (
+              <div key="settings" className="local-rail-row local-rail-help-row">
+                {link(item)}
+                <HelpButton help={help} menu={helpMenu} />
+              </div>
+            ) : (
+              link(item)
+            ),
+          )}
         </nav>
       </div>
     </aside>
+  );
+}
+
+/** Where "Open the docs" goes. */
+export const DOCS_URL = "https://docs.usebaum.com/";
+
+/** What the sidebar's `?` menu does beyond opening the docs. */
+export type RailHelp = {
+  /** Shows the shortcuts sheet. */
+  shortcuts: () => void;
+  /** Starts a report of a problem. */
+  report: () => void;
+  /** Set while the button is mounted to what opens its menu, so the `?` key
+   *  can open it with the keys on Show shortcuts: `?` then Enter shows the
+   *  sheet. */
+  opener?: RefObject<(() => void) | null>;
+};
+
+/** The `?` beside Settings: a menu of the shortcuts, reporting a problem and
+ *  the docs. It opens from the keys as a menu button does (Enter, Space, and
+ *  Down on the first choice, Up on the last), and from the `?` key. */
+function HelpButton({ help, menu }: { help?: RailHelp; menu: ReturnType<typeof useContextMenu> }) {
+  const ref = useRef<HTMLButtonElement>(null);
+  const open = menu.anchor !== null && menu.anchor === ref.current;
+  const items = (): MenuItem[] => [
+    ...(help
+      ? [
+          { label: "Show shortcuts", onSelect: help.shortcuts },
+          { label: "Report a problem", onSelect: help.report },
+        ]
+      : []),
+    {
+      label: "Open the docs",
+      // The desktop app hands a new window to the browser.
+      onSelect: () => void window.open(DOCS_URL, "_blank", "noopener,noreferrer"),
+    },
+  ];
+  const show = (last = false, returnTo?: Element | null) => {
+    if (ref.current) menu.openFrom(ref.current, items(), "Help", last, returnTo);
+  };
+  const opener = help?.opener;
+  useEffect(() => {
+    if (!opener) return;
+    // Opened by `?`, the keys go back to where they were, not to this button,
+    // which would then draw its focus ring.
+    opener.current = () => show(false, document.activeElement);
+    return () => {
+      opener.current = null;
+    };
+  });
+  return (
+    <button
+      ref={ref}
+      type="button"
+      className="local-rail-help"
+      aria-label="Help"
+      title="Help"
+      aria-haspopup="menu"
+      aria-expanded={open}
+      aria-controls={open ? menu.id : undefined}
+      onClick={(event) => {
+        const button = event.currentTarget;
+        // The press that closed the menu leaves it closed.
+        if (button.dataset.closing !== undefined) delete button.dataset.closing;
+        else show();
+      }}
+      onPointerLeave={(event) => delete event.currentTarget.dataset.closing}
+      onKeyDown={(event) => {
+        if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
+        event.preventDefault();
+        show(event.key === "ArrowUp");
+      }}
+    >
+      ?
+    </button>
   );
 }
 
@@ -242,7 +348,7 @@ function InboxRows({
   }, [open]);
   // A deleted row takes its button with it: focus moves to its neighbour, or
   // to Inbox when it was the last.
-  const afterDelete = () => {
+  const neighbour = () => {
     const row = menu.current;
     const inboxRow = (element: Element | null | undefined) =>
       element?.matches(".local-rail-inbox") ? (element as HTMLElement) : null;
@@ -250,7 +356,7 @@ function InboxRows({
     const target = next
       ? next.querySelector<HTMLElement>("a.local-rail-sub")
       : row?.closest("nav")?.querySelector<HTMLElement>("a.local-rail-link");
-    target?.focus();
+    return target;
   };
   return (
     <div className="local-rail-inboxes">
@@ -261,6 +367,11 @@ function InboxRows({
             key={inbox.id}
             ref={open === inbox.id ? menu : undefined}
             className={`local-rail-inbox inbox-${inbox.color}`}
+            // A right click opens the same menu as its ⋯: Edit and Delete.
+            onContextMenu={(event) => {
+              event.preventDefault();
+              setOpen(inbox.id);
+            }}
           >
             <Link
               href={appURL(`?inbox=${encodeURIComponent(inbox.id)}`)}
@@ -304,18 +415,9 @@ function InboxRows({
                 <button
                   type="button"
                   onClick={() => {
-                    close(true);
-                    inboxes.toggleBadge(inbox);
-                  }}
-                >
-                  {inbox.badge ? "Leave out of the Inbox badge" : "Count in the Inbox badge"}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    afterDelete();
+                    const next = neighbour();
                     setOpen(null);
-                    inboxes.remove(inbox);
+                    inboxes.remove(inbox, () => next?.focus());
                   }}
                 >
                   Delete inbox
@@ -325,7 +427,6 @@ function InboxRows({
           </div>
         );
       })}
-      {inboxes.footer}
     </div>
   );
 }

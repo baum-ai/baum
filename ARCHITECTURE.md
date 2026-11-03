@@ -752,7 +752,10 @@ text, event or log line holds the key.
 The `claude` and `codex` backends classify a failed call by the provider's
 HTTP status where the harness reports one (`agent.HTTPErrorStatus`): Claude
 Code's `api_error_status` on its failed `result`, and the status Codex names in
-a failed turn's message (`unexpected status NNN`). A Codex 400 carries only the
+a failed turn's message (`unexpected status NNN`). Claude Code that is not
+signed in sends no request: its synthetic assistant message carries `"error":
+"authentication_failed"` and its result has `is_error` and no status, so that
+class alone makes the failure an `authentication_error` refusal. A Codex 400 carries only the
 response body, whose structured fields classify it (`"type":
 "invalid_request_error"`, `"code": "invalid_json_schema"`), as `last status:
 429` does an exhausted rate limit; only such an OpenAI-shaped 400 refuses, and
@@ -2720,12 +2723,15 @@ error messages.
 A client that wants no history sends a `Last-Event-ID` beyond the latest
 event: it gets a `reset` and then only new events.
 
-`GET /api/index` also carries `waiting`, the number of open pull requests
-waiting on the user: those review-requested from them plus their own with
-changes requested, failing checks or a conflict, each counted once. It is the
-set the app's Pull requests list shows under "Review requested" and "Needs changes".
-`GET /api/index?view=waiting` answers `{"waiting":N}` alone, which is what the
-desktop app polls for its tray text and dock badge.
+`GET /api/index?view=waiting` answers `{"waiting":N}`, the number of pull
+requests in the app's Inbox, which is what the desktop app polls for its tray
+icon, tray text and dock badge. `internal/inboxcount` counts it on each request
+from the cached index, the job queue, the stack groups and the saved `inbox`
+ui-state, with the app's queue rules: each open pull request asking for the
+user's review, and each of their own with something to fix, merge or update
+and no fix running, once across clones, less stacked pull requests that must
+wait to merge and snoozed ones. It does not apply saved inboxes that leave
+the badge, so with such an inbox it can be higher than the app's badge.
 
 Version image copies use an additive `attachments` table keyed by repository,
 PR, immutable version and attachment ID, committed atomically by `Store.Put`.
@@ -2765,9 +2771,9 @@ run's outcome afterwards is only a warning, and the lease later expires.
 
 `Service.Build` is uncached: each call probes every clone with git, reads the
 discovery cache and opens every store. The daemon reads it through one
-`reviewindex.Cache`, shared by `GET /api/index` (all views; `view=waiting`
-is the cached snapshot's count, and the `history` filter works on a per-request
-copy), notices and review groups. Concurrent readers share one build, which
+`reviewindex.Cache`, shared by `GET /api/index` (all views; the `history`
+filter works on a per-request copy), the Inbox count, notices and review
+groups. Concurrent readers share one build, which
 runs under the daemon's context, so a reader that gives up does not fail the
 others; a failed build is not kept. A generation counter invalidates: every
 in-process change that publishes an `index` event (the daemon's `changed`,
@@ -3216,7 +3222,7 @@ group) has a queued or running job (it never joins or supersedes one),
 automatic job a daemon stop or restart interrupted, which `Interrupted` lists
 and which may run once more; failed and cancelled jobs are final). Jobs
 record `automatic` and `trigger` (`new_head`, `review_requested`,
-`ready_for_review`, `retry`, `stack_reviewed`). A job an older baum cancelled with reason
+`ready_for_review`, `retry`, `stack_reviewed`, `setup`). A job an older baum cancelled with reason
 `daily_cap`, for the spending cap baum no longer has, loads as an ordinary
 cancelled job. The executor's recheck of the confirmed inputs, before any model call, also refuses an automatic job whose
 pull request GitHub now reports as a draft (the queue marks its inputs
@@ -3380,7 +3386,10 @@ branch. Phases are `reading checks`, `reading review comments`, `fetching`,
 records `commit`, `commit_url` and the agent's masked `summary`; a failed one
 a reason (`head_changed`, `threads_changed`, `no_remote`, `git`, `backend`,
 `budget`, `no_changes`, `conflicts_remain`, `history_rewritten`,
-`workflow_changed`, `push_rejected`, `push_failed`) and a bounded detail. A
+`workflow_changed`, `push_rejected`, `push_failed`, `signed_out`) and a
+bounded detail. `signed_out` is an agent failure whose provider refused its
+sign-in (`agent.SignInRejected`); review and chat jobs report the same reason
+in place of `backend`. A
 `budget` detail names the limit the agent reached (its time limit, in
 minutes, or its call or token budget); a `backend` one points to the daemon
 log, where `fix.Options.Logger` (the job's logger) has the agent's own error,
@@ -3739,7 +3748,8 @@ it and `Queue.SubmitAutomatic` decides each job.
   first snapshot `Observe` gets that was fetched at or after that time records
   each open PR's head, whether the user's review is requested, whether team
   membership was readable and whether it is a draft, and queues nothing: PRs
-  open at first launch, registration or re-enabling are not caught up. An older
+  open at first launch, registration or re-enabling are not caught up
+  (except by the setup catch-up below). An older
   (cached) snapshot is not a baseline; the next poll's is.
 - **Triggers.** Afterwards, a PR whose head differs from the recorded one (a
   new PR included), whose review request turned on (not merely because team
@@ -3756,6 +3766,19 @@ it and `Queue.SubmitAutomatic` decides each job.
   that head. A PR
   that closes, moves to another head while ineligible, or stops being eligible
   loses its pending head.
+- **Setup catch-up.** `POST /api/automatic/catch-up`
+  (`Scheduler.CatchUp`), which the desktop app sends once when first-run
+  setup finishes, answers 202 and then, apart from the request, records the
+  enabling of each repository automatic generation covers, polls it at once
+  (that poll is its baseline when it had none, and goes through background
+  discovery's handling, so the stack groups are current) and makes the three most
+  recently updated eligible open pull requests across them pending with
+  trigger `setup`, unless their head is already pending or handled. A pull
+  request in a stack group counts with its group as one, and the group's
+  eligible members are made pending together, so the group's review follows
+  theirs. The pass submits them like any other pending head: a head already
+  reviewed is skipped, the switches and Drain apply, and an interrupted run
+  is retried once. A repository whose poll fails is left out.
 - **Interrupted runs.** Each pass asks `Queue.Interrupted` for automatic jobs
   a daemon stop or restart cut short that are the only job for their head; if
   the PR is still open at that head and eligible, the head is pending again
@@ -3852,6 +3875,12 @@ endpoint.
   start hooks without one), and `processes`, the hook's ancestors, parent
   first, as `pid`, `start` (`/proc` starttime on Linux, `kern.proc.pid` start
   time on macOS) and `name`, at most 24 (see "Focus" under "Live sessions").
+  Git's `post-commit` and `pre-push` carry `terminal` with `processes` alone
+  (`focus.Ancestors`), so live sessions can tell which agent committed or
+  pushed, and a `post-commit` carries `git.head` and `git.branch` (empty when
+  detached), the commit and the branch it was made on, read with one `git
+  rev-parse` as the hook ran (see "Commits and pushes" under "Live
+  sessions").
   `Event.Bound` cuts fields at character boundaries and keeps only
   `TerminalEnv`, then trims Git lines, drops `terminal` and halves the longest
   fields until the escaped encoding fits one control line. The daemon ignores fields it does not know and records
@@ -4148,11 +4177,17 @@ replace it.
   (`Discovery.Cached`, never GitHub) whose head branch (`head_ref`, new in the
   cache, which refetches responses cached without it) is the branch and that
   is not a fork's (a fork's branch of the same name is another branch); the
-  newest when several. When no head has the branch's name, the head branch
+  none when several match. When no head has the branch's name, the head branch
   named by the branch's upstream (`branch.<name>.merge`, when its remote is the
   same repository) is tried, then the pull request whose head commit is the
   commit checked out, which covers a detached HEAD and a push to a branch of
-  another name. Without one the session is still tracked against its
+  another name. If no open PR matches, a unique cached merged or closed PR
+  with the exact same head commit in the same repository is still linked.
+  A closed PR is never inferred from a branch name alone, and ambiguous
+  matches remain unlinked. The live-session response includes `pr_state`
+  (`OPEN`, `MERGED` or `CLOSED`) from that match, and a state change notifies
+  the UI even when the PR number stays the same.
+  Without one the session is still tracked against its
   repository and branch, and only a PR page it does not match omits it. The
   clone list is read at most every 30 seconds and a directory that fails to
   link is not looked up again for a minute, since listing and opening a clone
@@ -4160,6 +4195,30 @@ replace it.
   after, since the branch changes while it runs and a pull request appears
   once pushed; a lookup that fails keeps the last link. Failing to list the
   registered clones is not retried for 30 seconds either.
+- **Commits and pushes.** An agent often works away from its directory: it
+  commits in another worktree of the clone, or creates a branch, pushes it and
+  checks its directory back out on `main`. The tracker also follows Git's
+  `post-commit` and `pre-push` (one that let the push go) events, whose
+  `terminal.processes` are the hook's ancestors: the session whose agent is
+  the nearest of them (the parent its own start and prompt events recorded,
+  matched by `pid` and `start`) made the commit or push; a process two open
+  sessions name is neither's, and Git run by no session's agent belongs to
+  none. A commit (`LinkCommit`) is the commit and branch its hook recorded,
+  with the clone's remotes and the branch's upstream (`prlink.At`), never what
+  the worktree has checked out by the time the daemon looks, so a branch
+  switched or a worktree reused right after does not move it; a commit without
+  them (a hook that could not read them) is ignored. A push (`LinkPush`) is
+  the pushed branch and commit in the repository the remote's push URL names,
+  as refresh on hook events reads a push. When the session's directory links to
+  no pull request (and not to several), the session takes the repository,
+  branch and pull request of its latest commit or push that has one, with
+  `link_method` `commit` or `push`; each later lookup checks the cache again,
+  so a pull request opened after the push is found within 30 seconds and one
+  closed falls back to an older one. At most 16 commits and pushes are kept
+  per session; the record's within a day are replayed on a rebuild, and the
+  state file keeps those looked up (repository, branch, commit, pull request
+  and event id, no directory), so a restart after the record rotated keeps
+  them.
 - **API.** `GET /api/live-sessions` (a `LocalAPI.Live` provider, behind the
   same auth as every application route; a daemon with no record answers
   `{"available":false,"code":"live_sessions_unavailable"}`) answers
@@ -4651,7 +4710,7 @@ and two files:
    `baum` being the first executable `baum` on that `PATH` (relative entries
    skipped), with its links resolved and its `--version` (5 s timeout; its
    own version when it is this executable). `baum hooks status --user --json`
-   prints `{"agents":[{"agent","name","detected","plugin","installed","enabled","version","error"}]}`
+   prints `{"agents":[{"agent","name","detected","signed_in","plugin","installed","enabled","version","error"}]}`
    from native plugin registries, with executable detection and installation/
    enablement separate from the agent's hook trust decision. It installs and
    removes `baum@baum` through native CLIs with `baum hooks install --user`
@@ -4691,9 +4750,10 @@ the window's close and quit behaviour and start at login; the daemon serves
 `app/` to it like any loopback client, including the PR page's facts before
 any review exists (see "Pull request facts") and the draft of a review being
 written in stages (see "Persistent generation jobs"). Besides `ensure` and `stop`, the tray
-reads `GET /api/jobs`, `/api/automatic` and `/api/diagnostics` and sets
-`PUT /api/automatic` with the launch token as a bearer, over the app API the
-window uses. It also owns first-run setup
+reads `GET /api/jobs`, `/api/automatic` and `/api/diagnostics`, sets
+`PUT /api/automatic` and, once when first-run setup finishes, sends
+`POST /api/automatic/catch-up` (see "Setup catch-up"), with the launch token
+as a bearer, over the app API the window uses. It also owns first-run setup
 (`src/onboarding.rs`, `src/install.rs`, `../app/src/desktop/setup.tsx`): a bundled screen,
 with its own narrow capability, from which the user installs the bundled
 `baum` as the `baum` command on the login shell's `PATH` (a symbolic link to a

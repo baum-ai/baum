@@ -51,6 +51,8 @@ export type PR = GitHubState & {
   fork: boolean;
   authored_by_me: boolean;
   review_requested_from_me: boolean;
+  /** The person is among its first 20 assignees; absent in data from an older daemon. */
+  assigned_to_me?: boolean;
   author_has_write: boolean | null;
   team_membership_known: boolean;
   head_ref?: string;
@@ -268,6 +270,8 @@ const jobReasons: Record<string, string> = {
   input:
     "baum couldn't gather what the review needs: the pull request, its commits in your clone, or GitHub.",
   backend: "The agent couldn't run, or its provider was unavailable.",
+  signed_out:
+    "The agent isn't signed in, or its sign-in expired. Sign in to Claude Code with /login or to Codex with codex login in a terminal, then try again.",
   budget: "The run reached its time or size limit before it finished.",
   validation: "The agent's review didn't pass baum's checks, even after repairs.",
   interrupted: "The run stopped before it finished.",
@@ -355,6 +359,7 @@ export function automaticLabel(job: Job): string | null {
         : job.trigger === "ready_for_review"
           ? "the pull request was marked ready for review"
           : "";
+  if (job.trigger === "setup") return "Started automatically when baum was set up";
   if (job.trigger === "retry")
     return "Started automatically again: the daemon stopped during the previous automatic run";
   return why ? `Started automatically because ${why}` : "Started automatically";
@@ -402,6 +407,24 @@ export type Diagnostics = {
   /** This user's home directory, which the app shows as ~ in the report. */
   home?: string;
   report: DiagnosticReport | null;
+  /** A new GitHub issue with the version, OS and a redacted summary filled in. */
+  report_issue_url?: string;
+  /** What Report a problem may attach, each part already redacted. */
+  report_issue?: IssueParts;
+};
+/** The parts of a new GitHub issue the daemon redacted (`doctor.IssueParts`):
+ *  the version and OS fields and the diagnostics field at either level. */
+export type IssueParts = {
+  version: string;
+  os: string;
+  /** Per tool that reported one, its version. */
+  versions: string;
+  /** The whole redacted Diagnostics summary. */
+  diagnostics: string;
+  /** The longest link GitHub is sure to answer with the form. */
+  max_url: number;
+  /** Ends a diagnostics field that lost lines to fit `max_url`. */
+  truncation_note: string;
 };
 /** Why a session waits on its user: it asks to run a tool, it asked a
  *  question, its turn ended, or it went quiet (silent for 10 minutes with no
@@ -440,6 +463,7 @@ export type LiveSession = {
   branch?: string;
   /** Absent while the branch has no unique matching pull request. */
   pr?: number;
+  pr_state?: "OPEN" | "MERGED" | "CLOSED";
   link_status?:
     | "resolved"
     | "unmatched"
@@ -447,7 +471,9 @@ export type LiveSession = {
     | "stale"
     | "unavailable"
     | "unknown_history";
-  link_method?: "branch" | "upstream" | "head";
+  /** How `pr` was found: from the session's directory (`branch`, `upstream`,
+   *  `head`), or from its agent's latest commit or push elsewhere. */
+  link_method?: "branch" | "upstream" | "head" | "commit" | "push";
   head_sha?: string;
   upstream?: string;
   observed_at?: string;
@@ -732,10 +758,15 @@ export type Snapshot = { entries: Entry[]; problems: { clone_id: string; reason:
 /** The server serves the app only under its session namespace,
  * `/s/<namespace>/`: the first two segments of the page's path. The session
  * cookie is scoped to that path and nothing outside it accepts the cookie, so
- * every API, event stream and in-app URL is built from this base. */
+ * every API, event stream and in-app URL is built from this base. The tour's
+ * sample project is served under `sample/` within it, which the base keeps. */
 export function appBase(pathname = location.pathname): string {
-  return /^\/s\/[^/]+\//.exec(pathname)?.[0] ?? "/";
+  return /^\/s\/[^/]+\/(sample\/)?/.exec(pathname)?.[0] ?? "/";
 }
+/** Whether the app is showing the tour's sample project. */
+export const inSample = (pathname = location.pathname) => appBase(pathname).endsWith("/sample/");
+/** The base of the person's own data, outside the sample project. */
+export const ownBase = () => appBase().replace(/sample\/$/, "");
 /** A URL under the namespace; `path` is relative to it, as `api/repos` or
  * `?page=jobs`. The app routes with query strings on the base itself. */
 export function appURL(path = ""): string {
@@ -804,10 +835,8 @@ export function jobHref(job: Job) {
 export function backTo(search: URLSearchParams): { href: string; label: string; prefix: string } {
   if (search.get("page") !== "pulls") return { href: appURL(), label: "Inbox", prefix: "" };
   const back = new URLSearchParams({ page: "pulls" });
-  for (const key of ["filter", "repo"]) {
-    const value = search.get(key);
-    if (value) back.set(key, value);
-  }
+  const filter = search.get("filter");
+  if (filter) back.set("filter", filter);
   return { href: appURL(`?${back}`), label: "Pull requests", prefix: "page=pulls&" };
 }
 /** Requests `path`, relative to the namespace, as `api/repos`. */
@@ -872,15 +901,12 @@ export async function generateReviews(
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ items, mode, confirm_isolation: confirmIsolation }),
   });
+  const body = await answered(response);
   if (response.status === 409) {
-    const body = await response.json().catch(() => null);
     if (body?.isolation_required) return "isolation";
     if (body?.needs_clone) return "needs_clone";
   }
-  if (!response.ok)
-    throw Error(
-      `Local request failed (${response.status}): ${(await response.text()).slice(0, 240)}`,
-    );
+  if (!response.ok) throw refused(response, body);
   return "queued";
 }
 /** Queues the review of a group. Besides the answers of `generateReviews`,
@@ -900,17 +926,32 @@ export async function generateGroup(
       confirm_isolation: confirmIsolation,
     }),
   });
+  const body = await answered(response);
   if (response.status === 409) {
-    const body = await response.json().catch(() => null);
     if (body?.isolation_required) return "isolation";
     if (body?.needs_clone) return "needs_clone";
     if (Array.isArray(body?.members_need_reviews)) return { missing: body.members_need_reviews };
   }
-  if (!response.ok)
-    throw Error(
-      `Local request failed (${response.status}): ${(await response.text()).slice(0, 240)}`,
-    );
+  if (!response.ok) throw refused(response, body);
   return "queued";
+}
+/** A failed queueing's JSON answer, read once, or null for any other. */
+async function answered(response: Response): Promise<Record<string, unknown> | null> {
+  if (response.ok) return null;
+  const text = await response.text();
+  try {
+    return { ...JSON.parse(text), text };
+  } catch {
+    return { text };
+  }
+}
+/** The error of a failed queueing: the daemon's words when it gave them. */
+function refused(response: Response, body: Record<string, unknown> | null) {
+  return Error(
+    typeof body?.message === "string"
+      ? body.message
+      : `Local request failed (${response.status}): ${String(body?.text ?? "").slice(0, 240)}`,
+  );
 }
 export function selector(clone: string, pr: number, version?: number) {
   return new URLSearchParams({
@@ -943,28 +984,10 @@ export function groupDocumentRequest(id: string, version?: number, signal?: Abor
 export function rowKey(row: Entry) {
   return `${row.clone_id ?? ""}:${row.pull_request.repository}:${row.pull_request.number}`;
 }
-/** The inbox view holds what is the person's to check now: pull requests
- *  asking for their review and their own. Everyone else's are under "other";
- *  "all" is every open pull request. */
-export function filtered(entries: Entry[], filter: string, repository: string) {
-  const yours = (e: Entry) =>
-    e.pull_request.review_requested_from_me || e.pull_request.authored_by_me;
-  return entries.filter(
-    (e) =>
-      (!repository || e.pull_request.repository === repository) &&
-      (filter === "history" ? e.historical : !e.historical) &&
-      (filter === "inbox"
-        ? yours(e)
-        : filter === "other"
-          ? !yours(e)
-          : filter === "requested"
-            ? e.pull_request.review_requested_from_me
-            : filter === "mine"
-              ? e.pull_request.authored_by_me
-              : filter === "outdated" || filter === "no_review"
-                ? e.status === filter
-                : true),
-  );
+/** A Pull requests view's pull requests: `history` those closed, merged or no
+ *  longer listed whose reviews were saved, any other the open ones. */
+export function filtered(entries: Entry[], filter: string) {
+  return entries.filter((e) => (filter === "history" ? e.historical : !e.historical));
 }
 export function cost(value: number | null | undefined) {
   return formatUSD(value);

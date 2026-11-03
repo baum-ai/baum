@@ -61,9 +61,8 @@ struct WaitingBody {
     waiting: Option<usize>,
 }
 
-/// `GET /api/index?view=waiting`: how many pull requests wait on the user
-/// (review requested from them, or their own needing changes), counted by the
-/// daemon as the app's inbox groups them.
+/// `GET /api/index?view=waiting`: how many pull requests are in the user's
+/// Inbox, counted by the daemon as the app's Inbox lists them.
 pub fn parse_waiting(body: &[u8]) -> Result<usize, String> {
     let body: WaitingBody =
         serde_json::from_slice(body).map_err(|e| format!("unreadable waiting count: {e}"))?;
@@ -407,7 +406,7 @@ pub struct Observed {
     pub automatic: Option<Automatic>,
     /// Ids of the checks reporting a problem; `None` until diagnostics ran.
     pub diagnostics: Option<Vec<String>>,
-    /// Pull requests waiting on the user; `None` while unknown, such as a
+    /// Pull requests in the user's Inbox; `None` while unknown, such as a
     /// daemon without GitHub discovery.
     pub waiting: Option<usize>,
     /// The plans the daemon could read; `None` until it answered.
@@ -421,6 +420,8 @@ pub enum Icon {
     Idle,
     Running,
     Attention,
+    /// Idle, with pull requests in the Inbox.
+    Inbox,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -435,7 +436,7 @@ pub struct View {
     pub automatic: Option<bool>,
     pub running: usize,
     pub queued: usize,
-    /// Pull requests waiting on the user while the daemon is up and said so.
+    /// Pull requests in the Inbox while the daemon is up and said so.
     pub waiting: Option<usize>,
     /// Agent sessions waiting for the user's permission or answer.
     pub needs: Vec<NeedsYou>,
@@ -444,13 +445,13 @@ pub struct View {
 }
 
 impl View {
-    /// "3 pull requests waiting on you"; nothing when none wait or it is not
+    /// "3 pull requests in your Inbox"; nothing when it is empty or not
     /// known, which is also when the badge is clear.
     pub fn waiting_label(&self) -> Option<String> {
         match self.waiting? {
             0 => None,
-            1 => Some("1 pull request waiting on you".to_string()),
-            n => Some(format!("{n} pull requests waiting on you")),
+            1 => Some("1 pull request in your Inbox".to_string()),
+            n => Some(format!("{n} pull requests in your Inbox")),
         }
     }
 
@@ -540,6 +541,12 @@ impl Tracker {
             Link::Up if running + queued > 0 => (Icon::Running, summary(running, queued)),
             Link::Up => (Icon::Idle, summary(running, queued)),
         };
+        // A daemon that is not running has nothing in the Inbox.
+        let waiting = seen.waiting.filter(|_| seen.link == Link::Up);
+        let icon = match icon {
+            Icon::Idle if waiting.is_some_and(|n| n > 0) => Icon::Inbox,
+            icon => icon,
+        };
         View {
             icon,
             summary,
@@ -547,8 +554,7 @@ impl Tracker {
             automatic: seen.automatic.as_ref().map(|a| a.enabled),
             running,
             queued,
-            // A daemon that is not running has nobody waiting on anything.
-            waiting: seen.waiting.filter(|_| seen.link == Link::Up),
+            waiting,
             needs: seen
                 .needs
                 .clone()
@@ -797,7 +803,7 @@ mod tests {
     }
 
     #[test]
-    fn waiting_pull_requests_show_in_the_tooltip_and_the_badge() {
+    fn the_inbox_count_shows_in_the_tooltip_the_badge_and_the_icon() {
         let waiting = |link, waiting| {
             Tracker::default().update(&Observed {
                 link,
@@ -808,17 +814,18 @@ mod tests {
         let view = waiting(Link::Up, Some(3));
         assert_eq!(
             view.waiting_label().as_deref(),
-            Some("3 pull requests waiting on you")
+            Some("3 pull requests in your Inbox")
         );
         assert_eq!(
             view.tooltip(),
-            "baum: Checking background reviews… · 3 pull requests waiting on you"
+            "baum: Checking background reviews… · 3 pull requests in your Inbox"
         );
         assert_eq!(view.badge(), Some(3));
+        assert_eq!(view.icon, Icon::Inbox);
         let one = waiting(Link::Up, Some(1));
         assert_eq!(
             one.waiting_label().as_deref(),
-            Some("1 pull request waiting on you")
+            Some("1 pull request in your Inbox")
         );
         // Zero clears the badge and says nothing; so does not knowing, and a
         // daemon that is not running.
@@ -830,8 +837,24 @@ mod tests {
         ] {
             assert_eq!(view.waiting_label(), None);
             assert_eq!(view.badge(), None);
-            assert!(!view.tooltip().contains("waiting"), "{}", view.tooltip());
+            assert_ne!(view.icon, Icon::Inbox);
+            assert!(!view.tooltip().contains("Inbox"), "{}", view.tooltip());
         }
+    }
+
+    #[test]
+    fn running_reviews_and_attention_outrank_the_inbox_dot() {
+        let mut busy = up(jobs(1, 0, &[]));
+        busy.waiting = Some(2);
+        assert_eq!(Tracker::default().update(&busy).icon, Icon::Running);
+        let mut tracker = Tracker::default();
+        let mut quiet = up(jobs(0, 0, &[]));
+        quiet.waiting = Some(2);
+        assert_eq!(tracker.update(&quiet).icon, Icon::Inbox);
+        quiet.diagnostics = Some(vec!["disk".to_string()]);
+        let view = tracker.update(&quiet);
+        assert_eq!(view.icon, Icon::Attention);
+        assert_eq!(view.badge(), Some(2));
     }
 
     #[test]

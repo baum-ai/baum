@@ -37,6 +37,7 @@ pub const SETUP_PERMISSIONS: &[&str] = &[
     "allow-uninstall-command",
     "allow-install-hooks",
     "allow-uninstall-hooks",
+    "allow-update-hooks",
     "allow-choose-repository",
     "allow-add-repository",
     "allow-review-settings",
@@ -309,6 +310,9 @@ pub struct AgentHooks {
     name: String,
     #[serde(default)]
     detected: bool,
+    /// Whether the detected CLI is signed in; absent when baum could not tell.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    signed_in: Option<bool>,
     plugin: String,
     #[serde(default)]
     installed: bool,
@@ -908,7 +912,11 @@ mod repository_relay_tests {
 /// to the connecting screen and attaches to the daemon, opening its inbox.
 #[tauri::command]
 pub fn finish_setup(app: AppHandle) -> Result<(), String> {
+    let first = !load(&app).onboarded;
     update(&app, |saved| saved.onboarded = true)?;
+    if first {
+        catch_up(&app);
+    }
     let setup = app.state::<Setup>();
     setup.open.store(false, Ordering::SeqCst);
     if let Some(window) = app.get_webview_window(crate::MAIN) {
@@ -916,6 +924,20 @@ pub fn finish_setup(app: AppHandle) -> Result<(), String> {
     }
     crate::connect(&app, crate::Attach::First);
     Ok(())
+}
+
+/// Asks the daemon setup used to review the latest pull requests now, in the
+/// background, so reviews run while the tour shows. Best effort: without it
+/// automatic reviews start with the next push or review request.
+fn catch_up(app: &AppHandle) {
+    let Some(launch) = crate::tray::launch(app) else {
+        return;
+    };
+    thread::spawn(move || {
+        if let Err(error) = crate::client::catch_up(&launch) {
+            eprintln!("baum desktop: reviews of the open pull requests were not queued: {error}");
+        }
+    });
 }
 
 struct Output {

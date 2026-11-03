@@ -32,6 +32,9 @@ type Open = {
   anchor?: HTMLElement;
   /** Whether the keys start on the last choice (Up on the button). */
   last?: boolean;
+  /** Where the keys go back to when it closes, when not to `anchor`: a menu
+   *  a shortcut opened gives them back to where they were. */
+  returnTo?: Element | null;
 };
 
 /** The key that opens the menu of what has the keys, as the app's own
@@ -66,10 +69,16 @@ export function useContextMenu() {
     }
     setState({ x, y, items, label });
   };
-  const openFrom = (anchor: HTMLElement, items: MenuItem[], label?: string, last = false) => {
+  const openFrom = (
+    anchor: HTMLElement,
+    items: MenuItem[],
+    label?: string,
+    last = false,
+    returnTo?: Element | null,
+  ) => {
     if (items.length === 0) return;
     const rect = anchor.getBoundingClientRect();
-    setState({ x: rect.right, y: rect.bottom + 4, items, label, anchor, last });
+    setState({ x: rect.right, y: rect.bottom + 4, items, label, anchor, last, returnTo });
   };
   const menu = state ? <ContextMenu {...state} id={id} close={() => setState(null)} /> : null;
   return { open, openFrom, menu, id, anchor: state?.anchor ?? null };
@@ -164,13 +173,14 @@ function ContextMenu({
   label,
   anchor,
   last,
+  returnTo,
   id,
   close,
 }: Open & { id: string; close: () => void }): ReactNode {
   const ref = useRef<HTMLDivElement>(null);
   const [at, setAt] = useState({ left: x, top: y });
   // What had the keys before the menu took them, given back when it closes.
-  const [opener] = useState(() => anchor ?? document.activeElement);
+  const [opener] = useState(() => returnTo ?? anchor ?? document.activeElement);
   const giveBack = () => {
     if (opener instanceof HTMLElement && opener.isConnected) opener.focus();
   };

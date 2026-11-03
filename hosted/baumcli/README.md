@@ -186,9 +186,12 @@ handshake, in [`apiclient`](../apiclient).
   processes where supported. One failing agent does not stop the other.
 - `baum hooks status --user [--json]` reads native registries without changing
   them. It reports detection of the CLI, plugin ID, installation, enablement
-  and version separately, with `latest`, the plugin version this baum shipped
-  with (the marketplace has at least that one), and `update_available` when the
-  installed version is older. Installed, enabled Codex plugins also include
+  and version separately, and `signed_in` for a detected Claude Code or Codex:
+  the answer of `claude auth status --json` or `codex login status`, run with
+  the environment a job gets, so a provider key in baum's own environment does
+  not count (absent when the CLI could not say). It also reports `latest`, the
+  plugin version this baum shipped with (the marketplace has at least that
+  one), and `update_available` when the installed version is older. Installed, enabled Codex plugins also include
   `trust.state`, read through Codex's effective hook inventory; Claude Code
   plugins include the settings-based state from `agentplugins.ClaudeHooks`. Only a
   trusted result means every required baum hook is present, enabled and
@@ -360,7 +363,11 @@ handshake, in [`apiclient`](../apiclient).
   kitty, iTerm2 and Terminal identifiers and the display), never the rest of
   the environment. A Git event keeps the
   hook's arguments and the lines Git writes to `pre-push` and `post-rewrite`
-  (refs and commits), but never a pre-push remote URL, which can carry
+  (refs and commits), and a `post-commit` or `pre-push` event the hook's
+  ancestors alone (no terminal or variables), so the daemon can tell which
+  agent session committed or pushed; a `post-commit` also keeps the commit and
+  its branch, read with one `git rev-parse` (at most two seconds); never a
+  pre-push remote URL, which can carry
   credentials: the remote name is kept only when it differs from the URL and
   reads as neither a URL nor an scp-style address (a push to a URL passes the
   URL as both). Every event names its working directory, exit status and

@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -83,7 +84,21 @@ func (g *gatedBuilds) await(t *testing.T) int {
 	}
 }
 
-func snap(n int) Snapshot { return Snapshot{Entries: []Entry{}, Problems: []Problem{}, Waiting: n} }
+// snap is a snapshot marked n, so a test can tell which build it came from.
+func snap(n int) Snapshot {
+	return Snapshot{Entries: []Entry{}, Problems: []Problem{{CloneID: strconv.Itoa(n)}}}
+}
+
+func mark(s Snapshot) int {
+	if len(s.Problems) != 1 {
+		return -1
+	}
+	n, err := strconv.Atoi(s.Problems[0].CloneID)
+	if err != nil {
+		return -1
+	}
+	return n
+}
 
 func testCache(build func(context.Context, time.Time) (Snapshot, time.Time, error), now func() time.Time) *Cache {
 	return &Cache{life: context.Background(), build: build, now: now}
@@ -142,7 +157,7 @@ func TestCacheConcurrentReadersShareOneBuild(t *testing.T) {
 	g.release(t, first, buildResult{snapshot: snap(3)})
 	for _, r := range results {
 		got := <-r
-		if got.err != nil || got.snapshot.Waiting != 3 {
+		if got.err != nil || mark(got.snapshot) != 3 {
 			t.Fatalf("got %+v", got)
 		}
 	}
@@ -165,15 +180,15 @@ func TestCacheInvalidationDuringBuildStartsAnother(t *testing.T) {
 	fresh := g.await(t)
 	// The newer build finishes first; the older one must not replace it.
 	g.release(t, fresh, buildResult{snapshot: snap(2)})
-	if got := <-after; got.err != nil || got.snapshot.Waiting != 2 {
+	if got := <-after; got.err != nil || mark(got.snapshot) != 2 {
 		t.Fatalf("reader after the invalidation got %+v", got)
 	}
 	g.release(t, old, buildResult{snapshot: snap(1)})
-	if got := <-before; got.err != nil || got.snapshot.Waiting != 1 {
+	if got := <-before; got.err != nil || mark(got.snapshot) != 1 {
 		t.Fatalf("reader before the invalidation got %+v", got)
 	}
 	got, err := c.Snapshot(context.Background())
-	if err != nil || got.Waiting != 2 {
+	if err != nil || mark(got) != 2 {
 		t.Fatalf("cached %+v %v", got, err)
 	}
 	if n := c.buildCount(); n != 2 {
@@ -195,7 +210,7 @@ func TestCacheStaleBuildIsNotKept(t *testing.T) {
 	}
 	after := readAsync(context.Background(), c)
 	g.release(t, g.await(t), buildResult{snapshot: snap(2)})
-	if got := <-after; got.snapshot.Waiting != 2 {
+	if got := <-after; mark(got.snapshot) != 2 {
 		t.Fatalf("got %+v", got)
 	}
 }
@@ -219,7 +234,7 @@ func TestCacheReaderCancellationLeavesOthers(t *testing.T) {
 		t.Fatal("the shared build was cancelled")
 	}
 	g.release(t, n, buildResult{snapshot: snap(5)})
-	if got := <-stayer; got.err != nil || got.snapshot.Waiting != 5 {
+	if got := <-stayer; got.err != nil || mark(got.snapshot) != 5 {
 		t.Fatalf("other reader got %+v", got)
 	}
 }
@@ -234,7 +249,7 @@ func TestCacheDoesNotKeepErrors(t *testing.T) {
 	}
 	r = readAsync(context.Background(), c)
 	g.release(t, g.await(t), buildResult{snapshot: snap(1)})
-	if got := <-r; got.err != nil || got.snapshot.Waiting != 1 {
+	if got := <-r; got.err != nil || mark(got.snapshot) != 1 {
 		t.Fatalf("got %+v", got)
 	}
 }
@@ -253,8 +268,8 @@ func TestCacheExpiresAtComputedTimeAndMaxAge(t *testing.T) {
 	expect := func(want int) {
 		t.Helper()
 		got, err := c.Snapshot(ctx)
-		if err != nil || got.Waiting != want || builds != want {
-			t.Fatalf("snapshot %d builds %d err %v, want %d", got.Waiting, builds, err, want)
+		if err != nil || mark(got) != want || builds != want {
+			t.Fatalf("snapshot %d builds %d err %v, want %d", mark(got), builds, err, want)
 		}
 	}
 	expect(1)
@@ -519,7 +534,7 @@ func TestCacheRecoversBuildPanic(t *testing.T) {
 			t.Fatal(got.err)
 		}
 	}
-	if got, err := c.Snapshot(context.Background()); err != nil || got.Waiting != 1 {
+	if got, err := c.Snapshot(context.Background()); err != nil || mark(got) != 1 {
 		t.Fatal(got, err)
 	}
 }
@@ -557,7 +572,7 @@ func TestCacheHandlerLeavesSharedSnapshot(t *testing.T) {
 	builds := 0
 	c := testCache(func(context.Context, time.Time) (Snapshot, time.Time, error) {
 		builds++
-		return Snapshot{Entries: entries, Problems: []Problem{}, Waiting: 1}, time.Time{}, nil
+		return Snapshot{Entries: entries, Problems: []Problem{}}, time.Time{}, nil
 	}, (&clock{now: time.Unix(1000, 0)}).Now)
 	get := func(query string) string {
 		w := httptest.NewRecorder()
@@ -568,9 +583,6 @@ func TestCacheHandlerLeavesSharedSnapshot(t *testing.T) {
 		t.Fatal(got)
 	}
 	if got := get("?history=1"); strings.Count(got, `"number"`) != 2 {
-		t.Fatal(got)
-	}
-	if got := get("?view=waiting"); strings.TrimSpace(got) != `{"waiting":1}` {
 		t.Fatal(got)
 	}
 	if builds != 1 || !entries[0].Historical || entries[1].PullRequest.Number != 2 {

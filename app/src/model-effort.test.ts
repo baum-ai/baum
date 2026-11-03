@@ -21,10 +21,15 @@ it("offers Ultra only on the Codex models that advertise delegation", () => {
     ]);
 });
 
-it("leaves unknown and custom models at the agent's default", () => {
-  expect(modelEfforts("claude", "custom-model")).toEqual([]);
+it("offers the standard levels for unknown and custom models", () => {
+  expect(modelEfforts("claude", "custom-model")).toEqual(["low", "medium", "high", "xhigh", "max"]);
+  expect(modelEfforts("codex", "gpt-6-sol")).toEqual(["low", "medium", "high", "xhigh", "max"]);
+  expect(modelEfforts("claude", "gpt-6-astra")).toEqual(["low", "medium", "high", "xhigh", "max"]);
+});
+
+it("leaves an empty model and retired agents at the agent's default", () => {
   expect(modelEfforts("codex", "")).toEqual([]);
-  expect(modelEfforts("claude", "gpt-6-astra")).toEqual([]);
+  expect(modelEfforts("cursor-agent", "custom-model")).toEqual([]);
   expect(supportedEffort("codex", "gpt-6-luna", "ultra")).toBe("");
   expect(supportedEffort("codex", "gpt-6.1-sol", "ultra")).toBe("ultra");
   expect(supportedEffort("claude", "claude-sonnet-5-5", "xhigh")).toBe("xhigh");

@@ -19,6 +19,11 @@ test *args: frontend sidecar
 frontend:
     {{ heavy }} --workdir /oss/app ui-test pnpm build
 
+# Build the viewer the bundled baum embeds, which frontend leaves out
+[private]
+viewer:
+    {{ heavy }} --workdir /oss/viewer ui-test pnpm build:app
+
 # The Rust target triple of this machine, for the sidecar the host app runs
 host_target := arch() + if os() == "macos" { "-apple-darwin" } else { "-unknown-linux-gnu" }
 
@@ -36,6 +41,10 @@ build bundles="deb": frontend sidecar
 bundle version="0.0.0": frontend sidecar
     {{ heavy }} desktop-test scripts/bundle.sh linux-amd64 {{ version }} target/release-bundles
 
+# Build an ad hoc signed macOS DMG into target/local-dmg (--install also installs it)
+dmg *args: frontend viewer (sidecar "aarch64-apple-darwin") (sidecar "x86_64-apple-darwin")
+    scripts/macos-local.sh {{ args }}
+
 # Regenerate ../third_party/rust.txt, the licences of the crates in the app
 # (just third-party-notices does the rest)
 notices:
@@ -48,7 +57,7 @@ updater-test:
 # Regenerate icons/ from icons/source.svg, and the tray icons from icons/tray/*.svg
 icons:
     {{ heavy }} --workdir /oss/app ui-test node ../desktop/scripts/prepare-icons.mjs
-    BAUM_OP_RUN=0 {{ dev_compose }} run --build --rm --no-deps desktop-test sh -ec 'rsvg-convert -w 1024 -h 1024 target/icon-source.svg -o target/icon-source.png && cargo tauri icon target/icon-source.png -o icons && rm -rf icons/android icons/ios icons/Square*Logo.png icons/StoreLogo.png && for s in idle running attention; do rsvg-convert -w 64 -h 64 target/tray-$s.svg -o icons/tray/$s.png; done'
+    BAUM_OP_RUN=0 {{ dev_compose }} run --build --rm --no-deps desktop-test sh -ec 'rsvg-convert -w 1024 -h 1024 target/icon-source.svg -o target/icon-source.png && cargo tauri icon target/icon-source.png -o icons && rm -rf icons/android icons/ios icons/Square*Logo.png icons/StoreLogo.png && for s in idle running attention inbox; do rsvg-convert -w 64 -h 64 target/tray-$s.svg -o icons/tray/$s.png; done'
 
 # Run the native desktop on the Linux or macOS host, with Vite hot reload in Docker
 dev: frontend (sidecar host_target)

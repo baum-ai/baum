@@ -19,7 +19,7 @@ const assert = require('node:assert/strict');
   let cloning = false;
   // A saved decision model the daemon reports capture ignores with the harness auto resolves to.
   let reviews = { backend: 'auto', model: '', effort: '', automatic: true, pull_requests: 'both', decisions_model: 'gpt-6-luna', decisions_effort: 'high', decisions_backend: 'claude', decisions_effective_model: 'claude-haiku-5-5', decisions_model_ignored: true };
-  const state = { first_run: true, home: '/workspace/sample', command: { installed: false, target: '/app/baum', plan: { link: '/workspace/sample/.local/bin/baum', on_path: true } }, hooks: { agents: ['codex', 'claude-code'].map(agent => ({ agent, name: agent === 'codex' ? 'Codex' : 'Claude Code', detected: true, installed: false, enabled: false, plugin: 'baum@baum' })) } };
+  const state = { first_run: true, home: '/workspace/sample', command: { installed: false, target: '/app/baum', plan: { link: '/workspace/sample/.local/bin/baum', on_path: true } }, hooks: { agents: ['codex', 'claude-code'].map(agent => ({ agent, name: agent === 'codex' ? 'Codex' : 'Claude Code', detected: true, signed_in: agent === 'claude-code', installed: false, enabled: false, plugin: 'baum@baum' })) } };
   await page.exposeFunction('nativeInvoke', async (command, args) => {
     calls.push([command, args]);
     if (command === 'setup_state') return state;
@@ -198,10 +198,21 @@ const assert = require('node:assert/strict');
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
   await page.locator('#review-model').selectOption('Custom…');
   assert(await page.locator('#continue').isDisabled(), 'A custom model needs a name');
-  assert(await page.locator('#review-effort').isDisabled(), 'An unknown custom model leaves effort to the agent');
+  assert(await page.locator('#review-effort').isDisabled(), 'An empty custom model leaves effort to the agent');
   await page.locator('#review-model-custom').fill('custom-claude-model');
   assert(await page.locator('#continue').isEnabled());
+  assert.equal(
+    (await page.locator('#review-model-custom').boundingBox()).height,
+    (await page.locator('#review-model').boundingBox()).height,
+    'The custom model field matches the model dropdown',
+  );
+  await page.screenshot({ path: `${screenshots}/onboarding-reviews-custom.png`, fullPage: true });
+  assert(await page.locator('#review-effort').isEnabled(), 'A custom model offers the standard levels');
+  assert.equal(await page.locator('.harness-signin').count(), 0, 'A signed-in agent has no sign-in hint');
+  assert.match(await page.locator(`${reviewHarness}:has(input[value=codex])`).first().innerText(), /Not signed in/);
   await page.locator(`${reviewHarness}:has(input[value=codex])`).click();
+  assert.match(await page.locator('.harness-signin').innerText(), /Codex isn't signed in[\s\S]*codex login/, 'A signed-out agent says how to sign in');
+  await page.screenshot({ path: `${screenshots}/onboarding-reviews-signed-out.png`, fullPage: true });
   assert.equal(await page.locator('#review-model').inputValue(), 'gpt-6-luna');
   assert.equal(await page.locator('#review-effort option[value=ultra]').count(), 0, 'Luna does not advertise Ultra');
   await page.locator('#review-model').selectOption('gpt-6.1-sol');
@@ -235,7 +246,7 @@ const assert = require('node:assert/strict');
   assert.equal(await page.locator('#step-label').textContent(), 'STEP 3 OF 3');
   assert((await page.locator('#command-state').textContent()).includes('~/.local/bin/baum'));
   await expect(page.locator('#continue')).toBeEnabled();
-  await expect(page.locator('#skip-note')).toHaveText('You can finish setup later from the settings.');
+  await expect(page.locator('#skip-note')).toHaveText('You can finish setup later in Settings.');
   await page.screenshot({ path: `${screenshots}/onboarding-agents.png` });
   await page.emulateMedia({ colorScheme: 'dark' });
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
@@ -253,7 +264,7 @@ const assert = require('node:assert/strict');
   await page.screenshot({ path: `${screenshots}/onboarding-cli-loading.png` });
   await page.waitForSelector('#command-state.ok');
   await expect(page.locator('#continue')).toBeEnabled();
-  await expect(page.locator('#skip-note')).toHaveText('You can finish setup later from the settings.');
+  await expect(page.locator('#skip-note')).toHaveText('You can finish setup later in Settings.');
   assert(await page.locator('#log').isHidden(), 'A successful install should not show the log');
   fail = true;
   await page.locator('#codex-install').click();
@@ -264,6 +275,16 @@ const assert = require('node:assert/strict');
   await expect(page.locator('#codex-state')).toHaveText('Needs approval in Codex');
   assert(!await page.locator('#codex-state').evaluate(e=>e.classList.contains('ok')), 'Installed hooks must not imply trusted');
   await expect(page.locator('#codex-hint')).toContainText('/hooks');
+  await expect(page.locator('#codex-update')).toHaveCount(0);
+  state.hooks.agents.find(a => a.agent === 'codex').trust.state = 'missing';
+  await page.locator('#refresh').click();
+  await expect(page.locator('#codex-state.attention')).toHaveText('Some baum hooks are missing');
+  await expect(page.locator('#codex-hint code')).toHaveText('/hooks');
+  await page.locator('#codex-update').click();
+  await expect.poll(() => calls.filter(([c]) => c === 'update_hooks').map(([, a]) => a.agent)).toEqual(['codex']);
+  state.hooks.agents.find(a => a.agent === 'codex').trust.state = 'untrusted';
+  await page.locator('#refresh').click();
+  await expect(page.locator('#codex-update')).toHaveCount(0);
   await page.locator('#claude-code-install').click();
   await page.waitForSelector('#claude-code-state.ok');
   await expect(page.locator('#refresh')).toBeVisible();

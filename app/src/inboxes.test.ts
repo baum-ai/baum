@@ -2,9 +2,15 @@ import { expect, it, vi } from "vitest";
 import { LocalRequestError, type Entry } from "./api";
 import {
   createInboxSaver,
+  unusedInboxColor,
+  fromQuery,
+  fromTemplate,
+  templates,
+  INBOX_COLORS,
   inboxBadgeCount,
   inboxesOf,
   matches,
+  folded,
   parseInboxes,
   sentence,
   type Inbox,
@@ -20,6 +26,7 @@ const inbox = (overrides: Partial<Inbox> = {}): Inbox => ({
   owners: [],
   risk: "any",
   repositories: [],
+  query: "",
   no_bots: false,
   badge: true,
   ...overrides,
@@ -79,6 +86,34 @@ it("leaves out bots when asked", () => {
   expect(matches(inbox({ no_bots: true }), item("merge", { author_bot: false }))).toBe(true);
   expect(matches(inbox({ no_bots: true }), item("merge"))).toBe(true);
   expect(matches(inbox({ no_bots: false }), item("merge", { author_bot: true }))).toBe(true);
+});
+
+it("folds an inbox's parts into its query, unless that would not fit or its query does not read", () => {
+  const many = Array.from({ length: 30 }, (_, n) => `acme/repository-number-${n}`);
+  const long = inbox({ what: "review", repositories: many });
+  // Too long for the daemon: the parts stay as they are, and still match.
+  expect(folded(long)).toBe(long);
+  expect(matches(long, item("review", { repository: "acme/repository-number-3" }))).toBe(true);
+  expect(matches(long, item("merge", { repository: "acme/repository-number-3" }))).toBe(false);
+  // A query that does not read keeps the parts, which still narrow.
+  const broken = inbox({ what: "review", query: "risk>=none" });
+  expect(folded(broken)).toBe(broken);
+  expect(matches(broken, item("merge"))).toBe(false);
+  expect(folded(inbox({ what: "review", query: "is!=draft" }))).toMatchObject({
+    what: "any",
+    query: "waiting=review is!=draft",
+  });
+});
+
+it("matches its query on top of the rest", () => {
+  const plain = item("merge", { draft: false });
+  const failing = { ...plain, entry: { ...plain.entry, checks: "failing" as const } };
+  expect(matches(inbox({ query: "checks:failing" }), failing)).toBe(true);
+  expect(matches(inbox({ query: "checks:failing -is:draft" }), failing)).toBe(true);
+  expect(matches(inbox({ query: "checks:passing" }), failing)).toBe(false);
+  expect(matches(inbox({ what: "review", query: "checks:failing" }), failing)).toBe(false);
+  // A query that does not read narrows nothing.
+  expect(matches(inbox({ query: "checks:" }), failing)).toBe(true);
 });
 
 it("says what an inbox holds", () => {
@@ -271,6 +306,7 @@ it("reads a malformed entry defensively and drops one without an id or name", ()
       owners: [],
       risk: "any",
       repositories: [],
+      query: "",
       no_bots: false,
       badge: true,
     },
@@ -278,15 +314,24 @@ it("reads a malformed entry defensively and drops one without an id or name", ()
       id: "b",
       name: "B",
       color: "red",
-      what: "merge",
-      owners: ["acme"],
+      what: "any",
+      owners: [],
       risk: "any",
       repositories: [],
+      query: "waiting=merge org=acme",
       no_bots: false,
       badge: false,
     },
   ]);
-  // Matching and the sentence cope with what it returns.
-  expect(() => sentence(list!.inboxes[0]!)).not.toThrow();
+  // Matching copes with what it returns.
   expect(matches(list!.inboxes[0]!, item("review"))).toBe(true);
+});
+
+it("uses an unused default color for filtered and template inboxes, falling back when full", () => {
+  const existing = [inbox({ color: "blue" })];
+  expect(fromQuery("org=acme", existing).color).toBe("green");
+  expect(fromTemplate(templates([], "sam")[0]!, existing).color).toBe("green");
+  expect(unusedInboxColor(existing, "red")).toBe("red");
+  const full = INBOX_COLORS.map((color) => inbox({ color }));
+  expect(unusedInboxColor(full, "purple")).toBe("purple");
 });

@@ -72,6 +72,30 @@ func TestDiagnosticsReturnsReportAndCapabilities(t *testing.T) {
 	}
 }
 
+func TestDiagnosticsOffersARedactedIssueLink(t *testing.T) {
+	report := sampleReport()
+	report.Checks[1].Detail = "failed with ghp_abcdefghijklmnopqrstuvwxyz0123456789"
+	s := diagnosticsServer(t, LocalAPI{Version: "1.2.3", Diagnostics: func(context.Context) doctor.Report { return report }})
+	w := request(t, s, "GET", "/api/diagnostics", "", "", "", "Bearer "+s.launch, "")
+	var body struct {
+		URL   string            `json:"report_issue_url"`
+		Parts doctor.IssueParts `json:"report_issue"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body.Parts.Version != "1.2.3" || body.Parts.OS == "" || body.Parts.MaxURL == 0 ||
+		strings.Contains(body.Parts.Diagnostics, "ghp_") || !strings.Contains(body.Parts.Diagnostics, "[redacted]") {
+		t.Fatalf("parts = %+v", body.Parts)
+	}
+	if !strings.HasPrefix(body.URL, "https://github.com/baum-ai/baum/issues/new?") || !strings.Contains(body.URL, "version=1.2.3") {
+		t.Fatalf("url = %q", body.URL)
+	}
+	if strings.Contains(body.URL, "ghp_") || !strings.Contains(body.URL, "%5Bredacted%5D") {
+		t.Fatalf("url leaks or lacks the redaction marker: %q", body.URL)
+	}
+}
+
 func TestDiagnosticsRequiresAuthenticationAndGET(t *testing.T) {
 	var runs atomic.Int32
 	s := diagnosticsServer(t, LocalAPI{Diagnostics: func(context.Context) doctor.Report { runs.Add(1); return sampleReport() }})

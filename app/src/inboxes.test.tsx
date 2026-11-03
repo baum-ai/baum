@@ -5,6 +5,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { App } from "./app";
 import type { Entry } from "./api";
 import type { Inbox } from "./inboxes";
+import { COMMAND } from "./shortcuts";
 
 const entry = (
   number: number,
@@ -99,6 +100,10 @@ beforeEach(() => {
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
   history.replaceState(null, "", "/s/test-ns/");
   localStorage.clear();
+  // jsdom has no modal dialogs.
+  HTMLDialogElement.prototype.showModal = function () {
+    this.open = true;
+  };
   entries = fixture();
   daemon = { revision: 1, inboxes: [reviews, merges, acme, quiet] };
   puts = [];
@@ -194,6 +199,13 @@ const menuItem = (label: string) =>
   Array.from(node.querySelectorAll<HTMLButtonElement>(".local-rail-menu button")).find(
     (item) => item.textContent === label,
   )!;
+// Says yes to the question a delete asks first.
+const confirmDelete = () =>
+  click(
+    Array.from(node.querySelectorAll<HTMLButtonElement>("dialog button")).find(
+      (one) => one.textContent === "Delete inbox",
+    ),
+  );
 const more = (name: string) =>
   node.querySelector<HTMLButtonElement>(`[aria-label="More for ${name}"]`)!;
 const press = (key: string) =>
@@ -253,12 +265,13 @@ it("folds the nested list with its chevron and remembers it", async () => {
   expect(subRows()).toHaveLength(4);
 });
 
-it("shows only an inbox's own queue under its name and sentence", async () => {
+it("shows only an inbox's own queue under its name", async () => {
   await render("?inbox=Merges");
   expect(titles()).toEqual(["Change 3", "Change 4"]);
   const head = node.querySelector(".upnext-list-head")!;
   expect(head.querySelector("h1")!.textContent).toBe("Merges");
-  expect(head.textContent).toContain("Things ready to merge in any repository, whatever the risk.");
+  // No sentence says what it holds.
+  expect(head.textContent).not.toContain("whatever the risk");
   // Done today, its bar and the person's pull requests waiting on others are the Inbox's.
   expect(node.querySelector('[role="progressbar"]')).toBeNull();
   expect(node.querySelector('[aria-label="Done today"]')).toBeNull();
@@ -315,6 +328,7 @@ it("deletes an inbox with Undo", async () => {
   );
   expect(node.querySelector('[role="menu"]')).toBeNull();
   await click(menuItem("Delete inbox"));
+  await confirmDelete();
   expect(puts).toHaveLength(1);
   expect(puts[0]!.revision).toBe(1);
   expect(puts[0]!.inboxes.map((one) => one.id)).toEqual(["Reviews", "Merges", "Quiet"]);
@@ -347,20 +361,77 @@ it("closes an inbox's menu when the sidebar scrolls, giving focus back to its bu
   expect(document.activeElement).toBe(more("Acme"));
 });
 
-it("switches an inbox in and out of the badge, and closes its menu with Esc", async () => {
+it("starts a saved inbox's filter from its query and keeps a change as a draft until it is saved", async () => {
+  await render("?inbox=Merges");
+  expect(titles()).toEqual(["Change 3", "Change 4"]);
+  await click(node.querySelector("summary.filter-menu-button"));
+  const box = () => node.querySelector<HTMLTextAreaElement>(".filter-menu-query textarea")!;
+  const typeQuery = (value: string) =>
+    act(async () => {
+      box().focus();
+      const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!;
+      setter.call(box(), value);
+      box().dispatchEvent(new Event("input", { bubbles: true }));
+      box().blur();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+  const saves = () => [
+    node.querySelector(".filter-save-main")?.textContent,
+    ...Array.from(node.querySelectorAll(".filter-save-menu [role=menuitem]")).map(
+      (one) => one.textContent,
+    ),
+  ];
+  expect(box().value).toBe("waiting=merge");
+  // Nothing to save while it is the inbox's own query.
+  expect(node.querySelector(".filter-save-main")).toBeNull();
+
+  // Emptied, the draft shows the whole queue; Discard changes goes back.
+  await typeQuery("");
+  expect(titles()).toHaveLength(4);
+  await click(node.querySelector("summary.filter-save-arrow"));
+  expect(saves()).toEqual(["Update inbox", `Create inbox${COMMAND}↵`, "Discard changes"]);
+  await click(
+    Array.from(node.querySelectorAll<HTMLElement>(".filter-save-menu [role=menuitem]")).find(
+      (one) => one.textContent === "Discard changes",
+    ),
+  );
+  expect(titles()).toEqual(["Change 3", "Change 4"]);
+  expect(box().value).toBe("waiting=merge");
+
+  // A save that fails keeps the draft; one that goes through ends it.
+  await typeQuery("waiting=merge -#4");
+  expect(titles()).toEqual(["Change 3"]);
+  readStatus = 500;
+  await click(node.querySelector(".filter-save-main"));
+  expect(puts).toHaveLength(1);
+  expect(box().value).toBe("waiting=merge -#4");
+  expect(node.querySelector(".filter-save-main")!.textContent).toBe("Update inbox");
+  readStatus = 0;
+  await click(node.querySelector(".filter-save-main"));
+  expect(puts.at(-1)!.inboxes.find((one) => one.id === "Merges")!.query).toBe("waiting=merge -#4");
+  expect(node.querySelector(".filter-save-main")).toBeNull();
+  expect(titles()).toEqual(["Change 3"]);
+});
+
+it("opens an inbox's menu from its ⋯ and from a right click, and closes it with Esc", async () => {
   await render();
+  await act(async () => {
+    subLink("Merges").dispatchEvent(
+      new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 9, clientY: 9 }),
+    );
+  });
+  expect(
+    [...node.querySelectorAll(".local-rail-menu button")].map((one) => one.textContent),
+  ).toEqual(["Edit inbox", "Delete inbox"]);
+  await press("Escape");
+  expect(node.querySelector(".local-rail-menu")).toBeNull();
   await click(node.querySelector('[aria-label="More for Merges"]'));
-  expect(menuItem("Count in the Inbox badge")).toBeTruthy();
+  expect(menuItem("Edit inbox")).toBeTruthy();
   await act(async () => {
     document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
   });
   expect(node.querySelector(".local-rail-menu")).toBeNull();
   expect(document.activeElement).toBe(more("Merges"));
-  await click(node.querySelector('[aria-label="More for Merges"]'));
-  await click(menuItem("Count in the Inbox badge"));
-  expect(puts[0]!.inboxes.find((one) => one.id === "Merges")!.badge).toBe(true);
-  // Change 4 now counts too.
-  expect(inboxLink().querySelector(".local-rail-badge")?.textContent).toBe("4");
   await click(node.querySelector('[aria-label="More for Acme"]'));
   await act(async () => {
     document.body.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
@@ -388,11 +459,6 @@ it("returns focus to the menu button after Esc and after choosing, never to the 
   expect(node.querySelector(".local-rail-menu")).toBeNull();
   expect(document.activeElement).toBe(more("Acme"));
 
-  await click(more("Acme"));
-  await click(menuItem("Leave out of the Inbox badge"));
-  expect(node.querySelector(".local-rail-menu")).toBeNull();
-  expect(document.activeElement).toBe(more("Acme"));
-
   // A click elsewhere closes it, and focus that was in it does not fall to the body.
   await click(more("Acme"));
   await act(async () => {
@@ -404,32 +470,25 @@ it("returns focus to the menu button after Esc and after choosing, never to the 
   // A deleted row's focus moves to a neighbour.
   await click(more("Acme"));
   await click(menuItem("Delete inbox"));
+  await confirmDelete();
   expect(document.activeElement).toBe(subLink("Quiet"));
   await click(more("Quiet"));
   await click(menuItem("Delete inbox"));
+  await confirmDelete();
   expect(document.activeElement).toBe(subLink("Merges"));
-});
-
-it("keeps changes made while the toast is up when Undo brings an inbox back", async () => {
-  await render();
-  await click(more("Acme"));
-  await click(menuItem("Delete inbox"));
-  await click(more("Merges"));
-  await click(menuItem("Count in the Inbox badge"));
-  await click(node.querySelector(".inbox-toast button"));
-  const last = puts[puts.length - 1]!;
-  expect(last.inboxes.map((one) => one.id)).toEqual(["Reviews", "Merges", "Acme", "Quiet"]);
-  expect(last.inboxes.find((one) => one.id === "Merges")!.badge).toBe(true);
 });
 
 it("puts an inbox back at its old place in the list as it is now", async () => {
   await render();
   await click(more("Quiet"));
   await click(menuItem("Delete inbox"));
+  await confirmDelete();
   await click(more("Reviews"));
   await click(menuItem("Delete inbox"));
+  await confirmDelete();
   await click(more("Acme"));
   await click(menuItem("Delete inbox"));
+  await confirmDelete();
   const before = puts.length;
   // Undo is for the last delete: Acme goes back at its old index, clamped.
   await click(node.querySelector(".inbox-toast button"));
@@ -449,7 +508,8 @@ it("keeps the inbox controls and reports a failed read, but hides them for an ol
   expect(node.textContent).toContain("Couldn't read your inboxes: The inboxes file is unreadable.");
   // A save still goes out: the failure did not forget the daemon's revision.
   await click(more("Merges"));
-  await click(menuItem("Count in the Inbox badge"));
+  await click(menuItem("Delete inbox"));
+  await confirmDelete();
   expect(puts).toHaveLength(1);
   expect(puts[0]!.revision).toBe(1);
   // A later good read clears the report.
@@ -459,7 +519,7 @@ it("keeps the inbox controls and reports a failed read, but hides them for an ol
     await new Promise((resolve) => setTimeout(resolve, 0));
   });
   expect(node.textContent).not.toContain("Couldn't read your inboxes");
-  expect(subRows()).toHaveLength(4);
+  expect(subRows()).toHaveLength(3);
 
   // The very first read failing shows no inbox controls, but says why.
   readStatus = 500;
@@ -533,3 +593,46 @@ it("moves j and k only through the inbox's own rows", async () => {
   await press("k");
   expect(panelTitle()).toBe("Change 3");
 });
+
+it("creates an inbox with Control+Enter from the inbox filter", async () => {
+  await render("?inbox=Merges");
+  await act(async () => {
+    document.body.dispatchEvent(
+      new KeyboardEvent("keydown", {
+        key: "Enter",
+        ctrlKey: true,
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+  });
+  expect(node.querySelector("h1")?.textContent).toBe("New inbox");
+  const name = node.querySelector<HTMLInputElement>(".inbox-name")!;
+  expect(name.value).toBe("Merges 2");
+  expect(name.selectionStart).toBe(0);
+  expect(name.selectionEnd).toBe(name.value.length);
+  expect(puts).toHaveLength(0);
+});
+
+for (const [key, start, expected] of [
+  ["j", "Reviews", "Merges"],
+  ["k", "Merges", "Reviews"],
+  ["ArrowDown", "Reviews", "Merges"],
+  ["ArrowUp", "Merges", "Reviews"],
+  ["k", "Reviews", "Up next"],
+  ["ArrowUp", "Reviews", "Up next"],
+  ["j", "", "Reviews"],
+  ["ArrowDown", "", "Reviews"],
+  ["k", "", "Up next"],
+]) {
+  it(`switches inboxes with Control+${key} from ${start}`, async () => {
+    await render(start ? `?inbox=${start}` : "");
+    await act(async () => {
+      document.body.dispatchEvent(
+        new KeyboardEvent("keydown", { key, ctrlKey: true, bubbles: true, cancelable: true }),
+      );
+    });
+    expect(node.querySelector("h1")?.textContent).toBe(expected);
+    expect(node.querySelector("[data-go-to]")).toBeNull();
+  });
+}

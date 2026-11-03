@@ -1010,3 +1010,40 @@ describe("source chips", () => {
     expect(container.querySelector("#commits-probe")?.textContent).toBe(sha);
   });
 });
+
+it("toggles the side pane with ] and leaves typing alone", async () => {
+  const originalMedia = window.matchMedia;
+  const media = vi.spyOn(window, "matchMedia").mockImplementation((query) => ({
+    ...originalMedia(query),
+    matches: query === "(width >= 80rem)",
+  }));
+  try {
+    const container = await render(
+      <Host>
+        <ReviewViewer document={current} />
+      </Host>,
+    );
+    const input = document.createElement("textarea");
+    container.append(input);
+    await act(async () => {
+      input.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "]", bubbles: true, cancelable: true }),
+      );
+    });
+    expect(localStorage.getItem("baum.review.conversation-collapsed")).not.toBe("true");
+    await act(async () => {
+      document.body.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "]", bubbles: true, cancelable: true }),
+      );
+    });
+    expect(localStorage.getItem("baum.review.conversation-collapsed")).toBe("true");
+    await act(async () => {
+      document.body.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "]", bubbles: true, cancelable: true }),
+      );
+    });
+    expect(localStorage.getItem("baum.review.conversation-collapsed")).toBe("false");
+  } finally {
+    media.mockRestore();
+  }
+});

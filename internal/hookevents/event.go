@@ -16,6 +16,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"strings"
 	"time"
 	"unicode/utf8"
 )
@@ -83,7 +84,8 @@ type Event struct {
 	Git *Git `json:"git,omitempty"`
 	// Terminal locates where an agent session runs, so the application can
 	// bring it forward. Agent hooks send it on a session's start and on its
-	// prompts.
+	// prompts; Git's post-commit and pre-push send its Processes alone, which
+	// name the agent whose command ran Git.
 	Terminal *Terminal `json:"terminal,omitempty"`
 }
 
@@ -169,7 +171,64 @@ type Git struct {
 	// Lines are what Git wrote to the hook's standard input: the refs a
 	// pre-push sends, the commits a post-rewrite replaced.
 	Lines []string `json:"lines,omitempty"`
+	// Head and Branch are a post-commit's: the commit it follows and the
+	// branch it was made on, empty when detached, read as the hook ran, so
+	// the commit links to its branch whatever the checkout does next.
+	Head   string `json:"head,omitempty"`
+	Branch string `json:"branch,omitempty"`
 }
+
+// Push is one branch a pre-push hook names.
+type Push struct {
+	Branch string
+	// Old is the head the remote had before the push, empty for a new
+	// branch; New is the pushed one.
+	Old, New string
+}
+
+// Pushes reads a pre-push hook's lines, "<local ref> <local oid> <remote
+// ref> <remote oid>", keeping branch updates and creations; a deletion moves
+// no branch head.
+func Pushes(lines []string) []Push {
+	var pushes []Push
+	for _, line := range lines {
+		fields := strings.Fields(line)
+		if len(fields) != 4 || !validOID(fields[1]) || !validOID(fields[3]) || zeroOID(fields[1]) {
+			continue
+		}
+		branch, ok := strings.CutPrefix(fields[2], "refs/heads/")
+		if !ok || branch == "" {
+			continue
+		}
+		p := Push{Branch: branch, New: fields[1]}
+		if !zeroOID(fields[3]) {
+			p.Old = fields[3]
+		}
+		pushes = append(pushes, p)
+	}
+	return pushes
+}
+
+// RemoteName reports whether a pre-push hook's first argument can be a
+// remote's name rather than a URL, an scp-style address or a path.
+func RemoteName(name string) bool {
+	return name != "" && !strings.Contains(name, "://") && !strings.ContainsAny(name, ":@\\") &&
+		!strings.HasPrefix(name, "/") && !strings.HasPrefix(name, ".") && !strings.HasPrefix(name, "-")
+}
+
+func validOID(s string) bool {
+	if len(s) != 40 && len(s) != 64 {
+		return false
+	}
+	for _, r := range s {
+		if (r < '0' || r > '9') && (r < 'a' || r > 'f') {
+			return false
+		}
+	}
+	return true
+}
+
+func zeroOID(oid string) bool { return strings.Trim(oid, "0") == "" }
 
 // NewID returns a random event id: 32 lowercase hexadecimal digits.
 func NewID() string {
@@ -261,6 +320,7 @@ func (e *Event) fields() []*string {
 		for i := range g.Args {
 			fields = append(fields, &g.Args[i])
 		}
+		fields = append(fields, &g.Head, &g.Branch)
 	}
 	return fields
 }

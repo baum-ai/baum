@@ -97,8 +97,11 @@ tar -xf "$app_tar" -C "$work"
 app=$work/baum.app
 main=$app/Contents/MacOS/baum-desktop
 sidecar=$app/Contents/MacOS/baum
+# One architecture per call: Xcode 27's lipo takes no more.
 for binary in "$main" "$sidecar"; do
-  lipo "$binary" -verify_arch arm64 x86_64
+  for arch in arm64 x86_64; do
+    lipo "$binary" -verify_arch "$arch"
+  done
 done
 
 notarize_file() {

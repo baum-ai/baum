@@ -66,6 +66,58 @@
   color: var(--text-tertiary);
   font-size: var(--text-xs);
 }
+/* The opening card: larger and centred, Stumpy peeking up from a band of
+   sand with leaves around it. */
+.tour-welcome {
+  width: 480px;
+  padding: 0;
+  overflow: hidden;
+  border-radius: 20px;
+}
+.tour-band {
+  position: relative;
+  height: 180px;
+  overflow: hidden;
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--nav-selected);
+}
+.tour-leaf {
+  position: absolute;
+  width: 44px;
+  height: 40px;
+  fill: var(--brand-green-500);
+  opacity: 0.7;
+}
+.tour-stumpy {
+  position: absolute;
+  bottom: -52px;
+  left: 50%;
+  transform: translateX(-50%);
+}
+.tour-welcome-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 24px 28px;
+}
+/* Above the band. */
+.tour-welcome .tour-close {
+  z-index: 1;
+}
+.tour-welcome .tour-head {
+  margin: 0;
+}
+.tour-welcome h2 {
+  font-family: var(--font-heading);
+  font-size: var(--text-2xl);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1.1;
+}
+.tour-welcome p {
+  margin: 0 0 16px;
+  font-size: var(--text-lg);
+}
 @media (prefers-reduced-motion: reduce) {
   .tour-spot,
   .tour-scrim {

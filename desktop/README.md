@@ -138,7 +138,7 @@ happen only when the user selects an install or add action. Displayed paths abbr
      actions to the daemon. It cannot provide arbitrary HTTP routes or see a
      GitHub token. Explicit folder attachment may file a fork under its
      upstream repository when a remote matches it.
-2. Select your agent: Claude Code or Codex (initially resolved from automatic
+2. Configure your agents: Claude Code or Codex (initially resolved from automatic
    selection or the installed agents). Missing CLIs are marked Not installed
    and cannot be selected; a saved missing agent falls back to an installed
    one, preferring Claude Code. When neither is detected, official installation
@@ -146,11 +146,17 @@ happen only when the user selects an install or add action. Displayed paths abbr
    step in the rail wait for an installed agent; rechecking selects one as
    soon as it is detected. Detection errors show retry guidance.
    A compact row pairs the model for reviews and data extraction with its
-   reasoning effort. Fixes start as Same as reviews; choosing Claude Code or
-   Codex for them adds their own model and effort row. A model can be a preset
-   or a custom name. Choose whether reviews run automatically and, if so, for
-   which pull requests (authored, requested, both, or all open pull requests).
-   The screen reads them with `baum internal reviews show` and saves changes
+   reasoning effort. A line under Reviews and extraction and under Fixes says
+   what each agent does, and a note below the card points to Settings for
+   per-task agents and per-repository automatic reviews. The Fixes tiles show
+   only agent names (or Not installed). A detected agent that reports no
+   sign-in is marked Not signed in but stays selectable (its jobs fail until it
+   signs in); choosing it adds a line on how to sign in (`claude` then
+   `/login`, or `codex login`) and to choose Check again. Fixes start as Same as reviews;
+   choosing Claude Code or Codex for them adds their own model and effort row.
+   A model can be a preset or a custom name. Choose whether reviews run
+   automatically and, if so, for which pull requests (authored, requested,
+   both, or all open pull requests). The screen reads them with `baum internal reviews show` and saves changes
    with `baum internal reviews set` when the user opens baum at the end of
    setup. They are stored as app preferences in the repository registry, which
    the daemon rereads for every job. The native bridge forwards the review,
@@ -164,7 +170,12 @@ happen only when the user selects an install or add action. Displayed paths abbr
      baum it replaces; PATH and administrator warnings show beneath it.
    - Connect the agents you use, with separate Connect or Enable buttons. The
      Codex marketplace plugin is installed with `baum hooks install --user
-     --agent codex`. The screen explains reviewing trust with `/hooks`. The
+     --agent codex`. Each connected agent shows the same status, plugin
+     version, hook note and Update button as Settings (below). A status names
+     the state and the button the action; an agent that is installed but
+     blocked (disabled, hooks missing, unapproved, or stopped by its settings)
+     shows its status in the caution colour. When Codex reports baum hooks
+     missing, the note says Update adds them before `/hooks` approves them. The
      Claude Code plugin is installed separately with `--agent claude-code`.
      Both use the native agent CLI to fetch the public marketplace.
      Codex status additionally checks its effective hook inventory. Connected
@@ -200,8 +211,9 @@ model through [`model_reasoning_effort`](https://learn.chatgpt.com/docs/config-f
 | GPT-6.1 Sol, GPT-6.1 Terra and GPT-6 Astra | Low, Medium, High, Extra high, Max, Ultra |
 
 Every selector also offers Default, which leaves the effort to the agent.
-Ultra enables Codex's automatic task delegation. Unknown custom models offer
-Default only. Changing a model preserves a supported effort and resets an
+Ultra enables Codex's automatic task delegation. Other models, including
+custom ones, offer Low to Max; the agent handles a level a model lacks (Claude
+Code falls back to the highest supported level). Changing a model preserves a supported effort and resets an
 unsupported one to Default. API-only levels are not offered by the CLI picker.
 
 Open baum uses the app's CLI independently of the command on the user's PATH.
@@ -325,11 +337,13 @@ succeeds for it. Updating the app's own link keeps the backup of the baum it
 replaced, so Remove still puts that back.
 Hooks are removed with the bundled `baum hooks uninstall --user`, which
 removes only the native `baum@baum` plugin and leaves the marketplace and
-other plugins. Settings' Update runs the bundled `baum hooks update --user
+other plugins. Update, in Settings and in setup, runs the bundled `baum hooks update --user
 --agent AGENT`, which refreshes the marketplace and brings the installed
 plugin to its latest version, so new hooks arrive without removing and
 connecting the agent again. Update shows only when status reports
-`update_available`, or when Codex reports baum hooks missing.
+`update_available` (a connected agent then reads Connected · update
+available), or when Codex reports baum hooks missing (Some baum hooks are
+missing).
 
 ### Restarts into the app's baum
 
@@ -373,7 +387,7 @@ The daemon outlives the app, so the app's presence is a tray icon.
   line per readable plan window ("Claude Code · 5-hour: 62% left · resets in
   3 h"); Open baum; Pause or Resume automatic reviews; Start at login;
   a Notifications submenu (see
-  "Notifications"); Quit; Quit and stop background reviews. Plan usage shows
+  "Notifications"); Report a problem…; Quit; Quit and stop background reviews. Plan usage shows
   only the plans the daemon could read and the person has not hidden in
   Settings (by default those of the backends baum uses), and nothing when
   none remain. The menu is rebuilt whenever a "resets in" text would
@@ -389,16 +403,14 @@ The daemon outlives the app, so the app's presence is a tray icon.
   click keeps the full menu. Linux tray hosts
   report no clicks, so Linux has the menu only. The panel is the bundled
   `tray.html`, created hidden at startup.
-- **Waiting on you.** While some pull requests wait on the user (review
-  requested from them, or their own with changes requested, failing checks or
-  a conflict, the "Review requested" and "Needs changes" groups of the app's
-  Pull requests),
-  the menu shows a disabled line such as "3 pull requests waiting on you", the
-  tooltip appends it, and the dock badge (macOS; any other platform whose
-  window badge Tauri supports, ignored silently elsewhere) shows the count.
-  Zero, an unknown count and a daemon that is not running clear all three. The
-  daemon counts them: `GET /api/index?view=waiting`, polled with the other
-  tray requests.
+- **Inbox.** While the app's Inbox lists some pull requests, the menu shows a
+  disabled line such as "3 pull requests in your Inbox", the tooltip appends
+  it, the dock badge (macOS; any other platform whose window badge Tauri
+  supports, ignored silently elsewhere) shows the count, and an otherwise idle
+  icon shows the Inbox dot. Zero, an unknown count and a daemon that is not
+  running clear all of them. The daemon counts the Inbox as the app does,
+  except that saved inboxes left out of the app's badge still count:
+  `GET /api/index?view=waiting`, polled with the other tray requests.
 - **Quit** ends the app only. Background refresh and automatic generation
   continue in the daemon.
 - **Quit and stop background reviews** runs the bundled `baum daemon stop`, so
@@ -419,6 +431,9 @@ The daemon outlives the app, so the app's presence is a tray icon.
 | Idle | Nothing running or queued, nothing new to look at. |
 | Running | A review is running or queued. |
 | Attention | A review failed, a diagnostics check reports a problem, or the daemon is not running. |
+| Inbox | Otherwise idle, with pull requests in the Inbox (an amber dot). |
+
+Attention outranks Running, which outranks Inbox.
 
 Attention for the first two clears when the window is opened or focused and
 returns for something new (a failure found when the app first looks at the
@@ -440,9 +455,12 @@ Two channels, each the least that does the job:
    `GET /api/diagnostics` every 5 minutes (it runs the doctor's checks),
    `GET /api/plan-usage?refresh=1` every 5 minutes (a fresh reading; the
    daemon reads again at most once a minute), and
-   `PUT /api/automatic`. This is the credential the app already reads for the
-   window and the health check, accepted on `/api/` routes only; the request
-   that changes state sends the daemon's own origin and JSON, as the daemon
+   `PUT /api/automatic`, and once, when first-run setup finishes,
+   `POST /api/automatic/catch-up`, which queues automatic reviews of the
+   latest open pull requests so they run during the tour (best effort: a
+   daemon not attached then, or a failed request, only skips it). This is the
+   credential the app already reads for the window and the health check,
+   accepted on `/api/` routes only; the requests that change state send the daemon's own origin and JSON, as the daemon
    requires. It is polled rather than streamed: the events stream carries only
    change notices, so the tray would fetch the same data anyway.
 
@@ -456,6 +474,33 @@ the tray's last view (`tray_panel`), fit the window to its height
 (`tray_panel_height`) and run Open, pause or resume, Quit and stop or open a
 waiting session, or only hide the panel (`close`) (`tray_action`, which
 refuses any other menu id).
+
+## Report a problem
+
+The app sends no telemetry or crash reports, so **Report a problem…** opens a
+new bug report in the public repository (`baum-ai/baum`) in the default
+browser. In the app (the sidebar's `?` menu and Diagnostics' button) it first
+opens a dialog (`src/report-problem.tsx` in the local app) where the user
+writes what happened and chooses what to attach: **Nothing**, **Versions
+only** (baum's version, the OS and each tool's version, no paths or details)
+or **All diagnostics** (the summary below), with a preview of exactly what
+the link carries. The dialog builds the link from the redacted parts in the
+`/api/diagnostics` answer (`report_issue`, `doctor.Report.PublicIssueParts`)
+and fits it the same way. The tray menu and the macOS window menu's Help open
+the link directly, with the whole summary. The daemon builds that link in its
+`/api/diagnostics` answer
+(`report_issue_url`) with the version, OS and a redacted summary of the
+Diagnostics report (`doctor.Report.PublicSummary`): home directories become
+`~`, secret-shaped values and e-mail addresses are masked, and the
+configuration's load error, the `PATH` entries, the per-repository store
+checks and non-github.com host names are left out. The
+summary loses whole lines from its end, with a note, to keep the link under
+about 6.5 KB, as GitHub refuses longer ones. The user reads and edits the form
+in the browser, and nothing is sent until they submit it. The tray menu asks the
+daemon for the link on each click (the checks take a few seconds), opens it only
+when it starts with `https://github.com/baum-ai/baum/issues/new?`, and otherwise
+(no daemon, failed checks) opens the repository's issue chooser. The tray panel
+has no such item; its right click keeps the full menu.
 
 ## Start at login
 
@@ -624,7 +669,7 @@ doing anything (`src/zoom.rs`).
   origin only: `connecting-screen` allows the app's `connection` and
   `reconnect` commands, and `setup-screen` the setup commands
   (`setup_state`, `install_command`, `uninstall_command`, `install_hooks`,
-  `uninstall_hooks`, `choose_repository`, `add_repository`, `review_settings`,
+  `uninstall_hooks`, `update_hooks`, `choose_repository`, `add_repository`, `review_settings`,
   `save_review_settings` and `finish_setup`). Both also allow `step_zoom`
   for the zoom shortcuts. Every change they make runs in the
   Rust side and only when the user requests it in setup or Settings;
@@ -693,11 +738,22 @@ just desktop::test          # tests only; pass cargo test arguments after it
 just desktop::sidecar       # build binaries/baum-<target triple>; pass a triple to cross-build
 just desktop::build         # Linux bundle (deb by default) in target/release/bundle
 just desktop::bundle        # the release's Linux deb and AppImage in target/release-bundles
+just desktop::dmg           # macOS: ad hoc signed DMG in target/local-dmg (--install also installs it)
 just desktop::updater-test  # updater manifest checks reject tampered releases
 just desktop::run           # run the app on this Wayland session's display
 just desktop::dev           # native host app, with Vite hot reload in Docker
 just desktop::icons         # resolve palette tokens and regenerate native icons
 ```
+
+`dmg` builds the frontend, the viewer and both darwin sidecars in Docker, then runs
+`scripts/macos-local.sh` on the host: `bundle.sh` and `macos-finalize.sh` as the
+release runs them, without a Developer ID, so the app is signed ad hoc and not
+notarised. This is a host execution exception, because the bundle needs Apple's
+`lipo`, `codesign` and `hdiutil`. The host needs Rust with the
+`aarch64-apple-darwin` and `x86_64-apple-darwin` targets, the Xcode command line
+tools and the Tauri CLI version the Dockerfile pins. With `--install` it
+replaces `/Applications/baum.app`; quit the app first with Quit and stop
+background reviews, so the next launch starts a daemon from the new binary.
 
 `run` starts the container's own daemon in the container's home directory,
 not yours. Set `BAUM_DESKTOP_BAUM` to run a different `baum` binary than the

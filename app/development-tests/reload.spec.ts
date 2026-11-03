@@ -22,6 +22,10 @@ test("development login, CSRF, streaming and React/CSS hot reload", async ({ pag
   expect(base).toMatch(/^\/s\/[A-Za-z0-9_-]{43}\/$/);
   expect((await streaming).headers()["content-type"]).toBe("text/event-stream");
   expect((await page.request.get(`${base}api/repos`)).status()).toBe(200);
+  // The tour's sample project's API reaches the daemon too, not Vite's page.
+  const sample = await page.request.get(`${base}sample/api/health`);
+  expect(sample.status()).toBe(200);
+  expect(sample.headers()["content-type"]).toContain("application/json");
   expect((await page.request.get("/api/repos")).status()).toBe(401);
   expect((await page.request.get("/s/wrong/api/repos")).status()).toBe(404);
   const status = await page.evaluate(async (url) => {

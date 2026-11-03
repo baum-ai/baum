@@ -658,6 +658,10 @@ var ErrNeedsClone = errors.New("a local clone of the repository is required")
 // ReasonNeedsClone is the machine-readable code of ErrNeedsClone.
 const ReasonNeedsClone = "needs_clone"
 
+// ReasonSignedOut is a backend failure whose provider refused the agent's
+// sign-in, which only signing in again in the agent fixes.
+const ReasonSignedOut = "signed_out"
+
 // ErrIsolationRequired is a direct generation that includes a fork or an
 // author without known write access, which needs its own confirmation.
 var ErrIsolationRequired = errors.New("isolation confirmation required")
@@ -1240,8 +1244,11 @@ func (q *Queue) worker(chat bool) {
 			case err != nil:
 				current.State = "failed"
 				current.Reason = string(generate.CategoryOf(err))
-				if current.Reason == "" {
+				switch {
+				case current.Reason == "":
 					current.Reason = "internal"
+				case current.Reason == string(generate.CategoryBackend) && agent.SignInRejected(err):
+					current.Reason = ReasonSignedOut
 				}
 				var failure *generate.Error
 				if errors.As(err, &failure) {

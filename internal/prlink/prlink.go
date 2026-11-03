@@ -30,11 +30,22 @@ type Work struct {
 // ("owner/name", as the registry names it). A part git cannot read stays
 // empty.
 func Local(ctx context.Context, repo *gitlocal.Repo, repository string) Work {
-	w := Work{Repository: strings.ToLower(repository)}
-	parsed, parseErr := github.ParseRepository(repository)
-	if branch, err := repo.CurrentBranch(ctx); err == nil {
-		w.Branch = branch
+	branch, head := "", ""
+	if b, err := repo.CurrentBranch(ctx); err == nil {
+		branch = b
 	}
+	if h, err := repo.HeadCommit(ctx); err == nil {
+		head = h
+	}
+	return At(ctx, repo, repository, branch, head)
+}
+
+// At is the work of a commit made on branch ("" when detached) in repo, a
+// working tree of repository, read from the clone's remotes rather than from
+// what it has checked out now: what a commit recorded as it was made.
+func At(ctx context.Context, repo *gitlocal.Repo, repository, branch, head string) Work {
+	w := Work{Repository: strings.ToLower(repository), Branch: branch, Head: head}
+	parsed, parseErr := github.ParseRepository(repository)
 	if parseErr == nil {
 		if origin, err := repo.RemoteFetchURL(ctx, "origin"); err == nil {
 			if source, err := github.RepositoryFromRemote(origin); err == nil {
@@ -48,9 +59,6 @@ func Local(ctx context.Context, repo *gitlocal.Repo, repository string) Work {
 	}
 	if w.Branch != "" && parseErr == nil {
 		w.Upstream, w.UpstreamRepository = upstreamWork(ctx, repo, parsed, w.Branch)
-	}
-	if head, err := repo.HeadCommit(ctx); err == nil {
-		w.Head = head
 	}
 	return w
 }

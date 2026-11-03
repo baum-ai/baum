@@ -276,6 +276,44 @@
   line-height: 1.5;
   color: var(--text-secondary);
 }
+/* Sits between the floated legend and the tiles, close to the legend like the
+   switch's own line. */
+.review-card .review-note.harness-description {
+  clear: both;
+  margin: 0 0 8px;
+}
+.review-card .review-section legend:has(+ .harness-description) {
+  margin-bottom: 2px;
+}
+/* In the card, the switch reads as a section heading like the legends, and the
+   dropdowns and model field match the tiles' text. */
+.review-card .switch-row {
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+}
+.review-card .switch-row small {
+  margin-top: 2px;
+  line-height: 1.5;
+}
+.review-card .select select {
+  height: 28px;
+  padding: 0 32px 0 10px;
+  font-size: var(--text-xs);
+}
+.review-card .select::after {
+  right: 12px;
+}
+.review-card .model-row input {
+  flex: none;
+  height: 28px;
+  padding: 0 10px;
+  font-size: var(--text-xs);
+}
+/* The model row belongs to the tiles above it, so it sits as close to them as
+   the parts of a section sit to each other. */
+.review-card .review-section + .model-settings {
+  padding-top: 0;
+}
 .model-row input {
   min-width: 0;
   flex: 1;

@@ -23,6 +23,8 @@ export type Agent = {
   agent: string;
   name: string;
   detected: boolean;
+  /** Whether the detected CLI is signed in; absent when baum could not tell. */
+  signed_in?: boolean | null;
   installed: boolean;
   enabled: boolean;
   plugin: string;
@@ -49,6 +51,8 @@ export type SetupView = {
 export type Outcome = { ok: boolean; lines: string[] };
 type CommandDescription = {
   state: string;
+  /** The installed command's path, which the state names. */
+  path?: string;
   note: string;
   action: string;
   replace?: string;
@@ -79,12 +83,12 @@ export function describeCommand(command: CommandStatus): CommandDescription {
   if (command.installed) {
     const at = command.found?.path ?? command.target;
     const state = command.record
-      ? `baum is installed at ${at}.`
-      : `baum is installed at ${at}. It was installed outside the app, so the app won't update it.`;
+      ? `Installed at ${at}`
+      : `Installed at ${at} outside the app, so the app won't update it.`;
     const shadowed = command.shadowed
       ? `A different baum comes first on your PATH: ${command.shadowed.path} (${version(command.shadowed)}).`
       : "";
-    return { state, note: shadowed, action: "", ok: true };
+    return { state, path: at ?? undefined, note: shadowed, action: "", ok: true };
   }
   // On Windows the plan names a directory to add to the PATH, not a link.
   const linking = /[\\/]baum$/.test(plan.link);
@@ -147,13 +151,21 @@ export function agentUpdatable(agent: Agent) {
   );
 }
 
+/** Whether an installed agent is blocked on something the person can do:
+ *  enable, update, approve or fix its settings. */
+export function agentNeedsAction(agent: Agent) {
+  return agent.installed && !agentConnected(agent);
+}
+
 /** The line under an installed agent: how its hooks come to run, or how to
  *  unblock them. */
 export function agentHookNote(agent: Agent) {
-  if (agent.agent === "codex")
-    return agent.trust?.state === "trusted"
-      ? "Codex hooks are approved."
-      : "Review hook trust with /hooks in Codex.";
+  if (agent.agent === "codex") {
+    if (agent.trust?.state === "trusted") return "Codex hooks are approved.";
+    if (agent.trust?.state === "missing" && agentUpdatable(agent))
+      return "Update adds the missing hooks. Then approve them with /hooks in Codex.";
+    return "Review hook trust with /hooks in Codex.";
+  }
   switch (agent.trust?.state) {
     case "hooks_disabled":
       return "disableAllHooks is on in your Claude Code settings. Turn it off, then check again.";
@@ -179,7 +191,7 @@ export function describeAgent(agent: Agent) {
         case "disabled":
           return "Hooks disabled in Codex";
         case "missing":
-          return "Update Codex hooks";
+          return "Some baum hooks are missing";
         default:
           return "Hook approval could not be verified";
       }
@@ -194,7 +206,7 @@ export function describeAgent(agent: Agent) {
           return "Claude Code settings could not be read";
       }
     }
-    return "Connected";
+    return agent.update_available ? "Connected · update available" : "Connected";
   }
   if (!agent.detected)
     return `${agent.name} isn't on your PATH. Install or update it, then check again.`;
@@ -235,6 +247,19 @@ export const modelPresets: Record<string, string[]> = {
   claude: claudeModels,
   codex: ["gpt-6-luna", "gpt-6.1-sol", "gpt-6.1-terra", "gpt-6-astra"],
 };
+
+const presetNames: Record<string, string> = {
+  "claude-haiku-5-5": "Claude Haiku 5.5",
+  "claude-sonnet-5-5": "Claude Sonnet 5.5",
+  "claude-opus-5-5": "Claude Opus 5.5",
+  "gpt-6-luna": "GPT-6 Luna",
+  "gpt-6.1-sol": "GPT-6.1 Sol",
+  "gpt-6.1-terra": "GPT-6.1 Terra",
+  "gpt-6-astra": "GPT-6 Astra",
+};
+
+/** A preset's display name; other models show as typed. */
+export const modelName = (model: string) => presetNames[model] ?? model;
 
 /** The cheap model decision capture uses per harness when none is chosen. */
 export const decisionModelDefaults: Record<string, string> = {
@@ -332,6 +357,18 @@ export function detectedHarnesses(agents: readonly Agent[]): string[] {
   return ["claude", "codex"].filter((backend) =>
     agents.some(
       (agent) => agent.agent === (backend === "claude" ? "claude-code" : backend) && agent.detected,
+    ),
+  );
+}
+
+/** Detected agent CLIs that report no sign-in, so their jobs would fail. */
+export function signedOutHarnesses(agents: readonly Agent[]): string[] {
+  return ["claude", "codex"].filter((backend) =>
+    agents.some(
+      (agent) =>
+        agent.agent === (backend === "claude" ? "claude-code" : backend) &&
+        agent.detected &&
+        agent.signed_in === false,
     ),
   );
 }

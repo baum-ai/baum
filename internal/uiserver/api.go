@@ -1,6 +1,7 @@
 package uiserver
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -9,6 +10,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -22,6 +24,7 @@ import (
 	"github.com/baum-ai/baum/internal/repos"
 	"github.com/baum-ai/baum/internal/store"
 	"github.com/baum-ai/baum/internal/viewserver"
+	"github.com/baum-ai/baum/sessions"
 )
 
 // LocalAPI composes the existing local services. It never selects a filesystem
@@ -85,6 +88,9 @@ type LocalAPI struct {
 	// Timeline serves /api/timeline/: the features and decisions of the
 	// local decision log (internal/decisionlog).
 	Timeline http.Handler
+	// Sessions are the session stores a pull request page's linked sessions
+	// are read from; the zero value reads this computer's default stores.
+	Sessions sessions.Options
 	// Facts builds what GET /api/facts answers: a pull request's facts for
 	// its page while it has no saved review (internal/facts). Without it the
 	// route reports the capability unavailable.
@@ -113,6 +119,9 @@ type LocalAPI struct {
 	// DiagnosticsTimeout bounds one shared run; zero means
 	// defaultDiagnosticsTimeout.
 	DiagnosticsTimeout time.Duration
+	// Version is this baum's version, named in the "Report a problem" link
+	// that /api/diagnostics returns.
+	Version string
 
 	// diagnosticsWaiting is a test hook, called once a request is waiting on
 	// the shared run.
@@ -145,6 +154,7 @@ func (h *LocalHandler) InvalidateSessions() { h.documents.invalidateSessions() }
 func (h *LocalHandler) Close() { h.documents.close() }
 func (a LocalAPI) Handler() *LocalHandler {
 	cache := newDocumentCache()
+	cache.sessions = a.Sessions
 	mux := http.NewServeMux()
 	registry := a.Registry.HandlerWith(a.CurrentName)
 	mutate := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -197,6 +207,7 @@ func (a LocalAPI) Handler() *LocalHandler {
 	mux.Handle("/api/prs/", provider(a.PRs, "discovery_unavailable"))
 	mux.Handle("/api/background", provider(a.Background, "background_unavailable"))
 	mux.Handle("/api/automatic", provider(a.Automatic, "automatic_unavailable"))
+	mux.Handle("POST /api/automatic/catch-up", provider(a.Automatic, "automatic_unavailable"))
 	mux.Handle("/api/live-sessions", provider(a.Live, "live_sessions_unavailable"))
 	mux.Handle("/api/live-sessions/", provider(a.Live, "live_sessions_unavailable"))
 	agentRequests := provider(a.AgentRequests, "agent_requests_unavailable")
@@ -431,6 +442,18 @@ func (a LocalAPI) Handler() *LocalHandler {
 					return
 				}
 				body["report"] = res.Val
+				if report, ok := res.Val.(doctor.Report); ok {
+					home, _ := os.UserHomeDir()
+					info := doctor.IssueInfo{
+						Version: cmp.Or(a.Version, "unknown"),
+						OS:      runtime.GOOS + "/" + runtime.GOARCH,
+						Home:    home,
+					}
+					// The tray and window menu open the link; the app's
+					// Report a problem dialog builds its own from the parts.
+					body["report_issue_url"] = doctor.IssueURL(report, info)
+					body["report_issue"] = report.PublicIssueParts(info)
+				}
 			}
 		}
 		writeJSON(w, body)

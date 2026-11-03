@@ -42,6 +42,7 @@ import (
 	"github.com/baum-ai/baum/internal/gitlocal"
 	"github.com/baum-ai/baum/internal/hookevents"
 	"github.com/baum-ai/baum/internal/hookrefresh"
+	"github.com/baum-ai/baum/internal/inboxcount"
 	"github.com/baum-ai/baum/internal/inboxes"
 	"github.com/baum-ai/baum/internal/jobs"
 	"github.com/baum-ai/baum/internal/livesessions"
@@ -54,6 +55,7 @@ import (
 	"github.com/baum-ai/baum/internal/reviewgroups"
 	"github.com/baum-ai/baum/internal/reviewindex"
 	"github.com/baum-ai/baum/internal/reviewruns"
+	"github.com/baum-ai/baum/internal/sampleapp"
 	"github.com/baum-ai/baum/internal/shellenv"
 	"github.com/baum-ai/baum/internal/transcript"
 	"github.com/baum-ai/baum/internal/uiserver"
@@ -435,6 +437,7 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 			scheduler.Observe(ctx, snapshot)
 			notify.Observe(ctx, snapshot)
 		}
+		scheduler.Discovered = worker.Discovered
 		chats := &chat.Service{Registry: registry, Config: cfg, Log: log}
 		// Feature builds run on the feature worker made below.
 		builds := &featureBuilder{}
@@ -659,8 +662,14 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 			return "", false
 		}
 		groupsAPI := &reviewgroups.API{Store: groups, Registry: registry, Index: index.Snapshot, Changed: changed}
-		api := uiserver.LocalAPI{GitHubAuth: githubConnection.Handler(), Registry: registry, Config: cfg, PRs: uiserver.DiscoveryHandler(registry, discover, changed), Index: index.Handler(), Jobs: queue.Handler(), Chat: uiserver.ChatHandler(registry, queue), Background: worker.Handler(), Automatic: scheduler.Handler(), Live: liveAPI, AgentRequests: requestsAPI, Clones: clones.Handler(), GitHubRepositories: pickList.Handler(), CurrentName: currentName(githubClient), PlanUsage: plans.Handler(), Analytics: insights.Handler(), Timeline: timeline, Merge: uiserver.MergeHandler(registry, actions.RecordMerges(githubClient), mergedPullRequest, changed), Review: uiserver.ReviewHandler(registry, githubClient, changed), Update: uiserver.UpdateHandler(registry, actions.RecordUpdates(prupdate.Service{Client: githubClient, Cache: panelCache, Counted: countedThreads, Clone: availableClone}), refreshRepository, changed), Changed: settingsChanged,
-			UIState:   (&uistate.Store{Path: database}).Handler(),
+		uiState := &uistate.Store{Path: database}
+		// The desktop app's badge and tray count what the app's Inbox lists.
+		inboxCount := &inboxcount.Service{Index: index.Snapshot, Jobs: queue.List, Groups: groups.List, Snoozes: func() (json.RawMessage, error) {
+			record, err := uiState.Read("inbox", "")
+			return record.Value, err
+		}}
+		api := uiserver.LocalAPI{GitHubAuth: githubConnection.Handler(), Registry: registry, Config: cfg, PRs: uiserver.DiscoveryHandler(registry, discover, changed), Index: inboxCount.Handler(index.Handler()), Jobs: queue.Handler(), Chat: uiserver.ChatHandler(registry, queue), Background: worker.Handler(), Automatic: scheduler.Handler(), Live: liveAPI, AgentRequests: requestsAPI, Clones: clones.Handler(), GitHubRepositories: pickList.Handler(), CurrentName: currentName(githubClient), PlanUsage: plans.Handler(), Analytics: insights.Handler(), Timeline: timeline, Merge: uiserver.MergeHandler(registry, actions.RecordMerges(githubClient), mergedPullRequest, changed), Review: uiserver.ReviewHandler(registry, githubClient, changed), Update: uiserver.UpdateHandler(registry, actions.RecordUpdates(prupdate.Service{Client: githubClient, Cache: panelCache, Counted: countedThreads, Clone: availableClone}), refreshRepository, changed), Changed: settingsChanged,
+			UIState:   uiState.Handler(),
 			Inboxes:   (&inboxes.API{Store: inboxes.Open(database), Changed: changed}).Handler(),
 			Groups:    groupsAPI.Handler(),
 			Decisions: decisionsAPI, Facts: pageFacts, Log: log,
@@ -687,10 +696,13 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 				}
 				return agentplugins.New().CodexTrust(ctx, dirs)
 			},
-			Diagnostics: uiDiagnostics}.Handler()
+			Diagnostics: uiDiagnostics, Version: version()}.Handler()
+		// The tour's sample project, written when first asked for.
+		sample := &sampleapp.Workspace{Dir: filepath.Join(state, "sample"), Own: api}
 		return daemon.App{
 			API:     api,
 			Assets:  localapp.Handler(),
+			Sample:  sample,
 			Methods: methods,
 			Waits:   waits,
 			Run: func(ctx context.Context) {
@@ -758,6 +770,7 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 			Drain:    queue.Drain,
 			Resume:   queue.Resume,
 			Close: func() {
+				sample.Close()
 				api.Close()
 				groupsAPI.Close()
 				unsubscribe()
