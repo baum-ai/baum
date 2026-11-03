@@ -168,6 +168,10 @@ with the decisions captured from them. In the sample the tour's Inbox stop
 picks the person's own pull request, written with their agent, so Next opens
 that one.
 
+Buttons the tour's copy names, such as **Ask** or **Focus session**, are drawn
+as those buttons but are not controls: the pointer neither hovers nor presses
+them.
+
 The PR page reuses the same `@baum/viewer` `ReviewViewer`, header, section/risk
 navigation, version menu/comparison, Markdown/code renderers, session cards,
 commit panes, tokens and system theme as the current hosted PR page. Its host
