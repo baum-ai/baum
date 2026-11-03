@@ -86,6 +86,7 @@ import { PAGES, type Page } from "./pages";
 import { LocalReview } from "./review";
 import { DecisionsRevision } from "./decisions";
 import { useCodexHookTrust } from "./codex-hooks";
+import { pendingUpdate, useAppUpdates, useUpdateToast } from "./desktop/updates";
 import { useDiagnosticProblems } from "./diagnostics";
 import { RepositoriesPage, SettingsPage, settingsSection, type ReviewDefaults } from "./settings";
 import { asksYou, SessionsPage, transcriptHref } from "./sessions";
@@ -830,6 +831,17 @@ function Workspace({ url }: { url: UrlState }) {
   // The diagnostics dialog runs them itself while it is open.
   const diagnostics = useDiagnosticProblems(page !== "diagnostics");
   const codexTrust = useCodexHookTrust();
+  const appUpdates = useAppUpdates();
+  useUpdateToast(
+    appUpdates,
+    () =>
+      url.update((current) => {
+        current.set("page", "settings");
+        current.set("section", "computer");
+        return current;
+      }),
+    page === "settings" && settingsSection(url.search.get("section")) === "computer",
+  );
   const reviewTogether = () => {
     const chosen = snapshot.entries.filter((e) => selection.has(rowKey(e)));
     if (
@@ -1260,6 +1272,7 @@ function Workspace({ url }: { url: UrlState }) {
         needsYou={asksYou(live).length}
         problems={diagnostics.problems}
         settingsWarning={codexTrust.warning}
+        update={pendingUpdate(appUpdates.view)}
         help={{
           shortcuts: () => setShortcuts(true),
           report: () => setReporting(true),
@@ -1367,6 +1380,7 @@ function Workspace({ url }: { url: UrlState }) {
               }
               onDiagnostics={diagnostics.update}
               codexTrust={codexTrust}
+              updates={appUpdates}
             />
           ) : page === "sessions" && openSession ? (
             <SessionTranscriptPage

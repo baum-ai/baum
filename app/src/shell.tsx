@@ -71,6 +71,7 @@ export function Sidebar({
   needsYou,
   problems,
   settingsWarning,
+  update,
   inboxes,
   help,
   Link,
@@ -85,6 +86,8 @@ export function Sidebar({
   needsYou: number;
   problems: number;
   settingsWarning?: string | null;
+  /** A newer desktop app version; Settings counts it. */
+  update?: string | null;
   inboxes?: RailInboxes;
   /** What the `?` beside Settings offers besides the docs. */
   help?: RailHelp;
@@ -104,18 +107,26 @@ export function Sidebar({
     },
     jobs: { badge: activeJobs > 0 ? activeJobs : null },
     settings: {
-      badge: problems > 0 ? problems + (settingsWarning ? 1 : 0) : settingsWarning ? "!" : null,
-      tone: problems > 0 ? "warn" : "caution",
+      badge:
+        problems > 0 || update
+          ? problems + (settingsWarning ? 1 : 0) + (update ? 1 : 0)
+          : settingsWarning
+            ? "!"
+            : null,
+      tone: problems > 0 ? "warn" : settingsWarning ? "caution" : undefined,
     },
   };
+  const settingsNote = [settingsWarning, update ? `baum ${update} is available` : null]
+    .filter(Boolean)
+    .join("; ");
   const link = ({ page: target, label, href, icon: Icon }: (typeof PAGES)[number]) => {
     const { badge, tone } = badges[target] ?? {};
     return (
       <Link
         key={target}
         href={href()}
-        title={`${label} (${pageKeyLabel(target, modifier)})${target === "settings" && settingsWarning ? ": " + settingsWarning : ""}`}
-        aria-description={target === "settings" ? (settingsWarning ?? undefined) : undefined}
+        title={`${label} (${pageKeyLabel(target, modifier)})${target === "settings" && settingsNote ? ": " + settingsNote : ""}`}
+        aria-description={target === "settings" ? settingsNote || undefined : undefined}
         aria-current={
           page === target && !(target === "inbox" && (inboxes?.selected || inboxes?.elsewhere))
             ? "page"

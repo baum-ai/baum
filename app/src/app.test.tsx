@@ -2048,6 +2048,239 @@ it("hides the zoom card when the desktop app does not offer zoom", async () => {
   }
 });
 
+const appUpdate = {
+  version: "0.1.0",
+  enabled: true,
+  installs: true,
+  phase: "idle",
+  available: null as string | null,
+  page: null as string | null,
+  checked_at: Math.floor(Date.now() / 1000) - 120,
+  jobs: 0,
+  error: null,
+};
+
+const setupView = {
+  first_run: false,
+  command: {
+    installed: false,
+    target: "/app/baum",
+    plan: { link: "/home/user/bin/baum", on_path: true, admin: false },
+  },
+  hooks: { agents: [] },
+};
+
+it("tells about an app update once in a toast that opens This computer", async () => {
+  let state = {
+    ...appUpdate,
+    phase: "ready",
+    available: "0.2.0",
+    page: "https://github.com/baum-ai/baum/releases/tag/v0.2.0",
+    noticed: null as string | null,
+  };
+  const invoke = vi.fn(async (command: string, args?: { version: string }) => {
+    if (command === "update_state") return state;
+    if (command === "dismiss_update_notice") {
+      state = { ...state, noticed: args!.version };
+      return state;
+    }
+    if (command === "zoom_state") return { level: 1, levels: [1] };
+    return setupView;
+  });
+  Object.defineProperty(window, "__TAURI_INTERNALS__", { configurable: true, value: { invoke } });
+  try {
+    await act(async () => root.render(<App />));
+    const toast = () => node.querySelector(".local-toast");
+    expect(toast()?.textContent).toContain("baum 0.2.0 is ready to install");
+    const open = [...toast()!.querySelectorAll("button")].find(
+      (b) => b.textContent === "Open This computer",
+    )!;
+    await act(async () => open.click());
+    expect(invoke).toHaveBeenCalledWith("dismiss_update_notice", { version: "0.2.0" });
+    expect(new URLSearchParams(location.search).get("section")).toBe("computer");
+    expect(toast()).toBeNull();
+    // Reloading the page in the same app launch does not tell it again.
+    await act(async () => root.unmount());
+    root = createRoot(node);
+    history.replaceState(null, "", "/s/test-ns/");
+    await act(async () => root.render(<App />));
+    expect(toast()).toBeNull();
+  } finally {
+    Reflect.deleteProperty(window, "__TAURI_INTERNALS__");
+  }
+});
+
+it("records a closed app update toast and skips it on This computer", async () => {
+  let state = {
+    ...appUpdate,
+    installs: false,
+    available: "0.2.0",
+    page: "https://github.com/baum-ai/baum/releases/tag/v0.2.0",
+    noticed: null as string | null,
+  };
+  const invoke = vi.fn(async (command: string, args?: { version: string }) => {
+    if (command === "update_state") return state;
+    if (command === "dismiss_update_notice") {
+      state = { ...state, noticed: args!.version };
+      return state;
+    }
+    if (command === "zoom_state") return { level: 1, levels: [1] };
+    return setupView;
+  });
+  Object.defineProperty(window, "__TAURI_INTERNALS__", { configurable: true, value: { invoke } });
+  try {
+    await act(async () => root.render(<App />));
+    const toast = () => node.querySelector(".local-toast");
+    expect(toast()?.textContent).toContain("baum 0.2.0 is available");
+    await act(async () =>
+      toast()!.querySelector<HTMLButtonElement>('button[aria-label="Dismiss"]')!.click(),
+    );
+    expect(invoke).toHaveBeenCalledWith("dismiss_update_notice", { version: "0.2.0" });
+    expect(toast()).toBeNull();
+
+    // Looking at This computer counts as seeing it.
+    state = { ...state, noticed: null };
+    invoke.mockClear();
+    await act(async () => root.unmount());
+    root = createRoot(node);
+    history.replaceState(null, "", "/s/test-ns/?page=settings&section=computer");
+    await act(async () => root.render(<App />));
+    expect(toast()).toBeNull();
+    expect(invoke).toHaveBeenCalledWith("dismiss_update_notice", { version: "0.2.0" });
+  } finally {
+    Reflect.deleteProperty(window, "__TAURI_INTERNALS__");
+  }
+});
+
+it("counts a ready app update on Settings and installs it from This computer", async () => {
+  history.replaceState(null, "", "/s/test-ns/?page=settings&section=computer");
+  let state = {
+    ...appUpdate,
+    phase: "ready",
+    available: "0.2.0",
+    page: "https://github.com/baum-ai/baum/releases/tag/v0.2.0",
+  };
+  const invoke = vi.fn(async (command: string) => {
+    if (command === "update_state") return state;
+    if (command === "install_update") {
+      state = { ...state, phase: "waiting", jobs: 2 };
+      return state;
+    }
+    if (command === "cancel_update") {
+      state = { ...state, phase: "ready", jobs: 0 };
+      return state;
+    }
+    if (command === "zoom_state") return { level: 1, levels: [1] };
+    return setupView;
+  });
+  Object.defineProperty(window, "__TAURI_INTERNALS__", { configurable: true, value: { invoke } });
+  try {
+    await act(async () => root.render(<App />));
+    const settings = node.querySelector<HTMLAnchorElement>('.local-rail a[href*="page=settings"]')!;
+    expect(settings.querySelector(".local-rail-badge")?.textContent).toBe("1");
+    expect(settings.getAttribute("title")).toContain("baum 0.2.0 is available");
+    const card = () => node.querySelector('section[aria-labelledby="updates-heading"]')!;
+    expect(card().textContent).toContain("Version 0.1.0");
+    expect(card().textContent).toContain("baum 0.2.0 is ready");
+    expect(
+      node.querySelector('.settings-nav-item[data-section="computer"] .settings-nav-count')
+        ?.textContent,
+    ).toBe("1");
+    const notes = card().querySelector<HTMLAnchorElement>('a[target="_blank"]')!;
+    expect(notes.href).toBe("https://github.com/baum-ai/baum/releases/tag/v0.2.0");
+    const button = (label: string) =>
+      [...card().querySelectorAll("button")].find((b) => b.textContent === label)!;
+    await act(async () => button("Update and restart").click());
+    expect(invoke).toHaveBeenCalledWith("install_update", undefined);
+    expect(card().textContent).toContain("installs when 2 running jobs finish");
+    await act(async () => button("Cancel").click());
+    expect(invoke).toHaveBeenCalledWith("cancel_update", undefined);
+    expect(card().textContent).toContain("baum 0.2.0 is ready");
+  } finally {
+    Reflect.deleteProperty(window, "__TAURI_INTERNALS__");
+  }
+});
+
+it("checks for app updates on request and links a copy that cannot update itself", async () => {
+  history.replaceState(null, "", "/s/test-ns/?page=settings&section=computer");
+  let state: typeof appUpdate = { ...appUpdate };
+  const invoke = vi.fn(async (command: string) => {
+    if (command === "update_state") return state;
+    if (command === "check_for_updates") {
+      state = { ...state, phase: "checking" };
+      return state;
+    }
+    if (command === "zoom_state") return { level: 1, levels: [1] };
+    return setupView;
+  });
+  Object.defineProperty(window, "__TAURI_INTERNALS__", { configurable: true, value: { invoke } });
+  try {
+    await act(async () => root.render(<App />));
+    const settings = node.querySelector('.local-rail a[href*="page=settings"]')!;
+    expect(settings.querySelector(".local-rail-badge")).toBeNull();
+    expect(node.querySelector(".settings-nav-count")).toBeNull();
+    const card = () => node.querySelector('section[aria-labelledby="updates-heading"]')!;
+    expect(card().textContent).toContain("Up to date.");
+    expect(card().textContent).toContain("Checked 2 minutes ago");
+    const check = [...card().querySelectorAll("button")].find(
+      (b) => b.textContent === "Check now",
+    )!;
+    await act(async () => check.click());
+    expect(invoke).toHaveBeenCalledWith("check_for_updates", undefined);
+    expect(card().textContent).toContain("Checking for updates…");
+    expect(check.disabled).toBe(true);
+  } finally {
+    Reflect.deleteProperty(window, "__TAURI_INTERNALS__");
+  }
+});
+
+it("counts and links an app update that this copy cannot install", async () => {
+  history.replaceState(null, "", "/s/test-ns/?page=settings&section=computer");
+  const state = {
+    ...appUpdate,
+    installs: false,
+    available: "0.2.0",
+    page: "https://github.com/baum-ai/baum/releases/tag/v0.2.0",
+  };
+  const invoke = vi.fn(async (command: string) => {
+    if (command === "update_state") return state;
+    if (command === "zoom_state") return { level: 1, levels: [1] };
+    return setupView;
+  });
+  Object.defineProperty(window, "__TAURI_INTERNALS__", { configurable: true, value: { invoke } });
+  try {
+    await act(async () => root.render(<App />));
+    const settings = node.querySelector('.local-rail a[href*="page=settings"]')!;
+    expect(settings.querySelector(".local-rail-badge")?.textContent).toBe("1");
+    const card = node.querySelector('section[aria-labelledby="updates-heading"]')!;
+    expect(card.textContent).toContain("baum 0.2.0 is available.");
+    expect(card.textContent).not.toContain("Update and restart");
+    const download = card.querySelector<HTMLAnchorElement>('a[target="_blank"]')!;
+    expect(download.textContent).toBe("Download 0.2.0");
+    expect(download.href).toBe("https://github.com/baum-ai/baum/releases/tag/v0.2.0");
+  } finally {
+    Reflect.deleteProperty(window, "__TAURI_INTERNALS__");
+  }
+});
+
+it("hides the app update card when the desktop app offers no updater", async () => {
+  history.replaceState(null, "", "/s/test-ns/?page=settings&section=computer");
+  const invoke = vi.fn(async (command: string) => {
+    if (command === "update_state") throw new Error("update_state not allowed");
+    if (command === "zoom_state") return { level: 1, levels: [1] };
+    return setupView;
+  });
+  Object.defineProperty(window, "__TAURI_INTERNALS__", { configurable: true, value: { invoke } });
+  try {
+    await act(async () => root.render(<App />));
+    expect(invoke).toHaveBeenCalledWith("update_state", undefined);
+    expect(node.querySelector('section[aria-labelledby="updates-heading"]')).toBeNull();
+    expect(node.textContent).not.toContain("update_state not allowed");
+  } finally {
+    Reflect.deleteProperty(window, "__TAURI_INTERNALS__");
+  }
+});
+
 it("opens clone-less PR deep links by repository and refreshes picked repositories", async () => {
   const row = { ...entry(7), clone_id: undefined, needs_clone: true };
   entries = [row];

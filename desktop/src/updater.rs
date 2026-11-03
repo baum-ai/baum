@@ -4,26 +4,30 @@
 //! is in `tauri.conf.json`, made for the version the manifest announces;
 //! anything else is rejected before it is installed.
 //!
-//! Where the app can replace itself (the macOS app, the Linux AppImage and
-//! the Windows installer), it downloads the update in the background, waits
-//! while the daemon runs generation jobs, and asks before it restarts. A deb
-//! install, or any other copy the updater cannot replace, only says that a
-//! new version exists and links to its release page. So does a version whose
-//! installation failed before: it is remembered in the app's config
-//! directory and never offered for installation again.
+//! The updater never interrupts: Settings shows its state (`update_state`),
+//! and the sidebar counts an available update on Settings. Where the app can
+//! replace itself (the macOS app, the Linux AppImage and the Windows
+//! installer), it downloads the update in the background; installing it
+//! (`install_update`) waits while the daemon runs generation jobs, then
+//! restarts the app (`cancel_update` stops that wait). A deb install, or any
+//! other copy the updater cannot replace, only says that a new version exists
+//! and links to its release page. So does a version whose installation
+//! failed before: it is remembered in the app's config directory and never
+//! offered for installation again. `check_for_updates` checks at once. The
+//! page also shows a toast once per version and app launch; closing it
+//! (`dismiss_update_notice`) is remembered only in memory.
 
 use std::ffi::OsStr;
 #[cfg(test)]
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::{Condvar, Mutex, MutexGuard};
 use std::thread;
 use std::time::{Duration, SystemTime};
 
 use serde::{Deserialize, Serialize};
 use tauri::utils::config::BundleType;
-use tauri::{AppHandle, Manager, Runtime};
-use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
-use tauri_plugin_opener::OpenerExt;
+use tauri::{AppHandle, Manager, Runtime, State};
 use tauri_plugin_updater::{Update, UpdaterExt};
 
 use crate::daemon;
@@ -43,7 +47,8 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
 /// A request that receives nothing for this long is abandoned. A slow
 /// download that keeps receiving data is not cut off.
 const STALL_TIMEOUT: Duration = Duration::from_secs(2 * 60);
-const JOBS_POLL: Duration = Duration::from_secs(60);
+/// How often an install that waits for running jobs asks again.
+const JOBS_POLL: Duration = Duration::from_secs(15);
 const STATUS_TIMEOUT: Duration = Duration::from_secs(10);
 /// How long `baum daemon stop` may take before a Windows update.
 #[cfg(windows)]
@@ -54,7 +59,7 @@ const SECTION: &str = "updates";
 /// What the app does with an update.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Mode {
-    /// Download it, wait for running jobs, ask, install and restart.
+    /// Download it, then install it when asked, once no job runs.
     Install,
     /// Say it exists and link to the release page.
     Announce,
@@ -88,20 +93,9 @@ fn release_page(version: &str) -> String {
     format!("{RELEASES}/tag/v{}", version.trim_start_matches('v'))
 }
 
-/// Returns once `running` reports no running job, sleeping between asks.
-fn wait_until_idle(mut running: impl FnMut() -> usize, mut sleep: impl FnMut(Duration)) {
-    let mut waiting = 0;
-    loop {
-        let jobs = running();
-        if jobs == 0 {
-            return;
-        }
-        if jobs != waiting {
-            eprintln!("baum desktop: the update waits for {jobs} running generation job(s)");
-            waiting = jobs;
-        }
-        sleep(JOBS_POLL);
-    }
+fn unix_seconds(at: SystemTime) -> u64 {
+    at.duration_since(SystemTime::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs())
 }
 
 /// What the updater remembers between app starts.
@@ -146,165 +140,396 @@ fn running_jobs() -> usize {
     })
 }
 
-/// Starts the update checks on their own thread.
+/// What the updater is doing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Phase {
+    /// Nothing; `available` says what the last check found.
+    Idle,
+    Checking,
+    Downloading,
+    /// Downloaded and verified, waiting to be installed.
+    Ready,
+    /// Asked to install; waits while generation jobs run.
+    Waiting,
+    Installing,
+}
+
+/// The updater as Settings and the sidebar show it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct View {
+    /// This app's version.
+    version: String,
+    /// Whether this build checks for updates at all.
+    enabled: bool,
+    /// Whether this copy can install `available` itself; otherwise Settings
+    /// links to its release page.
+    installs: bool,
+    phase: Phase,
+    /// The newer version the last check found.
+    available: Option<String>,
+    /// Its release page.
+    page: Option<String>,
+    /// When the last check succeeded, in seconds since the Unix epoch.
+    checked_at: Option<u64>,
+    /// The running jobs an install waits for.
+    jobs: usize,
+    /// Why the last check, download or install failed.
+    error: Option<String>,
+    /// The version whose notice the person closed since the app started;
+    /// the page tells them about an update once per version and launch.
+    noticed: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Request {
+    Check,
+    Install,
+}
+
+struct Inner {
+    view: View,
+    request: Option<Request>,
+    cancel: bool,
+    /// The downloaded, verified update.
+    ready: Option<(Update, Vec<u8>)>,
+}
+
+/// The updater's state, shared by its thread and the commands.
+pub struct Updates {
+    inner: Mutex<Inner>,
+    wake: Condvar,
+}
+
+impl Updates {
+    fn new(version: String, enabled: bool, installs: bool) -> Updates {
+        Updates {
+            inner: Mutex::new(Inner {
+                view: View {
+                    version,
+                    enabled,
+                    installs,
+                    phase: Phase::Idle,
+                    available: None,
+                    page: None,
+                    checked_at: None,
+                    jobs: 0,
+                    error: None,
+                    noticed: None,
+                },
+                request: None,
+                cancel: false,
+                ready: None,
+            }),
+            wake: Condvar::new(),
+        }
+    }
+
+    fn lock(&self) -> MutexGuard<'_, Inner> {
+        self.inner.lock().unwrap_or_else(|p| p.into_inner())
+    }
+
+    fn view(&self) -> View {
+        self.lock().view.clone()
+    }
+
+    fn edit<T>(&self, change: impl FnOnce(&mut Inner) -> T) -> T {
+        change(&mut self.lock())
+    }
+
+    /// Asks the updater thread to check now. A check, download or install
+    /// already under way answers for it.
+    fn request_check(&self) -> Result<View, String> {
+        let mut inner = self.lock();
+        if !inner.view.enabled {
+            return Err("This build does not check for updates.".into());
+        }
+        if matches!(inner.view.phase, Phase::Idle | Phase::Ready) {
+            inner.request = Some(Request::Check);
+            if inner.view.phase == Phase::Idle {
+                inner.view.phase = Phase::Checking;
+            }
+            inner.view.error = None;
+            self.wake.notify_all();
+        }
+        Ok(inner.view.clone())
+    }
+
+    /// Asks the updater thread to install the downloaded update.
+    fn request_install(&self) -> Result<View, String> {
+        let mut inner = self.lock();
+        if inner.view.phase != Phase::Ready || !inner.view.installs {
+            return Err("No update is ready to install.".into());
+        }
+        inner.request = Some(Request::Install);
+        inner.cancel = false;
+        inner.view.phase = Phase::Waiting;
+        inner.view.jobs = 0;
+        inner.view.error = None;
+        self.wake.notify_all();
+        Ok(inner.view.clone())
+    }
+
+    /// Stops an install that waits for running jobs.
+    fn request_cancel(&self) -> View {
+        let mut inner = self.lock();
+        if inner.view.phase == Phase::Waiting {
+            inner.cancel = true;
+            self.wake.notify_all();
+        }
+        inner.view.clone()
+    }
+
+    /// Remembers, until the app quits, that the person saw `version`'s notice.
+    fn dismiss_notice(&self, version: String) -> View {
+        let mut inner = self.lock();
+        inner.view.noticed = Some(version);
+        inner.view.clone()
+    }
+
+    /// Waits up to `timeout` for a request and takes it.
+    fn next_request(&self, timeout: Duration) -> Option<Request> {
+        let mut inner = self.lock();
+        if inner.request.is_none() {
+            inner = self
+                .wake
+                .wait_timeout(inner, timeout)
+                .unwrap_or_else(|p| p.into_inner())
+                .0;
+        }
+        inner.request.take()
+    }
+
+    /// Waits up to `timeout`; true once the wait for jobs was cancelled.
+    fn cancelled(&self, timeout: Duration) -> bool {
+        let mut inner = self.lock();
+        if !inner.cancel {
+            inner = self
+                .wake
+                .wait_timeout(inner, timeout)
+                .unwrap_or_else(|p| p.into_inner())
+                .0;
+        }
+        std::mem::take(&mut inner.cancel)
+    }
+
+    fn fail(&self, phase: Phase, error: String) {
+        eprintln!("baum desktop: {error}");
+        self.edit(|inner| {
+            inner.view.phase = phase;
+            inner.view.jobs = 0;
+            inner.view.error = Some(error);
+        });
+    }
+}
+
+/// Keeps the updater's state and starts its checks on their own thread.
 pub fn start<R: Runtime>(app: &AppHandle<R>) {
     let version = app.package_info().version.to_string();
     let setting = std::env::var_os(SETTING);
-    if !enabled(&version, cfg!(debug_assertions), setting.as_deref()) {
+    let enabled = enabled(&version, cfg!(debug_assertions), setting.as_deref());
+    let installs = mode(tauri::utils::platform::bundle_type()) == Mode::Install;
+    app.manage(Updates::new(version, enabled, installs));
+    if !enabled {
         return;
     }
     let app = app.clone();
     let spawned = thread::Builder::new()
         .name("updater".into())
-        .spawn(move || {
-            thread::sleep(FIRST_CHECK_DELAY);
-            let mut session = Session::default();
-            loop {
-                let last = SystemTime::now();
-                if let Err(e) = session.check(&app) {
-                    eprintln!("baum desktop: update check failed: {e}");
-                }
-                while !due(last, SystemTime::now()) {
-                    thread::sleep(CLOCK_TICK);
-                }
-            }
-        });
+        .spawn(move || run(&app));
     if let Err(e) = spawned {
         eprintln!("baum desktop: cannot start update checks: {e}");
     }
 }
 
-#[derive(Default)]
-struct Session {
-    /// The version the user was last told about, so the daily check does not
-    /// repeat itself.
-    announced: Option<String>,
-    /// A downloaded, verified update the user chose to install later.
-    ready: Option<(Update, Vec<u8>)>,
+fn run<R: Runtime>(app: &AppHandle<R>) {
+    let updates = app.state::<Updates>();
+    // A check asked for from Settings starts the first one early.
+    let mut request = updates.next_request(FIRST_CHECK_DELAY);
+    loop {
+        if request == Some(Request::Install) {
+            install(app, &updates);
+        } else {
+            check(app, &updates);
+        }
+        let last = SystemTime::now();
+        request = None;
+        while request.is_none() && !due(last, SystemTime::now()) {
+            request = updates.next_request(CLOCK_TICK);
+        }
+    }
 }
 
-impl Session {
-    fn check<R: Runtime>(&mut self, app: &AppHandle<R>) -> Result<(), String> {
-        let updater = app
-            .updater_builder()
-            .configure_client(|client| {
-                client
-                    .connect_timeout(CONNECT_TIMEOUT)
-                    .read_timeout(STALL_TIMEOUT)
-            })
-            .build()
-            .map_err(|e| e.to_string())?;
-        let Some(update) =
-            tauri::async_runtime::block_on(updater.check()).map_err(|e| e.to_string())?
-        else {
-            self.ready = None;
-            return Ok(());
-        };
-        let state = state_file(app);
-        let failed_before = state
-            .as_deref()
-            .is_some_and(|path| install_failed_before(path, &update.version));
-        match mode(tauri::utils::platform::bundle_type()) {
-            Mode::Install if !failed_before => self.install(app, update),
-            _ => {
-                let reason = failed_before.then_some("An earlier attempt to install it failed.");
-                self.announce(app, &update, reason);
-                Ok(())
-            }
+fn check<R: Runtime>(app: &AppHandle<R>, updates: &Updates) {
+    updates.edit(|inner| {
+        if inner.view.phase == Phase::Idle {
+            inner.view.phase = Phase::Checking;
         }
-    }
-
-    fn install<R: Runtime>(&mut self, app: &AppHandle<R>, update: Update) -> Result<(), String> {
-        let bytes = match self.ready.take() {
-            Some((ready, bytes)) if ready.version == update.version => bytes,
-            // Verifies the signature, and the version it was made for,
-            // before returning anything.
-            _ => tauri::async_runtime::block_on(update.download(|_, _| {}, || {}))
-                .map_err(|e| format!("cannot download baum {}: {e}", update.version))?,
-        };
-        wait_until_idle(running_jobs, thread::sleep);
-        let restart = app
-            .dialog()
-            .message(format!(
-                "baum {} is ready to install. The app restarts to finish; no generation job is running.",
-                update.version
-            ))
-            .title("Update ready")
-            .kind(MessageDialogKind::Info)
-            .buttons(MessageDialogButtons::OkCancelCustom(
-                "Restart now".into(),
-                "Later".into(),
-            ))
-            .blocking_show();
-        if !restart {
-            self.ready = Some((update, bytes));
-            return Ok(());
-        }
-        // A job may have started while the question was open.
-        wait_until_idle(running_jobs, thread::sleep);
-        // Windows: the installer closes the app and the updated app starts
-        // the daemon, so stop it now rather than leave the old version
-        // running from the app's copy of baum.exe (or, for installs from
-        // before that copy, from the installed one, which the installer could
-        // then not replace). Stopping marks the daemon as stopped by the
-        // user, so hooks leave it alone; the updated app's `baum daemon
-        // ensure` starts it and clears that mark. The installer's pre-install
-        // hook stops it too (windows/installer-hooks.nsh). Elsewhere nothing
-        // is stopped: the AppImage's copy of baum is refreshed by renaming a
-        // new file into place, so the running daemon keeps its binary until
-        // the updated app's `ensure` replaces it, as after any upgrade.
-        #[cfg(windows)]
-        stop_daemon();
-        if let Err(e) = update.install(&bytes) {
-            eprintln!("baum desktop: cannot install baum {}: {e}", update.version);
-            #[cfg(windows)]
-            restart_daemon();
-            if let Some(path) = state_file(app)
-                && let Err(e) = remember_failed_install(&path, &update.version)
-            {
-                eprintln!("baum desktop: cannot record the failed update: {e}");
-            }
-            self.announce(
-                app,
-                &update,
-                Some("This copy of baum could not update itself."),
-            );
-            return Ok(());
-        }
-        // Windows does not get here: the installer has already closed the
-        // app, and starts it again when it finishes.
-        app.restart()
-    }
-
-    fn announce<R: Runtime>(&mut self, app: &AppHandle<R>, update: &Update, reason: Option<&str>) {
-        if self.announced.as_deref() == Some(update.version.as_str()) {
+    });
+    let found = app
+        .updater_builder()
+        .configure_client(|client| {
+            client
+                .connect_timeout(CONNECT_TIMEOUT)
+                .read_timeout(STALL_TIMEOUT)
+        })
+        .build()
+        .and_then(|updater| tauri::async_runtime::block_on(updater.check()));
+    let update = match found {
+        Ok(update) => update,
+        Err(e) => {
+            let phase = updates.view().phase;
+            let phase = if phase == Phase::Ready {
+                Phase::Ready
+            } else {
+                Phase::Idle
+            };
+            updates.fail(phase, format!("cannot check for updates: {e}"));
             return;
         }
-        self.announced = Some(update.version.clone());
-        let mut message = format!(
-            "baum {} is available. You have {}.",
-            update.version, update.current_version
-        );
-        if let Some(reason) = reason {
-            message = format!("{reason} {message}");
+    };
+    let now = unix_seconds(SystemTime::now());
+    let Some(update) = update else {
+        updates.edit(|inner| {
+            inner.ready = None;
+            inner.view.phase = Phase::Idle;
+            inner.view.available = None;
+            inner.view.page = None;
+            inner.view.checked_at = Some(now);
+            inner.view.error = None;
+        });
+        return;
+    };
+    let failed_before = state_file(app)
+        .as_deref()
+        .is_some_and(|path| install_failed_before(path, &update.version));
+    let installs = !failed_before && mode(tauri::utils::platform::bundle_type()) == Mode::Install;
+    let already = updates.edit(|inner| {
+        inner.view.available = Some(update.version.clone());
+        inner.view.page = Some(release_page(&update.version));
+        inner.view.checked_at = Some(now);
+        inner.view.installs = installs;
+        inner.view.error = failed_before.then(|| {
+            format!(
+                "An earlier attempt to install baum {} failed; download it from its release page.",
+                update.version
+            )
+        });
+        let already = inner
+            .ready
+            .as_ref()
+            .is_some_and(|(ready, _)| ready.version == update.version);
+        inner.view.phase = if !installs {
+            Phase::Idle
+        } else if already {
+            Phase::Ready
+        } else {
+            Phase::Downloading
+        };
+        already
+    });
+    if !installs || already {
+        return;
+    }
+    // Verifies the signature, and the version it was made for, before
+    // returning anything.
+    match tauri::async_runtime::block_on(update.download(|_, _| {}, || {})) {
+        Ok(bytes) => updates.edit(|inner| {
+            inner.ready = Some((update, bytes));
+            inner.view.phase = Phase::Ready;
+        }),
+        Err(e) => updates.fail(
+            Phase::Idle,
+            format!("cannot download baum {}: {e}", update.version),
+        ),
+    }
+}
+
+/// Installs the downloaded update once no generation job runs, then
+/// restarts the app.
+fn install<R: Runtime>(app: &AppHandle<R>, updates: &Updates) {
+    let Some((update, bytes)) = updates.edit(|inner| inner.ready.take()) else {
+        updates.fail(Phase::Idle, "no update is ready to install".into());
+        return;
+    };
+    loop {
+        let jobs = running_jobs();
+        if jobs == 0 {
+            break;
         }
-        let open = app
-            .dialog()
-            .message(message)
-            .title("Update available")
-            .kind(MessageDialogKind::Info)
-            .buttons(MessageDialogButtons::OkCancelCustom(
-                "Open download page".into(),
-                "Later".into(),
-            ))
-            .blocking_show();
-        if open {
-            let page = release_page(&update.version);
-            if let Err(e) = app.opener().open_url(&page, None::<&str>) {
-                eprintln!("baum desktop: cannot open {page}: {e}");
-            }
+        updates.edit(|inner| inner.view.jobs = jobs);
+        if updates.cancelled(JOBS_POLL) {
+            updates.edit(|inner| {
+                inner.ready = Some((update, bytes));
+                inner.view.phase = Phase::Ready;
+                inner.view.jobs = 0;
+            });
+            return;
         }
     }
+    updates.edit(|inner| {
+        inner.view.phase = Phase::Installing;
+        inner.view.jobs = 0;
+    });
+    // Windows: the installer closes the app and the updated app starts
+    // the daemon, so stop it now rather than leave the old version
+    // running from the app's copy of baum.exe (or, for installs from
+    // before that copy, from the installed one, which the installer could
+    // then not replace). Stopping marks the daemon as stopped by the
+    // user, so hooks leave it alone; the updated app's `baum daemon
+    // ensure` starts it and clears that mark. The installer's pre-install
+    // hook stops it too (windows/installer-hooks.nsh). Elsewhere nothing
+    // is stopped: the AppImage's copy of baum is refreshed by renaming a
+    // new file into place, so the running daemon keeps its binary until
+    // the updated app's `ensure` replaces it, as after any upgrade.
+    #[cfg(windows)]
+    stop_daemon();
+    if let Err(e) = update.install(&bytes) {
+        #[cfg(windows)]
+        restart_daemon();
+        if let Some(path) = state_file(app)
+            && let Err(e) = remember_failed_install(&path, &update.version)
+        {
+            eprintln!("baum desktop: cannot record the failed update: {e}");
+        }
+        updates.edit(|inner| inner.view.installs = false);
+        updates.fail(
+            Phase::Idle,
+            format!(
+                "This copy of baum could not update itself to {} ({e}); download it from its release page.",
+                update.version
+            ),
+        );
+        return;
+    }
+    // Windows does not get here: the installer has already closed the
+    // app, and starts it again when it finishes.
+    app.restart()
+}
+
+#[tauri::command]
+pub fn update_state(updates: State<'_, Updates>) -> View {
+    updates.view()
+}
+
+#[tauri::command]
+pub fn check_for_updates(updates: State<'_, Updates>) -> Result<View, String> {
+    updates.request_check()
+}
+
+#[tauri::command]
+pub fn install_update(updates: State<'_, Updates>) -> Result<View, String> {
+    updates.request_install()
+}
+
+#[tauri::command]
+pub fn cancel_update(updates: State<'_, Updates>) -> View {
+    updates.request_cancel()
+}
+
+#[tauri::command]
+pub fn dismiss_update_notice(updates: State<'_, Updates>, version: String) -> View {
+    updates.dismiss_notice(version)
 }
 
 #[cfg(windows)]
@@ -416,11 +641,87 @@ mod tests {
     }
 
     #[test]
-    fn waits_while_jobs_run() {
-        let mut answers = vec![0, 1, 2].into_iter();
-        let mut slept = Vec::new();
-        wait_until_idle(|| answers.next_back().unwrap(), |d| slept.push(d));
-        assert_eq!(slept, vec![JOBS_POLL, JOBS_POLL]);
+    fn a_check_is_asked_for_once_and_only_when_updates_are_on() {
+        let off = Updates::new("0.0.0".into(), false, true);
+        assert!(off.request_check().is_err());
+        assert_eq!(off.next_request(Duration::ZERO), None);
+
+        let updates = Updates::new("1.2.3".into(), true, true);
+        let view = updates.request_check().unwrap();
+        assert_eq!(view.phase, Phase::Checking);
+        assert_eq!(updates.next_request(Duration::ZERO), Some(Request::Check));
+        // A check under way answers a second click.
+        updates.request_check().unwrap();
+        assert_eq!(updates.next_request(Duration::ZERO), None);
+    }
+
+    #[test]
+    fn only_a_ready_update_is_installed_and_its_wait_can_be_cancelled() {
+        let updates = Updates::new("1.2.3".into(), true, true);
+        assert!(updates.request_install().is_err());
+        assert!(!updates.cancelled(Duration::ZERO));
+
+        updates.edit(|inner| inner.view.phase = Phase::Ready);
+        let view = updates.request_install().unwrap();
+        assert_eq!(view.phase, Phase::Waiting);
+        assert_eq!(updates.next_request(Duration::ZERO), Some(Request::Install));
+        updates.request_cancel();
+        assert!(updates.cancelled(Duration::ZERO));
+        assert!(!updates.cancelled(Duration::ZERO));
+    }
+
+    #[test]
+    fn a_copy_that_cannot_replace_itself_never_installs() {
+        let updates = Updates::new("1.2.3".into(), true, false);
+        updates.edit(|inner| inner.view.phase = Phase::Ready);
+        assert!(updates.request_install().is_err());
+    }
+
+    #[test]
+    fn a_request_wakes_the_updater() {
+        let updates = std::sync::Arc::new(Updates::new("1.2.3".into(), true, true));
+        let waiter = {
+            let updates = updates.clone();
+            thread::spawn(move || updates.next_request(Duration::from_secs(30)))
+        };
+        thread::sleep(Duration::from_millis(50));
+        updates.request_check().unwrap();
+        assert_eq!(waiter.join().unwrap(), Some(Request::Check));
+    }
+
+    #[test]
+    fn the_view_is_what_settings_reads() {
+        let view = Updates::new("1.2.3".into(), true, true).view();
+        assert_eq!(
+            serde_json::to_value(view).unwrap(),
+            serde_json::json!({
+                "version": "1.2.3",
+                "enabled": true,
+                "installs": true,
+                "phase": "idle",
+                "available": null,
+                "page": null,
+                "checked_at": null,
+                "jobs": 0,
+                "error": null,
+                "noticed": null,
+            })
+        );
+    }
+
+    #[test]
+    fn a_closed_notice_is_remembered_until_the_app_quits() {
+        let updates = Updates::new("1.2.3".into(), true, true);
+        assert_eq!(
+            updates.dismiss_notice("1.2.4".into()).noticed.as_deref(),
+            Some("1.2.4")
+        );
+        assert_eq!(updates.view().noticed.as_deref(), Some("1.2.4"));
+        // A new app starts with nothing noticed.
+        assert_eq!(
+            Updates::new("1.2.3".into(), true, true).view().noticed,
+            None
+        );
     }
 
     /// The release workflow signs bundles with the key whose public half is

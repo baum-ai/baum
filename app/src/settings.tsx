@@ -53,6 +53,7 @@ import { GitHubConnectionSection } from "./github-connection";
 import { messages as githubMessages } from "./github-auth";
 import { CodexHookWarning, type useCodexHookTrust } from "./codex-hooks";
 import { DiagnosticsSection } from "./diagnostics";
+import { pendingUpdate, UpdatesSection, type AppUpdates } from "./desktop/updates";
 import { invoke } from "./desktop/native";
 import { withCode } from "./desktop/code-terms";
 import { Notice, PageBar, PanelHeader, RefreshButton } from "./shell";
@@ -1051,6 +1052,7 @@ export function SettingsPage({
   onDiagnostics,
   authChanged,
   codexTrust,
+  updates,
 }: {
   automatic: Automatic | null;
   defaults: ReviewDefaults | null;
@@ -1064,8 +1066,11 @@ export function SettingsPage({
   onDiagnostics: (report: DiagnosticReport | null) => void;
   authChanged: () => void;
   codexTrust?: ReturnType<typeof useCodexHookTrust>;
+  /** The desktop app's updater, from the app shell. */
+  updates?: AppUpdates;
 }) {
   const setup = useDesktopSetup(codexTrust?.recheck);
+  const update = pendingUpdate(updates?.view ?? null);
   // Only the desktop app can ask the agent CLIs whether they are signed in.
   const signedOut = setup.desktop && setup.view ? signedOutHarnesses(setup.view.hooks.agents) : [];
   const gh = githubHealth(github);
@@ -1077,7 +1082,8 @@ export function SettingsPage({
       : hooks?.tone === "caution" || codexTrust?.warning
         ? "caution"
         : gh.tone;
-  const nav: { id: SettingsSection; sub: string; tone?: Tone }[] = [
+  // `count` repeats the sidebar's Settings badge where it comes from.
+  const nav: { id: SettingsSection; sub: string; tone?: Tone; count?: number }[] = [
     {
       id: "general",
       sub: "Appearance and keyboard",
@@ -1104,10 +1110,13 @@ export function SettingsPage({
       sub:
         problems > 0
           ? `${problems} ${problems === 1 ? "problem" : "problems"} found`
-          : setup.desktop
-            ? "Diagnostics, CLI, environment"
-            : "Diagnostics, environment",
+          : update
+            ? "Update available"
+            : setup.desktop
+              ? "Diagnostics, CLI, environment"
+              : "Diagnostics, environment",
       tone: problems > 0 ? "critical" : undefined,
+      count: update ? 1 : undefined,
     },
   ];
   const keys = useSettingsKeys(
@@ -1155,6 +1164,15 @@ export function SettingsPage({
                       className="ml-2 inline-flex"
                     >
                       <Dot tone={item.tone} />
+                    </span>
+                  ) : null}
+                  {item.count ? (
+                    <span
+                      className="settings-nav-count"
+                      aria-hidden="true"
+                      title="Update available"
+                    >
+                      {item.count}
                     </span>
                   ) : null}
                 </span>
@@ -1229,6 +1247,7 @@ export function SettingsPage({
                 title="This computer"
                 detail="What baum needs here, and how it runs."
               />
+              {updates ? <UpdatesSection updates={updates} /> : null}
               <div className="local-panel settings-list">
                 <SettingRow
                   label="Diagnostics"

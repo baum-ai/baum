@@ -15,7 +15,9 @@ import {
 
 /** What the app tells the person after they acted: what happened, what it
  *  was about, and where (a session, a pull request), with that thing's icon;
- *  `error` draws a failure, and `action` offers one step more, such as Undo. */
+ *  `error` draws a failure, and `action` offers one step more, such as Undo.
+ *  A `sticky` toast stays until the person closes it or takes its action,
+ *  either of which calls `onClose`. */
 export type Toast = {
   title: string;
   detail?: string;
@@ -24,6 +26,8 @@ export type Toast = {
   icon?: { brand: Brand; alt: string };
   error?: boolean;
   action?: { label: string; run: () => void };
+  sticky?: boolean;
+  onClose?: () => void;
 };
 
 const Show = createContext<(toast: Toast) => void>(() => {});
@@ -55,9 +59,14 @@ function ToastView({ toast, close }: { toast: Toast; close: () => void }) {
   const closing = useRef(close);
   closing.current = close;
   useEffect(() => {
+    if (toast.sticky) return;
     const timer = setTimeout(() => closing.current(), SHOWN_FOR);
     return () => clearTimeout(timer);
-  }, []);
+  }, [toast.sticky]);
+  const dismiss = () => {
+    toast.onClose?.();
+    close();
+  };
   const Icon = toast.error ? WarningIcon : CircleCheckIcon;
   return (
     <div className={toast.error ? "local-toast error" : "local-toast"}>
@@ -82,13 +91,13 @@ function ToastView({ toast, close }: { toast: Toast; close: () => void }) {
           className={cn("local-toast-action", SMALL)}
           onClick={() => {
             toast.action!.run();
-            close();
+            dismiss();
           }}
         >
           {toast.action.label}
         </button>
       ) : null}
-      <button type="button" className="local-toast-close" aria-label="Dismiss" onClick={close}>
+      <button type="button" className="local-toast-close" aria-label="Dismiss" onClick={dismiss}>
         <CloseIcon size={12} />
       </button>
     </div>
