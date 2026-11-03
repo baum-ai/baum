@@ -529,9 +529,6 @@ export function GroupPage({
     if (step) {
       event.preventDefault();
       step.go();
-    } else if (event.key === "g" && !generating && !busy && clone) {
-      event.preventDefault();
-      void generate();
     }
   });
 

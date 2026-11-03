@@ -339,7 +339,7 @@ it("makes Personal from the login with the badge off, and the others as their qu
   await saveTemplate("Quick merges");
   expect(puts[2]!.inboxes.at(-1)).toMatchObject({ color: "amber", query: "waiting=merge" });
   await saveTemplate("For an agent");
-  expect(puts[3]!.inboxes.at(-1)).toMatchObject({ color: "grey", query: "waiting=agent" });
+  expect(puts[3]!.inboxes.at(-1)).toMatchObject({ color: "blue", query: "waiting=agent" });
   await saveTemplate("Custom");
   expect(puts[4]!.inboxes.at(-1)).toMatchObject({ name: "Custom", query: "" });
 });
@@ -701,7 +701,7 @@ it("puts New inbox and Manage inboxes in Inbox's right-click menu, and Edit in a
 });
 
 it("lists the inboxes, New inbox and Manage inboxes in Go to", async () => {
-  await render();
+  await render("?page=pulls");
   await act(async () => {
     window.dispatchEvent(new KeyboardEvent("keydown", { key: "k", ctrlKey: true, bubbles: true }));
   });
@@ -779,3 +779,22 @@ it("falls back to Inbox for a daemon that says it has no inboxes", async () => {
   expect(node.querySelector(".upnext-list-head h1")!.textContent).toBe("Up next");
   expect(node.querySelector('[role="alert"]')).toBeNull();
 });
+
+for (const modifier of ["metaKey", "ctrlKey"]) {
+  it(`creates an inbox with ${modifier} and Enter`, async () => {
+    await render("?page=inbox-new");
+    await click(template("Custom"));
+    await type(nameInput(), "Keyboard inbox");
+    await act(async () => {
+      nameInput().dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "Enter",
+          [modifier]: true,
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+    });
+    expect(puts.at(-1)?.inboxes.at(-1)).toMatchObject({ name: "Keyboard inbox" });
+  });
+}

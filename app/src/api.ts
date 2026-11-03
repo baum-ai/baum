@@ -404,6 +404,8 @@ export type Diagnostics = {
   generation_runner: boolean;
   discovery: boolean;
   index: boolean;
+  /** This user's home directory, which the app shows as ~ in the report. */
+  home?: string;
   report: DiagnosticReport | null;
   /** A new GitHub issue with the version, OS and a redacted summary filled in. */
   report_issue_url?: string;
@@ -461,6 +463,7 @@ export type LiveSession = {
   branch?: string;
   /** Absent while the branch has no unique matching pull request. */
   pr?: number;
+  pr_state?: "OPEN" | "MERGED" | "CLOSED";
   link_status?:
     | "resolved"
     | "unmatched"

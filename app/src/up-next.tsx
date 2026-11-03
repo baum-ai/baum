@@ -6,7 +6,7 @@ import {
   SaveButton,
   type SaveOption,
 } from "./filter-menu";
-import { matchesQuery, queryProblem, useFilterDraft } from "./pr-filter";
+import { matchesQuery, parseQuery, queryProblem, useFilterDraft } from "./pr-filter";
 import {
   Fragment,
   useEffect,
@@ -30,7 +30,7 @@ import {
 } from "@baum/viewer/components/icons";
 import { InlineMarkdown, Markdown } from "@baum/viewer/components/markdown";
 import { Lines } from "@baum/viewer/components/review-parts";
-import { Alert, Badge, Button, LiveDot } from "@baum/viewer/components/ui";
+import { Alert, Badge, Button, CloseButton, LiveDot } from "@baum/viewer/components/ui";
 import type { ViewerLinkProps } from "@baum/viewer/navigation";
 import {
   RISK_SCORE_MEANING,
@@ -361,7 +361,51 @@ type Seen = {
   minutes?: number | null;
   /** When it left the queue; absent while it is in it. */
   cleared?: number;
+  /** Its row as last in the queue, which filters test once it is done;
+   *  absent in records kept before it was. */
+  last?: Snapshot;
 };
+/** What of a row the filters read (`pr-filter.ts`), kept small so the
+ *  inbox's record stays within what the daemon stores. */
+type Snapshot = Pick<Entry, "review" | "checks" | "merge"> & {
+  risk_score: { score: number | null } | null;
+  pull_request: Pick<
+    Entry["pull_request"],
+    | "repository"
+    | "number"
+    | "title"
+    | "author"
+    | "author_bot"
+    | "draft"
+    | "authored_by_me"
+    | "review_requested_from_me"
+    | "assigned_to_me"
+    | "base_ref"
+    | "behind"
+  >;
+};
+function snapshot(entry: Entry): Snapshot {
+  const pr = entry.pull_request;
+  return {
+    review: entry.review,
+    checks: entry.checks,
+    merge: entry.merge,
+    risk_score: entry.risk_score ? { score: entry.risk_score.score } : null,
+    pull_request: {
+      repository: pr.repository,
+      number: pr.number,
+      title: pr.title,
+      author: pr.author,
+      author_bot: pr.author_bot,
+      draft: pr.draft,
+      authored_by_me: pr.authored_by_me,
+      review_requested_from_me: pr.review_requested_from_me,
+      assigned_to_me: pr.assigned_to_me,
+      base_ref: pr.base_ref,
+      behind: pr.behind,
+    },
+  };
+}
 /** What the inbox remembers on this computer: today's pull requests and
  *  which it cleared, and the person's snoozes. */
 type Stored = {
@@ -473,8 +517,7 @@ export function useUpNext(
   );
   const signature = [
     ...items.map(
-      (item) =>
-        `${item.key}:${item.kind}:${item.minutes}:${item.entry.pull_request.head_sha}:${item.entry.pull_request.title}`,
+      (item) => `${item.key}:${item.kind}:${item.minutes}:${JSON.stringify(item.entry)}`,
     ),
     ...entries
       .filter((entry) => waitingKeys.has(upNextKey(entry.pull_request)))
@@ -511,7 +554,8 @@ export function useUpNext(
           seen.cleared != null ||
           seen.kind !== item.kind ||
           seen.title !== item.entry.pull_request.title ||
-          seen.minutes !== item.minutes
+          seen.minutes !== item.minutes ||
+          JSON.stringify(seen.last) !== JSON.stringify(snapshot(item.entry))
         );
       }) ||
       Object.entries(stored.seen).some(([key, record]) => clears(key, record)) ||
@@ -530,6 +574,7 @@ export function useUpNext(
           number: pr.number,
           url: pr.url,
           minutes: item.minutes,
+          last: snapshot(item.entry),
         };
       }
       const held = Object.fromEntries(
@@ -704,14 +749,22 @@ function useReviewDocument(entry: Entry | undefined, clone: string) {
 }
 
 /** The row's inboxes, in the sidebar's order. A pull request an agent is
- *  fixing is in those that take a fix; one that waits on others is in none. */
+ *  fixing is in those that take a fix; one that waits on others is in those
+ *  that ask for no kind of work. */
 function rowInboxes(row: Row, inboxes: Inbox[]) {
-  const item = row.item ?? (row.job ? { kind: "fix" as const, entry: row.entry } : null);
-  return item ? inboxesOf(item, inboxes) : [];
+  return inboxesOf(
+    row.item ?? (row.job ? { kind: "fix" as const, entry: row.entry } : { entry: row.entry }),
+    inboxes,
+  );
 }
 
 export function InboxTag({ inbox }: { inbox: Inbox }) {
-  return <span className={`upnext-tag inbox-${inbox.color}`}>{inbox.name}</span>;
+  return (
+    <span className={`upnext-tag inbox-${inbox.color}`}>
+      <span aria-hidden="true" className="inbox-dot" />
+      <span className="upnext-tag-name">{inbox.name}</span>
+    </span>
+  );
 }
 
 /** The six inbox colours as a radio group; `pick` hears each click. */
@@ -842,8 +895,8 @@ function InboxHeadEdit({
 
 /** The inbox: what waits on the person, grouped by what they do about it, and
  *  the selected pull request's panel beside it. In one of the person's inboxes
- *  (`selected`) it lists only what matches that inbox; what was done today and
- *  the person's pull requests waiting on others are only in the Inbox. */
+ *  (`selected`) every list, what was done today among them, holds only what
+ *  matches that inbox. */
 export function UpNextPage({
   inbox: all,
   inboxes = [],
@@ -923,21 +976,50 @@ export function UpNextPage({
   );
   const { query, set: setQuery } = quick;
   const filtering = scope ? quick.dirty : query !== "";
+  useEffect(() => {
+    const create = (event: KeyboardEvent) => {
+      if (
+        event.key !== "Enter" ||
+        !(event.metaKey || event.ctrlKey) ||
+        event.altKey ||
+        event.shiftKey ||
+        event.isComposing ||
+        event.defaultPrevented ||
+        !saveAsInbox ||
+        document.querySelector("dialog[open]")
+      )
+        return;
+      const text =
+        event.target instanceof HTMLTextAreaElement && event.target.closest(".filter-menu")
+          ? event.target.value
+          : query;
+      if (queryProblem(text, true)) return;
+      event.preventDefault();
+      if (event.target instanceof HTMLTextAreaElement) event.target.blur();
+      saveAsInbox(text, scope ?? undefined);
+    };
+    window.addEventListener("keydown", create);
+    return () => window.removeEventListener("keydown", create);
+  }, [query, saveAsInbox, scope]);
   const inScope = (item: { kind: UpNextKind; entry: Entry }) =>
     matchesQuery(query, item.entry, item.kind);
   const queue = all.queue.filter(inScope);
   const snoozed = all.snoozed.filter(inScope);
   const fixing = all.fixing.filter(({ entry }) => inScope({ kind: "fix", entry }));
-  // Done today and what waits on others are the Inbox's alone.
-  const cleared = scope ? [] : all.cleared;
-  const waiting = scope ? [] : all.waiting.filter((entry) => matchesQuery(query, entry));
+  // A done pull request matches as it was in the queue.
+  const cleared = all.cleared.filter((item) => {
+    // The snapshot holds every field the filters read.
+    const entry = (item.last as Entry | undefined) ?? item.entry;
+    return entry ? matchesQuery(query, entry, item.kind) : !parseQuery(query).expr;
+  });
+  const waiting = all.waiting.filter((entry) => matchesQuery(query, entry));
   // What the filter's counts and values come from: the whole queue, each
   // pull request with what it waits for.
   const kinds = new Map<Entry, UpNextKind>([
     ...all.queue.map((item): [Entry, UpNextKind] => [item.entry, item.kind]),
     ...all.fixing.map(({ entry }): [Entry, UpNextKind] => [entry, "fix"]),
   ]);
-  const unfiltered = [...kinds.keys(), ...(scope ? [] : all.waiting)];
+  const unfiltered = [...kinds.keys(), ...all.waiting];
   const inbox = { ...all, queue, snoozed, fixing, cleared, waiting };
   const { now } = all;
   // Those an agent is fixing are listed under Hand to an agent.
@@ -1148,10 +1230,10 @@ export function UpNextPage({
   const summary = loading
     ? "Loading your inbox…"
     : actionable === 0
-      ? scope
-        ? "Nothing waiting."
-        : cleared.length
-          ? `Nothing left. ${formatCount(cleared.length)} handled today.`
+      ? cleared.length
+        ? `Nothing left. ${formatCount(cleared.length)} handled today.`
+        : scope
+          ? "Nothing waiting."
           : "Nothing waits on you."
       : [
           yours ? `${plural(yours, "thing")} for you` : "",
@@ -1193,7 +1275,12 @@ export function UpNextPage({
               ]
             : []),
           ...(saveAsInbox
-            ? [{ label: "Create inbox", onSelect: () => saveAsInbox(query, scope ?? undefined) }]
+            ? [
+                {
+                  label: "Create inbox",
+                  onSelect: () => saveAsInbox(query, scope ?? undefined),
+                },
+              ]
             : []),
           ...(scope ? [{ label: "Discard changes", onSelect: () => quick.reset() }] : []),
         ];
@@ -1259,18 +1346,18 @@ export function UpNextPage({
                   {refreshButton}
                 </div>
                 <p>{summary}</p>
-                <div
-                  className="upnext-bar"
-                  role="progressbar"
-                  aria-label="Cleared today"
-                  aria-valuemin={0}
-                  aria-valuemax={total}
-                  aria-valuenow={cleared.length}
-                >
-                  <div style={{ width: `${total ? (100 * cleared.length) / total : 0}%` }} />
-                </div>
               </>
             )}
+            <div
+              className="upnext-bar"
+              role="progressbar"
+              aria-label="Cleared today"
+              aria-valuemin={0}
+              aria-valuemax={total}
+              aria-valuenow={cleared.length}
+            >
+              <div style={{ width: `${total ? (100 * cleared.length) / total : 0}%` }} />
+            </div>
           </header>
           <div ref={list} className="upnext-list-body">
             {actionsMenu.menu}
@@ -1562,20 +1649,22 @@ function ListRow({
     >
       <span className="upnext-row-text">
         <span className="upnext-row-title">{pr.title || "Untitled pull request"}</span>
-        <span
-          className={`upnext-row-sub${row.job ? " upnext-row-working" : row.item?.failedFix ? " upnext-row-failed" : ""}`}
-        >
-          {row.job ? (
-            <>
-              <NineDots size={10} />
-              <span className="upnext-row-working-text">{sub}</span>
-            </>
-          ) : (
-            sub
-          )}
+        <span className="upnext-row-line">
+          <span
+            className={`upnext-row-sub${row.job ? " upnext-row-working" : row.item?.failedFix ? " upnext-row-failed" : ""}`}
+          >
+            {row.job ? (
+              <>
+                <NineDots size={10} />
+                <span className="upnext-row-working-text">{sub}</span>
+              </>
+            ) : (
+              sub
+            )}
+          </span>
+          {tag ? <InboxTag inbox={tag} /> : null}
         </span>
       </span>
-      {tag ? <InboxTag inbox={tag} /> : null}
       {hot ? (
         <span className="upnext-hot" role="img" aria-label="Critical risk" title="Critical risk" />
       ) : null}
@@ -2570,7 +2659,9 @@ function Zero({
         <p>
           {snoozed.length > 0
             ? `Everything here is handled except ${plural(snoozed.length, "snoozed pull request")}; they come back on their own.`
-            : "It fills up as matching pull requests come in."}
+            : cleared.length > 0
+              ? `All ${formatCount(cleared.length)} handled. Nothing needs you right now.`
+              : "It fills up as matching pull requests come in."}
         </p>
       </div>
     );
@@ -2694,9 +2785,12 @@ export function MergeReadyDialog({
       onClose={close}
       aria-labelledby="merge-ready-title"
     >
-      <h2 id="merge-ready-title" className="text-lg font-semibold">
-        Merge {formatCount(entries.length)} ready pull requests?
-      </h2>
+      <div className="flex items-start justify-between gap-3">
+        <h2 id="merge-ready-title" className="text-lg font-semibold">
+          Merge {formatCount(entries.length)} ready pull requests?
+        </h2>
+        {finished ? <CloseButton ref={closeButton} onClick={close} /> : null}
+      </div>
       <p className="my-3 text-(--text-secondary)">
         Each merges with GitHub's default method for you in its repository, and only at the commit
         shown here.
@@ -2741,11 +2835,11 @@ export function MergeReadyDialog({
       {finished && merges.some((merge) => merge.state === "failed") ? (
         <Alert>Some pull requests were not merged; the reasons are beside them.</Alert>
       ) : null}
-      <div className="mt-4 flex justify-end gap-2">
-        <Button ref={closeButton} variant="ghost" size="compact" disabled={running} onClick={close}>
-          {finished ? "Close" : "Cancel"}
-        </Button>
-        {finished ? null : (
+      {finished ? null : (
+        <div className="mt-4 flex justify-end gap-2">
+          <Button variant="ghost" size="compact" disabled={running} onClick={close}>
+            Cancel
+          </Button>
           <Button
             size="compact"
             disabled={checking || running || mergeable.length === 0}
@@ -2760,8 +2854,8 @@ export function MergeReadyDialog({
               `Merge ${formatCount(mergeable.length)} ${mergeable.length === 1 ? "pull request" : "pull requests"}`
             )}
           </Button>
-        )}
-      </div>
+        </div>
+      )}
     </dialog>
   );
 }

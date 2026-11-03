@@ -1,4 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { cn } from "@baum/viewer/components/classnames";
+import {
+  CircleCheckIcon,
+  CircleCrossIcon,
+  CircleDashedIcon,
+  WarningIcon,
+} from "@baum/viewer/components/icons";
 import { Alert, Badge, type BadgeTone, Button } from "@baum/viewer/components/ui";
 import {
   request,
@@ -7,6 +14,7 @@ import {
   type Diagnostics,
   type IssueParts,
 } from "./api";
+import { displayPath } from "./desktop/setup-model";
 import { LoadingStatus } from "./nine-dots";
 import { ReportProblemDialog } from "./report-problem";
 
@@ -22,24 +30,93 @@ const statusTone: Record<DiagnosticCheck["status"], BadgeTone> = {
   problem: "critical",
   info: "neutral",
 };
+const statusColor: Record<DiagnosticCheck["status"], string> = {
+  ok: "text-(--status-positive)",
+  warning: "text-(--status-caution)",
+  problem: "text-(--status-critical)",
+  info: "text-(--text-tertiary)",
+};
 const order = { problem: 0, warning: 1, ok: 2, info: 3 } as const;
 
 function summary(report: DiagnosticReport) {
   const problems = report.checks.filter((c) => c.status === "problem").length;
   const warnings = report.checks.filter((c) => c.status === "warning").length;
-  if (problems > 0) return `${problems} ${problems === 1 ? "problem" : "problems"} found.`;
-  if (warnings > 0) return `${warnings} ${warnings === 1 ? "warning" : "warnings"}, no problems.`;
-  return "No problems found.";
+  if (problems > 0) return `${problems} ${problems === 1 ? "problem" : "problems"} found`;
+  if (warnings > 0) return `${warnings} ${warnings === 1 ? "warning" : "warnings"}, no problems`;
+  return "No problems found";
 }
 
-function Detail({ label, value }: { label: string; value: string }) {
+function StatusIcon({ status }: { status: DiagnosticCheck["status"] }) {
+  const Glyph =
+    status === "ok"
+      ? CircleCheckIcon
+      : status === "problem"
+        ? CircleCrossIcon
+        : status === "warning"
+          ? WarningIcon
+          : CircleDashedIcon;
+  return <Glyph size={16} aria-hidden className={cn("flex-none", statusColor[status])} />;
+}
+
+function Detail({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
   return (
-    <div className="flex flex-col gap-0.5 sm:flex-row sm:gap-2">
-      <dt className="shrink-0 text-(--text-tertiary)">{label}</dt>
-      <dd className="m-0 min-w-0 [overflow-wrap:anywhere]">{value}</dd>
+    <div className="flex min-w-0 gap-1.5">
+      <dt className="flex-none text-(--text-tertiary)">{label}</dt>
+      <dd
+        className={cn(
+          "m-0 min-w-0 text-(--text-secondary) [overflow-wrap:anywhere]",
+          mono && "font-mono",
+        )}
+      >
+        {value}
+      </dd>
     </div>
   );
 }
+
+function CheckRow({ check, home }: { check: DiagnosticCheck; home?: string }) {
+  const display = (text: string) => displayPath(text, home);
+  const flagged = check.status === "problem" || check.status === "warning";
+  return (
+    <li className="flex min-w-0 gap-3 px-4 py-3">
+      <span className="mt-1">
+        <StatusIcon status={check.status} />
+      </span>
+      <div className="min-w-0 flex-1 space-y-1">
+        <div className="flex flex-wrap items-center gap-2">
+          <h4 className="m-0 text-base font-medium">{check.label}</h4>
+          {flagged ? (
+            <Badge tone={statusTone[check.status]}>{statusText[check.status]}</Badge>
+          ) : (
+            <span className="sr-only">{statusText[check.status]}</span>
+          )}
+        </div>
+        <p className="m-0 text-(--text-secondary) break-words">{display(check.detail)}</p>
+        {check.path || check.version || check.source ? (
+          <dl className="m-0 flex flex-wrap gap-x-4 gap-y-0.5 text-xs">
+            {check.path ? <Detail label="Path" value={display(check.path)} mono /> : null}
+            {check.version ? <Detail label="Version" value={check.version} /> : null}
+            {check.source ? <Detail label="Source" value={display(check.source)} /> : null}
+          </dl>
+        ) : null}
+        {check.fix ? (
+          <p className="m-0 mt-2 rounded-(--radius-md) bg-(--surface-wash) px-3 py-2 break-words">
+            <strong className="font-medium">Fix:</strong> {display(check.fix)}
+          </p>
+        ) : null}
+      </div>
+    </li>
+  );
+}
+
+const groups = [
+  {
+    title: "Needs attention",
+    has: (c: DiagnosticCheck) => c.status === "problem" || c.status === "warning",
+  },
+  { title: "Working", has: (c: DiagnosticCheck) => c.status === "ok" },
+  { title: "Details", has: (c: DiagnosticCheck) => c.status === "info" },
+];
 
 /** How many checks of a report are problems: what stops baum from working. */
 export function problemCount(report: DiagnosticReport | null | undefined) {
@@ -67,6 +144,33 @@ export function useDiagnosticProblems(enabled: boolean) {
   return { problems, update };
 }
 
+function sorted(report: DiagnosticReport) {
+  return report.checks
+    .map((check, index) => ({ check, index }))
+    .sort((a, b) => order[a.check.status] - order[b.check.status] || a.index - b.index)
+    .map(({ check }) => check);
+}
+
+/** The report as Markdown for a GitHub issue, in the dialog's order and with
+ *  the home directory as ~, so the issue does not name the user's account. */
+export function diagnosticsMarkdown(report: DiagnosticReport, home?: string) {
+  const display = (text: string) => displayPath(text, home);
+  const lines = [
+    "### baum diagnostics",
+    "",
+    `**Overall:** ${statusText[report.status]}. ${summary(report)}`,
+    "",
+  ];
+  for (const check of sorted(report)) {
+    lines.push(`- **${check.label}** (${statusText[check.status]}): ${display(check.detail)}`);
+    if (check.fix) lines.push(`  - Fix: ${display(check.fix)}`);
+    if (check.path) lines.push(`  - Path: \`${display(check.path)}\``);
+    if (check.version) lines.push(`  - Version: ${check.version}`);
+    if (check.source) lines.push(`  - Source: ${display(check.source)}`);
+  }
+  return `${lines.join("\n")}\n`;
+}
+
 /** The report `baum internal doctor` prints, as the local server computes it. It never
  * fetches the price list; "Check again" re-inspects this computer. */
 export function DiagnosticsSection({
@@ -75,10 +179,25 @@ export function DiagnosticsSection({
   onReport?: (report: DiagnosticReport | null) => void;
 } = {}) {
   const [report, setReport] = useState<DiagnosticReport | null | undefined>();
+  const [home, setHome] = useState<string>();
   const [issueParts, setIssueParts] = useState<IssueParts | null>(null);
   const [reporting, setReporting] = useState(false);
   const [error, setError] = useState("");
   const [running, setRunning] = useState(true);
+  const [copied, setCopied] = useState("");
+  const copiedTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
+  useEffect(() => () => clearTimeout(copiedTimer.current), []);
+  const copy = async () => {
+    if (!report) return;
+    clearTimeout(copiedTimer.current);
+    try {
+      await navigator.clipboard.writeText(diagnosticsMarkdown(report, home));
+      setCopied("Copied");
+    } catch {
+      setCopied("Could not copy");
+    }
+    copiedTimer.current = setTimeout(() => setCopied(""), 2000);
+  };
   const sequence = useRef(0);
   // A new callback from the parent must not rerun the checks.
   const reported = useRef(onReport);
@@ -93,6 +212,7 @@ export function DiagnosticsSection({
       const body = await request<Diagnostics>("api/diagnostics");
       if (mine === sequence.current) {
         setReport(body.report);
+        setHome(body.home);
         setIssueParts(body.report_issue ?? null);
         reported.current?.(body.report);
       }
@@ -109,32 +229,13 @@ export function DiagnosticsSection({
       sequence.current++;
     };
   }, [run]);
-  const checks = report
-    ? report.checks
-        .map((check, index) => ({ check, index }))
-        .sort((a, b) => order[a.check.status] - order[b.check.status] || a.index - b.index)
-    : [];
+  const checks = report ? sorted(report) : [];
+  const overall = report ? report.status : null;
   return (
-    <section aria-labelledby="diagnostics-heading" className="local-panel space-y-3">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <h2 id="diagnostics-heading" className="text-lg">
-          Diagnostics
-        </h2>
-        <div className="flex flex-wrap gap-2">
-          <Button variant="secondary" onClick={() => setReporting(true)}>
-            Report a problem
-          </Button>
-          <Button variant="secondary" disabled={running} onClick={() => void run()}>
-            {running ? "Checking…" : "Check again"}
-          </Button>
-        </div>
-      </div>
-      <p className="text-xs">
-        Which tools and credentials baum found on this computer, never their values. “Report a
-        problem” lets you describe it and choose how much of a redacted summary of this report to
-        attach, then opens a new GitHub issue in your browser; nothing is sent until you submit it
-        there.
-      </p>
+    <section aria-labelledby="diagnostics-heading" className="space-y-5">
+      <h2 id="diagnostics-heading" className="sr-only">
+        Diagnostics
+      </h2>
       {reporting ? (
         <ReportProblemDialog parts={issueParts} close={() => setReporting(false)} />
       ) : null}
@@ -146,43 +247,72 @@ export function DiagnosticsSection({
           </Button>
         </Alert>
       ) : null}
-      {running && report === undefined && !error ? (
-        <LoadingStatus block>Checking this computer…</LoadingStatus>
-      ) : null}
-      {report === null ? <p>Diagnostics are not available in this build.</p> : null}
-      {report ? (
-        <>
-          <p role="status" className="font-medium">
-            Overall: {statusText[report.status]}. {summary(report)}
+      <div
+        className={cn(
+          "flex flex-wrap items-center gap-3 rounded-(--radius-lg) border border-(--border-subtle) px-4 py-3",
+          overall === "problem"
+            ? "bg-(--status-critical-bg)"
+            : overall === "warning"
+              ? "bg-(--status-caution-bg)"
+              : overall
+                ? "bg-(--status-positive-bg)"
+                : "bg-(--surface-wash)",
+        )}
+      >
+        {report ? <StatusIcon status={report.status} /> : null}
+        <div className="min-w-0 flex-1 basis-56">
+          {report ? (
+            <p role="status" className="m-0 font-medium">
+              <span className="sr-only">Overall: {statusText[report.status]}. </span>
+              {summary(report)}
+            </p>
+          ) : running && report === undefined && !error ? (
+            <LoadingStatus>Checking this computer…</LoadingStatus>
+          ) : report === null ? (
+            <p className="m-0">Diagnostics are not available in this build.</p>
+          ) : null}
+          <p className="m-0 text-xs text-(--text-tertiary)">
+            {report ? `${report.checks.length} checks. ` : ""}Credential values are never shown.
           </p>
-          <ul className="m-0 list-none space-y-3 p-0">
-            {checks.map(({ check }) => (
-              <li
-                key={check.id}
-                className="min-w-0 space-y-1 border-t border-(--border-default) pt-3"
-              >
-                <div className="flex flex-wrap items-center gap-2">
-                  <h3 className="text-base font-medium">{check.label}</h3>
-                  <Badge tone={statusTone[check.status]}>{statusText[check.status]}</Badge>
-                </div>
-                <p className="m-0 break-words">{check.detail}</p>
-                {check.path || check.version || check.source ? (
-                  <dl className="m-0 space-y-0.5 text-xs">
-                    {check.path ? <Detail label="Path" value={check.path} /> : null}
-                    {check.version ? <Detail label="Version" value={check.version} /> : null}
-                    {check.source ? <Detail label="Source" value={check.source} /> : null}
-                  </dl>
-                ) : null}
-                {check.fix ? (
-                  <p className="m-0 break-words">
-                    <strong>Fix:</strong> {check.fix}
-                  </p>
-                ) : null}
-              </li>
-            ))}
-          </ul>
-        </>
-      ) : null}
+          <p className="m-0 text-xs text-(--text-tertiary)">
+            “Report a problem” opens a new GitHub issue in your browser with as much of a redacted
+            summary as you choose; nothing is sent until you submit it there.
+          </p>
+        </div>
+        <div className="flex flex-none gap-2">
+          <Button
+            variant="secondary"
+            size="compact"
+            disabled={!report}
+            title="Copy the report as Markdown, for a GitHub issue"
+            onClick={() => void copy()}
+          >
+            <span aria-live="polite">{copied || "Copy"}</span>
+          </Button>
+          <Button variant="secondary" size="compact" onClick={() => setReporting(true)}>
+            Report a problem
+          </Button>
+          <Button variant="secondary" size="compact" disabled={running} onClick={() => void run()}>
+            {running ? "Checking…" : "Check again"}
+          </Button>
+        </div>
+      </div>
+      {groups.map((group) => {
+        const list = checks.filter(group.has);
+        if (list.length === 0) return null;
+        return (
+          <div key={group.title} className="space-y-2">
+            <h3 className="diagnostics-group-title">
+              {group.title} <span className="font-normal">· {list.length}</span>
+            </h3>
+            <ul className="m-0 list-none divide-y divide-(--border-subtle) overflow-hidden rounded-(--radius-lg) border border-(--border-subtle) bg-(--surface-card) p-0">
+              {list.map((check) => (
+                <CheckRow key={check.id} check={check} home={home} />
+              ))}
+            </ul>
+          </div>
+        );
+      })}
     </section>
   );
 }

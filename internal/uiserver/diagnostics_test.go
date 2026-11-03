@@ -58,10 +58,14 @@ func TestDiagnosticsReturnsReportAndCapabilities(t *testing.T) {
 	var body struct {
 		Local  bool           `json:"local"`
 		Runner bool           `json:"generation_runner"`
+		Home   string         `json:"home"`
 		Report *doctor.Report `json:"report"`
 	}
 	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
 		t.Fatal(err)
+	}
+	if home, _ := os.UserHomeDir(); body.Home != home {
+		t.Fatalf("home %q, want %q", body.Home, home)
 	}
 	if !body.Local || body.Runner || body.Report == nil || body.Report.Status != doctor.StatusProblem || len(body.Report.Checks) != 2 || body.Report.Checks[1].Fix != "Install gh." {
 		t.Fatalf("%s", w.Body.String())

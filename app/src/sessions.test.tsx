@@ -205,7 +205,7 @@ it("posts a question's answers, joining multi-select labels, once every question
       {
         question: "Which approach?",
         header: "Approach",
-        options: [{ label: "A", description: "Fast" }, { label: "B" }],
+        options: [{ label: "Plan A", description: "Fast" }, { label: "Plan B" }],
       },
       {
         question: "Which checks?",
@@ -216,16 +216,22 @@ it("posts a question's answers, joining multi-select labels, once every question
   };
   await render([s], requests({ requests: [question] }));
   // What a choice means shows beside it.
-  expect(button("A")!.querySelector(".local-feed-choice-note")!.textContent).toBe("Fast");
-  expect(button("Submit")!.disabled).toBe(true);
-  await click(button("B"));
+  expect(button("Plan A")!.querySelector(".local-feed-choice-note")!.textContent).toBe("Fast");
+  // One at a time: a single choice moves on to the next question.
+  expect(button("Submit")).toBeUndefined();
+  expect(button("Unit")).toBeUndefined();
+  await click(button("Plan B"));
+  expect(button("Plan B")).toBeUndefined();
   await click(button("Unit"));
   await click(button("E2E"));
   expect(button("Unit")!.getAttribute("aria-pressed")).toBe("true");
   await click(button("Submit"));
   expect(posts()[0]).toMatchObject({
     path: "/s/test-ns/api/agent-requests/q1/answer",
-    body: { behavior: "allow", answers: { "Which approach?": "B", "Which checks?": "Unit, E2E" } },
+    body: {
+      behavior: "allow",
+      answers: { "Which approach?": "Plan B", "Which checks?": "Unit, E2E" },
+    },
   });
 
   // One single-choice question is answered by its option.
@@ -233,10 +239,10 @@ it("posts a question's answers, joining multi-select labels, once every question
     [s],
     requests({ requests: [{ ...question, id: "q2", questions: [question.questions[0]!] }] }),
   );
-  await click(button("A"));
+  await click(button("Plan A"));
   expect(posts()[1]).toMatchObject({
     path: "/s/test-ns/api/agent-requests/q2/answer",
-    body: { behavior: "allow", answers: { "Which approach?": "A" } },
+    body: { behavior: "allow", answers: { "Which approach?": "Plan A" } },
   });
 });
 
@@ -537,7 +543,6 @@ it("toggles Codex approvals in Settings, and hides the toggle without the route"
           diagnosticsOpen={false}
           setDiagnosticsOpen={() => {}}
           onDiagnostics={() => {}}
-          authRevision={0}
           authChanged={() => {}}
         />,
       ),
@@ -1266,3 +1271,25 @@ it("shows ambiguous and stale PR associations explicitly", async () => {
   await render([session({ link_status: "stale", pr: 7 })]);
   expect(node.textContent).toContain("PR link may be out of date");
 });
+
+for (const [state, label] of [
+  ["OPEN", "Open"],
+  ["MERGED", "Merged"],
+  ["CLOSED", "Closed"],
+] as const) {
+  it(`shows a ${label.toLowerCase()} PR pill on the session`, async () => {
+    await render([
+      session({
+        state: "idle",
+        waiting_reason: "turn_finished",
+        waiting_since: ago(60),
+        pr: 1040,
+        pr_state: state,
+      }),
+    ]);
+    const pill = node.querySelector(".local-session-pr")!;
+    expect(pill.textContent).toBe("PR #1040");
+    expect(pill.querySelector("[title]")?.getAttribute("title")).toBe(`PR #1040 · ${label}`);
+    expect(pill.querySelector(".rounded-full")).not.toBeNull();
+  });
+}

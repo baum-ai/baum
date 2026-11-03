@@ -12,6 +12,7 @@ import (
 	"github.com/baum-ai/baum/internal/assemble/assembletest"
 	"github.com/baum-ai/baum/internal/generate"
 	"github.com/baum-ai/baum/internal/generate/generatetest"
+	"github.com/baum-ai/baum/internal/pricing"
 	"github.com/baum-ai/baum/internal/store"
 	"github.com/baum-ai/baum/internal/viewserver"
 	"github.com/baum-ai/baum/review"
@@ -93,6 +94,32 @@ func TestPublishCancellationDuringRepairKeepsStoreEmptyAndCleansTrees(t *testing
 		t.Fatal("missing interrupted run", snapshot, e)
 	}
 	f.requireClean(t)
+}
+
+func TestPublishPreservesConfiguredModelEstimateWithCostCallback(t *testing.T) {
+	f := newFixture(t)
+	f.backend.RunFunc = func(_ context.Context, r agent.Request, _ int) (agent.Result, error) {
+		doc, err := generatetest.Document(r.Directory, nil)
+		return agent.Result{Document: doc, Model: "claude-sonnet-4-5", ModelSource: "configured", Calls: 1, Tokens: 10, Usage: agent.Usage{Input: 6, Output: 4, Speed: new("standard")}}, err
+	}
+	s, err := store.Open("", t.TempDir(), true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := store.Key{Repository: "acme/demo", Number: 7}
+	_, err = generate.Publish(context.Background(), s, key, f.options(t), func(r generate.Result) *float64 {
+		return pricing.Embedded().OutcomeCost(r.Outcome.Model, r.Outcome)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	saved, err := s.Latest(context.Background(), key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if saved.Metadata.RecordedCostUSD == nil || *saved.Metadata.RecordedCostUSD <= 0 || saved.Metadata.CostReason != "estimated_from_configured_model" {
+		t.Fatalf("lost configured-model estimate: %+v", saved.Metadata)
+	}
 }
 
 func TestPublishKeepsRetryUsageAndOldRecordsUnknown(t *testing.T) {

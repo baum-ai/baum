@@ -44,7 +44,6 @@ import {
   ChecksIcon,
   ChevronLeftIcon,
   ChevronRightIcon,
-  CloseIcon,
   CommitIcon,
   FilesIcon,
   LightbulbIcon,
@@ -79,7 +78,16 @@ import { SideNavButton, SideNavDisclosure, SideNavGroup, SideNavNest } from "./s
 import { Empty, Failed, Skeleton } from "./states";
 import { tabPanelProps } from "./tabs";
 import { scrollerOf } from "./scroller";
-import { Alert, Badge, Button, CardHeader, IconButton, SegmentedControl, Spinner } from "./ui";
+import {
+  Alert,
+  Badge,
+  Button,
+  CardHeader,
+  CloseButton,
+  IconButton,
+  SegmentedControl,
+  Spinner,
+} from "./ui";
 
 /** The history view a host drives itself, when it needs the version being
  *  read for its own requests: the return of `useHistoryView`. */
@@ -513,6 +521,34 @@ function ReviewWorkspace<F extends ReviewFile>({
   // pane has the width when the talk is not the point.
   const [chosenCollapsed, setChatCollapsed] = useConversationCollapsed();
   const chatCollapsed = chosenCollapsed || foldSidePane;
+  const paneChoice = useRef({ chosenCollapsed, foldSidePane });
+  paneChoice.current = { chosenCollapsed, foldSidePane };
+  useEffect(() => {
+    const toggle = (event: KeyboardEvent) => {
+      if (
+        event.key !== "]" ||
+        event.defaultPrevented ||
+        event.ctrlKey ||
+        event.metaKey ||
+        event.altKey ||
+        event.shiftKey ||
+        event.isComposing ||
+        window.document.querySelector("dialog[open]")
+      )
+        return;
+      if (
+        event.target instanceof HTMLElement &&
+        event.target.closest('input, textarea, select, [contenteditable], [role="textbox"]')
+      )
+        return;
+      event.preventDefault();
+      if (window.matchMedia("(width >= 80rem)").matches) {
+        if (!paneChoice.current.foldSidePane) setChatCollapsed(!paneChoice.current.chosenCollapsed);
+      } else setSheet((currentSheet) => (currentSheet === "aside" ? null : "aside"));
+    };
+    window.document.addEventListener("keydown", toggle);
+    return () => window.document.removeEventListener("keydown", toggle);
+  }, [setChatCollapsed]);
   // Which of its tabs the side pane shows: the host's conversation, the pull
   // request's details, or how it came about. Without a conversation the
   // details stand in for it.
@@ -1168,19 +1204,19 @@ function ReviewWorkspace<F extends ReviewFile>({
       <span className="box-content hidden h-9 flex-none items-center border-b border-(--border-subtle) xl:flex">
         <IconButton
           label={conversation ? "Collapse conversation" : "Collapse side pane"}
+          title="Collapse side pane (])"
+          aria-keyshortcuts="]"
           onClick={() => setChatCollapsed(true)}
         >
           <ChevronRightIcon />
         </IconButton>
       </span>
       <span className="box-content flex h-9 flex-none items-center border-b border-(--border-subtle) xl:hidden">
-        <IconButton
+        <CloseButton
           label={`Close ${asideLabel.toLowerCase()}`}
           className="h-9 w-9"
           onClick={closeSheet}
-        >
-          <CloseIcon />
-        </IconButton>
+        />
       </span>
     </div>
   );
@@ -1334,9 +1370,7 @@ function ReviewWorkspace<F extends ReviewFile>({
               )}
             >
               <div className="absolute top-1 right-2 xl:hidden">
-                <IconButton label="Close sections" className="h-10 w-10" onClick={closeSheet}>
-                  <CloseIcon />
-                </IconButton>
+                <CloseButton label="Close sections" className="h-10 w-10" onClick={closeSheet} />
               </div>
               <SideNavGroup label="Review">
                 <SideNavButton
@@ -1747,6 +1781,8 @@ function ReviewWorkspace<F extends ReviewFile>({
               >
                 <IconButton
                   label={conversation ? "Expand conversation" : "Expand side pane"}
+                  title="Expand side pane (])"
+                  aria-keyshortcuts="]"
                   className="h-9 w-9 text-(--text-secondary)"
                   onClick={() => setChatCollapsed(false)}
                 >

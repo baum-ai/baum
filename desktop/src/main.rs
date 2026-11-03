@@ -164,7 +164,9 @@ fn connect(app: &AppHandle, why: Attach) {
             return fail(&app, &state, attempt, failure);
         }
         let current = state.clone();
-        notifications::attach(&app, &launch, move || current.lock().attempt != attempt);
+        notifications::attach(&app, &launch, &frontend, move || {
+            current.lock().attempt != attempt
+        });
         watch(&app, &state, attempt, &launch, why);
     });
 }

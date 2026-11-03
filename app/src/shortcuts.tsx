@@ -1,7 +1,7 @@
 import { usePreferences, type PageModifier } from "./preferences";
 import { useModal } from "./modal";
 import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
-import { Button } from "@baum/viewer/components/ui";
+import { CloseButton } from "@baum/viewer/components/ui";
 import { PAGES, type Page } from "./pages";
 
 export type InboxAction =
@@ -12,7 +12,6 @@ export type InboxAction =
   | "peek"
   | "merge"
   | "fix"
-  | "generate"
   | "transcript"
   | "refresh";
 
@@ -38,7 +37,6 @@ export const INBOX_SHORTCUTS: Shortcut<{ action: InboxAction }>[] = [
   },
   { keys: ["m"], action: "merge", label: "Merge, where offered", short: "merge" },
   { keys: ["f"], action: "fix", label: "Fix, where offered", short: "fix" },
-  { keys: ["g"], action: "generate", label: "Generate the review", short: "generate" },
   { keys: ["t"], action: "transcript", label: TRANSCRIPT_LABEL },
   { keys: ["r"], action: "refresh", label: "Refresh from GitHub" },
 ];
@@ -790,12 +788,17 @@ function shortcutGroups(
         { keys: ["Escape"], label: "Close this list" },
       ],
     },
-    { place: "inbox", title: "Inbox", rows: UP_NEXT_SHORTCUTS },
+    {
+      place: "inbox",
+      title: "Inbox",
+      rows: [...UP_NEXT_SHORTCUTS, { keys: ["/"], label: "Open the filter" }],
+    },
     {
       place: "pulls",
       title: "Pull requests",
       rows: [
         ...INBOX_SHORTCUTS,
+        { keys: ["/"], label: "Open the filter" },
         { keys: ["Escape"], label: "Clear the row focus" },
         { keys: VIEW_KEYS.previous, label: "Previous view", short: "views" },
         { keys: VIEW_KEYS.next, label: "Next view", short: "views" },
@@ -807,8 +810,8 @@ function shortcutGroups(
       rows: [
         { keys: ["j", "ArrowDown"], label: "Next item in the section", short: "move" },
         { keys: ["k", "ArrowUp"], label: "Previous item in the section", short: "move" },
-        { keys: ["l", "ArrowRight"], label: "Next place in the sidebar", short: "sidebar" },
-        { keys: ["h", "ArrowLeft"], label: "Previous place in the sidebar", short: "sidebar" },
+        { keys: ["l", "ArrowRight"], label: "Next section", short: "sections" },
+        { keys: ["h", "ArrowLeft"], label: "Previous section", short: "sections" },
         {
           keys: [" "],
           label: "Open or close the item's details, or the selected group in the sidebar",
@@ -817,13 +820,13 @@ function shortcutGroups(
         { keys: ["Enter"], label: "Open the item, such as a commit in the list", short: "open" },
         { keys: ["m"], label: "Merge, where offered", short: "merge" },
         { keys: ["f"], label: "Fix, where offered", short: "fix" },
-        { keys: ["g"], label: "Generate or regenerate the review", short: "generate" },
         { keys: ["t"], label: TRANSCRIPT_LABEL },
         {
           keys: ["a"],
           label: "Ask the review's agent a question; Esc in the panel closes it",
           short: "ask",
         },
+        { keys: ["]"], label: "Toggle the right-hand sidebar", short: "sidebar" },
         back,
       ],
     },
@@ -916,8 +919,9 @@ const LISTS: ShortcutsPlace[] = ["pulls", "sessions", "jobs", "repositories"];
 /** The keys of where the person is, in one line along the foot of the page,
  *  shown while Alt (Option on a Mac) is held, with the keys on buttons
  *  (`useKeyHints`): each key the place's group names `short`, keys sharing a
- *  name together ("j k move"), then the row menu's key on a list, Go to and
- *  the sheet. It is drawn for the eye; the sheet (`?`) says the same aloud. */
+ *  name together ("j k move"), then the row menu's key on a list. Only keys
+ *  for this page belong here. It is drawn for the eye; the sheet (`?`) lists
+ *  these and the app-wide keys aloud. */
 export function KeyBar({ place, className }: { place: ShortcutsPlace; className?: string }) {
   const items: { keys: string[]; short: string }[] = [];
   // Page keys have no `short`, so the bar does not depend on their modifier.
@@ -928,7 +932,6 @@ export function KeyBar({ place, className }: { place: ShortcutsPlace; className?
     else items.push({ keys: [row.keys[0]!], short: row.short });
   }
   if (LISTS.includes(place)) items.push({ keys: [`${COMMAND}.`], short: "actions" });
-  items.push({ keys: [`${COMMAND}K`], short: "go to" }, { keys: ["?"], short: "help" });
   return (
     <footer
       aria-hidden="true"
@@ -960,7 +963,7 @@ export function ShortcutsSheet({
   const title = useRef<HTMLHeadingElement>(null);
   useEffect(() => {
     // The list scrolls; it opens at its top, on the current page's keys,
-    // rather than on Close at its foot.
+    // rather than on its close control.
     title.current?.focus({ preventScroll: true });
     if (dialog.current) dialog.current.scrollTop = 0;
   }, []);
@@ -977,35 +980,35 @@ export function ShortcutsSheet({
       aria-labelledby="shortcuts-title"
       className="shortcuts-sheet"
     >
-      <h2
-        ref={title}
-        id="shortcuts-title"
-        tabIndex={-1}
-        className="text-lg font-semibold outline-none"
-      >
-        Keyboard shortcuts
-      </h2>
-      {ordered.map((group) => (
-        <section key={group.place} aria-label={group.title} className="shortcuts-group">
-          <h3>{group.title}</h3>
-          <dl className="shortcuts-list">
-            {group.rows.map((row) => (
-              <div key={row.keys.join()}>
-                <dt>
-                  {row.keys.map((key) => (
-                    <kbd key={key}>{KEY_NAMES[key] ?? key}</kbd>
-                  ))}
-                </dt>
-                <dd>{row.label}</dd>
-              </div>
-            ))}
-          </dl>
-        </section>
-      ))}
-      <div className="mt-4 flex justify-end">
-        <Button size="compact" onClick={close}>
-          Close
-        </Button>
+      <div className="local-dialog-head shortcuts-head">
+        <h2
+          ref={title}
+          id="shortcuts-title"
+          tabIndex={-1}
+          className="text-lg font-semibold outline-none"
+        >
+          Keyboard shortcuts
+        </h2>
+        <CloseButton onClick={close} />
+      </div>
+      <div className="shortcuts-body">
+        {ordered.map((group) => (
+          <section key={group.place} aria-label={group.title} className="shortcuts-group">
+            <h3>{group.title}</h3>
+            <dl className="shortcuts-list">
+              {group.rows.map((row) => (
+                <div key={row.keys.join()}>
+                  <dt>
+                    {row.keys.map((key) => (
+                      <kbd key={key}>{KEY_NAMES[key] ?? key}</kbd>
+                    ))}
+                  </dt>
+                  <dd>{row.label}</dd>
+                </div>
+              ))}
+            </dl>
+          </section>
+        ))}
       </div>
     </dialog>
   );

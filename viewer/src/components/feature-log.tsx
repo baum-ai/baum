@@ -29,10 +29,10 @@ import {
   UnknownPerson,
 } from "./decision-log";
 import { formatBucket, formatCount, formatDate, formatTime } from "./format";
-import { ChevronDownIcon, CloseIcon } from "./icons";
+import { ChevronDownIcon } from "./icons";
 import { InlineMarkdown, Markdown } from "./markdown";
 import { DecisionByBadge } from "./review-parts";
-import { Badge, Button, Spinner } from "./ui";
+import { Badge, Button, CloseButton, Spinner } from "./ui";
 import { type ReactNode, useEffect, useId, useRef, useState } from "react";
 
 /** The Features tab of a decision log: its features, newest activity first,
@@ -417,17 +417,7 @@ export function FeatureSidePanel({
             <span className="text-xs text-(--text-tertiary)">{featureCounts(feature)}</span>
           </div>
         </div>
-        <button
-          type="button"
-          onClick={onClose}
-          aria-label="Close feature"
-          className={cn(
-            "flex-none cursor-pointer rounded-(--radius-sm) p-1.5 text-(--text-tertiary) hover:bg-(--surface-hover) hover:text-(--text-primary)",
-            FOCUS_RING,
-          )}
-        >
-          <CloseIcon size={14} />
-        </button>
+        <CloseButton onClick={onClose} label="Close feature" />
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto bg-(--surface-wash) px-5 py-4">{children}</div>
     </aside>

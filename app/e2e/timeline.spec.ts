@@ -102,6 +102,8 @@ test("the Timeline filters with the Inbox's filter menu and query", async ({ pag
   const features = page.getByRole("list", { name: "Features" });
   await features.waitFor();
   await page.locator("summary[aria-label='Filter']").click();
+  // An empty filter shows its query box once "Write a query…" asks for it.
+  await page.getByRole("option", { name: "Write a query…" }).click();
   const bar = page.getByRole("combobox", { name: "Filter the Timeline" });
   await bar.fill("status=");
   await expect(page.getByRole("listbox", { name: "Suggestions" })).toContainText("status=shipped");

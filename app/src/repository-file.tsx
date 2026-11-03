@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { HighlightedText } from "@baum/viewer/components/highlighted-text";
 import { ExternalLinkIcon } from "@baum/viewer/components/icons";
-import { ActionLink, Alert, Button } from "@baum/viewer/components/ui";
+import { ActionLink, Alert, Button, CloseButton } from "@baum/viewer/components/ui";
 import { highlightCode, languageForPath, type HighlightedLine } from "@baum/viewer/highlight";
 import type { ReviewContextRef } from "@baum/viewer/review-document";
 import { request } from "./api";
@@ -126,9 +126,7 @@ export function RepositoryFileDialog({
           </h2>
           <p>{symbol ? `${symbol} · as of the review's head` : "As of the review's head"}</p>
         </div>
-        <Button variant="ghost" size="compact" onClick={close}>
-          Close
-        </Button>
+        <CloseButton onClick={close} />
       </div>
       {!file && !error ? <LoadingStatus>Reading the file from this clone…</LoadingStatus> : null}
       {error ? (

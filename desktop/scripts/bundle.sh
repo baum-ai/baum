@@ -110,8 +110,12 @@ case "$platform" in
     cp "$(one "$bundle"/appimage/baum_"$version"_*.AppImage)" "$out/$name.AppImage"
     ;;
   darwin-universal)
-    lipo "$bundle/macos/baum.app/Contents/MacOS/baum" -verify_arch arm64 x86_64
-    lipo "$bundle/macos/baum.app/Contents/MacOS/baum-desktop" -verify_arch arm64 x86_64
+    # One architecture per call: Xcode 27's lipo takes no more.
+    for binary in baum baum-desktop; do
+      for arch in arm64 x86_64; do
+        lipo "$bundle/macos/baum.app/Contents/MacOS/$binary" -verify_arch "$arch"
+      done
+    done
     COPYFILE_DISABLE=1 tar -cf "$out/$name.app.tar" -C "$bundle/macos" baum.app
     ;;
   windows-amd64)

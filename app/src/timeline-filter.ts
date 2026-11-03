@@ -36,6 +36,14 @@ import {
  *  any other word is looked for in the text. */
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
 const never = () => false;
+/** A day the calendar has, so `2026-02-30` is refused rather than dropped
+ *  from the address without a word. */
+function realDay(value: string): boolean {
+  if (!DAY.test(value)) return false;
+  const [year, month, day] = value.split("-").map(Number) as [number, number, number];
+  const at = new Date(year, month - 1, day);
+  return at.getFullYear() === year && at.getMonth() === month - 1 && at.getDate() === day;
+}
 /** The server only keeps what a field is: no field takes `!=` but `who`. */
 const IS: Op[] = ["="];
 const only = (field: Field): Field => ({ ...field, ops: IS });
@@ -66,6 +74,7 @@ export function timelineFields({
   };
   const person: Field = {
     ops: IS,
+    single: true,
     key: "person",
     label: "Author",
     values: () => people.map((one) => ({ value: one.email, label: personLabel(one) })),
@@ -73,6 +82,7 @@ export function timelineFields({
   };
   const file: Field = {
     ops: IS,
+    single: true,
     key: "file",
     label: "File or folder",
     values: () => files.map((one) => ({ value: one.path, label: one.path })),
@@ -83,7 +93,8 @@ export function timelineFields({
     label: "Date",
     values: () => [],
     ops: [">=", "<="],
-    check: (value) => (DAY.test(value) ? "" : "date takes a day, as 2026-10-31."),
+    single: true,
+    check: (value) => (realDay(value) ? "" : "date takes a day, as 2026-10-31."),
     test: never,
   };
   if (features)

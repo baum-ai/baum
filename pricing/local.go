@@ -226,9 +226,10 @@ func (l *List) AccountingCost(a *agent.Accounting) (*float64, string) {
 		return nil, "usage_incomplete"
 	}
 	sum := 0.0
+	reason := ""
 	for _, attempt := range a.Attempts {
 		if attempt.ModelSource == "configured" {
-			return nil, "actual_model_not_reported"
+			reason = "estimated_from_configured_model"
 		}
 		u := attempt.Usage
 		if u.Unreported || u.IsZero() {
@@ -249,5 +250,5 @@ func (l *List) AccountingCost(a *agent.Accounting) (*float64, string) {
 		}
 		sum += *cost
 	}
-	return &sum, ""
+	return &sum, reason
 }

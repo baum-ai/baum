@@ -2451,8 +2451,9 @@ to the pull request, read from the local session stores with `sessions` and
 document's own session metadata.
 
 What usage would cost at API prices comes from a price list at
-`https://static.usebaum.com/pricing/v2/prices.json`. baum verifies its `.sig`
-with a public key embedded in the binary and falls back to a snapshot embedded
+`https://static.usebaum.com/pricing/v3/prices.json`. baum verifies its `.sig`
+with the price-list public key embedded in the binary (a key that signs only
+price lists) and falls back to a snapshot embedded
 at release when no newer verified list is available. The daemon can persist a
 verified signed list beside its job journal and reload it on restart.
 `pricing.CurrentSource` says which is active (`embedded`, `fetched` or `cached`),
@@ -3446,6 +3447,11 @@ to it (`agent.TitlePath`). `Job.has_transcript` says one exists, and
 (at most 500 entries after `seq` N; `404` without a transcript). Transcripts
 never leave the machine.
 
+`POST /api/jobs/{id}/seen` (body `{}`) records that the user looked at a failed
+job: it sets `Job.seen_at` once, in the queue's `state/jobs` record, and
+leaves jobs in any other state unchanged (`404` for an unknown job). A failed
+job never runs again, so the desktop tray never flags one with `seen_at`.
+
 Review threads reach the prompt as untrusted blocks headed with local ids
 (`T1`…`T20`) that baum maps to the GraphQL node ids, which the prompt never
 contains. The agent ends its final message with a JSON array of
@@ -4177,11 +4183,17 @@ replace it.
   (`Discovery.Cached`, never GitHub) whose head branch (`head_ref`, new in the
   cache, which refetches responses cached without it) is the branch and that
   is not a fork's (a fork's branch of the same name is another branch); the
-  newest when several. When no head has the branch's name, the head branch
+  none when several match. When no head has the branch's name, the head branch
   named by the branch's upstream (`branch.<name>.merge`, when its remote is the
   same repository) is tried, then the pull request whose head commit is the
   commit checked out, which covers a detached HEAD and a push to a branch of
-  another name. Without one the session is still tracked against its
+  another name. If no open PR matches, a unique cached merged or closed PR
+  with the exact same head commit in the same repository is still linked.
+  A closed PR is never inferred from a branch name alone, and ambiguous
+  matches remain unlinked. The live-session response includes `pr_state`
+  (`OPEN`, `MERGED` or `CLOSED`) from that match, and a state change notifies
+  the UI even when the PR number stays the same.
+  Without one the session is still tracked against its
   repository and branch, and only a PR page it does not match omits it. The
   clone list is read at most every 30 seconds and a directory that fails to
   link is not looked up again for a minute, since listing and opening a clone

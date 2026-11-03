@@ -899,3 +899,12 @@ description" (with "§ <section>" when a heading is cited), "From commit
 review" or "From <author>'s comment". A chip the host or the viewer opens
 stays in the app (see the source opener above); one that still leaves for
 GitHub carries the leaving mark.
+
+On review pages, `]` toggles the right-hand Details/Activity pane: its saved
+fold on wide screens, or its sheet on narrow screens. Text fields and open
+dialogs keep the key. A host’s forced fold remains in force.
+
+Continuation summaries and standalone system-reminder turns are collapsed by
+default to a labelled disclosure with their turn number and time. Expanding
+retains the full prompt and agent activity. Real agent replies and work remain
+visible outside the disclosure; normal user prompts remain visible.

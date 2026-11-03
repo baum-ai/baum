@@ -54,6 +54,8 @@ export type Field = {
   test: (value: string, entry: Entry, op: Op, kind?: string) => boolean;
   /** Only an inbox's queue knows it (`kind`): offered there alone. */
   inboxOnly?: boolean;
+  /** It takes one value: picking another replaces it (`toggleValue`). */
+  single?: boolean;
 };
 
 const same = (a: string | undefined, b: string) => (a ?? "").toLowerCase() === b.toLowerCase();
@@ -491,6 +493,9 @@ export function toggleValue(
 ): string {
   const terms = topTerms(query, fields).filter((one) => one.key === key && one.op === op);
   const term = terms.find((one) => one.values.some((v) => same(v, value))) ?? terms[0];
+  // A field of one value has the new one in place of the old.
+  if (term && fieldOf(key, fields)?.single && !term.values.some((v) => same(v, value)))
+    return tidy(`${query.slice(0, term.start)}${key}${op}${quote(value)}${query.slice(term.end)}`);
   const { expr, error } = parseQuery(query, fields);
   if (term) {
     const values = term.values.some((one) => same(one, value))
@@ -739,7 +744,7 @@ export function usePageFilter(page: FilterPage) {
     },
     /** Keeps nothing for the page. */
     reset() {
-      if (stored !== undefined) write(null);
+      write(null);
     },
   };
 }

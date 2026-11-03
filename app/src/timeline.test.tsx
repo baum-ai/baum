@@ -189,6 +189,10 @@ async function filterTo(text: string) {
       menu.dispatchEvent(new Event("toggle"));
     });
   }
+  // An empty filter shows its query box once "Write a query…" asks for it.
+  const write = node.querySelector<HTMLElement>(".filter-menu-write");
+  if (!node.querySelector(".filter-menu-query textarea") && write)
+    await act(async () => write.click());
   const box = node.querySelector<HTMLTextAreaElement>(".filter-menu-query textarea")!;
   await act(async () => {
     Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(box, text);
@@ -998,4 +1002,18 @@ it("focuses the search box with /, which the shortcuts sheet lists", async () =>
   });
   expect(document.activeElement?.getAttribute("placeholder")).toBe("Search features");
   expect(node.querySelector(".timeline-search kbd.key-hint")?.textContent).toBe("/");
+});
+
+it("shows the open tab's own filter after the tab changes", async () => {
+  await show();
+  await filterTo("status=shipped");
+  expect(current.get("status")).toBe("shipped");
+  const all = [...node.querySelectorAll<HTMLElement>('[role="tab"]')].find(
+    (tab) => tab.textContent === "All decisions",
+  )!;
+  await act(async () => all.click());
+  await act(async () => {});
+  const box = node.querySelector<HTMLTextAreaElement>(".filter-menu-query textarea");
+  expect(box?.value ?? "").toBe("");
+  forgetLastRows();
 });

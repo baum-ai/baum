@@ -137,6 +137,14 @@ test("Tab stays inside a dialog and goes through its controls", async ({ page })
   const sheet = page.getByRole("dialog", { name: "Keyboard shortcuts" });
   await expect(sheet).toBeVisible();
   const close = sheet.getByRole("button", { name: "Close", exact: true });
+  const heading = sheet.getByRole("heading", { name: "Keyboard shortcuts", exact: true });
+  const headingTop = (await heading.boundingBox())!.y;
+  await sheet.evaluate((element) => {
+    element.scrollTop = element.scrollHeight;
+  });
+  await expect.poll(() => sheet.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
+  await expect.poll(async () => (await heading.boundingBox())!.y).toBeCloseTo(headingTop, 0);
+  await expect(close).toBeInViewport();
   await page.keyboard.press("Tab");
   await expect(close).toBeFocused();
   // Its only control: Tab and Shift+Tab stay on it.
@@ -193,6 +201,7 @@ test("a click leaves no focus ring behind, and j and k still move the selection"
     .first()
     .click();
   await expect(page.locator("button.upnext-row").first()).toBeVisible();
+  await expect.poll(() => page.evaluate(() => document.activeElement === document.body)).toBe(true);
   await page.keyboard.press("j");
   expect(await page.evaluate(() => !!document.querySelector(".local-rail :focus-visible"))).toBe(
     false,
@@ -235,4 +244,27 @@ test("Tab goes through a dialog's controls, a radio group as one, and wraps insi
   expect(seen).toEqual(["radio:b", "Cancel", "Save", "text", "radio:b", "Cancel", "Save", "text"]);
   await page.keyboard.press("Shift+Tab");
   expect(await page.evaluate(() => document.activeElement?.textContent)).toBe("Save");
+});
+
+test("j and k move through the review Summary", async ({ page }) => {
+  await page.goto(await launchURL());
+  await page.getByRole("link", { name: "Pull requests", exact: true }).first().click();
+  await page.getByRole("link", { name: /Reuse the existing PR page/ }).click();
+  await expect(page.getByText("Local fixture review version 2", { exact: true })).toBeVisible();
+  const active = page.locator("[data-review-block-active]");
+  await page.keyboard.press("j");
+  await expect(active).toBeFocused();
+  const first = await active.textContent();
+  await page.keyboard.press("j");
+  await expect(active).toBeFocused();
+  await expect(active).not.toHaveText(first!);
+  await page.keyboard.press("k");
+  await expect(active).toHaveText(first!);
+  // Summary items open their section just as their jump link does.
+  for (let step = 0; step < 30 && !(await active.locator("[data-block-open]").count()); step++) {
+    await page.keyboard.press("j");
+  }
+  await expect(active.locator("[data-block-open]").first()).toBeVisible();
+  await page.keyboard.press("Enter");
+  await expect(page).toHaveURL(/pane=section.*section=/);
 });

@@ -381,8 +381,10 @@ The daemon outlives the app, so the app's presence is a tray icon.
   host before it shows the window after all. The deb depends on
   `libayatana-appindicator3-1` (the Tauri bundler adds it for the tray), and a
   tray library that fails to load leaves the app running without a tray.
-- **Tray menu:** what the daemon is doing (Idle, "2 running, 1 queued");
-  anything needing attention; each agent session asking for a permission or
+- **Tray menu:** what the daemon is doing (Idle, "2 running, 1 queued"),
+  which opens the jobs list while reviews run or wait and is inert otherwise;
+  an item for each reason the icon is red, which goes where to look (see
+  "Icon states"); each agent session asking for a permission or
   an answer (clicking one opens its transcript); "Plan usage left" with a
   line per readable plan window ("Claude Code · 5-hour: 62% left · resets in
   3 h"); Open baum; Pause or Resume automatic reviews; Start at login;
@@ -394,9 +396,17 @@ The daemon outlives the app, so the app's presence is a tray icon.
   read differently, which the 3–10 s polls check.
 - **Tray panel (macOS and Windows):** a left click on the icon opens a small
   borderless window under the icon (above it, on a bottom taskbar), drawn
-  like a menu: the status line, waiting sessions as highlighted rows that
-  open them, the plan usage left as coloured meters, Open baum, Pause or
-  Resume automatic reviews and Quit and stop background reviews. It hides
+  like a menu, with no title row (the icon names the app, as for the menu
+  bar's own items) and no Open item: first a status dot (red while the icon
+  is) with what the daemon is doing, which opens the jobs list while reviews
+  run or wait (as in the menu) and is plain text otherwise; the Inbox's
+  count, or "Your Inbox is empty" once the daemon counted none (nothing
+  while the count is unknown), which opens the app; the alerts and the waiting sessions as highlighted rows that
+  open them; the plan usage left as coloured meters; Pause or Resume
+  automatic reviews; and Quit and stop background reviews. It is placed on
+  the icon's screen, found
+  from the cursor in points on macOS (whose monitors report pixels at each
+  screen's own scale) and from the icon's pixels elsewhere. It hides
   when it loses focus or on Escape. As in a native menu, `↓` and `↑` move
   through its items (from the first or last, wrapping), `Home` and `End` go
   to either end, and `Enter` or `Space` presses the focused one. The right
@@ -406,8 +416,9 @@ The daemon outlives the app, so the app's presence is a tray icon.
 - **Inbox.** While the app's Inbox lists some pull requests, the menu shows a
   disabled line such as "3 pull requests in your Inbox", the tooltip appends
   it, the dock badge (macOS; any other platform whose window badge Tauri
-  supports, ignored silently elsewhere) shows the count, and an otherwise idle
-  icon shows the Inbox dot. Zero, an unknown count and a daemon that is not
+  supports, ignored silently elsewhere) shows the count. The tray icon does
+  not: its dot means only that something runs or needs the user. Zero, an
+  unknown count and a daemon that is not
   running clear all of them. The daemon counts the Inbox as the app does,
   except that saved inboxes left out of the app's badge still count:
   `GET /api/index?view=waiting`, polled with the other tray requests.
@@ -428,17 +439,33 @@ The daemon outlives the app, so the app's presence is a tray icon.
 
 | State | When |
 | --- | --- |
-| Idle | Nothing running or queued, nothing new to look at. |
-| Running | A review is running or queued. |
-| Attention | A review failed, a diagnostics check reports a problem, or the daemon is not running. |
-| Inbox | Otherwise idle, with pull requests in the Inbox (an amber dot). |
+| Idle | No dot: nothing running or queued, nothing needing the user. Pull requests waiting in the Inbox leave it idle. |
+| Running | A blue dot: a review is running or queued. |
+| Attention | A red dot: a job failed, a diagnostics check reports a problem, or the daemon is not running. |
 
-Attention outranks Running, which outranks Inbox.
+Attention outranks Running.
 
-Attention for the first two clears when the window is opened or focused and
-returns for something new (a failure found when the app first looks at the
-queue is not new; the daemon keeps finished jobs). Diagnostics warnings do not
-count. The menu lists what needs attention, and the tooltip shows the summary.
+Whenever the icon is red, the menu and the panel offer, under the status
+line, one item per reason that goes where the user needs to look:
+
+| Alert | Item | Following it |
+| --- | --- | --- |
+| A failed job | "Review failed: acme/widgets #7 · Open job" ("Fix failed", "Build failed") | Opens the job (`?page=jobs&job=<id>`) |
+| More than three failed jobs | "5 jobs failed · Open jobs" | Opens the jobs list |
+| Diagnostics problems | "A diagnostics check reports a problem · Open diagnostics" | Opens Diagnostics |
+| No daemon | "Background reviews are not running · Open baum to restart them" | Shows the window, whose connecting screen restarts it |
+
+Whether a failed job was seen is the daemon's record: every failed job
+without `seen_at` turns the icon red, including one that failed while the
+app was closed, until its alert is followed. That records it
+(`POST /api/jobs/{id}/seen` sets the job's `seen_at` in `app.sqlite`; when
+that fails, each poll records it again until the daemon stops reporting the
+job as unseen, and its alert stays hidden meanwhile), and a
+failed job with `seen_at` is never flagged again, after a restart either.
+Opening or focusing the window does not see a failed job (the window opens on
+its own at launch); it acknowledges diagnostics problems, until one clears
+and returns. Diagnostics warnings do not count. A missing daemon stays red
+until it runs again. The tooltip shows the summary.
 
 ### How the app talks to the daemon
 
@@ -738,11 +765,22 @@ just desktop::test          # tests only; pass cargo test arguments after it
 just desktop::sidecar       # build binaries/baum-<target triple>; pass a triple to cross-build
 just desktop::build         # Linux bundle (deb by default) in target/release/bundle
 just desktop::bundle        # the release's Linux deb and AppImage in target/release-bundles
+just desktop::dmg           # macOS: ad hoc signed DMG in target/local-dmg (--install also installs it)
 just desktop::updater-test  # updater manifest checks reject tampered releases
 just desktop::run           # run the app on this Wayland session's display
 just desktop::dev           # native host app, with Vite hot reload in Docker
 just desktop::icons         # resolve palette tokens and regenerate native icons
 ```
+
+`dmg` builds the frontend, the viewer and both darwin sidecars in Docker, then runs
+`scripts/macos-local.sh` on the host: `bundle.sh` and `macos-finalize.sh` as the
+release runs them, without a Developer ID, so the app is signed ad hoc and not
+notarised. This is a host execution exception, because the bundle needs Apple's
+`lipo`, `codesign` and `hdiutil`. The host needs Rust with the
+`aarch64-apple-darwin` and `x86_64-apple-darwin` targets, the Xcode command line
+tools and the Tauri CLI version the Dockerfile pins. With `--install` it
+replaces `/Applications/baum.app`; quit the app first with Quit and stop
+background reviews, so the next launch starts a daemon from the new binary.
 
 `run` starts the container's own daemon in the container's home directory,
 not yours. Set `BAUM_DESKTOP_BAUM` to run a different `baum` binary than the

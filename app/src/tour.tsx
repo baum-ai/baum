@@ -1,7 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
-import { CloseIcon } from "@baum/viewer/components/icons";
 import { Stumpy } from "@baum/viewer/components/stumpy";
-import { Button } from "@baum/viewer/components/ui";
+import { CloseButton } from "@baum/viewer/components/ui";
 import { appURL, inSample, navigate, ownBase } from "./api";
 import { PRIMARY, SECONDARY, SMALL } from "./action-classes";
 import { PAGES } from "./pages";
@@ -285,15 +284,7 @@ export function Tour({ close }: { close: () => void }) {
           if (["Enter", " "].includes(event.key)) event.stopPropagation();
         }}
       >
-        <Button
-          variant="ghost"
-          size="compact"
-          aria-label="Close the tour"
-          onClick={close}
-          className="tour-close"
-        >
-          <CloseIcon size={14} />
-        </Button>
+        <CloseButton label="Close the tour" onClick={close} className="tour-close" />
         {stop.welcome ? (
           <div className="tour-band" aria-hidden="true">
             {LEAVES.map((leaf) => (

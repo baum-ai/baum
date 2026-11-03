@@ -5,6 +5,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { App } from "./app";
 import type { Entry } from "./api";
 import type { Inbox } from "./inboxes";
+import { COMMAND } from "./shortcuts";
 
 const entry = (
   number: number,
@@ -271,8 +272,8 @@ it("shows only an inbox's own queue under its name", async () => {
   expect(head.querySelector("h1")!.textContent).toBe("Merges");
   // No sentence says what it holds.
   expect(head.textContent).not.toContain("whatever the risk");
-  // Done today, its bar and the person's pull requests waiting on others are the Inbox's.
-  expect(node.querySelector('[role="progressbar"]')).toBeNull();
+  // Nothing of its own is done yet.
+  expect(node.querySelector('[role="progressbar"]')!.getAttribute("aria-valuenow")).toBe("0");
   expect(node.querySelector('[aria-label="Done today"]')).toBeNull();
   const heading = node.querySelector(".upnext-list-body .list-heading-label")!;
   expect(node.querySelectorAll(".upnext-list-body .list-heading")).toHaveLength(1);
@@ -290,6 +291,59 @@ it("shows only an inbox's own queue under its name", async () => {
   expect(titles()).toEqual(["Change 1", "Change 3", "Change 2"]);
   await render("?inbox=Reviews");
   expect(titles()).toEqual(["Change 1"]);
+});
+
+it("lists an inbox's own pull requests done today and waiting on others", async () => {
+  await render();
+  // 3 and 4 are merged; 5 and 6 are the person's, waiting on their checks.
+  const merged = (one: Entry) => ({
+    ...one,
+    historical: true,
+    pull_request: { ...one.pull_request, state: "MERGED" },
+  });
+  entries = [
+    ...entries.map((one) => (one.pull_request.number >= 3 ? merged(one) : one)),
+    entry(5, "acme/demo", { authored_by_me: true }, { checks: "running" }),
+    entry(6, "other/thing", { authored_by_me: true }, { checks: "running" }),
+  ];
+  await render("?inbox=Acme");
+  const done = async () => {
+    const toggle = node.querySelector<HTMLButtonElement>('[aria-label="Done today"] button');
+    if (!toggle) return [];
+    if (toggle.getAttribute("aria-expanded") === "false") await click(toggle);
+    return Array.from(node.querySelectorAll(".upnext-done-text")).map((one) => one.textContent);
+  };
+  const bar = () => node.querySelector('[role="progressbar"]')!;
+  const headings = () =>
+    Array.from(node.querySelectorAll(".upnext-list-body .list-heading-label")).map(
+      (one) => one.textContent,
+    );
+  expect(await done()).toEqual(["Merged #3 Change 3"]);
+  expect(`${bar().getAttribute("aria-valuenow")} of ${bar().getAttribute("aria-valuemax")}`).toBe(
+    "1 of 3",
+  );
+  expect(node.querySelector(".upnext-list-summary")!.textContent).toContain("1 done");
+  expect(headings()).toContain("Waiting on checks or reviews 1");
+  expect(titles()).toContain("Change 5");
+  expect(titles()).not.toContain("Change 6");
+  // In the Inbox, a pull request waiting on others is tagged with its inbox too.
+  await render();
+  const tagOf = (title: string) =>
+    Array.from(node.querySelectorAll(".upnext-row"))
+      .find((row) => row.textContent?.includes(title))
+      ?.querySelector(".upnext-tag")?.textContent;
+  expect(tagOf("Change 5")).toBe("Acme");
+  expect(tagOf("Change 6")).toBeUndefined();
+  // A merge inbox matches the merges done, and no pull request waiting on others.
+  await render("?inbox=Merges");
+  expect((await done()).sort()).toEqual(["Merged #3 Change 3", "Merged #4 Change 4"]);
+  expect(headings().some((one) => one?.startsWith("Waiting"))).toBe(false);
+  // Once the app no longer lists them, they match as they were in the queue.
+  entries = entries.filter((one) => one.pull_request.number < 3);
+  await render("?inbox=Acme");
+  expect(await done()).toEqual(["Merged #3 Change 3"]);
+  await render("?inbox=Reviews");
+  expect(await done()).toEqual([]);
 });
 
 it("says an inbox with nothing in it fills up, and falls back to Inbox for an unknown one", async () => {
@@ -388,7 +442,7 @@ it("starts a saved inbox's filter from its query and keeps a change as a draft u
   await typeQuery("");
   expect(titles()).toHaveLength(4);
   await click(node.querySelector("summary.filter-save-arrow"));
-  expect(saves()).toEqual(["Update inbox", "Create inbox", "Discard changes"]);
+  expect(saves()).toEqual(["Update inbox", `Create inbox${COMMAND}↵`, "Discard changes"]);
   await click(
     Array.from(node.querySelectorAll<HTMLElement>(".filter-save-menu [role=menuitem]")).find(
       (one) => one.textContent === "Discard changes",
@@ -592,3 +646,46 @@ it("moves j and k only through the inbox's own rows", async () => {
   await press("k");
   expect(panelTitle()).toBe("Change 3");
 });
+
+it("creates an inbox with Control+Enter from the inbox filter", async () => {
+  await render("?inbox=Merges");
+  await act(async () => {
+    document.body.dispatchEvent(
+      new KeyboardEvent("keydown", {
+        key: "Enter",
+        ctrlKey: true,
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+  });
+  expect(node.querySelector("h1")?.textContent).toBe("New inbox");
+  const name = node.querySelector<HTMLInputElement>(".inbox-name")!;
+  expect(name.value).toBe("Merges 2");
+  expect(name.selectionStart).toBe(0);
+  expect(name.selectionEnd).toBe(name.value.length);
+  expect(puts).toHaveLength(0);
+});
+
+for (const [key, start, expected] of [
+  ["j", "Reviews", "Merges"],
+  ["k", "Merges", "Reviews"],
+  ["ArrowDown", "Reviews", "Merges"],
+  ["ArrowUp", "Merges", "Reviews"],
+  ["k", "Reviews", "Up next"],
+  ["ArrowUp", "Reviews", "Up next"],
+  ["j", "", "Reviews"],
+  ["ArrowDown", "", "Reviews"],
+  ["k", "", "Up next"],
+]) {
+  it(`switches inboxes with Control+${key} from ${start}`, async () => {
+    await render(start ? `?inbox=${start}` : "");
+    await act(async () => {
+      document.body.dispatchEvent(
+        new KeyboardEvent("keydown", { key, ctrlKey: true, bubbles: true, cancelable: true }),
+      );
+    });
+    expect(node.querySelector("h1")?.textContent).toBe(expected);
+    expect(node.querySelector("[data-go-to]")).toBeNull();
+  });
+}

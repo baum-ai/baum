@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { toggleValue } from "./pr-filter";
 import {
   timelineFields,
   timelineFilter,
@@ -64,6 +65,17 @@ describe("the Timeline's filter", () => {
     const search = new URLSearchParams('q=say "hi"');
     const query = `status=shipped ${timelineQuery(search, true)}`;
     expect(withTimelineQuery(search, query, fields(true), true).get("q")).toBe('say "hi"');
+  });
+
+  it("replaces a one-value field's value, and refuses a day the calendar lacks", () => {
+    const all = fields(false);
+    expect(toggleValue("person=a@example.com who=human", "person", "b@example.com", "=", all)).toBe(
+      "person=b@example.com who=human",
+    );
+    expect(toggleValue("who=human", "who", "agent", "=", all)).toBe("who=human,agent");
+    expect(timelineFilter(all).problem("date>=2026-02-30")).toBe(
+      "date takes a day, as 2026-10-31.",
+    );
   });
 
   it("quotes text that would read as a filter", () => {

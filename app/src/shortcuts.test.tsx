@@ -273,14 +273,14 @@ it("opens Merge on a ready row only", async () => {
   expect(node.querySelector("dialog")?.textContent).toContain("Merge pull request #1?");
 });
 
-it("calls fix only on a row that offers it, and generate and refresh", async () => {
+it("calls fix only on a row that offers it, and refresh; g does not generate", async () => {
   await render();
   await press("j");
   expect(focusedTitle()).toBe("Change 2");
   await press("f");
   expect(handlers.fix).toHaveBeenCalledWith(rows[1]);
   await press("g");
-  expect(handlers.generate).toHaveBeenCalledWith(rows[1]);
+  expect(handlers.generate).not.toHaveBeenCalled();
   await press("j");
   await press("f");
   expect(handlers.fix).toHaveBeenCalledTimes(1);
@@ -465,7 +465,20 @@ it("lists exactly the keys that work in the sheet", async () => {
     "Alt",
     "Esc",
   ]);
-  expect(listed("Inbox")).toEqual(["j", "↓", "k", "↑", "Enter", "Space", "m", "f", "t", "s", "u"]);
+  expect(listed("Inbox")).toEqual([
+    "j",
+    "↓",
+    "k",
+    "↑",
+    "Enter",
+    "Space",
+    "m",
+    "f",
+    "t",
+    "s",
+    "u",
+    "/",
+  ]);
   expect(listed("Pull requests")).toEqual([
     "j",
     "↓",
@@ -477,9 +490,9 @@ it("lists exactly the keys that work in the sheet", async () => {
     "Space",
     "m",
     "f",
-    "g",
     "t",
     "r",
+    "/",
     "Esc",
     "h",
     "←",
@@ -499,9 +512,9 @@ it("lists exactly the keys that work in the sheet", async () => {
     "Enter",
     "m",
     "f",
-    "g",
     "t",
     "a",
+    "]",
     "u",
     "Esc",
   ]);
@@ -532,7 +545,6 @@ it("lists exactly the keys that work in the sheet", async () => {
     " ",
     "m",
     "f",
-    "g",
     "t",
     "r",
   ]);
@@ -974,14 +986,7 @@ it("draws a place's key bar from the sheet's table, keys sharing a name together
     return [...node.querySelectorAll(".key-bar > span")].map((item) => item.textContent);
   };
   const command = MAC ? "⌘" : "Ctrl+";
-  expect(await bar("jobs")).toEqual([
-    "jk move",
-    "↵ open",
-    "t transcript",
-    `${command}. actions`,
-    `${command}K go to`,
-    "? help",
-  ]);
+  expect(await bar("jobs")).toEqual(["jk move", "↵ open", "t transcript", `${command}. actions`]);
   // The Inbox's bar is what its foot always said; Settings has no row menu.
   expect(await bar("inbox")).toEqual([
     "jk move",
@@ -990,8 +995,6 @@ it("draws a place's key bar from the sheet's table, keys sharing a name together
     "f fix",
     "s snooze",
     "u undo",
-    `${command}K go to`,
-    "? help",
   ]);
   expect(await bar("settings")).not.toContain(`${command}. actions`);
   // It shows only while Alt is held, and is for the eye alone.

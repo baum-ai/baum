@@ -642,6 +642,7 @@ function TimelineLog({
   const [sent, setSent] = useState("");
   const shown =
     sent &&
+    !pageFilter.problem(sent) &&
     timelineQuery(
       withTimelineQuery(search, sent, filterFields, onFeatures),
       onFeatures,
@@ -716,6 +717,7 @@ function TimelineLog({
                   onChange={setQuery}
                   entries={[]}
                   page={pageFilter}
+                  slashOpens={false}
                   footer={
                     <FilterBar
                       key={tab}
