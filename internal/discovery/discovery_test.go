@@ -799,9 +799,19 @@ func TestForgottenMergeabilitySettlesAndKeepsMergeState(t *testing.T) {
 	if got := poll(); got.Settling {
 		t.Fatal("a mergeability still unknown settled again")
 	}
-	mergeable, state = "CONFLICTING", "DIRTY"
-	if got := poll(); got.Settling || got.PullRequests[0].Merge != "conflict" {
+	mergeable, state = "MERGEABLE", "CLEAN"
+	if got := poll(); got.Settling || got.PullRequests[0].Merge != "ready" {
 		t.Fatalf("worked out: settling=%v merge=%q", got.Settling, got.PullRequests[0].Merge)
+	}
+	// One field settles it while the other is unknown: that answer stands.
+	for _, tc := range []struct{ mergeable, state, merge string }{
+		{"CONFLICTING", "UNKNOWN", "conflict"},
+		{"UNKNOWN", "BEHIND", "blocked"},
+	} {
+		mergeable, state = tc.mergeable, tc.state
+		if got := poll(); got.PullRequests[0].Merge != tc.merge {
+			t.Fatalf("%s/%s: merge=%q, want %q", tc.mergeable, tc.state, got.PullRequests[0].Merge, tc.merge)
+		}
 	}
 	// A new head keeps nothing from the old one.
 	head, mergeable, state = "two", "UNKNOWN", "UNKNOWN"

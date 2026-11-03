@@ -672,9 +672,15 @@ func (p *poll) discover(ctx context.Context, repository github.Repository) (Snap
 // for keeps the merge state of the earlier poll that read the same head:
 // after a merge into its base GitHub works the answer out again, and until it
 // does the pull request stays where it was rather than looking like one that
-// waits on reviewers. A new head, or one that was a draft, has nothing to keep.
+// waits on reviewers. A new head, or one that was a draft, has nothing to keep,
+// and a response one of whose fields still settles the merge state (CONFLICTING,
+// or BEHIND) keeps its own.
 func carryMerge(old PullRequest, row gqlPR, unknown bool) bool {
-	return unknown && old.HeadSHA == row.HeadRefOid && old.Merge != "" && old.Merge != "draft"
+	if !unknown || old.HeadSHA != row.HeadRefOid || old.Merge == "" || old.Merge == "draft" {
+		return false
+	}
+	_, _, merge, _, _ := row.states()
+	return merge == ""
 }
 
 // Observe retains fresh free metadata for open and saved historical PRs. A
