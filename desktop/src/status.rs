@@ -4,9 +4,16 @@
 //!
 //! The icon has three states. Idle is the default. Running means a job is
 //! running or queued. Attention means something needs the user and they have
-//! not yet opened the window since it appeared: a job failed, a diagnostics
-//! check reports a problem, or the daemon is not running. Opening the window
-//! acknowledges the first two; the last stays until the daemon runs again.
+//! not yet seen it: a job failed, a diagnostics check reports a problem, or
+//! the daemon is not running. Each is an `Alert`, which the menu and the
+//! panel offer as an item that goes where the user needs to look: the failed
+//! job, the jobs list, diagnostics, or the window (which offers to restart
+//! the daemon). Following an alert acknowledges what it is about; opening the
+//! window acknowledges diagnostics problems only. A missing daemon stays
+//! until it runs again. Every failed job the daemon reports without
+//! `seen_at` is flagged, including one that failed while the app was closed;
+//! following its alert records it (`POST /api/jobs/{id}/seen`), and a seen
+//! failed job is never flagged again.
 //!
 //! The menu and the panel also show what is left of the agents' plans
 //! (`GET /api/plan-usage`) and the agent sessions waiting for the user's
@@ -28,6 +35,41 @@ struct JobRow {
     id: String,
     #[serde(default)]
     state: String,
+    #[serde(default)]
+    kind: Option<String>,
+    #[serde(default)]
+    repository: Option<String>,
+    #[serde(default)]
+    pr: Option<u64>,
+    #[serde(default)]
+    seen_at: Option<String>,
+}
+
+/// A failed job the user has not seen, with what its alert names.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Failed {
+    pub id: String,
+    /// `fix` or `feature_build`; a review has none.
+    pub kind: Option<String>,
+    pub repository: Option<String>,
+    pub pr: Option<u64>,
+}
+
+impl Failed {
+    /// "Review failed: acme/widgets #7".
+    fn label(&self) -> String {
+        let what = match self.kind.as_deref() {
+            None => "Review failed",
+            Some("fix") => "Fix failed",
+            Some("feature_build") => "Build failed",
+            Some(_) => "Job failed",
+        };
+        match (&self.repository, self.pr) {
+            (Some(repository), Some(pr)) if pr > 0 => format!("{what}: {repository} #{pr}"),
+            (Some(repository), _) => format!("{what}: {repository}"),
+            _ => what.to_string(),
+        }
+    }
 }
 
 /// The queue as the tray needs it.
@@ -35,8 +77,9 @@ struct JobRow {
 pub struct Jobs {
     pub running: usize,
     pub queued: usize,
-    /// Ids of failed jobs. The daemon keeps finished jobs in its journal.
-    pub failed: Vec<String>,
+    /// Failed jobs not yet seen, in the daemon's order. The daemon keeps
+    /// finished jobs in its journal, with when the user saw a failure.
+    pub failed: Vec<Failed>,
 }
 
 /// `GET /api/jobs`. A daemon without a runner answers `{"available":false}`,
@@ -49,7 +92,12 @@ pub fn parse_jobs(body: &[u8]) -> Result<Jobs, String> {
         match row.state.as_str() {
             "running" => jobs.running += 1,
             "queued" => jobs.queued += 1,
-            "failed" => jobs.failed.push(row.id),
+            "failed" if row.seen_at.is_none() => jobs.failed.push(Failed {
+                id: row.id,
+                kind: row.kind,
+                repository: row.repository,
+                pr: row.pr,
+            }),
             _ => {}
         }
     }
@@ -424,13 +472,52 @@ pub enum Icon {
     Inbox,
 }
 
+/// The menu id of an alert about one failed job, before the job's id.
+pub const ALERT_JOB: &str = "alert:job:";
+/// The menu id of an alert about several failed jobs: opens the jobs list.
+pub const ALERT_JOBS: &str = "alert:jobs";
+pub const ALERT_DIAGNOSTICS: &str = "alert:diagnostics";
+/// The daemon is not running: opens the window, which offers to restart it.
+pub const ALERT_DAEMON: &str = "alert:daemon";
+/// More failed jobs than this make one alert that opens the jobs list.
+const JOB_ALERTS: usize = 3;
+
+/// Something the icon is red for, and where to go about it. The menu and the
+/// panel show each as an item; `id` is its menu id.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct Alert {
+    pub id: String,
+    pub text: String,
+    /// What following it does: "Open job".
+    pub action: String,
+}
+
+impl Alert {
+    fn new(id: impl Into<String>, text: impl Into<String>, action: &str) -> Alert {
+        Alert {
+            id: id.into(),
+            text: text.into(),
+            action: action.to_string(),
+        }
+    }
+}
+
+/// Whether a menu id is an alert's.
+pub fn is_alert(id: &str) -> bool {
+    match id.strip_prefix(ALERT_JOB) {
+        Some(job) => !job.is_empty(),
+        None => matches!(id, ALERT_JOBS | ALERT_DIAGNOSTICS | ALERT_DAEMON),
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct View {
     pub icon: Icon,
     /// The first menu line and the tooltip: what the daemon is doing.
     pub summary: String,
-    /// One line per thing needing the user; empty unless the icon is Attention.
-    pub attention: Vec<String>,
+    /// Each thing needing the user. Empty unless the icon is Attention, and
+    /// never empty when it is: everything red can be followed.
+    pub attention: Vec<Alert>,
     /// The global automatic switch; `None` while unknown, which disables the
     /// pause item.
     pub automatic: Option<bool>,
@@ -477,13 +564,15 @@ impl Default for View {
     }
 }
 
-/// Remembers what the user has already seen, so Attention clears when they
-/// open the window and returns only for something new.
+/// Remembers what the user has already seen, so Attention clears and returns
+/// only for something new. Whether a failed job was seen is the daemon's
+/// record: every failed job it reports without `seen_at` is flagged, whenever
+/// it failed, until the user follows its alert. Those the tracker
+/// acknowledges are returned to the caller, which records them in the
+/// daemon; until the daemon says so, they are remembered here.
 #[derive(Debug, Default)]
 pub struct Tracker {
     acknowledged: HashSet<String>,
-    /// Failed jobs found on the first look are old news.
-    seeded: bool,
     current: BTreeSet<String>,
 }
 
@@ -493,38 +582,64 @@ impl Tracker {
         let queued = seen.jobs.as_ref().map_or(0, |j| j.queued);
         let mut keys = BTreeSet::new();
         if let Some(jobs) = &seen.jobs {
-            keys.extend(jobs.failed.iter().map(|id| format!("failed:{id}")));
-            if !self.seeded {
-                self.acknowledged.extend(keys.iter().cloned());
-                self.seeded = true;
-            }
+            keys.extend(jobs.failed.iter().map(|f| format!("failed:{}", f.id)));
         }
         if let Some(problems) = &seen.diagnostics {
             keys.extend(problems.iter().map(|id| format!("diagnostics:{id}")));
         }
-        // Anything that went away and comes back is new again. What a report
-        // we do not have (a failed poll) would have said is not forgotten.
+        // A problem that went away and comes back is new again. What a report
+        // we do not have (a failed poll) would have said is not forgotten. A
+        // failed job leaves the list once the daemon records it seen, and
+        // never fails again.
         self.acknowledged.retain(|k| {
             keys.contains(k)
                 || (k.starts_with("failed:") && seen.jobs.is_none())
                 || (k.starts_with("diagnostics:") && seen.diagnostics.is_none())
         });
-        let unseen: Vec<&String> = keys
-            .iter()
-            .filter(|k| !self.acknowledged.contains(*k))
-            .collect();
         self.current = keys.clone();
+        let unseen = |key: &str| keys.contains(key) && !self.acknowledged.contains(key);
 
+        // Only a daemon that is up can be asked about what it reported.
         let mut attention = Vec::new();
-        let count = |prefix: &str| unseen.iter().filter(|k| k.starts_with(prefix)).count();
-        let failed = count("failed:");
-        if failed > 0 {
-            attention.push(count_label(failed, "review failed", "reviews failed"));
+        if seen.link == Link::Up {
+            let failed: Vec<&Failed> = seen
+                .jobs
+                .iter()
+                .flat_map(|jobs| &jobs.failed)
+                .filter(|f| unseen(&format!("failed:{}", f.id)))
+                .collect();
+            if failed.len() > JOB_ALERTS {
+                attention.push(Alert::new(
+                    ALERT_JOBS,
+                    format!("{} jobs failed", failed.len()),
+                    "Open jobs",
+                ));
+            } else {
+                attention.extend(
+                    failed
+                        .iter()
+                        .map(|f| Alert::new(format!("{ALERT_JOB}{}", f.id), f.label(), "Open job")),
+                );
+            }
+            let problems = keys
+                .iter()
+                .filter(|k| k.starts_with("diagnostics:") && unseen(k))
+                .count();
+            let text = match problems {
+                0 => None,
+                1 => Some("A diagnostics check reports a problem".to_string()),
+                n => Some(format!("{n} diagnostics checks report a problem")),
+            };
+            if let Some(text) = text {
+                attention.push(Alert::new(ALERT_DIAGNOSTICS, text, "Open diagnostics"));
+            }
         }
-        match count("diagnostics:") {
-            0 => {}
-            1 => attention.push("A diagnostics check reports a problem".to_string()),
-            n => attention.push(format!("{n} diagnostics checks report a problem")),
+        if seen.link == Link::Down {
+            attention.push(Alert::new(
+                ALERT_DAEMON,
+                "Background reviews are not running",
+                "Open baum to restart them",
+            ));
         }
 
         let plans = seen.plans.as_deref().filter(|_| seen.link == Link::Up);
@@ -564,14 +679,53 @@ impl Tracker {
         }
     }
 
-    /// The user opened the window: what is showing now has been seen.
+    /// The user opened the window: the diagnostics problems showing have been
+    /// seen. Failed jobs have not: the window may show anything, and it
+    /// opens on its own at launch, so a job is seen only by following its
+    /// alert.
     pub fn acknowledge(&mut self) {
-        self.acknowledged.extend(self.current.iter().cloned());
+        let keys: Vec<String> = self
+            .current
+            .iter()
+            .filter(|k| k.starts_with("diagnostics:"))
+            .cloned()
+            .collect();
+        self.mark(keys);
     }
-}
 
-fn count_label(n: usize, one: &str, many: &str) -> String {
-    format!("{n} {}", if n == 1 { one } else { many })
+    /// The user followed an alert: what it is about has been seen. Returns
+    /// the failed jobs this made seen. A missing daemon is not something to
+    /// acknowledge.
+    pub fn acknowledge_alert(&mut self, id: &str) -> Vec<String> {
+        let keys: Vec<String> = if let Some(job) = id.strip_prefix(ALERT_JOB) {
+            vec![format!("failed:{job}")]
+        } else {
+            let prefix = match id {
+                ALERT_JOBS => "failed:",
+                ALERT_DIAGNOSTICS => "diagnostics:",
+                _ => return Vec::new(),
+            };
+            self.current
+                .iter()
+                .filter(|k| k.starts_with(prefix))
+                .cloned()
+                .collect()
+        };
+        self.mark(keys)
+    }
+
+    fn mark(&mut self, keys: Vec<String>) -> Vec<String> {
+        let mut jobs = Vec::new();
+        for key in keys {
+            if let Some(id) = key.strip_prefix("failed:") {
+                // Recorded again even when known here: the daemon may not
+                // have it yet, and recording is idempotent.
+                jobs.push(id.to_string());
+            }
+            self.acknowledged.insert(key);
+        }
+        jobs
+    }
 }
 
 fn summary(running: usize, queued: usize) -> String {
@@ -605,8 +759,22 @@ mod tests {
         Jobs {
             running,
             queued,
-            failed: failed.iter().map(|s| s.to_string()).collect(),
+            failed: failed
+                .iter()
+                .map(|id| Failed {
+                    id: id.to_string(),
+                    ..Failed::default()
+                })
+                .collect(),
         }
+    }
+
+    fn texts(view: &View) -> Vec<&str> {
+        view.attention.iter().map(|a| a.text.as_str()).collect()
+    }
+
+    fn ids(view: &View) -> Vec<&str> {
+        view.attention.iter().map(|a| a.id.as_str()).collect()
     }
 
     fn up(jobs: Jobs) -> Observed {
@@ -634,6 +802,152 @@ mod tests {
             Jobs::default()
         );
         assert!(parse_jobs(b"not json").is_err());
+    }
+
+    #[test]
+    fn a_failed_job_the_daemon_records_as_seen_is_not_a_failure_to_flag() {
+        let body = br#"{"jobs":[
+            {"id":"a","state":"failed","repository":"acme/widgets","pr":7},
+            {"id":"b","state":"failed","seen_at":"2026-11-03T09:00:00Z"},
+            {"id":"c","state":"failed","kind":"fix","repository":"acme/widgets","pr":8}]}"#;
+        let parsed = parse_jobs(body).unwrap();
+        assert_eq!(
+            parsed.failed,
+            vec![
+                Failed {
+                    id: "a".into(),
+                    kind: None,
+                    repository: Some("acme/widgets".into()),
+                    pr: Some(7),
+                },
+                Failed {
+                    id: "c".into(),
+                    kind: Some("fix".into()),
+                    repository: Some("acme/widgets".into()),
+                    pr: Some(8),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn a_new_failure_is_an_alert_that_opens_the_job() {
+        let mut tracker = Tracker::default();
+        tracker.update(&up(jobs(0, 0, &[])));
+        let mut failed = jobs(0, 0, &[]);
+        failed.failed = vec![
+            Failed {
+                id: "a".into(),
+                kind: None,
+                repository: Some("acme/widgets".into()),
+                pr: Some(7),
+            },
+            Failed {
+                id: "b".into(),
+                kind: Some("feature_build".into()),
+                repository: Some("acme/widgets".into()),
+                pr: Some(0),
+            },
+        ];
+        let view = tracker.update(&up(failed.clone()));
+        assert_eq!(view.icon, Icon::Attention);
+        assert_eq!(ids(&view), vec!["alert:job:a", "alert:job:b"]);
+        assert_eq!(
+            texts(&view),
+            vec![
+                "Review failed: acme/widgets #7",
+                "Build failed: acme/widgets"
+            ]
+        );
+        assert_eq!(view.attention[0].action, "Open job");
+        // Following one acknowledges that job only, and says to record it.
+        assert_eq!(tracker.acknowledge_alert("alert:job:a"), vec!["a"]);
+        let view = tracker.update(&up(failed.clone()));
+        assert_eq!(ids(&view), vec!["alert:job:b"]);
+        assert_eq!(tracker.acknowledge_alert("alert:job:b"), vec!["b"]);
+        let view = tracker.update(&up(failed));
+        assert_eq!(view.icon, Icon::Idle);
+        assert!(view.attention.is_empty());
+    }
+
+    #[test]
+    fn many_failures_are_one_alert_that_opens_the_jobs_list() {
+        let mut tracker = Tracker::default();
+        tracker.update(&up(jobs(0, 0, &[])));
+        let seen = up(jobs(0, 0, &["a", "b", "c", "d"]));
+        let view = tracker.update(&seen);
+        assert_eq!(ids(&view), vec!["alert:jobs"]);
+        assert_eq!(texts(&view), vec!["4 jobs failed"]);
+        let mut recorded = tracker.acknowledge_alert("alert:jobs");
+        recorded.sort();
+        assert_eq!(recorded, vec!["a", "b", "c", "d"]);
+        assert_eq!(tracker.update(&seen).icon, Icon::Idle);
+    }
+
+    #[test]
+    fn every_red_icon_has_an_alert_to_follow() {
+        let mut tracker = Tracker::default();
+        let mut cases = vec![
+            Observed {
+                link: Link::Down,
+                ..Observed::default()
+            },
+            up(jobs(0, 0, &[])),
+        ];
+        cases[1].diagnostics = Some(vec!["git".into()]);
+        for seen in cases {
+            let view = tracker.update(&seen);
+            assert_eq!(view.icon, Icon::Attention);
+            assert!(!view.attention.is_empty());
+            assert!(view.attention.iter().all(|a| is_alert(&a.id)), "{view:?}");
+        }
+        tracker.update(&up(jobs(0, 0, &[])));
+        let view = tracker.update(&up(jobs(1, 0, &["x"])));
+        assert_eq!(view.icon, Icon::Attention);
+        assert!(view.attention.iter().all(|a| is_alert(&a.id)));
+    }
+
+    #[test]
+    fn following_the_diagnostics_alert_acknowledges_the_problems_only() {
+        let mut tracker = Tracker::default();
+        tracker.update(&up(jobs(0, 0, &[])));
+        let mut seen = up(jobs(0, 0, &["x"]));
+        seen.diagnostics = Some(vec!["git".into()]);
+        let view = tracker.update(&seen);
+        assert_eq!(ids(&view), vec!["alert:job:x", "alert:diagnostics"]);
+        assert!(tracker.acknowledge_alert("alert:diagnostics").is_empty());
+        assert_eq!(ids(&tracker.update(&seen)), vec!["alert:job:x"]);
+        // A missing daemon is not acknowledged by following its alert.
+        assert!(tracker.acknowledge_alert("alert:daemon").is_empty());
+    }
+
+    #[test]
+    fn opening_the_window_does_not_see_a_failed_job() {
+        // The window opens on its own at launch, so only following the
+        // alert sees the job.
+        let mut tracker = Tracker::default();
+        let mut seen = up(jobs(0, 0, &["x"]));
+        seen.diagnostics = Some(vec!["git".into()]);
+        tracker.update(&seen);
+        tracker.acknowledge();
+        let view = tracker.update(&seen);
+        assert_eq!(view.icon, Icon::Attention);
+        assert_eq!(ids(&view), vec!["alert:job:x"]);
+    }
+
+    #[test]
+    fn only_alert_ids_are_alerts() {
+        for id in [
+            "alert:job:a",
+            "alert:jobs",
+            "alert:diagnostics",
+            "alert:daemon",
+        ] {
+            assert!(is_alert(id), "{id}");
+        }
+        for id in ["alert:job:", "alert:", "alert:other", "open", "session:a"] {
+            assert!(!is_alert(id), "{id}");
+        }
     }
 
     #[test]
@@ -699,25 +1013,27 @@ mod tests {
     }
 
     #[test]
-    fn a_new_failure_needs_attention_until_the_window_opens() {
+    fn a_failure_needs_attention_until_its_alert_is_followed() {
         let mut tracker = Tracker::default();
-        tracker.update(&up(jobs(0, 0, &["old"])));
-        let view = tracker.update(&up(jobs(0, 0, &["old", "new"])));
+        let view = tracker.update(&up(jobs(0, 0, &["old"])));
         assert_eq!(view.icon, Icon::Attention);
-        assert_eq!(view.attention, vec!["1 review failed"]);
-        tracker.acknowledge();
-        let view = tracker.update(&up(jobs(0, 0, &["old", "new"])));
+        assert_eq!(texts(&view), vec!["Review failed"]);
+        assert_eq!(tracker.acknowledge_alert("alert:job:old"), vec!["old"]);
+        let view = tracker.update(&up(jobs(0, 0, &["old"])));
         assert_eq!(view.icon, Icon::Idle);
         assert!(view.attention.is_empty());
-        let view = tracker.update(&up(jobs(0, 0, &["old", "new", "newer"])));
-        assert_eq!(view.icon, Icon::Attention);
+        let view = tracker.update(&up(jobs(0, 0, &["old", "new"])));
+        assert_eq!(ids(&view), vec!["alert:job:new"]);
     }
 
     #[test]
-    fn failures_found_on_the_first_look_are_not_new() {
+    fn failures_found_on_the_first_look_still_need_attention() {
+        // The daemon reports only failed jobs not yet seen, so one that
+        // failed while the app was closed is still news.
         let mut tracker = Tracker::default();
         let view = tracker.update(&up(jobs(0, 0, &["a", "b"])));
-        assert_eq!(view.icon, Icon::Idle);
+        assert_eq!(view.icon, Icon::Attention);
+        assert_eq!(ids(&view), vec!["alert:job:a", "alert:job:b"]);
     }
 
     #[test]
@@ -727,7 +1043,7 @@ mod tests {
         let view = tracker.update(&up(jobs(1, 1, &["x", "y"])));
         assert_eq!(view.icon, Icon::Attention);
         assert_eq!(view.summary, "1 running, 1 queued");
-        assert_eq!(view.attention, vec!["2 reviews failed"]);
+        assert_eq!(ids(&view), vec!["alert:job:x", "alert:job:y"]);
     }
 
     #[test]
@@ -741,16 +1057,15 @@ mod tests {
         // A second problem is new.
         seen.diagnostics = Some(vec!["git".into(), "gh".into()]);
         let view = tracker.update(&seen);
-        assert_eq!(
-            view.attention,
-            vec!["A diagnostics check reports a problem"]
-        );
+        assert_eq!(texts(&view), vec!["A diagnostics check reports a problem"]);
+        assert_eq!(view.attention[0].action, "Open diagnostics");
     }
 
     #[test]
-    fn a_failed_poll_does_not_make_old_failures_new() {
+    fn a_failed_poll_does_not_make_seen_failures_new() {
         let mut tracker = Tracker::default();
         tracker.update(&up(jobs(0, 0, &["old"])));
+        tracker.acknowledge_alert("alert:job:old");
         let mut gap = up(jobs(0, 0, &[]));
         gap.jobs = None;
         gap.automatic = None;
@@ -784,6 +1099,8 @@ mod tests {
         });
         assert_eq!(view.icon, Icon::Attention);
         assert_eq!(view.summary, "Background reviews are not running");
+        assert_eq!(ids(&view), vec!["alert:daemon"]);
+        assert_eq!(view.attention[0].action, "Open baum to restart them");
         tracker.acknowledge();
         let view = tracker.update(&Observed {
             link: Link::Down,

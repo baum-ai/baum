@@ -32,7 +32,8 @@ use crate::daemon::Launch;
 use events::Endpoint;
 use notifier::{Host, Notifier};
 use settings::Store;
-use toast::{Kind, Route};
+use toast::Kind;
+pub use toast::Route;
 
 const MAIN_WINDOW: &str = "main";
 const SUBMENU_ID: &str = "notifications";
@@ -226,11 +227,18 @@ fn sync_window_menu(app: &AppHandle) {
 /// notification does, for the tray's waiting sessions. The app path is asked
 /// of the daemon, so this runs off the main thread.
 pub fn open_session(app: &AppHandle, key: String) {
+    open(app, Route::Session { key });
+}
+
+/// Opens a page of the app in the window, as a click on a notification does:
+/// for the tray's alerts and waiting sessions. The app path is asked of the
+/// daemon, so this runs off the main thread.
+pub fn open(app: &AppHandle, route: Route) {
     let Some(service) = app.try_state::<Service>() else {
         return;
     };
     let host = service.host.clone();
-    thread::spawn(move || host.open(&Route::Session { key }));
+    thread::spawn(move || host.open(&route));
 }
 
 /// Starts reading the attached daemon's events until `stop` returns true (the

@@ -28,6 +28,7 @@ use tauri::tray::{TrayIcon, TrayIconBuilder};
 use tauri::{AppHandle, Manager, Wry};
 
 use crate::daemon::Launch;
+use crate::notifications::Route;
 use crate::status::{self, Icon, Link, Observed, Plan, Tracker, View};
 use crate::{autostart, client, lifecycle, notifications, onboarding, panel};
 
@@ -82,8 +83,9 @@ pub fn now() -> i64 {
 }
 
 /// The tray menu for a view, in the order of the panel: what the daemon is
-/// doing and anything needing the user (a waiting session opens its
-/// transcript), the plan usage left when any can be read, then Open, pause
+/// doing and anything needing the user (an alert goes where to look about
+/// it, a waiting session opens its transcript), the plan usage left when any
+/// can be read, then Open, pause
 /// or resume, start at login, Quit, and Quit and stop.
 pub fn menu_spec(view: &View, login: bool, now: i64) -> Vec<Entry> {
     let separator = |id: &str| Entry {
@@ -96,11 +98,11 @@ pub fn menu_spec(view: &View, login: bool, now: i64) -> Vec<Entry> {
     if let Some(waiting) = view.waiting_label() {
         entries.push(Entry::item("waiting", waiting, false));
     }
-    for (i, line) in view.attention.iter().enumerate() {
+    for alert in &view.attention {
         entries.push(Entry::item(
-            &format!("attention-{i}"),
-            format!("! {line}"),
-            false,
+            &alert.id,
+            format!("{} · {}", alert.text, alert.action),
+            true,
         ));
     }
     for needs in &view.needs {
@@ -502,6 +504,8 @@ fn build_menu(app: &AppHandle, spec: &[Entry]) -> tauri::Result<Menu<Wry>> {
 #[derive(Debug, PartialEq, Eq)]
 enum Action {
     Open,
+    /// An alert, by its menu id: goes where to look, and records it seen.
+    Alert(String),
     /// A waiting agent session, by its `agent:id` key: opens its transcript.
     Session(String),
     Pause,
@@ -523,6 +527,7 @@ fn route(id: &str) -> Action {
         "quit" => Action::Quit,
         "quit-stop" => Action::QuitStop,
         _ if notifications::is_menu_id(id) => Action::Notification,
+        _ if status::is_alert(id) => Action::Alert(id.to_string()),
         _ => match id.strip_prefix(SESSION_PREFIX) {
             Some(key) if !key.is_empty() => Action::Session(key.to_string()),
             _ => Action::Ignore,
@@ -533,6 +538,7 @@ fn route(id: &str) -> Action {
 pub fn on_menu(app: &AppHandle, id: &str) {
     match route(id) {
         Action::Open => lifecycle::show_window(app),
+        Action::Alert(id) => follow_alert(app, &id),
         Action::Session(key) => notifications::open_session(app, key),
         Action::Pause => toggle_pause(app),
         Action::Login => toggle_login(app),
@@ -626,11 +632,53 @@ fn set_link(app: &AppHandle, link: Link) {
     render(app, &shared, false);
 }
 
-/// The window is showing: what the tray flagged has been seen.
+/// The window is showing: the diagnostics problems flagged have been seen.
+/// Failed jobs stay flagged until their alert is followed.
 pub fn window_seen(app: &AppHandle) {
     let Some(shared) = shared(app) else { return };
     lock(&shared.0.tracker).acknowledge();
     render(app, &shared, false);
+}
+
+/// An alert was followed: records what it is about as seen, then goes where
+/// the user needs to look.
+fn follow_alert(app: &AppHandle, id: &str) {
+    let Some(shared) = shared(app) else { return };
+    let jobs = lock(&shared.0.tracker).acknowledge_alert(id);
+    record_seen(&shared, jobs);
+    render(app, &shared, false);
+    let route = if let Some(job) = id.strip_prefix(status::ALERT_JOB) {
+        Route::Job { id: job.into() }
+    } else {
+        match id {
+            status::ALERT_JOBS => Route::Jobs,
+            status::ALERT_DIAGNOSTICS => Route::Diagnostics,
+            // The window shows the connecting screen, which can restart the
+            // daemon.
+            _ => return lifecycle::show_window(app),
+        }
+    };
+    notifications::open(app, route);
+}
+
+/// Records failed jobs as seen in the daemon, so no client flags them
+/// again, and looks again once it has.
+fn record_seen(shared: &Shared, jobs: Vec<String>) {
+    if jobs.is_empty() {
+        return;
+    }
+    let Some(launch) = lock(&shared.0.launch).clone() else {
+        return;
+    };
+    let shared = shared.clone();
+    thread::spawn(move || {
+        for id in &jobs {
+            if let Err(e) = client::job_seen(&launch, id) {
+                eprintln!("baum desktop: cannot record job {id} as seen: {e}");
+            }
+        }
+        wake(&shared);
+    });
 }
 
 /// What the panel shows: the view last shown and the plans behind its meters.
@@ -964,13 +1012,34 @@ mod tests {
     }
 
     #[test]
-    fn attention_lines_appear_under_the_summary() {
+    fn alerts_are_items_under_the_summary_that_go_where_to_look() {
         let mut observed = up(0, true);
         observed.diagnostics = Some(vec!["git".into()]);
         let spec = menu_spec(&view(observed), false, NOW);
         assert_eq!(spec[0].text, "Idle");
-        assert_eq!(spec[1].text, "! A diagnostics check reports a problem");
-        assert!(!spec[1].enabled);
+        assert_eq!(
+            spec[1].text,
+            "A diagnostics check reports a problem · Open diagnostics"
+        );
+        assert!(spec[1].enabled);
+        assert_eq!(
+            route(&spec[1].id),
+            Action::Alert("alert:diagnostics".into())
+        );
+        let down = view(Observed {
+            link: Link::Down,
+            ..Observed::default()
+        });
+        let spec = menu_spec(&down, false, NOW);
+        assert_eq!(
+            spec[1].text,
+            "Background reviews are not running · Open baum to restart them"
+        );
+        assert_eq!(route(&spec[1].id), Action::Alert("alert:daemon".into()));
+        assert_eq!(
+            route("alert:job:6e280a68"),
+            Action::Alert("alert:job:6e280a68".into())
+        );
     }
 
     #[test]

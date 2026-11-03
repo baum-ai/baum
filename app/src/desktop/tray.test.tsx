@@ -51,6 +51,33 @@ it("draws the status, a waiting session, each plan window and the actions", () =
   expect(html).toContain("Quit and stop background reviews");
 });
 
+it("offers each alert as an item that runs it, above the waiting sessions", () => {
+  const act = vi.fn();
+  const view = TrayPanelView({
+    panel: {
+      ...panel,
+      attention: [
+        {
+          id: "alert:job:6e280a68",
+          text: "Review failed: acme/widgets #7",
+          action: "Open job",
+        },
+      ],
+    },
+    now,
+    act,
+  });
+  const html = renderToStaticMarkup(view);
+  expect(html).toContain("Review failed: acme/widgets #7");
+  expect(html).toContain("Open job");
+  expect(html).toContain('class="tray-dot attention"');
+  expect(html.indexOf("Review failed")).toBeLessThan(html.indexOf("Claude needs your permission"));
+  const children = (view.props as { children: unknown[] }).children;
+  const alerts = children[1] as { props: { onClick: () => void } }[];
+  alerts[0]?.props.onClick();
+  expect(act).toHaveBeenCalledWith("alert:job:6e280a68");
+});
+
 it("leaves plan usage out when no agent could be read, and says when reviews are paused", () => {
   const html = renderToStaticMarkup(
     <TrayPanelView

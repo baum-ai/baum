@@ -3446,6 +3446,11 @@ to it (`agent.TitlePath`). `Job.has_transcript` says one exists, and
 (at most 500 entries after `seq` N; `404` without a transcript). Transcripts
 never leave the machine.
 
+`POST /api/jobs/{id}/seen` (body `{}`) records that the user looked at a failed
+job: it sets `Job.seen_at` once, in the queue's `state/jobs` record, and
+leaves jobs in any other state unchanged (`404` for an unknown job). A failed
+job never runs again, so the desktop tray never flags one with `seen_at`.
+
 Review threads reach the prompt as untrusted blocks headed with local ids
 (`T1`…`T20`) that baum maps to the GraphQL node ids, which the prompt never
 contains. The agent ends its final message with a JSON array of

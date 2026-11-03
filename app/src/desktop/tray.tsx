@@ -14,7 +14,8 @@ import { invoke } from "./native";
 export type Panel = {
   summary: string;
   waiting: string | null;
-  attention: string[];
+  /** What the icon is red for, each going where to look (`alert:…`). */
+  attention: { id: string; text: string; action: string }[];
   needs: { key: string; title: string; detail: string }[];
   automatic: boolean | null;
   pause_label: string;
@@ -69,9 +70,24 @@ export function TrayPanelView({
     <div className="tray-menu" role="menu" aria-label="baum">
       <div className="tray-status">
         <strong>baum</strong>
-        <span className={`tray-dot${paused ? " paused" : ""}`} aria-hidden="true" />
+        <span
+          className={`tray-dot${panel.attention.length > 0 ? " attention" : paused ? " paused" : ""}`}
+          aria-hidden="true"
+        />
         <span>{paused ? "Automatic reviews paused" : panel.summary}</span>
       </div>
+      {panel.attention.map((alert) => (
+        <button
+          key={alert.id}
+          type="button"
+          role="menuitem"
+          className="tray-item tray-alert"
+          onClick={() => act(alert.id)}
+        >
+          <strong>{alert.text}</strong>
+          <span>{alert.action}</span>
+        </button>
+      ))}
       {panel.needs.map((needs) => (
         <button
           key={needs.key}
@@ -89,11 +105,6 @@ export function TrayPanelView({
           {panel.waiting}
         </button>
       ) : null}
-      {panel.attention.map((line) => (
-        <p key={line} className="tray-attention">
-          {line}
-        </p>
-      ))}
       {plans.length > 0 ? (
         <>
           <hr />

@@ -135,6 +135,24 @@ pub fn set_automatic(launch: &Launch, enabled: bool) -> Result<(), String> {
     Ok(())
 }
 
+/// Records in the daemon that the user has seen a failed job, so no client
+/// flags it again.
+pub fn job_seen(launch: &Launch, id: &str) -> Result<(), String> {
+    if id.is_empty()
+        || !id
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+    {
+        return Err(format!("not a job id: {id:?}"));
+    }
+    let path = format!("/api/jobs/{id}/seen");
+    let response = request(launch, "POST", &path, Some("{}"), POLL_TIMEOUT)?;
+    if response.status != 200 {
+        return Err(format!("{path} answered {}", response.status));
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
