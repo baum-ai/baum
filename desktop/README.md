@@ -1044,6 +1044,10 @@ snapshot bundles are kept as workflow artifacts for 14 days.
 | `desktop-checksums.txt` | SHA-256 of the desktop files |
 | `latest.json` | the updater manifest |
 
+The download links at `downloads.usebaum.com`, used by the website and the
+repository README, take the version from the updater manifests and find these
+files by name; renaming one means updating them too.
+
 The desktop files also carry a GitHub build provenance attestation
 (`gh attestation verify FILE --repo baum-ai/baum`).
 
