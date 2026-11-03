@@ -3635,8 +3635,10 @@ update or a development rebuild, even at the same version: every 5 seconds it
 compares the file at its `os.Executable()` path with the one it started from,
 and once a different file there has stayed unchanged for one check and passes
 the same policy, it schedules `restart_pending` into that path as if a newer
-client had asked. Until then, helpers it starts from its own path (the GitHub
-credential helper) run the new file and refuse the old parent. A failed
+client had asked. Until then, on Linux, the GitHub credential helper still
+works: the daemon starts it from `/proc/self/exe`, the binary it is running,
+and the helper compares that with its parent's, so neither side looks at the
+replaced path. A failed
 restart is not retried until the file changes again.
 A daemon speaking a newer protocol is an
 `IncompatibleError` naming both versions.
