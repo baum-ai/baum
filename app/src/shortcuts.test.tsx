@@ -475,6 +475,7 @@ it("lists exactly the keys that work in the sheet", async () => {
     "m",
     "f",
     "t",
+    "v",
     "s",
     "u",
     "/",
@@ -513,8 +514,12 @@ it("lists exactly the keys that work in the sheet", async () => {
     "m",
     "f",
     "t",
+    "c",
+    "v",
     "a",
     "]",
+    "h",
+    "l",
     "u",
     "Esc",
   ]);
@@ -992,6 +997,7 @@ it("draws a place's key bar from the sheet's table, keys sharing a name together
     "↵ act",
     "m merge",
     "f fix",
+    "v review",
     "s snooze",
     "u undo",
   ]);

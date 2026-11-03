@@ -93,6 +93,9 @@ import { RefreshButton, type RefreshRun } from "./shell";
 import { ReviewThreads } from "./threads";
 import { canUpdateBranch, UpdateBranchDialog } from "./unblock";
 import { PRIMARY, SECONDARY, SMALL, SMALL_PRIMARY } from "./action-classes";
+import { ReviewButton, ReviewDialog, usePendingReview } from "./pending-review";
+import { reviewable } from "./pending-review-model";
+import type { ReviewEvent } from "./walkthrough-model";
 import { cn } from "@baum/viewer/components/classnames";
 
 /** What the person does next about a pull request: read a review they were
@@ -954,6 +957,7 @@ export function UpNextPage({
   Link: ComponentType<ViewerLinkProps>;
 }) {
   const [merging, setMerging] = useState<Entry | null>(null);
+  const [reviewing, setReviewing] = useState<{ entry: Entry; event: ReviewEvent } | null>(null);
   const [mergingAll, setMergingAll] = useState<Entry[] | null>(null);
   const [updating, setUpdating] = useState<Entry | null>(null);
   // Kept for when the inbox is drawn again, back from a pull request.
@@ -961,7 +965,12 @@ export function UpNextPage({
   const [menu, setMenu] = useState(false);
   const [snoozedOpen, setSnoozedOpen] = useState(false);
   const [doneOpen, setDoneOpen] = useState(false);
-  const [toast, setToast] = useState<{ id: number; text: string; undo?: () => void } | null>(null);
+  const [toast, setToast] = useState<{
+    id: number;
+    text: string;
+    undo?: () => void;
+    link?: string;
+  } | null>(null);
   const list = useRef<HTMLDivElement>(null);
   const detail = useRef<HTMLDivElement>(null);
   // The page's filter narrows what it shows, on top of its inbox.
@@ -1204,6 +1213,13 @@ export function UpNextPage({
       if (!selected?.item) return;
       event.preventDefault();
       setMenu((open) => !open);
+    } else if (key === "v") {
+      // As a click on the panel's review button: its menu of verdicts.
+      const button = detail.current?.querySelector<HTMLElement>("[data-review-button]");
+      if (!button) return;
+      event.preventDefault();
+      setMenu(false);
+      button.click();
     } else if (key === "m") {
       if (selected?.item?.kind !== "merge") return;
       event.preventDefault();
@@ -1525,6 +1541,7 @@ export function UpNextPage({
               fix={selectedFix}
               fixState={selectedFixState}
               merge={() => setMerging(selected.entry)}
+              review={(event) => setReviewing({ entry: selected.entry, event })}
               update={() => setUpdating(selected.entry)}
               menu={menu}
               setMenu={setMenu}
@@ -1566,6 +1583,11 @@ export function UpNextPage({
         {toast ? (
           <div role="status" className="upnext-toast">
             <span>{toast.text}</span>
+            {toast.link ? (
+              <a href={toast.link} target="_blank" rel="noreferrer" className={SMALL}>
+                Open it
+              </a>
+            ) : null}
             {toast.undo ? (
               <button type="button" className={SMALL} onClick={undo}>
                 Undo
@@ -1583,6 +1605,18 @@ export function UpNextPage({
           entry={merging}
           close={() => setMerging(null)}
           merged={changed}
+        />
+      ) : null}
+      {reviewing ? (
+        <ReviewDialog
+          key={upNextKey(reviewing.entry.pull_request)}
+          entry={reviewing.entry}
+          event={reviewing.event}
+          close={() => setReviewing(null)}
+          sent={(url) => {
+            setToast({ id: Date.now(), text: "Your review is on GitHub", link: url });
+            void changed();
+          }}
         />
       ) : null}
       {updating ? (
@@ -1930,6 +1964,7 @@ function Panel({
   fix,
   fixState,
   merge,
+  review,
   update,
   menu,
   setMenu,
@@ -1946,6 +1981,7 @@ function Panel({
   fix?: () => void;
   fixState: FixState;
   merge: () => void;
+  review: (event: ReviewEvent) => void;
   update: () => void;
   menu: boolean;
   setMenu: (open: boolean | ((open: boolean) => boolean)) => void;
@@ -1956,6 +1992,7 @@ function Panel({
   const { entry, item, job, waiting } = row;
   const pr = entry.pull_request;
   const kind = item?.kind ?? "fix";
+  const pending = usePendingReview(entry);
   const menuRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!menu) return;
@@ -2079,6 +2116,14 @@ function Panel({
       ) : null}
       <div className="upnext-actions">
         {actions}
+        {reviewable(entry) ? (
+          <ReviewButton
+            entry={entry}
+            count={pending.value.comments.length}
+            review={review}
+            className="upnext-secondary"
+          />
+        ) : null}
         {item ? (
           <div className="upnext-snooze" ref={menuRef}>
             <button

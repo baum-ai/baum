@@ -344,3 +344,34 @@ func TestCorruptSiblingPreventsReadsWritesAndRetentionPruning(t *testing.T) {
 		})
 	}
 }
+
+func TestReviewRecordsArePerPullRequestAndValidated(t *testing.T) {
+	s := store(t)
+	const review = `{"comments":[{"id":"c1","target":{"kind":"section","id":"sec_retry","title":"Retry"},"body":"Why?","place":{"path":"worker/retry.go","line":42,"side":"RIGHT","start_line":31},"head":"d6d7a116b9babb73a1e9be4db63b94f35952ba6b","created":1}],"note":""}`
+	save(t, s, "review", "acme/demo#7", 0, "mutation-00000001", review)
+	if got, err := s.Read("review", "acme/demo#8"); err != nil || got.Revision != 0 {
+		t.Fatalf("another pull request: %+v %v", got, err)
+	}
+	const sent = `{"comments":[],"note":"","sent":[{"url":"https://github.com/acme/demo/pull/7#pullrequestreview-1","event":"APPROVE","at":5,"note":"LGTM","comments":[{"title":"Retry","where":"retry.go:42","body":"Why?"}]}]}`
+	save(t, s, "review", "acme/demo#7", 1, "mutation-00000001:2", sent)
+	if got, err := (&Store{Path: s.Path}).Read("review", "acme/demo#7"); err != nil || got.Revision != 2 || string(got.Value) != sent {
+		t.Fatalf("reopen: %+v %v", got, err)
+	}
+	if _, err := s.Read("review", "acme/demo#7@v1"); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("a version key: %v", err)
+	}
+	for _, value := range []string{
+		`{"comments":[]}`,
+		`{"comments":[{"id":"c1","target":{"kind":"section","id":"s","title":"t"},"body":"  ","place":null,"head":"","created":1}],"note":""}`,
+		`{"comments":[{"id":"c1","target":{"kind":"section","id":"","title":"t"},"body":"b","place":null,"head":"","created":1}],"note":""}`,
+		`{"comments":[{"id":"c1","target":{"kind":"general","id":"","title":"t"},"body":"b","place":{"path":"a","line":3,"side":"UP"},"head":"","created":1}],"note":""}`,
+		`{"comments":[{"id":"c1","target":{"kind":"general","id":"","title":"t"},"body":"b","place":{"path":"a","line":3,"side":"RIGHT","start_line":3},"head":"","created":1}],"note":""}`,
+		`{"comments":[{"id":"c1","target":{"kind":"general","id":"","title":"t"},"body":"b","place":null,"head":"","created":1},{"id":"c1","target":{"kind":"general","id":"","title":"t"},"body":"b","place":null,"head":"","created":1}],"note":""}`,
+		`{"comments":[],"note":"","sent":[{"url":"http://example.com","event":"APPROVE","at":1,"note":"","comments":[]}]}`,
+		`{"comments":[],"note":"","sent":[{"url":"https://github.com/a","event":"MERGE","at":1,"note":"","comments":[]}]}`,
+	} {
+		if _, err := s.Replace("review", "acme/demo#7", 2, "mutation-00000002:1", json.RawMessage(value)); !errors.Is(err, ErrInvalid) {
+			t.Fatalf("%s: %v", value, err)
+		}
+	}
+}

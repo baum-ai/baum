@@ -212,6 +212,7 @@ left out rather than shown empty or failed:
 | `files` | a Files group: the host's tree in the rail, under a row that writes how many files changed, over a bar of how many are viewed, and its list of file diffs in the pane, with code links in the review opening the cited file there. `?pane=files` lists every file folded; `?pane=file&file=<id>` hands `renderFiles` that file to unfold and scroll to, whether the reader clicked it, followed a link or went Back. With `tracksViewed: false` the rail counts no progress through the files |
 | `sessions`, `commits` | rail groups listing the host's linked sessions and commits, each with the host's pane; `sessionsSlot` and `commitsSlot` build them from plain data (see below) |
 | `decisions` | one rail row above Sessions, **Decisions** with an optional `count`, opening the host's pane (`ReviewPaneSlot`, `?pane=decisions`); absent, the row is not drawn and a link to it reads as the Summary |
+| `comments` | the side pane's last tab, **Comments**, dotted (caution) while `count` is above 0: the reader's own review comments, which the host draws (given the same context as `conversation`) and keeps. Each change of `reveal` opens the tab, unfolding the side pane |
 | `conversation` | the side pane's first tab, given where the reader is (section, risk, version) and a way to open a file at a line. Without it the side pane holds only Details and Activity, and nothing is labelled as a conversation |
 | `detailsChecks` | the Checks part for the document the side pane describes, in place of the document's own checks, and whether it shows a failure (which flags the tab that holds it); null content leaves the part out. The part leads the Activity tab, or the Details tab when `hideActivity` is set. For checks gathered from elsewhere, such as a stack review's members |
 | `activityMembers` | a stack's member reviews for the Activity tab, for the document it describes: each with its number and a tag (such as a link to its page), whether some are still loading, and a note (such as which could not be read). Under the checks the tab then gathers the members' open review threads, each tagged with its member, their exchange figures summed with no full exchange, their sessions once each, and their decisions tagged with their member (optional `decisions` carries snapshot `items` and their `version` to keep text and links pinned to the stack snapshot when member evidence is live); an open thread in any member flags the tab |
@@ -897,7 +898,12 @@ GitHub carries the leaving mark.
 
 On review pages, `]` toggles the right-hand Details/Activity pane: its saved
 fold on wide screens, or its sheet on narrow screens. Text fields and open
-dialogs keep the key. A host’s forced fold remains in force.
+dialogs keep the key. A host’s forced fold remains in force. Opening the pane
+with `]` focuses the pane itself, drawn without a ring, so it has the keys
+(as a click in it gives them): while it does, `h` and `l` step through its tabs
+(wrapping, as the arrows do on the strip) in place of the host's own use of
+them, and from a focused tab move the focus with them, and Esc blurs the focus, giving the keys
+back to the review. Text fields and menus in the pane keep them.
 
 Continuation summaries and standalone system-reminder turns are collapsed by
 default to a labelled disclosure with their turn number and time. Expanding

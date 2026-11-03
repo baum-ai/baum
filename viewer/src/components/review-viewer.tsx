@@ -44,6 +44,7 @@ import {
   ChecksIcon,
   ChevronLeftIcon,
   ChevronRightIcon,
+  CommentsIcon,
   CommitIcon,
   FilesIcon,
   LightbulbIcon,
@@ -76,7 +77,7 @@ import { ReviewSection } from "./review-section";
 import { ReviewSummary, type SummaryDestination } from "./review-summary";
 import { SideNavButton, SideNavDisclosure, SideNavGroup, SideNavNest } from "./side-nav";
 import { Empty, Failed, Skeleton } from "./states";
-import { tabPanelProps } from "./tabs";
+import { tabIds, tabPanelProps } from "./tabs";
 import {
   Alert,
   Badge,
@@ -201,6 +202,16 @@ export type ReviewConversationContext = {
   revealLine: (path: string, side: "LEFT" | "RIGHT", line: number) => void;
 };
 
+/** The side pane's Comments tab: what the reader has written for their own
+ *  review of the pull request, which the host keeps and sends. */
+export type ReviewCommentsSlot = {
+  /** The comments waiting to be sent, counted on the tab. */
+  count: number;
+  /** Opens the tab, unfolding the side pane, each time the host changes it. */
+  reveal?: number;
+  render: (context: ReviewConversationContext) => ReactNode;
+};
+
 export type ReviewViewerProps<F extends ReviewFile = ReviewFile> = {
   /** The current review. Null while a host has none to show; `placeholder`
    *  then fills the pane. */
@@ -247,6 +258,8 @@ export type ReviewViewerProps<F extends ReviewFile = ReviewFile> = {
   /** The side pane's first tab, such as a discussion. Absent, the side pane
    *  holds only the document's details and activity. */
   conversation?: (context: ReviewConversationContext) => ReactNode;
+  /** The side pane's last tab, the reader's own review comments. */
+  comments?: ReviewCommentsSlot;
   /** Replaces the Details tab's Checks part for the document it describes,
    *  such as checks gathered from elsewhere; null content leaves the part
    *  out. */
@@ -430,6 +443,7 @@ function ReviewWorkspace<F extends ReviewFile>({
   commits,
   decisions,
   conversation,
+  comments,
   detailsChecks,
   detailsFooter,
   activityMembers,
@@ -510,9 +524,17 @@ function ReviewWorkspace<F extends ReviewFile>({
   // The side pane can fold to a strip at the window's edge, so the review
   // pane has the width when the talk is not the point.
   const [chosenCollapsed, setChatCollapsed] = useConversationCollapsed();
+  // Opening the side pane with ] gives it the keys, so h and l move between
+  // its tabs at once: the pane itself takes them, with no ring, once drawn.
+  const [asideKeys, setAsideKeys] = useState(0);
+  useEffect(() => {
+    if (asideKeys === 0) return;
+    const pane = conversationPane.current;
+    if (pane && !pane.contains(window.document.activeElement)) pane.focus({ preventScroll: true });
+  }, [asideKeys]);
   const chatCollapsed = chosenCollapsed || foldSidePane;
-  const paneChoice = useRef({ chosenCollapsed, foldSidePane });
-  paneChoice.current = { chosenCollapsed, foldSidePane };
+  const paneChoice = useRef({ chosenCollapsed, foldSidePane, sheet });
+  paneChoice.current = { chosenCollapsed, foldSidePane, sheet };
   useEffect(() => {
     const toggle = (event: KeyboardEvent) => {
       if (
@@ -533,8 +555,13 @@ function ReviewWorkspace<F extends ReviewFile>({
         return;
       event.preventDefault();
       if (window.matchMedia("(width >= 80rem)").matches) {
-        if (!paneChoice.current.foldSidePane) setChatCollapsed(!paneChoice.current.chosenCollapsed);
-      } else setSheet((currentSheet) => (currentSheet === "aside" ? null : "aside"));
+        if (paneChoice.current.foldSidePane) return;
+        if (paneChoice.current.chosenCollapsed) setAsideKeys((n) => n + 1);
+        setChatCollapsed(!paneChoice.current.chosenCollapsed);
+      } else {
+        if (paneChoice.current.sheet !== "aside") setAsideKeys((n) => n + 1);
+        setSheet((currentSheet) => (currentSheet === "aside" ? null : "aside"));
+      }
     };
     window.document.addEventListener("keydown", toggle);
     return () => window.document.removeEventListener("keydown", toggle);
@@ -544,7 +571,9 @@ function ReviewWorkspace<F extends ReviewFile>({
   // details stand in for it.
   const [storedTab, setBarTab] = useConversationTab();
   const barTab: ConversationTab =
-    (!conversation && storedTab === "chat") || (hideActivity && storedTab === "activity")
+    (!conversation && storedTab === "chat") ||
+    (hideActivity && storedTab === "activity") ||
+    (!comments && storedTab === "comments")
       ? "details"
       : storedTab;
   /** Opens a tab of the side pane, unfolding it if it was folded. */
@@ -553,6 +582,15 @@ function ReviewWorkspace<F extends ReviewFile>({
     setChatCollapsed(false);
     setSheet("aside");
   };
+  const revealComments = comments?.reveal ?? 0;
+  const [commentsShown, setCommentsShown] = useState(0);
+  useEffect(() => {
+    if (!revealComments) return;
+    setBarTab("comments");
+    setChatCollapsed(false);
+    setSheet("aside");
+    setCommentsShown((n) => n + 1);
+  }, [revealComments, setBarTab, setChatCollapsed]);
   // "Discuss this PR" asks for the composer; the focus waits for the render
   // that unfolds the side pane, since a folded pane hides the text box.
   const [composerFocus, setComposerFocus] = useState(0);
@@ -886,15 +924,17 @@ function ReviewWorkspace<F extends ReviewFile>({
       }
     }
     // Start on the row being read, or the tab on show, unless something in
-    // the sheet already asked for the focus (the composer, for "Discuss").
+    // the sheet already asked for the focus (the composer, for "Discuss"),
+    // or the host's content asks for it once shown (`data-autofocus`).
     if (!pane.contains(window.document.activeElement)) {
       const start = pane.querySelector<HTMLElement>(
         sheet === "rail"
           ? '[aria-pressed="true"][aria-controls~="review-section"]'
           : '[role="tab"][aria-selected="true"]',
       );
-      start?.focus({ preventScroll: true });
-      start?.scrollIntoView({ block: "nearest" });
+      const first = pane.querySelector<HTMLElement>("[data-autofocus]") ?? start;
+      first?.focus({ preventScroll: true });
+      first?.scrollIntoView({ block: "nearest" });
     }
     const opener = navigator.current?.querySelector<HTMLElement>(
       `[aria-controls="review-${sheet}"]`,
@@ -912,6 +952,15 @@ function ReviewWorkspace<F extends ReviewFile>({
       if (!active || active === window.document.body || pane.contains(active)) opener?.focus();
     };
   }, [sheet]);
+  // The Comments tab a host revealed gives the keys to what it asks for,
+  // such as a comment box, once the side pane is drawn: a box mounted while
+  // the pane was folded or its sheet closed could not take them itself.
+  useEffect(() => {
+    if (!commentsShown) return;
+    conversationPane.current
+      ?.querySelector<HTMLElement>("[data-autofocus]")
+      ?.focus({ preventScroll: true });
+  }, [commentsShown]);
   // Reading order, for the navigator's previous and next: the Summary, then
   // each section as the rail lists it. A risk is read inside its section, and
   // the Changes overview sits between the Summary and the
@@ -1147,7 +1196,12 @@ function ReviewWorkspace<F extends ReviewFile>({
           ? [barFacts]
           : []
   ).some((shown) => (reviewThreadStatus(shown)?.open.length ?? 0) > 0);
-  const barTabs: { value: ConversationTab; label: string; icon: ReactNode; tone?: "critical" }[] = [
+  const barTabs: {
+    value: ConversationTab;
+    label: string;
+    icon: ReactNode;
+    tone?: "critical" | "caution";
+  }[] = [
     ...(conversation ? [{ value: "chat" as const, label: "Chat", icon: <TeamChatIcon /> }] : []),
     {
       value: "details",
@@ -1167,6 +1221,17 @@ function ReviewWorkspace<F extends ReviewFile>({
             tone: checksFailing || threadsOpen ? ("critical" as const) : undefined,
           },
         ]),
+    ...(comments
+      ? [
+          {
+            value: "comments" as const,
+            label: "Comments",
+            icon: <CommentsIcon />,
+            // Comments not yet sent are worth flagging from another tab.
+            tone: comments.count ? ("caution" as const) : undefined,
+          },
+        ]
+      : []),
   ];
   // What the tabs' dots flag, in words for the bar's button below xl.
   const barAlert =
@@ -1176,22 +1241,52 @@ function ReviewWorkspace<F extends ReviewFile>({
     ]
       .filter(Boolean)
       .join(", ") || null;
+  // While the side pane has the keys, h and l move between its tabs rather
+  // than the review's sections, and Esc gives the keys back to the review.
+  // Listened for on the pane itself, before the host's own keys on window.
+  const asideKey = useRef<(event: KeyboardEvent) => void>(() => {});
+  asideKey.current = (event) => {
+    if (
+      event.defaultPrevented ||
+      event.ctrlKey ||
+      event.metaKey ||
+      event.altKey ||
+      event.isComposing ||
+      !(event.target instanceof HTMLElement) ||
+      event.target.closest(
+        'input, textarea, select, [contenteditable], [role="textbox"], [role="menu"]',
+      )
+    )
+      return;
+    if (event.key === "Escape") {
+      event.target.blur();
+      return;
+    }
+    if (event.key !== "h" && event.key !== "l") return;
+    const index = barTabs.findIndex((tab) => tab.value === barTab);
+    const next = barTabs[(index + (event.key === "l" ? 1 : barTabs.length - 1)) % barTabs.length];
+    if (!next) return;
+    event.preventDefault();
+    setBarTab(next.value);
+    // A tab with the keys hands them to the next, as the arrows do.
+    if (event.target.getAttribute("role") === "tab")
+      window.document.getElementById(tabIds("conversation", next.value).tab)?.focus();
+  };
+  useEffect(() => {
+    const pane = conversationPane.current;
+    if (!pane) return;
+    const onKeyDown = (event: KeyboardEvent) => asideKey.current(event);
+    pane.addEventListener("keydown", onKeyDown);
+    return () => pane.removeEventListener("keydown", onKeyDown);
+  }, []);
   const asideLabel = conversation ? "Conversation" : "Details";
-  // The tabs and the fold share the pane's first line; folding only exists
-  // from xl up, where the panes sit side by side. Below xl the pane is a
-  // sheet, and the same place holds the way to close it.
+  // The tabs and the fold share the pane's first line, the fold leading (at
+  // the end it read as a step to the next tab); folding only exists from xl
+  // up, where the panes sit side by side. Below xl the pane is a sheet, and
+  // the line ends with the way to close it.
   const barHeader = (
     <div className="mb-4 flex flex-none items-end">
-      <SegmentedControl
-        label={conversation ? "Conversation pane" : "Side pane"}
-        variant="tabs"
-        tablist="conversation"
-        value={barTab}
-        onChange={setBarTab}
-        items={barTabs}
-        className="min-w-0 flex-1"
-      />
-      <span className="box-content hidden h-9 flex-none items-center border-b border-(--border-subtle) xl:flex">
+      <span className="box-content hidden h-9 flex-none items-center border-b border-(--border-subtle) pr-1 xl:flex">
         <IconButton
           label={conversation ? "Collapse conversation" : "Collapse side pane"}
           title="Collapse side pane (])"
@@ -1201,6 +1296,15 @@ function ReviewWorkspace<F extends ReviewFile>({
           <ChevronRightIcon />
         </IconButton>
       </span>
+      <SegmentedControl
+        label={conversation ? "Conversation pane" : "Side pane"}
+        variant="tabs"
+        tablist="conversation"
+        value={barTab}
+        onChange={setBarTab}
+        items={barTabs}
+        className="min-w-0 flex-1"
+      />
       <span className="box-content flex h-9 flex-none items-center border-b border-(--border-subtle) xl:hidden">
         <CloseButton
           label={`Close ${asideLabel.toLowerCase()}`}
@@ -1749,12 +1853,13 @@ function ReviewWorkspace<F extends ReviewFile>({
             <section
               ref={conversationPane}
               id="review-aside"
+              tabIndex={-1}
               aria-label={conversation ? "Conversation" : "Side pane"}
               // Below xl a sheet from the bottom of the window, nearly its full
               // height so the chat's feed and composer both have room; from xl
               // the column beside the pane, under the head's bar.
               className={cn(
-                "fixed inset-x-0 top-[max(3rem,8dvh)] bottom-0 z-(--z-sheet) min-w-0 flex-col overflow-hidden border-t border-(--border-default) bg-(--surface-aside) p-4 pb-[max(1rem,env(safe-area-inset-bottom))] shadow-(--shadow-overlay) sm:p-5",
+                "fixed inset-x-0 top-[max(3rem,8dvh)] bottom-0 z-(--z-sheet) min-w-0 flex-col overflow-hidden outline-none border-t border-(--border-default) bg-(--surface-aside) p-4 pb-[max(1rem,env(safe-area-inset-bottom))] shadow-(--shadow-overlay) sm:p-5",
                 "xl:sticky xl:inset-x-auto xl:top-12 xl:bottom-auto xl:z-auto xl:flex xl:h-(--review-visible) xl:self-start xl:border-t-0 xl:shadow-none",
                 asideOpen ? "flex" : "hidden",
                 chatCollapsed && "xl:items-center xl:px-0 xl:py-2",
@@ -1793,7 +1898,12 @@ function ReviewWorkspace<F extends ReviewFile>({
                     {tab.tone ? (
                       <span
                         aria-hidden
-                        className="absolute top-1.5 right-1.5 h-1.5 w-1.5 rounded-full bg-(--status-critical)"
+                        className={cn(
+                          "absolute top-1.5 right-1.5 h-1.5 w-1.5 rounded-full",
+                          tab.tone === "caution"
+                            ? "bg-(--status-caution)"
+                            : "bg-(--status-critical)",
+                        )}
                       />
                     ) : null}
                   </IconButton>
@@ -1886,6 +1996,14 @@ function ReviewWorkspace<F extends ReviewFile>({
                     ) : null}
                   </div>
                 )}
+                {comments ? (
+                  <div
+                    {...tabPanelProps("conversation", "comments", barTab === "comments")}
+                    className="@container min-h-0 flex-1 overflow-y-auto xl:-mr-2 xl:pr-2"
+                  >
+                    {barTab === "comments" ? comments.render(conversationContext) : null}
+                  </div>
+                ) : null}
               </div>
             </section>
           </div>

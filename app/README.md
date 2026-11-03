@@ -773,8 +773,9 @@ Sessions or Jobs. Analytics has no keys of its own beyond Tab: its controls
 are native buttons (its window, chart and breakdown toggles are pressed
 buttons in a group), and its charts' bars take the focus for their tooltips.
 
-The PR page header keeps two buttons at its end, **Ask** and, when it can
-merge, **Merge…**. The pull request's GitHub state beside the version is a
+The PR page header keeps buttons at its end: **Ask**, **Approve** for an open
+pull request (see [Your review](#your-review)) and, when it can merge,
+**Merge…**. The pull request's GitHub state beside the version is a
 menu (`StatusMenu` in `src/review.tsx`) holding what can be done about it: the
 fix (as `fixLabel` names it), **Re-run checks** and **Update branch**; with
 none to offer it is the state alone, and while a fix starts or runs a live dot
@@ -842,7 +843,8 @@ is what the kind asks for: Merge (`MergeDialog`), Update the branch
 (`UpdateBranchDialog`), the fix's own label (which starts the fix at once, with
 `f` as its key), Watch the agent for
 a running fix, else nothing (the GitHub icon among its facts opens the pull
-request on GitHub); then **Snooze**. A scored pull request has
+request on GitHub); then **Approve** for an open pull request (see [Your
+review](#your-review)) and **Snooze**. A scored pull request has
 a risk card: the score as five blocks, its meaning and, from the saved review,
 its first reason. Below it the panel lists, by kind: for a Review or Merge,
 "What changed" (the review's summary and its first six sections in review
@@ -864,8 +866,10 @@ a toast with **Undo**; **Bring back**, in a snoozed row's menu under Snoozed,
 ends one early. Keys:
 `j`/`↓` and `k`/`↑` move the selection, `Enter` opens, `m` merges a Merge, `f`
 starts a Fix item's fix (where its panel offers the button), `t` opens its fix
-transcript (Watch the agent, See what the agent did, or the last run's), `s` opens Snooze
-and `1`–`4` choose from it, `u` undoes a snooze.
+transcript (Watch the agent, See what the agent did, or the last run's), `v` opens
+Approve's menu, `s` opens Snooze
+and `1`–`4` choose from it, `u` undoes a snooze. A review sent from Up next
+shows a toast with **Open it** (the review on GitHub).
 
 "Done today" lists the pull requests that left the queue since first seen
 today because the person's part is done: it merged or closed, the review
@@ -1899,13 +1903,49 @@ it left), with `link_method` `commit` or `push` (see "Commits and pushes" under
 A session retains up to 32 timestamped Git work observations across branch
 changes; these are context associations, not asserted code contributions.
 
+## Your review
+
+Without the walkthrough, a reader reviews from the PR page and Up next
+(`src/pending-review.tsx`, `src/pending-review-model.ts`). **Approve** is one
+button with an arrow, as Snooze is (`ReviewButton`; `v` presses it): it opens
+a menu of Approve, Comment and Request changes, and each opens `ReviewDialog`
+on that verdict, with the others still to pick, an optional summary and the
+comments that go with it; ⌘↵ (Ctrl+↵) sends. On the reader's own pull request
+GitHub takes neither Approve nor Request changes, so the button is **Comment**,
+straight to the dialog. Comment and Request changes can always be picked;
+without comments, Send waits for a summary (GitHub requires a body for both),
+and a dialog opened on one of them starts in the summary. When GitHub cannot place an
+inline comment (`invalid_line`), the dialog offers to put the comments in the
+summary instead. Once GitHub has the review, what was sent is cleared from the
+draft and the page reloads.
+
+On the PR page, `c` comments on the item being read (`commentTarget`): the
+selected section or risk, placed on the first line its anchors cite (else the
+section's first hunk), a changed file, on its first hunk, or else the pull
+request as a whole. It opens the side pane's **Comments** tab (the viewer's
+`comments` slot) with a box for the comment, saved with ⌘↵ and put away with
+Esc. The tab lists the comments in the order written, each with its item and
+place; its ⋯ (or a right click) edits or deletes one, and the tab ends with
+the same Approve button. Below it, **Sent from baum** lists the reviews sent
+from the app, newest first and as they were sent (verdict, when, summary and
+comments, with a link to each on GitHub); the pull request's other reviews are
+not listed. The latest 20 are kept, fewer when they would not fit the record.
+The comments and summary are stored per pull request
+in the daemon (`api/ui-state/review?key=<repository>#<PR>`), so they survive
+reloads and new review versions. `pendingSubmission` posts the review on the
+pull request's current head: a comment goes on its line only when it was
+placed on that head; the others, and general comments, go in the body under
+the summary with their item's title and place.
+
 ## Durable reading state
 
 `GET` and `PUT api/ui-state/inbox` store the Inbox's local-day seen/cleared
 record, time snoozes and head-based snoozes. `GET` and
 `PUT api/ui-state/walkthrough?key=<repository>#<PR>@v<version>` store seen stops,
-per-stop draft comments and the overall comment. The key is URL encoded;
-`src/api.ts` keeps both routes under the authenticated session namespace.
+per-stop draft comments and the overall comment, and
+`api/ui-state/review?key=<repository>#<PR>` the comments and summary of the
+reader's review until it is sent. The key is URL encoded;
+`src/api.ts` keeps these routes under the authenticated session namespace.
 The backend contract is in [`internal/uistate`](../internal/uistate/README.md).
 
 Each record has its own revision. The window shares a hydrated record across
@@ -1955,6 +1995,9 @@ Enter is drawn as ↵ in button shortcut hints.
 
 On PR and stack review pages, `]` toggles the right-hand Details/Activity
 sidebar, or its sheet on narrow windows. It is listed in the review shortcut hints.
+Opening it with `]` gives it the keys: `h` and `l` then step through Details,
+Activity and Comments instead of the sections, until Esc (or a click in the
+review) gives them back.
 
 The page shortcut bar labels H/L as sections and lists only page actions;
 Go to (Command/Control+K) and help (?) remain available globally.

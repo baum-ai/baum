@@ -51,6 +51,11 @@ const UP_NEXT_SHORTCUTS: Shortcut[] = [
   { keys: ["m"], label: "Merge, where offered", short: "merge" },
   { keys: ["f"], label: "Fix, where offered", short: "fix" },
   { keys: ["t"], label: TRANSCRIPT_LABEL },
+  {
+    keys: ["v"],
+    label: "Review: approve, comment or request changes",
+    short: "review",
+  },
   { keys: ["s"], label: "Snooze, then 1–4 to choose until when", short: "snooze" },
   { keys: ["u"], label: "Undo a snooze", short: "undo" },
 ];
@@ -794,11 +799,29 @@ function shortcutGroups(
         { keys: ["f"], label: "Fix, where offered", short: "fix" },
         { keys: ["t"], label: TRANSCRIPT_LABEL },
         {
+          keys: ["c"],
+          label: `Comment on the section, risk or file being read; ${COMMAND}↵ saves it`,
+          short: "comment",
+        },
+        {
+          keys: ["v"],
+          label: "Send your review: approve, comment or request changes",
+          short: "review",
+        },
+        {
           keys: ["a"],
           label: "Ask the review's agent a question; Esc in the panel closes it",
           short: "ask",
         },
-        { keys: ["]"], label: "Toggle the right-hand sidebar", short: "sidebar" },
+        {
+          keys: ["]"],
+          label: "Toggle the right-hand sidebar; opening it gives it the keys",
+          short: "sidebar",
+        },
+        {
+          keys: ["h", "l"],
+          label: "In the sidebar: Details, Activity and Comments; Esc goes back to the review",
+        },
         back,
       ],
     },
