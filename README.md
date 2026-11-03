@@ -16,14 +16,14 @@ A desktop app for keeping up with what your coding agents build.</p>
 </p>
 
 <p align="center">
-  <a href="https://github.com/baum-ai/baum/releases/latest">
+  <a href="https://downloads.usebaum.com/desktop/macos?from=readme">
     <picture>
       <source media="(prefers-color-scheme: dark)" srcset="docs/readme/download-mac-dark.png">
       <source media="(prefers-color-scheme: light)" srcset="docs/readme/download-mac-light.png">
       <img alt="Download for Mac, macOS 12+" src="docs/readme/download-mac-light.png" width="260">
     </picture>
   </a>
-  <a href="https://github.com/baum-ai/baum/releases/latest">
+  <a href="https://downloads.usebaum.com/desktop/linux?from=readme">
     <picture>
       <source media="(prefers-color-scheme: dark)" srcset="docs/readme/download-linux-dark.png">
       <source media="(prefers-color-scheme: light)" srcset="docs/readme/download-linux-light.png">
@@ -74,21 +74,23 @@ whatever the model.
 
 ## Install
 
-Download the desktop app from the
-[latest release](https://github.com/baum-ai/baum/releases/latest):
+Download the desktop app:
 
-| System | File |
+| System | Download |
 | --- | --- |
-| macOS 12 or newer | `baum-desktop-darwin-universal.dmg` |
-| Linux x86_64 | `baum-desktop-linux-amd64.AppImage` or `.deb` |
+| macOS 12 or newer | [`.dmg`](https://downloads.usebaum.com/desktop/macos?from=readme) |
+| Linux x86_64 | [AppImage](https://downloads.usebaum.com/desktop/linux-appimage?from=readme) or [`.deb`](https://downloads.usebaum.com/desktop/linux-deb?from=readme) |
+| Linux arm64 | [AppImage](https://downloads.usebaum.com/desktop/linux-arm64-appimage?from=readme) or [`.deb`](https://downloads.usebaum.com/desktop/linux-arm64-deb?from=readme) |
+
+Every release, with checksums and the `baum` command line on its own, is on
+the [releases page](https://github.com/baum-ai/baum/releases).
 
 Open it and setup walks you through connecting GitHub, choosing your agent and
 installing the `baum` command. See
 [Install baum](https://docs.usebaum.com/getting-started/).
 
 The macOS app is signed and notarised. To check a download, compare it with
-`desktop-checksums.txt` from the same release. The release also has the
-`baum` command line on its own.
+`desktop-checksums.txt` from the same release.
 
 ## Docs
 
