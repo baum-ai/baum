@@ -155,7 +155,18 @@ fi
 mkdir "$work/dmg"
 cp -R "$app" "$work/dmg/"
 ln -s /Applications "$work/dmg/Applications"
-hdiutil create -volname baum -srcfolder "$work/dmg" -fs HFS+ -format UDZO -ov "$out/$name.dmg"
+# hdiutil now and then fails with "Resource busy" while macOS still holds a
+# volume it mounted, so a failed attempt is tried again a little later.
+for attempt in 1 2 3; do
+  if hdiutil create -volname baum -srcfolder "$work/dmg" -fs HFS+ -format UDZO -ov "$out/$name.dmg"; then
+    break
+  fi
+  if [ "$attempt" = 3 ]; then
+    exit 1
+  fi
+  echo "hdiutil create failed (attempt $attempt); trying again" >&2
+  sleep $((attempt * 10))
+done
 if [ -n "$identity" ]; then
   codesign --force --timestamp --sign "$identity" "$out/$name.dmg"
 fi

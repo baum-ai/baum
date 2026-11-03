@@ -171,7 +171,8 @@ func TestWorkOnlyFillsAMissingLinkOfItsOwnSession(t *testing.T) {
 
 	cwd := newTracker(c, l)
 	e := prompt("s-3", t0, claude)
-	e.Session.Cwd = workDir("demo")
+	// newLinker's directory, which resolves to a pull request of its own.
+	e.Session.Cwd = "/work/demo"
 	apply(cwd, e)
 	apply(cwd, gitHook("pre-push", workDir("main"), t0.Add(time.Minute), claude, pushOf("topic")))
 	if s := only(t, cwd); s.PR != 7 || s.LinkMethod == MethodPush {
