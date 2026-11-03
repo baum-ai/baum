@@ -1983,6 +1983,14 @@ it("offers the desktop-setup command in desktop Settings for an agent that is to
           minimum_version: "0.156.1",
           supported: false,
         },
+        {
+          agent: "claude-code",
+          name: "Claude Code",
+          detected: false,
+          installed: false,
+          enabled: false,
+          plugin: "baum@baum",
+        },
       ],
     },
     terminal_setup: command,
@@ -1992,9 +2000,13 @@ it("offers the desktop-setup command in desktop Settings for an agent that is to
   try {
     await act(async () => root.render(<App />));
     const panel = node.querySelector('[aria-labelledby="hooks-heading"]')!;
+    expect(panel.textContent).toContain("Needs a newer version");
     expect(panel.textContent).toContain(
       "Codex 0.128.0 (/usr/local/bin/codex) is older than 0.156.1, which baum needs.",
     );
+    // A missing agent's badge is short; its sentence shows once, below it.
+    expect(panel.textContent).toContain("Not found");
+    expect(panel.textContent!.split("Claude Code isn't on your PATH").length).toBe(2);
     // Connecting would run the old Codex's plugin commands.
     expect(
       [...panel.querySelectorAll("button")].some((b) => b.textContent === "Connect Codex"),

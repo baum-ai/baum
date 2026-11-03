@@ -3,7 +3,6 @@ import { renderToStaticMarkup } from "react-dom/server";
 import {
   asOf,
   PlanUsageRailView,
-  PlanUsageView,
   readablePlans,
   resetsAt,
   span,
@@ -32,46 +31,6 @@ const plans: PlanUsageEntry[] = [
     fetched_at: "2026-10-26T11:00:00Z",
   },
 ];
-
-it("shows what is left, when it resets and colours by remaining", () => {
-  const html = renderToStaticMarkup(<PlanUsageView plans={plans} now={now} />);
-  expect(html).toContain("62% left");
-  expect(html).toContain("resets in 3 h");
-  expect(html).toContain("5% left");
-  expect(html).toContain("resets in 4 d");
-  expect(html).toContain("var(--status-positive)");
-  expect(html).toContain("var(--status-caution)");
-  expect(html).toContain("var(--status-critical)");
-  expect(html).toContain("As of its last session, 1 h ago.");
-  // A live Codex reading says nothing about its age.
-  const live = renderToStaticMarkup(
-    <PlanUsageView plans={[{ ...plans[1]!, fetched_at: "2026-10-26T11:59:00Z" }]} now={now} />,
-  );
-  expect(live).not.toContain("As of its last session");
-  expect(html).toContain("Reset since baum last saw it");
-  expect(html).toContain("pro");
-});
-
-it("says why a plan is unavailable and can show one provider", () => {
-  const html = renderToStaticMarkup(
-    <PlanUsageView
-      only="claude"
-      now={now}
-      plans={[
-        {
-          provider: "claude",
-          available: false,
-          reason: "Open Claude Code to refresh its sign-in.",
-          windows: [],
-          fetched_at: "",
-        },
-        ...plans.slice(1),
-      ]}
-    />,
-  );
-  expect(html).toContain("Open Claude Code to refresh its sign-in.");
-  expect(html).not.toContain("Codex");
-});
 
 it("rounds spans to readable units", () => {
   expect(span(10_000)).toBe("1 min");

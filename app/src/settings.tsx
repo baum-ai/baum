@@ -77,6 +77,7 @@ import {
   agentUnsupported,
   terminalSetup,
   displayPath,
+  type Agent,
   type SetupView,
   type Outcome,
   decisionModelDefaults,
@@ -857,6 +858,15 @@ function connectedState(label: string, connected: boolean, attention = false) {
   );
 }
 
+/** An agent's status badge: short, since the line below it explains a missing,
+ *  too old or unreadable agent in full. */
+function agentBadge(agent: Agent) {
+  if (agentUnsupported(agent)) return "Needs a newer version";
+  if (agent.error) return "Couldn't check";
+  if (!agent.detected) return "Not found";
+  return describeAgent(agent) || "Not connected";
+}
+
 /** The `baum desktop-setup` command for an agent baum found too old, with a
  *  button that copies it (setup's TerminalSetup). */
 function TerminalSetupRow({ text, command }: { text: string; command: string }) {
@@ -912,9 +922,7 @@ function AgentHooksPanel({ setup }: { setup: DesktopSetup }) {
                 <div className="flex flex-wrap items-center gap-3">
                   <h3 className="text-base font-medium">{agent.name}</h3>
                   {connectedState(
-                    agentUnsupported(agent)
-                      ? "Needs a newer version"
-                      : describeAgent(agent) || "Not connected",
+                    agentBadge(agent),
                     agentConnected(agent),
                     agentNeedsAction(agent) || agentUnsupported(agent),
                   )}
@@ -922,7 +930,8 @@ function AgentHooksPanel({ setup }: { setup: DesktopSetup }) {
                     <span className="text-xs text-(--text-tertiary)">Plugin {agent.version}</span>
                   ) : null}
                 </div>
-                {agent.error || !agent.installed || agentUnsupported(agent) ? (
+                {(agent.error || !agent.installed || agentUnsupported(agent)) &&
+                describeAgent(agent) ? (
                   <p className="text-xs text-(--text-secondary)">{display(describeAgent(agent))}</p>
                 ) : null}
                 {agent.installed ? (

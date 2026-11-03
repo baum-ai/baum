@@ -3,8 +3,7 @@
 `internal/planusage` tells the person how much of their Claude and Codex plans
 is left, so they can choose the harness for reviews knowing what each has to
 spare. The daemon serves it as `GET /api/plan-usage`; the app shows it in its
-sidebar and in the desktop setup's review step, and the desktop tray in its
-menu and panel.
+sidebar, and the desktop tray in its menu and panel.
 
 ```json
 {"plans": [{"provider": "claude", "available": true, "plan": "",
@@ -77,8 +76,7 @@ Claude Code to refresh its sign-in."
 ## Which plans are served
 
 `GET /api/plan-usage` serves only the plans chosen in Settings, so the
-sidebar and tray show the same ones; `?all=1` serves every plan (the desktop
-setup compares them). The choice, `GET`/`PUT /api/settings/plan-usage`, is the
+sidebar and tray show the same ones. The choice, `GET`/`PUT /api/settings/plan-usage`, is the
 `plan_usage.show` object of the [registry's global preferences](../repos/README.md)
 in `app.sqlite`: provider to true or false, only for plans the person
 switched. A plan with no entry follows the backends baum uses: those of the

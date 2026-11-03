@@ -24,7 +24,6 @@ import {
 import { ReviewSettingsForm } from "./reviews";
 import { withCode } from "./code-terms";
 import { TerminalSetup } from "./terminal-setup";
-import { PlanUsage } from "../plan-usage";
 import { GitHubStep } from "./github-step";
 import { RepositoryPicker, setupRepositoryCall } from "../repositories";
 import { Stumpy } from "@baum/viewer/components/stumpy";
@@ -344,7 +343,6 @@ export function Setup() {
                     reviews per repository.
                   </p>
                 )}
-                <PlanUsage className="setup-card" all />
               </>
             )}
             {step === reviewStep && !reviews && !error && (
