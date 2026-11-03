@@ -363,8 +363,49 @@ type Seen = {
   cleared?: number;
   /** Its row as last in the queue, which filters test once it is done;
    *  absent in records kept before it was. */
-  last?: Entry;
+  last?: Snapshot;
 };
+/** What of a row the filters read (`pr-filter.ts`), kept small so the
+ *  inbox's record stays within what the daemon stores. */
+type Snapshot = Pick<Entry, "review" | "checks" | "merge"> & {
+  risk_score: { score: number | null } | null;
+  pull_request: Pick<
+    Entry["pull_request"],
+    | "repository"
+    | "number"
+    | "title"
+    | "author"
+    | "author_bot"
+    | "draft"
+    | "authored_by_me"
+    | "review_requested_from_me"
+    | "assigned_to_me"
+    | "base_ref"
+    | "behind"
+  >;
+};
+function snapshot(entry: Entry): Snapshot {
+  const pr = entry.pull_request;
+  return {
+    review: entry.review,
+    checks: entry.checks,
+    merge: entry.merge,
+    risk_score: entry.risk_score ? { score: entry.risk_score.score } : null,
+    pull_request: {
+      repository: pr.repository,
+      number: pr.number,
+      title: pr.title,
+      author: pr.author,
+      author_bot: pr.author_bot,
+      draft: pr.draft,
+      authored_by_me: pr.authored_by_me,
+      review_requested_from_me: pr.review_requested_from_me,
+      assigned_to_me: pr.assigned_to_me,
+      base_ref: pr.base_ref,
+      behind: pr.behind,
+    },
+  };
+}
 /** What the inbox remembers on this computer: today's pull requests and
  *  which it cleared, and the person's snoozes. */
 type Stored = {
@@ -514,7 +555,7 @@ export function useUpNext(
           seen.kind !== item.kind ||
           seen.title !== item.entry.pull_request.title ||
           seen.minutes !== item.minutes ||
-          JSON.stringify(seen.last) !== JSON.stringify(item.entry)
+          JSON.stringify(seen.last) !== JSON.stringify(snapshot(item.entry))
         );
       }) ||
       Object.entries(stored.seen).some(([key, record]) => clears(key, record)) ||
@@ -533,7 +574,7 @@ export function useUpNext(
           number: pr.number,
           url: pr.url,
           minutes: item.minutes,
-          last: item.entry,
+          last: snapshot(item.entry),
         };
       }
       const held = Object.fromEntries(
@@ -967,7 +1008,8 @@ export function UpNextPage({
   const fixing = all.fixing.filter(({ entry }) => inScope({ kind: "fix", entry }));
   // A done pull request matches as it was in the queue.
   const cleared = all.cleared.filter((item) => {
-    const entry = item.last ?? item.entry;
+    // The snapshot holds every field the filters read.
+    const entry = (item.last as Entry | undefined) ?? item.entry;
     return entry ? matchesQuery(query, entry, item.kind) : !parseQuery(query).expr;
   });
   const waiting = all.waiting.filter((entry) => matchesQuery(query, entry));
