@@ -478,15 +478,18 @@ function AnswerField({
   disabled,
   close,
   answer,
+  text,
+  setText,
 }: {
   question: string;
   disabled: boolean;
   close: () => void;
   answer: (text: string) => void;
+  text: string;
+  setText: (text: string) => void;
 }) {
   const id = useId();
   const input = useRef<HTMLInputElement>(null);
-  const [text, setText] = useState("");
   useEffect(() => input.current?.focus(), []);
   return (
     <form
@@ -742,6 +745,10 @@ function QuestionCard({
   const [picked, setPicked] = useState<Record<string, string[]>>({});
   // The question an answer is being typed for.
   const [typing, setTyping] = useState<string | null>(null);
+  // What is typed for each question, kept while another question shows.
+  const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const setDraft = (question: string, text: string) =>
+    setDrafts((d) => ({ ...d, [question]: text }));
   // Several questions show one at a time, each its own tab.
   const [step, setStep] = useState(0);
   const questions = request.questions;
@@ -858,9 +865,15 @@ function QuestionCard({
               <AnswerField
                 question={q.question}
                 disabled={busy}
-                close={() => setTyping(null)}
+                text={drafts[q.question] ?? ""}
+                setText={(text) => setDraft(q.question, text)}
+                close={() => {
+                  setTyping(null);
+                  setDraft(q.question, "");
+                }}
                 answer={(text) => {
                   setTyping(null);
+                  setDraft(q.question, "");
                   choose(q, text);
                 }}
               />
