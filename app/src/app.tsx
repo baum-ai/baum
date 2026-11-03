@@ -974,7 +974,19 @@ function Workspace({ url }: { url: UrlState }) {
           const stop = () => one.abort();
           signal.addEventListener("abort", stop, { once: true });
           const timer = setTimeout(stop, REFRESH_TIMEOUT_MS);
-          await request("api/prs/refresh", clone ? { clone } : { repository }, "POST", one.signal)
+          await request<{ stale?: boolean; error?: string } | null>(
+            "api/prs/refresh",
+            clone ? { clone } : { repository },
+            "POST",
+            one.signal,
+          )
+            // The daemon answers a refresh GitHub did not complete (a
+            // stalled read it gave up on, an exhausted allowance) with the
+            // cached snapshot, marked stale with the error.
+            .then((answer) => {
+              if (answer?.stale && answer.error)
+                failed.push(`${repository}: not refreshed from GitHub; baum will keep retrying.`);
+            })
             .catch((e) => {
               if (signal.aborted) return;
               failed.push(
