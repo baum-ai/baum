@@ -659,7 +659,7 @@ the sheet read). Every page is reached from the keyboard. With the command key
 (their modifier can be changed in Settings › General: Command, Control or
 Option on a Mac, Ctrl or Alt elsewhere; the sidebar, its tooltips and the sheet
 show the chosen one, and the other app-wide keys keep the command key)
-(Inbox, Pull requests, Timeline, Sessions, Analytics, Repositories, Jobs,
+(Inbox, Sessions, Timeline, Pull requests, Analytics, Repositories, Jobs,
 Settings; digits
 are read by their place on the keyboard, so layouts that shift them work),
 `,` opens Settings, `K` opens **Go to** (`src/go-to.tsx`) and `R` refreshes
@@ -1298,7 +1298,7 @@ ChatGPT; otherwise they come from its last session and, once older than 15
 minutes, say how old they are.
 See the daemon's [plan usage README](../internal/planusage/README.md).
 
-The app's sidebar leads to the Inbox, Pull requests, Timeline, Sessions, Analytics, Repositories, Jobs
+The app's sidebar leads to the Inbox, Sessions, Timeline, Pull requests, Analytics, Repositories, Jobs
 and Settings; the Inbox shows how many things wait on the person there (its inboxes are nested beneath it), and Sessions shows the number of agent sessions waiting on the person (in the caution tone), or
 else the number working now. The sidebar and the page's panel stay in place:
 the panel's notices and each page's bar (`PageBar`) stay at its top, and only

@@ -592,7 +592,7 @@ it("reads the app-wide keys with the platform's command key", () => {
   // The sidebar's pages in order, by the digit's place on the keyboard.
   expect(commandAction(key({ ctrlKey: true, key: "2", code: "Digit2" }), false)).toEqual({
     kind: "page",
-    page: "pulls",
+    page: "sessions",
   });
   expect(commandAction(key({ ctrlKey: true, key: "&", code: "Digit1" }), false)).toEqual({
     kind: "page",
@@ -668,7 +668,7 @@ it("opens the sidebar's pages with the modifier chosen in Settings", () => {
   expect(commandAction(key({ ctrlKey: true, key: "1", code: "Digit1" }), false, "meta")).toEqual(
     inbox,
   );
-  expect(pageKeyShortcut("pulls", "alt")).toBe("Alt+2");
+  expect(pageKeyShortcut("pulls", "alt")).toBe("Alt+4");
 });
 
 const opened = vi.fn();
