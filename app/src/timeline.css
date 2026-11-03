@@ -8,10 +8,11 @@
 .timeline-page [data-feature-group] {
   --surface-card: var(--surface-sunken);
 }
-/* The feature or decision the keys focused is tinted whole and marked with
-   the lists' accent bar, so it stands apart from the row under the pointer;
-   the bar replaces the ring. */
-.timeline-page :is(div, li):has(> [data-row-link]:focus-visible) {
+/* The feature or decision the keys are on (`data-focused`, kept when the
+   focus goes elsewhere) is tinted whole, a feature's tile or a decision's
+   row, and marked with the lists' accent bar, so it stands apart from the
+   row under the pointer; the bar replaces the ring. */
+.timeline-page :is(li[data-focused], [data-focused] > div > div):has(> [data-row-link]) {
   background: var(--surface-hover);
   box-shadow: inset 3px 0 0 var(--text-primary);
 }
@@ -38,4 +39,43 @@
     padding-left: 1rem;
     padding-right: 1rem;
   }
+}
+/* The panel stays in place: the page's name, the filters and the tabs stay
+   at its top, and only the open tab's list scrolls, with the opened
+   feature's panel held beside it. */
+.local-shell:has(.timeline-log) {
+  height: 100vh;
+}
+.local-frame:has(.timeline-log) {
+  min-height: 0;
+}
+.local-main:has(.timeline-log),
+.timeline-page:has(.timeline-log),
+.timeline-log {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  padding-bottom: 0;
+}
+.timeline-log > [role="tabpanel"]:not([hidden]) {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  container-type: size;
+}
+.timeline-log #opened-feature-panel {
+  max-height: calc(100cqh - 2rem);
+}
+/* The search box, its key (/) shown inside it while Alt is held. */
+.timeline-search {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+.timeline-search kbd.key-hint {
+  position: absolute;
+  right: 0.5rem;
+  margin-left: 0;
+  pointer-events: none;
 }

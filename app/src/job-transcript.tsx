@@ -23,7 +23,7 @@ import { jobOrigin, jobTarget, jobType, useJobTimes } from "./job-info";
 import { UsageBar } from "./usage";
 import { LoadingStatus } from "./nine-dots";
 import { ReadFailed } from "./page-state";
-import { PageBar } from "./shell";
+import { PageBar, pageScroll } from "./shell";
 import { useFollowScroll } from "./session-transcript";
 
 /** One line of a fix agent's transcript, from `api/jobs/{id}/transcript`.
@@ -504,7 +504,7 @@ export function JobPage({
   Link: ComponentType<ViewerLinkProps>;
 }) {
   useEffect(() => {
-    window.scrollTo({ top: 0 });
+    pageScroll().to(0);
   }, [job?.id]);
   return (
     <>

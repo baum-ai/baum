@@ -179,6 +179,29 @@ function Harness({
   );
 }
 
+/** Writes the Timeline's filter into the query box in the filter menu and
+ *  applies it, as Enter does. */
+async function filterTo(text: string) {
+  if (!node.querySelector(".filter-menu-panel")) {
+    const menu = node.querySelector<HTMLDetailsElement>("details.filter-menu")!;
+    await act(async () => {
+      menu.open = true;
+      menu.dispatchEvent(new Event("toggle"));
+    });
+  }
+  const box = node.querySelector<HTMLTextAreaElement>(".filter-menu-query textarea")!;
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(box, text);
+    box.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  await act(async () => {
+    box.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }),
+    );
+  });
+  await act(async () => {});
+}
+
 async function show(initial = "page=timeline") {
   await act(async () => root.render(<Harness initial={initial} />));
   await act(async () => {});
@@ -193,7 +216,7 @@ it("moves through the features with the list keys and opens one", async () => {
   await show();
   const key = (k: string) =>
     act(async () => {
-      window.dispatchEvent(
+      (document.activeElement ?? window).dispatchEvent(
         new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true }),
       );
     });
@@ -204,9 +227,35 @@ it("moves through the features with the list keys and opens one", async () => {
   await key("j");
   expect(focusedFeature()).toBe("F0");
   await key("k");
+  expect(focusedFeature()).toBe("F1");
+  expect(node.querySelector("[data-focused]")?.getAttribute("data-row-id")).toBe("F1");
   await key("o");
   await act(async () => {});
   expect(current.get("feature")).toBe("F1");
+  forgetLastRows();
+});
+
+it("goes on from a feature the pointer opened", async () => {
+  answers["api/timeline/features"] = {
+    features: [feature, { ...feature, id: "F0", title: "Earlier work" }],
+    next_cursor: null,
+  };
+  await show();
+  const earlier = [...node.querySelectorAll<HTMLButtonElement>("button[aria-expanded]")].find((b) =>
+    b.textContent?.includes("Earlier work"),
+  )!;
+  await act(async () => {
+    earlier.focus();
+    earlier.click();
+  });
+  await act(async () => {
+    earlier.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "k", bubbles: true, cancelable: true }),
+    );
+  });
+  expect(document.activeElement?.closest<HTMLElement>("[data-feature]")?.dataset.feature).toBe(
+    "F1",
+  );
   forgetLastRows();
 });
 
@@ -235,16 +284,12 @@ it("shows all decisions with what capture covered and a decision without its pro
   expect(node.textContent).toContain("A hosted-only page");
   expect(node.textContent).toContain("The session's transcript is no longer on this computer.");
   // A file narrows the list to the decisions citing it.
-  const file = [...node.querySelectorAll("button")].find((b) =>
-    b.textContent?.includes("oss/app/src/timeline.tsx"),
-  )!;
-  await act(async () => file.click());
-  await act(async () => {});
+  await filterTo("file=oss/app/src/timeline.tsx");
   expect(requests.at(-1)).toBe(
     "/s/test-ns/api/timeline/decisions?file=oss%2Fapp%2Fsrc%2Ftimeline.tsx",
   );
   // All decisions offers the filters that pick decisions.
-  expect(node.textContent).toContain("Decided by");
+  expect(node.querySelector(".filter-menu-rows")?.textContent).toContain("Decided by");
 });
 
 it("shows the prompts a decision cites", async () => {
@@ -309,23 +354,19 @@ it("shows every repository at once, or those ticked, each row naming its own", a
   expect(requests.some((path) => path.includes("api/timeline/build"))).toBe(false);
   const list = node.querySelector('ol[aria-label="Features"]')!;
   expect(list.textContent).toContain("acme/other");
-  expect(node.querySelector("summary")?.textContent).toBe("All repositories");
-  const box = [...node.querySelectorAll("label")]
-    .find((l) => l.textContent === "acme/other")!
-    .querySelector("input")!;
-  await act(async () => box.click());
-  await act(async () => {});
+  await filterTo("repo=acme/demo");
   expect(current.getAll("repo")).toEqual(["acme/demo"]);
   expect(requests).toContain("/s/test-ns/api/timeline/features?repository=acme%2Fdemo");
   expect(requests).toContain("/s/test-ns/api/timeline/build?repository=acme%2Fdemo");
-  // The one box left ticked cannot be cleared.
-  const last = [...node.querySelectorAll("label")]
-    .find((l) => l.textContent === "acme/demo")!
-    .querySelector("input")!;
-  expect(last.disabled).toBe(true);
+  // A repository the Timeline does not serve is refused, not read as all.
+  await filterTo("repo=acme/gone");
+  expect(current.getAll("repo")).toEqual(["acme/demo"]);
+  expect(node.querySelector('[role="status"].filter-bar-error')?.textContent).toContain(
+    "repo takes acme/demo, acme/other.",
+  );
 });
 
-it("filters with the shared controls, offering the tab's people and the cited files", async () => {
+it("filters with the Inbox's filter, offering the tab's people and the cited files", async () => {
   answers["api/timeline/features/people"] = {
     people: [{ ...me, name: "Ada", login: "ada", feature_count: 2 }],
   };
@@ -341,13 +382,23 @@ it("filters with the shared controls, offering the tab's people and the cited fi
     to: localDayStart("2026-10-31", 1),
   });
   expect(requests).toContain(`/s/test-ns/api/timeline/features?${query}`);
-  // A pill per filter in force; the person's reads as their name.
-  expect(node.textContent).toContain("Ada");
-  const clear = [...node.querySelectorAll("button")].find(
-    (b) => b.textContent === "Clear filters",
-  )!;
-  await act(async () => clear.click());
-  await act(async () => {});
+  // The query reads back what the address holds.
+  await filterTo("person=me@example.com file=oss/app date>=2026-10-01 date<=2026-10-31");
+  const sorted = (params: URLSearchParams) => [...params].sort().map((one) => one.join("="));
+  expect(sorted(current)).toEqual(
+    sorted(
+      new URLSearchParams(
+        "page=timeline&file=oss/app&person=me@example.com&from=2026-10-01&to=2026-10-31",
+      ),
+    ),
+  );
+  // The menu offers the tab's people by name, and the cited files.
+  const rows = node.querySelector(".filter-menu-rows")!;
+  expect(rows.textContent).toContain("Author");
+  expect(rows.textContent).toContain("File or folder");
+  // Features offers no filter that picks decisions alone.
+  expect(rows.textContent).not.toContain("Decided by");
+  await filterTo("");
   expect(current.toString()).toBe("page=timeline");
   expect(requests.at(-1)).toBe("/s/test-ns/api/timeline/features");
 });
@@ -551,13 +602,8 @@ it("drops rows a load of more brings after the list was read again", async () =>
   // twice for the same query and revision it had, and those answers land
   // first.
   answers["api/timeline/features"] = { features: many(0, 50), next_cursor: "1|F49" };
-  for (let i = 0; i < 2; i++) {
-    const shipped = [...node.querySelectorAll("button[aria-pressed]")].find(
-      (b) => b.textContent === "Shipped",
-    ) as HTMLButtonElement;
-    await act(async () => shipped.click());
-    await act(async () => {});
-  }
+  await filterTo("status=shipped");
+  await filterTo("");
   expect(node.querySelectorAll("li[data-feature]").length).toBe(50);
   // Then the old load of more answers: only the read count tells it is
   // stale, and its rows are not appended.
@@ -941,4 +987,15 @@ it("keeps the build state shown when a read of it fails", async () => {
   await act(async () => root.render(<Harness initial="page=timeline" revision={1} />));
   await act(async () => {});
   expect(node.textContent).toContain("The model backend is not available on this computer.");
+});
+
+it("focuses the search box with /, which the shortcuts sheet lists", async () => {
+  await show();
+  await act(async () => {
+    window.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "/", bubbles: true, cancelable: true }),
+    );
+  });
+  expect(document.activeElement?.getAttribute("placeholder")).toBe("Search features");
+  expect(node.querySelector(".timeline-search kbd.key-hint")?.textContent).toBe("/");
 });

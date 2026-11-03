@@ -397,7 +397,7 @@ function activeFilterPills({
 /** Applied a moment after typing stops, so a word is one request, not one per
  *  letter. A value arriving from outside replaces the text unless it is the
  *  one this box just sent. */
-function KeywordSearch({
+export function KeywordSearch({
   label,
   value,
   onChange,

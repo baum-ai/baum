@@ -597,12 +597,17 @@ address.
 
 - `TimelinePage` (`@baum/viewer/components/timeline-page`) is the whole log
   page below the host's header, shared by the hosted Timeline and the local
-  app's: the host's filter bar (`filterBar` wraps the shared controls), the
+  app's: the host's filter bar (`filterBar` is given the shared controls,
+  which the hosted Timeline wraps and the local app replaces with its own
+  over the same address), the
   Features and All decisions tabs when `withFeatures` (the timeline alone
   otherwise), and each tab's list. The address it reads and writes through
   `useUrlState` holds the tab (`parseLogTab`, `withLogTab`), the filters,
   the open decision (`open`, read through the host's `parseOpen`) and the
   open feature (`feature`); opening and closing replace the history entry.
+  A host whose keys move through the rows names the row they are on
+  (`focusedRow`), which the feature or decision marks `data-focused` for
+  the host to style; `KeywordSearch` is the shared search box.
   A shared link's row or feature scrolls into view once, a feature merged
   into another opens the one it went into, and an opened decision or feature
   the list does not hold shows above it. The host reads the lists and hands

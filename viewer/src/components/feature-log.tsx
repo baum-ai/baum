@@ -196,6 +196,7 @@ export function TimelineHeading({
 export function FeatureItem({
   feature,
   expanded,
+  focused = false,
   onToggle,
   onKeyDecision,
   children,
@@ -206,6 +207,8 @@ export function FeatureItem({
 }: {
   feature: FeatureSummary;
   expanded: boolean;
+  /** The host's keys are on this entry. */
+  focused?: boolean;
   onToggle: () => void;
   onKeyDecision: (decision: KeyDecision) => void;
   /** The drill-down, rendered only while expanded. */
@@ -226,7 +229,13 @@ export function FeatureItem({
   const selected = expanded && panelElsewhere !== undefined;
   return (
     // A row the app's keys move through, opened by its button.
-    <li ref={itemRef} data-feature={feature.id} data-row-id={feature.id} className={TIMELINE_ROW}>
+    <li
+      ref={itemRef}
+      data-feature={feature.id}
+      data-row-id={feature.id}
+      data-focused={focused || undefined}
+      className={TIMELINE_ROW}
+    >
       <TimelineDate day={day} />
       <TimelineRail>
         <span

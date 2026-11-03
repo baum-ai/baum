@@ -718,14 +718,16 @@ view, marking it and giving it the focus; a new section starts from its first.
 risk's details, a decision; `toggleActiveBlock`), and still presses a focused
 button or link. `Enter` opens the marked block where it opens somewhere (its
 `data-block-open` control, as a commit row's subject; `openActiveBlock`). The
-arrows then no longer scroll the review. Sessions, Jobs and Repositories share the list keys
+arrows then no longer scroll the review. Sessions, Jobs, Repositories and the Timeline share the list keys
 (`useRowFocus` and `listKeys`): `j`/`↓` and `k`/`↑` move, `Enter` or `o` opens
 the row (a session's transcript, a job's page, a repository's
 settings) and `Esc` clears the focus. On Sessions the three sections are one
 list and `p` opens the focused session's pull request; on Jobs `t` opens the
 transcript (Watch while a fix runs); on Repositories `a` opens or closes the
 picker and `/` searches it (the search takes the focus when the picker opens,
-and `Esc` in an empty search leaves it). Settings' section list is its
+and `Esc` in an empty search leaves it); on the Timeline `Enter` or `o` opens or
+closes the feature or decision, an open feature's side panel follows the
+focus, and `/` focuses the search box (its hint shows inside the box). Settings' section list is its
 selection, as Up next's list is: `j`/`↓` and `k`/`↑` move it, `1` to `5` jump
 to a section, and `Enter`, `l` or `→` go into the shown section, where `j` and
 `k` step through its controls, `Space` or `Enter` changes the focused one and
@@ -749,11 +751,14 @@ group in the sheet that carry a short name, those sharing one together ("j k
 move"), then ⌘. for the row menu on a list, Go to and `?`. The bar reads the
 sheet's table, so it names only keys that work. The Inbox draws it at the foot
 of its list instead. The focused row has an
-accent bar and a faint fill, distinct from hover and selection; focus moves to
-the row's own link, so screen readers follow, and the row scrolls into view.
-Each list (Pull requests, Inbox, Sessions, Jobs, Repositories) keeps its
-focused or selected row for as long as the app runs (`useLastRow`), and a link
-clicked in a row keeps that row too, so coming back from what a row opened
+accent bar and a faint fill, distinct from hover and selection, and keeps it
+when the focus goes elsewhere (`data-focused`); focus moves to the row's own
+link, so screen readers follow, and the row scrolls into view only when any
+of it is out of sight (the key bar counts as out of sight); the list's first
+row takes it back to the top, with its heading. Each list (Pull requests,
+Inbox, Sessions, Jobs, Repositories, Timeline) keeps its focused or selected
+row for as long as the app runs (`useLastRow`), and a link clicked in a row,
+or a row button that opens it in place, keeps that row too, so coming back from what a row opened
 (`Esc`, `u`, Back or the sidebar) lands on the same row, scrolled to the middle.
 `Esc` on the list gives the row up.
 Keys are ignored with Ctrl, Meta or Alt held, in text fields, selects, text areas
@@ -1256,7 +1261,11 @@ See the daemon's [plan usage README](../internal/planusage/README.md).
 
 The app's sidebar leads to the Inbox, Pull requests, Timeline, Sessions, Analytics, Repositories, Jobs
 and Settings; the Inbox shows how many things wait on the person there (its inboxes are nested beneath it), and Sessions shows the number of agent sessions waiting on the person (in the caution tone), or
-else the number working now.
+else the number working now. The sidebar and the page's panel stay in place:
+the panel's notices and each page's bar (`PageBar`) stay at its top, and only
+what is under them scrolls (`.local-main`, which pages scroll through
+`pageScroll` rather than the window); pages with panes of their own (the Inbox,
+Settings, the Timeline) scroll each pane instead.
 
 The Timeline page (`?page=timeline&repo=&tab=all&q=&person=&file=&from=&to=&status=&category=&feature=&open=`,
 `src/timeline.tsx`) is the hosted Timeline over the local decision log. It reads
@@ -1265,18 +1274,25 @@ the daemon's `api/timeline` routes (see the
 them with the hosted Timeline's own page, the viewer's `TimelinePage` (see the
 [viewer README](../viewer/README.md#decision-log)): the tabs, lists, paging and
 empty states, the opened decision and feature and the address they live in are
-the same code. The app supplies the lists, details and authors, its filter bar
-around the shared controls, the lines above each list, the empty lists'
+the same code. The app supplies the lists, details and authors, its own bar
+in place of the shared controls, the lines above each list, the empty lists'
 wording and the session a decision opens. It shows every picked repository whose decisions are
 on, as the hosted Timeline shows all of an organisation's, or those named by
-`repo=` (repeated). Its bar is the hosted Timeline's: with more than one
-such repository, a repository picker drawn as the hosted one (a popover of a
-box per repository; the last one ticked cannot be cleared, and ticking them
-all, or **All repositories**, drops `repo=`), then the viewer's shared
-`DecisionFilterControls` over the same address as hosted (`q`, `file`,
-`person`, `who`, `category`, `from`, `to`, `superseded`, `agent` and, on
-Features, `status`; see the
-[viewer README](../viewer/README.md#decision-log)). The sidebar, its key and
+`repo=` (repeated). The page's name, its bar and the tabs stay at the top of
+the panel; only the open tab's list scrolls, and the opened feature's panel
+stays beside it. The bar holds a search box for the text (`q`) and the
+Inbox's filter menu and query (`FilterButton` and `FilterBar` from
+`src/filter-menu.tsx`, with the Timeline's fields from
+`src/timeline-filter.ts`): `repo=`, `person=`, `file=` (whose values follow
+the path typed, from `api/timeline/files`), `date>=` and `date<=`, on
+Features `status=`, and on All decisions `who=` (`who!=agent` hides the
+agents' own decisions), `category=` and `is=superseded`; any other word is
+the text. The query is written into the address the shared page reads (`q`,
+`file`, `person`, `who`, `category`, `from`, `to`, `superseded`, `agent`,
+`status`) and read back from it. The server applies the filter to each page it
+reads, so every term must hold and each field is named once (`who=a,b` for
+either): OR, NOT, `-` and parentheses are refused with a reason, and the last
+filter stays. The sidebar, its key and
 Go to open it on human decisions (`who=human`), as the hosted rail does;
 clearing the filters there shows every decision. The app supplies its
 file and folder suggestions from `api/timeline/files` and its authors from

@@ -359,7 +359,8 @@ export function forgetLastRows() {
  *  opened, or its page from the sidebar) comes back on the same row. A link
  *  clicked in a row (`[data-row-id]` inside `list`) makes that row the one
  *  to come back to, so a row opened by the pointer is kept as one opened by
- *  the keyboard is. Tab landing on a row's link (`useTabStops`) makes that
+ *  the keyboard is; a row button that opens the row in place (`ROW_LINK`)
+ *  selects it there, so the keys go on from it. Tab landing on a row's link (`useTabStops`) makes that
  *  row the selected one, so the row's keys act where the focus is. */
 export function useLastRow(name: string, list?: RefObject<HTMLElement | null>) {
   const [id, setId] = useState(() => lastRows.get(name) ?? null);
@@ -376,8 +377,9 @@ export function useLastRow(name: string, list?: RefObject<HTMLElement | null>) {
     const click = (event: MouseEvent) => {
       const target = event.target instanceof Element ? event.target : null;
       const row = target?.closest<HTMLElement>("[data-row-id]");
-      if (row?.dataset.rowId && target?.closest("a[href]") && list.current?.contains(row))
-        lastRows.set(name, row.dataset.rowId);
+      if (!row?.dataset.rowId || !list.current?.contains(row)) return;
+      if (target?.closest("a[href]")) lastRows.set(name, row.dataset.rowId);
+      else if (target?.closest(`button:is(${ROW_LINK})`)) set(row.dataset.rowId);
     };
     const focusin = (event: FocusEvent) => {
       if (!tabbed || !(event.target instanceof Element)) return;
@@ -395,23 +397,49 @@ export function useLastRow(name: string, list?: RefObject<HTMLElement | null>) {
   return [id, set] as const;
 }
 
-/** Focuses a row's link and scrolls the row into view: to the middle when a
- *  list comes back on its last row, which may be far down, and just enough
- *  as the keys move it. */
+/** Focuses a row's link and scrolls the row into view when any of it is out
+ *  of sight: to the middle when a list comes back on its last row, which may
+ *  be far down, and just enough as the keys move it. The list's first row
+ *  (`first`) takes it back to the top, with what is above the row, such as
+ *  its heading. */
 export function useFocusRow(
   focused: string | null,
   rowLink: (id: string) => HTMLElement | null | undefined,
+  first = false,
 ) {
   const returning = useRef(focused !== null);
   useEffect(() => {
     if (!focused) return;
     const target = rowLink(focused);
     target?.focus({ preventScroll: true });
-    target
-      ?.closest("[data-row-id]")
-      ?.scrollIntoView?.({ block: returning.current ? "center" : "nearest" });
+    const row = target?.closest<HTMLElement>("[data-row-id]");
+    if (row && first && !returning.current) scrollAreas(row)[0]?.scrollTo?.({ top: 0 });
+    else if (row && !inSight(row))
+      row.scrollIntoView?.({ block: returning.current ? "center" : "nearest" });
     returning.current = false;
   }, [focused]);
+}
+
+/** The elements that scroll `row`, innermost first, ending at the page's. */
+function scrollAreas(row: HTMLElement): Element[] {
+  const areas: Element[] = [];
+  for (let up = row.parentElement; up; up = up.parentElement)
+    if (/auto|scroll/.test(getComputedStyle(up).overflowY)) areas.push(up);
+  return [...areas, document.scrollingElement ?? document.documentElement];
+}
+
+/** Whether all of `row` shows: inside the window and the areas that scroll
+ *  it. */
+function inSight(row: HTMLElement) {
+  const box = row.getBoundingClientRect();
+  let head = 0;
+  let foot = window.innerHeight;
+  for (const up of scrollAreas(row).slice(0, -1)) {
+    const area = up.getBoundingClientRect();
+    head = Math.max(head, area.top);
+    foot = Math.min(foot, area.bottom);
+  }
+  return box.top >= head && box.bottom <= foot;
 }
 
 /** A row focus that the keyboard moves through a list's rows: each row is
@@ -432,7 +460,7 @@ export function useRowFocus<List extends HTMLElement = HTMLElement>(
     Array.from(list.current?.querySelectorAll<HTMLElement>("[data-row-id]") ?? [])
       .find((element) => element.dataset.rowId === id)
       ?.querySelector<HTMLElement>(link);
-  useFocusRow(focused, rowLink);
+  useFocusRow(focused, rowLink, focused !== null && focused === ids[0]);
   return {
     list,
     focused,
@@ -848,11 +876,14 @@ function shortcutGroups(
     {
       place: "timeline",
       title: "Timeline",
-      rows: LIST_SHORTCUTS.map((row) =>
-        row.keys.includes("Enter")
-          ? { ...row, label: "Open or close the feature or decision" }
-          : row,
-      ),
+      rows: [
+        ...LIST_SHORTCUTS.map((row) =>
+          row.keys.includes("Enter")
+            ? { ...row, label: "Open or close the feature or decision" }
+            : row,
+        ),
+        { keys: ["/"], label: "Search the features or decisions", short: "search" },
+      ],
     },
     { place: "settings", title: "Settings", rows: SETTINGS_SHORTCUTS },
     {

@@ -1,9 +1,8 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { cn, FOCUS_RING } from "@baum/viewer/components/classnames";
 import type { DetailState, OpenSessionSource } from "@baum/viewer/components/decision-log";
 import type { FeatureState } from "@baum/viewer/components/feature-log";
 import { formatCount } from "@baum/viewer/components/format";
-import { ChevronDownIcon, RepositoryIcon } from "@baum/viewer/components/icons";
 import { Empty } from "@baum/viewer/components/states";
 import { PageRead, readState } from "./page-state";
 import {
@@ -24,6 +23,7 @@ import {
   type LogTab,
   parseDecisionFilters,
   parseFeatureStatuses,
+  withDecisionFilters,
 } from "@baum/viewer/decision-log";
 import { useUrlState } from "@baum/viewer/navigation";
 import { humanize } from "@baum/viewer/review-document";
@@ -43,6 +43,14 @@ import {
 } from "./session-transcript";
 import { PageBar, RefreshButton, useReread } from "./shell";
 import { listKeys, useRowFocus, useShortcuts } from "./shortcuts";
+import { FilterBar, FilterButton } from "./filter-menu";
+import { KeywordSearch } from "@baum/viewer/components/decision-filters";
+import {
+  timelineFields,
+  timelineFilter,
+  timelineQuery,
+  withTimelineQuery,
+} from "./timeline-filter";
 import "./timeline.css";
 
 /** The Timeline: the picked repositories' features and decisions from the
@@ -533,7 +541,28 @@ function TimelineLog({
     `timeline:${tab}`,
     (tab === "features" ? features.rows : decisions.rows).map((row) => row.id),
   );
-  useShortcuts((event) => listKeys(event, rows));
+  // Whether the keys moved the focus, which an open feature's panel follows;
+  // a row the list comes back on leaves the panel as the address has it.
+  const moved = useRef(false);
+  useShortcuts((event) => {
+    moved.current = ["j", "k", "ArrowDown", "ArrowUp"].includes(event.key);
+    if (listKeys(event, rows)) return;
+    if (event.key === "/") {
+      event.preventDefault();
+      rows.list.current?.querySelector<HTMLInputElement>(".timeline-search input")?.focus();
+    }
+  });
+  // A feature open in the panel beside the list follows the keys: the row
+  // they move to opens there in its place. A row that opens in place waits
+  // for Enter.
+  useEffect(() => {
+    if (!moved.current) return;
+    moved.current = false;
+    const link = rows.focused ? rows.rowLink(rows.focused) : null;
+    const panel = document.getElementById(link?.getAttribute("aria-controls") ?? "");
+    const beside = !!panel && !link?.closest("[data-row-id]")?.contains(panel);
+    if (beside && link?.getAttribute("aria-expanded") !== "true") link?.click();
+  }, [rows.focused]);
   // The people the person filter offers: those with decisions on All
   // decisions, those among the features' people on Features.
   const readPeople = useCallback(
@@ -565,18 +594,65 @@ function TimelineLog({
     },
     [scopeKey],
   );
-  // Another set of repositories keeps the tab and filters; what was open
-  // was one of the old set's.
-  const openRepositories = (names: string[]) =>
-    url.update((current) => {
-      const next = new URLSearchParams(current);
-      next.delete("repo");
-      next.delete("open");
-      next.delete("feature");
-      for (const name of names) next.append("repo", name);
-      return next;
-    });
-
+  // The filter is written as the Inbox's is (`timeline-filter.ts`), over the
+  // filters the address holds. The people and files it offers are the open
+  // tab's and repositories'.
+  const onFeatures = tab === "features";
+  const [people, setPeople] = useState<AuthorCount[]>([]);
+  useEffect(() => {
+    const abort = new AbortController();
+    readPeople(tab, abort.signal).then(setPeople, () => {});
+    return () => abort.abort();
+  }, [tab, readPeople, revision]);
+  // The files and folders under what is typed, as `file=oss/app/` lists the
+  // folder's; a search in the menu reads paths only once it looks like one.
+  const [filePrefix, setFilePrefix] = useState("");
+  const [topFiles, setTopFiles] = useState<DecisionFile[]>([]);
+  useEffect(() => {
+    const abort = new AbortController();
+    files(filePrefix, abort.signal).then(setTopFiles, () => {});
+    return () => abort.abort();
+  }, [filePrefix, files, revision]);
+  const typed = useCallback((key: string | null, partial: string) => {
+    if (key === "file" || (key === null && (partial === "" || /[/.]/.test(partial))))
+      setFilePrefix(partial);
+  }, []);
+  const repositoryNames = served.map((each) => each.repository).join("\n");
+  const servedNames = useMemo(
+    () => (repositoryNames ? repositoryNames.split("\n") : []),
+    [repositoryNames],
+  );
+  const filterFields = useMemo(
+    () =>
+      timelineFields({
+        features: onFeatures,
+        repositories: servedNames,
+        people,
+        files: topFiles,
+      }),
+    [onFeatures, servedNames, people, topFiles],
+  );
+  const pageFilter = useMemo(
+    () => ({ ...timelineFilter(filterFields), typed }),
+    [filterFields, typed],
+  );
+  const query = timelineQuery(search, onFeatures, servedNames);
+  // What was typed stays as typed while it asks for what the address holds;
+  // a change from elsewhere (Clear, Back) shows the address's own.
+  const [sent, setSent] = useState("");
+  const shown =
+    sent &&
+    timelineQuery(
+      withTimelineQuery(search, sent, filterFields, onFeatures),
+      onFeatures,
+      servedNames,
+    ) === query
+      ? sent
+      : query;
+  const setQuery = (next: string) => {
+    setSent(next);
+    url.update((current) => withTimelineQuery(current, next, filterFields, onFeatures));
+  };
   const coverage = decisions.coverage;
   // Over several repositories the menu is always there; one repository needs
   // features at all, not whether the filters leave any, since its empty
@@ -597,17 +673,10 @@ function TimelineLog({
       : "";
   return (
     <>
-      <PageBar
-        title="Timeline"
-        detail={PAGE_DETAIL}
-        actions={<RefreshButton refresh={refresh} />}
-      />
-      {build.error ? (
-        <Alert className="mx-5 mt-3">Couldn't start the feature build: {build.error}</Alert>
-      ) : null}
-      <div ref={rows.list}>
+      <div ref={rows.list} className="timeline-log">
         <SharedTimelinePage
           withFeatures
+          focusedRow={rows.focused}
           features={timelineList(features)}
           decisions={timelineList(decisions)}
           readDecision={readDecision}
@@ -620,26 +689,52 @@ function TimelineLog({
           repository={single ?? ""}
           repositoryLabel={several ? (name) => name : undefined}
           withheldNote={WITHHELD_NOTE}
-          // The hosted Timeline's filter bar: the repository picker, then the
-          // viewer's shared controls over the same address.
-          filterBar={(controls) => (
-            <div className="local-filter-bar timeline-filters">
-              {served.length > 1 ? (
-                <RepositoryPicker
-                  repositories={served.map((each) => each.repository)}
-                  selected={all ? [] : scope}
-                  onChange={openRepositories}
-                />
+          // The Inbox's filter in place of the hosted Timeline's controls.
+          filterBar={() => (
+            <div className="timeline-top">
+              <PageBar
+                title="Timeline"
+                detail={PAGE_DETAIL}
+                actions={<RefreshButton refresh={refresh} />}
+              />
+              {build.error ? (
+                <Alert className="mx-5 mt-3">Couldn't start the feature build: {build.error}</Alert>
               ) : null}
-              {controls}
-              {showMore ? (
-                <MoreMenu
-                  starting={build.starting}
-                  blocked={rebuildBlocked}
-                  note={rebuildNote}
-                  onRebuild={() => void build.start()}
+              <div className="local-filter-bar timeline-filters">
+                <div className="timeline-search">
+                  <KeywordSearch
+                    label={onFeatures ? "Search features" : "Search decisions"}
+                    value={filters.q}
+                    onChange={(q) => url.update((current) => withDecisionFilters(current, { q }))}
+                  />
+                  <kbd aria-hidden="true" className="key-hint">
+                    /
+                  </kbd>
+                </div>
+                <FilterButton
+                  query={shown}
+                  onChange={setQuery}
+                  entries={[]}
+                  page={pageFilter}
+                  footer={
+                    <FilterBar
+                      key={tab}
+                      query={shown}
+                      onChange={setQuery}
+                      entries={[]}
+                      page={pageFilter}
+                    />
+                  }
                 />
-              ) : null}
+                {showMore ? (
+                  <MoreMenu
+                    starting={build.starting}
+                    blocked={rebuildBlocked}
+                    note={rebuildNote}
+                    onRebuild={() => void build.start()}
+                  />
+                ) : null}
+              </div>
             </div>
           )}
           tabsClassName="timeline-tabs"
@@ -755,87 +850,6 @@ function MoreMenu({
           ) : null}
         </button>
       </div>
-    </details>
-  );
-}
-
-/** Which repositories the Timeline shows, drawn as the hosted log's picker:
- *  a box for each, in a popover; none ticked in the address is all of them.
- *  The last box left ticked cannot be cleared. */
-function RepositoryPicker({
-  repositories,
-  selected,
-  onChange,
-}: {
-  repositories: string[];
-  /** Empty for all of them. */
-  selected: string[];
-  onChange: (names: string[]) => void;
-}) {
-  const { detailsProps } = useDisclosure();
-  const all = selected.length === 0;
-  const ticked = all ? repositories : selected;
-  const label = all
-    ? "All repositories"
-    : selected.length === 1
-      ? selected[0]
-      : `${formatCount(selected.length)} repositories`;
-  const toggle = (name: string) => {
-    const next = ticked.includes(name) ? ticked.filter((each) => each !== name) : [...ticked, name];
-    onChange(next.length === repositories.length ? [] : next);
-  };
-  return (
-    <details {...detailsProps} className="group relative">
-      <summary
-        aria-label={`Repositories: ${label}`}
-        className={cn(
-          "flex max-w-[280px] cursor-pointer list-none items-center gap-1.5 rounded-(--radius-sm) border px-2.5 py-1 text-base [&::-webkit-details-marker]:hidden",
-          FOCUS_RING,
-          // A narrowed scope stands out: every number on the page depends on it.
-          all
-            ? "border-(--border-default) bg-(--surface-card) text-(--text-secondary) hover:bg-(--surface-hover)"
-            : "border-(--action-accent) bg-(--surface-pressed) font-medium text-(--text-primary)",
-        )}
-      >
-        <RepositoryIcon size={13} className="flex-none text-(--text-tertiary)" />
-        <span className="truncate">{label}</span>
-        <ChevronDownIcon
-          size={12}
-          className="flex-none text-(--text-tertiary) transition-transform duration-150 group-open:rotate-180"
-        />
-      </summary>
-      <fieldset className="absolute left-0 z-20 mt-1 flex max-h-80 w-72 flex-col overflow-y-auto rounded-(--radius-md) border border-(--border-default) bg-(--surface-card) p-1 shadow-(--shadow-overlay)">
-        <legend className="sr-only">Repositories</legend>
-        {repositories.map((name) => {
-          const on = ticked.includes(name);
-          return (
-            <label
-              key={name}
-              className="flex cursor-pointer items-center gap-2 rounded-(--radius-sm) px-2 py-1.5 text-base text-(--text-primary) hover:bg-(--surface-hover)"
-            >
-              <input
-                type="checkbox"
-                checked={on}
-                disabled={on && ticked.length === 1}
-                onChange={() => toggle(name)}
-              />
-              <span className="truncate">{name}</span>
-            </label>
-          );
-        })}
-        {all ? null : (
-          <>
-            <div aria-hidden className="my-1 h-px bg-(--border-subtle)" />
-            <button
-              type="button"
-              className="rounded-(--radius-sm) px-2 py-1.5 text-left text-base text-(--text-secondary) hover:bg-(--surface-hover)"
-              onClick={() => onChange([])}
-            >
-              All repositories
-            </button>
-          </>
-        )}
-      </fieldset>
     </details>
   );
 }
