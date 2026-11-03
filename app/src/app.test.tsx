@@ -782,7 +782,7 @@ it("shows the home directory in diagnostics paths as ~", async () => {
   stubDiagnostics(async () =>
     Response.json({
       local: true,
-      home: "/home/ada",
+      home: "/home/alice",
       report: {
         status: "ok",
         checks: [
@@ -790,8 +790,8 @@ it("shows the home directory in diagnostics paths as ~", async () => {
             id: "baum",
             label: "baum command",
             status: "ok",
-            detail: "hooks run this baum (/home/ada/bin/baum)",
-            path: "/home/ada/.local/bin/baum",
+            detail: "hooks run this baum (/home/alice/bin/baum)",
+            path: "/home/alice/.local/bin/baum",
           },
         ],
       },
@@ -801,7 +801,7 @@ it("shows the home directory in diagnostics paths as ~", async () => {
   const text = node.textContent ?? "";
   expect(text).toContain("hooks run this baum (~/bin/baum)");
   expect(text).toContain("~/.local/bin/baum");
-  expect(text).not.toContain("/home/ada");
+  expect(text).not.toContain("/home/alice");
 });
 it("shows diagnostics loading, then re-runs on Check again and disables it meanwhile", async () => {
   history.replaceState(null, "", "/s/test-ns/?page=diagnostics");
