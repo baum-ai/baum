@@ -4238,10 +4238,13 @@ replace it.
   switched or a worktree reused right after does not move it; a commit without
   them (a hook that could not read them) is ignored. A push (`LinkPush`) is
   the pushed branch and commit in the repository the remote's push URL names,
-  as refresh on hook events reads a push. When the session's directory links to
-  no pull request (and not to several), the session takes the repository,
-  branch and pull request of its latest commit or push that has one, with
-  `link_method` `commit` or `push`; each later lookup checks the cache again,
+  as refresh on hook events reads a push. A session's own work comes before
+  its directory: when its latest commit or push that has a pull request
+  exists, the session takes that repository, branch and pull request, with
+  `link_method` `commit` or `push`, whatever its directory has checked out
+  (another session, or a subagent, may have switched it to another branch);
+  only a session with no such work takes its directory's pull request. Each
+  later lookup checks the cache again,
   so a pull request opened after the push is found within 30 seconds and one
   closed falls back to an older one. At most 16 commits and pushes are kept
   per session; the record's within a day are replayed on a rebuild, and the

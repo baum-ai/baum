@@ -182,16 +182,15 @@ export function SessionWhere({
   prHref: (session: LiveSession) => string | null;
   Link: ComponentType<ViewerLinkProps>;
 }) {
+  // A stale link says nothing: it settles at the next lookup.
   const note =
     s.link_status === "ambiguous"
       ? "Several pull requests match"
-      : s.link_status === "stale"
-        ? "PR link may be out of date"
-        : s.link_status === "unavailable"
-          ? "PR lookup unavailable"
-          : s.link_status === "unknown_history"
-            ? "Historical branch unknown"
-            : null;
+      : s.link_status === "unavailable"
+        ? "PR lookup unavailable"
+        : s.link_status === "unknown_history"
+          ? "Historical branch unknown"
+          : null;
   return (
     <div className="local-session-where">
       <span className="local-session-repo">{s.repository}</span>
