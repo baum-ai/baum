@@ -74,6 +74,8 @@ import {
   agentUpdatable,
   agentHookNote,
   agentNeedsAction,
+  agentUnsupported,
+  terminalSetup,
   displayPath,
   type SetupView,
   type Outcome,
@@ -86,6 +88,7 @@ import {
   type PullRequests,
   type ReviewSettings,
 } from "./desktop/setup-model";
+import { useCopy } from "./desktop/terminal-setup";
 import { useModal } from "./modal";
 import { LoadingStatus } from "./nine-dots";
 
@@ -854,9 +857,32 @@ function connectedState(label: string, connected: boolean, attention = false) {
   );
 }
 
+/** The `baum desktop-setup` command for an agent baum found too old, with a
+ *  button that copies it (setup's TerminalSetup). */
+function TerminalSetupRow({ text, command }: { text: string; command: string }) {
+  const { copied, copy } = useCopy();
+  return (
+    <div id="terminal-setup" className="border-t border-(--border-subtle) px-5 py-4">
+      <p className="text-xs text-(--text-secondary)">{text}</p>
+      <div className="terminal-command">
+        <code id="terminal-setup-command">{command}</code>
+        <Button
+          size="compact"
+          variant="secondary"
+          aria-label="Copy the command"
+          onClick={() => void copy(command)}
+        >
+          {copied || "Copy"}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 /** Whether each coding agent's hooks are in, so baum can follow its work. */
 function AgentHooksPanel({ setup }: { setup: DesktopSetup }) {
   const { view, busy, doing, run, display } = setup;
+  const terminal = view ? terminalSetup(view) : null;
   return (
     <>
       <section className="local-panel p-0!" aria-labelledby="hooks-heading">
@@ -886,15 +912,17 @@ function AgentHooksPanel({ setup }: { setup: DesktopSetup }) {
                 <div className="flex flex-wrap items-center gap-3">
                   <h3 className="text-base font-medium">{agent.name}</h3>
                   {connectedState(
-                    describeAgent(agent) || "Not connected",
+                    agentUnsupported(agent)
+                      ? "Needs a newer version"
+                      : describeAgent(agent) || "Not connected",
                     agentConnected(agent),
-                    agentNeedsAction(agent),
+                    agentNeedsAction(agent) || agentUnsupported(agent),
                   )}
                   {agent.installed && agent.version ? (
                     <span className="text-xs text-(--text-tertiary)">Plugin {agent.version}</span>
                   ) : null}
                 </div>
-                {agent.error || !agent.installed ? (
+                {agent.error || !agent.installed || agentUnsupported(agent) ? (
                   <p className="text-xs text-(--text-secondary)">{display(describeAgent(agent))}</p>
                 ) : null}
                 {agent.installed ? (
@@ -905,7 +933,10 @@ function AgentHooksPanel({ setup }: { setup: DesktopSetup }) {
               </div>
             </div>
             <div className="flex flex-wrap items-center gap-2">
-              {agent.detected && !agent.error && (!agent.installed || !agent.enabled) ? (
+              {agent.detected &&
+              !agent.error &&
+              !agentUnsupported(agent) &&
+              (!agent.installed || !agent.enabled) ? (
                 <Button
                   disabled={busy}
                   size="compact"
@@ -944,6 +975,7 @@ function AgentHooksPanel({ setup }: { setup: DesktopSetup }) {
             </div>
           </div>
         ))}
+        {terminal ? <TerminalSetupRow {...terminal} /> : null}
       </section>
       {view?.hooks.error ? <Alert>{display(view.hooks.error)}</Alert> : null}
     </>

@@ -6,7 +6,9 @@ import {
   agentConnected,
   agentHookNote,
   agentNeedsAction,
+  agentUnsupported,
   agentUpdatable,
+  terminalSetup,
   describeCommand,
   detectedHarnesses,
   signedOutHarnesses,
@@ -21,6 +23,7 @@ import {
 } from "./setup-model";
 import { ReviewSettingsForm } from "./reviews";
 import { withCode } from "./code-terms";
+import { TerminalSetup } from "./terminal-setup";
 import { PlanUsage } from "../plan-usage";
 import { GitHubStep } from "./github-step";
 import { RepositoryPicker, setupRepositoryCall } from "../repositories";
@@ -207,6 +210,7 @@ export function Setup() {
     );
   }
   const command = view ? describeCommand(view.command) : null;
+  const terminal = view ? terminalSetup(view) : null;
   const agentsDone =
     view !== null && view.hooks.agents.length > 0 && view.hooks.agents.every(agentConnected);
   const githubReady = github && pickedCount > 0;
@@ -418,7 +422,7 @@ export function Setup() {
                           className={
                             connected
                               ? "ok"
-                              : agent && agentNeedsAction(agent)
+                              : agent && (agentNeedsAction(agent) || agentUnsupported(agent))
                                 ? "attention"
                                 : undefined
                           }
@@ -446,6 +450,7 @@ export function Setup() {
                           )}
                         {agent?.detected &&
                           !agent.error &&
+                          !agentUnsupported(agent) &&
                           (!agent.installed || !agent.enabled) &&
                           button(
                             `${definition.id}-install`,
@@ -475,6 +480,7 @@ export function Setup() {
                 })}
               </ul>
             )}
+            {step === 2 && terminal && <TerminalSetup {...terminal} />}
             {step === 2 && view.hooks.error && (
               <p id="hooks-error" role="status">
                 {display(view.hooks.error)}

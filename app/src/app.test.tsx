@@ -1959,6 +1959,58 @@ it("opens agent hooks from the Codex warning in desktop Settings", async () => {
   }
 });
 
+it("offers the desktop-setup command in desktop Settings for an agent that is too old", async () => {
+  history.replaceState(null, "", "/s/test-ns/?page=settings&section=connections");
+  const writeText = vi.fn(async (_: string) => {});
+  Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
+  const command = "'/home/user/.local/share/ai.baum/bin/baum' desktop-setup";
+  const view = {
+    first_run: false,
+    home: "/home/user",
+    command: { installed: true },
+    hooks: {
+      agents: [
+        {
+          agent: "codex",
+          name: "Codex",
+          detected: true,
+          installed: false,
+          enabled: false,
+          plugin: "baum@baum",
+          cli_path: "/usr/local/bin/codex",
+          cli_version: "0.128.0",
+          minimum_version: "0.156.1",
+          supported: false,
+        },
+      ],
+    },
+    terminal_setup: command,
+  };
+  const invoke = vi.fn(async () => view);
+  Object.defineProperty(window, "__TAURI_INTERNALS__", { configurable: true, value: { invoke } });
+  try {
+    await act(async () => root.render(<App />));
+    const panel = node.querySelector('[aria-labelledby="hooks-heading"]')!;
+    expect(panel.textContent).toContain(
+      "Codex 0.128.0 (/usr/local/bin/codex) is older than 0.156.1, which baum needs.",
+    );
+    // Connecting would run the old Codex's plugin commands.
+    expect(
+      [...panel.querySelectorAll("button")].some((b) => b.textContent === "Connect Codex"),
+    ).toBe(false);
+    // The command is shown as is: `~` would not expand inside its quotes.
+    expect(panel.querySelector("#terminal-setup-command")!.textContent).toBe(command);
+    const copy = panel.querySelector<HTMLButtonElement>(
+      '#terminal-setup button[aria-label="Copy the command"]',
+    )!;
+    await act(async () => copy.click());
+    expect(writeText).toHaveBeenCalledWith(command);
+    expect(copy.textContent).toBe("Copied");
+  } finally {
+    Reflect.deleteProperty(window, "__TAURI_INTERNALS__");
+  }
+});
+
 it("says in desktop Settings when neither Claude Code nor Codex is installed", async () => {
   history.replaceState(null, "", "/s/test-ns/?page=settings&section=reviews");
   stubDiagnostics(async () => Response.json({ local: true, report: diagnosticsReport }));

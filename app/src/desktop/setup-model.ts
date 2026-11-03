@@ -25,6 +25,14 @@ export type Agent = {
   detected: boolean;
   /** Whether the detected CLI is signed in; absent when baum could not tell. */
   signed_in?: boolean | null;
+  /** The detected CLI, its version and the oldest version baum runs. */
+  cli_path?: string | null;
+  cli_version?: string | null;
+  minimum_version?: string | null;
+  /** Whether baum runs this version; absent when it could not be read. */
+  supported?: boolean | null;
+  /** The CLI is in a directory `baum desktop-setup` recorded. */
+  recorded?: boolean;
   installed: boolean;
   enabled: boolean;
   plugin: string;
@@ -47,6 +55,9 @@ export type SetupView = {
   home?: string | null;
   command: CommandStatus;
   hooks: { agents: Agent[]; error?: string | null };
+  /** `'<the app's baum>' desktop-setup`, for the user's terminal; absent
+   *  where there is no login shell (Windows). */
+  terminal_setup?: string | null;
 };
 export type Outcome = { ok: boolean; lines: string[] };
 type CommandDescription = {
@@ -178,7 +189,28 @@ export function agentHookNote(agent: Agent) {
   }
 }
 
+/** A detected CLI older than baum runs. Its plugin commands may fail too. */
+export function agentUnsupported(agent: Agent) {
+  return agent.detected && agent.supported === false;
+}
+
+/** The agents to name above the `baum desktop-setup` command: those baum
+ *  found too old. Shells that set up a version manager only for interactive
+ *  use leave an older copy on the PATH baum reads, while the user's terminal
+ *  runs a newer one; once recorded, the terminal's copy itself is too old. */
+export function terminalSetup(view: SetupView) {
+  const unsupported = view.hooks.agents.filter(agentUnsupported);
+  if (!view.terminal_setup || unsupported.length === 0) return null;
+  const names = unsupported.map((agent) => agent.name).join(" and ");
+  const text = unsupported.every((agent) => agent.recorded)
+    ? `Upgrade ${names} in your terminal, then run this command there again and check again:`
+    : `Your terminal may run a newer ${names} than baum found. Run this command in your terminal, then check again:`;
+  return { text, command: view.terminal_setup };
+}
+
 export function describeAgent(agent: Agent) {
+  if (agentUnsupported(agent))
+    return `${agent.name} ${agent.cli_version} (${agent.cli_path}) is older than ${agent.minimum_version}, which baum needs.`;
   if (agent.error) return agent.error;
   if (agent.installed) {
     if (!agent.enabled) return "Installed but disabled";

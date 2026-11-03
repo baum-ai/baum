@@ -91,7 +91,7 @@ func TestSessionUnknownOptionDoesNotBlameTheVersionFloor(t *testing.T) {
 	r := schemaRequest(t.TempDir(), nil)
 	r.ResumeSession, r.ForkSession = testSession, true
 	_, err := (&Backend{Binary: script}).Run(context.Background(), r)
-	if err == nil || !strings.Contains(err.Error(), "does not support exec resume/fork") || strings.Contains(err.Error(), minimumVersion) {
+	if err == nil || !strings.Contains(err.Error(), "does not support exec resume/fork") || strings.Contains(err.Error(), MinimumVersion) {
 		t.Fatalf("error %v", err)
 	}
 }

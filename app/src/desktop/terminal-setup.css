@@ -1,0 +1,20 @@
+/* The `baum desktop-setup` command and its Copy button, in setup and in
+   Settings. */
+.terminal-command {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-default);
+  border-radius: 10px;
+  background: var(--surface-canvas);
+}
+.terminal-command code {
+  flex: 1;
+  min-width: 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: var(--text-xs);
+  overflow-wrap: anywhere;
+  user-select: all;
+}

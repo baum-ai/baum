@@ -1460,6 +1460,16 @@ what is on your `PATH`, the app runs the bundled `baum daemon login-path`,
 which starts your login shell the way the daemon does and runs the first
 `baum` it finds with `--version`.
 
+When the Claude Code or Codex baum finds is older than it supports, the app
+shows a command to run in your terminal: the app's own baum by its full path,
+followed by `desktop-setup`. It runs `claude --version` and `codex --version`
+from your terminal's `PATH` and writes the directories they are in to
+`terminal.json` beside `config.toml` (readable only by you). baum, the daemon
+and the app's status checks then put those directories first on the `PATH` they
+use, so they run the agents your terminal runs. Anything that can write your
+configuration directory could already set `backend_paths` there, so the record
+gives no new control; directories that no longer exist are skipped.
+
 Besides loopback requests to the daemon, the app makes one kind of network
 request: a release build checks GitHub Releases for a newer version of
 baum-ai/baum when it starts and once a day (`BAUM_DESKTOP_UPDATES=0` turns

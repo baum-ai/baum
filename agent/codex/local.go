@@ -18,7 +18,7 @@ import (
 	"github.com/baum-ai/baum/internal/proc"
 )
 
-// minimumVersion is the oldest Codex the Local profile runs. It is the release
+// MinimumVersion is the oldest Codex the Local profile runs. It is the release
 // the hosted review agent image pins (tools/codex-cli/package.json), which runs
 // every flag Run passes in production apart from --sandbox. Checked by
 // installing @openai/codex 0.156.1 and 0.162.1: both list --ephemeral,
@@ -26,7 +26,7 @@ import (
 // both accept `codex sandbox -P :read-only`, which the preflight uses. An older
 // release that lacks one of the flags exits with an unknown-option error, which
 // Run maps to the same upgrade request.
-const minimumVersion = "0.156.1"
+const MinimumVersion = "0.156.1"
 
 var versionPattern = regexp.MustCompile(`\d+\.\d+\.\d+`)
 
@@ -88,10 +88,10 @@ func checkVersion(ctx context.Context, binary string) (string, error) {
 	}
 	version := versionPattern.FindString(string(out))
 	if version == "" {
-		return "", fmt.Errorf("could not read a version from %s --version (%q); upgrade Codex to %s or newer", binary, strings.TrimSpace(string(out)), minimumVersion)
+		return "", fmt.Errorf("could not read a version from %s --version (%q); upgrade Codex to %s or newer", binary, strings.TrimSpace(string(out)), MinimumVersion)
 	}
-	if compareVersions(version, minimumVersion) < 0 {
-		return "", fmt.Errorf("codex %s is older than %s, which baum needs; upgrade Codex", version, minimumVersion)
+	if compareVersions(version, MinimumVersion) < 0 {
+		return "", fmt.Errorf("codex %s is older than %s, which baum needs; upgrade Codex", version, MinimumVersion)
 	}
 	return version, nil
 }

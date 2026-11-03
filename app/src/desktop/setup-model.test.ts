@@ -249,6 +249,49 @@ it("only calls Codex connected when its hooks are enabled and trusted", async ()
   expect(agentConnected({ ...codex, agent: "claude-code" })).toBe(true);
 });
 
+it("asks for the terminal's agents when baum finds one too old", async () => {
+  const { describeAgent, terminalSetup } = await import("./setup-model");
+  const codex = {
+    agent: "codex",
+    name: "Codex",
+    detected: true,
+    installed: false,
+    enabled: false,
+    plugin: "baum@baum",
+    cli_path: "/usr/local/bin/codex",
+    cli_version: "0.128.0",
+    minimum_version: "0.156.1",
+    supported: false,
+    // The plugin command an old Codex lacks fails too.
+    error: "codex plugin command failed: exit status 2",
+  };
+  const claude = { ...codex, agent: "claude-code", name: "Claude Code", supported: true };
+  const command = "'/home/user/.local/share/ai.baum/bin/baum' desktop-setup";
+  const view = {
+    first_run: true,
+    command: { installed: true },
+    hooks: { agents: [codex, claude] },
+    terminal_setup: command,
+  };
+  expect(describeAgent(codex)).toBe(
+    "Codex 0.128.0 (/usr/local/bin/codex) is older than 0.156.1, which baum needs.",
+  );
+  expect(terminalSetup(view)).toEqual({
+    text: "Your terminal may run a newer Codex than baum found. Run this command in your terminal, then check again:",
+    command,
+  });
+  // Once recorded, the terminal's own copy is the old one.
+  expect(
+    terminalSetup({ ...view, hooks: { agents: [{ ...codex, recorded: true }, claude] } })?.text,
+  ).toBe("Upgrade Codex in your terminal, then run this command there again and check again:");
+  // Nothing to ask while every version is supported or unknown, or without a
+  // command (Windows).
+  expect(
+    terminalSetup({ ...view, hooks: { agents: [claude, { ...codex, supported: null }] } }),
+  ).toBeNull();
+  expect(terminalSetup({ ...view, terminal_setup: null })).toBeNull();
+});
+
 it("tells a status from the action that resolves it", async () => {
   const { agentHookNote, agentNeedsAction, describeAgent } = await import("./setup-model");
   const agent = { detected: true, installed: true, enabled: true, plugin: "baum@baum" };

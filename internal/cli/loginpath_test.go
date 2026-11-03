@@ -17,6 +17,7 @@ import (
 func stubLoginShell(t *testing.T, path string, err error) {
 	t.Helper()
 	t.Setenv("PATH", "")
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	old := resolveShell
 	t.Cleanup(func() { resolveShell = old })
 	resolveShell = func(context.Context, shellenv.Options) (shellenv.Result, error) {

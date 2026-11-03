@@ -252,6 +252,18 @@ runtime puts its mount (`$APPDIR/usr/bin`, which holds the bundled baum) first
 on the app's PATH; the app removes it from the PATH of every baum it runs, so
 the daemon never inherits it and setup never reports it as a different baum.
 
+The status also names each detected agent CLI's path and version and whether
+baum supports that version. When one is too old, the agent's row says so,
+offers no Connect (the old CLI's plugin commands may fail), and setup and
+Settings show a command with a Copy button: the app's own baum by its full
+path (the `baum` command may not be installed yet) and `desktop-setup`. Run in
+the user's terminal, it records the directories that terminal finds `claude`
+and `codex` in, and baum puts them first on its PATH from then on, so a Codex
+set up only in `~/.bashrc` (fnm, nvm) is found; "Check again" reads the record
+through the same status commands. Once the recorded copy is the old one, the
+text asks to upgrade it in the terminal first. Windows shows no command: it has
+no login shell to miss an interactive PATH.
+
 ### Where the command goes
 
 - **macOS and Linux:** a symbolic link named `baum` to the baum the app runs.
