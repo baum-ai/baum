@@ -93,7 +93,8 @@ export async function readInboxes(
 
 /** What `matches` needs of a queue item. A pull request an agent is fixing
  *  now is one of kind `fix`. */
-export type Matchable = { kind: UpNextKind; entry: Entry };
+/** A queue item, or without `kind` one that waits on others. */
+export type Matchable = { kind?: UpNextKind; entry: Entry };
 
 /** An inbox's parts as one query: what it holds (`waiting=` or, for the
  *  person's own, `author=@me`), owners (`org=`), risk (`risk>=`),

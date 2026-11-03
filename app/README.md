@@ -904,11 +904,15 @@ that inbox's Merge items). Its header shows the inbox's colour dot and name:
 the dot opens its six colours, and a click on the name renames it in place
 (Enter or leaving saves, Esc keeps the old name, a blank or taken name is
 refused there); a right click on the head offers **Edit…**. An empty one says
-"Nothing here right now." Snoozed lists only the inbox's pull requests. **Done today**, the header's
-done count and progress bar, and the group of the person's own pull requests
-that wait on checks or reviews are only in the Inbox (all). In the Inbox a row
-carries a small tag with the colour and name of the first inbox it is in, and
-its panel a tag for each; in an inbox the panel tags the other inboxes it is
+"Nothing here right now." Snoozed, **Done today**, the header's done count and
+progress bar, and the group of the person's own pull requests that wait on
+checks or reviews list only the inbox's pull requests, as the Inbox's filter
+narrows them there too. A pull request done today matches as it was when last
+in the queue, from its row kept with today's record, even once the app no
+longer lists it. In the Inbox a row
+carries a quiet tag after its number and repository, the colour dot and name
+of the first inbox it is in (one waiting on others included), and its panel a
+tag for each; in an inbox the panel tags the other inboxes it is
 also in. Colours are six palette names (`--inbox-*` in `src/style.css`, with
 dark variants).
 
