@@ -83,6 +83,7 @@ import { buildTour } from "./walkthrough-model";
 import { AnswerActions } from "./answer-actions";
 import { AskPanel } from "./chat";
 import { documentFilesSlot, factsFilesSlot, factsQuery, useFacts } from "./facts";
+import { liveDetailsChecks, useChecks } from "./checks";
 import { SECONDARY } from "./action-classes";
 import {
   CommentsPane,
@@ -704,6 +705,9 @@ export function LocalReview({
   const [factsRetry, setFactsRetry] = useState(0);
   const facts = useFacts(clone, pr.number, pr.head_sha, revision + factsRetry, wantsFacts);
   const shownFacts = !doc && facts.state === "ready" ? facts.facts : null;
+  // The head's checks as GitHub lists them now, for the Details tab: the
+  // review's own are a snapshot from when it was generated.
+  const liveChecks = useChecks(pr.repository, pr.number, pr.head_sha);
   const factsHead = shownFacts?.review.head ?? "";
   const factsBase = shownFacts?.review.base ?? "";
   const factsMergeBase = shownFacts?.review.merge_base ?? "";
@@ -957,6 +961,19 @@ export function LocalReview({
                     : undefined
                 }
                 steps={steps}
+                detailsChecks={(shown) =>
+                  liveDetailsChecks(
+                    shown,
+                    {
+                      repository: pr.repository,
+                      number: pr.number,
+                      head_sha: pr.head_sha,
+                      url: pr.url,
+                      canRetry: pr.viewer_can_push === true,
+                    },
+                    liveChecks,
+                  )
+                }
                 foldSidePane={askOpen && tight}
                 header={{
                   pullRequest: {
