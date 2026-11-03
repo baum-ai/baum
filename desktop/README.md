@@ -410,8 +410,9 @@ The daemon outlives the app, so the app's presence is a tray icon.
 - **Inbox.** While the app's Inbox lists some pull requests, the menu shows a
   disabled line such as "3 pull requests in your Inbox", the tooltip appends
   it, the dock badge (macOS; any other platform whose window badge Tauri
-  supports, ignored silently elsewhere) shows the count, and an otherwise idle
-  icon shows the Inbox dot. Zero, an unknown count and a daemon that is not
+  supports, ignored silently elsewhere) shows the count. The tray icon does
+  not: its dot means only that something runs or needs the user. Zero, an
+  unknown count and a daemon that is not
   running clear all of them. The daemon counts the Inbox as the app does,
   except that saved inboxes left out of the app's badge still count:
   `GET /api/index?view=waiting`, polled with the other tray requests.
@@ -432,12 +433,11 @@ The daemon outlives the app, so the app's presence is a tray icon.
 
 | State | When |
 | --- | --- |
-| Idle | Nothing running or queued, nothing new to look at. |
-| Running | A review is running or queued. |
-| Attention | A job failed, a diagnostics check reports a problem, or the daemon is not running. |
-| Inbox | Otherwise idle, with pull requests in the Inbox (an amber dot). |
+| Idle | No dot: nothing running or queued, nothing needing the user. Pull requests waiting in the Inbox leave it idle. |
+| Running | A blue dot: a review is running or queued. |
+| Attention | A red dot: a job failed, a diagnostics check reports a problem, or the daemon is not running. |
 
-Attention outranks Running, which outranks Inbox.
+Attention outranks Running.
 
 Whenever the icon is red, the menu and the panel offer, under the status
 line, one item per reason that goes where the user needs to look:

@@ -463,13 +463,14 @@ pub struct Observed {
     pub needs: Option<Vec<NeedsYou>>,
 }
 
+/// The tray icon. Only work in progress and problems colour it: the Inbox
+/// count is the dock badge's and the menu's, not the icon's, so the icon's
+/// dot always means something is running or needs the user.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Icon {
     Idle,
     Running,
     Attention,
-    /// Idle, with pull requests in the Inbox.
-    Inbox,
 }
 
 /// The menu id of an alert about one failed job, before the job's id.
@@ -658,10 +659,6 @@ impl Tracker {
         };
         // A daemon that is not running has nothing in the Inbox.
         let waiting = seen.waiting.filter(|_| seen.link == Link::Up);
-        let icon = match icon {
-            Icon::Idle if waiting.is_some_and(|n| n > 0) => Icon::Inbox,
-            icon => icon,
-        };
         View {
             icon,
             summary,
@@ -1120,7 +1117,7 @@ mod tests {
     }
 
     #[test]
-    fn the_inbox_count_shows_in_the_tooltip_the_badge_and_the_icon() {
+    fn the_inbox_count_shows_in_the_tooltip_and_the_badge_but_not_the_icon() {
         let waiting = |link, waiting| {
             Tracker::default().update(&Observed {
                 link,
@@ -1138,7 +1135,7 @@ mod tests {
             "baum: Checking background reviews… · 3 pull requests in your Inbox"
         );
         assert_eq!(view.badge(), Some(3));
-        assert_eq!(view.icon, Icon::Inbox);
+        assert_eq!(view.icon, Icon::Idle);
         let one = waiting(Link::Up, Some(1));
         assert_eq!(
             one.waiting_label().as_deref(),
@@ -1154,20 +1151,19 @@ mod tests {
         ] {
             assert_eq!(view.waiting_label(), None);
             assert_eq!(view.badge(), None);
-            assert_ne!(view.icon, Icon::Inbox);
             assert!(!view.tooltip().contains("Inbox"), "{}", view.tooltip());
         }
     }
 
     #[test]
-    fn running_reviews_and_attention_outrank_the_inbox_dot() {
+    fn pull_requests_waiting_leave_the_icon_to_work_and_problems() {
         let mut busy = up(jobs(1, 0, &[]));
         busy.waiting = Some(2);
         assert_eq!(Tracker::default().update(&busy).icon, Icon::Running);
         let mut tracker = Tracker::default();
         let mut quiet = up(jobs(0, 0, &[]));
         quiet.waiting = Some(2);
-        assert_eq!(tracker.update(&quiet).icon, Icon::Inbox);
+        assert_eq!(tracker.update(&quiet).icon, Icon::Idle);
         quiet.diagnostics = Some(vec!["disk".to_string()]);
         let view = tracker.update(&quiet);
         assert_eq!(view.icon, Icon::Attention);
