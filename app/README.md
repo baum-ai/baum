@@ -1903,6 +1903,10 @@ Saved review usage follows the version selected in history. Its cost reads
 subscription charges. Unknown costs show a reason; configured model identity
 is distinguished from a provider report. When only the configured model is known,
 its rates are used and the cost is labelled "estimated" with an explanation.
+A running review is priced the same way while the provider's model and speed
+strings are masked: each update carries an estimate at the configured model's
+rates, replaced by the exact cost once masking finishes. A run interrupted by
+a restart keeps no estimate, because it left out the call in flight.
 Each attempt is priced independently
 when its model and pricing inputs are known. A cost with `unpriced_calls` (a
 feature build some of whose calls could not be priced) is a lower bound, shown

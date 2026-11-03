@@ -205,6 +205,47 @@ func TestProgressWithholdsProviderStringsUntilRedaction(t *testing.T) {
 	}
 }
 
+// While the provider's strings are masked, a running review is priced as an
+// estimate at the configured model's rates; nothing it publishes names the
+// provider's model.
+func TestProgressEstimatesCostFromConfiguredModel(t *testing.T) {
+	var reports []Progress
+	run := func(context.Context, agent.Request, int) (agent.Result, error) {
+		return agent.Result{Model: "untrusted-model", Calls: 1, Tokens: 10, Usage: agent.Usage{Input: 1000, Output: 400, CacheRead: 90, Speed: new("standard")}}, nil
+	}
+	b := &trackedBackend{Backend: &generatetest.Backend{RunFunc: run}, model: "claude-opus-5-5", prices: pricing.Embedded(), progress: func(p Progress) { reports = append(reports, p) }}
+	if _, err := b.Run(context.Background(), agent.Request{}); err != nil {
+		t.Fatal(err)
+	}
+	got := reports[len(reports)-1]
+	if got.CostUSD == nil || *got.CostUSD <= 0 || got.CostReason != "estimated_from_configured_model" {
+		t.Fatalf("running cost = %v, %q", got.CostUSD, got.CostReason)
+	}
+	if got.Accounting.Attempts[0].Model != "" || got.Accounting.Attempts[0].Usage.Speed != nil {
+		t.Fatalf("unsafe progress: %+v", got.Accounting)
+	}
+
+	// An unpriceable configured model, or a speed no rate describes, leaves
+	// the cost unknown until masking finishes.
+	for _, b := range []*trackedBackend{
+		{Backend: &generatetest.Backend{RunFunc: run}, model: "no-such-model", prices: pricing.Embedded()},
+		{Backend: &generatetest.Backend{RunFunc: func(ctx context.Context, r agent.Request, n int) (agent.Result, error) {
+			result, e := run(ctx, r, n)
+			result.Usage.Speed = new("untrusted-speed")
+			return result, e
+		}}, model: "claude-opus-5-5", prices: pricing.Embedded()},
+	} {
+		var last Progress
+		b.progress = func(p Progress) { last = p }
+		if _, err := b.Run(context.Background(), agent.Request{}); err != nil {
+			t.Fatal(err)
+		}
+		if last.CostUSD != nil || last.CostReason != "metadata_pending_redaction" {
+			t.Fatalf("model %q: cost = %v, %q", b.model, last.CostUSD, last.CostReason)
+		}
+	}
+}
+
 func TestReviewTranscriptMarksEachCall(t *testing.T) {
 	var reports []Progress
 	var kept []agent.TranscriptEntry

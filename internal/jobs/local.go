@@ -405,7 +405,7 @@ func (l *Local) Execute(ctx context.Context, p Prepared, progress func(Progress)
 	// The active list prices the run and is recorded with the saved review,
 	// even when it is newer than the one the job was prepared with.
 	list := pricing.Active()
-	backend := &trackedBackend{Backend: selected.Backend, progress: progress, prices: list}
+	backend := &trackedBackend{Backend: selected.Backend, progress: progress, prices: list, model: selected.Model}
 	// A review keeps its agent's transcript like a fix's, every call of it.
 	if target, ok := transcriptTargetOf(ctx); ok {
 		if writer, err := openTranscript(target.Dir, target.JobID); err == nil {
@@ -559,6 +559,9 @@ func (l *Local) publish(ctx context.Context, published generate.Versions, versio
 type trackedBackend struct {
 	prices *pricing.List
 	agent.Backend
+	// model is the model the run was configured with, which prices the
+	// usage while the provider's own model strings are still masked.
+	model    string
 	progress func(Progress)
 
 	mu                     sync.Mutex
@@ -667,7 +670,8 @@ func (b *trackedBackend) finish(result generate.Result, staged bool) {
 	b.accounting = result.Outcome.Accounting.Clone()
 	b.redacted = true
 	b.phase = "publishing"
-	p := Progress{Phase: b.phase, Calls: b.calls, Tokens: b.tokens, Repairs: b.repairs, Accounting: b.accounting.Clone(), CostReason: b.reason(), HasTranscript: b.transcript != nil}
+	cost, reason := b.cost()
+	p := Progress{Phase: b.phase, Calls: b.calls, Tokens: b.tokens, Repairs: b.repairs, Accounting: b.accounting.Clone(), CostUSD: cost, CostReason: reason, HasTranscript: b.transcript != nil}
 	if staged {
 		p.Gaps, p.FailedSections, p.ContextFailed = true, result.FailedSections, result.ContextFailed
 	}
@@ -682,28 +686,52 @@ func (b *trackedBackend) report(phase string, draft []byte) {
 	}
 	b.phase = phase
 	safe := b.accounting.Clone()
-	reason := b.reason()
+	cost, reason := b.cost()
 	if !b.redacted {
 		safe.ClearStrings()
 	}
-	b.progress(Progress{Phase: phase, Calls: b.calls, Tokens: b.tokens, Repairs: b.repairs, Accounting: safe, CostReason: reason, Draft: draft, HasTranscript: b.transcript != nil})
+	b.progress(Progress{Phase: phase, Calls: b.calls, Tokens: b.tokens, Repairs: b.repairs, Accounting: safe, CostUSD: cost, CostReason: reason, Draft: draft, HasTranscript: b.transcript != nil})
 }
 
-// reason is why the usage so far has no price, if it has none. The caller
-// holds mu.
-func (b *trackedBackend) reason() string {
-	if !b.redacted {
-		return "metadata_pending_redaction"
+// cost is what the usage so far costs at API prices, or why it has no price.
+// Until the provider's strings are masked, each attempt is priced at the
+// configured model's rates and the cost is an estimate. The caller holds mu.
+func (b *trackedBackend) cost() (*float64, string) {
+	list := b.prices
+	if list == nil {
+		list = pricing.Active()
 	}
-	reason := "usage_not_reported"
-	if b.accounting != nil {
-		list := b.prices
-		if list == nil {
-			list = pricing.Active()
+	if b.redacted {
+		if b.accounting == nil {
+			return nil, "usage_not_reported"
 		}
-		_, reason = list.BackendAccountingCost(b.Name(), b.accounting)
+		return list.BackendAccountingCost(b.Name(), b.accounting)
 	}
-	return reason
+	if b.model == "" || b.accounting == nil {
+		return nil, "metadata_pending_redaction"
+	}
+	estimate := b.accounting.Clone()
+	for i := range estimate.Attempts {
+		attempt := &estimate.Attempts[i]
+		attempt.Model, attempt.ModelSource = b.model, "configured"
+		// A reported speed only chooses a rate; anything but a known one
+		// leaves the estimate unknown.
+		if s := attempt.Usage.Speed; s != nil && !knownSpeed(*s) {
+			attempt.Usage.Speed = nil
+		}
+	}
+	if cost, reason := list.BackendAccountingCost(b.Name(), estimate); cost != nil {
+		return cost, reason
+	}
+	return nil, "metadata_pending_redaction"
+}
+
+func knownSpeed(s string) bool {
+	switch pricing.Speed(s) {
+	case pricing.SpeedStandard, pricing.SpeedFast, pricing.SpeedUltrafast:
+		return true
+	}
+	return false
 }
 
 type headAssembler struct {

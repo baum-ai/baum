@@ -290,7 +290,10 @@ type Job struct {
 	SeenAt *time.Time `json:"seen_at,omitempty"`
 }
 type Progress struct {
-	Accounting             *agent.Accounting
+	Accounting *agent.Accounting
+	// CostUSD is what the usage so far costs at API prices, nil while it is
+	// unknown; CostReason qualifies it (see Job).
+	CostUSD                *float64
 	CostReason             string
 	Phase                  string
 	Calls, Tokens, Repairs int
@@ -437,6 +440,9 @@ func Open(path string, executor Executor, concurrency int, changed func(Job)) (*
 				q.jobs[i].Accounting.Usage.Unreported = true
 				q.jobs[i].CostReason = "usage_incomplete"
 			}
+			// What the run cost before it stopped is not known: its last
+			// estimate left out the call in flight.
+			q.jobs[i].ActualCostUSD = nil
 			q.jobs[i].State = "interrupted"
 			q.jobs[i].Reason = "interrupted"
 			q.jobs[i].Phase = "finished"
@@ -1148,7 +1154,7 @@ func (q *Queue) worker(chat bool) {
 				q.jobs[i].Tokens = p.Tokens
 				q.jobs[i].Repairs = p.Repairs
 				q.jobs[i].Accounting = p.Accounting.Clone()
-				q.jobs[i].CostReason = p.CostReason
+				q.jobs[i].ActualCostUSD, q.jobs[i].CostReason = p.CostUSD, p.CostReason
 				if p.Commit != "" {
 					q.jobs[i].Commit, q.jobs[i].CommitURL = p.Commit, p.CommitURL
 				}
