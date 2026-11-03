@@ -1,0 +1,1 @@
+function e(){let e=window.matchMedia(`(prefers-color-scheme: dark)`),t=()=>{document.documentElement.dataset.theme=e.matches?`dark`:`light`};t(),e.addEventListener(`change`,t)}export{e as t};
