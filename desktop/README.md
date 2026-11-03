@@ -381,7 +381,8 @@ The daemon outlives the app, so the app's presence is a tray icon.
   host before it shows the window after all. The deb depends on
   `libayatana-appindicator3-1` (the Tauri bundler adds it for the tray), and a
   tray library that fails to load leaves the app running without a tray.
-- **Tray menu:** what the daemon is doing (Idle, "2 running, 1 queued");
+- **Tray menu:** what the daemon is doing (Idle, "2 running, 1 queued"),
+  which opens the jobs list while reviews run or wait and is inert otherwise;
   an item for each reason the icon is red, which goes where to look (see
   "Icon states"); each agent session asking for a permission or
   an answer (clicking one opens its transcript); "Plan usage left" with a
@@ -395,7 +396,8 @@ The daemon outlives the app, so the app's presence is a tray icon.
   read differently, which the 3–10 s polls check.
 - **Tray panel (macOS and Windows):** a left click on the icon opens a small
   borderless window under the icon (above it, on a bottom taskbar), drawn
-  like a menu: the status line (its dot red while the icon is), the alerts
+  like a menu: the status line (its dot red while the icon is; an item that
+  opens the jobs list while reviews run or wait, as in the menu), the alerts
   and the waiting sessions as highlighted rows that open them, the plan usage
   left as coloured meters, Open baum, Pause or Resume automatic reviews and
   Quit and stop background reviews. It is placed on the icon's screen, found

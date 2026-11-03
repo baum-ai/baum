@@ -36,6 +36,8 @@ static HIDDEN_AT: Mutex<Option<Instant>> = Mutex::new(None);
 #[derive(Debug, Serialize)]
 pub struct Panel {
     pub summary: String,
+    /// Reviews run or wait, so the summary opens the jobs list (`summary`).
+    pub jobs: bool,
     pub waiting: Option<String>,
     /// What the icon is red for, each an action (`alert:…`).
     pub attention: Vec<Alert>,
@@ -50,6 +52,7 @@ pub struct Panel {
 fn panel(view: &status::View, plans: Vec<Plan>) -> Panel {
     Panel {
         summary: view.summary.clone(),
+        jobs: view.running + view.queued > 0,
         waiting: view.waiting_label(),
         attention: view.attention.clone(),
         needs: view.needs.clone(),
@@ -314,7 +317,7 @@ pub fn tray_action(app: AppHandle, id: String) -> Result<(), String> {
 }
 
 fn allowed(id: &str) -> bool {
-    matches!(id, "open" | "pause" | "quit-stop" | "close")
+    matches!(id, "open" | "summary" | "pause" | "quit-stop" | "close")
         || status::is_alert(id)
         || id
             .strip_prefix(tray::SESSION_PREFIX)
@@ -434,6 +437,7 @@ mod tests {
     fn the_page_reaches_only_the_panels_actions() {
         for id in [
             "open",
+            "summary",
             "pause",
             "quit-stop",
             "close",
@@ -465,6 +469,12 @@ mod tests {
         let shown = panel(&view, Vec::new());
         assert_eq!(shown.summary, view.summary);
         assert_eq!(shown.pause_label, "Pause automatic reviews");
+        assert!(!shown.jobs);
+        let busy = status::View {
+            running: 1,
+            ..status::View::default()
+        };
+        assert!(panel(&busy, Vec::new()).jobs);
         assert!(shown.plans.is_empty());
         let json = serde_json::to_value(&shown).unwrap();
         assert_eq!(json["plans"], serde_json::json!([]));

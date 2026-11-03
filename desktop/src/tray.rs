@@ -93,7 +93,12 @@ pub fn menu_spec(view: &View, login: bool, now: i64) -> Vec<Entry> {
         kind: Kind::Separator,
         enabled: false,
     };
-    let mut entries = vec![Entry::item("summary", view.summary.clone(), false)];
+    // While reviews run or wait, the status opens the jobs list.
+    let mut entries = vec![Entry::item(
+        "summary",
+        view.summary.clone(),
+        view.running + view.queued > 0,
+    )];
     if let Some(waiting) = view.waiting_label() {
         entries.push(Entry::item("waiting", waiting, false));
     }
@@ -502,6 +507,8 @@ fn build_menu(app: &AppHandle, spec: &[Entry]) -> tauri::Result<Menu<Wry>> {
 #[derive(Debug, PartialEq, Eq)]
 enum Action {
     Open,
+    /// The status line while reviews run or wait: opens the jobs list.
+    Jobs,
     /// An alert, by its menu id: goes where to look, and records it seen.
     Alert(String),
     /// A waiting agent session, by its `agent:id` key: opens its transcript.
@@ -519,6 +526,7 @@ enum Action {
 fn route(id: &str) -> Action {
     match id {
         "open" => Action::Open,
+        "summary" => Action::Jobs,
         "pause" => Action::Pause,
         "login" | MENU_LOGIN => Action::Login,
         onboarding::MENU_ID => Action::Setup,
@@ -536,6 +544,7 @@ fn route(id: &str) -> Action {
 pub fn on_menu(app: &AppHandle, id: &str) {
     match route(id) {
         Action::Open => lifecycle::show_window(app),
+        Action::Jobs => notifications::open(app, Route::Jobs),
         Action::Alert(id) => follow_alert(app, &id),
         Action::Session(key) => notifications::open_session(app, key),
         Action::Pause => toggle_pause(app),
@@ -909,6 +918,7 @@ mod tests {
             let action = route(&id);
             let expected = match id.as_str() {
                 "open" => Action::Open,
+                "summary" => Action::Jobs,
                 _ if id.starts_with(SESSION_PREFIX) => Action::Session(id[8..].to_string()),
                 "pause" => Action::Pause,
                 "login" | MENU_LOGIN => Action::Login,
@@ -971,6 +981,22 @@ mod tests {
                 "quit-stop"
             ]
         );
+    }
+
+    #[test]
+    fn the_status_opens_the_jobs_list_only_while_reviews_run_or_wait() {
+        let idle = menu_spec(&view(up(0, true)), false, NOW);
+        assert_eq!((idle[0].id.as_str(), idle[0].enabled), ("summary", false));
+        let busy = menu_spec(&view(up(2, true)), false, NOW);
+        assert_eq!(busy[0].text, "2 running");
+        assert!(busy[0].enabled);
+        assert_eq!(route(&busy[0].id), Action::Jobs);
+        let mut queued = up(0, true);
+        queued.jobs = Some(Jobs {
+            queued: 1,
+            ..Jobs::default()
+        });
+        assert!(menu_spec(&view(queued), false, NOW)[0].enabled);
     }
 
     #[test]

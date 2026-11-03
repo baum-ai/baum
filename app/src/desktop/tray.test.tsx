@@ -5,6 +5,7 @@ import { menuKey, type Panel, TrayPanelView } from "./tray";
 const now = Date.parse("2026-10-26T12:00:00Z");
 const panel: Panel = {
   summary: "1 running",
+  jobs: true,
   waiting: null,
   attention: [],
   needs: [
@@ -49,6 +50,21 @@ it("draws the status, a waiting session, each plan window and the actions", () =
   expect(html).toContain("Open baum");
   expect(html).toContain("Pause automatic reviews");
   expect(html).toContain("Quit and stop background reviews");
+});
+
+it("opens the jobs list from the status only while reviews run or wait", () => {
+  const act = vi.fn();
+  const busy = TrayPanelView({ panel, now, act });
+  const status = (busy.props as { children: { type: string; props: { onClick?: () => void } }[] })
+    .children[0];
+  expect(status?.type).toBe("button");
+  status?.props.onClick?.();
+  expect(act).toHaveBeenCalledWith("summary");
+  const idle = renderToStaticMarkup(
+    <TrayPanelView panel={{ ...panel, summary: "Idle", jobs: false }} now={now} act={act} />,
+  );
+  expect(idle).toContain('<div class="tray-status">');
+  expect(idle).not.toContain('class="tray-item tray-status"');
 });
 
 it("offers each alert as an item that runs it, above the waiting sessions", () => {
@@ -117,7 +133,7 @@ it("moves through the menu's items with the arrows, wrapping, and closes with Es
   const focused = () => document.activeElement?.textContent;
   // From nothing, down starts at the first item and up at the last.
   press("ArrowDown");
-  expect(focused()).toContain("Claude needs your permission");
+  expect(focused()).toBe("baum1 running");
   press("ArrowUp");
   expect(focused()).toBe("Quit and stop background reviews");
   press("ArrowUp");
@@ -126,10 +142,14 @@ it("moves through the menu's items with the arrows, wrapping, and closes with Es
   press("ArrowDown");
   expect(focused()).toBe("Quit and stop background reviews");
   press("ArrowDown");
-  expect(focused()).toContain("Claude needs your permission");
+  expect(focused()).toBe("baum1 running");
   press("End");
   expect(focused()).toBe("Quit and stop background reviews");
   press("Home");
+  expect(focused()).toBe("baum1 running");
+  // The running status opens the jobs list, so it is an item; the waiting
+  // session follows it.
+  press("ArrowDown");
   expect(focused()).toContain("Claude needs your permission");
   expect(close).not.toHaveBeenCalled();
   press("Escape");

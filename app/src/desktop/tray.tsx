@@ -13,6 +13,8 @@ import { invoke } from "./native";
 /** What the tray panel draws: the tray's last view, from `tray_panel`. */
 export type Panel = {
   summary: string;
+  /** Reviews run or wait, so the summary opens the jobs list. */
+  jobs: boolean;
   waiting: string | null;
   /** What the icon is red for, each going where to look (`alert:…`). */
   attention: { id: string; text: string; action: string }[];
@@ -66,16 +68,31 @@ export function TrayPanelView({
 }) {
   const plans = readablePlans(panel.plans);
   const paused = panel.automatic === false;
+  const status = (
+    <>
+      <strong>baum</strong>
+      <span
+        className={`tray-dot${panel.attention.length > 0 ? " attention" : paused ? " paused" : ""}`}
+        aria-hidden="true"
+      />
+      <span>{paused ? "Automatic reviews paused" : panel.summary}</span>
+    </>
+  );
   return (
     <div className="tray-menu" role="menu" aria-label="baum">
-      <div className="tray-status">
-        <strong>baum</strong>
-        <span
-          className={`tray-dot${panel.attention.length > 0 ? " attention" : paused ? " paused" : ""}`}
-          aria-hidden="true"
-        />
-        <span>{paused ? "Automatic reviews paused" : panel.summary}</span>
-      </div>
+      {/* While reviews run or wait, the status opens the jobs list. */}
+      {panel.jobs ? (
+        <button
+          type="button"
+          role="menuitem"
+          className="tray-item tray-status"
+          onClick={() => act("summary")}
+        >
+          {status}
+        </button>
+      ) : (
+        <div className="tray-status">{status}</div>
+      )}
       {panel.attention.map((alert) => (
         <button
           key={alert.id}

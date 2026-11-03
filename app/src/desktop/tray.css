@@ -105,6 +105,10 @@ body {
 .tray-item:active:not(:disabled) {
   background: var(--surface-pressed);
 }
+.tray-item.tray-status {
+  justify-content: flex-start;
+  padding: 8px 10px 6px;
+}
 .tray-item:disabled {
   color: var(--text-secondary);
 }
