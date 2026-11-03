@@ -331,6 +331,32 @@ it("sends one save at a time and shows Saved only while the text is the saved on
   expect(button("Save").disabled).toBe(false);
 });
 
+it("keeps an edit back to the old text made while a save runs", async () => {
+  let release: (() => void) | undefined;
+  stub(
+    () => ({ prompts: [entry("review", "reviews", { custom_text: "A" })] }),
+    () => ({}),
+  );
+  vi.mocked(fetch).mockImplementation(async (_url, init) => {
+    const method = (init as RequestInit | undefined)?.method ?? "GET";
+    if (method === "GET")
+      return Response.json({ prompts: [entry("review", "reviews", { custom_text: "A" })] });
+    await new Promise<void>((r) => (release = r));
+    return Response.json(entry("review", "reviews", { custom_text: "B" }));
+  });
+  act(() => root.render(<Section />));
+  await flush();
+  act(() => byLabel("Edit: Title review").click());
+  await type("B");
+  act(() => button("Save").click());
+  await type("A");
+  await act(async () => release?.());
+  await flush();
+  expect(area().value).toBe("A");
+  expect(host.querySelector(".settings-saved")!.textContent).toBe("");
+  expect(button("Save").disabled).toBe(false);
+});
+
 it("lets Esc leave the field without closing a dialog around it", async () => {
   stub(
     () => ({ prompts: [entry("review", "reviews")] }),

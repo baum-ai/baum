@@ -227,14 +227,16 @@ export function PromptEditor({
 }) {
   const stored = entry.custom_text;
   const text = draft ?? stored ?? baseline;
+  const working = useRef(false);
+  // While a save runs, the stored text is about to change, so a text equal to
+  // the old one is still an edit and stays a draft.
   const setText = (next: string) =>
-    setDraft(() => (next === (stored ?? baseline) ? undefined : next));
+    setDraft(() => (!working.current && next === (stored ?? baseline) ? undefined : next));
   const [view, setView] = useState<"" | "default" | "changes">("");
   const [busy, setBusy] = useState<"" | "save" | "reset">("");
   const [error, setError] = useState("");
   // What the last save stored; "Saved" shows only while the text is still it.
   const [savedText, setSavedText] = useState<string | null>(null);
-  const working = useRef(false);
   const rulesId = `prompt-rules-${entry.id}`;
   const missing = missingRules(text, entry.safety_rules);
   const send = async (body: string | null, kind: "save" | "reset") => {
@@ -256,6 +258,8 @@ export function PromptEditor({
       }
     } catch (e) {
       setError(errorText(e));
+      // Nothing was stored, so a draft equal to the stored text is no edit.
+      setDraft((current) => (current === (stored ?? baseline) ? undefined : current));
     } finally {
       working.current = false;
       setBusy("");
