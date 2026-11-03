@@ -12,7 +12,9 @@ Sessions overview, the Pull requests list and a Timeline feature. It marks
 where each part starts and measures where the sidebar's Inbox, Pull requests,
 Timeline and Sessions links are, and `encode.mjs` writes both, in the video's
 seconds, to `ui/app/assets/baum-app-chapters.ts`: on the website a click on
-one of those links in the video plays it from that part.
+one of those links in the video plays it from that part. The website shows
+the dark recording when the page is in dark mode, and on a switch carries on
+from the same moment in the other.
 
 Record it again after a change to the app that the video shows. From the
 repository root:
@@ -22,11 +24,12 @@ repository root:
 BAUM_OP_RUN=0 BAUM_DEV_HEAVY=1 ./dev-compose.sh run --build --rm --no-deps --workdir /oss/app ui-test pnpm build
 BAUM_OP_RUN=0 BAUM_DEV_HEAVY=1 ./dev-compose.sh run --build --rm --no-deps oss-test sh -ec 'CGO_ENABLED=0 go test -c ./internal/uiserver -o app/e2e/video-fixture'
 
-# The walkthrough, into video/frames.
+# The walkthrough, into video/frames, then the MP4, its poster and chapters,
+# with ffmpeg: the light recording, then the dark one (baum-app-dark).
 BAUM_OP_RUN=0 BAUM_DEV_HEAVY=1 ./dev-compose.sh run --build --rm --no-deps --workdir /oss/app ui-test ./node_modules/.bin/playwright test -c playwright.video.config.ts
-
-# The MP4, its poster and chapters, with ffmpeg.
 docker run --rm -v "$PWD":/repo -w /repo/oss/app node:24 sh -c 'apt-get -qq update && apt-get -qq install -y ffmpeg && node video/encode.mjs /repo/ui/app/assets'
+BAUM_OP_RUN=0 BAUM_DEV_HEAVY=1 ./dev-compose.sh run --build --rm --no-deps -e BAUM_VIDEO_SCHEME=dark --workdir /oss/app ui-test ./node_modules/.bin/playwright test -c playwright.video.config.ts
+docker run --rm -v "$PWD":/repo -w /repo/oss/app node:24 sh -c 'apt-get -qq update && apt-get -qq install -y ffmpeg && node video/encode.mjs /repo/ui/app/assets baum-app-dark'
 ```
 
 The video plays 1.6 times as fast as the walkthrough (`SPEED` in

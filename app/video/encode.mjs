@@ -3,7 +3,11 @@
 // browser showed it, the first frame as the poster, and where each chapter
 // starts in it. Needs ffmpeg.
 //
-//   node video/encode.mjs <output directory>
+//   node video/encode.mjs <output directory> [name]
+//
+// The name, baum-app unless given, names the files: <name>.mp4,
+// <name>-poster.jpg and <name>-chapters.ts; the dark recording is
+// baum-app-dark.
 import { execFileSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
@@ -13,6 +17,7 @@ const SPEED = 1.6;
 
 const frames = join(import.meta.dirname, "frames");
 const out = resolve(process.argv[2] ?? join(import.meta.dirname, "out"));
+const name = process.argv[3] ?? "baum-app";
 const {
   frames: list,
   chapters,
@@ -57,9 +62,9 @@ ffmpeg(
   "-movflags",
   "+faststart",
   "-an",
-  join(out, "baum-app.mp4"),
+  join(out, `${name}.mp4`),
 );
-ffmpeg("-i", join(frames, list[0].file), "-q:v", "3", join(out, "baum-app-poster.jpg"));
+ffmpeg("-i", join(frames, list[0].file), "-q:v", "3", join(out, `${name}-poster.jpg`));
 
 // Each chapter's start in the video, and where its sidebar link is from each
 // time on, for the website's click targets over the video's sidebar.
@@ -75,8 +80,8 @@ const layouts = sidebar.map(({ time, links }) => {
   return `  {\n    start: ${at(time)},\n    links: [\n${boxes.join("\n")}\n    ],\n  },`;
 });
 writeFileSync(
-  join(out, "baum-app-chapters.ts"),
-  `// Written by oss/app/video/encode.mjs: where each part of baum-app.mp4
+  join(out, `${name}-chapters.ts`),
+  `// Written by oss/app/video/encode.mjs: where each part of ${name}.mp4
 // starts, in seconds, and where in its 1056 by 800 frame the sidebar link
 // that opens it is, from each time on.
 export const chapters = [
@@ -88,4 +93,4 @@ ${layouts.join("\n")}
 ];
 `,
 );
-console.log(`wrote ${join(out, "baum-app.mp4")}, the poster and the chapters`);
+console.log(`wrote ${join(out, `${name}.mp4`)}, the poster and the chapters`);

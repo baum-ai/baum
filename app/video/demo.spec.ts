@@ -14,8 +14,10 @@ function installPointer() {
     if (document.getElementById("demo-pointer")) return;
     const pointer = document.createElement("div");
     pointer.id = "demo-pointer";
-    pointer.innerHTML =
-      '<svg width="22" height="26" viewBox="0 0 22 26"><path d="M2 2 L2 21 L7 16.5 L10.5 24 L14 22.5 L10.5 15 L17 15 Z" fill="#1f1b17" stroke="#fff" stroke-width="1.6" stroke-linejoin="round"/></svg>';
+    // Dark on light; on the dark scheme, light, so it stands out there too.
+    const dark = matchMedia("(prefers-color-scheme: dark)").matches;
+    const [fill, stroke] = dark ? ["#f7efe2", "#1f1b17"] : ["#1f1b17", "#fff"];
+    pointer.innerHTML = `<svg width="22" height="26" viewBox="0 0 22 26"><path d="M2 2 L2 21 L7 16.5 L10.5 24 L14 22.5 L10.5 15 L17 15 Z" fill="${fill}" stroke="${stroke}" stroke-width="1.6" stroke-linejoin="round"/></svg>`;
     Object.assign(pointer.style, {
       position: "fixed",
       left: "0",

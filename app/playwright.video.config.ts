@@ -6,6 +6,9 @@ import { defineConfig } from "@playwright/test";
 // fixture daemon (TestLocalAppVideoFixture) with made-up work, driven by
 // video/demo.spec.ts. Not part of the test suites; see video/README.md.
 const stateDir = join(tmpdir(), "baum-app-video-daemon");
+// The app follows the system's scheme; BAUM_VIDEO_SCHEME=dark records the
+// dark one, for the website in dark mode.
+const scheme = process.env.BAUM_VIDEO_SCHEME === "dark" ? "dark" : "light";
 process.env.BAUM_APP_STATE_DIR = stateDir;
 
 export default defineConfig({
@@ -21,7 +24,7 @@ export default defineConfig({
     // it sharp on high-density screens.
     viewport: { width: 1056, height: 800 },
     deviceScaleFactor: 2,
-    colorScheme: "light",
+    colorScheme: scheme,
   },
   webServer: {
     command: `rm -rf '${stateDir}' && mkdir -m 700 -p '${stateDir}' && BAUM_APP_VIDEO_FIXTURE=1 BAUM_APP_SCHEMA_DIR=../schema BAUM_APP_STATE_DIR='${stateDir}' ./e2e/video-fixture -test.run '^TestLocalAppVideoFixture$' -test.timeout=0`,
