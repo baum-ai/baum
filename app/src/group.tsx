@@ -35,7 +35,7 @@ import { CloneActions } from "./repositories";
 import { CancelJob, GenerationOutcome, ReviewJob } from "./review";
 import { useModal } from "./modal";
 import { Notice, PageBar, RefreshButton, type RefreshRun, usePageRefreshAction } from "./shell";
-import { openActiveBlock, toggleActiveBlock, useShortcuts } from "./shortcuts";
+import { openActiveBlock, reviewKeyStep, toggleActiveBlock, useShortcuts } from "./shortcuts";
 import { LoadingStatus, NineDots } from "./nine-dots";
 import { liveForGroup, useGroupRail, type RailMember } from "./group-rail";
 
@@ -514,18 +514,9 @@ export function GroupPage({
       event.preventDefault();
       return;
     }
-    const step =
-      // As on a pull request's page: h and l (← →) between sections, j and k
-      // (↓ ↑) through the blocks of the one read.
-      event.key === "j" || event.key === "ArrowDown"
-        ? steps.current?.item?.next
-        : event.key === "k" || event.key === "ArrowUp"
-          ? steps.current?.item?.previous
-          : event.key === "l" || event.key === "ArrowRight"
-            ? (steps.current?.rail?.next ?? steps.current?.next)
-            : event.key === "h" || event.key === "ArrowLeft"
-              ? (steps.current?.rail?.previous ?? steps.current?.previous)
-              : null;
+    // As on a pull request's page: j and k (↓ ↑) through the blocks of the
+    // section read, Shift+J and Shift+K (Shift+↓ ↑) or ← → between sections.
+    const step = reviewKeyStep(event, steps.current);
     if (step) {
       event.preventDefault();
       step.go();

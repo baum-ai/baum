@@ -75,7 +75,7 @@ import { LoadingStatus } from "./nine-dots";
 import { DescriptionDialog } from "./description";
 import { RepositoryFileDialog } from "./repository-file";
 import { canMerge, MergeDialog } from "./merge";
-import { openActiveBlock, toggleActiveBlock, useShortcuts } from "./shortcuts";
+import { openActiveBlock, reviewKeyStep, toggleActiveBlock, useShortcuts } from "./shortcuts";
 import { PullRequestState, pullRequestStates } from "./inbox";
 import { canRerunChecks, canUpdateBranch, RerunChecksDialog, UpdateBranchDialog } from "./unblock";
 import { Walkthrough, type WalkMode } from "./walkthrough";
@@ -417,19 +417,9 @@ export function LocalReview({
       event.preventDefault();
       return;
     }
-    // h and l (← →) move to the previous and next section, as the navigator
-    // does; j and k (↓ ↑) through the blocks of the one read.
-    const key = event.key;
-    const step =
-      key === "j" || key === "ArrowDown"
-        ? steps.current?.item?.next
-        : key === "k" || key === "ArrowUp"
-          ? steps.current?.item?.previous
-          : key === "l" || key === "ArrowRight"
-            ? (steps.current?.rail?.next ?? steps.current?.next)
-            : key === "h" || key === "ArrowLeft"
-              ? (steps.current?.rail?.previous ?? steps.current?.previous)
-              : null;
+    // j and k (↓ ↑) move through the blocks of the section read; with Shift,
+    // or ← and →, to the next and previous section, as the navigator does.
+    const step = reviewKeyStep(event, steps.current);
     if (step) {
       event.preventDefault();
       step.go();

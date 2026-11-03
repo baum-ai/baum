@@ -1032,8 +1032,9 @@ function ReviewWorkspace<F extends ReviewFile>({
       target.scrollIntoView?.({ block: "nearest", behavior: reduced ? "auto" : "smooth" });
     },
   });
-  // The rail's rows in the order it shows them, for h and l: a folded group
-  // is one row, an open one is followed by each of its rows.
+  // The rail's rows in the order it shows them, for the host's section keys
+  // (Shift+J and Shift+K in the app): a folded group is one row, an open one
+  // is followed by each of its rows.
   const railRows: (ReviewStep & { key: string })[] = [
     { key: "summary", label: "Summary", go: () => setSelection({ kind: "summary" }) },
     { key: "changes", label: "Changes", go: () => setSelection({ kind: "changes" }) },
@@ -1255,8 +1256,8 @@ function ReviewWorkspace<F extends ReviewFile>({
     ]
       .filter(Boolean)
       .join(", ") || null;
-  // While the side pane has the keys, h and l move between its tabs rather
-  // than the review's sections, and Esc gives the keys back to the review.
+  // While the side pane has the keys, h and l move between its tabs, and Esc
+  // gives the keys back to the review.
   // Listened for on the pane itself, before the host's own keys on window.
   const asideKey = useRef<(event: KeyboardEvent) => void>(() => {});
   asideKey.current = (event) => {

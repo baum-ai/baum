@@ -906,8 +906,7 @@ fold on wide screens, or its sheet on narrow screens. Text fields and open
 dialogs keep the key. A host’s forced fold remains in force. Opening the pane
 with `]` focuses the pane itself, drawn without a ring, so it has the keys
 (as a click in it gives them): while it does, `h` and `l` step through its tabs
-(wrapping, as the arrows do on the strip) in place of the host's own use of
-them, and from a focused tab move the focus with them, and Esc blurs the focus, giving the keys
+(wrapping, as the arrows do on the strip), and from a focused tab move the focus with them, and Esc blurs the focus, giving the keys
 back to the review. Text fields and menus in the pane keep them.
 
 Continuation summaries and standalone system-reminder turns are collapsed by

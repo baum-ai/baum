@@ -12,6 +12,7 @@ import {
   moveFocus,
   pageKeyShortcut,
   pageModifier,
+  reviewKeyStep,
   ShortcutsSheet,
   shouldIgnore,
   useCommandKeys,
@@ -509,9 +510,11 @@ it("lists exactly the keys that work in the sheet", async () => {
     "↓",
     "k",
     "↑",
-    "l",
+    "Shift+J",
+    "Shift+↓",
     "→",
-    "h",
+    "Shift+K",
+    "Shift+↑",
     "←",
     "Space",
     "Enter",
@@ -1010,4 +1013,34 @@ it("draws a place's key bar from the sheet's table, keys sharing a name together
   // It shows only while Alt is held, and is for the eye alone.
   expect(node.querySelector(".key-bar")!.classList.contains("key-hint")).toBe(true);
   expect(node.querySelector(".key-bar")!.getAttribute("aria-hidden")).toBe("true");
+});
+
+it("moves a review page by block with j and k, by section with Shift or the side arrows", () => {
+  const step = (label: string) => ({ label, go: () => {} });
+  const steps = {
+    previous: step("previous section"),
+    next: step("next section"),
+    item: { previous: step("previous item"), next: step("next item") },
+  };
+  const press = (key: string, shiftKey = false) =>
+    reviewKeyStep(new KeyboardEvent("keydown", { key, shiftKey }), steps)?.label ?? null;
+  expect(press("j")).toBe("next item");
+  expect(press("ArrowDown")).toBe("next item");
+  expect(press("k")).toBe("previous item");
+  expect(press("ArrowUp")).toBe("previous item");
+  expect(press("J", true)).toBe("next section");
+  expect(press("ArrowDown", true)).toBe("next section");
+  expect(press("K", true)).toBe("previous section");
+  expect(press("ArrowUp", true)).toBe("previous section");
+  expect(press("ArrowRight")).toBe("next section");
+  expect(press("ArrowLeft")).toBe("previous section");
+  // h and l no longer move between sections.
+  expect(press("l")).toBeNull();
+  expect(press("h")).toBeNull();
+  // The rail's own order wins where the viewer gives one.
+  const rail = { ...steps, rail: { previous: step("previous row"), next: step("next row") } };
+  expect(
+    reviewKeyStep(new KeyboardEvent("keydown", { key: "J", shiftKey: true }), rail)?.label,
+  ).toBe("next row");
+  expect(reviewKeyStep(new KeyboardEvent("keydown", { key: "j" }), null)).toBeNull();
 });

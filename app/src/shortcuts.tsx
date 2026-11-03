@@ -1,6 +1,7 @@
 import { usePreferences, type PageModifier } from "./preferences";
 import { useModal } from "./modal";
 import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
+import type { ReviewSteps } from "@baum/viewer/components/review-viewer";
 import { CloseButton } from "@baum/viewer/components/ui";
 import { PAGES, type Page } from "./pages";
 
@@ -348,6 +349,22 @@ export function openActiveBlock(): boolean {
   if (!open) return false;
   open.click();
   return true;
+}
+
+/** Where a key moves a review page, as the navigator does: j and k (↓ ↑)
+ *  through the blocks of the section being read; Shift+J and Shift+K
+ *  (Shift+↓ ↑), or → and ←, to the next or previous section. */
+export function reviewKeyStep(event: KeyboardEvent, steps: ReviewSteps | null) {
+  if (!steps) return null;
+  const key = event.key.length === 1 ? event.key.toLowerCase() : event.key;
+  const next = key === "j" || key === "ArrowDown";
+  if (next || key === "k" || key === "ArrowUp") {
+    if (!event.shiftKey) return (next ? steps.item?.next : steps.item?.previous) ?? null;
+    return next ? (steps.rail?.next ?? steps.next) : (steps.rail?.previous ?? steps.previous);
+  }
+  if (key === "ArrowRight") return steps.rail?.next ?? steps.next;
+  if (key === "ArrowLeft") return steps.rail?.previous ?? steps.previous;
+  return null;
 }
 
 /** Each list's last row, by the list's name, for as long as the app runs. */
@@ -822,8 +839,16 @@ function shortcutGroups(
       rows: [
         { keys: ["j", "ArrowDown"], label: "Next item in the section", short: "move" },
         { keys: ["k", "ArrowUp"], label: "Previous item in the section", short: "move" },
-        { keys: ["l", "ArrowRight"], label: "Next section", short: "sections" },
-        { keys: ["h", "ArrowLeft"], label: "Previous section", short: "sections" },
+        {
+          keys: MAC ? ["⇧J", "⇧↓", "ArrowRight"] : ["Shift+J", "Shift+↓", "ArrowRight"],
+          label: "Next section",
+          short: "sections",
+        },
+        {
+          keys: MAC ? ["⇧K", "⇧↑", "ArrowLeft"] : ["Shift+K", "Shift+↑", "ArrowLeft"],
+          label: "Previous section",
+          short: "sections",
+        },
         {
           keys: [" "],
           label: "Open or close the item's details, or the selected group in the sidebar",
