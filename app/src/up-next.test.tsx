@@ -378,6 +378,54 @@ it("moves with j and k, opens with Enter and merges with m", async () => {
   expect(location.search).toBe("?clone=clone&pr=3");
 });
 
+// A right click on a row opens its menu, without picking the row.
+const rightClick = (title: string) =>
+  act(async () => {
+    row(title).dispatchEvent(
+      new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 9, clientY: 9 }),
+    );
+  });
+const choices = () =>
+  Array.from(node.querySelectorAll(".context-menu [role=menuitem] .context-menu-label")).map(
+    (label) => label.textContent,
+  );
+const choose = (label: string) =>
+  act(async () =>
+    Array.from(node.querySelectorAll<HTMLButtonElement>(".context-menu [role=menuitem]"))
+      .find((item) => item.textContent?.startsWith(label))!
+      .click(),
+  );
+
+it("offers a pull request's actions on a right click on its row", async () => {
+  await render();
+  await rightClick("Change 3");
+  expect(node.querySelector(".context-menu")!.getAttribute("aria-label")).toBe(
+    "Actions for acme/demo #3",
+  );
+  expect(choices()).toEqual(expect.arrayContaining(["Open", "Merge…", "Snooze…"]));
+  expect(choices()).not.toContain("Update the branch…");
+  // The panel stays on what it showed.
+  expect(shown()).toBe("Change 1");
+  await choose("Merge…");
+  expect(node.querySelector("dialog")).not.toBeNull();
+});
+
+it("snoozes from a row's menu with the panel's choices", async () => {
+  await render();
+  await rightClick("Change 3");
+  await choose("Snooze…");
+  expect(shown()).toBe("Change 3");
+  await act(async () => snoozeFor("Tomorrow morning").click());
+  expect(list()).not.toContain("Change 3");
+});
+
+it("opens a pull request from its row's menu", async () => {
+  await render();
+  await rightClick("Change 3");
+  await choose("Open");
+  expect(location.search).toBe("?clone=clone&pr=3");
+});
+
 it("snoozes, undoes and brings back, and remembers it", async () => {
   await render();
   await act(async () => row("Change 3").click());

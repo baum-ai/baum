@@ -825,6 +825,14 @@ export function navigate(href: string) {
   writeHistory(href);
   dispatchEvent(new PopStateEvent("popstate"));
 }
+/** Opens a page outside the app, as a link to it would. */
+export function openExternal(url: string) {
+  Object.assign(document.createElement("a"), {
+    href: url,
+    target: "_blank",
+    rel: "noreferrer",
+  }).click();
+}
 /** A job's own page: everything kept about it and its transcript. */
 export function jobHref(job: Job) {
   return appURL(`?page=jobs&job=${encodeURIComponent(job.id)}`);
