@@ -1675,7 +1675,9 @@ it opens under the focused card. Ctrl+N and Ctrl+P (`useReadlineArrows`) move as
 and ↑ in every list and menu of the app, and in Go to, but not in a plain text field. In the menu the arrows move, Enter chooses, and a click
 elsewhere or a scroll closes it; Escape closes it wherever the keys are and gives them
 back to the row that opened it. In a field, or over selected text, the browser's menu
-stays.
+stays; everywhere else that offers no menu of its own, a right click does nothing
+(`blockBrowserMenu` in `src/native-menu.ts`, installed by every window: the app, setup,
+the tray and the connecting screen).
 
 - "Needs you" (`SessionsPage` in `src/sessions.tsx`) shows only while something asks
   the person for a permission or an answer (`asks`), and "Waiting for you", after it,
