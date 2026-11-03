@@ -3,3 +3,5 @@ coverage/
 playwright-report/
 test-results/
 e2e/fixture
+video/frames/
+video/out/
