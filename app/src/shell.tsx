@@ -12,7 +12,7 @@ import {
   type RefObject,
 } from "react";
 import { Wordmark } from "@baum/viewer/components/editorial";
-import { ChevronDownIcon, RefreshIcon } from "@baum/viewer/components/icons";
+import { ChevronDownIcon, HelpIcon, RefreshIcon } from "@baum/viewer/components/icons";
 import { Stumpy } from "@baum/viewer/components/stumpy";
 import type { ViewerLinkProps } from "@baum/viewer/navigation";
 import { appURL } from "./api";
@@ -89,7 +89,7 @@ export function Sidebar({
   /** A newer desktop app version; Settings counts it. */
   update?: string | null;
   inboxes?: RailInboxes;
-  /** What the `?` beside Settings offers besides the docs. */
+  /** What Help, beside the baum title, offers besides the docs. */
   help?: RailHelp;
   Link: ComponentType<ViewerLinkProps>;
 }) {
@@ -165,10 +165,13 @@ export function Sidebar({
     <aside data-tab-region="" className="local-rail">
       {inboxMenu.menu}
       {helpMenu.menu}
-      <Link href={appURL()} className="local-rail-mark" title="Inbox">
-        <Stumpy size={28} className="flex-none" />
-        <Wordmark size="sidebar" className="local-rail-label" />
-      </Link>
+      <div className="local-rail-head">
+        <Link href={appURL()} className="local-rail-mark" title="Inbox">
+          <Stumpy size={28} className="flex-none" />
+          <Wordmark size="sidebar" className="local-rail-label" />
+        </Link>
+        <HelpButton help={help} menu={helpMenu} />
+      </div>
       <nav aria-label="Main" className="local-rail-nav local-rail-main">
         {PAGES.filter((item) => !item.foot).map((item) =>
           item.page === "inbox" && inboxes && nested ? (
@@ -205,16 +208,7 @@ export function Sidebar({
       <div className="local-rail-foot">
         <PlanUsageRail />
         <nav aria-label="More" className="local-rail-nav">
-          {PAGES.filter((item) => item.foot).map((item) =>
-            item.page === "settings" ? (
-              <div key="settings" className="local-rail-row local-rail-help-row">
-                {link(item)}
-                <HelpButton help={help} menu={helpMenu} />
-              </div>
-            ) : (
-              link(item)
-            ),
-          )}
+          {PAGES.filter((item) => item.foot).map(link)}
         </nav>
       </div>
     </aside>
@@ -224,7 +218,7 @@ export function Sidebar({
 /** Where "Open the docs" goes. */
 export const DOCS_URL = "https://docs.usebaum.com/";
 
-/** What the sidebar's `?` menu does beyond opening the docs. */
+/** What the sidebar's Help menu does beyond opening the docs. */
 export type RailHelp = {
   /** Shows the shortcuts sheet. */
   shortcuts: () => void;
@@ -236,8 +230,8 @@ export type RailHelp = {
   opener?: RefObject<(() => void) | null>;
 };
 
-/** The `?` beside Settings: a menu of the shortcuts, reporting a problem and
- *  the docs. It opens from the keys as a menu button does (Enter, Space, and
+/** Help, at the right of the baum title: a menu of the shortcuts, reporting
+ *  a problem and the docs. It opens from the keys as a menu button does (Enter, Space, and
  *  Down on the first choice, Up on the last), and from the `?` key. */
 function HelpButton({ help, menu }: { help?: RailHelp; menu: ReturnType<typeof useContextMenu> }) {
   const ref = useRef<HTMLButtonElement>(null);
@@ -274,7 +268,7 @@ function HelpButton({ help, menu }: { help?: RailHelp; menu: ReturnType<typeof u
       type="button"
       className="local-rail-help"
       aria-label="Help"
-      title="Help"
+      title="Help (?)"
       aria-haspopup="menu"
       aria-expanded={open}
       aria-controls={open ? menu.id : undefined}
@@ -291,7 +285,7 @@ function HelpButton({ help, menu }: { help?: RailHelp; menu: ReturnType<typeof u
         show(event.key === "ArrowUp");
       }}
     >
-      ?
+      <HelpIcon size={16} />
     </button>
   );
 }

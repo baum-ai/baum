@@ -2163,14 +2163,28 @@ const appUpdate = {
   error: null,
 };
 
+// A computer with nothing left to set up, so only the update counts on Settings.
 const setupView = {
   first_run: false,
   command: {
-    installed: false,
+    installed: true,
     target: "/app/baum",
+    record: {},
+    found: { path: "/home/user/bin/baum", resolved: "/app/baum", version: "0.1.0" },
     plan: { link: "/home/user/bin/baum", on_path: true, admin: false },
   },
-  hooks: { agents: [] },
+  hooks: {
+    agents: [
+      {
+        agent: "claude-code",
+        name: "Claude Code",
+        detected: true,
+        installed: true,
+        enabled: true,
+        plugin: "baum@baum",
+      },
+    ],
+  },
 };
 
 it("tells about an app update once in a toast that opens This computer", async () => {
@@ -2462,7 +2476,7 @@ it("opens the help menu with ?, the sheet with Enter on it, and hides the sheet 
   );
   expect(node.querySelector("dialog")?.textContent).toContain("Refresh from GitHub");
 });
-it("offers the shortcuts, a problem report and the docs from the ? beside Settings", async () => {
+it("offers the shortcuts, a problem report and the docs from Help beside the baum title", async () => {
   entries = [entry(1)];
   Object.defineProperty(HTMLDialogElement.prototype, "showModal", {
     configurable: true,

@@ -229,11 +229,17 @@ func changeUserHooks(ctx context.Context, agents []string, action string, stdout
 		}
 		switch {
 		case action == "install":
-			_, _ = fmt.Fprintf(stdout, "Installed and enabled %s for %s", agentplugins.Plugin, name)
+			_, _ = fmt.Fprintf(stdout, "Connected %s", name)
 			if status.Version != "" {
-				_, _ = fmt.Fprintf(stdout, " (%s)", status.Version)
+				_, _ = fmt.Fprintf(stdout, " (baum plugin %s)", status.Version)
 			}
-			_, _ = fmt.Fprintln(stdout, ". Review hook trust in the agent before relying on the hooks (Codex: /hooks).")
+			// Only Codex asks the person to approve hooks, and only until they
+			// have; Claude Code runs them.
+			if agent == "codex" && client.HookTrust(ctx, nil).State != "trusted" {
+				_, _ = fmt.Fprintln(stdout, ". Open /hooks in Codex and trust baum's hooks so new sessions appear in baum.")
+			} else {
+				_, _ = fmt.Fprintf(stdout, ". New %s sessions will appear in baum.\n", name)
+			}
 		case action == "update" && status.Version != "" && before == status.Version:
 			_, _ = fmt.Fprintf(stdout, "%s for %s is already the latest version (%s).\n", agentplugins.Plugin, name, status.Version)
 		case action == "update":
@@ -247,7 +253,7 @@ func changeUserHooks(ctx context.Context, agents []string, action string, stdout
 			}
 			_, _ = fmt.Fprintln(stdout)
 		default:
-			_, _ = fmt.Fprintf(stdout, "%s is not installed for %s. The marketplace and other plugins are unchanged.\n", agentplugins.Plugin, name)
+			_, _ = fmt.Fprintf(stdout, "Removed baum's hooks from %s. baum won't see new %s sessions until you connect it again.\n", name, name)
 		}
 	}
 	return errors.Join(failures...)

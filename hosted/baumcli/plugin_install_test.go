@@ -48,7 +48,7 @@ func TestHooksCommandsUseNativeMarketplaceAndReportTrustSeparately(t *testing.T)
 		t.Fatal("validation changed an earlier agent")
 	}
 	stdout, _, err := runCLI(t, "hooks", "install", "--user", "--agent", "claude-code")
-	if err != nil || !strings.Contains(stdout, "Installed and enabled baum@baum") || !strings.Contains(stdout, "Review hook trust") {
+	if err != nil || !strings.Contains(stdout, "Connected Claude Code") || strings.Contains(stdout, "/hooks") {
 		t.Fatalf("install=%v %s", err, stdout)
 	}
 	if got := readHookTestFile(t, filepath.Join(home, ".claude", "settings.json")); got != `{"custom":"keep"}` {

@@ -181,12 +181,19 @@ body {
 .local-rail-fold[aria-expanded="false"] svg {
   transform: rotate(-90deg);
 }
-/* The help menu's `?` beside Settings, always shown. */
+/* The baum title, with Help at its right edge. */
+.local-rail-head {
+  display: flex;
+  align-items: center;
+  gap: 0.125rem;
+}
+.local-rail-head > .local-rail-mark {
+  flex: 1;
+  min-width: 0;
+}
 .local-rail-help {
-  width: 1.75rem;
-  height: 2.25rem;
-  font-size: var(--text-base);
-  font-weight: 600;
+  width: 2rem;
+  height: 2rem;
 }
 .local-rail-fold:hover,
 .local-rail-more:hover,
@@ -416,8 +423,8 @@ body {
   .local-rail-inboxes {
     display: none;
   }
-  /* The `?` stays, under the Settings glyph. */
-  .local-rail-help-row {
+  /* Folded, Help sits under the mark. */
+  .local-rail-head {
     flex-direction: column;
     align-items: stretch;
   }
@@ -2238,6 +2245,12 @@ dialog.local-dialog-wide {
 }
 .settings-dot[data-tone="critical"] {
   background: var(--status-critical);
+}
+/* A settings panel that needs the person, such as a missing baum CLI. */
+.local-panel[data-attention="true"] {
+  border-color: var(--status-caution);
+  box-shadow: 0 0 0 1px var(--status-caution);
+  background: color-mix(in srgb, var(--status-caution-bg) 45%, var(--surface-card));
 }
 /* Settings use the theme's shared control, surface and focus tokens. */
 .settings-content {
