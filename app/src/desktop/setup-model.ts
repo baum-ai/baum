@@ -428,3 +428,21 @@ export function shownHarness(settings: ReviewSettings, available: readonly strin
 export function extractionHarness(settings: ReviewSettings): string {
   return settings.decisions_chosen_backend || settings.backend;
 }
+
+/** Whether the app could install the baum CLI here but hasn't. A CLI the app
+ *  can't install on this system is not something to warn about. */
+export function commandMissing(view: SetupView | null | undefined): boolean {
+  return !!view && !view.command.installed && !view.command.unavailable;
+}
+
+/** Whether no agent has baum's hooks installed, so no session can reach the
+ *  app. An unreadable hook state is not counted as missing. */
+export function hooksMissing(view: SetupView | null | undefined): boolean {
+  return !!view && !view.hooks.error && !view.hooks.agents.some((agent) => agent.installed);
+}
+
+export const hooksMissingWarning =
+  "No coding agent is connected, so baum can't follow your agent sessions.";
+
+export const commandMissingWarning =
+  "The baum CLI isn't installed, so your terminal and coding agents can't run baum.";

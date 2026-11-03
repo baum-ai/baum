@@ -934,7 +934,8 @@ tag for each; in an inbox the panel tags the other inboxes it is
 also in. Colours are six palette names (`--inbox-*` in `src/style.css`, with
 dark variants).
 
-A `?` beside Settings opens a help menu (`HelpButton` in `src/shell.tsx`):
+A Help button at the right of the sidebar's baum title (under it when the
+sidebar is folded) opens a help menu (`HelpButton` in `src/shell.tsx`):
 **Show shortcuts** opens the shortcuts sheet, **Report a problem** opens the
 Report a problem dialog (`src/report-problem.tsx`, also Diagnostics' button:
 what happened, what to attach with a preview, then **Open issue**, which opens
@@ -2000,6 +2001,29 @@ The warning clears after a successful ready result; a failed request retains
 the previous warning. Older daemons without this endpoint show no new global
 badge. Onboarding rechecks on focus or Check again. Checking never trusts a
 hook, restarts Codex or starts a conversation.
+
+In the desktop app the same badge and description also cover a missing baum
+CLI: one the app could install but hasn't (a CLI the app can't install on this
+system raises nothing). The app reads `setup_state` on load, on window focus
+and after native Settings actions. While the CLI is missing, every Settings
+section opens with a banner whose Install the CLI button goes to This computer
+and scrolls to the Command line card; the section list marks This computer
+with a caution dot and "baum CLI not installed", and the card itself is
+outlined in the caution colour with its install button promoted to primary.
+No agent with baum's hooks installed (an unreadable hook state does not count)
+gets the same treatment: the badge, a banner whose Connect an agent button
+opens Connections at the Agent hooks card, a caution dot and "No coding agent
+connected" on Connections, and the card outlined with its Connect buttons
+promoted to primary.
+While the app checks the agents (on opening and on Check again), the Agent
+hooks card keeps its Claude Code and Codex rows and shows Checking… beside each
+name in place of its state.
+
+The Sessions page shows a notice while the baum CLI is missing or no agent has
+baum's hooks installed (an unreadable hook state counts as neither), since the
+hooks run `baum` from the PATH and report nothing without it. It links to
+whichever fixes apply: Connect an agent (Settings, Connections) and Install
+baum CLI (Settings, This computer).
 
 On Inbox and Pull requests, `/` opens the filter with Add filter focused.
 Escape closes the filter without leaving a focus ring on its button.

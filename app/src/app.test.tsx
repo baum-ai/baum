@@ -2462,7 +2462,7 @@ it("opens the help menu with ?, the sheet with Enter on it, and hides the sheet 
   );
   expect(node.querySelector("dialog")?.textContent).toContain("Refresh from GitHub");
 });
-it("offers the shortcuts, a problem report and the docs from the ? beside Settings", async () => {
+it("offers the shortcuts, a problem report and the docs from Help beside the baum title", async () => {
   entries = [entry(1)];
   Object.defineProperty(HTMLDialogElement.prototype, "showModal", {
     configurable: true,

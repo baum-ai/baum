@@ -88,7 +88,13 @@ import { DecisionsRevision } from "./decisions";
 import { useCodexHookTrust } from "./codex-hooks";
 import { pendingUpdate, useAppUpdates, useUpdateToast } from "./desktop/updates";
 import { useDiagnosticProblems } from "./diagnostics";
-import { RepositoriesPage, SettingsPage, settingsSection, type ReviewDefaults } from "./settings";
+import {
+  RepositoriesPage,
+  SettingsPage,
+  settingsSection,
+  useCommandLineCheck,
+  type ReviewDefaults,
+} from "./settings";
 import { asksYou, SessionsPage, transcriptHref } from "./sessions";
 import { SampleGuard } from "./sample";
 import { ToastProvider } from "./toast";
@@ -348,7 +354,7 @@ function Workspace({ url }: { url: UrlState }) {
     null,
   );
   const [shortcuts, setShortcuts] = useState(false);
-  // Opens the sidebar's help menu while its `?` button is mounted.
+  // Opens the sidebar's help menu while its Help button is mounted.
   const openHelp = useRef<(() => void) | null>(null);
   const [reporting, setReporting] = useState(false);
   const [goingTo, setGoingTo] = useState(false);
@@ -831,6 +837,7 @@ function Workspace({ url }: { url: UrlState }) {
   // The diagnostics dialog runs them itself while it is open.
   const diagnostics = useDiagnosticProblems(page !== "diagnostics");
   const codexTrust = useCodexHookTrust();
+  const commandLine = useCommandLineCheck();
   const appUpdates = useAppUpdates();
   useUpdateToast(
     appUpdates,
@@ -1271,7 +1278,9 @@ function Workspace({ url }: { url: UrlState }) {
         runningSessions={live.filter((s) => s.state === "running").length}
         needsYou={asksYou(live).length}
         problems={diagnostics.problems}
-        settingsWarning={codexTrust.warning}
+        settingsWarning={
+          [codexTrust.warning, commandLine.warning].filter(Boolean).join(" ") || null
+        }
         update={pendingUpdate(appUpdates.view)}
         help={{
           shortcuts: () => setShortcuts(true),
@@ -1380,6 +1389,7 @@ function Workspace({ url }: { url: UrlState }) {
               }
               onDiagnostics={diagnostics.update}
               codexTrust={codexTrust}
+              commandLine={commandLine}
               updates={appUpdates}
             />
           ) : page === "sessions" && openSession ? (
@@ -1425,6 +1435,28 @@ function Workspace({ url }: { url: UrlState }) {
                   message="baum could not read the agent sessions on this computer."
                   retry={reloadLive}
                 >
+                  {commandLine.missing || commandLine.hooksMissing ? (
+                    <div className="local-list-note">
+                      <Notice
+                        action={
+                          <>
+                            {commandLine.hooksMissing ? (
+                              <LocalLink href={appURL("?page=settings&section=connections")}>
+                                Connect an agent
+                              </LocalLink>
+                            ) : null}
+                            {commandLine.missing ? (
+                              <LocalLink href={appURL("?page=settings&section=computer")}>
+                                Install baum CLI
+                              </LocalLink>
+                            ) : null}
+                          </>
+                        }
+                      >
+                        {sessionsSetupWarning(commandLine)}
+                      </Notice>
+                    </div>
+                  ) : null}
                   {liveStale ? (
                     <div className="local-list-note">
                       <Alert className="flex flex-wrap items-center gap-x-3 gap-y-2">
@@ -2332,4 +2364,14 @@ function readPageWhat(page: string, group: string | null) {
   if (page === "jobs") return "jobs";
   if (page === "repositories") return "repositories";
   return page === "pulls" ? "pull requests" : "your inbox";
+}
+
+/** Why the Sessions page may stay empty: the desktop setup baum's session
+ *  reporting needs is incomplete. */
+function sessionsSetupWarning(check: { missing: boolean; hooksMissing: boolean }) {
+  if (check.missing && check.hooksMissing)
+    return "baum can't see your agent sessions: the baum CLI isn't installed and no coding agent is connected.";
+  if (check.hooksMissing)
+    return "baum can't see your agent sessions: no coding agent has baum's hooks installed.";
+  return "baum can't see your agent sessions: the baum CLI isn't installed, and the agent hooks need it to report sessions.";
 }
