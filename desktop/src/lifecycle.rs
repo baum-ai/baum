@@ -148,6 +148,10 @@ pub fn quit_and_stop(app: &AppHandle) {
 }
 
 fn stop_and_exit(app: &AppHandle) {
+    // An app on a disk image runs no baum, so it has no daemon to stop.
+    if daemon::misplaced().is_some() {
+        return app.exit(0);
+    }
     let app = app.clone();
     thread::spawn(move || {
         let stopped =

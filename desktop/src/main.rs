@@ -56,6 +56,11 @@ enum Connection {
         message: String,
         details: Vec<String>,
     },
+    /// The app cannot run baum from where it is installed (a disk image), so
+    /// there is nothing to retry until it is moved.
+    Misplaced {
+        message: String,
+    },
 }
 
 #[derive(Default)]
@@ -104,6 +109,18 @@ enum Attach {
 
 fn connect(app: &AppHandle, why: Attach) {
     let state = app.state::<State>().inner().clone();
+    if let Some(message) = daemon::misplaced() {
+        eprintln!("baum desktop: {message}");
+        {
+            let mut shared = state.lock();
+            shared.connection = Connection::Misplaced {
+                message: message.into(),
+            };
+            shared.daemon = None;
+        }
+        tray::detached(app);
+        return show_screen(app);
+    }
     let attempt = {
         let mut shared = state.lock();
         if matches!(shared.connection, Connection::Connecting) && shared.attempt > 0 {

@@ -10,7 +10,7 @@ use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{SocketAddr, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::sync::mpsc;
+use std::sync::{OnceLock, mpsc};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -89,9 +89,14 @@ impl Failure {
 /// The `baum` binary the app runs: `BAUM_DESKTOP_BAUM` while developing, else
 /// the stable copy where the app keeps one, else the one bundled next to the
 /// executable.
+/// A macOS app on a read-only volume runs no baum and asks to be moved
+/// instead (see `misplaced`).
 pub fn cli_path() -> Result<PathBuf, Failure> {
     if let Some(path) = std::env::var_os("BAUM_DESKTOP_BAUM") {
         return Ok(PathBuf::from(path));
+    }
+    if let Some(message) = misplaced() {
+        return Err(Failure::new(message));
     }
     if let Some(stable) = STABLE_CLI.get() {
         return stable().map_err(Failure::new);
@@ -110,6 +115,62 @@ static STABLE_CLI: std::sync::OnceLock<StableCli> = std::sync::OnceLock::new();
 
 pub fn use_stable_cli(stable: impl Fn() -> Result<PathBuf, String> + Send + Sync + 'static) {
     let _ = STABLE_CLI.set(Box::new(stable));
+}
+
+const DISK_IMAGE: &str = "baum cannot run from a disk image or another read-only disk: once the disk is ejected, baum stops working in the background. Quit baum, drag it into the Applications folder, eject the disk image, then open baum from Applications.";
+const TRANSLOCATED: &str = "macOS opened baum from a temporary read-only copy because it is still where it was downloaded. Quit baum, move it into the Applications folder, then open it from there.";
+
+/// Why the app cannot run baum from where it is installed, if it cannot. A
+/// macOS disk image is read-only and goes away when it is ejected: a daemon
+/// started from one keeps running without its executable, cannot load its own
+/// code and stops answering, and no other client replaces it. App
+/// Translocation (a quarantined app opened where it was downloaded) runs the
+/// app from a random read-only mount that also goes away. So on macOS the app
+/// runs nothing from a read-only volume, which an installed app never is.
+/// Linux AppImages are read-only too, but run a stable copy (`use_stable_cli`).
+pub fn misplaced() -> Option<&'static str> {
+    if cli_overridden() {
+        return None;
+    }
+    static MISPLACED: OnceLock<Option<&'static str>> = OnceLock::new();
+    *MISPLACED.get_or_init(|| {
+        let exe = std::env::current_exe().ok()?;
+        misplaced_message(&exe, cfg!(target_os = "macos") && read_only_volume(&exe))
+    })
+}
+
+fn misplaced_message(exe: &Path, read_only: bool) -> Option<&'static str> {
+    if !read_only {
+        return None;
+    }
+    Some(if exe.to_string_lossy().contains("/AppTranslocation/") {
+        TRANSLOCATED
+    } else {
+        DISK_IMAGE
+    })
+}
+
+/// Whether the volume holding `path` is mounted read-only. A path statfs
+/// cannot read counts as writable, so a failed check never blocks the app.
+#[cfg(target_os = "macos")]
+fn read_only_volume(path: &Path) -> bool {
+    use std::os::unix::ffi::OsStrExt;
+    let Ok(path) = std::ffi::CString::new(path.as_os_str().as_bytes()) else {
+        return false;
+    };
+    let mut fs = std::mem::MaybeUninit::<libc::statfs>::uninit();
+    // SAFETY: path is NUL-terminated and fs is written by statfs on success.
+    if unsafe { libc::statfs(path.as_ptr(), fs.as_mut_ptr()) } != 0 {
+        return false;
+    }
+    // SAFETY: statfs returned 0, so it filled fs.
+    let fs = unsafe { fs.assume_init() };
+    fs.f_flags & (libc::MNT_RDONLY as u32) != 0
+}
+
+#[cfg(not(target_os = "macos"))]
+fn read_only_volume(_: &Path) -> bool {
+    false
 }
 
 /// Whether `BAUM_DESKTOP_BAUM` names the baum to run (development).
@@ -464,6 +525,35 @@ pub fn fake_cli(dir: &Path, script: &str) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_writable_app_runs_baum() {
+        let exe = Path::new("/Applications/baum.app/Contents/MacOS/baum-desktop");
+        assert_eq!(misplaced_message(exe, false), None);
+    }
+
+    #[test]
+    fn a_disk_image_asks_to_move_the_app() {
+        let exe = Path::new("/Volumes/baum/baum.app/Contents/MacOS/baum-desktop");
+        assert_eq!(misplaced_message(exe, true), Some(DISK_IMAGE));
+    }
+
+    /// The sealed system volume is mounted read-only, like a disk image.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn read_only_volumes_are_detected() {
+        assert!(read_only_volume(Path::new("/usr/bin/true")));
+        assert!(!read_only_volume(&std::env::temp_dir()));
+        assert!(!read_only_volume(Path::new("/no/such/path")));
+    }
+
+    #[test]
+    fn a_translocated_app_asks_to_move_the_app() {
+        let exe = Path::new(
+            "/private/var/folders/x/T/AppTranslocation/0A1B/d/baum.app/Contents/MacOS/baum-desktop",
+        );
+        assert_eq!(misplaced_message(exe, true), Some(TRANSLOCATED));
+    }
     use std::net::TcpListener;
 
     const TOKEN: &str = "abcdefghijklmnopqrstuvwxyz0123456789-_ABCDE";
