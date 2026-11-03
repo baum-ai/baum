@@ -1266,11 +1266,11 @@ it("shows the pull request of a waiting session after its branch", async () => {
   ).toEqual(["fix-dialog", "PR #1035"]);
 });
 
-it("shows ambiguous and stale PR associations explicitly", async () => {
+it("shows an ambiguous PR association explicitly, and a stale one as nothing", async () => {
   await render([session({ link_status: "ambiguous" })]);
   expect(node.textContent).toContain("Several pull requests match");
   await render([session({ link_status: "stale", pr: 7 })]);
-  expect(node.textContent).toContain("PR link may be out of date");
+  expect(node.querySelector(".local-session-where")!.textContent).not.toMatch(/out of date|stale/i);
 });
 
 for (const [state, label] of [

@@ -1926,7 +1926,8 @@ reloading the review document. Polling allows late transcript/checkpoint arrival
 to appear; a transient poll failure retains the last successful evidence.
 
 Live-session linkage reports `link_status` and `link_method`, with recorded
-branch/upstream/HEAD evidence. Ambiguous matches have no selected PR. Recently
+branch/upstream/HEAD evidence. Ambiguous matches have no selected PR. A
+`stale` status shows no note on the session: the next lookup settles it. Recently
 ended sessions can acquire a PR after ending, using their saved Git observation
 rather than the current checkout. Active observations are also saved without
 notification message text or local paths for restart recovery.
