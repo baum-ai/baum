@@ -39,6 +39,15 @@ may start it, and it outlives the app: quitting the app leaves it running.
    - The app never restarts the daemon on its own, so a crashing daemon
      cannot restart in a loop.
 
+On macOS the app runs no `baum` from a read-only volume: the disk image it
+ships in, or the temporary copy App Translocation makes of an app opened
+where it was downloaded. Both go away (ejecting the image, quitting the app),
+and a daemon started from one keeps running without its executable and stops
+answering, which no other client can repair. Instead the window opens on the
+connecting screen, skipping first-run setup, and says to move baum to
+Applications. Nothing is retried, start at login stays off, and Quit and Stop
+just quits, since this app started no daemon.
+
 A second launch focuses the existing window instead of opening another one.
 
 ## Native settings

@@ -38,8 +38,15 @@ const APPROVED_KEY: &str =
     r"HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run";
 
 /// The executable the login entry starts. An AppImage runs from a temporary
-/// mount, so its own path (`APPIMAGE`) is the stable one.
+/// mount, so its own path (`APPIMAGE`) is the stable one. A macOS app on a
+/// disk image gets no entry, since the image goes away when ejected.
 fn executable() -> Result<PathBuf, String> {
+    if crate::daemon::misplaced().is_some() {
+        return Err(
+            "move baum to the Applications folder, open it from there, then turn on start at login"
+                .into(),
+        );
+    }
     if let Some(image) = std::env::var_os("APPIMAGE").filter(|v| !v.is_empty()) {
         return check_executable(Path::new(&image));
     }

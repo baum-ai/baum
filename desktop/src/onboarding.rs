@@ -180,7 +180,8 @@ pub fn start(app: &AppHandle) -> &'static str {
                 })
         });
     }
-    if load(app).onboarded {
+    // An app that cannot run baum shows why on the connecting screen.
+    if load(app).onboarded || crate::daemon::misplaced().is_some() {
         return CONNECTING_PAGE;
     }
     app.state::<Setup>().open.store(true, Ordering::SeqCst);
