@@ -711,6 +711,18 @@ impl Tracker {
         self.mark(keys)
     }
 
+    /// Failed jobs acknowledged here that the daemon still reports unseen:
+    /// recording them failed or has not landed yet, so the caller records
+    /// them again. Once the daemon has, it stops reporting them.
+    pub fn unrecorded(&self) -> Vec<String> {
+        self.current
+            .iter()
+            .filter(|k| self.acknowledged.contains(*k))
+            .filter_map(|k| k.strip_prefix("failed:"))
+            .map(str::to_string)
+            .collect()
+    }
+
     fn mark(&mut self, keys: Vec<String>) -> Vec<String> {
         let mut jobs = Vec::new();
         for key in keys {
@@ -865,6 +877,22 @@ mod tests {
         let view = tracker.update(&up(failed));
         assert_eq!(view.icon, Icon::Idle);
         assert!(view.attention.is_empty());
+    }
+
+    #[test]
+    fn a_seen_failure_the_daemon_still_reports_is_recorded_again() {
+        let mut tracker = Tracker::default();
+        tracker.update(&up(jobs(0, 0, &["a", "b"])));
+        assert!(tracker.unrecorded().is_empty());
+        tracker.acknowledge_alert("alert:job:a");
+        // Recording failed: the daemon still reports it, and the alert stays
+        // hidden while it is recorded again.
+        let view = tracker.update(&up(jobs(0, 0, &["a", "b"])));
+        assert_eq!(ids(&view), vec!["alert:job:b"]);
+        assert_eq!(tracker.unrecorded(), vec!["a"]);
+        // Once recorded, the daemon no longer reports it.
+        tracker.update(&up(jobs(0, 0, &["b"])));
+        assert!(tracker.unrecorded().is_empty());
     }
 
     #[test]

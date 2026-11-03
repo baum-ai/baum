@@ -458,7 +458,9 @@ line, one item per reason that goes where the user needs to look:
 Whether a failed job was seen is the daemon's record: every failed job
 without `seen_at` turns the icon red, including one that failed while the
 app was closed, until its alert is followed. That records it
-(`POST /api/jobs/{id}/seen` sets the job's `seen_at` in `app.sqlite`), and a
+(`POST /api/jobs/{id}/seen` sets the job's `seen_at` in `app.sqlite`; when
+that fails, each poll records it again until the daemon stops reporting the
+job as unseen, and its alert stays hidden meanwhile), and a
 failed job with `seen_at` is never flagged again, after a restart either.
 Opening or focusing the window does not see a failed job (the window opens on
 its own at launch); it acknowledges diagnostics problems, until one clears

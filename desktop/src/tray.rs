@@ -926,6 +926,16 @@ fn poll_once(app: &AppHandle, shared: &Shared) -> Duration {
         observed.needs = needs.ok();
     }
     render(app, shared, false);
+    // A failed job seen here but still unseen in the daemon: recording it
+    // failed (the daemon was briefly unreachable, or could not save), so it
+    // is recorded again until the daemon stops reporting it, rather than
+    // hidden only until the app restarts.
+    let unrecorded = lock(&shared.0.tracker).unrecorded();
+    for id in unrecorded {
+        if let Err(e) = client::job_seen(&launch, &id) {
+            eprintln!("baum desktop: cannot record job {id} as seen: {e}");
+        }
+    }
     let busy = lock(&shared.0.observed)
         .jobs
         .as_ref()
