@@ -16,15 +16,30 @@ A desktop app for keeping up with what your coding agents build.</p>
 </p>
 
 <p align="center">
-  <a href="https://github.com/baum-ai/baum/releases/latest"><img alt="Download for Mac, macOS 12+" src="docs/readme/download-mac-light.png#gh-light-mode-only" width="260"></a>
-  <a href="https://github.com/baum-ai/baum/releases/latest"><img alt="Download for Mac, macOS 12+" src="docs/readme/download-mac-dark.png#gh-dark-mode-only" width="260"></a>
-  <a href="https://github.com/baum-ai/baum/releases/latest"><img alt="Download for Linux, AppImage or .deb" src="docs/readme/download-linux-light.png#gh-light-mode-only" width="260"></a>
-  <a href="https://github.com/baum-ai/baum/releases/latest"><img alt="Download for Linux, AppImage or .deb" src="docs/readme/download-linux-dark.png#gh-dark-mode-only" width="260"></a>
+  <a href="https://github.com/baum-ai/baum/releases/latest">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="docs/readme/download-mac-dark.png">
+      <source media="(prefers-color-scheme: light)" srcset="docs/readme/download-mac-light.png">
+      <img alt="Download for Mac, macOS 12+" src="docs/readme/download-mac-light.png" width="260">
+    </picture>
+  </a>
+  <a href="https://github.com/baum-ai/baum/releases/latest">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="docs/readme/download-linux-dark.png">
+      <source media="(prefers-color-scheme: light)" srcset="docs/readme/download-linux-light.png">
+      <img alt="Download for Linux, AppImage or .deb" src="docs/readme/download-linux-light.png" width="260">
+    </picture>
+  </a>
 </p>
 
 <p align="center">
-  <a href="https://usebaum.com"><img alt="The baum desktop app: the Inbox, with the pull requests waiting on you and baum's review of the first one" src="docs/readme/app-light.png#gh-light-mode-only"></a>
-  <a href="https://usebaum.com"><img alt="The baum desktop app: the Inbox, with the pull requests waiting on you and baum's review of the first one" src="docs/readme/app-dark.png#gh-dark-mode-only"></a>
+  <a href="https://usebaum.com">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="docs/readme/app-dark.png">
+      <source media="(prefers-color-scheme: light)" srcset="docs/readme/app-light.png">
+      <img alt="The baum desktop app: the Inbox, with the pull requests waiting on you and baum's review of the first one" src="docs/readme/app-light.png">
+    </picture>
+  </a>
 </p>
 
 ## What is baum?
