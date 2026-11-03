@@ -1,5 +1,8 @@
 /* The `baum desktop-setup` command and its Copy button, in setup and in
    Settings. */
+.agent-terminal-setup {
+  margin-top: 16px;
+}
 .terminal-command {
   display: flex;
   align-items: center;

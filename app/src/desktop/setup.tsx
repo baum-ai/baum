@@ -336,6 +336,7 @@ export function Setup() {
                   available={available}
                   signedOut={signedOutHarnesses(view.hooks.agents)}
                   detectionError={view.hooks.error}
+                  terminal={terminal}
                 />
                 {available.length > 0 && (
                   <p id="review-customise" className="repo-note">

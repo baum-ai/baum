@@ -290,6 +290,20 @@ it("asks for the terminal's agents when baum finds one too old", async () => {
     terminalSetup({ ...view, hooks: { agents: [claude, { ...codex, supported: null }] } }),
   ).toBeNull();
   expect(terminalSetup({ ...view, terminal_setup: null })).toBeNull();
+  // No agent at all may be one set up only for interactive shells; one
+  // missing beside another is someone who uses only that one.
+  const missing = { ...codex, detected: false, supported: null, error: null };
+  expect(
+    terminalSetup({
+      ...view,
+      hooks: { agents: [missing, { ...missing, agent: "claude-code", name: "Claude Code" }] },
+    }),
+  ).toEqual({ text: "Already installed? Run this in your terminal, then check again:", command });
+  expect(
+    terminalSetup({ ...view, hooks: { agents: [missing, { ...claude, error: null }] } }),
+  ).toBeNull();
+  // Not when baum could not check.
+  expect(terminalSetup({ ...view, hooks: { agents: [], error: "status failed" } })).toBeNull();
 });
 
 it("tells a status from the action that resolves it", async () => {

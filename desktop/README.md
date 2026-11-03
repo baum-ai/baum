@@ -261,8 +261,11 @@ the user's terminal, it records the directories that terminal finds `claude`
 and `codex` in, and baum puts them first on its PATH from then on, so a Codex
 set up only in `~/.bashrc` (fnm, nvm) is found; "Check again" reads the record
 through the same status commands. Once the recorded copy is the old one, the
-text asks to upgrade it in the terminal first. Windows shows no command: it has
-no login shell to miss an interactive PATH.
+text asks to upgrade it in the terminal first. When baum finds neither agent,
+setup's "Install an agent to continue" box and Settings offer the same command
+under "Already installed?"; one agent missing beside another does not, since
+most people use only one. Windows shows no command: it has no login shell to
+miss an interactive PATH.
 
 ### Where the command goes
 

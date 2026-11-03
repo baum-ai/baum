@@ -24,10 +24,19 @@ export function useCopy() {
  *  baum by its full path, so it is shown as is: `~` would not expand inside
  *  its quotes. */
 export function TerminalSetup({ text, command }: { text: string; command: string }) {
-  const { copied, copy } = useCopy();
   return (
     <div id="terminal-setup" className="setup-card terminal-setup">
       <p>{text}</p>
+      <TerminalCommand command={command} />
+    </div>
+  );
+}
+
+/** The command and its Copy button. */
+export function TerminalCommand({ command }: { command: string }) {
+  const { copied, copy } = useCopy();
+  return (
+    <>
       <div className="terminal-command">
         <code id="terminal-setup-command">{command}</code>
         <button
@@ -43,6 +52,6 @@ export function TerminalSetup({ text, command }: { text: string; command: string
       <span className="visually-hidden" role="status">
         {copied}
       </span>
-    </div>
+    </>
   );
 }

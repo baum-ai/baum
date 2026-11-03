@@ -194,13 +194,22 @@ export function agentUnsupported(agent: Agent) {
   return agent.detected && agent.supported === false;
 }
 
-/** The agents to name above the `baum desktop-setup` command: those baum
- *  found too old. Shells that set up a version manager only for interactive
- *  use leave an older copy on the PATH baum reads, while the user's terminal
- *  runs a newer one; once recorded, the terminal's copy itself is too old. */
+/** When to offer the `baum desktop-setup` command, and the text above it.
+ *  Shells that set up a version manager only for interactive use leave an
+ *  older copy, or none, on the PATH baum reads, while the user's terminal runs
+ *  a newer one. So the command is offered when baum finds no agent at all, and
+ *  for agents it finds too old; once recorded, the terminal's copy itself is
+ *  too old. One agent missing beside another is not enough: most people use
+ *  only one. */
 export function terminalSetup(view: SetupView) {
+  if (!view.terminal_setup) return null;
+  if (!view.hooks.error && !view.hooks.agents.some((agent) => agent.detected))
+    return {
+      text: "Already installed? Run this in your terminal, then check again:",
+      command: view.terminal_setup,
+    };
   const unsupported = view.hooks.agents.filter(agentUnsupported);
-  if (!view.terminal_setup || unsupported.length === 0) return null;
+  if (unsupported.length === 0) return null;
   const names = unsupported.map((agent) => agent.name).join(" and ");
   const text = unsupported.every((agent) => agent.recorded)
     ? `Upgrade ${names} in your terminal, then run this command there again and check again:`

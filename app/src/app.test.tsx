@@ -4,6 +4,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { beforeEach, afterEach, expect, it, vi } from "vitest";
 import { inboxGroups } from "./inbox";
 import { App } from "./app";
+import { ReviewSettingsForm } from "./desktop/reviews";
 import { useLocation } from "./location";
 import { appBase, cost, filtered, type Entry, type Clone } from "./api";
 import { forgetLastRows } from "./shortcuts";
@@ -2037,6 +2038,44 @@ it("says in desktop Settings when neither Claude Code nor Codex is installed", a
   } finally {
     Reflect.deleteProperty(window, "__TAURI_INTERNALS__");
   }
+});
+
+it("offers the desktop-setup command in setup when no agent is found", async () => {
+  const writeText = vi.fn(async (_: string) => {});
+  Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
+  const command = "'/home/user/.local/share/ai.baum/bin/baum' desktop-setup";
+  const settings = {
+    backend: "",
+    model: "",
+    automatic: true,
+    pull_requests: "both" as const,
+  };
+  const form = (detectionError: string | null) => (
+    <ReviewSettingsForm
+      settings={settings}
+      disabled={false}
+      onChange={() => {}}
+      available={[]}
+      detectionError={detectionError}
+      terminal={{
+        text: "Already installed? Run this in your terminal, then check again:",
+        command,
+      }}
+    />
+  );
+  await act(async () => root.render(form(null)));
+  const box = node.querySelector("#agent-installation")!;
+  expect(box.textContent).toContain("Install an agent to continue");
+  expect(box.querySelector("#terminal-setup")!.textContent).toContain(
+    "Already installed? Run this in your terminal, then check again:",
+  );
+  await act(async () =>
+    box.querySelector<HTMLButtonElement>('button[aria-label="Copy the command"]')!.click(),
+  );
+  expect(writeText).toHaveBeenCalledWith(command);
+  // When baum could not check, retrying comes first.
+  await act(async () => root.render(form("status failed")));
+  expect(node.querySelector("#terminal-setup")).toBeNull();
 });
 
 it("sets the desktop window's zoom in Settings and follows the shortcuts", async () => {
