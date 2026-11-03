@@ -245,7 +245,12 @@ Disabled plugins offer an Enable action; approval still belongs to Codex. Each n
 agents, login PATH resolution and process overhead a 240-second total budget.
 Status, install and removal run with the resolved login shell PATH so agents
 installed through Homebrew or npm are found from GUI launchers too. If login
-PATH resolution fails, the app uses its inherited PATH and displays the reason.
+PATH resolution fails, the app uses its inherited PATH and displays the reason;
+if only a login shell that is not interactive answered, it displays that
+warning, since such a shell may skip `~/.bashrc` or `~/.zshrc`. An AppImage's
+runtime puts its mount (`$APPDIR/usr/bin`, which holds the bundled baum) first
+on the app's PATH; the app removes it from the PATH of every baum it runs, so
+the daemon never inherits it and setup never reports it as a different baum.
 
 ### Where the command goes
 
