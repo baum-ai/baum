@@ -160,8 +160,9 @@ edit 'del(.platforms["windows-x86_64"])'
 pass "$manifest" verify "$dir"
 mv "$dir/baum-desktop-windows-amd64-setup.exe" "$dir/baum-desktop-windows-amd64-setup.exe.sig" "$work/"
 pass "$manifest" write 1.2.3 "$dir"
-if [ "$(jq -c '.platforms | keys' "$dir/latest.json")" != '["darwin-aarch64","darwin-x86_64","linux-x86_64"]' ]; then
-  echo "FAIL a release without the Windows installer lists $(jq -c '.platforms | keys' "$dir/latest.json")" >&2
+keys=$(jq -cj '.platforms | keys' "$dir/latest.json")
+if [ "$keys" != '["darwin-aarch64","darwin-x86_64","linux-x86_64"]' ]; then
+  echo "FAIL a release without the Windows installer lists $keys" >&2
   status=1
 fi
 mv "$work/baum-desktop-windows-amd64-setup.exe" "$work/baum-desktop-windows-amd64-setup.exe.sig" "$dir/"
