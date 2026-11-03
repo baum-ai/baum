@@ -3726,6 +3726,22 @@ installed after the starting process are found. The log records the shell, the
 outcome and the kept variable names, never values. `backend_paths` remains the
 way to name a backend executable explicitly.
 
+Some shells set an agent up only for interactive use (fnm or nvm in
+`~/.bashrc`), so the login shell's `PATH` holds an older copy or none. `baum
+desktop-setup`, which the user runs in their own terminal, finds `claude` and
+`codex` on that terminal's `PATH` (`internal/agentcli`), prints each one's path,
+version and whether it is at least the backend's `MinimumVersion`, and writes
+`terminal.json` beside `config.toml`: per agent, in the terminal's `PATH`
+order (one agent's directory may hold an older copy of the other), the
+executable and its directory with symbolic links resolved (fnm's per-shell `fnm_multishells`
+directory vanishes with the shell). `agentcli.WithRecorded` puts the recorded
+directories that still exist first on a `PATH`; the daemon applies it after
+`shellenv.Merge` and, through `agentcli.Keep`, again within 15 s of the record
+changing, and `baum daemon login-path` applies it too, so every lookup of
+`claude`, `codex` and the `node` an npm-installed agent starts finds what the
+terminal runs. The live-session Codex queue looks Codex up once at start, so it
+follows a new record after the daemon restarts.
+
 ### Automatic generation
 
 `internal/automatic.Scheduler`, built by `localApplication` and run beside
@@ -4723,8 +4739,10 @@ and two files:
    `baum` being the first executable `baum` on that `PATH` (relative entries
    skipped), with its links resolved and its `--version` (5 s timeout; its
    own version when it is this executable). `baum hooks status --user --json`
-   prints `{"agents":[{"agent","name","detected","signed_in","plugin","installed","enabled","version","error"}]}`
-   from native plugin registries, with executable detection and installation/
+   prints `{"agents":[{"agent","name","detected","signed_in","cli_path","cli_version","minimum_version","supported","recorded","plugin","installed","enabled","version","error"}]}`
+   from native plugin registries and the detected CLI's `--version`
+   (`supported` is absent when it could not be read; `recorded` says `baum
+   desktop-setup` recorded its directory), with executable detection and installation/
    enablement separate from the agent's hook trust decision. It installs and
    removes `baum@baum` through native CLIs with `baum hooks install --user`
    and `uninstall --user`, and `update --user` refreshes the marketplace and

@@ -291,6 +291,20 @@ pub struct View {
     home: Option<PathBuf>,
     command: install::Status,
     hooks: Hooks,
+    /// What the user runs in a terminal so baum records the agents that
+    /// terminal runs: the app's own baum by its full path, since the `baum`
+    /// command may not be installed yet.
+    terminal_setup: Option<String>,
+}
+
+/// `'<cli>' desktop-setup`, quoted for POSIX shells and fish. Windows has no
+/// login shell to miss an interactive PATH.
+fn terminal_setup(cli: &Path) -> Option<String> {
+    if cfg!(windows) {
+        return None;
+    }
+    let path = cli.to_string_lossy().replace('\'', r"'\''");
+    Some(format!("'{path}' desktop-setup"))
 }
 
 /// Native marketplace plugin installation and enablement, from `baum hooks status --user --json`.
@@ -313,6 +327,19 @@ pub struct AgentHooks {
     /// Whether the detected CLI is signed in; absent when baum could not tell.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     signed_in: Option<bool>,
+    /// The detected CLI and its version, the oldest version baum runs,
+    /// whether this one is that or newer (absent when its version is
+    /// unknown), and whether `baum desktop-setup` recorded its directory.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    cli_path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    cli_version: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    minimum_version: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    supported: Option<bool>,
+    #[serde(default)]
+    recorded: bool,
     plugin: String,
     #[serde(default)]
     installed: bool,
@@ -402,6 +429,7 @@ fn view(app: &AppHandle) -> Result<View, String> {
         home: app.path().home_dir().ok(),
         command: command_status(app, &cli),
         hooks: hooks_status(&cli),
+        terminal_setup: terminal_setup(&cli),
     })
 }
 
@@ -1067,6 +1095,22 @@ mod tests {
                 "--decisions-model=gpt-6.1-sol",
                 "--decisions-effort=high",
             ]
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn terminal_setup_quotes_the_apps_baum() {
+        assert_eq!(
+            terminal_setup(Path::new("/home/user/.local/share/ai.baum/bin/baum")).as_deref(),
+            Some("'/home/user/.local/share/ai.baum/bin/baum' desktop-setup")
+        );
+        assert_eq!(
+            terminal_setup(Path::new(
+                "/Applications/Ada's Baum.app/Contents/MacOS/baum"
+            ))
+            .as_deref(),
+            Some(r"'/Applications/Ada'\''s Baum.app/Contents/MacOS/baum' desktop-setup")
         );
     }
 

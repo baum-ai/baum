@@ -14,6 +14,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/baum-ai/baum/internal/agentcli"
 	"github.com/baum-ai/baum/internal/shellenv"
 )
 
@@ -113,7 +114,8 @@ func readLoginPath(ctx context.Context) loginPath {
 	for _, entry := range shellenv.Merge(inherited, resolved) {
 		name, value, _ := strings.Cut(entry, "=")
 		if pathVariable(name) {
-			for _, dir := range filepath.SplitList(value) {
+			// The daemon puts the agents `baum desktop-setup` recorded first.
+			for _, dir := range filepath.SplitList(agentcli.WithRecorded(value)) {
 				if dir != "" {
 					report.Path = append(report.Path, dir)
 				}

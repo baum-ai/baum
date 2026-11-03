@@ -114,13 +114,8 @@ func planEntries(prefs repos.Preferences, cfg config.Config, plans []json.RawMes
 }
 
 // planUsageHandler serves /api/plan-usage with only the plans the person has
-// chosen, or by default those baum uses. all=1 serves every plan, for the
-// setup step that compares plans to choose a harness.
+// chosen, or by default those baum uses.
 func (a LocalAPI) planUsageHandler(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Query().Get("all") == "1" {
-		a.PlanUsage.ServeHTTP(w, r)
-		return
-	}
 	rec := httptest.NewRecorder()
 	a.PlanUsage.ServeHTTP(rec, r)
 	var body struct {

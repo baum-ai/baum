@@ -4,6 +4,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { beforeEach, afterEach, expect, it, vi } from "vitest";
 import { inboxGroups } from "./inbox";
 import { App } from "./app";
+import { ReviewSettingsForm } from "./desktop/reviews";
 import { useLocation } from "./location";
 import { appBase, cost, filtered, type Entry, type Clone } from "./api";
 import { forgetLastRows } from "./shortcuts";
@@ -1959,6 +1960,70 @@ it("opens agent hooks from the Codex warning in desktop Settings", async () => {
   }
 });
 
+it("offers the desktop-setup command in desktop Settings for an agent that is too old", async () => {
+  history.replaceState(null, "", "/s/test-ns/?page=settings&section=connections");
+  const writeText = vi.fn(async (_: string) => {});
+  Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
+  const command = "'/home/user/.local/share/ai.baum/bin/baum' desktop-setup";
+  const view = {
+    first_run: false,
+    home: "/home/user",
+    command: { installed: true },
+    hooks: {
+      agents: [
+        {
+          agent: "codex",
+          name: "Codex",
+          detected: true,
+          installed: false,
+          enabled: false,
+          plugin: "baum@baum",
+          cli_path: "/usr/local/bin/codex",
+          cli_version: "0.128.0",
+          minimum_version: "0.156.1",
+          supported: false,
+        },
+        {
+          agent: "claude-code",
+          name: "Claude Code",
+          detected: false,
+          installed: false,
+          enabled: false,
+          plugin: "baum@baum",
+        },
+      ],
+    },
+    terminal_setup: command,
+  };
+  const invoke = vi.fn(async () => view);
+  Object.defineProperty(window, "__TAURI_INTERNALS__", { configurable: true, value: { invoke } });
+  try {
+    await act(async () => root.render(<App />));
+    const panel = node.querySelector('[aria-labelledby="hooks-heading"]')!;
+    expect(panel.textContent).toContain("Needs a newer version");
+    expect(panel.textContent).toContain(
+      "Codex 0.128.0 (/usr/local/bin/codex) is older than 0.156.1, which baum needs.",
+    );
+    // A missing agent's badge is short; its sentence shows once, below it.
+    expect(panel.textContent).toContain("Not found");
+    expect(panel.textContent!.split("Claude Code isn't on your PATH").length).toBe(2);
+    // Connecting would run the old Codex's plugin commands.
+    expect(
+      [...panel.querySelectorAll("button")].some((b) => b.textContent === "Connect Codex"),
+    ).toBe(false);
+    // The command is shown as is: `~` would not expand inside its quotes.
+    expect(panel.querySelector("#terminal-setup-command")!.textContent).toBe(command);
+    const copy = panel.querySelector<HTMLButtonElement>(
+      '#terminal-setup button[aria-label="Copy the command"]',
+    )!;
+    await act(async () => copy.click());
+    expect(writeText).toHaveBeenCalledWith(command);
+    expect(copy.textContent).toBe("Copied");
+  } finally {
+    Reflect.deleteProperty(window, "__TAURI_INTERNALS__");
+  }
+});
+
 it("says in desktop Settings when neither Claude Code nor Codex is installed", async () => {
   history.replaceState(null, "", "/s/test-ns/?page=settings&section=reviews");
   stubDiagnostics(async () => Response.json({ local: true, report: diagnosticsReport }));
@@ -1985,6 +2050,44 @@ it("says in desktop Settings when neither Claude Code nor Codex is installed", a
   } finally {
     Reflect.deleteProperty(window, "__TAURI_INTERNALS__");
   }
+});
+
+it("offers the desktop-setup command in setup when no agent is found", async () => {
+  const writeText = vi.fn(async (_: string) => {});
+  Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
+  const command = "'/home/user/.local/share/ai.baum/bin/baum' desktop-setup";
+  const settings = {
+    backend: "",
+    model: "",
+    automatic: true,
+    pull_requests: "both" as const,
+  };
+  const form = (detectionError: string | null) => (
+    <ReviewSettingsForm
+      settings={settings}
+      disabled={false}
+      onChange={() => {}}
+      available={[]}
+      detectionError={detectionError}
+      terminal={{
+        text: "Already installed? Run this in your terminal, then check again:",
+        command,
+      }}
+    />
+  );
+  await act(async () => root.render(form(null)));
+  const box = node.querySelector("#agent-installation")!;
+  expect(box.textContent).toContain("Install an agent to continue");
+  expect(box.querySelector("#terminal-setup")!.textContent).toContain(
+    "Already installed? Run this in your terminal, then check again:",
+  );
+  await act(async () =>
+    box.querySelector<HTMLButtonElement>('button[aria-label="Copy the command"]')!.click(),
+  );
+  expect(writeText).toHaveBeenCalledWith(command);
+  // When baum could not check, retrying comes first.
+  await act(async () => root.render(form("status failed")));
+  expect(node.querySelector("#terminal-setup")).toBeNull();
 });
 
 it("sets the desktop window's zoom in Settings and follows the shortcuts", async () => {

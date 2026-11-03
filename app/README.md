@@ -1264,12 +1264,10 @@ it to the lowest share left. Only
 plans the daemon could read show: a provider that is not installed, signed
 out or has not run yet is left out, and with neither readable (or a failed
 request) the box is not drawn. Which plans show is a choice in Settings
-(below): by default only those of the backends baum uses. The desktop setup's
-review step shows every plan, whatever the choice (`?all=1`), so the harness
-can be chosen knowing what each has to spare, with "Unavailable: <reason>" for
-a provider it cannot read. Both ask
+(below): by default only those of the backends baum uses. The desktop setup
+shows no plan usage. The sidebar asks
 `GET api/plan-usage?refresh=1` on mount and every five minutes (the daemon
-reads again at most once a minute), and work out "resets in" again every 30
+reads again at most once a minute), and works out "resets in" again every 30
 seconds between readings. Codex figures are live when Codex is signed in with
 ChatGPT; otherwise they come from its last session and, once older than 15
 minutes, say how old they are.
