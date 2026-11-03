@@ -171,9 +171,9 @@ mod tests {
     #[test]
     fn the_entry_starts_the_appimage_and_hides_once_it_is_gone() {
         let entry = menu_entry(
-            Path::new("/home/a/Applications/baum.AppImage"),
+            Path::new("/home/user/Applications/baum.AppImage"),
             Some(Path::new(
-                "/home/a/.local/share/com.usebaum.desktop/baum.png",
+                "/home/user/.local/share/com.usebaum.desktop/baum.png",
             )),
         )
         .unwrap();
@@ -181,9 +181,9 @@ mod tests {
             entry,
             "[Desktop Entry]\nType=Application\nName=baum\n\
              Comment=Keep up with what your coding agents build\n\
-             Exec=/home/a/Applications/baum.AppImage\n\
-             TryExec=/home/a/Applications/baum.AppImage\n\
-             Icon=/home/a/.local/share/com.usebaum.desktop/baum.png\n\
+             Exec=/home/user/Applications/baum.AppImage\n\
+             TryExec=/home/user/Applications/baum.AppImage\n\
+             Icon=/home/user/.local/share/com.usebaum.desktop/baum.png\n\
              Terminal=false\nCategories=Development;\nStartupWMClass=baum-desktop\n"
         );
     }
@@ -200,14 +200,14 @@ mod tests {
     #[test]
     fn the_entry_goes_in_the_xdg_data_directory() {
         assert_eq!(
-            entry_path_in(Some("/data".into()), Some("/home/a".into())),
+            entry_path_in(Some("/data".into()), Some("/home/user".into())),
             Some(PathBuf::from("/data/applications/baum-appimage.desktop"))
         );
         // A relative XDG_DATA_HOME is invalid and ignored.
         assert_eq!(
-            entry_path_in(Some("data".into()), Some("/home/a".into())),
+            entry_path_in(Some("data".into()), Some("/home/user".into())),
             Some(PathBuf::from(
-                "/home/a/.local/share/applications/baum-appimage.desktop"
+                "/home/user/.local/share/applications/baum-appimage.desktop"
             ))
         );
         assert_eq!(entry_path_in(None, None), None);
