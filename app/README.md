@@ -862,7 +862,8 @@ fixing; for an Update, where it stands; for a Clone, what baum will do. The
 saved review is read when its pull request is selected, and again only for a
 new version. While the first review is being generated, What changed shows
 the available draft summary and section titles, updating as the draft advances.
-A saved review stays visible while a replacement is being generated.
+Until a summary exists, a live line under the actions says the review is
+being generated. A saved review stays visible while a replacement is being generated.
 A pull request back in the queue as a Fix whose latest fix job
 failed says "The last fix failed: <reason>", with **See what the agent did**
 (the transcript, else the job in the list). Agent sessions working on its

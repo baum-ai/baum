@@ -2196,6 +2196,14 @@ function Panel({
           ) : null}
         </div>
       </div>
+      {/* Until the review's summary is written there is nothing under the
+          actions to read, so say it is on its way. */}
+      {entry.status === "generating" && !doc?.summary.text ? (
+        <div className="upnext-working" role="status">
+          <NineDots size={14} />
+          <span>Generating the review.</span>
+        </div>
+      ) : null}
       {score != null ? (
         <RiskCard score={score} text={riskText(entry)}>
           {reason ? (

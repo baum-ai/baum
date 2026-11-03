@@ -471,6 +471,17 @@ it("keeps a snoozed Fix under Snoozed when its thread resolves and it waits on c
   expect(await cleared()).toBeNull();
 });
 
+it("says under the actions that the review is generating until its summary is written", async () => {
+  entries = [mine(7, { status: "generating", unresolved: 1 })];
+  await render();
+  const status = [...panel().querySelectorAll('[role="status"]')].find((el) =>
+    el.textContent?.includes("Generating the review"),
+  );
+  expect(status?.textContent).toBe("Generating the review.");
+  // Straight after the actions, so it reads under Open, Comment and Snooze.
+  expect(status?.previousElementSibling?.classList.contains("upnext-actions")).toBe(true);
+});
+
 it("shows the available summary in a Fix preview while its first review is being written", async () => {
   entries = [mine(7, { status: "generating", unresolved: 1 }), mine(8, { checks: "failing" })];
   jobsList = [fixJobOf({ id: "review-7", kind: undefined, pr: 7, draft: 1 })];
@@ -488,6 +499,7 @@ it("shows the available summary in a Fix preview while its first review is being
   expect(panel().textContent).toContain("What needs fixing");
   expect(panel().textContent).toContain("What changed");
   expect(panel().textContent).toContain(draft.summary.text);
+  expect(panel().textContent).not.toContain("Generating the review");
   await act(async () => row("Change 8").click());
   expect(panel().textContent).not.toContain(draft.summary.text);
 });
@@ -502,6 +514,7 @@ it("keeps the saved summary in the preview while a replacement review is being w
   vi.stubGlobal("fetch", fetch);
   await render();
   expect(panel().textContent).toContain(example.summary.text);
+  expect(panel().textContent).not.toContain("Generating the review");
   expect(fetch.mock.calls.some(([path]) => String(path).includes("/draft"))).toBe(false);
 });
 
