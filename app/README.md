@@ -2010,7 +2010,8 @@ section opens with a banner whose Install the CLI button goes to This computer
 and scrolls to the Command line card; the section list marks This computer
 with a caution dot and "baum CLI not installed", and the card itself is
 outlined in the caution colour with its install button promoted to primary.
-No agent with baum's hooks installed (an unreadable hook state does not count)
+No agent with baum's hooks installed (an unreadable hook state, overall or for
+any one agent, does not count)
 gets the same treatment: the badge, a banner whose Connect an agent button
 opens Connections at the Agent hooks card, a caution dot and "No coding agent
 connected" on Connections, and the card outlined with its Connect buttons
@@ -2020,7 +2021,8 @@ hooks card keeps its Claude Code and Codex rows and shows Checking… beside eac
 name in place of its state.
 
 The Sessions page shows a notice while the baum CLI is missing or no agent has
-baum's hooks installed (an unreadable hook state counts as neither), since the
+baum's hooks installed (an unreadable hook state, overall or for any one agent,
+counts as neither), since the
 hooks run `baum` from the PATH and report nothing without it. It links to
 whichever fixes apply: Connect an agent (Settings, Connections) and Install
 baum CLI (Settings, This computer).

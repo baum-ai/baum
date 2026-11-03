@@ -436,9 +436,12 @@ export function commandMissing(view: SetupView | null | undefined): boolean {
 }
 
 /** Whether no agent has baum's hooks installed, so no session can reach the
- *  app. An unreadable hook state is not counted as missing. */
+ *  app. An unreadable hook state, overall or for any one agent, is not counted
+ *  as missing: that agent may well be connected. */
 export function hooksMissing(view: SetupView | null | undefined): boolean {
-  return !!view && !view.hooks.error && !view.hooks.agents.some((agent) => agent.installed);
+  if (!view || view.hooks.error) return false;
+  const agents = view.hooks.agents;
+  return !agents.some((agent) => agent.error) && !agents.some((agent) => agent.installed);
 }
 
 export const hooksMissingWarning =
