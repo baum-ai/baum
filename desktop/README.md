@@ -1029,13 +1029,31 @@ makes it.
 
 ### Linux
 
-The Linux bundles are built in this directory's Docker image, on Debian 12
-(the base image pinned by digest), so they need glibc 2.34 or newer and
-WebKitGTK 2.38 or newer with the 4.1 API (`libwebkit2gtk-4.1-0`; Debian 12,
-Ubuntu 22.04 and newer). The deb declares that dependency and installs
-`baum-desktop` and `baum` in `/usr/bin`. The AppImage carries its own
-WebKitGTK and updates itself in place, so keep it in a directory you can
-write (for example `~/Applications`). There is no Flatpak or Snap. x86_64 is
+The Linux bundles are built in this directory's Docker image, on Ubuntu
+22.04 (the base image pinned by digest), the oldest supported distribution.
+They need glibc 2.35 or newer and WebKitGTK with the 4.1 API
+(`libwebkit2gtk-4.1-0`; Ubuntu 22.04, Debian 12 and newer). The deb declares
+that dependency and installs `baum-desktop` and `baum` in `/usr/bin`. The
+AppImage carries its own WebKitGTK, GTK and Pango but uses the system's
+glibc, HarfBuzz and the other libraries linuxdeploy leaves out, which is why
+it is built on the oldest system: one built on Debian 12 carries a Pango
+that needs HarfBuzz 4, and fails on Ubuntu 22.04. It updates itself in
+place, so keep it in a directory you can write (for example
+`~/Applications`).
+
+The AppImage has no AppImage magic bytes (`AI\x02` at offset 8):
+`scripts/bundle.sh` clears them. AppImageLauncher 2.x registers a kernel
+binfmt rule on those bytes that runs every AppImage through its interpreter,
+which cannot start the static AppImage runtime ("Can't open squashfs image:
+Bad address"), and the rule outlives the package until a reboot. Without
+the bytes the kernel runs the file directly. Integration tools that look for
+them (AppImageLauncher, Gear Lever, appimaged) no longer add the app to the
+applications menu, so the app does (`src/menu_entry.rs`): every start of an
+installed AppImage writes `$XDG_DATA_HOME/applications/baum-appimage.desktop`
+(default `~/.local/share`), naming the AppImage's current path, with
+`TryExec` so menus drop it once the file is gone and the icon copied to
+`baum.png` in the app's data directory. Hiding the entry with `NoDisplay=true`
+or `Hidden=true` keeps it hidden. There is no Flatpak or Snap. x86_64 is
 the supported architecture; arm64 is built on GitHub's arm64 runners and
 published when that build succeeds. Linux bundles are not OS-signed; the
 AppImage carries the updater signature.

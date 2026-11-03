@@ -175,8 +175,8 @@ jobs:
             cargo install --locked tauri-cli --version 2.12.3
           fi
 
-      # Linux bundles are built on Debian 12 so they run on older systems
-      # too, in the same image as `just desktop::bundle`.
+      # Linux bundles are built on Ubuntu 22.04, the oldest supported
+      # distribution, in the same image as `just desktop::bundle`.
       - name: Build the Linux build image
         if: runner.os == 'Linux'
         run: docker build --tag baum-desktop-build desktop

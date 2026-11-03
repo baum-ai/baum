@@ -264,7 +264,7 @@ fn managed_copy(app: &AppHandle) -> Option<PathBuf> {
     )
 }
 
-fn running_as_appimage() -> bool {
+pub fn running_as_appimage() -> bool {
     let (Some(_), Some(appdir)) = (std::env::var_os("APPIMAGE"), std::env::var_os("APPDIR")) else {
         return false;
     };
