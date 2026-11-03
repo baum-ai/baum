@@ -625,7 +625,8 @@ it("opens a waiting session's Reply with its peek on a click on its card", async
 it("moves the peek and reply to another card on a click, and peeks alone where no reply goes", async () => {
   await render([
     session({ state: "running" }),
-    session({ session_id: "s2", state: "running" }),
+    // Started earlier, so Running now lists s1 first.
+    session({ session_id: "s2", state: "running", started_at: ago(8 * 60) }),
     session({
       session_id: "s3",
       state: "idle",
