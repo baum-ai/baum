@@ -75,7 +75,10 @@ test("Go to and the shortcuts sheet give the focus back, and the page keys keep 
   await expect(page.getByRole("dialog")).toHaveCount(0);
   await expect(link).toBeFocused();
 
+  // `?` opens the help menu on Show shortcuts; Enter shows the sheet.
   await page.keyboard.press("?");
+  await expect(page.getByRole("menuitem", { name: "Show shortcuts" })).toBeFocused();
+  await page.keyboard.press("Enter");
   await expect(page.getByRole("dialog", { name: "Keyboard shortcuts" })).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(page.getByRole("dialog")).toHaveCount(0);

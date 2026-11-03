@@ -15,7 +15,7 @@ import { SessionCard } from "@baum/viewer/components/session-card";
 import { SessionTranscript } from "@baum/viewer/components/transcript";
 import { Markdown } from "@baum/viewer/components/markdown";
 import { ChevronLeftIcon } from "@baum/viewer/components/icons";
-import { Button } from "@baum/viewer/components/ui";
+import { CloseButton } from "@baum/viewer/components/ui";
 import { parseTranscript, type LocalTranscript } from "@baum/viewer/local-transcript";
 import type { TranscriptSession, TranscriptSource } from "@baum/viewer/transcript";
 import type { ViewerLinkProps } from "@baum/viewer/navigation";
@@ -399,9 +399,7 @@ function MessageReader({ message, onClose }: { message: HTMLElement; onClose: ()
       }}
     >
       <div className="local-message-reader-bar">
-        <Button size="compact" variant="secondary" onClick={() => dialog.current?.close()}>
-          Close
-        </Button>
+        <CloseButton onClick={() => dialog.current?.close()} />
       </div>
       <div
         ref={content}

@@ -72,6 +72,7 @@ const session = (over: Partial<LiveSession> = {}): LiveSession => ({
 let root: Root, node: HTMLDivElement;
 let liveBody: unknown;
 let liveFails = false;
+let indexEntries: Entry[] = [];
 const streams: EventTarget[] = [];
 beforeEach(() => {
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
@@ -80,6 +81,7 @@ beforeEach(() => {
   localStorage.clear();
   liveBody = { sessions: [] };
   liveFails = false;
+  indexEntries = [entry(7), entry(8)];
   streams.length = 0;
   node = document.createElement("div");
   document.body.append(node);
@@ -118,7 +120,7 @@ beforeEach(() => {
                     },
                   ])
                 : path.startsWith("/s/test-ns/api/index")
-                  ? Response.json({ entries: [entry(7), entry(8)], problems: [] })
+                  ? Response.json({ entries: indexEntries, problems: [] })
                   : path === "/s/test-ns/api/jobs"
                     ? Response.json({ jobs: [] })
                     : path === "/s/test-ns/api/prs"
@@ -485,4 +487,12 @@ it("refreshes linked evidence while the review stays open", async () => {
   } finally {
     vi.useRealTimers();
   }
+});
+
+it("uses known merged PR metadata when an older daemon omits session PR state", async () => {
+  history.replaceState(null, "", "/s/test-ns/?page=sessions");
+  indexEntries[0]!.pull_request.state = "MERGED";
+  liveBody = { sessions: [session()] };
+  await act(async () => root.render(<App />));
+  expect(node.querySelector('.local-session-pr [title="PR #7 · Merged"]')).not.toBeNull();
 });

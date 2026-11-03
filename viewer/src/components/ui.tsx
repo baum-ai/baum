@@ -1,15 +1,10 @@
-import type {
-  AnchorHTMLAttributes,
-  ButtonHTMLAttributes,
-  ComponentProps,
-  KeyboardEvent,
-  ReactNode,
-} from "react";
+import type { AnchorHTMLAttributes, ComponentProps, KeyboardEvent, ReactNode } from "react";
 
 import { cn, FOCUS_RING } from "./classnames";
 import { tabIds } from "./tabs";
 import { SEGMENT_BASE, SEGMENTED_TRACK, segmentedTileClass } from "./segmented";
 import { actionClassName, type ActionOptions } from "./actions";
+import { CloseIcon } from "./icons";
 
 export type { ActionOptions };
 
@@ -392,7 +387,7 @@ export function IconButton({
   children,
   className,
   ...props
-}: ButtonHTMLAttributes<HTMLButtonElement> & { label: string }) {
+}: ComponentProps<"button"> & { label: string }) {
   return (
     <button
       type="button"
@@ -407,6 +402,19 @@ export function IconButton({
     >
       {children}
     </button>
+  );
+}
+
+/** The cross that closes a dialog, sheet or panel. `label` names what it
+ *  closes when "Close" alone would be ambiguous. */
+export function CloseButton({
+  label = "Close",
+  ...props
+}: Omit<ComponentProps<"button">, "children"> & { label?: string }) {
+  return (
+    <IconButton label={label} {...props}>
+      <CloseIcon />
+    </IconButton>
   );
 }
 

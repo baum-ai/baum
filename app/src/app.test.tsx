@@ -725,14 +725,105 @@ it("lists diagnostics problems first with status text and fixes", async () => {
   await act(async () => root.render(<App />));
   const text = node.textContent ?? "";
   expect(text).toContain("Diagnostics");
-  expect(text).toContain("Overall: Problem. 1 problem found.");
+  expect(text).toContain("Overall: Problem. 1 problem found");
   for (const word of ["OK", "Warning", "Problem"]) expect(text).toContain(word);
   expect(text).toContain("Fix: Connect GitHub in baum Settings.");
   expect(text).toContain("Fix: Upgrade gh.");
   expect(text).toContain("/usr/bin/git");
   expect(text).toContain("2.40.0");
-  const checks = [...node.querySelectorAll("li h3")].map((h) => h.textContent);
+  const checks = [...node.querySelectorAll("li h4")].map((h) => h.textContent);
   expect(checks).toEqual(["GitHub token", "GitHub CLI", "git"]);
+});
+it("opens diagnostics on its title and copies the report as Markdown", async () => {
+  history.replaceState(null, "", "/s/test-ns/?page=diagnostics");
+  stubDiagnostics(async () =>
+    Response.json({ local: true, home: "/usr", report: diagnosticsReport }),
+  );
+  const writeText = vi.fn(async (_: string) => {});
+  Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
+  // The first-run tour takes the focus afterwards here, so watch the calls.
+  const focus = vi.spyOn(HTMLElement.prototype, "focus");
+  await act(async () => root.render(<App />));
+  const title = node.querySelector("#diagnostics-dialog-title");
+  expect(focus.mock.contexts).toContain(title);
+  focus.mockRestore();
+  const copy = [...node.querySelectorAll("button")].find((b) => b.textContent === "Copy")!;
+  await act(async () => copy.click());
+  expect(writeText).toHaveBeenCalledWith(
+    [
+      "### baum diagnostics",
+      "",
+      "**Overall:** Problem. 1 problem found",
+      "",
+      "- **GitHub token** (Problem): No token found.",
+      "  - Fix: Connect GitHub in baum Settings.",
+      "  - Source: none",
+      "- **GitHub CLI** (Warning): gh is old.",
+      "  - Fix: Upgrade gh.",
+      "  - Version: 2.40.0",
+      "- **git** (OK): git is available.",
+      "  - Path: `~/bin/git`",
+      "",
+    ].join("\n"),
+  );
+  expect(copy.textContent).toBe("Copied");
+});
+it("shows the home directory in diagnostics paths as ~", async () => {
+  history.replaceState(null, "", "/s/test-ns/?page=diagnostics");
+  stubDiagnostics(async () =>
+    Response.json({
+      local: true,
+      home: "/home/alice",
+      report: {
+        status: "ok",
+        checks: [
+          {
+            id: "baum",
+            label: "baum command",
+            status: "ok",
+            detail: "hooks run this baum (/home/alice/bin/baum)",
+            path: "/home/alice/.local/bin/baum",
+          },
+        ],
+      },
+    }),
+  );
+  await act(async () => root.render(<App />));
+  const text = node.textContent ?? "";
+  expect(text).toContain("hooks run this baum (~/bin/baum)");
+  expect(text).toContain("~/.local/bin/baum");
+  expect(text).not.toContain("/home/alice");
+});
+it("reports a problem from Diagnostics with the parts it already has", async () => {
+  history.replaceState(null, "", "/s/test-ns/?page=diagnostics");
+  Object.defineProperty(HTMLDialogElement.prototype, "showModal", {
+    configurable: true,
+    value(this: HTMLDialogElement) {
+      this.open = true;
+    },
+  });
+  const reportButton = () =>
+    [
+      ...node.querySelectorAll<HTMLButtonElement>("[aria-labelledby=diagnostics-heading] button"),
+    ].find((b) => b.textContent === "Report a problem");
+  const parts = {
+    version: "1.2.3",
+    os: "darwin/arm64",
+    versions: "- gh: 2.60.0",
+    diagnostics: "Overall: problem",
+    max_url: 6500,
+    truncation_note: "(truncated)",
+  };
+  stubDiagnostics(async () =>
+    Response.json({ local: true, report: diagnosticsReport, report_issue: parts }),
+  );
+  await act(async () => root.render(<App />));
+  expect(node.textContent).toContain("nothing is sent until you submit it");
+  await act(async () => reportButton()!.click());
+  const dialog = node.querySelector("dialog.report-problem")!;
+  expect(dialog.querySelector("[aria-label='What is attached']")!.textContent).toContain(
+    "- gh: 2.60.0",
+  );
 });
 it("shows diagnostics loading, then re-runs on Check again and disables it meanwhile", async () => {
   history.replaceState(null, "", "/s/test-ns/?page=diagnostics");
@@ -796,7 +887,7 @@ it("opens the diagnostics page from its address", async () => {
   );
   await act(async () => root.render(<App />));
   expect(node.textContent).toContain("Check this computer");
-  expect(node.textContent).toContain("Overall: Problem. 1 problem found.");
+  expect(node.textContent).toContain("Overall: Problem. 1 problem found");
   expect(node.textContent).not.toContain("Show the fixes");
   expect(calls.count).toBe(1);
 });
@@ -2004,7 +2095,7 @@ const press = (key: string, init: KeyboardEventInit = {}) =>
   act(async () => {
     document.body.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, ...init }));
   });
-it("toggles the shortcuts sheet with ? and from its button", async () => {
+it("opens the help menu with ?, the sheet with Enter on it, and hides the sheet with ?", async () => {
   entries = [entry(1)];
   // jsdom has no modal dialogs.
   Object.defineProperty(HTMLDialogElement.prototype, "showModal", {
@@ -2015,13 +2106,56 @@ it("toggles the shortcuts sheet with ? and from its button", async () => {
   });
   await act(async () => root.render(<App />));
   await press("?");
+  expect(node.querySelector('button[aria-label="Help"]')!.getAttribute("aria-expanded")).toBe(
+    "true",
+  );
+  // The keys are on Show shortcuts; Enter presses it, as a click does here.
+  const focused = document.activeElement as HTMLElement;
+  expect(focused.getAttribute("role")).toBe("menuitem");
+  expect(focused.textContent).toBe("Show shortcuts");
+  await act(async () => focused.click());
+  expect(node.querySelector('[role="menu"]')).toBeNull();
   expect(node.querySelector("dialog")?.textContent).toContain("Keyboard shortcuts");
   await press("?");
   expect(node.querySelector("dialog")).toBeNull();
+  expect(node.querySelector('[role="menu"]')).toBeNull();
+  // The keys go back to where they were, not to `?`, which would draw its ring.
+  expect(document.activeElement?.getAttribute("aria-label")).not.toBe("Help");
   await act(async () =>
     node.querySelector<HTMLElement>('button[aria-label="Keyboard shortcuts"]')!.click(),
   );
   expect(node.querySelector("dialog")?.textContent).toContain("Refresh from GitHub");
+});
+it("offers the shortcuts, a problem report and the docs from the ? beside Settings", async () => {
+  entries = [entry(1)];
+  Object.defineProperty(HTMLDialogElement.prototype, "showModal", {
+    configurable: true,
+    value(this: HTMLDialogElement) {
+      this.open = true;
+    },
+  });
+  const open = vi.fn();
+  vi.stubGlobal("open", open);
+  await act(async () => root.render(<App />));
+  const help = () => node.querySelector<HTMLButtonElement>('button[aria-label="Help"]')!;
+  const choose = async (label: string) => {
+    await act(async () => help().click());
+    expect(help().getAttribute("aria-expanded")).toBe("true");
+    const items = [...node.querySelectorAll<HTMLElement>('[role="menu"] [role^=menuitem]')];
+    expect(items.map((item) => item.textContent)).toEqual([
+      "Show shortcuts",
+      "Report a problem",
+      "Open the docs",
+    ]);
+    await act(async () => items.find((item) => item.textContent?.startsWith(label))!.click());
+  };
+  await choose("Show shortcuts");
+  expect(node.querySelector("dialog")?.textContent).toContain("Keyboard shortcuts");
+  await press("?");
+  await choose("Open the docs");
+  expect(open).toHaveBeenCalledWith("https://docs.usebaum.com/", "_blank", "noopener,noreferrer");
+  await choose("Report a problem");
+  expect(node.querySelector("dialog.report-problem h2")!.textContent).toBe("Report a problem");
 });
 it("goes back to the inbox from a pull request page with u or Escape, keeping the filter", async () => {
   entries = [{ ...entry(42), clone_id: undefined, needs_clone: true }];

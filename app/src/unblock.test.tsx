@@ -104,7 +104,9 @@ afterEach(async () => {
   vi.unstubAllGlobals();
 });
 const button = (text: string) =>
-  Array.from(node.querySelectorAll("button")).find((b) => b.textContent?.includes(text))!;
+  Array.from(node.querySelectorAll("button")).find((b) =>
+    (b.getAttribute("aria-label") ?? b.textContent)?.includes(text),
+  )!;
 
 it("offers Update branch only to someone who can push to an open, clean, behind pull request", () => {
   expect(canUpdateBranch(entry())).toBe(true);
@@ -144,6 +146,7 @@ it("confirms an update with the branches named, then sends the head the page sho
   expect(updated).toHaveBeenCalledOnce();
   expect(node.textContent).toContain("GitHub accepted the update");
   expect(button("Close")).toBeTruthy();
+  expect(document.activeElement).toBe(button("Close"));
   expect(node.textContent).not.toContain("Cancel");
 });
 

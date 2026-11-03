@@ -696,7 +696,7 @@ export function usePageFilter(page: FilterPage) {
     },
     /** Keeps nothing for the page. */
     reset() {
-      if (stored !== undefined) write(null);
+      write(null);
     },
   };
 }

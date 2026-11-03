@@ -10,7 +10,14 @@ import {
   type FormEvent,
   type ReactNode,
 } from "react";
-import { Alert, Badge, Button, LiveDot, SegmentedControl } from "@baum/viewer/components/ui";
+import {
+  Alert,
+  Badge,
+  Button,
+  CloseButton,
+  LiveDot,
+  SegmentedControl,
+} from "@baum/viewer/components/ui";
 import {
   formatCount,
   formatDateTime,
@@ -1042,7 +1049,6 @@ export function SettingsPage({
   diagnosticsOpen,
   setDiagnosticsOpen,
   onDiagnostics,
-  authRevision,
   authChanged,
   codexTrust,
 }: {
@@ -1056,7 +1062,6 @@ export function SettingsPage({
   diagnosticsOpen: boolean;
   setDiagnosticsOpen: (open: boolean) => void;
   onDiagnostics: (report: DiagnosticReport | null) => void;
-  authRevision: number;
   authChanged: () => void;
   codexTrust?: ReturnType<typeof useCodexHookTrust>;
 }) {
@@ -1125,12 +1130,7 @@ export function SettingsPage({
         detail="How baum reviews and fixes pull requests on this computer"
       />
       {diagnosticsOpen ? (
-        <DiagnosticsDialog
-          close={() => setDiagnosticsOpen(false)}
-          onReport={onDiagnostics}
-          authRevision={authRevision}
-          authChanged={authChanged}
-        />
+        <DiagnosticsDialog close={() => setDiagnosticsOpen(false)} onReport={onDiagnostics} />
       ) : null}
       <div className="local-page-body settings-layout">
         <nav ref={keys.nav} aria-label="Settings sections" className="settings-nav">
@@ -1218,7 +1218,7 @@ export function SettingsPage({
                     : "GitHub, where baum finds pull requests."
                 }
               />
-              {diagnosticsOpen ? null : <GitHubConnectionSection onChanged={authChanged} />}
+              <GitHubConnectionSection onChanged={authChanged} />
               {setup.desktop ? <AgentHooksPanel setup={setup} /> : null}
               {setup.feedback}
             </section>
@@ -1891,15 +1891,14 @@ function AgentEnvSection() {
 function DiagnosticsDialog({
   close,
   onReport,
-  authRevision,
-  authChanged,
 }: {
   close: () => void;
   onReport: (report: DiagnosticReport | null) => void;
-  authRevision: number;
-  authChanged: () => void;
 }) {
   const dialog = useModal();
+  const title = useRef<HTMLHeadingElement>(null);
+  // Open on the title rather than on the close control, the first button.
+  useEffect(() => title.current?.focus({ preventScroll: true }), []);
   return (
     <dialog
       ref={dialog}
@@ -1909,15 +1908,14 @@ function DiagnosticsDialog({
     >
       <div className="local-dialog-head">
         <div>
-          <h2 id="diagnostics-dialog-title">Check this computer</h2>
+          <h2 ref={title} id="diagnostics-dialog-title" tabIndex={-1} className="outline-none">
+            Check this computer
+          </h2>
           <p>What baum needs here, what it found, and how to fix each problem.</p>
         </div>
-        <Button variant="ghost" size="compact" onClick={close}>
-          Close
-        </Button>
+        <CloseButton onClick={close} />
       </div>
-      <GitHubConnectionSection onChanged={authChanged} />
-      <DiagnosticsSection key={authRevision} onReport={onReport} />
+      <DiagnosticsSection onReport={onReport} />
     </dialog>
   );
 }

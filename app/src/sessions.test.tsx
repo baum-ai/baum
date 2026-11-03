@@ -537,7 +537,6 @@ it("toggles Codex approvals in Settings, and hides the toggle without the route"
           diagnosticsOpen={false}
           setDiagnosticsOpen={() => {}}
           onDiagnostics={() => {}}
-          authRevision={0}
           authChanged={() => {}}
         />,
       ),
@@ -1266,3 +1265,25 @@ it("shows ambiguous and stale PR associations explicitly", async () => {
   await render([session({ link_status: "stale", pr: 7 })]);
   expect(node.textContent).toContain("PR link may be out of date");
 });
+
+for (const [state, label] of [
+  ["OPEN", "Open"],
+  ["MERGED", "Merged"],
+  ["CLOSED", "Closed"],
+] as const) {
+  it(`shows a ${label.toLowerCase()} PR pill on the session`, async () => {
+    await render([
+      session({
+        state: "idle",
+        waiting_reason: "turn_finished",
+        waiting_since: ago(60),
+        pr: 1040,
+        pr_state: state,
+      }),
+    ]);
+    const pill = node.querySelector(".local-session-pr")!;
+    expect(pill.textContent).toBe("PR #1040");
+    expect(pill.querySelector("[title]")?.getAttribute("title")).toBe(`PR #1040 · ${label}`);
+    expect(pill.querySelector(".rounded-full")).not.toBeNull();
+  });
+}

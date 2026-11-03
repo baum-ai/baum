@@ -60,7 +60,13 @@ test("filters the Inbox from the menu and as typed, saves an inbox, and edits a 
   // The menu lists the fields; a field's values open beside it.
   const filter = page.locator("summary.filter-menu-button");
   const panel = page.locator(".filter-menu-panel");
+  await page.keyboard.press("/");
+  await expect(page.getByRole("combobox", { name: "Add filter", exact: true })).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(panel).toHaveCount(0);
+  await expect(filter).not.toBeFocused();
   await filter.click();
+  await expect(page.getByRole("combobox", { name: "Add filter", exact: true })).toBeFocused();
   await page.getByRole("option", { name: /^Author/ }).hover();
   await page.getByRole("listbox", { name: "Author" }).getByRole("option", { name: /^Me/ }).click();
   await expect(requested).toHaveCount(0);
@@ -85,6 +91,20 @@ test("filters the Inbox from the menu and as typed, saves an inbox, and edits a 
 
   // Typed, it suggests a field, then its operators, then its values.
   await filter.click();
+  await page.keyboard.down("Alt");
+  await expect(filter.locator(".key-hint")).toBeVisible();
+  await expect(
+    panel.getByRole("button", { name: "Clear", exact: true }).locator(".key-hint"),
+  ).toBeVisible();
+  await page.keyboard.up("Alt");
+  await expect(filter.locator(".key-hint")).toBeHidden();
+  await page.keyboard.press("Control+c");
+  await expect(bar).toHaveCount(0);
+  const addFilter = page.getByRole("combobox", { name: "Add filter", exact: true });
+  await expect(addFilter).toBeFocused();
+  await addFilter.fill("author=@me");
+  await page.keyboard.press("Enter");
+  await filter.click();
   await bar.fill("");
   await bar.pressSequentially("revi");
   await expect(page.getByRole("option", { name: /^review\s*Review$/ })).toBeVisible();
@@ -108,16 +128,25 @@ test("filters the Inbox from the menu and as typed, saves an inbox, and edits a 
   await expect(conflicted).toHaveCount(1);
 
   // Create inbox makes an inbox with the same query.
-  await panel.getByRole("button", { name: "Create inbox" }).click();
+  await bar.press("Control+Enter");
   await expect(page).toHaveURL(/page=inbox-edit&inbox=[0-9a-f]{32}/);
-  await expect(page.getByLabel("Name")).toHaveValue("Filtered");
-  const edited = page.locator(".inbox-query textarea");
-  await expect(edited).toHaveValue("review=approved OR is=conflict");
-  await shot(page, "4-saved-inbox-edit");
-
-  // In the saved inbox the icon is lit and the menu starts from its query.
-  await page.getByRole("link", { name: /^← Filtered/ }).click();
+  const name = page.getByLabel("Name", { exact: true });
+  await expect(name).toHaveValue("Filtered");
+  await expect(name).toBeFocused();
+  await name.fill("Filtered");
+  await name.press("Control+Enter");
+  await expect(page).toHaveURL(/\?inbox=[0-9a-f]{32}/);
   await expect(page.locator(".upnext-list-title h1")).toHaveText("Filtered");
+  const edited = page.locator(".inbox-query textarea");
+  const sidebar = page.getByRole("navigation", { name: "Main" });
+  await sidebar
+    .getByRole("link", { name: /^Inbox/ })
+    .first()
+    .click();
+  await expect(filter).toHaveAccessibleName("Filter");
+  await page.reload();
+  await expect(filter).toHaveAccessibleName("Filter");
+  await sidebar.getByRole("link", { name: /^Filtered/ }).click();
   await expect(filter).toHaveAccessibleName("Filter, in force");
   await filter.click();
   await expect(bar).toHaveValue("review=approved OR is=conflict");
@@ -144,7 +173,6 @@ test("filters the Inbox from the menu and as typed, saves an inbox, and edits a 
   await page.locator("summary.inbox-head-dot").click();
   await page.getByRole("radio", { name: "Green" }).click();
   await expect(page.locator(".upnext-list-title")).toHaveClass(/inbox-green/);
-  const sidebar = page.getByRole("navigation", { name: "Main" });
   await expect(sidebar.getByRole("link", { name: /^Approved/ })).toBeVisible();
 
   // A right click on it in the sidebar offers Edit and Delete.
@@ -171,7 +199,8 @@ test("filters Pull requests, saves and edits a tab, and reads a repository from 
   const filter = page.locator("summary.filter-menu-button");
   const panel = page.locator(".filter-menu-panel");
   const bar = panel.getByRole("combobox", { name: "Filter pull requests" });
-  await filter.click();
+  await page.keyboard.press("/");
+  await expect(page.getByRole("combobox", { name: "Add filter", exact: true })).toBeFocused();
   await page.getByRole("combobox", { name: "Add filter" }).fill("assig");
   await page.keyboard.press("Enter");
   await page.keyboard.press("Enter");

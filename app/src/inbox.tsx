@@ -326,11 +326,6 @@ export function Inbox({
         event.preventDefault();
         fix(entry);
         return;
-      case "generate":
-        if (!entry || !generate || entry.status === "generating") return;
-        event.preventDefault();
-        generate(entry);
-        return;
       case "transcript": {
         const run = entry && watchableFix(entry, jobs);
         if (!run) return;
@@ -388,7 +383,6 @@ export function Inbox({
     if (generate && clone && entry.status !== "generating")
       items.push({
         label: entry.version_count > 0 ? "Regenerate review" : "Generate review",
-        hint: "g",
         onSelect: () => generate(entry),
       });
     if (!entry.needs_clone)

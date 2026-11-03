@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/baum-ai/baum/blob/main/SECURITY.md
+    about: Do not open a public issue for a vulnerability. SECURITY.md says how to report it privately.

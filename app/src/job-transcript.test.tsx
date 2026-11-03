@@ -4,6 +4,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { Job } from "./api";
 import {
+  EntryView,
   groupEntries,
   JobPage,
   JobTranscript,
@@ -32,6 +33,32 @@ const entry = (seq: number, rest: Partial<TranscriptEntry>): TranscriptEntry => 
   time: "2026-10-27T10:00:00Z",
   kind: "message",
   ...rest,
+});
+
+it("folds review JSON into an expandable formatted output without changing prose", async () => {
+  const text = JSON.stringify({ schema: "baum.review/1", sections: [{ title: "Changes" }] });
+  await act(async () => root.render(<EntryView entry={entry(1, { text })} />));
+  const details = node.querySelector("details")!;
+  expect(details.open).toBe(false);
+  expect(details.querySelector("summary")?.textContent).toBe("Review output");
+  expect(details.querySelector("pre")?.textContent).toBe(JSON.stringify(JSON.parse(text), null, 2));
+  await act(async () =>
+    root.render(<EntryView entry={entry(2, { text: "Checking **changes**." })} />),
+  );
+  expect(node.querySelector("details")).toBeNull();
+  expect(node.querySelector("strong")?.textContent).toBe("changes");
+});
+
+it.each([
+  '{"context":{"area":{"text":"Codebase context"}}}',
+  '{"sections":[{"attention":{"text":"Details"}}]}',
+  '[{"text":"Result"}]',
+  '```json\n{"sections":[]}\n```',
+])("folds stage JSON without a schema marker: %s", async (text) => {
+  await act(async () => root.render(<EntryView entry={entry(1, { text })} />));
+  expect(node.querySelector("details")?.open).toBe(false);
+  expect(node.querySelector("summary")?.textContent).toBe("Structured output");
+  expect(node.querySelector("pre")?.textContent).toContain("\n");
 });
 
 let root: Root;

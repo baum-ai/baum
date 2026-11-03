@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -211,10 +212,19 @@ type pr struct {
 	// write is the author's permission: "" write, "no" or "unknown".
 	write     string
 	teamKnown *bool
+	updated   time.Time
+	// branch and base are the head and base branch names.
+	branch, base string
 }
 
 func (h *harness) observe(prs ...pr) {
 	h.t.Helper()
+	h.scheduler.Observe(context.Background(), h.snapshot(prs...))
+}
+
+// snapshot is a discovery poll of org/repo now that shows prs, whose heads
+// it gives the fake GitHub.
+func (h *harness) snapshot(prs ...pr) discovery.Snapshot {
 	snapshot := discovery.Snapshot{Repository: "org/repo", FetchedAt: h.now, PullRequests: []discovery.PullRequest{}}
 	for _, p := range prs {
 		var write *bool
@@ -229,9 +239,9 @@ func (h *harness) observe(prs ...pr) {
 			team = *p.teamKnown
 		}
 		h.exec.setHead(p.number, p.head, p.draft)
-		snapshot.PullRequests = append(snapshot.PullRequests, discovery.PullRequest{Repository: "org/repo", Number: p.number, HeadSHA: p.head, State: "OPEN", Fork: p.fork, Draft: p.draft, AuthoredByMe: p.authored, ReviewRequestedFromMe: p.requested, AuthorHasWrite: write, TeamMembershipKnown: team})
+		snapshot.PullRequests = append(snapshot.PullRequests, discovery.PullRequest{Repository: "org/repo", Number: p.number, HeadSHA: p.head, State: "OPEN", Fork: p.fork, Draft: p.draft, AuthoredByMe: p.authored, ReviewRequestedFromMe: p.requested, AuthorHasWrite: write, TeamMembershipKnown: team, UpdatedAt: p.updated, HeadRef: p.branch, BaseRef: p.base})
 	}
-	h.scheduler.Observe(context.Background(), snapshot)
+	return snapshot
 }
 
 // queued lists repository#PR@head:trigger of every automatic job so far.
@@ -1174,4 +1184,138 @@ func TestAnOldCursorAgentNoticeIsDropped(t *testing.T) {
 	if o, err := h.scheduler.Overview(context.Background()); err != nil || len(o.Repositories) != 1 || o.Repositories[0].Notice != "" {
 		t.Fatalf("overview %+v %v", o, err)
 	}
+}
+
+// Setup's catch-up reviews the most recently updated pull requests automatic
+// generation covers, though open before the baseline, and what it chose
+// already reviewed counts; afterwards only new heads trigger as usual.
+func TestCatchUpReviewsTheLatestEligiblePullRequests(t *testing.T) {
+	at := func(hours int) time.Time { return time.Date(2026, 10, 19, 10-hours, 0, 0, 0, time.UTC) }
+	open := []pr{
+		{number: 1, head: "a1", requested: true, updated: at(1)},
+		{number: 2, head: "b1", authored: true, updated: at(2)},
+		{number: 3, head: "c1", updated: at(0)},
+		{number: 4, head: "d1", authored: true, draft: true, updated: at(0)},
+		{number: 5, head: "e1", requested: true, updated: at(3)},
+		{number: 6, head: "f1", authored: true, updated: at(4)},
+	}
+	for _, tc := range []struct {
+		choice    string
+		baselined bool
+		want      []string
+	}{
+		{"", false, []string{"org/repo#1@a1:setup", "org/repo#5@e1:setup"}},
+		{"", true, []string{"org/repo#1@a1:setup", "org/repo#5@e1:setup"}},
+		{repos.PullRequestsAuthored, false, []string{"org/repo#6@f1:setup"}},
+	} {
+		t.Run(fmt.Sprintf("pull_requests=%s/baselined=%t", tc.choice, tc.baselined), func(t *testing.T) {
+			h := newHarness(t)
+			h.registry.prefs.PullRequests = tc.choice
+			prs := append([]pr(nil), open...)
+			h.scheduler.Discover = func(context.Context, github.Repository) (discovery.Snapshot, error) {
+				return h.snapshot(prs...), nil
+			}
+			// PR 2's head was reviewed by hand: chosen, but not reviewed again.
+			h.reviewed[2] = "b1"
+			// Discovery usually took the baseline while setup ran; the
+			// catch-up is the same either way.
+			if tc.baselined {
+				h.observe(prs...)
+				h.pass()
+				h.want()
+			}
+			if err := h.scheduler.CatchUp(context.Background(), SetupCatchUp); err != nil {
+				t.Fatal(err)
+			}
+			h.pass()
+			h.want(tc.want...)
+			h.waitIdle()
+			h.observe(prs...)
+			h.pass()
+			h.want(tc.want...)
+			prs[5].head = "f2"
+			h.observe(prs...)
+			h.pass()
+			h.want(append(tc.want, "org/repo#6@f2:new_head")...)
+		})
+	}
+}
+
+func TestCatchUpQueuesNothingWhileAutomaticGenerationIsOff(t *testing.T) {
+	h := newHarness(t)
+	h.registry.prefs.Automatic = false
+	h.scheduler.Discover = func(context.Context, github.Repository) (discovery.Snapshot, error) {
+		return h.snapshot(pr{number: 1, head: "a1", authored: true}), nil
+	}
+	if err := h.scheduler.CatchUp(context.Background(), SetupCatchUp); err != nil {
+		t.Fatal(err)
+	}
+	h.pass()
+	h.want()
+}
+
+// A stack group counts as one pull request and its members are caught up
+// together, so the group's review follows theirs; a pull request merely based
+// on another's branch is not a stack.
+func TestCatchUpTakesAStackGroupWhole(t *testing.T) {
+	h := newHarness(t)
+	_, mine := withGroups(t, h)
+	at := func(hours int) time.Time { return time.Date(2026, 10, 19, 10-hours, 0, 0, 0, time.UTC) }
+	// By recency: #7, #2 (with #1, its stack), #1 (taken), #6, #5. #3 and #4
+	// are a group a person made, which counts for nothing.
+	open := []pr{
+		{number: 1, head: "a1", authored: true, updated: at(2)},
+		{number: 2, head: "b1", authored: true, updated: at(1)},
+		{number: 3, head: "c1", authored: true, updated: at(9)},
+		{number: 4, head: "d1", authored: true, updated: at(9)},
+		{number: 5, head: "e1", authored: true, updated: at(4), branch: "five", base: "main"},
+		{number: 6, head: "f1", authored: true, updated: at(3), branch: "six", base: "five"},
+		{number: 7, head: "g1", authored: true, updated: at(0)},
+	}
+	if len(mine.Members) != 2 {
+		t.Fatalf("person's group %+v", mine)
+	}
+	var seen []string
+	h.scheduler.Discover = func(context.Context, github.Repository) (discovery.Snapshot, error) {
+		return h.snapshot(open...), nil
+	}
+	h.scheduler.Discovered = func(ctx context.Context, snapshot discovery.Snapshot) {
+		seen = append(seen, snapshot.Repository)
+		h.scheduler.Observe(ctx, snapshot)
+	}
+	if err := h.scheduler.CatchUp(context.Background(), SetupCatchUp); err != nil {
+		t.Fatal(err)
+	}
+	if len(seen) != 1 {
+		t.Fatalf("Discovered got %v, want the one repository's poll", seen)
+	}
+	h.pass()
+	members := []string{"org/repo#7@g1:setup", "org/repo#1@a1:setup", "org/repo#2@b1:setup", "org/repo#6@f1:setup"}
+	h.want(members...)
+	h.waitIdle()
+	h.reviewed[1], h.reviewed[2] = "a1", "b1"
+	h.pass()
+	h.want(append(members, "org/repo#group@1@a1,2@b1:stack_reviewed")...)
+}
+
+// A newer snapshot that shows a chosen pull request no longer covered, at the
+// same head, while the catch-up is still polling leaves it out.
+func TestCatchUpSkipsAPullRequestThatTurnedIneligible(t *testing.T) {
+	h := newHarness(t)
+	h.registry.prefs.PullRequests = repos.PullRequestsRequested
+	open := []pr{{number: 1, head: "a1", requested: true}, {number: 2, head: "b1", requested: true}}
+	h.scheduler.Discover = func(context.Context, github.Repository) (discovery.Snapshot, error) {
+		return h.snapshot(open...), nil
+	}
+	h.scheduler.Discovered = func(ctx context.Context, snapshot discovery.Snapshot) {
+		h.scheduler.Observe(ctx, snapshot)
+		newer := h.snapshot(pr{number: 1, head: "a1"}, open[1])
+		newer.FetchedAt = snapshot.FetchedAt.Add(time.Second)
+		h.scheduler.Observe(ctx, newer)
+	}
+	if err := h.scheduler.CatchUp(context.Background(), SetupCatchUp); err != nil {
+		t.Fatal(err)
+	}
+	h.pass()
+	h.want("org/repo#2@b1:setup")
 }

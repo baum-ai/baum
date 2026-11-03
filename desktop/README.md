@@ -389,7 +389,7 @@ The daemon outlives the app, so the app's presence is a tray icon.
   line per readable plan window ("Claude Code · 5-hour: 62% left · resets in
   3 h"); Open baum; Pause or Resume automatic reviews; Start at login;
   a Notifications submenu (see
-  "Notifications"); Quit; Quit and stop background reviews. Plan usage shows
+  "Notifications"); Report a problem…; Quit; Quit and stop background reviews. Plan usage shows
   only the plans the daemon could read and the person has not hidden in
   Settings (by default those of the backends baum uses), and nothing when
   none remain. The menu is rebuilt whenever a "resets in" text would
@@ -480,9 +480,12 @@ Two channels, each the least that does the job:
    `GET /api/diagnostics` every 5 minutes (it runs the doctor's checks),
    `GET /api/plan-usage?refresh=1` every 5 minutes (a fresh reading; the
    daemon reads again at most once a minute), and
-   `PUT /api/automatic`. This is the credential the app already reads for the
-   window and the health check, accepted on `/api/` routes only; the request
-   that changes state sends the daemon's own origin and JSON, as the daemon
+   `PUT /api/automatic`, and once, when first-run setup finishes,
+   `POST /api/automatic/catch-up`, which queues automatic reviews of the
+   latest open pull requests so they run during the tour (best effort: a
+   daemon not attached then, or a failed request, only skips it). This is the
+   credential the app already reads for the window and the health check,
+   accepted on `/api/` routes only; the requests that change state send the daemon's own origin and JSON, as the daemon
    requires. It is polled rather than streamed: the events stream carries only
    change notices, so the tray would fetch the same data anyway.
 
@@ -496,6 +499,33 @@ the tray's last view (`tray_panel`), fit the window to its height
 (`tray_panel_height`) and run Open, pause or resume, Quit and stop or open a
 waiting session, or only hide the panel (`close`) (`tray_action`, which
 refuses any other menu id).
+
+## Report a problem
+
+The app sends no telemetry or crash reports, so **Report a problem…** opens a
+new bug report in the public repository (`baum-ai/baum`) in the default
+browser. In the app (the sidebar's `?` menu and Diagnostics' button) it first
+opens a dialog (`src/report-problem.tsx` in the local app) where the user
+writes what happened and chooses what to attach: **Nothing**, **Versions
+only** (baum's version, the OS and each tool's version, no paths or details)
+or **All diagnostics** (the summary below), with a preview of exactly what
+the link carries. The dialog builds the link from the redacted parts in the
+`/api/diagnostics` answer (`report_issue`, `doctor.Report.PublicIssueParts`)
+and fits it the same way. The tray menu and the macOS window menu's Help open
+the link directly, with the whole summary. The daemon builds that link in its
+`/api/diagnostics` answer
+(`report_issue_url`) with the version, OS and a redacted summary of the
+Diagnostics report (`doctor.Report.PublicSummary`): home directories become
+`~`, secret-shaped values and e-mail addresses are masked, and the
+configuration's load error, the `PATH` entries, the per-repository store
+checks and non-github.com host names are left out. The
+summary loses whole lines from its end, with a note, to keep the link under
+about 6.5 KB, as GitHub refuses longer ones. The user reads and edits the form
+in the browser, and nothing is sent until they submit it. The tray menu asks the
+daemon for the link on each click (the checks take a few seconds), opens it only
+when it starts with `https://github.com/baum-ai/baum/issues/new?`, and otherwise
+(no daemon, failed checks) opens the repository's issue chooser. The tray panel
+has no such item; its right click keeps the full menu.
 
 ## Start at login
 
@@ -733,11 +763,22 @@ just desktop::test          # tests only; pass cargo test arguments after it
 just desktop::sidecar       # build binaries/baum-<target triple>; pass a triple to cross-build
 just desktop::build         # Linux bundle (deb by default) in target/release/bundle
 just desktop::bundle        # the release's Linux deb and AppImage in target/release-bundles
+just desktop::dmg           # macOS: ad hoc signed DMG in target/local-dmg (--install also installs it)
 just desktop::updater-test  # updater manifest checks reject tampered releases
 just desktop::run           # run the app on this Wayland session's display
 just desktop::dev           # native host app, with Vite hot reload in Docker
 just desktop::icons         # resolve palette tokens and regenerate native icons
 ```
+
+`dmg` builds the frontend, the viewer and both darwin sidecars in Docker, then runs
+`scripts/macos-local.sh` on the host: `bundle.sh` and `macos-finalize.sh` as the
+release runs them, without a Developer ID, so the app is signed ad hoc and not
+notarised. This is a host execution exception, because the bundle needs Apple's
+`lipo`, `codesign` and `hdiutil`. The host needs Rust with the
+`aarch64-apple-darwin` and `x86_64-apple-darwin` targets, the Xcode command line
+tools and the Tauri CLI version the Dockerfile pins. With `--install` it
+replaces `/Applications/baum.app`; quit the app first with Quit and stop
+background reviews, so the next launch starts a daemon from the new binary.
 
 `run` starts the container's own daemon in the container's home directory,
 not yours. Set `BAUM_DESKTOP_BAUM` to run a different `baum` binary than the

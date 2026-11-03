@@ -14,6 +14,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -25,6 +26,7 @@ import (
 	"github.com/baum-ai/baum/internal/github"
 	"github.com/baum-ai/baum/internal/jobs"
 	"github.com/baum-ai/baum/internal/repos"
+	"github.com/baum-ai/baum/internal/reviewgroups"
 	"github.com/baum-ai/baum/internal/store"
 )
 
@@ -73,8 +75,13 @@ type Scheduler struct {
 	// Path is the application database recording what was already seen, so a
 	// restart neither forgets pending work nor treats old heads as new.
 	Path string
-	// Discover polls one repository's open pull requests; Trigger uses it.
+	// Discover polls one repository's open pull requests; Trigger and
+	// CatchUp use it.
 	Discover func(context.Context, github.Repository) (discovery.Snapshot, error)
+	// Discovered, when set, receives CatchUp's polls in place of Observe: the
+	// daemon passes background discovery's, which also brings the stack
+	// groups up to date before CatchUp reads them.
+	Discovered func(context.Context, discovery.Snapshot)
 	// Reviewed returns the head of the PR's latest saved review, "" if none.
 	// Nil uses SavedHead.
 	Reviewed func(context.Context, repos.Clone, int) (string, error)
@@ -490,6 +497,143 @@ func (s *Scheduler) Observe(ctx context.Context, snapshot discovery.Snapshot) {
 	if pending {
 		s.Wake()
 	}
+}
+
+// SetupCatchUp is how many pull requests desktop setup asks CatchUp for.
+const SetupCatchUp = 3
+
+// CatchUp queues automatic reviews of the n most recently updated open pull
+// requests automatic generation covers, across its repositories, though they
+// were open before it was enabled. Desktop setup asks for it once, so the
+// first reviews run while the person takes the tour. Each repository is
+// polled now, and the poll is its baseline when it has none yet; the chosen
+// pull requests become pending with jobs.TriggerSetup and the next pass
+// submits them like any other, skipping a head already reviewed or queued.
+// A pull request in a stack group counts with its group as one and the
+// group's eligible members are caught up together, so the group review can
+// follow theirs (passGroups).
+func (s *Scheduler) CatchUp(ctx context.Context, n int) error {
+	if s.Discover == nil {
+		return errors.New("no discovery")
+	}
+	v, err := s.current(ctx)
+	if err != nil {
+		return err
+	}
+	// Enabling is recorded before the polls, so they can be the baselines.
+	s.mu.Lock()
+	state := s.load()
+	changed := s.prune(v)
+	names := make([]string, 0, len(v.repos))
+	for name, r := range v.repos {
+		if !r.enabled {
+			continue
+		}
+		names = append(names, name)
+		if state.Repositories[name] == nil {
+			s.enable(name)
+			changed = true
+		}
+	}
+	if changed {
+		s.save()
+	}
+	s.mu.Unlock()
+	sort.Strings(names)
+	type candidate struct {
+		name string
+		pr   discovery.PullRequest
+	}
+	// The eligible pull requests by repository, and all of them by recency.
+	eligibleIn := map[string][]discovery.PullRequest{}
+	var candidates []candidate
+	for _, name := range names {
+		repo, err := github.ParseRepository(name)
+		if err != nil {
+			continue
+		}
+		snapshot, err := s.Discover(ctx, repo)
+		if err != nil {
+			s.log().Warn("setup catch-up skipped a repository", "repository", name, "error", err)
+			continue
+		}
+		if s.Discovered != nil {
+			s.Discovered(ctx, snapshot)
+		} else {
+			s.Observe(ctx, snapshot)
+		}
+		for _, pr := range snapshot.PullRequests {
+			if eligible(pr, v.prefs) {
+				eligibleIn[name] = append(eligibleIn[name], pr)
+				candidates = append(candidates, candidate{name, pr})
+			}
+		}
+	}
+	sort.SliceStable(candidates, func(i, j int) bool { return candidates[i].pr.UpdatedAt.After(candidates[j].pr.UpdatedAt) })
+	type prKey struct {
+		name   string
+		number int
+	}
+	stacks := map[prKey][]int{}
+	if s.Groups != nil {
+		groups, err := s.Groups.List(ctx)
+		if err != nil {
+			s.log().Warn("setup catch-up reads no stack groups", "error", err)
+		}
+		for _, g := range groups {
+			if g.Stack && len(g.Members) >= reviewgroups.MinMembers {
+				for _, number := range g.Members {
+					stacks[prKey{g.Repository, number}] = g.Members
+				}
+			}
+		}
+	}
+	var chosen []candidate
+	taken := map[prKey]bool{}
+	for _, c := range candidates {
+		if n == 0 {
+			break
+		}
+		if taken[prKey{c.name, c.pr.Number}] {
+			continue
+		}
+		n--
+		members := stacks[prKey{c.name, c.pr.Number}]
+		if members == nil {
+			members = []int{c.pr.Number}
+		}
+		for _, pr := range eligibleIn[c.name] {
+			if slices.Contains(members, pr.Number) {
+				taken[prKey{c.name, pr.Number}] = true
+				chosen = append(chosen, candidate{c.name, pr})
+			}
+		}
+	}
+	s.mu.Lock()
+	queued := false
+	for _, c := range chosen {
+		rs := s.load().Repositories[c.name]
+		if rs == nil {
+			continue
+		}
+		pr := rs.PRs[c.pr.Number]
+		// A newer snapshot may have seen it turn ineligible at the same head.
+		if pr == nil || pr.Head != c.pr.HeadSHA || !pr.Eligible || pr.Pending != "" || pr.Done == pr.Head {
+			continue
+		}
+		// The baseline marked the head retried; an interrupted catch-up run
+		// gets its one retry like any other.
+		pr.Pending, pr.Trigger, pr.Retried, pr.Attempts, pr.RetryAt = pr.Head, jobs.TriggerSetup, "", 0, time.Time{}
+		queued = true
+	}
+	if queued {
+		s.save()
+	}
+	s.mu.Unlock()
+	if queued {
+		s.Wake()
+	}
+	return nil
 }
 
 type work struct {

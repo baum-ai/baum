@@ -359,6 +359,7 @@ export function automaticLabel(job: Job): string | null {
         : job.trigger === "ready_for_review"
           ? "the pull request was marked ready for review"
           : "";
+  if (job.trigger === "setup") return "Started automatically when baum was set up";
   if (job.trigger === "retry")
     return "Started automatically again: the daemon stopped during the previous automatic run";
   return why ? `Started automatically because ${why}` : "Started automatically";
@@ -403,7 +404,27 @@ export type Diagnostics = {
   generation_runner: boolean;
   discovery: boolean;
   index: boolean;
+  /** This user's home directory, which the app shows as ~ in the report. */
+  home?: string;
   report: DiagnosticReport | null;
+  /** A new GitHub issue with the version, OS and a redacted summary filled in. */
+  report_issue_url?: string;
+  /** What Report a problem may attach, each part already redacted. */
+  report_issue?: IssueParts;
+};
+/** The parts of a new GitHub issue the daemon redacted (`doctor.IssueParts`):
+ *  the version and OS fields and the diagnostics field at either level. */
+export type IssueParts = {
+  version: string;
+  os: string;
+  /** Per tool that reported one, its version. */
+  versions: string;
+  /** The whole redacted Diagnostics summary. */
+  diagnostics: string;
+  /** The longest link GitHub is sure to answer with the form. */
+  max_url: number;
+  /** Ends a diagnostics field that lost lines to fit `max_url`. */
+  truncation_note: string;
 };
 /** Why a session waits on its user: it asks to run a tool, it asked a
  *  question, its turn ended, or it went quiet (silent for 10 minutes with no
@@ -442,6 +463,7 @@ export type LiveSession = {
   branch?: string;
   /** Absent while the branch has no unique matching pull request. */
   pr?: number;
+  pr_state?: "OPEN" | "MERGED" | "CLOSED";
   link_status?:
     | "resolved"
     | "unmatched"

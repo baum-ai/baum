@@ -275,6 +275,68 @@ function Turn({
   const sessionLevelTokens = session.tokens > 0 && !session.cost_per_prompt;
   const log = useLogLayout();
 
+  const text = prompt.text.trimStart();
+  const systemLabel = text.startsWith(
+    "This session is being continued from a previous conversation",
+  )
+    ? "Context summary"
+    : /^<system-reminder>[\s\S]*<\/system-reminder>\s*$/.test(text)
+      ? "System reminder"
+      : null;
+  const hasAgentOutput =
+    prompt.replies.length > 0 ||
+    prompt.replies_omitted > 0 ||
+    (prompt.effects?.tool_calls ?? 0) > 0;
+  const humanContent = (
+    <HumanMessage
+      prompt={prompt}
+      runId={session.run_id}
+      author={session.user_email}
+      loadPromptText={source?.loadPromptText}
+      renderAvatar={renderAvatar}
+    />
+  );
+  const agentContent = (
+    <AgentSide>
+      <AgentReplies
+        vendor={session.source}
+        prompt={prompt}
+        state={replies}
+        activity={replyExpanded ? activity : null}
+        loadActivity={() => {
+          setReplyExpanded(true);
+          load();
+        }}
+        openActivity={available ? toggleActivity : undefined}
+      />
+      <TurnFooter
+        prompt={prompt}
+        cost={session.cost_per_prompt ? prompt.cost_usd : null}
+        costIsFloor={session.cost_per_prompt && prompt.cost_is_floor}
+        formatCost={formatCost}
+        sessionLevelTokens={sessionLevelTokens}
+        activityOpen={activityOpen}
+        onToggleActivity={available ? toggleActivity : undefined}
+      />
+      {activityOpen ? (
+        <div
+          role="region"
+          aria-label={`Agent activity for prompt ${prompt.ordinal}`}
+          className={cn(
+            "flex min-w-0 flex-col gap-2 border-l-2 border-(--border-subtle) pl-3",
+            log && "ml-1",
+          )}
+        >
+          <ActivityTimeline
+            vendor={session.source}
+            activity={activity}
+            sessionLevelTokens={sessionLevelTokens}
+            onRetry={load}
+          />
+        </div>
+      ) : null}
+    </AgentSide>
+  );
   return (
     <li
       ref={row}
@@ -282,52 +344,26 @@ function Turn({
       className={cn("flex flex-col", log ? "gap-3 py-6 first:pt-2" : "gap-2 rounded-xl")}
     >
       {day ? <SystemNote className={log ? "font-medium" : "mb-1"}>{day}</SystemNote> : null}
-      <HumanMessage
-        prompt={prompt}
-        runId={session.run_id}
-        author={session.user_email}
-        loadPromptText={source?.loadPromptText}
-        renderAvatar={renderAvatar}
-      />
-      <AgentSide>
-        <AgentReplies
-          vendor={session.source}
-          prompt={prompt}
-          state={replies}
-          activity={replyExpanded ? activity : null}
-          loadActivity={() => {
-            setReplyExpanded(true);
-            load();
-          }}
-          openActivity={available ? toggleActivity : undefined}
-        />
-        <TurnFooter
-          prompt={prompt}
-          cost={session.cost_per_prompt ? prompt.cost_usd : null}
-          costIsFloor={session.cost_per_prompt && prompt.cost_is_floor}
-          formatCost={formatCost}
-          sessionLevelTokens={sessionLevelTokens}
-          activityOpen={activityOpen}
-          onToggleActivity={available ? toggleActivity : undefined}
-        />
-        {activityOpen ? (
-          <div
-            role="region"
-            aria-label={`Agent activity for prompt ${prompt.ordinal}`}
+      {systemLabel ? (
+        <details open={focused || undefined} data-system-turn="" className="min-w-0">
+          <summary
             className={cn(
-              "flex min-w-0 flex-col gap-2 border-l-2 border-(--border-subtle) pl-3",
-              log && "ml-1",
+              "w-fit cursor-pointer rounded-(--radius-sm) text-xs text-(--text-tertiary) hover:text-(--text-primary)",
+              FOCUS_RING,
             )}
           >
-            <ActivityTimeline
-              vendor={session.source}
-              activity={activity}
-              sessionLevelTokens={sessionLevelTokens}
-              onRetry={load}
-            />
+            {systemLabel} · #{prompt.ordinal}
+            {prompt.started_at ? ` · ${formatTime(prompt.started_at)}` : ""}
+          </summary>
+          <div className="mt-3 flex min-w-0 flex-col gap-3">
+            {humanContent}
+            {!hasAgentOutput ? agentContent : null}
           </div>
-        ) : null}
-      </AgentSide>
+        </details>
+      ) : (
+        humanContent
+      )}
+      {!systemLabel || hasAgentOutput ? agentContent : null}
     </li>
   );
 }

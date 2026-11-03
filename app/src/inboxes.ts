@@ -5,6 +5,12 @@ import { andQuery, matchesQuery, parseQuery, queryProblem, quote } from "./pr-fi
 
 export const INBOX_COLORS = ["blue", "green", "red", "amber", "purple", "grey"] as const;
 export type InboxColor = (typeof INBOX_COLORS)[number];
+export function unusedInboxColor(inboxes: Inbox[], preferred: InboxColor = "blue"): InboxColor {
+  const used = new Set(inboxes.map((inbox) => inbox.color));
+  if (!used.has(preferred)) return preferred;
+  return INBOX_COLORS.find((color) => !used.has(color)) ?? preferred;
+}
+
 export const COLOR_NAMES: Record<InboxColor, string> = {
   blue: "Blue",
   green: "Green",
@@ -295,7 +301,10 @@ export function templateInbox(template: Template, inboxes: Inbox[], id = newInbo
 /** A template as an inbox of its own, named so no other inbox has the name,
  *  its parts one query. */
 export function fromTemplate(template: Template, inboxes: Inbox[], id = newInboxId()): Inbox {
-  return folded(templateInbox(template, inboxes, id));
+  return folded({
+    ...templateInbox(template, inboxes, id),
+    color: unusedInboxColor(inboxes, template.color),
+  });
 }
 
 /** A page's filter as an inbox of its own: anything waiting that matches it,
@@ -304,7 +313,7 @@ export function fromQuery(query: string, inboxes: Inbox[]): Inbox {
   return {
     id: newInboxId(),
     name: freeName("Filtered", inboxes),
-    color: "blue",
+    color: unusedInboxColor(inboxes),
     what: "any",
     owners: [],
     risk: "any",

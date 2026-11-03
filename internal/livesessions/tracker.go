@@ -181,6 +181,7 @@ type Session struct {
 	// PR is the pull request whose head is Branch, 0 when there is none
 	// (yet) or it cannot be told.
 	PR                 int          `json:"pr,omitempty"`
+	PRState            string       `json:"pr_state,omitempty"`
 	HeadSHA            string       `json:"head_sha,omitempty"`
 	Upstream           string       `json:"upstream,omitempty"`
 	HeadRepository     string       `json:"head_repository,omitempty"`
@@ -200,6 +201,7 @@ type Link struct {
 	Branch string
 	// PR is the pull request of Branch, 0 when none is known.
 	PR                                 int
+	PRState                            string
 	HeadSHA, Upstream, Method, Status  string
 	HeadRepository, UpstreamRepository string
 }
@@ -696,6 +698,7 @@ func (e *entry) setLink(link Link, now time.Time) {
 		e.WorkHistory = &WorkHistory{Entries: history}
 	}
 	e.Repository, e.Branch, e.PR = link.Repository, link.Branch, link.PR
+	e.PRState = link.PRState
 	e.HeadSHA, e.Upstream = link.HeadSHA, link.Upstream
 	e.HeadRepository, e.UpstreamRepository = link.HeadRepository, link.UpstreamRepository
 	e.LinkMethod, e.LinkStatus = link.Method, link.Status
@@ -868,7 +871,7 @@ func (t *Tracker) ResolvePending(ctx context.Context) bool {
 			if resolver, supported := t.Linker.(RecordedLinker); supported {
 				link, ok = resolver.Relink(ctx, r.snapshot)
 			} else {
-				link, ok = Link{Repository: r.snapshot.Repository, Branch: r.snapshot.Branch, PR: r.snapshot.PR}, true
+				link, ok = Link{Repository: r.snapshot.Repository, Branch: r.snapshot.Branch, PR: r.snapshot.PR, PRState: r.snapshot.PRState}, true
 			}
 		} else {
 			link, ok = t.Linker.Link(ctx, r.cwd)
