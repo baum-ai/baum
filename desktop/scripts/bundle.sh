@@ -19,7 +19,6 @@
 #
 # OUT receives:
 #   linux-*           baum-desktop-linux-<arch>.deb, baum-desktop-linux-<arch>.AppImage
-#                     (without the AppImage magic bytes; see unmark_appimage)
 #   darwin-universal  baum-desktop-darwin-universal.app.tar (the unsigned app)
 #   windows-amd64     baum-desktop-windows-amd64-setup.exe (unsigned)
 set -euo pipefail
@@ -104,22 +103,17 @@ one() {
   printf '%s\n' "${matches[0]}"
 }
 
-# Clears the AppImage type 2 magic ("AI\x02" at offset 8), which nothing in
-# the file reads. binfmt_misc rules match it: AppImageLauncher 2.x registers
-# one that runs every AppImage through its interpreter, which then fails to
-# start our static runtime ("Can't open squashfs image: Bad address"). The
-# rule stays in the kernel after the package is removed, until a reboot.
-# Without the magic, the kernel runs the file as the plain ELF it is. Tools
-# that integrate AppImages by the magic no longer recognise it, so the app
-# adds its own menu entry (src/menu_entry.rs).
-unmark_appimage() {
+# Checks the AppImage type 2 magic ("AI\x02" at offset 8). Desktop
+# integration tools (AppImageLauncher, Gear Lever) recognise an AppImage by
+# it, and open one that is not executable when it is double-clicked. See
+# "Linux" in the README for the AppImageLauncher 2.x rule it also triggers.
+check_appimage_magic() {
   local magic
   magic=$(od -An -tx1 -j8 -N3 "$1" | tr -d ' \n')
   if [ "$magic" != 414902 ]; then
     echo "bundle: $1 has no AppImage type 2 magic at offset 8 (found '$magic')" >&2
     exit 1
   fi
-  printf '\0\0\0' | dd of="$1" bs=1 seek=8 conv=notrunc status=none
 }
 
 name=baum-desktop-$platform
@@ -127,7 +121,7 @@ case "$platform" in
   linux-*)
     cp "$(one "$bundle"/deb/baum_"$version"_*.deb)" "$out/$name.deb"
     cp "$(one "$bundle"/appimage/baum_"$version"_*.AppImage)" "$out/$name.AppImage"
-    unmark_appimage "$out/$name.AppImage"
+    check_appimage_magic "$out/$name.AppImage"
     ;;
   darwin-universal)
     # One architecture per call: Xcode 27's lipo takes no more.

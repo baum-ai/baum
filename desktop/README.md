@@ -1108,19 +1108,26 @@ that needs HarfBuzz 4, and fails on Ubuntu 22.04. It updates itself in
 place, so keep it in a directory you can write (for example
 `~/Applications`).
 
-The AppImage has no AppImage magic bytes (`AI\x02` at offset 8):
-`scripts/bundle.sh` clears them. AppImageLauncher 2.x registers a kernel
-binfmt rule on those bytes that runs every AppImage through its interpreter,
-which cannot start the static AppImage runtime ("Can't open squashfs image:
-Bad address"), and the rule outlives the package until a reboot. Without
-the bytes the kernel runs the file directly. Integration tools that look for
-them (AppImageLauncher, Gear Lever, appimaged) no longer add the app to the
-applications menu, so the app does (`src/menu_entry.rs`): every start of an
-installed AppImage writes `$XDG_DATA_HOME/applications/baum-appimage.desktop`
-(default `~/.local/share`), naming the AppImage's current path, with
-`TryExec` so menus drop it once the file is gone and the icon copied to
-`baum.png` in the app's data directory. Hiding the entry with `NoDisplay=true`
-or `Hidden=true` keeps it hidden. There is no Flatpak or Snap. x86_64 is
+A downloaded AppImage is not executable. With an integration tool that
+handles AppImages (AppImageLauncher 3.x, Gear Lever), double-clicking it
+still opens it: the tool recognises the AppImage magic bytes (`AI\x02` at
+offset 8), which `scripts/bundle.sh` checks are present, and makes it
+executable. Without one, users run `chmod +x` first. AppImageLauncher 2.x
+registers a kernel binfmt rule on those bytes whose interpreter cannot start
+the static AppImage runtime ("Can't open squashfs image: Bad address"), so
+the AppImage does not start there; 3.x fixed that. Other AppImages built on
+this runtime, such as Cursor's, have the same limitation.
+
+The app adds itself to the applications menu (`src/menu_entry.rs`): every
+start of an installed AppImage writes
+`$XDG_DATA_HOME/applications/baum-appimage.desktop` (default
+`~/.local/share`), naming the AppImage's current path, with `TryExec` so
+menus drop it once the file is gone and the icon copied to `baum.png` in the
+app's data directory. Hiding the entry with `NoDisplay=true` or
+`Hidden=true` keeps it hidden. When another entry in that directory already
+starts the AppImage, through its `TryExec` or the program in its `Exec` (as
+AppImageLauncher's and Gear Lever's do), the app removes its own entry
+instead, so baum is listed once. There is no Flatpak or Snap. x86_64 is
 the supported architecture; arm64 is built on GitHub's arm64 runners and
 published when that build succeeds. Linux bundles are not OS-signed; the
 AppImage carries the updater signature.
