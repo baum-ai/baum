@@ -4880,18 +4880,23 @@ kbd.key-hint {
   width: 10px;
   height: 10px;
 }
+/* Quiet on the line under the title: the inbox's colour only in its dot. */
 .upnext-tag {
+  display: inline-flex;
   flex: none;
+  align-items: center;
+  gap: 5px;
   max-width: 8rem;
-  overflow: hidden;
-  padding: 0 6px;
-  border: 1px solid color-mix(in srgb, var(--inbox) 35%, transparent);
-  border-radius: var(--radius-xs);
-  background: color-mix(in srgb, var(--inbox) 10%, transparent);
-  color: var(--inbox);
+  color: var(--text-tertiary);
   font-size: var(--text-xs);
-  font-weight: 600;
   line-height: 1.5;
+}
+.upnext-tag .inbox-dot {
+  width: 6px;
+  height: 6px;
+}
+.upnext-tag-name {
+  overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -5074,6 +5079,13 @@ kbd.key-hint {
 .upnext-row-sub {
   color: var(--text-tertiary);
   font-size: var(--text-xs);
+}
+/* The line under the title, its inbox tag after it: a long line gives way first. */
+.upnext-row-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
 }
 /* An agent at work: the nine dots lead the line that says so. */
 .upnext-row-working {
