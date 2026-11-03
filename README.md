@@ -86,9 +86,9 @@ Open it and setup walks you through connecting GitHub, choosing your agent and
 installing the `baum` command. See
 [Install baum](https://docs.usebaum.com/getting-started/).
 
-Until code signing is set up, macOS warns before opening the app; check the
-download against `desktop-checksums.txt` from the same release. The release
-also has the `baum` command line on its own.
+The macOS app is signed and notarised. To check a download, compare it with
+`desktop-checksums.txt` from the same release. The release also has the
+`baum` command line on its own.
 
 ## Docs
 
