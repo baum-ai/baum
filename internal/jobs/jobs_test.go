@@ -175,6 +175,12 @@ func TestQueuedReplacementBatchEstimateAndNoParallelPR(t *testing.T) {
 	default:
 	}
 }
+
+// startWait bounds how long a test waits for a queued job to start. Each
+// start saves the journal to SQLite, which a loaded Windows runner under
+// -race can take seconds to do.
+const startWait = 15 * time.Second
+
 func TestConcurrencyLimitsRunningJobsAndChangesLive(t *testing.T) {
 	f := &fakeExecutor{head: "first", started: make(chan Prepared, 10), release: make(chan struct{})}
 	q, err := Open(filepath.Join(privateDir(t), "jobs.json"), f, 2, nil)
@@ -187,7 +193,7 @@ func TestConcurrencyLimitsRunningJobsAndChangesLive(t *testing.T) {
 		for range want {
 			select {
 			case <-f.started:
-			case <-time.After(3 * time.Second):
+			case <-time.After(startWait):
 				t.Fatal("job did not start")
 			}
 		}
@@ -239,7 +245,7 @@ func TestJobWaitsWhileAnotherOfItsPullRequestRuns(t *testing.T) {
 		select {
 		case p := <-f.started:
 			return p.Item
-		case <-time.After(3 * time.Second):
+		case <-time.After(startWait):
 			t.Fatal("job did not start")
 		}
 		return Item{}

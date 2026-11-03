@@ -332,7 +332,10 @@ func TestEncodedEmailScanIsLinear(t *testing.T) {
 		if _, _, err := e.Redact(in); err != nil {
 			t.Fatal(err)
 		}
-		if elapsed := time.Since(start); elapsed > 5*time.Second {
+		// A linear scan takes about a second under -race; the quadratic one
+		// this guards against takes minutes even without it. The budget
+		// leaves room for a loaded CI runner.
+		if elapsed := time.Since(start); elapsed > time.Minute {
 			t.Errorf("Redact of %d bytes took %v", len(in), elapsed)
 		}
 	}
