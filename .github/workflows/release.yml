@@ -589,3 +589,32 @@ jobs:
             gh release upload "$TAG" release/latest.json --repo "$GITHUB_REPOSITORY" --clobber
           fi
           gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false
+
+      # Release candidates read the manifest on the desktop-rc-updates
+      # pre-release, so they move to the next candidate or full release; full
+      # releases read the latest full release's. Every release replaces it once
+      # its own files are public, unless it holds a newer version already (a
+      # re-run of an older release). A pre-release is never the latest
+      # release, so this one never stands in for a full release.
+      - name: Update the release candidates' manifest
+        if: hashFiles('release/latest.json') != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CHANNEL: desktop-rc-updates
+        run: |
+          version=$(jq -er .version release/latest.json)
+          if ! gh release view "$CHANNEL" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release create "$CHANNEL" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --prerelease \
+              --title "Release-candidate updates (not a release)" \
+              --notes "Holds the updater manifest that release candidates of the desktop app read. Download baum from the latest release instead."
+          fi
+          current=$(gh release download "$CHANNEL" --repo "$GITHUB_REPOSITORY" --pattern latest.json --output - 2>/dev/null |
+            jq -r '.version // empty' || true)
+          # sort -V orders 1.2.3~rc.1 before 1.2.3, as semver orders
+          # 1.2.3-rc.1 before 1.2.3.
+          newest=$(printf '%s\n' "${version//-/\~}" "${current//-/\~}" | sort -V | tail -n 1)
+          if [ -n "$current" ] && [ "$newest" != "${version//-/\~}" ]; then
+            echo "::notice::$CHANNEL keeps $current, which is newer than $version."
+            exit 0
+          fi
+          gh release upload "$CHANNEL" release/latest.json --repo "$GITHUB_REPOSITORY" --clobber

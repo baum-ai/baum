@@ -746,8 +746,12 @@ notification service (`notify-rust`) only from Rust.
 
 A release build checks for a newer release about 30 seconds after it starts
 and then once a day (by the wall clock, so a computer that slept through the
-day checks when it wakes). It reads `latest.json` from the latest GitHub
-release of baum-ai/baum. Local and snapshot builds (version 0.0.0) and debug
+day checks when it wakes). A full release (1.2.3) reads `latest.json` from
+the latest GitHub release of baum-ai/baum, which is never a pre-release, so it
+updates only to full releases. A release candidate (1.2.3-rc.1) reads
+`latest.json` from the `desktop-rc-updates` pre-release instead, which every
+release, candidate or full, replaces (see Releases), so it updates to the
+next candidate or to a newer full release, whichever came last. Local and snapshot builds (version 0.0.0) and debug
 builds never check; `BAUM_DESKTOP_UPDATES=0` turns checks off.
 
 The updater never opens a dialog. Settings → **This computer** shows the
@@ -897,7 +901,8 @@ test, viewer-dist, desktop-test          checks of the tagged release commit
             ├─ sign-macos    ┐ environment "release": sign what desktop built
             └─ sign-linux    ┘
                  └─ desktop-manifest     latest.json, desktop-checksums.txt; read-only
-                      └─ desktop-publish attach files, latest.json last, publish the draft
+                      └─ desktop-publish attach files, latest.json last, publish the draft,
+                                         then the release candidates' latest.json
 ```
 
 - A tag points at a release commit: a commit on `main` plus the built viewer
@@ -939,7 +944,12 @@ test, viewer-dist, desktop-test          checks of the tagged release commit
   signature is missing, it fails. It also writes `desktop-checksums.txt`.
 - `desktop-publish`, the only job besides `release` with a token that can
   write, attests the files' build provenance, uploads exactly the expected
-  files (`latest.json` last), and only then publishes the draft.
+  files (`latest.json` last), and only then publishes the draft. It then
+  copies `latest.json` to the `desktop-rc-updates` pre-release, which it
+  creates on the first release, unless that already holds a newer version (a
+  re-run of an older release). That pre-release is not a release: it only
+  holds the manifest release candidates read, and being a pre-release, it is
+  never the latest release.
 
 To release, run the private monorepo's "Tag an open-source release" workflow
 (`oss-release-tag.yml`) on its `main` with the next version (`v1.2.3`). In a
@@ -954,8 +964,9 @@ reviewer then works through the checklist below
 before approving the `release` environment. Write the release notes on the draft while the run waits
 for the environment approval; the draft is published, with those notes, when
 the desktop files are attached. A tag with a pre-release suffix
-(`v1.2.3-rc.1`) becomes a GitHub pre-release, which apps do not update to:
-they read the latest full release.
+(`v1.2.3-rc.1`) becomes a GitHub pre-release. Full releases of the app do not
+update to it, since they read the latest full release; installed release
+candidates do, through `desktop-rc-updates`.
 
 If a job fails, re-run the failed jobs: uploads replace files of the same
 name, and nothing is public until `desktop-publish` finishes, because the
@@ -1135,7 +1146,8 @@ tools installed after the app or the agent started are found.
 ### What is checked where
 
 - `cargo test`: the updater configuration (key, manifest URL,
-  `requireSignedVersion`, Windows passive install), that the key rejects
+  `requireSignedVersion`, Windows passive install), that release candidates
+  read the `desktop-rc-updates` manifest and full releases the configured one, that the key rejects
   another key's signature, and the record of failed installs.
 - `scripts/updater-manifest-test.sh` (Check on Linux, and with the pinned
   minisign on macOS and Windows; the release's `desktop-test`; and `just

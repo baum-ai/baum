@@ -1,5 +1,9 @@
 //! Updates from GitHub Releases. The app checks the release manifest
-//! (`latest.json`) shortly after it starts and then once a day. Every bundle
+//! (`latest.json`) shortly after it starts and then once a day. A release
+//! build reads the latest full release's manifest; a release candidate
+//! (a version such as 1.2.3-rc.1) reads the one the release workflow keeps on
+//! the `desktop-rc-updates` pre-release, which every release replaces, so it
+//! moves to the next release candidate or full release. Every bundle
 //! it downloads must carry a signature from the release key whose public half
 //! is in `tauri.conf.json`, made for the version the manifest announces;
 //! anything else is rejected before it is installed.
@@ -34,6 +38,10 @@ use crate::daemon;
 
 /// Where the release pages live.
 const RELEASES: &str = "https://github.com/baum-ai/baum/releases";
+/// The manifest of the newest release, full or candidate, that release
+/// candidates update from. Full releases use the one in `tauri.conf.json`.
+const CANDIDATE_MANIFEST: &str =
+    "https://github.com/baum-ai/baum/releases/download/desktop-rc-updates/latest.json";
 /// Set to `0` to turn update checks off.
 const SETTING: &str = "BAUM_DESKTOP_UPDATES";
 
@@ -87,6 +95,16 @@ fn enabled(version: &str, debug: bool, setting: Option<&OsStr>) -> bool {
 fn due(last: SystemTime, now: SystemTime) -> bool {
     now.duration_since(last)
         .is_ok_and(|elapsed| elapsed >= CHECK_INTERVAL)
+}
+
+/// A release candidate's manifest, or `None` for a full release, which keeps
+/// the configured one.
+fn candidate_manifest(version: &str) -> Option<url::Url> {
+    // A pre-release part follows the first `-`, before any `+build` part.
+    let (version, _build) = version.split_once('+').unwrap_or((version, ""));
+    version
+        .contains('-')
+        .then(|| url::Url::parse(CANDIDATE_MANIFEST).expect("the manifest URL is valid"))
 }
 
 fn release_page(version: &str) -> String {
@@ -378,14 +396,17 @@ fn check<R: Runtime>(app: &AppHandle<R>, updates: &Updates) {
             inner.view.phase = Phase::Checking;
         }
     });
-    let found = app
-        .updater_builder()
-        .configure_client(|client| {
-            client
-                .connect_timeout(CONNECT_TIMEOUT)
-                .read_timeout(STALL_TIMEOUT)
-        })
-        .build()
+    let builder = app.updater_builder().configure_client(|client| {
+        client
+            .connect_timeout(CONNECT_TIMEOUT)
+            .read_timeout(STALL_TIMEOUT)
+    });
+    let builder = match candidate_manifest(&app.package_info().version.to_string()) {
+        Some(manifest) => builder.endpoints(vec![manifest]),
+        None => Ok(builder),
+    };
+    let found = builder
+        .and_then(|builder| builder.build())
         .and_then(|updater| tauri::async_runtime::block_on(updater.check()));
     let update = match found {
         Ok(update) => update,
@@ -630,6 +651,21 @@ mod tests {
         assert!(!enabled("1.2.3", true, None));
         for off in ["0", "false", "off", "no", " 0 "] {
             assert!(!enabled("1.2.3", false, Some(OsStr::new(off))), "{off}");
+        }
+    }
+
+    /// Release candidates follow every release; full releases only full ones.
+    #[test]
+    fn release_candidates_read_their_own_manifest() {
+        for candidate in ["1.2.3-rc.1", "1.2.3-rc.10+linux"] {
+            assert_eq!(
+                candidate_manifest(candidate).map(String::from).as_deref(),
+                Some(CANDIDATE_MANIFEST),
+                "{candidate}"
+            );
+        }
+        for release in ["1.2.3", "1.2.3+build-1"] {
+            assert_eq!(candidate_manifest(release), None, "{release}");
         }
     }
 
