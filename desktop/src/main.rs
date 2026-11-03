@@ -15,6 +15,8 @@ mod daemon;
 mod development;
 mod install;
 mod lifecycle;
+#[cfg(target_os = "linux")]
+mod menu_entry;
 mod navigation;
 mod notifications;
 mod onboarding;
@@ -340,6 +342,8 @@ fn main() {
             notifications::install(app.handle())?;
             zoom::install(app.handle())?;
             tray::setup(app.handle());
+            #[cfg(target_os = "linux")]
+            menu_entry::refresh(app.handle());
             let page = onboarding::start(app.handle());
             development::grant_setup(app.handle())?;
             let page = if page == onboarding::SETUP_PAGE {
