@@ -710,7 +710,11 @@ doing anything (`src/zoom.rs`).
   button opens, which changes nothing and returns only the chosen folder. The
   page registers it through the daemon's own API. It also allows the zoom
   commands (`zoom_state`, `set_zoom` and `step_zoom`), which accept only the
-  offered levels. They can call no other Tauri command or plugin.
+  offered levels, and the updater's (`update_state`, `check_for_updates`,
+  `install_update`, `cancel_update` and `dismiss_update_notice`): a page can
+  read the state, start a check, install only an update the app has already
+  downloaded and verified, and record that a notice was closed. They can call no other Tauri command or
+  plugin.
   `withGlobalTauri` is off.
 - The bundled screens have two capabilities, for the main window's bundled
   origin only: `connecting-screen` allows the app's `connection` and
@@ -727,7 +731,8 @@ doing anything (`src/zoom.rs`).
 - The opener plugin is used only from Rust, to open links in the browser. Its
   click script (`open_js_links_on_click`) is off: it would call the plugin from
   the page, which no page may do, and swallow the click. The
-  dialog and updater plugins are used only from Rust too (see Updates). No
+  dialog and updater plugins are used only from Rust too (see Updates); the
+  app's own updater commands wrap the latter. No
   page is granted any plugin's commands.
 
 The app itself makes no network requests other than loopback requests to the
@@ -745,29 +750,46 @@ day checks when it wakes). It reads `latest.json` from the latest GitHub
 release of baum-ai/baum. Local and snapshot builds (version 0.0.0) and debug
 builds never check; `BAUM_DESKTOP_UPDATES=0` turns checks off.
 
+The updater never opens a dialog. Settings → **This computer** shows the
+app's version and the updater's state in its first card (`update_state`):
+up to date with the time of the last check, checking, downloading, ready,
+waiting for running jobs, or installing, and why the last attempt failed.
+**Check now** checks at once (`check_for_updates`). While an update is ready
+to install, or available to download where the app cannot install it, the
+sidebar counts it in the Settings badge (as 1, beside any problems), and
+the **This computer** entry in Settings carries the same green 1 and says
+"Update available". When an update becomes
+available, and after every launch of the app while one is, the page also
+shows a toast ("baum 1.2.3 is ready to install") that stays until it is
+closed, with **Open This computer**. Closing it, following it, or already
+looking at This computer is remembered until the app quits
+(`dismiss_update_notice`), so reloading the page or reattaching to the
+daemon does not bring it back; a newer version does. The page reads the
+state every minute, and every second while the updater works.
+
 - The macOS app, the Linux AppImage and the Windows installer update
   themselves. The app downloads the update in the background; the download
   must carry a signature from the release key whose public half is
   `plugins.updater.pubkey` in `tauri.conf.json`, made for the version the
-  manifest announces (`requireSignedVersion`), or it is discarded. While the
-  daemon runs a generation job (`baum daemon status`, then `GET /api/jobs`;
-  queued jobs survive a restart), the app waits. Then it asks; **Restart now**
-  installs and restarts the app, **Later** keeps the download and asks again
-  at the next daily check. A download that receives nothing for two minutes
-  is abandoned until the next check. On Windows the app stops the daemon
-  first, and the installer (whose hook stops it too) closes the app, updates
-  it for the current user and starts it again; the updated app refreshes its
-  copy of `baum.exe` and starts the daemon. An updated AppImage refreshes its
-  copy of `baum` in the data directory on the next start, renaming the new
-  file into place, so a daemon still running the old copy keeps it until the
-  updated app's `baum daemon ensure` replaces that daemon.
+  manifest announces (`requireSignedVersion`), or it is discarded. A download
+  that receives nothing for two minutes is abandoned until the next check.
+  **Update and restart** (`install_update`) installs it: while the daemon
+  runs a generation job (`baum daemon status`, then `GET /api/jobs`, every
+  15 seconds; queued jobs survive a restart), the card says how many it
+  waits for and offers **Cancel** (`cancel_update`), then the app installs
+  the update and restarts. On Windows the app stops the daemon first, and
+  the installer (whose hook stops it too) closes the app, updates it for the
+  current user and starts it again; the updated app refreshes its copy of
+  `baum.exe` and starts the daemon. An updated AppImage refreshes its copy of
+  `baum` in the data directory on the next start, renaming the new file into
+  place, so a daemon still running the old copy keeps it until the updated
+  app's `baum daemon ensure` replaces that daemon.
 - A deb install, or any copy the updater cannot replace (an AppImage in a
   directory the user cannot write, an app on a read-only volume), only says
-  that a new version exists, once per version and app start, and offers to
-  open its release page. Updating it is the user's job, as with any package.
-  A version whose installation failed is remembered (`desktop.json`'s
-  `updates` section in the app's config directory) and from then on only
-  announced this way.
+  that a new version exists and links to its release page. Updating it is
+  the user's job, as with any package. A version whose installation failed
+  is remembered (`desktop.json`'s `updates` section in the app's config
+  directory) and from then on only offered this way.
 - Restarting the app does not stop the daemon. The first client to run the
   new `baum` replaces an older daemon, as after any upgrade.
 
