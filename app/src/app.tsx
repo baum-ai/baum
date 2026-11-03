@@ -222,6 +222,8 @@ const VIEWS = [
   ["history", "Closed"],
 ] as const;
 const PULLS_TAB_KEY = "baum.pulls.tab.v1";
+// Longer than the daemon's own limit on a refresh, so its answer comes first.
+const REFRESH_TIMEOUT_MS = 60_000;
 /** The Pull requests tab last shown in this window's browser, if any. */
 function lastPullsTab(): string | null {
   try {
@@ -966,14 +968,35 @@ function Workspace({ url }: { url: UrlState }) {
         if (!press.restart) await Promise.race([before, dropped]);
         for (const { repository, clone } of targets) {
           if (signal.aborted) return;
-          await request(
+          // A request that never answers gives up, so it cannot hold the
+          // queue and the loader; the daemon gives up on GitHub sooner.
+          const one = new AbortController();
+          const stop = () => one.abort();
+          signal.addEventListener("abort", stop, { once: true });
+          const timer = setTimeout(stop, REFRESH_TIMEOUT_MS);
+          await request<{ stale?: boolean; error?: string } | null>(
             "api/prs/refresh",
             clone ? { clone } : { repository },
             "POST",
-            signal,
-          ).catch((e) => {
-            if (!signal.aborted) failed.push(`${repository}: ${errorText(e)}`);
-          });
+            one.signal,
+          )
+            // The daemon answers a refresh GitHub did not complete (a
+            // stalled read it gave up on, an exhausted allowance) with the
+            // cached snapshot, marked stale with the error.
+            .then((answer) => {
+              if (answer?.stale && answer.error)
+                failed.push(`${repository}: not refreshed from GitHub; baum will keep retrying.`);
+            })
+            .catch((e) => {
+              if (signal.aborted) return;
+              failed.push(
+                `${repository}: ${one.signal.aborted ? "baum did not answer in time." : errorText(e)}`,
+              );
+            })
+            .finally(() => {
+              clearTimeout(timer);
+              signal.removeEventListener("abort", stop);
+            });
         }
         // The press that dropped this one reads the daemon again itself.
         if (signal.aborted) return;

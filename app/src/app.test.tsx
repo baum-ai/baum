@@ -2441,6 +2441,65 @@ it("opens clone-less PR deep links by repository and refreshes picked repositori
     false,
   );
 });
+it("gives up on a refresh that never answers and names the repository", async () => {
+  entries = [entry(7)];
+  const original = vi.mocked(fetch).getMockImplementation()!;
+  vi.mocked(fetch).mockImplementation((...args) => {
+    const path = String(args[0]);
+    const init = args[1] as RequestInit | undefined;
+    if (path === "/s/test-ns/api/repositories")
+      return Promise.resolve(
+        Response.json([{ repository: "acme/demo", settings: { automatic: null }, clones: [] }]),
+      );
+    // A connection that dropped: no answer, only the abort.
+    if (path === "/s/test-ns/api/prs/refresh")
+      return new Promise((_, reject) =>
+        init?.signal?.addEventListener("abort", () =>
+          reject(new DOMException("aborted", "AbortError")),
+        ),
+      );
+    return original(...args);
+  });
+  await act(async () => root.render(<App />));
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  try {
+    await act(async () =>
+      node.querySelector<HTMLButtonElement>('button[aria-label="Refresh from GitHub"]')!.click(),
+    );
+    expect(node.textContent).not.toContain("did not answer in time");
+    await act(async () => {
+      vi.advanceTimersByTime(60_000);
+    });
+  } finally {
+    vi.useRealTimers();
+  }
+  await act(async () => {});
+  expect(node.textContent).toContain("acme/demo: baum did not answer in time.");
+});
+it("names a repository the daemon answers as not refreshed", async () => {
+  entries = [entry(7)];
+  const original = vi.mocked(fetch).getMockImplementation()!;
+  vi.mocked(fetch).mockImplementation((...args) => {
+    const path = String(args[0]);
+    if (path === "/s/test-ns/api/repositories")
+      return Promise.resolve(
+        Response.json([{ repository: "acme/demo", settings: { automatic: null }, clones: [] }]),
+      );
+    // The daemon gave up on GitHub and answered with the cached snapshot.
+    if (path === "/s/test-ns/api/prs/refresh")
+      return Promise.resolve(
+        Response.json({ repository: "acme/demo", stale: true, error: "discovery_unavailable" }),
+      );
+    return original(...args);
+  });
+  await act(async () => root.render(<App />));
+  await act(async () =>
+    node.querySelector<HTMLButtonElement>('button[aria-label="Refresh from GitHub"]')!.click(),
+  );
+  expect(node.textContent).toContain(
+    "acme/demo: not refreshed from GitHub; baum will keep retrying.",
+  );
+});
 const press = (key: string, init: KeyboardEventInit = {}) =>
   act(async () => {
     document.body.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, ...init }));
