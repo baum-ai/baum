@@ -756,6 +756,60 @@ func TestNewHeadPollsAgainSoonWhileMergeabilitySettles(t *testing.T) {
 	}
 }
 
+// A merge into the base makes GitHub work out a pull request's mergeability
+// again at the same head: the poll that finds it unknown settles like one
+// after a push, and the pull request keeps its last merge state meanwhile.
+func TestForgottenMergeabilitySettlesAndKeepsMergeState(t *testing.T) {
+	t.Setenv("GH_HOST", "github.com")
+	head, mergeable, state := "one", "MERGEABLE", "CLEAN"
+	client := github.New(func(context.Context, string) (string, error) { return "synthetic", nil }, github.Options{Transport: roundTrip(func(r *http.Request) (*http.Response, error) {
+		body := `[]`
+		if r.Method == http.MethodPost {
+			body = fmt.Sprintf(`{"data":{"viewer":{"login":"viewer"},"repository":{"pullRequests":{"nodes":[{"number":1,"title":"PR","headRefOid":%q,"mergeable":%q,"mergeStateStatus":%q,"author":{"login":"viewer"},"headRepository":{"databaseId":1,"nameWithOwner":"acme/app"},"baseRepository":{"databaseId":1,"nameWithOwner":"acme/app"}}],"pageInfo":{"hasNextPage":false}}}}}`, head, mergeable, state)
+		} else if strings.Contains(r.URL.Path, "/permission") {
+			body = `{"permission":"write"}`
+		}
+		return &http.Response{StatusCode: 200, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(body))}, nil
+	})})
+	s := New(client, appdbtest.TempDir(t))
+	now := time.Date(2026, 11, 3, 11, 0, 0, 0, time.UTC)
+	s.now = func() time.Time { return now }
+	poll := func() Snapshot {
+		t.Helper()
+		snapshot, err := s.PollNow(context.Background(), testRepo)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return snapshot
+	}
+	if first := poll(); first.PullRequests[0].Merge != "ready" {
+		t.Fatalf("first poll merge=%q", first.PullRequests[0].Merge)
+	}
+	mergeable, state = "UNKNOWN", "UNKNOWN"
+	for i := range 1 + maxSettles {
+		got := poll()
+		if !got.Settling || !got.NextPoll.Equal(now.Add(settleInterval)) || got.PullRequests[0].Merge != "ready" {
+			t.Fatalf("poll %d after the base moved: settling=%v next=%v merge=%q", i, got.Settling, got.NextPoll.Sub(now), got.PullRequests[0].Merge)
+		}
+	}
+	// GitHub never worked it out: the usual backoff goes on, still ready.
+	if got := poll(); got.Settling || got.PullRequests[0].Merge != "ready" {
+		t.Fatalf("after %d settles: settling=%v merge=%q", maxSettles, got.Settling, got.PullRequests[0].Merge)
+	}
+	if got := poll(); got.Settling {
+		t.Fatal("a mergeability still unknown settled again")
+	}
+	mergeable, state = "CONFLICTING", "DIRTY"
+	if got := poll(); got.Settling || got.PullRequests[0].Merge != "conflict" {
+		t.Fatalf("worked out: settling=%v merge=%q", got.Settling, got.PullRequests[0].Merge)
+	}
+	// A new head keeps nothing from the old one.
+	head, mergeable, state = "two", "UNKNOWN", "UNKNOWN"
+	if got := poll(); got.PullRequests[0].Merge != "" {
+		t.Fatalf("new head merge=%q", got.PullRequests[0].Merge)
+	}
+}
+
 func discoveryDatabase(t *testing.T, s *Service) string {
 	t.Helper()
 	path, err := s.databasePath()

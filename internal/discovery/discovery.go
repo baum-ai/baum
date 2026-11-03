@@ -113,8 +113,9 @@ type Snapshot struct {
 	NextPoll     time.Time     `json:"next_poll"`
 	Rate         RateLimit     `json:"rate"`
 	Error        string        `json:"error,omitempty"`
-	// Settling: this poll found a new head, or GitHub still works out a
-	// mergeability since one, so NextPoll comes after settleInterval.
+	// Settling: this poll found a new head or a mergeability GitHub forgot,
+	// or GitHub still works one out since, so NextPoll comes after
+	// settleInterval.
 	Settling bool `json:"settling,omitempty"`
 }
 
@@ -134,6 +135,9 @@ type diskCache struct {
 	Fingerprint fingerprint
 	// Settling counts the quick polls since one found a new head (settle).
 	Settling int `json:",omitempty"`
+	// Carried are the pull requests whose merge state the last poll kept from
+	// an earlier one while GitHub worked it out again (carryMerge).
+	Carried map[int]bool `json:",omitempty"`
 }
 
 // After a push GitHub works out in the background whether the pull request
@@ -141,6 +145,9 @@ type diskCache struct {
 // none. A poll that finds a new head, or a new pull request, so polls again
 // after settleInterval, as do up to maxSettles more while GitHub still
 // reports a mergeability it has not worked out. Then the usual backoff goes on.
+// A merge into the base makes GitHub work out every other pull request's
+// mergeability again, with no head moving and nothing the probe sees, so one
+// whose answer GitHub forgot settles the same way.
 const (
 	settleInterval = 15 * time.Second
 	maxSettles     = 3
@@ -292,8 +299,12 @@ type poll struct {
 	// server is the polling interval GitHub asked for, if any.
 	server time.Duration
 	// moved: a pull request has a head the last poll did not see. unknown: a
-	// non-draft one has a mergeability GitHub has not worked out yet.
-	moved, unknown bool
+	// non-draft one has a mergeability GitHub has not worked out yet. forgot:
+	// one GitHub had worked out at the same head is unknown again.
+	moved, unknown, forgot bool
+	// carried is the earlier poll's pull request whose merge state each
+	// unknown one keeps (carryMerge).
+	carried map[int]PullRequest
 	// fingerprint is the open pull requests' when all pages were read.
 	fingerprint fingerprint
 }
@@ -496,7 +507,7 @@ func (s *Service) poll(ctx context.Context, repository github.Repository, force 
 		}
 		interval = max(interval, p.minimum)
 		switch {
-		case p.moved:
+		case p.moved || p.forgot:
 			p.cache.Settling = 1
 		case p.unknown && p.cache.Settling > 0 && p.cache.Settling <= maxSettles:
 			p.cache.Settling++
@@ -514,6 +525,13 @@ func (s *Service) poll(ctx context.Context, repository github.Repository, force 
 		snapshot.Rate = p.visibleRate()
 		p.cache.Interval = interval
 		p.cache.Fingerprint = p.fingerprint
+		p.cache.Carried = nil
+		for number := range p.carried {
+			if p.cache.Carried == nil {
+				p.cache.Carried = map[int]bool{}
+			}
+			p.cache.Carried[number] = true
+		}
 	}
 	s.liveMu.Lock()
 	defer s.liveMu.Unlock()
@@ -554,13 +572,22 @@ func (p *poll) discover(ctx context.Context, repository github.Repository) (Snap
 	}
 	snapshot.Viewer = viewer.Login
 	if !p.cache.Snapshot.FetchedAt.IsZero() {
-		heads := map[int]string{}
+		known := map[int]PullRequest{}
 		for _, pr := range p.cache.Snapshot.PullRequests {
-			heads[pr.Number] = pr.HeadSHA
+			known[pr.Number] = pr
 		}
 		for _, row := range prs {
-			p.moved = p.moved || heads[row.Number] != row.HeadRefOid
-			p.unknown = p.unknown || !row.IsDraft && (row.Mergeable == "UNKNOWN" || row.MergeStateStatus == "UNKNOWN")
+			old := known[row.Number]
+			unknown := !row.IsDraft && (row.Mergeable == "UNKNOWN" || row.MergeStateStatus == "UNKNOWN")
+			p.moved = p.moved || old.HeadSHA != row.HeadRefOid
+			p.unknown = p.unknown || unknown
+			if carryMerge(old, row, unknown) {
+				if p.carried == nil {
+					p.carried = map[int]PullRequest{}
+				}
+				p.carried[row.Number] = old
+				p.forgot = p.forgot || !p.cache.Carried[row.Number]
+			}
 		}
 	}
 	prefix := "/repos/" + url.PathEscape(repository.Owner) + "/" + url.PathEscape(repository.Name)
@@ -632,10 +659,22 @@ func (p *poll) discover(ctx context.Context, repository github.Repository) (Snap
 		item.ViewerCanPush = canPush
 		item.Review, item.Checks, item.Merge, item.Unresolved, item.UnresolvedCapped = row.states()
 		item.Behind = row.behind()
+		if old, ok := p.carried[pr.Number]; ok {
+			item.Merge, item.Behind = old.Merge, old.Behind
+		}
 		item.UpdatedAt = row.UpdatedAt
 		snapshot.PullRequests = append(snapshot.PullRequests, item)
 	}
 	return snapshot, nil
+}
+
+// carryMerge is whether a pull request GitHub reports an unknown mergeability
+// for keeps the merge state of the earlier poll that read the same head:
+// after a merge into its base GitHub works the answer out again, and until it
+// does the pull request stays where it was rather than looking like one that
+// waits on reviewers. A new head, or one that was a draft, has nothing to keep.
+func carryMerge(old PullRequest, row gqlPR, unknown bool) bool {
+	return unknown && old.HeadSHA == row.HeadRefOid && old.Merge != "" && old.Merge != "draft"
 }
 
 // Observe retains fresh free metadata for open and saved historical PRs. A
