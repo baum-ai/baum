@@ -146,6 +146,29 @@ func Recording(found Found) (Recorded, bool) {
 	return Recorded{Agent: found.Agent, Path: filepath.Join(dir, filepath.Base(found.Path)), Dir: dir, Version: found.Version}, true
 }
 
+// NewRecord records the agents Find found on the PATH value path, in that
+// PATH's order, so the recorded directories, put first on another PATH,
+// resolve each agent as the terminal did: one agent's directory may hold an
+// older copy of another, which must not come first unless it did there.
+func NewRecord(found []Found, path string) Record {
+	entries := filepath.SplitList(path)
+	position := func(f Found) int {
+		if i := slices.Index(entries, filepath.Dir(f.Path)); i >= 0 {
+			return i
+		}
+		return len(entries)
+	}
+	ordered := slices.Clone(found)
+	slices.SortStableFunc(ordered, func(a, b Found) int { return position(a) - position(b) })
+	record := Record{Agents: []Recorded{}}
+	for _, f := range ordered {
+		if recorded, ok := Recording(f); ok {
+			record.Agents = append(record.Agents, recorded)
+		}
+	}
+	return record
+}
+
 // RecordFile is the record's location: terminal.json beside config.toml.
 func RecordFile() (string, error) {
 	path, err := config.Path()

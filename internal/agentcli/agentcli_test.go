@@ -81,6 +81,30 @@ func TestRecordingResolvesLinkedDirectories(t *testing.T) {
 	}
 }
 
+// The record keeps the terminal's PATH order: Claude Code's directory, which
+// also holds an old Codex, must not come before the newer Codex's.
+func TestNewRecordKeepsTheTerminalsOrder(t *testing.T) {
+	newer, older := t.TempDir(), t.TempDir()
+	writeAgent(t, newer, "codex", "codex-cli 0.166.0")
+	writeAgent(t, older, "codex", "codex-cli 0.128.0")
+	writeAgent(t, older, "claude", "2.1.300 (Claude Code)")
+	terminal := newer + ":" + older
+	t.Setenv("PATH", terminal)
+	var found []Found
+	for _, agent := range Agents {
+		found = append(found, Find(context.Background(), agent))
+	}
+	record := NewRecord(found, terminal)
+	if len(record.Agents) != 2 || record.Agents[0].Agent != "codex" {
+		t.Fatalf("%+v", record.Agents)
+	}
+	t.Setenv("PATH", WithDirs("/usr/bin", record.Dirs()))
+	codex, _ := Lookup("codex")
+	if got := Find(context.Background(), codex); got.Version != "0.166.0" {
+		t.Fatalf("baum would run %+v", got)
+	}
+}
+
 func TestRecordRoundTripAndPath(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	file, err := RecordFile()

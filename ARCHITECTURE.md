@@ -3729,8 +3729,9 @@ Some shells set an agent up only for interactive use (fnm or nvm in
 desktop-setup`, which the user runs in their own terminal, finds `claude` and
 `codex` on that terminal's `PATH` (`internal/agentcli`), prints each one's path,
 version and whether it is at least the backend's `MinimumVersion`, and writes
-`terminal.json` beside `config.toml`: per agent, the executable and its
-directory with symbolic links resolved (fnm's per-shell `fnm_multishells`
+`terminal.json` beside `config.toml`: per agent, in the terminal's `PATH`
+order (one agent's directory may hold an older copy of the other), the
+executable and its directory with symbolic links resolved (fnm's per-shell `fnm_multishells`
 directory vanishes with the shell). `agentcli.WithRecorded` puts the recorded
 directories that still exist first on a `PATH`; the daemon applies it after
 `shellenv.Merge` and, through `agentcli.Keep`, again within 15 s of the record

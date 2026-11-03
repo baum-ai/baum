@@ -3,6 +3,7 @@ package cli
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 
 	"github.com/spf13/cobra"
 
@@ -36,17 +37,10 @@ afterwards.`,
 				return err
 			}
 			report := desktopSetup{Agents: []agentcli.Found{}, Record: file}
-			var record agentcli.Record
 			for _, agent := range agentcli.Agents {
-				found := agentcli.Find(cmd.Context(), agent)
-				report.Agents = append(report.Agents, found)
-				if recorded, ok := agentcli.Recording(found); ok {
-					record.Agents = append(record.Agents, recorded)
-				}
+				report.Agents = append(report.Agents, agentcli.Find(cmd.Context(), agent))
 			}
-			if record.Agents == nil {
-				record.Agents = []agentcli.Recorded{}
-			}
+			record := agentcli.NewRecord(report.Agents, os.Getenv("PATH"))
 			if err := agentcli.Save(file, record); err != nil {
 				return fmt.Errorf("saving %s: %w", file, err)
 			}
