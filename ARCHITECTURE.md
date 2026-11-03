@@ -2451,8 +2451,9 @@ to the pull request, read from the local session stores with `sessions` and
 document's own session metadata.
 
 What usage would cost at API prices comes from a price list at
-`https://static.usebaum.com/pricing/v2/prices.json`. baum verifies its `.sig`
-with a public key embedded in the binary and falls back to a snapshot embedded
+`https://static.usebaum.com/pricing/v3/prices.json`. baum verifies its `.sig`
+with the price-list public key embedded in the binary (a key that signs only
+price lists) and falls back to a snapshot embedded
 at release when no newer verified list is available. The daemon can persist a
 verified signed list beside its job journal and reload it on restart.
 `pricing.CurrentSource` says which is active (`embedded`, `fetched` or `cached`),

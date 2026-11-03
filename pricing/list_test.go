@@ -4,6 +4,7 @@ import (
 	"crypto/ed25519"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"math"
 	"strings"
 	"testing"
@@ -131,6 +132,34 @@ func TestNewestPrefersTheLaterVersion(t *testing.T) {
 func TestPublishedKeyDecodes(t *testing.T) {
 	if len(PublishedKey()) != ed25519.PublicKeySize {
 		t.Fatal("published key has the wrong size")
+	}
+}
+
+// Price lists have their own key and path. The release manifest key, which
+// builds before v3 trusted, must not verify a list, and the v2 path it signs
+// must not be fetched.
+func TestPublishedListsUseThePriceListKeyAtV3(t *testing.T) {
+	const manifestKey = "rU/Iy4IT2gMQlgq7qNFjliiA6tqH11nq2PC9ld4j43I="
+	if base64.StdEncoding.EncodeToString(PublishedKey()) == manifestKey {
+		t.Fatal("published lists are verified with the release manifest key")
+	}
+	if !strings.HasSuffix(PublishedURL, "/pricing/v3/prices.json") {
+		t.Fatalf("PublishedURL = %s, want the v3 path", PublishedURL)
+	}
+}
+
+func TestParsePublishedRejectsAnotherKeysSignature(t *testing.T) {
+	_, private, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, _, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, signature := sign(t, testDocument(t), private)
+	if _, err := ParsePublished(data, signature, other); !errors.Is(err, ErrSignatureNotTrusted) {
+		t.Fatalf("err = %v, want ErrSignatureNotTrusted", err)
 	}
 }
 
