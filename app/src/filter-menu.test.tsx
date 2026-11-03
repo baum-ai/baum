@@ -1,10 +1,59 @@
 import { act, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { expect, it, vi } from "vitest";
-import { FilterBar, FilterButton } from "./filter-menu";
+import { FilterBar, FilterButton, SaveButton } from "./filter-menu";
+import { useReadlineArrows } from "./shortcuts";
 import type { Entry } from "./api";
 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
+
+it("focuses Save's choices and keeps navigation keys inside its menu", async () => {
+  const node = document.createElement("div");
+  document.body.append(node);
+  const root = createRoot(node);
+  function Save() {
+    useReadlineArrows();
+    return (
+      <SaveButton
+        options={["Save", "Save as new inbox", "Discard changes"].map((label) => ({
+          label,
+          onSelect: vi.fn(),
+        }))}
+      />
+    );
+  }
+  try {
+    await act(async () => root.render(<Save />));
+    const summary = node.querySelector("summary")!;
+    summary.focus();
+    await act(async () => summary.click());
+    const choices = [...node.querySelectorAll<HTMLElement>('[role="menuitem"]')];
+    expect(document.activeElement).toBe(choices[0]);
+    for (const [key, ctrlKey, index] of [
+      ["j", false, 1],
+      ["n", true, 0],
+      ["k", false, 1],
+      ["p", true, 0],
+    ] as const) {
+      await act(async () => {
+        document.activeElement!.dispatchEvent(
+          new KeyboardEvent("keydown", { key, ctrlKey, bubbles: true, cancelable: true }),
+        );
+      });
+      expect(document.activeElement).toBe(choices[index]);
+    }
+    await act(async () => {
+      document.activeElement!.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }),
+      );
+    });
+    expect(node.querySelector('[role="menu"]')).toBeNull();
+    expect(document.activeElement).toBe(summary);
+  } finally {
+    await act(async () => root.unmount());
+    node.remove();
+  }
+});
 
 it("opens with slash and focuses Add filter after positioning", async () => {
   const node = document.createElement("div");

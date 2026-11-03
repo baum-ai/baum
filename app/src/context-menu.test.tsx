@@ -2,6 +2,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { MenuButton, useContextMenu, type MenuItem } from "./context-menu";
+import { useReadlineArrows } from "./shortcuts";
 
 let node: HTMLDivElement;
 let root: Root;
@@ -20,6 +21,7 @@ const archive = vi.fn();
 const remove = vi.fn();
 const badge = vi.fn();
 function Row({ items }: { items: MenuItem[] }) {
+  useReadlineArrows();
   const menu = useContextMenu();
   return (
     <>
@@ -46,9 +48,11 @@ const button = () => node.querySelector<HTMLButtonElement>(".row-menu-button")!;
 const menu = () => document.querySelector<HTMLElement>('[role="menu"]');
 const choices = () => [...(menu()?.querySelectorAll<HTMLElement>("[role^=menuitem]") ?? [])];
 const focused = () => document.activeElement?.querySelector(".context-menu-label")?.textContent;
-async function key(key: string, target: Element = document.activeElement!) {
+async function key(key: string, target: Element = document.activeElement!, ctrlKey = false) {
   await act(async () => {
-    target.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }));
+    target.dispatchEvent(
+      new KeyboardEvent("keydown", { key, ctrlKey, bubbles: true, cancelable: true }),
+    );
   });
 }
 
@@ -109,6 +113,26 @@ it("opens on the last choice with Up, and gives the keys back on Escape", async 
   expect(menu()).toBeNull();
   expect(document.activeElement).toBe(button());
   expect(button().getAttribute("aria-expanded")).toBe("false");
+});
+
+it("moves between choices with j/k and Control+n/p without reaching the page", async () => {
+  await render();
+  await act(async () => button().click());
+  const pageKey = vi.fn();
+  window.addEventListener("keydown", pageKey);
+  try {
+    await key("j");
+    expect(focused()).toBe("Archive");
+    await key("n", document.activeElement!, true);
+    expect(focused()).toBe("Count in the badge");
+    await key("k");
+    expect(focused()).toBe("Archive");
+    await key("p", document.activeElement!, true);
+    expect(focused()).toBe("Peek");
+    expect(pageKey).not.toHaveBeenCalled();
+  } finally {
+    window.removeEventListener("keydown", pageKey);
+  }
 });
 
 it("closes on Tab, back on its button", async () => {

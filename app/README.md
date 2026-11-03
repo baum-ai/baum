@@ -856,7 +856,10 @@ its first reason. Below it the panel lists, by kind: for a Review or Merge,
 order, with their scores and lines added and removed); for a Fix, what needs
 fixing; for an Update, where it stands; for a Clone, what baum will do. The
 saved review is read when its pull request is selected, and again only for a
-new version. A pull request back in the queue as a Fix whose latest fix job
+new version. While the first review is being generated, What changed shows
+the available draft summary and section titles, updating as the draft advances.
+A saved review stays visible while a replacement is being generated.
+A pull request back in the queue as a Fix whose latest fix job
 failed says "The last fix failed: <reason>", with **See what the agent did**
 (the transcript, else the job in the list). Agent sessions working on its
 branch are counted at the foot of the panel, as a link to Sessions
@@ -868,7 +871,13 @@ Snooze offers 1 hour, this afternoon (3 PM, while that is more than an hour
 away), tomorrow morning (9 AM) and **Until it changes**, which hides the pull
 request until its head moves. A snooze selects the next pull request and shows
 a toast with **Undo**; **Bring back**, in a snoozed row's menu under Snoozed,
-ends one early. Keys:
+ends one early. Waiting pull requests, including those waiting on another
+member of their stack, offer Snooze too. Snoozed waiting PRs keep their
+waiting classification, so the same inbox filters apply before and after
+snoozing. Snoozes still apply when a pull
+request moves between needing an action and waiting; a stack disappears
+from the active queue when all its pull requests are snoozed. A snoozed pull
+request stays under Snoozed when its Fix clears, rather than Done today. Keys:
 `j`/`↓` and `k`/`↑` move the selection, `Enter` opens, `m` merges a Merge, `f`
 starts a Fix item's fix (where its panel offers the button), `t` opens its fix
 transcript (Watch the agent, See what the agent did, or the last run's), `v` opens
@@ -1610,9 +1619,12 @@ while the row is under the pointer, holds the keys or has its menu open, and
 always on a touch screen; it keeps its place while hidden, so nothing moves.
 It is a WAI-ARIA menu button: named "Actions for <row>", `aria-haspopup="menu"`,
 `aria-expanded` while open, and Enter, Space or ↓ open the menu on its first
-choice, ↑ on its last. In the menu ↑ and ↓ move and wrap, Home and End go to
-either end, a letter goes to the next choice starting with it, Enter chooses,
-and Escape or Tab close it with the keys back on the ⋯. An on-or-off choice is
+choice, ↑ on its last. In choice menus (including Snooze and Save), ↑/↓,
+`j`/`k` and Ctrl+N/P focus choices and wrap, keeping the page's selection in
+place. Inline menus focus their first choice when opened. Home and End go to
+either end. In a row's menu, another letter goes to the next choice starting
+with it, Enter chooses, and Escape or Tab close it with the keys back on the
+⋯. An on-or-off choice is
 a `menuitemcheckbox` with its tick; what stops or removes something is in the
 critical tone, set apart below a separator. A row offers only what applies to
 it now, each choice with its key where it has one. Choices that open more

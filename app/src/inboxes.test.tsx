@@ -610,6 +610,42 @@ it("leaves a snoozed pull request out of an inbox's count and queue, and lists i
   expect(node.querySelector('section[aria-label="Snoozed"]')).toBeNull();
 });
 
+it.each([
+  ["waiting!=merge", false],
+  ["waiting!=agent", true],
+] as const)(
+  "keeps a snoozed waiting PR under %s and lets it return (previously actionable: %s)",
+  async (query, previouslyActionable) => {
+    daemon = { revision: 1, inboxes: [inbox("Waiting", { query })] };
+    if (previouslyActionable) {
+      entries = [entry(7, "acme/demo", { authored_by_me: true }, { checks: "failing" })];
+      await render("?inbox=Waiting");
+    }
+    entries = [entry(7, "acme/demo", { authored_by_me: true }, { checks: "running" })];
+    await render("?inbox=Waiting");
+    expect(titles()).toEqual(["Change 7"]);
+    await click(node.querySelector("button.upnext-row"));
+    await press("s");
+    await click(
+      Array.from(node.querySelectorAll('[role="menuitem"]')).find((choice) =>
+        choice.textContent?.includes("Tomorrow morning"),
+      ),
+    );
+    expect(titles()).toEqual([]);
+    const snoozed = node.querySelector('section[aria-label="Snoozed"]')!;
+    expect(snoozed).not.toBeNull();
+    expect(snoozed.textContent).toContain("Change 7");
+    await click(snoozed.querySelector(".list-heading button"));
+    await click(snoozed.querySelector(".row-menu-button"));
+    await click(
+      Array.from(node.querySelectorAll('[role="menuitem"]')).find((choice) =>
+        choice.textContent?.includes("Bring back"),
+      ),
+    );
+    expect(titles()).toEqual(["Change 7"]);
+  },
+);
+
 it("shows Snoozed with Bring back in an inbox whose queue is empty", async () => {
   snoozeUntilLater("acme/demo#3", "other/thing#4");
   await render("?inbox=Merges");

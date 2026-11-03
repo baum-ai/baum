@@ -35,6 +35,7 @@ import {
   type Option,
 } from "./pr-filter";
 import { COMMAND, MAC, useShortcuts } from "./shortcuts";
+import { useMenuFocus } from "./context-menu";
 import "./filter-menu.css";
 
 type Row =
@@ -751,6 +752,7 @@ export type SaveOption = { label: string; onSelect: () => void };
  *  option, and a single one is a plain button. */
 export function SaveButton({ options }: { options: SaveOption[] }) {
   const { detailsProps, close, open } = useDisclosure();
+  const menuFocus = useMenuFocus(open, close);
   const [first, ...rest] = options;
   if (!first) return null;
   return (
@@ -774,7 +776,7 @@ export function SaveButton({ options }: { options: SaveOption[] }) {
             <ChevronDownIcon size={12} />
           </summary>
           {open ? (
-            <div role="menu" className="filter-save-menu">
+            <div role="menu" className="filter-save-menu" {...menuFocus}>
               {rest.map((option) => (
                 <button
                   key={option.label}
