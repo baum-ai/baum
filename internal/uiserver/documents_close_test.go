@@ -13,8 +13,7 @@ import (
 // clones its Patcher keeps open for further patches of a range.
 func TestDocumentCacheCloseClosesTheKeptClones(t *testing.T) {
 	f := linktest.New(t)
-	tmp := t.TempDir()
-	t.Setenv("TMPDIR", tmp)
+	tmp := linktest.TempDir(t)
 	cache := newDocumentCache()
 	result, err := cache.patch(context.Background(), locallink.PatchRequest{Dir: f.Repo, Repository: linktest.Repository, Head: f.Head, Base: f.Base, Path: "c.txt"})
 	if err != nil || !result.Available {
