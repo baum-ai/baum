@@ -30,7 +30,7 @@ jobs:
             runner: windows-2025
     runs-on: ${{ matrix.runner }}
     # The race-enabled tests run several times slower on Windows.
-    timeout-minutes: ${{ matrix.os == 'windows' && 30 || 15 }}
+    timeout-minutes: ${{ matrix.os == 'windows' && 40 || 15 }}
     defaults:
       run:
         shell: bash
@@ -71,10 +71,14 @@ jobs:
       # A race-enabled binary sleeps a second as it exits, and the tests run
       # their own binary as a fake baum or cursor-agent hundreds of times.
       # Races are still reported; only the wait is skipped.
+      # On Windows, internal/decisionlog alone takes 6 to over 10 minutes
+      # (each SQLite commit waits for FlushFileBuffers on the runner's disk),
+      # past go test's default 10-minute limit per package.
       - name: Test
-        run: go test -race ./...
+        run: go test -race -timeout "$TEST_TIMEOUT" ./...
         env:
           GORACE: atexit_sleep_ms=0
+          TEST_TIMEOUT: ${{ matrix.os == 'windows' && '30m' || '10m' }}
 
       - name: Check shipped marketplace files without cached results
         run: go test -race -count=1 ./hosted/agenthooks/
