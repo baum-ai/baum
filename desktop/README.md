@@ -1124,10 +1124,11 @@ start of an installed AppImage writes
 `~/.local/share`), naming the AppImage's current path, with `TryExec` so
 menus drop it once the file is gone and the icon copied to `baum.png` in the
 app's data directory. Hiding the entry with `NoDisplay=true` or
-`Hidden=true` keeps it hidden. When another entry in that directory already
-starts the AppImage, through its `TryExec` or the program in its `Exec` (as
-AppImageLauncher's and Gear Lever's do), the app removes its own entry
-instead, so baum is listed once. There is no Flatpak or Snap. x86_64 is
+`Hidden=true` keeps it hidden, and the app never removes a hidden entry.
+When another visible entry in that directory already starts the AppImage,
+through its `TryExec` or the program in its `Exec` (as AppImageLauncher's
+and Gear Lever's do), the app removes its own entry instead, so baum is
+listed once. There is no Flatpak or Snap. x86_64 is
 the supported architecture; arm64 is built on GitHub's arm64 runners and
 published when that build succeeds. Linux bundles are not OS-signed; the
 AppImage carries the updater signature.

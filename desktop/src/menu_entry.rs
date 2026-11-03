@@ -8,7 +8,7 @@
 //! Every start of an installed AppImage rewrites the entry, so moving the file
 //! keeps it working, and `TryExec` hides the entry once the file is gone. An
 //! entry the user hid (`Hidden` or `NoDisplay`) is left alone. When another
-//! entry in the same directory already starts this AppImage (one an
+//! visible entry in the same directory already starts this AppImage (one an
 //! integration tool wrote), the app removes its own instead, so the menu does
 //! not list baum twice. The deb installs its own entry and never runs this.
 
@@ -74,8 +74,12 @@ fn entry_path_in(
 }
 
 /// Writes the entry unless the user hid it or it is already current, and
-/// removes it when another entry already starts the AppImage.
+/// removes it when another visible entry already starts the AppImage.
 fn update(path: &Path, image: &Path, icon: Option<&Path>) -> Result<(), String> {
+    let existing = fs::read_to_string(path).ok();
+    if existing.as_deref().is_some_and(hidden) {
+        return Ok(());
+    }
     if started_by_another_entry(path, image) {
         return match fs::remove_file(path) {
             Err(e) if e.kind() != std::io::ErrorKind::NotFound => {
@@ -83,10 +87,6 @@ fn update(path: &Path, image: &Path, icon: Option<&Path>) -> Result<(), String> 
             }
             _ => Ok(()),
         };
-    }
-    let existing = fs::read_to_string(path).ok();
-    if existing.as_deref().is_some_and(hidden) {
-        return Ok(());
     }
     let entry = menu_entry(image, icon)?;
     if existing.as_deref() == Some(entry.as_str()) {
@@ -146,8 +146,9 @@ fn hidden(content: &str) -> bool {
     false
 }
 
-/// Whether a `.desktop` file beside `own` starts `image`, by its `TryExec` or
-/// the program in its `Exec`, as AppImageLauncher's and Gear Lever's do.
+/// Whether a visible `.desktop` file beside `own` starts `image`, by its
+/// `TryExec` or the program in its `Exec`, as AppImageLauncher's and Gear
+/// Lever's do. A hidden one does not count: baum would be in no menu.
 fn started_by_another_entry(own: &Path, image: &Path) -> bool {
     let Some(entries) = own.parent().and_then(|dir| fs::read_dir(dir).ok()) else {
         return false;
@@ -156,7 +157,8 @@ fn started_by_another_entry(own: &Path, image: &Path) -> bool {
         let path = entry.path();
         path != own
             && path.extension().is_some_and(|ext| ext == "desktop")
-            && fs::read_to_string(&path).is_ok_and(|content| starts(&content, image))
+            && fs::read_to_string(&path)
+                .is_ok_and(|content| !hidden(&content) && starts(&content, image))
     })
 }
 
@@ -370,6 +372,23 @@ mod tests {
         fs::remove_file(&theirs).unwrap();
         update(&path, image, None).unwrap();
         assert!(path.exists());
+
+        // A hidden entry of theirs leaves ours in place.
+        let starts_image = format!("Exec={}\n", image.display());
+        fs::write(
+            &theirs,
+            format!("[Desktop Entry]\n{starts_image}NoDisplay=true\n"),
+        )
+        .unwrap();
+        update(&path, image, None).unwrap();
+        assert!(path.exists());
+
+        // Ours, once the user hid it, is kept even beside a visible one.
+        let ours_hidden = format!("[Desktop Entry]\n{starts_image}Hidden=true\n");
+        fs::write(&path, &ours_hidden).unwrap();
+        fs::write(&theirs, format!("[Desktop Entry]\n{starts_image}")).unwrap();
+        update(&path, image, None).unwrap();
+        assert_eq!(fs::read_to_string(&path).unwrap(), ours_hidden);
         fs::remove_dir_all(&dir).unwrap();
     }
 
