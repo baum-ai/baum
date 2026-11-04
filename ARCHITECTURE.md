@@ -2860,12 +2860,12 @@ kept snapshot expires at the earliest instant at which building again could
 differ with nothing written: a `generating` run's lease end (it then reads as
 interrupted), a fresh discovery snapshot's next poll, or an applied
 observation turning stale two minutes after it was fetched; and at the latest
-after `reviewindex.MaxAge` (30 seconds), for what nothing models (below).
+after `reviewindex.MaxAge` (2 minutes), for what nothing models (below).
 Nothing is persisted: a restarted daemon builds on first read.
 
 `uiserver.Server.WatchIndex` catches changes made outside the daemon (a CLI
 `baum internal generate`, another process editing the registry) and those that
-come with time. Every 2 seconds it computes `reviewindex.Fingerprint`, which
+come with time. Every 10 seconds (`uiserver.IndexWatchEvery`) it computes `reviewindex.Fingerprint`, which
 runs no git and opens no store: the registry's picked repositories and clone
 rows as stored (`Registry.RepositoryRows`, one query on the registry's
 connection), the GitHub account revision (`githubauth.Manager.Revision`), and
@@ -4195,8 +4195,10 @@ replace it.
   session with no title and no activity never had a conversation (opened and
   left, or used only to resume another; Claude Code writes no transcript until
   then) and is left out of the list (`empty`). Since agents report few
-  events during a turn, `Transcripts.Watch` builds the list every second,
-  reading a working session's transcript (one neither ended nor waiting)
+  events during a turn, `Transcripts.Watch` builds the list every second
+  while a session is running (every 5 seconds while sessions are listed but
+  none runs, and every 15 when none is live, so an idle daemon does not wake
+  every second), reading a working session's transcript (one neither ended nor waiting)
   when it grew and the others' every 5 seconds, only what they appended, and
   publishes `live` when it differs from the last one: a running session's
   steps, files and message, and a session settling, reach the app without a
@@ -4301,6 +4303,13 @@ replace it.
   after, since the branch changes while it runs and a pull request appears
   once pushed; a lookup that fails keeps the last link. Failing to list the
   registered clones is not retried for 30 seconds either.
+
+  A lookup runs git only when the directory's `gitlocal.CheckoutStamp`
+  changed since git last read it. The stamp is read from files, not git: what
+  `HEAD` names, its branch's commit, and the common `config`. Otherwise it
+  reuses the branch, head, upstream and remotes git last gave, for at most
+  10 minutes, and matches them against the current discovery cache, so a
+  newly opened pull request still links.
 - **Commits and pushes.** An agent often works away from its directory: it
   commits in another worktree of the clone, or creates a branch, pushes it and
   checks its directory back out on `main`. The tracker also follows Git's
