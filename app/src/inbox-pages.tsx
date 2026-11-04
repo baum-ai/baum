@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState, type ComponentType } from "react";
 import type { ViewerLinkProps } from "@baum/viewer/navigation";
-import { appURL } from "./api";
+import { appURL, type Entry } from "./api";
 import {
   sentence,
   templateInbox,
@@ -17,6 +17,7 @@ import {
 import { MenuButton, useContextMenu, type MenuItem } from "./context-menu";
 import { FilterBar, FilterButton } from "./filter-menu";
 import { PageBar } from "./shell";
+import { queryProblem, tidyQuery } from "./pr-filter";
 import { SettingRow } from "./settings";
 import { ColourSwatches, GROUPS, InboxTag, type UpNextItem } from "./up-next";
 import { DANGER, PRIMARY, SECONDARY } from "./action-classes";
@@ -30,6 +31,8 @@ export type InboxPageProps = {
   login?: string;
   /** The person's repositories, as owner/name. */
   repositories: string[];
+  /** Every pull request read, whose values the query's filter offers. */
+  entries?: Entry[];
   /** How many saves the daemon has accepted; each shows "Saved" for a moment. */
   saves: number;
   save: (inboxes: Inbox[]) => void;
@@ -102,7 +105,7 @@ export function NewInboxPage({
                 <button
                   type="button"
                   disabled={full}
-                  className={`inbox-template inbox-${template.color}`}
+                  className={`inbox-template inbox-${made.color}`}
                   onClick={() => start(fromTemplate(template, inboxes))}
                 >
                   <span className="inbox-template-head">
@@ -137,6 +140,7 @@ export function EditInboxPage({
   remove,
   draft,
   setDraft,
+  onCreated,
   ...page
 }: InboxPageProps & {
   /** The id in the address. */
@@ -148,6 +152,7 @@ export function EditInboxPage({
   /** An inbox started from a template on New inbox, not saved until Save. */
   draft: Inbox | null;
   setDraft: (inbox: Inbox | null) => void;
+  onCreated?: () => void;
 }) {
   const { inboxes, Link } = page;
   const saved = inboxes.find((one) => one.id === id);
@@ -158,6 +163,7 @@ export function EditInboxPage({
   useEffect(() => {
     if (saving === null || page.saves <= saving) return;
     setSaving(null);
+    onCreated?.();
     setDraft(null);
     page.go(appURL(`?inbox=${encodeURIComponent(id)}`));
   }, [page.saves]);
@@ -201,6 +207,8 @@ function EditInbox({
   saveDraft,
   inboxes,
   items,
+  repositories,
+  entries,
   saves,
   save,
   go,
@@ -222,7 +230,10 @@ function EditInbox({
   const nameField = useRef<HTMLInputElement>(null);
   // A new inbox opens with its name to type over.
   useEffect(() => {
-    if (fresh) nameField.current?.focus();
+    if (fresh) {
+      nameField.current?.focus();
+      nameField.current?.select();
+    }
   }, []);
   // The name shown follows the saved one, as after a refusal elsewhere.
   useEffect(() => setDraft(inbox.name), [inbox.name]);
@@ -269,7 +280,27 @@ function EditInbox({
   })).filter((group) => group.rows.length > 0);
 
   return (
-    <section>
+    <section
+      onKeyDown={(event) => {
+        if (
+          !keepDraft ||
+          event.key !== "Enter" ||
+          !(event.metaKey || event.ctrlKey) ||
+          event.nativeEvent.isComposing
+        )
+          return;
+        event.preventDefault();
+        const problem = nameProblem(draft, inboxes, inbox.id);
+        setNameError(problem);
+        if (!problem) {
+          const text =
+            event.currentTarget.querySelector<HTMLTextAreaElement>(".inbox-query textarea")?.value;
+          const query =
+            text !== undefined && !queryProblem(text, true) ? tidyQuery(text) : inbox.query;
+          saveDraft?.({ ...inbox, name: draft.trim(), query });
+        }
+      }}
+    >
       <PageBar
         title={keepDraft ? "New inbox" : "Edit inbox"}
         detail={keepDraft ? "Save adds it to the sidebar" : "Changes save as you make them"}
@@ -344,6 +375,7 @@ function EditInbox({
                 query={inbox.query}
                 onChange={(query) => change({ query })}
                 entries={items.map((item) => item.entry)}
+                known={{ entries, repositories }}
                 kindOf={(entry) => kinds.get(entry)}
                 inbox
               />
@@ -351,6 +383,7 @@ function EditInbox({
                 query={inbox.query}
                 onChange={(query) => change({ query })}
                 entries={items.map((item) => item.entry)}
+                known={{ entries, repositories }}
                 inbox
               />
             </div>

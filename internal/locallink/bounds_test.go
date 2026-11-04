@@ -129,8 +129,7 @@ func TestResolveNamesTheRemotesOnAMismatch(t *testing.T) {
 
 func TestResolveLeavesNothingBehindWhenCancelled(t *testing.T) {
 	f := linktest.New(t)
-	tmp := t.TempDir()
-	t.Setenv("TMPDIR", tmp)
+	tmp := linktest.TempDir(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	if _, err := Resolve(ctx, request(f)); err == nil {

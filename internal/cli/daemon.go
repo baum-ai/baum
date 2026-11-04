@@ -22,6 +22,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/baum-ai/baum/hosted/agentplugins"
+	"github.com/baum-ai/baum/internal/agentcli"
 	"github.com/baum-ai/baum/internal/agentrequests"
 	"github.com/baum-ai/baum/internal/analytics"
 	"github.com/baum-ai/baum/internal/appdb"
@@ -276,6 +277,11 @@ func runDaemonRun(cmd *cobra.Command, _ []string) error {
 		OpenLogger: openLogger,
 		Prepare: func(ctx context.Context) error {
 			applyLoginEnvironment(ctx, logger)
+			// The agents `baum desktop-setup` recorded come first on the
+			// PATH, including those recorded while the daemon runs.
+			agentcli.Keep(ctx, os.Getenv("PATH"), recordedAgentsInterval, func(string) {
+				logger.Info("PATH changed: baum desktop-setup recorded the coding agents again")
+			})
 			// Nobody answers prompts in the daemon: fetches over SSH run in
 			// batch mode with an agent socket that still exists.
 			gitlocal.SetBackground(&gitlocal.Background{SSHAgent: sshAgent().Socket})
@@ -318,6 +324,10 @@ func respawnDaemon(paths daemon.Paths, executable string, status daemon.Status, 
 // resolveShell is a seam for tests.
 var resolveShell = shellenv.Resolve
 
+// recordedAgentsInterval is how often the daemon checks whether `baum
+// desktop-setup` recorded the coding agents again.
+const recordedAgentsInterval = 15 * time.Second
+
 // sshAgent replaces a stale SSH agent socket with the login shell's. The
 // shell is not given the stale socket, so it reports the one its own startup
 // files or session provide.
@@ -350,6 +360,9 @@ func applyLoginEnvironment(ctx context.Context, log *slog.Logger) {
 		// Windows: the inherited environment with the registry's PATH.
 		resolved = result.Env
 		log.Info("read PATH from the registry")
+	case result.Fallback != "":
+		resolved = result.Env
+		log.Warn("read the environment of a login shell that is not interactive", "shell", result.Shell, "reason", result.Fallback)
 	default:
 		resolved = result.Env
 		log.Info("read the login shell environment", "shell", result.Shell)
@@ -703,7 +716,7 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 				}
 				return agentplugins.New().CodexTrust(ctx, dirs)
 			},
-			Diagnostics: uiDiagnostics}.Handler()
+			Diagnostics: uiDiagnostics, Version: version()}.Handler()
 		// The tour's sample project, written when first asked for.
 		sample := &sampleapp.Workspace{Dir: filepath.Join(state, "sample"), Own: api}
 		return daemon.App{

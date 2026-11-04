@@ -122,6 +122,23 @@ func (q *Queue) Handler() http.Handler {
 		}
 		respond(w, v)
 	})
+	// seen records that the user looked at a failed job (Queue.Seen).
+	mux.HandleFunc("POST /api/jobs/{id}/seen", func(w http.ResponseWriter, r *http.Request) {
+		var request struct{}
+		if !decode(w, r, &request) {
+			return
+		}
+		v, e := q.Seen(r.PathValue("id"))
+		if e != nil {
+			status := 500
+			if errors.Is(e, os.ErrNotExist) {
+				status = 404
+			}
+			http.Error(w, http.StatusText(status), status)
+			return
+		}
+		respond(w, v)
+	})
 	// draft serves a running staged review's latest draft: masked and
 	// completed like a version, with the sections still being written
 	// pending, and never a version. A job without one, or ended, is 404.

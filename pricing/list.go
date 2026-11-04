@@ -27,12 +27,20 @@ var embeddedDocument []byte
 
 // PublishedURL is where main's prices.json is published, with its signature
 // at PublishedURL + ".sig". It carries the full format (tiers, fast mode,
-// 1-hour cache writes).
-const PublishedURL = "https://static.usebaum.com/pricing/v2/prices.json"
+// 1-hour cache writes). The path version changes whenever older builds could
+// not read the publication: v2 added the full format, and v3 is signed with
+// the price-list key. pricing-publish keeps writing v2, signed with the
+// release manifest key, for appliances built before v3.
+const PublishedURL = "https://static.usebaum.com/pricing/v3/prices.json"
 
-// publishedKey verifies published lists. It is the release manifest key: the
-// same party that signs a release signs its price corrections.
-const publishedKey = "rU/Iy4IT2gMQlgq7qNFjliiA6tqH11nq2PC9ld4j43I="
+// publishedKey verifies published lists. It is the price-list key, which signs
+// nothing else, so publishing prices cannot sign a release manifest. Builds
+// before v3 trusted the release manifest key here instead.
+const publishedKey = "VfG2YeK/hX4E5dM7z9beP7R8/jMMTWOS54h+GuDdEPY="
+
+// ErrSignatureNotTrusted is the error for a list that publishedKey (or the key
+// passed to ParsePublished) did not sign.
+var ErrSignatureNotTrusted = errors.New("price list signature is not trusted")
 
 // Entry sources. The sync tool rewrites litellm entries from LiteLLM's price
 // file and never touches manual ones, which record a deliberate choice the
@@ -394,7 +402,7 @@ func ParsePublished(data, signature []byte, key ed25519.PublicKey) (*List, error
 		return nil, fmt.Errorf("decoding price list signature: %w", err)
 	}
 	if !ed25519.Verify(key, data, decoded) {
-		return nil, errors.New("price list signature is not trusted")
+		return nil, ErrSignatureNotTrusted
 	}
 	document, err := ParseDocument(data)
 	if err != nil {

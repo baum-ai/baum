@@ -4,18 +4,25 @@ name: Release
 # viewer and local app, which no other commit carries, so go install of the tag
 # needs only Go. The monorepo's "Tag an open-source release" workflow makes it.
 #
-#   test, viewer-dist, desktop-test
+#   viewer-dist
 #     -> release (goreleaser: CLI archives into a draft GitHub release)
 #     -> desktop (desktop.yml: unsigned bundles, no secrets)
-#     -> sign-macos, sign-windows, sign-linux (environment "release")
+#     -> sign-macos, sign-linux (environment "release")
 #     -> desktop-manifest (latest.json, checksums; read-only)
 #     -> desktop-publish (attach, then publish the draft)
+#   test, desktop-test run beside them; desktop-publish waits for both, so
+#   nothing is published until they pass. The tagging workflow already ran
+#   the Go tests on this commit, so they only gate publishing here.
 #
 # Signing secrets live only in the "release" environment, which needs an
-# approval and accepts only v* tags. Only the three sign jobs use it, and
-# they compile nothing: they run Apple's and Microsoft's signing tools, a
-# pinned minisign and this repository's scripts on bundles built without
-# secrets. Actions are pinned to commits. See desktop/README.md.
+# approval and accepts only v* tags. Only the sign jobs use it, and they
+# compile nothing: they run Apple's signing tools, a pinned minisign and this
+# repository's scripts on bundles built without secrets. Actions are pinned to
+# commits. See desktop/README.md.
+#
+# The Windows desktop installer is not released for now: desktop.yml skips its
+# bundle here and in Check, and nothing signs or publishes it. The CLI's
+# Windows archives are unaffected.
 
 on:
   push:
@@ -147,7 +154,7 @@ jobs:
 
   release:
     name: Release
-    needs: [test, viewer-dist, desktop-test]
+    needs: viewer-dist
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
@@ -222,6 +229,7 @@ jobs:
     with:
       version: ${{ needs.release.outputs.version }}
       cli-artifact: cli-binaries
+      windows: false
 
   sign-macos:
     # Apple's tools, a pinned minisign and this repository's scripts only.
@@ -345,103 +353,6 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-  sign-windows:
-    # Microsoft's signtool, a pinned minisign and this repository's scripts only.
-    name: Sign the Windows installer
-    needs: [release, desktop]
-    environment: release
-    runs-on: windows-2025
-    timeout-minutes: 30
-    defaults:
-      run:
-        shell: bash
-    env:
-      VERSION: ${{ needs.release.outputs.version }}
-      # updater-sign.sh and updater-manifest.sh then use only the pinned
-      # minisign (MINISIGN), never one on PATH.
-      BAUM_RELEASE_SIGNING: "1"
-    outputs:
-      updater: ${{ steps.signing.outputs.updater }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - name: Download the unsigned installer
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          name: desktop-windows-amd64
-          path: unsigned
-
-      - name: Signing configuration
-        id: signing
-        env:
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
-          AZURE_TRUSTED_SIGNING_ACCOUNT: ${{ secrets.AZURE_TRUSTED_SIGNING_ACCOUNT }}
-        run: |
-          has() { if [ -n "$1" ]; then echo true; else echo false; fi; }
-          {
-            echo "updater=$(has "$TAURI_SIGNING_PRIVATE_KEY")"
-            echo "windows=$(has "$WINDOWS_CERTIFICATE$AZURE_TRUSTED_SIGNING_ACCOUNT")"
-          } >>"$GITHUB_OUTPUT"
-          mkdir -p signed
-          name=baum-desktop-windows-amd64-unsigned-setup.exe
-          if [ -n "$WINDOWS_CERTIFICATE$AZURE_TRUSTED_SIGNING_ACCOUNT" ]; then
-            name=baum-desktop-windows-amd64-setup.exe
-          fi
-          cp unsigned/baum-desktop-windows-amd64-setup.exe "signed/$name"
-
-      - name: Write the code signing certificate
-        if: steps.signing.outputs.windows == 'true'
-        env:
-          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
-        run: |
-          if [ -n "$WINDOWS_CERTIFICATE" ]; then
-            printf '%s' "$WINDOWS_CERTIFICATE" | base64 --decode >"$RUNNER_TEMP/certificate.pfx"
-            echo "WINDOWS_CERTIFICATE_PATH=$RUNNER_TEMP/certificate.pfx" >>"$GITHUB_ENV"
-          fi
-
-      - name: Sign the installer
-        if: steps.signing.outputs.windows == 'true'
-        shell: pwsh
-        env:
-          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
-          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
-          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
-          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
-          AZURE_TRUSTED_SIGNING_ENDPOINT: ${{ secrets.AZURE_TRUSTED_SIGNING_ENDPOINT }}
-          AZURE_TRUSTED_SIGNING_ACCOUNT: ${{ secrets.AZURE_TRUSTED_SIGNING_ACCOUNT }}
-          AZURE_TRUSTED_SIGNING_PROFILE: ${{ secrets.AZURE_TRUSTED_SIGNING_PROFILE }}
-        run: ./desktop/scripts/windows-sign.ps1 -Path signed/baum-desktop-windows-amd64-setup.exe
-
-      - name: Install minisign
-        if: steps.signing.outputs.updater == 'true'
-        run: |
-          minisign=$(bash desktop/scripts/install-minisign.sh "$RUNNER_TEMP/minisign")
-          echo "MINISIGN=$minisign" >>"$GITHUB_ENV"
-
-      # After the Authenticode signature: the updater signs the final file.
-      - name: Sign the updater installer
-        if: steps.signing.outputs.updater == 'true'
-        env:
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        run: bash desktop/scripts/updater-sign.sh "$VERSION" signed/*-setup.exe
-
-      - name: Remove signing material
-        if: always()
-        run: rm -f "$RUNNER_TEMP/certificate.pfx"
-
-      - name: Keep the signed files
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: signed-windows-amd64
-          path: signed/
-          if-no-files-found: error
-          retention-days: 7
-
   sign-linux:
     # A pinned minisign and this repository's scripts only.
     name: Sign the Linux AppImages
@@ -524,7 +435,7 @@ jobs:
     # Read-only: writes latest.json and checksums, and checks every bundle
     # against the release key and the version before anything is published.
     name: Desktop updater manifest
-    needs: [release, sign-macos, sign-windows, sign-linux]
+    needs: [release, sign-macos, sign-linux]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     env:
@@ -534,7 +445,6 @@ jobs:
       # job saw it.
       UPDATER: ${{ needs.sign-linux.outputs.updater }}
       UPDATER_MACOS: ${{ needs.sign-macos.outputs.updater }}
-      UPDATER_WINDOWS: ${{ needs.sign-windows.outputs.updater }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -546,12 +456,6 @@ jobs:
         with:
           name: signed-darwin-universal
           path: signed/darwin-universal
-
-      - name: Download the signed Windows files
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          name: signed-windows-amd64
-          path: signed/windows-amd64
 
       - name: Download the signed Linux files
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
@@ -580,7 +484,6 @@ jobs:
             done
           }
           take darwin-universal '^baum-desktop-darwin-universal(-unsigned|-unnotarized)?\.(dmg|app\.tar\.gz(\.sig)?)$'
-          take windows-amd64 '^baum-desktop-windows-amd64(-unsigned)?-setup\.exe(\.sig)?$'
           take linux '^baum-desktop-linux-(amd64|arm64)\.(deb|AppImage(\.sig)?)$'
           exit "$status"
 
@@ -593,7 +496,7 @@ jobs:
         run: |
           shopt -s nullglob
           signatures=(release/*.sig)
-          if [ "$UPDATER" != "$UPDATER_MACOS" ] || [ "$UPDATER" != "$UPDATER_WINDOWS" ]; then
+          if [ "$UPDATER" != "$UPDATER_MACOS" ]; then
             echo "::error::the sign jobs disagree on whether the updater key is configured"
             exit 1
           fi
@@ -631,7 +534,7 @@ jobs:
     # The only desktop job with a token that can write: it runs no build
     # tooling, only gh and the attestation action.
     name: Publish the release
-    needs: desktop-manifest
+    needs: [desktop-manifest, test, desktop-test]
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
@@ -648,7 +551,7 @@ jobs:
       # Only the files a release ships, and every one it must ship.
       - name: Check the files
         run: |
-          allowed='^(baum-desktop-darwin-universal(-unsigned|-unnotarized)?\.(dmg|app\.tar\.gz(\.sig)?)|baum-desktop-linux-(amd64|arm64)\.(deb|AppImage(\.sig)?)|baum-desktop-windows-amd64(-unsigned)?-setup\.exe(\.sig)?|desktop-checksums\.txt|latest\.json)$'
+          allowed='^(baum-desktop-darwin-universal(-unsigned|-unnotarized)?\.(dmg|app\.tar\.gz(\.sig)?)|baum-desktop-linux-(amd64|arm64)\.(deb|AppImage(\.sig)?)|desktop-checksums\.txt|latest\.json)$'
           status=0
           for file in release/*; do
             if ! [[ $(basename "$file") =~ $allowed ]]; then
@@ -659,7 +562,7 @@ jobs:
           # Exactly one of each, so no bundle is shipped under two names.
           for required in 'baum-desktop-darwin-universal*.dmg' 'baum-desktop-darwin-universal*.app.tar.gz' \
             'baum-desktop-linux-amd64.deb' 'baum-desktop-linux-amd64.AppImage' \
-            'baum-desktop-windows-amd64*-setup.exe' desktop-checksums.txt; do
+            desktop-checksums.txt; do
             mapfile -t matches < <(compgen -G "release/$required" || true)
             if [ "${#matches[@]}" -ne 1 ]; then
               echo "::error::expected one $required, found ${#matches[@]}"
@@ -689,3 +592,32 @@ jobs:
             gh release upload "$TAG" release/latest.json --repo "$GITHUB_REPOSITORY" --clobber
           fi
           gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false
+
+      # Release candidates read the manifest on the desktop-rc-updates
+      # pre-release, so they move to the next candidate or full release; full
+      # releases read the latest full release's. Every release replaces it once
+      # its own files are public, unless it holds a newer version already (a
+      # re-run of an older release). A pre-release is never the latest
+      # release, so this one never stands in for a full release.
+      - name: Update the release candidates' manifest
+        if: hashFiles('release/latest.json') != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CHANNEL: desktop-rc-updates
+        run: |
+          version=$(jq -er .version release/latest.json)
+          if ! gh release view "$CHANNEL" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release create "$CHANNEL" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --prerelease \
+              --title "Release-candidate updates (not a release)" \
+              --notes "Holds the updater manifest that release candidates of the desktop app read. Download baum from the latest release instead."
+          fi
+          current=$(gh release download "$CHANNEL" --repo "$GITHUB_REPOSITORY" --pattern latest.json --output - 2>/dev/null |
+            jq -r '.version // empty' || true)
+          # sort -V orders 1.2.3~rc.1 before 1.2.3, as semver orders
+          # 1.2.3-rc.1 before 1.2.3.
+          newest=$(printf '%s\n' "${version//-/\~}" "${current//-/\~}" | sort -V | tail -n 1)
+          if [ -n "$current" ] && [ "$newest" != "${version//-/\~}" ]; then
+            echo "::notice::$CHANNEL keeps $current, which is newer than $version."
+            exit 0
+          fi
+          gh release upload "$CHANNEL" release/latest.json --repo "$GITHUB_REPOSITORY" --clobber

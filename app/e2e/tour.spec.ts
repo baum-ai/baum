@@ -52,6 +52,9 @@ async function walk(
         })
         .toBe(true);
     }
+    // Buttons the copy names look like buttons but take no pointer.
+    for (const named of await tour.locator("p > span").all())
+      await expect(named, titles.at(-1)).toHaveCSS("pointer-events", "none");
     // Every stop but the first goes back.
     if (stop > 1) await expect(tour.getByRole("button", { name: "Back" })).toBeVisible();
     if (pictures && name) {

@@ -134,13 +134,13 @@ func (c *Backend) environment(directory string, endpoint *agent.Endpoint) []stri
 	return env
 }
 
-// minimumVersion is the oldest Claude Code the User profile runs: the first
+// MinimumVersion is the oldest Claude Code the User profile runs: the first
 // release whose argument parser accepts every flag args and fixArgs pass.
 // Found with the agent version matrix (scripts/agent-matrix): 2.1.247 refuses
 // --restricted ("unknown option") and 2.1.248 accepts every argument of a
 // review, a resumed or forked session, a fix and a completion. Older 2.1
 // releases lack --effort (2.1.0 to 2.1.32 at least) or --restricted.
-const minimumVersion = "2.1.248"
+const MinimumVersion = "2.1.248"
 
 var versionPattern = regexp.MustCompile(`\d+\.\d+\.\d+`)
 
@@ -193,10 +193,10 @@ func (c *Backend) checkVersion(ctx context.Context, binary string) (string, erro
 	}
 	version := versionPattern.FindString(string(out))
 	if version == "" {
-		return "", fmt.Errorf("could not read a version from %s --version (%q); upgrade Claude Code to %s or newer", binary, strings.TrimSpace(string(out)), minimumVersion)
+		return "", fmt.Errorf("could not read a version from %s --version (%q); upgrade Claude Code to %s or newer", binary, strings.TrimSpace(string(out)), MinimumVersion)
 	}
-	if compareVersions(version, minimumVersion) < 0 {
-		return "", fmt.Errorf("claude %s is older than %s, which baum needs; upgrade Claude Code", version, minimumVersion)
+	if compareVersions(version, MinimumVersion) < 0 {
+		return "", fmt.Errorf("claude %s is older than %s, which baum needs; upgrade Claude Code", version, MinimumVersion)
 	}
 	return version, nil
 }

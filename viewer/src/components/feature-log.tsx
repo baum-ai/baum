@@ -29,10 +29,10 @@ import {
   UnknownPerson,
 } from "./decision-log";
 import { formatBucket, formatCount, formatDate, formatTime } from "./format";
-import { ChevronDownIcon, CloseIcon } from "./icons";
+import { ChevronDownIcon } from "./icons";
 import { InlineMarkdown, Markdown } from "./markdown";
 import { DecisionByBadge } from "./review-parts";
-import { Badge, Button, Spinner } from "./ui";
+import { Badge, Button, CloseButton, Spinner } from "./ui";
 import { type ReactNode, useEffect, useId, useRef, useState } from "react";
 
 /** The Features tab of a decision log: its features, newest activity first,
@@ -196,6 +196,7 @@ export function TimelineHeading({
 export function FeatureItem({
   feature,
   expanded,
+  focused = false,
   onToggle,
   onKeyDecision,
   children,
@@ -206,6 +207,8 @@ export function FeatureItem({
 }: {
   feature: FeatureSummary;
   expanded: boolean;
+  /** The host's keys are on this entry. */
+  focused?: boolean;
   onToggle: () => void;
   onKeyDecision: (decision: KeyDecision) => void;
   /** The drill-down, rendered only while expanded. */
@@ -226,7 +229,13 @@ export function FeatureItem({
   const selected = expanded && panelElsewhere !== undefined;
   return (
     // A row the app's keys move through, opened by its button.
-    <li ref={itemRef} data-feature={feature.id} data-row-id={feature.id} className={TIMELINE_ROW}>
+    <li
+      ref={itemRef}
+      data-feature={feature.id}
+      data-row-id={feature.id}
+      data-focused={focused || undefined}
+      className={TIMELINE_ROW}
+    >
       <TimelineDate day={day} />
       <TimelineRail>
         <span
@@ -408,17 +417,7 @@ export function FeatureSidePanel({
             <span className="text-xs text-(--text-tertiary)">{featureCounts(feature)}</span>
           </div>
         </div>
-        <button
-          type="button"
-          onClick={onClose}
-          aria-label="Close feature"
-          className={cn(
-            "flex-none cursor-pointer rounded-(--radius-sm) p-1.5 text-(--text-tertiary) hover:bg-(--surface-hover) hover:text-(--text-primary)",
-            FOCUS_RING,
-          )}
-        >
-          <CloseIcon size={14} />
-        </button>
+        <CloseButton onClick={onClose} label="Close feature" />
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto bg-(--surface-wash) px-5 py-4">{children}</div>
     </aside>

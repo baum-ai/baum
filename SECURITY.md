@@ -229,7 +229,16 @@ It never prints a token or an API key, or a prefix, length or hash of one. For a
 GitHub token it prints only where it was found (an environment variable's name,
 the config file, `hosts.yml` or the keyring), and for `ANTHROPIC_API_KEY` only
 whether it is set. It does print paths, tool versions and the `PATH` entries,
-so look at a report before pasting it into a public issue.
+so look at a report before pasting it into a public issue. The desktop app's
+"Report a problem" attaches nothing, only the versions (of baum, the OS and
+each tool, without paths), or a shorter summary, as you choose with a preview
+in the app (the Help and tray menus attach the summary). In the summary home directories
+become `~`, secret-shaped values, e-mail addresses and @mentions are masked,
+the configuration's load error, the `PATH` entries, the per-repository store
+checks (which name your clones) and the names of GitHub hosts other than
+github.com are left out, and each line is clipped. It still lists tool versions
+and paths, and a machine or host name inside a tool's error text is not
+recognised, so review the form before submitting.
 
 ## What `baum internal view` shows
 
@@ -1122,8 +1131,11 @@ daemon records; a session end or push naming a registered clone makes it run
 the bounded GitHub reads above, never a job by itself.
 
 The daemon does not use the environment of whatever started it. It runs your
-login shell (`$SHELL -i -l -c`, without a terminal, for at most 10 seconds)
-with only session variables and reads the environment your startup files set,
+login shell (`$SHELL -i -l -c`, without a terminal, for at most 10 seconds;
+`$SHELL -l -c` within the same time if that prints nothing, as when a startup
+file runs `exec tmux`) with only session variables and reads the environment
+your startup files set (they can test `BAUM_RESOLVING_ENVIRONMENT` to skip
+work that needs a terminal),
 then keeps only `PATH`, locale, proxy and certificate settings, the SSH agent
 socket and ssh command git uses, the desktop session bus and display,
 GitHub tokens (`GITHUB_TOKEN`, `GH_TOKEN`, `GH_ENTERPRISE_TOKEN`,
@@ -1447,6 +1459,16 @@ install --user` and `uninstall --user` (see "Hosted service commands"). To see
 what is on your `PATH`, the app runs the bundled `baum daemon login-path`,
 which starts your login shell the way the daemon does and runs the first
 `baum` it finds with `--version`.
+
+When the Claude Code or Codex baum finds is older than it supports, the app
+shows a command to run in your terminal: the app's own baum by its full path,
+followed by `desktop-setup`. It runs `claude --version` and `codex --version`
+from your terminal's `PATH` and writes the directories they are in to
+`terminal.json` beside `config.toml` (readable only by you). baum, the daemon
+and the app's status checks then put those directories first on the `PATH` they
+use, so they run the agents your terminal runs. Anything that can write your
+configuration directory could already set `backend_paths` there, so the record
+gives no new control; directories that no longer exist are skipped.
 
 Besides loopback requests to the daemon, the app makes one kind of network
 request: a release build checks GitHub Releases for a newer version of

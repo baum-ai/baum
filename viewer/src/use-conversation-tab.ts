@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 
-export const CONVERSATION_TABS = ["chat", "details", "activity"] as const;
+export const CONVERSATION_TABS = ["chat", "details", "activity", "comments"] as const;
 export type ConversationTab = (typeof CONVERSATION_TABS)[number];
 
 const STORAGE_KEY = "baum.review.conversation-tab";

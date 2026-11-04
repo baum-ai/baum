@@ -23,7 +23,7 @@ import { jobOrigin, jobTarget, jobType, useJobTimes } from "./job-info";
 import { UsageBar } from "./usage";
 import { LoadingStatus } from "./nine-dots";
 import { ReadFailed } from "./page-state";
-import { PageBar } from "./shell";
+import { PageBar, pageScroll } from "./shell";
 import { useFollowScroll } from "./session-transcript";
 
 /** One line of a fix agent's transcript, from `api/jobs/{id}/transcript`.
@@ -187,14 +187,36 @@ function ToolRun({ tools }: { tools: TranscriptEntry[] }) {
   );
 }
 
+function MessageView({ text }: { text: string }) {
+  const json = text.trim().replace(/^```(?:json)?\s*\n([\s\S]*?)\n```$/, "$1");
+  try {
+    const output: unknown = JSON.parse(json);
+    if (output !== null && typeof output === "object") {
+      return (
+        <details className="local-job-output">
+          <summary>
+            {"schema" in output && output.schema === "baum.review/1"
+              ? "Review output"
+              : "Structured output"}
+          </summary>
+          <pre>{JSON.stringify(output, null, 2)}</pre>
+        </details>
+      );
+    }
+  } catch {
+    // Prose and incomplete streamed JSON remain readable as messages.
+  }
+  return (
+    <Markdown html={false} className="local-job-message">
+      {text}
+    </Markdown>
+  );
+}
+
 export function EntryView({ entry }: { entry: TranscriptEntry }) {
   switch (entry.kind) {
     case "message":
-      return (
-        <Markdown html={false} className="local-job-message">
-          {entry.text ?? ""}
-        </Markdown>
-      );
+      return <MessageView text={entry.text ?? ""} />;
     case "reasoning":
       return (
         <details className="local-job-reasoning">
@@ -504,7 +526,7 @@ export function JobPage({
   Link: ComponentType<ViewerLinkProps>;
 }) {
   useEffect(() => {
-    window.scrollTo({ top: 0 });
+    pageScroll().to(0);
   }, [job?.id]);
   return (
     <>

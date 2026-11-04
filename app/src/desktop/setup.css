@@ -618,3 +618,7 @@ button:disabled.loading {
 #hooks-error {
   overflow-wrap: anywhere;
 }
+.terminal-setup {
+  margin-top: 16px;
+  padding: 18px 20px;
+}

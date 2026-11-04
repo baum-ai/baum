@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Markdown } from "@baum/viewer/components/markdown";
 import { ExternalLinkIcon } from "@baum/viewer/components/icons";
-import { ActionLink, Alert, Button } from "@baum/viewer/components/ui";
+import { ActionLink, Alert, Button, CloseButton } from "@baum/viewer/components/ui";
 import { request } from "./api";
 import { LoadingStatus } from "./nine-dots";
 
@@ -80,9 +80,7 @@ export function DescriptionDialog({
           <h2 id="description-title">Description of #{number}</h2>
           <p>{repository}</p>
         </div>
-        <Button variant="ghost" size="compact" onClick={close}>
-          Close
-        </Button>
+        <CloseButton onClick={close} />
       </div>
       {!description && !error ? (
         <LoadingStatus>Reading the description from GitHub…</LoadingStatus>

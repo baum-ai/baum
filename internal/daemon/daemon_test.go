@@ -1164,3 +1164,36 @@ func TestEnsureReplacesAnOlderDaemonThatWonTheStartRace(t *testing.T) {
 		t.Fatalf("%d spawned, %d restarted", spawned.Load(), restarted)
 	}
 }
+
+// Background work that ignores its context does not keep the daemon from
+// stopping, so a client's stop (and the app's quit) still ends.
+func TestStopDoesNotWaitForWorkThatIgnoresItsContext(t *testing.T) {
+	paths := testPaths(t)
+	stuck := make(chan struct{})
+	t.Cleanup(func() { close(stuck) })
+	started := make(chan struct{})
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		done <- Run(ctx, Options{Paths: paths, Version: "v1.0.0", stopGrace: 50 * time.Millisecond,
+			Start: func(context.Context, *uiserver.Server) (App, error) {
+				return App{Run: func(context.Context) { close(started); <-stuck }}, nil
+			}})
+	}()
+	select {
+	case <-started:
+	case err := <-done:
+		t.Fatalf("daemon did not start: %v", err)
+	case <-time.After(10 * time.Second):
+		t.Fatal("daemon did not start")
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("the daemon waited for work that ignores its context")
+	}
+}

@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -226,4 +227,18 @@ func transcript(id, cwd, prompt, commitOID string) string {
 		fmt.Sprintf(`{"type":"ai-title","aiTitle":"Ask %s about the feature (%s)","sessionId":%q}`, Email, Secret, id),
 	}
 	return strings.Join(lines, "\n") + "\n"
+}
+
+// TempDir returns a new directory that os.TempDir names for the rest of the
+// test: TMPDIR on Unix, TMP and TEMP on Windows, which ignores TMPDIR.
+func TempDir(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	if runtime.GOOS == "windows" {
+		t.Setenv("TMP", dir)
+		t.Setenv("TEMP", dir)
+	} else {
+		t.Setenv("TMPDIR", dir)
+	}
+	return dir
 }

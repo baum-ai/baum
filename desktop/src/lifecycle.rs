@@ -70,11 +70,11 @@ pub fn stop_prompt(running: usize, queued: usize) -> Option<String> {
     ))
 }
 
-/// The error shown when the daemon will not stop. The daemon keeps running,
-/// and says so, because quitting the app was not what the user asked for.
+/// The question asked when the daemon will not stop: the app can still quit,
+/// leaving the daemon, which may still be running, to the user.
 fn stop_failure_text(message: &str, details: &[String]) -> String {
     let mut text = format!(
-        "{message}\n\nThe daemon may still be running. Hooks will not restart a daemon you stopped until `baum daemon ensure` or the baum app starts it."
+        "{message}\n\nThe daemon may still be running. Quit baum anyway? Hooks will not restart a daemon you stopped until `baum daemon ensure` or the baum app starts it."
     );
     if !details.is_empty() {
         text.push_str("\n\n");
@@ -148,16 +148,22 @@ pub fn quit_and_stop(app: &AppHandle) {
 }
 
 fn stop_and_exit(app: &AppHandle) {
+    // An app on a disk image runs no baum, so it has no daemon to stop.
+    if daemon::misplaced().is_some() {
+        return app.exit(0);
+    }
     let app = app.clone();
     thread::spawn(move || {
         let stopped =
             daemon::cli_path().and_then(|cli| daemon::run(&cli, &["daemon", "stop"], STOP_TIMEOUT));
         match stopped {
             Ok(_) => app.exit(0),
-            Err(failure) => message(
+            Err(failure) => confirm(
                 &app,
                 "Cannot stop background reviews",
                 &stop_failure_text(&failure.message, &failure.details),
+                "Quit anyway",
+                |app| app.exit(0),
             ),
         }
     });
@@ -226,6 +232,7 @@ mod tests {
             "baum daemon stop failed (exit status: 1).",
             &["timeout".into()],
         );
+        assert!(text.contains("Quit baum anyway?"), "{text}");
         assert!(text.contains("Hooks will not restart"), "{text}");
         assert!(text.contains("baum daemon ensure"), "{text}");
         assert!(text.ends_with("timeout"), "{text}");

@@ -20,6 +20,15 @@ import (
 
 const KeepWalkthroughs = 40
 
+// KeepReviews is how many pull requests' pending reviews are retained.
+const KeepReviews = 200
+
+// MaxReviewComments is how many comments one pending review holds.
+const MaxReviewComments = 100
+
+// KeepSent is how many sent reviews a pull request's record keeps.
+const KeepSent = 20
+
 // MaxTabs is how many saved Pull requests tabs the filters document holds.
 const MaxTabs = 20
 
@@ -32,6 +41,9 @@ var filterPage = regexp.MustCompile(`^(inbox|pulls|(inbox|tab):[0-9a-f]{32})$`)
 var tabID = regexp.MustCompile(`^[0-9a-f]{32}$`)
 var tabView = regexp.MustCompile(`^(open|history)$`)
 var reviewKey = regexp.MustCompile(`^[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+){1,2}#[1-9][0-9]*@v[1-9][0-9]*$`)
+var pullKey = regexp.MustCompile(`^[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+){1,2}#[1-9][0-9]*$`)
+var commentID = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
+var headSHA = regexp.MustCompile(`^[0-9a-f]{7,64}$`)
 
 type Record struct {
 	Revision int               `json:"revision"`
@@ -52,7 +64,27 @@ type Store struct {
 }
 
 func valid(kind, key string) bool {
-	return (kind == "inbox" || kind == "tour" || kind == "filters") && key == "" || kind == "walkthrough" && len(key) <= 300 && reviewKey.MatchString(key)
+	switch kind {
+	case "inbox", "tour", "filters":
+		return key == ""
+	case "walkthrough":
+		return len(key) <= 300 && reviewKey.MatchString(key)
+	case "review":
+		return len(key) <= 300 && pullKey.MatchString(key)
+	}
+	return false
+}
+
+// keep is how many records a keyed kind retains, the latest saved first; 0
+// for a kind that is one record.
+func keep(kind string) int {
+	switch kind {
+	case "walkthrough":
+		return KeepWalkthroughs
+	case "review":
+		return KeepReviews
+	}
+	return 0
 }
 func empty() Record { return Record{Value: json.RawMessage("null")} }
 func decode(raw []byte, kind, key string) (Record, error) {
@@ -60,7 +92,7 @@ func decode(raw []byte, kind, key string) (Record, error) {
 		return empty(), nil
 	}
 	var record Record
-	if kind == "walkthrough" {
+	if keep(kind) > 0 {
 		var records map[string]*struct {
 			Record
 			At *int64 `json:"at"`
@@ -69,7 +101,7 @@ func decode(raw []byte, kind, key string) (Record, error) {
 			return Record{}, ErrUnreadable
 		}
 		for review, item := range records {
-			if !valid("walkthrough", review) || item == nil || item.At == nil || validRecord("walkthrough", item.Record) != nil {
+			if !valid(kind, review) || item == nil || item.At == nil || validRecord(kind, item.Record) != nil {
 				return Record{}, ErrUnreadable
 			}
 		}
@@ -147,7 +179,7 @@ func (s *Store) Replace(kind, key string, revision int, mutation string, value j
 		}
 		clients[client] = sequence
 		next = Record{Revision: revision + 1, Value: value, Clients: clients}
-		if kind != "walkthrough" {
+		if keep(kind) == 0 {
 			return json.Marshal(next)
 		}
 		records := map[string]retained{}
@@ -177,7 +209,7 @@ func (s *Store) Replace(kind, key string, revision int, mutation string, value j
 			}
 			return a.At > b.At
 		})
-		for _, k := range keys[min(KeepWalkthroughs, len(keys)):] {
+		for _, k := range keys[min(keep(kind), len(keys)):] {
 			delete(records, k)
 		}
 		return json.Marshal(records)
@@ -248,6 +280,82 @@ func validate(kind string, raw []byte) error {
 		for id, note := range *value.Notes {
 			if id == "" || len(id) > 256 || note == nil || len(*note) > 64<<10 {
 				return ErrInvalid
+			}
+		}
+	case "review":
+		var value struct {
+			Comments *[]*struct {
+				ID     *string `json:"id"`
+				Target *struct {
+					Kind  *string `json:"kind"`
+					ID    *string `json:"id"`
+					Title *string `json:"title"`
+				} `json:"target"`
+				Body  *string `json:"body"`
+				Place *struct {
+					Path      *string `json:"path"`
+					Line      *int    `json:"line"`
+					Side      *string `json:"side"`
+					StartLine *int    `json:"start_line"`
+				} `json:"place"`
+				Head    *string `json:"head"`
+				Created *int64  `json:"created"`
+			} `json:"comments"`
+			Note *string `json:"note"`
+			// Absent from a record saved before sent reviews were kept.
+			Sent []*struct {
+				URL      *string `json:"url"`
+				Event    *string `json:"event"`
+				At       *int64  `json:"at"`
+				Note     *string `json:"note"`
+				Comments *[]*struct {
+					Title *string `json:"title"`
+					Where *string `json:"where"`
+					Body  *string `json:"body"`
+				} `json:"comments"`
+			} `json:"sent"`
+		}
+		if json.Unmarshal(raw, &value) != nil || value.Comments == nil || value.Note == nil || len(*value.Comments) > MaxReviewComments || len(*value.Note) > 64<<10 || len(value.Sent) > KeepSent {
+			return ErrInvalid
+		}
+		for _, sent := range value.Sent {
+			if sent == nil || sent.URL == nil || !strings.HasPrefix(*sent.URL, "https://") || len(*sent.URL) > 2048 || sent.Event == nil || sent.At == nil || *sent.At < 0 || sent.Note == nil || len(*sent.Note) > 64<<10 || sent.Comments == nil || len(*sent.Comments) > MaxReviewComments {
+				return ErrInvalid
+			}
+			switch *sent.Event {
+			case "APPROVE", "COMMENT", "REQUEST_CHANGES":
+			default:
+				return ErrInvalid
+			}
+			for _, comment := range *sent.Comments {
+				if comment == nil || comment.Title == nil || len(*comment.Title) > 1024 || comment.Where == nil || len(*comment.Where) > 512 || comment.Body == nil || len(*comment.Body) > 64<<10 {
+					return ErrInvalid
+				}
+			}
+		}
+		ids := map[string]bool{}
+		for _, comment := range *value.Comments {
+			if comment == nil || comment.ID == nil || !commentID.MatchString(*comment.ID) || ids[*comment.ID] || comment.Body == nil || strings.TrimSpace(*comment.Body) == "" || len(*comment.Body) > 64<<10 || comment.Head == nil || (*comment.Head != "" && !headSHA.MatchString(*comment.Head)) || comment.Created == nil || *comment.Created < 0 {
+				return ErrInvalid
+			}
+			ids[*comment.ID] = true
+			target := comment.Target
+			if target == nil || target.Kind == nil || target.ID == nil || target.Title == nil || len(*target.ID) > 4096 || len(*target.Title) > 1024 {
+				return ErrInvalid
+			}
+			switch *target.Kind {
+			case "general":
+			case "section", "risk", "file":
+				if *target.ID == "" {
+					return ErrInvalid
+				}
+			default:
+				return ErrInvalid
+			}
+			if place := comment.Place; place != nil {
+				if place.Path == nil || *place.Path == "" || len(*place.Path) > 4096 || place.Line == nil || *place.Line < 1 || place.Side == nil || (*place.Side != "RIGHT" && *place.Side != "LEFT") || (place.StartLine != nil && (*place.StartLine < 1 || *place.StartLine >= *place.Line)) {
+					return ErrInvalid
+				}
 			}
 		}
 	case "filters":

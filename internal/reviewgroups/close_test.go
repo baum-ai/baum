@@ -13,8 +13,7 @@ import (
 // own Patcher keeps open.
 func TestAPICloseClosesTheKeptClones(t *testing.T) {
 	f := linktest.New(t)
-	tmp := t.TempDir()
-	t.Setenv("TMPDIR", tmp)
+	tmp := linktest.TempDir(t)
 	api := &API{}
 	api.Handler()
 	result, err := api.Patch(context.Background(), locallink.PatchRequest{Dir: f.Repo, Repository: linktest.Repository, Head: f.Head, Base: f.Base, Path: "c.txt"})

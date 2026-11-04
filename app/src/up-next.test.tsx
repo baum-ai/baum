@@ -378,6 +378,54 @@ it("moves with j and k, opens with Enter and merges with m", async () => {
   expect(location.search).toBe("?clone=clone&pr=3");
 });
 
+// A right click on a row opens its menu, without picking the row.
+const rightClick = (title: string) =>
+  act(async () => {
+    row(title).dispatchEvent(
+      new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 9, clientY: 9 }),
+    );
+  });
+const choices = () =>
+  Array.from(node.querySelectorAll(".context-menu [role=menuitem] .context-menu-label")).map(
+    (label) => label.textContent,
+  );
+const choose = (label: string) =>
+  act(async () =>
+    Array.from(node.querySelectorAll<HTMLButtonElement>(".context-menu [role=menuitem]"))
+      .find((item) => item.textContent?.startsWith(label))!
+      .click(),
+  );
+
+it("offers a pull request's actions on a right click on its row", async () => {
+  await render();
+  await rightClick("Change 3");
+  expect(node.querySelector(".context-menu")!.getAttribute("aria-label")).toBe(
+    "Actions for acme/demo #3",
+  );
+  expect(choices()).toEqual(expect.arrayContaining(["Open", "Merge…", "Snooze…"]));
+  expect(choices()).not.toContain("Update the branch…");
+  // The panel stays on what it showed.
+  expect(shown()).toBe("Change 1");
+  await choose("Merge…");
+  expect(node.querySelector("dialog")).not.toBeNull();
+});
+
+it("snoozes from a row's menu with the panel's choices", async () => {
+  await render();
+  await rightClick("Change 3");
+  await choose("Snooze…");
+  expect(shown()).toBe("Change 3");
+  await act(async () => snoozeFor("Tomorrow morning").click());
+  expect(list()).not.toContain("Change 3");
+});
+
+it("opens a pull request from its row's menu", async () => {
+  await render();
+  await rightClick("Change 3");
+  await choose("Open");
+  expect(location.search).toBe("?clone=clone&pr=3");
+});
+
 it("snoozes, undoes and brings back, and remembers it", async () => {
   await render();
   await act(async () => row("Change 3").click());
@@ -410,6 +458,38 @@ it("snoozes, undoes and brings back, and remembers it", async () => {
   expect(shown()).toBe("Change 3");
 });
 
+it("keeps arrows, j/k and Control+n/p on Snooze's choices", async () => {
+  await render();
+  button("Snooze").focus();
+  await act(async () => button("Snooze").click());
+  const choices = [...node.querySelectorAll<HTMLElement>('.upnext-menu [role="menuitem"]')];
+  expect(document.activeElement).toBe(choices[0]);
+  for (const [key, ctrlKey, index] of [
+    ["ArrowDown", false, 1],
+    ["j", false, 2],
+    ["n", true, 3],
+    ["p", true, 2],
+    ["k", false, 1],
+    ["ArrowUp", false, 0],
+    ["ArrowUp", false, choices.length - 1],
+  ] as const) {
+    await act(async () => {
+      document.activeElement!.dispatchEvent(
+        new KeyboardEvent("keydown", { key, ctrlKey, bubbles: true, cancelable: true }),
+      );
+    });
+    expect(document.activeElement).toBe(choices[index % choices.length]);
+    expect(shown()).toBe("Change 1");
+  }
+  await act(async () => {
+    document.activeElement!.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }),
+    );
+  });
+  expect(node.querySelector(".upnext-menu")).toBeNull();
+  expect(document.activeElement).toBe(button("Snooze"));
+});
+
 it("brings back a pull request snoozed until it changes once it is pushed to", async () => {
   await render();
   await act(async () => row("Change 4").click());
@@ -425,6 +505,65 @@ it("brings back a pull request snoozed until it changes once it is pushed to", a
   );
   await render();
   expect(list()).toContain("Change 4");
+});
+
+it("keeps a snoozed Fix under Snoozed when its thread resolves and it waits on checks", async () => {
+  entries = [mine(7, { unresolved: 1 })];
+  await render();
+  await press("s");
+  await act(async () => snoozeFor("Tomorrow morning").click());
+  entries = [mine(7, { unresolved: 0, checks: "running" })];
+  await render();
+  expect(list()).not.toContain("Change 7");
+  expect(node.querySelector('section[aria-label="Snoozed"]')!.textContent).toContain("Change 7");
+  expect(await cleared()).toBeNull();
+});
+
+it("says under the actions that the review is generating until its summary is written", async () => {
+  entries = [mine(7, { status: "generating", unresolved: 1 })];
+  await render();
+  const status = [...panel().querySelectorAll('[role="status"]')].find((el) =>
+    el.textContent?.includes("Generating the review"),
+  );
+  expect(status?.textContent).toBe("Generating the review.");
+  // Straight after the actions, so it reads under Open, Comment and Snooze.
+  expect(status?.previousElementSibling?.classList.contains("upnext-actions")).toBe(true);
+});
+
+it("shows the available summary in a Fix preview while its first review is being written", async () => {
+  entries = [mine(7, { status: "generating", unresolved: 1 }), mine(8, { checks: "failing" })];
+  jobsList = [fixJobOf({ id: "review-7", kind: undefined, pr: 7, draft: 1 })];
+  const draft = structuredClone(example);
+  draft.summary.text = "The terminal now remembers which agent CLIs it runs.";
+  draft.sections = [];
+  const original = globalThis.fetch;
+  vi.stubGlobal("fetch", (...args: Parameters<typeof fetch>) =>
+    String(args[0]).includes("api/jobs/review-7/draft")
+      ? Response.json({ document: draft })
+      : original(...args),
+  );
+  await render();
+  await act(async () => row("Change 7").click());
+  expect(panel().textContent).toContain("What needs fixing");
+  expect(panel().textContent).toContain("What changed");
+  expect(panel().textContent).toContain(draft.summary.text);
+  expect(panel().textContent).not.toContain("Generating the review");
+  await act(async () => row("Change 8").click());
+  expect(panel().textContent).not.toContain(draft.summary.text);
+});
+
+it("keeps the saved summary in the preview while a replacement review is being written", async () => {
+  entries = [mine(7, { status: "generating", version_count: 1, unresolved: 1 })];
+  jobsList = [fixJobOf({ id: "review-7", kind: undefined, pr: 7, draft: 1 })];
+  const original = globalThis.fetch;
+  const fetch = vi.fn((...args: Parameters<typeof globalThis.fetch>) =>
+    String(args[0]).includes("api/document") ? Response.json(example) : original(...args),
+  );
+  vi.stubGlobal("fetch", fetch);
+  await render();
+  expect(panel().textContent).toContain(example.summary.text);
+  expect(panel().textContent).not.toContain("Generating the review");
+  expect(fetch.mock.calls.some(([path]) => String(path).includes("/draft"))).toBe(false);
 });
 
 it("counts what left the queue as cleared today", async () => {
@@ -1060,6 +1199,72 @@ it("lists a review group as one row that opens to its members", async () => {
   await press(" ");
   expect(list()).toEqual(["Change 1", "Payments stack", "Change 4"]);
 });
+
+it.each(["1 hour", "Until it changes"])(
+  "hides a stack when every member is snoozed for %s, including one waiting on its base",
+  async (duration) => {
+    entries = [
+      mine(1, {
+        merge: "ready",
+        checks: "passing",
+        pull_request: { head_ref: "one", base_ref: "main" },
+      }),
+      mine(2, {
+        merge: "ready",
+        checks: "passing",
+        pull_request: { head_ref: "two", base_ref: "one" },
+      }),
+    ];
+    const original = globalThis.fetch;
+    vi.stubGlobal("fetch", (...args: Parameters<typeof fetch>) =>
+      String(args[0]).endsWith("api/groups")
+        ? Response.json({
+            groups: [
+              {
+                id: "s1",
+                repository: "acme/demo",
+                name: "Stack",
+                members: [1, 2],
+                stack: true,
+                created_at: "",
+                updated_at: "",
+                version_count: 0,
+                latest: null,
+                risk_score: null,
+                reviewed: [],
+                outdated: false,
+              },
+            ],
+          })
+        : original(...args),
+    );
+    await render();
+    await press(" ");
+    await act(async () => row("Change 1").click());
+    await press("s");
+    await act(async () => snoozeFor(duration).click());
+    expect(list()).toContain("Stack");
+    await act(async () => row("Change 2").click());
+    expect(panel().textContent).toContain("Waiting on #1");
+    expect(button("Snooze")).toBeDefined();
+    await press("s");
+    await act(async () => snoozeFor(duration).click());
+    expect(list()).not.toContain("Stack");
+    const snoozed = node.querySelector('section[aria-label="Snoozed"]')!;
+    expect(snoozed.textContent).toContain("Change 1");
+    expect(snoozed.textContent).toContain("Change 2");
+    await render();
+    expect(list()).not.toContain("Stack");
+    await act(async () => button("Snoozed").click());
+    await act(async () =>
+      node
+        .querySelector<HTMLButtonElement>('section[aria-label="Snoozed"] .row-menu-button')!
+        .click(),
+    );
+    await act(async () => snoozeFor("Bring back").click());
+    expect(list()).toContain("Stack");
+  },
+);
 
 it("links the agent sessions working on the pull request to their cards on Sessions, opened", async () => {
   liveList = [

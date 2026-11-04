@@ -7,6 +7,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -31,7 +32,7 @@ printf '%s\n' '{"type":"turn.completed","usage":{"input_tokens":100,"cached_inpu
 	}
 	backend := &Backend{Binary: script, Model: "gpt-6-luna", checked: true}
 	completion, err := backend.Complete(context.Background(), agent.CompleteRequest{System: "Extract decisions.", User: "## Turn 1", Schema: []byte(`{"type":"object","properties":{"decisions":{"type":"array"}}}`)})
-	if err != nil || string(completion.Document) != `{"decisions":[]}` || completion.Model != "gpt-6-luna" || completion.Usage != (agent.Usage{Input: 60, Output: 10, CacheRead: 40}) {
+	if err != nil || string(completion.Document) != `{"decisions":[]}` || completion.Model != "gpt-6-luna" || !reflect.DeepEqual(completion.Usage, agent.Usage{Input: 60, Output: 10, CacheRead: 40, Speed: new("standard")}) {
 		t.Fatalf("%+v %v", completion, err)
 	}
 	arguments, _ := os.ReadFile(filepath.Join(out, "arguments.txt"))

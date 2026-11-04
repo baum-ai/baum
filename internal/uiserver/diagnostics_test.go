@@ -58,13 +58,41 @@ func TestDiagnosticsReturnsReportAndCapabilities(t *testing.T) {
 	var body struct {
 		Local  bool           `json:"local"`
 		Runner bool           `json:"generation_runner"`
+		Home   string         `json:"home"`
 		Report *doctor.Report `json:"report"`
 	}
 	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
 		t.Fatal(err)
 	}
+	if home, _ := os.UserHomeDir(); body.Home != home {
+		t.Fatalf("home %q, want %q", body.Home, home)
+	}
 	if !body.Local || body.Runner || body.Report == nil || body.Report.Status != doctor.StatusProblem || len(body.Report.Checks) != 2 || body.Report.Checks[1].Fix != "Install gh." {
 		t.Fatalf("%s", w.Body.String())
+	}
+}
+
+func TestDiagnosticsOffersARedactedIssueLink(t *testing.T) {
+	report := sampleReport()
+	report.Checks[1].Detail = "failed with ghp_abcdefghijklmnopqrstuvwxyz0123456789"
+	s := diagnosticsServer(t, LocalAPI{Version: "1.2.3", Diagnostics: func(context.Context) doctor.Report { return report }})
+	w := request(t, s, "GET", "/api/diagnostics", "", "", "", "Bearer "+s.launch, "")
+	var body struct {
+		URL   string            `json:"report_issue_url"`
+		Parts doctor.IssueParts `json:"report_issue"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body.Parts.Version != "1.2.3" || body.Parts.OS == "" || body.Parts.MaxURL == 0 ||
+		strings.Contains(body.Parts.Diagnostics, "ghp_") || !strings.Contains(body.Parts.Diagnostics, "[redacted]") {
+		t.Fatalf("parts = %+v", body.Parts)
+	}
+	if !strings.HasPrefix(body.URL, "https://github.com/baum-ai/baum/issues/new?") || !strings.Contains(body.URL, "version=1.2.3") {
+		t.Fatalf("url = %q", body.URL)
+	}
+	if strings.Contains(body.URL, "ghp_") || !strings.Contains(body.URL, "%5Bredacted%5D") {
+		t.Fatalf("url leaks or lacks the redaction marker: %q", body.URL)
 	}
 }
 

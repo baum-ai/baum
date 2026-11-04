@@ -98,6 +98,10 @@ pub enum Route {
     RepositoryPr { repository: String, number: u64 },
     /// The jobs list.
     Jobs,
+    /// One job's page.
+    Job { id: String },
+    /// The diagnostics page.
+    Diagnostics,
     /// An agent session's transcript, by its `agent:id` key.
     Session { key: String },
 }
@@ -122,6 +126,13 @@ impl Route {
                 Route::Jobs => {
                     query.append_pair("page", "jobs");
                 }
+                Route::Job { id } => {
+                    query.append_pair("page", "jobs");
+                    query.append_pair("job", id);
+                }
+                Route::Diagnostics => {
+                    query.append_pair("page", "diagnostics");
+                }
                 Route::Session { key } => {
                     query.append_pair("page", "sessions");
                     query.append_pair("session", key);
@@ -136,7 +147,7 @@ impl Route {
         match self {
             Route::Pr { clone, number } => Some((clone, *number)),
             Route::RepositoryPr { repository, number } => Some((repository, *number)),
-            Route::Jobs | Route::Session { .. } => None,
+            Route::Jobs | Route::Job { .. } | Route::Diagnostics | Route::Session { .. } => None,
         }
     }
 

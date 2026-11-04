@@ -130,6 +130,87 @@ test("Add repositories searches beyond suggestions and picks the result", async 
   }
 });
 
+test("review JSON stays folded and scrollable in an existing job transcript", async ({ page }) => {
+  await page.route("**/api/jobs", (route) =>
+    route.fulfill({
+      json: {
+        jobs: [
+          {
+            id: "review-output",
+            clone: "fixture",
+            repository: "acme/demo",
+            pr: 7,
+            state: "completed",
+            phase: "finished",
+            calls: 1,
+            tokens: 10,
+            repairs: 0,
+            actual_cost_usd: null,
+            has_transcript: true,
+          },
+        ],
+      },
+    }),
+  );
+  const output = {
+    schema: "baum.review/1",
+    sections: [{ hunks: Array(200).fill("h_1234567890") }],
+  };
+  await page.route("**/api/jobs/review-output/transcript?*", (route) =>
+    route.fulfill({
+      json: {
+        entries: [
+          { seq: 1, time: "2026-11-02T12:00:00Z", kind: "message", text: JSON.stringify(output) },
+          {
+            seq: 2,
+            time: "2026-11-02T12:00:00Z",
+            kind: "tool",
+            tool: "command",
+            title: `/bin/zsh -lc "python3 -c '${"bundle.json ".repeat(100)}'"`,
+            text: "Finished",
+            status: "completed",
+          },
+          {
+            seq: 3,
+            time: "2026-11-02T12:00:00Z",
+            kind: "message",
+            text: JSON.stringify({ context: { area: { text: "Codebase context" } } }),
+          },
+          {
+            seq: 4,
+            time: "2026-11-02T12:00:00Z",
+            kind: "message",
+            text: JSON.stringify({ sections: [{ attention: { text: "Details" } }] }),
+          },
+        ],
+        next: 4,
+        more: false,
+        done: true,
+      },
+    }),
+  );
+  await page.goto(await launchURL());
+  await expect(page.getByRole("heading", { name: "Up next", exact: true })).toBeVisible();
+  const url = new URL(page.url());
+  url.search = "?page=jobs&job=review-output";
+  await page.goto(url.href);
+  const summary = page.getByText("Review output", { exact: true });
+  await expect(summary).toBeVisible();
+  const content = page.locator(".local-job-output pre");
+  await expect(content).toHaveCount(3);
+  for (const output of await content.all()) await expect(output).toBeHidden();
+  await expect(page.getByText("Structured output", { exact: true })).toHaveCount(2);
+  await summary.click();
+  await expect(content.first()).toBeVisible();
+  expect(await content.first().textContent()).toContain('\n  "schema":');
+  expect(await content.first().evaluate((el) => el.scrollHeight > el.clientHeight)).toBe(true);
+  const command = page.locator(".local-job-tool-title");
+  expect(await command.evaluate((el) => el.scrollWidth > el.clientWidth)).toBe(true);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+});
+
 test("automatic review of a new head, shown as started automatically", async ({ page }) => {
   const errors: string[] = [];
   page.on("pageerror", (e) => errors.push(e.message));

@@ -247,6 +247,16 @@ export function SectionIcon(props: IconProps) {
 
 /** A toothed wheel, not a disc with rays: the teeth meet the body with no gap,
  *  which is the whole difference between a gear and a sun. */
+export function HelpIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <circle cx="8" cy="8" r="6.25" />
+      <path d="M6.25 6.25a1.75 1.75 0 1 1 2.5 1.6c-.45.2-.75.6-.75 1.1v.3" />
+      <path d="M8 11.25h.01" />
+    </Icon>
+  );
+}
+
 export function SettingsIcon(props: IconProps) {
   return (
     <Icon {...props}>

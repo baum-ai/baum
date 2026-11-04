@@ -404,7 +404,27 @@ export type Diagnostics = {
   generation_runner: boolean;
   discovery: boolean;
   index: boolean;
+  /** This user's home directory, which the app shows as ~ in the report. */
+  home?: string;
   report: DiagnosticReport | null;
+  /** A new GitHub issue with the version, OS and a redacted summary filled in. */
+  report_issue_url?: string;
+  /** What Report a problem may attach, each part already redacted. */
+  report_issue?: IssueParts;
+};
+/** The parts of a new GitHub issue the daemon redacted (`doctor.IssueParts`):
+ *  the version and OS fields and the diagnostics field at either level. */
+export type IssueParts = {
+  version: string;
+  os: string;
+  /** Per tool that reported one, its version. */
+  versions: string;
+  /** The whole redacted Diagnostics summary. */
+  diagnostics: string;
+  /** The longest link GitHub is sure to answer with the form. */
+  max_url: number;
+  /** Ends a diagnostics field that lost lines to fit `max_url`. */
+  truncation_note: string;
 };
 /** Why a session waits on its user: it asks to run a tool, it asked a
  *  question, its turn ended, or it went quiet (silent for 10 minutes with no
@@ -443,6 +463,7 @@ export type LiveSession = {
   branch?: string;
   /** Absent while the branch has no unique matching pull request. */
   pr?: number;
+  pr_state?: "OPEN" | "MERGED" | "CLOSED";
   link_status?:
     | "resolved"
     | "unmatched"
@@ -803,6 +824,14 @@ export function backToOpener(): boolean {
 export function navigate(href: string) {
   writeHistory(href);
   dispatchEvent(new PopStateEvent("popstate"));
+}
+/** Opens a page outside the app, as a link to it would. */
+export function openExternal(url: string) {
+  Object.assign(document.createElement("a"), {
+    href: url,
+    target: "_blank",
+    rel: "noreferrer",
+  }).click();
 }
 /** A job's own page: everything kept about it and its transcript. */
 export function jobHref(job: Job) {

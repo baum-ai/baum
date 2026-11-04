@@ -41,6 +41,7 @@ import {
   jobHref,
   liveFor,
   navigate,
+  openExternal,
   rowKey,
   sameRepository,
   watchableFix,
@@ -326,11 +327,6 @@ export function Inbox({
         event.preventDefault();
         fix(entry);
         return;
-      case "generate":
-        if (!entry || !generate || entry.status === "generating") return;
-        event.preventDefault();
-        generate(entry);
-        return;
       case "transcript": {
         const run = entry && watchableFix(entry, jobs);
         if (!run) return;
@@ -388,7 +384,6 @@ export function Inbox({
     if (generate && clone && entry.status !== "generating")
       items.push({
         label: entry.version_count > 0 ? "Regenerate review" : "Generate review",
-        hint: "g",
         onSelect: () => generate(entry),
       });
     if (!entry.needs_clone)
@@ -759,14 +754,6 @@ function StatusColumns({ entry }: { entry: Entry }) {
 }
 /** How a row is named to assistive technology and in its menu. */
 const rowName = (entry: Entry) => `${entry.pull_request.repository} #${entry.pull_request.number}`;
-/** Opens a page outside the app, as a link to it would. */
-function openExternal(url: string) {
-  Object.assign(document.createElement("a"), {
-    href: url,
-    target: "_blank",
-    rel: "noreferrer",
-  }).click();
-}
 const PEEK_SECTIONS = 4;
 /** A look at the saved review under its row: the summary and the first
  *  sections with their lines, and a way in. The row already shows the risk. */

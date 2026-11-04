@@ -251,7 +251,7 @@ func TestLocalRefusesOldCodexOnce(t *testing.T) {
 	}
 	backend := &Backend{Binary: script}
 	_, err := backend.Run(context.Background(), request(t.TempDir()))
-	if err == nil || !strings.Contains(err.Error(), "codex 0.100.0 is older than "+minimumVersion) || !strings.Contains(err.Error(), "upgrade Codex") {
+	if err == nil || !strings.Contains(err.Error(), "codex 0.100.0 is older than "+MinimumVersion) || !strings.Contains(err.Error(), "upgrade Codex") {
 		t.Fatalf("error %v", err)
 	}
 	if _, statErr := os.Stat(marker); statErr == nil {
@@ -282,7 +282,7 @@ func TestLocalRefusesUnreadableVersion(t *testing.T) {
 func TestLocalMapsUnknownOptionToUpgrade(t *testing.T) {
 	script := fakeCodex(t, "codex-cli 0.162.1", "cat >/dev/null\necho 'Usage: codex exec [OPTIONS]' >&2\necho \"error: unexpected argument '--ignore-rules' found\" >&2\nexit 2\n")
 	_, err := (&Backend{Binary: script}).Run(context.Background(), request(t.TempDir()))
-	if err == nil || !strings.Contains(err.Error(), "upgrade Codex to "+minimumVersion) || !strings.Contains(err.Error(), "unexpected argument '--ignore-rules'") || strings.Contains(err.Error(), "Usage:") {
+	if err == nil || !strings.Contains(err.Error(), "upgrade Codex to "+MinimumVersion) || !strings.Contains(err.Error(), "unexpected argument '--ignore-rules'") || strings.Contains(err.Error(), "Usage:") {
 		t.Fatalf("error %v", err)
 	}
 	// The container profile reports the failure as it always has.

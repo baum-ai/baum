@@ -458,9 +458,7 @@ it("opens the description a source chip cites in a panel, and another pull reque
     "View on GitHub",
   );
   await act(async () => {
-    Array.from(dialog.querySelectorAll("button"))
-      .find((button) => button.textContent === "Close")!
-      .click();
+    dialog.querySelector<HTMLButtonElement>('button[aria-label="Close"]')!.click();
   });
   expect(node.querySelector("dialog")).toBeNull();
 
@@ -519,9 +517,7 @@ it("opens a file a context chip cites in a panel, marking its symbol's definitio
     "View on GitHub",
   );
   await act(async () => {
-    Array.from(dialog.querySelectorAll("button"))
-      .find((button) => button.textContent === "Close")!
-      .click();
+    dialog.querySelector<HTMLButtonElement>('button[aria-label="Close"]')!.click();
   });
   expect(node.querySelector("dialog")).toBeNull();
 });

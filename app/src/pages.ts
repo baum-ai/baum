@@ -34,10 +34,10 @@ export const PAGES: {
 }[] = [
   { page: "inbox", label: "Inbox", href: () => appURL(), icon: InboxIcon },
   {
-    page: "pulls",
-    label: "Pull requests",
-    href: () => appURL("?page=pulls"),
-    icon: PullRequestIcon,
+    page: "sessions",
+    label: "Sessions",
+    href: () => appURL("?page=sessions"),
+    icon: SessionsIcon,
   },
   // The Timeline opens on human decisions, as the hosted rail's does; the
   // address alone is every decision, so clearing the filters stays cleared.
@@ -48,10 +48,10 @@ export const PAGES: {
     icon: TimelineIcon,
   },
   {
-    page: "sessions",
-    label: "Sessions",
-    href: () => appURL("?page=sessions"),
-    icon: SessionsIcon,
+    page: "pulls",
+    label: "Pull requests",
+    href: () => appURL("?page=pulls"),
+    icon: PullRequestIcon,
   },
   {
     page: "analytics",

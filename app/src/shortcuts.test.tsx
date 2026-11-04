@@ -12,6 +12,7 @@ import {
   moveFocus,
   pageKeyShortcut,
   pageModifier,
+  reviewKeyStep,
   ShortcutsSheet,
   shouldIgnore,
   useCommandKeys,
@@ -273,14 +274,14 @@ it("opens Merge on a ready row only", async () => {
   expect(node.querySelector("dialog")?.textContent).toContain("Merge pull request #1?");
 });
 
-it("calls fix only on a row that offers it, and generate and refresh", async () => {
+it("calls fix only on a row that offers it, and refresh; g does not generate", async () => {
   await render();
   await press("j");
   expect(focusedTitle()).toBe("Change 2");
   await press("f");
   expect(handlers.fix).toHaveBeenCalledWith(rows[1]);
   await press("g");
-  expect(handlers.generate).toHaveBeenCalledWith(rows[1]);
+  expect(handlers.generate).not.toHaveBeenCalled();
   await press("j");
   await press("f");
   expect(handlers.fix).toHaveBeenCalledTimes(1);
@@ -465,7 +466,25 @@ it("lists exactly the keys that work in the sheet", async () => {
     "Alt",
     "Esc",
   ]);
-  expect(listed("Inbox")).toEqual(["j", "↓", "k", "↑", "Enter", "Space", "m", "f", "t", "s", "u"]);
+  expect(listed("Inbox")).toEqual([
+    "j",
+    "↓",
+    "k",
+    "↑",
+    "Enter",
+    "Space",
+    "m",
+    "f",
+    "t",
+    "v",
+    "s",
+    "u",
+    "/",
+    "Shift+J",
+    "Shift+K",
+    "Ctrl+↓",
+    "Ctrl+↑",
+  ]);
   expect(listed("Pull requests")).toEqual([
     "j",
     "↓",
@@ -477,9 +496,9 @@ it("lists exactly the keys that work in the sheet", async () => {
     "Space",
     "m",
     "f",
-    "g",
     "t",
     "r",
+    "/",
     "Esc",
     "h",
     "←",
@@ -491,17 +510,23 @@ it("lists exactly the keys that work in the sheet", async () => {
     "↓",
     "k",
     "↑",
-    "l",
+    "Shift+J",
+    "Shift+↓",
     "→",
-    "h",
+    "Shift+K",
+    "Shift+↑",
     "←",
     "Space",
     "Enter",
     "m",
     "f",
-    "g",
     "t",
+    "c",
+    "v",
     "a",
+    "]",
+    "h",
+    "l",
     "u",
     "Esc",
   ]);
@@ -510,6 +535,7 @@ it("lists exactly the keys that work in the sheet", async () => {
   expect(listed("Sessions")).toEqual([...list, "p", "r", "f", "Space", "1–9"]);
   expect(listed("Jobs")).toEqual([...list, "t"]);
   expect(listed("Repositories")).toEqual([...list, "a", "/"]);
+  expect(listed("Timeline")).toEqual([...list, "/"]);
   expect(listed("A session or job transcript")).toEqual([
     "u",
     "Esc",
@@ -531,7 +557,6 @@ it("lists exactly the keys that work in the sheet", async () => {
     " ",
     "m",
     "f",
-    "g",
     "t",
     "r",
   ]);
@@ -567,7 +592,7 @@ it("reads the app-wide keys with the platform's command key", () => {
   // The sidebar's pages in order, by the digit's place on the keyboard.
   expect(commandAction(key({ ctrlKey: true, key: "2", code: "Digit2" }), false)).toEqual({
     kind: "page",
-    page: "pulls",
+    page: "sessions",
   });
   expect(commandAction(key({ ctrlKey: true, key: "&", code: "Digit1" }), false)).toEqual({
     kind: "page",
@@ -643,7 +668,7 @@ it("opens the sidebar's pages with the modifier chosen in Settings", () => {
   expect(commandAction(key({ ctrlKey: true, key: "1", code: "Digit1" }), false, "meta")).toEqual(
     inbox,
   );
-  expect(pageKeyShortcut("pulls", "alt")).toBe("Alt+2");
+  expect(pageKeyShortcut("pulls", "alt")).toBe("Alt+4");
 });
 
 const opened = vi.fn();
@@ -973,27 +998,49 @@ it("draws a place's key bar from the sheet's table, keys sharing a name together
     return [...node.querySelectorAll(".key-bar > span")].map((item) => item.textContent);
   };
   const command = MAC ? "⌘" : "Ctrl+";
-  expect(await bar("jobs")).toEqual([
-    "jk move",
-    "↵ open",
-    "t transcript",
-    `${command}. actions`,
-    `${command}K go to`,
-    "? all keys",
-  ]);
+  expect(await bar("jobs")).toEqual(["jk move", "↵ open", "t transcript", `${command}. actions`]);
   // The Inbox's bar is what its foot always said; Settings has no row menu.
   expect(await bar("inbox")).toEqual([
     "jk move",
     "↵ act",
     "m merge",
     "f fix",
+    "v review",
     "s snooze",
     "u undo",
-    `${command}K go to`,
-    "? all keys",
   ]);
   expect(await bar("settings")).not.toContain(`${command}. actions`);
   // It shows only while Alt is held, and is for the eye alone.
   expect(node.querySelector(".key-bar")!.classList.contains("key-hint")).toBe(true);
   expect(node.querySelector(".key-bar")!.getAttribute("aria-hidden")).toBe("true");
+});
+
+it("moves a review page by block with j and k, by section with Shift or the side arrows", () => {
+  const step = (label: string) => ({ label, go: () => {} });
+  const steps = {
+    previous: step("previous section"),
+    next: step("next section"),
+    item: { previous: step("previous item"), next: step("next item") },
+  };
+  const press = (key: string, shiftKey = false) =>
+    reviewKeyStep(new KeyboardEvent("keydown", { key, shiftKey }), steps)?.label ?? null;
+  expect(press("j")).toBe("next item");
+  expect(press("ArrowDown")).toBe("next item");
+  expect(press("k")).toBe("previous item");
+  expect(press("ArrowUp")).toBe("previous item");
+  expect(press("J", true)).toBe("next section");
+  expect(press("ArrowDown", true)).toBe("next section");
+  expect(press("K", true)).toBe("previous section");
+  expect(press("ArrowUp", true)).toBe("previous section");
+  expect(press("ArrowRight")).toBe("next section");
+  expect(press("ArrowLeft")).toBe("previous section");
+  // h and l no longer move between sections.
+  expect(press("l")).toBeNull();
+  expect(press("h")).toBeNull();
+  // The rail's own order wins where the viewer gives one.
+  const rail = { ...steps, rail: { previous: step("previous row"), next: step("next row") } };
+  expect(
+    reviewKeyStep(new KeyboardEvent("keydown", { key: "J", shiftKey: true }), rail)?.label,
+  ).toBe("next row");
+  expect(reviewKeyStep(new KeyboardEvent("keydown", { key: "j" }), null)).toBeNull();
 });

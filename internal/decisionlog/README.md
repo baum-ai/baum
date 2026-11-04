@@ -96,7 +96,7 @@ not a failure.
    not hold up the sessions queued behind it. The attempt is settled with its
    cost from the reported usage, priced as reviews price theirs
    (`pricing.List.OutcomeCost`): when any part of it is unknown (a run cut short, a speed or 1-hour cache-write
-   split not reported, as Codex never reports its speed, or several calls
+   split not reported, or several calls
    whose prompt sizes may straddle a long-prompt tier) the cost is unknown,
    not estimated. It is also settled with how many replies the harness
    rejected against the schema (`rejections`; the last one's reason goes to

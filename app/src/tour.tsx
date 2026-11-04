@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
-import { CloseIcon } from "@baum/viewer/components/icons";
 import { Stumpy } from "@baum/viewer/components/stumpy";
-import { Button } from "@baum/viewer/components/ui";
+import { cn } from "@baum/viewer/components/classnames";
+import { CloseButton } from "@baum/viewer/components/ui";
 import { appURL, inSample, navigate, ownBase } from "./api";
 import { PRIMARY, SECONDARY, SMALL } from "./action-classes";
 import { PAGES } from "./pages";
@@ -65,8 +65,11 @@ function closedHere() {
   }
 }
 
-/** A button named in the copy, drawn as the button it names. */
-const B = ({ children }: { children: ReactNode }) => <span className={SMALL}>{children}</span>;
+/** A button named in the copy, drawn as the button it names but inert: the
+ *  pointer neither hovers nor presses it. */
+const B = ({ children }: { children: ReactNode }) => (
+  <span className={cn(SMALL, "pointer-events-none")}>{children}</span>
+);
 const href = (page: string) => PAGES.find((item) => item.page === page)!.href();
 
 type Stop = {
@@ -285,15 +288,7 @@ export function Tour({ close }: { close: () => void }) {
           if (["Enter", " "].includes(event.key)) event.stopPropagation();
         }}
       >
-        <Button
-          variant="ghost"
-          size="compact"
-          aria-label="Close the tour"
-          onClick={close}
-          className="tour-close"
-        >
-          <CloseIcon size={14} />
-        </Button>
+        <CloseButton label="Close the tour" onClick={close} className="tour-close" />
         {stop.welcome ? (
           <div className="tour-band" aria-hidden="true">
             {LEAVES.map((leaf) => (

@@ -35,6 +35,11 @@ const (
 	methodTimeout = 30 * time.Second
 	// restartPoll is how often a daemon asked to restart checks for idleness.
 	restartPoll = time.Second
+	// stopGrace bounds what stopping waits for after App.Shutdown: the
+	// background work and the control requests still being answered. One
+	// that ignores its context (a stalled read, say) is left behind, so a
+	// stop always ends inside the client's DefaultStopTimeout.
+	stopGrace = 10 * time.Second
 )
 
 // ErrRunning is returned by Run when another daemon owns the lock.
@@ -125,6 +130,8 @@ type Options struct {
 	// replacedCheckInterval, in tests.
 	executable    string
 	replacedCheck time.Duration
+	// stopGrace replaces stopGrace in tests.
+	stopGrace time.Duration
 }
 
 // Run is the daemon. It returns ErrRunning when another daemon holds the
@@ -283,15 +290,38 @@ func Run(ctx context.Context, opts Options) error {
 	log.Info("daemon stopping")
 	shutdownApp()
 	cancelRun()
-	running.Wait()
+	grace := opts.stopGrace
+	if grace <= 0 {
+		grace = stopGrace
+	}
+	deadline := time.Now().Add(grace)
+	ran := make(chan struct{})
+	go func() { running.Wait(); close(ran) }()
+	if !waitUntil(ran, deadline) {
+		log.Warn("background work did not stop in time; the daemon stops without it", "timeout", grace)
+	}
 	cancelHTTP()
 	if serveErr == nil {
 		serveErr = <-httpDone
 	}
 	_ = listener.Close()
-	<-controlDone
+	if !waitUntil(controlDone, deadline) {
+		log.Warn("control requests did not end in time; the daemon stops without them", "timeout", grace)
+	}
 	log.Info("daemon stopped")
 	return serveErr
+}
+
+// waitUntil waits for done until deadline, and reports whether it came.
+func waitUntil(done <-chan struct{}, deadline time.Time) bool {
+	timer := time.NewTimer(time.Until(deadline))
+	defer timer.Stop()
+	select {
+	case <-done:
+		return true
+	case <-timer.C:
+		return false
+	}
 }
 
 // acquire takes the daemon lock. A daemon that answers and is not stopping

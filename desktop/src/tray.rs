@@ -26,8 +26,10 @@ use tauri::image::Image;
 use tauri::menu::{CheckMenuItem, IsMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu};
 use tauri::tray::{TrayIcon, TrayIconBuilder};
 use tauri::{AppHandle, Manager, Wry};
+use tauri_plugin_opener::OpenerExt;
 
 use crate::daemon::Launch;
+use crate::notifications::Route;
 use crate::status::{self, Icon, Link, Observed, Plan, Tracker, View};
 use crate::{autostart, client, lifecycle, notifications, onboarding, panel};
 
@@ -42,11 +44,18 @@ pub const SESSION_PREFIX: &str = "session:";
 const TRAY_ID: &str = "baum";
 /// The window menu's own item, so its events never match the tray's.
 const MENU_LOGIN: &str = "menu-login";
+/// The window menu's Help item; the tray's is "report".
+const MENU_REPORT: &str = "menu-report";
+/// Where a problem is reported, and what Report a problem opens when the
+/// daemon cannot supply a prefilled link: the public repository's issue chooser.
+const ISSUES_CHOOSE: &str = "https://github.com/baum-ai/baum/issues/new/choose";
+/// A link the daemon built must open the bug report of that repository and
+/// nothing else, whatever the daemon answers.
+const ISSUES_NEW_PREFIX: &str = "https://github.com/baum-ai/baum/issues/new?";
 
 const IDLE_ICON: &[u8] = include_bytes!("../icons/tray/idle.png");
 const RUNNING_ICON: &[u8] = include_bytes!("../icons/tray/running.png");
 const ATTENTION_ICON: &[u8] = include_bytes!("../icons/tray/attention.png");
-const INBOX_ICON: &[u8] = include_bytes!("../icons/tray/inbox.png");
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Kind {
@@ -82,8 +91,9 @@ pub fn now() -> i64 {
 }
 
 /// The tray menu for a view, in the order of the panel: what the daemon is
-/// doing and anything needing the user (a waiting session opens its
-/// transcript), the plan usage left when any can be read, then Open, pause
+/// doing and anything needing the user (an alert goes where to look about
+/// it, a waiting session opens its transcript), the plan usage left when any
+/// can be read, then Open, pause
 /// or resume, start at login, Quit, and Quit and stop.
 pub fn menu_spec(view: &View, login: bool, now: i64) -> Vec<Entry> {
     let separator = |id: &str| Entry {
@@ -92,15 +102,20 @@ pub fn menu_spec(view: &View, login: bool, now: i64) -> Vec<Entry> {
         kind: Kind::Separator,
         enabled: false,
     };
-    let mut entries = vec![Entry::item("summary", view.summary.clone(), false)];
+    // While reviews run or wait, the status opens the jobs list.
+    let mut entries = vec![Entry::item(
+        "summary",
+        view.summary.clone(),
+        view.running + view.queued > 0,
+    )];
     if let Some(waiting) = view.waiting_label() {
         entries.push(Entry::item("waiting", waiting, false));
     }
-    for (i, line) in view.attention.iter().enumerate() {
+    for alert in &view.attention {
         entries.push(Entry::item(
-            &format!("attention-{i}"),
-            format!("! {line}"),
-            false,
+            &alert.id,
+            format!("{} · {}", alert.text, alert.action),
+            true,
         ));
     }
     for needs in &view.needs {
@@ -134,6 +149,7 @@ pub fn menu_spec(view: &View, login: bool, now: i64) -> Vec<Entry> {
         kind: Kind::Check(login),
         enabled: true,
     });
+    entries.push(Entry::item("report", "Report a problem…", true));
     entries.push(separator("separator-2"));
     entries.push(Entry::item("quit", "Quit", true));
     entries.push(Entry::item(
@@ -419,6 +435,20 @@ fn install_window_menu(app: &AppHandle, login: bool) -> Result<CheckMenuItem<Wry
         _ => background.append(&setup).map_err(e)?,
     }
     window_menu.append(&background).map_err(e)?;
+    let report =
+        MenuItem::with_id(app, MENU_REPORT, "Report a problem…", true, None::<&str>).map_err(e)?;
+    let help = window_menu
+        .items()
+        .map_err(e)?
+        .into_iter()
+        .filter_map(|i| i.as_submenu().cloned())
+        .find(|s| s.text().is_ok_and(|t| t == "Help"));
+    match help {
+        Some(help) => help.append(&report).map_err(e)?,
+        None => window_menu
+            .append(&Submenu::with_items(app, "Help", true, &[&report]).map_err(e)?)
+            .map_err(e)?,
+    }
     if let Some(notifications) = notifications::submenu(app).map_err(e)? {
         window_menu.append(&notifications).map_err(e)?;
     }
@@ -456,7 +486,6 @@ fn icon(state: Icon) -> Result<Image<'static>, String> {
         Icon::Idle => IDLE_ICON,
         Icon::Running => RUNNING_ICON,
         Icon::Attention => ATTENTION_ICON,
-        Icon::Inbox => INBOX_ICON,
     };
     Image::from_bytes(bytes).map_err(|e| e.to_string())
 }
@@ -502,12 +531,18 @@ fn build_menu(app: &AppHandle, spec: &[Entry]) -> tauri::Result<Menu<Wry>> {
 #[derive(Debug, PartialEq, Eq)]
 enum Action {
     Open,
+    /// The status line while reviews run or wait: opens the jobs list.
+    Jobs,
+    /// An alert, by its menu id: goes where to look, and records it seen.
+    Alert(String),
     /// A waiting agent session, by its `agent:id` key: opens its transcript.
     Session(String),
     Pause,
     Login,
     /// "Command Line and Hooks…", in the window's menu bar.
     Setup,
+    /// "Report a problem…": opens a prefilled GitHub issue in the browser.
+    Report,
     Quit,
     QuitStop,
     Notification,
@@ -517,12 +552,15 @@ enum Action {
 fn route(id: &str) -> Action {
     match id {
         "open" => Action::Open,
+        "summary" => Action::Jobs,
         "pause" => Action::Pause,
         "login" | MENU_LOGIN => Action::Login,
         onboarding::MENU_ID => Action::Setup,
+        "report" | MENU_REPORT => Action::Report,
         "quit" => Action::Quit,
         "quit-stop" => Action::QuitStop,
         _ if notifications::is_menu_id(id) => Action::Notification,
+        _ if status::is_alert(id) => Action::Alert(id.to_string()),
         _ => match id.strip_prefix(SESSION_PREFIX) {
             Some(key) if !key.is_empty() => Action::Session(key.to_string()),
             _ => Action::Ignore,
@@ -533,10 +571,13 @@ fn route(id: &str) -> Action {
 pub fn on_menu(app: &AppHandle, id: &str) {
     match route(id) {
         Action::Open => lifecycle::show_window(app),
+        Action::Jobs => notifications::open(app, Route::Jobs),
+        Action::Alert(id) => follow_alert(app, &id),
         Action::Session(key) => notifications::open_session(app, key),
         Action::Pause => toggle_pause(app),
         Action::Login => toggle_login(app),
         Action::Setup => onboarding::show(app),
+        Action::Report => report_problem(app),
         Action::Quit => lifecycle::quit(app),
         Action::QuitStop => lifecycle::quit_and_stop(app),
         Action::Notification => {
@@ -552,6 +593,38 @@ pub fn refresh(app: &AppHandle) {
     if let Some(shared) = shared(app) {
         render(app, &shared, true);
     }
+}
+
+/// The prefilled issue link in a `/api/diagnostics` answer, only when it opens
+/// the public repository's new issue form.
+fn issue_url(body: &[u8]) -> Option<String> {
+    let value: serde_json::Value = serde_json::from_slice(body).ok()?;
+    let url = value.get("report_issue_url")?.as_str()?;
+    url.starts_with(ISSUES_NEW_PREFIX).then(|| url.to_string())
+}
+
+/// Opens a new GitHub issue in the browser with the version, OS and the
+/// daemon's redacted Diagnostics summary filled in (the daemon builds the
+/// link, so one redaction serves every surface). The user reads the form in the
+/// browser and nothing is sent until they submit it. Without a daemon, or when
+/// diagnostics fail, it opens the issue chooser instead. The checks can take
+/// seconds, so they run off the menu's thread.
+fn report_problem(app: &AppHandle) {
+    let launch = launch(app);
+    let app = app.clone();
+    thread::spawn(move || {
+        let prefilled = launch.and_then(|launch| match client::diagnostics(&launch) {
+            Ok(body) => issue_url(&body),
+            Err(e) => {
+                eprintln!("baum desktop: no diagnostics for the problem report: {e}");
+                None
+            }
+        });
+        let url = prefilled.as_deref().unwrap_or(ISSUES_CHOOSE);
+        if let Err(e) = app.opener().open_url(url, None::<&str>) {
+            lifecycle::message(&app, "Cannot open the browser", &e.to_string());
+        }
+    });
 }
 
 /// Flips start at login and shows the real result in both menus.
@@ -626,11 +699,53 @@ fn set_link(app: &AppHandle, link: Link) {
     render(app, &shared, false);
 }
 
-/// The window is showing: what the tray flagged has been seen.
+/// The window is showing: the diagnostics problems flagged have been seen.
+/// Failed jobs stay flagged until their alert is followed.
 pub fn window_seen(app: &AppHandle) {
     let Some(shared) = shared(app) else { return };
     lock(&shared.0.tracker).acknowledge();
     render(app, &shared, false);
+}
+
+/// An alert was followed: records what it is about as seen, then goes where
+/// the user needs to look.
+fn follow_alert(app: &AppHandle, id: &str) {
+    let Some(shared) = shared(app) else { return };
+    let jobs = lock(&shared.0.tracker).acknowledge_alert(id);
+    record_seen(&shared, jobs);
+    render(app, &shared, false);
+    let route = if let Some(job) = id.strip_prefix(status::ALERT_JOB) {
+        Route::Job { id: job.into() }
+    } else {
+        match id {
+            status::ALERT_JOBS => Route::Jobs,
+            status::ALERT_DIAGNOSTICS => Route::Diagnostics,
+            // The window shows the connecting screen, which can restart the
+            // daemon.
+            _ => return lifecycle::show_window(app),
+        }
+    };
+    notifications::open(app, route);
+}
+
+/// Records failed jobs as seen in the daemon, so no client flags them
+/// again, and looks again once it has.
+fn record_seen(shared: &Shared, jobs: Vec<String>) {
+    if jobs.is_empty() {
+        return;
+    }
+    let Some(launch) = lock(&shared.0.launch).clone() else {
+        return;
+    };
+    let shared = shared.clone();
+    thread::spawn(move || {
+        for id in &jobs {
+            if let Err(e) = client::job_seen(&launch, id) {
+                eprintln!("baum desktop: cannot record job {id} as seen: {e}");
+            }
+        }
+        wake(&shared);
+    });
 }
 
 /// What the panel shows: the view last shown and the plans behind its meters.
@@ -811,6 +926,16 @@ fn poll_once(app: &AppHandle, shared: &Shared) -> Duration {
         observed.needs = needs.ok();
     }
     render(app, shared, false);
+    // A failed job seen here but still unseen in the daemon: recording it
+    // failed (the daemon was briefly unreachable, or could not save), so it
+    // is recorded again until the daemon stops reporting it, rather than
+    // hidden only until the app restarts.
+    let unrecorded = lock(&shared.0.tracker).unrecorded();
+    for id in unrecorded {
+        if let Err(e) = client::job_seen(&launch, &id) {
+            eprintln!("baum desktop: cannot record job {id} as seen: {e}");
+        }
+    }
     let busy = lock(&shared.0.observed)
         .jobs
         .as_ref()
@@ -857,16 +982,22 @@ mod tests {
         let ids = menu_spec(&View::default(), false, NOW)
             .into_iter()
             .map(|e| e.id)
-            .chain([MENU_LOGIN.to_string(), onboarding::MENU_ID.to_string()])
+            .chain([
+                MENU_LOGIN.to_string(),
+                MENU_REPORT.to_string(),
+                onboarding::MENU_ID.to_string(),
+            ])
             .chain(notifications::menu_ids().map(String::from));
         for id in ids {
             let action = route(&id);
             let expected = match id.as_str() {
                 "open" => Action::Open,
+                "summary" => Action::Jobs,
                 _ if id.starts_with(SESSION_PREFIX) => Action::Session(id[8..].to_string()),
                 "pause" => Action::Pause,
                 "login" | MENU_LOGIN => Action::Login,
                 onboarding::MENU_ID => Action::Setup,
+                "report" | MENU_REPORT => Action::Report,
                 "quit" => Action::Quit,
                 "quit-stop" => Action::QuitStop,
                 _ if id.starts_with("notifications:") => Action::Notification,
@@ -907,6 +1038,7 @@ mod tests {
                 "Open baum",
                 "Pause automatic reviews",
                 "Start at login",
+                "Report a problem…",
                 "Quit",
                 "Quit and stop background reviews"
             ]
@@ -920,11 +1052,48 @@ mod tests {
                 "open",
                 "pause",
                 "login",
+                "report",
                 "separator-2",
                 "quit",
                 "quit-stop"
             ]
         );
+    }
+
+    #[test]
+    fn the_status_opens_the_jobs_list_only_while_reviews_run_or_wait() {
+        let idle = menu_spec(&view(up(0, true)), false, NOW);
+        assert_eq!((idle[0].id.as_str(), idle[0].enabled), ("summary", false));
+        let busy = menu_spec(&view(up(2, true)), false, NOW);
+        assert_eq!(busy[0].text, "2 running");
+        assert!(busy[0].enabled);
+        assert_eq!(route(&busy[0].id), Action::Jobs);
+        let mut queued = up(0, true);
+        queued.jobs = Some(Jobs {
+            queued: 1,
+            ..Jobs::default()
+        });
+        assert!(menu_spec(&view(queued), false, NOW)[0].enabled);
+    }
+
+    #[test]
+    fn only_the_issue_form_of_the_public_repository_is_opened() {
+        let ok = br#"{"report_issue_url":"https://github.com/baum-ai/baum/issues/new?template=bug_report.yml&version=1"}"#;
+        assert_eq!(
+            issue_url(ok).as_deref(),
+            Some("https://github.com/baum-ai/baum/issues/new?template=bug_report.yml&version=1")
+        );
+        for body in [
+            &br#"{}"#[..],
+            br#"not json"#,
+            br#"{"report_issue_url":5}"#,
+            br#"{"report_issue_url":"https://evil.example/issues/new?x=1"}"#,
+            br#"{"report_issue_url":"https://github.com/baum-ai/baum.evil/issues/new?x=1"}"#,
+            br#"{"report_issue_url":"http://github.com/baum-ai/baum/issues/new?x=1"}"#,
+            br#"{"report_issue_url":"file:///etc/passwd"}"#,
+        ] {
+            assert_eq!(issue_url(body), None, "{}", String::from_utf8_lossy(body));
+        }
     }
 
     #[test]
@@ -964,13 +1133,34 @@ mod tests {
     }
 
     #[test]
-    fn attention_lines_appear_under_the_summary() {
+    fn alerts_are_items_under_the_summary_that_go_where_to_look() {
         let mut observed = up(0, true);
         observed.diagnostics = Some(vec!["git".into()]);
         let spec = menu_spec(&view(observed), false, NOW);
         assert_eq!(spec[0].text, "Idle");
-        assert_eq!(spec[1].text, "! A diagnostics check reports a problem");
-        assert!(!spec[1].enabled);
+        assert_eq!(
+            spec[1].text,
+            "A diagnostics check reports a problem · Open diagnostics"
+        );
+        assert!(spec[1].enabled);
+        assert_eq!(
+            route(&spec[1].id),
+            Action::Alert("alert:diagnostics".into())
+        );
+        let down = view(Observed {
+            link: Link::Down,
+            ..Observed::default()
+        });
+        let spec = menu_spec(&down, false, NOW);
+        assert_eq!(
+            spec[1].text,
+            "Background reviews are not running · Open baum to restart them"
+        );
+        assert_eq!(route(&spec[1].id), Action::Alert("alert:daemon".into()));
+        assert_eq!(
+            route("alert:job:6e280a68"),
+            Action::Alert("alert:job:6e280a68".into())
+        );
     }
 
     #[test]

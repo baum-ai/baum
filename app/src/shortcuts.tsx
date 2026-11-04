@@ -1,7 +1,8 @@
 import { usePreferences, type PageModifier } from "./preferences";
 import { useModal } from "./modal";
 import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
-import { Button } from "@baum/viewer/components/ui";
+import type { ReviewSteps } from "@baum/viewer/components/review-viewer";
+import { CloseButton } from "@baum/viewer/components/ui";
 import { PAGES, type Page } from "./pages";
 
 export type InboxAction =
@@ -12,7 +13,6 @@ export type InboxAction =
   | "peek"
   | "merge"
   | "fix"
-  | "generate"
   | "transcript"
   | "refresh";
 
@@ -38,7 +38,6 @@ export const INBOX_SHORTCUTS: Shortcut<{ action: InboxAction }>[] = [
   },
   { keys: ["m"], action: "merge", label: "Merge, where offered", short: "merge" },
   { keys: ["f"], action: "fix", label: "Fix, where offered", short: "fix" },
-  { keys: ["g"], action: "generate", label: "Generate the review", short: "generate" },
   { keys: ["t"], action: "transcript", label: TRANSCRIPT_LABEL },
   { keys: ["r"], action: "refresh", label: "Refresh from GitHub" },
 ];
@@ -53,6 +52,11 @@ const UP_NEXT_SHORTCUTS: Shortcut[] = [
   { keys: ["m"], label: "Merge, where offered", short: "merge" },
   { keys: ["f"], label: "Fix, where offered", short: "fix" },
   { keys: ["t"], label: TRANSCRIPT_LABEL },
+  {
+    keys: ["v"],
+    label: "Review: approve, comment or request changes",
+    short: "review",
+  },
   { keys: ["s"], label: "Snooze, then 1–4 to choose until when", short: "snooze" },
   { keys: ["u"], label: "Undo a snooze", short: "undo" },
 ];
@@ -347,6 +351,22 @@ export function openActiveBlock(): boolean {
   return true;
 }
 
+/** Where a key moves a review page, as the navigator does: j and k (↓ ↑)
+ *  through the blocks of the section being read; Shift+J and Shift+K
+ *  (Shift+↓ ↑), or → and ←, to the next or previous section. */
+export function reviewKeyStep(event: KeyboardEvent, steps: ReviewSteps | null) {
+  if (!steps) return null;
+  const key = event.key.length === 1 ? event.key.toLowerCase() : event.key;
+  const next = key === "j" || key === "ArrowDown";
+  if (next || key === "k" || key === "ArrowUp") {
+    if (!event.shiftKey) return (next ? steps.item?.next : steps.item?.previous) ?? null;
+    return next ? (steps.rail?.next ?? steps.next) : (steps.rail?.previous ?? steps.previous);
+  }
+  if (key === "ArrowRight") return steps.rail?.next ?? steps.next;
+  if (key === "ArrowLeft") return steps.rail?.previous ?? steps.previous;
+  return null;
+}
+
 /** Each list's last row, by the list's name, for as long as the app runs. */
 const lastRows = new Map<string, string>();
 /** Forgets every list's last row, as a fresh start of the app does. */
@@ -359,7 +379,8 @@ export function forgetLastRows() {
  *  opened, or its page from the sidebar) comes back on the same row. A link
  *  clicked in a row (`[data-row-id]` inside `list`) makes that row the one
  *  to come back to, so a row opened by the pointer is kept as one opened by
- *  the keyboard is. Tab landing on a row's link (`useTabStops`) makes that
+ *  the keyboard is; a row button that opens the row in place (`ROW_LINK`)
+ *  selects it there, so the keys go on from it. Tab landing on a row's link (`useTabStops`) makes that
  *  row the selected one, so the row's keys act where the focus is. */
 export function useLastRow(name: string, list?: RefObject<HTMLElement | null>) {
   const [id, setId] = useState(() => lastRows.get(name) ?? null);
@@ -376,8 +397,9 @@ export function useLastRow(name: string, list?: RefObject<HTMLElement | null>) {
     const click = (event: MouseEvent) => {
       const target = event.target instanceof Element ? event.target : null;
       const row = target?.closest<HTMLElement>("[data-row-id]");
-      if (row?.dataset.rowId && target?.closest("a[href]") && list.current?.contains(row))
-        lastRows.set(name, row.dataset.rowId);
+      if (!row?.dataset.rowId || !list.current?.contains(row)) return;
+      if (target?.closest("a[href]")) lastRows.set(name, row.dataset.rowId);
+      else if (target?.closest(`button:is(${ROW_LINK})`)) set(row.dataset.rowId);
     };
     const focusin = (event: FocusEvent) => {
       if (!tabbed || !(event.target instanceof Element)) return;
@@ -395,23 +417,49 @@ export function useLastRow(name: string, list?: RefObject<HTMLElement | null>) {
   return [id, set] as const;
 }
 
-/** Focuses a row's link and scrolls the row into view: to the middle when a
- *  list comes back on its last row, which may be far down, and just enough
- *  as the keys move it. */
+/** Focuses a row's link and scrolls the row into view when any of it is out
+ *  of sight: to the middle when a list comes back on its last row, which may
+ *  be far down, and just enough as the keys move it. The list's first row
+ *  (`first`) takes it back to the top, with what is above the row, such as
+ *  its heading. */
 export function useFocusRow(
   focused: string | null,
   rowLink: (id: string) => HTMLElement | null | undefined,
+  first = false,
 ) {
   const returning = useRef(focused !== null);
   useEffect(() => {
     if (!focused) return;
     const target = rowLink(focused);
     target?.focus({ preventScroll: true });
-    target
-      ?.closest("[data-row-id]")
-      ?.scrollIntoView?.({ block: returning.current ? "center" : "nearest" });
+    const row = target?.closest<HTMLElement>("[data-row-id]");
+    if (row && first && !returning.current) scrollAreas(row)[0]?.scrollTo?.({ top: 0 });
+    else if (row && !inSight(row))
+      row.scrollIntoView?.({ block: returning.current ? "center" : "nearest" });
     returning.current = false;
   }, [focused]);
+}
+
+/** The elements that scroll `row`, innermost first, ending at the page's. */
+function scrollAreas(row: HTMLElement): Element[] {
+  const areas: Element[] = [];
+  for (let up = row.parentElement; up; up = up.parentElement)
+    if (/auto|scroll/.test(getComputedStyle(up).overflowY)) areas.push(up);
+  return [...areas, document.scrollingElement ?? document.documentElement];
+}
+
+/** Whether all of `row` shows: inside the window and the areas that scroll
+ *  it. */
+function inSight(row: HTMLElement) {
+  const box = row.getBoundingClientRect();
+  let head = 0;
+  let foot = window.innerHeight;
+  for (const up of scrollAreas(row).slice(0, -1)) {
+    const area = up.getBoundingClientRect();
+    head = Math.max(head, area.top);
+    foot = Math.min(foot, area.bottom);
+  }
+  return box.top >= head && box.bottom <= foot;
 }
 
 /** A row focus that the keyboard moves through a list's rows: each row is
@@ -432,7 +480,7 @@ export function useRowFocus<List extends HTMLElement = HTMLElement>(
     Array.from(list.current?.querySelectorAll<HTMLElement>("[data-row-id]") ?? [])
       .find((element) => element.dataset.rowId === id)
       ?.querySelector<HTMLElement>(link);
-  useFocusRow(focused, rowLink);
+  useFocusRow(focused, rowLink, focused !== null && focused === ids[0]);
   return {
     list,
     focused,
@@ -754,7 +802,7 @@ function shortcutGroups(
         MAC
           ? { keys: ["⌘[", "⌘]"], label: "Back, forward" }
           : { keys: ["Alt+←", "Alt+→"], label: "Back, forward" },
-        { keys: ["?"], label: "Show or hide this list" },
+        { keys: ["?"], label: "Help menu (then Enter shows this list), or hide this list" },
         {
           keys: [MAC ? "⌥ Option" : "Alt"],
           label: "Hold to show the page's keys and those on buttons",
@@ -762,12 +810,24 @@ function shortcutGroups(
         { keys: ["Escape"], label: "Close this list" },
       ],
     },
-    { place: "inbox", title: "Inbox", rows: UP_NEXT_SHORTCUTS },
+    {
+      place: "inbox",
+      title: "Inbox",
+      rows: [
+        ...UP_NEXT_SHORTCUTS,
+        { keys: ["/"], label: "Open the filter" },
+        {
+          keys: MAC ? ["⇧J", "⇧K", "⌃↓", "⌃↑"] : ["Shift+J", "Shift+K", "Ctrl+↓", "Ctrl+↑"],
+          label: "Next, previous inbox",
+        },
+      ],
+    },
     {
       place: "pulls",
       title: "Pull requests",
       rows: [
         ...INBOX_SHORTCUTS,
+        { keys: ["/"], label: "Open the filter" },
         { keys: ["Escape"], label: "Clear the row focus" },
         { keys: VIEW_KEYS.previous, label: "Previous view", short: "views" },
         { keys: VIEW_KEYS.next, label: "Next view", short: "views" },
@@ -779,8 +839,16 @@ function shortcutGroups(
       rows: [
         { keys: ["j", "ArrowDown"], label: "Next item in the section", short: "move" },
         { keys: ["k", "ArrowUp"], label: "Previous item in the section", short: "move" },
-        { keys: ["l", "ArrowRight"], label: "Next place in the sidebar", short: "sidebar" },
-        { keys: ["h", "ArrowLeft"], label: "Previous place in the sidebar", short: "sidebar" },
+        {
+          keys: MAC ? ["⇧J", "⇧↓", "ArrowRight"] : ["Shift+J", "Shift+↓", "ArrowRight"],
+          label: "Next section",
+          short: "sections",
+        },
+        {
+          keys: MAC ? ["⇧K", "⇧↑", "ArrowLeft"] : ["Shift+K", "Shift+↑", "ArrowLeft"],
+          label: "Previous section",
+          short: "sections",
+        },
         {
           keys: [" "],
           label: "Open or close the item's details, or the selected group in the sidebar",
@@ -789,12 +857,30 @@ function shortcutGroups(
         { keys: ["Enter"], label: "Open the item, such as a commit in the list", short: "open" },
         { keys: ["m"], label: "Merge, where offered", short: "merge" },
         { keys: ["f"], label: "Fix, where offered", short: "fix" },
-        { keys: ["g"], label: "Generate or regenerate the review", short: "generate" },
         { keys: ["t"], label: TRANSCRIPT_LABEL },
+        {
+          keys: ["c"],
+          label: `Comment on the section, risk or file being read; ${COMMAND}↵ saves it`,
+          short: "comment",
+        },
+        {
+          keys: ["v"],
+          label: "Send your review: approve, comment or request changes",
+          short: "review",
+        },
         {
           keys: ["a"],
           label: "Ask the review's agent a question; Esc in the panel closes it",
           short: "ask",
+        },
+        {
+          keys: ["]"],
+          label: "Toggle the right-hand sidebar; opening it gives it the keys",
+          short: "sidebar",
+        },
+        {
+          keys: ["h", "l"],
+          label: "In the sidebar: Details, Activity and Comments; Esc goes back to the review",
         },
         back,
       ],
@@ -848,11 +934,14 @@ function shortcutGroups(
     {
       place: "timeline",
       title: "Timeline",
-      rows: LIST_SHORTCUTS.map((row) =>
-        row.keys.includes("Enter")
-          ? { ...row, label: "Open or close the feature or decision" }
-          : row,
-      ),
+      rows: [
+        ...LIST_SHORTCUTS.map((row) =>
+          row.keys.includes("Enter")
+            ? { ...row, label: "Open or close the feature or decision" }
+            : row,
+        ),
+        { keys: ["/"], label: "Search the features or decisions", short: "search" },
+      ],
     },
     { place: "settings", title: "Settings", rows: SETTINGS_SHORTCUTS },
     {
@@ -885,8 +974,9 @@ const LISTS: ShortcutsPlace[] = ["pulls", "sessions", "jobs", "repositories"];
 /** The keys of where the person is, in one line along the foot of the page,
  *  shown while Alt (Option on a Mac) is held, with the keys on buttons
  *  (`useKeyHints`): each key the place's group names `short`, keys sharing a
- *  name together ("j k move"), then the row menu's key on a list, Go to and
- *  the sheet. It is drawn for the eye; the sheet (`?`) says the same aloud. */
+ *  name together ("j k move"), then the row menu's key on a list. Only keys
+ *  for this page belong here. It is drawn for the eye; the sheet (`?`) lists
+ *  these and the app-wide keys aloud. */
 export function KeyBar({ place, className }: { place: ShortcutsPlace; className?: string }) {
   const items: { keys: string[]; short: string }[] = [];
   // Page keys have no `short`, so the bar does not depend on their modifier.
@@ -897,7 +987,6 @@ export function KeyBar({ place, className }: { place: ShortcutsPlace; className?
     else items.push({ keys: [row.keys[0]!], short: row.short });
   }
   if (LISTS.includes(place)) items.push({ keys: [`${COMMAND}.`], short: "actions" });
-  items.push({ keys: [`${COMMAND}K`], short: "go to" }, { keys: ["?"], short: "all keys" });
   return (
     <footer
       aria-hidden="true"
@@ -929,7 +1018,7 @@ export function ShortcutsSheet({
   const title = useRef<HTMLHeadingElement>(null);
   useEffect(() => {
     // The list scrolls; it opens at its top, on the current page's keys,
-    // rather than on Close at its foot.
+    // rather than on its close control.
     title.current?.focus({ preventScroll: true });
     if (dialog.current) dialog.current.scrollTop = 0;
   }, []);
@@ -946,35 +1035,35 @@ export function ShortcutsSheet({
       aria-labelledby="shortcuts-title"
       className="shortcuts-sheet"
     >
-      <h2
-        ref={title}
-        id="shortcuts-title"
-        tabIndex={-1}
-        className="text-lg font-semibold outline-none"
-      >
-        Keyboard shortcuts
-      </h2>
-      {ordered.map((group) => (
-        <section key={group.place} aria-label={group.title} className="shortcuts-group">
-          <h3>{group.title}</h3>
-          <dl className="shortcuts-list">
-            {group.rows.map((row) => (
-              <div key={row.keys.join()}>
-                <dt>
-                  {row.keys.map((key) => (
-                    <kbd key={key}>{KEY_NAMES[key] ?? key}</kbd>
-                  ))}
-                </dt>
-                <dd>{row.label}</dd>
-              </div>
-            ))}
-          </dl>
-        </section>
-      ))}
-      <div className="mt-4 flex justify-end">
-        <Button size="compact" onClick={close}>
-          Close
-        </Button>
+      <div className="local-dialog-head shortcuts-head">
+        <h2
+          ref={title}
+          id="shortcuts-title"
+          tabIndex={-1}
+          className="text-lg font-semibold outline-none"
+        >
+          Keyboard shortcuts
+        </h2>
+        <CloseButton onClick={close} />
+      </div>
+      <div className="shortcuts-body">
+        {ordered.map((group) => (
+          <section key={group.place} aria-label={group.title} className="shortcuts-group">
+            <h3>{group.title}</h3>
+            <dl className="shortcuts-list">
+              {group.rows.map((row) => (
+                <div key={row.keys.join()}>
+                  <dt>
+                    {row.keys.map((key) => (
+                      <kbd key={key}>{KEY_NAMES[key] ?? key}</kbd>
+                    ))}
+                  </dt>
+                  <dd>{row.label}</dd>
+                </div>
+              ))}
+            </dl>
+          </section>
+        ))}
       </div>
     </dialog>
   );

@@ -38,8 +38,15 @@ const APPROVED_KEY: &str =
     r"HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run";
 
 /// The executable the login entry starts. An AppImage runs from a temporary
-/// mount, so its own path (`APPIMAGE`) is the stable one.
+/// mount, so its own path (`APPIMAGE`) is the stable one. A macOS app on a
+/// disk image gets no entry, since the image goes away when ejected.
 fn executable() -> Result<PathBuf, String> {
+    if crate::daemon::misplaced().is_some() {
+        return Err(
+            "move baum to the Applications folder, open it from there, then turn on start at login"
+                .into(),
+        );
+    }
     if let Some(image) = std::env::var_os("APPIMAGE").filter(|v| !v.is_empty()) {
         return check_executable(Path::new(&image));
     }
@@ -138,12 +145,12 @@ fn exec_line(exe: &Path) -> Result<String, String> {
     Ok(format!("{} {HIDDEN_FLAG}", desktop_exec_quote(&text)))
 }
 
-fn desktop_entry_pair(line: &str) -> Option<(&str, &str)> {
+pub fn desktop_entry_pair(line: &str) -> Option<(&str, &str)> {
     let (key, value) = line.split_once('=')?;
     Some((key.trim(), value.trim()))
 }
 
-fn is_true(value: &str) -> bool {
+pub fn is_true(value: &str) -> bool {
     value.eq_ignore_ascii_case("true")
 }
 
@@ -227,7 +234,7 @@ fn rewrite_entry(existing: &str, exe: &Path) -> Result<String, String> {
 /// `$` and `\` inside them (the file's own string escaping then doubles each
 /// backslash again); `%` starts a field code, so a literal one is doubled.
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
-fn desktop_exec_quote(arg: &str) -> String {
+pub fn desktop_exec_quote(arg: &str) -> String {
     let arg = arg.replace('%', "%%");
     let reserved = |c: char| " \t\n\"'\\><~|&;$*?#()`".contains(c);
     if !arg.chars().any(reserved) {
@@ -353,10 +360,8 @@ fn reg_query_args() -> Vec<String> {
 /// Writes `content` to `path` through a temporary file, so a crash leaves the
 /// old entry or the new one and never half of one.
 #[cfg_attr(windows, allow(dead_code))]
-fn write_entry(path: &Path, content: &str) -> Result<(), String> {
-    let dir = path
-        .parent()
-        .ok_or("the autostart entry has no directory")?;
+pub fn write_entry(path: &Path, content: &str) -> Result<(), String> {
+    let dir = path.parent().ok_or("the entry has no directory")?;
     fs::create_dir_all(dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
     let temp = path.with_extension("tmp");
     let write = || -> std::io::Result<()> {

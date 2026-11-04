@@ -13,7 +13,11 @@
 :root:not([data-theme="dark"]) .local-frame:has(.local-page-body.analytics) {
   --surface-sunken: var(--nav-hover);
 }
+/* Positioned, so the visually hidden labels in its cards (absolutely placed)
+   stay in the page's scroller. Without it they hang off the document at the
+   report's full height and the whole window scrolls past the panel. */
 .local-page-body.analytics {
+  position: relative;
   gap: 1rem;
   padding-bottom: 1.5rem;
 }

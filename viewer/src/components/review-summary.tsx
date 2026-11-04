@@ -74,7 +74,10 @@ export function ReviewSummary({
                 : "This pull request changes REVIEW.md. The base branch has no REVIEW.md, so the review used the default review policy."}
             </StatusLine>
           )}
-          <div className="space-y-3">
+          <div
+            data-review-block=""
+            className="space-y-3 rounded-(--radius-sm) outline-none data-[review-block-active]:bg-(--surface-wash)"
+          >
             <Markdown className={PROSE}>{summary.text}</Markdown>
             {summary.breaking_change && (
               <StatusBlock tone="critical" label="Breaking change">
@@ -92,7 +95,14 @@ export function ReviewSummary({
             )}
           </div>
 
-          <ContextPart document={document} pending={contextPending} />
+          {(document.summary.context || contextPending) && (
+            <div
+              data-review-block=""
+              className="rounded-(--radius-sm) outline-none data-[review-block-active]:bg-(--surface-wash)"
+            >
+              <ContextPart document={document} pending={contextPending} />
+            </div>
+          )}
 
           {intent.length > 0 && (
             <Part label="Intent and instructions">
@@ -243,60 +253,65 @@ function RiskScorePart({
 }) {
   const view = riskScoreView(document);
   return (
-    <Part label="Risk score">
-      {view.assessed ? (
-        <div className="space-y-2">
-          <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-base">
-            <RiskMeter
-              score={view.score}
-              lowerBound={view.lowerBound}
-              tone={riskScoreTone(view.score)}
-            />
-            <span>
-              <span
-                className={cn("font-medium tabular-nums", RISK_TEXT[riskScoreTone(view.score)])}
-              >
-                {view.lowerBound ? `At least ${view.score}` : view.score} of 5
-              </span>
-              {/* A lower bound names no meaning: "negligible" would read as a
+    <div
+      data-review-block=""
+      className="rounded-(--radius-sm) outline-none data-[review-block-active]:bg-(--surface-wash)"
+    >
+      <Part label="Risk score">
+        {view.assessed ? (
+          <div className="space-y-2">
+            <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-base">
+              <RiskMeter
+                score={view.score}
+                lowerBound={view.lowerBound}
+                tone={riskScoreTone(view.score)}
+              />
+              <span>
+                <span
+                  className={cn("font-medium tabular-nums", RISK_TEXT[riskScoreTone(view.score)])}
+                >
+                  {view.lowerBound ? `At least ${view.score}` : view.score} of 5
+                </span>
+                {/* A lower bound names no meaning: "negligible" would read as a
                   verdict on input the review could not rate. */}
-              {!view.lowerBound && (
-                <span className="text-(--text-secondary)"> · {view.meaning}</span>
-              )}
+                {!view.lowerBound && (
+                  <span className="text-(--text-secondary)"> · {view.meaning}</span>
+                )}
+              </span>
+            </p>
+            {view.reasons.length > 0 && (
+              <ul className="space-y-1.5">
+                {view.reasons.map((reason, index) => (
+                  <li
+                    key={`${reason.section}-${index}`}
+                    className="max-w-[90ch] text-base text-(--text-primary)"
+                  >
+                    <Markdown className="inline [&>p]:inline">{reason.text}</Markdown>{" "}
+                    <JumpLink onClick={() => onSelectSection(reason.section)}>
+                      {reason.sectionTitle} →
+                    </JumpLink>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        ) : (
+          <p className="flex flex-wrap items-baseline gap-x-2 gap-y-1 text-base">
+            <span className="font-medium">Not assessed</span>
+            <span className="text-(--text-secondary)">
+              {view.legacy
+                ? "This review was generated before risk scores. Regenerate it to assess."
+                : "No current section of this review was rated."}
             </span>
           </p>
-          {view.reasons.length > 0 && (
-            <ul className="space-y-1.5">
-              {view.reasons.map((reason, index) => (
-                <li
-                  key={`${reason.section}-${index}`}
-                  className="max-w-[90ch] text-base text-(--text-primary)"
-                >
-                  <Markdown className="inline [&>p]:inline">{reason.text}</Markdown>{" "}
-                  <JumpLink onClick={() => onSelectSection(reason.section)}>
-                    {reason.sectionTitle} →
-                  </JumpLink>
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-      ) : (
-        <p className="flex flex-wrap items-baseline gap-x-2 gap-y-1 text-base">
-          <span className="font-medium">Not assessed</span>
-          <span className="text-(--text-secondary)">
-            {view.legacy
-              ? "This review was generated before risk scores. Regenerate it to assess."
-              : "No current section of this review was rated."}
-          </span>
-        </p>
-      )}
-      {view.limitations.length > 0 && (
-        <p className="mt-2 text-xs text-(--text-tertiary)">
-          Incomplete input: {view.limitations.join(" · ")}
-        </p>
-      )}
-    </Part>
+        )}
+        {view.limitations.length > 0 && (
+          <p className="mt-2 text-xs text-(--text-tertiary)">
+            Incomplete input: {view.limitations.join(" · ")}
+          </p>
+        )}
+      </Part>
+    </div>
   );
 }
 
@@ -309,7 +324,10 @@ function IntentRow({
   onSelectSection: (id: string) => void;
 }) {
   return (
-    <li className="flex gap-2.5">
+    <li
+      data-review-block=""
+      className="flex gap-2.5 rounded-(--radius-sm) outline-none data-[review-block-active]:bg-(--surface-wash)"
+    >
       <span
         aria-hidden
         className="mt-[0.55rem] h-1 w-1 flex-none rounded-full bg-(--text-tertiary)"

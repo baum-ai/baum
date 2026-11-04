@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/baum-ai/baum/agent"
 	"github.com/baum-ai/baum/internal/appdb"
+	"github.com/baum-ai/baum/internal/repos"
 )
 
 type fakeExecutor struct {
@@ -175,6 +177,12 @@ func TestQueuedReplacementBatchEstimateAndNoParallelPR(t *testing.T) {
 	default:
 	}
 }
+
+// startWait bounds how long a test waits for a queued job to start. Each
+// start saves the journal to SQLite, which a loaded Windows runner under
+// -race can take seconds to do.
+const startWait = 15 * time.Second
+
 func TestConcurrencyLimitsRunningJobsAndChangesLive(t *testing.T) {
 	f := &fakeExecutor{head: "first", started: make(chan Prepared, 10), release: make(chan struct{})}
 	q, err := Open(filepath.Join(privateDir(t), "jobs.json"), f, 2, nil)
@@ -187,7 +195,7 @@ func TestConcurrencyLimitsRunningJobsAndChangesLive(t *testing.T) {
 		for range want {
 			select {
 			case <-f.started:
-			case <-time.After(3 * time.Second):
+			case <-time.After(startWait):
 				t.Fatal("job did not start")
 			}
 		}
@@ -239,7 +247,7 @@ func TestJobWaitsWhileAnotherOfItsPullRequestRuns(t *testing.T) {
 		select {
 		case p := <-f.started:
 			return p.Item
-		case <-time.After(3 * time.Second):
+		case <-time.After(startWait):
 			t.Fatal("job did not start")
 		}
 		return Item{}
@@ -767,4 +775,190 @@ func TestSeparateDatabasePathsHaveIndependentQueueLocks(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer second.Close()
+}
+
+// logBuffer collects log lines for tests that wait on a logged failure.
+type logBuffer struct {
+	mu sync.Mutex
+	b  strings.Builder
+}
+
+func (l *logBuffer) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.b.Write(p)
+}
+func (l *logBuffer) count(s string) int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return strings.Count(l.b.String(), s)
+}
+
+// failSaves makes journal writes fail until the returned function restores
+// them, and shortens the retry delays.
+func failSaves(t *testing.T, q *Queue, base time.Duration) (restore func()) {
+	t.Helper()
+	oldBase, oldMax := saveRetryBase, saveRetryMax
+	saveRetryBase, saveRetryMax = base, 4*base
+	t.Cleanup(func() { saveRetryBase, saveRetryMax = oldBase, oldMax })
+	q.mu.Lock()
+	good := q.path
+	q.path = filepath.Join(good, "not-a-directory")
+	q.mu.Unlock()
+	return func() {
+		q.mu.Lock()
+		q.path = good
+		q.mu.Unlock()
+	}
+}
+func journalState(q *Queue, id string) string {
+	q.mu.Lock()
+	path := q.path
+	q.mu.Unlock()
+	raw, err := appdb.Read(path, "state", "jobs")
+	if err != nil {
+		return ""
+	}
+	var saved []Job
+	if json.Unmarshal(raw, &saved) != nil {
+		return ""
+	}
+	for _, j := range saved {
+		if j.ID == id {
+			return j.State
+		}
+	}
+	return ""
+}
+func waitJournal(t *testing.T, q *Queue, id, state string) {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if journalState(q, id) == state {
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatalf("journal shows %q for %s, want %s", journalState(q, id), id, state)
+}
+
+// awaitStart waits for a job to start executing and for its first progress
+// update to be journaled, so later write failures hit only the end save.
+func awaitStart(t *testing.T, q *Queue, f *fakeExecutor, id string) {
+	t.Helper()
+	select {
+	case <-f.started:
+	case <-time.After(3 * time.Second):
+		t.Fatal("job did not start")
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		for _, j := range q.List() {
+			if j.ID == id && j.State == "running" && j.Phase == "repairing" {
+				return
+			}
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatalf("job %s made no progress: %+v", id, q.List())
+}
+func releaseJob(t *testing.T, f *fakeExecutor) {
+	t.Helper()
+	select {
+	case f.release <- struct{}{}:
+	case <-time.After(3 * time.Second):
+		t.Fatal("job did not take its release")
+	}
+}
+
+func TestFailedEndSavesDoNotStopWorkers(t *testing.T) {
+	q, f := newQueue(t)
+	var ids []string
+	for i := range repos.MaxJobConcurrency + 2 {
+		e := estimate(t, q, "single", Item{Clone: "clone", PR: i + 1})
+		jobs, err := q.Submit(context.Background(), e.ID, true, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ids = append(ids, jobs[0].ID)
+		awaitStart(t, q, f, jobs[0].ID)
+		restore := failSaves(t, q, time.Millisecond)
+		releaseJob(t, f)
+		waitState(t, q, jobs[0].ID, "completed")
+		restore()
+		waitJournal(t, q, jobs[0].ID, "completed")
+	}
+	for _, id := range ids {
+		if got := journalState(q, id); got != "completed" {
+			t.Fatalf("journal shows %q for %s", got, id)
+		}
+	}
+}
+
+func TestFailedStartSaveRetriesWithoutAnotherWake(t *testing.T) {
+	q, f := newQueue(t)
+	logs := &logBuffer{}
+	q.SetLogger(slog.New(slog.NewTextHandler(logs, nil)))
+	first := estimate(t, q, "single", Item{Clone: "clone", PR: 1})
+	a, err := q.Submit(context.Background(), first.ID, true, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	awaitStart(t, q, f, a[0].ID)
+	second := estimate(t, q, "single", Item{Clone: "clone", PR: 2})
+	b, err := q.Submit(context.Background(), second.ID, true, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	restore := failSaves(t, q, time.Millisecond)
+	// Only b's start save fails: a keeps running and saves nothing.
+	if err = q.SetConcurrency(2); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	for logs.count("journal write failed") < 1 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if n := logs.count("journal write failed"); n < 1 {
+		t.Fatalf("%d failed writes logged", n)
+	}
+	for _, j := range q.List() {
+		if j.ID == b[0].ID && j.State != "queued" {
+			t.Fatalf("job %s is %s while its start was not journaled", j.ID, j.State)
+		}
+	}
+	select {
+	case <-f.started:
+		t.Fatal("job started while its start was not journaled")
+	default:
+	}
+	restore()
+	awaitStart(t, q, f, b[0].ID)
+	releaseJob(t, f)
+	releaseJob(t, f)
+	waitJournal(t, q, a[0].ID, "completed")
+	waitJournal(t, q, b[0].ID, "completed")
+}
+
+func TestShutdownWritesUnsavedState(t *testing.T) {
+	q, f := newQueue(t)
+	e := estimate(t, q, "single", Item{Clone: "clone", PR: 1})
+	jobs, err := q.Submit(context.Background(), e.ID, true, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	awaitStart(t, q, f, jobs[0].ID)
+	restore := failSaves(t, q, time.Hour)
+	releaseJob(t, f)
+	waitState(t, q, jobs[0].ID, "completed")
+	restore()
+	if got := journalState(q, jobs[0].ID); got == "completed" {
+		t.Fatal("journal written before shutdown")
+	}
+	if err = q.Shutdown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got := journalState(q, jobs[0].ID); got != "completed" {
+		t.Fatalf("journal shows %q after shutdown", got)
+	}
 }

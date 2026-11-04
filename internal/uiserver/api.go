@@ -1,6 +1,7 @@
 package uiserver
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -8,6 +9,8 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"os"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -116,6 +119,9 @@ type LocalAPI struct {
 	// DiagnosticsTimeout bounds one shared run; zero means
 	// defaultDiagnosticsTimeout.
 	DiagnosticsTimeout time.Duration
+	// Version is this baum's version, named in the "Report a problem" link
+	// that /api/diagnostics returns.
+	Version string
 
 	// diagnosticsWaiting is a test hook, called once a request is waiting on
 	// the shared run.
@@ -401,6 +407,10 @@ func (a LocalAPI) Handler() *LocalHandler {
 	var diagnostics singleflight.Group
 	mux.HandleFunc("GET /api/diagnostics", func(w http.ResponseWriter, r *http.Request) {
 		body := map[string]any{"local": true, "generation_runner": a.Jobs != nil, "discovery": a.PRs != nil, "index": a.Index != nil, "report": nil}
+		// The report's paths are this user's; the app shows the home directory as ~.
+		if home, err := os.UserHomeDir(); err == nil {
+			body["home"] = home
+		}
 		if a.Diagnostics != nil {
 			timeout := a.DiagnosticsTimeout
 			if timeout <= 0 {
@@ -432,6 +442,18 @@ func (a LocalAPI) Handler() *LocalHandler {
 					return
 				}
 				body["report"] = res.Val
+				if report, ok := res.Val.(doctor.Report); ok {
+					home, _ := os.UserHomeDir()
+					info := doctor.IssueInfo{
+						Version: cmp.Or(a.Version, "unknown"),
+						OS:      runtime.GOOS + "/" + runtime.GOARCH,
+						Home:    home,
+					}
+					// The tray and window menu open the link; the app's
+					// Report a problem dialog builds its own from the parts.
+					body["report_issue_url"] = doctor.IssueURL(report, info)
+					body["report_issue"] = report.PublicIssueParts(info)
+				}
 			}
 		}
 		writeJSON(w, body)

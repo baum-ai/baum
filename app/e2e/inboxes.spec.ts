@@ -43,9 +43,13 @@ test("makes an inbox from a template, edits it, counts it in the badge and delet
   const inboxLink = sidebar.getByRole("link", { name: /^For an agent/ });
   await expect(inboxLink).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Delete inbox" })).toHaveCount(0);
-  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await page.keyboard.press("Control+Enter");
   await expect(page).toHaveURL(/\?inbox=[0-9a-f]{32}/);
   await expect(inboxLink).toBeVisible();
+  await page.keyboard.press("Shift+K");
+  await expect(page.getByRole("heading", { name: "Up next", exact: true })).toBeVisible();
+  await page.keyboard.press("Shift+J");
+  await expect(page.locator(".upnext-list-title h1")).toHaveText("For an agent");
   await page.locator(".upnext-list-title h1").click({ button: "right" });
   await page.getByRole("menuitem", { name: "Edit…" }).click();
   await expect(page.getByLabel("Name")).toHaveValue("For an agent");
@@ -71,15 +75,16 @@ test("makes an inbox from a template, edits it, counts it in the badge and delet
   // The queue the sidebar link opens holds what the preview showed.
   await page.reload();
   await expect(page.getByLabel("Name")).toHaveValue("For an agent");
-  await expect(query).toHaveValue("");
+  await expect(query).toHaveCount(0);
 
   // Counting it in the Inbox badge: with it on, its pull requests add to the
   // number; leaving it out takes away those that are in no other inbox.
   const badge = page.getByRole("switch", { name: "Count it in the Inbox badge" });
   await expect(badge).toBeChecked();
   await expect.poll(() => inboxBadge(page)).toBeGreaterThan(0);
-  await query.fill("waiting=agent");
-  await query.blur();
+  await page.locator("summary.filter-menu-button").click();
+  await page.getByRole("combobox", { name: "Add filter", exact: true }).fill("waiting=agent");
+  await page.keyboard.press("Enter");
   await expect(page.locator(".inbox-preview-count")).toHaveText(String(reviews));
   const withBadge = await inboxBadge(page);
   // Pull requests of the inbox are in no other inbox, so leaving them out

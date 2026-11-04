@@ -15,7 +15,7 @@ import { SessionCard } from "@baum/viewer/components/session-card";
 import { SessionTranscript } from "@baum/viewer/components/transcript";
 import { Markdown } from "@baum/viewer/components/markdown";
 import { ChevronLeftIcon } from "@baum/viewer/components/icons";
-import { Button } from "@baum/viewer/components/ui";
+import { CloseButton } from "@baum/viewer/components/ui";
 import { parseTranscript, type LocalTranscript } from "@baum/viewer/local-transcript";
 import type { TranscriptSession, TranscriptSource } from "@baum/viewer/transcript";
 import type { ViewerLinkProps } from "@baum/viewer/navigation";
@@ -39,7 +39,7 @@ import {
   SessionState,
   SessionWhere,
 } from "./sessions";
-import { PageBar } from "./shell";
+import { PageBar, pageScroll } from "./shell";
 
 /** How often an open transcript is read again without a `live` event: a
  *  transcript grows between hook events (the agent's replies are written
@@ -240,8 +240,8 @@ export function useLiveTranscript(
 const BOTTOM_SLACK = 48;
 
 function atBottom() {
-  const page = document.scrollingElement ?? document.documentElement;
-  return window.innerHeight + window.scrollY >= page.scrollHeight - BOTTOM_SLACK;
+  const page = pageScroll();
+  return page.view + page.top >= page.height - BOTTOM_SLACK;
 }
 
 /** Follow mode: while the reader is at the end of the page, each new
@@ -256,15 +256,16 @@ export function useFollowScroll(version: string | undefined, follow = true) {
     const onScroll = () => {
       if (shown.current) pinned.current = atBottom();
     };
-    addEventListener("scroll", onScroll, { passive: true });
-    return () => removeEventListener("scroll", onScroll);
+    // Captured: the panel's scroll does not bubble.
+    addEventListener("scroll", onScroll, { capture: true, passive: true });
+    return () => removeEventListener("scroll", onScroll, { capture: true });
   }, []);
   useLayoutEffect(() => {
     if (!version) return;
     shown.current = true;
     if (pinned.current) {
-      const page = document.scrollingElement ?? document.documentElement;
-      window.scrollTo({ top: page.scrollHeight });
+      const page = pageScroll();
+      page.to(page.height);
     }
   }, [version]);
 }
@@ -334,10 +335,8 @@ export function useMessageKeys(
       event.preventDefault();
       mark(target);
       const reduced = matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
-      window.scrollTo({
-        top: window.scrollY + target.getBoundingClientRect().top - edge,
-        behavior: reduced ? "instant" : "smooth",
-      });
+      const page = pageScroll();
+      page.to(page.top + target.getBoundingClientRect().top - edge, reduced ? "instant" : "smooth");
     };
     addEventListener("keydown", onKey);
     return () => removeEventListener("keydown", onKey);
@@ -399,9 +398,7 @@ function MessageReader({ message, onClose }: { message: HTMLElement; onClose: ()
       }}
     >
       <div className="local-message-reader-bar">
-        <Button size="compact" variant="secondary" onClick={() => dialog.current?.close()}>
-          Close
-        </Button>
+        <CloseButton onClick={() => dialog.current?.close()} />
       </div>
       <div
         ref={content}
@@ -464,7 +461,7 @@ export function SessionTranscriptPage({
     session?.state === "running" ? POLL_RUNNING : session?.state === "idle" ? POLL_IDLE : null;
   const { state, retry } = useLiveTranscript(agent, id, { tick, poll });
   useEffect(() => {
-    window.scrollTo({ top: 0 });
+    pageScroll().to(0);
   }, [agent, id]);
   useFollowScroll(state.kind === "ready" ? state.version : undefined);
   const top = useRef<HTMLDivElement>(null);

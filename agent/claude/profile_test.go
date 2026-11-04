@@ -171,7 +171,7 @@ func TestUserProfileRefusesOldClaudeOnce(t *testing.T) {
 	}
 	backend := &Backend{Binary: script}
 	_, err := backend.Run(context.Background(), request(t.TempDir(), nil))
-	if err == nil || !strings.Contains(err.Error(), "claude 2.0.1 is older than "+minimumVersion) || !strings.Contains(err.Error(), "upgrade Claude Code") {
+	if err == nil || !strings.Contains(err.Error(), "claude 2.0.1 is older than "+MinimumVersion) || !strings.Contains(err.Error(), "upgrade Claude Code") {
 		t.Fatalf("error %v", err)
 	}
 	if _, statErr := os.Stat(marker); statErr == nil {
@@ -203,7 +203,7 @@ func TestUserProfileRefusesUnreadableVersion(t *testing.T) {
 func TestUserProfileMapsUnknownOptionToUpgrade(t *testing.T) {
 	script := fakeClaude(t, "2.1.296 (Claude Code)", "echo \"error: unknown option '--restricted'\" >&2\nexit 1\n")
 	_, err := (&Backend{Binary: script}).Run(context.Background(), request(t.TempDir(), nil))
-	if err == nil || !strings.Contains(err.Error(), "upgrade Claude Code to "+minimumVersion) || !strings.Contains(err.Error(), "unknown option") {
+	if err == nil || !strings.Contains(err.Error(), "upgrade Claude Code to "+MinimumVersion) || !strings.Contains(err.Error(), "unknown option") {
 		t.Fatalf("error %v", err)
 	}
 	// Isolated reports the failure as it always has.

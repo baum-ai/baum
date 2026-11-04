@@ -283,9 +283,17 @@ type Job struct {
 	// it. Jobs saved before it was recorded, and those that never ran, have none.
 	StartedAt *time.Time `json:"started_at,omitempty"`
 	UpdatedAt time.Time  `json:"updated_at"`
+	// SeenAt is when the user first looked at this failed job from a client
+	// that flags failures, such as the desktop tray (POST
+	// /api/jobs/{id}/seen). A failed job never runs again, so once seen it is
+	// never flagged again. Other states have none.
+	SeenAt *time.Time `json:"seen_at,omitempty"`
 }
 type Progress struct {
-	Accounting             *agent.Accounting
+	Accounting *agent.Accounting
+	// CostUSD is what the usage so far costs at API prices, nil while it is
+	// unknown; CostReason qualifies it (see Job).
+	CostUSD                *float64
 	CostReason             string
 	Phase                  string
 	Calls, Tokens, Repairs int
@@ -341,6 +349,9 @@ type Queue struct {
 	// lock keeps every other process from opening this journal.
 	lock        *filelock.Lock
 	releaseOnce sync.Once
+	// released closes once the final journal write is done and lock is
+	// released; set inside releaseOnce.
+	released chan struct{}
 	// draining refuses new jobs while the daemon restarts.
 	draining bool
 	// gate, when set, answers whether an automatic job may run now (and
@@ -351,6 +362,9 @@ type Queue struct {
 	limit int
 	// log records jobs starting and ending; see SetLogger.
 	log *slog.Logger
+	// unsaved marks in-memory jobs the journal lacks after a failed write;
+	// retrying marks the goroutine that rewrites them (see retrySave).
+	unsaved, retrying bool
 }
 
 // ErrRestarting refuses a job while the daemon restarts as a newer version.
@@ -432,6 +446,9 @@ func Open(path string, executor Executor, concurrency int, changed func(Job)) (*
 				q.jobs[i].Accounting.Usage.Unreported = true
 				q.jobs[i].CostReason = "usage_incomplete"
 			}
+			// What the run cost before it stopped is not known: its last
+			// estimate left out the call in flight.
+			q.jobs[i].ActualCostUSD = nil
 			q.jobs[i].State = "interrupted"
 			q.jobs[i].Reason = "interrupted"
 			q.jobs[i].Phase = "finished"
@@ -465,7 +482,63 @@ func (q *Queue) save() error {
 	if e != nil {
 		return e
 	}
-	return appdb.Write(q.path, "state", "jobs", raw)
+	if e = appdb.Write(q.path, "state", "jobs", raw); e != nil {
+		return e
+	}
+	q.unsaved = false
+	return nil
+}
+
+// Delays between retries of a failed journal write; variables for tests.
+var saveRetryBase, saveRetryMax = time.Second, 30 * time.Second
+
+// saveFailed records a failed journal write and makes sure it is retried.
+// mu is held.
+func (q *Queue) saveFailed(err error) {
+	if q.log != nil {
+		q.log.Error("job journal write failed", "error", err)
+	}
+	q.unsaved = true
+	if q.retrying || q.ctx.Err() != nil {
+		return
+	}
+	q.retrying = true
+	q.wg.Add(1)
+	go q.retrySave()
+}
+
+// retrySave rewrites the journal with backoff until a write succeeds, then
+// wakes the workers a failed write held back. It stops when the queue does.
+func (q *Queue) retrySave() {
+	defer q.wg.Done()
+	delay := saveRetryBase
+	for {
+		timer := time.NewTimer(delay)
+		select {
+		case <-q.ctx.Done():
+			timer.Stop()
+			q.mu.Lock()
+			q.retrying = false
+			q.mu.Unlock()
+			return
+		case <-timer.C:
+		}
+		q.mu.Lock()
+		if q.unsaved {
+			if err := q.save(); err != nil {
+				if q.log != nil {
+					q.log.Error("job journal write failed", "error", err)
+				}
+				q.mu.Unlock()
+				delay = min(2*delay, saveRetryMax)
+				continue
+			}
+		}
+		q.retrying = false
+		q.mu.Unlock()
+		q.signal()
+		return
+	}
 }
 func (q *Queue) signal() {
 	for _, wake := range []chan struct{}{q.wake, q.chatWake} {
@@ -503,8 +576,30 @@ func (q *Queue) Shutdown(ctx context.Context) error {
 		// Workers have saved their last records; another process may open
 		// the journal now. A worker still running at the deadline keeps the
 		// lock until this process exits.
-		q.releaseOnce.Do(func() { _ = q.lock.Release() })
-		return nil
+		// A write that failed and was not retried yet gets one last try,
+		// while the lock is still held. The write runs on its own so it
+		// cannot hold Shutdown past ctx; the lock is released only after it
+		// finishes.
+		q.releaseOnce.Do(func() {
+			q.released = make(chan struct{})
+			go func() {
+				defer close(q.released)
+				q.mu.Lock()
+				if q.unsaved {
+					if err := q.save(); err != nil && q.log != nil {
+						q.log.Error("job journal write failed at shutdown", "error", err)
+					}
+				}
+				q.mu.Unlock()
+				_ = q.lock.Release()
+			}()
+		})
+		select {
+		case <-q.released:
+			return nil
+		case <-ctx.Done():
+			return ctx.Err()
+		}
 	case <-ctx.Done():
 		return ctx.Err()
 	}
@@ -1011,6 +1106,32 @@ func (q *Queue) Cancel(jobID string) (Job, error) {
 	return Job{}, os.ErrNotExist
 }
 
+// Seen records that the user has looked at a failed job, keeping the first
+// time. A job in any other state is returned unchanged: only failures are
+// flagged. A missing job is os.ErrNotExist.
+func (q *Queue) Seen(jobID string) (Job, error) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	for i := range q.jobs {
+		j := &q.jobs[i]
+		if j.ID != jobID {
+			continue
+		}
+		if j.State == "failed" && j.SeenAt == nil {
+			now := time.Now().UTC()
+			j.SeenAt = &now
+			if e := q.save(); e != nil {
+				j.SeenAt = nil
+				return Job{}, e
+			}
+		}
+		result := *j
+		result.Accounting = result.Accounting.Clone()
+		return result, nil
+	}
+	return Job{}, os.ErrNotExist
+}
+
 // supersedeDetails cancels, as superseded, the queued retries of the pull
 // request's section details (KindDetails) at a head other than head, which a
 // review of head replaces, and returns them with the running ones, which
@@ -1097,6 +1218,8 @@ func (q *Queue) worker(chat bool) {
 			}
 			if e := q.save(); e != nil {
 				q.jobs[i] = old
+				// The retry's signal restarts this job; signalling now would spin.
+				q.saveFailed(e)
 				q.mu.Unlock()
 				break
 			}
@@ -1117,7 +1240,7 @@ func (q *Queue) worker(chat bool) {
 				q.jobs[i].Tokens = p.Tokens
 				q.jobs[i].Repairs = p.Repairs
 				q.jobs[i].Accounting = p.Accounting.Clone()
-				q.jobs[i].CostReason = p.CostReason
+				q.jobs[i].ActualCostUSD, q.jobs[i].CostReason = p.CostUSD, p.CostReason
 				if p.Commit != "" {
 					q.jobs[i].Commit, q.jobs[i].CommitURL = p.Commit, p.CommitURL
 				}
@@ -1274,6 +1397,9 @@ func (q *Queue) worker(chat bool) {
 			cancel()
 			delete(q.cancels, j.ID)
 			saveErr := q.save()
+			if saveErr != nil {
+				q.saveFailed(saveErr)
+			}
 			result := *current
 			q.mu.Unlock()
 			logFinished(log, result, started, err)
@@ -1282,7 +1408,6 @@ func (q *Queue) worker(chat bool) {
 			if saveErr != nil {
 				// Another worker takes what this one's job held back.
 				q.signal()
-				return
 			}
 		}
 	}

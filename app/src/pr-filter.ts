@@ -37,11 +37,15 @@ export const OP_LABELS: Record<Op, string> = {
 const EQUALITY: Op[] = ["=", "!="];
 const COMPARISONS: Op[] = ["=", "!=", ">=", "<=", ">", "<"];
 
-type Field = {
+/** A field a query can name. Another page's fields (the Timeline's) are
+ *  passed in where the pull requests' are the default; their `values`
+ *  ignore the entries and their `test` is never asked. */
+export type Field = {
   key: string;
   label: string;
-  /** The values to offer, given the page's pull requests. */
-  values: (entries: Entry[]) => Option[];
+  /** The values to offer, given the pull requests and repositories known
+   *  (`valuesOf`). */
+  values: (entries: Entry[], repositories: readonly string[]) => Option[];
   /** The operators it takes, `=` and `!=` unless it says. */
   ops?: Op[];
   /** Why a typed value is not one the field takes with the operator, or "". */
@@ -51,6 +55,8 @@ type Field = {
   test: (value: string, entry: Entry, op: Op, kind?: string) => boolean;
   /** Only an inbox's queue knows it (`kind`): offered there alone. */
   inboxOnly?: boolean;
+  /** It takes one value: picking another replaces it (`toggleValue`). */
+  single?: boolean;
 };
 
 const same = (a: string | undefined, b: string) => (a ?? "").toLowerCase() === b.toLowerCase();
@@ -61,14 +67,39 @@ const distinct = (values: (string | undefined)[]) =>
 const plain = (values: (string | undefined)[]): Option[] =>
   distinct(values).map((value) => ({ value, label: value }));
 
+/** What a filter offers values from beyond the page's pull requests: every
+ *  pull request read and the person's repositories, so a value with nothing
+ *  on the page now (a quiet repository, an author with nothing waiting) can
+ *  still be picked. */
+export type Known = { entries?: readonly Entry[]; repositories?: readonly string[] };
+
+/** The field's values to offer: those of the page's pull requests and of
+ *  everything `known`. */
+export function valuesOf(field: Field, entries: readonly Entry[], known?: Known): Option[] {
+  return field.values([...entries, ...(known?.entries ?? [])], known?.repositories ?? []);
+}
+
 /** The owner of `owner/name`, or of `host/owner/name` on GitHub Enterprise. */
 export function ownerOf(repository: string): string {
   const parts = repository.split("/");
   return parts.length >= 2 ? (parts[parts.length - 2] ?? "") : "";
 }
 
+/** Another page's filter, written in the same syntax: its fields, and why a
+ *  query that reads still cannot be applied there ("" when it can). Its
+ *  suggestions leave out AND, OR and NOT. */
+export type PageFilter = {
+  /** What the query box filters, for screen readers. */
+  label: string;
+  fields: readonly Field[];
+  problem: (query: string) => string;
+  /** The value being typed for a field (`key`), or in the menu's search box
+   *  (`key` null), so values the page reads by prefix can follow it. */
+  typed?: (key: string | null, partial: string) => void;
+};
+
 /** A field that takes only the listed values. */
-function listed(key: string, label: string, options: Option[], test: Field["test"]): Field {
+export function listed(key: string, label: string, options: Option[], test: Field["test"]): Field {
   return {
     key,
     label,
@@ -138,7 +169,8 @@ const FIELDS: Field[] = [
   {
     key: "repo",
     label: "Repository",
-    values: (entries) => plain(entries.map((e) => e.pull_request.repository)),
+    values: (entries, repositories) =>
+      plain([...entries.map((e) => e.pull_request.repository), ...repositories]),
     // The whole name, or the part after the owner.
     test: (value, entry) => {
       const repository = entry.pull_request.repository;
@@ -148,7 +180,8 @@ const FIELDS: Field[] = [
   {
     key: "org",
     label: "Organization",
-    values: (entries) => plain(entries.map((e) => ownerOf(e.pull_request.repository))),
+    values: (entries, repositories) =>
+      plain([...entries.map((e) => e.pull_request.repository), ...repositories].map(ownerOf)),
     test: (value, entry) => same(ownerOf(entry.pull_request.repository), value),
   },
   {
@@ -200,7 +233,8 @@ const FIELDS: Field[] = [
     test: (value, entry) => same(entry.pull_request.base_ref, value),
   },
 ];
-const fieldOf = (key: string) => FIELDS.find((one) => one.key === key.toLowerCase());
+const fieldOf = (key: string, fields: readonly Field[] = FIELDS) =>
+  fields.find((one) => one.key === key.toLowerCase());
 
 const OPERATORS = ["AND", "OR", "NOT"] as const;
 
@@ -274,7 +308,7 @@ function splitTerm(query: string, token: Extract<Token, { kind: "word" }>) {
 
 export type Parsed = { expr: Expr | null; error: string };
 
-function parse(query: string): Parsed {
+function parse(query: string, fields: readonly Field[]): Parsed {
   const tokens = tokenize(query);
   let at = 0;
   const fail = (error: string): never => {
@@ -296,8 +330,8 @@ function parse(query: string): Parsed {
     const term = splitTerm(query, token);
     let expr: Expr;
     if (term) {
-      const field = fieldOf(term.key);
-      if (!field) fail(`Unknown filter "${term.key}". Try ${FIELDS.map((f) => f.key).join(", ")}.`);
+      const field = fieldOf(term.key, fields);
+      if (!field) fail(`Unknown filter "${term.key}". Try ${fields.map((f) => f.key).join(", ")}.`);
       const ops = field!.ops ?? EQUALITY;
       if (!ops.includes(term.op)) fail(`${field!.key} takes ${ops.join(" or ")}.`);
       if (term.values.some((v) => v.trim() === "")) fail(`${field!.key}${term.op} needs a value.`);
@@ -346,14 +380,16 @@ function parse(query: string): Parsed {
   }
 }
 
-const parsed = new Map<string, Parsed>();
-/** The query's expression, or why it cannot be read. Remembers recent ones,
- *  since every row of every list asks. */
-export function parseQuery(query: string): Parsed {
+const parsedBy = new WeakMap<readonly Field[], Map<string, Parsed>>();
+/** The query's expression, or why it cannot be read with `fields`.
+ *  Remembers recent ones, since every row of every list asks. */
+export function parseQuery(query: string, fields: readonly Field[] = FIELDS): Parsed {
+  let parsed = parsedBy.get(fields);
+  if (!parsed) parsedBy.set(fields, (parsed = new Map()));
   let out = parsed.get(query);
   if (!out) {
     if (parsed.size > 200) parsed.clear();
-    out = parse(query);
+    out = parse(query, fields);
     parsed.set(query, out);
   }
   return out;
@@ -389,9 +425,13 @@ function test(expr: Expr, entry: Entry, kind?: string): boolean {
 
 /** Why the query cannot be saved: it does not read, or is longer than the
  *  daemon keeps. "" when it can. */
-export function queryProblem(query: string, inbox = true): string {
+export function queryProblem(
+  query: string,
+  inbox = true,
+  fields: readonly Field[] = FIELDS,
+): string {
   return (
-    parseQuery(query).error ||
+    parseQuery(query, fields).error ||
     (query.length > MAX_QUERY ? `A filter is at most ${MAX_QUERY} characters.` : "") ||
     (!inbox && usesInboxOnly(query) ? "waiting works only in an inbox's queue." : "")
   );
@@ -428,16 +468,22 @@ export function quote(value: string): string {
 }
 
 /** The query's terms that must all hold, outside any OR or NOT. */
-function topTerms(query: string) {
-  const { expr } = parseQuery(query);
+function topTerms(query: string, fields: readonly Field[]) {
+  const { expr } = parseQuery(query, fields);
   const items = !expr ? [] : expr.kind === "and" ? expr.items : [expr];
   return items.filter((one): one is Extract<Expr, { kind: "term" }> => one.kind === "term");
 }
 
 /** Whether the query requires the field to compare so with the value, as
  *  the menu ticks it. */
-export function hasValue(query: string, key: string, value: string, op: Op = "="): boolean {
-  return topTerms(query).some(
+export function hasValue(
+  query: string,
+  key: string,
+  value: string,
+  op: Op = "=",
+  fields: readonly Field[] = FIELDS,
+): boolean {
+  return topTerms(query, fields).some(
     (term) => term.key === key && term.op === op && term.values.some((one) => same(one, value)),
   );
 }
@@ -453,10 +499,19 @@ const MAX_QUERY = 500;
  *  field and operator that must hold gains or loses it as one more choice
  *  (`review=a,b`); otherwise a term is added, around a query with OR in
  *  parentheses. */
-export function toggleValue(query: string, key: string, value: string, op: Op = "="): string {
-  const terms = topTerms(query).filter((one) => one.key === key && one.op === op);
+export function toggleValue(
+  query: string,
+  key: string,
+  value: string,
+  op: Op = "=",
+  fields: readonly Field[] = FIELDS,
+): string {
+  const terms = topTerms(query, fields).filter((one) => one.key === key && one.op === op);
   const term = terms.find((one) => one.values.some((v) => same(v, value))) ?? terms[0];
-  const { expr, error } = parseQuery(query);
+  // A field of one value has the new one in place of the old.
+  if (term && fieldOf(key, fields)?.single && !term.values.some((v) => same(v, value)))
+    return tidy(`${query.slice(0, term.start)}${key}${op}${quote(value)}${query.slice(term.end)}`);
+  const { expr, error } = parseQuery(query, fields);
   if (term) {
     const values = term.values.some((one) => same(one, value))
       ? term.values.filter((one) => !same(one, value))
@@ -512,12 +567,18 @@ export type Suggestion = {
 };
 
 /** What to offer at the caret: the values of the field being typed, or the
- *  fields and operators that start with the word being typed. */
+ *  fields and operators that start with the word being typed. `fields` are
+ *  another page's, in place of the pull requests'; `operators` false leaves
+ *  AND, OR and NOT out, for a page whose filter takes none; `known` adds
+ *  values from beyond `entries`. */
 export function suggest(
   query: string,
   caret: number,
   entries: Entry[],
   inbox = false,
+  fields?: readonly Field[],
+  operators = true,
+  known?: Known,
 ): Suggestion[] {
   const token = tokenize(query).find(
     (one) => one.kind === "word" && one.start < caret && caret <= one.end,
@@ -542,7 +603,10 @@ export function suggest(
   const sign = negated ? "-" : "";
   const term = TERM.exec(body);
   // `risk:` waits for its comparison like `risk`, and `review!` for its `=`.
-  const field = fieldOf((term?.[1] ?? /^([A-Za-z][A-Za-z-]*)!?$/.exec(body)?.[1]) || "");
+  const field = fieldOf(
+    (term?.[1] ?? /^([A-Za-z][A-Za-z-]*)!?$/.exec(body)?.[1]) || "",
+    fields ?? FIELDS,
+  );
   const ops = field?.ops ?? EQUALITY;
   const opRow = (op: Op): Suggestion => ({
     ...take(`${sign}${field!.key}${op}`, false),
@@ -571,8 +635,7 @@ export function suggest(
     const listedValues = rest.split(",");
     const partial = (listedValues.pop() ?? "").replace(/^"/, "").toLowerCase();
     const prefix = `${sign}${field.key}${op}${listedValues.map(quote).join(",")}${listedValues.length ? "," : ""}`;
-    const values = field
-      .values(entries)
+    const values = valuesOf(field, entries, known)
       .filter(
         (one) =>
           !listedValues.some((v) => same(v, one.value)) &&
@@ -595,15 +658,16 @@ export function suggest(
   const before = tokenize(query.slice(0, start)).at(-1);
   // After a filter or a closing parenthesis, AND and OR may follow.
   const afterOperand = before?.kind === "word" || before?.kind === ")";
-  const operators = negated
-    ? []
-    : OPERATORS.filter(
-        (op) =>
-          (op === "NOT" || afterOperand) &&
-          (word ? op.toLowerCase().startsWith(word) : afterOperand),
-      ).map((op) => ({ ...take(op), label: op, detail: OPERATOR_HELP[op] }));
-  if (operators.length > 0 && body !== word) return operators;
-  const fields = fieldsFor(inbox)
+  const words =
+    negated || !operators
+      ? []
+      : OPERATORS.filter(
+          (op) =>
+            (op === "NOT" || afterOperand) &&
+            (word ? op.toLowerCase().startsWith(word) : afterOperand),
+        ).map((op) => ({ ...take(op), label: op, detail: OPERATOR_HELP[op] }));
+  if (words.length > 0 && body !== word) return words;
+  const offered = (fields ?? fieldsFor(inbox))
     .filter(
       (one) =>
         // The field typed whole offers its operators instead.
@@ -623,7 +687,7 @@ export function suggest(
       detail: negated ? `Not ${field.label.toLowerCase()}` : field.label,
       field: true,
     }));
-  return [...whole, ...fields, ...operators];
+  return [...whole, ...offered, ...words];
 }
 
 const OPERATOR_HELP: Record<(typeof OPERATORS)[number], string> = {
@@ -696,7 +760,7 @@ export function usePageFilter(page: FilterPage) {
     },
     /** Keeps nothing for the page. */
     reset() {
-      if (stored !== undefined) write(null);
+      write(null);
     },
   };
 }

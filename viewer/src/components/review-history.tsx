@@ -3,8 +3,8 @@ import { type ReactNode, useId, useRef, useState } from "react";
 import { type ReviewDocument, shortSha } from "../review-document";
 import { cn, FOCUS_RING } from "./classnames";
 import { formatDateTime } from "./format";
-import { CheckIcon, ChevronDownIcon, CloseIcon } from "./icons";
-import { IconButton } from "./ui";
+import { CheckIcon, ChevronDownIcon } from "./icons";
+import { CloseButton } from "./ui";
 
 import type { HistorySelection, useHistoryView } from "../use-review-version";
 
@@ -183,12 +183,10 @@ export function HistoryToolbar({
         actions={actions}
       />
       {view.selection && (
-        <IconButton
+        <CloseButton
           label={view.selection.compare ? "Close history comparison" : "Return to current version"}
           onClick={() => view.setSelection(null)}
-        >
-          <CloseIcon />
-        </IconButton>
+        />
       )}
       {status}
       {view.selection ? (
