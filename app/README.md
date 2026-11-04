@@ -6,6 +6,15 @@ host; Vite and frontend dependencies stay in Docker. Changes to the daemon-serve
 app and `../viewer` hot reload without rebuilding Go or Rust. See
 [desktop development](../desktop/README.md#development).
 
+A hidden window or closed tray panel makes no requests and repaints nothing.
+Every timer that refreshes data or relative times (`useNow`, the plan usage,
+review, repository, updater, chat, transcript and GitHub connection polls and
+the tray panel's refresh) runs through `useVisibleInterval` in
+`src/visible-interval.ts`: it pauses while `document.hidden` and runs once when
+the page becomes visible again. The entry points call `trackHidden`, which sets
+`data-hidden` on `<html>` while hidden; the viewer stylesheet pauses every
+animation then.
+
 The desktop app's own screens are React too: `setup.html` mounts
 `src/desktop/setup.tsx` and `connecting.html` mounts `src/desktop/connecting.tsx`,
 with typed native IPC and the same Vite, TypeScript, lint and test pipeline. Setup,
@@ -1298,9 +1307,9 @@ out or has not run yet is left out, and with neither readable (or a failed
 request) the box is not drawn. Which plans show is a choice in Settings
 (below): by default only those of the backends baum uses. The desktop setup
 shows no plan usage. The sidebar asks
-`GET api/plan-usage?refresh=1` on mount and every five minutes (the daemon
-reads again at most once a minute), and works out "resets in" again every 30
-seconds between readings. Codex figures are live when Codex is signed in with
+`GET api/plan-usage?refresh=1` on mount and every five minutes while the
+window is visible (the daemon reads again at most once a minute), and works
+out "resets in" again every 30 seconds between readings. Codex figures are live when Codex is signed in with
 ChatGPT; otherwise they come from its last session and, once older than 15
 minutes, say how old they are.
 See the daemon's [plan usage README](../internal/planusage/README.md).
@@ -1855,8 +1864,9 @@ to open the browser, leaving time to read the code and clipboard confirmation.
 The launch does not wait for clipboard access; a failed copy offers manual
 copying. Cancelling or leaving the step cancels that pending launch.
 The panel observes only safe local connection status, every 300 ms while
-sign-in is pending and every 10 seconds once settled, with an immediate check
-when the window regains focus. Go polls GitHub at GitHub's required interval,
+sign-in is pending (1.5 s until the first answer) and not on a timer once
+settled, with an immediate check when the window regains focus, and never while
+the window is hidden. Go polls GitHub at GitHub's required interval,
 even after the window closes. Denial, expiry, network failures,
 missing scopes, revoked authorization and locked credential stores have retry
 or reconnect controls. An explicit environment/config credential is shown
@@ -1943,8 +1953,8 @@ use by generation, disconnect, and access to saved reviews. Denial, expiry,
 network/scope/persistence failures and the endpoint namespace/CSRF matrix stay
 in component and Go handler tests.
 
-Linked session evidence on an open review refreshes every 30 seconds without
-reloading the review document. Polling allows late transcript/checkpoint arrivals
+Linked session evidence on an open review refreshes every 30 seconds while the
+window is visible, without reloading the review document. Polling allows late transcript/checkpoint arrivals
 to appear; a transient poll failure retains the last successful evidence.
 
 Live-session linkage reports `link_status` and `link_method`, with recorded

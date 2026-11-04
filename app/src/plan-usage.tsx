@@ -1,5 +1,6 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { request } from "./api";
+import { useVisibleInterval } from "./visible-interval";
 
 export type PlanWindow = {
   name: string;
@@ -46,12 +47,14 @@ export const leftOf = (used: number) => Math.min(100, Math.max(0, Math.round(100
 export const PLAN_USAGE_CHANGED = "baum:plan-usage-changed";
 
 /** Plan usage from the daemon, asking for a fresh reading on mount and every
- *  five minutes (the daemon still reads at most once a minute), with a clock
+ *  five minutes while the page is visible (the daemon still reads at most once
+ *  a minute), with a clock
  *  that keeps "resets in" current between readings. A failed request leaves
  *  the last answer, or `plans` null. */
 export function usePlanUsage(): { plans: PlanUsageEntry[] | null; now: number } {
   const [plans, setPlans] = useState<PlanUsageEntry[] | null>(null);
   const [now, setNow] = useState(() => Date.now());
+  const loadRef = useRef<() => void>(() => undefined);
   useEffect(() => {
     const controller = new AbortController();
     const load = () => {
@@ -68,17 +71,16 @@ export function usePlanUsage(): { plans: PlanUsageEntry[] | null; now: number } 
         () => undefined,
       );
     };
+    loadRef.current = load;
     load();
     window.addEventListener(PLAN_USAGE_CHANGED, load);
-    const timer = window.setInterval(load, PLAN_USAGE_REFRESH_MS);
-    const clock = window.setInterval(() => setNow(Date.now()), CLOCK_MS);
     return () => {
       controller.abort();
       window.removeEventListener(PLAN_USAGE_CHANGED, load);
-      window.clearInterval(timer);
-      window.clearInterval(clock);
     };
   }, []);
+  useVisibleInterval(() => setNow(Date.now()), CLOCK_MS);
+  useVisibleInterval(() => loadRef.current(), PLAN_USAGE_REFRESH_MS);
   return { plans, now };
 }
 

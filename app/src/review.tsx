@@ -13,6 +13,7 @@ import {
   type ReviewSteps,
 } from "@baum/viewer/components/review-viewer";
 import { sessionsSlot, commitsSlot } from "@baum/viewer/components/list-slots";
+import { useVisibleInterval } from "./visible-interval";
 import { Alert, Button, LiveDot } from "@baum/viewer/components/ui";
 import {
   ChevronDownIcon,
@@ -628,6 +629,8 @@ export function LocalReview({
       });
     return () => abort.abort();
   }, [clone, pr.number, latestQuery, revision, retry]);
+  const refreshSessions = useRef<(() => void) | null>(null);
+  useVisibleInterval(() => refreshSessions.current?.(), 30_000);
   useEffect(() => {
     if (sessionsVersion == null) return;
     const abort = new AbortController();
@@ -682,9 +685,9 @@ export function LocalReview({
       }
     };
     void refresh();
-    const timer = window.setInterval(() => void refresh(), 30_000);
+    refreshSessions.current = () => void refresh();
     return () => {
-      window.clearInterval(timer);
+      refreshSessions.current = null;
       abort.abort();
     };
   }, [sessionsVersion, query, revision, retry, ended]);
