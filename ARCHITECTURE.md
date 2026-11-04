@@ -1678,6 +1678,13 @@ inside the clone and the session store overrides, and does this:
    remotes' URLs are read from configuration, never contacted.
 4. Loads the sessions with `sessions.Load`, only those last modified within
    `locallink.SessionWindow` (two days: the matcher's one-day timeframe tolerance plus a day of margin) before the first commit's date, and Entire checkpoints are dated from the branch's own history, or, for a ref, its commit's date, so older ones are skipped unread.
+   Sessions the agent's own store says began more than `SessionWindow` after
+   the last commit's date (`sessions.Options.StartedBefore`) are not loaded
+   either. Such a session cannot have created a commit, and it ends too late
+   to fall within the matcher's tolerance of one, so an old pull request does
+   not read every session written since. Claude Code's start is the earliest
+   timestamp among its first records, and Codex's is its `session_meta`
+   timestamp. Cursor sessions and Entire checkpoints are not bounded this way.
    `sessions.Load` finds a session recorded in any working tree of the clone:
    it lists them with `gitlocal.Worktrees` (`git worktree list --porcelain
    -z`, run against the clone's repository directory with the read
@@ -1926,6 +1933,32 @@ name is not listed; a tool call is counted toward the command-event cap only
 when `bundle.CommandText` finds a command in it, where the query also counts
 an array of empty strings; and when a tool use has more than one result the
 first one recorded decides its outcome.
+
+The daemon refreshes every saved review's evidence on a timer. Rebuilding
+evidence is the expensive part: it decodes every transcript in the window. So
+a process reuses what it built:
+
+* **Unchanged inputs.** `BuildSessionEvidence` first runs `sessions.Discover`,
+  which reads directories, file metadata and the Entire refs but no
+  transcript. It reuses its last answer while all of these are unchanged, for
+  at most `locallink.EvidenceMaxAge` (10 minutes):
+  * the request;
+  * `Discovery.Fingerprint`: each session file's path, size and modification
+    time, the worktrees, the Codex thread index and the Entire refs;
+  * what each checkout has checked out: `HEAD` and the branch's commit. Index
+    rewrites from `git status` are ignored.
+* **Closed and merged pull requests.** A refresh of a pull request that is
+  closed or merged sets `EvidenceRequest.Frozen`. Its sessions are read once in
+  the process, then kept for the same commits without looking at the stores
+  again.
+* **One background pass.** A pass that refreshes several pull requests holds
+  `sessions.HoldMappings`, so the mapping cache keeps up to
+  `sessions.HeldMapCacheBytes` (256 MiB) of transcripts while the pass runs and
+  each session is decoded once in it. When the pass ends, the cache shrinks
+  back to its 64 MiB limit.
+
+Callers get deep copies of reused evidence, because they cap and redact it in
+place. A reused answer prints no warnings.
 
 ### Session transcripts
 

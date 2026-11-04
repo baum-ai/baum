@@ -39,6 +39,18 @@ one only once until it changes.
   limit; zero or less turns the cache off.
 * **Sharing:** cached graphs are shared between callers, so callers must not
   change a graph `Map` or `Load` returns.
+* **Holds:** `HoldMappings` raises the limit to `HeldMapCacheBytes` (256 MiB)
+  until it is released. The daemon's background pass holds it while it
+  refreshes several pull requests of a clone, so each session is decoded once
+  in the pass.
+
+`Load` is `Discover` followed by `Discovery.Load`. `Discover` reads
+directories, file metadata and the Entire refs, and never a transcript.
+`Discovery.Fingerprint` describes everything `Load` would read, so a caller can
+tell whether anything changed before paying for the decode.
+`Options.StartedBefore` drops sessions the agent's own store says began after
+it. Claude Code's start comes from its first records and Codex's from its
+`session_meta`; a session with no known start is kept.
 
 ## Product profiles
 

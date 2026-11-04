@@ -114,6 +114,26 @@ func TestSessionsSince(t *testing.T) {
 	}
 }
 
+func TestSessionsUntil(t *testing.T) {
+	dated := func(dates ...string) []gitlocalCommit {
+		var out []gitlocalCommit
+		for _, d := range dates {
+			out = append(out, gitlocalCommit{CommittedAt: d})
+		}
+		return out
+	}
+	got, ok := sessionsUntil(dated("2026-07-01T10:00:00Z", "2026-07-02T12:00:00+02:00"))
+	if want := time.Date(2026, 7, 2, 10, 0, 0, 0, time.UTC).Add(SessionWindow); !ok || !got.Equal(want) {
+		t.Errorf("until = %v, %v; want %v", got, ok, want)
+	}
+	if _, ok := sessionsUntil(dated("2026-07-02T10:00:00Z", "not a date")); ok {
+		t.Error("an unreadable date must not bound the sessions")
+	}
+	if _, ok := sessionsUntil(nil); ok {
+		t.Error("no commits has no bound")
+	}
+}
+
 func TestResolveNamesTheRemotesOnAMismatch(t *testing.T) {
 	f := linktest.New(t)
 	req := request(f)

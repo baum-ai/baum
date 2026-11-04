@@ -18,9 +18,9 @@ func counter(name string) int64 { return workstats.Take().Counters[name] }
 // useEvidenceMemo gives the test its own memo.
 func useEvidenceMemo(t *testing.T) *evidenceCache {
 	t.Helper()
-	previous := evidenceMemo
-	evidenceMemo = newEvidenceCache()
-	t.Cleanup(func() { evidenceMemo = previous })
+	previous, previousFrozen := evidenceMemo, frozenMemo
+	evidenceMemo, frozenMemo = newEvidenceCache(EvidenceMaxAge), newEvidenceCache(0)
+	t.Cleanup(func() { evidenceMemo, frozenMemo = previous, previousFrozen })
 	return evidenceMemo
 }
 
@@ -102,8 +102,45 @@ func TestBuildSessionEvidenceReusesAnUnchangedAnswer(t *testing.T) {
 	}
 }
 
+func TestFrozenEvidenceIsReadOnce(t *testing.T) {
+	useEvidenceMemo(t)
+	f := linktest.New(t)
+	req := evidenceRequest(t, f)
+	req.Frozen = true
+	first := buildEvidence(t, req)
+	if len(first) != 1 {
+		t.Fatalf("sessions = %+v", first)
+	}
+	// A frozen answer stands even when the stores change and the ordinary
+	// answer expired.
+	transcripts, err := filepath.Glob(filepath.Join(f.Store.ClaudeProjectsDir, "*", "*.jsonl"))
+	if err != nil || len(transcripts) == 0 {
+		t.Fatalf("transcripts = %v, %v", transcripts, err)
+	}
+	later := time.Now().Add(time.Minute)
+	if err := os.Chtimes(transcripts[0], later, later); err != nil {
+		t.Fatal(err)
+	}
+	evidenceMemo = newEvidenceCache(EvidenceMaxAge)
+	loads, frozen := counter("sessions.load.calls"), counter("locallink.session_evidence_frozen")
+	second := buildEvidence(t, req)
+	if got := counter("sessions.load.calls") - loads; got != 0 {
+		t.Errorf("a frozen pull request loaded sessions %d times", got)
+	}
+	if counter("locallink.session_evidence_frozen") != frozen+1 || !reflect.DeepEqual(first, second) {
+		t.Errorf("the frozen answer was not reused: %+v", second)
+	}
+	// An ordinary request still reads the changed store.
+	req.Frozen = false
+	loads = counter("sessions.load.calls")
+	buildEvidence(t, req)
+	if got := counter("sessions.load.calls") - loads; got != 1 {
+		t.Errorf("an open pull request: %d loads, want 1", got)
+	}
+}
+
 func TestEvidenceMemoExpires(t *testing.T) {
-	c := newEvidenceCache()
+	c := newEvidenceCache(EvidenceMaxAge)
 	now := time.Now()
 	c.now = func() time.Time { return now }
 	c.put("k", []bundle.Session{{RootSessionID: "s"}})

@@ -44,6 +44,11 @@ type EvidenceRequest struct {
 	// Warn receives one line for each session store file or checkpoint that
 	// could not be read. It defaults to discarding them.
 	Warn io.Writer
+	// Frozen answers with the evidence this process last built for the same
+	// request, without looking at the session stores, when there is one: the
+	// commits belong to a pull request that is closed or merged. Only the
+	// first frozen request in a process reads the stores.
+	Frozen bool
 }
 
 // BuildSessionEvidence returns the bundle sessions for the pull request
@@ -69,6 +74,13 @@ func BuildSessionEvidence(ctx context.Context, req EvidenceRequest) ([]bundle.Se
 	if dir == "" {
 		dir = "."
 	}
+	frozenKey := frozenEvidenceKey(req, dir)
+	if req.Frozen {
+		if cached, ok := frozenMemo.get(frozenKey); ok {
+			workstats.Inc("locallink.session_evidence_frozen")
+			return cached, nil
+		}
+	}
 	d, err := discoverSessions(ctx, dir, req.Sessions, req.Commits)
 	if err != nil {
 		return nil, err
@@ -77,6 +89,9 @@ func BuildSessionEvidence(ctx context.Context, req EvidenceRequest) ([]bundle.Se
 	if cacheable {
 		if cached, ok := evidenceMemo.get(key); ok {
 			workstats.Inc("locallink.session_evidence_reused")
+			if req.Frozen {
+				frozenMemo.put(frozenKey, cached)
+			}
 			return cached, nil
 		}
 	}
@@ -122,6 +137,9 @@ func BuildSessionEvidence(ctx context.Context, req EvidenceRequest) ([]bundle.Se
 	sortSessionEvidence(evidence)
 	if cacheable {
 		evidenceMemo.put(key, evidence)
+	}
+	if req.Frozen {
+		frozenMemo.put(frozenKey, evidence)
 	}
 	return evidence, nil
 }

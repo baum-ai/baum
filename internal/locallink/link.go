@@ -259,6 +259,9 @@ func discoverSessions(ctx context.Context, dir string, opts sessions.Options, co
 	if since, ok := sessionsSince(commits); ok && opts.Since.Before(since) {
 		opts.Since = since
 	}
+	if until, ok := sessionsUntil(commits); ok && (opts.StartedBefore.IsZero() || until.Before(opts.StartedBefore)) {
+		opts.StartedBefore = until
+	}
 	d, err := sessions.Discover(ctx, dir, opts)
 	if err != nil {
 		return nil, fmt.Errorf("reading sessions: %w", err)

@@ -47,7 +47,7 @@ func FindSessionsWith(projectsDir string, roots []string, since time.Time, profi
 	}
 	var sessions []model.Session
 	for _, c := range candidates {
-		cwd, ok, err := eligible(c, roots)
+		cwd, started, ok, err := eligible(c, roots)
 		if err != nil {
 			report.Add(c.path, err.Error())
 			continue
@@ -55,7 +55,7 @@ func FindSessionsWith(projectsDir string, roots []string, since time.Time, profi
 		if !ok {
 			continue
 		}
-		sessions = append(sessions, buildSession(c, cwd))
+		sessions = append(sessions, buildSession(c, cwd, started))
 	}
 	return sessions, report, nil
 }
@@ -119,22 +119,23 @@ func loadCandidates(projectsDir string, roots []string, since time.Time, profile
 
 // eligible reports whether a candidate transcript belongs under one of the
 // repository roots, using the working directory the transcript recorded.
-func eligible(c candidate, roots []string) (cwd string, ok bool, err error) {
-	cwd, err = sessionCWD(c.path)
+func eligible(c candidate, roots []string) (cwd string, started time.Time, ok bool, err error) {
+	cwd, started, err = sessionHead(c.path)
 	if err != nil {
-		return "", false, err
+		return "", time.Time{}, false, err
 	}
-	return cwd, model.PathWithinAny(roots, cwd) && !model.IsAgentRun(cwd), nil
+	return cwd, started, model.PathWithinAny(roots, cwd) && !model.IsAgentRun(cwd), nil
 }
 
 // buildSession names the files an eligible transcript needs for upload.
-func buildSession(c candidate, cwd string) model.Session {
+func buildSession(c candidate, cwd string, started time.Time) model.Session {
 	return model.Session{
 		Source:     vendors.ClaudeCode,
 		Path:       c.path,
 		SessionID:  strings.TrimSuffix(c.name, ".jsonl"),
 		WorkingDir: cwd,
 		ModifiedAt: c.modTime,
+		StartedAt:  started,
 		Files:      SessionFiles(c.path),
 	}
 }
@@ -196,27 +197,43 @@ func EncodeProjectDir(path string) string {
 
 // sessionCWD returns the first working directory recorded in a transcript.
 func sessionCWD(path string) (string, error) {
+	cwd, _, err := sessionHead(path)
+	return cwd, err
+}
+
+// sessionHead returns the first working directory recorded in a transcript
+// and the earliest time a record up to it carries, zero when none does.
+func sessionHead(path string) (string, time.Time, error) {
 	f, err := os.Open(path)
 	if err != nil {
-		return "", err
+		return "", time.Time{}, err
 	}
 	defer f.Close()
 	r := bufio.NewReader(f)
+	var started time.Time
 	for range probeLines {
 		line, err := r.ReadBytes('\n')
 		if len(line) > 0 {
 			var rec struct {
-				CWD string `json:"cwd"`
+				CWD       string `json:"cwd"`
+				Timestamp any    `json:"timestamp"`
 			}
-			if json.Unmarshal(line, &rec) == nil && rec.CWD != "" {
-				return filepath.Clean(rec.CWD), nil
+			if json.Unmarshal(line, &rec) == nil {
+				if text, ok := rec.Timestamp.(string); ok {
+					if at, err := time.Parse(time.RFC3339Nano, text); err == nil && (started.IsZero() || at.Before(started)) {
+						started = at.UTC()
+					}
+				}
+				if rec.CWD != "" {
+					return filepath.Clean(rec.CWD), started, nil
+				}
 			}
 		}
 		if err != nil {
 			break
 		}
 	}
-	return "", fmt.Errorf("no working directory recorded in the first %d records", probeLines)
+	return "", time.Time{}, fmt.Errorf("no working directory recorded in the first %d records", probeLines)
 }
 
 // SessionWorkingDir returns the working directory recorded near the start of

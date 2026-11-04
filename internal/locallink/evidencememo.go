@@ -29,13 +29,21 @@ const maxEvidenceEntries = 256
 // evidenceMemo remembers BuildSessionEvidence's answers, so a refresh of a
 // pull request whose commits, sessions and checkout did not change reads no
 // transcript. Callers get copies: they cap and redact the evidence in place.
-var evidenceMemo = newEvidenceCache()
+var evidenceMemo = newEvidenceCache(EvidenceMaxAge)
+
+// frozenMemo keeps the evidence last built for the commits of a pull request
+// that is closed or merged (EvidenceRequest.Frozen), for the life of the
+// process: those commits will not change, and a session that began after
+// them is past the bound the evidence reads (sessionsUntil).
+var frozenMemo = newEvidenceCache(0)
 
 type evidenceCache struct {
 	mu      sync.Mutex
 	order   *list.List
 	entries map[string]*list.Element
 	now     func() time.Time
+	// maxAge is how long an answer is reused; zero keeps it until evicted.
+	maxAge time.Duration
 }
 
 type evidenceEntry struct {
@@ -44,8 +52,8 @@ type evidenceEntry struct {
 	sessions []bundle.Session
 }
 
-func newEvidenceCache() *evidenceCache {
-	return &evidenceCache{order: list.New(), entries: map[string]*list.Element{}, now: time.Now}
+func newEvidenceCache(maxAge time.Duration) *evidenceCache {
+	return &evidenceCache{order: list.New(), entries: map[string]*list.Element{}, now: time.Now, maxAge: maxAge}
 }
 
 func (c *evidenceCache) get(key string) ([]bundle.Session, bool) {
@@ -56,7 +64,7 @@ func (c *evidenceCache) get(key string) ([]bundle.Session, bool) {
 		return nil, false
 	}
 	entry := element.Value.(*evidenceEntry)
-	if c.now().Sub(entry.at) >= EvidenceMaxAge {
+	if c.maxAge > 0 && c.now().Sub(entry.at) >= c.maxAge {
 		c.order.Remove(element)
 		delete(c.entries, key)
 		return nil, false
@@ -108,6 +116,21 @@ func evidenceKey(req EvidenceRequest, dir string, d *sessions.Discovery) (string
 		fmt.Fprintf(h, "%s\x01", state)
 	}
 	return hex.EncodeToString(h.Sum(nil)), true
+}
+
+// frozenEvidenceKey describes a request without the session stores: the
+// clone, the commits, the caps and the store options.
+func frozenEvidenceKey(req EvidenceRequest, dir string) string {
+	clone, err := collector.RepoRoot(dir)
+	if err != nil {
+		clone = dir
+	}
+	h := sha256.New()
+	fmt.Fprintf(h, "%s\x00%d\x00%d\x00%#v\x00", clone, req.MaxPromptsPerSession, req.MaxCommandEventsPerSession, req.Sessions)
+	for _, c := range req.Commits {
+		fmt.Fprintf(h, "%#v\x01", c)
+	}
+	return hex.EncodeToString(h.Sum(nil))
 }
 
 // checkoutState describes what a checkout has checked out: what HEAD names
