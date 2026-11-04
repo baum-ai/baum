@@ -349,6 +349,9 @@ type Queue struct {
 	// lock keeps every other process from opening this journal.
 	lock        *filelock.Lock
 	releaseOnce sync.Once
+	// released closes once the final journal write is done and lock is
+	// released; set inside releaseOnce.
+	released chan struct{}
 	// draining refuses new jobs while the daemon restarts.
 	draining bool
 	// gate, when set, answers whether an automatic job may run now (and
@@ -574,18 +577,29 @@ func (q *Queue) Shutdown(ctx context.Context) error {
 		// the journal now. A worker still running at the deadline keeps the
 		// lock until this process exits.
 		// A write that failed and was not retried yet gets one last try,
-		// while the lock is still held.
+		// while the lock is still held. The write runs on its own so it
+		// cannot hold Shutdown past ctx; the lock is released only after it
+		// finishes.
 		q.releaseOnce.Do(func() {
-			q.mu.Lock()
-			if q.unsaved {
-				if err := q.save(); err != nil && q.log != nil {
-					q.log.Error("job journal write failed at shutdown", "error", err)
+			q.released = make(chan struct{})
+			go func() {
+				defer close(q.released)
+				q.mu.Lock()
+				if q.unsaved {
+					if err := q.save(); err != nil && q.log != nil {
+						q.log.Error("job journal write failed at shutdown", "error", err)
+					}
 				}
-			}
-			q.mu.Unlock()
-			_ = q.lock.Release()
+				q.mu.Unlock()
+				_ = q.lock.Release()
+			}()
 		})
-		return nil
+		select {
+		case <-q.released:
+			return nil
+		case <-ctx.Done():
+			return ctx.Err()
+		}
 	case <-ctx.Done():
 		return ctx.Err()
 	}
