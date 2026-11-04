@@ -349,6 +349,9 @@ type Queue struct {
 	// lock keeps every other process from opening this journal.
 	lock        *filelock.Lock
 	releaseOnce sync.Once
+	// released closes once the final journal write is done and lock is
+	// released; set inside releaseOnce.
+	released chan struct{}
 	// draining refuses new jobs while the daemon restarts.
 	draining bool
 	// gate, when set, answers whether an automatic job may run now (and
@@ -359,6 +362,9 @@ type Queue struct {
 	limit int
 	// log records jobs starting and ending; see SetLogger.
 	log *slog.Logger
+	// unsaved marks in-memory jobs the journal lacks after a failed write;
+	// retrying marks the goroutine that rewrites them (see retrySave).
+	unsaved, retrying bool
 }
 
 // ErrRestarting refuses a job while the daemon restarts as a newer version.
@@ -476,7 +482,63 @@ func (q *Queue) save() error {
 	if e != nil {
 		return e
 	}
-	return appdb.Write(q.path, "state", "jobs", raw)
+	if e = appdb.Write(q.path, "state", "jobs", raw); e != nil {
+		return e
+	}
+	q.unsaved = false
+	return nil
+}
+
+// Delays between retries of a failed journal write; variables for tests.
+var saveRetryBase, saveRetryMax = time.Second, 30 * time.Second
+
+// saveFailed records a failed journal write and makes sure it is retried.
+// mu is held.
+func (q *Queue) saveFailed(err error) {
+	if q.log != nil {
+		q.log.Error("job journal write failed", "error", err)
+	}
+	q.unsaved = true
+	if q.retrying || q.ctx.Err() != nil {
+		return
+	}
+	q.retrying = true
+	q.wg.Add(1)
+	go q.retrySave()
+}
+
+// retrySave rewrites the journal with backoff until a write succeeds, then
+// wakes the workers a failed write held back. It stops when the queue does.
+func (q *Queue) retrySave() {
+	defer q.wg.Done()
+	delay := saveRetryBase
+	for {
+		timer := time.NewTimer(delay)
+		select {
+		case <-q.ctx.Done():
+			timer.Stop()
+			q.mu.Lock()
+			q.retrying = false
+			q.mu.Unlock()
+			return
+		case <-timer.C:
+		}
+		q.mu.Lock()
+		if q.unsaved {
+			if err := q.save(); err != nil {
+				if q.log != nil {
+					q.log.Error("job journal write failed", "error", err)
+				}
+				q.mu.Unlock()
+				delay = min(2*delay, saveRetryMax)
+				continue
+			}
+		}
+		q.retrying = false
+		q.mu.Unlock()
+		q.signal()
+		return
+	}
 }
 func (q *Queue) signal() {
 	for _, wake := range []chan struct{}{q.wake, q.chatWake} {
@@ -514,8 +576,30 @@ func (q *Queue) Shutdown(ctx context.Context) error {
 		// Workers have saved their last records; another process may open
 		// the journal now. A worker still running at the deadline keeps the
 		// lock until this process exits.
-		q.releaseOnce.Do(func() { _ = q.lock.Release() })
-		return nil
+		// A write that failed and was not retried yet gets one last try,
+		// while the lock is still held. The write runs on its own so it
+		// cannot hold Shutdown past ctx; the lock is released only after it
+		// finishes.
+		q.releaseOnce.Do(func() {
+			q.released = make(chan struct{})
+			go func() {
+				defer close(q.released)
+				q.mu.Lock()
+				if q.unsaved {
+					if err := q.save(); err != nil && q.log != nil {
+						q.log.Error("job journal write failed at shutdown", "error", err)
+					}
+				}
+				q.mu.Unlock()
+				_ = q.lock.Release()
+			}()
+		})
+		select {
+		case <-q.released:
+			return nil
+		case <-ctx.Done():
+			return ctx.Err()
+		}
 	case <-ctx.Done():
 		return ctx.Err()
 	}
@@ -1134,6 +1218,8 @@ func (q *Queue) worker(chat bool) {
 			}
 			if e := q.save(); e != nil {
 				q.jobs[i] = old
+				// The retry's signal restarts this job; signalling now would spin.
+				q.saveFailed(e)
 				q.mu.Unlock()
 				break
 			}
@@ -1311,6 +1397,9 @@ func (q *Queue) worker(chat bool) {
 			cancel()
 			delete(q.cancels, j.ID)
 			saveErr := q.save()
+			if saveErr != nil {
+				q.saveFailed(saveErr)
+			}
 			result := *current
 			q.mu.Unlock()
 			logFinished(log, result, started, err)
@@ -1319,7 +1408,6 @@ func (q *Queue) worker(chat bool) {
 			if saveErr != nil {
 				// Another worker takes what this one's job held back.
 				q.signal()
-				return
 			}
 		}
 	}
