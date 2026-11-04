@@ -69,9 +69,20 @@ func BuildSessionEvidence(ctx context.Context, req EvidenceRequest) ([]bundle.Se
 	if dir == "" {
 		dir = "."
 	}
+	d, err := discoverSessions(ctx, dir, req.Sessions, req.Commits)
+	if err != nil {
+		return nil, err
+	}
+	key, cacheable := evidenceKey(req, dir, d)
+	if cacheable {
+		if cached, ok := evidenceMemo.get(key); ok {
+			workstats.Inc("locallink.session_evidence_reused")
+			return cached, nil
+		}
+	}
 	// The pull request's repository is not known here, so a missing
 	// checkpoint's fetch hint names a placeholder remote.
-	found, _, err := loadSessions(ctx, dir, req.Sessions, req.Commits, "", req.Warn)
+	found, _, err := loadDiscovered(ctx, d, dir, req.Commits, "", req.Warn)
 	if err != nil {
 		return nil, err
 	}
@@ -109,6 +120,9 @@ func BuildSessionEvidence(ctx context.Context, req EvidenceRequest) ([]bundle.Se
 		}
 	}
 	sortSessionEvidence(evidence)
+	if cacheable {
+		evidenceMemo.put(key, evidence)
+	}
 	return evidence, nil
 }
 

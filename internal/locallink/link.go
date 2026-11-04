@@ -246,11 +246,30 @@ func Resolve(ctx context.Context, req Request) (Result, error) {
 // checkpoints where possible. Generation runs are excluded from both. remote
 // names the remote in a missing-checkpoint fetch hint; nothing is fetched here.
 func loadSessions(ctx context.Context, dir string, opts sessions.Options, commits []gitlocal.Commit, remote string, warn io.Writer) ([]sessions.Session, map[string][]string, error) {
-	workstats.Inc("locallink.load_sessions")
+	d, err := discoverSessions(ctx, dir, opts, commits)
+	if err != nil {
+		return nil, nil, err
+	}
+	return loadDiscovered(ctx, d, dir, commits, remote, warn)
+}
+
+// discoverSessions finds the sessions loadSessions reads for the commits,
+// without reading any.
+func discoverSessions(ctx context.Context, dir string, opts sessions.Options, commits []gitlocal.Commit) (*sessions.Discovery, error) {
 	if since, ok := sessionsSince(commits); ok && opts.Since.Before(since) {
 		opts.Since = since
 	}
-	found, report, err := sessions.Load(ctx, dir, opts)
+	d, err := sessions.Discover(ctx, dir, opts)
+	if err != nil {
+		return nil, fmt.Errorf("reading sessions: %w", err)
+	}
+	return d, nil
+}
+
+// loadDiscovered is loadSessions over sessions already discovered.
+func loadDiscovered(ctx context.Context, d *sessions.Discovery, dir string, commits []gitlocal.Commit, remote string, warn io.Writer) ([]sessions.Session, map[string][]string, error) {
+	workstats.Inc("locallink.load_sessions")
+	found, report, err := d.Load(ctx)
 	if err != nil {
 		return nil, nil, fmt.Errorf("reading sessions: %w", err)
 	}
