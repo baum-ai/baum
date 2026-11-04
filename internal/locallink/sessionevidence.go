@@ -14,6 +14,7 @@ import (
 
 	"github.com/baum-ai/baum/bundle"
 	"github.com/baum-ai/baum/internal/gitlocal"
+	"github.com/baum-ai/baum/internal/workstats"
 	"github.com/baum-ai/baum/linkage"
 	"github.com/baum-ai/baum/linkage/sessioncorrelate"
 	"github.com/baum-ai/baum/sessions"
@@ -63,6 +64,7 @@ func BuildSessionEvidence(ctx context.Context, req EvidenceRequest) ([]bundle.Se
 	if len(req.Commits) == 0 {
 		return evidence, nil
 	}
+	workstats.Inc("locallink.session_evidence")
 	dir := req.Dir
 	if dir == "" {
 		dir = "."

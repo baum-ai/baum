@@ -19,6 +19,7 @@ import (
 	"github.com/baum-ai/baum/internal/github"
 	"github.com/baum-ai/baum/internal/repos"
 	"github.com/baum-ai/baum/internal/store"
+	"github.com/baum-ai/baum/internal/workstats"
 )
 
 type Registry interface {
@@ -315,6 +316,7 @@ func (s *Service) due(r read, observation discovery.Observation, observed bool, 
 // behind another's reads, then reads the saved pull requests that are due,
 // those GitHub reported changed first, within refreshBudget.
 func (s *Service) Sync(ctx context.Context) {
+	workstats.Inc("background.passes")
 	s.runMu.Lock()
 	defer s.runMu.Unlock()
 	epoch := s.identityEpoch()
@@ -494,6 +496,7 @@ func (s *Service) Sync(ctx context.Context) {
 			break
 		}
 		requestCtx, cancel := context.WithTimeout(ctx, 45*time.Second)
+		workstats.Inc("background.refreshes")
 		observation, err := s.Refresh(requestCtx, current.clone, current.number)
 		cancel()
 		if observation.Number > 0 && observation.HeadSHA != "" {

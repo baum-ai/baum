@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/baum-ai/baum/internal/transcript"
+	"github.com/baum-ai/baum/internal/workstats"
 	"github.com/baum-ai/baum/sessions"
 	"github.com/baum-ai/baum/sessions/codextranscript"
 	"github.com/baum-ai/baum/sessions/collector"
@@ -224,6 +225,7 @@ func (t *Transcripts) serve(ctx context.Context, session Session, path string, u
 	if version == c.version && c.body != nil {
 		return c.answer(session), nil
 	}
+	workstats.Inc("livesessions.transcript_builds")
 	body, images, err := t.build(ctx, src, transcript.Meta{ID: id, Vendor: string(src.Vendor), Branch: session.Branch})
 	switch {
 	case ctx.Err() != nil:
