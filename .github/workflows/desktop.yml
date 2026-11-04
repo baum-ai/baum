@@ -171,10 +171,43 @@ jobs:
             cargo install --locked tauri-cli --version 2.12.3
           fi
 
+      # Snapshots reuse the compiled dependencies of the last snapshot for
+      # the platform; release builds compile everything afresh.
+      - name: Cache the Rust build output
+        if: inputs.cli-artifact == ''
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            desktop/target/*/release/build
+            desktop/target/*/release/deps
+            desktop/target/*/release/.fingerprint
+          key: desktop-bundle-${{ matrix.platform }}-${{ hashFiles('desktop/Cargo.lock') }}
+          restore-keys: desktop-bundle-${{ matrix.platform }}-
+
       # Linux bundles are built on Ubuntu 22.04, the oldest supported
-      # distribution, in the same image as `just desktop::bundle`.
+      # distribution, in the same image as `just desktop::bundle`. Snapshots
+      # reuse the image's layers from the Actions cache; release builds build
+      # it afresh.
+      - name: Set up Docker builder for the snapshot image
+        if: runner.os == 'Linux' && inputs.cli-artifact == ''
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Build the Linux build image (snapshot)
+        if: runner.os == 'Linux' && inputs.cli-artifact == ''
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        env:
+          DOCKER_BUILD_RECORD_UPLOAD: false
+        with:
+          context: desktop
+          load: true
+          push: false
+          provenance: false
+          tags: baum-desktop-build
+          cache-from: type=gha,scope=desktop-build-${{ matrix.platform }}
+          cache-to: type=gha,scope=desktop-build-${{ matrix.platform }},mode=max
+
       - name: Build the Linux build image
-        if: runner.os == 'Linux'
+        if: runner.os == 'Linux' && inputs.cli-artifact != ''
         run: docker build --tag baum-desktop-build desktop
 
       - name: Build the bundles (Linux)

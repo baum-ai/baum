@@ -4,12 +4,15 @@ name: Release
 # viewer and local app, which no other commit carries, so go install of the tag
 # needs only Go. The monorepo's "Tag an open-source release" workflow makes it.
 #
-#   test, viewer-dist, desktop-test
+#   viewer-dist
 #     -> release (goreleaser: CLI archives into a draft GitHub release)
 #     -> desktop (desktop.yml: unsigned bundles, no secrets)
 #     -> sign-macos, sign-linux (environment "release")
 #     -> desktop-manifest (latest.json, checksums; read-only)
 #     -> desktop-publish (attach, then publish the draft)
+#   test, desktop-test run beside them; desktop-publish waits for both, so
+#   nothing is published until they pass. The tagging workflow already ran
+#   the Go tests on this commit, so they only gate publishing here.
 #
 # Signing secrets live only in the "release" environment, which needs an
 # approval and accepts only v* tags. Only the sign jobs use it, and they
@@ -18,8 +21,8 @@ name: Release
 # commits. See desktop/README.md.
 #
 # The Windows desktop installer is not released for now: desktop.yml skips its
-# bundle here (Check still builds it), and nothing signs or publishes it. The
-# CLI's Windows archives are unaffected.
+# bundle here and in Check, and nothing signs or publishes it. The CLI's
+# Windows archives are unaffected.
 
 on:
   push:
@@ -151,7 +154,7 @@ jobs:
 
   release:
     name: Release
-    needs: [test, viewer-dist, desktop-test]
+    needs: viewer-dist
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
@@ -531,7 +534,7 @@ jobs:
     # The only desktop job with a token that can write: it runs no build
     # tooling, only gh and the attestation action.
     name: Publish the release
-    needs: desktop-manifest
+    needs: [desktop-manifest, test, desktop-test]
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:

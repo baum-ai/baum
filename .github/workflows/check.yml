@@ -29,8 +29,7 @@ jobs:
           - os: windows
             runner: windows-2025
     runs-on: ${{ matrix.runner }}
-    # The race-enabled tests run several times slower on Windows.
-    timeout-minutes: ${{ matrix.os == 'windows' && 40 || 15 }}
+    timeout-minutes: 15
     defaults:
       run:
         shell: bash
@@ -71,17 +70,23 @@ jobs:
       # A race-enabled binary sleeps a second as it exits, and the tests run
       # their own binary as a fake baum or cursor-agent hundreds of times.
       # Races are still reported; only the wait is skipped.
-      # On Windows, internal/decisionlog alone takes 6 to over 10 minutes
-      # (each SQLite commit waits for FlushFileBuffers on the runner's disk),
-      # past go test's default 10-minute limit per package.
+      # Windows runs without the race detector, which makes its tests several
+      # times slower there; Linux and macOS still look for races. It also
+      # skips internal/decisionlog, whose tests take over 7 minutes there (each
+      # SQLite commit waits for FlushFileBuffers on the runner's disk) and run
+      # the same code on the other two.
       - name: Test
-        run: go test -race -timeout "$TEST_TIMEOUT" ./...
+        run: |
+          if [ "$RUNNER_OS" = Windows ]; then
+            go list ./... | grep -v '/internal/decisionlog$' | xargs go test
+          else
+            go test -race ./...
+          fi
         env:
           GORACE: atexit_sleep_ms=0
-          TEST_TIMEOUT: ${{ matrix.os == 'windows' && '30m' || '10m' }}
 
       - name: Check shipped marketplace files without cached results
-        run: go test -race -count=1 ./hosted/agenthooks/
+        run: go test -count=1 ./hosted/agenthooks/
 
   lint:
     name: Lint
@@ -487,15 +492,55 @@ jobs:
           BAUM_RELEASE_SIGNING: "1"
         run: bash desktop/scripts/updater-manifest-test.sh
 
+  desktop-changes:
+    # The snapshot bundles take 10 to 15 minutes, so they run only when a push
+    # or pull request touches what the bundling depends on beyond the Go code
+    # the go job builds: the desktop app, the local app it shows, and these
+    # workflows. Without the commit to compare with (a new branch, or one the
+    # fetch cannot reach) they run.
+    name: Desktop changes
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      bundle: ${{ steps.classify.outputs.bundle }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          filter: blob:none
+          persist-credentials: false
+
+      - name: Classify changed paths
+        id: classify
+        env:
+          BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          set -eu
+          if [ -z "$BASE" ] || [ "$BASE" = 0000000000000000000000000000000000000000 ] ||
+            ! git cat-file -e "$BASE^{commit}" 2>/dev/null; then
+            echo "bundle=true" | tee -a "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if git diff --name-only --no-renames "$BASE" HEAD | grep -qE '^(desktop/|app/|internal/localapp/|scripts/viewer-|\.github/workflows/(check|desktop)\.yml$)'; then
+            echo "bundle=true" | tee -a "$GITHUB_OUTPUT"
+          else
+            echo "bundle=false" | tee -a "$GITHUB_OUTPUT"
+          fi
+
   desktop-bundle:
-    # Unsigned snapshot bundles for every platform the release ships, built
-    # as the release builds them (with baum built from source and the apps
+    # Unsigned snapshot bundles for the platforms the release ships, built as
+    # the release builds them (with baum built from source and the apps
     # viewer-dist built), so a bundling or signing-script break shows here
-    # rather than on the tag. They are kept as workflow artifacts.
+    # rather than on the tag. They are kept as workflow artifacts. The Windows
+    # installer is skipped, as the release skips it while Windows is not
+    # released.
     name: Desktop snapshot
-    needs: viewer-dist
+    needs: [viewer-dist, desktop-changes]
+    if: needs.desktop-changes.outputs.bundle == 'true'
     uses: ./.github/workflows/desktop.yml
     with:
       version: 0.0.0
       apps-artifact: built-apps
       finalize-macos: true
+      windows: false

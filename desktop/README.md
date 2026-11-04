@@ -1030,10 +1030,14 @@ summary and a local clone of baum-ai/baum:
 
 ### Snapshots
 
-Each pull request and push to `main` also runs `desktop.yml` from `check.yml`
-with version 0.0.0, packaging the macOS app ad hoc with `macos-finalize.sh`,
-so the bundling and packaging scripts are exercised before a tag. Those
-snapshot bundles are kept as workflow artifacts for 14 days.
+A pull request or push to `main` that changes `desktop/`, `app/`,
+`internal/localapp/`, the viewer build scripts or these workflows also runs
+`desktop.yml` from `check.yml` with version 0.0.0, packaging the macOS app ad
+hoc with `macos-finalize.sh`, so the bundling and packaging scripts are
+exercised before a tag. Like the release, it skips the Windows installer.
+Snapshots reuse a cached Linux build image and Rust build output; release
+builds use neither. Those snapshot bundles are kept as workflow artifacts for
+14 days.
 
 ### Files on a release
 
