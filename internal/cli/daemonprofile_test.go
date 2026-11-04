@@ -1,12 +1,36 @@
 package cli
 
 import (
+	"context"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/baum-ai/baum/internal/workstats"
 )
+
+func TestProfileClientErrors(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer secret" {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer server.Close()
+	client := profileClient{origin: server.URL, token: "secret", http: server.Client()}
+	ctx := context.Background()
+	if _, _, err := client.stats(ctx); err == nil || !strings.Contains(err.Error(), "does not serve profiles") {
+		t.Errorf("stats on an old daemon: %v", err)
+	}
+	err := client.get(ctx, "/api/debug/pprof/nosuch", io.Discard, 0)
+	if err == nil || strings.Contains(err.Error(), "does not serve profiles") {
+		t.Errorf("an unknown profile is not an old daemon: %v", err)
+	}
+}
 
 func TestProfileSummary(t *testing.T) {
 	at := time.Date(2026, 11, 4, 18, 0, 0, 0, time.UTC)

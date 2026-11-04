@@ -29,8 +29,9 @@ one only once until it changes.
   SHA-256 instead.
 * **Invalidation:** a file that grows or is rewritten gets a new key. A file
   that cannot be statted is mapped without the cache.
-* **Failures:** a mapping that failed is cached as well, so an unchanged broken
-  transcript is not read again.
+* **Failures:** a mapping that failed because of the file's content is cached
+  as well, so an unchanged broken transcript is not read again. A file that
+  could not be opened or read is tried again on the next call.
 * **Discovery warnings:** these come from discovery, not the mapper. They are
   not cached, and each call adds its own.
 * **Size:** least recently used entries are evicted once the transcript bytes

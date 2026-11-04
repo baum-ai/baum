@@ -11,6 +11,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"slices"
 	"strings"
 	"time"
@@ -230,7 +231,10 @@ func Map(s collector.Session) (*session.Graph, []string, error) {
 	workstats.Add("sessions.map.decoded_bytes", cost)
 	graph, notes, err := mapSession(s)
 	entry := &mapEntry{key: key, graph: graph, notes: notes, err: err, cost: cost}
-	if cacheable {
+	// A file that could not be opened or read may read next time (too many
+	// open files, a permission fixed); only what its content caused is kept.
+	var pathErr *fs.PathError
+	if cacheable && !errors.As(err, &pathErr) {
 		cache.put(entry)
 	}
 	return graph, mapNotes(s, entry), err

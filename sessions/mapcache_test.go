@@ -106,6 +106,32 @@ func TestMapCachesFailures(t *testing.T) {
 	}
 }
 
+func TestMapRetriesFilesThatCouldNotBeOpened(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root opens unreadable files")
+	}
+	c := useCache(t, DefaultMapCacheBytes)
+	path := filepath.Join(t.TempDir(), "rollout.jsonl")
+	write(t, path, `{"timestamp":"2026-07-01T10:00:00.000Z","type":"session_meta","payload":{"id":"019f0000-0000-7000-8000-000000000003","cwd":"/repo","cli_version":"0.69.0","model_provider":"openai"}}`+"\n")
+	s := collector.Session{Source: vendors.Codex, Files: []model.SessionFile{{Path: path, Name: filepath.Base(path), Kind: model.KindTranscript}}}
+	if err := os.Chmod(path, 0); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := Map(s); err == nil {
+		t.Fatal("an unreadable rollout mapped")
+	}
+	// Restoring the permission leaves size and modification time alone.
+	if err := os.Chmod(path, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := Map(s); err != nil {
+		t.Errorf("a rollout readable again still fails: %v", err)
+	}
+	if got := c.missCount(); got != 2 {
+		t.Errorf("mappings = %d, want 2: an open failure must not be cached", got)
+	}
+}
+
 func TestMapKeepsDiscoveryWarningsOutOfTheCache(t *testing.T) {
 	useCache(t, DefaultMapCacheBytes)
 	path := filepath.Join(t.TempDir(), "rollout.jsonl")

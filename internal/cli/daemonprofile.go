@@ -67,7 +67,13 @@ func newProfileClient() (profileClient, error) {
 	return profileClient{origin: credential.Origin(), token: credential.Token(), http: &http.Client{}}, nil
 }
 
-func (c profileClient) get(ctx context.Context, path string, w io.Writer) error {
+// requestTimeout bounds a request beyond the profile window it asks for, so
+// a daemon too busy to answer does not hang the command.
+const requestTimeout = 30 * time.Second
+
+func (c profileClient) get(ctx context.Context, path string, w io.Writer, window time.Duration) error {
+	ctx, cancel := context.WithTimeout(ctx, window+requestTimeout)
+	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.origin+path, nil)
 	if err != nil {
 		return err
@@ -80,7 +86,7 @@ func (c profileClient) get(ctx context.Context, path string, w io.Writer) error 
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		if resp.StatusCode == http.StatusNotFound {
+		if resp.StatusCode == http.StatusNotFound && path == statsPath {
 			return errors.New("the running daemon does not serve profiles; update baum and restart it with \"baum daemon stop\" and \"baum daemon ensure\"")
 		}
 		return fmt.Errorf("%s: %s: %s", path, resp.Status, strings.TrimSpace(string(body)))
@@ -89,9 +95,11 @@ func (c profileClient) get(ctx context.Context, path string, w io.Writer) error 
 	return err
 }
 
+const statsPath = "/api/debug/stats"
+
 func (c profileClient) stats(ctx context.Context) (workstats.Snapshot, []byte, error) {
 	var body strings.Builder
-	if err := c.get(ctx, "/api/debug/stats", &body); err != nil {
+	if err := c.get(ctx, statsPath, &body, 0); err != nil {
 		return workstats.Snapshot{}, nil, err
 	}
 	var s workstats.Snapshot
@@ -132,35 +140,41 @@ func runDaemonProfile(cmd *cobra.Command, _ []string) error {
 	}
 	_, _ = fmt.Fprintf(w, "profiling baum daemon for %s into %s ...\n", duration, out)
 
-	seconds := int(duration.Round(time.Second) / time.Second)
-	record := func(name, path string) chan error {
+	window := duration.Round(time.Second)
+	seconds := int(window / time.Second)
+	// record saves one profile; a failed one leaves no partial file.
+	record := func(name, path string, window time.Duration) chan error {
 		done := make(chan error, 1)
 		go func() {
-			f, err := os.OpenFile(filepath.Join(out, name), os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
+			file := filepath.Join(out, name)
+			f, err := os.OpenFile(file, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
 			if err != nil {
 				done <- err
 				return
 			}
-			err = client.get(ctx, path, f)
+			err = client.get(ctx, path, f, window)
 			if closeErr := f.Close(); err == nil {
 				err = closeErr
+			}
+			if err != nil {
+				_ = os.Remove(file)
 			}
 			done <- err
 		}()
 		return done
 	}
-	cpu := record("cpu.pprof", fmt.Sprintf("/api/debug/pprof/profile?seconds=%d", seconds))
-	var trace chan error
+	cpu := record("cpu.pprof", fmt.Sprintf("/api/debug/pprof/profile?seconds=%d", seconds), window)
+	trace := make(chan error, 1)
+	trace <- nil
 	if withTrace, _ := cmd.Flags().GetBool("trace"); withTrace {
-		trace = record("trace.out", fmt.Sprintf("/api/debug/pprof/trace?seconds=%d", seconds))
+		trace = record("trace.out", fmt.Sprintf("/api/debug/pprof/trace?seconds=%d", seconds), window)
 	}
-	if err := <-cpu; err != nil {
-		return fmt.Errorf("recording the CPU profile: %w", err)
+	cpuErr, traceErr := <-cpu, <-trace
+	if cpuErr != nil {
+		return fmt.Errorf("recording the CPU profile: %w", cpuErr)
 	}
-	if trace != nil {
-		if err := <-trace; err != nil {
-			return fmt.Errorf("recording the trace: %w", err)
-		}
+	if traceErr != nil {
+		return fmt.Errorf("recording the trace: %w", traceErr)
 	}
 	end, endJSON, err := client.stats(ctx)
 	if err != nil {
@@ -173,7 +187,7 @@ func runDaemonProfile(cmd *cobra.Command, _ []string) error {
 		"heap.pprof":    "/api/debug/pprof/heap",
 		"goroutine.txt": "/api/debug/pprof/goroutine?debug=1",
 	} {
-		if err := <-record(name, path); err != nil {
+		if err := <-record(name, path, 0); err != nil {
 			return fmt.Errorf("recording %s: %w", name, err)
 		}
 	}
