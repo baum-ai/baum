@@ -99,6 +99,14 @@ how the desktop app is built and released, see
 [desktop/README.md](desktop/README.md); for the agent plugins, see
 [plugins/README.md](plugins/README.md).
 
+## Troubleshooting
+
+If something does not work, check the [known issues](KNOWN_ISSUES.md) first.
+Otherwise, [open an issue](https://github.com/baum-ai/baum/issues/new/choose)
+on GitHub. In the desktop app, **Report a problem** (in the Help menu, the tray
+menu or Diagnostics) opens one with the versions filled in. For a security
+vulnerability, follow [SECURITY.md](SECURITY.md) instead.
+
 ## License
 
 [MIT](LICENSE). Third-party licences are in

@@ -1125,6 +1125,13 @@ the static AppImage runtime ("Can't open squashfs image: Bad address"), so
 the AppImage does not start there; 3.x fixed that. Other AppImages built on
 this runtime, such as Cursor's, have the same limitation.
 
+On NVIDIA GPUs under Wayland, WebKitGTK only uses its fast GPU renderer
+from 2.54. The AppImage carries Ubuntu 22.04's WebKitGTK (2.50), so it renders
+slowly there, as does the deb on systems whose WebKitGTK is older than 2.54.
+No Ubuntu release offers 2.54 yet, so a newer build image would not help.
+User-facing limitations like these are listed in
+[KNOWN_ISSUES.md](../KNOWN_ISSUES.md).
+
 The app adds itself to the applications menu (`src/menu_entry.rs`): every
 start of an installed AppImage writes
 `$XDG_DATA_HOME/applications/baum-appimage.desktop` (default
