@@ -970,6 +970,52 @@ it("answers the focused question or permission with its number keys, Enter submi
   });
 });
 
+it("keeps Enter on a focused request card for the card, not the transcript", async () => {
+  const s = session({ state: "idle", waiting_reason: "input", waiting_since: ago(5) });
+  // From where the keys leave the focus: the row's transcript link.
+  const key = (k: string) =>
+    act(async () => {
+      (document.activeElement ?? window).dispatchEvent(
+        new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true }),
+      );
+    });
+  const steps: AgentRequest = {
+    id: "q1",
+    agent: "claude-code",
+    session_id: "s1",
+    kind: "question",
+    tool: "AskUserQuestion",
+    created_at: ago(5),
+    input: [],
+    suggestions: [],
+    questions: [
+      { question: "Open the PR?", options: [{ label: "Yes" }, { label: "Not yet" }] },
+      { question: "Which checks?", options: [{ label: "Unit" }, { label: "E2E" }] },
+    ],
+  };
+  await render([s], requests({ requests: [steps] }));
+  await key("j");
+  expect(document.activeElement?.hasAttribute("data-row-link")).toBe(true);
+  await key("1");
+  await key("Enter");
+  expect(node.querySelector(".local-feed-ask-text")!.textContent).toBe("Which checks?");
+  await key("1");
+  await key("Enter");
+  expect(posts()[0]).toMatchObject({
+    body: { answers: { "Open the PR?": "Yes", "Which checks?": "Unit" } },
+  });
+
+  // A permission has nothing on Enter: the transcript stays shut.
+  await render([s], requests({ requests: [permission({ id: "p1" })] }));
+  await key("j");
+  const enter = new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true });
+  await act(async () => {
+    document.activeElement!.dispatchEvent(enter);
+  });
+  expect(enter.defaultPrevented).toBe(true);
+  expect(posts()).toHaveLength(1);
+});
+
 it("takes an answer typed in place of a choice", async () => {
   const s = session({ state: "idle", waiting_reason: "input", waiting_since: ago(5) });
   const question: AgentRequest = {

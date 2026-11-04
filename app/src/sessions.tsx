@@ -1737,14 +1737,28 @@ export function SessionsPage({
     const choice = card?.querySelector<HTMLButtonElement>(
       `button[data-key="${CSS.escape(event.key)}"]`,
     );
-    // Enter on a focused control already does what it says.
+    // Enter on a focused control already does what it says. The row's link,
+    // where the keys leave the focus, is not one: on a request card Enter
+    // answers the card, not opens its transcript.
     const onControl =
       event.key === "Enter" &&
       event.target instanceof HTMLElement &&
-      event.target.closest("a, button, input, textarea");
-    if (choice && !onControl && !event.metaKey && !event.ctrlKey && !event.altKey) {
+      event.target.closest("a, button, input, textarea") &&
+      !event.target.closest("[data-row-link]");
+    const plain = !event.metaKey && !event.ctrlKey && !event.altKey;
+    if (choice && !onControl && plain) {
       event.preventDefault();
       if (!choice.disabled) choice.click();
+      return;
+    }
+    // A request card with nothing on Enter, such as a permission, keeps it.
+    if (
+      event.key === "Enter" &&
+      !onControl &&
+      plain &&
+      card?.querySelector(".local-feed-choices")
+    ) {
+      event.preventDefault();
       return;
     }
     if (listKeys(event, rows) || !rows.focused) return;

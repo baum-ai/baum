@@ -1708,7 +1708,10 @@ the tray and the connecting screen).
   under its label and "(Recommended)" as a tag (toggles and Submit for
   multi-select or several questions). Several questions show one at a time under a
   tab each, ticked once answered; a single choice moves on to the next unanswered
-  question, and Back, Next and Submit sit under it. A button disables the card and shows "Sending…"
+  question, and Back, Next and Submit sit under it. On a focused request card the
+  number keys press its choices and Enter presses Next or Submit; where the card
+  has neither (a permission, a single choice) Enter does nothing rather than open
+  the transcript. A button disables the card and shows "Sending…"
   at once; the card says "Sent" until the next `live` refresh drops the request, and a
   409 `request_gone` shows "Already answered in the terminal". A green notice says
   what was done, and when nobody waits it reads "Nobody is waiting on you." with the

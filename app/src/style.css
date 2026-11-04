@@ -7040,6 +7040,12 @@ dialog.local-file-dialog {
   min-width: 0;
   gap: 0.2rem;
 }
+/* The heading-sized field takes a tight ring: the shared one's 2px gap and
+   2px band read as a heavy double frame around it. */
+.inbox-head-rename .local-field:focus-visible {
+  border-color: var(--border-focus);
+  box-shadow: 0 0 0 1px var(--border-focus);
+}
 .inbox-head-problem {
   color: var(--status-critical);
   font-size: var(--text-xs);
