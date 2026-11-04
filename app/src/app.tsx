@@ -690,12 +690,18 @@ function Workspace({ url }: { url: UrlState }) {
         ];
   // What the filter's values and counts come from: the view before it.
   const filterBase = filtered(indexedEntries, view);
+  // The person's repositories: picked, registered as clones, or holding a
+  // pull request read. The filters offer each.
   const repositories = Array.from(
     new Set([
       ...picked.map((r) => r.repository),
+      ...clones.map((c) => c.repository),
       ...indexedEntries.map((e) => e.pull_request.repository),
     ]),
   );
+  // What the filters offer beyond the page's pull requests: every one read,
+  // in any view, and every repository.
+  const knownValues = { entries: indexedEntries, repositories };
   const requestedNumber = Number(url.search.get("pr"));
   const requestedClone = url.search.get("clone");
   const requestedRepository =
@@ -1161,6 +1167,7 @@ function Workspace({ url }: { url: UrlState }) {
     items: inbox.queue,
     login: github?.login,
     repositories,
+    entries: indexedEntries,
     saves: inboxes.saves,
     save: inboxes.save,
     go: navigate,
@@ -1679,6 +1686,7 @@ function Workspace({ url }: { url: UrlState }) {
               reviewGroups={groups}
               saveAsInbox={saveAsInbox}
               inboxSaves={inboxes.saves}
+              repositories={repositories}
               updateInbox={
                 selectedInbox && inboxes.status === "ready"
                   ? (patch) =>
@@ -1769,6 +1777,7 @@ function Workspace({ url }: { url: UrlState }) {
                     query={pullsQuery}
                     onChange={setPullsQuery}
                     entries={filterBase}
+                    known={knownValues}
                     active={pullsQuery !== ""}
                     openRequest={openPullsMenu}
                     onOpened={() => setOpenPullsMenu(false)}
@@ -1783,6 +1792,7 @@ function Workspace({ url }: { url: UrlState }) {
                           query={pullsQuery}
                           onChange={setPullsQuery}
                           entries={filterBase}
+                          known={knownValues}
                           actions={
                             editing ? (
                               <TabNameForm

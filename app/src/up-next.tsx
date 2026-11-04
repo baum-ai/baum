@@ -1,3 +1,4 @@
+import { Stumpy } from "@baum/viewer/components/stumpy";
 import { uiState, useUIState } from "./ui-state";
 import {
   FilterBar,
@@ -953,6 +954,7 @@ export function UpNextPage({
   saveAsInbox,
   updateInbox,
   inboxSaves = 0,
+  repositories = [],
   Link,
 }: {
   inbox: UpNextState;
@@ -990,6 +992,8 @@ export function UpNextPage({
   updateInbox?: (patch: Partial<Inbox>) => void;
   /** How many inbox saves the daemon has accepted. */
   inboxSaves?: number;
+  /** The person's repositories, offered by the filter with nothing waiting. */
+  repositories?: readonly string[];
   Link: ComponentType<ViewerLinkProps>;
 }) {
   const [merging, setMerging] = useState<Entry | null>(null);
@@ -1406,11 +1410,15 @@ export function UpNextPage({
   const hidden = scope
     ? unfiltered.filter((entry) => matchesQuery(saved, entry, kinds.get(entry))).length
     : unfiltered.length;
+  // The filter offers every repository, organization, author and branch
+  // known, not only those of what the inbox holds now.
+  const known = { entries, repositories };
   const filterButton = (
     <FilterButton
       query={query}
       onChange={setQuery}
       entries={unfiltered}
+      known={known}
       kindOf={(entry) => kinds.get(entry)}
       inbox
       footer={
@@ -1421,6 +1429,7 @@ export function UpNextPage({
             query={query}
             onChange={setQuery}
             entries={unfiltered}
+            known={known}
             inbox
             actions={<SaveButton options={saveOptions} />}
           />
@@ -2804,9 +2813,12 @@ function Zero({
   hasRepositories: boolean;
   Link: ComponentType<ViewerLinkProps>;
 }) {
+  // Stumpy marks the edges of the work, as on hosted Focus: awake while there
+  // is nothing to read yet, dozing once nothing is waiting.
   if (!hasRepositories)
     return (
       <div className="upnext-zero">
+        <Stumpy mood="awake" size={88} className="upnext-zero-stumpy" />
         <h2>Nothing to do yet</h2>
         <p>
           Pick GitHub repositories in <Link href={appURL("?page=repositories")}>Repositories</Link>{" "}
@@ -2818,6 +2830,7 @@ function Zero({
   if (scoped)
     return (
       <div className="upnext-zero">
+        <Stumpy mood="dozing" size={88} className="upnext-zero-stumpy" />
         <h2>Nothing here right now.</h2>
         <p>
           {snoozed.length > 0
@@ -2830,6 +2843,7 @@ function Zero({
     );
   return (
     <div className="upnext-zero">
+      <Stumpy mood="dozing" size={88} className="upnext-zero-stumpy" />
       <h2>Inbox zero</h2>
       <p>
         {snoozed.length > 0

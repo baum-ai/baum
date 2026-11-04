@@ -43,8 +43,9 @@ const COMPARISONS: Op[] = ["=", "!=", ">=", "<=", ">", "<"];
 export type Field = {
   key: string;
   label: string;
-  /** The values to offer, given the page's pull requests. */
-  values: (entries: Entry[]) => Option[];
+  /** The values to offer, given the pull requests and repositories known
+   *  (`valuesOf`). */
+  values: (entries: Entry[], repositories: readonly string[]) => Option[];
   /** The operators it takes, `=` and `!=` unless it says. */
   ops?: Op[];
   /** Why a typed value is not one the field takes with the operator, or "". */
@@ -65,6 +66,18 @@ const distinct = (values: (string | undefined)[]) =>
   );
 const plain = (values: (string | undefined)[]): Option[] =>
   distinct(values).map((value) => ({ value, label: value }));
+
+/** What a filter offers values from beyond the page's pull requests: every
+ *  pull request read and the person's repositories, so a value with nothing
+ *  on the page now (a quiet repository, an author with nothing waiting) can
+ *  still be picked. */
+export type Known = { entries?: readonly Entry[]; repositories?: readonly string[] };
+
+/** The field's values to offer: those of the page's pull requests and of
+ *  everything `known`. */
+export function valuesOf(field: Field, entries: readonly Entry[], known?: Known): Option[] {
+  return field.values([...entries, ...(known?.entries ?? [])], known?.repositories ?? []);
+}
 
 /** The owner of `owner/name`, or of `host/owner/name` on GitHub Enterprise. */
 export function ownerOf(repository: string): string {
@@ -156,7 +169,8 @@ const FIELDS: Field[] = [
   {
     key: "repo",
     label: "Repository",
-    values: (entries) => plain(entries.map((e) => e.pull_request.repository)),
+    values: (entries, repositories) =>
+      plain([...entries.map((e) => e.pull_request.repository), ...repositories]),
     // The whole name, or the part after the owner.
     test: (value, entry) => {
       const repository = entry.pull_request.repository;
@@ -166,7 +180,8 @@ const FIELDS: Field[] = [
   {
     key: "org",
     label: "Organization",
-    values: (entries) => plain(entries.map((e) => ownerOf(e.pull_request.repository))),
+    values: (entries, repositories) =>
+      plain([...entries.map((e) => e.pull_request.repository), ...repositories].map(ownerOf)),
     test: (value, entry) => same(ownerOf(entry.pull_request.repository), value),
   },
   {
@@ -554,7 +569,8 @@ export type Suggestion = {
 /** What to offer at the caret: the values of the field being typed, or the
  *  fields and operators that start with the word being typed. `fields` are
  *  another page's, in place of the pull requests'; `operators` false leaves
- *  AND, OR and NOT out, for a page whose filter takes none. */
+ *  AND, OR and NOT out, for a page whose filter takes none; `known` adds
+ *  values from beyond `entries`. */
 export function suggest(
   query: string,
   caret: number,
@@ -562,6 +578,7 @@ export function suggest(
   inbox = false,
   fields?: readonly Field[],
   operators = true,
+  known?: Known,
 ): Suggestion[] {
   const token = tokenize(query).find(
     (one) => one.kind === "word" && one.start < caret && caret <= one.end,
@@ -618,8 +635,7 @@ export function suggest(
     const listedValues = rest.split(",");
     const partial = (listedValues.pop() ?? "").replace(/^"/, "").toLowerCase();
     const prefix = `${sign}${field.key}${op}${listedValues.map(quote).join(",")}${listedValues.length ? "," : ""}`;
-    const values = field
-      .values(entries)
+    const values = valuesOf(field, entries, known)
       .filter(
         (one) =>
           !listedValues.some((v) => same(v, one.value)) &&

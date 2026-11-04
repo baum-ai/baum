@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState, type ComponentType } from "react";
 import type { ViewerLinkProps } from "@baum/viewer/navigation";
-import { appURL } from "./api";
+import { appURL, type Entry } from "./api";
 import {
   sentence,
   templateInbox,
@@ -31,6 +31,8 @@ export type InboxPageProps = {
   login?: string;
   /** The person's repositories, as owner/name. */
   repositories: string[];
+  /** Every pull request read, whose values the query's filter offers. */
+  entries?: Entry[];
   /** How many saves the daemon has accepted; each shows "Saved" for a moment. */
   saves: number;
   save: (inboxes: Inbox[]) => void;
@@ -205,6 +207,8 @@ function EditInbox({
   saveDraft,
   inboxes,
   items,
+  repositories,
+  entries,
   saves,
   save,
   go,
@@ -371,6 +375,7 @@ function EditInbox({
                 query={inbox.query}
                 onChange={(query) => change({ query })}
                 entries={items.map((item) => item.entry)}
+                known={{ entries, repositories }}
                 kindOf={(entry) => kinds.get(entry)}
                 inbox
               />
@@ -378,6 +383,7 @@ function EditInbox({
                 query={inbox.query}
                 onChange={(query) => change({ query })}
                 entries={items.map((item) => item.entry)}
+                known={{ entries, repositories }}
                 inbox
               />
             </div>

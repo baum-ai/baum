@@ -28,8 +28,10 @@ import {
   suggest,
   tidyQuery,
   toggleValue,
+  valuesOf,
   withText,
   type Field,
+  type Known,
   type Op,
   type PageFilter,
   type Option,
@@ -70,12 +72,15 @@ export function FilterButton({
   onClosed,
   page,
   slashOpens = true,
+  known,
 }: {
   query: string;
   onChange: (next: string) => void;
   /** The pull requests before the filter, which the counts are of; a page
    *  with its own `fields` passes none and shows no counts. */
   entries: Entry[];
+  /** More values to offer than `entries` hold, as every repository. */
+  known?: Known;
   active?: boolean;
   /** What a pull request waits for in an inbox's queue, for `waiting`. */
   kindOf?: (entry: Entry) => string | undefined;
@@ -195,8 +200,7 @@ export function FilterButton({
           .map((field) => ({ kind: "field" as const, field })),
         ...fields
           .flatMap((field) =>
-            field
-              .values(entries)
+            valuesOf(field, entries, known)
               .filter(fits)
               .map((option) => ({ kind: "value" as const, field, option })),
           )
@@ -208,7 +212,7 @@ export function FilterButton({
     ? (sub.field.ops ?? (["=", "!="] as Op[])).filter((one) => one !== ">" && one !== "<")
     : [];
   const values = sub
-    ? sub.field.values(entries).filter((one) => !sub.field.check?.(one.value, op))
+    ? valuesOf(sub.field, entries, known).filter((one) => !sub.field.check?.(one.value, op))
     : [];
   const live = entries.filter((entry) => passes(query, entry));
   // Count matches belonging to this option, not the union of every selected
@@ -547,11 +551,14 @@ export function FilterBar({
   inbox = false,
   actions,
   page,
+  known,
 }: {
   query: string;
   onChange: (next: string) => void;
   /** The page's pull requests before its filter, whose values are offered. */
   entries: Entry[];
+  /** More values to offer than `entries` hold, as every repository. */
+  known?: Known;
   /** An inbox's page: `waiting` is suggested too. */
   inbox?: boolean;
   /** Saving the filter, at the end of the bar. */
@@ -598,7 +605,7 @@ export function FilterBar({
   const problem = (one: string) => (page ? page.problem(one) : queryProblem(one, inbox));
   const error = problem(text);
   const options = state.open
-    ? suggest(text, caret, entries, inbox, page?.fields, !page).slice(0, 12)
+    ? suggest(text, caret, entries, inbox, page?.fields, !page, known).slice(0, 12)
     : [];
   const apply = (next: string, now = false) => {
     clearTimeout(timer.current);

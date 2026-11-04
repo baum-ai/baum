@@ -928,7 +928,8 @@ that inbox's Merge items). Its header shows the inbox's colour dot and name:
 the dot opens its six colours, and a click on the name renames it in place
 (Enter or leaving saves, Esc keeps the old name, a blank or taken name is
 refused there); a right click on the head offers **Edit…**. An empty one says
-"Nothing here right now." Snoozed, **Done today**, the header's done count and
+"Nothing here right now." under a dozing Stumpy, as the Inbox's "Inbox zero"
+does (an awake one while no repository is picked). Snoozed, **Done today**, the header's done count and
 progress bar, and the group of the person's own pull requests that wait on
 checks or reviews list only the inbox's pull requests, as the Inbox's filter
 narrows them there too. A pull request done today matches as it was when last
@@ -1021,7 +1022,13 @@ an inbox's queue Waiting for, then Risk, Base branch); pointing at one, or
 Enter or → on it, opens its values beside the menu (or in its place when
 neither side has room, where pointing alone does not open it), under the
 operator they are picked with: **is** or **is not**, and for Risk also **≥**
-and **≤** (Tab moves it along). Each value is ticked while the query requires
+and **≤** (Tab moves it along). On every page (the Inbox, an inbox's queue,
+an inbox's edit page and Pull requests), Repository, Organization, Author and
+Base branch offer every value known, not only those of the pull requests the
+page holds now: the repositories picked, registered as clones or with any pull
+request read, their owners, and the authors and base branches of every pull
+request read (`Known`, `valuesOf` in `src/pr-filter.ts`); one with nothing on
+the page counts 0. Each value is ticked while the query requires
 it with that operator and counted by how many of the page's pull requests
 picking it would leave. Picking a value adds it to the term of that field and
 operator as one more choice, or takes it out (with an `AND` beside it and

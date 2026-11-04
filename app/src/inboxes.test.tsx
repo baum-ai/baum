@@ -348,9 +348,11 @@ it("lists an inbox's own pull requests done today and waiting on others", async 
 
 it("says an inbox with nothing in it fills up, and falls back to Inbox for an unknown one", async () => {
   await render("?inbox=Quiet");
-  expect(node.querySelector(".upnext-zero")!.textContent).toBe(
-    "Nothing here right now.It fills up as matching pull requests come in.",
-  );
+  // Under a dozing Stumpy, whose artwork is no part of the text.
+  expect(node.querySelector(".upnext-zero svg")).not.toBeNull();
+  expect(
+    [...node.querySelectorAll(".upnext-zero :is(h2, p)")].map((one) => one.textContent),
+  ).toEqual(["Nothing here right now.", "It fills up as matching pull requests come in."]);
   await render("?inbox=gone");
   expect(titles()).toEqual(["Change 1", "Change 3", "Change 4", "Change 2"]);
   expect(node.querySelector(".upnext-list-head h1")!.textContent).toBe("Up next");
