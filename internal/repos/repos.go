@@ -9,10 +9,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"slices"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/baum-ai/baum/internal/appdb"
@@ -808,11 +810,73 @@ func probe(ctx context.Context, clones []Clone) error {
 		if e := ctx.Err(); e != nil {
 			return e
 		}
-		// Any remote may name the clone's repository, as AddFor allows.
-		current, err := inspectFor(ctx, clones[i].Path, clones[i].Repository)
-		clones[i].Available = err == nil && current.Path == clones[i].Path && current.CommonDir == clones[i].CommonDir && current.Repository == clones[i].Repository
+		clones[i].Available = probed.available(ctx, clones[i])
 	}
 	return nil
+}
+
+// ProbeMaxAge bounds how long a clone's availability is reused while nothing
+// it is read from changed: a change only global git configuration makes,
+// such as a url.insteadOf rewrite, shows within this time.
+const ProbeMaxAge = 5 * time.Minute
+
+// probeCache remembers whether each registered clone was available, so the
+// many registry reads of the daemon (the app, its tray, the schedulers and
+// the background refresh) do not each run git in every clone. An answer is
+// reused while the clone's directory, its .git entry and its common
+// directory's config, where its remotes live, are as they were, for at most
+// ProbeMaxAge.
+type probeCache struct {
+	mu      sync.Mutex
+	entries map[string]probeEntry
+}
+
+type probeEntry struct {
+	stamp     string
+	at        time.Time
+	available bool
+}
+
+var probed = &probeCache{entries: map[string]probeEntry{}}
+
+func (p *probeCache) available(ctx context.Context, clone Clone) bool {
+	stamp, ok := cloneStamp(clone)
+	if !ok {
+		// The working tree or its git directory is gone.
+		return false
+	}
+	key := clone.Path + "\x00" + clone.CommonDir + "\x00" + clone.Repository
+	now := time.Now()
+	p.mu.Lock()
+	entry, cached := p.entries[key]
+	p.mu.Unlock()
+	if cached && entry.stamp == stamp && now.Sub(entry.at) < ProbeMaxAge {
+		return entry.available
+	}
+	// Any remote may name the clone's repository, as AddFor allows.
+	current, err := inspectFor(ctx, clone.Path, clone.Repository)
+	available := err == nil && current.Path == clone.Path && current.CommonDir == clone.CommonDir && current.Repository == clone.Repository
+	if ctx.Err() == nil {
+		p.mu.Lock()
+		p.entries[key] = probeEntry{stamp: stamp, at: now, available: available}
+		p.mu.Unlock()
+	}
+	return available
+}
+
+// cloneStamp describes what a clone's availability is read from: its
+// directory, its .git entry (a directory, or a linked worktree's file) and
+// its common directory's config. ok is false when one is missing.
+func cloneStamp(clone Clone) (string, bool) {
+	var b strings.Builder
+	for _, path := range []string{clone.Path, filepath.Join(clone.Path, ".git"), filepath.Join(clone.CommonDir, "config")} {
+		info, err := os.Stat(path)
+		if err != nil {
+			return "", false
+		}
+		fmt.Fprintf(&b, "%s\x00%d\x00%d\x00%o\x00", path, info.Size(), info.ModTime().UnixNano(), info.Mode())
+	}
+	return b.String(), true
 }
 
 // Update replaces shared repository settings without needing an available clone.

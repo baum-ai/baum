@@ -120,6 +120,18 @@ clone row), `CloneRows` (clones as stored, `available` false) and
 `RepositoryRows` (`Repositories` with clones as stored) read the registry only
 and run no git, unlike `List` and `Repositories`, which probe every clone.
 
+A probe runs git in the clone only when something its answer is read from
+changed. The process keeps each clone's last availability with a stamp of:
+
+* its directory;
+* its `.git` entry (a directory, or a linked worktree's file);
+* its common directory's `config`, where the remotes live.
+
+While the stamp is unchanged the answer is reused, for at most `ProbeMaxAge`
+(5 minutes). A rewrite that only global git configuration makes, such as
+`url.insteadOf`, therefore shows within that time. A clone whose directory or
+`.git` is gone is unavailable without running git.
+
 Settings PUTs replace the whole object and require `automatic`, `null` for
 the default. A `daily_cap` an older app still sends, in a settings PUT or in
 the settings of a `POST`, is dropped rather than refused: baum sets no

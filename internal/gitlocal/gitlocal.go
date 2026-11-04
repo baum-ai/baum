@@ -164,11 +164,52 @@ var gitVersionPattern = regexp.MustCompile(`^git version (\d+)\.(\d+)`)
 // checkGitVersion fails clearly on a git too old for this package. An
 // unrecognised version string is let through.
 func checkGitVersion(ctx context.Context, dir string, timeout time.Duration) error {
+	// A cancelled caller fails here as it did when the check always ran git.
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("running git: %w", err)
+	}
+	key := gitExecutableKey()
+	if key != "" {
+		versionChecked.Lock()
+		cached, ok := versionChecked.results[key]
+		versionChecked.Unlock()
+		if ok {
+			return cached
+		}
+	}
 	out, err := run(ctx, runSpec{dir: dir, env: userEnv(), limit: 4096, timeout: timeout}, "version")
 	if err != nil {
 		return fmt.Errorf("running git: %w", err)
 	}
-	return SupportedGitVersion(string(out))
+	err = SupportedGitVersion(string(out))
+	if key != "" {
+		versionChecked.Lock()
+		versionChecked.results[key] = err
+		versionChecked.Unlock()
+	}
+	return err
+}
+
+// versionChecked remembers SupportedGitVersion's answer for each git
+// executable, so opening a repository does not run "git version" every time.
+var versionChecked = struct {
+	sync.Mutex
+	results map[string]error
+}{results: map[string]error{}}
+
+// gitExecutableKey names the git that "git" runs now: its path on PATH with
+// its size and modification time, so an upgrade or another git first on PATH
+// is checked again. Empty when it cannot be found, and the check then runs.
+func gitExecutableKey() string {
+	path, err := exec.LookPath("git")
+	if err != nil {
+		return ""
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return ""
+	}
+	return fmt.Sprintf("%s\x00%d\x00%d", path, info.Size(), info.ModTime().UnixNano())
 }
 
 // SupportedGitVersion fails when the output of "git version" names a git older
