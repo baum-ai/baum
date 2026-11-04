@@ -573,15 +573,18 @@ func (q *Queue) Shutdown(ctx context.Context) error {
 		// Workers have saved their last records; another process may open
 		// the journal now. A worker still running at the deadline keeps the
 		// lock until this process exits.
-		// A write that failed and was not retried yet gets one last try.
-		q.mu.Lock()
-		if q.unsaved {
-			if err := q.save(); err != nil && q.log != nil {
-				q.log.Error("job journal write failed at shutdown", "error", err)
+		// A write that failed and was not retried yet gets one last try,
+		// while the lock is still held.
+		q.releaseOnce.Do(func() {
+			q.mu.Lock()
+			if q.unsaved {
+				if err := q.save(); err != nil && q.log != nil {
+					q.log.Error("job journal write failed at shutdown", "error", err)
+				}
 			}
-		}
-		q.mu.Unlock()
-		q.releaseOnce.Do(func() { _ = q.lock.Release() })
+			q.mu.Unlock()
+			_ = q.lock.Release()
+		})
 		return nil
 	case <-ctx.Done():
 		return ctx.Err()

@@ -842,6 +842,35 @@ func waitJournal(t *testing.T, q *Queue, id, state string) {
 	t.Fatalf("journal shows %q for %s, want %s", journalState(q, id), id, state)
 }
 
+// awaitStart waits for a job to start executing and for its first progress
+// update to be journaled, so later write failures hit only the end save.
+func awaitStart(t *testing.T, q *Queue, f *fakeExecutor, id string) {
+	t.Helper()
+	select {
+	case <-f.started:
+	case <-time.After(3 * time.Second):
+		t.Fatal("job did not start")
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		for _, j := range q.List() {
+			if j.ID == id && j.State == "running" && j.Phase == "repairing" {
+				return
+			}
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatalf("job %s made no progress: %+v", id, q.List())
+}
+func releaseJob(t *testing.T, f *fakeExecutor) {
+	t.Helper()
+	select {
+	case f.release <- struct{}{}:
+	case <-time.After(3 * time.Second):
+		t.Fatal("job did not take its release")
+	}
+}
+
 func TestFailedEndSavesDoNotStopWorkers(t *testing.T) {
 	q, f := newQueue(t)
 	var ids []string
@@ -852,10 +881,9 @@ func TestFailedEndSavesDoNotStopWorkers(t *testing.T) {
 			t.Fatal(err)
 		}
 		ids = append(ids, jobs[0].ID)
-		<-f.started
-		waitState(t, q, jobs[0].ID, "running")
+		awaitStart(t, q, f, jobs[0].ID)
 		restore := failSaves(t, q, time.Millisecond)
-		f.release <- struct{}{}
+		releaseJob(t, f)
 		waitState(t, q, jobs[0].ID, "completed")
 		restore()
 		waitJournal(t, q, jobs[0].ID, "completed")
@@ -876,22 +904,28 @@ func TestFailedStartSaveRetriesWithoutAnotherWake(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	<-f.started
+	awaitStart(t, q, f, a[0].ID)
 	second := estimate(t, q, "single", Item{Clone: "clone", PR: 2})
 	b, err := q.Submit(context.Background(), second.ID, true, false)
 	if err != nil {
 		t.Fatal(err)
 	}
 	restore := failSaves(t, q, time.Millisecond)
-	f.release <- struct{}{}
-	waitState(t, q, a[0].ID, "completed")
-	// The end save of the first job and the start save of the second fail.
+	// Only b's start save fails: a keeps running and saves nothing.
+	if err = q.SetConcurrency(2); err != nil {
+		t.Fatal(err)
+	}
 	deadline := time.Now().Add(3 * time.Second)
-	for logs.count("journal write failed") < 2 && time.Now().Before(deadline) {
+	for logs.count("journal write failed") < 1 && time.Now().Before(deadline) {
 		time.Sleep(time.Millisecond)
 	}
-	if n := logs.count("journal write failed"); n < 2 {
+	if n := logs.count("journal write failed"); n < 1 {
 		t.Fatalf("%d failed writes logged", n)
+	}
+	for _, j := range q.List() {
+		if j.ID == b[0].ID && j.State != "queued" {
+			t.Fatalf("job %s is %s while its start was not journaled", j.ID, j.State)
+		}
 	}
 	select {
 	case <-f.started:
@@ -899,13 +933,10 @@ func TestFailedStartSaveRetriesWithoutAnotherWake(t *testing.T) {
 	default:
 	}
 	restore()
-	select {
-	case <-f.started:
-	case <-time.After(3 * time.Second):
-		t.Fatal("queued job never started")
-	}
-	waitState(t, q, b[0].ID, "running")
-	f.release <- struct{}{}
+	awaitStart(t, q, f, b[0].ID)
+	releaseJob(t, f)
+	releaseJob(t, f)
+	waitJournal(t, q, a[0].ID, "completed")
 	waitJournal(t, q, b[0].ID, "completed")
 }
 
@@ -916,10 +947,9 @@ func TestShutdownWritesUnsavedState(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	<-f.started
-	waitState(t, q, jobs[0].ID, "running")
+	awaitStart(t, q, f, jobs[0].ID)
 	restore := failSaves(t, q, time.Hour)
-	f.release <- struct{}{}
+	releaseJob(t, f)
 	waitState(t, q, jobs[0].ID, "completed")
 	restore()
 	if got := journalState(q, jobs[0].ID); got == "completed" {

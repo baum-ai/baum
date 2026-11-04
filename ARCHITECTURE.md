@@ -3099,7 +3099,7 @@ text of (a provider's error, an internal one).
 A failed journal write does not stop a worker: the queue retries it with
 backoff (1 s up to 30 s) until it succeeds, signals the waiting workers after
 it does (a job whose start could not be journaled waits until then), and tries
-once more at shutdown.
+once more at shutdown after the workers stop.
 
 A run's time limit is its only bound by default: `budgets.review_timeout` (10
 minutes) for a review of a pull request or a group and `budgets.run_timeout`
