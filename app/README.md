@@ -1140,7 +1140,9 @@ Pull request, Review time, Review and Status columns. The pull requests of a
 repository without a local clone are listed from discovery (its entries have
 `needs_clone` and no clone); a review needs a local clone. Risk is the latest
 saved review's score as a coloured pill (a lower bound reads `≥`). Review time
-is that review's reading estimate in whole minutes. Review is GitHub's review
+is that review's reading estimate in whole minutes. For staged PR reviews,
+it counts prose at 400 words a minute, rounded up within 1–240 minutes;
+code excerpts add no time. Review is GitHub's review
 decision with a count of unresolved threads beside it. Status combines checks
 and merge state into the one that stands first between the pull request and
 merging: a conflict, failing checks, a draft, running checks, ready, blocked,
