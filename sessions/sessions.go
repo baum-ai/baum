@@ -11,11 +11,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"slices"
 	"strings"
 	"time"
 
 	"github.com/baum-ai/baum/internal/gitlocal"
+	"github.com/baum-ai/baum/internal/workstats"
 	"github.com/baum-ai/baum/sessions/claudesession"
 	"github.com/baum-ai/baum/sessions/claudetranscript"
 	"github.com/baum-ai/baum/sessions/codexsession"
@@ -130,6 +132,7 @@ type Report struct {
 // Entire session is returned once, from the newest checkpoint that recorded
 // it, and not at all when the agent's own store holds it.
 func Load(ctx context.Context, dir string, opts Options) ([]Session, Report, error) {
+	workstats.Inc("sessions.load.calls")
 	var report Report
 	// A clone whose worktrees git cannot list (git older than 2.36) is read
 	// as the one checkout containing dir.
@@ -211,7 +214,44 @@ var ErrUnbalanced = errors.New("mapper did not account for every record")
 
 // Map turns one discovered session into its graph. The notes are the
 // mapper's remarks; an error means the tree must not be used.
+//
+// A session whose files have not changed since it was last mapped is not
+// read again: the graph comes from a process-wide cache (see mapCache) and
+// is shared with every other caller that mapped the same files, so callers
+// must not change it.
 func Map(s collector.Session) (*session.Graph, []string, error) {
+	workstats.Inc("sessions.map.calls")
+	key, cost, cacheable := mapKey(s)
+	if cacheable {
+		if entry, ok := cache.get(key); ok {
+			return entry.graph, mapNotes(s, entry), entry.err
+		}
+	}
+	workstats.Inc("sessions.map.decodes." + string(s.Source))
+	workstats.Add("sessions.map.decoded_bytes", cost)
+	graph, notes, err := mapSession(s)
+	entry := &mapEntry{key: key, graph: graph, notes: notes, err: err, cost: cost}
+	// A file that could not be opened or read may read next time (too many
+	// open files, a permission fixed); only what its content caused is kept.
+	var pathErr *fs.PathError
+	if cacheable && !errors.As(err, &pathErr) {
+		cache.put(entry)
+	}
+	return graph, mapNotes(s, entry), err
+}
+
+// mapNotes are the discovery warnings followed by the mapper's notes, or none
+// when the session did not map.
+func mapNotes(s collector.Session, entry *mapEntry) []string {
+	if entry.err != nil {
+		return nil
+	}
+	return slices.Concat(s.Warnings, entry.notes)
+}
+
+// mapSession reads and maps the session's files; its notes are the mapper's
+// alone.
+func mapSession(s collector.Session) (*session.Graph, []string, error) {
 	switch s.Source {
 	case vendors.ClaudeCode:
 		tree, err := claudetranscript.DecodeLocalFiles(model.Files(s.Files))
@@ -227,7 +267,7 @@ func Map(s collector.Session) (*session.Graph, []string, error) {
 		if !report.Lines.Balanced() {
 			return nil, nil, fmt.Errorf("%w: %d of %d transcript lines", ErrUnbalanced, report.Lines.Accounted(), report.Lines.Total)
 		}
-		return graph, append(s.Warnings, report.Notes...), nil
+		return graph, report.Notes, nil
 	case vendors.Codex:
 		tree, err := codextranscript.DecodeLocalFiles(model.Files(s.Files))
 		if err != nil {
@@ -243,7 +283,7 @@ func Map(s collector.Session) (*session.Graph, []string, error) {
 		case report.UnsupportedTurns > 0:
 			return nil, nil, fmt.Errorf("%w: %d unsupported turns", ErrUnbalanced, report.UnsupportedTurns)
 		}
-		return graph, append(s.Warnings, report.Notes...), nil
+		return graph, report.Notes, nil
 	case vendors.Cursor:
 		if len(s.Files) == 0 || s.Files[0].Data == nil {
 			return nil, nil, errors.New("the Cursor session carries no composer tree")
@@ -259,7 +299,7 @@ func Map(s collector.Session) (*session.Graph, []string, error) {
 		if !report.Bubbles.Balanced() {
 			return nil, nil, fmt.Errorf("%w: %d of %d Cursor bubbles", ErrUnbalanced, report.Bubbles.Accounted(), report.Bubbles.Total)
 		}
-		return graph, append(s.Warnings, report.Notes...), nil
+		return graph, report.Notes, nil
 	default:
 		return nil, nil, fmt.Errorf("no mapper for %q sessions", s.Source)
 	}

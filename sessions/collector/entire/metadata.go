@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/baum-ai/baum/internal/gitlocal"
+	"github.com/baum-ai/baum/internal/workstats"
 	"github.com/baum-ai/baum/sessions/entirecheckpoint"
 )
 
@@ -175,6 +176,7 @@ func catBlobs(ctx context.Context, repoRoot string, paths []string) (map[string]
 		}
 		input.WriteString(p + "\n")
 	}
+	workstats.Git("cat-file")
 	cmd := exec.CommandContext(ctx, "git", "-C", repoRoot, "cat-file", "--batch")
 	cmd.Env = gitlocal.ReadEnv(repoRoot)
 	cmd.Stdin = &input

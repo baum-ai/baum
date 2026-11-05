@@ -15,6 +15,7 @@ import (
 
 	"github.com/baum-ai/baum/internal/proc"
 	"github.com/baum-ai/baum/internal/textclean"
+	"github.com/baum-ai/baum/internal/workstats"
 )
 
 const (
@@ -202,6 +203,7 @@ func run(ctx context.Context, spec runSpec, args ...string) ([]byte, error) {
 		full = append(full, "-c", c)
 	}
 	full = append(full, args...)
+	workstats.Git(args...)
 	cmd := exec.CommandContext(ctx, "git", full...)
 	proc.Configure(cmd)
 	cmd.Dir = spec.dir

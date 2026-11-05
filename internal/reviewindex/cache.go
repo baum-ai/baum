@@ -15,6 +15,7 @@ import (
 
 	"github.com/baum-ai/baum/internal/repos"
 	"github.com/baum-ai/baum/internal/store"
+	"github.com/baum-ai/baum/internal/workstats"
 )
 
 // MaxAge bounds how long a snapshot is served without building again, for
@@ -90,6 +91,7 @@ func (c *Cache) Current(ctx context.Context) (Snapshot, uint64, error) {
 		f = &flight{generation: c.generation, done: make(chan struct{})}
 		c.flight = f
 		c.builds++
+		workstats.Inc("reviewindex.builds")
 		go c.run(f, now)
 	}
 	f.waiting++
