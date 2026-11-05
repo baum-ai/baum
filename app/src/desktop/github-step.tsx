@@ -10,6 +10,9 @@ import {
 import { invoke } from "./native";
 import { NineDots } from "../nine-dots";
 
+/** The docs section on giving baum a GitHub token instead of signing in. */
+const TOKEN_DOCS_URL = "https://docs.usebaum.com/getting-started/#use-an-existing-github-token";
+
 /** The setup screen reaches the daemon's GitHub sign-in through the app. */
 const viaApp: GitHubAuthCall = (action) =>
   invoke<GitHubConnection>("github_connection", action ? { action } : {});
@@ -171,6 +174,14 @@ export function GitHubStep({ onConnected }: { onConnected: (connected: boolean) 
           </div>
         )}
       </div>
+      {known && !connected && !pending && (
+        <p id="github-token-note" className="repo-note">
+          Prefer to use an existing GitHub token?{" "}
+          <a href={TOKEN_DOCS_URL} target="_blank" rel="noreferrer">
+            See the docs ↗
+          </a>
+        </p>
+      )}
       <p className="repo-note">Data is stored on this computer and never shared with baum.</p>
     </div>
   );

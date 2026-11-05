@@ -110,7 +110,8 @@ Setup uses the native `repositories` relay; app pages use namespaced local HTTP.
 The relay permits only named repository actions and never exposes credentials.
 Desktop setup requires a GitHub connection and at least one picked repository
 before continuing or opening a later step from the rail. The GitHub step has no
-skip action. Adding the baum CLI to the terminal and connecting agent hooks
+skip action; until GitHub is connected, a note under it links to the docs for
+using an existing token instead of signing in. Adding the baum CLI to the terminal and connecting agent hooks
 remain optional; the app runs its own CLI to start the daemon.
 The onboarding agent picker offers Claude Code and Codex. A line under
 Reviews and extraction and under Fixes says what each agent does, and a single
