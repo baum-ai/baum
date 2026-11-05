@@ -84,19 +84,20 @@ function ToastView({ toast, close }: { toast: Toast; close: () => void }) {
             {toast.context}
           </p>
         ) : null}
+        {/* A row of its own under the text, which keeps the toast's width. */}
+        {toast.action ? (
+          <button
+            type="button"
+            className={cn("local-toast-action", SMALL)}
+            onClick={() => {
+              toast.action!.run();
+              dismiss();
+            }}
+          >
+            {toast.action.label}
+          </button>
+        ) : null}
       </div>
-      {toast.action ? (
-        <button
-          type="button"
-          className={cn("local-toast-action", SMALL)}
-          onClick={() => {
-            toast.action!.run();
-            dismiss();
-          }}
-        >
-          {toast.action.label}
-        </button>
-      ) : null}
       <button type="button" className="local-toast-close" aria-label="Dismiss" onClick={dismiss}>
         <CloseIcon size={12} />
       </button>

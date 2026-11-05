@@ -335,6 +335,8 @@ export function LocalReview({
   const [reviewing, setReviewing] = useState<ReviewEvent | null>(null);
   const [composer, setComposer] = useState<Composer | null>(null);
   const [revealComments, setRevealComments] = useState(0);
+  // The review just sent, which the Comments tab opens on under Sent.
+  const [sentReview, setSentReview] = useState<string | null>(null);
   const pending = usePendingReview(entry);
   const pendingCount = pending.value.comments.length;
   const canReview = reviewable(entry);
@@ -1258,6 +1260,7 @@ export function LocalReview({
                             composer={composer}
                             setComposer={setComposer}
                             review={setReviewing}
+                            fresh={sentReview}
                           />
                         ),
                       }
@@ -1348,7 +1351,12 @@ export function LocalReview({
             entry={entry}
             event={reviewing}
             close={() => setReviewing(null)}
-            sent={() => void changed()}
+            sent={(url) => {
+              // Where it shows: the Comments tab opens on it under Sent.
+              setSentReview(url);
+              setRevealComments((n) => n + 1);
+              void changed();
+            }}
           />
         ) : null}
         {rerunning ? (
