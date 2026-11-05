@@ -5,6 +5,7 @@ import { RefreshIcon } from "@baum/viewer/components/icons";
 import { LoadingStatus } from "../nine-dots";
 import { PanelHeader } from "../shell";
 import { useToast } from "../toast";
+import { useVisibleInterval } from "../visible-interval";
 import { invoke } from "./native";
 
 /** The desktop app's updater (`update_state` in oss/desktop/src/updater.rs). */
@@ -50,6 +51,7 @@ export function useAppUpdates(): AppUpdates {
   const [view, setView] = useState<AppUpdate | null>(null);
   const [error, setError] = useState("");
   const gone = useRef(false);
+  const readUpdate = useRef<(() => void) | null>(null);
   const busy = view ? BUSY.has(view.phase) : false;
   useEffect(() => {
     if (gone.current) return;
@@ -65,12 +67,13 @@ export function useAppUpdates(): AppUpdates {
         else if (!stop) setView(next);
       }, missing);
     void read();
-    const timer = window.setInterval(() => void read(), busy ? 1000 : 60_000);
+    readUpdate.current = () => void read();
     return () => {
       stop = true;
-      window.clearInterval(timer);
+      readUpdate.current = null;
     };
-  }, [busy]);
+  }, []);
+  useVisibleInterval(() => readUpdate.current?.(), busy ? 1000 : 60_000);
   const act = (command: string, args?: Record<string, unknown>) => {
     setError("");
     invoke<AppUpdate>(command, args).then(

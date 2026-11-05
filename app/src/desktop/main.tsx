@@ -4,6 +4,8 @@ import { followSystemTheme } from "./system-theme";
 import "./screen.css";
 import "./setup.css";
 import { blockBrowserMenu } from "../native-menu";
+import { trackHidden } from "../visible-interval";
 followSystemTheme();
 blockBrowserMenu();
+trackHidden();
 createRoot(document.getElementById("root")!).render(<Setup />);
