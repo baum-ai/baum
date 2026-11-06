@@ -17,6 +17,29 @@ type does not fail the whole session. A malformed line of a known type still
 fails it. An Entire checkpoint whose embedded Codex transcript has an unknown
 record falls back to its compact transcript instead.
 
+## Mapping cache
+
+`sessions.Map` keeps the graphs it mapped in a process-wide cache. Every
+caller shares it: `Load`, the live transcript view and the decision log. A
+daemon that reads the same transcripts on each refresh therefore decodes each
+one only once until it changes.
+
+* **Key:** the source and, for each file, its name, kind, path, size and
+  modification time. Generated content, such as a Cursor tree, is keyed by its
+  SHA-256 instead.
+* **Invalidation:** a file that grows or is rewritten gets a new key. A file
+  that cannot be statted is mapped without the cache.
+* **Failures:** a mapping that failed because of the file's content is cached
+  as well, so an unchanged broken transcript is not read again. A file that
+  could not be opened or read is tried again on the next call.
+* **Discovery warnings:** these come from discovery, not the mapper. They are
+  not cached, and each call adds its own.
+* **Size:** least recently used entries are evicted once the transcript bytes
+  held pass `DefaultMapCacheBytes` (64 MiB). `SetMapCacheLimit` changes the
+  limit; zero or less turns the cache off.
+* **Sharing:** cached graphs are shared between callers, so callers must not
+  change a graph `Map` or `Load` returns.
+
 ## Product profiles
 
 `traceprocessing.Local` is the zero value and the default of existing public

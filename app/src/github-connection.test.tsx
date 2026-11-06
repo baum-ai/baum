@@ -203,7 +203,10 @@ it("observes runtime authorization failures and refreshes parent state on recove
   };
   await act(async () => root.render(<GitHubConnectionSection onChanged={onChanged} />));
   status = { ...status, error: "reconnect_required" };
-  await act(async () => vi.advanceTimersByTimeAsync(10000));
+  // A settled connection is not polled on a timer, only read on focus.
+  await act(async () => vi.advanceTimersByTimeAsync(60000));
+  expect(node.textContent).not.toContain("expired or was revoked");
+  await act(async () => dispatchEvent(new Event("focus")));
   expect(node.textContent).toContain("expired or was revoked");
   expect(onChanged).toHaveBeenCalledTimes(1);
   status = { ...status, error: undefined };

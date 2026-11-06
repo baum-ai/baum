@@ -206,6 +206,8 @@ func (a LocalAPI) Handler() *LocalHandler {
 	mux.Handle("/api/prs", provider(a.PRs, "discovery_unavailable"))
 	mux.Handle("/api/prs/", provider(a.PRs, "discovery_unavailable"))
 	mux.Handle("/api/background", provider(a.Background, "background_unavailable"))
+	mux.Handle("GET /api/debug/stats", debugStats())
+	mux.Handle("GET /api/debug/pprof/", debugProfiles())
 	mux.Handle("/api/automatic", provider(a.Automatic, "automatic_unavailable"))
 	mux.Handle("POST /api/automatic/catch-up", provider(a.Automatic, "automatic_unavailable"))
 	mux.Handle("/api/live-sessions", provider(a.Live, "live_sessions_unavailable"))

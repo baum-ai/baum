@@ -136,7 +136,7 @@ is already running.`,
 			return shellenv.PrintEnv(cmd.OutOrStdout(), args[0])
 		},
 	}
-	cmd.AddCommand(ensure, status, stop, run, printEnv, newLoginPathCommand())
+	cmd.AddCommand(ensure, status, stop, run, printEnv, newLoginPathCommand(), newDaemonProfileCommand())
 	return cmd
 }
 

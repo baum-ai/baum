@@ -17,6 +17,7 @@ import (
 	"github.com/baum-ai/baum/internal/gitlocal"
 	"github.com/baum-ai/baum/internal/pricing"
 	"github.com/baum-ai/baum/internal/repos"
+	"github.com/baum-ai/baum/internal/workstats"
 	"github.com/baum-ai/baum/sessions"
 	"github.com/baum-ai/baum/sessions/collector"
 	"github.com/baum-ai/baum/sessions/session"
@@ -181,6 +182,7 @@ type found struct {
 // worktrees) are read; a clone that is not available keeps its entries
 // until it is back or unregistered.
 func (x *Index) Refresh(ctx context.Context) error {
+	workstats.Inc("analytics.refreshes")
 	x.mu.Lock()
 	x.load()
 	// A newer price list with other thresholds groups usage differently.

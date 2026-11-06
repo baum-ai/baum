@@ -28,6 +28,7 @@ import (
 
 	"github.com/baum-ai/baum/bundle"
 	"github.com/baum-ai/baum/internal/gitlocal"
+	"github.com/baum-ai/baum/internal/workstats"
 	"github.com/baum-ai/baum/linkage"
 	"github.com/baum-ai/baum/linkage/sessioncorrelate"
 	"github.com/baum-ai/baum/redact"
@@ -245,6 +246,7 @@ func Resolve(ctx context.Context, req Request) (Result, error) {
 // checkpoints where possible. Generation runs are excluded from both. remote
 // names the remote in a missing-checkpoint fetch hint; nothing is fetched here.
 func loadSessions(ctx context.Context, dir string, opts sessions.Options, commits []gitlocal.Commit, remote string, warn io.Writer) ([]sessions.Session, map[string][]string, error) {
+	workstats.Inc("locallink.load_sessions")
 	if since, ok := sessionsSince(commits); ok && opts.Since.Before(since) {
 		opts.Since = since
 	}

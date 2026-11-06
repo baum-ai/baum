@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { request } from "./api";
 import { Notice } from "./shell";
+import { useVisibleInterval } from "./visible-interval";
 
 export type CodexHookTrust = {
   state:
@@ -63,16 +64,13 @@ export function useCodexHookTrust() {
     alive.current = true;
     void read();
     const focus = () => void read();
-    const timer = setInterval(() => {
-      if (!document.hidden) void read();
-    }, 60_000);
     window.addEventListener("focus", focus);
     return () => {
       alive.current = false;
-      clearInterval(timer);
       window.removeEventListener("focus", focus);
     };
   }, [read]);
+  useVisibleInterval(() => void read(), 60_000);
   return { status, warning: codexHookWarning(status), checking, recheck };
 }
 

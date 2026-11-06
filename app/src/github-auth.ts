@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { request, type GitHubConnection } from "./api";
+import { useVisibleInterval } from "./visible-interval";
 
 export const messages: Record<string, string> = {
   credential_store_unavailable: "Unlock your operating system credential store, then try again.",
@@ -94,19 +95,18 @@ export function useGitHubConnection(
       sequence.current++;
     };
   }, [read]);
+  // Polls only while the connection is in flux and the page is visible: a
+  // settled state is read again on focus, not on a timer.
+  useVisibleInterval(
+    () => void read(),
+    // Until the first answer, the daemon may still be starting.
+    connection?.pending ? 300 : !connection || connection.state === "loading" ? 1500 : null,
+  );
   useEffect(() => {
-    const timer = setInterval(
-      () => void read(),
-      // Until the first answer, the daemon may still be starting.
-      connection?.pending ? 300 : !connection || connection.state === "loading" ? 1500 : 10000,
-    );
     const focus = () => void read();
     addEventListener("focus", focus);
-    return () => {
-      clearInterval(timer);
-      removeEventListener("focus", focus);
-    };
-  }, [connection === undefined, connection?.pending?.id, connection?.state, read]);
+    return () => removeEventListener("focus", focus);
+  }, [read]);
   useEffect(() => {
     if (!browserAttempt || connection?.pending?.id !== browserAttempt) return;
     const timer = setTimeout(() => {
