@@ -29,6 +29,7 @@ import {
 } from "./api";
 import { useNow } from "./live";
 import { LoadingStatus } from "./nine-dots";
+import { useVisibleInterval } from "./visible-interval";
 import { useModal } from "./modal";
 import { ReadFailed } from "./page-state";
 import {
@@ -227,11 +228,7 @@ export function useLiveTranscript(
     const timer = setTimeout(() => read.current(), LIVE_DEBOUNCE);
     return () => clearTimeout(timer);
   }, [tick]);
-  useEffect(() => {
-    if (!poll) return;
-    const timer = setInterval(() => read.current(), poll);
-    return () => clearInterval(timer);
-  }, [poll, agent, id]);
+  useVisibleInterval(() => read.current(), poll || null);
   const retry = useCallback(() => setAttempt((n) => n + 1), []);
   return { state, retry };
 }

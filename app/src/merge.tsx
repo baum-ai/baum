@@ -1,7 +1,9 @@
 import { useEffect, useState } from "react";
 import { Alert, Button } from "@baum/viewer/components/ui";
 import { request, type Entry } from "./api";
+import { githubToast } from "./github-toast";
 import { useModal } from "./modal";
+import { useToast } from "./toast";
 import { LoadingStatus, NineDots } from "./nine-dots";
 
 export type MergeOptions = {
@@ -69,6 +71,7 @@ export function MergeDialog({
 }) {
   const pr = entry.pull_request;
   const dialog = useModal();
+  const toast = useToast();
   const [options, setOptions] = useState<MergeOptions | null>(null);
   const [method, setMethod] = useState("");
   const [error, setError] = useState("");
@@ -110,6 +113,7 @@ export function MergeDialog({
         method,
         head_sha: pr.head_sha,
       });
+      toast(githubToast(pr, "Merged on GitHub"));
       void merged();
       close();
     } catch (e) {

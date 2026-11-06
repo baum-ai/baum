@@ -1,6 +1,8 @@
 import { useEffect, useId, useState } from "react";
 import { ChevronRightIcon } from "@baum/viewer/components/icons";
 import { request } from "./api";
+import { githubToast } from "./github-toast";
+import { useToast } from "./toast";
 import { LoadingStatus } from "./nine-dots";
 import { SMALL } from "./action-classes";
 import { cn } from "@baum/viewer/components/classnames";
@@ -46,6 +48,7 @@ export function ReviewThreads({
   unresolved: number;
   url: string;
 }) {
+  const toast = useToast();
   const [read, setRead] = useState<Read>({});
   const [resolving, setResolving] = useState<Set<string>>(new Set());
   const [resolved, setResolved] = useState<Set<string>>(new Set());
@@ -75,6 +78,12 @@ export function ReviewThreads({
     try {
       await request("api/prs/resolve-thread", { repository, pr: number, thread: thread.id });
       setResolved((ids) => new Set(ids).add(thread.id));
+      toast(
+        githubToast(
+          { repository, number, title: thread.excerpt, url: thread.url },
+          "Thread resolved on GitHub",
+        ),
+      );
     } catch (error) {
       setFailed((all) => ({
         ...all,

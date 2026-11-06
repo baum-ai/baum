@@ -148,8 +148,8 @@ func Load(ctx context.Context, dir string, opts Options) ([]Session, Report, err
 }
 
 // Discovery is what Load finds before it reads any session: the clone's
-// worktrees, the session files recorded in them and, when Entire is read, the
-// checkpoint store's branch commit and refs. Finding them reads directories,
+// worktrees, the session files recorded in them and the checkpoint store's
+// branch commit and refs. Finding them reads directories,
 // file metadata and git refs, never a transcript, so a caller can tell from
 // Fingerprint whether anything Load reads changed before paying for it.
 type Discovery struct {
@@ -158,8 +158,8 @@ type Discovery struct {
 	worktrees []string
 	wanted    []collector.Session
 	skipped   []model.SkippedFile
-	// entire describes the checkpoint store; empty when Entire is not read
-	// or the clone has none.
+	// entire describes the checkpoint store, whether or not Entire is read;
+	// empty when the clone has none.
 	entire string
 }
 
@@ -191,10 +191,10 @@ func Discover(ctx context.Context, dir string, opts Options) (*Discovery, error)
 			d.wanted = append(d.wanted, s)
 		}
 	}
-	if opts.wants(Entire) {
-		if root, err := collector.RepoRoot(dir); err == nil {
-			d.entire = entireState(ctx, root)
-		}
+	// The store is described even when Entire is not read: commit checkpoint
+	// fallback reads the checkpoints commits name whatever the sources.
+	if root, err := collector.RepoRoot(dir); err == nil {
+		d.entire = entireState(ctx, root)
 	}
 	return d, nil
 }
@@ -234,17 +234,17 @@ func (d *Discovery) Worktrees() []string { return slices.Clone(d.worktrees) }
 // when a file cannot be described, and nothing should be assumed unchanged.
 func (d *Discovery) Fingerprint() (string, bool) {
 	h := sha256.New()
-	fmt.Fprintf(h, "%q\x00%q\x00", d.worktrees, d.entire)
+	_, _ = fmt.Fprintf(h, "%q\x00%q\x00", d.worktrees, d.entire)
 	for _, s := range d.wanted {
 		key, _, ok := mapKey(s)
 		if !ok {
 			return "", false
 		}
-		fmt.Fprintf(h, "%s\x00%s\x00%s\x00%s\x00%s\x00%d\x00%q\x00%s\x01", s.Source, s.SessionID, s.Path, s.RepoRoot, s.WorktreeRoot, s.ModifiedAt.UnixNano(), s.Warnings, key)
+		_, _ = fmt.Fprintf(h, "%s\x00%s\x00%s\x00%s\x00%s\x00%d\x00%q\x00%s\x01", s.Source, s.SessionID, s.Path, s.RepoRoot, s.WorktreeRoot, s.ModifiedAt.UnixNano(), s.Warnings, key)
 		// A Codex thread's name comes from the index beside its rollouts.
 		if index := codextranscript.IndexPath(s.Path); s.Source == vendors.Codex && index != "" {
 			if info, err := os.Stat(index); err == nil {
-				fmt.Fprintf(h, "%s\x00%d\x00%d\x01", index, info.Size(), info.ModTime().UnixNano())
+				_, _ = fmt.Fprintf(h, "%s\x00%d\x00%d\x01", index, info.Size(), info.ModTime().UnixNano())
 			}
 		}
 	}

@@ -350,11 +350,9 @@ copy:
   exchange, release note, breaking change), the context, and each section's
   title, summary, attention, behaviour steps (title, text, before, after,
   question), risks, evidence (claim, detail, expects) and decisions (title,
-  text, rationale, trigger, rejected alternative, evidence) at 200 words a
-  minute, plus the code lines it shows (code blocks, tile code excerpts and
-  the lines a behaviour step's first hunk anchor names) at 12 lines a
-  minute, rounded up and kept within 1 to 240. A one-pass review keeps the
-  model's estimate.
+  text, rationale, trigger, rejected alternative, evidence) at 400 words a
+  minute, rounded up and kept within 1 to 240. Code excerpts add no time.
+  A one-pass review keeps the model's estimate.
 
 ### Validation and derivation
 

@@ -8,6 +8,7 @@ import {
   tone,
   type PlanUsageEntry,
 } from "../plan-usage";
+import { useVisibleInterval } from "../visible-interval";
 import { invoke } from "./native";
 
 /** What the tray panel draws: the tray's last view, from `tray_panel`. */
@@ -24,7 +25,7 @@ export type Panel = {
   plans: PlanUsageEntry[];
 };
 
-/** How often the open panel asks again; the tray polls the daemon itself. */
+/** How often the visible panel asks again; the tray reads the daemon itself. */
 const REFRESH_MS = 2000;
 
 /** The menu's keys, as a native menu's: ↓ and ↑ move through its items,
@@ -190,6 +191,7 @@ export function TrayPanel() {
   const [panel, setPanel] = useState<Panel | null>(null);
   const [now, setNow] = useState(() => Date.now());
   const root = useRef<HTMLDivElement>(null);
+  const reload = useRef<(() => Promise<void>) | null>(null);
   useEffect(() => {
     let live = true;
     const load = () =>
@@ -201,15 +203,17 @@ export function TrayPanel() {
         },
         () => undefined,
       );
+    reload.current = load;
     void load();
-    const timer = window.setInterval(load, REFRESH_MS);
     window.addEventListener("focus", load);
     return () => {
       live = false;
-      window.clearInterval(timer);
+      reload.current = null;
       window.removeEventListener("focus", load);
     };
   }, []);
+  // A closed panel asks for nothing; opening it refreshes once.
+  useVisibleInterval(() => void reload.current?.(), REFRESH_MS);
   // The window takes the keys, so the first arrow reaches the menu before
   // any item has the focus.
   useEffect(() => {

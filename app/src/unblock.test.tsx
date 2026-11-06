@@ -11,6 +11,7 @@ import {
   type RerunOptions,
   type UpdateOptions,
 } from "./unblock";
+import { ToastProvider } from "./toast";
 
 const entry = (
   patch: Partial<Entry["pull_request"]> = {},
@@ -128,12 +129,17 @@ it("offers Re-run checks only for failing checks to someone who can push", () =>
   expect(canRerunChecks(entry({ state: "MERGED" }))).toBe(false);
 });
 
-it("confirms an update with the branches named, then sends the head the page showed", async () => {
+it("confirms an update with the branches named, sends the head the page showed and says so in a toast", async () => {
   optionsAnswer = updateOptions;
   writeAnswer = Response.json({ updating: true });
   const updated = vi.fn(async () => {});
+  const close = vi.fn();
   await act(async () =>
-    root.render(<UpdateBranchDialog entry={entry()} close={() => {}} updated={updated} />),
+    root.render(
+      <ToastProvider>
+        <UpdateBranchDialog entry={entry()} close={close} updated={updated} />
+      </ToastProvider>,
+    ),
   );
   expect(node.textContent).toContain("merge main into feature");
   await act(async () => button("Update branch").click());
@@ -144,10 +150,11 @@ it("confirms an update with the branches named, then sends the head the page sho
     },
   ]);
   expect(updated).toHaveBeenCalledOnce();
-  expect(node.textContent).toContain("GitHub accepted the update");
-  expect(button("Close")).toBeTruthy();
-  expect(document.activeElement).toBe(button("Close"));
-  expect(node.textContent).not.toContain("Cancel");
+  expect(close).toHaveBeenCalledOnce();
+  const toast = node.querySelector(".local-toast")!;
+  expect(toast.textContent).toContain("Branch update started on GitHub");
+  expect(toast.textContent).toContain("acme/demo #7");
+  expect(button("Open on GitHub")).toBeTruthy();
 });
 
 it("confirms from the keyboard with Enter, with no Tab needed", async () => {
