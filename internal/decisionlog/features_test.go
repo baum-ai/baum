@@ -226,6 +226,30 @@ func TestFeatureSyncAndIndex(t *testing.T) {
 	if head, _ := s.pathsAt(t, 7); head != "" {
 		t.Fatal("unknown paths are not retried")
 	}
+	// Nothing it reads changed, so the next re-link reads no session: the
+	// links stay and its time is recorded. A session written since is read.
+	c.now = c.now.Add(time.Minute)
+	if indexed, err = w.Index(ctx, linktest.Repository, f.Repo, nil, true); err != nil || !indexed.Unchanged || indexed.Commits != 0 {
+		t.Fatalf("unchanged re-link = %+v, %v", indexed, err)
+	}
+	var relinked int64
+	if err := s.db.QueryRow(`SELECT relinked_at FROM pull_sync WHERE repository=?`, linktest.Repository).Scan(&relinked); err != nil || relinked != c.now.UnixMilli() {
+		t.Fatalf("relinked at %d, %v", relinked, err)
+	}
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM session_commit`).Scan(&linked); err != nil || linked != 1 {
+		t.Fatalf("%d links after an unchanged re-link, %v", linked, err)
+	}
+	transcripts, err := filepath.Glob(filepath.Join(f.Store.ClaudeProjectsDir, "*", linktest.SessionID+".jsonl"))
+	if err != nil || len(transcripts) != 1 {
+		t.Fatalf("transcripts %v, %v", transcripts, err)
+	}
+	written := time.Now().Add(time.Hour)
+	if err := os.Chtimes(transcripts[0], written, written); err != nil {
+		t.Fatal(err)
+	}
+	if indexed, err = w.Index(ctx, linktest.Repository, f.Repo, nil, true); err != nil || indexed.Unchanged || indexed.Commits != 3 || indexed.Links != 1 {
+		t.Fatalf("re-link after a session was written = %+v, %v", indexed, err)
+	}
 
 	// The session's decisions go to pull request 5's feature once the
 	// session was captured.

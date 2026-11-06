@@ -2,6 +2,8 @@ package decisionlog
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,6 +14,7 @@ import (
 	"time"
 
 	"github.com/baum-ai/baum/bundle"
+	"github.com/baum-ai/baum/internal/commitattribution"
 	"github.com/baum-ai/baum/internal/config"
 	"github.com/baum-ai/baum/internal/generate"
 	"github.com/baum-ai/baum/internal/github"
@@ -63,16 +66,18 @@ type FeatureWorker struct {
 	redactor *bundle.Redactor
 	initErr  error
 	// mu guards windowLinked, each repository's last re-link of the session
-	// window, and retryAt, when a failed repository is tried again: a first
-	// build indexes from a job's goroutine while Run's goroutine does.
+	// window, linked, what its last re-link read, and retryAt, when a failed
+	// repository is tried again: a first build indexes from a job's goroutine
+	// while Run's goroutine does.
 	mu                    sync.Mutex
 	windowLinked, retryAt map[string]time.Time
+	linked                map[string]string
 }
 
 func (w *FeatureWorker) init() {
 	w.once.Do(func() {
 		w.wake = make(chan struct{}, 1)
-		w.windowLinked, w.retryAt = map[string]time.Time{}, map[string]time.Time{}
+		w.windowLinked, w.retryAt, w.linked = map[string]time.Time{}, map[string]time.Time{}, map[string]string{}
 		w.redactor, w.initErr = bundle.NewRedactor()
 	})
 }
@@ -429,6 +434,8 @@ type IndexReport struct {
 	Commits    int    `json:"commits_linked"`
 	Links      int    `json:"links"`
 	Sessions   int    `json:"sessions"`
+	// Unchanged is a re-link skipped: what it reads is as at the last one.
+	Unchanged bool `json:"unchanged,omitempty"`
 }
 
 // agents names the live session agent of each session vendor, as
@@ -443,7 +450,9 @@ var agents = map[string]string{
 // links: the fresh commits Sync recorded within FeatureLookback; every
 // FeatureQuiet, the commits within the session window of now, which
 // sessions still running may yet link to; and every FeatureRelinkEvery, or
-// with full, every commit within FeatureLookback.
+// with full, every commit within FeatureLookback. A re-link without fresh
+// commits whose commits, sessions and observed commit creations are as at the
+// repository's last one would link the same: it reads no session.
 func (w *FeatureWorker) Index(ctx context.Context, repository, dir string, fresh []gitlocal.Commit, full bool) (IndexReport, error) {
 	w.init()
 	report := IndexReport{Repository: repository}
@@ -517,6 +526,24 @@ func (w *FeatureWorker) Index(ctx context.Context, repository, dir string, fresh
 		shas = append(shas, sha)
 	}
 	slices.SortFunc(list, func(a, b gitlocal.Commit) int { return strings.Compare(a.OID, b.OID) })
+	inputs := ""
+	if len(fresh) == 0 {
+		inputs = linkInputs(ctx, dir, list, w.Sessions, lookback)
+	}
+	w.mu.Lock()
+	report.Unchanged = inputs != "" && inputs == w.linked[repository]
+	w.mu.Unlock()
+	if report.Unchanged {
+		if full {
+			if err := w.Store.ReplaceSessionCommits(ctx, repository, nil, nil, now); err != nil {
+				return report, err
+			}
+		}
+		if window {
+			w.linkedWindow(repository, now)
+		}
+		return report, nil
+	}
 	links, err := locallink.LinkCommits(ctx, dir, list, locallink.LinkOptions{Repository: repository, Sessions: w.Sessions})
 	if err != nil {
 		return report, err
@@ -538,11 +565,58 @@ func (w *FeatureWorker) Index(ctx context.Context, repository, dir string, fresh
 	if err := w.Store.ReplaceSessionCommits(ctx, repository, shas, rows, relinked); err != nil {
 		return report, err
 	}
+	w.mu.Lock()
+	w.linked[repository] = inputs
+	w.mu.Unlock()
 	if window {
 		w.linkedWindow(repository, now)
 	}
 	report.Commits, report.Links, report.Sessions = len(list), len(rows), len(linked)
 	return report, nil
+}
+
+// linkInputs describes what LinkCommits reads for the commits, which were
+// made since: the commits, the session stores from the session window before
+// since (sessions.Discovery's fingerprint) and the commits' observed creations
+// under each repository the clone's remotes name. It is empty when something
+// cannot be described.
+func linkInputs(ctx context.Context, dir string, commits []gitlocal.Commit, opts sessions.Options, since time.Time) string {
+	if from := since.Add(-locallink.SessionWindow); opts.Since.Before(from) {
+		opts.Since = from
+	}
+	d, err := sessions.Discover(ctx, dir, opts)
+	if err != nil {
+		return ""
+	}
+	discovered, ok := d.Fingerprint()
+	if !ok {
+		return ""
+	}
+	clone, err := gitlocal.Open(ctx, dir, gitlocal.Options{})
+	if err != nil {
+		return ""
+	}
+	remotes, err := clone.RemoteURLs(ctx)
+	_ = clone.Close()
+	if err != nil {
+		return ""
+	}
+	var repositories, shas []string
+	for _, remote := range remotes {
+		if repository, err := github.RepositoryFromRemote(remote.URL); err == nil {
+			repositories = append(repositories, strings.ToLower(repository.String()))
+		}
+	}
+	for _, c := range commits {
+		shas = append(shas, c.OID)
+	}
+	observed, err := (&commitattribution.Store{}).Lookup(ctx, repositories, shas)
+	if err != nil {
+		return ""
+	}
+	h := sha256.New()
+	_, _ = fmt.Fprintf(h, "%s\x00%q\x00%+v", discovered, shas, observed)
+	return hex.EncodeToString(h.Sum(nil))
 }
 
 // linkedWindow records the repository's re-link of the session window.
