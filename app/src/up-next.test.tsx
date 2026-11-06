@@ -5,7 +5,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import example from "../../schema/review-example.json" with { type: "json" };
 import { App } from "./app";
 import type { Entry, Job, LiveSession, ReviewGroup } from "./api";
-import { snoozeOptions, snoozeText, upNext, waitingOn } from "./up-next";
+import { snoozeOptions, snoozeText, upNext, waitingOn, withGroups } from "./up-next";
 import { forgetLastRows } from "./shortcuts";
 
 type Overrides = Partial<Omit<Entry, "pull_request">> & {
@@ -83,7 +83,7 @@ it("keeps a stacked pull request GitHub would merge waiting on the lowest open o
       merge: "ready",
       checks: "passing",
       ...overrides,
-      pull_request: { head_ref: head, base_ref: base },
+      pull_request: { head_ref: head, base_ref: base, ...overrides.pull_request },
     });
   const stack: ReviewGroup = {
     id: "s1",
@@ -101,7 +101,7 @@ it("keeps a stacked pull request GitHub would merge waiting on the lowest open o
   };
   const entries = [
     // The bottom targets main, which wants a review first.
-    stacked(1, "one", "main", { merge: "blocked" }),
+    stacked(1, "one", "main", { merge: "blocked", pull_request: { review_required: true } }),
     stacked(2, "two", "one"),
     stacked(3, "three", "two"),
     // A failing one still needs fixing, whatever lies under it.
@@ -299,6 +299,63 @@ const render = async () => {
 };
 const panel = () => node.querySelector("article.upnext-panel")!;
 const shown = () => panel().querySelector("h2")!.textContent;
+
+it("distinguishes a GitHub blocker from a required review without requiring approvals to merge", async () => {
+  entries = [
+    mine(1130, {
+      merge: "blocked",
+      checks: "passing",
+      review: "commented",
+      pull_request: { review_required: false },
+    }),
+    mine(1131, {
+      merge: "blocked",
+      checks: "passing",
+      review: "commented",
+      pull_request: { review_required: true },
+    }),
+    mine(1132, { merge: "ready", checks: "passing", review: "unreviewed" }),
+    // An older snapshot has no review-required signal, so its blocker is unknown.
+    mine(1133, { merge: "blocked", checks: "passing", review: "unreviewed" }),
+  ];
+  await render();
+  expect(groups()).toEqual(["Ready to merge · 1", "Waiting · 3"]);
+  expect(row("Change 1130").textContent).toContain("Blocked on GitHub");
+  expect(row("Change 1131").textContent).toContain("Waiting on review");
+  expect(upNext(entries).items.map(({ kind, entry }) => [kind, entry.pull_request.number])).toEqual(
+    [["merge", 1132]],
+  );
+  expect(row("Change 1133").textContent).toContain("Blocked on GitHub");
+  await act(async () => row("Change 1130").click());
+  expect(panel().querySelector(".upnext-chip-waiting")?.textContent).toBe("Blocked on GitHub");
+  expect(panel().querySelector('[aria-label="Why this is waiting"]')).toBeNull();
+  const github = Array.from(panel().querySelectorAll(".upnext-block")).find(
+    (block) => block.querySelector("h3")?.textContent === "On GitHub",
+  )!;
+  expect(github.textContent).toContain("Merge blocked by GitHub");
+  expect(github.textContent).toContain("GitHub has not supplied the reason.");
+  expect(
+    panel().querySelector('.upnext-actions a[href="https://github.com/acme/demo/pull/1130"]')
+      ?.textContent,
+  ).toBe("Open on GitHub");
+});
+
+it.each<Overrides>([
+  { merge: "blocked", checks: "running" },
+  { merge: "blocked", checks: "failing" },
+  { merge: "conflict" },
+  { merge: "blocked", pull_request: { review_required: true } },
+  { merge: "blocked", review: "changes_requested" },
+  { merge: "blocked", unresolved: 1 },
+  { merge: "blocked", pull_request: { behind: true } },
+])("keeps the existing explanation for a known blocker: %j", async (state) => {
+  entries = [mine(1, state)];
+  await render();
+  if (!panel()) await act(async () => row("Change 1").click());
+  expect(panel().textContent).not.toContain("Merge blocked by GitHub");
+  expect(panel().querySelector('[aria-label="Why this is waiting"]')).toBeNull();
+});
+
 const list = () =>
   Array.from(node.querySelectorAll(".upnext-row-title")).map((title) => title.textContent);
 // A heading's name and count, as "Ready to merge · 2".
@@ -342,7 +399,7 @@ it("groups what waits on the person and opens on the first", async () => {
     "Needs your eyes · 1",
     "Ready to merge · 2",
     "Hand to an agent · 1",
-    "Waiting on checks or reviews · 1",
+    "Waiting · 1",
   ]);
   // The person's own pull requests that wait on others come last.
   expect(list()).toEqual(["Change 1", "Change 3", "Change 4", "Change 2", "Change 5"]);
@@ -708,7 +765,7 @@ it("waits on checks that run before calling a pull request ready to merge", asyn
     "Needs your eyes · 1",
     "Ready to merge · 1",
     "Hand to an agent · 1",
-    "Waiting on checks or reviews · 2",
+    "Waiting · 2",
   ]);
 });
 
@@ -1145,7 +1202,7 @@ it("opens an unresolved thread to its whole conversation", async () => {
   ]);
 });
 
-it("lists a review group as one row that opens to its members", async () => {
+it("places a stack by its first shown open member and opens to its members", async () => {
   entries = [ready(3), mine(2, { checks: "failing" }), requested(1), ready(4)];
   const original = vi.mocked(fetch).getMockImplementation()!;
   vi.mocked(fetch).mockImplementation(async (...args) =>
@@ -1171,10 +1228,10 @@ it("lists a review group as one row that opens to its members", async () => {
       : original(...args),
   );
   await render();
-  // The group sits where its first member in the list would be, under Ready
-  // to merge, and its members leave their own rows.
-  expect(groups()).toEqual(["Needs your eyes · 1", "Ready to merge · 3"]);
-  expect(list()).toEqual(["Change 1", "Payments stack", "Change 4"]);
+  // The stack follows #2's failing checks, even though #3 is ready to merge.
+  expect(groups()).toEqual(["Needs your eyes · 1", "Ready to merge · 1", "Hand to an agent · 2"]);
+  expect(list()).toEqual(["Change 1", "Change 4", "Payments stack"]);
+  await press("j");
   await press("j");
   expect(shown()).toBe("Payments stack");
   expect(panel().textContent).toContain("There is no group review yet");
@@ -1187,18 +1244,59 @@ it("lists a review group as one row that opens to its members", async () => {
   expect(node.textContent).not.toContain("Merge all");
   // Space opens the group, and from a member closes it again, back on the group.
   await press(" ");
-  expect(list()).toEqual(["Change 1", "Payments stack", "Change 2", "Change 3", "Change 4"]);
+  expect(list()).toEqual(["Change 1", "Change 4", "Payments stack", "Change 2", "Change 3"]);
   await press("j");
   expect(shown()).toBe("Change 2");
   await press(" ");
   expect(shown()).toBe("Payments stack");
-  expect(list()).toEqual(["Change 1", "Payments stack", "Change 4"]);
+  expect(list()).toEqual(["Change 1", "Change 4", "Payments stack"]);
   // On the group itself it opens and closes it.
   await press(" ");
-  expect(list()).toEqual(["Change 1", "Payments stack", "Change 2", "Change 3", "Change 4"]);
+  expect(list()).toEqual(["Change 1", "Change 4", "Payments stack", "Change 2", "Change 3"]);
   await press(" ");
-  expect(list()).toEqual(["Change 1", "Payments stack", "Change 4"]);
+  expect(list()).toEqual(["Change 1", "Change 4", "Payments stack"]);
 });
+
+it.each([
+  [true, "review", "merge", true, "review"],
+  [true, "waiting", "agent", true, "waiting"],
+  [true, "merge", "agent", true, "merge"],
+  [true, "agent", "merge", true, "agent"],
+  [true, "agent", "waiting", true, "agent"],
+  [false, "waiting", "merge", true, "merge"],
+  [true, "waiting", "agent", false, "agent"],
+] as const)(
+  "places stack=%s, first=%s, later=%s, first visible=%s in %s",
+  (stack, first, later, visible, expected) => {
+    const firstRow = { key: "first", entry: mine(1), waiting: first === "waiting" };
+    const laterRow = { key: "later", entry: mine(2), waiting: later === "waiting" };
+    const sections = ["review", "merge", "agent", "waiting"].map((id) => ({
+      id,
+      rows: [...(visible && id === first ? [firstRow] : []), ...(id === later ? [laterRow] : [])],
+    }));
+    const group: ReviewGroup = {
+      id: "stack",
+      repository: "acme/demo",
+      name: "Stack",
+      members: [1, 2],
+      stack,
+      created_at: "",
+      updated_at: "",
+      version_count: 0,
+      latest: null,
+      risk_score: null,
+      reviewed: [],
+      outdated: false,
+    };
+    const placed = withGroups(sections, [group]);
+    expect(placed.flatMap(({ id, lines }) => lines.map((line) => [id, line.key]))).toEqual([
+      [expected, "group:stack"],
+    ]);
+    const line = placed.flatMap(({ lines }) => lines)[0]!;
+    if (!("members" in line)) throw Error("expected a grouped row");
+    expect(line.members.map(({ key }) => key)).toEqual(visible ? ["first", "later"] : ["later"]);
+  },
+);
 
 it.each(["1 hour", "Until it changes"])(
   "hides a stack when every member is snoozed for %s, including one waiting on its base",

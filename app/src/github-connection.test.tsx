@@ -142,7 +142,7 @@ it("keeps the effective override distinct from the saved account on disconnect",
 it.each([
   ["credential_store_unavailable", "Unlock your operating system"],
   ["reconnect_required", "expired or was revoked"],
-  ["insufficient_scopes", "repository and organization read access"],
+  ["insufficient_scopes", "repository, organization read and workflow access"],
   ["sso_required", "GitHub SSO"],
   ["permission_denied", "repository access"],
   ["auth_request_failed", "Check your connection"],

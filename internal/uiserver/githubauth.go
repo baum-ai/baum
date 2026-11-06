@@ -79,7 +79,7 @@ func (a *GitHubAuthentication) setError(err error) {
 	case errors.Is(err, githubauth.ErrReconnect):
 		a.status.Error, a.status.Message = "reconnect_required", "Reconnect GitHub; authorization expired or was revoked."
 	case errors.Is(err, githubauth.ErrScopes):
-		a.status.Error, a.status.Message = "insufficient_scopes", "GitHub authorization requires repository and organization read access."
+		a.status.Error, a.status.Message = "insufficient_scopes", "GitHub authorization requires repository, organization read and workflow access. Reconnect and grant all three permissions."
 	case errors.Is(err, githubauth.ErrSSO):
 		a.status.Error, a.status.Message = "sso_required", "Authorize baum for your organization's GitHub SSO and try again."
 	case errors.Is(err, githubauth.ErrPermissions):

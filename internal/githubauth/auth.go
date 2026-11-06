@@ -17,13 +17,13 @@ import (
 )
 
 const ClientID = "Ov23liFSMjrhof9WQlOi"
-const Scopes = "repo read:org"
+const Scopes = "repo read:org workflow"
 
 var ErrNotConnected = errors.New("GitHub is not connected")
 var ErrStore = errors.New("GitHub credential store unavailable; unlock your operating system credential store and try again")
 var ErrRequest = errors.New("GitHub authentication request failed; try again")
 var ErrReconnect = errors.New("GitHub authorization expired or was revoked; reconnect GitHub")
-var ErrScopes = errors.New("GitHub authorization requires repo and read:org access")
+var ErrScopes = errors.New("GitHub authorization requires repo, read:org and workflow access")
 var ErrSSO = errors.New("authorize baum for your organization's GitHub SSO and retry")
 var ErrPermissions = errors.New("check repository access and GitHub authorization permissions")
 
@@ -274,7 +274,7 @@ func (m *Manager) validate(ctx context.Context, r tokenResponse) (Credential, er
 	for _, s := range strings.Split(h.Get("X-OAuth-Scopes"), ",") {
 		scopes[strings.TrimSpace(s)] = true
 	}
-	if !scopes["repo"] || (!scopes["read:org"] && !scopes["write:org"] && !scopes["admin:org"]) {
+	if !scopes["repo"] || !scopes["workflow"] || (!scopes["read:org"] && !scopes["write:org"] && !scopes["admin:org"]) {
 		return Credential{}, ErrScopes
 	}
 	if user.Login == "" || user.ID <= 0 {

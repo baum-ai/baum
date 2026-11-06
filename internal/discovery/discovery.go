@@ -68,8 +68,11 @@ type PullRequest struct {
 	// must not be interpreted as proof that no team requested this viewer.
 	TeamMembershipKnown bool   `json:"team_membership_known"`
 	Review              string `json:"review"`
-	Checks              string `json:"checks"`
-	Merge               string `json:"merge"`
+	// ReviewRequired is true only when GitHub's reviewDecision is REVIEW_REQUIRED;
+	// nil means an older snapshot did not retain the requirement.
+	ReviewRequired *bool  `json:"review_required,omitempty"`
+	Checks         string `json:"checks"`
+	Merge          string `json:"merge"`
 	// Behind is GitHub's report (mergeStateStatus BEHIND) that the head
 	// branch is out of date with its base and not conflicting, which Update
 	// branch fixes. A draft never reports it.
@@ -658,6 +661,7 @@ func (p *poll) discover(ctx context.Context, repository github.Repository) (Snap
 		item.AuthorHasWrite = permission
 		item.ViewerCanPush = canPush
 		item.Review, item.Checks, item.Merge, item.Unresolved, item.UnresolvedCapped = row.states()
+		item.ReviewRequired = new(row.ReviewDecision != nil && *row.ReviewDecision == "REVIEW_REQUIRED")
 		item.Behind = row.behind()
 		if old, ok := p.carried[pr.Number]; ok {
 			item.Merge, item.Behind = old.Merge, old.Behind

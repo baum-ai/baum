@@ -82,10 +82,10 @@ func TestGraphQLPaginationEndpointsStatesAndIndependentBudgets(t *testing.T) {
 				t.Fatalf("snapshot=%+v calls=%d err=%v", got, calls, err)
 			}
 			first, second := got.PullRequests[0], got.PullRequests[1]
-			if first.Review != "approved" || first.Checks != "passing" || first.Merge != "ready" || first.Unresolved == nil || *first.Unresolved != 2 || !first.UnresolvedCapped {
+			if first.Review != "approved" || first.ReviewRequired == nil || *first.ReviewRequired || first.Checks != "passing" || first.Merge != "ready" || first.Unresolved == nil || *first.Unresolved != 2 || !first.UnresolvedCapped {
 				t.Fatalf("first=%+v", first)
 			}
-			if second.Review != "commented" || second.Checks != "none" || second.Merge != "draft" || second.Unresolved == nil || *second.Unresolved != 0 || second.UnresolvedCapped {
+			if second.Review != "commented" || second.ReviewRequired == nil || !*second.ReviewRequired || second.Checks != "none" || second.Merge != "draft" || second.Unresolved == nil || *second.Unresolved != 0 || second.UnresolvedCapped {
 				t.Fatalf("second=%+v", second)
 			}
 			if got.Rate.Cost == nil || *got.Rate.Cost != 2 || got.Rate.Remaining == nil || *got.Rate.Remaining != 4998 || !got.Rate.Reset.Equal(reset) {
@@ -144,6 +144,48 @@ func TestGraphQLStateMappingsAndUnknown(t *testing.T) {
 				t.Fatalf("states=%s,%s,%s,%v,%t", review, checks, merge, count, capped)
 			}
 		})
+	}
+}
+
+func TestReviewRequiredIsIndependentOfRecordedReviews(t *testing.T) {
+	for _, decision := range []string{`null`, `"REVIEW_REQUIRED"`, `"APPROVED"`} {
+		t.Run(decision, func(t *testing.T) {
+			client := github.New(func(context.Context, string) (string, error) { return "synthetic", nil }, github.Options{Transport: roundTrip(func(r *http.Request) (*http.Response, error) {
+				body := `[]`
+				if r.Method == http.MethodPost {
+					body = fmt.Sprintf(`{"data":{"viewer":{"login":"viewer"},"repository":{"pullRequests":{"nodes":[{"number":1130,"headRefOid":"head","reviewDecision":%s,"latestOpinionatedReviews":{"nodes":[{"state":"COMMENTED"}]},"mergeStateStatus":"BLOCKED"}]}}}}`, decision)
+				}
+				return &http.Response{StatusCode: 200, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(body))}, nil
+			})})
+			service := New(client, appdbtest.TempDir(t))
+			repo := github.Repository{Host: "github.com", Owner: "acme", Name: "app"}
+			snapshot, err := service.PollNow(context.Background(), repo)
+			if err != nil || len(snapshot.PullRequests) != 1 {
+				t.Fatalf("snapshot=%+v err=%v", snapshot, err)
+			}
+			pr := snapshot.PullRequests[0]
+			if pr.ReviewRequired == nil || *pr.ReviewRequired != (decision == `"REVIEW_REQUIRED"`) || pr.Merge != "blocked" {
+				t.Fatalf("PR=%+v", pr)
+			}
+			cached, err := service.Cached(context.Background(), repo)
+			if err != nil || len(cached.PullRequests) != 1 || cached.PullRequests[0].ReviewRequired == nil || *cached.PullRequests[0].ReviewRequired != *pr.ReviewRequired {
+				t.Fatalf("cached=%+v err=%v", cached, err)
+			}
+		})
+	}
+}
+
+func TestOlderSnapshotDoesNotInventReviewRequirement(t *testing.T) {
+	var pr PullRequest
+	if err := json.Unmarshal([]byte(`{"review":"commented","merge":"blocked"}`), &pr); err != nil {
+		t.Fatal(err)
+	}
+	data, err := json.Marshal(pr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pr.ReviewRequired != nil || strings.Contains(string(data), `"review_required"`) {
+		t.Fatalf("older snapshot invented a review requirement: %s", data)
 	}
 }
 

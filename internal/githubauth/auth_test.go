@@ -49,7 +49,7 @@ func fixture(t *testing.T) (*Manager, *memoryStore, *time.Time, *string, *int) {
 				t.Error(err)
 				return
 			}
-			if r.Form.Get("scope") != Scopes {
+			if r.Form.Get("scope") != "repo read:org workflow" {
 				t.Error("missing scopes")
 			}
 			if _, err := fmt.Fprint(w, `{"device_code":"secret-device","user_code":"ABCD-EFGH","verification_uri":"https://github.com/login/device","expires_in":900,"interval":5}`); err != nil {
@@ -71,7 +71,7 @@ func fixture(t *testing.T) (*Manager, *memoryStore, *time.Time, *string, *int) {
 			if r.Header.Get("Authorization") == "" {
 				t.Error("missing token")
 			}
-			w.Header().Set("X-OAuth-Scopes", "read:org, repo")
+			w.Header().Set("X-OAuth-Scopes", "read:org, repo, workflow")
 			if _, err := fmt.Fprint(w, `{"login":"octocat","id":1}`); err != nil {
 				t.Error(err)
 			}
@@ -243,7 +243,7 @@ type writeFailure struct{ *memoryStore }
 func (writeFailure) Save(context.Context, Credential) error {
 	return errors.New("secret upstream store detail")
 }
-func TestScopeAndMalformedTokenRejected(t *testing.T) {
+func TestMalformedTokenRejected(t *testing.T) {
 	for _, reply := range []string{`{"access_token":"secret","token_type":"bearer","expires_in":9223372036854775807}`, `{"access_token":"secret","token_type":"unknown"}`, `{"access_token":"secret","token_type":"bearer","expires_in":1}`} {
 		m, _, _, _, _ := fixture(t)
 		var r tokenResponse
@@ -254,17 +254,45 @@ func TestScopeAndMalformedTokenRejected(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	m, _, _, _, _ := fixture(t)
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("X-OAuth-Scopes", "repo")
-		if _, err := fmt.Fprint(w, `{"login":"octocat","id":1}`); err != nil {
-			t.Error(err)
-		}
-	}))
-	defer srv.Close()
-	m.api = srv.URL
-	if _, err := m.validate(context.Background(), tokenResponse{Access: "token", TokenType: "bearer", Refresh: "refresh", Expires: 3600, RefreshExpires: 7200}); !errors.Is(err, ErrScopes) {
-		t.Fatal(err)
+}
+
+func TestRequiredScopesBeforeSavingGrant(t *testing.T) {
+	for _, c := range []struct {
+		scopes string
+		valid  bool
+	}{
+		{"repo, read:org, workflow", true},
+		{"repo, write:org, workflow", true},
+		{"repo, admin:org, workflow", true},
+		{"repo, read:org", false},
+		{"repo, workflow", false},
+		{"read:org, workflow", false},
+	} {
+		t.Run(c.scopes, func(t *testing.T) {
+			m, store, now, reply, _ := fixture(t)
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("X-OAuth-Scopes", c.scopes)
+				if _, err := fmt.Fprint(w, `{"login":"octocat","id":1}`); err != nil {
+					t.Error(err)
+				}
+			}))
+			defer srv.Close()
+			m.api = srv.URL
+			device, err := m.Start(context.Background())
+			if err != nil {
+				t.Fatal(err)
+			}
+			*now = now.Add(5 * time.Second)
+			*reply = `{"access_token":"secret-access","token_type":"bearer"}`
+			status, err := m.Poll(context.Background(), device.ID)
+			if c.valid {
+				if err != nil || status.State != "connected" || store.saves != 1 {
+					t.Fatalf("status=%+v err=%v saves=%d", status, err, store.saves)
+				}
+			} else if !errors.Is(err, ErrScopes) || store.saves != 0 {
+				t.Fatalf("err=%v saves=%d; want insufficient scopes and no saved grant", err, store.saves)
+			}
+		})
 	}
 }
 func TestSafeUpstreamErrors(t *testing.T) {

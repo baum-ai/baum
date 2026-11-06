@@ -164,8 +164,11 @@ func (c *Client) MergePullRequest(ctx context.Context, repository Repository, nu
 // mergeError words one GraphQL error. GitHub's messages are for developers, so
 // only the recognized causes are rephrased; others are quoted.
 func mergeError(kind, message string) error {
+	message = strings.TrimSpace(message)
 	lower := strings.ToLower(message)
 	switch {
+	case strings.Contains(lower, "without `workflow` scope") || strings.Contains(lower, "without 'workflow' scope"):
+		return &MergeError{MergeForbidden, "This pull request changes GitHub Actions workflows, but the current GitHub connection is missing the workflow scope. Grant workflow access to this connection or merge on GitHub. GitHub says: " + message}
 	case strings.Contains(lower, "head branch was modified") || strings.Contains(lower, "expected head"):
 		return &MergeError{MergeHeadMoved, "The pull request changed since you opened it. Review the new commits and try again."}
 	case strings.Contains(lower, "conflict") || strings.Contains(lower, "not mergeable"):
@@ -173,16 +176,20 @@ func mergeError(kind, message string) error {
 	case strings.Contains(lower, "status check") || strings.Contains(lower, "checks"):
 		return &MergeError{MergeBlocked, "Required checks have not passed yet. Wait for them, then try again."}
 	case strings.Contains(lower, "review") || strings.Contains(lower, "protect") || strings.Contains(lower, "policy"):
-		return &MergeError{MergeBlocked, "The base branch's protection rules do not allow this merge yet: " + strings.TrimSpace(message)}
+		return &MergeError{MergeBlocked, "The base branch's protection rules do not allow this merge yet: " + message}
 	case kind == "FORBIDDEN" || strings.Contains(lower, "permission") || strings.Contains(lower, "not authorized"):
-		return &MergeError{MergeForbidden, "Your GitHub account is not allowed to merge this pull request."}
+		explanation := "GitHub refused the merge with the current connection. Check its repository permissions and authorization scopes."
+		if message != "" {
+			explanation += " GitHub says: " + message
+		}
+		return &MergeError{MergeForbidden, explanation}
 	case strings.Contains(lower, "not allowed") || strings.Contains(lower, "merge method"):
 		return &MergeError{MergeMethod, "This repository does not allow that merge method."}
 	case kind == "NOT_FOUND":
 		return &MergeError{MergeFailed, "GitHub could not find this pull request."}
 	}
-	if strings.TrimSpace(message) == "" {
+	if message == "" {
 		return &MergeError{MergeFailed, "GitHub refused the merge."}
 	}
-	return &MergeError{MergeFailed, "GitHub refused the merge: " + strings.TrimSpace(message)}
+	return &MergeError{MergeFailed, "GitHub refused the merge: " + message}
 }

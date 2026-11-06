@@ -51,6 +51,8 @@ export type PR = GitHubState & {
   fork: boolean;
   authored_by_me: boolean;
   review_requested_from_me: boolean;
+  /** GitHub explicitly requires another review; absent in older snapshots. */
+  review_required?: boolean;
   /** The person is among its first 20 assignees; absent in data from an older daemon. */
   assigned_to_me?: boolean;
   author_has_write: boolean | null;

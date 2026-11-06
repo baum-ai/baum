@@ -6,7 +6,7 @@ export const messages: Record<string, string> = {
   credential_store_unavailable: "Unlock your operating system credential store, then try again.",
   reconnect_required: "GitHub authorization expired or was revoked. Reconnect GitHub.",
   insufficient_scopes:
-    "GitHub needs repository and organization read access. Reconnect and grant both permissions.",
+    "GitHub needs repository, organization read and workflow access. Reconnect and grant all three permissions.",
   sso_required:
     "Authorize baum for your organization's GitHub SSO, then check the connection again.",
   permission_denied: "Check your repository access and GitHub authorization permissions.",

@@ -152,7 +152,7 @@ export function GitHubStep({ onConnected }: { onConnected: (connected: boolean) 
                 hour: "2-digit",
                 minute: "2-digit",
               })}
-              . Grant repository and organization read access.
+              . Grant repository, organization read and workflow access.
             </p>
           </div>
         )}

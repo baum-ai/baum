@@ -250,8 +250,11 @@ be read show beneath them. **Start the review** opens the tour, `?…&walk=tour`
 clears `walk`; the retired `walk=full` also opens the full review.
 
 Up next's list shows a review group or stack (`api/groups`) with a shown member
-as one row, in the section and at the place of its first member in the list
-(`withGroups` in `src/up-next.tsx`); its members leave their own rows and nest
+as one row (`withGroups` in `src/up-next.tsx`). A stack takes the section and
+position of its first shown open member in base-to-tip order, so a later
+member needing a fix does not move a stack whose first member is waiting.
+Other review groups take the section and position of their first member in
+the action list. The members leave their own rows and nest
 under it when it is opened (its chevron, or `Space`, which opens or closes it
 from the group and closes it from a member, back on the group). Each member says what it waits on, since it may belong to another
 section: what needs fixing ("Checks failing · Conflicts", "2 unresolved
@@ -843,8 +846,16 @@ on, each with the loader and the fix's phase). Within Review a saved review
 ready to read comes before one being written, then the riskier first;
 otherwise the lower number first. Each pull request appears once, whatever
 clones hold it. Their own pull requests with nothing to do (drafts, and those
-waiting on reviewers or checks) are counted at the foot of the list and linked
-to Pull requests; everyone else's are only there.
+waiting on reviewers, checks or another GitHub blocker) appear in **Waiting**.
+The chip says **Waiting on review** only when GitHub explicitly requires one;
+the absence of an approval is not a review requirement. With no known checks,
+review or stack to wait on, a blocked merge says **Blocked on GitHub** without
+guessing the cause. Older snapshots without the review requirement keep that
+neutral explanation. Everyone else's pull requests are only in Pull requests.
+An otherwise unexplained GitHub merge blocker adds **Merge blocked by GitHub**
+under **On GitHub**, saying when GitHub has not supplied the reason. Known
+blockers keep their existing rows and chips. **Open on GitHub** is offered
+beside Open for waiting pull requests.
 
 The list's header counts what is the person's, sums baum's reading estimates
 into minutes (only reviews have one), counts the fixes with agents and what was
@@ -1858,7 +1869,10 @@ when a running session's turn ends, the queued message in its place once
 there is one. `r` focuses it.
 
 GitHub connection is available in Settings' Connections section and the
-desktop setup's first step, which share
+desktop setup's first step. Device sign-in requests repository, organization
+read and workflow access.
+Reconnect an existing connection to grant workflow access after updating baum.
+The desktop setup's GitHub step and Settings share
 `src/github-auth.ts`. Sign in with GitHub starts device authorization through
 the daemon and, in the same click, opens the fixed
 `https://github.com/login/device` page in the browser and copies the code once

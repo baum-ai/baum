@@ -81,9 +81,9 @@ func browserAuthentication(t *testing.T, ctx context.Context, state string, cfg 
 				body = `{"error":"authorization_pending"}`
 			}
 		case "/user":
-			headers.Set("X-OAuth-Scopes", "repo, read:org")
+			headers.Set("X-OAuth-Scopes", "repo, read:org, workflow")
 			if mode() == "scopes" {
-				headers.Set("X-OAuth-Scopes", "read:org")
+				headers.Set("X-OAuth-Scopes", "repo, read:org")
 			}
 			if strings.Contains(r.Header.Get("Authorization"), "bob") {
 				body = `{"id":2,"login":"bob"}`

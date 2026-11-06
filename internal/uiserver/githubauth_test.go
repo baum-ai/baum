@@ -78,7 +78,7 @@ func connectionFixture(t *testing.T, store *connectionStore, token func(*http.Re
 			}
 		case "/user":
 			body = `{"login":"alice","id":1}`
-			header.Set("X-OAuth-Scopes", "repo, read:org")
+			header.Set("X-OAuth-Scopes", "repo, read:org, workflow")
 		default:
 			t.Errorf("unexpected path %s", r.URL.Path)
 		}
