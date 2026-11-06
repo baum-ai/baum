@@ -3811,8 +3811,7 @@ a.local-session-pr:hover {
   flex: none;
 }
 .local-toast-action {
-  flex: none;
-  align-self: center;
+  margin-top: 8px;
 }
 .local-toast-close {
   display: grid;
@@ -7171,6 +7170,99 @@ dialog.review-dialog {
   padding: 0.625rem 0.75rem;
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-md);
+}
+/* The review just sent, which the Comments tab opens on: tinted with its
+   verdict's colour, fading back to the others. */
+.review-sent.fresh {
+  --fresh-border: var(--border-strong);
+  --fresh-background: var(--surface-hover);
+  animation: review-sent-fresh 2.4s ease-out;
+}
+.review-sent.fresh-approve {
+  --fresh-border: var(--status-positive-border);
+  --fresh-background: var(--status-positive-bg);
+}
+.review-sent.fresh-request_changes {
+  --fresh-border: color-mix(in srgb, var(--status-critical) 40%, transparent);
+  --fresh-background: var(--status-critical-bg);
+}
+.review-sent.fresh:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: 2px;
+}
+@keyframes review-sent-fresh {
+  0%,
+  40% {
+    border-color: var(--fresh-border);
+    background: var(--fresh-background);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .review-sent.fresh {
+    animation: none;
+  }
+}
+/* The review button once the reader reviewed from here: green approved,
+   red changes requested, and a comment in the button's own colours. */
+.review-button-approved {
+  border-color: var(--status-positive-border);
+  background: var(--status-positive-bg);
+  color: var(--status-positive);
+}
+.review-button-approved:hover {
+  background: color-mix(in srgb, var(--status-positive-bg) 70%, var(--status-positive) 8%);
+}
+.review-button-changes_requested {
+  border-color: color-mix(in srgb, var(--status-critical) 40%, transparent);
+  background: var(--status-critical-bg);
+  color: var(--status-critical);
+}
+.review-button-changes_requested:hover {
+  background: color-mix(in srgb, var(--status-critical-bg) 70%, var(--status-critical) 8%);
+}
+.review-button-commented .review-state-icon {
+  color: var(--text-tertiary);
+}
+.review-state-icon {
+  flex: none;
+}
+/* The review dialog's word on the verdict already given from here. */
+.review-standing {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0 0 0.75rem;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid var(--status-positive-border);
+  border-radius: var(--radius-md);
+  background: var(--status-positive-bg);
+  color: var(--status-positive);
+  font-size: var(--text-sm);
+}
+.review-standing-commented {
+  border-color: var(--border-subtle);
+  background: var(--surface-sunken, var(--border-subtle));
+  color: var(--text-tertiary);
+}
+.review-standing-changes_requested {
+  border-color: color-mix(in srgb, var(--status-critical) 40%, transparent);
+  background: var(--status-critical-bg);
+  color: var(--status-critical);
+}
+.review-standing span {
+  color: var(--text-primary);
+}
+.review-standing-link {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 0.25rem;
+  color: inherit;
+  font-size: var(--text-xs);
+  font-weight: 500;
+}
+.review-standing-link:hover {
+  text-decoration: underline;
 }
 .review-sent-head {
   display: flex;

@@ -96,6 +96,7 @@ import { RefreshButton, type RefreshRun } from "./shell";
 import { ReviewThreads } from "./threads";
 import { canUpdateBranch, UpdateBranchDialog } from "./unblock";
 import { PRIMARY, SECONDARY, SMALL, SMALL_PRIMARY } from "./action-classes";
+import { useToast } from "./toast";
 import { EVENT_LABELS, ReviewButton, ReviewDialog, usePendingReview } from "./pending-review";
 import { reviewable } from "./pending-review-model";
 import type { ReviewEvent } from "./walkthrough-model";
@@ -1009,7 +1010,6 @@ export function UpNextPage({
     id: number;
     text: string;
     undo?: () => void;
-    link?: string;
   } | null>(null);
   const list = useRef<HTMLDivElement>(null);
   const detail = useRef<HTMLDivElement>(null);
@@ -1703,11 +1703,6 @@ export function UpNextPage({
         {toast ? (
           <div role="status" className="upnext-toast">
             <span>{toast.text}</span>
-            {toast.link ? (
-              <a href={toast.link} target="_blank" rel="noreferrer" className={SMALL}>
-                Open it
-              </a>
-            ) : null}
             {toast.undo ? (
               <button type="button" className={SMALL} onClick={undo}>
                 Undo
@@ -1733,10 +1728,8 @@ export function UpNextPage({
           entry={reviewing.entry}
           event={reviewing.event}
           close={() => setReviewing(null)}
-          sent={(url) => {
-            setToast({ id: Date.now(), text: "Your review is on GitHub", link: url });
-            void changed();
-          }}
+          // The dialog says it landed in the app's toast.
+          sent={() => void changed()}
         />
       ) : null}
       {updating ? (
@@ -2877,6 +2870,7 @@ export function MergeReadyDialog({
   merged: () => Promise<void>;
 }) {
   const dialog = useModal();
+  const toast = useToast();
   const [merges, setMerges] = useState<Merge[]>(() =>
     entries.map((entry) => ({ entry, state: "checking" })),
   );
@@ -2928,6 +2922,8 @@ export function MergeReadyDialog({
   const checking = merges.some((merge) => merge.state === "checking");
   const mergeAll = async () => {
     setRunning(true);
+    let done = 0;
+    let refused = 0;
     for (const [index, merge] of merges.entries()) {
       if (gone.current) break;
       if (merge.state !== "ready" || !merge.options) continue;
@@ -2940,7 +2936,9 @@ export function MergeReadyDialog({
           head_sha: merge.entry.pull_request.head_sha,
         });
         set(index, { state: "merged" });
+        done++;
       } catch (e) {
+        refused++;
         set(index, {
           state: "failed",
           error: e instanceof Error ? e.message : "Local request failed.",
@@ -2949,6 +2947,14 @@ export function MergeReadyDialog({
     }
     setRunning(false);
     setFinished(true);
+    // The dialog lists each; the toast stays in sight once it is closed.
+    toast({
+      title: done
+        ? `Merged ${formatCount(done)} pull request${done === 1 ? "" : "s"} on GitHub`
+        : "Nothing was merged",
+      detail: refused ? `GitHub refused ${formatCount(refused)}; the dialog says why.` : undefined,
+      error: done === 0 && refused > 0,
+    });
     await merged();
   };
   return (

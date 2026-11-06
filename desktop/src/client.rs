@@ -10,7 +10,7 @@
 //! The request is HTTP/1.0 so the daemon sends the body unframed and closes
 //! the connection, which keeps this client to a few lines.
 
-use std::io::{Read, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{SocketAddr, TcpStream};
 use std::time::Duration;
 
@@ -24,6 +24,10 @@ pub const POLL_TIMEOUT: Duration = Duration::from_secs(5);
 pub const DIAGNOSTICS_TIMEOUT: Duration = Duration::from_secs(50);
 /// A plan usage reading may ask Claude's usage endpoint first.
 pub const PLAN_USAGE_TIMEOUT: Duration = Duration::from_secs(20);
+
+/// The daemon pings an idle event stream every 20 s, so a stream silent for
+/// this long is dead and is dropped.
+pub const STREAM_READ_TIMEOUT: Duration = Duration::from_secs(70);
 
 #[derive(Debug)]
 pub struct Response {
@@ -85,6 +89,101 @@ fn parse_response(raw: &[u8]) -> Result<Response, String> {
         status,
         body: raw[split + 4..].to_vec(),
     })
+}
+
+/// What an event stream delivers to its reader.
+#[derive(Debug, PartialEq, Eq)]
+pub enum StreamItem {
+    /// The daemon accepted the stream.
+    Open,
+    /// An event of this kind arrived.
+    Event(String),
+    /// A comment line (the daemon's ping): nothing happened, but it is alive.
+    Ping,
+}
+
+/// Turns the lines of a server-sent event stream into items. Only the event
+/// kind matters to the tray, so data and ids are ignored.
+#[derive(Default)]
+pub struct EventParser {
+    kind: Option<String>,
+}
+
+impl EventParser {
+    /// Feeds one line (without its line ending).
+    pub fn line(&mut self, line: &str) -> Option<StreamItem> {
+        if line.is_empty() {
+            return self.kind.take().map(StreamItem::Event);
+        }
+        if line.starts_with(':') {
+            return Some(StreamItem::Ping);
+        }
+        let (field, value) = line.split_once(':').unwrap_or((line, ""));
+        if field == "event" {
+            self.kind = Some(value.strip_prefix(' ').unwrap_or(value).to_string());
+        }
+        None
+    }
+}
+
+/// Reads the daemon's event stream until it ends, errors or `on_item`
+/// returns false. The request is HTTP/1.0, so the body is unframed.
+pub fn stream_events(
+    launch: &Launch,
+    timeout: Duration,
+    mut on_item: impl FnMut(StreamItem) -> bool,
+) -> Result<(), String> {
+    let (Some(host), Some(port)) = (launch.url.host_str(), launch.url.port()) else {
+        return Err("the daemon's address is unusable".into());
+    };
+    let addr: SocketAddr = format!("{host}:{port}")
+        .parse()
+        .map_err(|_| "the daemon's address is unusable".to_string())?;
+    let head = format!(
+        "GET /api/events HTTP/1.0\r\nHost: {host}:{port}\r\nAuthorization: Bearer {}\r\nAccept: text/event-stream\r\n\r\n",
+        launch.bearer()
+    );
+    let io = |e: std::io::Error| format!("cannot reach the baum daemon: {e}");
+    let mut stream = TcpStream::connect_timeout(&addr, POLL_TIMEOUT).map_err(io)?;
+    stream.set_read_timeout(Some(timeout)).map_err(io)?;
+    stream.set_write_timeout(Some(POLL_TIMEOUT)).map_err(io)?;
+    stream.write_all(head.as_bytes()).map_err(io)?;
+    let mut reader = BufReader::new(stream);
+    let mut line = String::new();
+    reader.read_line(&mut line).map_err(io)?;
+    let status: u16 = line
+        .split(' ')
+        .nth(1)
+        .and_then(|s| s.trim().parse().ok())
+        .ok_or("the baum daemon sent an unreadable response")?;
+    if status != 200 {
+        return Err(format!("/api/events answered {status}"));
+    }
+    loop {
+        line.clear();
+        if reader.read_line(&mut line).map_err(io)? == 0 {
+            return Err("the event stream ended".into());
+        }
+        if line.trim_end_matches(['\r', '\n']).is_empty() {
+            break;
+        }
+    }
+    if !on_item(StreamItem::Open) {
+        return Ok(());
+    }
+    let mut parser = EventParser::default();
+    loop {
+        line.clear();
+        if reader.read_line(&mut line).map_err(io)? == 0 {
+            return Err("the event stream ended".into());
+        }
+        let text = line.trim_end_matches(['\r', '\n']);
+        if let Some(item) = parser.line(text)
+            && !on_item(item)
+        {
+            return Ok(());
+        }
+    }
 }
 
 fn get(launch: &Launch, path: &str, timeout: Duration) -> Result<Vec<u8>, String> {
@@ -217,6 +316,64 @@ mod tests {
         assert!(head.starts_with("GET /api/jobs HTTP/1.0\r\n"), "{head}");
         assert!(head.contains("Authorization: Bearer "), "{head}");
         assert!(!head.contains("Origin:"), "{head}");
+    }
+
+    #[test]
+    fn the_parser_yields_event_kinds_and_pings() {
+        let mut parser = EventParser::default();
+        let lines = [
+            ": connected",
+            "",
+            "id: 4",
+            "event: progress",
+            "data: {\"a\":1}",
+            "",
+            "event:live",
+            "",
+            "data: orphan",
+            "",
+        ];
+        let items: Vec<_> = lines.iter().filter_map(|l| parser.line(l)).collect();
+        assert_eq!(
+            items,
+            vec![
+                StreamItem::Ping,
+                StreamItem::Event("progress".into()),
+                StreamItem::Event("live".into()),
+            ]
+        );
+    }
+
+    #[test]
+    fn the_stream_reads_events_with_the_bearer() {
+        let (port, server) = serve_once(
+            "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\r\n: connected\n\nid: 1\nevent: reset\ndata: {}\n\n",
+        );
+        let mut items = Vec::new();
+        let result = stream_events(&test_launch(port), Duration::from_secs(2), |i| {
+            items.push(i);
+            true
+        });
+        assert!(result.is_err(), "the server closed the stream");
+        assert_eq!(
+            items,
+            vec![
+                StreamItem::Open,
+                StreamItem::Ping,
+                StreamItem::Event("reset".into())
+            ]
+        );
+        let (head, _) = server.join().unwrap();
+        assert!(head.starts_with("GET /api/events HTTP/1.0\r\n"), "{head}");
+        assert!(head.contains("Authorization: Bearer "), "{head}");
+    }
+
+    #[test]
+    fn a_refused_stream_is_an_error() {
+        let (port, server) = serve_once("HTTP/1.1 401 Unauthorized\r\n\r\nunauthorized");
+        let result = stream_events(&test_launch(port), Duration::from_secs(2), |_| true);
+        assert!(result.unwrap_err().contains("401"));
+        server.join().unwrap();
     }
 
     #[test]

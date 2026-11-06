@@ -422,7 +422,7 @@ The daemon outlives the app, so the app's presence is a tray icon.
   only the plans the daemon could read and the person has not hidden in
   Settings (by default those of the backends baum uses), and nothing when
   none remain. The menu is rebuilt whenever a "resets in" text would
-  read differently, which the 3–10 s polls check.
+  read differently, which each read of the daemon checks (see the app API below).
 - **Tray panel (macOS and Windows):** a left click on the icon opens a small
   borderless window under the icon (above it, on a bottom taskbar), drawn
   like a menu, with no title row (the icon names the app, as for the menu
@@ -432,7 +432,9 @@ The daemon outlives the app, so the app's presence is a tray icon.
   count, or "Your Inbox is empty" once the daemon counted none (nothing
   while the count is unknown), which opens the app; the alerts and the waiting sessions as highlighted rows that
   open them; the plan usage left as coloured meters; Pause or Resume
-  automatic reviews; and Quit and stop background reviews. It is placed on
+  automatic reviews; and Quit and stop background reviews. It asks the tray for its
+  view every 2 s while it is visible, once when it is shown, and never while it is
+  closed. It is placed on
   the icon's screen, found
   from the cursor in points on macOS (whose monitors report pixels at each
   screen's own scale) and from the icon's pixels elsewhere. It hides
@@ -450,7 +452,7 @@ The daemon outlives the app, so the app's presence is a tray icon.
   unknown count and a daemon that is not
   running clear all of them. The daemon counts the Inbox as the app does,
   except that saved inboxes left out of the app's badge still count:
-  `GET /api/index?view=waiting`, polled with the other tray requests.
+  `GET /api/index?view=waiting`, read with the other tray requests.
 - **Quit** ends the app only. Background refresh and automatic generation
   continue in the daemon.
 - **Quit and stop background reviews** runs the bundled `baum daemon stop`, so
@@ -491,7 +493,7 @@ Whether a failed job was seen is the daemon's record: every failed job
 without `seen_at` turns the icon red, including one that failed while the
 app was closed, until its alert is followed. That records it
 (`POST /api/jobs/{id}/seen` sets the job's `seen_at` in `app.sqlite`; when
-that fails, each poll records it again until the daemon stops reporting the
+that fails, each read records it again until the daemon stops reporting the
 job as unseen, and its alert stays hidden meanwhile), and a
 failed job with `seen_at` is never flagged again, after a restart either.
 Opening or focusing the window does not see a failed job (the window opens on
@@ -510,18 +512,26 @@ Two channels, each the least that does the job:
 2. **The app API on loopback, with the launch capability as a bearer token**,
    for what the daemon exposes only there: `GET /api/jobs`,
    `GET /api/automatic`, `GET /api/index?view=waiting` and
-   `GET /api/live-sessions` every 3 s while jobs run and every 10 s otherwise,
+   `GET /api/live-sessions`, read when the daemon's events stream
+   (`GET /api/events`, held open by a thread of its own and reopened with a
+   backoff from 1 s to 30 s) announces a `progress`, `automatic`, `live`,
+   `index` or `reset` event, or when the stream (re)connects, after a pause of
+   500 ms (at most 2 s) for a burst of events to end; as a safety net also
+   every 60 s while the stream is up and every 30 s while it is down, and
+   never with no daemon attached,
    `GET /api/diagnostics` every 5 minutes (it runs the doctor's checks),
    `GET /api/plan-usage?refresh=1` every 5 minutes (a fresh reading; the
-   daemon reads again at most once a minute), and
+   daemon reads again at most once a minute; no event announces either, so
+   one worker sleeps until the next is due and does nothing with no daemon
+   attached), and
    `PUT /api/automatic`, and once, when first-run setup finishes,
    `POST /api/automatic/catch-up`, which queues automatic reviews of the
    latest open pull requests so they run during the tour (best effort: a
    daemon not attached then, or a failed request, only skips it). This is the
    credential the app already reads for the window and the health check,
    accepted on `/api/` routes only; the requests that change state send the daemon's own origin and JSON, as the daemon
-   requires. It is polled rather than streamed: the events stream carries only
-   change notices, so the tray would fetch the same data anyway.
+   requires. The events stream carries change notices only, so an event
+   makes the tray fetch the data; the stream uses the same bearer token.
 
 Notifications read the events stream separately (see "Notifications").
 
