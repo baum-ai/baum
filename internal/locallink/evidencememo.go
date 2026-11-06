@@ -6,13 +6,12 @@ import (
 	"encoding/hex"
 	"fmt"
 	"os"
-	"path/filepath"
 	"reflect"
-	"strings"
 	"sync"
 	"time"
 
 	"github.com/baum-ai/baum/bundle"
+	"github.com/baum-ai/baum/internal/gitlocal"
 	"github.com/baum-ai/baum/sessions"
 	"github.com/baum-ai/baum/sessions/collector"
 )
@@ -125,7 +124,7 @@ func evidenceKey(req EvidenceRequest, dir string, d *sessions.Discovery) (string
 		_, _ = fmt.Fprintf(h, "%#v\x01", c)
 	}
 	for _, root := range append([]string{clone}, d.Worktrees()...) {
-		state, ok := checkoutState(root)
+		state, _, ok := gitlocal.CheckoutStamp(root)
 		if !ok {
 			return "", false
 		}
@@ -147,64 +146,6 @@ func frozenEvidenceKey(req EvidenceRequest, dir string) string {
 		_, _ = fmt.Fprintf(h, "%#v\x01", c)
 	}
 	return hex.EncodeToString(h.Sum(nil))
-}
-
-// checkoutState describes what a checkout has checked out: what HEAD names
-// and, for a branch, the commit the branch is at. A checkout or a commit
-// changes it; "git status", which editors run all the time and which
-// rewrites the index, does not. A linked worktree's .git is a file naming its
-// git directory, whose commondir file names where its branches live.
-func checkoutState(root string) (string, bool) {
-	dotGit := filepath.Join(root, ".git")
-	info, err := os.Stat(dotGit)
-	if err != nil {
-		return "", false
-	}
-	gitDir := dotGit
-	if !info.IsDir() {
-		data, err := os.ReadFile(dotGit)
-		if err != nil {
-			return "", false
-		}
-		target, ok := strings.CutPrefix(strings.TrimSpace(string(data)), "gitdir:")
-		if !ok {
-			return "", false
-		}
-		gitDir = strings.TrimSpace(target)
-		if !filepath.IsAbs(gitDir) {
-			gitDir = filepath.Join(root, gitDir)
-		}
-	}
-	head, err := os.ReadFile(filepath.Join(gitDir, "HEAD"))
-	if err != nil {
-		return "", false
-	}
-	state := gitDir + "\x00" + strings.TrimSpace(string(head))
-	ref, symbolic := strings.CutPrefix(strings.TrimSpace(string(head)), "ref:")
-	if !symbolic {
-		return state, true
-	}
-	commonDir := gitDir
-	if data, err := os.ReadFile(filepath.Join(gitDir, "commondir")); err == nil {
-		commonDir = strings.TrimSpace(string(data))
-		if !filepath.IsAbs(commonDir) {
-			commonDir = filepath.Join(gitDir, commonDir)
-		}
-	}
-	ref = filepath.FromSlash(strings.TrimSpace(ref))
-	if !filepath.IsLocal(ref) {
-		return "", false
-	}
-	// A loose ref holds the branch's commit; a packed one is in packed-refs.
-	if data, err := os.ReadFile(filepath.Join(commonDir, ref)); err == nil {
-		return state + "\x00" + strings.TrimSpace(string(data)), true
-	}
-	info, err = os.Stat(filepath.Join(commonDir, "packed-refs"))
-	if err != nil {
-		// An unborn branch has no commit yet.
-		return state + "\x00unborn", true
-	}
-	return fmt.Sprintf("%s\x00packed\x00%d\x00%d", state, info.Size(), info.ModTime().UnixNano()), true
 }
 
 // deepCopy copies v and everything it points to, keeping nil and empty
