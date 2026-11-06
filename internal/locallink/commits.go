@@ -7,6 +7,7 @@ import (
 	"slices"
 
 	"github.com/baum-ai/baum/internal/gitlocal"
+	"github.com/baum-ai/baum/internal/workstats"
 	"github.com/baum-ai/baum/sessions"
 	"github.com/baum-ai/baum/sessions/entirecheckpoint"
 )
@@ -40,6 +41,7 @@ func LinkCommits(ctx context.Context, dir string, commits []gitlocal.Commit, opt
 	if len(commits) == 0 {
 		return nil, nil
 	}
+	workstats.Inc("locallink.link_commits")
 	// The remote is only a missing checkpoint's fetch hint in a warning: the
 	// clone is opened for it only when warnings are read and a commit names
 	// a checkpoint.

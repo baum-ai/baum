@@ -25,6 +25,7 @@ import (
 	"strings"
 
 	"github.com/baum-ai/baum/internal/gitlocal"
+	"github.com/baum-ai/baum/internal/workstats"
 	"github.com/baum-ai/baum/sessions/entirecheckpoint"
 )
 
@@ -363,6 +364,7 @@ func Read(ctx context.Context, repoRoot string, store Store, checkpointID string
 	if loc.dir != "" {
 		args = append(args, "--", loc.dir)
 	}
+	workstats.Git(args...)
 	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", repoRoot}, args...)...)
 	cmd.Env = gitlocal.ReadEnv(repoRoot)
 	var stderr bytes.Buffer
@@ -420,6 +422,7 @@ func privateGit(ctx context.Context, dir string, args ...string) ([]byte, error)
 }
 
 func runGit(ctx context.Context, env []string, repoRoot string, stdin io.Reader, args ...string) ([]byte, error) {
+	workstats.Git(args...)
 	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", repoRoot}, args...)...)
 	cmd.Env = env
 	cmd.Stdin = stdin

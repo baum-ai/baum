@@ -76,6 +76,7 @@ const assert = require('node:assert/strict');
   await expect(page.locator('#skip-note')).toHaveCount(0);
   await expect(page.locator('[data-step] button').nth(1)).toBeDisabled();
   await expect(page.locator('[data-step] button').nth(2)).toBeDisabled();
+  await expect(page.locator('#github-token-note a')).toHaveAttribute('href', 'https://docs.usebaum.com/getting-started/#use-an-existing-github-token');
   await page.screenshot({ path: `${screenshots}/onboarding-github.png` });
   // Custom colors override default dark recipes, while artwork stays fixed.
   const originalBackground = await page.locator('body').evaluate(element => getComputedStyle(element).backgroundColor);
@@ -117,6 +118,7 @@ const assert = require('node:assert/strict');
   assert(await page.locator('#repo-panel').isHidden(), 'Repositories wait for GitHub');
   await page.locator('#github-sign-in').click();
   await expect(page.getByLabel('GitHub sign-in code')).toHaveText('ABCD-EFGH');
+  await expect(page.locator('#github-token-note')).toHaveCount(0);
   await page.screenshot({ path: `${screenshots}/onboarding-github-code.png` });
   github = { ...disconnected, state: 'connected', saved: true, login: 'octocat', source: 'baum credential store' };
   await page.waitForSelector('#github-state.ok');

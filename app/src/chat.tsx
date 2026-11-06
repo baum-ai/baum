@@ -20,6 +20,7 @@ import {
 } from "./api";
 import { EntryView, useJobTranscript } from "./job-transcript";
 import { LoadingStatus } from "./nine-dots";
+import { useVisibleInterval } from "./visible-interval";
 
 /** The most anchors a question's focus may carry. */
 const MAX_ANCHORS = 20;
@@ -429,11 +430,7 @@ export function AskPanel({
   const busy = !!conversation?.turns.some(chatTurnActive);
   const activeTurns = conversations.some((c) => c.turns.some(chatTurnActive));
 
-  useEffect(() => {
-    if (!activeTurns) return;
-    const timer = setInterval(refresh, ACTIVE_POLL_MS);
-    return () => clearInterval(timer);
-  }, [activeTurns, refresh]);
+  useVisibleInterval(refresh, activeTurns ? ACTIVE_POLL_MS : null);
 
   // The box takes the typing when the panel opens and when a part of the
   // review is chosen to ask about; that part is asked about on the current

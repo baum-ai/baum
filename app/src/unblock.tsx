@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Alert, Button, CloseButton } from "@baum/viewer/components/ui";
 import { request, type Entry } from "./api";
+import { githubToast } from "./github-toast";
 import { useModal } from "./modal";
+import { useToast } from "./toast";
 import { LoadingStatus, NineDots } from "./nine-dots";
 
 export type UpdateOptions = {
@@ -65,6 +67,8 @@ function UnblockDialog<Options extends { head_sha: string }, Result>({
   refusal,
   describe,
   finished,
+  toastTitle,
+  toastUrl,
 }: {
   entry: Entry;
   close: () => void;
@@ -81,9 +85,14 @@ function UnblockDialog<Options extends { head_sha: string }, Result>({
   describe: (options: Options) => ReactNode;
   /** What to tell the person once the write was sent, or null to close. */
   finished: (result: Result) => { message: ReactNode; problem?: string } | null;
+  /** What the toast says once GitHub took the write, and where Open on
+   *  GitHub goes (the pull request by default). */
+  toastTitle: string;
+  toastUrl?: string;
 }) {
   const pr = entry.pull_request;
   const dialog = useModal();
+  const toast = useToast();
   const [options, setOptions] = useState<Options | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -128,6 +137,7 @@ function UnblockDialog<Options extends { head_sha: string }, Result>({
         pr: pr.number,
         head_sha: pr.head_sha,
       });
+      toast(githubToast(pr, toastTitle, toastUrl));
       // The reload runs behind the outcome: it can take seconds.
       void done();
       const next = finished(result);
@@ -232,6 +242,8 @@ export function UpdateBranchDialog({
       writePath="api/prs/update-branch"
       action="Update branch"
       pending="Updating…"
+      toastTitle="Branch update started on GitHub"
+      toastUrl={`${entry.pull_request.url}/commits`}
       refusal={(o) =>
         o.fork
           ? "This pull request's branch is in a fork, which baum does not update."
@@ -245,14 +257,9 @@ export function UpdateBranchDialog({
           commit to the pull request. Checks run again on the new commit.
         </p>
       )}
-      finished={() => ({
-        message: (
-          <p>
-            GitHub accepted the update and is adding the merge commit now. The new state shows here
-            after the next refresh.
-          </p>
-        ),
-      })}
+      // The toast says GitHub took it; the merge commit shows after the next
+      // refresh.
+      finished={() => null}
     />
   );
 }
@@ -279,6 +286,8 @@ export function RerunChecksDialog({
       writePath="api/prs/rerun-checks"
       action="Re-run failed checks"
       pending="Re-running…"
+      toastTitle="Failed checks re-running on GitHub"
+      toastUrl={`${entry.pull_request.url}/checks`}
       refusal={(o) =>
         o.runs.length === 0
           ? "No failed GitHub Actions workflow run was found for this commit, so there is nothing baum can re-run."

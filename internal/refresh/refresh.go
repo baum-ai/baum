@@ -13,6 +13,7 @@ import (
 	"github.com/baum-ai/baum/internal/github"
 	"github.com/baum-ai/baum/internal/gitlocal"
 	"github.com/baum-ai/baum/internal/store"
+	"github.com/baum-ai/baum/internal/workstats"
 	"github.com/baum-ai/baum/review"
 )
 
@@ -30,6 +31,7 @@ type Refresher struct {
 // Refresh returns a validated replacement document. Callers publish it with
 // Store.RefreshCurrent so a newer generation or refresh cannot be overwritten.
 func (r Refresher) Refresh(ctx context.Context, repository github.Repository, number int, saved store.Version, caps bundle.Caps, now time.Time) ([]byte, error) {
+	workstats.Inc("refresh.pull_requests")
 	validator, err := review.NewDocumentValidator()
 	if err != nil {
 		return nil, err

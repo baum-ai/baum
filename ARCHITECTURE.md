@@ -350,11 +350,9 @@ copy:
   exchange, release note, breaking change), the context, and each section's
   title, summary, attention, behaviour steps (title, text, before, after,
   question), risks, evidence (claim, detail, expects) and decisions (title,
-  text, rationale, trigger, rejected alternative, evidence) at 200 words a
-  minute, plus the code lines it shows (code blocks, tile code excerpts and
-  the lines a behaviour step's first hunk anchor names) at 12 lines a
-  minute, rounded up and kept within 1 to 240. A one-pass review keeps the
-  model's estimate.
+  text, rationale, trigger, rejected alternative, evidence) at 400 words a
+  minute, rounded up and kept within 1 to 240. Code excerpts add no time.
+  A one-pass review keeps the model's estimate.
 
 ### Validation and derivation
 
@@ -2488,6 +2486,43 @@ without a token lookup. It does not import `daemon`, which serves the
 report: the command line passes `Options.Daemon`, which asks the daemon over
 its control socket (never starting it or creating its state directory) for
 its version, process id and uptime, and whether this baum would replace it.
+
+### Profiling the daemon
+
+The daemon should use next to no CPU while nothing changes. To measure what
+it does, `baum daemon profile` watches the running daemon without restarting
+it:
+
+```sh
+baum daemon profile                          # 60s CPU profile, heap, goroutines and work counters
+baum daemon profile --duration 5m --trace    # longer window, plus an execution trace
+baum daemon profile --watch --interval 10s   # one line per interval: CPU share, heap, work that ran
+go tool pprof -top baum-profile-*/cpu.pprof  # where the CPU time went
+```
+
+The profile command saves `cpu.pprof`, `heap.pprof`, `goroutine.txt`,
+`stats-start.json`, `stats-end.json` and `summary.txt`. The summary gives the
+CPU time the daemon used as a share of one core, from `getrusage`, and lists
+the counters that moved in that window, largest first.
+
+`internal/workstats` keeps those counters. Each is an atomic add, so they are
+always on. They count:
+
+* calls to `sessions.Map`, its decodes by source and the bytes decoded, and
+  hits on its cache;
+* git processes in total and by subcommand;
+* background passes and pull request refreshes;
+* session loads by entry point;
+* analytics refreshes, review index builds and live transcript builds.
+
+Gauges report state such as the size of the session cache.
+
+The daemon serves the counters at `GET /api/debug/stats` and Go's runtime
+profiles at `GET /api/debug/pprof/` (`profile?seconds=N`, `trace?seconds=N`,
+`heap`, `goroutine`, and so on; never `cmdline`). Like every `/api/` route they
+need the launch credential as a Bearer token. The CLI reads that credential
+from the daemon's state directory. A profile costs nothing until it is
+requested.
 
 `config.Config.BackendPaths` (TOML `[backend_paths]`, keys `claude`, `codex`
 and `cursor-agent`, absolute paths only, validated by `config.ReadFile`) is the
