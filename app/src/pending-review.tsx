@@ -1,6 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 import { Alert, Button } from "@baum/viewer/components/ui";
-import { ChevronDownIcon, ExternalLinkIcon, PlusIcon } from "@baum/viewer/components/icons";
+import {
+  ChevronDownIcon,
+  CircleCheckIcon,
+  CircleCrossIcon,
+  CommentsIcon,
+  ExternalLinkIcon,
+  PlusIcon,
+} from "@baum/viewer/components/icons";
 import { Part } from "@baum/viewer/components/review-parts";
 import { Markdown } from "@baum/viewer/components/markdown";
 import { formatRelative } from "@baum/viewer/components/format";
@@ -11,11 +18,15 @@ import { MenuButton, useContextMenu, type MenuItem } from "./context-menu";
 import { useModal } from "./modal";
 import { NineDots } from "./nine-dots";
 import { COMMAND } from "./shortcuts";
+import { githubToast, REVIEW_SENT_TITLES } from "./github-toast";
+import { useToast } from "./toast";
 import { SavedStateNotice, useUIState } from "./ui-state";
 import {
   afterSent,
   needsSummary,
   sentRecord,
+  reviewState,
+  standingVerdict,
   pendingReviewState,
   pendingSubmission,
   placeText,
@@ -63,10 +74,37 @@ export function usePendingReview(entry: Entry) {
   return { ...state, add, edit, remove };
 }
 
+/** When a review was sent, as "5 minutes ago". */
+const sentWhen = (at: number) => formatRelative(new Date(at).toISOString());
+
+/** How the review button and dialog speak of a review the reader sent:
+ *  the button's label, its icon, and the sentence that says when. */
+const SENT_STATES: Record<
+  ReviewEvent,
+  { label: string; icon: typeof CircleCheckIcon; said: string; kind: string }
+> = {
+  APPROVE: {
+    label: "Approved",
+    icon: CircleCheckIcon,
+    said: "You approved this",
+    kind: "approved",
+  },
+  COMMENT: { label: "Commented", icon: CommentsIcon, said: "You commented", kind: "commented" },
+  REQUEST_CHANGES: {
+    label: "Changes requested",
+    icon: CircleCrossIcon,
+    said: "You requested changes",
+    kind: "changes_requested",
+  },
+};
+
 /** Sends the review, as Snooze picks a time: the button opens a menu of
  *  verdicts, and each opens the dialog on it. On the reader's own pull
  *  request GitHub only takes comments, so it is a Comment button straight to
- *  the dialog. The page's v presses it. */
+ *  the dialog. Once the reader sent a review from here it says so, as
+ *  `reviewState` has it (Approved, Changes requested or Commented, with the
+ *  verdict's icon and colour), and still opens the menu to review again. The
+ *  page's v presses it. */
 export function ReviewButton({
   entry,
   count,
@@ -82,6 +120,9 @@ export function ReviewButton({
   const menu = useContextMenu();
   const button = useRef<HTMLButtonElement>(null);
   const own = entry.pull_request.authored_by_me;
+  const state = reviewState(entry.pull_request, usePendingReview(entry).value);
+  const shown = state ? SENT_STATES[state.review.event] : null;
+  const Icon = shown?.icon;
   const items: MenuItem[] = (["APPROVE", "COMMENT", "REQUEST_CHANGES"] as const).map((event) => ({
     label: EVENT_LABELS[event],
     onSelect: () => review(event),
@@ -93,7 +134,9 @@ export function ReviewButton({
         ref={button}
         type="button"
         data-review-button=""
-        className={cn(SECONDARY, className)}
+        data-review-state={state?.kind}
+        className={cn(SECONDARY, state && `review-button-${state.kind}`, className)}
+        title={shown && state ? `${shown.said} ${sentWhen(state.review.at)}` : undefined}
         aria-keyshortcuts="v"
         aria-haspopup={own ? undefined : "menu"}
         aria-expanded={own ? undefined : open}
@@ -116,7 +159,8 @@ export function ReviewButton({
         }}
         onPointerLeave={(event) => delete event.currentTarget.dataset.closing}
       >
-        {own ? "Comment" : "Approve"}
+        {Icon ? <Icon size={14} className="review-state-icon" /> : null}
+        {shown ? shown.label : own ? "Comment" : "Approve"}
         {count ? <span className="review-count">{count}</span> : null}
         {own ? null : <ChevronDownIcon size={14} className="text-(--text-tertiary)" />}
         <kbd aria-hidden="true" className="key-hint">
@@ -149,9 +193,18 @@ export function ReviewDialog({
 }) {
   const pr = entry.pull_request;
   const dialog = useModal();
+  const toast = useToast();
   const draft = usePendingReview(entry);
   const review = draft.value;
   const events = reviewEvents(pr, review);
+  // What the reader last said from here: the verdict that stands, else
+  // their latest comment.
+  const lastComment = (review.sent ?? []).findLast((r) => r.event === "COMMENT");
+  const said =
+    standingVerdict(pr, review) ??
+    (lastComment
+      ? { ...lastComment, current: !lastComment.head || lastComment.head === pr.head_sha }
+      : null);
   const [picked, setPicked] = useState(initial);
   const [sending, setSending] = useState<Sending>({ state: "idle" });
   const event = events.find((e) => e.id === picked && e.ok)?.id ?? null;
@@ -173,8 +226,9 @@ export function ReviewDialog({
         "api/prs/review",
         pendingSubmission(pr, snapshot, event, inline),
       );
-      const record = sentRecord(snapshot, event, answer.url, Date.now());
+      const record = sentRecord(snapshot, event, answer.url, Date.now(), pr.head_sha);
       draft.update((current) => afterSent(current, snapshot, record));
+      toast(githubToast(pr, REVIEW_SENT_TITLES[event], answer.url));
       sent(answer.url);
       close();
     } catch (error) {
@@ -231,6 +285,7 @@ export function ReviewDialog({
       <p className="my-3 text-(--text-secondary)">
         {pr.title} · {pr.repository}
       </p>
+      {said ? <SaidBefore review={said} /> : null}
       <fieldset className="merge-methods" disabled={busy}>
         <legend className="sr-only">Verdict</legend>
         {events.map((e) => (
@@ -333,6 +388,26 @@ export function ReviewDialog({
   );
 }
 
+/** The dialog's word on what the reader already said from here, so
+ *  reviewing again is a choice made knowing it: the verdict, when, whether
+ *  commits came after, and the link to it on GitHub. */
+function SaidBefore({ review }: { review: SentReview & { current: boolean } }) {
+  const { icon: Icon, said, kind } = SENT_STATES[review.event];
+  return (
+    <p className={`review-standing review-standing-${kind}`}>
+      <Icon size={14} className="flex-none" />
+      <span className="min-w-0 flex-1">
+        {said} {sentWhen(review.at)}
+        {review.current ? "." : ", before its latest commits."}
+      </span>
+      <a href={review.url} target="_blank" rel="noreferrer" className="review-standing-link">
+        Open on GitHub
+        <ExternalLinkIcon size={12} />
+      </a>
+    </p>
+  );
+}
+
 /** A comment being written: a new one on `target`, or an edit of `id`. */
 export type Composer =
   | { kind: "new"; target: CommentTarget; place: CommentPlace | null; head: string }
@@ -346,6 +421,7 @@ export function CommentsPane({
   composer,
   setComposer,
   review,
+  fresh = null,
 }: {
   entry: Entry;
   /** What a new comment is about: the item being read. */
@@ -353,6 +429,9 @@ export function CommentsPane({
   composer: Composer | null;
   setComposer: (composer: Composer | null) => void;
   review: (event: ReviewEvent) => void;
+  /** The URL of the review just sent from here, which the Sent list marks
+   *  and gives the focus when the host reveals the tab. */
+  fresh?: string | null;
 }) {
   const draft = usePendingReview(entry);
   const comments = draft.value.comments;
@@ -453,7 +532,7 @@ export function CommentsPane({
           {draft.error ? <SavedStateNotice state={draft} label="comments" /> : null}
         </div>
       </Part>
-      <SentReviews sent={draft.value.sent ?? []} />
+      <SentReviews sent={draft.value.sent ?? []} fresh={fresh} />
     </div>
   );
 }
@@ -467,55 +546,64 @@ const SENT_LABELS: Record<ReviewEvent, string> = {
 /** The reviews sent from here, newest first, as they were sent: the verdict,
  *  when, the summary and the comments, each a link to the review on GitHub.
  *  Other reviews of the pull request are GitHub's to show. */
-function SentReviews({ sent }: { sent: SentReview[] }) {
+function SentReviews({ sent, fresh }: { sent: SentReview[]; fresh: string | null }) {
   if (sent.length === 0) return null;
+  const latest = sent[sent.length - 1]!;
   return (
     <Part label="Sent">
       <ol className="review-comments-list">
-        {[...sent].reverse().map((review) => (
-          <li key={`${review.url}@${review.at}`} className="review-sent">
-            <div className="review-sent-head">
-              <span className={`review-sent-verdict review-sent-${review.event.toLowerCase()}`}>
-                {SENT_LABELS[review.event]}
-              </span>
-              <time dateTime={new Date(review.at).toISOString()} className="review-sent-when">
-                {formatRelative(new Date(review.at).toISOString())}
-              </time>
-              <a
-                href={review.url}
-                target="_blank"
-                rel="noreferrer"
-                className="review-sent-link"
-                aria-label="Open the review on GitHub"
-                title="Open it on GitHub"
-              >
-                <ExternalLinkIcon size={13} />
-              </a>
-            </div>
-            {review.note ? (
-              <Markdown html={false} className="review-comment-body">
-                {review.note}
-              </Markdown>
-            ) : null}
-            {review.comments.length ? (
-              <ul className="review-sent-comments">
-                {review.comments.map((comment, index) => (
-                  <li key={index}>
-                    <span className="review-comment-title">
-                      {comment.title}
-                      {comment.where ? (
-                        <code className="review-comment-where">{comment.where}</code>
-                      ) : null}
-                    </span>
-                    <Markdown html={false} className="review-comment-body">
-                      {comment.body}
-                    </Markdown>
-                  </li>
-                ))}
-              </ul>
-            ) : null}
-          </li>
-        ))}
+        {[...sent].reverse().map((review) => {
+          const isFresh = review === latest && review.url === fresh;
+          return (
+            <li
+              key={`${review.url}@${review.at}`}
+              className={cn("review-sent", isFresh && `fresh fresh-${review.event.toLowerCase()}`)}
+              data-autofocus={isFresh ? "" : undefined}
+              tabIndex={isFresh ? -1 : undefined}
+            >
+              <div className="review-sent-head">
+                <span className={`review-sent-verdict review-sent-${review.event.toLowerCase()}`}>
+                  {SENT_LABELS[review.event]}
+                </span>
+                <time dateTime={new Date(review.at).toISOString()} className="review-sent-when">
+                  {sentWhen(review.at)}
+                </time>
+                <a
+                  href={review.url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="review-sent-link"
+                  aria-label="Open the review on GitHub"
+                  title="Open it on GitHub"
+                >
+                  <ExternalLinkIcon size={13} />
+                </a>
+              </div>
+              {review.note ? (
+                <Markdown html={false} className="review-comment-body">
+                  {review.note}
+                </Markdown>
+              ) : null}
+              {review.comments.length ? (
+                <ul className="review-sent-comments">
+                  {review.comments.map((comment, index) => (
+                    <li key={index}>
+                      <span className="review-comment-title">
+                        {comment.title}
+                        {comment.where ? (
+                          <code className="review-comment-where">{comment.where}</code>
+                        ) : null}
+                      </span>
+                      <Markdown html={false} className="review-comment-body">
+                        {comment.body}
+                      </Markdown>
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
+            </li>
+          );
+        })}
       </ol>
     </Part>
   );

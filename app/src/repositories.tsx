@@ -12,6 +12,7 @@ import { invoke } from "./desktop/native";
 import { displayPath, repositoryPath } from "./desktop/setup-model";
 import { LoadingStatus } from "./nine-dots";
 import { usePageRefreshAction } from "./shell";
+import { useVisibleInterval } from "./visible-interval";
 import "./repositories.css";
 import { PRIMARY, SECONDARY } from "./action-classes";
 
@@ -177,10 +178,13 @@ export function useCloneActions({
       alive = false;
     };
   }, [call, repository]);
+  const cloneStatus = useRef<(() => void) | null>(null);
+  const cloneRunning = state?.state === "running";
+  useVisibleInterval(() => cloneStatus.current?.(), cloneRunning ? 1000 : null);
   useEffect(() => {
-    if (state?.state !== "running") return;
+    if (!cloneRunning) return;
     let alive = true;
-    const timer = setInterval(() => {
+    cloneStatus.current = () => {
       void call<CloneState>("status", { repository }).then(
         async (next) => {
           if (!alive) return;
@@ -191,12 +195,12 @@ export function useCloneActions({
           if (alive) setError(message(e));
         },
       );
-    }, 1000);
+    };
     return () => {
       alive = false;
-      clearInterval(timer);
+      cloneStatus.current = null;
     };
-  }, [state?.state, call, repository, changed]);
+  }, [cloneRunning, call, repository, changed]);
   const attach = async (folder: string) => {
     await call("attach", { repository, path: folder });
     await changed();
@@ -500,15 +504,12 @@ export function RepositoryPicker({
     };
   }, [reload]);
   const looking = Boolean(found?.running);
-  useEffect(() => {
-    const timer = setInterval(
-      () => {
-        if (!working.current && !reading.current) void reload();
-      },
-      searchPending ? 300 : looking ? 1000 : 4000,
-    );
-    return () => clearInterval(timer);
-  }, [looking, searchPending, reload]);
+  useVisibleInterval(
+    () => {
+      if (!working.current && !reading.current) void reload();
+    },
+    searchPending ? 300 : looking ? 1000 : 4000,
+  );
   const latestReload = useRef(reload);
   latestReload.current = reload;
   const update = useCallback(async () => {

@@ -794,11 +794,7 @@ func (v *DocumentValidator) CompleteStaged(document []byte, b *bundlepkg.Bundle,
 	return v.complete(v.staged, document, b, directory, model, promptVersion, now)
 }
 
-// The reading rates of ReviewMinutes.
-const (
-	readingWordsPerMinute     = 200
-	readingCodeLinesPerMinute = 12
-)
+const readingWordsPerMinute = 400
 
 // ReviewMinutes estimates the whole minutes a reader needs to read an
 // authored review document once: the words of the overview (the summary's
@@ -806,11 +802,9 @@ const (
 // context, and each section's title, summary, attention, behavior steps
 // (title, text, before, after and question), risks, evidence (claim, detail
 // and expects) and decisions (title, text, rationale, trigger, rejected
-// alternative and evidence), at 200 words a minute, plus the code lines it
-// shows (code blocks, tile code excerpts and the lines a behavior step's first
-// hunk anchor names) at 12 lines a minute. The sum is rounded up and kept
-// within 1 to 240, the schema's range. A document that cannot be read
-// takes 1 minute.
+// alternative and evidence), at 400 words a minute. Code excerpts add no time.
+// The estimate is rounded up and kept within 1 to 240, the schema's range.
+// A document that cannot be read takes 1 minute.
 func ReviewMinutes(document []byte) int {
 	root, err := decodeObject(document, "review")
 	if err != nil {
@@ -820,7 +814,7 @@ func ReviewMinutes(document []byte) int {
 }
 
 func reviewMinutesOf(root map[string]any) int {
-	words, lines := 0, 0
+	words := 0
 	count := func(object map[string]any, keys ...string) {
 		for _, key := range keys {
 			if text, ok := object[key].(string); ok {
@@ -845,7 +839,6 @@ func reviewMinutesOf(root map[string]any) int {
 		count(object(section["attention"]), "text")
 		for _, risk := range jsonObjects(section["risks"]) {
 			count(risk, "text")
-			lines += tileCodeLines(risk["tiles"])
 		}
 		for _, evidence := range jsonObjects(section["evidence"]) {
 			count(evidence, "claim", "detail", "expects")
@@ -855,55 +848,14 @@ func reviewMinutesOf(root map[string]any) int {
 			case "behavior":
 				for _, step := range jsonObjects(block["steps"]) {
 					count(step, "title", "text", "before", "after", "question")
-					lines += anchoredLines(step["anchors"])
 				}
 			case "decisions":
 				for _, decision := range jsonObjects(block["items"]) {
 					count(decision, "title", "text", "rationale", "trigger", "rejected", "evidence")
 				}
-			case "code":
-				if content, ok := block["content"].(string); ok {
-					lines += strings.Count(strings.TrimRight(content, "\n"), "\n") + 1
-				}
 			}
 		}
-		lines += tileCodeLines(section["tiles"])
 	}
-	minutes := float64(words)/readingWordsPerMinute + float64(lines)/readingCodeLinesPerMinute
+	minutes := float64(words) / readingWordsPerMinute
 	return int(min(max(math.Ceil(minutes), minReviewMinutes), maxReviewMinutes))
-}
-
-// tileCodeLines counts the excerpt lines of the tiles' code sources: every
-// hunk with a header and lines.
-func tileCodeLines(tiles any) int {
-	lines := 0
-	walkJSON(tiles, func(object map[string]any) {
-		if _, ok := object["header"].(string); ok {
-			if list, ok := object["lines"].([]any); ok {
-				lines += len(list)
-			}
-		}
-	})
-	return lines
-}
-
-// anchoredLines counts the lines the first hunk anchor with a line range
-// names, which the viewer shows beside a behavior step.
-func anchoredLines(anchors any) int {
-	for _, anchor := range jsonObjects(anchors) {
-		if anchor["type"] != "hunk" {
-			continue
-		}
-		bounds, _ := anchor["lines"].([]any)
-		if len(bounds) != 2 {
-			return 0
-		}
-		start, startOK := bounds[0].(float64)
-		end, endOK := bounds[1].(float64)
-		if !startOK || !endOK || end < start {
-			return 0
-		}
-		return int(end-start) + 1
-	}
-	return 0
 }

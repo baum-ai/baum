@@ -37,6 +37,9 @@ export type SentReview = {
   event: ReviewEvent;
   /** When GitHub took it, in milliseconds. */
   at: number;
+  /** The pull request's head it was sent on; absent from a record saved
+   *  before it was kept. */
+  head?: string;
   note: string;
   comments: { title: string; where: string; body: string }[];
 };
@@ -202,17 +205,19 @@ export function afterSent(
 }
 
 /** What a review sent now records of `review`: its summary and comments,
- *  each with its item and place. */
+ *  each with its item and place, and the head it was sent on. */
 export function sentRecord(
   review: PendingReview,
   event: ReviewEvent,
   url: string,
   at: number,
+  head: string,
 ): SentReview {
   return {
     url,
     event,
     at,
+    head,
     note: review.note.trim(),
     comments: review.comments.map((c) => ({
       title: c.target.title,
@@ -220,6 +225,48 @@ export function sentRecord(
       body: c.body.trim(),
     })),
   };
+}
+
+/** The reader's verdict that stands on the pull request, as sent from here:
+ *  the latest approval or request for changes, which a later comment leaves
+ *  in place on GitHub. `current` is false once commits came after it, when
+ *  GitHub may have dismissed it. Null when no verdict was sent from here. */
+export function standingVerdict(
+  pr: Pick<PR, "head_sha">,
+  review: PendingReview,
+): (SentReview & { event: "APPROVE" | "REQUEST_CHANGES"; current: boolean }) | null {
+  const sent = review.sent ?? [];
+  for (let i = sent.length - 1; i >= 0; i--) {
+    const record = sent[i]!;
+    if (record.event === "COMMENT") continue;
+    const current = !record.head || record.head === pr.head_sha;
+    return { ...record, event: record.event, current };
+  }
+  return null;
+}
+
+/** What the review button says of the reader's own review, as sent from
+ *  here: Approved while their approval is on the current head (GitHub may
+ *  dismiss it after new commits); Changes requested while that verdict
+ *  stands, which commits do not dismiss; else Commented once they commented
+ *  on the current head. A later comment leaves a verdict in place, as on
+ *  GitHub. Null when none of these holds: the button asks for a review. */
+export type ReviewState = {
+  kind: "approved" | "changes_requested" | "commented";
+  review: SentReview;
+};
+
+export function reviewState(pr: Pick<PR, "head_sha">, review: PendingReview): ReviewState | null {
+  const verdict = standingVerdict(pr, review);
+  if (verdict?.event === "REQUEST_CHANGES") return { kind: "changes_requested", review: verdict };
+  if (verdict?.event === "APPROVE" && verdict.current) return { kind: "approved", review: verdict };
+  const sent = review.sent ?? [];
+  for (let i = sent.length - 1; i >= 0; i--) {
+    const record = sent[i]!;
+    if (record.event === "COMMENT" && (!record.head || record.head === pr.head_sha))
+      return { kind: "commented", review: record };
+  }
+  return null;
 }
 
 /** Whether the pull request takes a review from here: open, and current. */

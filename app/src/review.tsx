@@ -13,6 +13,7 @@ import {
   type ReviewSteps,
 } from "@baum/viewer/components/review-viewer";
 import { sessionsSlot, commitsSlot } from "@baum/viewer/components/list-slots";
+import { useVisibleInterval } from "./visible-interval";
 import { Alert, Button, LiveDot } from "@baum/viewer/components/ui";
 import {
   ChevronDownIcon,
@@ -335,6 +336,8 @@ export function LocalReview({
   const [reviewing, setReviewing] = useState<ReviewEvent | null>(null);
   const [composer, setComposer] = useState<Composer | null>(null);
   const [revealComments, setRevealComments] = useState(0);
+  // The review just sent, which the Comments tab opens on under Sent.
+  const [sentReview, setSentReview] = useState<string | null>(null);
   const pending = usePendingReview(entry);
   const pendingCount = pending.value.comments.length;
   const canReview = reviewable(entry);
@@ -628,6 +631,8 @@ export function LocalReview({
       });
     return () => abort.abort();
   }, [clone, pr.number, latestQuery, revision, retry]);
+  const refreshSessions = useRef<(() => void) | null>(null);
+  useVisibleInterval(() => refreshSessions.current?.(), 30_000);
   useEffect(() => {
     if (sessionsVersion == null) return;
     const abort = new AbortController();
@@ -682,9 +687,9 @@ export function LocalReview({
       }
     };
     void refresh();
-    const timer = window.setInterval(() => void refresh(), 30_000);
+    refreshSessions.current = () => void refresh();
     return () => {
-      window.clearInterval(timer);
+      refreshSessions.current = null;
       abort.abort();
     };
   }, [sessionsVersion, query, revision, retry, ended]);
@@ -1258,6 +1263,7 @@ export function LocalReview({
                             composer={composer}
                             setComposer={setComposer}
                             review={setReviewing}
+                            fresh={sentReview}
                           />
                         ),
                       }
@@ -1348,7 +1354,12 @@ export function LocalReview({
             entry={entry}
             event={reviewing}
             close={() => setReviewing(null)}
-            sent={() => void changed()}
+            sent={(url) => {
+              // Where it shows: the Comments tab opens on it under Sent.
+              setSentReview(url);
+              setRevealComments((n) => n + 1);
+              void changed();
+            }}
           />
         ) : null}
         {rerunning ? (

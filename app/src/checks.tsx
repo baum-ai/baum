@@ -2,7 +2,9 @@ import { useEffect, useState } from "react";
 import { formatCount } from "@baum/viewer/components/format";
 import { CircleCheckIcon, CircleCrossIcon, CircleDashedIcon } from "@baum/viewer/components/icons";
 import { LocalRequestError, joinAnd, request } from "./api";
+import { githubToast } from "./github-toast";
 import { LoadingStatus } from "./nine-dots";
+import { useToast } from "./toast";
 import { SMALL } from "./action-classes";
 import { cn } from "@baum/viewer/components/classnames";
 import { Part } from "@baum/viewer/components/review-parts";
@@ -177,6 +179,7 @@ export function PullRequestChecks({
 }) {
   const own = useChecks(repository, number, head, checks === undefined);
   const read = checks ?? own;
+  const toast = useToast();
   const [retrying, setRetrying] = useState<Set<number>>(new Set());
   const [retried, setRetried] = useState<Set<number>>(new Set());
   const [failed, setFailed] = useState<Record<number, string>>({});
@@ -190,6 +193,13 @@ export function PullRequestChecks({
     try {
       await request("api/prs/rerun-job", { repository, pr: number, head_sha: head, job_id: job });
       setRetried((ids) => new Set(ids).add(job));
+      const check = read.checks?.find((c) => c.job_id === job);
+      toast(
+        githubToast(
+          { repository, number, title: check?.name ?? "", url: check?.url ?? `${url}/checks` },
+          "Check re-running on GitHub",
+        ),
+      );
     } catch (error) {
       setFailed((all) => ({
         ...all,

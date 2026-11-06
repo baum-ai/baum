@@ -10,9 +10,12 @@ import {
   pendingSubmission,
   reviewEvents,
   sentRecord,
+  reviewState,
+  standingVerdict,
   type PendingComment,
   type PendingReview,
 } from "./pending-review-model";
+import type { ReviewEvent } from "./walkthrough-model";
 
 const doc = example as unknown as ReviewDocument;
 const pr = {
@@ -125,7 +128,14 @@ it("moves what was sent to the sent reviews and keeps what changed meanwhile", (
       comment({ id: "c3" }),
     ],
   };
-  const record = sentRecord(sent, "APPROVE", "https://github.com/acme/demo/pull/7#r1", 5);
+  const record = sentRecord(
+    sent,
+    "APPROVE",
+    "https://github.com/acme/demo/pull/7#r1",
+    5,
+    pr.head_sha,
+  );
+  expect(record.head).toBe(pr.head_sha);
   expect(record.comments[0]).toEqual({
     title: "Retry policy and backoff",
     where: "retry.go:42",
@@ -138,4 +148,66 @@ it("moves what was sent to the sent reviews and keeps what changed meanwhile", (
 
   const many = Array.from({ length: KEEP_SENT }, (_, at) => ({ ...record, at }));
   expect(afterSent({ ...current, sent: many }, sent, record).sent).toHaveLength(KEEP_SENT);
+});
+
+it("finds the verdict that stands: the latest approval or request for changes", () => {
+  const record = (event: ReviewEvent, at: number, head?: string) => ({
+    url: `https://github.com/acme/demo/pull/7#r${at}`,
+    event,
+    at,
+    head,
+    note: "",
+    comments: [],
+  });
+  const review = (...sent: ReturnType<typeof record>[]): PendingReview => ({
+    comments: [],
+    note: "",
+    sent,
+  });
+  expect(standingVerdict(pr, { comments: [], note: "" })).toBeNull();
+  expect(standingVerdict(pr, review(record("COMMENT", 1, pr.head_sha)))).toBeNull();
+  // A comment after an approval leaves the approval standing, as on GitHub.
+  expect(
+    standingVerdict(
+      pr,
+      review(record("APPROVE", 1, pr.head_sha), record("COMMENT", 2, pr.head_sha)),
+    ),
+  ).toMatchObject({ event: "APPROVE", at: 1, current: true });
+  expect(
+    standingVerdict(
+      pr,
+      review(record("APPROVE", 1, pr.head_sha), record("REQUEST_CHANGES", 2, pr.head_sha)),
+    ),
+  ).toMatchObject({ event: "REQUEST_CHANGES", current: true });
+  // Commits since: the approval was on an earlier head.
+  expect(standingVerdict(pr, review(record("APPROVE", 1, "0ld")))).toMatchObject({
+    current: false,
+  });
+  // A record from before heads were kept counts as current.
+  expect(standingVerdict(pr, review(record("APPROVE", 1)))).toMatchObject({ current: true });
+});
+
+it("says what the button shows of the reader's own review", () => {
+  const record = (event: ReviewEvent, at: number, head = pr.head_sha) => ({
+    url: `https://github.com/acme/demo/pull/7#r${at}`,
+    event,
+    at,
+    head,
+    note: "",
+    comments: [],
+  });
+  const kind = (...sent: ReturnType<typeof record>[]) =>
+    reviewState(pr, { comments: [], note: "", sent })?.kind ?? null;
+  expect(kind()).toBeNull();
+  expect(kind(record("COMMENT", 1))).toBe("commented");
+  // A comment on an earlier head asks for a review again.
+  expect(kind(record("COMMENT", 1, "0ld"))).toBeNull();
+  expect(kind(record("APPROVE", 1))).toBe("approved");
+  expect(kind(record("APPROVE", 1), record("COMMENT", 2))).toBe("approved");
+  // A dismissible approval on an earlier head gives way to a later comment.
+  expect(kind(record("APPROVE", 1, "0ld"))).toBeNull();
+  expect(kind(record("APPROVE", 1, "0ld"), record("COMMENT", 2))).toBe("commented");
+  // Changes requested stands through new commits and later comments.
+  expect(kind(record("REQUEST_CHANGES", 1, "0ld"), record("COMMENT", 2))).toBe("changes_requested");
+  expect(kind(record("REQUEST_CHANGES", 1), record("APPROVE", 2))).toBe("approved");
 });

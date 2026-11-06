@@ -92,3 +92,10 @@
 .scroll-on-demand[data-scrolling] {
   scrollbar-color: var(--border-strong) transparent;
 }
+
+/* A hidden window (closed tray panel, minimised or covered window) must not
+   repaint: the app sets data-hidden on <html> while the page is hidden, and
+   the infinite animations (spinners, shimmer, pings) stand still. */
+[data-hidden] * {
+  animation-play-state: paused !important;
+}
