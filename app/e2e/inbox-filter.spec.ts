@@ -1,34 +1,38 @@
+import { randomUUID } from "node:crypto";
 import { expect, test, type Page } from "@playwright/test";
 import { deleteAllInboxes, launchURL } from "./inbox-helpers";
 
 /** Clears every page's filter and saved tab through the daemon, so a failed
  *  run leaves none for the specs that follow. */
 async function clearFilters(page: Page) {
-  try {
-    if (!page.url().includes("/s/")) return;
-    await page.evaluate(async () => {
-      localStorage.removeItem("baum.pulls.tab.v1");
-      const read = await fetch("api/ui-state/filters", { cache: "no-store" });
-      if (!read.ok) return;
-      const { revision } = (await read.json()) as { revision: number };
-      await fetch("api/ui-state/filters", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          revision,
-          mutation_id: `${crypto.randomUUID()}:1`,
-          value: { pages: {}, tabs: [] },
-        }),
-      });
+  if (!page.url().includes("/s/")) return;
+  const endpoint = new URL("api/ui-state/filters", page.url()).href;
+  const origin = new URL(page.url()).origin;
+  // Unmount the page before resetting its filters, so queued saves cannot
+  // restore them after cleanup. A save already sent may still win one revision.
+  await page.goto("about:blank");
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const read = await page.request.get(endpoint);
+    expect(read.ok()).toBe(true);
+    const { revision } = (await read.json()) as { revision: number };
+    const written = await page.request.put(endpoint, {
+      headers: { Origin: origin },
+      data: {
+        revision,
+        mutation_id: `${randomUUID()}:1`,
+        value: { pages: {}, tabs: [] },
+      },
     });
-  } catch {
-    // A page that never loaded set none.
+    if (written.status() === 409) continue;
+    expect(written.ok()).toBe(true);
+    return;
   }
+  throw new Error("The page's filters could not be cleared after three revisions.");
 }
 
 test.afterEach(async ({ page }) => {
-  await clearFilters(page);
   await deleteAllInboxes(page);
+  await clearFilters(page);
 });
 
 // Pictures for a pull request are taken only when asked for
