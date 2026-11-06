@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/baum-ai/baum/internal/agenthookdefs"
 	"github.com/baum-ai/baum/internal/daemon"
 )
 
@@ -81,6 +82,41 @@ func TestHooksIgnoreHostedOptInsAndIndependentEntire(t *testing.T) {
 	t.Chdir(t.TempDir())
 	if _, _, err := runCLI(t, check...); err == nil {
 		t.Fatal("user hook admitted outside Git worktree")
+	}
+}
+
+func TestLegacyRepositoryChecksDeclineAfterDesktopHasRun(t *testing.T) {
+	paths := useTestHookDaemon(t)
+	markDaemonRan(t, paths)
+	repo := t.TempDir()
+	if err := os.Mkdir(filepath.Join(repo, ".git"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(repo)
+	writeAgentSettings(t, repo, ".entire/settings.json", `{"enabled":true}`)
+	for _, agent := range []string{"claude-code", "codex"} {
+		settings, _ := agenthookdefs.LookupUserWide(agent)
+		for _, placement := range settings.Placements {
+			t.Run(agent+"/"+placement.Event, func(t *testing.T) {
+				// Repository dispatchers exec baum on success, otherwise their own fallback.
+				if _, _, err := runCLI(t, "hooks", "agent", "--check", agent, placement.Event); err == nil {
+					t.Fatal("legacy dispatcher would intercept the independent hook")
+				}
+				if _, _, err := runCLI(t, "hooks", "agent", "--check", "--user", agent, placement.Event); err != nil {
+					t.Fatalf("desktop plugin declined: %v", err)
+				}
+			})
+		}
+	}
+	for _, event := range []string{"post-commit", "pre-push"} {
+		t.Run("git/"+event, func(t *testing.T) {
+			if _, _, err := runCLI(t, "hooks", "git", "--check", event); err == nil {
+				t.Fatal("legacy Git dispatcher would intercept the independent hook")
+			}
+		})
+	}
+	if events, _ := spooledHookEvents(t, paths); len(events) != 0 {
+		t.Fatalf("admission checks recorded events: %+v", events)
 	}
 }
 

@@ -39,7 +39,7 @@ func newGitHooksCommand() *cobra.Command {
 				if _, ok := gitHookArgumentCounts[args[1]]; !ok {
 					return fmt.Errorf("unsupported Git hook %q", args[1])
 				}
-				return hooksEnabled()
+				return errors.New("repository Git hook dispatchers are no longer supported")
 			}
 			if _, ok := gitHookArgumentCounts[args[0]]; !ok {
 				return fmt.Errorf("unsupported Git hook %q", args[0])
@@ -79,7 +79,8 @@ func newAgentHooksCommand(stdout io.Writer) *cobra.Command {
 			if check {
 				args = args[1:]
 			}
-			if len(args) > 0 && args[0] == "--user" {
+			userWide := len(args) > 0 && args[0] == "--user"
+			if userWide {
 				args = args[1:]
 			}
 			if len(args) != 2 {
@@ -90,6 +91,10 @@ func newAgentHooksCommand(stdout io.Writer) *cobra.Command {
 				return err
 			}
 			if check {
+				// Legacy repository dispatchers own their fallback to independent hooks.
+				if !userWide {
+					return errors.New("repository agent hooks are no longer supported; use the desktop plugins")
+				}
 				return hooksEnabled()
 			}
 			started := time.Now()

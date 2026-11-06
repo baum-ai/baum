@@ -12,6 +12,9 @@ Plugin callbacks keep their existing command strings:
 The check succeeds only in a Git worktree after the local daemon has run.
 It reads no credentials or third-party hook settings. Independent hooks may
 run alongside baum; baum neither installs nor delegates to another hook system.
+Legacy repository agent checks without `--user` and Git dispatcher checks always
+decline, leaving the repository dispatcher free to run its own independent hook
+fallback.
 
 Agent callbacks record bounded session identifiers, terminal location and
 notification metadata locally. The daemon event sender retains its bounded
