@@ -120,7 +120,10 @@ test("Add repositories searches beyond suggestions and picks the result", async 
       initialOrder,
     );
     // Leave the shared fixture registry as it was for the remaining stories.
+    // Each pick disables the boxes until the daemon answers, and a click on a
+    // disabled box is lost, so wait for the first to settle.
     await cached.uncheck();
+    await expect(result).toBeEnabled();
     await result.uncheck();
     await expect(
       page.getByRole("button", { name: "Settings for acme/search-only", exact: true }),
