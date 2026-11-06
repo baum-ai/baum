@@ -87,9 +87,9 @@ func BuildSessionEvidence(ctx context.Context, req EvidenceRequest) ([]bundle.Se
 	}
 	key, cacheable := evidenceKey(req, dir, d)
 	if cacheable {
-		if cached, ok := evidenceMemo.get(key); ok {
+		if cached, complete, ok := evidenceMemo.lookup(key); ok {
 			workstats.Inc("locallink.session_evidence_reused")
-			if req.Frozen {
+			if req.Frozen && complete {
 				frozenMemo.put(frozenKey, cached)
 			}
 			return cached, nil
@@ -97,7 +97,7 @@ func BuildSessionEvidence(ctx context.Context, req EvidenceRequest) ([]bundle.Se
 	}
 	// The pull request's repository is not known here, so a missing
 	// checkpoint's fetch hint names a placeholder remote.
-	found, _, err := loadDiscovered(ctx, d, dir, req.Commits, "", req.Warn)
+	found, _, complete, err := loadDiscovered(ctx, d, dir, req.Commits, "", req.Warn)
 	if err != nil {
 		return nil, err
 	}
@@ -136,9 +136,11 @@ func BuildSessionEvidence(ctx context.Context, req EvidenceRequest) ([]bundle.Se
 	}
 	sortSessionEvidence(evidence)
 	if cacheable {
-		evidenceMemo.put(key, evidence)
+		evidenceMemo.store(key, evidence, complete)
 	}
-	if req.Frozen {
+	// Evidence from a partial read is not frozen: a later refresh, once the
+	// store or transcript is readable again, reads it.
+	if req.Frozen && complete {
 		frozenMemo.put(frozenKey, evidence)
 	}
 	return evidence, nil

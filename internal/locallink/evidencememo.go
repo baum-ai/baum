@@ -50,6 +50,9 @@ type evidenceEntry struct {
 	key      string
 	at       time.Time
 	sessions []bundle.Session
+	// partial is set for evidence built while some session store file or
+	// session could not be read, which must not be frozen.
+	partial bool
 }
 
 func newEvidenceCache(maxAge time.Duration) *evidenceCache {
@@ -57,29 +60,42 @@ func newEvidenceCache(maxAge time.Duration) *evidenceCache {
 }
 
 func (c *evidenceCache) get(key string) ([]bundle.Session, bool) {
+	evidence, _, ok := c.lookup(key)
+	return evidence, ok
+}
+
+// lookup is get, also reporting whether the evidence was built from a
+// complete read of the session stores.
+func (c *evidenceCache) lookup(key string) ([]bundle.Session, bool, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	element, ok := c.entries[key]
 	if !ok {
-		return nil, false
+		return nil, false, false
 	}
 	entry := element.Value.(*evidenceEntry)
 	if c.maxAge > 0 && c.now().Sub(entry.at) >= c.maxAge {
 		c.order.Remove(element)
 		delete(c.entries, key)
-		return nil, false
+		return nil, false, false
 	}
 	c.order.MoveToFront(element)
-	return deepCopy(entry.sessions), true
+	return deepCopy(entry.sessions), !entry.partial, true
 }
 
 func (c *evidenceCache) put(key string, evidence []bundle.Session) {
+	c.store(key, evidence, true)
+}
+
+// store is put, recording whether the evidence was built from a complete
+// read of the session stores.
+func (c *evidenceCache) store(key string, evidence []bundle.Session, complete bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if old, ok := c.entries[key]; ok {
 		c.order.Remove(old)
 	}
-	c.entries[key] = c.order.PushFront(&evidenceEntry{key: key, at: c.now(), sessions: deepCopy(evidence)})
+	c.entries[key] = c.order.PushFront(&evidenceEntry{key: key, at: c.now(), sessions: deepCopy(evidence), partial: !complete})
 	for c.order.Len() > maxEvidenceEntries {
 		last := c.order.Back()
 		c.order.Remove(last)
