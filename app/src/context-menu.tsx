@@ -41,12 +41,55 @@ type Open = {
  *  shortcut for the Menu key or Shift+F10 (see `useActionsKey`). */
 export const ACTIONS_KEY = MAC ? "⌘." : "Ctrl+.";
 
+function moveMenuFocus(event: KeyboardEvent): boolean {
+  if (event.metaKey || event.ctrlKey || event.altKey || event.nativeEvent.isComposing) return false;
+  const list = [
+    ...event.currentTarget.querySelectorAll<HTMLElement>("[role^=menuitem]:not(:disabled)"),
+  ];
+  const index = list.indexOf(document.activeElement as HTMLElement);
+  const next =
+    event.key === "ArrowDown" || event.key === "j"
+      ? index + 1
+      : event.key === "ArrowUp" || event.key === "k"
+        ? index - 1
+        : event.key === "Home"
+          ? 0
+          : event.key === "End"
+            ? list.length - 1
+            : null;
+  if (next === null || list.length === 0) return false;
+  event.preventDefault();
+  event.stopPropagation();
+  list[(next + list.length) % list.length]?.focus();
+  return true;
+}
+
+/** Inline choice menus take the keys while open, just as context menus do. */
+export function useMenuFocus(open: boolean, close: () => void) {
+  const ref = useRef<HTMLDivElement>(null);
+  const opener = useRef<Element | null>(null);
+  useLayoutEffect(() => {
+    if (!open) return;
+    opener.current = document.activeElement;
+    ref.current?.querySelector<HTMLElement>("[role^=menuitem]:not(:disabled)")?.focus();
+  }, [open]);
+  const onKeyDown = (event: KeyboardEvent) => {
+    if (moveMenuFocus(event)) return;
+    if (event.key !== "Escape" && event.key !== "Tab") return;
+    event.preventDefault();
+    event.stopPropagation();
+    close();
+    if (opener.current instanceof HTMLElement && opener.current.isConnected) opener.current.focus();
+  };
+  return { ref, onKeyDown };
+}
+
 /** The app's menus: `open` shows `items` at the pointer on a right click (or
  *  under the focused element when the keyboard asked, with the Menu key,
  *  Shift+F10 or ⌘.) in place of the browser's; `openFrom` hangs them under a
  *  row's ⋯ button (`MenuButton`); and `menu` is the element to render. The
- *  browser's own stays where it is useful: in a field, over selected text,
- *  and when there is nothing to offer. A list keeps one for all its rows, so
+ *  browser's own stays where it is useful: in a field and over selected
+ *  text; elsewhere `blockBrowserMenu` keeps it off. A list keeps one for all its rows, so
  *  a right click and the ⋯ button offer the same choices. */
 export function useContextMenu() {
   const [state, setState] = useState<Open | null>(null);
@@ -239,10 +282,11 @@ function ContextMenu({
     return () => window.removeEventListener("keydown", escape, true);
   });
   // The menu's keys are its own: the page's list keys wait until it closes.
-  // Up and Down move and wrap, Home and End go to either end, a letter goes
+  // Up/Down and j/k move and wrap, Home and End go to either end, a letter goes
   // to the next choice that starts with it, and Tab leaves the menu.
   const keys = (event: KeyboardEvent) => {
     event.stopPropagation();
+    if (moveMenuFocus(event)) return;
     const list = choices();
     const index = list.indexOf(document.activeElement as HTMLElement);
     const go = (next: number) => {
@@ -252,11 +296,7 @@ function ContextMenu({
     if (event.key === "Tab") {
       event.preventDefault();
       dismiss();
-    } else if (event.key === "ArrowDown") go(index + 1);
-    else if (event.key === "ArrowUp") go(index - 1);
-    else if (event.key === "Home") go(0);
-    else if (event.key === "End") go(list.length - 1);
-    else if (event.key.length === 1 && /\S/.test(event.key) && !event.metaKey && !event.ctrlKey) {
+    } else if (event.key.length === 1 && /\S/.test(event.key) && !event.metaKey && !event.ctrlKey) {
       const letter = event.key.toLowerCase();
       for (let step = 1; step <= list.length; step++) {
         const candidate = list[(index + step) % list.length]!;

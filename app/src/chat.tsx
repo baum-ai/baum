@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { HunkEvidence, HunkPatchProvider } from "@baum/viewer/components/hunk-evidence";
 import type { HunkPatchSource } from "@baum/viewer/components/hunk-evidence";
 import { Markdown } from "@baum/viewer/components/markdown";
-import { Alert, Button, LiveDot } from "@baum/viewer/components/ui";
+import { Alert, Button, CloseButton, LiveDot } from "@baum/viewer/components/ui";
 import type { Anchor, ReviewDocument } from "@baum/viewer/review-document";
 import {
   askChat,
@@ -20,6 +20,7 @@ import {
 } from "./api";
 import { EntryView, useJobTranscript } from "./job-transcript";
 import { LoadingStatus } from "./nine-dots";
+import { useVisibleInterval } from "./visible-interval";
 
 /** The most anchors a question's focus may carry. */
 const MAX_ANCHORS = 20;
@@ -429,11 +430,7 @@ export function AskPanel({
   const busy = !!conversation?.turns.some(chatTurnActive);
   const activeTurns = conversations.some((c) => c.turns.some(chatTurnActive));
 
-  useEffect(() => {
-    if (!activeTurns) return;
-    const timer = setInterval(refresh, ACTIVE_POLL_MS);
-    return () => clearInterval(timer);
-  }, [activeTurns, refresh]);
+  useVisibleInterval(refresh, activeTurns ? ACTIVE_POLL_MS : null);
 
   // The box takes the typing when the panel opens and when a part of the
   // review is chosen to ask about; that part is asked about on the current
@@ -515,9 +512,7 @@ export function AskPanel({
     >
       <header className="ask-head">
         <h2>Ask about this review</h2>
-        <Button variant="secondary" size="compact" onClick={close} aria-keyshortcuts="Escape">
-          Close
-        </Button>
+        <CloseButton onClick={close} aria-keyshortcuts="Escape" />
       </header>
       {conversations.length > 0 ? (
         <nav aria-label="Conversations" className="ask-convos">

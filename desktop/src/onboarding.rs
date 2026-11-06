@@ -180,7 +180,8 @@ pub fn start(app: &AppHandle) -> &'static str {
                 })
         });
     }
-    if load(app).onboarded {
+    // An app that cannot run baum shows why on the connecting screen.
+    if load(app).onboarded || crate::daemon::misplaced().is_some() {
         return CONNECTING_PAGE;
     }
     app.state::<Setup>().open.store(true, Ordering::SeqCst);
@@ -264,7 +265,7 @@ fn managed_copy(app: &AppHandle) -> Option<PathBuf> {
     )
 }
 
-fn running_as_appimage() -> bool {
+pub fn running_as_appimage() -> bool {
     let (Some(_), Some(appdir)) = (std::env::var_os("APPIMAGE"), std::env::var_os("APPDIR")) else {
         return false;
     };
@@ -291,6 +292,20 @@ pub struct View {
     home: Option<PathBuf>,
     command: install::Status,
     hooks: Hooks,
+    /// What the user runs in a terminal so baum records the agents that
+    /// terminal runs: the app's own baum by its full path, since the `baum`
+    /// command may not be installed yet.
+    terminal_setup: Option<String>,
+}
+
+/// `'<cli>' desktop-setup`, quoted for POSIX shells and fish. Windows has no
+/// login shell to miss an interactive PATH.
+fn terminal_setup(cli: &Path) -> Option<String> {
+    if cfg!(windows) {
+        return None;
+    }
+    let path = cli.to_string_lossy().replace('\'', r"'\''");
+    Some(format!("'{path}' desktop-setup"))
 }
 
 /// Native marketplace plugin installation and enablement, from `baum hooks status --user --json`.
@@ -313,6 +328,19 @@ pub struct AgentHooks {
     /// Whether the detected CLI is signed in; absent when baum could not tell.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     signed_in: Option<bool>,
+    /// The detected CLI and its version, the oldest version baum runs,
+    /// whether this one is that or newer (absent when its version is
+    /// unknown), and whether `baum desktop-setup` recorded its directory.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    cli_path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    cli_version: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    minimum_version: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    supported: Option<bool>,
+    #[serde(default)]
+    recorded: bool,
     plugin: String,
     #[serde(default)]
     installed: bool,
@@ -358,11 +386,13 @@ fn login_path(cli: &Path) -> install::LoginPath {
         last_json(&out.stdout)
     });
     read.unwrap_or_else(|why| install::LoginPath {
-        path: std::env::var_os("PATH")
+        path: crate::daemon::child_path()
+            .or_else(|| std::env::var_os("PATH"))
             .map(|p| std::env::split_paths(&p).collect())
             .unwrap_or_default(),
         baum: None,
         error: Some(format!("The baum command could not read your PATH: {why}")),
+        warning: None,
     })
 }
 
@@ -400,6 +430,7 @@ fn view(app: &AppHandle) -> Result<View, String> {
         home: app.path().home_dir().ok(),
         command: command_status(app, &cli),
         hooks: hooks_status(&cli),
+        terminal_setup: terminal_setup(&cli),
     })
 }
 
@@ -981,7 +1012,7 @@ fn run_with_path(
     path: Option<&OsStr>,
 ) -> Result<Output, String> {
     let mut command = Command::new(cli);
-    if let Some(path) = path {
+    if let Some(path) = path.map(OsStr::to_owned).or_else(crate::daemon::child_path) {
         command.env("PATH", path);
     }
     let mut child = command
@@ -1065,6 +1096,22 @@ mod tests {
                 "--decisions-model=gpt-6.1-sol",
                 "--decisions-effort=high",
             ]
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn terminal_setup_quotes_the_apps_baum() {
+        assert_eq!(
+            terminal_setup(Path::new("/home/user/.local/share/ai.baum/bin/baum")).as_deref(),
+            Some("'/home/user/.local/share/ai.baum/bin/baum' desktop-setup")
+        );
+        assert_eq!(
+            terminal_setup(Path::new(
+                "/Applications/Ada's Baum.app/Contents/MacOS/baum"
+            ))
+            .as_deref(),
+            Some(r"'/Applications/Ada'\''s Baum.app/Contents/MacOS/baum' desktop-setup")
         );
     }
 

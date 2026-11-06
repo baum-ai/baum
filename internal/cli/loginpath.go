@@ -14,6 +14,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/baum-ai/baum/internal/agentcli"
 	"github.com/baum-ai/baum/internal/shellenv"
 )
 
@@ -31,9 +32,12 @@ type loginPath struct {
 	// the inherited one (always on Windows, which has no login shell).
 	LoginShell bool `json:"login_shell"`
 	// Error is why the login shell could not be read.
-	Error string    `json:"error,omitempty"`
-	Path  []string  `json:"path"`
-	Baum  *pathBaum `json:"baum"`
+	Error string `json:"error,omitempty"`
+	// Warning is why the PATH is a login shell's that is not interactive,
+	// which may miss settings the interactive one makes.
+	Warning string    `json:"warning,omitempty"`
+	Path    []string  `json:"path"`
+	Baum    *pathBaum `json:"baum"`
 }
 
 // pathBaum is the first baum on the PATH.
@@ -67,6 +71,9 @@ its version. It changes nothing.`,
 			if report.Error != "" {
 				_, _ = fmt.Fprintf(out, "login shell not read (%s); using the inherited PATH\n", report.Error)
 			}
+			if report.Warning != "" {
+				_, _ = fmt.Fprintf(out, "warning: %s\n", report.Warning)
+			}
 			_, _ = fmt.Fprintf(out, "PATH: %s\n", strings.Join(report.Path, string(os.PathListSeparator)))
 			if report.Baum == nil {
 				_, _ = fmt.Fprintln(out, "baum: not found on PATH")
@@ -99,6 +106,7 @@ func readLoginPath(ctx context.Context) loginPath {
 	case err == nil:
 		resolved = result.Env
 		report.LoginShell = true
+		report.Warning = result.Fallback
 	case errors.Is(err, shellenv.ErrUnsupported):
 	default:
 		report.Error = err.Error()
@@ -106,7 +114,8 @@ func readLoginPath(ctx context.Context) loginPath {
 	for _, entry := range shellenv.Merge(inherited, resolved) {
 		name, value, _ := strings.Cut(entry, "=")
 		if pathVariable(name) {
-			for _, dir := range filepath.SplitList(value) {
+			// The daemon puts the agents `baum desktop-setup` recorded first.
+			for _, dir := range filepath.SplitList(agentcli.WithRecorded(value)) {
 				if dir != "" {
 					report.Path = append(report.Path, dir)
 				}

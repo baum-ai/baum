@@ -43,8 +43,7 @@ func patchWith(t *testing.T, p *Patcher, req PatchRequest) PatchResult {
 // the range opens nothing more, and Close closes it.
 func TestPatcherKeepsARangesOpenClone(t *testing.T) {
 	f := twoChangedFiles(t)
-	tmp := t.TempDir()
-	t.Setenv("TMPDIR", tmp)
+	tmp := linktest.TempDir(t)
 	p := new(Patcher)
 	for _, path := range []string{"one.txt", "two.txt"} {
 		if result := patchWith(t, p, patchRequest(f, path)); !result.Available {
@@ -70,8 +69,7 @@ func TestPatcherKeepsARangesOpenClone(t *testing.T) {
 // for the answer that was unavailable.
 func TestPatcherResolvesAnUnavailableRangeAgain(t *testing.T) {
 	f := twoChangedFiles(t)
-	tmp := t.TempDir()
-	t.Setenv("TMPDIR", tmp)
+	tmp := linktest.TempDir(t)
 	p := new(Patcher)
 	defer p.Close()
 	req := patchRequest(f, "one.txt")
@@ -91,8 +89,7 @@ func TestPatcherResolvesAnUnavailableRangeAgain(t *testing.T) {
 // A kept clone closes once it has been idle for rangeIdle.
 func TestPatcherClosesAnIdleRange(t *testing.T) {
 	f := twoChangedFiles(t)
-	tmp := t.TempDir()
-	t.Setenv("TMPDIR", tmp)
+	tmp := linktest.TempDir(t)
 	defer func(idle time.Duration) { rangeIdle = idle }(rangeIdle)
 	rangeIdle = 50 * time.Millisecond
 	p := new(Patcher)
@@ -128,8 +125,7 @@ func holdRange(t *testing.T, p *Patcher, req PatchRequest) (*openRange, func()) 
 // open once the kept ones are closed.
 func TestEvictedRangesInUseCloseWithTheirLastRead(t *testing.T) {
 	f := twoChangedFiles(t)
-	tmp := t.TempDir()
-	t.Setenv("TMPDIR", tmp)
+	tmp := linktest.TempDir(t)
 	p := new(Patcher)
 	const ranges = maxChangeSets + 3
 	var releases []func()
@@ -162,8 +158,7 @@ func TestEvictedRangesInUseCloseWithTheirLastRead(t *testing.T) {
 // then closes it.
 func TestCloseDuringAReadClosesWhenItEnds(t *testing.T) {
 	f := twoChangedFiles(t)
-	tmp := t.TempDir()
-	t.Setenv("TMPDIR", tmp)
+	tmp := linktest.TempDir(t)
 	p := new(Patcher)
 	r, release := holdRange(t, p, patchRequest(f, "one.txt"))
 	p.Close()
@@ -183,8 +178,7 @@ func TestCloseDuringAReadClosesWhenItEnds(t *testing.T) {
 // busy it was; the old clone closes.
 func TestABusyRangeIsReopenedAfterItsMaxAge(t *testing.T) {
 	f := twoChangedFiles(t)
-	tmp := t.TempDir()
-	t.Setenv("TMPDIR", tmp)
+	tmp := linktest.TempDir(t)
 	defer func(age time.Duration) { rangeMaxAge = age }(rangeMaxAge)
 	rangeMaxAge = 50 * time.Millisecond
 	p := new(Patcher)

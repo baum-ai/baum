@@ -587,7 +587,7 @@ func (c *Backend) run(ctx context.Context, request agent.Request, args, env []st
 			return result, agent.SessionNotFound("claude code", line)
 		}
 		if c.Profile == User && unknownOption(stderr.String()) {
-			return result, fmt.Errorf("claude does not accept the options baum needs (%s); upgrade Claude Code to %s or newer", firstLine(stderr.String()), minimumVersion)
+			return result, fmt.Errorf("claude does not accept the options baum needs (%s); upgrade Claude Code to %s or newer", firstLine(stderr.String()), MinimumVersion)
 		}
 		return result, fmt.Errorf("claude code failed: %w (%s)", waitErr, stderr.String())
 	}

@@ -48,6 +48,10 @@ pub struct LoginPath {
     /// Why the login shell could not be read; the PATH is then the app's.
     #[serde(default)]
     pub error: Option<String>,
+    /// Why the PATH is a login shell's that is not interactive, which may
+    /// miss settings the interactive one makes.
+    #[serde(default)]
+    pub warning: Option<String>,
 }
 
 /// A `baum` on the PATH: the first one, which is what the hooks run.
@@ -540,7 +544,7 @@ fn status_with(
         installed: false,
         shadowed: None,
         plan: None,
-        path_error: login.error.clone(),
+        path_error: login.error.clone().or_else(|| login.warning.clone()),
         found: login.baum.clone(),
         record,
     };
@@ -999,7 +1003,7 @@ pub fn status(
         installed: false,
         shadowed: None,
         plan: None,
-        path_error: login.error.clone(),
+        path_error: login.error.clone().or_else(|| login.warning.clone()),
         found: login.baum.clone(),
         record: None,
     };
@@ -1197,6 +1201,7 @@ mod tests {
                     version: "v0.2.9".into(),
                 }),
                 error: None,
+                warning: None,
             }
         }
 
@@ -1816,6 +1821,7 @@ mod tests {
                 path: path.to_vec(),
                 baum,
                 error: None,
+                warning: None,
             };
             status_with(Ok(copy.clone()), &login, Vec::new(), &rules)
         };

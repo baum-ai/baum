@@ -122,6 +122,8 @@ export type TimelinePageProps<S> = {
   noDecisions: ReactNode;
   /** A list whose first page is being read. */
   loading?: (label: string) => ReactNode;
+  /** The row the host's keys are on, marked `data-focused`. */
+  focusedRow?: string | null;
 };
 
 const TABLIST = "decision-log";
@@ -157,6 +159,7 @@ export function TimelinePage<S>({
   noFeatures,
   noDecisions,
   loading = defaultLoading,
+  focusedRow = null,
 }: TimelinePageProps<S>) {
   const url = useUrlState();
   const search = url.search;
@@ -395,6 +398,7 @@ export function TimelinePage<S>({
       panelElsewhere={wide && !inline ? FEATURE_PANEL : undefined}
       repository={labelOf(feature)}
       expanded={openFeature === feature.id}
+      focused={focusedRow === feature.id}
       onToggle={() => toggleFeature(feature)}
       onKeyDecision={(decision) => writeFeature(feature.id, decision)}
       itemRef={(element) => {
@@ -442,6 +446,7 @@ export function TimelinePage<S>({
                         key={key}
                         decision={decision}
                         expanded={openRow === decision}
+                        focused={focusedRow === decision.id}
                         withDate={section.dated}
                         repository={labelOf(decision)}
                         onToggle={() => toggle(decision)}

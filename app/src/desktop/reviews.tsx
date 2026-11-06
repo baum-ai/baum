@@ -2,6 +2,7 @@ import { BrandMark } from "@baum/viewer/components/brand-logo";
 import { type ReactNode, useId, useState } from "react";
 import { modelName, modelPresets, type PullRequests, type ReviewSettings } from "./setup-model";
 import { effortLabels, modelEfforts, supportedEffort } from "../model-effort";
+import { TerminalCommand } from "./terminal-setup";
 import "./review-form.css";
 
 export const harnesses = [
@@ -280,6 +281,7 @@ export function ReviewSettingsForm({
   available,
   signedOut,
   detectionError,
+  terminal,
 }: {
   settings: ReviewSettings;
   disabled: boolean;
@@ -288,6 +290,9 @@ export function ReviewSettingsForm({
   available: readonly string[];
   signedOut?: readonly string[];
   detectionError?: string | null;
+  /** The `baum desktop-setup` command, for an agent installed only where
+   *  baum cannot see it (see terminalSetup). */
+  terminal?: { text: string; command: string } | null;
 }) {
   const update = (patch: Partial<ReviewSettings>) => {
     const next = { ...settings, ...patch };
@@ -337,6 +342,12 @@ export function ReviewSettingsForm({
               <a href="https://learn.chatgpt.com/docs/cli" target="_blank" rel="noreferrer">
                 Install Codex ↗
               </a>
+            </div>
+          )}
+          {!detectionError && terminal && (
+            <div id="terminal-setup" className="agent-terminal-setup">
+              <p className="review-note">{terminal.text}</p>
+              <TerminalCommand command={terminal.command} />
             </div>
           )}
         </div>

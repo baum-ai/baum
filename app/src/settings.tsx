@@ -3,6 +3,7 @@ import { BrandMark } from "@baum/viewer/components/brand-logo";
 import { usePreferences, type PageModifier } from "./preferences";
 import { PlanUsageSettings } from "./plan-usage-settings";
 import {
+  useCallback,
   useEffect,
   useRef,
   useState,
@@ -10,7 +11,14 @@ import {
   type FormEvent,
   type ReactNode,
 } from "react";
-import { Alert, Badge, Button, LiveDot, SegmentedControl } from "@baum/viewer/components/ui";
+import {
+  Alert,
+  Badge,
+  Button,
+  CloseButton,
+  LiveDot,
+  SegmentedControl,
+} from "@baum/viewer/components/ui";
 import {
   formatCount,
   formatDateTime,
@@ -48,6 +56,7 @@ import { GitHubConnectionSection } from "./github-connection";
 import { messages as githubMessages } from "./github-auth";
 import { CodexHookWarning, type useCodexHookTrust } from "./codex-hooks";
 import { DiagnosticsSection } from "./diagnostics";
+import { pendingUpdate, UpdatesSection, type AppUpdates } from "./desktop/updates";
 import { invoke } from "./desktop/native";
 import { withCode } from "./desktop/code-terms";
 import { Notice, PageBar, PanelHeader, RefreshButton } from "./shell";
@@ -64,12 +73,19 @@ import { DecisionsDisclosure, harnesses, harnessName, signIn } from "./desktop/r
 import { effortLabels } from "./model-effort";
 import {
   describeCommand,
+  commandMissing,
+  commandMissingWarning,
+  hooksMissing,
+  hooksMissingWarning,
   describeAgent,
   agentConnected,
   agentUpdatable,
   agentHookNote,
   agentNeedsAction,
+  agentUnsupported,
+  terminalSetup,
   displayPath,
+  type Agent,
   type SetupView,
   type Outcome,
   decisionModelDefaults,
@@ -81,6 +97,7 @@ import {
   type PullRequests,
   type ReviewSettings,
 } from "./desktop/setup-model";
+import { CommandText, useCopy } from "./desktop/terminal-setup";
 import { useModal } from "./modal";
 import { LoadingStatus } from "./nine-dots";
 import { isCustom, PromptList, promptsNeedAttention } from "./prompt-editor";
@@ -889,6 +906,41 @@ function FixesSection({
   );
 }
 
+/** Whether the baum CLI or every agent's hooks are missing, for the sidebar's
+ *  Settings badge and the Sessions page. Only the desktop app can tell; it
+ *  rechecks on returning to the window and when Settings changes the setup. */
+export function useCommandLineCheck() {
+  const desktop = hasFolderPicker();
+  const [missing, setMissing] = useState(false);
+  const [noHooks, setNoHooks] = useState(false);
+  const recheck = useCallback(async () => {
+    if (!desktop) return;
+    try {
+      const view = await invoke<SetupView>("setup_state");
+      setMissing(commandMissing(view));
+      setNoHooks(hooksMissing(view));
+    } catch {
+      // Keep the last answer until a check succeeds.
+    }
+  }, [desktop]);
+  useEffect(() => {
+    if (!desktop) return;
+    void recheck();
+    const focus = () => void recheck();
+    window.addEventListener("focus", focus);
+    return () => window.removeEventListener("focus", focus);
+  }, [desktop, recheck]);
+  return {
+    missing,
+    hooksMissing: noHooks,
+    warning:
+      [missing ? commandMissingWarning : null, noHooks ? hooksMissingWarning : null]
+        .filter(Boolean)
+        .join(" ") || null,
+    recheck,
+  };
+}
+
 /** The desktop app's view of the CLI and agent hooks, and the actions that
  *  change them. Outside the desktop app it stays empty. */
 function useDesktopSetup(onChanged?: () => Promise<void>) {
@@ -958,12 +1010,57 @@ function connectedState(label: string, connected: boolean, attention = false) {
   );
 }
 
+/** An agent's status badge: short, since the line below it explains a missing,
+ *  too old or unreadable agent in full. */
+function agentBadge(agent: Agent) {
+  if (agentUnsupported(agent)) return "Needs a newer version";
+  if (agent.error) return "Couldn't check";
+  if (!agent.detected) return "Not found";
+  return describeAgent(agent) || "Not connected";
+}
+
+/** The `baum desktop-setup` command for an agent baum found too old, with a
+ *  button that copies it (setup's TerminalSetup). */
+function TerminalSetupRow({ text, command }: { text: string; command: string }) {
+  const { copied, copy } = useCopy();
+  return (
+    <div id="terminal-setup" className="border-t border-(--border-subtle) px-5 py-4">
+      <p className="text-xs text-(--text-secondary)">{text}</p>
+      <div className="terminal-command">
+        <CommandText command={command} />
+        <Button
+          size="compact"
+          variant="secondary"
+          aria-label="Copy the command"
+          onClick={() => void copy(command)}
+        >
+          {copied || "Copy"}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 /** Whether each coding agent's hooks are in, so baum can follow its work. */
+/** The agents baum connects, shown while the first check runs. */
+const checkingAgents = [
+  { agent: "claude-code", name: "Claude Code" },
+  { agent: "codex", name: "Codex" },
+];
+
 function AgentHooksPanel({ setup }: { setup: DesktopSetup }) {
   const { view, busy, doing, run, display } = setup;
+  const terminal = view ? terminalSetup(view) : null;
+  const missing = hooksMissing(view);
+  // Checking shows beside each agent; the panel keeps its rows meanwhile.
+  const checking = !view || (doing === "refresh" && busy);
   return (
     <>
-      <section className="local-panel p-0!" aria-labelledby="hooks-heading">
+      <section
+        className="local-panel p-0!"
+        aria-labelledby="hooks-heading"
+        data-attention={missing ? "true" : undefined}
+      >
         <PanelHeader
           id="hooks-heading"
           icon={<SessionsIcon size={20} />}
@@ -975,6 +1072,26 @@ function AgentHooksPanel({ setup }: { setup: DesktopSetup }) {
             </Button>
           }
         />
+        {view
+          ? null
+          : checkingAgents.map((agent) => (
+              <div
+                key={agent.agent}
+                className="flex flex-wrap items-center justify-between gap-4 border-t border-(--border-subtle) px-5 py-4"
+              >
+                <div className="flex min-w-0 flex-[1_1_16rem] items-center gap-3">
+                  <BrandMark
+                    brand={agent.agent === "codex" ? "openai" : "claude"}
+                    size={24}
+                    className="shrink-0"
+                  />
+                  <h3 className="text-base font-medium">{agent.name}</h3>
+                  <div className="text-xs text-(--text-tertiary)">
+                    <LoadingStatus>Checking…</LoadingStatus>
+                  </div>
+                </div>
+              </div>
+            ))}
         {view?.hooks.agents.map((agent) => (
           <div
             key={agent.agent}
@@ -989,16 +1106,23 @@ function AgentHooksPanel({ setup }: { setup: DesktopSetup }) {
               <div className="min-w-0 space-y-1">
                 <div className="flex flex-wrap items-center gap-3">
                   <h3 className="text-base font-medium">{agent.name}</h3>
-                  {connectedState(
-                    describeAgent(agent) || "Not connected",
-                    agentConnected(agent),
-                    agentNeedsAction(agent),
+                  {checking ? (
+                    <div className="text-xs text-(--text-tertiary)">
+                      <LoadingStatus>Checking…</LoadingStatus>
+                    </div>
+                  ) : (
+                    connectedState(
+                      agentBadge(agent),
+                      agentConnected(agent),
+                      agentNeedsAction(agent) || agentUnsupported(agent),
+                    )
                   )}
                   {agent.installed && agent.version ? (
                     <span className="text-xs text-(--text-tertiary)">Plugin {agent.version}</span>
                   ) : null}
                 </div>
-                {agent.error || !agent.installed ? (
+                {(agent.error || !agent.installed || agentUnsupported(agent)) &&
+                describeAgent(agent) ? (
                   <p className="text-xs text-(--text-secondary)">{display(describeAgent(agent))}</p>
                 ) : null}
                 {agent.installed ? (
@@ -1009,11 +1133,14 @@ function AgentHooksPanel({ setup }: { setup: DesktopSetup }) {
               </div>
             </div>
             <div className="flex flex-wrap items-center gap-2">
-              {agent.detected && !agent.error && (!agent.installed || !agent.enabled) ? (
+              {agent.detected &&
+              !agent.error &&
+              !agentUnsupported(agent) &&
+              (!agent.installed || !agent.enabled) ? (
                 <Button
                   disabled={busy}
                   size="compact"
-                  variant="secondary"
+                  variant={missing ? "primary" : "secondary"}
                   onClick={() => void run("install_hooks", { agent: agent.agent })}
                 >
                   {doing === `install_hooks:${agent.agent}`
@@ -1048,6 +1175,7 @@ function AgentHooksPanel({ setup }: { setup: DesktopSetup }) {
             </div>
           </div>
         ))}
+        {terminal ? <TerminalSetupRow {...terminal} /> : null}
       </section>
       {view?.hooks.error ? <Alert>{display(view.hooks.error)}</Alert> : null}
     </>
@@ -1058,8 +1186,13 @@ function AgentHooksPanel({ setup }: { setup: DesktopSetup }) {
 function CommandLinePanel({ setup }: { setup: DesktopSetup }) {
   const { view, busy, doing, run, display } = setup;
   const command = view ? describeCommand(view.command) : null;
+  const missing = commandMissing(view);
   return (
-    <section className="local-panel p-0!" aria-labelledby="cli-heading">
+    <section
+      className="local-panel p-0!"
+      aria-labelledby="cli-heading"
+      data-attention={missing ? "true" : undefined}
+    >
       <PanelHeader
         id="cli-heading"
         icon={<TerminalIcon size={20} />}
@@ -1071,7 +1204,7 @@ function CommandLinePanel({ setup }: { setup: DesktopSetup }) {
           <div className="flex flex-wrap items-center gap-3">
             <h3 className="text-base font-medium">baum CLI</h3>
             {command
-              ? connectedState(command.ok ? "Installed" : "Not installed", !!command.ok)
+              ? connectedState(command.ok ? "Installed" : "Not installed", !!command.ok, missing)
               : null}
           </div>
           {command ? (
@@ -1092,7 +1225,7 @@ function CommandLinePanel({ setup }: { setup: DesktopSetup }) {
             <Button
               disabled={busy}
               size="compact"
-              variant="secondary"
+              variant={missing ? "primary" : "secondary"}
               onClick={() =>
                 void run("install_command", command.replace ? { replace: command.replace } : {})
               }
@@ -1153,9 +1286,10 @@ export function SettingsPage({
   diagnosticsOpen,
   setDiagnosticsOpen,
   onDiagnostics,
-  authRevision,
   authChanged,
   codexTrust,
+  commandLine,
+  updates,
 }: {
   automatic: Automatic | null;
   defaults: ReviewDefaults | null;
@@ -1167,11 +1301,19 @@ export function SettingsPage({
   diagnosticsOpen: boolean;
   setDiagnosticsOpen: (open: boolean) => void;
   onDiagnostics: (report: DiagnosticReport | null) => void;
-  authRevision: number;
   authChanged: () => void;
   codexTrust?: ReturnType<typeof useCodexHookTrust>;
+  /** The app shell's CLI check, rechecked when Settings changes the setup. */
+  commandLine?: ReturnType<typeof useCommandLineCheck>;
+  /** The desktop app's updater, from the app shell. */
+  updates?: AppUpdates;
 }) {
-  const setup = useDesktopSetup(codexTrust?.recheck);
+  const setup = useDesktopSetup(async () => {
+    await Promise.all([codexTrust?.recheck(), commandLine?.recheck()]);
+  });
+  const cliMissing = setup.desktop && commandMissing(setup.view);
+  const noHooks = setup.desktop && hooksMissing(setup.view);
+  const update = pendingUpdate(updates?.view ?? null);
   const prompts = usePrompts();
   // Only the desktop app can ask the agent CLIs whether they are signed in.
   const signedOut = setup.desktop && setup.view ? signedOutHarnesses(setup.view.hooks.agents) : [];
@@ -1181,10 +1323,11 @@ export function SettingsPage({
   const connectionTone: Tone =
     gh.tone === "critical"
       ? "critical"
-      : hooks?.tone === "caution" || codexTrust?.warning
+      : hooks?.tone === "caution" || codexTrust?.warning || noHooks
         ? "caution"
         : gh.tone;
-  const nav: { id: SettingsSection; sub: string; tone?: Tone }[] = [
+  // `count` repeats the sidebar's Settings badge where it comes from.
+  const nav: { id: SettingsSection; sub: string; tone?: Tone; count?: number }[] = [
     {
       id: "general",
       sub: "Appearance and keyboard",
@@ -1202,7 +1345,11 @@ export function SettingsPage({
     },
     {
       id: "connections",
-      sub: setup.desktop ? "GitHub and agent hooks" : "GitHub",
+      sub: noHooks
+        ? "No coding agent connected"
+        : setup.desktop
+          ? "GitHub and agent hooks"
+          : "GitHub",
       tone:
         connectionTone === "critical" || connectionTone === "caution" ? connectionTone : undefined,
     },
@@ -1211,10 +1358,15 @@ export function SettingsPage({
       sub:
         problems > 0
           ? `${problems} ${problems === 1 ? "problem" : "problems"} found`
-          : setup.desktop
-            ? "Diagnostics, CLI, environment"
-            : "Diagnostics, environment",
-      tone: problems > 0 ? "critical" : undefined,
+          : cliMissing
+            ? "baum CLI not installed"
+            : update
+              ? "Update available"
+              : setup.desktop
+                ? "Diagnostics, CLI, environment"
+                : "Diagnostics, environment",
+      tone: problems > 0 ? "critical" : cliMissing ? "caution" : undefined,
+      count: update ? 1 : undefined,
     },
     {
       id: "prompts",
@@ -1238,6 +1390,13 @@ export function SettingsPage({
     document.getElementById("hooks-heading")?.scrollIntoView?.({ block: "start" });
     setShowHooks(false);
   }, [showHooks, section]);
+  // Set by the CLI banner's button, the same way.
+  const [showCommandLine, setShowCommandLine] = useState(false);
+  useEffect(() => {
+    if (!showCommandLine || section !== "computer") return;
+    document.getElementById("cli-heading")?.scrollIntoView?.({ block: "center" });
+    setShowCommandLine(false);
+  }, [showCommandLine, section]);
   const loading = <LoadingStatus block>Reading your review settings…</LoadingStatus>;
   return (
     <section className="settings-page">
@@ -1246,12 +1405,7 @@ export function SettingsPage({
         detail="How baum reviews and fixes pull requests on this computer"
       />
       {diagnosticsOpen ? (
-        <DiagnosticsDialog
-          close={() => setDiagnosticsOpen(false)}
-          onReport={onDiagnostics}
-          authRevision={authRevision}
-          authChanged={authChanged}
-        />
+        <DiagnosticsDialog close={() => setDiagnosticsOpen(false)} onReport={onDiagnostics} />
       ) : null}
       <div className="local-page-body settings-layout">
         <nav ref={keys.nav} aria-label="Settings sections" className="settings-nav">
@@ -1278,6 +1432,15 @@ export function SettingsPage({
                       <Dot tone={item.tone} />
                     </span>
                   ) : null}
+                  {item.count ? (
+                    <span
+                      className="settings-nav-count"
+                      aria-hidden="true"
+                      title="Update available"
+                    >
+                      {item.count}
+                    </span>
+                  ) : null}
                 </span>
                 <span className="settings-nav-sub">{item.sub}</span>
               </span>
@@ -1296,6 +1459,40 @@ export function SettingsPage({
                 : undefined
             }
           />
+          {noHooks ? (
+            <Notice
+              action={
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSection("connections");
+                    setShowHooks(true);
+                  }}
+                >
+                  Connect an agent
+                </button>
+              }
+            >
+              {hooksMissingWarning}
+            </Notice>
+          ) : null}
+          {cliMissing ? (
+            <Notice
+              action={
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSection("computer");
+                    setShowCommandLine(true);
+                  }}
+                >
+                  Install the CLI
+                </button>
+              }
+            >
+              {commandMissingWarning}
+            </Notice>
+          ) : null}
           {section === "general" ? (
             <GeneralSection />
           ) : section === "reviews" ? (
@@ -1341,7 +1538,7 @@ export function SettingsPage({
                     : "GitHub, where baum finds pull requests."
                 }
               />
-              {diagnosticsOpen ? null : <GitHubConnectionSection onChanged={authChanged} />}
+              <GitHubConnectionSection onChanged={authChanged} />
               {setup.desktop ? <AgentHooksPanel setup={setup} /> : null}
               {setup.feedback}
             </section>
@@ -1352,6 +1549,7 @@ export function SettingsPage({
                 title="This computer"
                 detail="What baum needs here, and how it runs."
               />
+              {updates ? <UpdatesSection updates={updates} /> : null}
               <div className="local-panel settings-list">
                 <SettingRow
                   label="Diagnostics"
@@ -2014,15 +2212,14 @@ function AgentEnvSection() {
 function DiagnosticsDialog({
   close,
   onReport,
-  authRevision,
-  authChanged,
 }: {
   close: () => void;
   onReport: (report: DiagnosticReport | null) => void;
-  authRevision: number;
-  authChanged: () => void;
 }) {
   const dialog = useModal();
+  const title = useRef<HTMLHeadingElement>(null);
+  // Open on the title rather than on the close control, the first button.
+  useEffect(() => title.current?.focus({ preventScroll: true }), []);
   return (
     <dialog
       ref={dialog}
@@ -2032,15 +2229,14 @@ function DiagnosticsDialog({
     >
       <div className="local-dialog-head">
         <div>
-          <h2 id="diagnostics-dialog-title">Check this computer</h2>
+          <h2 ref={title} id="diagnostics-dialog-title" tabIndex={-1} className="outline-none">
+            Check this computer
+          </h2>
           <p>What baum needs here, what it found, and how to fix each problem.</p>
         </div>
-        <Button variant="ghost" size="compact" onClick={close}>
-          Close
-        </Button>
+        <CloseButton onClick={close} />
       </div>
-      <GitHubConnectionSection onChanged={authChanged} />
-      <DiagnosticsSection key={authRevision} onReport={onReport} />
+      <DiagnosticsSection onReport={onReport} />
     </dialog>
   );
 }

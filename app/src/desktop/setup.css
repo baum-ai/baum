@@ -391,6 +391,14 @@ input {
   line-height: 1.6;
   color: var(--text-secondary);
 }
+.repo-note a {
+  color: var(--action-primary);
+  text-underline-offset: 3px;
+}
+.repo-note a:focus-visible {
+  outline: 2px solid var(--action-primary);
+  outline-offset: 2px;
+}
 #log {
   font-size: var(--text-xs);
   line-height: 1.6;
@@ -613,4 +621,8 @@ button:disabled.loading {
 }
 #hooks-error {
   overflow-wrap: anywhere;
+}
+.terminal-setup {
+  margin-top: 16px;
+  padding: 18px 20px;
 }

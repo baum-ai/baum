@@ -39,6 +39,15 @@ may start it, and it outlives the app: quitting the app leaves it running.
    - The app never restarts the daemon on its own, so a crashing daemon
      cannot restart in a loop.
 
+On macOS the app runs no `baum` from a read-only volume: the disk image it
+ships in, or the temporary copy App Translocation makes of an app opened
+where it was downloaded. Both go away (ejecting the image, quitting the app),
+and a daemon started from one keeps running without its executable and stops
+answering, which no other client can repair. Instead the window opens on the
+connecting screen, skipping first-run setup, and says to move baum to
+Applications. Nothing is retried, start at login stays off, and Quit and Stop
+just quits, since this app started no daemon.
+
 A second launch focuses the existing window instead of opening another one.
 
 ## Native settings
@@ -245,7 +254,27 @@ Disabled plugins offer an Enable action; approval still belongs to Codex. Each n
 agents, login PATH resolution and process overhead a 240-second total budget.
 Status, install and removal run with the resolved login shell PATH so agents
 installed through Homebrew or npm are found from GUI launchers too. If login
-PATH resolution fails, the app uses its inherited PATH and displays the reason.
+PATH resolution fails, the app uses its inherited PATH and displays the reason;
+if only a login shell that is not interactive answered, it displays that
+warning, since such a shell may skip `~/.bashrc` or `~/.zshrc`. An AppImage's
+runtime puts its mount (`$APPDIR/usr/bin`, which holds the bundled baum) first
+on the app's PATH; the app removes it from the PATH of every baum it runs, so
+the daemon never inherits it and setup never reports it as a different baum.
+
+The status also names each detected agent CLI's path and version and whether
+baum supports that version. When one is too old, the agent's row says so,
+offers no Connect (the old CLI's plugin commands may fail), and setup and
+Settings show a command with a Copy button: the app's own baum by its full
+path (the `baum` command may not be installed yet) and `desktop-setup`. Run in
+the user's terminal, it records the directories that terminal finds `claude`
+and `codex` in, and baum puts them first on its PATH from then on, so a Codex
+set up only in `~/.bashrc` (fnm, nvm) is found; "Check again" reads the record
+through the same status commands. Once the recorded copy is the old one, the
+text asks to upgrade it in the terminal first. When baum finds neither agent,
+setup's "Install an agent to continue" box and Settings offer the same command
+under "Already installed?"; one agent missing beside another does not, since
+most people use only one. Windows shows no command: it has no login shell to
+miss an interactive PATH.
 
 ### Where the command goes
 
@@ -381,8 +410,10 @@ The daemon outlives the app, so the app's presence is a tray icon.
   host before it shows the window after all. The deb depends on
   `libayatana-appindicator3-1` (the Tauri bundler adds it for the tray), and a
   tray library that fails to load leaves the app running without a tray.
-- **Tray menu:** what the daemon is doing (Idle, "2 running, 1 queued");
-  anything needing attention; each agent session asking for a permission or
+- **Tray menu:** what the daemon is doing (Idle, "2 running, 1 queued"),
+  which opens the jobs list while reviews run or wait and is inert otherwise;
+  an item for each reason the icon is red, which goes where to look (see
+  "Icon states"); each agent session asking for a permission or
   an answer (clicking one opens its transcript); "Plan usage left" with a
   line per readable plan window ("Claude Code · 5-hour: 62% left · resets in
   3 h"); Open baum; Pause or Resume automatic reviews; Start at login;
@@ -391,12 +422,22 @@ The daemon outlives the app, so the app's presence is a tray icon.
   only the plans the daemon could read and the person has not hidden in
   Settings (by default those of the backends baum uses), and nothing when
   none remain. The menu is rebuilt whenever a "resets in" text would
-  read differently, which the 3–10 s polls check.
+  read differently, which each read of the daemon checks (see the app API below).
 - **Tray panel (macOS and Windows):** a left click on the icon opens a small
   borderless window under the icon (above it, on a bottom taskbar), drawn
-  like a menu: the status line, waiting sessions as highlighted rows that
-  open them, the plan usage left as coloured meters, Open baum, Pause or
-  Resume automatic reviews and Quit and stop background reviews. It hides
+  like a menu, with no title row (the icon names the app, as for the menu
+  bar's own items) and no Open item: first a status dot (red while the icon
+  is) with what the daemon is doing, which opens the jobs list while reviews
+  run or wait (as in the menu) and is plain text otherwise; the Inbox's
+  count, or "Your Inbox is empty" once the daemon counted none (nothing
+  while the count is unknown), which opens the app; the alerts and the waiting sessions as highlighted rows that
+  open them; the plan usage left as coloured meters; Pause or Resume
+  automatic reviews; and Quit and stop background reviews. It asks the tray for its
+  view every 2 s while it is visible, once when it is shown, and never while it is
+  closed. It is placed on
+  the icon's screen, found
+  from the cursor in points on macOS (whose monitors report pixels at each
+  screen's own scale) and from the icon's pixels elsewhere. It hides
   when it loses focus or on Escape. As in a native menu, `↓` and `↑` move
   through its items (from the first or last, wrapping), `Home` and `End` go
   to either end, and `Enter` or `Space` presses the focused one. The right
@@ -406,11 +447,12 @@ The daemon outlives the app, so the app's presence is a tray icon.
 - **Inbox.** While the app's Inbox lists some pull requests, the menu shows a
   disabled line such as "3 pull requests in your Inbox", the tooltip appends
   it, the dock badge (macOS; any other platform whose window badge Tauri
-  supports, ignored silently elsewhere) shows the count, and an otherwise idle
-  icon shows the Inbox dot. Zero, an unknown count and a daemon that is not
+  supports, ignored silently elsewhere) shows the count. The tray icon does
+  not: its dot means only that something runs or needs the user. Zero, an
+  unknown count and a daemon that is not
   running clear all of them. The daemon counts the Inbox as the app does,
   except that saved inboxes left out of the app's badge still count:
-  `GET /api/index?view=waiting`, polled with the other tray requests.
+  `GET /api/index?view=waiting`, read with the other tray requests.
 - **Quit** ends the app only. Background refresh and automatic generation
   continue in the daemon.
 - **Quit and stop background reviews** runs the bundled `baum daemon stop`, so
@@ -418,7 +460,10 @@ The daemon outlives the app, so the app's presence is a tray icon.
   again until the app or `baum daemon ensure` does. When a review is running
   the app first asks, saying it will be interrupted (queued reviews have not
   started and are not mentioned as interrupted). If the daemon will not stop,
-  the app shows the error and stays open.
+  the app shows the error and offers **Quit anyway**, which quits and leaves
+  the daemon as it is; Cancel keeps the app open. The daemon's own stop is
+  bounded (see the [daemon README](../internal/daemon/README.md)), so this is
+  for a daemon that does not answer at all.
 - **Pause automatic reviews** sets the daemon's global automatic switch
   (`PUT /api/automatic {"enabled":false}`), the same switch as the app's
   settings, so queued automatic jobs are cancelled and running ones finish.
@@ -428,17 +473,33 @@ The daemon outlives the app, so the app's presence is a tray icon.
 
 | State | When |
 | --- | --- |
-| Idle | Nothing running or queued, nothing new to look at. |
-| Running | A review is running or queued. |
-| Attention | A review failed, a diagnostics check reports a problem, or the daemon is not running. |
-| Inbox | Otherwise idle, with pull requests in the Inbox (an amber dot). |
+| Idle | No dot: nothing running or queued, nothing needing the user. Pull requests waiting in the Inbox leave it idle. |
+| Running | A blue dot: a review is running or queued. |
+| Attention | A red dot: a job failed, a diagnostics check reports a problem, or the daemon is not running. |
 
-Attention outranks Running, which outranks Inbox.
+Attention outranks Running.
 
-Attention for the first two clears when the window is opened or focused and
-returns for something new (a failure found when the app first looks at the
-queue is not new; the daemon keeps finished jobs). Diagnostics warnings do not
-count. The menu lists what needs attention, and the tooltip shows the summary.
+Whenever the icon is red, the menu and the panel offer, under the status
+line, one item per reason that goes where the user needs to look:
+
+| Alert | Item | Following it |
+| --- | --- | --- |
+| A failed job | "Review failed: acme/widgets #7 · Open job" ("Fix failed", "Build failed") | Opens the job (`?page=jobs&job=<id>`) |
+| More than three failed jobs | "5 jobs failed · Open jobs" | Opens the jobs list |
+| Diagnostics problems | "A diagnostics check reports a problem · Open diagnostics" | Opens Diagnostics |
+| No daemon | "Background reviews are not running · Open baum to restart them" | Shows the window, whose connecting screen restarts it |
+
+Whether a failed job was seen is the daemon's record: every failed job
+without `seen_at` turns the icon red, including one that failed while the
+app was closed, until its alert is followed. That records it
+(`POST /api/jobs/{id}/seen` sets the job's `seen_at` in `app.sqlite`; when
+that fails, each read records it again until the daemon stops reporting the
+job as unseen, and its alert stays hidden meanwhile), and a
+failed job with `seen_at` is never flagged again, after a restart either.
+Opening or focusing the window does not see a failed job (the window opens on
+its own at launch); it acknowledges diagnostics problems, until one clears
+and returns. Diagnostics warnings do not count. A missing daemon stays red
+until it runs again. The tooltip shows the summary.
 
 ### How the app talks to the daemon
 
@@ -451,18 +512,26 @@ Two channels, each the least that does the job:
 2. **The app API on loopback, with the launch capability as a bearer token**,
    for what the daemon exposes only there: `GET /api/jobs`,
    `GET /api/automatic`, `GET /api/index?view=waiting` and
-   `GET /api/live-sessions` every 3 s while jobs run and every 10 s otherwise,
+   `GET /api/live-sessions`, read when the daemon's events stream
+   (`GET /api/events`, held open by a thread of its own and reopened with a
+   backoff from 1 s to 30 s) announces a `progress`, `automatic`, `live`,
+   `index` or `reset` event, or when the stream (re)connects, after a pause of
+   500 ms (at most 2 s) for a burst of events to end; as a safety net also
+   every 60 s while the stream is up and every 30 s while it is down, and
+   never with no daemon attached,
    `GET /api/diagnostics` every 5 minutes (it runs the doctor's checks),
    `GET /api/plan-usage?refresh=1` every 5 minutes (a fresh reading; the
-   daemon reads again at most once a minute), and
+   daemon reads again at most once a minute; no event announces either, so
+   one worker sleeps until the next is due and does nothing with no daemon
+   attached), and
    `PUT /api/automatic`, and once, when first-run setup finishes,
    `POST /api/automatic/catch-up`, which queues automatic reviews of the
    latest open pull requests so they run during the tour (best effort: a
    daemon not attached then, or a failed request, only skips it). This is the
    credential the app already reads for the window and the health check,
    accepted on `/api/` routes only; the requests that change state send the daemon's own origin and JSON, as the daemon
-   requires. It is polled rather than streamed: the events stream carries only
-   change notices, so the tray would fetch the same data anyway.
+   requires. The events stream carries change notices only, so an event
+   makes the tray fetch the data; the stream uses the same bearer token.
 
 Notifications read the events stream separately (see "Notifications").
 
@@ -663,7 +732,11 @@ doing anything (`src/zoom.rs`).
   button opens, which changes nothing and returns only the chosen folder. The
   page registers it through the daemon's own API. It also allows the zoom
   commands (`zoom_state`, `set_zoom` and `step_zoom`), which accept only the
-  offered levels. They can call no other Tauri command or plugin.
+  offered levels, and the updater's (`update_state`, `check_for_updates`,
+  `install_update`, `cancel_update` and `dismiss_update_notice`): a page can
+  read the state, start a check, install only an update the app has already
+  downloaded and verified, and record that a notice was closed. They can call no other Tauri command or
+  plugin.
   `withGlobalTauri` is off.
 - The bundled screens have two capabilities, for the main window's bundled
   origin only: `connecting-screen` allows the app's `connection` and
@@ -680,7 +753,8 @@ doing anything (`src/zoom.rs`).
 - The opener plugin is used only from Rust, to open links in the browser. Its
   click script (`open_js_links_on_click`) is off: it would call the plugin from
   the page, which no page may do, and swallow the click. The
-  dialog and updater plugins are used only from Rust too (see Updates). No
+  dialog and updater plugins are used only from Rust too (see Updates); the
+  app's own updater commands wrap the latter. No
   page is granted any plugin's commands.
 
 The app itself makes no network requests other than loopback requests to the
@@ -694,33 +768,54 @@ notification service (`notify-rust`) only from Rust.
 
 A release build checks for a newer release about 30 seconds after it starts
 and then once a day (by the wall clock, so a computer that slept through the
-day checks when it wakes). It reads `latest.json` from the latest GitHub
-release of baum-ai/baum. Local and snapshot builds (version 0.0.0) and debug
+day checks when it wakes). A full release (1.2.3) reads `latest.json` from
+the latest GitHub release of baum-ai/baum, which is never a pre-release, so it
+updates only to full releases. A release candidate (1.2.3-rc.1) reads
+`latest.json` from the `desktop-rc-updates` pre-release instead, which every
+release, candidate or full, replaces (see Releases), so it updates to the
+next candidate or to a newer full release, whichever came last. Local and snapshot builds (version 0.0.0) and debug
 builds never check; `BAUM_DESKTOP_UPDATES=0` turns checks off.
+
+The updater never opens a dialog. Settings → **This computer** shows the
+app's version and the updater's state in its first card (`update_state`):
+up to date with the time of the last check, checking, downloading, ready,
+waiting for running jobs, or installing, and why the last attempt failed.
+**Check now** checks at once (`check_for_updates`). While an update is ready
+to install, or available to download where the app cannot install it, the
+sidebar counts it in the Settings badge (as 1, beside any problems), and
+the **This computer** entry in Settings carries the same green 1 and says
+"Update available". When an update becomes
+available, and after every launch of the app while one is, the page also
+shows a toast ("baum 1.2.3 is ready to install") that stays until it is
+closed, with **Open This computer**. Closing it, following it, or already
+looking at This computer is remembered until the app quits
+(`dismiss_update_notice`), so reloading the page or reattaching to the
+daemon does not bring it back; a newer version does. The page reads the
+state every minute, and every second while the updater works.
 
 - The macOS app, the Linux AppImage and the Windows installer update
   themselves. The app downloads the update in the background; the download
   must carry a signature from the release key whose public half is
   `plugins.updater.pubkey` in `tauri.conf.json`, made for the version the
-  manifest announces (`requireSignedVersion`), or it is discarded. While the
-  daemon runs a generation job (`baum daemon status`, then `GET /api/jobs`;
-  queued jobs survive a restart), the app waits. Then it asks; **Restart now**
-  installs and restarts the app, **Later** keeps the download and asks again
-  at the next daily check. A download that receives nothing for two minutes
-  is abandoned until the next check. On Windows the app stops the daemon
-  first, and the installer (whose hook stops it too) closes the app, updates
-  it for the current user and starts it again; the updated app refreshes its
-  copy of `baum.exe` and starts the daemon. An updated AppImage refreshes its
-  copy of `baum` in the data directory on the next start, renaming the new
-  file into place, so a daemon still running the old copy keeps it until the
-  updated app's `baum daemon ensure` replaces that daemon.
+  manifest announces (`requireSignedVersion`), or it is discarded. A download
+  that receives nothing for two minutes is abandoned until the next check.
+  **Update and restart** (`install_update`) installs it: while the daemon
+  runs a generation job (`baum daemon status`, then `GET /api/jobs`, every
+  15 seconds; queued jobs survive a restart), the card says how many it
+  waits for and offers **Cancel** (`cancel_update`), then the app installs
+  the update and restarts. On Windows the app stops the daemon first, and
+  the installer (whose hook stops it too) closes the app, updates it for the
+  current user and starts it again; the updated app refreshes its copy of
+  `baum.exe` and starts the daemon. An updated AppImage refreshes its copy of
+  `baum` in the data directory on the next start, renaming the new file into
+  place, so a daemon still running the old copy keeps it until the updated
+  app's `baum daemon ensure` replaces that daemon.
 - A deb install, or any copy the updater cannot replace (an AppImage in a
   directory the user cannot write, an app on a read-only volume), only says
-  that a new version exists, once per version and app start, and offers to
-  open its release page. Updating it is the user's job, as with any package.
-  A version whose installation failed is remembered (`desktop.json`'s
-  `updates` section in the app's config directory) and from then on only
-  announced this way.
+  that a new version exists and links to its release page. Updating it is
+  the user's job, as with any package. A version whose installation failed
+  is remembered (`desktop.json`'s `updates` section in the app's config
+  directory) and from then on only offered this way.
 - Restarting the app does not stop the daemon. The first client to run the
   new `baum` replaces an older daemon, as after any upgrade.
 
@@ -738,11 +833,31 @@ just desktop::test          # tests only; pass cargo test arguments after it
 just desktop::sidecar       # build binaries/baum-<target triple>; pass a triple to cross-build
 just desktop::build         # Linux bundle (deb by default) in target/release/bundle
 just desktop::bundle        # the release's Linux deb and AppImage in target/release-bundles
+just desktop::dmg           # macOS: ad hoc signed DMG in target/local-dmg (--install also installs it)
+just desktop::dmg-layout    # regenerate the DMG window layout and background in macos/
 just desktop::updater-test  # updater manifest checks reject tampered releases
 just desktop::run           # run the app on this Wayland session's display
 just desktop::dev           # native host app, with Vite hot reload in Docker
 just desktop::icons         # resolve palette tokens and regenerate native icons
 ```
+
+`dmg` builds the frontend, the viewer and both darwin sidecars in Docker, then runs
+`scripts/macos-local.sh` on the host: `bundle.sh` and `macos-finalize.sh` as the
+release runs them, without a Developer ID, so the app is signed ad hoc and not
+notarised. This is a host execution exception, because the bundle needs Apple's
+`lipo`, `codesign` and `hdiutil`. The host needs Rust with the
+`aarch64-apple-darwin` and `x86_64-apple-darwin` targets, the Xcode command line
+tools and the Tauri CLI version the Dockerfile pins. With `--install` it
+replaces `/Applications/baum.app`; quit the app first with Quit and stop
+background reviews, so the next launch starts a daemon from the new binary.
+
+The disk image opens as a small window with 128 px icons, `baum.app` beside
+the `Applications` link with an arrow between them, and mounts with the app
+icon (`icons/icon.icns`) as its volume icon. The window layout is
+`macos/dmg.DS_Store` and the arrow is the background
+`macos/dmg-background.tiff`, which `macos-finalize.sh` copies into the image;
+regenerate both in Docker with `just desktop::dmg-layout` after changing
+`scripts/dmg-layout.py`.
 
 `run` starts the container's own daemon in the container's home directory,
 not yours. Set `BAUM_DESKTOP_BAUM` to run a different `baum` binary than the
@@ -814,11 +929,11 @@ GitHub release. Pushing the tag to baum-ai/baum runs
 test, viewer-dist, desktop-test          checks of the tagged release commit
   └─ release                             parent on main? goreleaser: CLI archives, draft release
        └─ desktop (desktop.yml)          unsigned bundles per platform; no secrets
-            ├─ sign-macos    ┐
-            ├─ sign-windows  ├─ environment "release": sign what desktop built
+            ├─ sign-macos    ┐ environment "release": sign what desktop built
             └─ sign-linux    ┘
                  └─ desktop-manifest     latest.json, desktop-checksums.txt; read-only
-                      └─ desktop-publish attach files, latest.json last, publish the draft
+                      └─ desktop-publish attach files, latest.json last, publish the draft,
+                                         then the release candidates' latest.json
 ```
 
 - A tag points at a release commit: a commit on `main` plus the built viewer
@@ -837,14 +952,15 @@ test, viewer-dist, desktop-test          checks of the tagged release commit
   on Linux in this directory's Docker image. This is where third-party code
   runs: hundreds of crates' build scripts and macros, and the bundler's
   downloads (linuxdeploy, NSIS). It has no secrets, and `bundle.sh` refuses to
-  run if a signing variable is set. It produces the deb and AppImage, the
-  unsigned macOS app (as a tar) and the unsigned Windows installer.
-- The three sign jobs use the `release` environment, the only place the
-  signing secrets live. Each waits for a reviewer's approval (all three
+  run if a signing variable is set. It produces the deb and AppImage and the
+  unsigned macOS app (as a tar). The Windows installer is not released for
+  now: the release calls `desktop.yml` with `windows: false`, so only Check's
+  snapshots build it (see "Windows" below).
+- The two sign jobs use the `release` environment, the only place the
+  signing secrets live. Each waits for a reviewer's approval (both
   together), and the environment accepts only `v*` tags. They compile
   nothing: they run Apple's tools (`codesign`, `notarytool`, `stapler`,
-  `hdiutil`) through `scripts/macos-finalize.sh`, Microsoft's `signtool`
-  through `scripts/windows-sign.ps1`, and minisign 0.12 (the official binary,
+  `hdiutil`) through `scripts/macos-finalize.sh`, and minisign 0.12 (the official binary,
   pinned by SHA-256 in `scripts/install-minisign.sh`) through
   `scripts/updater-sign.sh`, which signs each updater bundle for the release
   version. OS signing comes first, so the updater signature covers the final
@@ -859,7 +975,12 @@ test, viewer-dist, desktop-test          checks of the tagged release commit
   signature is missing, it fails. It also writes `desktop-checksums.txt`.
 - `desktop-publish`, the only job besides `release` with a token that can
   write, attests the files' build provenance, uploads exactly the expected
-  files (`latest.json` last), and only then publishes the draft.
+  files (`latest.json` last), and only then publishes the draft. It then
+  copies `latest.json` to the `desktop-rc-updates` pre-release, which it
+  creates on the first release, unless that already holds a newer version (a
+  re-run of an older release). That pre-release is not a release: it only
+  holds the manifest release candidates read, and being a pre-release, it is
+  never the latest release.
 
 To release, run the private monorepo's "Tag an open-source release" workflow
 (`oss-release-tag.yml`) on its `main` with the next version (`v1.2.3`). In a
@@ -874,8 +995,9 @@ reviewer then works through the checklist below
 before approving the `release` environment. Write the release notes on the draft while the run waits
 for the environment approval; the draft is published, with those notes, when
 the desktop files are attached. A tag with a pre-release suffix
-(`v1.2.3-rc.1`) becomes a GitHub pre-release, which apps do not update to:
-they read the latest full release.
+(`v1.2.3-rc.1`) becomes a GitHub pre-release. Full releases of the app do not
+update to it, since they read the latest full release; installed release
+candidates do, through `desktop-rc-updates`.
 
 If a job fails, re-run the failed jobs: uploads replace files of the same
 name, and nothing is public until `desktop-publish` finishes, because the
@@ -918,10 +1040,14 @@ summary and a local clone of baum-ai/baum:
 
 ### Snapshots
 
-Each pull request and push to `main` also runs `desktop.yml` from `check.yml`
-with version 0.0.0, packaging the macOS app ad hoc with `macos-finalize.sh`,
-so the bundling and packaging scripts are exercised before a tag. Those
-snapshot bundles are kept as workflow artifacts for 14 days.
+A pull request or push to `main` that changes `desktop/`, `app/`,
+`internal/localapp/`, the viewer build scripts or these workflows also runs
+`desktop.yml` from `check.yml` with version 0.0.0, packaging the macOS app ad
+hoc with `macos-finalize.sh`, so the bundling and packaging scripts are
+exercised before a tag. Like the release, it skips the Windows installer.
+Snapshots reuse a cached Linux build image and Rust build output; release
+builds use neither. Those snapshot bundles are kept as workflow artifacts for
+14 days.
 
 ### Files on a release
 
@@ -932,19 +1058,21 @@ snapshot bundles are kept as workflow artifacts for 14 days.
 | `baum-desktop-linux-amd64.AppImage` (`.sig`) | Linux x86_64 AppImage; also what the updater installs |
 | `baum-desktop-linux-amd64.deb` | Debian and Ubuntu package (no self-update) |
 | `baum-desktop-linux-arm64.AppImage` (`.sig`), `.deb` | Linux arm64, when that build succeeds |
-| `baum-desktop-windows-amd64-setup.exe` (`.sig`) | Windows x64 installer; also what the updater runs |
 | `desktop-checksums.txt` | SHA-256 of the desktop files |
 | `latest.json` | the updater manifest |
+
+The download links at `downloads.usebaum.com`, used by the website and the
+repository README, take the version from the updater manifests and find these
+files by name; renaming one means updating them too.
 
 The desktop files also carry a GitHub build provenance attestation
 (`gh attestation verify FILE --repo baum-ai/baum`).
 
 A macOS bundle that is not signed with a Developer ID is named
-`…-unsigned.dmg` (signed but not notarised: `…-unnotarized.dmg`); an unsigned
-Windows installer is `…-unsigned-setup.exe`. Gatekeeper and SmartScreen warn
-about those. `latest.json` lists `darwin-aarch64` and `darwin-x86_64` (both
-the universal app), `linux-x86_64`, `windows-x86_64` and, when built,
-`linux-aarch64`, each at
+`…-unsigned.dmg` (signed but not notarised: `…-unnotarized.dmg`); Gatekeeper
+warns about those. `latest.json` lists `darwin-aarch64` and `darwin-x86_64`
+(both the universal app), `linux-x86_64` and, when built, `linux-aarch64`,
+each at
 `https://github.com/baum-ai/baum/releases/download/vVERSION/<its file>`.
 
 ### Signing
@@ -959,8 +1087,6 @@ never as repository secrets.
 | `TAURI_SIGNING_PRIVATE_KEY` (the content of the key file `tauri signer generate` writes), `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | updater signatures and `latest.json`. Without them the bundles are published without a manifest, and installed apps are not offered the release. |
 | `APPLE_CERTIFICATE` (the Developer ID Application certificate and key as a base64 `.p12`), `APPLE_CERTIFICATE_PASSWORD`, `APPLE_SIGNING_IDENTITY` (for example `Developer ID Application: Name (TEAMID)`) | macOS signing with the hardened runtime, of the app and the bundled `baum` |
 | `APPLE_API_ISSUER`, `APPLE_API_KEY` (key ID), `APPLE_API_PRIVATE_KEY` (the `.p8` contents) — or `APPLE_ID`, `APPLE_PASSWORD` (an app-specific password), `APPLE_TEAM_ID` | notarisation and stapling of the app and the disk image; needs the signing secrets |
-| `WINDOWS_CERTIFICATE` (base64 `.pfx`), `WINDOWS_CERTIFICATE_PASSWORD` | Windows signing with a code signing certificate |
-| `AZURE_TENANT_ID`, `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET`, `AZURE_TRUSTED_SIGNING_ENDPOINT`, `AZURE_TRUSTED_SIGNING_ACCOUNT`, `AZURE_TRUSTED_SIGNING_PROFILE` | Windows signing with Azure Artifact Signing instead |
 
 The updater key's public half is `plugins.updater.pubkey` in
 `tauri.conf.json`; a test fails if it is not a minisign key or the manifest
@@ -991,18 +1117,63 @@ makes it.
 
 ### Linux
 
-The Linux bundles are built in this directory's Docker image, on Debian 12
-(the base image pinned by digest), so they need glibc 2.34 or newer and
-WebKitGTK 2.38 or newer with the 4.1 API (`libwebkit2gtk-4.1-0`; Debian 12,
-Ubuntu 22.04 and newer). The deb declares that dependency and installs
-`baum-desktop` and `baum` in `/usr/bin`. The AppImage carries its own
-WebKitGTK and updates itself in place, so keep it in a directory you can
-write (for example `~/Applications`). There is no Flatpak or Snap. x86_64 is
+The Linux bundles are built in this directory's Docker image, on Ubuntu
+22.04 (the base image pinned by digest), the oldest supported distribution.
+They need glibc 2.35 or newer and WebKitGTK with the 4.1 API
+(`libwebkit2gtk-4.1-0`; Ubuntu 22.04, Debian 12 and newer). The deb declares
+that dependency and installs `baum-desktop` and `baum` in `/usr/bin`. The
+AppImage carries its own WebKitGTK, GTK and Pango but uses the system's
+glibc, HarfBuzz and the other libraries linuxdeploy leaves out, which is why
+it is built on the oldest system: one built on Debian 12 carries a Pango
+that needs HarfBuzz 4, and fails on Ubuntu 22.04. It updates itself in
+place, so keep it in a directory you can write (for example
+`~/Applications`).
+
+A downloaded AppImage is not executable. With an integration tool that
+handles AppImages (AppImageLauncher 3.x, Gear Lever), double-clicking it
+still opens it: the tool recognises the AppImage magic bytes (`AI\x02` at
+offset 8), which `scripts/bundle.sh` checks are present, and makes it
+executable. Without one, users run `chmod +x` first. AppImageLauncher 2.x
+registers a kernel binfmt rule on those bytes whose interpreter cannot start
+the static AppImage runtime ("Can't open squashfs image: Bad address"), so
+the AppImage does not start there; 3.x fixed that. Other AppImages built on
+this runtime, such as Cursor's, have the same limitation.
+
+On NVIDIA GPUs under Wayland, WebKitGTK only uses its fast GPU renderer
+from 2.54. The AppImage carries Ubuntu 22.04's WebKitGTK (2.50), so it renders
+slowly there, as does the deb on systems whose WebKitGTK is older than 2.54.
+No Ubuntu release offers 2.54 yet, so a newer build image would not help.
+User-facing limitations like these are listed in
+[KNOWN_ISSUES.md](../KNOWN_ISSUES.md).
+
+The app adds itself to the applications menu (`src/menu_entry.rs`): every
+start of an installed AppImage writes
+`$XDG_DATA_HOME/applications/baum-appimage.desktop` (default
+`~/.local/share`), naming the AppImage's current path, with `TryExec` so
+menus drop it once the file is gone and the icon copied to `baum.png` in the
+app's data directory. Hiding the entry with `NoDisplay=true` or
+`Hidden=true` keeps it hidden, and the app never removes a hidden entry.
+When another visible entry in that directory already starts the AppImage,
+through its `TryExec` or the program in its `Exec` (as AppImageLauncher's
+and Gear Lever's do), the app removes its own entry instead, so baum is
+listed once. There is no Flatpak or Snap. x86_64 is
 the supported architecture; arm64 is built on GitHub's arm64 runners and
 published when that build succeeds. Linux bundles are not OS-signed; the
 AppImage carries the updater signature.
 
 ### Windows
+
+Not released for now. Check still builds the installer for every pull
+request, so it keeps compiling, but the release skips it and has no Windows
+sign job. Releasing it again means restoring that job and the Windows entries
+in `desktop-manifest` and `desktop-publish`, passing `windows: true` (the
+default) to `desktop.yml`, and requiring `windows-x86_64` in
+`updater-manifest.sh` again; it was removed in one change, which reverting
+restores. Its signing secrets are `WINDOWS_CERTIFICATE` (base64 `.pfx`) and
+`WINDOWS_CERTIFICATE_PASSWORD`, or for Azure Artifact Signing
+`AZURE_TENANT_ID`, `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET`,
+`AZURE_TRUSTED_SIGNING_ENDPOINT`, `AZURE_TRUSTED_SIGNING_ACCOUNT` and
+`AZURE_TRUSTED_SIGNING_PROFILE`.
 
 An NSIS installer for the current user (no administrator rights), which
 installs the WebView2 runtime with Microsoft's bootstrapper when it is
@@ -1029,7 +1200,8 @@ tools installed after the app or the agent started are found.
 ### What is checked where
 
 - `cargo test`: the updater configuration (key, manifest URL,
-  `requireSignedVersion`, Windows passive install), that the key rejects
+  `requireSignedVersion`, Windows passive install), that release candidates
+  read the `desktop-rc-updates` manifest and full releases the configured one, that the key rejects
   another key's signature, and the record of failed installs.
 - `scripts/updater-manifest-test.sh` (Check on Linux, and with the pinned
   minisign on macOS and Windows; the release's `desktop-test`; and `just

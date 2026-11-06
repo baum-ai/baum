@@ -431,6 +431,8 @@ export type Diagnostics = {
   generation_runner: boolean;
   discovery: boolean;
   index: boolean;
+  /** This user's home directory, which the app shows as ~ in the report. */
+  home?: string;
   report: DiagnosticReport | null;
   /** A new GitHub issue with the version, OS and a redacted summary filled in. */
   report_issue_url?: string;
@@ -488,6 +490,7 @@ export type LiveSession = {
   branch?: string;
   /** Absent while the branch has no unique matching pull request. */
   pr?: number;
+  pr_state?: "OPEN" | "MERGED" | "CLOSED";
   link_status?:
     | "resolved"
     | "unmatched"
@@ -848,6 +851,14 @@ export function backToOpener(): boolean {
 export function navigate(href: string) {
   writeHistory(href);
   dispatchEvent(new PopStateEvent("popstate"));
+}
+/** Opens a page outside the app, as a link to it would. */
+export function openExternal(url: string) {
+  Object.assign(document.createElement("a"), {
+    href: url,
+    target: "_blank",
+    rel: "noreferrer",
+  }).click();
 }
 /** A job's own page: everything kept about it and its transcript. */
 export function jobHref(job: Job) {

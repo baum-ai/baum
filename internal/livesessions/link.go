@@ -19,7 +19,7 @@ type Registry interface {
 	List(context.Context) ([]repos.Clone, error)
 }
 
-// Discovery reads the cached open pull requests of a repository without a
+// Discovery reads cached open pull requests and terminal observations without a
 // request to GitHub; *discovery.Service is one.
 type Discovery interface {
 	Cached(context.Context, github.Repository) (discovery.Snapshot, error)
@@ -39,6 +39,7 @@ const (
 // its git directory (a linked worktree resolves to its clone, as it does for
 // session linkage), the branch is what git has checked out, and the pull
 // request is the open one of the discovery cache whose head is that branch.
+// A cached merged or closed PR can still match the exact same-repository head.
 // It never contacts GitHub and never fetches.
 type Resolver struct {
 	Registry  Registry
@@ -199,6 +200,27 @@ func (r *Resolver) resolve(ctx context.Context, repository string, work prlink.W
 		return link, true
 	}
 	selection := prlink.Resolve(snapshot, work)
+	if selection.PR != 0 {
+		link.PRState = "OPEN"
+	}
+	if selection.PR == 0 && selection.Status != "ambiguous" && work.Head != "" && strings.EqualFold(work.Repository, repository) {
+		for _, observation := range snapshot.Observations {
+			if (observation.State != "MERGED" && observation.State != "CLOSED") || !strings.EqualFold(observation.HeadSHA, work.Head) {
+				continue
+			}
+			if selection.PR != 0 && selection.PR != observation.Number {
+				selection = prlink.Selection{Status: "ambiguous"}
+				link.PRState = ""
+				break
+			}
+			status := "resolved"
+			if snapshot.Stale {
+				status = "stale"
+			}
+			selection = prlink.Selection{PR: observation.Number, Method: "head", Status: status}
+			link.PRState = observation.State
+		}
+	}
 	link.PR, link.Method, link.Status = selection.PR, selection.Method, selection.Status
 	return link, true
 }

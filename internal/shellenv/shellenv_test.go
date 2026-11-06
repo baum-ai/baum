@@ -146,6 +146,54 @@ func TestResolveFailingShell(t *testing.T) {
 	}
 }
 
+// TestResolveFallsBackToNonInteractiveLoginShell: startup files that exec a
+// program needing a terminal (`[[ -z "$TMUX" ]] && exec tmux`) end the
+// interactive shell; a login shell that is not interactive answers instead.
+func TestResolveFallsBackToNonInteractiveLoginShell(t *testing.T) {
+	body := `case " $* " in *" -i "*) echo "open terminal failed: not a terminal" >&2; exit 1;; esac; export PATH="/opt/profile/bin:$PATH"`
+	shell, argsFile := fakeShell(t, "bash", body)
+	result, err := Resolve(context.Background(), Options{Shell: shell, Printer: printer(t), Environ: []string{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(result.Env["PATH"], "/opt/profile/bin:") {
+		t.Fatalf("PATH %q", result.Env["PATH"])
+	}
+	if !strings.Contains(result.Fallback, "exit status 1") || !strings.Contains(result.Fallback, ResolvingVariable) {
+		t.Fatalf("fallback %q", result.Fallback)
+	}
+	args, err := os.ReadFile(argsFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Split(strings.TrimSpace(string(args)), "\n"); !slices.Equal(got[:2], []string{"-l", "-c"}) || len(got) != 3 {
+		t.Fatalf("arguments %q", got)
+	}
+
+	if bash, err := exec.LookPath("bash"); err == nil {
+		home := t.TempDir()
+		profile := "export GITHUB_TOKEN=from-bash\ncase $- in *i*) exec tmux-needs-a-terminal ;; esac\n"
+		if err := os.WriteFile(filepath.Join(home, ".bash_profile"), []byte(profile), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		result, err := Resolve(context.Background(), Options{Shell: bash, Printer: printer(t), Environ: []string{"HOME=" + home}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if result.Env["HOME"] == home && (result.Env["GITHUB_TOKEN"] != "from-bash" || result.Fallback == "") {
+			t.Fatalf("GITHUB_TOKEN %q, fallback %q", result.Env["GITHUB_TOKEN"], result.Fallback)
+		}
+	}
+
+	// csh has no such login shell to fall back to.
+	shell, _ = fakeShell(t, "tcsh", body)
+	if result, err := Resolve(context.Background(), Options{Shell: shell, Printer: printer(t), Environ: []string{}}); err == nil {
+		t.Fatalf("resolved %v", result.Env)
+	} else if !strings.Contains(err.Error(), "tmux") {
+		t.Fatalf("error %q", err)
+	}
+}
+
 // TestResolveInstalledShells runs the shells this machine has, with startup
 // files that print noise and export a token the way users do.
 func TestResolveInstalledShells(t *testing.T) {

@@ -15,6 +15,7 @@ import (
 	"github.com/baum-ai/baum/agent/claude"
 	"github.com/baum-ai/baum/agent/codex"
 	"github.com/baum-ai/baum/hosted/agentplugins"
+	"github.com/baum-ai/baum/internal/agentcli"
 	"github.com/baum-ai/baum/internal/codexconfig"
 	"github.com/baum-ai/baum/plugins"
 )
@@ -74,11 +75,20 @@ type userHooksStatus struct {
 	Detected bool   `json:"detected"`
 	// SignedIn is whether the detected CLI is signed in, as runs would find
 	// it; nil when it was not asked or could not say.
-	SignedIn  *bool  `json:"signed_in,omitempty"`
-	Plugin    string `json:"plugin"`
-	Installed bool   `json:"installed"`
-	Enabled   bool   `json:"enabled"`
-	Version   string `json:"version,omitempty"`
+	SignedIn *bool `json:"signed_in,omitempty"`
+	// CLIPath and CLIVersion are the detected CLI and its version; Supported
+	// is whether baum runs that version (MinimumVersion or newer), nil when
+	// the version could not be read. Recorded says CLIPath is in a directory
+	// `baum desktop-setup` recorded from the user's terminal.
+	CLIPath        string `json:"cli_path,omitempty"`
+	CLIVersion     string `json:"cli_version,omitempty"`
+	MinimumVersion string `json:"minimum_version,omitempty"`
+	Supported      *bool  `json:"supported,omitempty"`
+	Recorded       bool   `json:"recorded,omitempty"`
+	Plugin         string `json:"plugin"`
+	Installed      bool   `json:"installed"`
+	Enabled        bool   `json:"enabled"`
+	Version        string `json:"version,omitempty"`
 	// Latest is the plugin version this baum shipped with; UpdateAvailable
 	// says the installed Version is older than it.
 	Latest          string                  `json:"latest,omitempty"`
@@ -130,10 +140,21 @@ agent: inspect its hooks UI. This does not edit hook settings.`, Args: cobra.NoA
 func userHooksStatuses(ctx context.Context) []userHooksStatus {
 	statuses := []userHooksStatus{}
 	client := agentplugins.New()
+	var record agentcli.Record
+	if file, err := agentcli.RecordFile(); err == nil {
+		record, _ = agentcli.Load(file)
+	}
 	for _, agent := range agentplugins.Agents() {
 		s := userHooksStatus{Agent: agent, Name: agentDisplayName(agent), Plugin: agentplugins.Plugin}
 		binary, err := lookPath(agentplugins.Binary(agent))
 		s.Detected = err == nil
+		if cli, ok := agentcli.Lookup(agent); ok && s.Detected {
+			s.CLIPath, s.MinimumVersion, s.Recorded = binary, cli.Minimum, record.Holds(binary)
+			if version, err := agentVersion(ctx, binary); err == nil {
+				supported := agentcli.Supported(version, cli.Minimum)
+				s.CLIVersion, s.Supported = version, &supported
+			}
+		}
 		if s.Detected {
 			if signedIn, known := agentSignedIn(ctx, agent, binary); known {
 				s.SignedIn = &signedIn
@@ -208,11 +229,17 @@ func changeUserHooks(ctx context.Context, agents []string, action string, stdout
 		}
 		switch {
 		case action == "install":
-			_, _ = fmt.Fprintf(stdout, "Installed and enabled %s for %s", agentplugins.Plugin, name)
+			_, _ = fmt.Fprintf(stdout, "Connected %s", name)
 			if status.Version != "" {
-				_, _ = fmt.Fprintf(stdout, " (%s)", status.Version)
+				_, _ = fmt.Fprintf(stdout, " (baum plugin %s)", status.Version)
 			}
-			_, _ = fmt.Fprintln(stdout, ". Review hook trust in the agent before relying on the hooks (Codex: /hooks).")
+			// Only Codex asks the person to approve hooks, and only until they
+			// have; Claude Code runs them.
+			if agent == "codex" && client.HookTrust(ctx, nil).State != "trusted" {
+				_, _ = fmt.Fprintln(stdout, ". Open /hooks in Codex and trust baum's hooks so new sessions appear in baum.")
+			} else {
+				_, _ = fmt.Fprintf(stdout, ". New %s sessions will appear in baum.\n", name)
+			}
 		case action == "update" && status.Version != "" && before == status.Version:
 			_, _ = fmt.Fprintf(stdout, "%s for %s is already the latest version (%s).\n", agentplugins.Plugin, name, status.Version)
 		case action == "update":
@@ -226,7 +253,7 @@ func changeUserHooks(ctx context.Context, agents []string, action string, stdout
 			}
 			_, _ = fmt.Fprintln(stdout)
 		default:
-			_, _ = fmt.Fprintf(stdout, "%s is not installed for %s. The marketplace and other plugins are unchanged.\n", agentplugins.Plugin, name)
+			_, _ = fmt.Fprintf(stdout, "Removed baum's hooks from %s. baum won't see new %s sessions until you connect it again.\n", name, name)
 		}
 	}
 	return errors.Join(failures...)
@@ -300,6 +327,10 @@ var agentSignedIn = func(ctx context.Context, agent, binary string) (signedIn, k
 	}
 	return false, false
 }
+
+// agentVersion reads a detected agent CLI's version. A variable, so tests do
+// not run the CLIs.
+var agentVersion = agentcli.Version
 
 func agentDisplayName(slug string) string {
 	for _, agent := range entireAgents {

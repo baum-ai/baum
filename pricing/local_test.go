@@ -108,6 +108,10 @@ func TestAccountingPricesModelsIndependentlyAndKeepsUnknownReason(t *testing.T) 
 	if cost == nil || *cost != expected || reason != "" {
 		t.Fatal(cost, reason, expected)
 	}
+	a.Attempts[0].ModelSource = "configured"
+	if cost, reason = list.AccountingCost(a); cost == nil || *cost != expected || reason != "estimated_from_configured_model" {
+		t.Fatal("configured model should produce a labelled estimate", cost, reason)
+	}
 	a.Attempts[1].Usage.Speed = nil
 	if cost, reason = list.AccountingCost(a); cost != nil || reason != "speed_not_reported" {
 		t.Fatal(cost, reason)

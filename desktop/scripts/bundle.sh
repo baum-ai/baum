@@ -103,15 +103,33 @@ one() {
   printf '%s\n' "${matches[0]}"
 }
 
+# Checks the AppImage type 2 magic ("AI\x02" at offset 8). Desktop
+# integration tools (AppImageLauncher, Gear Lever) recognise an AppImage by
+# it, and open one that is not executable when it is double-clicked. See
+# "Linux" in the README for the AppImageLauncher 2.x rule it also triggers.
+check_appimage_magic() {
+  local magic
+  magic=$(od -An -tx1 -j8 -N3 "$1" | tr -d ' \n')
+  if [ "$magic" != 414902 ]; then
+    echo "bundle: $1 has no AppImage type 2 magic at offset 8 (found '$magic')" >&2
+    exit 1
+  fi
+}
+
 name=baum-desktop-$platform
 case "$platform" in
   linux-*)
     cp "$(one "$bundle"/deb/baum_"$version"_*.deb)" "$out/$name.deb"
     cp "$(one "$bundle"/appimage/baum_"$version"_*.AppImage)" "$out/$name.AppImage"
+    check_appimage_magic "$out/$name.AppImage"
     ;;
   darwin-universal)
-    lipo "$bundle/macos/baum.app/Contents/MacOS/baum" -verify_arch arm64 x86_64
-    lipo "$bundle/macos/baum.app/Contents/MacOS/baum-desktop" -verify_arch arm64 x86_64
+    # One architecture per call: Xcode 27's lipo takes no more.
+    for binary in baum baum-desktop; do
+      for arch in arm64 x86_64; do
+        lipo "$bundle/macos/baum.app/Contents/MacOS/$binary" -verify_arch "$arch"
+      done
+    done
     COPYFILE_DISABLE=1 tar -cf "$out/$name.app.tar" -C "$bundle/macos" baum.app
     ;;
   windows-amd64)

@@ -91,7 +91,9 @@ export function firstSentence(value: string): string {
 
 const basename = (path: string) => path.slice(path.lastIndexOf("/") + 1);
 
-function placeOf(anchors: Anchor[], hunks: Map<string, IndexedHunk>): CommentPlace | null {
+/** Where a comment on code cited by `anchors` lands: the first hunk it can
+ *  place, on its cited lines or else its first changed line. */
+export function placeOf(anchors: Anchor[], hunks: Map<string, IndexedHunk>): CommentPlace | null {
   for (const anchor of anchors) {
     if (anchor.type !== "hunk") continue;
     const hunk = hunks.get(anchor.id);

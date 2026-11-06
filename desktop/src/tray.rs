@@ -2,8 +2,12 @@
 //!
 //! The icon follows `status::View`, which a poll thread computes from the
 //! attached daemon's `/api/jobs`, `/api/automatic`, `/api/index?view=waiting`
-//! and `/api/live-sessions` (every 3 s while jobs run, else every 10 s) and a
-//! slower thread computes from `/api/diagnostics` and `/api/plan-usage`
+//! and `/api/live-sessions`. It reads when the daemon's event stream
+//! (`/api/events`, kept open by its own thread, reconnecting with backoff)
+//! announces a change, after a 500 ms pause for a burst of events to end; as a
+//! safety net it also reads every 60 s while the stream is up and every 30 s
+//! while it is down, and never with no daemon attached. A separate worker
+//! computes from `/api/diagnostics` and `/api/plan-usage`
 //! (every 5 minutes: the first runs the doctor's checks, the second is
 //! cached that long by the daemon). `main` tells this module when it attaches
 //! to a daemon, loses it, or starts connecting.
@@ -29,11 +33,20 @@ use tauri::{AppHandle, Manager, Wry};
 use tauri_plugin_opener::OpenerExt;
 
 use crate::daemon::Launch;
+use crate::notifications::Route;
 use crate::status::{self, Icon, Link, Observed, Plan, Tracker, View};
 use crate::{autostart, client, lifecycle, notifications, onboarding, panel};
 
-const BUSY_INTERVAL: Duration = Duration::from_secs(3);
-const IDLE_INTERVAL: Duration = Duration::from_secs(10);
+/// Events wait this long for more before the tray reads (at most
+/// `DEBOUNCE_MAX`), so a burst of job events costs one set of requests.
+const DEBOUNCE: Duration = Duration::from_millis(500);
+const DEBOUNCE_MAX: Duration = Duration::from_secs(2);
+/// A read with no event, as a safety net while the event stream is up.
+const FALLBACK_STREAM_UP: Duration = Duration::from_secs(60);
+/// The same while the stream is down, when nothing announces changes.
+const FALLBACK_STREAM_DOWN: Duration = Duration::from_secs(30);
+const STREAM_BACKOFF_FIRST: Duration = Duration::from_secs(1);
+const STREAM_BACKOFF_MAX: Duration = Duration::from_secs(30);
 const DIAGNOSTICS_INTERVAL: Duration = Duration::from_secs(300);
 /// The daemon caches plan usage this long, so asking sooner repeats it.
 const PLAN_USAGE_INTERVAL: Duration = Duration::from_secs(300);
@@ -55,7 +68,6 @@ const ISSUES_NEW_PREFIX: &str = "https://github.com/baum-ai/baum/issues/new?";
 const IDLE_ICON: &[u8] = include_bytes!("../icons/tray/idle.png");
 const RUNNING_ICON: &[u8] = include_bytes!("../icons/tray/running.png");
 const ATTENTION_ICON: &[u8] = include_bytes!("../icons/tray/attention.png");
-const INBOX_ICON: &[u8] = include_bytes!("../icons/tray/inbox.png");
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Kind {
@@ -91,8 +103,9 @@ pub fn now() -> i64 {
 }
 
 /// The tray menu for a view, in the order of the panel: what the daemon is
-/// doing and anything needing the user (a waiting session opens its
-/// transcript), the plan usage left when any can be read, then Open, pause
+/// doing and anything needing the user (an alert goes where to look about
+/// it, a waiting session opens its transcript), the plan usage left when any
+/// can be read, then Open, pause
 /// or resume, start at login, Quit, and Quit and stop.
 pub fn menu_spec(view: &View, login: bool, now: i64) -> Vec<Entry> {
     let separator = |id: &str| Entry {
@@ -101,15 +114,20 @@ pub fn menu_spec(view: &View, login: bool, now: i64) -> Vec<Entry> {
         kind: Kind::Separator,
         enabled: false,
     };
-    let mut entries = vec![Entry::item("summary", view.summary.clone(), false)];
+    // While reviews run or wait, the status opens the jobs list.
+    let mut entries = vec![Entry::item(
+        "summary",
+        view.summary.clone(),
+        view.running + view.queued > 0,
+    )];
     if let Some(waiting) = view.waiting_label() {
         entries.push(Entry::item("waiting", waiting, false));
     }
-    for (i, line) in view.attention.iter().enumerate() {
+    for alert in &view.attention {
         entries.push(Entry::item(
-            &format!("attention-{i}"),
-            format!("! {line}"),
-            false,
+            &alert.id,
+            format!("{} · {}", alert.text, alert.action),
+            true,
         ));
     }
     for needs in &view.needs {
@@ -300,6 +318,12 @@ struct Inner {
     rendered: Mutex<Option<(View, Vec<String>)>>,
     ui: Mutex<Option<Ui>>,
     wake: Mutex<Option<mpsc::Sender<()>>>,
+    /// The daemon's event stream is open.
+    stream_up: AtomicBool,
+    /// Wakes the stream thread (waiting for a daemon or to reconnect).
+    stream_kick: Mutex<Option<mpsc::Sender<()>>>,
+    /// Wakes the diagnostics and plan usage worker.
+    periodic_kick: Mutex<Option<mpsc::Sender<()>>>,
 }
 
 #[derive(Clone, Default)]
@@ -480,7 +504,6 @@ fn icon(state: Icon) -> Result<Image<'static>, String> {
         Icon::Idle => IDLE_ICON,
         Icon::Running => RUNNING_ICON,
         Icon::Attention => ATTENTION_ICON,
-        Icon::Inbox => INBOX_ICON,
     };
     Image::from_bytes(bytes).map_err(|e| e.to_string())
 }
@@ -526,6 +549,10 @@ fn build_menu(app: &AppHandle, spec: &[Entry]) -> tauri::Result<Menu<Wry>> {
 #[derive(Debug, PartialEq, Eq)]
 enum Action {
     Open,
+    /// The status line while reviews run or wait: opens the jobs list.
+    Jobs,
+    /// An alert, by its menu id: goes where to look, and records it seen.
+    Alert(String),
     /// A waiting agent session, by its `agent:id` key: opens its transcript.
     Session(String),
     Pause,
@@ -543,6 +570,7 @@ enum Action {
 fn route(id: &str) -> Action {
     match id {
         "open" => Action::Open,
+        "summary" => Action::Jobs,
         "pause" => Action::Pause,
         "login" | MENU_LOGIN => Action::Login,
         onboarding::MENU_ID => Action::Setup,
@@ -550,6 +578,7 @@ fn route(id: &str) -> Action {
         "quit" => Action::Quit,
         "quit-stop" => Action::QuitStop,
         _ if notifications::is_menu_id(id) => Action::Notification,
+        _ if status::is_alert(id) => Action::Alert(id.to_string()),
         _ => match id.strip_prefix(SESSION_PREFIX) {
             Some(key) if !key.is_empty() => Action::Session(key.to_string()),
             _ => Action::Ignore,
@@ -560,6 +589,8 @@ fn route(id: &str) -> Action {
 pub fn on_menu(app: &AppHandle, id: &str) {
     match route(id) {
         Action::Open => lifecycle::show_window(app),
+        Action::Jobs => notifications::open(app, Route::Jobs),
+        Action::Alert(id) => follow_alert(app, &id),
         Action::Session(key) => notifications::open_session(app, key),
         Action::Pause => toggle_pause(app),
         Action::Login => toggle_login(app),
@@ -666,6 +697,11 @@ pub fn attached(app: &AppHandle, launch: &Launch) {
     }
     shared.0.generation.fetch_add(1, Ordering::Relaxed);
     render(app, &shared, false);
+    for kick in [&shared.0.stream_kick, &shared.0.periodic_kick] {
+        if let Some(sender) = lock(kick).as_ref() {
+            let _ = sender.send(());
+        }
+    }
     wake(&shared);
 }
 
@@ -686,11 +722,53 @@ fn set_link(app: &AppHandle, link: Link) {
     render(app, &shared, false);
 }
 
-/// The window is showing: what the tray flagged has been seen.
+/// The window is showing: the diagnostics problems flagged have been seen.
+/// Failed jobs stay flagged until their alert is followed.
 pub fn window_seen(app: &AppHandle) {
     let Some(shared) = shared(app) else { return };
     lock(&shared.0.tracker).acknowledge();
     render(app, &shared, false);
+}
+
+/// An alert was followed: records what it is about as seen, then goes where
+/// the user needs to look.
+fn follow_alert(app: &AppHandle, id: &str) {
+    let Some(shared) = shared(app) else { return };
+    let jobs = lock(&shared.0.tracker).acknowledge_alert(id);
+    record_seen(&shared, jobs);
+    render(app, &shared, false);
+    let route = if let Some(job) = id.strip_prefix(status::ALERT_JOB) {
+        Route::Job { id: job.into() }
+    } else {
+        match id {
+            status::ALERT_JOBS => Route::Jobs,
+            status::ALERT_DIAGNOSTICS => Route::Diagnostics,
+            // The window shows the connecting screen, which can restart the
+            // daemon.
+            _ => return lifecycle::show_window(app),
+        }
+    };
+    notifications::open(app, route);
+}
+
+/// Records failed jobs as seen in the daemon, so no client flags them
+/// again, and looks again once it has.
+fn record_seen(shared: &Shared, jobs: Vec<String>) {
+    if jobs.is_empty() {
+        return;
+    }
+    let Some(launch) = lock(&shared.0.launch).clone() else {
+        return;
+    };
+    let shared = shared.clone();
+    thread::spawn(move || {
+        for id in &jobs {
+            if let Err(e) = client::job_seen(&launch, id) {
+                eprintln!("baum desktop: cannot record job {id} as seen: {e}");
+            }
+        }
+        wake(&shared);
+    });
 }
 
 /// What the panel shows: the view last shown and the plans behind its meters.
@@ -733,7 +811,7 @@ fn next_view<T: PartialEq + Clone>(rendered: &mut Option<T>, view: T, force: boo
 }
 
 /// The plan usage lines as the menu would show them now. Part of what counts
-/// as a change, so the polls (every 10 s at most) keep "resets in" current.
+/// as a change, so the reads (at least a minute apart) keep "resets in" current.
 fn usage_texts(view: &View, now: i64) -> Vec<String> {
     view.usage.iter().map(|meter| meter.text(now)).collect()
 }
@@ -793,71 +871,213 @@ fn apply(
     }
 }
 
+/// Event kinds after which the tray's numbers may have changed: job state
+/// (running, queued, failures), the pause switch, sessions waiting on the
+/// user, the waiting pull request count, and a missed replay window.
+fn wakes_poll(kind: &str) -> bool {
+    matches!(kind, "progress" | "automatic" | "live" | "index" | "reset")
+}
+
+/// The wait before reconnecting after the `attempt`th failure in a row.
+fn backoff(attempt: u32) -> Duration {
+    STREAM_BACKOFF_FIRST
+        .saturating_mul(1 << attempt.min(8))
+        .min(STREAM_BACKOFF_MAX)
+}
+
+/// How long the poll thread waits for an event before looking anyway: not at
+/// all without a daemon, rarely while the stream delivers events.
+fn fallback_interval(attached: bool, stream_up: bool) -> Option<Duration> {
+    match (attached, stream_up) {
+        (false, _) => None,
+        (true, true) => Some(FALLBACK_STREAM_UP),
+        (true, false) => Some(FALLBACK_STREAM_DOWN),
+    }
+}
+
+/// Time left until a periodic read is due: none is due yet for a daemon
+/// not read from, or one replaced since.
+fn until_due(
+    checked: Option<(u64, Instant)>,
+    generation: u64,
+    interval: Duration,
+    now: Instant,
+) -> Duration {
+    match checked {
+        Some((g, at)) if g == generation => {
+            interval.saturating_sub(now.saturating_duration_since(at))
+        }
+        _ => Duration::ZERO,
+    }
+}
+
+/// After a wake, waits for the burst of events around it to end (a quiet
+/// `DEBOUNCE`, or `DEBOUNCE_MAX` in all). False when the poll thread should
+/// stop.
+fn settle(receiver: &mpsc::Receiver<()>) -> bool {
+    let start = Instant::now();
+    loop {
+        let left = DEBOUNCE_MAX.saturating_sub(start.elapsed());
+        if left.is_zero() {
+            return true;
+        }
+        match receiver.recv_timeout(left.min(DEBOUNCE)) {
+            Ok(()) => {}
+            Err(RecvTimeoutError::Timeout) => return true,
+            Err(RecvTimeoutError::Disconnected) => return false,
+        }
+    }
+}
+
 fn spawn_polls(app: &AppHandle, shared: &Shared) {
     let (sender, receiver) = mpsc::channel();
+    // The first pass reads whatever is attached already.
+    let _ = sender.send(());
     *lock(&shared.0.wake) = Some(sender);
     let (poll_app, poll_shared) = (app.clone(), shared.clone());
     thread::spawn(move || {
         loop {
-            let interval = poll_once(&poll_app, &poll_shared);
-            match receiver.recv_timeout(interval) {
-                Ok(()) | Err(RecvTimeoutError::Timeout) => {}
-                Err(RecvTimeoutError::Disconnected) => return,
+            let attached = lock(&poll_shared.0.launch).is_some();
+            let stream_up = poll_shared.0.stream_up.load(Ordering::Relaxed);
+            let woke = match fallback_interval(attached, stream_up) {
+                Some(interval) => match receiver.recv_timeout(interval) {
+                    Ok(()) => true,
+                    Err(RecvTimeoutError::Timeout) => false,
+                    Err(RecvTimeoutError::Disconnected) => return,
+                },
+                None => match receiver.recv() {
+                    Ok(()) => true,
+                    Err(_) => return,
+                },
+            };
+            if woke && !settle(&receiver) {
+                return;
             }
+            poll_once(&poll_app, &poll_shared);
         }
     });
-    let (diag_app, diag_shared) = (app.clone(), shared.clone());
-    thread::spawn(move || {
-        let mut checked: Option<(u64, Instant)> = None;
-        loop {
-            thread::sleep(Duration::from_secs(5));
-            let generation = diag_shared.0.generation.load(Ordering::Relaxed);
-            let due = checked
-                .is_none_or(|(g, at)| g != generation || at.elapsed() >= DIAGNOSTICS_INTERVAL);
-            let Some(launch) = lock(&diag_shared.0.launch).clone().filter(|_| due) else {
-                continue;
-            };
-            checked = Some((generation, Instant::now()));
+
+    let (stream_sender, stream_receiver) = mpsc::channel();
+    *lock(&shared.0.stream_kick) = Some(stream_sender);
+    let stream_shared = shared.clone();
+    thread::spawn(move || stream_loop(&stream_shared, &stream_receiver));
+
+    let (kick_sender, kick_receiver) = mpsc::channel();
+    *lock(&shared.0.periodic_kick) = Some(kick_sender);
+    let (periodic_app, periodic_shared) = (app.clone(), shared.clone());
+    thread::spawn(move || periodic_loop(&periodic_app, &periodic_shared, &kick_receiver));
+}
+
+/// Keeps the daemon's event stream open while a daemon is attached, waking
+/// the poll thread on events that change what the tray shows. It reconnects
+/// with backoff, and a connection (also a re-connection) wakes a read so
+/// nothing missed meanwhile stays missed.
+fn stream_loop(shared: &Shared, kick: &mpsc::Receiver<()>) {
+    let mut attempt = 0u32;
+    loop {
+        let Some(launch) = lock(&shared.0.launch).clone() else {
+            attempt = 0;
+            if kick.recv().is_err() {
+                return;
+            }
+            continue;
+        };
+        let generation = shared.0.generation.load(Ordering::Relaxed);
+        let result = client::stream_events(&launch, client::STREAM_READ_TIMEOUT, |item| {
+            match item {
+                client::StreamItem::Open => {
+                    attempt = 0;
+                    shared.0.stream_up.store(true, Ordering::Relaxed);
+                    wake(shared);
+                }
+                client::StreamItem::Event(kind) => {
+                    if wakes_poll(&kind) {
+                        wake(shared);
+                    }
+                }
+                client::StreamItem::Ping => {}
+            }
+            // Stop for a detached or replaced daemon, at the next ping.
+            shared.0.generation.load(Ordering::Relaxed) == generation
+                && lock(&shared.0.launch).is_some()
+        });
+        if shared.0.stream_up.swap(false, Ordering::Relaxed) {
+            // The fallback interval just shortened: look now.
+            wake(shared);
+        }
+        if let Err(e) = result
+            && attempt > 0
+        {
+            eprintln!("baum desktop: event stream unavailable: {e}");
+        }
+        if shared.0.generation.load(Ordering::Relaxed) != generation {
+            attempt = 0;
+            continue;
+        }
+        let wait = backoff(attempt);
+        attempt = attempt.saturating_add(1);
+        if let Err(RecvTimeoutError::Disconnected) = kick.recv_timeout(wait) {
+            return;
+        }
+    }
+}
+
+/// Reads what no event announces: diagnostics and plan usage, each every
+/// five minutes and again for a new daemon. Sleeps until the next is due,
+/// and with no daemon until one is attached.
+fn periodic_loop(app: &AppHandle, shared: &Shared, kick: &mpsc::Receiver<()>) {
+    let mut diagnostics: Option<(u64, Instant)> = None;
+    let mut plans: Option<(u64, Instant)> = None;
+    loop {
+        let generation = shared.0.generation.load(Ordering::Relaxed);
+        let launch = lock(&shared.0.launch).clone();
+        let Some(launch) = launch else {
+            if kick.recv().is_err() {
+                return;
+            }
+            continue;
+        };
+        let now = Instant::now();
+        let plan_wait = until_due(plans, generation, PLAN_USAGE_INTERVAL, now);
+        let diagnostics_wait = until_due(diagnostics, generation, DIAGNOSTICS_INTERVAL, now);
+        let wait = plan_wait.min(diagnostics_wait);
+        if !wait.is_zero() {
+            if let Err(RecvTimeoutError::Disconnected) = kick.recv_timeout(wait) {
+                return;
+            }
+            continue;
+        }
+        if plan_wait.is_zero() {
+            plans = Some((generation, Instant::now()));
+            // The figures are a convenience: a failed reading keeps the last
+            // one, and a daemon without the route has none to show.
+            if let Ok(found) =
+                client::plan_usage(&launch).and_then(|b| status::parse_plan_usage(&b))
+            {
+                lock(&shared.0.observed).plans = Some(found);
+                render(app, shared, false);
+            }
+        }
+        if diagnostics_wait.is_zero() {
+            diagnostics = Some((generation, Instant::now()));
             // A failed or timed-out run leaves the last answer standing.
             if let Ok(problems) =
                 client::diagnostics(&launch).and_then(|b| status::parse_diagnostics(&b))
             {
-                lock(&diag_shared.0.observed).diagnostics = Some(problems);
-                render(&diag_app, &diag_shared, false);
+                lock(&shared.0.observed).diagnostics = Some(problems);
+                render(app, shared, false);
             }
         }
-    });
-    let (plan_app, plan_shared) = (app.clone(), shared.clone());
-    thread::spawn(move || {
-        let mut checked: Option<(u64, Instant)> = None;
-        loop {
-            thread::sleep(Duration::from_secs(2));
-            let generation = plan_shared.0.generation.load(Ordering::Relaxed);
-            let due = checked
-                .is_none_or(|(g, at)| g != generation || at.elapsed() >= PLAN_USAGE_INTERVAL);
-            let Some(launch) = lock(&plan_shared.0.launch).clone().filter(|_| due) else {
-                continue;
-            };
-            checked = Some((generation, Instant::now()));
-            // The figures are a convenience: a failed reading keeps the last
-            // one, and a daemon without the route has none to show.
-            if let Ok(plans) =
-                client::plan_usage(&launch).and_then(|b| status::parse_plan_usage(&b))
-            {
-                lock(&plan_shared.0.observed).plans = Some(plans);
-                render(&plan_app, &plan_shared, false);
-            }
-        }
-    });
+    }
 }
 
 /// One look at the daemon. A failed request forgets that answer, so the menu
 /// does not show counts it cannot vouch for; the connection watch in `main`
 /// decides when the daemon has gone.
-fn poll_once(app: &AppHandle, shared: &Shared) -> Duration {
+fn poll_once(app: &AppHandle, shared: &Shared) {
     let launch = lock(&shared.0.launch).clone();
     let Some(launch) = launch else {
-        return IDLE_INTERVAL;
+        return;
     };
     let jobs = client::jobs(&launch).and_then(|b| status::parse_jobs(&b));
     let automatic = client::automatic(&launch).and_then(|b| status::parse_automatic(&b));
@@ -871,17 +1091,79 @@ fn poll_once(app: &AppHandle, shared: &Shared) -> Duration {
         observed.needs = needs.ok();
     }
     render(app, shared, false);
-    let busy = lock(&shared.0.observed)
-        .jobs
-        .as_ref()
-        .is_some_and(|j| j.running + j.queued > 0);
-    if busy { BUSY_INTERVAL } else { IDLE_INTERVAL }
+    // A failed job seen here but still unseen in the daemon: recording it
+    // failed (the daemon was briefly unreachable, or could not save), so it
+    // is recorded again until the daemon stops reporting it, rather than
+    // hidden only until the app restarts.
+    let unrecorded = lock(&shared.0.tracker).unrecorded();
+    for id in unrecorded {
+        if let Err(e) = client::job_seen(&launch, &id) {
+            eprintln!("baum desktop: cannot record job {id} as seen: {e}");
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::status::{Automatic, Jobs};
+
+    #[test]
+    fn only_state_events_wake_the_poll() {
+        for kind in ["progress", "automatic", "live", "index", "reset"] {
+            assert!(wakes_poll(kind), "{kind}");
+        }
+        for kind in ["chat", "timeline", "decisions", "notice", ""] {
+            assert!(!wakes_poll(kind), "{kind}");
+        }
+    }
+
+    #[test]
+    fn reconnects_back_off_to_a_cap() {
+        let waits: Vec<u64> = (0..8).map(|a| backoff(a).as_secs()).collect();
+        assert_eq!(waits, [1, 2, 4, 8, 16, 30, 30, 30]);
+        assert_eq!(backoff(u32::MAX), STREAM_BACKOFF_MAX);
+    }
+
+    #[test]
+    fn the_fallback_poll_is_slow_with_a_stream_and_absent_without_a_daemon() {
+        assert_eq!(fallback_interval(false, true), None);
+        assert_eq!(fallback_interval(false, false), None);
+        assert_eq!(fallback_interval(true, true), Some(Duration::from_secs(60)));
+        assert_eq!(
+            fallback_interval(true, false),
+            Some(Duration::from_secs(30))
+        );
+    }
+
+    #[test]
+    fn a_periodic_read_is_due_at_once_for_a_new_daemon_and_then_after_its_interval() {
+        let now = Instant::now();
+        let hour = Duration::from_secs(3600);
+        let interval = Duration::from_secs(300);
+        assert_eq!(until_due(None, 1, interval, now), Duration::ZERO);
+        let read = Some((1, now));
+        assert_eq!(until_due(read, 2, interval, now + hour), Duration::ZERO);
+        assert_eq!(
+            until_due(read, 1, interval, now + Duration::from_secs(100)),
+            Duration::from_secs(200)
+        );
+        assert_eq!(until_due(read, 1, interval, now + hour), Duration::ZERO);
+    }
+
+    #[test]
+    fn a_burst_of_wakes_settles_into_one_read() {
+        let (sender, receiver) = mpsc::channel();
+        for _ in 0..5 {
+            sender.send(()).unwrap();
+        }
+        let start = Instant::now();
+        assert!(settle(&receiver));
+        assert!(start.elapsed() < DEBOUNCE_MAX);
+        assert!(receiver.try_recv().is_err(), "the burst was drained");
+        drop(sender);
+        assert!(!settle(&receiver));
+    }
 
     fn view(observed: Observed) -> View {
         Tracker::default().update(&observed)
@@ -927,6 +1209,7 @@ mod tests {
             let action = route(&id);
             let expected = match id.as_str() {
                 "open" => Action::Open,
+                "summary" => Action::Jobs,
                 _ if id.starts_with(SESSION_PREFIX) => Action::Session(id[8..].to_string()),
                 "pause" => Action::Pause,
                 "login" | MENU_LOGIN => Action::Login,
@@ -995,6 +1278,22 @@ mod tests {
     }
 
     #[test]
+    fn the_status_opens_the_jobs_list_only_while_reviews_run_or_wait() {
+        let idle = menu_spec(&view(up(0, true)), false, NOW);
+        assert_eq!((idle[0].id.as_str(), idle[0].enabled), ("summary", false));
+        let busy = menu_spec(&view(up(2, true)), false, NOW);
+        assert_eq!(busy[0].text, "2 running");
+        assert!(busy[0].enabled);
+        assert_eq!(route(&busy[0].id), Action::Jobs);
+        let mut queued = up(0, true);
+        queued.jobs = Some(Jobs {
+            queued: 1,
+            ..Jobs::default()
+        });
+        assert!(menu_spec(&view(queued), false, NOW)[0].enabled);
+    }
+
+    #[test]
     fn only_the_issue_form_of_the_public_repository_is_opened() {
         let ok = br#"{"report_issue_url":"https://github.com/baum-ai/baum/issues/new?template=bug_report.yml&version=1"}"#;
         assert_eq!(
@@ -1051,13 +1350,34 @@ mod tests {
     }
 
     #[test]
-    fn attention_lines_appear_under_the_summary() {
+    fn alerts_are_items_under_the_summary_that_go_where_to_look() {
         let mut observed = up(0, true);
         observed.diagnostics = Some(vec!["git".into()]);
         let spec = menu_spec(&view(observed), false, NOW);
         assert_eq!(spec[0].text, "Idle");
-        assert_eq!(spec[1].text, "! A diagnostics check reports a problem");
-        assert!(!spec[1].enabled);
+        assert_eq!(
+            spec[1].text,
+            "A diagnostics check reports a problem · Open diagnostics"
+        );
+        assert!(spec[1].enabled);
+        assert_eq!(
+            route(&spec[1].id),
+            Action::Alert("alert:diagnostics".into())
+        );
+        let down = view(Observed {
+            link: Link::Down,
+            ..Observed::default()
+        });
+        let spec = menu_spec(&down, false, NOW);
+        assert_eq!(
+            spec[1].text,
+            "Background reviews are not running · Open baum to restart them"
+        );
+        assert_eq!(route(&spec[1].id), Action::Alert("alert:daemon".into()));
+        assert_eq!(
+            route("alert:job:6e280a68"),
+            Action::Alert("alert:job:6e280a68".into())
+        );
     }
 
     #[test]

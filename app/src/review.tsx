@@ -13,6 +13,7 @@ import {
   type ReviewSteps,
 } from "@baum/viewer/components/review-viewer";
 import { sessionsSlot, commitsSlot } from "@baum/viewer/components/list-slots";
+import { useVisibleInterval } from "./visible-interval";
 import { Alert, Button, LiveDot } from "@baum/viewer/components/ui";
 import {
   ChevronDownIcon,
@@ -75,7 +76,7 @@ import { LoadingStatus } from "./nine-dots";
 import { DescriptionDialog } from "./description";
 import { RepositoryFileDialog } from "./repository-file";
 import { canMerge, MergeDialog } from "./merge";
-import { openActiveBlock, toggleActiveBlock, useShortcuts } from "./shortcuts";
+import { openActiveBlock, reviewKeyStep, toggleActiveBlock, useShortcuts } from "./shortcuts";
 import { PullRequestState, pullRequestStates } from "./inbox";
 import { canRerunChecks, canUpdateBranch, RerunChecksDialog, UpdateBranchDialog } from "./unblock";
 import { Walkthrough, type WalkMode } from "./walkthrough";
@@ -83,7 +84,18 @@ import { buildTour } from "./walkthrough-model";
 import { AnswerActions } from "./answer-actions";
 import { AskPanel } from "./chat";
 import { documentFilesSlot, factsFilesSlot, factsQuery, useFacts } from "./facts";
+import { liveDetailsChecks, useChecks } from "./checks";
 import { SECONDARY } from "./action-classes";
+import {
+  CommentsPane,
+  ReviewButton,
+  ReviewDialog,
+  usePendingReview,
+  type Composer,
+} from "./pending-review";
+import { commentTarget, reviewable } from "./pending-review-model";
+import type { ReviewEvent } from "./walkthrough-model";
+import { readSelection } from "@baum/viewer/review-selection";
 
 /** `commitsSlot`'s loaders over the daemon's commit routes under `route`
  *  (`api` for a saved version, `api/facts` for the facts), with the page's
@@ -319,6 +331,16 @@ export function LocalReview({
     previousKeys.current = liveKeys;
   }, [liveKeys]);
   const [merging, setMerging] = useState(false);
+  // The reader's own review: the verdict being confirmed, the comment being
+  // written, and the Comments tab, which c opens on the item being read.
+  const [reviewing, setReviewing] = useState<ReviewEvent | null>(null);
+  const [composer, setComposer] = useState<Composer | null>(null);
+  const [revealComments, setRevealComments] = useState(0);
+  // The review just sent, which the Comments tab opens on under Sent.
+  const [sentReview, setSentReview] = useState<string | null>(null);
+  const pending = usePendingReview(entry);
+  const pendingCount = pending.value.comments.length;
+  const canReview = reviewable(entry);
   const [rerunning, setRerunning] = useState(false);
   const [updating, setUpdating] = useState(false);
   const generating = starting || isActiveJob(job) || (!job && entry.status === "generating");
@@ -398,19 +420,9 @@ export function LocalReview({
       event.preventDefault();
       return;
     }
-    // h and l (← →) move to the previous and next section, as the navigator
-    // does; j and k (↓ ↑) through the blocks of the one read.
-    const key = event.key;
-    const step =
-      key === "j" || key === "ArrowDown"
-        ? steps.current?.item?.next
-        : key === "k" || key === "ArrowUp"
-          ? steps.current?.item?.previous
-          : key === "l" || key === "ArrowRight"
-            ? (steps.current?.rail?.next ?? steps.current?.next)
-            : key === "h" || key === "ArrowLeft"
-              ? (steps.current?.rail?.previous ?? steps.current?.previous)
-              : null;
+    // j and k (↓ ↑) move through the blocks of the section read; with Shift,
+    // or ← and →, to the next and previous section, as the navigator does.
+    const step = reviewKeyStep(event, steps.current);
     if (step) {
       event.preventDefault();
       step.go();
@@ -420,12 +432,19 @@ export function LocalReview({
     } else if (event.key === "f" && fix && fixLabelText && !fixing && !fixStarting) {
       event.preventDefault();
       fix();
-    } else if (event.key === "g" && !generating && !entry.needs_clone) {
-      event.preventDefault();
-      generate();
     } else if (event.key === "t" && watchable) {
       event.preventDefault();
       navigate(jobHref(watchable));
+    } else if (event.key === "c" && canReview && !showingDraft) {
+      event.preventDefault();
+      setComposer({ kind: "new", ...commentOn });
+      setRevealComments((n) => n + 1);
+    } else if (event.key === "v") {
+      // As a click on the review button: its menu of verdicts.
+      const button = window.document.querySelector<HTMLElement>("[data-review-button]");
+      if (!button) return;
+      event.preventDefault();
+      button.click();
     }
   });
   const loadVersion = useCallback(
@@ -446,6 +465,8 @@ export function LocalReview({
       ? history.state.document
       : null
     : doc;
+  // What c comments on: the section, risk or file being read.
+  const commentOn = commentTarget(viewedDocument ?? null, readSelection(url.search));
   const query = selector(clone, pr.number, viewedVersion);
   const latestQuery = selector(clone, pr.number);
   // While the daemon writes a review in stages it holds a draft of it. It is
@@ -610,6 +631,8 @@ export function LocalReview({
       });
     return () => abort.abort();
   }, [clone, pr.number, latestQuery, revision, retry]);
+  const refreshSessions = useRef<(() => void) | null>(null);
+  useVisibleInterval(() => refreshSessions.current?.(), 30_000);
   useEffect(() => {
     if (sessionsVersion == null) return;
     const abort = new AbortController();
@@ -664,9 +687,9 @@ export function LocalReview({
       }
     };
     void refresh();
-    const timer = window.setInterval(() => void refresh(), 30_000);
+    refreshSessions.current = () => void refresh();
     return () => {
-      window.clearInterval(timer);
+      refreshSessions.current = null;
       abort.abort();
     };
   }, [sessionsVersion, query, revision, retry, ended]);
@@ -677,6 +700,9 @@ export function LocalReview({
   const [factsRetry, setFactsRetry] = useState(0);
   const facts = useFacts(clone, pr.number, pr.head_sha, revision + factsRetry, wantsFacts);
   const shownFacts = !doc && facts.state === "ready" ? facts.facts : null;
+  // The head's checks as GitHub lists them now, for the Details tab: the
+  // review's own are a snapshot from when it was generated.
+  const liveChecks = useChecks(pr.repository, pr.number, pr.head_sha);
   const factsHead = shownFacts?.review.head ?? "";
   const factsBase = shownFacts?.review.base ?? "";
   const factsMergeBase = shownFacts?.review.merge_base ?? "";
@@ -930,6 +956,19 @@ export function LocalReview({
                     : undefined
                 }
                 steps={steps}
+                detailsChecks={(shown) =>
+                  liveDetailsChecks(
+                    shown,
+                    {
+                      repository: pr.repository,
+                      number: pr.number,
+                      head_sha: pr.head_sha,
+                      url: pr.url,
+                      canRetry: pr.viewer_can_push === true,
+                    },
+                    liveChecks,
+                  )
+                }
                 foldSidePane={askOpen && tight}
                 header={{
                   pullRequest: {
@@ -986,6 +1025,7 @@ export function LocalReview({
                   // and updating the branch are its smaller remedies.
                   beside:
                     doc ||
+                    canReview ||
                     pullRequestStates(entry).length > 0 ||
                     (fix && fixLabelText) ||
                     canMerge(entry) ||
@@ -1030,6 +1070,13 @@ export function LocalReview({
                             >
                               Ask
                             </Button>
+                          ) : null}
+                          {canReview ? (
+                            <ReviewButton
+                              entry={entry}
+                              count={pendingCount}
+                              review={setReviewing}
+                            />
                           ) : null}
                           {canMerge(entry) ? (
                             <Button size="compact" onClick={() => setMerging(true)}>
@@ -1204,6 +1251,24 @@ export function LocalReview({
                     : undefined
                 }
                 facts={shownFacts}
+                comments={
+                  canReview
+                    ? {
+                        count: pendingCount,
+                        reveal: revealComments,
+                        render: () => (
+                          <CommentsPane
+                            entry={entry}
+                            current={commentOn}
+                            composer={composer}
+                            setComposer={setComposer}
+                            review={setReviewing}
+                            fresh={sentReview}
+                          />
+                        ),
+                      }
+                    : undefined
+                }
                 files={
                   factsMode
                     ? factsFilesSlot(facts, () => setFactsRetry((n) => n + 1), factsPatches, pr.url)
@@ -1283,6 +1348,19 @@ export function LocalReview({
         ) : null}
         {merging ? (
           <MergeDialog entry={entry} close={() => setMerging(false)} merged={changed} />
+        ) : null}
+        {reviewing ? (
+          <ReviewDialog
+            entry={entry}
+            event={reviewing}
+            close={() => setReviewing(null)}
+            sent={(url) => {
+              // Where it shows: the Comments tab opens on it under Sent.
+              setSentReview(url);
+              setRevealComments((n) => n + 1);
+              void changed();
+            }}
+          />
         ) : null}
         {rerunning ? (
           <RerunChecksDialog entry={entry} close={() => setRerunning(false)} rerun={changed} />

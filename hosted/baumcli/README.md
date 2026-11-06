@@ -191,7 +191,11 @@ handshake, in [`apiclient`](../apiclient).
   the environment a job gets, so a provider key in baum's own environment does
   not count (absent when the CLI could not say). It also reports `latest`, the
   plugin version this baum shipped with (the marketplace has at least that
-  one), and `update_available` when the installed version is older. Installed, enabled Codex plugins also include
+  one), and `update_available` when the installed version is older. For the
+  CLI itself it reports `cli_path`, `cli_version` (its `--version`),
+  `minimum_version`, `supported` (absent when the version could not be read)
+  and `recorded`, set when the CLI is in a directory `baum desktop-setup`
+  recorded (see `internal/agentcli`). Installed, enabled Codex plugins also include
   `trust.state`, read through Codex's effective hook inventory; Claude Code
   plugins include the settings-based state from `agentplugins.ClaudeHooks`. Only a
   trusted result means every required baum hook is present, enabled and

@@ -23,6 +23,11 @@ fn main() {
         "zoom_state",
         "set_zoom",
         "step_zoom",
+        "update_state",
+        "check_for_updates",
+        "install_update",
+        "cancel_update",
+        "dismiss_update_notice",
     ]);
     tauri_build::try_build(tauri_build::Attributes::new().app_manifest(manifest))
         .expect("tauri build script");

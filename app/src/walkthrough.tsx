@@ -23,6 +23,8 @@ import {
 } from "@baum/viewer/review-document";
 import { LocalRequestError, request, type ChatFocus, type Entry } from "./api";
 import { stopFocus } from "./chat";
+import { githubToast, REVIEW_SENT_TITLES } from "./github-toast";
+import { useToast } from "./toast";
 import { PullRequestState } from "./inbox";
 import { useShortcuts } from "./shortcuts";
 import {
@@ -1125,6 +1127,7 @@ function Submit({
 }) {
   const [picked, setPicked] = useState<ReviewEvent | null>(null);
   const [sending, setSending] = useState<SubmitState>({ state: "idle" });
+  const toast = useToast();
   const comments = commentedStops(tour, progress);
   const count = comments.length;
   const own = entry.pull_request.authored_by_me;
@@ -1183,6 +1186,7 @@ function Submit({
       }));
       setPicked(null);
       setSending({ state: "sent", url: answer.url });
+      toast(githubToast(entry.pull_request, REVIEW_SENT_TITLES[event], answer.url));
       void changed();
     } catch (error) {
       setSending({

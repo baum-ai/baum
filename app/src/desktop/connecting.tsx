@@ -32,7 +32,12 @@ export function Connecting() {
   const details = connection.details ?? [];
   return (
     <main>
-      {connection.phase === "failed" ? (
+      {connection.phase === "misplaced" ? (
+        <section id="misplaced" role="alert">
+          <h1>Move baum to Applications</h1>
+          <p id="message">{connection.message}</p>
+        </section>
+      ) : connection.phase === "failed" ? (
         <section id="failed" role="alert">
           <h1>baum is not running</h1>
           <p id="message">{connection.message}</p>

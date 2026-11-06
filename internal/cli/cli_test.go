@@ -62,7 +62,7 @@ func TestHelpListsOnlyUserCommands(t *testing.T) {
 	if err != nil {
 		t.Fatalf("help: %v", err)
 	}
-	want := []string{"completion", "daemon", "help", "hooks", "login", "logout", "setup", "upload", "whoami"}
+	want := []string{"completion", "daemon", "desktop-setup", "help", "hooks", "login", "logout", "setup", "upload", "whoami"}
 	got := listedCommands(stdout)
 	sort.Strings(got)
 	if !slices.Equal(got, want) {

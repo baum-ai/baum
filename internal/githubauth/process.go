@@ -52,6 +52,11 @@ func (s ProcessStore) call(ctx context.Context, op string, c Credential) (Creden
 		if strings.HasSuffix(executable, ".test") || strings.HasSuffix(executable, ".test.exe") {
 			return Credential{}, ErrNotConnected
 		}
+		// The helper must be this very executable, even after an update
+		// replaced the file at its path.
+		if executable, err = selfExecutable(); err != nil {
+			return Credential{}, ErrStore
+		}
 	}
 	input, err := json.Marshal(storeRequest{op, c})
 	if err != nil {
@@ -150,7 +155,7 @@ func authorizeCredentialHelper() error {
 	if err != nil {
 		return ErrStore
 	}
-	executable, err := os.Executable()
+	executable, err := selfExecutable()
 	if err != nil {
 		return ErrStore
 	}

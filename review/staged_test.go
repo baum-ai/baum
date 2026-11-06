@@ -357,8 +357,8 @@ func TestPreserveSectionRiskOmissions(t *testing.T) {
 	checkEqual(t, string(unchanged), string(PreserveSectionRiskOmissions(nil, encodeJSON(t, assessed), unchanged)))
 }
 
-// The reading time counts the words a reader reads at 200 a minute and the
-// code lines shown at 12 a minute, rounded up, within 1 to 240.
+// The reading time counts prose at 400 words a minute, without adding time
+// for code excerpts, rounded up, within 1 to 240.
 func TestReviewMinutes(t *testing.T) {
 	words := func(n int) string { return strings.TrimSpace(strings.Repeat("word ", n)) }
 	document := map[string]any{
@@ -381,10 +381,10 @@ func TestReviewMinutes(t *testing.T) {
 			"tiles": []any{map[string]any{"kind": "bug-fix", "data": map[string]any{"code": map[string]any{"diff": map[string]any{"hunks": []any{map[string]any{"header": "@@ -1 +1 @@", "lines": []any{1, 2, 3}}}}}}}},
 		}},
 	}
-	// 400 words is 2 minutes; 6 + 3 + 3 = 12 code lines is 1 minute.
-	checkEqual(t, 3, ReviewMinutes(encodeJSON(t, document)))
+	// 400 words is 1 minute; the anchored, block and tile code adds no time.
+	checkEqual(t, 1, ReviewMinutes(encodeJSON(t, document)))
 	document["summary"].(map[string]any)["breaking_change"] = "one"
-	checkEqual(t, 4, ReviewMinutes(encodeJSON(t, document)))
+	checkEqual(t, 2, ReviewMinutes(encodeJSON(t, document)))
 	checkEqual(t, 1, ReviewMinutes([]byte(`{"summary":{"text":""},"sections":[]}`)))
 	checkEqual(t, 1, ReviewMinutes([]byte(`not json`)))
 	checkEqual(t, 240, ReviewMinutes(encodeJSON(t, map[string]any{"summary": map[string]any{"text": words(100000)}})))

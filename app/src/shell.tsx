@@ -12,7 +12,7 @@ import {
   type RefObject,
 } from "react";
 import { Wordmark } from "@baum/viewer/components/editorial";
-import { ChevronDownIcon, RefreshIcon } from "@baum/viewer/components/icons";
+import { ChevronDownIcon, HelpIcon, RefreshIcon } from "@baum/viewer/components/icons";
 import { Stumpy } from "@baum/viewer/components/stumpy";
 import type { ViewerLinkProps } from "@baum/viewer/navigation";
 import { appURL } from "./api";
@@ -71,6 +71,7 @@ export function Sidebar({
   needsYou,
   problems,
   settingsWarning,
+  update,
   inboxes,
   help,
   Link,
@@ -85,8 +86,10 @@ export function Sidebar({
   needsYou: number;
   problems: number;
   settingsWarning?: string | null;
+  /** A newer desktop app version; Settings counts it. */
+  update?: string | null;
   inboxes?: RailInboxes;
-  /** What the `?` beside Settings offers besides the docs. */
+  /** What Help, beside the baum title, offers besides the docs. */
   help?: RailHelp;
   Link: ComponentType<ViewerLinkProps>;
 }) {
@@ -104,18 +107,26 @@ export function Sidebar({
     },
     jobs: { badge: activeJobs > 0 ? activeJobs : null },
     settings: {
-      badge: problems > 0 ? problems + (settingsWarning ? 1 : 0) : settingsWarning ? "!" : null,
-      tone: problems > 0 ? "warn" : "caution",
+      badge:
+        problems > 0 || update
+          ? problems + (settingsWarning ? 1 : 0) + (update ? 1 : 0)
+          : settingsWarning
+            ? "!"
+            : null,
+      tone: problems > 0 ? "warn" : settingsWarning ? "caution" : undefined,
     },
   };
+  const settingsNote = [settingsWarning, update ? `baum ${update} is available` : null]
+    .filter(Boolean)
+    .join("; ");
   const link = ({ page: target, label, href, icon: Icon }: (typeof PAGES)[number]) => {
     const { badge, tone } = badges[target] ?? {};
     return (
       <Link
         key={target}
         href={href()}
-        title={`${label} (${pageKeyLabel(target, modifier)})${target === "settings" && settingsWarning ? ": " + settingsWarning : ""}`}
-        aria-description={target === "settings" ? (settingsWarning ?? undefined) : undefined}
+        title={`${label} (${pageKeyLabel(target, modifier)})${target === "settings" && settingsNote ? ": " + settingsNote : ""}`}
+        aria-description={target === "settings" ? settingsNote || undefined : undefined}
         aria-current={
           page === target && !(target === "inbox" && (inboxes?.selected || inboxes?.elsewhere))
             ? "page"
@@ -154,10 +165,13 @@ export function Sidebar({
     <aside data-tab-region="" className="local-rail">
       {inboxMenu.menu}
       {helpMenu.menu}
-      <Link href={appURL()} className="local-rail-mark" title="Inbox">
-        <Stumpy size={28} className="flex-none" />
-        <Wordmark size="sidebar" className="local-rail-label" />
-      </Link>
+      <div className="local-rail-head">
+        <Link href={appURL()} className="local-rail-mark" title="Inbox">
+          <Stumpy size={28} className="flex-none" />
+          <Wordmark size="sidebar" className="local-rail-label" />
+        </Link>
+        <HelpButton help={help} menu={helpMenu} />
+      </div>
       <nav aria-label="Main" className="local-rail-nav local-rail-main">
         {PAGES.filter((item) => !item.foot).map((item) =>
           item.page === "inbox" && inboxes && nested ? (
@@ -194,16 +208,7 @@ export function Sidebar({
       <div className="local-rail-foot">
         <PlanUsageRail />
         <nav aria-label="More" className="local-rail-nav">
-          {PAGES.filter((item) => item.foot).map((item) =>
-            item.page === "settings" ? (
-              <div key="settings" className="local-rail-row local-rail-help-row">
-                {link(item)}
-                <HelpButton help={help} menu={helpMenu} />
-              </div>
-            ) : (
-              link(item)
-            ),
-          )}
+          {PAGES.filter((item) => item.foot).map(link)}
         </nav>
       </div>
     </aside>
@@ -213,7 +218,7 @@ export function Sidebar({
 /** Where "Open the docs" goes. */
 export const DOCS_URL = "https://docs.usebaum.com/";
 
-/** What the sidebar's `?` menu does beyond opening the docs. */
+/** What the sidebar's Help menu does beyond opening the docs. */
 export type RailHelp = {
   /** Shows the shortcuts sheet. */
   shortcuts: () => void;
@@ -225,8 +230,8 @@ export type RailHelp = {
   opener?: RefObject<(() => void) | null>;
 };
 
-/** The `?` beside Settings: a menu of the shortcuts, reporting a problem and
- *  the docs. It opens from the keys as a menu button does (Enter, Space, and
+/** Help, at the right of the baum title: a menu of the shortcuts, reporting
+ *  a problem and the docs. It opens from the keys as a menu button does (Enter, Space, and
  *  Down on the first choice, Up on the last), and from the `?` key. */
 function HelpButton({ help, menu }: { help?: RailHelp; menu: ReturnType<typeof useContextMenu> }) {
   const ref = useRef<HTMLButtonElement>(null);
@@ -263,7 +268,7 @@ function HelpButton({ help, menu }: { help?: RailHelp; menu: ReturnType<typeof u
       type="button"
       className="local-rail-help"
       aria-label="Help"
-      title="Help"
+      title="Help (?)"
       aria-haspopup="menu"
       aria-expanded={open}
       aria-controls={open ? menu.id : undefined}
@@ -280,7 +285,7 @@ function HelpButton({ help, menu }: { help?: RailHelp; menu: ReturnType<typeof u
         show(event.key === "ArrowUp");
       }}
     >
-      ?
+      <HelpIcon size={16} />
     </button>
   );
 }
@@ -445,8 +450,24 @@ export function PageBar({
   /** The way back to where the page was opened from, before its name. */
   back?: ReactNode;
 }) {
+  // The bar stays at the top of the panel as the page scrolls under it; what
+  // else sticks there sits below it (`--page-bar-height`).
+  const bar = useRef<HTMLElement>(null);
+  useLayoutEffect(() => {
+    const element = bar.current;
+    const main = element?.closest<HTMLElement>(".local-main");
+    if (!element || !main || typeof ResizeObserver !== "function") return;
+    const observer = new ResizeObserver(() =>
+      main.style.setProperty("--page-bar-height", `${element.offsetHeight}px`),
+    );
+    observer.observe(element);
+    return () => {
+      observer.disconnect();
+      main.style.removeProperty("--page-bar-height");
+    };
+  }, []);
   return (
-    <header className="local-page-bar">
+    <header ref={bar} className="local-page-bar">
       {back}
       <div className="local-page-title">
         <h1>{title}</h1>
@@ -455,6 +476,26 @@ export function PageBar({
       {actions ? <div className="local-page-actions">{actions}</div> : null}
     </header>
   );
+}
+
+/** Where the app's pages scroll: the panel under the notices
+ *  (`.local-main`), or the window where there is none. */
+export function pageScroll() {
+  const main = document.querySelector<HTMLElement>(".local-main");
+  if (main)
+    return {
+      top: main.scrollTop,
+      height: main.scrollHeight,
+      view: main.clientHeight,
+      to: (top: number, behavior?: ScrollBehavior) => main.scrollTo?.({ top, behavior }),
+    };
+  const page = document.scrollingElement ?? document.documentElement;
+  return {
+    top: window.scrollY,
+    height: page.scrollHeight,
+    view: window.innerHeight,
+    to: (top: number, behavior?: ScrollBehavior) => window.scrollTo({ top, behavior }),
+  };
 }
 
 /** One press of a page's refresh. `signal` aborts when the page's refresh

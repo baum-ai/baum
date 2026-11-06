@@ -1,4 +1,13 @@
-import { useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import { CLOSED, comboboxKey, type ComboboxState } from "@baum/viewer/combobox";
 import { formatCount } from "@baum/viewer/components/format";
 import {
@@ -19,13 +28,18 @@ import {
   suggest,
   tidyQuery,
   toggleValue,
+  valuesOf,
   withText,
+  type Field,
+  type Known,
   type Op,
+  type PageFilter,
   type Option,
 } from "./pr-filter";
+import { COMMAND, MAC, useShortcuts } from "./shortcuts";
+import { useMenuFocus } from "./context-menu";
 import "./filter-menu.css";
 
-type Field = ReturnType<typeof fieldsFor>[number];
 type Row =
   | { kind: "field"; field: Field }
   | { kind: "value"; field: Field; option: Option }
@@ -34,6 +48,10 @@ type Row =
 
 /** How far a menu row's values reach beside the menu. */
 const SUBMENU_WIDTH = 256;
+
+/** Whether the menu's "Write a query…" asked for the query box, so a
+ *  `FilterBar` in its footer shows the box even with no filter. */
+const WritingQuery = createContext(false);
 
 /** The filter icon and its menu, as Linear draws one: a search box over the
  *  fields, each opening its values beside the menu, and the query itself at
@@ -52,25 +70,44 @@ export function FilterButton({
   openRequest = false,
   onOpened,
   onClosed,
+  page,
+  slashOpens = true,
+  known,
 }: {
   query: string;
   onChange: (next: string) => void;
+  /** The pull requests before the filter, which the counts are of; a page
+   *  with its own `fields` passes none and shows no counts. */
   entries: Entry[];
+  /** More values to offer than `entries` hold, as every repository. */
+  known?: Known;
   active?: boolean;
   /** What a pull request waits for in an inbox's queue, for `waiting`. */
   kindOf?: (entry: Entry) => string | undefined;
   /** An inbox's page: `waiting` is offered too. */
   inbox?: boolean;
   footer?: ReactNode;
-  /** Opens the menu with the query's box focused; `onOpened` clears it. */
+  /** Opens the menu with Add filter focused; `onOpened` clears it. */
   openRequest?: boolean;
   onOpened?: () => void;
   onClosed?: () => void;
+  /** Another page's filter, in place of the pull requests'. */
+  page?: PageFilter;
+  /** `/` opens the menu; false on a page whose `/` goes to its own search. */
+  slashOpens?: boolean;
 }) {
   const { detailsProps, close, open } = useDisclosure();
+  const given = page?.fields;
   const focusQuery = () =>
     panel.current?.querySelector<HTMLTextAreaElement>(".filter-menu-query textarea")?.focus();
   const [focusOnOpen, setFocusOnOpen] = useState(false);
+  useShortcuts((event) => {
+    if (!slashOpens || event.key !== "/") return;
+    event.preventDefault();
+    if (detailsProps.ref.current) detailsProps.ref.current.open = true;
+    detailsProps.onToggle();
+    panel.current?.querySelector<HTMLInputElement>(".filter-menu-search")?.focus();
+  });
   useEffect(() => {
     if (!openRequest) return;
     if (detailsProps.ref.current) detailsProps.ref.current.open = true;
@@ -100,17 +137,28 @@ export function FilterButton({
     };
   }, [open]);
   const wasOpen = useRef(false);
+  const positioned = place !== null;
+  useLayoutEffect(() => {
+    if (open && positioned)
+      panel.current?.querySelector<HTMLInputElement>(".filter-menu-search")?.focus();
+  }, [open, positioned]);
   useEffect(() => {
     if (open && focusOnOpen) {
-      focusQuery();
+      panel.current?.querySelector<HTMLInputElement>(".filter-menu-search")?.focus();
       setFocusOnOpen(false);
     }
-    if (!open && wasOpen.current) onClosed?.();
+    if (!open && wasOpen.current) {
+      detailsProps.ref.current?.querySelector("summary")?.blur();
+      onClosed?.();
+    }
     wasOpen.current = open;
   }, [open, focusOnOpen]);
   const ids = useId();
   const panel = useRef<HTMLDivElement>(null);
   const [search, setSearch] = useState("");
+  useEffect(() => {
+    if (open) page?.typed?.(null, search.trim());
+  }, [open, search]);
   const [active, setActive] = useState(0);
   // The field whose values show beside the menu, where they hang, and
   // whether the keys move through them.
@@ -118,6 +166,8 @@ export function FilterButton({
   const [inSub, setInSub] = useState(-1);
   // The operator the open field's values are picked with.
   const [op, setOp] = useState<Op>("=");
+  // An empty query has no box until "Write a query…" shows it.
+  const [writing, setWriting] = useState(false);
   useEffect(() => {
     if (open) return;
     setSearch("");
@@ -125,9 +175,17 @@ export function FilterButton({
     setSub(null);
     setInSub(-1);
     setOp("=");
+    setWriting(false);
   }, [open]);
+  useEffect(() => {
+    if (writing) focusQuery();
+  }, [writing]);
 
-  const fields = fieldsFor(inbox);
+  const fields = given ?? fieldsFor(inbox);
+  const on = (text: string, key: string, value: string, with_: Op = "=") =>
+    hasValue(text, key, value, with_, given);
+  const toggle = (key: string, value: string, with_: Op = "=") =>
+    toggleValue(query, key, value, with_, given);
   const passes = (text: string, entry: Entry) => matchesQuery(text, entry, kindOf?.(entry));
   const words = search.trim().toLowerCase();
   const fits = (option: Option) =>
@@ -142,8 +200,7 @@ export function FilterButton({
           .map((field) => ({ kind: "field" as const, field })),
         ...fields
           .flatMap((field) =>
-            field
-              .values(entries)
+            valuesOf(field, entries, known)
               .filter(fits)
               .map((option) => ({ kind: "value" as const, field, option })),
           )
@@ -155,21 +212,27 @@ export function FilterButton({
     ? (sub.field.ops ?? (["=", "!="] as Op[])).filter((one) => one !== ">" && one !== "<")
     : [];
   const values = sub
-    ? sub.field.values(entries).filter((one) => !sub.field.check?.(one.value, op))
+    ? valuesOf(sub.field, entries, known).filter((one) => !sub.field.check?.(one.value, op))
     : [];
   const live = entries.filter((entry) => passes(query, entry));
-  // What the page would show with the value picked: a value already in is
-  // counted as it stands, another as one more choice of its field's term.
+  // Count matches belonging to this option, not the union of every selected
+  // value of its field. Other fields still narrow the count.
   const count = (field: Field, option: Option, with_: Op = "=") =>
-    formatCount(
-      hasValue(query, field.key, option.value, with_)
-        ? live.length
-        : entries.filter((entry) =>
-            passes(toggleValue(query, field.key, option.value, with_), entry),
-          ).length,
-    );
+    given
+      ? null
+      : formatCount(
+          on(query, field.key, option.value, with_)
+            ? live.filter((entry) => passes(toggleValue("", field.key, option.value, with_), entry))
+                .length
+            : entries.filter(
+                (entry) =>
+                  passes(toggle(field.key, option.value, with_), entry) &&
+                  passes(toggleValue("", field.key, option.value, with_), entry),
+              ).length,
+        );
   // Added only when the query still reads with it.
-  const addable = (text: string) => !queryProblem(withText(query, text), inbox);
+  const addable = (text: string) =>
+    !(page ? page.problem : (one: string) => queryProblem(one, inbox))(withText(query, text));
 
   const openSub = (field: Field, row: HTMLElement | null, keys: boolean, hover = false) => {
     const box = panel.current?.getBoundingClientRect();
@@ -189,17 +252,21 @@ export function FilterButton({
   };
   const pick = (row: Row, element: HTMLElement | null, keys: boolean) => {
     if (row.kind === "field") openSub(row.field, element, keys);
-    else if (row.kind === "value") onChange(toggleValue(query, row.field.key, row.option.value));
+    else if (row.kind === "value") onChange(toggle(row.field.key, row.option.value));
     else if (row.kind === "add") {
       if (!addable(row.text)) return;
       onChange(withText(query, row.text));
       close();
-    } else focusQuery();
+    } else {
+      setWriting(true);
+      focusQuery();
+    }
   };
   const rowElement = (index: number) =>
     panel.current?.querySelector<HTMLElement>(`[data-filter-row="${index}"]`) ?? null;
 
   const onKeyDown = (event: React.KeyboardEvent) => {
+    if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) return;
     const inValues = sub && inSub >= 0;
     const length = inValues ? values.length : rows.length;
     const move = (step: number) => {
@@ -232,7 +299,7 @@ export function FilterButton({
     } else if (event.key === "Enter") {
       event.preventDefault();
       const option = inValues ? values[inSub] : undefined;
-      if (sub && option) onChange(toggleValue(query, sub.field.key, option.value, op));
+      if (sub && option) onChange(toggle(sub.field.key, option.value, op));
       else if (rows[active]) pick(rows[active]!, rowElement(active), true);
     }
   };
@@ -258,6 +325,7 @@ export function FilterButton({
         role="radiogroup"
         aria-label={`How ${sub.field.label} compares`}
         className="filter-menu-ops"
+        hidden={ops.length < 2}
       >
         {ops.map((one) => (
           <button
@@ -274,20 +342,20 @@ export function FilterButton({
         ))}
       </div>
       {values.map((option, index) => {
-        const on = hasValue(query, sub.field.key, option.value, op);
+        const ticked = on(query, sub.field.key, option.value, op);
         return (
           <div
             key={option.value}
             id={`${ids}-value-${index}`}
             role="option"
-            aria-selected={on}
+            aria-selected={ticked}
             tabIndex={-1}
             className={index === inSub ? "filter-menu-row active" : "filter-menu-row"}
             onMouseEnter={() => setInSub(index)}
             onMouseDown={(event) => event.preventDefault()}
-            onClick={() => onChange(toggleValue(query, sub.field.key, option.value, op))}
+            onClick={() => onChange(toggle(sub.field.key, option.value, op))}
           >
-            <span className="filter-menu-tick">{on ? <CheckIcon size={13} /> : null}</span>
+            <span className="filter-menu-tick">{ticked ? <CheckIcon size={13} /> : null}</span>
             <span className="filter-menu-label">{option.label}</span>
             {option.label !== option.value ? (
               <code className="filter-menu-key">{option.value}</code>
@@ -304,6 +372,27 @@ export function FilterButton({
     <details
       {...detailsProps}
       className="filter-menu"
+      onKeyDownCapture={(event) => {
+        if (
+          !open ||
+          event.key.toLowerCase() !== "c" ||
+          !(event.metaKey || event.ctrlKey) ||
+          event.altKey ||
+          event.shiftKey ||
+          event.nativeEvent.isComposing
+        )
+          return;
+        event.preventDefault();
+        event.stopPropagation();
+        const clear = panel.current?.querySelector<HTMLButtonElement>(".filter-bar-text-button");
+        if (clear) clear.click();
+        else onChange("");
+        setSearch("");
+        setActive(0);
+        setSub(null);
+        setInSub(-1);
+        panel.current?.querySelector<HTMLInputElement>(".filter-menu-search")?.focus();
+      }}
       // Tab past its last control (or before its first) leaves the menu,
       // which then closes, as a pointer elsewhere does.
       onBlur={(event) => {
@@ -313,12 +402,21 @@ export function FilterButton({
     >
       <summary
         aria-label={lit ? "Filter, in force" : "Filter"}
-        title={lit ? `Filter: ${query}` : "Filter"}
+        title={lit ? `Filter: ${query} (/)` : "Filter (/)"}
+        aria-keyshortcuts="/"
         className={
           lit ? "local-icon-button filter-menu-button on" : "local-icon-button filter-menu-button"
         }
+        onClick={(event) => {
+          event.preventDefault();
+          if (detailsProps.ref.current) detailsProps.ref.current.open = !open;
+          detailsProps.onToggle();
+        }}
       >
         <FilterIcon size={16} />
+        <kbd aria-hidden="true" className="key-hint">
+          /
+        </kbd>
         {lit ? <span aria-hidden="true" className="filter-menu-dot" /> : null}
       </summary>
       {/* Drawn only while open: a closed menu's controls are no Tab stops. */}
@@ -404,7 +502,7 @@ export function FilterButton({
                     ) : row.kind === "value" ? (
                       <>
                         <span className="filter-menu-tick">
-                          {hasValue(query, row.field.key, row.option.value) ? (
+                          {on(query, row.field.key, row.option.value) ? (
                             <CheckIcon size={13} />
                           ) : null}
                         </span>
@@ -415,7 +513,11 @@ export function FilterButton({
                       </>
                     ) : row.kind === "add" ? (
                       <span className="filter-menu-label">
-                        {row.text.includes(":") ? "Add " : "Titles containing "}
+                        {row.text.includes(":")
+                          ? "Add "
+                          : given
+                            ? "Containing "
+                            : "Titles containing "}
                         <q>{row.text}</q>
                       </span>
                     ) : (
@@ -427,7 +529,11 @@ export function FilterButton({
             </div>
           )}
           {sub && sub.side !== "inside" ? valueList : null}
-          {footer ? <div className="filter-menu-query">{footer}</div> : null}
+          {footer ? (
+            <div className="filter-menu-query">
+              <WritingQuery.Provider value={writing}>{footer}</WritingQuery.Provider>
+            </div>
+          ) : null}
         </div>
       ) : null}
     </details>
@@ -444,17 +550,24 @@ export function FilterBar({
   entries,
   inbox = false,
   actions,
+  page,
+  known,
 }: {
   query: string;
   onChange: (next: string) => void;
   /** The page's pull requests before its filter, whose values are offered. */
   entries: Entry[];
+  /** More values to offer than `entries` hold, as every repository. */
+  known?: Known;
   /** An inbox's page: `waiting` is suggested too. */
   inbox?: boolean;
   /** Saving the filter, at the end of the bar. */
   actions?: ReactNode;
+  /** Another page's filter, in place of the pull requests'. */
+  page?: PageFilter;
 }) {
   const id = useId();
+  const writing = useContext(WritingQuery);
   const input = useRef<HTMLTextAreaElement>(null);
   // The box grows with the query, which wraps rather than scrolling sideways.
   useLayoutEffect(() => {
@@ -465,6 +578,13 @@ export function FilterBar({
   });
   const [text, setText] = useState(query);
   const [caret, setCaret] = useState(query.length);
+  // The value being typed, for a page that reads a field's values by prefix.
+  useEffect(() => {
+    const at = /(?:^|[\s(])-?([A-Za-z][A-Za-z-]*)(?:!=|=|:)(?:[^\s,]*,)*"?([^\s,"]*)$/.exec(
+      text.slice(0, caret),
+    );
+    if (at) page?.typed?.(at[1]!.toLowerCase(), at[2]!);
+  }, [text, caret]);
   const [state, setState] = useState<ComboboxState>(CLOSED);
   const timer = useRef<ReturnType<typeof setTimeout>>(undefined);
   // The filter can change from outside (the menu, Clear, another window); the
@@ -482,13 +602,16 @@ export function FilterBar({
     [],
   );
 
-  const error = queryProblem(text, inbox);
-  const options = state.open ? suggest(text, caret, entries, inbox).slice(0, 12) : [];
+  const problem = (one: string) => (page ? page.problem(one) : queryProblem(one, inbox));
+  const error = problem(text);
+  const options = state.open
+    ? suggest(text, caret, entries, inbox, page?.fields, !page, known).slice(0, 12)
+    : [];
   const apply = (next: string, now = false) => {
     clearTimeout(timer.current);
     pending.current = null;
     const tidy = tidyQuery(next);
-    if (tidy === query || queryProblem(tidy, inbox)) return;
+    if (tidy === query || problem(tidy)) return;
     const send = () => {
       pending.current = null;
       onChange(tidy);
@@ -520,11 +643,14 @@ export function FilterBar({
         ? 1
         : 0;
 
+  if (!writing && !query.trim() && !text.trim())
+    return actions ? <div className="filter-bar-actions">{actions}</div> : null;
+
   return (
     <div className="filter-bar">
       <div role="search" className="filter-bar-field">
         <label htmlFor={id} className="sr-only">
-          Filter pull requests
+          {page?.label ?? "Filter pull requests"}
         </label>
         <textarea
           ref={input}
@@ -540,7 +666,6 @@ export function FilterBar({
           aria-describedby={error ? `${id}-error` : undefined}
           autoComplete="off"
           spellCheck={false}
-          placeholder="repo=acme/app is!=draft review=approved OR risk>=4"
           value={text}
           onChange={(event) =>
             edit(event.target.value, event.target.selectionStart ?? event.target.value.length)
@@ -558,6 +683,7 @@ export function FilterBar({
             apply(text, true);
           }}
           onKeyDown={(event) => {
+            if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) return;
             if (event.key === "Tab" && !event.shiftKey && tabTakes) {
               event.preventDefault();
               take(tabTakes - 1);
@@ -604,12 +730,16 @@ export function FilterBar({
         <button
           type="button"
           className="filter-bar-text-button"
+          aria-keyshortcuts={`${MAC ? "Meta" : "Control"}+c`}
           onClick={() => {
             edit("", 0, false);
             apply("", true);
           }}
         >
           Clear
+          <kbd aria-hidden="true" className="key-hint">
+            {COMMAND}C
+          </kbd>
         </button>
         {actions}
       </div>
@@ -629,6 +759,7 @@ export type SaveOption = { label: string; onSelect: () => void };
  *  option, and a single one is a plain button. */
 export function SaveButton({ options }: { options: SaveOption[] }) {
   const { detailsProps, close, open } = useDisclosure();
+  const menuFocus = useMenuFocus(open, close);
   const [first, ...rest] = options;
   if (!first) return null;
   return (
@@ -640,6 +771,11 @@ export function SaveButton({ options }: { options: SaveOption[] }) {
         onClick={first.onSelect}
       >
         {first.label}
+        {first.label === "Create inbox" ? (
+          <kbd aria-hidden="true" className="key-hint">
+            {COMMAND}↵
+          </kbd>
+        ) : null}
       </button>
       {rest.length ? (
         <details {...detailsProps} className="filter-save-more">
@@ -647,7 +783,7 @@ export function SaveButton({ options }: { options: SaveOption[] }) {
             <ChevronDownIcon size={12} />
           </summary>
           {open ? (
-            <div role="menu" className="filter-save-menu">
+            <div role="menu" className="filter-save-menu" {...menuFocus}>
               {rest.map((option) => (
                 <button
                   key={option.label}
@@ -660,6 +796,11 @@ export function SaveButton({ options }: { options: SaveOption[] }) {
                   }}
                 >
                   {option.label}
+                  {option.label === "Create inbox" ? (
+                    <span aria-hidden="true" className="key-hint filter-menu-key">
+                      {COMMAND}↵
+                    </span>
+                  ) : null}
                 </button>
               ))}
             </div>

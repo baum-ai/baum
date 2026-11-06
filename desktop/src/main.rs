@@ -15,6 +15,8 @@ mod daemon;
 mod development;
 mod install;
 mod lifecycle;
+#[cfg(target_os = "linux")]
+mod menu_entry;
 mod navigation;
 mod notifications;
 mod onboarding;
@@ -53,6 +55,11 @@ enum Connection {
     Failed {
         message: String,
         details: Vec<String>,
+    },
+    /// The app cannot run baum from where it is installed (a disk image), so
+    /// there is nothing to retry until it is moved.
+    Misplaced {
+        message: String,
     },
 }
 
@@ -102,6 +109,18 @@ enum Attach {
 
 fn connect(app: &AppHandle, why: Attach) {
     let state = app.state::<State>().inner().clone();
+    if let Some(message) = daemon::misplaced() {
+        eprintln!("baum desktop: {message}");
+        {
+            let mut shared = state.lock();
+            shared.connection = Connection::Misplaced {
+                message: message.into(),
+            };
+            shared.daemon = None;
+        }
+        tray::detached(app);
+        return show_screen(app);
+    }
     let attempt = {
         let mut shared = state.lock();
         if matches!(shared.connection, Connection::Connecting) && shared.attempt > 0 {
@@ -164,7 +183,9 @@ fn connect(app: &AppHandle, why: Attach) {
             return fail(&app, &state, attempt, failure);
         }
         let current = state.clone();
-        notifications::attach(&app, &launch, move || current.lock().attempt != attempt);
+        notifications::attach(&app, &launch, &frontend, move || {
+            current.lock().attempt != attempt
+        });
         watch(&app, &state, attempt, &launch, why);
     });
 }
@@ -329,6 +350,11 @@ fn main() {
             zoom::zoom_state,
             zoom::set_zoom,
             zoom::step_zoom,
+            updater::update_state,
+            updater::check_for_updates,
+            updater::install_update,
+            updater::cancel_update,
+            updater::dismiss_update_notice,
         ])
         .on_window_event(lifecycle::on_window_event)
         .setup(move |app| {
@@ -337,7 +363,11 @@ fn main() {
             // Before the tray, whose menus hold the notification toggles.
             notifications::install(app.handle())?;
             zoom::install(app.handle())?;
+            // Before the window, whose Settings page reads its state.
+            updater::start(app.handle());
             tray::setup(app.handle());
+            #[cfg(target_os = "linux")]
+            menu_entry::refresh(app.handle());
             let page = onboarding::start(app.handle());
             development::grant_setup(app.handle())?;
             let page = if page == onboarding::SETUP_PAGE {
@@ -389,7 +419,6 @@ fn main() {
             // A hidden start shows the window after all if no tray appears.
             tray::watch_host(app.handle(), hidden);
             connect(app.handle(), Attach::First);
-            updater::start(app.handle());
             Ok(())
         })
         .build(tauri::generate_context!())
@@ -415,7 +444,7 @@ mod tests {
     fn pages_have_only_their_declared_capabilities() {
         let expected = serde_json::json!({
             "connecting-screen": ["allow-connection", "allow-reconnect", "allow-step-zoom"],
-            "daemon-pages": ["allow-choose-repository", "allow-setup-state", "allow-install-command", "allow-uninstall-command", "allow-install-hooks", "allow-uninstall-hooks", "allow-update-hooks", "allow-zoom-state", "allow-set-zoom", "allow-step-zoom"],
+            "daemon-pages": ["allow-choose-repository", "allow-setup-state", "allow-install-command", "allow-uninstall-command", "allow-install-hooks", "allow-uninstall-hooks", "allow-update-hooks", "allow-zoom-state", "allow-set-zoom", "allow-step-zoom", "allow-update-state", "allow-check-for-updates", "allow-install-update", "allow-cancel-update", "allow-dismiss-update-notice"],
             "setup-screen": [
                 "allow-setup-state",
                 "allow-install-command",

@@ -3,7 +3,15 @@ import { PreferencesProvider } from "./preferences";
 import { formatCount } from "@baum/viewer/components/format";
 import { UsageDetails } from "./usage";
 import { JobTiming, jobOrigin, jobTarget, jobType } from "./job-info";
-import { useCallback, useEffect, useRef, useState, type MouseEvent, type ReactNode } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type MouseEvent,
+  type ReactNode,
+} from "react";
 import { LogoMark } from "@baum/viewer/components/editorial";
 import { CircleCheckIcon, CircleCrossIcon, CircleDashedIcon } from "@baum/viewer/components/icons";
 import { Alert, Button, LiveDot } from "@baum/viewer/components/ui";
@@ -27,6 +35,7 @@ import {
 } from "./inbox-pages";
 import {
   freeName,
+  unusedInboxColor,
   fromQuery,
   withQuery,
   inboxBadgeCount,
@@ -77,8 +86,15 @@ import { PAGES, type Page } from "./pages";
 import { LocalReview } from "./review";
 import { DecisionsRevision } from "./decisions";
 import { useCodexHookTrust } from "./codex-hooks";
+import { pendingUpdate, useAppUpdates, useUpdateToast } from "./desktop/updates";
 import { useDiagnosticProblems } from "./diagnostics";
-import { RepositoriesPage, SettingsPage, settingsSection, type ReviewDefaults } from "./settings";
+import {
+  RepositoriesPage,
+  SettingsPage,
+  settingsSection,
+  useCommandLineCheck,
+  type ReviewDefaults,
+} from "./settings";
 import { asksYou, SessionsPage, transcriptHref } from "./sessions";
 import { SampleGuard } from "./sample";
 import { ToastProvider } from "./toast";
@@ -206,6 +222,8 @@ const VIEWS = [
   ["history", "Closed"],
 ] as const;
 const PULLS_TAB_KEY = "baum.pulls.tab.v1";
+// Longer than the daemon's own limit on a refresh, so its answer comes first.
+const REFRESH_TIMEOUT_MS = 60_000;
 /** The Pull requests tab last shown in this window's browser, if any. */
 function lastPullsTab(): string | null {
   try {
@@ -321,7 +339,6 @@ function Workspace({ url }: { url: UrlState }) {
   // When the latest read of the daemon completed, for Pull requests' bar.
   const [updatedAt, setUpdatedAt] = useState<number | null>(null);
   const [revision, setRevision] = useState(0);
-  const [authRevision, setAuthRevision] = useState(0);
   const [selection, setSelection] = useState(new Set<string>());
   const [generating, setGenerating] = useState(false);
   // The pull requests whose review request is on its way to the daemon: they
@@ -339,7 +356,7 @@ function Workspace({ url }: { url: UrlState }) {
     null,
   );
   const [shortcuts, setShortcuts] = useState(false);
-  // Opens the sidebar's help menu while its `?` button is mounted.
+  // Opens the sidebar's help menu while its Help button is mounted.
   const openHelp = useRef<(() => void) | null>(null);
   const [reporting, setReporting] = useState(false);
   const [goingTo, setGoingTo] = useState(false);
@@ -355,7 +372,22 @@ function Workspace({ url }: { url: UrlState }) {
   const [automatic, setAutomatic] = useState<Automatic | null>(null);
   const [github, setGitHub] = useState<GitHubConnection | null>(null);
   const [defaults, setDefaults] = useState<ReviewDefaults | null>(null);
-  const [live, setLive] = useState<LiveSession[]>([]);
+  const [rawLive, setLive] = useState<LiveSession[]>([]);
+  const live = useMemo<LiveSession[]>(() => {
+    const indexedPRStates = new Map(
+      snapshot.entries.map(({ pull_request: pr }) => [
+        `${pr.repository.toLowerCase()}#${pr.number}`,
+        pr.state,
+      ]),
+    );
+    return rawLive.map((session) => {
+      if (session.pr_state || !session.pr) return session;
+      const state = indexedPRStates.get(`${session.repository.toLowerCase()}#${session.pr}`);
+      return state === "OPEN" || state === "MERGED" || state === "CLOSED"
+        ? { ...session, pr_state: state }
+        : session;
+    });
+  }, [rawLive, snapshot.entries]);
   // Whether the sessions have been read, or the first read failed.
   const [liveRead, setLiveRead] = useState<"loading" | "loaded" | "failed">("loading");
   // A later read of the sessions that failed: they stay as they were.
@@ -376,8 +408,8 @@ function Workspace({ url }: { url: UrlState }) {
   // Why the groups could not be read, so a group is not called missing then.
   const [groupsError, setGroupsError] = useState("");
   const inboxes = useInboxes();
-  // The inbox just made from a template, whose page says so.
-  const [freshInbox, setFreshInbox] = useState<string | null>(null);
+  const [draftInboxSource, setDraftInboxSource] = useState<string | null>(null);
+  const draftSourceFilter = usePageFilter(draftInboxSource ?? "inbox");
   // An inbox started from a template, not saved until its edit page's Save.
   const [draftInbox, setDraftInbox] = useState<SavedInbox | null>(null);
   // Deleting an inbox says so on any page, with a way back.
@@ -545,7 +577,6 @@ function Workspace({ url }: { url: UrlState }) {
     };
   }, [reload, reloadLive]);
   const authChanged = () => {
-    setAuthRevision((n) => n + 1);
     void reload();
   };
   const cloneFor = (e: Entry) =>
@@ -659,12 +690,18 @@ function Workspace({ url }: { url: UrlState }) {
         ];
   // What the filter's values and counts come from: the view before it.
   const filterBase = filtered(indexedEntries, view);
+  // The person's repositories: picked, registered as clones, or holding a
+  // pull request read. The filters offer each.
   const repositories = Array.from(
     new Set([
       ...picked.map((r) => r.repository),
+      ...clones.map((c) => c.repository),
       ...indexedEntries.map((e) => e.pull_request.repository),
     ]),
   );
+  // What the filters offer beyond the page's pull requests: every one read,
+  // in any view, and every repository.
+  const knownValues = { entries: indexedEntries, repositories };
   const requestedNumber = Number(url.search.get("pr"));
   const requestedClone = url.search.get("clone");
   const requestedRepository =
@@ -725,6 +762,43 @@ function Workspace({ url }: { url: UrlState }) {
     railPage === "inbox"
       ? (inboxes.inboxes.find((candidate) => candidate.id === url.search.get("inbox")) ?? null)
       : null;
+  useEffect(() => {
+    const switchInbox = (event: KeyboardEvent) => {
+      if (
+        inboxes.inboxes.length === 0 ||
+        page !== "inbox" ||
+        selectedEntry ||
+        groupId ||
+        event.metaKey ||
+        event.altKey ||
+        event.isComposing ||
+        document.querySelector("dialog[open]")
+      )
+        return;
+      if (
+        event.target instanceof HTMLElement &&
+        event.target.closest("input, textarea, select, [contenteditable], .filter-menu[open]")
+      )
+        return;
+      // Shift+J and Shift+K, or Ctrl+↓ and Ctrl+↑. Ctrl+K stays Go to's.
+      const steps: Record<string, number> = event.shiftKey
+        ? { j: 1, k: -1 }
+        : { arrowdown: 1, arrowup: -1 };
+      const step = event.shiftKey === event.ctrlKey ? 0 : (steps[event.key.toLowerCase()] ?? 0);
+      if (!step) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      const index = selectedInbox
+        ? inboxes.inboxes.findIndex((inbox) => inbox.id === selectedInbox.id) + 1
+        : 0;
+      const nextIndex = Math.max(0, Math.min(inboxes.inboxes.length, index + step));
+      if (nextIndex === index) return;
+      const next = inboxes.inboxes[nextIndex - 1];
+      navigate(next ? appURL(`?inbox=${encodeURIComponent(next.id)}`) : appURL());
+    };
+    window.addEventListener("keydown", switchInbox, true);
+    return () => window.removeEventListener("keydown", switchInbox, true);
+  }, [selectedInbox, page, selectedEntry, groupId, inboxes.inboxes, navigate]);
   // Undo reads the list as it is then, not as it was at the delete.
   const currentInboxes = useRef(inboxes.inboxes);
   currentInboxes.current = inboxes.inboxes;
@@ -759,13 +833,27 @@ function Workspace({ url }: { url: UrlState }) {
     return () => clearTimeout(timer);
   }, [inboxToast?.id]);
   useEffect(() => {
-    if (freshInbox && page !== "inbox-edit") setFreshInbox(null);
-    if (draftInbox && page !== "inbox-edit") setDraftInbox(null);
-  }, [freshInbox, draftInbox, page]);
+    if (draftInbox && page !== "inbox-edit") {
+      setDraftInbox(null);
+      setDraftInboxSource(null);
+    }
+  }, [draftInbox, page]);
   // The pages that show the diagnostics run them themselves.
   // The diagnostics dialog runs them itself while it is open.
   const diagnostics = useDiagnosticProblems(page !== "diagnostics");
   const codexTrust = useCodexHookTrust();
+  const commandLine = useCommandLineCheck();
+  const appUpdates = useAppUpdates();
+  useUpdateToast(
+    appUpdates,
+    () =>
+      url.update((current) => {
+        current.set("page", "settings");
+        current.set("section", "computer");
+        return current;
+      }),
+    page === "settings" && settingsSection(url.search.get("section")) === "computer",
+  );
   const reviewTogether = () => {
     const chosen = snapshot.entries.filter((e) => selection.has(rowKey(e)));
     if (
@@ -886,14 +974,35 @@ function Workspace({ url }: { url: UrlState }) {
         if (!press.restart) await Promise.race([before, dropped]);
         for (const { repository, clone } of targets) {
           if (signal.aborted) return;
-          await request(
+          // A request that never answers gives up, so it cannot hold the
+          // queue and the loader; the daemon gives up on GitHub sooner.
+          const one = new AbortController();
+          const stop = () => one.abort();
+          signal.addEventListener("abort", stop, { once: true });
+          const timer = setTimeout(stop, REFRESH_TIMEOUT_MS);
+          await request<{ stale?: boolean; error?: string } | null>(
             "api/prs/refresh",
             clone ? { clone } : { repository },
             "POST",
-            signal,
-          ).catch((e) => {
-            if (!signal.aborted) failed.push(`${repository}: ${errorText(e)}`);
-          });
+            one.signal,
+          )
+            // The daemon answers a refresh GitHub did not complete (a
+            // stalled read it gave up on, an exhausted allowance) with the
+            // cached snapshot, marked stale with the error.
+            .then((answer) => {
+              if (answer?.stale && answer.error)
+                failed.push(`${repository}: not refreshed from GitHub; baum will keep retrying.`);
+            })
+            .catch((e) => {
+              if (signal.aborted) return;
+              failed.push(
+                `${repository}: ${one.signal.aborted ? "baum did not answer in time." : errorText(e)}`,
+              );
+            })
+            .finally(() => {
+              clearTimeout(timer);
+              signal.removeEventListener("abort", stop);
+            });
         }
         // The press that dropped this one reads the daemon again itself.
         if (signal.aborted) return;
@@ -1058,24 +1167,30 @@ function Workspace({ url }: { url: UrlState }) {
     items: inbox.queue,
     login: github?.login,
     repositories,
+    entries: indexedEntries,
     saves: inboxes.saves,
     save: inboxes.save,
     go: navigate,
     Link: LocalLink,
   };
-  // The Inbox's filter as an inbox of its own, opened to be named.
+  // The Inbox's filter as an inbox of its own.
   const saveAsInbox =
     inboxes.status === "ready" && inboxes.inboxes.length < MAX_INBOXES
       ? (query: string, base?: SavedInbox) => {
           // From an inbox: a copy of it, named so no other inbox has the name.
           const made = base
             ? withQuery(
-                { ...base, id: newInboxId(), name: freeName(base.name, inboxes.inboxes) },
+                {
+                  ...base,
+                  id: newInboxId(),
+                  name: freeName(base.name, inboxes.inboxes),
+                  color: unusedInboxColor(inboxes.inboxes, base.color),
+                },
                 query,
               )
             : fromQuery(query, inboxes.inboxes);
-          inboxes.save([...inboxes.inboxes, made]);
-          setFreshInbox(made.id);
+          setDraftInbox(made);
+          setDraftInboxSource(base ? `inbox:${base.id}` : "inbox");
           navigate(editInboxHref(made.id));
         }
       : undefined;
@@ -1190,7 +1305,10 @@ function Workspace({ url }: { url: UrlState }) {
         runningSessions={live.filter((s) => s.state === "running").length}
         needsYou={asksYou(live).length}
         problems={diagnostics.problems}
-        settingsWarning={codexTrust.warning}
+        settingsWarning={
+          [codexTrust.warning, commandLine.warning].filter(Boolean).join(" ") || null
+        }
+        update={pendingUpdate(appUpdates.view)}
         help={{
           shortcuts: () => setShortcuts(true),
           report: () => setReporting(true),
@@ -1274,7 +1392,6 @@ function Workspace({ url }: { url: UrlState }) {
             />
           ) : page === "settings" || page === "diagnostics" ? (
             <SettingsPage
-              authRevision={authRevision}
               authChanged={authChanged}
               automatic={automatic}
               defaults={defaults}
@@ -1299,6 +1416,8 @@ function Workspace({ url }: { url: UrlState }) {
               }
               onDiagnostics={diagnostics.update}
               codexTrust={codexTrust}
+              commandLine={commandLine}
+              updates={appUpdates}
             />
           ) : page === "sessions" && openSession ? (
             <SessionTranscriptPage
@@ -1343,6 +1462,28 @@ function Workspace({ url }: { url: UrlState }) {
                   message="baum could not read the agent sessions on this computer."
                   retry={reloadLive}
                 >
+                  {commandLine.missing || commandLine.hooksMissing ? (
+                    <div className="local-list-note">
+                      <Notice
+                        action={
+                          <>
+                            {commandLine.hooksMissing ? (
+                              <LocalLink href={appURL("?page=settings&section=connections")}>
+                                Connect an agent
+                              </LocalLink>
+                            ) : null}
+                            {commandLine.missing ? (
+                              <LocalLink href={appURL("?page=settings&section=computer")}>
+                                Install baum CLI
+                              </LocalLink>
+                            ) : null}
+                          </>
+                        }
+                      >
+                        {sessionsSetupWarning(commandLine)}
+                      </Notice>
+                    </div>
+                  ) : null}
                   {liveStale ? (
                     <div className="local-list-note">
                       <Alert className="flex flex-wrap items-center gap-x-3 gap-y-2">
@@ -1395,6 +1536,7 @@ function Workspace({ url }: { url: UrlState }) {
             <NewInboxPage
               {...inboxPageProps}
               start={(inbox) => {
+                setDraftInboxSource(null);
                 setDraftInbox(inbox);
                 navigate(editInboxHref(inbox.id));
               }}
@@ -1403,7 +1545,11 @@ function Workspace({ url }: { url: UrlState }) {
             <EditInboxPage
               {...inboxPageProps}
               id={url.search.get("inbox") ?? ""}
-              fresh={freshInbox === url.search.get("inbox")}
+              fresh={false}
+              onCreated={() => {
+                if (draftInboxSource) draftSourceFilter.reset();
+                setDraftInboxSource(null);
+              }}
               remove={askRemoveInbox}
               draft={draftInbox}
               setDraft={setDraftInbox}
@@ -1524,6 +1670,7 @@ function Workspace({ url }: { url: UrlState }) {
           ) : page !== "pulls" ? (
             <UpNextPage
               inbox={inbox}
+              jobs={jobs}
               inboxes={inboxes.inboxes}
               selected={selectedInbox}
               onEdit={selectedInbox ? () => navigate(editInboxHref(selectedInbox.id)) : undefined}
@@ -1539,6 +1686,7 @@ function Workspace({ url }: { url: UrlState }) {
               reviewGroups={groups}
               saveAsInbox={saveAsInbox}
               inboxSaves={inboxes.saves}
+              repositories={repositories}
               updateInbox={
                 selectedInbox && inboxes.status === "ready"
                   ? (patch) =>
@@ -1629,6 +1777,7 @@ function Workspace({ url }: { url: UrlState }) {
                     query={pullsQuery}
                     onChange={setPullsQuery}
                     entries={filterBase}
+                    known={knownValues}
                     active={pullsQuery !== ""}
                     openRequest={openPullsMenu}
                     onOpened={() => setOpenPullsMenu(false)}
@@ -1643,6 +1792,7 @@ function Workspace({ url }: { url: UrlState }) {
                           query={pullsQuery}
                           onChange={setPullsQuery}
                           entries={filterBase}
+                          known={knownValues}
                           actions={
                             editing ? (
                               <TabNameForm
@@ -2244,4 +2394,14 @@ function readPageWhat(page: string, group: string | null) {
   if (page === "jobs") return "jobs";
   if (page === "repositories") return "repositories";
   return page === "pulls" ? "pull requests" : "your inbox";
+}
+
+/** Why the Sessions page may stay empty: the desktop setup baum's session
+ *  reporting needs is incomplete. */
+function sessionsSetupWarning(check: { missing: boolean; hooksMissing: boolean }) {
+  if (check.missing && check.hooksMissing)
+    return "baum can't see your agent sessions: the baum CLI isn't installed and no coding agent is connected.";
+  if (check.hooksMissing)
+    return "baum can't see your agent sessions: no coding agent has baum's hooks installed.";
+  return "baum can't see your agent sessions: the baum CLI isn't installed, and the agent hooks need it to report sessions.";
 }

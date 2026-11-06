@@ -35,7 +35,10 @@ this first version. Native keyring operations run in the hidden
 `baum internal github-credential`
 helper with a 20-second deadline. Before reading a request or opening the
 keyring, the helper verifies its parent's executable identity using operating
-system process metadata and requires pipe input and output. A shell or coding
+system process metadata and requires pipe input and output. On Linux the
+parent starts the helper from `/proc/self/exe` and the helper compares its own
+`/proc/self/exe` with the parent's, so a daemon whose file an update replaced
+keeps its credential access until it restarts into the new one. A shell or coding
 agent invoking the hidden command directly is refused, including save and
 delete requests. Credentials pass through private pipes. This trusts the
 installed baum executable and the OS process metadata; unsupported operating

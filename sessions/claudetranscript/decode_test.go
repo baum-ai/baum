@@ -188,7 +188,9 @@ func TestMessageTextJoinsManyBlocksInLinearTime(t *testing.T) {
 	content := "[" + strings.Repeat(`{"type":"text","text":"x"},`, blocks-1) + `{"type":"text","text":"x"}]`
 	started := time.Now()
 	text := (&Message{Content: []byte(content)}).Text()
-	if elapsed := time.Since(started); elapsed > 5*time.Second {
+	// A linear join takes about five seconds under -race on a CI runner; the
+	// quadratic one this guards against takes minutes even without it.
+	if elapsed := time.Since(started); elapsed > time.Minute {
 		t.Fatalf("joining %d text blocks took %v", blocks, elapsed)
 	}
 	if len(text) != 2*blocks-1 {

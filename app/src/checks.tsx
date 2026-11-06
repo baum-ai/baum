@@ -2,9 +2,15 @@ import { useEffect, useState } from "react";
 import { formatCount } from "@baum/viewer/components/format";
 import { CircleCheckIcon, CircleCrossIcon, CircleDashedIcon } from "@baum/viewer/components/icons";
 import { LocalRequestError, joinAnd, request } from "./api";
+import { githubToast } from "./github-toast";
 import { LoadingStatus } from "./nine-dots";
+import { useToast } from "./toast";
 import { SMALL } from "./action-classes";
 import { cn } from "@baum/viewer/components/classnames";
+import { Part } from "@baum/viewer/components/review-parts";
+import type { ReviewDetailsChecks } from "@baum/viewer/components/review-viewer";
+import { Badge } from "@baum/viewer/components/ui";
+import { checkStatus, type ReviewDocument } from "@baum/viewer/review-document";
 
 /** A check of the head commit, as `api/prs/checks` lists it. Name and title
  *  come from the check itself. */
@@ -173,6 +179,7 @@ export function PullRequestChecks({
 }) {
   const own = useChecks(repository, number, head, checks === undefined);
   const read = checks ?? own;
+  const toast = useToast();
   const [retrying, setRetrying] = useState<Set<number>>(new Set());
   const [retried, setRetried] = useState<Set<number>>(new Set());
   const [failed, setFailed] = useState<Record<number, string>>({});
@@ -186,6 +193,13 @@ export function PullRequestChecks({
     try {
       await request("api/prs/rerun-job", { repository, pr: number, head_sha: head, job_id: job });
       setRetried((ids) => new Set(ids).add(job));
+      const check = read.checks?.find((c) => c.job_id === job);
+      toast(
+        githubToast(
+          { repository, number, title: check?.name ?? "", url: check?.url ?? `${url}/checks` },
+          "Check re-running on GitHub",
+        ),
+      );
     } catch (error) {
       setFailed((all) => ({
         ...all,
@@ -304,4 +318,45 @@ export function PullRequestChecks({
       ) : null}
     </div>
   );
+}
+
+/** The review page's Details checks, as GitHub lists them now.
+ *
+ *  A review's own check index is a snapshot taken when it was generated, and
+ *  an automatic review starts as soon as a new head is pushed, so that
+ *  snapshot usually shows CI still running. For a version of the head the
+ *  pull request is on, this reads the checks live (`useChecks`) instead.
+ *  An earlier head's version, a read not back yet and a read that failed keep
+ *  the snapshot, which dates itself once it is old. */
+export function liveDetailsChecks(
+  document: ReviewDocument,
+  pr: { repository: string; number: number; head_sha: string; url: string; canRetry: boolean },
+  read: ChecksRead,
+): ReviewDetailsChecks {
+  if (document.review.head !== pr.head_sha || !read.checks) {
+    return { content: undefined, failing: checkStatus(document).state === "failing" };
+  }
+  const count = read.checks.length ? checksCount(read.checks) : null;
+  return {
+    content: (
+      <Part label="Checks">
+        <div className="space-y-2">
+          {count ? (
+            <Badge tone={count.tone} role="status">
+              {count.text}
+            </Badge>
+          ) : null}
+          <PullRequestChecks
+            repository={pr.repository}
+            number={pr.number}
+            head={pr.head_sha}
+            url={pr.url}
+            canRetry={pr.canRetry}
+            checks={read}
+          />
+        </div>
+      </Part>
+    ),
+    failing: count?.tone === "critical",
+  };
 }

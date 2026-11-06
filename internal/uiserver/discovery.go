@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"time"
 
 	"github.com/baum-ai/baum/internal/discovery"
 	"github.com/baum-ai/baum/internal/github"
@@ -18,6 +19,11 @@ type DiscoveryCache interface {
 	Cached(context.Context, github.Repository) (discovery.Snapshot, error)
 	PollNow(context.Context, github.Repository) (discovery.Snapshot, error)
 }
+
+// refreshTimeout bounds a refresh the person asks for, as the background
+// poll of one repository is bounded: a connection that stalls (the network
+// dropping mid-read) answers as a failed refresh instead of never.
+var refreshTimeout = 45 * time.Second
 
 func DiscoveryHandler(registry *repos.Registry, service DiscoveryCache, changed func()) http.Handler {
 	mux := http.NewServeMux()
@@ -77,7 +83,9 @@ func DiscoveryHandler(registry *repos.Registry, service DiscoveryCache, changed 
 			apiError(w, err)
 			return
 		}
-		snapshot, err := service.PollNow(r.Context(), repo)
+		ctx, cancel := context.WithTimeout(r.Context(), refreshTimeout)
+		snapshot, err := service.PollNow(ctx, repo)
+		cancel()
 		if err != nil {
 			snapshot.Repository = repo.String()
 			snapshot.Stale = true

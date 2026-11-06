@@ -61,6 +61,7 @@
     "./components/review-tiles/tile-questions": "./src/components/review-tiles/tile-questions.tsx",
     "./components/review-tiles/workflow": "./src/components/review-tiles/workflow.tsx",
     "./components/review-viewer": "./src/components/review-viewer.tsx",
+    "./components/scroller": "./src/components/scroller.ts",
     "./components/segmented": "./src/components/segmented.ts",
     "./components/session-card": "./src/components/session-card.tsx",
     "./components/session-list": "./src/components/session-list.tsx",

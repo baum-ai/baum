@@ -102,6 +102,7 @@ daemon keep them current. The commands here set those up.`,
 
 	cmd.AddCommand(
 		newDaemonCommand(),
+		newDesktopSetupCommand(),
 		newInternalCommand(),
 	)
 	addHostedCommands(cmd, stdout, stderr)

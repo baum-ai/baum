@@ -39,6 +39,10 @@ test("GitHub device lifecycle, recovery and saved reviews through the real daemo
   expect((await mutate("disconnect")).status()).toBe(200);
   await page.reload();
   const panel = page.getByRole("region", { name: "GitHub connection", exact: true });
+  // The diagnostics dialog leaves the GitHub connection to Connections.
+  await expect(page.getByText(/Credential values are never shown/)).toBeVisible();
+  await expect(panel).toHaveCount(0);
+  await page.getByRole("button", { name: "Close", exact: true }).click();
   // Settings opens on General; the GitHub panel is under Connections.
   const openConnections = async () => {
     await page.getByRole("link", { name: "Settings", exact: true }).click();
@@ -47,6 +51,7 @@ test("GitHub device lifecycle, recovery and saved reviews through the real daemo
       .getByRole("button", { name: /^Connections/ })
       .click();
   };
+  await openConnections();
   await expect(
     panel.getByRole("button", { name: "Sign in with GitHub", exact: true }),
   ).toBeEnabled();
@@ -78,8 +83,7 @@ test("GitHub device lifecycle, recovery and saved reviews through the real daemo
   expect((await (await page.request.get(`${base}api/github-auth`)).json()).pending.id).toBe(
     attempt,
   );
-  // Closing the panel cannot stop Go-owned polling.
-  await page.getByRole("button", { name: "Close", exact: true }).click();
+  // Leaving the panel cannot stop Go-owned polling.
   await page.getByRole("link", { name: "Pull requests", exact: true }).first().click();
   await mode("alice");
   await expect

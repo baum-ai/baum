@@ -15,6 +15,7 @@ import { flushSync } from "react-dom";
 import { formatRelative } from "@baum/viewer/components/format";
 import { InlineMarkdown, Markdown } from "@baum/viewer/components/markdown";
 import {
+  CheckIcon,
   CircleCheckIcon,
   CircleDashedIcon,
   CommentsIcon,
@@ -22,7 +23,7 @@ import {
   PaperPlaneIcon,
   WarningIcon,
 } from "@baum/viewer/components/icons";
-import { Button, LiveDot } from "@baum/viewer/components/ui";
+import { Badge, Button, LiveDot } from "@baum/viewer/components/ui";
 import type { ViewerLinkProps } from "@baum/viewer/navigation";
 import {
   agentName,
@@ -181,16 +182,15 @@ export function SessionWhere({
   prHref: (session: LiveSession) => string | null;
   Link: ComponentType<ViewerLinkProps>;
 }) {
+  // A stale link says nothing: it settles at the next lookup.
   const note =
     s.link_status === "ambiguous"
       ? "Several pull requests match"
-      : s.link_status === "stale"
-        ? "PR link may be out of date"
-        : s.link_status === "unavailable"
-          ? "PR lookup unavailable"
-          : s.link_status === "unknown_history"
-            ? "Historical branch unknown"
-            : null;
+      : s.link_status === "unavailable"
+        ? "PR lookup unavailable"
+        : s.link_status === "unknown_history"
+          ? "Historical branch unknown"
+          : null;
   return (
     <div className="local-session-where">
       <span className="local-session-repo">{s.repository}</span>
@@ -218,12 +218,25 @@ function SessionPR({
 }) {
   if (!s.pr) return null;
   const href = prHref(s);
-  return href ? (
-    <Link href={href} className="local-session-pr">
+  const state =
+    s.pr_state === "MERGED"
+      ? { label: "Merged", tone: "merged" as const }
+      : s.pr_state === "CLOSED"
+        ? { label: "Closed", tone: "critical" as const }
+        : s.pr_state === "OPEN"
+          ? { label: "Open", tone: "positive" as const }
+          : { label: "Status unknown", tone: "neutral" as const };
+  const pill = (
+    <Badge tone={state.tone} size="compact" title={`PR #${s.pr} · ${state.label}`}>
       PR #{s.pr}
+    </Badge>
+  );
+  return href ? (
+    <Link href={href} className="local-session-pr" aria-label={`PR #${s.pr}, ${state.label}`}>
+      {pill}
     </Link>
   ) : (
-    <span className="local-session-pr">PR #{s.pr}</span>
+    <span className="local-session-pr">{pill}</span>
   );
 }
 
@@ -428,11 +441,17 @@ type Notice = {
   error?: boolean;
 };
 
+/** An agent marks the option it recommends in its label; the card shows that
+ *  as a tag and answers with the label as given. */
+const RECOMMENDED = /\s*\(recommended\)\s*$/i;
+
 /** One choice of a request: a row with the number of its key (1–9, on the
- *  focused card), its label and what it means; pressed while chosen among
- *  several, `danger` for a refusal and `quiet` for typing one's own. */
+ *  focused card) or, unnumbered, a radio or check `mark`; its label, and
+ *  what it means under it. Pressed while chosen among several, `danger` for
+ *  a refusal and `quiet` for typing one's own. */
 function Choice({
   n,
+  mark,
   label,
   note,
   pressed,
@@ -441,6 +460,7 @@ function Choice({
   ...button
 }: {
   n?: number;
+  mark?: "radio" | "check";
   label: string;
   note?: string;
   pressed?: boolean;
@@ -450,6 +470,7 @@ function Choice({
   disabled: boolean;
   onClick: () => void;
 }) {
+  const recommended = RECOMMENDED.test(label);
   return (
     <li>
       <button
@@ -461,11 +482,20 @@ function Choice({
         data-key={n ? String(n) : undefined}
         {...button}
       >
-        <kbd className="local-feed-key" aria-hidden="true">
-          {n ?? ""}
-        </kbd>
-        <span className="local-feed-choice-label">{label}</span>
-        {note ? <span className="local-feed-choice-note">{note}</span> : null}
+        {n || !mark ? (
+          <kbd className="local-feed-key" aria-hidden="true">
+            {n ?? ""}
+          </kbd>
+        ) : (
+          <span className={`local-feed-mark ${mark}`} aria-hidden="true" />
+        )}
+        <span className="local-feed-choice-text">
+          <span className="local-feed-choice-label">
+            {label.replace(RECOMMENDED, "")}
+            {recommended ? <span className="local-feed-choice-tag">Recommended</span> : null}
+          </span>
+          {note ? <span className="local-feed-choice-note">{note}</span> : null}
+        </span>
       </button>
     </li>
   );
@@ -478,15 +508,18 @@ function AnswerField({
   disabled,
   close,
   answer,
+  text,
+  setText,
 }: {
   question: string;
   disabled: boolean;
   close: () => void;
   answer: (text: string) => void;
+  text: string;
+  setText: (text: string) => void;
 }) {
   const id = useId();
   const input = useRef<HTMLInputElement>(null);
-  const [text, setText] = useState("");
   useEffect(() => input.current?.focus(), []);
   return (
     <form
@@ -745,7 +778,14 @@ function QuestionCard({
   const [picked, setPicked] = useState<Record<string, string[]>>({});
   // The question an answer is being typed for.
   const [typing, setTyping] = useState<string | null>(null);
+  // What is typed for each question, kept while another question shows.
+  const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const setDraft = (question: string, text: string) =>
+    setDrafts((d) => ({ ...d, [question]: text }));
+  // Several questions show one at a time, each its own tab.
+  const [step, setStep] = useState(0);
   const questions = request.questions;
+  const last = questions.length - 1;
   // One single-choice question is answered by its option; any other needs a
   // choice for every question and a Submit.
   const immediate = questions.length === 1 && !questions[0]!.multi_select;
@@ -767,90 +807,161 @@ function QuestionCard({
         session: name,
       },
     );
+  const has = (chosen: Record<string, string[]>, q: RequestQuestion) =>
+    (chosen[q.question]?.length ?? 0) > 0;
   const choose = (q: RequestQuestion, option: string) => {
     if (immediate) {
       void send({ [q.question]: [option] });
       return;
     }
-    setPicked((current) => {
-      const had = current[q.question] ?? [];
-      const next = q.multi_select
+    const had = picked[q.question] ?? [];
+    const next = {
+      ...picked,
+      [q.question]: q.multi_select
         ? had.includes(option)
           ? had.filter((o) => o !== option)
           : [...had, option]
-        : [option];
-      return { ...current, [q.question]: next };
-    });
+        : [option],
+    };
+    setPicked(next);
+    // A single choice answers its question: on to the next one unanswered.
+    if (!q.multi_select) {
+      const after = questions.findIndex((other, i) => i > step && !has(next, other));
+      const any = questions.findIndex((other) => !has(next, other));
+      if (after >= 0 || any >= 0) setStep(after >= 0 ? after : any);
+    }
   };
-  const ready = questions.every((q) => (picked[q.question]?.length ?? 0) > 0);
+  const answered = questions.filter((q) => has(picked, q)).length;
+  const ready = answered === questions.length;
+  const q = questions[Math.min(step, last)]!;
+  const mark = q.multi_select ? "check" : "radio";
   return (
     <li className="list-row local-feed-card local-feed-ask" {...row}>
       <RequestHead request={request} session={session} now={now} open={open} />
-      {questions.map((q) => (
-        <div key={q.question} role="group" aria-label={q.question} className="local-feed-question">
-          <p className="local-feed-ask-text">
-            {q.header ? <span className="local-feed-ask-header">{q.header} · </span> : null}
-            {q.question}
-          </p>
-          {/* Each choice a row, numbered for its key when the card asks
-              one thing, then a typed answer of the person's own. */}
-          <ul className="local-feed-choices">
-            {q.options.map((o, i) => (
+      {questions.length > 1 ? (
+        <div className="local-feed-steps" role="tablist" aria-label="Questions">
+          {questions.map((other, i) => (
+            <button
+              key={other.question}
+              type="button"
+              role="tab"
+              className="local-feed-step"
+              aria-selected={i === step}
+              title={other.question}
+              disabled={busy}
+              onClick={() => setStep(i)}
+            >
+              <span className={`local-feed-step-mark${has(picked, other) ? " done" : ""}`}>
+                {has(picked, other) ? <CheckIcon size={12} /> : i + 1}
+              </span>
+              {other.header || `Question ${i + 1}`}
+            </button>
+          ))}
+        </div>
+      ) : null}
+      <div key={q.question} role="group" aria-label={q.question} className="local-feed-question">
+        {q.header && questions.length === 1 ? (
+          <p className="local-feed-ask-header">{q.header}</p>
+        ) : null}
+        <p className="local-feed-ask-text">{q.question}</p>
+        {/* Each choice a row, numbered for its key, then a typed answer of
+            the person's own. */}
+        <ul className="local-feed-choices">
+          {q.options.map((o, i) => (
+            <Choice
+              key={o.label}
+              n={i < 9 ? i + 1 : undefined}
+              mark={mark}
+              label={o.label}
+              note={o.description}
+              pressed={immediate ? undefined : (picked[q.question]?.includes(o.label) ?? false)}
+              aria-label={`${o.label}: ${agentName(request.agent)} on ${name}`}
+              disabled={busy}
+              onClick={() => choose(q, o.label)}
+            />
+          ))}
+          {(picked[q.question] ?? [])
+            .filter((answer) => !q.options.some((o) => o.label === answer))
+            .map((answer) => (
               <Choice
-                key={o.label}
-                n={questions.length === 1 && i < 9 ? i + 1 : undefined}
-                label={o.label}
-                note={o.description}
-                pressed={immediate ? undefined : (picked[q.question]?.includes(o.label) ?? false)}
-                aria-label={`${o.label}: ${agentName(request.agent)} on ${name}`}
+                key={`typed:${answer}`}
+                mark={mark}
+                label={`“${answer}”`}
+                pressed
+                aria-label={`${answer}: ${agentName(request.agent)} on ${name}`}
                 disabled={busy}
-                onClick={() => choose(q, o.label)}
+                onClick={() => choose(q, answer)}
               />
             ))}
-            {(picked[q.question] ?? [])
-              .filter((answer) => !q.options.some((o) => o.label === answer))
-              .map((answer) => (
-                <Choice
-                  key={`typed:${answer}`}
-                  label={`“${answer}”`}
-                  pressed
-                  aria-label={`${answer}: ${agentName(request.agent)} on ${name}`}
-                  disabled={busy}
-                  onClick={() => choose(q, answer)}
-                />
-              ))}
+          {typing === q.question ? (
+            <li>
+              <AnswerField
+                question={q.question}
+                disabled={busy}
+                text={drafts[q.question] ?? ""}
+                setText={(text) => setDraft(q.question, text)}
+                close={() => {
+                  setTyping(null);
+                  setDraft(q.question, "");
+                }}
+                answer={(text) => {
+                  setTyping(null);
+                  setDraft(q.question, "");
+                  choose(q, text);
+                }}
+              />
+            </li>
+          ) : (
             <Choice
-              n={questions.length === 1 && q.options.length < 9 ? q.options.length + 1 : undefined}
+              n={q.options.length < 9 ? q.options.length + 1 : undefined}
               label="Type an answer…"
               quiet
               aria-label={`Type an answer: ${agentName(request.agent)} on ${name}`}
               disabled={busy}
               onClick={() => setTyping(q.question)}
             />
-          </ul>
-          {typing === q.question ? (
-            <AnswerField
-              question={q.question}
-              disabled={busy}
-              close={() => setTyping(null)}
-              answer={(text) => {
-                setTyping(null);
-                choose(q, text);
-              }}
-            />
-          ) : null}
-        </div>
-      ))}
+          )}
+        </ul>
+      </div>
       {immediate ? null : (
-        <div className="local-feed-actions">
-          <Button
-            aria-label={`Submit: ${agentName(request.agent)} on ${name}`}
-            data-key="Enter"
-            disabled={busy || !ready}
-            onClick={() => void send(picked)}
-          >
-            Submit
-          </Button>
+        <div className="local-feed-actions local-feed-submit">
+          {step > 0 ? (
+            <Button
+              variant="secondary"
+              size="compact"
+              aria-label={`Back: ${agentName(request.agent)} on ${name}`}
+              disabled={busy}
+              onClick={() => setStep(step - 1)}
+            >
+              Back
+            </Button>
+          ) : null}
+          {step < last && !ready ? (
+            <Button
+              size="compact"
+              aria-label={`Next question: ${agentName(request.agent)} on ${name}`}
+              data-key="Enter"
+              disabled={busy}
+              onClick={() => setStep(step + 1)}
+            >
+              Next
+            </Button>
+          ) : (
+            <Button
+              size="compact"
+              aria-label={`Submit: ${agentName(request.agent)} on ${name}`}
+              data-key="Enter"
+              disabled={busy || !ready}
+              onClick={() => void send(picked)}
+            >
+              {busy ? "Submitting…" : "Submit"}
+            </Button>
+          )}
+          {questions.length > 1 ? (
+            <span className="local-feed-note">
+              {answered} of {questions.length} answered
+            </span>
+          ) : null}
         </div>
       )}
       <PhaseNote phase={phase} />
@@ -1626,14 +1737,28 @@ export function SessionsPage({
     const choice = card?.querySelector<HTMLButtonElement>(
       `button[data-key="${CSS.escape(event.key)}"]`,
     );
-    // Enter on a focused control already does what it says.
+    // Enter on a focused control already does what it says. The row's link,
+    // where the keys leave the focus, is not one: on a request card Enter
+    // answers the card, not opens its transcript.
     const onControl =
       event.key === "Enter" &&
       event.target instanceof HTMLElement &&
-      event.target.closest("a, button, input, textarea");
-    if (choice && !onControl && !event.metaKey && !event.ctrlKey && !event.altKey) {
+      event.target.closest("a, button, input, textarea") &&
+      !event.target.closest("[data-row-link]");
+    const plain = !event.metaKey && !event.ctrlKey && !event.altKey;
+    if (choice && !onControl && plain) {
       event.preventDefault();
       if (!choice.disabled) choice.click();
+      return;
+    }
+    // A request card with nothing on Enter, such as a permission, keeps it.
+    if (
+      event.key === "Enter" &&
+      !onControl &&
+      plain &&
+      card?.querySelector(".local-feed-choices")
+    ) {
+      event.preventDefault();
       return;
     }
     if (listKeys(event, rows) || !rows.focused) return;

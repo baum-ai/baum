@@ -200,6 +200,22 @@ it("suggests a field, then its operators, then its values", () => {
   expect(op).toMatchObject({ query: "checks=", caret: 7, field: true });
 });
 
+it("offers every known repository, organization, author and branch, not only the page's", () => {
+  const page = [entry()];
+  const known = {
+    entries: [entry({ repository: "acme/web", author: "kim", base_ref: "release" })],
+    repositories: ["quiet/tools", "acme/demo"],
+  };
+  const labels = (query: string) =>
+    suggest(query, query.length, page, false, undefined, true, known).map((one) => one.label);
+  expect(labels("repo=")).toEqual(["repo=acme/demo", "repo=acme/web", "repo=quiet/tools"]);
+  expect(labels("org=")).toEqual(["org=acme", "org=quiet"]);
+  expect(labels("author=")).toEqual(["author=@me", "author=kim", "author=sam"]);
+  expect(labels("base=")).toEqual(["base=release"]);
+  // Without them, only the page's.
+  expect(suggest("org=", 4, page).map((one) => one.label)).toEqual(["org=acme"]);
+});
+
 it("finds the owner of an Enterprise repository", () => {
   expect(ownerOf("acme/demo")).toBe("acme");
   expect(ownerOf("github.example.com/acme/demo")).toBe("acme");

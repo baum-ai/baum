@@ -350,11 +350,9 @@ copy:
   exchange, release note, breaking change), the context, and each section's
   title, summary, attention, behaviour steps (title, text, before, after,
   question), risks, evidence (claim, detail, expects) and decisions (title,
-  text, rationale, trigger, rejected alternative, evidence) at 200 words a
-  minute, plus the code lines it shows (code blocks, tile code excerpts and
-  the lines a behaviour step's first hunk anchor names) at 12 lines a
-  minute, rounded up and kept within 1 to 240. A one-pass review keeps the
-  model's estimate.
+  text, rationale, trigger, rejected alternative, evidence) at 400 words a
+  minute, rounded up and kept within 1 to 240. Code excerpts add no time.
+  A one-pass review keeps the model's estimate.
 
 ### Validation and derivation
 
@@ -2464,8 +2462,9 @@ to the pull request, read from the local session stores with `sessions` and
 document's own session metadata.
 
 What usage would cost at API prices comes from a price list at
-`https://static.usebaum.com/pricing/v2/prices.json`. baum verifies its `.sig`
-with a public key embedded in the binary and falls back to a snapshot embedded
+`https://static.usebaum.com/pricing/v3/prices.json`. baum verifies its `.sig`
+with the price-list public key embedded in the binary (a key that signs only
+price lists) and falls back to a snapshot embedded
 at release when no newer verified list is available. The daemon can persist a
 verified signed list beside its job journal and reload it on restart.
 `pricing.CurrentSource` says which is active (`embedded`, `fetched` or `cached`),
@@ -2500,6 +2499,43 @@ without a token lookup. It does not import `daemon`, which serves the
 report: the command line passes `Options.Daemon`, which asks the daemon over
 its control socket (never starting it or creating its state directory) for
 its version, process id and uptime, and whether this baum would replace it.
+
+### Profiling the daemon
+
+The daemon should use next to no CPU while nothing changes. To measure what
+it does, `baum daemon profile` watches the running daemon without restarting
+it:
+
+```sh
+baum daemon profile                          # 60s CPU profile, heap, goroutines and work counters
+baum daemon profile --duration 5m --trace    # longer window, plus an execution trace
+baum daemon profile --watch --interval 10s   # one line per interval: CPU share, heap, work that ran
+go tool pprof -top baum-profile-*/cpu.pprof  # where the CPU time went
+```
+
+The profile command saves `cpu.pprof`, `heap.pprof`, `goroutine.txt`,
+`stats-start.json`, `stats-end.json` and `summary.txt`. The summary gives the
+CPU time the daemon used as a share of one core, from `getrusage`, and lists
+the counters that moved in that window, largest first.
+
+`internal/workstats` keeps those counters. Each is an atomic add, so they are
+always on. They count:
+
+* calls to `sessions.Map`, its decodes by source and the bytes decoded, and
+  hits on its cache;
+* git processes in total and by subcommand;
+* background passes and pull request refreshes;
+* session loads by entry point;
+* analytics refreshes, review index builds and live transcript builds.
+
+Gauges report state such as the size of the session cache.
+
+The daemon serves the counters at `GET /api/debug/stats` and Go's runtime
+profiles at `GET /api/debug/pprof/` (`profile?seconds=N`, `trace?seconds=N`,
+`heap`, `goroutine`, and so on; never `cmdline`). Like every `/api/` route they
+need the launch credential as a Bearer token. The CLI reads that credential
+from the daemon's state directory. A profile costs nothing until it is
+requested.
 
 `config.Config.BackendPaths` (TOML `[backend_paths]`, keys `claude`, `codex`
 and `cursor-agent`, absolute paths only, validated by `config.ReadFile`) is the
@@ -3108,6 +3144,10 @@ it. The daemon's log (`Queue.SetLogger`) has a line when each job starts and
 one when it ends, with its state, reason, detail, calls, tokens and duration
 and, for a failure, the executor's error, which the job itself may keep no
 text of (a provider's error, an internal one).
+A failed journal write does not stop a worker: the queue retries it with
+backoff (1 s up to 30 s) until it succeeds, signals the waiting workers after
+it does (a job whose start could not be journaled waits until then), and tries
+once more at shutdown after the workers stop.
 
 A run's time limit is its only bound by default: `budgets.review_timeout` (10
 minutes) for a review of a pull request or a group and `budgets.run_timeout`
@@ -3459,6 +3499,11 @@ to it (`agent.TitlePath`). `Job.has_transcript` says one exists, and
 (at most 500 entries after `seq` N; `404` without a transcript). Transcripts
 never leave the machine.
 
+`POST /api/jobs/{id}/seen` (body `{}`) records that the user looked at a failed
+job: it sets `Job.seen_at` once, in the queue's `state/jobs` record, and
+leaves jobs in any other state unchanged (`404` for an unknown job). A failed
+job never runs again, so the desktop tray never flags one with `seen_at`.
+
 Review threads reach the prompt as untrusted blocks headed with local ids
 (`T1`…`T20`) that baum maps to the GraphQL node ids, which the prompt never
 contains. The agent ends its final message with a JSON array of
@@ -3642,8 +3687,10 @@ update or a development rebuild, even at the same version: every 5 seconds it
 compares the file at its `os.Executable()` path with the one it started from,
 and once a different file there has stayed unchanged for one check and passes
 the same policy, it schedules `restart_pending` into that path as if a newer
-client had asked. Until then, helpers it starts from its own path (the GitHub
-credential helper) run the new file and refuse the old parent. A failed
+client had asked. Until then, on Linux, the GitHub credential helper still
+works: the daemon starts it from `/proc/self/exe`, the binary it is running,
+and the helper compares that with its parent's, so neither side looks at the
+replaced path. A failed
 restart is not retried until the file changes again.
 A daemon speaking a newer protocol is an
 `IncompatibleError` naming both versions.
@@ -3671,7 +3718,10 @@ rather than using it), gives the generation queue `ShutdownTimeout` (20 s) to
 cancel running jobs, which are recorded as interrupted (a backend that does
 not return in time leaves its job running in the journal, and the next start
 records it as interrupted), stops background work and the app server, removes
-its files and releases the lock. The client waits until the lock is free.
+its files and releases the lock. Background work and control requests get 10 s
+more between them; one that ignores its cancellation (a stalled network read)
+is left behind and logged, so a stop ends well inside the client's 35 s wait.
+The client waits until the lock is free.
 SIGINT and SIGTERM stop it the same way.
 
 ### Environment
@@ -3687,7 +3737,12 @@ shell gets only the session variables (`HOME`, `USER`, `LOGNAME`, `TMPDIR`,
 and `BAUM_RESOLVING_ENVIRONMENT=1`, and runs `baum daemon print-env <marker>`,
 which prints the environment as JSON between two copies of a random marker,
 so whatever startup files print is ignored; once it has, whatever is left of
-the shell's process group is killed. `shellenv.Merge` then keeps only:
+the shell's process group is killed. When the interactive shell prints no
+environment before the timeout (a `.bashrc` that runs `exec tmux` exits with
+"not a terminal"), the same command runs once more as `-l -c`, a login shell
+that is not interactive, within the same 10 s; the result then carries why
+(`Result.Fallback`), which the daemon logs and `baum daemon login-path`
+reports as `warning`. `shellenv.Merge` then keeps only:
 `PATH`, `HOME`, `USER`, `LOGNAME`, `SHELL`, `TMPDIR`, `LANG`, `LC_*`, `TZ`,
 the XDG directories, `SSH_AUTH_SOCK`, `GIT_SSH_COMMAND`, `GIT_SSH`,
 `DBUS_SESSION_BUS_ADDRESS`, `DISPLAY`,
@@ -3725,6 +3780,22 @@ from the registry (`CreateEnvironmentBlock`), so `gh` and agent CLIs
 installed after the starting process are found. The log records the shell, the
 outcome and the kept variable names, never values. `backend_paths` remains the
 way to name a backend executable explicitly.
+
+Some shells set an agent up only for interactive use (fnm or nvm in
+`~/.bashrc`), so the login shell's `PATH` holds an older copy or none. `baum
+desktop-setup`, which the user runs in their own terminal, finds `claude` and
+`codex` on that terminal's `PATH` (`internal/agentcli`), prints each one's path,
+version and whether it is at least the backend's `MinimumVersion`, and writes
+`terminal.json` beside `config.toml`: per agent, in the terminal's `PATH`
+order (one agent's directory may hold an older copy of the other), the
+executable and its directory with symbolic links resolved (fnm's per-shell `fnm_multishells`
+directory vanishes with the shell). `agentcli.WithRecorded` puts the recorded
+directories that still exist first on a `PATH`; the daemon applies it after
+`shellenv.Merge` and, through `agentcli.Keep`, again within 15 s of the record
+changing, and `baum daemon login-path` applies it too, so every lookup of
+`claude`, `codex` and the `node` an npm-installed agent starts finds what the
+terminal runs. The live-session Codex queue looks Codex up once at start, so it
+follows a new record after the daemon restarts.
 
 ### Automatic generation
 
@@ -4190,11 +4261,17 @@ replace it.
   (`Discovery.Cached`, never GitHub) whose head branch (`head_ref`, new in the
   cache, which refetches responses cached without it) is the branch and that
   is not a fork's (a fork's branch of the same name is another branch); the
-  newest when several. When no head has the branch's name, the head branch
+  none when several match. When no head has the branch's name, the head branch
   named by the branch's upstream (`branch.<name>.merge`, when its remote is the
   same repository) is tried, then the pull request whose head commit is the
   commit checked out, which covers a detached HEAD and a push to a branch of
-  another name. Without one the session is still tracked against its
+  another name. If no open PR matches, a unique cached merged or closed PR
+  with the exact same head commit in the same repository is still linked.
+  A closed PR is never inferred from a branch name alone, and ambiguous
+  matches remain unlinked. The live-session response includes `pr_state`
+  (`OPEN`, `MERGED` or `CLOSED`) from that match, and a state change notifies
+  the UI even when the PR number stays the same.
+  Without one the session is still tracked against its
   repository and branch, and only a PR page it does not match omits it. The
   clone list is read at most every 30 seconds and a directory that fails to
   link is not looked up again for a minute, since listing and opening a clone
@@ -4216,10 +4293,13 @@ replace it.
   switched or a worktree reused right after does not move it; a commit without
   them (a hook that could not read them) is ignored. A push (`LinkPush`) is
   the pushed branch and commit in the repository the remote's push URL names,
-  as refresh on hook events reads a push. When the session's directory links to
-  no pull request (and not to several), the session takes the repository,
-  branch and pull request of its latest commit or push that has one, with
-  `link_method` `commit` or `push`; each later lookup checks the cache again,
+  as refresh on hook events reads a push. A session's own work comes before
+  its directory: when its latest commit or push that has a pull request
+  exists, the session takes that repository, branch and pull request, with
+  `link_method` `commit` or `push`, whatever its directory has checked out
+  (another session, or a subagent, may have switched it to another branch);
+  only a session with no such work takes its directory's pull request. Each
+  later lookup checks the cache again,
   so a pull request opened after the push is found within 30 seconds and one
   closed falls back to an older one. At most 16 commits and pushes are kept
   per session; the record's within a day are replayed on a rebuild, and the
@@ -4717,8 +4797,10 @@ and two files:
    `baum` being the first executable `baum` on that `PATH` (relative entries
    skipped), with its links resolved and its `--version` (5 s timeout; its
    own version when it is this executable). `baum hooks status --user --json`
-   prints `{"agents":[{"agent","name","detected","signed_in","plugin","installed","enabled","version","error"}]}`
-   from native plugin registries, with executable detection and installation/
+   prints `{"agents":[{"agent","name","detected","signed_in","cli_path","cli_version","minimum_version","supported","recorded","plugin","installed","enabled","version","error"}]}`
+   from native plugin registries and the detected CLI's `--version`
+   (`supported` is absent when it could not be read; `recorded` says `baum
+   desktop-setup` recorded its directory), with executable detection and installation/
    enablement separate from the agent's hook trust decision. It installs and
    removes `baum@baum` through native CLIs with `baum hooks install --user`
    and `uninstall --user`, and `update --user` refreshes the marketplace and

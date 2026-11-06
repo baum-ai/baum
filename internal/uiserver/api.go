@@ -206,6 +206,8 @@ func (a LocalAPI) Handler() *LocalHandler {
 	mux.Handle("/api/prs", provider(a.PRs, "discovery_unavailable"))
 	mux.Handle("/api/prs/", provider(a.PRs, "discovery_unavailable"))
 	mux.Handle("/api/background", provider(a.Background, "background_unavailable"))
+	mux.Handle("GET /api/debug/stats", debugStats())
+	mux.Handle("GET /api/debug/pprof/", debugProfiles())
 	mux.Handle("/api/automatic", provider(a.Automatic, "automatic_unavailable"))
 	mux.Handle("POST /api/automatic/catch-up", provider(a.Automatic, "automatic_unavailable"))
 	mux.Handle("/api/live-sessions", provider(a.Live, "live_sessions_unavailable"))
@@ -415,6 +417,10 @@ func (a LocalAPI) Handler() *LocalHandler {
 	var diagnostics singleflight.Group
 	mux.HandleFunc("GET /api/diagnostics", func(w http.ResponseWriter, r *http.Request) {
 		body := map[string]any{"local": true, "generation_runner": a.Jobs != nil, "discovery": a.PRs != nil, "index": a.Index != nil, "report": nil}
+		// The report's paths are this user's; the app shows the home directory as ~.
+		if home, err := os.UserHomeDir(); err == nil {
+			body["home"] = home
+		}
 		if a.Diagnostics != nil {
 			timeout := a.DiagnosticsTimeout
 			if timeout <= 0 {

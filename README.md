@@ -1,129 +1,114 @@
-# baum
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/readme/logo-dark.png">
+    <source media="(prefers-color-scheme: light)" srcset="docs/readme/logo-light.png">
+    <img alt="baum" src="docs/readme/logo-light.png" width="152">
+  </picture>
+</p>
 
-**Keep up with what your coding agents build.**
+<p align="center"><strong>Review features. Not diffs.</strong><br>
+A desktop app for keeping up with what your coding agents build.</p>
 
-baum turns pull requests and agent sessions into clear reviews, a searchable
-decision log and a timeline of features. See what changed, understand the
-reasoning and focus on the calls that need your judgement.
+<p align="center">
+  <a href="https://usebaum.com">Website</a> ·
+  <a href="https://docs.usebaum.com">Docs</a> ·
+  <a href="https://discord.gg/NAguQUReAd">Discord</a>
+</p>
 
-**[Use baum at usebaum.com →](https://usebaum.com)**
+<p align="center">
+  <a href="https://downloads.usebaum.com/desktop/macos?from=readme">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="docs/readme/download-mac-dark.png">
+      <source media="(prefers-color-scheme: light)" srcset="docs/readme/download-mac-light.png">
+      <img alt="Download for Mac, macOS 12+" src="docs/readme/download-mac-light.png" width="260">
+    </picture>
+  </a>
+  <a href="https://downloads.usebaum.com/desktop/linux?from=readme">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="docs/readme/download-linux-dark.png">
+      <source media="(prefers-color-scheme: light)" srcset="docs/readme/download-linux-light.png">
+      <img alt="Download for Linux, AppImage or .deb" src="docs/readme/download-linux-light.png" width="260">
+    </picture>
+  </a>
+</p>
 
-## Know what needs you
+<p align="center">
+  <a href="https://usebaum.com">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="docs/readme/app-dark.png">
+      <source media="(prefers-color-scheme: light)" srcset="docs/readme/app-light.png">
+      <img alt="The baum desktop app: the Inbox, with the pull requests waiting on you and baum's review of the first one" src="docs/readme/app-light.png">
+    </picture>
+  </a>
+</p>
 
-Find the pull requests waiting on you, the changes that need attention and the
-work that's ready to go. Risk scores, checks and approval status help you
-choose where to start, while the latest features show what the team is building.
+## What is baum?
 
-![baum Home showing pull requests ranked by risk, checks and latest features](docs/screenshots/home.png)
+[baum](https://usebaum.com) is a desktop app that sits on top of your coding
+agents. It reviews the pull requests in your GitHub repositories, shows which
+Claude Code and Codex sessions need you, and links every change back to the
+sessions and decisions behind it.
 
-## Review the change with context
+It runs on your computer. There is no baum account and no baum server: your
+sessions, reviews and decisions stay on your machine, and reviews run through
+your own Claude Code or Codex. See [privacy and data](https://docs.usebaum.com/privacy/).
 
-Get a clear explanation of what a pull request does, broken into sections
-ranked by how much attention they need. Follow the risks to their supporting
-evidence, inspect test results and see findings from your review agents in
-one place. Discuss the change and record your verdict alongside the review.
+## Features
 
-![Pull request review with a summary, risk assessment, checks and linked agent sessions](docs/screenshots/review.png)
+- **Inbox**: the pull requests waiting on you, ranked by risk, with checks,
+  approvals and conflicts in one place.
+- **Reviews**: an explanation of each pull request, its parts ranked by how
+  much they need you, instead of a line-by-line diff.
+- **Sessions**: which agent sessions are waiting on you, and one click to their
+  terminal or Claude app.
+- **Timeline**: pull requests grouped into features, from work in progress to
+  shipped, with the decisions made along the way.
+- **Decision log**: the reasoning from the agent session behind any piece of
+  code.
+- **Usage**: how much of your Claude and Codex plans is left. A review is one
+  short agent run, capped at 10 minutes.
+- **GitHub-native**: baum writes to GitHub only when you press a button.
 
-## Find the “why” behind the code
+baum works with Claude Code (2.1.248 or newer) and Codex (0.156.1 or newer),
+whatever the model.
 
-Trace a change back to the agent sessions that produced it. Explore the
-prompts, tool activity and decisions behind the implementation, with context
-from Claude Code, Codex, Cursor and Entire sessions.
+## Install
 
-Search the decision log to find a past choice and the reasoning behind it,
-without digging through transcripts or asking someone to remember.
+Download the desktop app:
 
-## Follow features across pull requests
-
-See related pull requests together as a feature, from work in progress to
-shipped. Catch up on the outcome, the decisions along the way and the sessions
-behind them. GitHub checks, comments and approvals stay connected.
-
-![baum timeline grouping pull requests and decisions into features](docs/screenshots/timeline.png)
-
-## Try baum
-
-Start at **[usebaum.com](https://usebaum.com)**. Access is currently limited;
-you can join the waitlist there.
-
-## Agent plugins
-
-Install baum's versioned Claude Code or Codex lifecycle hooks from the public
-Git marketplace. See [installation, trust and compatibility](plugins/README.md).
-The plugins use your existing opt-ins and need the baum command on `PATH`.
-
-## Install a release
-
-Each tagged release on [GitHub Releases](https://github.com/baum-ai/baum/releases)
-carries the desktop app and the `baum` command line. Replace `vX.Y.Z` with the
-release's tag.
-
-### Desktop app
-
-Download the file for your system from the release:
-
-| System | File |
+| System | Download |
 | --- | --- |
-| macOS 12 or newer (Apple silicon and Intel) | `baum-desktop-darwin-universal.dmg` |
-| Linux x86_64 | `baum-desktop-linux-amd64.AppImage` or `baum-desktop-linux-amd64.deb` |
-| Linux arm64, when the release has it | `baum-desktop-linux-arm64.AppImage` or `.deb` |
-| Windows x64 | `baum-desktop-windows-amd64-setup.exe` |
+| macOS 12 or newer | [`.dmg`](https://downloads.usebaum.com/desktop/macos?from=readme) |
+| Linux x86_64 | [AppImage](https://downloads.usebaum.com/desktop/linux-appimage?from=readme) or [`.deb`](https://downloads.usebaum.com/desktop/linux-deb?from=readme) |
+| Linux arm64 | [AppImage](https://downloads.usebaum.com/desktop/linux-arm64-appimage?from=readme) or [`.deb`](https://downloads.usebaum.com/desktop/linux-arm64-deb?from=readme) |
 
-`desktop-checksums.txt` lists the SHA-256 of each file, and every desktop file
-has a build provenance attestation: `gh attestation verify FILE --repo baum-ai/baum`.
+Every release, with checksums and the `baum` command line on its own, is on
+the [releases page](https://github.com/baum-ai/baum/releases).
 
-Builds are unsigned until code signing is set up for the project. A file that
-is not signed has `-unsigned` in its name (`-unnotarized` if signed but not
-notarised), and macOS Gatekeeper or Windows SmartScreen warns before opening
-it. Only open a file you downloaded from the release page and checked against
-`desktop-checksums.txt`. See [desktop/README.md](desktop/README.md) for what
-the app does and how releases are built.
+Open it and setup walks you through connecting GitHub, choosing your agent and
+installing the `baum` command. See
+[Install baum](https://docs.usebaum.com/getting-started/).
 
-### Command line
+The macOS app is signed and notarised. To check a download, compare it with
+`desktop-checksums.txt` from the same release.
 
-The release also has `baum` archives: `baum-linux-amd64.tar.gz`,
-`baum-linux-arm64.tar.gz`, `baum-darwin-amd64.tar.gz`,
-`baum-darwin-arm64.tar.gz` and `baum-windows-amd64.zip`. Each holds the `baum`
-binary, `LICENSE`, `THIRD_PARTY_NOTICES.txt` and this README. Check the
-download against `checksums.txt` from the same release, then unpack it and put
-`baum` on your `PATH`:
+## Docs
 
-```sh
-curl -LO https://github.com/baum-ai/baum/releases/download/vX.Y.Z/baum-linux-amd64.tar.gz
-curl -LO https://github.com/baum-ai/baum/releases/download/vX.Y.Z/checksums.txt
-sha256sum --check --ignore-missing checksums.txt   # macOS: shasum -a 256 --check --ignore-missing checksums.txt
-tar -xzf baum-linux-amd64.tar.gz baum
-./baum --version
-```
+Everything else is at **[docs.usebaum.com](https://docs.usebaum.com)**. For
+how the desktop app is built and released, see
+[desktop/README.md](desktop/README.md); for the agent plugins, see
+[plugins/README.md](plugins/README.md).
 
-With Go (the version in `go.mod`), build the same release from source:
+## Troubleshooting
 
-```sh
-go install github.com/baum-ai/baum/cmd/baum@vX.Y.Z
-```
-
-The desktop app bundles its own `baum`; [desktop/README.md](desktop/README.md)
-describes how it installs the `baum` command and how that relates to one you
-installed yourself.
-
-## Reporting problems
-
-baum sends no telemetry or crash reports, so an issue is how we hear about a
-problem. [Open one on GitHub](https://github.com/baum-ai/baum/issues/new/choose)
-(bug report or feature request). In the desktop app, **Report a problem** (the
-sidebar's `?` menu and Diagnostics) lets you describe the problem and choose
-whether to attach nothing, only the versions, or a redacted Diagnostics
-summary, with a preview, then opens the bug report in your browser; the Help
-and tray menus open it with the version, OS and summary filled in. You review
-the form there and nothing is sent until you submit it. From the command line, paste
-`baum internal doctor --offline` after checking it for private paths. Report
-security vulnerabilities privately as described in [SECURITY.md](SECURITY.md),
-never in a public issue.
+If something does not work, check the [known issues](KNOWN_ISSUES.md) first.
+Otherwise, [open an issue](https://github.com/baum-ai/baum/issues/new/choose)
+on GitHub. In the desktop app, **Report a problem** (in the Help menu, the tray
+menu or Diagnostics) opens one with the versions filled in. For a security
+vulnerability, follow [SECURITY.md](SECURITY.md) instead.
 
 ## License
 
-[MIT](LICENSE). The licences of the third-party software in the binaries and
-the desktop app are in [THIRD_PARTY_NOTICES.txt](THIRD_PARTY_NOTICES.txt); the
-desktop app's, which adds its Rust crates, is
+[MIT](LICENSE). Third-party licences are in
+[THIRD_PARTY_NOTICES.txt](THIRD_PARTY_NOTICES.txt) and
 [desktop/THIRD_PARTY_NOTICES.txt](desktop/THIRD_PARTY_NOTICES.txt).

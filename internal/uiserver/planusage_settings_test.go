@@ -66,11 +66,6 @@ func TestPlanUsageSettings(t *testing.T) {
 	if strings.Contains(rec.Body.String(), "codex") || !strings.Contains(rec.Body.String(), "claude") {
 		t.Fatalf("filtered plans: %s", rec.Body)
 	}
-	rec = httptest.NewRecorder()
-	handler.ServeHTTP(rec, httptest.NewRequest("GET", "/api/plan-usage?all=1", nil))
-	if !strings.Contains(rec.Body.String(), "codex") {
-		t.Fatalf("all plans: %s", rec.Body)
-	}
 	// A fix backend or decision backend adds its plan.
 	if _, err := registry.UpdatePreferences(t.Context(), func(p repos.Preferences) repos.Preferences {
 		p.FixBackend = new(config.BackendCodex)

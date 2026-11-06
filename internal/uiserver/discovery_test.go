@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/baum-ai/baum/internal/appdb/appdbtest"
 	"github.com/baum-ai/baum/internal/discovery"
@@ -59,5 +60,32 @@ func TestDiscoveryHandlerServesRepositoriesWithoutClones(t *testing.T) {
 	}
 	if len(prs.polled) != 1 {
 		t.Fatalf("rejected requests polled: %v", prs.polled)
+	}
+}
+
+type stalledPRs struct{ fakePRs }
+
+func (*stalledPRs) PollNow(ctx context.Context, _ github.Repository) (discovery.Snapshot, error) {
+	<-ctx.Done()
+	return discovery.Snapshot{}, ctx.Err()
+}
+
+func TestDiscoveryRefreshAnswersWhenGitHubStalls(t *testing.T) {
+	registry, err := repos.Open(filepath.Join(appdbtest.TempDir(t), "repos.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = registry.Close() }()
+	if _, err := registry.Pick(context.Background(), "acme/bare", nil); err != nil {
+		t.Fatal(err)
+	}
+	before := refreshTimeout
+	refreshTimeout = 50 * time.Millisecond
+	t.Cleanup(func() { refreshTimeout = before })
+	h := DiscoveryHandler(registry, &stalledPRs{}, nil)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, httptest.NewRequest("POST", "http://local/api/prs/refresh", strings.NewReader(`{"repository":"acme/bare"}`)))
+	if w.Code != 200 || !strings.Contains(w.Body.String(), `"stale":true`) || !strings.Contains(w.Body.String(), `"discovery_unavailable"`) {
+		t.Fatalf("stalled refresh: %d %s", w.Code, w.Body.String())
 	}
 }

@@ -97,8 +97,11 @@ tar -xf "$app_tar" -C "$work"
 app=$work/baum.app
 main=$app/Contents/MacOS/baum-desktop
 sidecar=$app/Contents/MacOS/baum
+# One architecture per call: Xcode 27's lipo takes no more.
 for binary in "$main" "$sidecar"; do
-  lipo "$binary" -verify_arch arm64 x86_64
+  for arch in arm64 x86_64; do
+    lipo "$binary" -verify_arch "$arch"
+  done
 done
 
 notarize_file() {
@@ -140,26 +143,79 @@ else
   codesign --verify --strict --deep "$app"
 fi
 
+# stapler staple and stapler validate both fetch the ticket from Apple's
+# CloudKit service, which now and then drops the connection or does not have a
+# ticket yet just after notarisation (error 68), so a failed attempt is tried
+# again a little later.
+stapler_retry() {
+  local attempt
+  for attempt in 1 2 3 4; do
+    if xcrun stapler "$@"; then
+      return 0
+    fi
+    if [ "$attempt" = 4 ]; then
+      exit 1
+    fi
+    echo "stapler $1 failed (attempt $attempt); trying again" >&2
+    sleep $((attempt * 20))
+  done
+}
+
 if [ "$notarize" = true ]; then
   ditto -c -k --keepParent "$app" "$work/baum.zip"
   notarize_file "$work/baum.zip"
-  xcrun stapler staple "$app"
-  xcrun stapler validate "$app"
+  stapler_retry staple "$app"
+  stapler_retry validate "$app"
   spctl --assess --type execute --verbose=2 "$app"
 fi
 
-# The disk image: the app and a link to /Applications.
+# hdiutil now and then fails with "Resource busy" while macOS still holds a
+# volume it mounted, so a failed attempt is tried again a little later.
+hdiutil_retry() {
+  local attempt
+  for attempt in 1 2 3; do
+    if hdiutil "$@"; then
+      return 0
+    fi
+    if [ "$attempt" = 3 ]; then
+      exit 1
+    fi
+    echo "hdiutil $1 failed (attempt $attempt); trying again" >&2
+    sleep $((attempt * 10))
+  done
+}
+
+# The disk image: the app and a link to /Applications, laid out by
+# macos/dmg.DS_Store and macos/dmg-background.tiff (scripts/dmg-layout.py) as
+# a small window with large icons and an arrow between them, and the app icon
+# as the mounted volume's icon.
+desktop=$(cd "$(dirname "$0")/.." && pwd)
 mkdir "$work/dmg"
 cp -R "$app" "$work/dmg/"
 ln -s /Applications "$work/dmg/Applications"
-hdiutil create -volname baum -srcfolder "$work/dmg" -fs HFS+ -format UDZO -ov "$out/$name.dmg"
+cp "$desktop/macos/dmg.DS_Store" "$work/dmg/.DS_Store"
+cp "$desktop/macos/dmg-background.tiff" "$work/dmg/.background.tiff"
+cp "$desktop/icons/icon.icns" "$work/dmg/.VolumeIcon.icns"
+# Finder uses .VolumeIcon.icns only when the volume root has the custom icon
+# flag, which only a mounted, writable image can take. The image is attached
+# without Finder seeing it, so Finder cannot rewrite the layout.
+hdiutil_retry create -volname baum -srcfolder "$work/dmg" -fs HFS+ -format UDRW -ov "$work/rw.dmg"
+mkdir "$work/mount"
+hdiutil_retry attach -nobrowse -noautoopen -mountpoint "$work/mount" "$work/rw.dmg" >/dev/null
+# Finder info is 32 bytes with the flags word at offset 8; 0x0400 is
+# kHasCustomIcon.
+xattr -wx com.apple.FinderInfo \
+  0000000000000000040000000000000000000000000000000000000000000000 "$work/mount"
+rm -rf "$work/mount/.fseventsd"
+hdiutil_retry detach "$work/mount" -quiet
+hdiutil_retry convert "$work/rw.dmg" -format UDZO -ov -o "$out/$name.dmg"
 if [ -n "$identity" ]; then
   codesign --force --timestamp --sign "$identity" "$out/$name.dmg"
 fi
 if [ "$notarize" = true ]; then
   notarize_file "$out/$name.dmg"
-  xcrun stapler staple "$out/$name.dmg"
-  xcrun stapler validate "$out/$name.dmg"
+  stapler_retry staple "$out/$name.dmg"
+  stapler_retry validate "$out/$name.dmg"
   spctl --assess --type open --context context:primary-signature --verbose=2 "$out/$name.dmg"
 fi
 

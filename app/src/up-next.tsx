@@ -1,3 +1,4 @@
+import { Stumpy } from "@baum/viewer/components/stumpy";
 import { uiState, useUIState } from "./ui-state";
 import {
   FilterBar,
@@ -6,7 +7,7 @@ import {
   SaveButton,
   type SaveOption,
 } from "./filter-menu";
-import { matchesQuery, queryProblem, useFilterDraft } from "./pr-filter";
+import { matchesQuery, parseQuery, queryProblem, useFilterDraft } from "./pr-filter";
 import {
   Fragment,
   useEffect,
@@ -30,7 +31,7 @@ import {
 } from "@baum/viewer/components/icons";
 import { InlineMarkdown, Markdown } from "@baum/viewer/components/markdown";
 import { Lines } from "@baum/viewer/components/review-parts";
-import { Alert, Badge, Button, LiveDot } from "@baum/viewer/components/ui";
+import { Alert, Badge, Button, CloseButton, LiveDot } from "@baum/viewer/components/ui";
 import type { ViewerLinkProps } from "@baum/viewer/navigation";
 import {
   RISK_SCORE_MEANING,
@@ -51,7 +52,9 @@ import {
   joinAnd,
   liveFor,
   navigate,
+  openExternal,
   request,
+  reviewJob,
   sameRepository,
   watchableFix,
   type Entry,
@@ -72,7 +75,7 @@ import {
   type InboxColor,
 } from "./inboxes";
 import { useDisclosure } from "@baum/viewer/components/use-disclosure";
-import { MenuButton, useContextMenu, type MenuItem } from "./context-menu";
+import { MenuButton, useContextMenu, useMenuFocus, type MenuItem } from "./context-menu";
 import { ListSection, type ListTone } from "./list";
 import { useNow } from "./live";
 import { peekHref } from "./sessions";
@@ -93,6 +96,10 @@ import { RefreshButton, type RefreshRun } from "./shell";
 import { ReviewThreads } from "./threads";
 import { canUpdateBranch, UpdateBranchDialog } from "./unblock";
 import { PRIMARY, SECONDARY, SMALL, SMALL_PRIMARY } from "./action-classes";
+import { useToast } from "./toast";
+import { EVENT_LABELS, ReviewButton, ReviewDialog, usePendingReview } from "./pending-review";
+import { reviewable } from "./pending-review-model";
+import type { ReviewEvent } from "./walkthrough-model";
 import { cn } from "@baum/viewer/components/classnames";
 
 /** What the person does next about a pull request: read a review they were
@@ -361,7 +368,51 @@ type Seen = {
   minutes?: number | null;
   /** When it left the queue; absent while it is in it. */
   cleared?: number;
+  /** Its row as last in the queue, which filters test once it is done;
+   *  absent in records kept before it was. */
+  last?: Snapshot;
 };
+/** What of a row the filters read (`pr-filter.ts`), kept small so the
+ *  inbox's record stays within what the daemon stores. */
+type Snapshot = Pick<Entry, "review" | "checks" | "merge"> & {
+  risk_score: { score: number | null } | null;
+  pull_request: Pick<
+    Entry["pull_request"],
+    | "repository"
+    | "number"
+    | "title"
+    | "author"
+    | "author_bot"
+    | "draft"
+    | "authored_by_me"
+    | "review_requested_from_me"
+    | "assigned_to_me"
+    | "base_ref"
+    | "behind"
+  >;
+};
+function snapshot(entry: Entry): Snapshot {
+  const pr = entry.pull_request;
+  return {
+    review: entry.review,
+    checks: entry.checks,
+    merge: entry.merge,
+    risk_score: entry.risk_score ? { score: entry.risk_score.score } : null,
+    pull_request: {
+      repository: pr.repository,
+      number: pr.number,
+      title: pr.title,
+      author: pr.author,
+      author_bot: pr.author_bot,
+      draft: pr.draft,
+      authored_by_me: pr.authored_by_me,
+      review_requested_from_me: pr.review_requested_from_me,
+      assigned_to_me: pr.assigned_to_me,
+      base_ref: pr.base_ref,
+      behind: pr.behind,
+    },
+  };
+}
 /** What the inbox remembers on this computer: today's pull requests and
  *  which it cleared, and the person's snoozes. */
 type Stored = {
@@ -450,11 +501,18 @@ export function useUpNext(
   const state =
     stored.day === day ? stored : fresh(day, stillSnoozed(stored.snoozed, now), stored.held);
   const { items, waiting, fixing, stackedOn } = upNext(entries, live, jobs, groups);
-  const snoozedNow = (item: UpNextItem) =>
-    (state.snoozed[item.key] ?? 0) > now ||
-    state.held[item.key] === item.entry.pull_request.head_sha;
-  const snoozed = items.filter(snoozedNow);
-  const queue = items.filter((item) => !snoozedNow(item));
+  const snoozedNow = (entry: Entry) => {
+    const key = upNextKey(entry.pull_request);
+    return (state.snoozed[key] ?? 0) > now || state.held[key] === entry.pull_request.head_sha;
+  };
+  const snoozed = [
+    ...items.filter((item) => snoozedNow(item.entry)),
+    ...waiting.filter(snoozedNow).map((entry) => ({
+      key: upNextKey(entry.pull_request),
+      entry,
+    })),
+  ];
+  const queue = items.filter((item) => !snoozedNow(item.entry));
   const update = (change: (state: Stored) => Stored) =>
     persistence.update((previous) => {
       const time = Date.now();
@@ -473,21 +531,25 @@ export function useUpNext(
   );
   const signature = [
     ...items.map(
-      (item) =>
-        `${item.key}:${item.kind}:${item.minutes}:${item.entry.pull_request.head_sha}:${item.entry.pull_request.title}`,
+      (item) => `${item.key}:${item.kind}:${item.minutes}:${JSON.stringify(item.entry)}`,
     ),
     ...entries
       .filter((entry) => waitingKeys.has(upNextKey(entry.pull_request)))
       .map((entry) => {
         const job = fixJob(entry, jobs);
-        return `waiting:${upNextKey(entry.pull_request)}:${job?.id ?? ""}:${job?.state ?? ""}`;
+        return `waiting:${upNextKey(entry.pull_request)}:${entry.pull_request.head_sha}:${job?.id ?? ""}:${job?.state ?? ""}`;
       }),
     ...[...listed].map((repository) => `listed:${repository}`),
   ].join("\n");
   useEffect(() => {
     if (!ready || !persistence.ready) return;
     const keys = new Set(items.map((item) => item.key));
-    const heads = new Map(items.map((item) => [item.key, item.entry.pull_request.head_sha]));
+    const heads = new Map(
+      [...items.map((item) => item.entry), ...waiting].map((entry) => [
+        upNextKey(entry.pull_request),
+        entry.pull_request.head_sha,
+      ]),
+    );
     // A fix counts once it pushed: not while it runs, nor after it failed.
     const fixed = (key: string) => {
       const entry = entries.find((e) => upNextKey(e.pull_request) === key);
@@ -500,7 +562,7 @@ export function useUpNext(
       listed.has(record.repository.toLowerCase()) &&
       (!waitingKeys.has(key) || (record.kind === "fix" && fixed(key)) || record.kind === "update");
     // A snooze until the next push ends once the pull request is in the
-    // queue on another head, or gone from it.
+    // inbox on another head, or gone from it.
     const pushed = (key: string, head: string) => heads.get(key) !== head;
     const changed =
       stored.day !== day ||
@@ -511,7 +573,8 @@ export function useUpNext(
           seen.cleared != null ||
           seen.kind !== item.kind ||
           seen.title !== item.entry.pull_request.title ||
-          seen.minutes !== item.minutes
+          seen.minutes !== item.minutes ||
+          JSON.stringify(seen.last) !== JSON.stringify(snapshot(item.entry))
         );
       }) ||
       Object.entries(stored.seen).some(([key, record]) => clears(key, record)) ||
@@ -530,6 +593,7 @@ export function useUpNext(
           number: pr.number,
           url: pr.url,
           minutes: item.minutes,
+          last: snapshot(item.entry),
         };
       }
       const held = Object.fromEntries(
@@ -539,8 +603,9 @@ export function useUpNext(
     });
     // `signature` stands for `items`.
   }, [ready, signature, day, persistence.ready]);
+  const snoozedKeys = new Set(snoozed.map((item) => item.key));
   const cleared = Object.entries(state.seen)
-    .filter(([, seen]) => seen.cleared != null)
+    .filter(([key, seen]) => seen.cleared != null && !snoozedKeys.has(key))
     .sort(([, a], [, b]) => (b.cleared ?? 0) - (a.cleared ?? 0))
     // Its row in the latest read, which a merged pull request keeps while a
     // saved review holds it, so its page can open.
@@ -554,8 +619,8 @@ export function useUpNext(
     now,
     queue,
     snoozed,
-    waiting,
-    fixing,
+    waiting: waiting.filter((entry) => !snoozedNow(entry)),
+    fixing: fixing.filter(({ entry }) => !snoozedNow(entry)),
     cleared,
     /** The open pull request each stacked one waits on to merge first. */
     stackedOn,
@@ -563,7 +628,7 @@ export function useUpNext(
     watchable: (entry: Entry) => watchableFix(entry, jobs),
     snoozedUntil: (key: string): SnoozeEnd =>
       key in state.held ? "change" : (state.snoozed[key] ?? 0),
-    snooze: (item: UpNextItem, until: SnoozeEnd) =>
+    snooze: (item: Pick<UpNextItem, "key" | "entry">, until: SnoozeEnd) =>
       update((s) =>
         until === "change"
           ? { ...s, held: { ...s.held, [item.key]: item.entry.pull_request.head_sha } }
@@ -697,21 +762,48 @@ export function useSavedReview(entry: Entry | undefined, clone: string, shared?:
   return id ? docs[id] : undefined;
 }
 
-/** The saved review of the selected pull request, once read. */
-function useReviewDocument(entry: Entry | undefined, clone: string) {
+/** Prefer a saved review; while the first is being written, show its draft. */
+function useReviewDocument(entry: Entry | undefined, clone: string, job: Job | undefined) {
   const doc = useSavedReview(entry, clone);
-  return doc && doc !== "failed" ? doc : null;
+  const [draft, setDraft] = useState<{ job: string; doc: ReviewDocument } | null>(null);
+  const id =
+    entry?.version_count === 0 && isActiveJob(job) && job?.draft ? `${job.id}@${job.draft}` : "";
+  useEffect(() => {
+    if (!id || !job) return;
+    const abort = new AbortController();
+    request<{ document?: ReviewDocument }>(
+      `api/jobs/${encodeURIComponent(job.id)}/draft`,
+      undefined,
+      "GET",
+      abort.signal,
+    )
+      .then(({ document }) => {
+        if (!abort.signal.aborted && document && Array.isArray(document.sections))
+          setDraft({ job: job.id, doc: document });
+      })
+      .catch(() => {});
+    return () => abort.abort();
+  }, [id]);
+  return doc && doc !== "failed" ? doc : id && draft && draft.job === job?.id ? draft.doc : null;
 }
 
 /** The row's inboxes, in the sidebar's order. A pull request an agent is
- *  fixing is in those that take a fix; one that waits on others is in none. */
+ *  fixing is in those that take a fix; one that waits on others is in those
+ *  that ask for no kind of work. */
 function rowInboxes(row: Row, inboxes: Inbox[]) {
-  const item = row.item ?? (row.job ? { kind: "fix" as const, entry: row.entry } : null);
-  return item ? inboxesOf(item, inboxes) : [];
+  return inboxesOf(
+    row.item ?? (row.job ? { kind: "fix" as const, entry: row.entry } : { entry: row.entry }),
+    inboxes,
+  );
 }
 
 export function InboxTag({ inbox }: { inbox: Inbox }) {
-  return <span className={`upnext-tag inbox-${inbox.color}`}>{inbox.name}</span>;
+  return (
+    <span className={`upnext-tag inbox-${inbox.color}`}>
+      <span aria-hidden="true" className="inbox-dot" />
+      <span className="upnext-tag-name">{inbox.name}</span>
+    </span>
+  );
 }
 
 /** The six inbox colours as a radio group; `pick` hears each click. */
@@ -842,8 +934,8 @@ function InboxHeadEdit({
 
 /** The inbox: what waits on the person, grouped by what they do about it, and
  *  the selected pull request's panel beside it. In one of the person's inboxes
- *  (`selected`) it lists only what matches that inbox; what was done today and
- *  the person's pull requests waiting on others are only in the Inbox. */
+ *  (`selected`) every list, what was done today among them, holds only what
+ *  matches that inbox. */
 export function UpNextPage({
   inbox: all,
   inboxes = [],
@@ -859,15 +951,18 @@ export function UpNextPage({
   refreshing = false,
   reviewGroups = [],
   entries = [],
+  jobs = [],
   saveAsInbox,
   updateInbox,
   inboxSaves = 0,
+  repositories = [],
   Link,
 }: {
   inbox: UpNextState;
   /** Every pull request read, open or not, for what a group's panel says of
    *  members the queue does not list, as those merged. */
   entries?: Entry[];
+  jobs?: Job[];
   /** All of the person's inboxes, for the tags. */
   inboxes?: Inbox[];
   /** The review groups and stacks, whose shown members the list nests under one row. */
@@ -898,9 +993,12 @@ export function UpNextPage({
   updateInbox?: (patch: Partial<Inbox>) => void;
   /** How many inbox saves the daemon has accepted. */
   inboxSaves?: number;
+  /** The person's repositories, offered by the filter with nothing waiting. */
+  repositories?: readonly string[];
   Link: ComponentType<ViewerLinkProps>;
 }) {
   const [merging, setMerging] = useState<Entry | null>(null);
+  const [reviewing, setReviewing] = useState<{ entry: Entry; event: ReviewEvent } | null>(null);
   const [mergingAll, setMergingAll] = useState<Entry[] | null>(null);
   const [updating, setUpdating] = useState<Entry | null>(null);
   // Kept for when the inbox is drawn again, back from a pull request.
@@ -908,7 +1006,11 @@ export function UpNextPage({
   const [menu, setMenu] = useState(false);
   const [snoozedOpen, setSnoozedOpen] = useState(false);
   const [doneOpen, setDoneOpen] = useState(false);
-  const [toast, setToast] = useState<{ id: number; text: string; undo?: () => void } | null>(null);
+  const [toast, setToast] = useState<{
+    id: number;
+    text: string;
+    undo?: () => void;
+  } | null>(null);
   const list = useRef<HTMLDivElement>(null);
   const detail = useRef<HTMLDivElement>(null);
   // The page's filter narrows what it shows, on top of its inbox.
@@ -923,21 +1025,50 @@ export function UpNextPage({
   );
   const { query, set: setQuery } = quick;
   const filtering = scope ? quick.dirty : query !== "";
-  const inScope = (item: { kind: UpNextKind; entry: Entry }) =>
+  useEffect(() => {
+    const create = (event: KeyboardEvent) => {
+      if (
+        event.key !== "Enter" ||
+        !(event.metaKey || event.ctrlKey) ||
+        event.altKey ||
+        event.shiftKey ||
+        event.isComposing ||
+        event.defaultPrevented ||
+        !saveAsInbox ||
+        document.querySelector("dialog[open]")
+      )
+        return;
+      const text =
+        event.target instanceof HTMLTextAreaElement && event.target.closest(".filter-menu")
+          ? event.target.value
+          : query;
+      if (queryProblem(text, true)) return;
+      event.preventDefault();
+      if (event.target instanceof HTMLTextAreaElement) event.target.blur();
+      saveAsInbox(text, scope ?? undefined);
+    };
+    window.addEventListener("keydown", create);
+    return () => window.removeEventListener("keydown", create);
+  }, [query, saveAsInbox, scope]);
+  const inScope = (item: { kind?: UpNextKind; entry: Entry }) =>
     matchesQuery(query, item.entry, item.kind);
   const queue = all.queue.filter(inScope);
   const snoozed = all.snoozed.filter(inScope);
   const fixing = all.fixing.filter(({ entry }) => inScope({ kind: "fix", entry }));
-  // Done today and what waits on others are the Inbox's alone.
-  const cleared = scope ? [] : all.cleared;
-  const waiting = scope ? [] : all.waiting.filter((entry) => matchesQuery(query, entry));
+  // A done pull request matches as it was in the queue.
+  const cleared = all.cleared.filter((item) => {
+    // The snapshot holds every field the filters read.
+    const entry = (item.last as Entry | undefined) ?? item.entry;
+    return entry ? matchesQuery(query, entry, item.kind) : !parseQuery(query).expr;
+  });
+  const waiting = all.waiting.filter((entry) => matchesQuery(query, entry));
   // What the filter's counts and values come from: the whole queue, each
   // pull request with what it waits for.
   const kinds = new Map<Entry, UpNextKind>([
     ...all.queue.map((item): [Entry, UpNextKind] => [item.entry, item.kind]),
     ...all.fixing.map(({ entry }): [Entry, UpNextKind] => [entry, "fix"]),
   ]);
-  const unfiltered = [...kinds.keys(), ...(scope ? [] : all.waiting)];
+  const unfiltered = [...kinds.keys(), ...all.waiting];
   const inbox = { ...all, queue, snoozed, fixing, cleared, waiting };
   const { now } = all;
   // Those an agent is fixing are listed under Hand to an agent.
@@ -1036,7 +1167,11 @@ export function UpNextPage({
     const timer = setTimeout(() => setToast((t) => (t?.id === toast.id ? null : t)), 5000);
     return () => clearTimeout(timer);
   }, [toast?.id]);
-  const doc = useReviewDocument(selected?.entry, selected ? cloneFor(selected.entry) : "");
+  const doc = useReviewDocument(
+    selected?.entry,
+    selected ? cloneFor(selected.entry) : "",
+    selected ? reviewJob(selected.entry, jobs) : undefined,
+  );
   const groupDoc = useGroupDocument(selectedGroup?.group);
   // The panel's fix button, which `f` presses too: a Fix item whose pull
   // request offers a fix and has a clone.
@@ -1047,7 +1182,7 @@ export function UpNextPage({
   const selectedFixState = selected ? fixState(selected.entry) : { starting: false, error: "" };
   const options = snoozeOptions(now);
   const snooze = (until: SnoozeEnd) => {
-    const item = selected?.item;
+    const item = selected;
     if (!item) return;
     inbox.snooze(item, until);
     setMenu(false);
@@ -1119,9 +1254,16 @@ export function UpNextPage({
       event.preventDefault();
       primary.click();
     } else if (key === "s") {
-      if (!selected?.item) return;
+      if (!selected) return;
       event.preventDefault();
       setMenu((open) => !open);
+    } else if (key === "v") {
+      // As a click on the panel's review button: its menu of verdicts.
+      const button = detail.current?.querySelector<HTMLElement>("[data-review-button]");
+      if (!button) return;
+      event.preventDefault();
+      setMenu(false);
+      button.click();
     } else if (key === "m") {
       if (selected?.item?.kind !== "merge") return;
       event.preventDefault();
@@ -1148,10 +1290,10 @@ export function UpNextPage({
   const summary = loading
     ? "Loading your inbox…"
     : actionable === 0
-      ? scope
-        ? "Nothing waiting."
-        : cleared.length
-          ? `Nothing left. ${formatCount(cleared.length)} handled today.`
+      ? cleared.length
+        ? `Nothing left. ${formatCount(cleared.length)} handled today.`
+        : scope
+          ? "Nothing waiting."
           : "Nothing waits on you."
       : [
           yours ? `${plural(yours, "thing")} for you` : "",
@@ -1167,8 +1309,70 @@ export function UpNextPage({
   ) : null;
   // A snoozed pull request's actions, behind its ⋯ and a right click on it.
   const actionsMenu = useContextMenu();
-  const snoozedName = (item: (typeof snoozed)[number]) =>
-    `${item.entry.pull_request.repository} #${item.entry.pull_request.number}`;
+  const prName = (pr: { repository: string; number: number }) => `${pr.repository} #${pr.number}`;
+  const snoozedName = (item: (typeof snoozed)[number]) => prName(item.entry.pull_request);
+  // A queued pull request's actions, behind a right click on its row (or ⌘.
+  // on it): what its panel's buttons and its keys do, with the key beside
+  // each. Snooze… picks the row and opens the panel's snooze choices.
+  const rowActions = (row: Row): MenuItem[] => {
+    const { entry, item, job, waiting } = row;
+    const pr = entry.pull_request;
+    const items: MenuItem[] = [
+      { label: "Open", hint: "↵", onSelect: () => navigate(prHref(entry, cloneFor)) },
+    ];
+    const watchable = inbox.watchable(entry);
+    const run = job ?? watchable;
+    if (run)
+      items.push({
+        label: isActiveJob(run) ? "Watch the agent" : "Fix transcript",
+        hint: watchable ? "t" : undefined,
+        onSelect: () => navigate(jobHref(run)),
+      });
+    if (!job && !waiting) {
+      const label = fixLabel(entry);
+      if (item?.kind === "merge")
+        items.push({ label: "Merge…", hint: "m", onSelect: () => setMerging(entry) });
+      else if (item?.kind === "update")
+        items.push({ label: "Update the branch…", onSelect: () => setUpdating(entry) });
+      else if (item?.kind === "fix" && label && cloneFor(entry) && !fixState(entry).starting)
+        items.push({ label, hint: "f", onSelect: () => fix(entry) });
+    }
+    if (reviewable(entry))
+      for (const event of pr.authored_by_me
+        ? (["COMMENT"] as const)
+        : (["APPROVE", "COMMENT", "REQUEST_CHANGES"] as const))
+        items.push({
+          label: `${EVENT_LABELS[event]}…`,
+          onSelect: () => setReviewing({ entry, event }),
+        });
+    items.push({
+      label: "Snooze…",
+      hint: "s",
+      onSelect: () => {
+        select(row.key);
+        setMenu(true);
+      },
+    });
+    if (pr.url) items.push({ label: "Open on GitHub", onSelect: () => openExternal(pr.url) });
+    return items;
+  };
+  const groupActions = (line: GroupRow): MenuItem[] => [
+    {
+      label: "Open",
+      hint: "↵",
+      onSelect: () => navigate(appURL(`?group=${encodeURIComponent(line.group.id)}`)),
+    },
+    {
+      label: groupOpen(line) ? "Hide pull requests" : "Show pull requests",
+      hint: "Space",
+      onSelect: () => toggleGroup(line),
+    },
+  ];
+  // A done one's page while the app still lists it, and its GitHub page.
+  const doneActions = ({ entry, url }: (typeof cleared)[number]): MenuItem[] => [
+    ...(entry ? [{ label: "Open", onSelect: () => navigate(prHref(entry, cloneFor)) }] : []),
+    ...(url ? [{ label: "Open on GitHub", onSelect: () => openExternal(url) }] : []),
+  ];
   const snoozedActions = (item: (typeof snoozed)[number]): MenuItem[] => [
     {
       label: "Bring back",
@@ -1193,7 +1397,12 @@ export function UpNextPage({
               ]
             : []),
           ...(saveAsInbox
-            ? [{ label: "Create inbox", onSelect: () => saveAsInbox(query, scope ?? undefined) }]
+            ? [
+                {
+                  label: "Create inbox",
+                  onSelect: () => saveAsInbox(query, scope ?? undefined),
+                },
+              ]
             : []),
           ...(scope ? [{ label: "Discard changes", onSelect: () => quick.reset() }] : []),
         ];
@@ -1201,11 +1410,15 @@ export function UpNextPage({
   const hidden = scope
     ? unfiltered.filter((entry) => matchesQuery(saved, entry, kinds.get(entry))).length
     : unfiltered.length;
+  // The filter offers every repository, organization, author and branch
+  // known, not only those of what the inbox holds now.
+  const known = { entries, repositories };
   const filterButton = (
     <FilterButton
       query={query}
       onChange={setQuery}
       entries={unfiltered}
+      known={known}
       kindOf={(entry) => kinds.get(entry)}
       inbox
       footer={
@@ -1216,6 +1429,7 @@ export function UpNextPage({
             query={query}
             onChange={setQuery}
             entries={unfiltered}
+            known={known}
             inbox
             actions={<SaveButton options={saveOptions} />}
           />
@@ -1259,18 +1473,18 @@ export function UpNextPage({
                   {refreshButton}
                 </div>
                 <p>{summary}</p>
-                <div
-                  className="upnext-bar"
-                  role="progressbar"
-                  aria-label="Cleared today"
-                  aria-valuemin={0}
-                  aria-valuemax={total}
-                  aria-valuenow={cleared.length}
-                >
-                  <div style={{ width: `${total ? (100 * cleared.length) / total : 0}%` }} />
-                </div>
               </>
             )}
+            <div
+              className="upnext-bar"
+              role="progressbar"
+              aria-label="Cleared today"
+              aria-valuemin={0}
+              aria-valuemax={total}
+              aria-valuenow={cleared.length}
+            >
+              <div style={{ width: `${total ? (100 * cleared.length) / total : 0}%` }} />
+            </div>
           </header>
           <div ref={list} className="upnext-list-body">
             {actionsMenu.menu}
@@ -1292,6 +1506,9 @@ export function UpNextPage({
                   data-row={row.key}
                   data-focused={row.key === line?.key || undefined}
                   className={`list-row upnext-item${group ? " upnext-member" : ""}`}
+                  onContextMenu={(event) =>
+                    actionsMenu.open(event, rowActions(row), prName(row.entry.pull_request))
+                  }
                 >
                   <ListRow
                     row={row}
@@ -1328,6 +1545,9 @@ export function UpNextPage({
                           data-row={entry.key}
                           data-focused={entry.key === line?.key || undefined}
                           className="list-row upnext-item"
+                          onContextMenu={(event) =>
+                            actionsMenu.open(event, groupActions(entry), entry.group.name)
+                          }
                         >
                           <GroupListRow
                             line={entry}
@@ -1392,6 +1612,9 @@ export function UpNextPage({
                     key={item.key}
                     title={`${item.repository} #${item.number}`}
                     className="list-row"
+                    onContextMenu={(event) =>
+                      actionsMenu.open(event, doneActions(item), prName(item))
+                    }
                   >
                     <span aria-hidden="true" className="upnext-done-check">
                       ✓
@@ -1438,6 +1661,7 @@ export function UpNextPage({
               fix={selectedFix}
               fixState={selectedFixState}
               merge={() => setMerging(selected.entry)}
+              review={(event) => setReviewing({ entry: selected.entry, event })}
               update={() => setUpdating(selected.entry)}
               menu={menu}
               setMenu={setMenu}
@@ -1496,6 +1720,16 @@ export function UpNextPage({
           entry={merging}
           close={() => setMerging(null)}
           merged={changed}
+        />
+      ) : null}
+      {reviewing ? (
+        <ReviewDialog
+          key={upNextKey(reviewing.entry.pull_request)}
+          entry={reviewing.entry}
+          event={reviewing.event}
+          close={() => setReviewing(null)}
+          // The dialog says it landed in the app's toast.
+          sent={() => void changed()}
         />
       ) : null}
       {updating ? (
@@ -1562,20 +1796,22 @@ function ListRow({
     >
       <span className="upnext-row-text">
         <span className="upnext-row-title">{pr.title || "Untitled pull request"}</span>
-        <span
-          className={`upnext-row-sub${row.job ? " upnext-row-working" : row.item?.failedFix ? " upnext-row-failed" : ""}`}
-        >
-          {row.job ? (
-            <>
-              <NineDots size={10} />
-              <span className="upnext-row-working-text">{sub}</span>
-            </>
-          ) : (
-            sub
-          )}
+        <span className="upnext-row-line">
+          <span
+            className={`upnext-row-sub${row.job ? " upnext-row-working" : row.item?.failedFix ? " upnext-row-failed" : ""}`}
+          >
+            {row.job ? (
+              <>
+                <NineDots size={10} />
+                <span className="upnext-row-working-text">{sub}</span>
+              </>
+            ) : (
+              sub
+            )}
+          </span>
+          {tag ? <InboxTag inbox={tag} /> : null}
         </span>
       </span>
-      {tag ? <InboxTag inbox={tag} /> : null}
       {hot ? (
         <span className="upnext-hot" role="img" aria-label="Critical risk" title="Critical risk" />
       ) : null}
@@ -1706,7 +1942,7 @@ function onGitHub(entry: Entry, fixing: boolean): PanelBlock[] {
 
 const SECTIONS_SHOWN = 6;
 
-/** What a saved review says changed: its summary, then its sections in
+/** What a review says changed: its summary, then its sections in
  *  review order with their scores and lines; none without a review. */
 function whatChanged(doc: ReviewDocument | null): PanelBlock[] {
   if (!doc) return [];
@@ -1841,6 +2077,7 @@ function Panel({
   fix,
   fixState,
   merge,
+  review,
   update,
   menu,
   setMenu,
@@ -1857,6 +2094,7 @@ function Panel({
   fix?: () => void;
   fixState: FixState;
   merge: () => void;
+  review: (event: ReviewEvent) => void;
   update: () => void;
   menu: boolean;
   setMenu: (open: boolean | ((open: boolean) => boolean)) => void;
@@ -1867,7 +2105,9 @@ function Panel({
   const { entry, item, job, waiting } = row;
   const pr = entry.pull_request;
   const kind = item?.kind ?? "fix";
+  const pending = usePendingReview(entry);
   const menuRef = useRef<HTMLDivElement>(null);
+  const menuFocus = useMenuFocus(menu, () => setMenu(false));
   useEffect(() => {
     if (!menu) return;
     const close = (event: MouseEvent) => {
@@ -1990,40 +2230,54 @@ function Panel({
       ) : null}
       <div className="upnext-actions">
         {actions}
-        {item ? (
-          <div className="upnext-snooze" ref={menuRef}>
-            <button
-              type="button"
-              className={cn("upnext-secondary", SECONDARY)}
-              aria-haspopup="menu"
-              aria-expanded={menu}
-              onClick={() => setMenu((open) => !open)}
-            >
-              Snooze
-              <ChevronDownIcon size={14} className="text-(--text-tertiary)" />
-              <kbd aria-hidden="true" className="key-hint">
-                s
-              </kbd>
-            </button>
-            {menu ? (
-              <div role="menu" className="upnext-menu">
-                {options.map((option, index) => (
-                  <button
-                    key={option.label}
-                    type="button"
-                    role="menuitem"
-                    onClick={() => snooze(option.until)}
-                  >
-                    <span className="upnext-menu-key">{index + 1}</span>
-                    <span className="upnext-menu-label">{option.label}</span>
-                    <span className="upnext-menu-when">{snoozeText(option.until, now)}</span>
-                  </button>
-                ))}
-              </div>
-            ) : null}
-          </div>
+        {reviewable(entry) ? (
+          <ReviewButton
+            entry={entry}
+            count={pending.value.comments.length}
+            review={review}
+            className="upnext-secondary"
+          />
         ) : null}
+        <div className="upnext-snooze" ref={menuRef}>
+          <button
+            type="button"
+            className={cn("upnext-secondary", SECONDARY)}
+            aria-haspopup="menu"
+            aria-expanded={menu}
+            onClick={() => setMenu((open) => !open)}
+          >
+            Snooze
+            <ChevronDownIcon size={14} className="text-(--text-tertiary)" />
+            <kbd aria-hidden="true" className="key-hint">
+              s
+            </kbd>
+          </button>
+          {menu ? (
+            <div role="menu" className="upnext-menu" {...menuFocus}>
+              {options.map((option, index) => (
+                <button
+                  key={option.label}
+                  type="button"
+                  role="menuitem"
+                  onClick={() => snooze(option.until)}
+                >
+                  <span className="upnext-menu-key">{index + 1}</span>
+                  <span className="upnext-menu-label">{option.label}</span>
+                  <span className="upnext-menu-when">{snoozeText(option.until, now)}</span>
+                </button>
+              ))}
+            </div>
+          ) : null}
+        </div>
       </div>
+      {/* Until the review's summary is written there is nothing under the
+          actions to read, so say it is on its way. */}
+      {entry.status === "generating" && !doc?.summary.text ? (
+        <div className="upnext-working" role="status">
+          <NineDots size={14} />
+          <span>Generating the review.</span>
+        </div>
+      ) : null}
       {score != null ? (
         <RiskCard score={score} text={riskText(entry)}>
           {reason ? (
@@ -2552,9 +2806,12 @@ function Zero({
   hasRepositories: boolean;
   Link: ComponentType<ViewerLinkProps>;
 }) {
+  // Stumpy marks the edges of the work, as on hosted Focus: awake while there
+  // is nothing to read yet, dozing once nothing is waiting.
   if (!hasRepositories)
     return (
       <div className="upnext-zero">
+        <Stumpy mood="awake" size={88} className="upnext-zero-stumpy" />
         <h2>Nothing to do yet</h2>
         <p>
           Pick GitHub repositories in <Link href={appURL("?page=repositories")}>Repositories</Link>{" "}
@@ -2566,16 +2823,20 @@ function Zero({
   if (scoped)
     return (
       <div className="upnext-zero">
+        <Stumpy mood="dozing" size={88} className="upnext-zero-stumpy" />
         <h2>Nothing here right now.</h2>
         <p>
           {snoozed.length > 0
             ? `Everything here is handled except ${plural(snoozed.length, "snoozed pull request")}; they come back on their own.`
-            : "It fills up as matching pull requests come in."}
+            : cleared.length > 0
+              ? `All ${formatCount(cleared.length)} handled. Nothing needs you right now.`
+              : "It fills up as matching pull requests come in."}
         </p>
       </div>
     );
   return (
     <div className="upnext-zero">
+      <Stumpy mood="dozing" size={88} className="upnext-zero-stumpy" />
       <h2>Inbox zero</h2>
       <p>
         {snoozed.length > 0
@@ -2609,6 +2870,7 @@ export function MergeReadyDialog({
   merged: () => Promise<void>;
 }) {
   const dialog = useModal();
+  const toast = useToast();
   const [merges, setMerges] = useState<Merge[]>(() =>
     entries.map((entry) => ({ entry, state: "checking" })),
   );
@@ -2660,6 +2922,8 @@ export function MergeReadyDialog({
   const checking = merges.some((merge) => merge.state === "checking");
   const mergeAll = async () => {
     setRunning(true);
+    let done = 0;
+    let refused = 0;
     for (const [index, merge] of merges.entries()) {
       if (gone.current) break;
       if (merge.state !== "ready" || !merge.options) continue;
@@ -2672,7 +2936,9 @@ export function MergeReadyDialog({
           head_sha: merge.entry.pull_request.head_sha,
         });
         set(index, { state: "merged" });
+        done++;
       } catch (e) {
+        refused++;
         set(index, {
           state: "failed",
           error: e instanceof Error ? e.message : "Local request failed.",
@@ -2681,6 +2947,14 @@ export function MergeReadyDialog({
     }
     setRunning(false);
     setFinished(true);
+    // The dialog lists each; the toast stays in sight once it is closed.
+    toast({
+      title: done
+        ? `Merged ${formatCount(done)} pull request${done === 1 ? "" : "s"} on GitHub`
+        : "Nothing was merged",
+      detail: refused ? `GitHub refused ${formatCount(refused)}; the dialog says why.` : undefined,
+      error: done === 0 && refused > 0,
+    });
     await merged();
   };
   return (
@@ -2694,9 +2968,12 @@ export function MergeReadyDialog({
       onClose={close}
       aria-labelledby="merge-ready-title"
     >
-      <h2 id="merge-ready-title" className="text-lg font-semibold">
-        Merge {formatCount(entries.length)} ready pull requests?
-      </h2>
+      <div className="flex items-start justify-between gap-3">
+        <h2 id="merge-ready-title" className="text-lg font-semibold">
+          Merge {formatCount(entries.length)} ready pull requests?
+        </h2>
+        {finished ? <CloseButton ref={closeButton} onClick={close} /> : null}
+      </div>
       <p className="my-3 text-(--text-secondary)">
         Each merges with GitHub's default method for you in its repository, and only at the commit
         shown here.
@@ -2741,11 +3018,11 @@ export function MergeReadyDialog({
       {finished && merges.some((merge) => merge.state === "failed") ? (
         <Alert>Some pull requests were not merged; the reasons are beside them.</Alert>
       ) : null}
-      <div className="mt-4 flex justify-end gap-2">
-        <Button ref={closeButton} variant="ghost" size="compact" disabled={running} onClick={close}>
-          {finished ? "Close" : "Cancel"}
-        </Button>
-        {finished ? null : (
+      {finished ? null : (
+        <div className="mt-4 flex justify-end gap-2">
+          <Button variant="ghost" size="compact" disabled={running} onClick={close}>
+            Cancel
+          </Button>
           <Button
             size="compact"
             disabled={checking || running || mergeable.length === 0}
@@ -2760,8 +3037,8 @@ export function MergeReadyDialog({
               `Merge ${formatCount(mergeable.length)} ${mergeable.length === 1 ? "pull request" : "pull requests"}`
             )}
           </Button>
-        )}
-      </div>
+        </div>
+      )}
     </dialog>
   );
 }
