@@ -20,6 +20,7 @@ import (
 	"github.com/baum-ai/baum/internal/livesessions"
 	"github.com/baum-ai/baum/internal/locallink/linktest"
 	"github.com/baum-ai/baum/internal/repos"
+	"github.com/baum-ai/baum/internal/workstats"
 	"github.com/baum-ai/baum/sessions"
 	"github.com/baum-ai/baum/sessions/vendors"
 )
@@ -226,16 +227,21 @@ func TestFeatureSyncAndIndex(t *testing.T) {
 	if head, _ := s.pathsAt(t, 7); head != "" {
 		t.Fatal("unknown paths are not retried")
 	}
-	// Nothing it reads changed, so the next re-link reads no session: the
-	// links stay and its time is recorded. A session written since is read.
-	c.now = c.now.Add(time.Minute)
-	if indexed, err = w.Index(ctx, linktest.Repository, f.Repo, nil, true); err != nil || !indexed.Unchanged || indexed.Commits != 0 {
-		t.Fatalf("unchanged re-link = %+v, %v", indexed, err)
+	// A window re-link after the daily one links its commits; with nothing
+	// it reads changed, the next reads no session and keeps the links. One
+	// after a session was written links again.
+	relink := func(name string, unchanged bool) {
+		t.Helper()
+		c.now = c.now.Add(FeatureQuiet)
+		before := workstats.Take().Counters["locallink.link_commits"]
+		indexed, err := w.Index(ctx, linktest.Repository, f.Repo, nil, false)
+		read := workstats.Take().Counters["locallink.link_commits"] > before
+		if err != nil || indexed.Unchanged != unchanged || read == unchanged || (!unchanged && indexed.Links != 1) {
+			t.Fatalf("%s = %+v (sessions read: %t), %v", name, indexed, read, err)
+		}
 	}
-	var relinked int64
-	if err := s.db.QueryRow(`SELECT relinked_at FROM pull_sync WHERE repository=?`, linktest.Repository).Scan(&relinked); err != nil || relinked != c.now.UnixMilli() {
-		t.Fatalf("relinked at %d, %v", relinked, err)
-	}
+	relink("window re-link", false)
+	relink("unchanged window re-link", true)
 	if err := s.db.QueryRow(`SELECT COUNT(*) FROM session_commit`).Scan(&linked); err != nil || linked != 1 {
 		t.Fatalf("%d links after an unchanged re-link, %v", linked, err)
 	}
@@ -247,9 +253,7 @@ func TestFeatureSyncAndIndex(t *testing.T) {
 	if err := os.Chtimes(transcripts[0], written, written); err != nil {
 		t.Fatal(err)
 	}
-	if indexed, err = w.Index(ctx, linktest.Repository, f.Repo, nil, true); err != nil || indexed.Unchanged || indexed.Commits != 3 || indexed.Links != 1 {
-		t.Fatalf("re-link after a session was written = %+v, %v", indexed, err)
-	}
+	relink("window re-link after a session was written", false)
 
 	// The session's decisions go to pull request 5's feature once the
 	// session was captured.

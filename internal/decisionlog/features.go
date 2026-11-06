@@ -66,12 +66,14 @@ type FeatureWorker struct {
 	redactor *bundle.Redactor
 	initErr  error
 	// mu guards windowLinked, each repository's last re-link of the session
-	// window, linked, what its last re-link read, and retryAt, when a failed
-	// repository is tried again: a first build indexes from a job's goroutine
-	// while Run's goroutine does.
+	// window, and retryAt, when a failed repository is tried again: a first
+	// build indexes from a job's goroutine while Run's goroutine does.
 	mu                    sync.Mutex
 	windowLinked, retryAt map[string]time.Time
-	linked                map[string]string
+	// linkMu guards linked, what each repository's last links were made
+	// from, and is held across their write, so it describes the last writer.
+	linkMu sync.Mutex
+	linked map[string]string
 }
 
 func (w *FeatureWorker) init() {
@@ -450,9 +452,9 @@ var agents = map[string]string{
 // links: the fresh commits Sync recorded within FeatureLookback; every
 // FeatureQuiet, the commits within the session window of now, which
 // sessions still running may yet link to; and every FeatureRelinkEvery, or
-// with full, every commit within FeatureLookback. A re-link without fresh
-// commits whose commits, sessions and observed commit creations are as at the
-// repository's last one would link the same: it reads no session.
+// with full, every commit within FeatureLookback. A window re-link whose
+// commits, sessions and observed commit creations are as at the repository's
+// last links would link the same: it reads no session.
 func (w *FeatureWorker) Index(ctx context.Context, repository, dir string, fresh []gitlocal.Commit, full bool) (IndexReport, error) {
 	w.init()
 	report := IndexReport{Repository: repository}
@@ -526,22 +528,16 @@ func (w *FeatureWorker) Index(ctx context.Context, repository, dir string, fresh
 		shas = append(shas, sha)
 	}
 	slices.SortFunc(list, func(a, b gitlocal.Commit) int { return strings.Compare(a.OID, b.OID) })
+	// The daily re-link always reads, so what the inputs miss lasts a day.
 	inputs := ""
-	if len(fresh) == 0 {
-		inputs = linkInputs(ctx, dir, list, w.Sessions, lookback)
+	if len(fresh) == 0 && !full {
+		inputs = linkInputs(ctx, dir, list, w.Sessions, now.Add(-locallink.SessionWindow))
 	}
-	w.mu.Lock()
+	w.linkMu.Lock()
 	report.Unchanged = inputs != "" && inputs == w.linked[repository]
-	w.mu.Unlock()
+	w.linkMu.Unlock()
 	if report.Unchanged {
-		if full {
-			if err := w.Store.ReplaceSessionCommits(ctx, repository, nil, nil, now); err != nil {
-				return report, err
-			}
-		}
-		if window {
-			w.linkedWindow(repository, now)
-		}
+		w.linkedWindow(repository, now)
 		return report, nil
 	}
 	links, err := locallink.LinkCommits(ctx, dir, list, locallink.LinkOptions{Repository: repository, Sessions: w.Sessions})
@@ -562,12 +558,15 @@ func (w *FeatureWorker) Index(ctx context.Context, repository, dir string, fresh
 	if full {
 		relinked = now
 	}
-	if err := w.Store.ReplaceSessionCommits(ctx, repository, shas, rows, relinked); err != nil {
+	w.linkMu.Lock()
+	err = w.Store.ReplaceSessionCommits(ctx, repository, shas, rows, relinked)
+	if err == nil {
+		w.linked[repository] = inputs
+	}
+	w.linkMu.Unlock()
+	if err != nil {
 		return report, err
 	}
-	w.mu.Lock()
-	w.linked[repository] = inputs
-	w.mu.Unlock()
 	if window {
 		w.linkedWindow(repository, now)
 	}
@@ -603,8 +602,12 @@ func linkInputs(ctx context.Context, dir string, commits []gitlocal.Commit, opts
 	}
 	var repositories, shas []string
 	for _, remote := range remotes {
-		if repository, err := github.RepositoryFromRemote(remote.URL); err == nil {
-			repositories = append(repositories, strings.ToLower(repository.String()))
+		repository, err := github.RepositoryFromRemote(remote.URL)
+		if err != nil {
+			continue
+		}
+		if name := strings.ToLower(repository.String()); !slices.Contains(repositories, name) {
+			repositories = append(repositories, name)
 		}
 	}
 	for _, c := range commits {
