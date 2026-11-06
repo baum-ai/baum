@@ -385,44 +385,57 @@ VALUES ('claude-code','s3',?,'claude','m','full',0,'pending',0,'capture')`, repo
 	}
 }
 
-// The daemon serves the Timeline from a read-only store of its own: a list
-// answers while the writer's one connection is busy, with what it committed.
-func TestTimelineReadsBesideTheWriter(t *testing.T) {
+// Lists share a repository's snapshot while the store holds still: a write
+// through its connection or another one, or listMaxAge, builds it again.
+func TestTimelineListsShareASnapshot(t *testing.T) {
 	f := newTimelineFixture(t)
-	ctx := context.Background()
-	var path string
-	if err := f.store.db.QueryRowContext(ctx, `SELECT file FROM pragma_database_list WHERE name='main'`).Scan(&path); err != nil {
-		t.Fatal(err)
-	}
-	read, err := Open(path, OpenOptions{ReadOnly: true})
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = read.Close() })
-	f.timeline.Store = read
-	f.exec(`UPDATE feature SET title='Drafts' WHERE id='F2'`)
-	busy, err := f.store.db.Conn(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = busy.Close() }()
-	answered := make(chan featurePage, 1)
-	go func() {
+	list := func() featurePage {
 		var page featurePage
-		f.get("/api/timeline/features", url.Values{"repository": {repo}}, &page)
-		answered <- page
-	}()
-	select {
-	case page := <-answered:
-		if page.ids() != "F1,F2" {
-			t.Fatalf("features = %s", page.ids())
+		if code := f.get("/api/timeline/features", url.Values{"repository": {repo}}, &page); code != http.StatusOK {
+			t.Fatalf("features = %d", code)
 		}
-		if title := page.Features[1].Title; title == nil || *title != "Drafts" {
-			t.Fatalf("F2 title = %v", title)
-		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("the list waited for the writer's connection")
+		return page
 	}
+	// Each build opens the repository's clone.
+	built := func(want int) {
+		t.Helper()
+		if f.clones != want {
+			t.Fatalf("clones opened = %d, want %d", f.clones, want)
+		}
+	}
+	list()
+	first := f.clones
+	list()
+	f.get("/api/timeline/features/people", url.Values{"repository": {repo}}, nil)
+	built(first)
+	f.exec(`UPDATE feature SET title='Drafts' WHERE id='F2'`)
+	if title := list().Features[1].Title; title == nil || *title != "Drafts" {
+		t.Fatalf("F2 title = %v", title)
+	}
+	built(first + 1)
+	// Another process writing the file, as `baum internal features build`.
+	var path string
+	if err := f.store.db.QueryRow(`SELECT file FROM pragma_database_list WHERE name='main'`).Scan(&path); err != nil {
+		t.Fatal(err)
+	}
+	other, err := Open(path, OpenOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = other.Close() }()
+	if _, err := other.db.Exec(`UPDATE feature SET title='Notes' WHERE id='F2'`); err != nil {
+		t.Fatal(err)
+	}
+	if title := list().Features[1].Title; title == nil || *title != "Notes" {
+		t.Fatalf("F2 title = %v", title)
+	}
+	built(first + 2)
+	f.clock.now = f.clock.now.Add(listMaxAge)
+	list()
+	built(first + 3)
+	// A search reads the store itself.
+	f.get("/api/timeline/features", url.Values{"repository": {repo}, "q": {"export"}}, nil)
+	built(first + 4)
 }
 
 // Every list reads the repositories asked for, or every one served, merged

@@ -554,7 +554,7 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 		// Decision capture follows the tracked sessions; its store keeps the
 		// derived, redacted decisions in the daemon's state.
 		var capture *decisionlog.Scheduler
-		var decisionStore, timelineStore *decisionlog.Store
+		var decisionStore *decisionlog.Store
 		var timeline http.Handler
 		// The GitHub connection's login, once it exists below.
 		var connectionLogin func() string
@@ -567,16 +567,7 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 					Worker: &decisionlog.Capturer{Store: decisionStore, Registry: registry, Config: cfg, Log: log, Changed: timelineChanged}}
 				featureLog = &decisionlog.FeatureWorker{Store: decisionStore, Registry: registry, GitHub: githubReaders(cfg), Config: cfg, Log: log, Changed: timelineChanged}
 				builds.worker.Store(featureLog)
-				// The Timeline reads through a connection of its own, so the
-				// page does not wait behind capture's and the feature log's
-				// work on the store's one connection.
-				read := decisionStore
-				if own, err := decisionlog.Open(database, decisionlog.OpenOptions{ReadOnly: true}); err != nil {
-					log.Warn("the Timeline reads through the decision store: its own connection did not open", "error", err)
-				} else {
-					timelineStore, read = own, own
-				}
-				timeline = (&decisionlog.Timeline{Store: read, Registry: registry, Clone: decisionlog.LocalClones(registry), Transcripts: transcripts,
+				timeline = (&decisionlog.Timeline{Store: decisionStore, Registry: registry, Clone: decisionlog.LocalClones(registry), Transcripts: transcripts,
 					Login: func(ctx context.Context) string { return viewerLogin(ctx, registry, discover.Cached, connectionLogin) }}).Handler()
 			}
 		}
@@ -800,10 +791,8 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 				unsubscribeEnded()
 				unsubscribeRequests()
 				events.Close()
-				for _, store := range []*decisionlog.Store{decisionStore, timelineStore} {
-					if store != nil {
-						_ = store.Close()
-					}
+				if decisionStore != nil {
+					_ = decisionStore.Close()
 				}
 				_ = groups.Close()
 				_ = registry.Close()
