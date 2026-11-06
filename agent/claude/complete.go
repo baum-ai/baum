@@ -43,7 +43,10 @@ func (c *Backend) Complete(ctx context.Context, request agent.CompleteRequest) (
 	args = append(args, "--system-prompt", request.System+"\n\n"+submitPrompt, "--max-turns", strconv.Itoa(CompleteMaxTurns),
 		"--restricted", "--tools", "", "--json-schema", string(request.Schema), "--no-session-persistence",
 		"--setting-sources", "", "--strict-mcp-config", "--mcp-config", `{"mcpServers":{}}`)
-	env := []string{"CLAUDE_CODE_MAX_OUTPUT_TOKENS=" + strconv.Itoa(cmp.Or(request.MaxOutputTokens, maxOutputTokens))}
+	var env []string
+	if request.MaxOutputTokens > 0 {
+		env = append(env, "CLAUDE_CODE_MAX_OUTPUT_TOKENS="+strconv.Itoa(request.MaxOutputTokens))
+	}
 	result, err := c.run(ctx, run, args, env, false)
 	return agent.Completion{Document: result.Document, Model: cmp.Or(result.Model, c.Model), Usage: result.Usage,
 		Rejections: result.StructuredOutputRejections, RejectionDetail: result.LastRejection}, err

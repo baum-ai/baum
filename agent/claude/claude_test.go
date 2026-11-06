@@ -55,8 +55,8 @@ func TestClaudeProcessEnvironmentAndUsageBudgets(t *testing.T) {
 			t.Fatalf("leaked %s", secret)
 		}
 	}
-	if !bytes.Contains(environment, []byte("CLAUDE_CODE_DISABLE_THINKING=1")) || !bytes.Contains(environment, []byte("MAX_THINKING_TOKENS=0")) || !bytes.Contains(environment, []byte("CLAUDE_CODE_MAX_OUTPUT_TOKENS=32000")) {
-		t.Fatal("generation thinking/output limits were not applied")
+	if !bytes.Contains(environment, []byte("CLAUDE_CODE_DISABLE_THINKING=1")) || !bytes.Contains(environment, []byte("MAX_THINKING_TOKENS=0")) {
+		t.Fatal("generation thinking limits were not applied")
 	}
 	if !bytes.Contains(environment, []byte("ANTHROPIC_API_KEY=run-token")) {
 		t.Fatal("missing the run's model access")

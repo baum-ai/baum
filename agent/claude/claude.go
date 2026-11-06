@@ -20,11 +20,6 @@ import (
 	"github.com/baum-ai/baum/internal/proc"
 )
 
-// maxOutputTokens bounds one model response. A large review submitted through
-// the StructuredOutput tool is a single tool input, so a cap sized for prose
-// truncates it into invalid JSON and forces another full call.
-const maxOutputTokens = 32000
-
 // Profile selects the environment and credentials the Claude Code process gets.
 // Both profiles run it with the same read-only flags.
 type Profile int
