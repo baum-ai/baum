@@ -46,13 +46,13 @@ func TestBuildEstimateOfAResumedVersion(t *testing.T) {
 	}
 }
 
-// A failed call adds its cost to the version's spend when it reported one,
-// and nothing when its usage is unknown.
+// A failed call adds its cost to the version's spend, estimated from what it
+// reported when its usage is incomplete, and nothing when it reported none.
 func TestBuildChargesFailedCalls(t *testing.T) {
 	for _, tc := range []struct {
 		usage agent.Usage
 		paid  bool
-	}{{agent.Usage{Input: 1000, Output: 100, Speed: new("standard")}, true}, {agent.Usage{Input: 1000, Output: 100, Speed: new("standard"), Unreported: true}, false}} {
+	}{{agent.Usage{Input: 1000, Output: 100, Speed: new("standard")}, true}, {agent.Usage{Input: 1000, Output: 100, Speed: new("standard"), Unreported: true}, true}, {agent.Usage{Unreported: true}, false}} {
 		f := newFeatureFixture(t)
 		f.clock.now = t0.Add(60 * 24 * time.Hour)
 		f.history(1)

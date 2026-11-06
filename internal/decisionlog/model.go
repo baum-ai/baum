@@ -85,9 +85,10 @@ func reserveFor(list *pricing.List, backend, model string, inputTokens, outputTo
 }
 
 // cost prices a call's reported usage as review accounting does
-// (pricing.List.OutcomeCost): nil when it cannot be priced or any part of it
-// is unknown, such as an unreported speed or 1-hour cache-write split, or a
-// prompt range that straddles a long-prompt tier.
+// (pricing.List.OutcomeCost): estimated at the lowest rates it could have been
+// billed at when a part of it is unknown, such as an unreported speed or
+// 1-hour cache-write split, or a prompt range that straddles a long-prompt
+// tier; nil when it reported no tokens or its model has no rates.
 func cost(list *pricing.List, model string, u agent.Usage) *float64 {
 	return list.OutcomeCost(model, agent.Outcome{Usage: u})
 }

@@ -107,6 +107,19 @@ func (c *Backend) Fix(ctx context.Context, request agent.Request) (agent.Result,
 	return c.run(ctx, request, true, nil)
 }
 
+// reportUsage sends the run's usage so far (agent.Request.Usage). Codex
+// reports usage per turn with no model of its own, so one attempt at the
+// configured model covers the turns so far; it is Unreported until the run
+// ends.
+func reportUsage(request agent.Request, result agent.Result) {
+	if request.Usage == nil {
+		return
+	}
+	usage := result.Usage
+	usage.Unreported = true
+	request.Usage([]agent.UsageAttempt{{ModelSource: result.ModelSource, Model: result.Model, Usage: usage, Calls: result.Calls, ChargedTokens: result.Tokens}})
+}
+
 func (c *Backend) run(ctx context.Context, request agent.Request, fix bool, extra []string) (result agent.Result, err error) {
 	result.Model = c.Model
 	result.ModelSource = "configured"
@@ -390,6 +403,7 @@ func (c *Backend) run(ctx context.Context, request agent.Request, fix bool, extr
 			})
 			result.Events = append(result.Events, agent.Event{Kind: "model_usage", Input: event.Usage.Input, Output: event.Usage.Output,
 				CacheRead: event.Usage.CachedInput, CacheCreate: event.Usage.CacheWrite})
+			reportUsage(request, result)
 		case "turn.failed":
 			if event.Usage != nil {
 				if pendingTurns > 0 {
@@ -398,6 +412,7 @@ func (c *Backend) run(ctx context.Context, request agent.Request, fix bool, extr
 				reportedTurns++
 				result.Tokens += max(event.Usage.Input-event.Usage.CachedInput, 0) + event.Usage.Output
 				result.Usage.Add(agent.Usage{Input: int64(max(event.Usage.Input-event.Usage.CachedInput-event.Usage.CacheWrite, 0)), Output: int64(event.Usage.Output), CacheRead: int64(event.Usage.CachedInput), CacheCreate: int64(event.Usage.CacheWrite), Speed: new(standardSpeed)})
+				reportUsage(request, result)
 			} else {
 				result.Usage.Unreported = true
 			}

@@ -281,6 +281,10 @@ func (c *Backend) run(ctx context.Context, request agent.Request, args, env []st
 			record(agent.Event{Kind: "model_usage", ID: id, Input: u.Input, Output: u.Output, CacheRead: u.CacheRead, CacheCreate: u.CacheCreate})
 		}
 	}
+	var attempts func() []agent.UsageAttempt
+	// observed: the event being handled reported usage, sent to
+	// request.Usage once the event has named its call's model and state.
+	observed := false
 	observe := func(id string, reported usage, counts bool) {
 		call := calls[id]
 		if call == nil {
@@ -294,8 +298,42 @@ func (c *Backend) run(ctx context.Context, request agent.Request, args, env []st
 		}
 		call.usage = larger(call.usage, reported)
 		total()
+		observed = true
 	}
 	completed := false
+	// attempts keeps the per-call reports before the backend's aggregate loses
+	// model identity: a call not yet finished, or cut off, is Unreported with
+	// what it reported so far. A run-total excess cannot be assigned to a model.
+	attempts = func() []agent.UsageAttempt {
+		var out []agent.UsageAttempt
+		var assigned agent.Usage
+		for _, id := range callOrder {
+			call := calls[id]
+			u := call.usage
+			usage := agent.Usage{Input: int64(u.Input), Output: int64(u.Output), CacheRead: int64(u.CacheRead), CacheCreate: int64(u.CacheCreate)}
+			if h := u.Cache1h(); h != nil {
+				usage.CacheCreate1h = pointerTo(int64(*h))
+			}
+			if u.Speed == speedStandard || u.Speed == speedFast {
+				usage.Speed = pointerTo(string(u.Speed))
+			}
+			prompt := int64(u.Input + u.CacheRead + u.CacheCreate)
+			if prompt > 0 {
+				usage.MinPrompt, usage.MaxPrompt = pointerTo(prompt), pointerTo(prompt)
+			}
+			complete := call.final || (!call.streamed && completed)
+			if !complete || usage.IsZero() {
+				usage.Unreported = true
+			}
+			assigned.Add(usage)
+			out = append(out, agent.UsageAttempt{Model: call.model, ModelSource: "provider_reported", Usage: usage, Calls: 1, ChargedTokens: agent.ChargedTokens(u.Input, u.Output, u.CacheCreate), Failed: !complete})
+		}
+		residual := agent.Usage{Input: max(0, result.Usage.Input-assigned.Input), Output: max(0, result.Usage.Output-assigned.Output), CacheRead: max(0, result.Usage.CacheRead-assigned.CacheRead), CacheCreate: max(0, result.Usage.CacheCreate-assigned.CacheCreate)}
+		if !residual.IsZero() {
+			out = append(out, agent.UsageAttempt{Usage: residual, ChargedTokens: int(residual.Input + residual.Output + residual.CacheCreate), Failed: !completed})
+		}
+		return out
+	}
 	// apiError is the class of the latest assistant message Claude Code wrote
 	// in place of a model's answer.
 	apiError := ""
@@ -516,6 +554,10 @@ func (c *Backend) run(ctx context.Context, request agent.Request, args, env []st
 			record(agent.Event{Kind: "document", Bytes: len(result.Document)})
 			completed = true
 		}
+		if observed && request.Usage != nil {
+			request.Usage(attempts())
+		}
+		observed = false
 		if agent.Exceeds(result.Calls, request.MaxCalls) {
 			err = errors.New(agent.GenerationBudgetExceededReason("model calls"))
 			break
@@ -537,34 +579,11 @@ func (c *Backend) run(ctx context.Context, request agent.Request, args, env []st
 		_ = cmd.Cancel()
 		_, _ = io.Copy(io.Discard, stdout)
 	}
-	// Preserve the per-call reports before the backend's aggregate loses
-	// model identity. A run-total excess cannot be assigned to a model.
-	var assigned agent.Usage
-	for _, id := range callOrder {
-		call := calls[id]
-		u := call.usage
-		usage := agent.Usage{Input: int64(u.Input), Output: int64(u.Output), CacheRead: int64(u.CacheRead), CacheCreate: int64(u.CacheCreate)}
-		if h := u.Cache1h(); h != nil {
-			usage.CacheCreate1h = pointerTo(int64(*h))
-		}
-		if u.Speed == speedStandard || u.Speed == speedFast {
-			usage.Speed = pointerTo(string(u.Speed))
-		}
-		prompt := int64(u.Input + u.CacheRead + u.CacheCreate)
-		if prompt > 0 {
-			usage.MinPrompt, usage.MaxPrompt = pointerTo(prompt), pointerTo(prompt)
-		}
-		complete := call.final || (!call.streamed && completed)
-		if !complete || usage.IsZero() {
-			usage.Unreported = true
+	result.UsageAttempts = attempts()
+	for _, attempt := range result.UsageAttempts {
+		if attempt.Usage.Unreported {
 			result.Usage.Unreported = true
 		}
-		assigned.Add(usage)
-		result.UsageAttempts = append(result.UsageAttempts, agent.UsageAttempt{Model: call.model, ModelSource: "provider_reported", Usage: usage, Calls: 1, ChargedTokens: agent.ChargedTokens(u.Input, u.Output, u.CacheCreate), Failed: !complete})
-	}
-	residual := agent.Usage{Input: max(0, result.Usage.Input-assigned.Input), Output: max(0, result.Usage.Output-assigned.Output), CacheRead: max(0, result.Usage.CacheRead-assigned.CacheRead), CacheCreate: max(0, result.Usage.CacheCreate-assigned.CacheCreate)}
-	if !residual.IsZero() {
-		result.UsageAttempts = append(result.UsageAttempts, agent.UsageAttempt{Usage: residual, ChargedTokens: int(residual.Input + residual.Output + residual.CacheCreate), Failed: !completed})
 	}
 	if !completed {
 		result.Usage.Unreported = true

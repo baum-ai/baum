@@ -145,7 +145,7 @@ func TestPublishKeepsRetryUsageAndOldRecordsUnknown(t *testing.T) {
 		t.Fatal(err)
 	}
 	a := saved.Metadata.Accounting
-	if a == nil || len(a.Attempts) != 2 || a.Usage.CacheRead != 200 || a.ChargedTokens != 20 || result.Metadata.CostReason != "speed_not_reported" {
+	if a == nil || len(a.Attempts) != 2 || a.Usage.CacheRead != 200 || a.ChargedTokens != 20 || result.Metadata.CostReason != "model_or_prompt_rates_unknown" {
 		t.Fatalf("lost repaired usage: %+v %+v", saved.Metadata, a)
 	}
 	var old store.Metadata
