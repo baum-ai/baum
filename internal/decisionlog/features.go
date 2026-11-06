@@ -531,7 +531,7 @@ func (w *FeatureWorker) Index(ctx context.Context, repository, dir string, fresh
 	// The daily re-link always reads, so what the inputs miss lasts a day.
 	inputs := ""
 	if len(fresh) == 0 && !full {
-		inputs = linkInputs(ctx, dir, list, w.Sessions, now.Add(-locallink.SessionWindow))
+		inputs = linkInputs(ctx, dir, list, w.Sessions)
 	}
 	w.linkMu.Lock()
 	report.Unchanged = inputs != "" && inputs == w.linked[repository]
@@ -574,13 +574,23 @@ func (w *FeatureWorker) Index(ctx context.Context, repository, dir string, fresh
 	return report, nil
 }
 
-// linkInputs describes what LinkCommits reads for the commits, which were
-// made since: the commits, the session stores from the session window before
-// since (sessions.Discovery's fingerprint) and the commits' observed creations
+// linkInputs describes what LinkCommits reads for the commits: the commits,
+// the session stores from the session window before the earliest of them
+// (sessions.Discovery's fingerprint) and the commits' observed creations
 // under each repository the clone's remotes name. It is empty when something
 // cannot be described.
-func linkInputs(ctx context.Context, dir string, commits []gitlocal.Commit, opts sessions.Options, since time.Time) string {
-	if from := since.Add(-locallink.SessionWindow); opts.Since.Before(from) {
+func linkInputs(ctx context.Context, dir string, commits []gitlocal.Commit, opts sessions.Options) string {
+	var earliest time.Time
+	for _, c := range commits {
+		at, err := time.Parse(time.RFC3339, c.CommittedAt)
+		if err != nil {
+			return ""
+		}
+		if earliest.IsZero() || at.Before(earliest) {
+			earliest = at
+		}
+	}
+	if from := earliest.Add(-locallink.SessionWindow); opts.Since.Before(from) {
 		opts.Since = from
 	}
 	d, err := sessions.Discover(ctx, dir, opts)
