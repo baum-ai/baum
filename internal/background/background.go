@@ -20,6 +20,7 @@ import (
 	"github.com/baum-ai/baum/internal/repos"
 	"github.com/baum-ai/baum/internal/store"
 	"github.com/baum-ai/baum/internal/workstats"
+	"github.com/baum-ai/baum/sessions"
 )
 
 type Registry interface {
@@ -491,6 +492,12 @@ func (s *Service) Sync(ctx context.Context) {
 		return a.number < b.number
 	})
 	started := s.now()
+	// The pull requests of one clone read mostly the same sessions: decode
+	// each once in this pass.
+	if len(targets) > 1 {
+		release := sessions.HoldMappings()
+		defer release()
+	}
 	for _, current := range targets {
 		if ctx.Err() != nil {
 			return

@@ -39,6 +39,29 @@ func sessionsSince(commits []gitlocal.Commit) (time.Time, bool) {
 	return earliest.Add(-SessionWindow), true
 }
 
+// sessionsUntil is the latest start worth loading for commits, and false when
+// a commit's date cannot be read. A session that began more than
+// SessionWindow after the last commit cannot have created any of them, and
+// ends too late to be within the matcher's timeframe tolerance of one, so it
+// cannot match. Bounding by it is what keeps an old pull request from reading
+// every session written since.
+func sessionsUntil(commits []gitlocal.Commit) (time.Time, bool) {
+	var latest time.Time
+	for _, c := range commits {
+		at, err := time.Parse(time.RFC3339, c.CommittedAt)
+		if err != nil {
+			return time.Time{}, false
+		}
+		if at.After(latest) {
+			latest = at
+		}
+	}
+	if latest.IsZero() {
+		return time.Time{}, false
+	}
+	return latest.Add(SessionWindow), true
+}
+
 // resolveBounds expands the request's head and range start to full commit ids
 // the clone holds. The range starts at the merge base when the clone has it
 // and at the base otherwise. A non-nil Result says why the pull request cannot

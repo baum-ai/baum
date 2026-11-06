@@ -29,49 +29,73 @@ const maxEvidenceEntries = 256
 // evidenceMemo remembers BuildSessionEvidence's answers, so a refresh of a
 // pull request whose commits, sessions and checkout did not change reads no
 // transcript. Callers get copies: they cap and redact the evidence in place.
-var evidenceMemo = newEvidenceCache()
+var evidenceMemo = newEvidenceCache(EvidenceMaxAge)
+
+// frozenMemo keeps the evidence last built for the commits of a pull request
+// that is closed or merged (EvidenceRequest.Frozen), for the life of the
+// process: those commits will not change, and a session that began after
+// them is past the bound the evidence reads (sessionsUntil).
+var frozenMemo = newEvidenceCache(0)
 
 type evidenceCache struct {
 	mu      sync.Mutex
 	order   *list.List
 	entries map[string]*list.Element
 	now     func() time.Time
+	// maxAge is how long an answer is reused; zero keeps it until evicted.
+	maxAge time.Duration
 }
 
 type evidenceEntry struct {
 	key      string
 	at       time.Time
 	sessions []bundle.Session
+	// partial is set for evidence built while some session store file or
+	// session could not be read, which must not be frozen.
+	partial bool
 }
 
-func newEvidenceCache() *evidenceCache {
-	return &evidenceCache{order: list.New(), entries: map[string]*list.Element{}, now: time.Now}
+func newEvidenceCache(maxAge time.Duration) *evidenceCache {
+	return &evidenceCache{order: list.New(), entries: map[string]*list.Element{}, now: time.Now, maxAge: maxAge}
 }
 
 func (c *evidenceCache) get(key string) ([]bundle.Session, bool) {
+	evidence, _, ok := c.lookup(key)
+	return evidence, ok
+}
+
+// lookup is get, also reporting whether the evidence was built from a
+// complete read of the session stores.
+func (c *evidenceCache) lookup(key string) ([]bundle.Session, bool, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	element, ok := c.entries[key]
 	if !ok {
-		return nil, false
+		return nil, false, false
 	}
 	entry := element.Value.(*evidenceEntry)
-	if c.now().Sub(entry.at) >= EvidenceMaxAge {
+	if c.maxAge > 0 && c.now().Sub(entry.at) >= c.maxAge {
 		c.order.Remove(element)
 		delete(c.entries, key)
-		return nil, false
+		return nil, false, false
 	}
 	c.order.MoveToFront(element)
-	return deepCopy(entry.sessions), true
+	return deepCopy(entry.sessions), !entry.partial, true
 }
 
 func (c *evidenceCache) put(key string, evidence []bundle.Session) {
+	c.store(key, evidence, true)
+}
+
+// store is put, recording whether the evidence was built from a complete
+// read of the session stores.
+func (c *evidenceCache) store(key string, evidence []bundle.Session, complete bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if old, ok := c.entries[key]; ok {
 		c.order.Remove(old)
 	}
-	c.entries[key] = c.order.PushFront(&evidenceEntry{key: key, at: c.now(), sessions: deepCopy(evidence)})
+	c.entries[key] = c.order.PushFront(&evidenceEntry{key: key, at: c.now(), sessions: deepCopy(evidence), partial: !complete})
 	for c.order.Len() > maxEvidenceEntries {
 		last := c.order.Back()
 		c.order.Remove(last)
@@ -108,6 +132,21 @@ func evidenceKey(req EvidenceRequest, dir string, d *sessions.Discovery) (string
 		_, _ = fmt.Fprintf(h, "%s\x01", state)
 	}
 	return hex.EncodeToString(h.Sum(nil)), true
+}
+
+// frozenEvidenceKey describes a request without the session stores: the
+// clone, the commits, the caps and the store options.
+func frozenEvidenceKey(req EvidenceRequest, dir string) string {
+	clone, err := collector.RepoRoot(dir)
+	if err != nil {
+		clone = dir
+	}
+	h := sha256.New()
+	_, _ = fmt.Fprintf(h, "%s\x00%d\x00%d\x00%#v\x00", clone, req.MaxPromptsPerSession, req.MaxCommandEventsPerSession, req.Sessions)
+	for _, c := range req.Commits {
+		_, _ = fmt.Fprintf(h, "%#v\x01", c)
+	}
+	return hex.EncodeToString(h.Sum(nil))
 }
 
 // checkoutState describes what a checkout has checked out: what HEAD names

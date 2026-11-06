@@ -84,7 +84,13 @@ func (r Refresher) Refresh(ctx context.Context, repository github.Repository, nu
 		return nil, fmt.Errorf("reading reviewed commits: %w", err)
 	}
 	if r.Sessions != nil {
-		b.Sessions, err = r.Sessions.Evidence(ctx, commits, caps.MaxPromptsPerSession, caps.MaxCommandEventsPerSession)
+		// A pull request that is closed or merged has all the commits it
+		// will have: its sessions are read once more, then kept.
+		read := r.Sessions.Evidence
+		if frozen, ok := r.Sessions.(assemble.FrozenSessions); ok && (evidence.PullRequest.State == "closed" || evidence.PullRequest.State == "merged") {
+			read = frozen.FrozenEvidence
+		}
+		b.Sessions, err = read(ctx, commits, caps.MaxPromptsPerSession, caps.MaxCommandEventsPerSession)
 		if err != nil {
 			return nil, fmt.Errorf("reading local session evidence: %w", err)
 		}

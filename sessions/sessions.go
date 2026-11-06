@@ -60,6 +60,10 @@ type Options struct {
 	Sources []vendors.Slug
 	// Since drops sessions last modified before it.
 	Since time.Time
+	// StartedBefore drops sessions their agent's own store says began after
+	// it. A session whose start discovery does not know (Cursor) is kept,
+	// and Entire checkpoints are not filtered by it.
+	StartedBefore time.Time
 	// Store overrides, mainly for tests. Empty means the vendor default.
 	ClaudeProjectsDir string
 	CodexSessionsDir  string
@@ -182,7 +186,8 @@ func Discover(ctx context.Context, dir string, opts Options) (*Discovery, error)
 	}
 	d.skipped = scan.Skipped
 	for _, s := range found {
-		if opts.wants(s.Source) && (opts.Since.IsZero() || !s.ModifiedAt.Before(opts.Since)) {
+		startedLater := !opts.StartedBefore.IsZero() && !s.StartedAt.IsZero() && s.StartedAt.After(opts.StartedBefore)
+		if opts.wants(s.Source) && (opts.Since.IsZero() || !s.ModifiedAt.Before(opts.Since)) && !startedLater {
 			d.wanted = append(d.wanted, s)
 		}
 	}
