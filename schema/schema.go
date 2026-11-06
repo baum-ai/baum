@@ -39,7 +39,7 @@ var Document []byte
 var LegacyTiles []byte
 
 // Example is a complete example document that validates against the schema. It
-// is what "baum internal view --sample" serves.
+// is what "the reference viewer host" serves.
 //
 //go:embed review-example.json
 var Example []byte

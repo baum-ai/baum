@@ -1,10 +1,10 @@
 # traceupload
 
-Builds the redacted session archive `baum upload` and `baum setup --upload`
-send to the hosted server the user logged in to. The server reads exactly one
-`ManifestVersion` and rejects any other; servers and CLIs of different
-releases meet, so changing it is an API change (see "Compatibility" in the
-[baumcli README](../baumcli/README.md)).
+Builds the redacted archive used by the appliance's legacy session-upload
+API. The desktop CLI no longer exposes upload commands. The server reads
+exactly one `ManifestVersion` and rejects any other; changing it remains an
+API change. The protocol headers are described in
+[apiclient](../apiclient/README.md).
 
 ## Archive contract
 
@@ -24,6 +24,6 @@ releases meet, so changing it is an API change (see "Compatibility" in the
   carries data the manifest does not check, so it is rejected.
 - `MaxUnpackedBytes` (512 MiB) bounds the decompressed tar stream: manifest,
   members and tar headers. The builder measures that stream
-  (`Bundle.UnpackedSize`) as it writes it, and the CLI refuses an archive over
-  the bound before uploading it, because the server's worker would refuse to
-  unpack it.
+  (`Bundle.UnpackedSize`) as it writes it. Upload clients must refuse an archive
+  over the bound before sending it, because the server worker would refuse
+  to unpack it.

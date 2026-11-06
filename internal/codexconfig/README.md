@@ -29,5 +29,5 @@ Plugin removal leaves this terminal preference alone.
 Run the helper, Focus repair and installer regression tests in Docker:
 
 ```sh
-just oss-go test -race ./internal/codexconfig ./internal/focus ./hosted/baumcli
+just oss-go test -race ./internal/codexconfig ./internal/focus ./internal/hookcli
 ```

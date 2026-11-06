@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/baum-ai/baum/hosted/agentplugins"
+	"github.com/baum-ai/baum/internal/agentplugins"
 	"github.com/baum-ai/baum/internal/appdb/appdbtest"
 	"github.com/baum-ai/baum/internal/repos"
 )

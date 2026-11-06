@@ -12,17 +12,19 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/spf13/cobra"
 
-	"github.com/baum-ai/baum/hosted/agentplugins"
 	"github.com/baum-ai/baum/internal/agentcli"
+	"github.com/baum-ai/baum/internal/agentplugins"
 	"github.com/baum-ai/baum/internal/agentrequests"
 	"github.com/baum-ai/baum/internal/analytics"
 	"github.com/baum-ai/baum/internal/appdb"
@@ -266,7 +268,7 @@ func runDaemonRun(cmd *cobra.Command, _ []string) error {
 		logger = slog.New(slog.NewTextHandler(w, nil))
 		return logger, func() { _ = logFile.Close() }, nil
 	}
-	ctx, stop := viewContext()
+	ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	err = daemon.Run(ctx, daemon.Options{
 		Paths:      paths,
