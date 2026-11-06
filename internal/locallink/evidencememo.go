@@ -102,17 +102,17 @@ func evidenceKey(req EvidenceRequest, dir string, d *sessions.Discovery) (string
 	}
 	home, _ := os.UserHomeDir()
 	h := sha256.New()
-	fmt.Fprintf(h, "%s\x00%s\x00%s\x00%d\x00%d\x00%#v\x00", discovered, clone, home,
+	_, _ = fmt.Fprintf(h, "%s\x00%s\x00%s\x00%d\x00%d\x00%#v\x00", discovered, clone, home,
 		req.MaxPromptsPerSession, req.MaxCommandEventsPerSession, req.Sessions)
 	for _, c := range req.Commits {
-		fmt.Fprintf(h, "%#v\x01", c)
+		_, _ = fmt.Fprintf(h, "%#v\x01", c)
 	}
 	for _, root := range append([]string{clone}, d.Worktrees()...) {
 		state, _, ok := gitlocal.CheckoutStamp(root)
 		if !ok {
 			return "", false
 		}
-		fmt.Fprintf(h, "%s\x01", state)
+		_, _ = fmt.Fprintf(h, "%s\x01", state)
 	}
 	return hex.EncodeToString(h.Sum(nil)), true
 }
