@@ -36,7 +36,7 @@ folders, `node_modules`, `vendor`, `target`, `dist`, `build`, `__pycache__`,
 `Library` or `Applications`. It never starts in, or below, `Desktop`,
 `Downloads`, `Pictures`, `Movies`, `Music`, `Public`,
 `iCloud Drive`, or a `Google Drive`, `Dropbox` or `OneDrive` folder (the lists
-are shared with `baum setup --all`, in `internal/scanskip`), after resolving
+are defined in `internal/scanskip`), after resolving
 symlinks, so a code folder that links there is skipped. It refuses the
 filesystem root, the home directory and anything above it as a starting
 point, and never reports any of them as a clone. A directory an agent worked

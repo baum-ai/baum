@@ -11,6 +11,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/baum-ai/baum/internal/generate"
+	"github.com/baum-ai/baum/internal/hookcli"
 	"github.com/baum-ai/baum/internal/repos"
 )
 
@@ -18,9 +19,7 @@ import (
 // builds fall back to the module version recorded by the Go toolchain.
 var buildVersion string
 
-// Exit codes of the command line. Failures of "baum internal generate" carry one of the
-// named categories; everything else, a bad command or a failure of another
-// command, exits with ExitFailure.
+// Exit codes for engine failures and desktop diagnostics.
 const (
 	ExitFailure    = 1
 	ExitInput      = 2
@@ -34,9 +33,6 @@ const (
 
 // ExitCode is the process exit code for the error Run returned; nil is 0.
 func ExitCode(err error) int {
-	if code, ok := hookExitCode(err); ok {
-		return code
-	}
 	var problems *problemsError
 	if errors.As(err, &problems) {
 		return ExitDiagnostics
@@ -96,6 +92,7 @@ daemon keep them current. The commands here set those up.`,
 			return errors.New("no command given")
 		},
 	}
+	cmd.CompletionOptions.DisableDefaultCmd = true
 	cmd.SetIn(stdin)
 	cmd.SetOut(stdout)
 	cmd.SetErr(stderr)
@@ -105,7 +102,7 @@ daemon keep them current. The commands here set those up.`,
 		newDesktopSetupCommand(),
 		newInternalCommand(),
 	)
-	addHostedCommands(cmd, stdout, stderr)
+	hookcli.AddCommand(cmd, version(), stdout, stderr)
 	return cmd
 }
 

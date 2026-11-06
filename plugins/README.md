@@ -35,13 +35,10 @@ how to restart and resume the session. The preference follows `CODEX_HOME`
 [Codex focus configuration](../internal/codexconfig/README.md). No migration
 markers or hook-settings migration are used.
 
-Setup uses the same installer once per invocation for a hosted install or
-logged-in user, unless `--skip-user-hooks` or `--skip-entire` is set. The
-`--all` confirmation plan names the agents and network download. Desktop
-onboarding invokes the same installer after the user chooses to install.
-Repository hooks remain supported; plugin hooks yield to active project
-hooks already handing that event to Entire. Arbitrary third-party plugins
-running Entire cannot be enumerated; avoid enabling overlapping plugins.
+Desktop onboarding invokes this installer after the user chooses to connect
+an agent. baum's plugins operate independently of repository and third-party
+hooks. Teams may install and run Entire themselves; baum reads their existing
+checkpoints but does not manage or run Entire.
 
 ## Compatibility and behavior
 
@@ -86,16 +83,12 @@ older one leaves the hooks deciding nothing. Keep `baum` and `sh` available in t
 on Windows use an environment providing a POSIX shell. Plugins never download
 or upgrade the CLI.
 
-Events, matchers, timeouts, `async` and commands come from the shared `agenthooks`
-placements and dispatcher.
-All existing opt-ins apply: a Git worktree, no active project/user/managed
-hook already delegating that event to Entire, and a login, setup marker, hosted
-onboarding or an existing local daemon. Hosted opt-ins delegate to Entire only
-in a worktree with Entire enabled; daemon-only hooks, and every hook in a
-worktree without Entire (which runs only for a user with a local daemon), record
-events locally, so the desktop app sees live sessions without Entire. Hooks never
-contact a baum server. Installation grants neither repository access nor
-upload consent. See the exact [CLI opt-in and event rules](../hosted/baumcli/README.md#user-wide-hooks).
+Events, matchers, timeouts, `async` and commands come from
+`internal/agenthookdefs`. Plugin checks succeed in a Git worktree after the
+local baum daemon has run. They read no hosted credentials or third-party hook
+settings. Independent Entire hooks do not suppress baum's local events.
+Callbacks never install repository hooks or invoke Entire. See the exact
+[local hook rules](../internal/hookcli/README.md).
 
 The existing daemon hook-event protocol/version handshake and bounded spool
 remain the compatibility contract. An absent daemon starts only under those
@@ -185,13 +178,13 @@ Its `.agents/plugins/marketplace.json` local source resolves from the marketplac
 
 `TestMarketplacePluginsMatchUserWideHooks` checks the shipped catalogs,
 manifest layout, events, matchers, timeouts and dispatcher strings against
-`agenthooks`. CLI tests execute shipped commands to verify opt-ins, project
-hook deduplication and quiet behavior without a compatible CLI.
-[`agentplugins`](../hosted/agentplugins/README.md) tests captured native registry
+`agenthookdefs`. CLI tests execute shipped commands to verify local admission,
+independent hook coexistence and quiet behavior without a compatible CLI.
+[`agentplugins`](../internal/agentplugins/README.md) tests captured native registry
 formats, scoped install/remove commands, final-state verification and bounded
 child-process cancellation. Run inside
 Docker from the monorepo root:
 
 ```sh
-just oss-go test -count=1 ./hosted/agenthooks ./hosted/agentplugins ./hosted/baumcli
+just oss-go test -count=1 ./internal/agenthookdefs ./internal/agentplugins ./internal/hookcli
 ```

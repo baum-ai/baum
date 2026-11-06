@@ -27,8 +27,11 @@ const DefaultMapCacheBytes = 64 << 20
 // the old entry ages out. Least recently used entries go first once the
 // transcript bytes held pass the limit.
 type mapCache struct {
-	mu      sync.Mutex
-	limit   int64
+	mu    sync.Mutex
+	limit int64
+	// holds counts HoldMappings calls not yet released; while there is one,
+	// the cache keeps up to HeldMapCacheBytes.
+	holds   int
 	held    int64
 	order   *list.List
 	entries map[string]*list.Element
@@ -63,6 +66,37 @@ func init() {
 
 func newMapCache(limit int64) *mapCache {
 	return &mapCache{limit: limit, order: list.New(), entries: map[string]*list.Element{}}
+}
+
+// HeldMapCacheBytes is the cache's limit while HoldMappings holds it.
+const HeldMapCacheBytes = 256 << 20
+
+// HoldMappings lets the cache keep up to HeldMapCacheBytes until release is
+// called, then trims it back to its limit. A caller about to load the same
+// sessions several times in a row, such as a background pass refreshing
+// several pull requests of one clone, holds it so each session is decoded
+// once in the pass, at the cost of that memory for the pass's duration.
+func HoldMappings() (release func()) {
+	cache.mu.Lock()
+	cache.holds++
+	cache.mu.Unlock()
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			cache.mu.Lock()
+			defer cache.mu.Unlock()
+			cache.holds--
+			cache.evict()
+		})
+	}
+}
+
+// effectiveLimit is the limit, raised while a hold is active.
+func (c *mapCache) effectiveLimit() int64 {
+	if c.holds > 0 && c.limit > 0 {
+		return max(c.limit, HeldMapCacheBytes)
+	}
+	return c.limit
 }
 
 // SetMapCacheLimit changes how many transcript bytes Map keeps mapped
@@ -116,7 +150,7 @@ func (c *mapCache) get(key string) (*mapEntry, bool) {
 func (c *mapCache) put(entry *mapEntry) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if entry.cost > c.limit {
+	if entry.cost > c.effectiveLimit() {
 		return
 	}
 	if old, ok := c.entries[entry.key]; ok {
@@ -129,7 +163,8 @@ func (c *mapCache) put(entry *mapEntry) {
 }
 
 func (c *mapCache) evict() {
-	for c.held > max(c.limit, 0) || (c.limit <= 0 && c.order.Len() > 0) {
+	limit := c.effectiveLimit()
+	for c.held > max(limit, 0) || (limit <= 0 && c.order.Len() > 0) {
 		last := c.order.Back()
 		if last == nil {
 			return

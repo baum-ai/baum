@@ -211,11 +211,10 @@ func TestDefaultBackendsWithBinariesOnPath(t *testing.T) {
 	})
 }
 
-// TestGenerateOnlyBuildsLocalProfiles is a guard: the generate command runs on
-// a person's machine, so its source must never name the Isolated or Container
-// profiles, or the unsandboxed codex mode.
+// The desktop engine runs on a person’s machine. Its generation and daemon
+// entry points must never select isolated/container or unsandboxed profiles.
 func TestGenerateOnlyBuildsLocalProfiles(t *testing.T) {
-	files := []string{"backend.go", "generate.go", filepath.Join("..", "cli", "generate.go")}
+	files := []string{"backend.go", "generate.go", filepath.Join("..", "cli", "daemon.go")}
 	for _, name := range files {
 		source, err := os.ReadFile(name)
 		if err != nil {

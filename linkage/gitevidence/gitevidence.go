@@ -143,7 +143,11 @@ func TrustsOnelineLog(command string) bool {
 			continue
 		}
 		if andBoundary(previous, true, isGitCommit) && andBoundary(next, false, isGitLog) {
-			trusted = true
+			// A log printed before the commit would come first in the output,
+			// so CommitSHAs would pick the previous HEAD instead of the new commit.
+			if !anyStmtCalls(file.Stmts[:i], isGitLog) {
+				trusted = true
+			}
 			break
 		}
 	}
@@ -165,6 +169,23 @@ func TrustsOnelineLog(command string) bool {
 		return !trusted
 	})
 	return trusted
+}
+
+// anyStmtCalls reports whether any of stmts contains a call matching match.
+func anyStmtCalls(stmts []*syntax.Stmt, match func(*syntax.CallExpr) bool) bool {
+	found := false
+	for _, stmt := range stmts {
+		syntax.Walk(stmt, func(node syntax.Node) bool {
+			if call, ok := node.(*syntax.CallExpr); ok && match(call) {
+				found = true
+			}
+			return !found
+		})
+		if found {
+			return true
+		}
+	}
+	return false
 }
 
 // andBoundary checks the first or last command of an && chain, so a newline

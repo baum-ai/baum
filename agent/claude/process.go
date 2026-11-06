@@ -91,13 +91,12 @@ func maxTurns(args []string, request agent.Request) []string {
 	return args
 }
 
-// fixedEnvironment is set in every profile: a bounded response, and no
-// update check, telemetry or other traffic that is not the run's. With
-// thinking false, as in the Isolated profile, hosted and evaluation runs never
-// think; the User profile leaves thinking to Claude Code and the chosen
-// effort.
+// fixedEnvironment is set in every profile: no update check, telemetry or
+// other traffic that is not the run's. With thinking false, as in the Isolated
+// profile, hosted and evaluation runs never think; the User profile leaves
+// thinking to Claude Code and the chosen effort.
 func fixedEnvironment(thinking bool) []string {
-	env := []string{"CLAUDE_CODE_MAX_OUTPUT_TOKENS=" + strconv.Itoa(maxOutputTokens)}
+	var env []string
 	if !thinking {
 		env = append(env, "MAX_THINKING_TOKENS=0", "CLAUDE_CODE_DISABLE_THINKING=1")
 	}

@@ -90,8 +90,9 @@ export type TimelinePageProps<S> = {
   readDecision: (id: string, signal: AbortSignal) => Promise<DetailState>;
   readFeature: (id: string, signal: AbortSignal) => Promise<FeatureState>;
   /** The people the person filter offers on a tab: decisions' authors on All
-   *  decisions, features' on Features. Stable while the log is. */
-  readPeople: (tab: LogTab, signal: AbortSignal) => Promise<AuthorCount[]>;
+   *  decisions, features' on Features. Stable while the log is. A host whose
+   *  `filterBar` draws its own filter leaves it out, and nobody is read. */
+  readPeople?: (tab: LogTab, signal: AbortSignal) => Promise<AuthorCount[]>;
   /** Changes when the host's log changed, so details and people are read
    *  again. */
   revision?: number;
@@ -316,6 +317,7 @@ export function TimelinePage<S>({
   // Read again when the log changes (`revision`).
   useEffect(() => {
     void revision;
+    if (!readPeople) return;
     const controller = new AbortController();
     readPeople(tab, controller.signal)
       .then((people) => setAuthors((known) => ({ ...known, [tab]: people })))

@@ -42,8 +42,8 @@ type Fixture struct {
 	Commits    []string
 	// Store points session discovery at the fixture's stores.
 	Store sessions.Options
-	// Flags are Store as the hidden command-line flags of "baum internal sessions" and
-	// "baum internal view".
+	// Flags are Store as the hidden command-line flags of "the local session reader" and
+	// "the reference viewer host".
 	Flags []string
 }
 

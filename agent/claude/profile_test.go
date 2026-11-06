@@ -78,7 +78,7 @@ func TestUserProfileEnvironment(t *testing.T) {
 	if env["HOME"] != home || env["CLAUDE_CONFIG_DIR"] != "/user/claude-config" {
 		t.Errorf("HOME=%q CLAUDE_CONFIG_DIR=%q, want the user's", env["HOME"], env["CLAUDE_CONFIG_DIR"])
 	}
-	if env["DISABLE_AUTOUPDATER"] != "1" || env["CLAUDE_CODE_MAX_OUTPUT_TOKENS"] != "32000" {
+	if env["DISABLE_AUTOUPDATER"] != "1" {
 		t.Errorf("fixed variables missing: %v", env)
 	}
 	// Thinking is left to Claude Code and the chosen effort.
@@ -151,7 +151,7 @@ func TestIsolatedArgumentsAndEnvironmentAreStable(t *testing.T) {
 
 	env := backend.environment("/run/1", &agent.Endpoint{BaseURL: "https://proxy/anthropic", Key: "tok"})
 	wantEnv := []string{"PATH=/usr/local/bin:/usr/bin:/bin", "HOME=/run/1/home", "CLAUDE_CONFIG_DIR=/run/1/home", "ANTHROPIC_API_KEY=tok",
-		"CLAUDE_CODE_MAX_OUTPUT_TOKENS=32000", "MAX_THINKING_TOKENS=0", "CLAUDE_CODE_DISABLE_THINKING=1", "DISABLE_AUTOUPDATER=1", "DISABLE_TELEMETRY=1",
+		"MAX_THINKING_TOKENS=0", "CLAUDE_CODE_DISABLE_THINKING=1", "DISABLE_AUTOUPDATER=1", "DISABLE_TELEMETRY=1",
 		"CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1", "ANTHROPIC_BASE_URL=https://proxy/anthropic"}
 	if !slices.Equal(env, wantEnv) {
 		t.Errorf("environment\n got %q\nwant %q", env, wantEnv)
