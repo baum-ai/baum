@@ -25,7 +25,8 @@ type Bundle struct {
 	Threads    []Thread    `json:"threads"`
 	Sessions   []Session   `json:"sessions"`
 	References []Reference `json:"references"`
-	// Attachments are the stored description images, in description order.
+	// Attachments are captured images, with description images first and native
+	// session images carrying their recorded origins.
 	// The byte fit counts them and never trims them.
 	Attachments  []Attachment     `json:"attachments,omitempty"`
 	ReviewConfig *ReviewConfig    `json:"review_config,omitempty"`
@@ -349,13 +350,15 @@ type Reference struct {
 	Source string `json:"source"`
 }
 
-// Attachment is one stored description image. Its file is in the run
+// Attachment is one captured image. Its file is in the run
 // directory at Path.
 type Attachment struct {
-	ID          string `json:"id"`
-	Path        string `json:"path"`
-	SourceURL   string `json:"source_url"`
-	ContentType string `json:"content_type"`
+	Origins     []ImageOrigin `json:"origins,omitempty"`
+	ID          string        `json:"id"`
+	Path        string        `json:"path"`
+	SourceURL   string        `json:"source_url,omitempty"`
+	SourceURLs  []string      `json:"source_urls,omitempty"`
+	ContentType string        `json:"content_type"`
 	// Alt and Heading, the nearest markdown heading above the image, are
 	// redacted and capped.
 	Alt      string `json:"alt,omitempty"`
@@ -364,6 +367,21 @@ type Attachment struct {
 	Width    int    `json:"width"`
 	Height   int    `json:"height"`
 	SHA256   string `json:"sha256"`
+}
+
+// ImageOrigin identifies a retained image's native session input or tool result.
+// Session is the root card; ChildSession identifies nested agent work.
+type ImageOrigin struct {
+	Session      string     `json:"session"`
+	ChildSession string     `json:"child_session,omitempty"`
+	ChildInput   string     `json:"child_input,omitempty"`
+	Turn         int        `json:"turn"`
+	Input        string     `json:"input,omitempty"`
+	Tool         string     `json:"tool,omitempty"`
+	ToolName     string     `json:"tool_name,omitempty"`
+	Kind         string     `json:"kind"`
+	Position     int        `json:"position"`
+	Timestamp    *time.Time `json:"timestamp,omitempty"`
 }
 
 // ReviewConfig is REVIEW.md at the pull request's base commit, the

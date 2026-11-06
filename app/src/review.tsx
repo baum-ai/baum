@@ -125,6 +125,7 @@ export function Transcript({
   query,
   route = "api/sessions",
   title,
+  focusTurn,
 }: {
   id: string;
   query: string;
@@ -132,6 +133,7 @@ export function Transcript({
   route?: string;
   /** The listed session's title, for a transcript that holds none. */
   title?: string;
+  focusTurn?: number;
 }) {
   const [load, setLoad] = useState<LocalTranscript | null>(null);
   const [error, setError] = useState(false);
@@ -159,7 +161,7 @@ export function Transcript({
     );
   if (!load) return <LoadingStatus block>Reading redacted local transcript…</LoadingStatus>;
   // Drawn as the Sessions page draws a session, not as a chat.
-  return <TranscriptCard transcript={load} title={title} embedded />;
+  return <TranscriptCard transcript={load} title={title} focusTurn={focusTurn} embedded />;
 }
 
 /** The pull request's Sessions group with the sessions running on it now:
@@ -172,14 +174,14 @@ export function withRunning(slot: ReviewListSlot, running: LiveSession[]): Revie
     indicator: running.some((s) => s.state !== "running" && s.waiting_reason)
       ? "attention"
       : "live",
-    renderPane: (selected, actions) =>
+    renderPane: (selected, actions, focusTurn) =>
       selected === null ? (
         <>
           <LiveSessions sessions={running} Link={ViewerLink} />
-          {slot.renderPane(selected, actions)}
+          {slot.renderPane(selected, actions, focusTurn)}
         </>
       ) : (
-        slot.renderPane(selected, actions)
+        slot.renderPane(selected, actions, focusTurn)
       ),
   };
 }
@@ -1211,12 +1213,13 @@ export function LocalReview({
                             ? lists.sessions
                             : { status: "ready", sessions: [] },
                           {
-                            renderSession: (session) =>
+                            renderSession: (session, focusTurn) =>
                               viewedDocument ? (
                                 <Transcript
                                   id={session.id}
                                   query={query}
                                   title={session.title ?? undefined}
+                                  focusTurn={focusTurn}
                                 />
                               ) : (
                                 <Transcript
@@ -1224,6 +1227,7 @@ export function LocalReview({
                                   query={factsSelector}
                                   route="api/facts/sessions"
                                   title={session.title ?? undefined}
+                                  focusTurn={focusTurn}
                                 />
                               ),
                           },

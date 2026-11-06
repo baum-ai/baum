@@ -12,6 +12,31 @@ import (
 
 const testAttachment = "att_0123456789abcdef0123456789abcdef"
 
+func TestSessionImagesRequireTheirOwnSourceAndKeepProvenance(t *testing.T) {
+	b := imagesBundle()
+	b.Attachments[0].SourceURL = ""
+	b.Attachments[0].Origins = []bundlepkg.ImageOrigin{{Session: "native-session", Turn: 3, Input: "prompt", Kind: "human_input", Position: 1}}
+	block := imagesBlock(testAttachment)
+	if _, findings := completeImages(t, imagesAuthored(t, block, nil), b); !strings.Contains(findings, "requires its attachment anchor") {
+		t.Fatalf("session image falsely attributed to PR accepted: %s", findings)
+	}
+	block["source"] = []any{map[string]any{"type": "attachment", "id": testAttachment}}
+	published, findings := completeImages(t, imagesAuthored(t, block, nil), b)
+	if findings != "" {
+		t.Fatal(findings)
+	}
+	if !strings.Contains(string(published), `"kind":"human_input"`) || !strings.Contains(string(published), `"turn":3`) {
+		t.Fatalf("provenance lost: %s", published)
+	}
+	validator, err := sharedValidator()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if findings := validator.ValidateStored(published, nil); len(findings) > 0 {
+		t.Fatal(findings)
+	}
+}
+
 func imagesBundle() *bundlepkg.Bundle {
 	return &bundlepkg.Bundle{Repository: "org/repo", PullRequest: bundlepkg.PullRequest{Number: 11, State: "open", HeadSHA: "aaaaaaa", BaseSHA: "bbbbbbb", MergeBaseSHA: "bbbbbbb", Body: "![Before](https://github.com/user-attachments/assets/1)"}, Sources: bundlepkg.Sources{"diff": true}, Diff: []bundlepkg.Hunk{{ID: testHunk, Path: "main.go", Role: bundlepkg.RoleCode, Change: "added"}},
 		Attachments: []bundlepkg.Attachment{{ID: testAttachment, Path: "attachments/" + testAttachment + ".png", SourceURL: "https://github.com/user-attachments/assets/1", ContentType: "image/png", Alt: "Before", Heading: "Screenshots", Position: 1, Width: 640, Height: 480, SHA256: strings.Repeat("a", 64)}}}

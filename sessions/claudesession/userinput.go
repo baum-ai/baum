@@ -136,6 +136,8 @@ func classifyInputWith(line claudetranscript.Line, text string, profile tracepro
 		return session.KindSlashCommand
 	case stripped == "" && strings.Contains(text, interruptMarker):
 		return session.KindInterrupt
+	case profile == traceprocessing.Local && stripped == "" && ordinaryImagePrompt(line):
+		return session.KindPrompt
 	case stripped == "":
 		return session.KindOther
 	case injected(line, text):
@@ -143,6 +145,31 @@ func classifyInputWith(line claudetranscript.Line, text string, profile tracepro
 	default:
 		return session.KindPrompt
 	}
+}
+
+// An image-only ask has no text to classify. Require the same ordinary user
+// envelope as a typed ask, excluding harness records and tool results.
+func ordinaryImagePrompt(line claudetranscript.Line) bool {
+	humanOrigin := len(line.Origin) == 0 || strings.TrimSpace(string(line.Origin)) == "null" || originKind(line.Origin) == "human"
+	if line.IsMeta || injected(line, "") || !humanOrigin ||
+		(line.PromptSource != "" && line.PromptSource != "typed") || line.Message == nil {
+		return false
+	}
+	image := false
+	for _, block := range line.Message.Blocks() {
+		switch block.Type {
+		case "image":
+			image = true
+		case "text":
+			text := strings.TrimSpace(block.Text)
+			if strings.HasPrefix(text, "<task-notification") || strings.HasPrefix(text, "<agent") || strings.HasPrefix(text, "<teammate-message") {
+				return false
+			}
+		default:
+			return false
+		}
+	}
+	return image
 }
 
 // injected reports whether the harness wrote this text rather than a person.

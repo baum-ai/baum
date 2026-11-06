@@ -2114,7 +2114,12 @@ A desktop generation job uses `internal/generate` to:
 4. reads the pull request's rendered body with the user's token, which carries
    image URLs GitHub has already signed, and downloads the description images
    from them without credentials; `bundle` caches nothing, and writes the
-   images only to the attachments archive `generate` reads;
+   images only to the attachments archive `generate` reads. After session
+   linkage and count caps, native Claude Code and Codex transcripts also supply
+   retained inline pasted and tool-result images through `sessions/sessionimages`.
+   Only readable linked roots and reachable subagents contribute; Entire
+   checkpoints and baum generation sessions supply no images. Native image
+   discovery follows no image paths or URLs from transcript text;
 5. loads the previous local version, if any, and builds the bundle, with the
    previous version's hunk anchors refitted to the diff
    (`review.FitPreviousHunkAnchors`, as the hosted builder does);
@@ -2374,8 +2379,9 @@ pull request's objects is reported, not fetched from on demand.
 `internal/assemble` follows the shared assembler's order behind small source
 interfaces (`GitHub`, `Git`, `Sessions`, `ImageFetcher`): description images,
 the pull request header, checks and conversation, diff index, commit changes,
-sessions, references, attachments, `REVIEW.md` at the base commit, checkout
-export, then caps, redaction, per-hunk line limits, byte trimming and digest.
+sessions, caps, native session images, references, attachments, `REVIEW.md` at
+the base commit, checkout export, then redaction, per-hunk line limits, byte
+trimming and digest.
 Sessions follow comparison because they need its merge base. The linker and
 `bundle.KeepKnownCommandTargets` check command targets against the pull
 request's diff paths, independent of the working tree. A failed session source
@@ -2387,6 +2393,17 @@ review; optional writers receive bounded checkout and attachment archives. The
 checkout is exported even without a writer because omitted files make their
 hunks textless. Bundle JSON has no timestamp of its own: the same inputs
 produce the same bytes and SHA-256 digest.
+
+Native images retain human-input or tool-result origins, their root prompt,
+optional child input and tool ID. The host deduplicates content across both
+image sources, retaining all origins and additional description URLs. The
+20-image/10-MiB-per-image defaults are shared; description images come first.
+Session images are content-sniffed and limited to 40 million pixels. Origins
+of sessions removed during fitting are pruned; an image with no remaining
+source is omitted before the archive is written. Session-only images use
+attachment-ID source anchors, never a fabricated PR-body source. Saved versions
+keep their own immutable copies and provenance through the existing store and
+authenticated attachment route.
 
 `internal/refresh` fetches current GitHub metadata with checks pinned to the
 saved head, re-links local sessions against the saved merge-base/head range
