@@ -83,6 +83,9 @@ type Session struct {
 	// Notes are the mapper's remarks about the tree: a subagent nothing
 	// spawned, a rollout that could not be read.
 	Notes []string
+	// CreatedCommits is independent, durable Git-hook evidence supplied by
+	// the local resolver. It never changes the mapped transcript graph.
+	CreatedCommits []string
 }
 
 // Root is the session's top-level session row, or nil for an empty graph.

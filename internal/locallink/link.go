@@ -263,7 +263,12 @@ func loadSessions(ctx context.Context, dir string, opts sessions.Options, commit
 		}
 	}
 	associations, extra := checkpointLinks(ctx, dir, commits, found, remote, warn)
-	found, associations = withoutGenerationRuns(append(found, extra...), associations)
+	found = append(found, extra...)
+	found, err = addObservedCommits(ctx, dir, found, commits)
+	if err != nil {
+		return nil, nil, fmt.Errorf("reading observed commit creation: %w", err)
+	}
+	found, associations = withoutGenerationRuns(found, associations)
 	return found, associations, nil
 }
 
@@ -366,7 +371,7 @@ func linkSessions(ctx context.Context, found []sessions.Session, commits []gitlo
 		if err := ctx.Err(); err != nil {
 			return nil, nil, nil, err
 		}
-		commitEdges, err := commitEdges(enrichedOf(c), candidates, cfg)
+		commitEdges, err := commitEdges(enrichedOf(c), preferObservedCreation(c.OID, candidates, latest), cfg)
 		if err != nil {
 			return nil, nil, nil, fmt.Errorf("matching commit %s: %w", c.OID, err)
 		}

@@ -13,6 +13,7 @@ configuration is still read from `config.toml`.
 | `repositories`, `clones`, `picked`, `aliases`, `preferences` | `repos`: picked repositories, clones, settings and global preferences |
 | `groups`, `versions` | `reviewgroups`: group definitions and combined review versions |
 | `capture_session`, `decision`, `decision_file`, `capture_attempt`, feature/PR/link/search tables | `decisionlog`: decisions, coverage, call ledger and feature history |
+| `attribution/commits/<repository>/<sha>` | `commitattribution`: permanent session-owned post-commit and pre-push observations, with event provenance |
 | `state/jobs` | `jobs`: queue/history, progress, accounting and fix outcomes |
 | `state/automatic` | `automatic`: observed heads, pending triggers, retries and notices |
 | `state/inboxes` | `inboxes`: saved filters and their revision |

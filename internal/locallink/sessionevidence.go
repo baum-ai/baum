@@ -246,6 +246,9 @@ func withoutGenerationRuns(found []sessions.Session, associations map[string][]s
 func sessionEvidence(s sessions.Session, confidence float64, roots []string, knownPath func(string) bool, maxPrompts, maxCommandEvents int) (bundle.Session, bool) {
 	root := s.Root()
 	if root == nil {
+		if len(s.CreatedCommits) > 0 {
+			return bundle.Session{RootSessionID: s.ID, Vendor: s.Vendor, Confidence: confidence}, true
+		}
 		return bundle.Session{}, false
 	}
 	graph := s.Graph

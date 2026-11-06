@@ -626,3 +626,29 @@ func TestCorrelateHandlesAnEmptyGraph(t *testing.T) {
 		t.Fatalf("Correlate(empty) = %+v", got)
 	}
 }
+
+func TestCorrelateQuietCommitFollowedByLogOnNextLine(t *testing.T) {
+	command := "git commit -q -F - <<'EOF'\nA change\nEOF\ngit log --format='%h %s%n%(trailers)' -1"
+	input, _ := json.Marshal(map[string]string{"command": command})
+	for _, tc := range []struct {
+		name   string
+		status session.ToolStatus
+		output string
+		want   int
+	}{
+		{"created", session.StatusOK, "1ea21269f A change\nEntire-Checkpoint: checkpoint", 1},
+		{"failed tool", session.StatusError, "1ea21269f An old commit", 0},
+		{"failed commit", session.StatusOK, "nothing to commit, working tree clean\n1ea21269f An old commit", 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tree := newTree("/repo", "").exec("commit", input, tc.status, tc.output)
+			refs := Correlate(tree.build(), "claude_code").CommitRefs
+			if len(refs) != tc.want {
+				t.Fatalf("refs: %+v", refs)
+			}
+			if tc.want > 0 && (refs[0].SHA != "1ea21269f" || refs[0].Role != RoleCreated) {
+				t.Fatalf("creation: %+v", refs)
+			}
+		})
+	}
+}

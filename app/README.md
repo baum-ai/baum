@@ -1976,6 +1976,12 @@ such commit or push shows its directory's PR.
 
 A session retains up to 32 timestamped Git work observations across branch
 changes; these are context associations, not asserted code contributions.
+The daemon separately retains session-owned post-commit and pre-push hook
+observations in the application database, beyond live-session expiry. Reviews,
+bundles and feature attribution use post-commit observations as creation
+links, even when transcript parsing misses the commit. Pushes alone remain
+context. Existing saved hook records are backfilled on startup; failed writes
+are retried without discarding the observations.
 
 ## Your review
 

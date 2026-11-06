@@ -30,6 +30,7 @@ import (
 	"github.com/baum-ai/baum/internal/background"
 	"github.com/baum-ai/baum/internal/chat"
 	"github.com/baum-ai/baum/internal/clonefind"
+	"github.com/baum-ai/baum/internal/commitattribution"
 	"github.com/baum-ai/baum/internal/config"
 	"github.com/baum-ai/baum/internal/daemon"
 	"github.com/baum-ai/baum/internal/decisionlog"
@@ -835,10 +836,11 @@ func (h hookEvents) liveSessions(paths daemon.Paths, registry *repos.Registry, d
 		Linker: &livesessions.Resolver{Registry: registry, Discovery: discover},
 		// Ended sessions are kept for a day, longer than the record may reach,
 		// and a Claude Code session waiting for its user while its process runs.
-		StateDir: hookevents.RecordDir(paths),
-		Alive:    liveAlive(),
-		Notify:   func() { _ = server.Publish("live", struct{}{}) },
-		Log:      log,
+		StateDir:     hookevents.RecordDir(paths),
+		Attributions: &commitattribution.Store{},
+		Alive:        liveAlive(),
+		Notify:       func() { _ = server.Publish("live", struct{}{}) },
+		Log:          log,
 	}
 }
 

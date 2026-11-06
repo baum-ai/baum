@@ -4288,11 +4288,20 @@ replace it.
   only a session with no such work takes its directory's pull request. Each
   later lookup checks the cache again,
   so a pull request opened after the push is found within 30 seconds and one
-  closed falls back to an older one. At most 16 commits and pushes are kept
+  closed falls back to an older one. At most 16 durably saved commits and pushes are kept
   per session; the record's within a day are replayed on a rebuild, and the
   state file keeps those looked up (repository, branch, commit, pull request
   and event id, no directory), so a restart after the record rotated keeps
-  them.
+  them. Independently, `commitattribution` retains all resolved session-owned
+  post-commit and pre-push observations in the application database, with the
+  repository, exact SHA, agent, session, kind, event id and observation time.
+  They have no live-session TTL. Pending writes are retried and retained in
+  the recovery file, including after the live session expires; unsaved work
+  is not truncated to the live history limit. Startup backfills existing saved
+  hook work before filtering expired sessions. The shared local resolver reads
+  post-commit observations as commit-creation evidence (`commit_ref`) for
+  reviews, bundles and feature attribution. Push and checkout associations
+  alone never establish contribution; missing transcripts remain missing.
 - **API.** `GET /api/live-sessions` (a `LocalAPI.Live` provider, behind the
   same auth as every application route; a daemon with no record answers
   `{"available":false,"code":"live_sessions_unavailable"}`) answers

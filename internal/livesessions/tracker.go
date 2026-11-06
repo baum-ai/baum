@@ -36,6 +36,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/baum-ai/baum/internal/commitattribution"
 	"github.com/baum-ai/baum/internal/hookevents"
 )
 
@@ -238,6 +239,11 @@ type Tracker struct {
 	// notification message text. An open one silent for DropAfter is restored
 	// only while Alive says its agent runs.
 	StateDir string
+	// Attributions retains session-owned commits and pushes independently of
+	// live-session expiry. Nil disables durable attribution.
+	Attributions        *commitattribution.Store
+	pendingAttributions []commitattribution.Observation
+	attributionMu       sync.Mutex
 	// Alive, when set, reports whether a session's agent still runs: true
 	// only for a process it confirms is the session's. A session silent for
 	// DropAfter stays listed while it does, as one waiting for its user may be
@@ -673,6 +679,7 @@ func (t *Tracker) Reconcile(ctx context.Context) bool {
 	}
 	announcements := t.takeAnnouncementsLocked()
 	t.mu.Unlock()
+	t.persistAttributions(ctx)
 	t.announce(announcements)
 	return changed
 }
@@ -921,6 +928,7 @@ func (t *Tracker) ResolvePending(ctx context.Context) bool {
 		announcements = append(announcements, t.takeAnnouncementsLocked()...)
 		t.mu.Unlock()
 	}
+	t.persistAttributions(ctx)
 	t.announce(announcements)
 	return changed
 }
@@ -1263,15 +1271,17 @@ func (t *Tracker) Terminal(agent, id string) (*hookevents.Terminal, bool) {
 // which an older daemon ignores; Work the commits and pushes looked up of
 // each, keyed by agent and id (savedKey).
 type persisted struct {
-	Sessions []Session              `json:"sessions"`
-	Open     []Session              `json:"open,omitempty"`
-	Work     map[string][]savedWork `json:"work,omitempty"`
+	Sessions            []Session                       `json:"sessions"`
+	Open                []Session                       `json:"open,omitempty"`
+	Work                map[string][]savedWork          `json:"work,omitempty"`
+	PendingAttributions []commitattribution.Observation `json:"pending_attributions,omitempty"`
 }
 
 // persist writes live and ended observations to StateDir when they changed
 // since the last write, so a restart keeps them even once the record has
 // rotated past them. A failure is logged and retried at the next sweep.
 func (t *Tracker) persist() {
+	t.persistAttributions(context.Background())
 	if t.StateDir == "" {
 		return
 	}
@@ -1295,6 +1305,7 @@ func (t *Tracker) persist() {
 			work[savedKey(k)] = saved
 		}
 	}
+	pending := slices.Clone(t.pendingAttributions)
 	t.mu.Unlock()
 	slices.SortFunc(ended, func(a, b Session) int {
 		return cmp.Or(a.EndedAt.Compare(b.EndedAt), cmp.Compare(a.Agent, b.Agent), cmp.Compare(a.ID, b.ID))
@@ -1302,7 +1313,7 @@ func (t *Tracker) persist() {
 	slices.SortFunc(open, func(a, b Session) int {
 		return cmp.Or(a.LastActivityAt.Compare(b.LastActivityAt), cmp.Compare(a.Agent, b.Agent), cmp.Compare(a.ID, b.ID))
 	})
-	data, err := json.Marshal(persisted{Sessions: ended, Open: open, Work: work})
+	data, err := json.Marshal(persisted{Sessions: ended, Open: open, Work: work, PendingAttributions: pending})
 	if err != nil || bytes.Equal(data, t.saved) {
 		return
 	}
@@ -1331,6 +1342,16 @@ func (t *Tracker) loadSavedLocked(now time.Time) {
 	var saved persisted
 	if json.Unmarshal(data, &saved) != nil {
 		return
+	}
+	// Preserve observations even when their live session already expired, and
+	// retain them in the recovery file until the application database accepts them.
+	if t.Attributions != nil {
+		t.pendingAttributions = append(t.pendingAttributions, saved.PendingAttributions...)
+		for _, s := range append(slices.Clone(saved.Sessions), saved.Open...) {
+			for _, w := range saved.Work[savedKey(key{s.Agent, s.ID})] {
+				t.pendingAttributions = append(t.pendingAttributions, workObservation(key{s.Agent, s.ID}, w))
+			}
+		}
 	}
 	for _, s := range saved.Sessions {
 		if s.Repository == "" || s.ID == "" || len(s.ID) > maxID || len(s.Agent) > maxAgent || (!s.EndedAt.IsZero() && now.Sub(s.EndedAt) > EndedFor) || (s.EndedAt.IsZero() && now.Sub(s.LastActivityAt) > DropAfter) {
