@@ -16,6 +16,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -175,6 +176,9 @@ func (b *Backend) Run(ctx context.Context, request agent.Request) (result agent.
 		// them too.
 		event.ID = boundedText(scrub(event.ID, endpoint.Key), 128)
 		event.Tool = boundedText(scrub(event.Tool, endpoint.Key), 64)
+		if event.Kind == "model_usage" && request.Usage != nil {
+			request.Usage(slices.Clone(result.UsageAttempts))
+		}
 		if len(result.Events) == maxEvents {
 			if event.Kind != "finished" {
 				return

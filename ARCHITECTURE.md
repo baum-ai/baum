@@ -732,7 +732,7 @@ retried: a stream that ends early, carries an error event or is silent for
 ten minutes (the SDKs' read timeout; a healthy stream can be silent for
 minutes while the API buffers a tool input or the model thinks without
 displaying it) fails the call. Such a call is billed with unknown usage, so
-the run's cost becomes unknown, and the generate-and-repair loop then retries
+the run's cost becomes a lower bound, and the generate-and-repair loop then retries
 the whole run within `MaxProviderAttempts`, sending the conversation again.
 A tool input or block a `max_tokens` or `refusal` stop leaves incomplete is
 not malformed: the stop reason decides, so a truncated call is answered as not
@@ -3596,11 +3596,16 @@ report refresh health without filesystem paths, credentials or remote bodies.
 Local generation stores additive `agent.Accounting` in immutable version
 metadata and the durable queue. Accounting retains disjoint provider token
 buckets and available per-call model identity, speed, TTL and prompt range.
-Retries and repairs append reports; partial or absent reports stay unknown.
+Retries and repairs append reports; partial or absent reports are marked
+`Unreported`. While a run is in progress, the backend reports its calls' usage
+so far (`agent.Request.Usage`: Claude Code per stream event, Codex per turn,
+the Anthropic API per response), and the queue adds it to the accounting it
+publishes, at most every two seconds.
 Queue progress is saved before SSE publication and snapshots detach mutable
 accounting. Existing version records are never backfilled. Pricing sums
-individually attributable model reports; missing pricing dimensions leave a
-nullable cost and a fixed reason. The local SPA renders both job accounting
+individually attributable model reports and estimates the rest at the lowest
+rates they could have been billed at, with a fixed reason marking the cost a
+lower bound; the cost is null only when nothing can be priced. The local SPA renders both job accounting
 and selected-version provenance without changing the review document schema.
 
 ## Local daemon

@@ -97,8 +97,9 @@ not a failure.
    cost from the reported usage, priced as reviews price theirs
    (`pricing.List.OutcomeCost`): when any part of it is unknown (a run cut short, a speed or 1-hour cache-write
    split not reported, or several calls
-   whose prompt sizes may straddle a long-prompt tier) the cost is unknown,
-   not estimated. It is also settled with how many replies the harness
+   whose prompt sizes may straddle a long-prompt tier) the cost is estimated
+   at the lowest rates the usage could have been billed at; it is unknown only
+   when the call reported no tokens or its model has no rates. It is also settled with how many replies the harness
    rejected against the schema (`rejections`; the last one's reason goes to
    the private log with the attempt's stage, item and id). An attempt still
    pending when the daemon starts is settled as abandoned. A reply stands

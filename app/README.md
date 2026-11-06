@@ -1936,17 +1936,22 @@ the provider reported them. Missing older accounting remains unknown,
 and interrupted providers show reported subtotals rather than exact totals.
 Saved review usage follows the version selected in history. Its cost reads
 "At API prices": what the usage would cost at API prices, not what a
-subscription charges. Unknown costs show a reason; configured model identity
-is distinguished from a provider report. When only the configured model is known,
+subscription charges. A cost is shown whenever any of the usage can be priced:
+usage that is incomplete (a call still running or cut off), or that lacks a
+speed, cache TTL or prompt tier, is priced at the lowest rates it could have
+been billed at and shown as a lower bound ("≥") with a note naming what was
+missing. Only usage with no tokens, or with no model the price list covers,
+leaves the cost unknown, with a reason. Configured model identity is
+distinguished from a provider report: when only the configured model is known,
 its rates are used and the cost is labelled "estimated" with an explanation.
-A running review is priced the same way while the provider's model and speed
-strings are masked: each update carries an estimate at the configured model's
-rates, replaced by the exact cost once masking finishes. A run interrupted by
-a restart keeps no estimate, because it left out the call in flight.
-Each attempt is priced independently
-when its model and pricing inputs are known. A cost with `unpriced_calls` (a
-feature build some of whose calls could not be priced) is a lower bound, shown
-"≥" with a note. Pricing only reports: no budget, cap, confirmation or decision
+A running review is priced as its calls report usage, not only between calls
+(at most every two seconds, as each update is saved): while the provider's
+model and speed strings are masked, each attempt is priced at the configured
+model's rates, or at the model it reported when none is configured, without
+showing that string, and the exact cost replaces the estimate once masking
+finishes. A run interrupted by a restart keeps its last estimate as a lower
+bound. Each attempt is priced independently. A cost with `unpriced_calls` (a
+feature build some of whose calls could not be priced) is also a lower bound. Pricing only reports: no budget, cap, confirmation or decision
 about a run reads it.
 
 GitHub browser coverage uses the real auth manager/controller with mocked

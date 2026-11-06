@@ -442,13 +442,12 @@ func Open(path string, executor Executor, concurrency int, changed func(Job)) (*
 	}
 	for i := range q.jobs {
 		if q.jobs[i].State == "running" {
+			// Its last estimate stays, as a lower bound: it left out
+			// whatever the call in flight used after its last report.
 			if q.jobs[i].Accounting != nil {
 				q.jobs[i].Accounting.Usage.Unreported = true
 				q.jobs[i].CostReason = "usage_incomplete"
 			}
-			// What the run cost before it stopped is not known: its last
-			// estimate left out the call in flight.
-			q.jobs[i].ActualCostUSD = nil
 			q.jobs[i].State = "interrupted"
 			q.jobs[i].Reason = "interrupted"
 			q.jobs[i].Phase = "finished"

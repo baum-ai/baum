@@ -1,20 +1,31 @@
 import { cost, type Accounting, type Usage } from "./api";
 import { formatCount } from "@baum/viewer/components/format";
+/** Why a cost is unknown. Older records may carry reasons no longer given. */
 const reasons: Record<string, string> = {
   metadata_pending_redaction: "Model metadata will appear after its secret masking finishes.",
   actual_model_not_reported:
     "The provider did not report the actual model; only the configured model is known.",
-  estimated_from_configured_model:
-    "Estimated using the configured model's API rates because the provider did not report the actual model.",
   usage_not_reported: "Provider usage was not reported.",
   usage_incomplete: "Provider usage is incomplete; shown counts are reported subtotals.",
   model_not_reported: "The provider did not report a model.",
   speed_not_reported: "The provider did not report its pricing speed.",
   cache_ttl_not_reported: "The provider did not report cache creation TTL.",
-  model_or_prompt_rates_unknown: "Model rates or prompt pricing tiers could not be established.",
+  model_or_prompt_rates_unknown: "The price list has no rates for the models used.",
   billed_by_cursor_subscription: "Billed by your Cursor subscription; baum can't price it.",
-  unpriced_calls: "Some calls could not be priced; the cost is at least the amount shown.",
 };
+/** What a cost shown as a lower bound ("≥") leaves out or prices low. */
+const lowerBound: Record<string, string> = {
+  usage_incomplete:
+    "Some usage is not reported yet or was cut off; the cost covers what was reported.",
+  model_or_prompt_rates_unknown:
+    "Some usage has no exact rate (a model, speed or prompt tier the price list does not cover) and is priced at the lowest rate or left out.",
+  speed_not_reported: "The provider did not report its pricing speed, so standard rates are used.",
+  cache_ttl_not_reported:
+    "The provider did not report the cache TTL, so cache writes are priced at the 5-minute rate.",
+  unpriced_calls: "Some calls could not be priced.",
+};
+const configured =
+  "Estimated using the configured model's API rates because the provider did not report the actual model.";
 function promptRange(usage: Usage) {
   return usage.MinPrompt == null || usage.MaxPrompt == null
     ? null
@@ -45,7 +56,7 @@ function Figures({ accounting, charged, amount, reason }: UsageProps) {
         value={
           amount == null
             ? "Unknown"
-            : `${reason === "unpriced_calls" ? "≥ " : ""}${cost(amount)}${reason === "estimated_from_configured_model" ? " (estimated)" : ""}`
+            : `${lowerBound[reason ?? ""] ? "≥ " : ""}${cost(amount)}${reason === "estimated_from_configured_model" ? " (estimated)" : ""}`
         }
       />
       <Stat label="Budget tokens" value={formatCount(charged)} />
@@ -72,12 +83,15 @@ function Buckets({ usage }: { usage: Usage }) {
  *  cache reads count, what else the provider reported, and each attempt. */
 function Notes({ accounting, amount, reason }: UsageProps) {
   const usage = accounting?.usage;
+  const bound = lowerBound[reason ?? ""];
   const note =
     amount == null
       ? (reasons[reason ?? ""] ?? "Exact pricing is unavailable for this record.")
-      : reason === "unpriced_calls" || reason === "estimated_from_configured_model"
-        ? reasons[reason]
-        : null;
+      : bound
+        ? `${bound} The cost is at least the amount shown.`
+        : reason === "estimated_from_configured_model"
+          ? configured
+          : null;
   // Only what the provider reported; unknown extras are left out rather than listed.
   const extras = usage
     ? [

@@ -75,18 +75,69 @@ func TestRefreshedListSurvivesRestartOnlyWhileItsSignatureVerifies(t *testing.T)
 		t.Fatal("missing stored list is not an error", err)
 	}
 }
-func TestOutcomeCostKeepsMissingAndAmbiguousUsageUnknown(t *testing.T) {
+func TestOutcomeCostEstimatesIncompleteUsage(t *testing.T) {
 	list := Embedded()
-	for _, usage := range []agent.Usage{{}, {Input: 10, Unreported: true}, {Input: 10}, {Input: 10, CacheCreate: 5, Speed: new("standard")}} {
-		if list.OutcomeCost("claude-sonnet-4-5", agent.Outcome{Usage: usage}) != nil {
-			t.Fatal("invented cost", usage)
-		}
+	if list.OutcomeCost("claude-sonnet-4-5", agent.Outcome{}) != nil || list.OutcomeCost("no-such-model", agent.Outcome{Usage: agent.Usage{Input: 10}}) != nil {
+		t.Fatal("invented a cost for no tokens or an unpriced model")
 	}
 	usage := agent.Usage{Input: 100, Output: 20, CacheRead: 50, Speed: new("standard"), MinPrompt: new(int64(150)), MaxPrompt: new(int64(150))}
 	cost := list.OutcomeCost("claude-sonnet-4-5", agent.Outcome{Usage: usage})
 	want, ok := list.Cost(list.Normalize("claude-sonnet-4-5", ""), Usage{Vendor: VendorClaudeCode, InputTokens: 100, OutputTokens: 20, CacheReadTokens: 50, Speed: SpeedStandard, PromptRangeKnown: true, MinPromptTokens: 150, MaxPromptTokens: 150})
 	if !ok || cost == nil || *cost != want {
 		t.Fatal("disjoint usage not preserved", cost, want)
+	}
+	// Missing speed, TTL and prompt range take the lowest rates.
+	usage = agent.Usage{Input: 100, Output: 20, CacheRead: 50, Unreported: true}
+	if cost := list.OutcomeCost("claude-sonnet-4-5", agent.Outcome{Usage: usage}); cost == nil || *cost != want {
+		t.Fatal("incomplete usage not estimated at the base rates", cost, want)
+	}
+}
+
+// The usage of a Claude Code run that hit the output cap four times and was
+// then cut off by its wall clock: complete calls over the long-prompt
+// threshold, the zero-token <synthetic> message Claude Code writes for the
+// API error, and a call cut off mid-stream.
+func TestAccountingEstimatesACutOffRun(t *testing.T) {
+	list := Embedded()
+	complete := func(cacheRead, cacheWrite int64) agent.UsageAttempt {
+		prompt := 2 + cacheRead + cacheWrite
+		return agent.UsageAttempt{ModelSource: "provider_reported", Model: "claude-haiku-5-5", Calls: 1, Usage: agent.Usage{
+			Input: 2, Output: 32000, CacheRead: cacheRead, CacheCreate: cacheWrite, CacheCreate1h: new(cacheWrite), Speed: new("standard"), MinPrompt: new(prompt), MaxPrompt: new(prompt)}}
+	}
+	a := &agent.Accounting{Attempts: []agent.UsageAttempt{complete(0, 111639), complete(17269, 94432)}}
+	exact, reason := list.AccountingCost(a)
+	if exact == nil || reason != "" {
+		t.Fatal("complete calls not priced exactly", exact, reason)
+	}
+	a.Attempts = append(a.Attempts, agent.UsageAttempt{ModelSource: "provider_reported", Model: "<synthetic>", Calls: 1, Usage: agent.Usage{CacheCreate1h: new(int64(0))}})
+	if cost, reason := list.AccountingCost(a); cost == nil || *cost != *exact || reason != "" {
+		t.Fatal("a zero-token synthetic message changed the cost", cost, reason)
+	}
+	cutOff := agent.UsageAttempt{ModelSource: "provider_reported", Model: "claude-haiku-5-5", Calls: 1, Failed: true, Usage: agent.Usage{
+		Input: 2, Output: 2, CacheRead: 111639, CacheCreate1h: new(int64(0)), Speed: new("standard"), MinPrompt: new(int64(111641)), MaxPrompt: new(int64(111641)), Unreported: true}}
+	a.Attempts = append(a.Attempts, cutOff)
+	a.Usage.Unreported = true
+	cost, reason := list.AccountingCost(a)
+	if cost == nil || *cost <= *exact || reason != ReasonUsageIncomplete {
+		t.Fatal("a cut-off call should leave a lower bound including what it reported", cost, *exact, reason)
+	}
+}
+
+// A run whose calls straddle a long-prompt threshold is priced at the base
+// tier, the lower of the two.
+func TestAccountingEstimatesAnAmbiguousPromptTier(t *testing.T) {
+	list := Embedded()
+	usage := agent.Usage{Input: 1000, Output: 100, Speed: new("standard"), MinPrompt: new(int64(1000)), MaxPrompt: new(int64(200000))}
+	cost, reason := list.AccountingCost(&agent.Accounting{Usage: usage, Attempts: []agent.UsageAttempt{{Model: "claude-haiku-5-5", Usage: usage}}})
+	base, _ := list.Cost(list.Normalize("claude-haiku-5-5", ""), Usage{Vendor: VendorClaudeCode, InputTokens: 1000, OutputTokens: 100, Speed: SpeedStandard, PromptRangeKnown: true})
+	if cost == nil || *cost != base || reason != ReasonRatesUnknown {
+		t.Fatal(cost, base, reason)
+	}
+	if cost, reason := list.AccountingCost(&agent.Accounting{Attempts: []agent.UsageAttempt{{Model: "no-such-model", Usage: usage}}}); cost != nil || reason != ReasonRatesUnknown {
+		t.Fatal("an unpriced model was priced", cost, reason)
+	}
+	if cost, reason := list.AccountingCost(&agent.Accounting{Attempts: []agent.UsageAttempt{{Model: "claude-haiku-5-5"}}}); cost != nil || reason != ReasonUsageNotReported {
+		t.Fatal("no tokens were priced", cost, reason)
 	}
 }
 
@@ -112,12 +163,14 @@ func TestAccountingPricesModelsIndependentlyAndKeepsUnknownReason(t *testing.T) 
 	if cost, reason = list.AccountingCost(a); cost == nil || *cost != expected || reason != "estimated_from_configured_model" {
 		t.Fatal("configured model should produce a labelled estimate", cost, reason)
 	}
+	// A missing speed is priced at standard, so the estimate is unchanged
+	// but labelled; incomplete usage outranks it.
 	a.Attempts[1].Usage.Speed = nil
-	if cost, reason = list.AccountingCost(a); cost != nil || reason != "speed_not_reported" {
+	if cost, reason = list.AccountingCost(a); cost == nil || *cost != expected || reason != ReasonSpeedNotReported {
 		t.Fatal(cost, reason)
 	}
 	a.Usage.Unreported = true
-	if cost, reason = list.AccountingCost(a); cost != nil || reason != "usage_incomplete" {
+	if cost, reason = list.AccountingCost(a); cost == nil || *cost != expected || reason != ReasonUsageIncomplete {
 		t.Fatal(cost, reason)
 	}
 }
