@@ -126,9 +126,9 @@ func frozenEvidenceKey(req EvidenceRequest, dir string) string {
 		clone = dir
 	}
 	h := sha256.New()
-	fmt.Fprintf(h, "%s\x00%d\x00%d\x00%#v\x00", clone, req.MaxPromptsPerSession, req.MaxCommandEventsPerSession, req.Sessions)
+	_, _ = fmt.Fprintf(h, "%s\x00%d\x00%d\x00%#v\x00", clone, req.MaxPromptsPerSession, req.MaxCommandEventsPerSession, req.Sessions)
 	for _, c := range req.Commits {
-		fmt.Fprintf(h, "%#v\x01", c)
+		_, _ = fmt.Fprintf(h, "%#v\x01", c)
 	}
 	return hex.EncodeToString(h.Sum(nil))
 }
