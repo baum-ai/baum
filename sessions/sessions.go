@@ -9,9 +9,12 @@ package sessions
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io/fs"
+	"os"
 	"slices"
 	"strings"
 	"time"
@@ -23,6 +26,7 @@ import (
 	"github.com/baum-ai/baum/sessions/codexsession"
 	"github.com/baum-ai/baum/sessions/codextranscript"
 	"github.com/baum-ai/baum/sessions/collector"
+	"github.com/baum-ai/baum/sessions/collector/entire"
 	"github.com/baum-ai/baum/sessions/collector/model"
 	"github.com/baum-ai/baum/sessions/cursorsession"
 	"github.com/baum-ai/baum/sessions/cursortranscript"
@@ -132,14 +136,37 @@ type Report struct {
 // Entire session is returned once, from the newest checkpoint that recorded
 // it, and not at all when the agent's own store holds it.
 func Load(ctx context.Context, dir string, opts Options) ([]Session, Report, error) {
-	workstats.Inc("sessions.load.calls")
-	var report Report
+	d, err := Discover(ctx, dir, opts)
+	if err != nil {
+		return nil, Report{}, err
+	}
+	return d.Load(ctx)
+}
+
+// Discovery is what Load finds before it reads any session: the clone's
+// worktrees, the session files recorded in them and the checkpoint store's
+// branch commit and refs. Finding them reads directories,
+// file metadata and git refs, never a transcript, so a caller can tell from
+// Fingerprint whether anything Load reads changed before paying for it.
+type Discovery struct {
+	dir       string
+	opts      Options
+	worktrees []string
+	wanted    []collector.Session
+	skipped   []model.SkippedFile
+	// entire describes the checkpoint store, whether or not Entire is read;
+	// empty when the clone has none.
+	entire string
+}
+
+// Discover finds what Load would read for the repository containing dir.
+func Discover(ctx context.Context, dir string, opts Options) (*Discovery, error) {
+	d := &Discovery{dir: dir, opts: opts}
 	// A clone whose worktrees git cannot list (git older than 2.36) is read
 	// as the one checkout containing dir.
-	var worktrees []string
 	if listed, err := gitlocal.Worktrees(ctx, dir); err == nil {
 		for _, worktree := range listed {
-			worktrees = append(worktrees, worktree.Path)
+			d.worktrees = append(d.worktrees, worktree.Path)
 		}
 	}
 	found, scan, err := collector.FindSessions(dir, collector.FindOptions{
@@ -147,20 +174,84 @@ func Load(ctx context.Context, dir string, opts Options) ([]Session, Report, err
 		CodexSessionsDir:  opts.CodexSessionsDir,
 		CursorStorePaths:  opts.CursorStorePaths,
 		PreviousPaths:     opts.PreviousPaths,
-		Worktrees:         worktrees,
+		Worktrees:         d.worktrees,
 		Since:             opts.Since,
 	})
 	if err != nil {
-		return nil, report, err
+		return nil, err
 	}
-	report.Skipped = scan.Skipped
-
-	wanted := make([]collector.Session, 0, len(found))
+	d.skipped = scan.Skipped
 	for _, s := range found {
 		if opts.wants(s.Source) && (opts.Since.IsZero() || !s.ModifiedAt.Before(opts.Since)) {
-			wanted = append(wanted, s)
+			d.wanted = append(d.wanted, s)
 		}
 	}
+	// The store is described even when Entire is not read: commit checkpoint
+	// fallback reads the checkpoints commits name whatever the sources.
+	if root, err := collector.RepoRoot(dir); err == nil {
+		d.entire = entireState(ctx, root)
+	}
+	return d, nil
+}
+
+// entireState describes the clone's Entire checkpoint stores: the branch
+// commit and every checkpoint ref, or why they could not be listed, so a
+// different listing gives a different description.
+func entireState(ctx context.Context, root string) string {
+	store, ok, err := entire.Resolve(ctx, root)
+	switch {
+	case err != nil:
+		return "error: " + err.Error()
+	case !ok:
+		return ""
+	}
+	ids := make([]string, 0, len(store.Refs))
+	for id := range store.Refs {
+		ids = append(ids, id)
+	}
+	slices.Sort(ids)
+	var b strings.Builder
+	b.WriteString(store.Branch)
+	for _, id := range ids {
+		fmt.Fprintf(&b, "\x00%s=%s", id, store.Refs[id])
+	}
+	return b.String()
+}
+
+// Worktrees are the clone's working trees git listed, empty when it could
+// not list them.
+func (d *Discovery) Worktrees() []string { return slices.Clone(d.worktrees) }
+
+// Fingerprint describes everything Load would read: the worktrees, each
+// session file's path, size and modification time (or the hash of
+// generated content), and the Entire store's branch commit and refs. Two
+// discoveries with the same fingerprint load the same sessions. ok is false
+// when a file cannot be described, and nothing should be assumed unchanged.
+func (d *Discovery) Fingerprint() (string, bool) {
+	h := sha256.New()
+	_, _ = fmt.Fprintf(h, "%q\x00%q\x00", d.worktrees, d.entire)
+	for _, s := range d.wanted {
+		key, _, ok := mapKey(s)
+		if !ok {
+			return "", false
+		}
+		_, _ = fmt.Fprintf(h, "%s\x00%s\x00%s\x00%s\x00%s\x00%d\x00%q\x00%s\x01", s.Source, s.SessionID, s.Path, s.RepoRoot, s.WorktreeRoot, s.ModifiedAt.UnixNano(), s.Warnings, key)
+		// A Codex thread's name comes from the index beside its rollouts.
+		if index := codextranscript.IndexPath(s.Path); s.Source == vendors.Codex && index != "" {
+			if info, err := os.Stat(index); err == nil {
+				_, _ = fmt.Fprintf(h, "%s\x00%d\x00%d\x01", index, info.Size(), info.ModTime().UnixNano())
+			}
+		}
+	}
+	return hex.EncodeToString(h.Sum(nil)), true
+}
+
+// Load maps the discovered sessions and reads the Entire checkpoints, as
+// Load does.
+func (d *Discovery) Load(ctx context.Context) ([]Session, Report, error) {
+	workstats.Inc("sessions.load.calls")
+	opts, wanted := d.opts, d.wanted
+	report := Report{Skipped: d.skipped}
 	mapped, err := mapAll(ctx, wanted)
 	if err != nil {
 		return nil, report, err
@@ -181,7 +272,7 @@ func Load(ctx context.Context, dir string, opts Options) ([]Session, Report, err
 	}
 
 	if opts.wants(Entire) {
-		root, err := collector.RepoRoot(dir)
+		root, err := collector.RepoRoot(d.dir)
 		if err != nil {
 			return nil, report, err
 		}

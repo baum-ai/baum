@@ -284,6 +284,16 @@ func (s *Service) recordRead(key string, err error, epoch uint64, head string, o
 // due says whether a saved pull request's evidence should be read now, and
 // whether first (urgent): GitHub reported a change since the last read.
 func (s *Service) due(r read, observation discovery.Observation, observed bool, pr discovery.PullRequest, open bool) (due, urgent bool) {
+	due, urgent, reason := s.dueReason(r, observation, observed, pr, open)
+	if due {
+		workstats.Inc("background.due." + reason)
+	}
+	return due, urgent
+}
+
+// dueReason is due with the rule that decided it, which the work counters
+// record.
+func (s *Service) dueReason(r read, observation discovery.Observation, observed bool, pr discovery.PullRequest, open bool) (due, urgent bool, reason string) {
 	last := maxTime(observation.FetchedAt, r.at)
 	// Unread in this process: what was last observed stands for it.
 	head, wasOpen := r.head, r.open
@@ -292,22 +302,22 @@ func (s *Service) due(r read, observation discovery.Observation, observed bool, 
 	}
 	switch {
 	case last.IsZero():
-		return true, true
+		return true, true, "never_read"
 	case open && pr.UpdatedAt.After(last):
-		return true, true
+		return true, true, "updated"
 	case r.failures > 0:
-		return !s.now().Before(r.at.Add(min(s.interval()*time.Duration(1<<min(r.failures-1, 8)), openReadAge))), false
+		return !s.now().Before(r.at.Add(min(s.interval()*time.Duration(1<<min(r.failures-1, 8)), openReadAge))), false, "retry"
 	case open && observed && pr.HeadSHA != head:
-		return true, true
+		return true, true, "new_head"
 	// It left the open pull requests since it was read open: merged or closed.
 	case !open && observed && observation.State == "OPEN" && wasOpen:
-		return true, true
+		return true, true, "closed"
 	}
 	age := closedReadAge
 	if open {
 		age = openReadAge
 	}
-	return !s.now().Before(last.Add(age)), false
+	return !s.now().Before(last.Add(age)), false, "age"
 }
 
 // Sync is a single serialized scheduling pass, exposed for deterministic tests.
