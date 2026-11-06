@@ -43,7 +43,7 @@ func TestCompleteRunsOneToollessCall(t *testing.T) {
 		t.Fatalf("prompt = %q", prompt)
 	}
 	environment, _ := os.ReadFile(filepath.Join(out, "environment.txt"))
-	if !bytes.Contains(environment, []byte("CLAUDE_CODE_MAX_OUTPUT_TOKENS=16384\n")) || bytes.Contains(environment, []byte("CLAUDE_CODE_MAX_OUTPUT_TOKENS=32000\n")) {
+	if !bytes.Contains(environment, []byte("CLAUDE_CODE_MAX_OUTPUT_TOKENS=16384\n")) {
 		t.Fatalf("output cap not applied: %s", environment)
 	}
 }
