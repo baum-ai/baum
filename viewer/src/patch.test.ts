@@ -70,7 +70,7 @@ describe("indexedHunkFromFilePatch", () => {
 });
 
 describe("indexedHunkFromFilePatch on a local patch", () => {
-  // What `baum internal view` serves for a renamed and edited file: the diff from its
+  // What `the reference viewer host` serves for a renamed and edited file: the diff from its
   // first hunk, with the function-context text after the header.
   const local =
     "@@ -18,6 +18,7 @@ line 17\n line 18\n line 19\n line 20\n+line 20b\n line 21\n line 22\n line 23\n";

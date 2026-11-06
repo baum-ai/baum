@@ -32,7 +32,7 @@ import (
 	"github.com/baum-ai/baum/review"
 )
 
-var ErrNotFound = errors.New("no stored review version; run baum internal generate first")
+var ErrNotFound = errors.New("no stored review version; generate a review in the baum desktop app first")
 var ErrConflict = errors.New("the stored review changed during the operation; retry using the latest version")
 
 // Key isolates pull requests of different GitHub repositories, including hosts.

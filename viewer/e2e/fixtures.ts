@@ -4,7 +4,7 @@ import { type Page, expect, test as base } from "@playwright/test";
 
 import type { ReviewDocument } from "../src/review-document.ts";
 
-/** The synthetic `baum.review/1` example `baum internal view --sample` serves. */
+/** The synthetic `baum.review/1` example `the reference viewer host` serves. */
 const exampleText = readFileSync(
   new URL("../../schema/review-example.json", import.meta.url),
   "utf8",

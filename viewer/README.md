@@ -61,7 +61,7 @@ viewer. Without it the viewer uses baum's bundled type, declared once in
 `src/fonts/fonts.css`: Instrument Sans for text (`--font-text`, with a real
 italic) and Manrope for headings (`--font-heading`, at weight 800), variable
 weight, Latin and Latin Extended, as woff2 with their SIL Open Font Licenses
-(`src/fonts/*-OFL.txt`). The local application, `baum internal view` and the desktop's
+(`src/fonts/*-OFL.txt`). The local application, the reference viewer host and the desktop's
 own screens all use it. The host's bundler resolves the files from
 `viewer.css`, and a browser downloads them only when a page renders in them,
 so a host that sets the variable never fetches them.
@@ -375,7 +375,7 @@ per commit and per file and forgetting a failed read, and
 ### Session transcripts
 
 `SessionCard` (`@baum/viewer/components/session-card`) draws one session, the
-same borderless session container in the hosted app and in `baum internal view`:
+same borderless session container in the hosted app and in the reference viewer host:
 a header with the agent,
 title, date, duration, prompt count and outcome (or linked commits), the
 session's main figures in four responsive groups: tokens with cost when the
@@ -714,7 +714,7 @@ not committed. `pnpm generate:validators` writes the validators to
 `src/precompiled/review-tile-validators.js` with Ajv's standalone code
 generation, and that file is committed. They are precompiled because Ajv
 otherwise compiles with `new Function`, which a page under a strict
-Content-Security-Policy (as `baum internal view` serves) cannot run. No other script
+Content-Security-Policy (as the reference viewer host serves) cannot run. No other script
 rewrites the file, so a unit test fails when it is out of date: run
 `pnpm generate:validators` after changing either schema file, then rebuild the
 standalone app; `just viewer-build` from the module root does both.
@@ -722,7 +722,9 @@ standalone app; `just viewer-build` from the module root does both.
 ## Standalone app
 
 `app/` is a single-page app that renders one review document with
-`ReviewViewer`. It is meant to be served by `baum internal view`, and talks only to the
+`ReviewViewer`. It is a reference integration for `internal/viewserver` and
+viewer tests; the desktop uses the shared components in its local app. The
+standalone CLI launcher is no longer available. It talks only to the
 page's own origin:
 
 - `GET /api/document` returns the `baum.review/1` document.
@@ -857,11 +859,10 @@ manifest's `tile_kinds` and `tile_catalogue`.
 `e2e/` holds Playwright specs that drive the standalone app in Chromium.
 `pnpm test:e2e` builds the app from source into `e2e-dist/` (not the committed
 bundle, so a stale one cannot hide a failure) and starts `e2e/server.ts`, a
-small stand-in for `baum internal view`. It serves the built files with the same
+small stand-in for the reference viewer host. It serves the built files with the same
 security headers as `internal/viewserver` (the content security policy is kept
 equal to its `contentSecurityPolicy`), `GET /api/document` with the schema's
-synthetic example (`../schema/review-example.json`, what `baum internal view --sample`
-shows), a quiet `/api/events`, `/api/sessions` answering that no sessions are
+synthetic example (`../schema/review-example.json`), a quiet `/api/events`, `/api/sessions` answering that no sessions are
 available, and `/api/patch` answering no patch for a path the document cites (404 for any other, as `viewserver` does). Opening the page as `/?csp=off` serves it without the policy, which `untrusted.spec.ts` uses so that sanitization is tested on its own rather than masked by the policy. The suite needs no Go binary
 and no hosted API. A spec changes what one page sees with `page.route`
 (`serveDocument` and `serveSessions` in `e2e/fixtures.ts`), so specs stay

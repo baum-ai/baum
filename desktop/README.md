@@ -204,7 +204,10 @@ guides, Settings' Reviews section says so and Diagnostics reports the `auto`
 check as a problem. The daemon refuses a job whose backend is `cursor-agent` or
 `anthropic`, for example one set in `config.toml`, failing it with a message
 that names the allowed choices; it does not switch backends, and pre-release
-configurations are not migrated. `baum internal generate` keeps every backend.
+configurations are not migrated. The CLI exposes only desktop runtime and
+support commands; reviews run through the daemon. baum's local agent plugins
+never install, configure or run Entire. Independently recorded checkpoints
+remain readable without the Entire executable.
 
 ### Model effort choices
 
@@ -460,7 +463,7 @@ The daemon outlives the app, so the app's presence is a tray icon.
   started and are not mentioned as interrupted). If the daemon will not stop,
   the app shows the error and offers **Quit anyway**, which quits and leaves
   the daemon as it is; Cancel keeps the app open. The daemon's own stop is
-  bounded (see the [daemon README](../internal/daemon/README.md)), so this is
+  bounded (see the [daemon implementation](../internal/daemon/daemon.go)), so this is
   for a daemon that does not answer at all.
 - **Pause automatic reviews** sets the daemon's global automatic switch
   (`PUT /api/automatic {"enabled":false}`), the same switch as the app's

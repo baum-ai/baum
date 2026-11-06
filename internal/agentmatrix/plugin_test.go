@@ -14,7 +14,7 @@ import (
 	"time"
 
 	"github.com/baum-ai/baum/hosted/agenthooks"
-	"github.com/baum-ai/baum/hosted/agentplugins"
+	"github.com/baum-ai/baum/internal/agentplugins"
 )
 
 // checkHookEvents looks in every file of the npm install for each hook event

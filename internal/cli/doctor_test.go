@@ -75,8 +75,7 @@ func TestDoctorJSONShape(t *testing.T) {
 	bin := doctorMachine(t)
 	fakeTool(t, bin, "git", `echo "git version 2.43.0"`)
 	t.Setenv("ANTHROPIC_API_KEY", "sk-ant-PLANTEDclikey000000000000000000000")
-	// claude is configured but not installed, so there is a problem; auto
-	// would use the Anthropic API.
+	// A provider key must not hide the absence of desktop agent CLIs.
 	t.Setenv("BAUM_BACKEND", "claude")
 	stdout, _, err := run(t, "internal", "doctor", "--json", "--offline")
 	if ExitCode(err) != ExitDiagnostics {
@@ -113,8 +112,13 @@ func TestDoctorJSONShape(t *testing.T) {
 	if git := byID["git"]; git.Status != doctor.StatusOK || git.Version != "2.43.0" || git.Path != filepath.Join(bin, "git") {
 		t.Errorf("git = %+v", git)
 	}
-	if auto := byID["backend-auto"]; auto.Status != doctor.StatusOK || !strings.Contains(auto.Detail, "picks anthropic") {
+	if auto := byID["backend-auto"]; auto.Status != doctor.StatusProblem || !strings.Contains(auto.Detail, "Neither Claude Code nor Codex is available") {
 		t.Errorf("backend-auto = %+v", auto)
+	}
+	for _, id := range []string{"cursor-agent", "anthropic-api-key"} {
+		if _, present := byID[id]; present {
+			t.Errorf("desktop diagnostics offered %s", id)
+		}
 	}
 	if configured := byID["backend-configured"]; configured.Status != doctor.StatusProblem || configured.Fix == "" {
 		t.Errorf("backend-configured = %+v", configured)

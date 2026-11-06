@@ -13,13 +13,10 @@ GitHub (with the user's own token) or the model provider the user configures.
 The one other contact is the public, signed price list described under
 "Running locally".
 
-The same binary also carries the hosted service's client commands (`login`,
-`logout`, `whoami`, `setup`, `upload` and the `hooks` dispatchers), listed
-under "Hosted service" in `--help`. They are opt-in: nothing reaches a baum
-server before `baum login`, and the hook commands committed to repositories
-run baum only for a logged-in user, in a clone set up for the hosted service,
-or, for a hosted install, in a repository onboarded to it; for everyone else
-they fall through to Entire. See "Hosted service client" below.
+The binary provides only the desktop daemon, setup helpers, local agent
+plugins and support commands. It has no hosted authentication, upload or
+repository setup commands, and never manages or executes Entire. Teams may
+run Entire independently; baum continues to parse their checkpoint objects.
 
 This file describes the package boundaries and the extension points a host
 implements. The packages are being moved here in stages: so far `bundle` holds
@@ -66,7 +63,7 @@ bundle types to resolve anchors and carry history; `bundle` never imports
 | `bundle` | evidence types, source interfaces, diff index, checkout export, `REVIEW.md` loading, reference extraction, input redaction, trimming, digest |
 | `review` | document types, the strict, lenient and stored schema views, normalisation, validation with located findings, derived fields, version history, model-free refresh, a pull request's model-free facts, output redaction, the tile catalogue |
 | `agent` | the backend interface and its implementations, the prompt interface, the generate-and-repair loop, budgets |
-| `viewer` | the React components that render a document and its versions, and the standalone single-page app that `baum internal view` embeds |
+| `viewer` | the React components that render a document and its versions, and the standalone single-page app that the reference viewer host embeds |
 | `sessions`, `linkage` | session discovery and commit-to-session matching, used by `bundle` sources |
 | `decisions` | the decisions an agent session made: the decision schema, the cleaned transcript a model reads, the strict reply schema and parser, the citation validator, and the published extraction prompt |
 | `features` | grouping work into features: the assigner, summarizer and consolidation model calls with their published prompt versions, decision attribution, status and the large-update rule; [rules](features/README.md) |
@@ -111,7 +108,7 @@ comment or thread has the same identifier in a local and a hosted document.
 
 ### GitHub source
 
-`internal/github` provides the GraphQL client `baum internal bundle` reads
+`internal/github` provides the GraphQL client `internal/assemble` reads
 GitHub with and the bounded read-only GraphQL and REST transport local inbox
 discovery uses. It parses repositories, remote URLs and SSH host aliases
 through the go-gh library
@@ -154,22 +151,12 @@ backoff, `sources` and the mapping onto the bundle.
   conditional ETags. Bundle requests are not cached and nothing is logged;
   `GH_DEBUG` has no effect. Discovery caches only its minimal inbox response fields, as described
   below. Responses reach the mapping exactly as GitHub sent them.
-- The pull request is `--pr` on the repository `--repo` names
-  (`owner/name` on github.com, or `host/owner/name`) or, by default, the one
-  the clone's `origin` remote names (https, ssh and scp-like URLs, read with
-  `insteadOf` rewrites applied). Without `--pr` it follows the current
-  branch's upstream (`branch.<name>.remote` and `branch.<name>.merge`): an
-  upstream of `refs/pull/N/head`, as `gh pr checkout` sets for a pull
-  request from a fork, is pull request N of that remote's repository, and an
-  upstream branch is looked up with GitHub's `associatedPullRequests` on that
-  remote's repository. Without a usable upstream, or when it finds nothing,
-  it looks up the branch of the same name on `--repo` or `origin`. The
-  lookup reads every associated pull request, page by page, and then takes
-  the open one, otherwise the most recently updated; several open ones are
-  an error. The pull request found may target another repository than the
-  one looked up, such as the upstream a fork's branch was opened against.
-  With `--repo`, a pull request found through the upstream counts only when
-  it is in that repository.
+- Callers select the pull request and repository through `github.ResolveOptions`.
+  Desktop jobs carry an explicit repository and pull request. Package callers
+  without a number can resolve the current branch through its upstream or the
+  clone's origin; associated pull requests are paginated, preferring an open
+  one and otherwise the most recently updated. Several open matches are an
+  error. Fork branches may resolve to a pull request in the upstream repository.
 - Each part is its own query, paginated to the end: the header (state,
   draft, title, body and rendered body, author and association, base, head,
   merge commit), the requested users and teams, the commits in order with
@@ -455,7 +442,7 @@ mentions one. Generation still
 
 `Refresh` updates checks, threads, comments and evidence status in a stored
 document without a model call, after the stored-document rules; both the
-platform and `baum internal refresh` use it. It
+platform and `internal/refresh` use it. It
 rebuilds the session index from the bundle and carries over, for each readable session the
 bundle still links, the stored index's prompts at turns the bundle lacks
 that are timestamped at or before the document's `generated_at`, as stored,
@@ -848,7 +835,7 @@ The loop owns the rest of what a run sends:
   whose instructions name the tools differently. They are not part of the
   prompt's JSON encoding.
 
-Local generation (`baum internal generate`, in `internal/generate`) starts every prompt
+Local generation (`internal/generate`) starts every prompt
 it sends, repairs included, with `sessions.GenerationRunMarker`; its `Prompts`
 wrapper prepends the marker to the body. That is the contract session
 evidence relies on: a CLI backend records its run in the same session stores
@@ -1167,13 +1154,13 @@ with its own prompt.
 `viewer` is a pnpm package of React components that render a document: the
 summary, sections and their blocks, risks, tiles, hunk evidence, images,
 checks, sessions and the version history with comparison. It also builds a
-standalone single-page app, which the `baum` binary embeds and `baum internal view`
-serves on localhost.
+standalone single-page app, which the `baum` binary embeds and the reference viewer host
+serves in package integrations and tests.
 
 The viewer reads only the document and its versions. A host connects it
 through props and context:
 
-| Seam | Required | `baum internal view` | Notes |
+| Seam | Required | the reference viewer host | Notes |
 | --- | --- | --- | --- |
 | document source | yes | the file given, and versions from the local store | the current document, a version list and a loader for one version |
 | attachment URL | no | served from the local cache | resolves an image ID to a URL; without it, image blocks draw nothing |
@@ -1220,7 +1207,7 @@ embeds an empty directory (its `.gitkeep`) until `just viewer-build` runs, and
 a binary built from it answers each app page with `viewer.NotBuilt`, a 503
 naming the fix.
 
-`baum internal view`'s app fills the `sessions` and `commits` slots from
+the reference viewer host's app fills the `sessions` and `commits` slots from
 `GET /api/sessions`, with `SessionList` and `CommitList`, which take plain
 view models and never fetch. The app asks once when the page opens, and again
 on each `document` event (the server recomputes when the head changes), and
@@ -1256,12 +1243,12 @@ keeps the last answer on screen while it does.
   commits"). Loading, a failure with Retry and "No diff to show" are its
   states; the list shows a commit's totals once it has been read.
 
-### How `baum internal view` serves it
+### Reference viewer host
 
-`internal/viewserver` is the host. `baum internal view` loads one document file (or the
-embedded `schema.Example` for `--sample`), binds `127.0.0.1` on the given port
-or a free one, and prints the URL. It never contacts a server or fetches
-anything. The server has ten API routes and an asset fallback:
+`internal/viewserver` is the reference host used by package integrations and
+viewer tests. The desktop uses its handlers behind the authenticated local
+application boundary. The standalone CLI launcher has been removed.
+The server has ten API routes and an asset fallback:
 
 | Route | Serves |
 | --- | --- |
@@ -1285,13 +1272,6 @@ Content-Security-Policy, `nosniff` and `no-referrer`; there are no CORS
 headers, and any method but `GET` and `HEAD` gets 405. An unknown `/api/` path
 is 404.
 
-A document with findings is served anyway, with the findings on stderr. It must
-be valid JSON of at most 32 MiB, or `view` exits at start-up. With `--watch` the
-file is polled by path every 500ms and read once it has stopped changing, so an
-editor's save by rename is followed. A change that is not valid JSON or is too
-large is warned about and ignored, and the previous document keeps being
-served. Findings print again on each accepted change.
-
 ### Hunk evidence in saved documents
 
 A document saved to the local store carries no hunk evidence: `store.Put`
@@ -1303,26 +1283,25 @@ and `deletions`, the sections' hunk assignments and tiles (a tile's code is
 the model's, not a hunk's `diff`), `unassigned_hunks` and the stats. Both
 fields are optional in `review-1.json`, so the schema is unchanged.
 
-- Every writer of the store goes through it: `generate.Publish` (the CLI and
-  the daemon's generation jobs), `RefreshCurrent` (the CLI's and the
-  background refresh, which keep the stored `index.hunks` as they are) and
+- Every writer of the store goes through it: `generate.Publish` (generation
+  jobs), `RefreshCurrent` (background refresh, which keeps the stored
+  `index.hunks` as they are) and
   `CompleteCurrent` (a details retry, which splices sections into the stored
   bytes). A replacement of a document stored without evidence is stored
   without it whatever it carries. A version stored with evidence, before
   this, is never rewritten: it is read, served and refreshed with its
   `diff` and `github_url` as stored, and the app shows its inline excerpts.
-- What `Publish` returns, and so what `baum internal generate` prints or
-  writes with `-o`, keeps the evidence as generated: that file is read
-  without the store.
+- What `Publish` returns keeps the evidence as generated, before the store
+  removes excerpts from its persisted copy.
 - `github_url` is derived where a document is served: `viewserver`
-  (`baum internal view`, and each version the daemon's app serves through
+  (the reference viewer host, and each version the daemon's app serves through
   it) and the app's `GET /api/document` give each hunk without one
   `bundle.HunkDiffURL(path, new_range[0])` (`review.DeriveHunkURLs`), the
   value generation records: GitHub's fragment shape
   `diff-<sha256(path)>R<first new line>`. A hunk that has one keeps it, so an
   older document whose hunks all carry theirs is served byte for byte; an
   older one with hunks that lack it (a hosted-style document opened with
-  `baum internal view`, say) gets it derived for those hunks, which changes
+  the reference viewer host, say) gets it derived for those hunks, which changes
   nothing the reader sees. The viewer never used the value as a
   link (it is not an absolute URL), and builds the same fragment on the pull
   request's files page itself. One difference: generation hashes the path as
@@ -1368,7 +1347,7 @@ documents"). The app fills them in from `GET /api/patch?path=<path>`, answered b
 
 - Without `version`, or with the served document's own `review.version`, the
   served document is answered. Another positive `version` names a saved
-  version of the same pull request, which `baum internal view --pr` reads
+  version of the same pull request, which the local version store reads
   from the store (`store.Get`, `viewserver.Options.Versions`); its document
   must name the same repository, pull request and version, and is kept until
   the served document changes. That version's head, base and merge base and
@@ -1470,7 +1449,7 @@ documents"). The app fills them in from `GET /api/patch?path=<path>`, answered b
   about its path alone, does not. A remote edited meanwhile is seen once the
   range has idled out or reached its maximum age. An evicted, aged, idled or
   closed range is closed when its last read ends. `locallink.Patch`,
-  `EmbedPatches` and `baum internal view` close theirs, and the daemon closes
+  `EmbedPatches` and the reference viewer host close theirs, and the daemon closes
   the app's document cache and the group API (`reviewgroups.API.Close`), and
   so their `Patcher`s, when it stops; only a daemon killed within a range's
   idle time leaves its private repository behind.
@@ -1515,14 +1494,14 @@ keeps them reachable with refs that live exactly as long as their versions:
   lazy path keeps falling back to the GitHub link for it.
 - Written on publish: once `generate.Publish` has stored a version
   (`Options.Stored`), `reviewrefs.Keep` writes that version's refs, from
-  `baum internal generate` and from the daemon's generation jobs (a single
+  the daemon's generation jobs (a single
   pull request; a group's combined review lives in the daemon's state, and
   a details retry rewrites a version in place with the same commits). It
   runs outside the store's transaction: a failure is a warning on the
   command's progress or a daemon log line, and never fails or undoes the
   version. A write another writer beat (the daemon's reconciliation) is no
   failure when the refs it left are the version's. A version saved to an
-  explicit `--store` outside the clone's own store roots (`store.Roots`)
+  explicit store-root option outside the clone's own store roots (`store.Roots`)
   gets no refs, since nothing would delete them with it.
 - Reconciled by the daemon: the background worker (see "Free background
   synchronization") calls `reviewrefs.Reconcile` for each available clone of
@@ -1546,7 +1525,7 @@ keeps them reachable with refs that live exactly as long as their versions:
   and planned once more, then applied in halves down to single refs, so one
   ref that cannot change holds up no other; those are logged.
 - The roots read are those of the daemon's environment (`XDG_DATA_HOME`, else
-  the home directory, for the fallback root). A `baum internal generate` run
+  the home directory, for the fallback root). A separate engine consumer running
   with another `XDG_DATA_HOME`, whose clone is read-only so its store went to
   the fallback root, writes refs the daemon then finds in no store it reads
   and deletes, and the daemon's own fallback store is not that run's; the
@@ -1639,8 +1618,8 @@ file in the app (see the app README). `GET /api/file?path=<path>` answers
 ### Local session linkage
 
 `internal/locallink` links the sessions on this machine to a pull request's
-commits using only this machine; `baum internal view` serves it, and the session
-evidence that `baum internal bundle` collects reuses its loading and matching (see
+commits using only this machine; the reference viewer host serves it, and the session
+evidence that `internal/assemble` collects reuses its loading and matching (see
 "Local session evidence"). `Resolve`
 takes the pull request's `owner/name`, head and base commit ids, a directory
 inside the clone and the session store overrides, and does this:
@@ -1767,7 +1746,7 @@ inside the clone and the session store overrides, and does this:
    `linkage.ReviewConfidence` (0.7), weaker links are dropped. A session arriving
    more than once is matched once from its fullest, then newest, reading.
 
-The result is redacted with the engine and the row summary that `baum internal sessions`
+The result is redacted with the engine and the row summary that the local session reader
 uses (`locallink.RowOf`), and carries no transcript, prompt, file path, e-mail
 address or session store path; a linked session's transcript is its own route
 (see "Session transcripts" below).
@@ -1843,14 +1822,14 @@ allowed.
 ### Local session evidence
 
 `locallink.BuildSessionEvidence` is the bundle's sessions source on this
-machine; `baum internal bundle` calls it through `internal/assemble`. It
+machine; `internal/assemble` calls it. It
 takes the pull request's commits as the clone holds them (`gitlocal.Commits`
 from the merge base to the head), a directory in the clone, the session store
-overrides with the `--previous-path` directories the repository used to live
+overrides with `PreviousPaths` for directories the repository used to live
 at, and the bundle caps `MaxPromptsPerSession` and
 `MaxCommandEventsPerSession`. It loads and matches sessions exactly as steps 4
 to 7 of "Local session linkage" do. Loading leaves out baum's own generation
-runs, for `baum internal view` too: a session whose top-level session has a prompt
+runs, for the reference viewer host too: a session whose top-level session has a prompt
 starting with `sessions.GenerationRunMarker` is neither linked nor allowed to
 take a link from another session, and is dropped from an Entire checkpoint's
 candidate associations. Each session linked to at least one commit becomes one bundle
@@ -1945,8 +1924,7 @@ redacted after, so nothing past the limits below is ever redacted or held
    limit and passed through the redaction engine before it is cut, so a
    secret that the cut runs through is still recognised and masked.
 2. The encoded transcript is redacted as a whole with the engine
-   `baum internal sessions --dump` uses (`redact.Engine.RedactJSON`, which `--dump`
-   reaches through `locallink.RedactGraph`): secrets and e-mail addresses are
+   `locallink.RedactGraph` uses (`redact.Engine.RedactJSON`): secrets and e-mail addresses are
    found over the encoded text, so a key and its value in separate strings are
    caught together, and in every string value and object key as decoded, so a
    rule anchored at a line's start fires after an escaped newline (an env
@@ -2073,57 +2051,28 @@ authentication extends it without changing these
 rules; its handlers sit behind the host check and the headers. Cancelling the
 context ends the event streams and shuts the server down.
 
-## Hosted service client
+## Desktop CLI and local hooks
 
-`hosted/baumcli` adds the hosted commands to the root command in
-`internal/cli`; `cmd/baum` builds the one binary, which the hosted service also
-ships to its users until the public release replaces that path. The hosted
-service imports `hosted/agenthooks`, `hosted/traceupload` and
-`hosted/apiclient` from this module, so the hook strings, the upload archive
-format and the protocol constants have one definition on both sides.
+`cmd/baum` builds the desktop runtime. `internal/cli` registers daemon control,
+`desktop-setup` and local hooks, plus hidden clone registration, review
+preferences, GitHub credential and diagnostics helpers. It exposes no hosted
+client commands or standalone review-generation commands.
 
-- Opt-in. Commands that need the server read a token from `BAUM_TOKEN` or the
-  credentials `baum login` stored, and stop with a login hint before any
-  request without one. `baum hooks agent --check` and `baum hooks git --check`,
-  which gate every committed dispatcher, succeed only for a logged-in user, in
-  a clone carrying the marker of `baum setup` or a hook bootstrap, or, for a
-  baum built or installed for the hosted service, in a repository whose
-  committed agent settings carry baum's dispatcher; or, without any of those,
-  for a user for whom a baum daemon ran (its lock file exists), where the
-  hook is local: no hosted work, Entire called exactly as the fall-through
-  would. The hook run decides hosted or local again, cheapest check first: it
-  reads the committed settings (`git cat-file`, up to 5 s) only for a daemon
-  user of a hosted install whose working tree settings carry the dispatcher,
-  so a hook admitted by the daemon alone hands off to Entire and sends its
-  event without waiting for git. They read local files only, and the hooks they admit never contact a
-  server; they hand their events to the local daemon, which keeps them on the
-  machine (see "Hook events" under "Local daemon"). The rules are in
-  [`hosted/baumcli/README.md`](hosted/baumcli/README.md).
-- User-scoped marketplace hooks. `baum hooks install --user` registers the
-  public `baum-ai/baum` Git marketplace and installs/enables `baum@baum`
-  through the Claude Code or Codex CLI (`hosted/agentplugins`), with a final
-  native list query verifying installation and enablement. It edits no hook
-  files directly and maintains no migration state. Installation fetches the
-  public marketplace; hook execution stays local. The dispatcher calls
-  `--check --user`, which adds two conditions to the rules above: the
-  repository has Entire enabled, and no other hook the agent runs (project,
-  user, managed or system settings; Codex project hooks only where Codex
-  trusts them) already runs Entire for the event, so an event is not reported
-  twice. Where it refuses, the hook does nothing. The run carries `--user`
-  too (`baum hooks agent --user AGENT EVENT`): where only a daemon that ran
-  admitted it, it records the event and runs no Entire. `baum setup` installs
-  them only for a hosted install or a logged-in user.
-- Compatibility. A client and a server of different releases agree on an API
-  protocol number: requests name the client's, responses the range the server
-  serves, and a client outside it stops with an error saying which side to
-  update. A server that predates the handshake counts as protocol 1.
-- Session discovery for uploads uses `sessions/collector`, with
-  `ExcludeNestedClones` so a session in an independent clone nested inside the
-  repository is uploaded only for its own repository.
+`internal/hookcli` implements native plugin management and local callbacks.
+`internal/agentplugins` owns bounded native CLI operations and trust/status
+queries; `internal/agenthookdefs` defines baum's local plugin vocabulary and
+stable dispatcher strings. A plugin check requires a Git worktree and a daemon
+that has run. It reads no credentials or third-party hook configuration.
+Independent Entire hooks do not suppress baum events. Callbacks never install
+repository hooks or invoke Entire. The appliance still imports the separate
+legacy `hosted/agenthooks`, `hosted/traceupload` and `hosted/apiclient` packages.
+
+See [local desktop hooks](internal/hookcli/README.md) and
+[native plugins](internal/agentplugins/README.md).
 
 ## Running locally
 
-`baum internal generate --pr N`:
+A desktop generation job uses `internal/generate` to:
 
 1. resolves the pull request with the user's GitHub token;
 2. exports the head and merge-base trees with `git archive` from a private
@@ -2145,36 +2094,20 @@ format and the protocol constants have one definition on both sides.
    version, with any section whose details failed `failed` and no context
    when the context stage failed.
 
-The hidden `--one-pass` flag writes the review in one call with the one-pass
-public prompt instead, as before staged reviews, for evaluations that compare
-the two; the daemon never uses it. Every backend (claude, codex, cursor-agent
-and anthropic) runs either way from the command line; the daemon runs only claude
-and codex.
+The shared engine retains a one-pass mode for package consumers and tests;
+the desktop uses staged generation. Desktop jobs open `internal/store`, load
+the previous local version and pass `review.PreviousVersionOf` into
+`assemble.Request.Previous`. They select and check the backend before
+assembling with `generate.SelectDesktop`: only `auto`, `claude` and `codex`
+run. Automatic selection tries Claude Code then Codex and never an API-key
+backend. A configured `cursor-agent` or `anthropic` job fails with
+`generate.ErrBackendNotOffered`; it never silently switches backend.
 
-`baum internal generate` is `internal/generate` (the pipeline) and
-`internal/cli/generate.go`. The CLI opens `internal/store`, loads the latest
-repository/PR version, and passes `review.PreviousVersionOf` into
-`assemble.Request.Previous`. After resolving the pull request and recording its
-run, it selects and checks the backend before assembling (`claude.Backend.Check`,
-`codex.Backend.Check`, `cursor.Backend.Check`, `anthropic.Backend.Check`, which
-only needs the key; `auto` tries `generate.AutoOrder`: claude, then codex, then
-anthropic, and never cursor-agent, which runs only when named because it cannot
-be held to read-only as reliably). The daemon, its chat, fix and decision calls
-use `generate.SelectDesktop` instead: only `auto`, `claude` and `codex` run, `auto`
-tries `generate.DesktopAutoOrder` (claude, then codex) and never reaches
-anthropic, and a job whose backend is `cursor-agent` or `anthropic` fails with
-`generate.ErrBackendNotOffered` rather than switching backends; the daemon's
-Diagnostics report (`doctor.Options.Desktop`) checks only claude and codex), assembles with `Request.Checkout` and `Attachments`
-written to temporary files outside the run directory, creates the run
-directory with `os.MkdirTemp("", agent.RunDirPrefix+"*")` and unpacks both
-archives into it with `bundle.UnpackCheckout` and `UnpackAttachments` under the
-bundle's own caps, and runs `agent.Generator` with the `claude.User` or
-`codex.Local` profile, never `Isolated` or `Container` (a test guards this),
-with `cursor.Backend`, or with `anthropic.Backend` and the key from
-`ANTHROPIC_API_KEY`. The
-wall-clock budget (`review_timeout`) is a `context.WithTimeout` around the loop, `pass_timeout`
-bounds each backend call, and SIGINT and SIGTERM cancel the context so the
-backend's process group is killed and the run directory removed.
+Assembly writes checkout and attachments to temporary archives, then unpacks
+them into a private run directory under the bundle's caps. Local execution
+uses `claude.User` or `codex.Local`, never `Isolated` or `Container`. The
+review timeout bounds the run and the pass timeout bounds each backend call;
+cancellation stops the backend process group and cleans up temporary files.
 
 A review the daemon runs with the local `claude` or `codex` backend keeps its
 agent session and run directory (`generate.Options.KeepSession`, set by
@@ -2359,13 +2292,13 @@ the hosted worker reports it as a plain failure rather than a rejected
 document. A spent `pass_timeout` is reported as the budget
 `generation budget exceeded: pass_timeout` and is not retried; the run's wall
 clock as `wall_clock`. The document is returned only for a run that passed every
-step, and published by the command afterwards. `internal/store` keeps
+step, and published by the desktop job afterwards. `internal/store` keeps
 versioned documents and immutable generation metadata in SQLite under the
 common git directory
 (`baum/reviews/versions.sqlite`), so linked worktrees share one history. A new
 store falls back to the XDG data directory (or `~/.local/share`) when git is
-read-only, keyed by the canonical common-directory digest; `--store` overrides
-the root. Existing local or fallback history wins over creating another store,
+read-only, keyed by the canonical common-directory digest; a store option can
+override the root. Existing local or fallback history wins over creating another store,
 and a read-only existing store fails writes without hiding its history.
 Repository names, including GitHub host, and pull request numbers key rows.
 Documents are stored without their hunks' `diff` and `github_url` (see "Hunk
@@ -2386,10 +2319,8 @@ cancellation before publication writes no version. Export errors after
 publication leave the successfully generated version available. Metadata records full revision IDs,
 bundle digest, backend and installed version, actual model, schema revision,
 prompt version/digest, applied REVIEW.md digest and generation time/usage.
-`view --pr` and `validate --pr` read the latest locally without GitHub; both
-accept `--version`, `--repo` and `--store`. Reads never create a store. The
-viewer can open an earlier version via the CLI selector; browser version
-navigation is not yet connected. `--watch` remains for document files only.
+The desktop reads saved versions from the local store. Reads never create a
+store, and historical versions keep their own revision and evidence selectors.
 
 Git reads (the comparison, patches, blobs and the exports) run in a private
 temporary bare repository that borrows the clone's objects and has default
@@ -2401,7 +2332,7 @@ the hosted service's own command, `git archive --format=tar
 filters are not applied.
 
 The clone is written to only when it lacks a pull request commit: generation
-(`baum internal generate` and the daemon's jobs) fetches the head from
+jobs fetch the head from
 `refs/pull/<N>/head` and the base from its branch, falling back to the commit
 id, into `refs/baum/pull/<N>/`, from the remote whose URL names the pull
 request's repository (`upstream` in a fork clone), with the user's git
@@ -2409,46 +2340,30 @@ configuration and no hooks. A fetch that fails, or a clone with no such
 remote, fails the run with the `git fetch` to run. A partial clone missing the
 pull request's objects is reported, not fetched from on demand.
 
-`baum internal bundle` stops after step 5, and never fetches: a pull request commit
-the clone lacks fails the command with the `git fetch` to run, so it reads
-git objects only and leaves refs, index, working tree and configuration
-alone. It is `internal/assemble`, which follows the hosted assembler's order
-over the same `bundle` functions with the sources above behind small
+`internal/assemble` follows the shared assembler's order behind small source
 interfaces (`GitHub`, `Git`, `Sessions`, `ImageFetcher`): description images,
-the pull request header, checks and conversation, the diff index, commit
-changes, sessions, references, attachments, `REVIEW.md` at the base commit,
-the checkout export, then caps, redaction, the per-hunk line cap, byte
-trimming and the digest. Sessions
-follow the comparison because they need its merge base. Command targets are
-first checked by `locallink` and then, as the hosted builder does, by
-`bundle.KeepKnownCommandTargets` against the diff's paths, so a target a
-session names depends on the pull request, not on the working tree. A
-session source that fails leaves the bundle without sessions and a warning;
-cancellation is an error. Image downloads carry no credentials: the user's
-token only reads the rendered body, in which GitHub has signed each image
-URL, and only GitHub's upload hosts are contacted (see SECURITY.md). A
-previous document can be given in `Request.Previous`, as `generate` will;
-`baum internal bundle` leaves it nil. The
-bundle is written as `json.Marshal` encodes it plus a newline, so its digest
-is the SHA-256 of the output without that newline, and it holds no timestamp
-of its own: the same inputs produce the same bytes. `Assemble` can also
-write the checkout (a gzip tar read by `bundle.UnpackCheckout`) and the
-attachments (a tar read by `bundle.UnpackAttachments`) to the writers in its
-`Request`, for `baum internal generate`; `baum internal bundle` discards both. The checkout is
-exported either way, since a file the checkout budget omits makes its hunks
-textless. `baum internal validate`  checks a stored document with
-`review.DocumentValidator.ValidateStored`, after the stored-document rules,
-against its bundle when one is given,
-and `baum internal refresh` uses `internal/refresh` to fetch current GitHub metadata
-with checks pinned to the saved head, re-link local sessions against the saved
-merge-base/head range and redact bounded evidence before calling
-`DocumentValidator.Refresh`. It exports no checkout, downloads no images and
-imports no model backend. Currency requires both saved head and base to match;
-command failures leave the existing document unchanged. `baum internal view`
-serves the viewer, the selected document, and the sessions and commits linked
-to the pull request, read from the local session stores with `sessions` and
-`linkage`. When those sessions are not on this machine, the viewer shows the
-document's own session metadata.
+the pull request header, checks and conversation, diff index, commit changes,
+sessions, references, attachments, `REVIEW.md` at the base commit, checkout
+export, then caps, redaction, per-hunk line limits, byte trimming and digest.
+Sessions follow comparison because they need its merge base. The linker and
+`bundle.KeepKnownCommandTargets` check command targets against the pull
+request's diff paths, independent of the working tree. A failed session source
+leaves a warning and no sessions; cancellation is an error.
+
+Image downloads use GitHub-signed URLs without credentials and contact only
+GitHub upload hosts (see SECURITY.md). `Request.Previous` carries the previous
+review; optional writers receive bounded checkout and attachment archives. The
+checkout is exported even without a writer because omitted files make their
+hunks textless. Bundle JSON has no timestamp of its own: the same inputs
+produce the same bytes and SHA-256 digest.
+
+`internal/refresh` fetches current GitHub metadata with checks pinned to the
+saved head, re-links local sessions against the saved merge-base/head range
+and redacts bounded evidence before `DocumentValidator.Refresh`. It exports
+no checkout, downloads no images and imports no model backend. Currency
+requires both saved head and base to match; failures leave the stored review
+unchanged. The desktop serves saved versions with linked local sessions and
+commits; when those sessions are absent, document session metadata remains.
 
 What usage would cost at API prices comes from a price list at
 `https://static.usebaum.com/pricing/v3/prices.json`. baum verifies its `.sig`
@@ -2477,9 +2392,9 @@ Every outside dependency (environment, `PATH` lookup, command runner, backends,
 token lookup, price refresh, registry and daemon) is an `Options` field, so
 tests use fake executables and stubs. It creates nothing (the registry is opened
 with `repos.OpenReadOnly`), runs `git` and `gh` in `agent.LocalEnvironment`'s
-filtered environment and never reruns a failed claude, codex or cursor-agent
-check (a missing cursor-agent is information unless it is the configured
-backend), and bounds every subprocess with a
+filtered environment and never reruns a failed backend check. The desktop
+command and daemon set `Options.Desktop`, which checks only Claude Code and
+Codex and never offers an API-key fallback, and bounds every subprocess with a
 timeout and, through `internal/proc`, a process group killed with it (the
 package moved from `agent/internal/proc` so both can use it). A configuration
 that does not load is a problem, not an abort; its parse errors name a line and
@@ -2495,8 +2410,7 @@ explicit executable of a backend. `generate.DefaultBackendsFor(cfg)` passes it
 to the backend as its `Binary`, which is looked up by `exec.LookPath` as given,
 so an absolute path replaces the `PATH` search; a path that cannot be run fails
 the backend's `Check` with `generate.ExplicitPathError` naming
-`backend_paths.<name>`, without trying `PATH`. `baum internal generate` and the job
-runner both build their backends from the resolved configuration, and
+`backend_paths.<name>`, without trying `PATH`. The job runner builds its backends from the resolved configuration, and
 per-repository settings do not override the paths.
 
 `config.Config.AgentEnv` (TOML `[agent_env]`, validated names, at most 32) is
@@ -2575,8 +2489,8 @@ from agent hook events and the Claude Code, Codex and Cursor session stores
 (cheap working-directory probes, no transcript parsing), resolves each to its
 working tree with `gitlocal.Probe` (two read-only git commands; `Open` would
 create a private mirror per candidate), then walks the usual code folders and
-the folders around the clones agents used, to four levels, with the exclusions
-`baum setup --all` uses (`internal/scanskip`). Candidates are grouped by the
+the folders around the clones agents used, to four levels, using exclusions
+defined by `internal/scanskip`. Candidates are grouped by the
 lowercase `owner/name` of every github.com remote, linked worktrees collapsing
 into their main clone. The daemon's `Service` keeps the result in memory,
 rescans at start, hourly while a picked repository has no available clone, and
@@ -2764,7 +2678,7 @@ uses a row only while its version is the latest and its length equals
 or a missing table (an old store, or a read-only open before any write-open
 by this version), falls back per row to extracting from the document. A
 read-only open never writes. When every row is current, Snapshot parses no
-document body. CLI generation publishes
+document body. Generation publishes
 lease-based run status independently of immutable successful version history;
 expired leases are read as interrupted without mutating stores during indexing.
 Once `Store.Put` commits a version, generation succeeds: failing to record the
@@ -2793,8 +2707,8 @@ observation turning stale two minutes after it was fetched; and at the latest
 after `reviewindex.MaxAge` (30 seconds), for what nothing models (below).
 Nothing is persisted: a restarted daemon builds on first read.
 
-`uiserver.Server.WatchIndex` catches changes made outside the daemon (a CLI
-`baum internal generate`, another process editing the registry) and those that
+`uiserver.Server.WatchIndex` catches changes made outside the daemon
+(another process editing the registry) and those that
 come with time. Every 2 seconds it computes `reviewindex.Fingerprint`, which
 runs no git and opens no store: the registry's picked repositories and clone
 rows as stored (`Registry.RepositoryRows`, one query on the registry's
@@ -3369,7 +3283,7 @@ fix, or nothing broken is the item's `blocked_reason` (`fork`,
 clicked. The budgets resolve as a review's, with `run_timeout` as the time
 limit. The harness and model are the
 preferences' fix agent (`fix_backend` and `fix_model`, Claude Code or Codex,
-set with `PUT /api/automatic` or `baum reviews set --fix-backend`) when one
+set with `PUT /api/automatic` or `baum internal reviews set --fix-backend`) when one
 is chosen (`Preferences.ResolveFix`), and otherwise the review's. Before running, the executor prepares
 again and refuses a changed head (`head_changed`) or changed fix inputs, then
 reads the failing checks' output and the last 200 lines of up to four GitHub
@@ -3579,12 +3493,11 @@ no command opens it in a browser: the desktop app reads the launch URL from the
 daemon's `credential.json`. It also keeps the record of the events agent
 and Git hooks send it.
 
-The top-level `baum --help` lists only what users run: `hooks`, `daemon` and
-the hosted service commands. The engine commands (`generate`, `bundle`, `view`,
-`validate`, `refresh`, `repos`, `sessions` and `doctor`) live under the hidden
-`baum internal` parent, which `baum internal --help` lists. They are debugging
-and diagnostic tools that run the same engine by hand, and there are no
-top-level aliases for them.
+The top-level help lists `hooks`, `daemon` and `desktop-setup`. The hidden
+`internal` group contains only `repos add`, `reviews show/set`,
+`github-credential` and `doctor`, which support desktop onboarding, credential
+storage and diagnostics. Engine packages remain callable by their hosts and
+package tests, with no standalone CLI wrappers.
 
 ### Lifecycle
 
@@ -3886,10 +3799,8 @@ it and `Queue.SubmitAutomatic` decides each job.
 ### Hook events
 
 `internal/hookevents` carries what `baum hooks agent` and `baum hooks git`
-report to the daemon; the hook side is in `hosted/baumcli` (rules in its
-[README](hosted/baumcli/README.md), "Hook events"). Nothing of it goes to a
-baum server: forwarding to the hosted service waits for a hosted event
-endpoint.
+report to the daemon; the hook side is in `internal/hookcli` (see its
+[README](internal/hookcli/README.md)). Events stay on this machine.
 
 - **Event.** One JSON object per hook run, sent as the params of the `event`
   control request: `v` (the event format, `hookevents.Version`, 1), a random
@@ -4483,8 +4394,8 @@ replace it.
 
 `internal/agentrequests` lets the app answer what Claude Code and Codex ask
 their user, and send a running session a message, through their hooks (the
-hook side is in `hosted/baumcli`, rules in its
-[README](hosted/baumcli/README.md), "User-wide hooks"). Everything is held in
+hook side is in `internal/hookcli`, rules in its
+[README](internal/hookcli/README.md)). Everything is held in
 the daemon's memory; only `Settings` (`codex_approvals`, default false) is
 saved, in the `state/agent-requests` document in `app.sqlite`.
 
@@ -4657,7 +4568,7 @@ pull request joined and
 switches it to current in one transaction, after which the weekly pass
 consolidates it on its next run; it runs
 as a job started at once (`jobs.KindFeatureBuild`, through `jobs.FeatureBuilder`)
-or from `baum internal features build`. Every stage calls through the same
+through the desktop app. Every stage calls through the same
 helper as capture (`caller` in `model.go`: backend and model resolution,
 reservation and the `capture_attempt` ledger, with the call's stage and
 item). The constants
