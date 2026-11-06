@@ -563,7 +563,8 @@ project (`internal/sampleapp`) as a build would have left it.
 `Timeline` serves the app's Timeline page under `/api/timeline/`, mounted in
 the local API behind its authentication, in the view models of the review
 viewer's decision log (`oss/viewer/src/decision-log.ts`). It reads the store
-and never writes it.
+and never writes it; the daemon gives it a read-only store of its own, so the
+page does not wait behind capture and the feature log.
 
 - **`GET /repositories`**: `decisions_enabled` (the decisions switch),
   `repositories`, the picked repositories whose decisions are not turned

@@ -385,6 +385,46 @@ VALUES ('claude-code','s3',?,'claude','m','full',0,'pending',0,'capture')`, repo
 	}
 }
 
+// The daemon serves the Timeline from a read-only store of its own: a list
+// answers while the writer's one connection is busy, with what it committed.
+func TestTimelineReadsBesideTheWriter(t *testing.T) {
+	f := newTimelineFixture(t)
+	ctx := context.Background()
+	var path string
+	if err := f.store.db.QueryRowContext(ctx, `SELECT file FROM pragma_database_list WHERE name='main'`).Scan(&path); err != nil {
+		t.Fatal(err)
+	}
+	read, err := Open(path, OpenOptions{ReadOnly: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = read.Close() })
+	f.timeline.Store = read
+	f.exec(`UPDATE feature SET title='Drafts' WHERE id='F2'`)
+	busy, err := f.store.db.Conn(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = busy.Close() }()
+	answered := make(chan featurePage, 1)
+	go func() {
+		var page featurePage
+		f.get("/api/timeline/features", url.Values{"repository": {repo}}, &page)
+		answered <- page
+	}()
+	select {
+	case page := <-answered:
+		if page.ids() != "F1,F2" {
+			t.Fatalf("features = %s", page.ids())
+		}
+		if title := page.Features[1].Title; title == nil || *title != "Drafts" {
+			t.Fatalf("F2 title = %v", title)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the list waited for the writer's connection")
+	}
+}
+
 // Every list reads the repositories asked for, or every one served, merged
 // in one order; every row and detail names its repository.
 func TestTimelineAcrossRepositories(t *testing.T) {

@@ -620,7 +620,8 @@ address.
   `pending` to show it stale. The page asks `readDecision` and
   `readFeature` for details, each once until `revision` changes (an open
   detail stays shown until the newer read answers), and
-  `readPeople` for a tab's authors, keeping each tab's list. Decisions group
+  `readPeople` for a tab's authors, keeping each tab's list (a host whose
+  `filterBar` draws its own filter leaves it out). Decisions group
   by local day (`decisionSections`) and features by month and day of their
   last activity (`featureHeadings`, which skips a feature with none); on a
   screen at least 96rem
