@@ -1,21 +1,7 @@
-// Package agenthooks holds the committed agent-hook vocabulary: which events
-// each coding agent has, the exact command string a hook entry carries, and how
-// to recognise one that is already ours.
-//
-// It exists because two callers must agree on those strings byte for byte.
-// `baum setup` rewrites the hooks in a checkout it is standing in
-// (hosted/baumcli), and the hosted service's onboarding pull request writes the
-// same files into a repository nobody has checked out. A
-// repository set up either way has to end up with identical files, or the two
-// paths would fight over the same lines forever.
-//
-// Customer repositories keep these command strings in tracked files, so they
-// are frozen once they land: change what a hook *does* in the binary, not in
-// the string that invokes it. The strings run baum only when `baum hooks agent
-// --check` succeeds, which it does only where the hosted service was opted in
-// to: a login, a set-up clone, or, for a baum built or installed for the
-// hosted service, a repository whose committed settings carry these strings.
-// Everyone else runs Entire directly, as if baum were not installed.
+// Package agenthooks holds the appliance's legacy repository-hook vocabulary.
+// Onboarding templates and repository setup detection share these stable
+// command strings. The desktop CLI uses its separate local agenthookdefs
+// vocabulary and does not install or execute these hooks.
 package agenthooks
 
 import (
@@ -353,7 +339,7 @@ func ContainsOwnedCommand(contents []byte) bool {
 
 // ContainsDispatcher reports whether a settings file carries at least one
 // command that dispatches through baum, as the onboarding pull request and
-// `baum setup` write it. Entire's own command does
+// legacy repository setup wrote it. Entire's own command does
 // not count: it does not run baum.
 func ContainsDispatcher(contents []byte) bool {
 	return anyCommand(contents, func(command string) bool {

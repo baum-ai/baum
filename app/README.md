@@ -315,6 +315,8 @@ icon, its name (a GitHub Actions job's after its workflow, as GitHub lists it:
 and a **Details** link (`url`). While any check fails, only the failing ones
 (and any retried from the list) show, the rest behind **Show N other checks**,
 which **Hide other checks** folds again; with none failing every check shows.
+The same bordered rows align the icon, name and status, and actions in the
+review's Activity pane, independently of the Up next panel.
 The row's title carries a pill counting them out of them all (`checksCount`):
 red "1/9 failing" while any fails, else amber "2/9 running" while any runs,
 else green "9/9 passing", with the count by state (`checksSummary`) as its

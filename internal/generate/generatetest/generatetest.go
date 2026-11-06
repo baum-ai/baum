@@ -1,4 +1,4 @@
-// Package generatetest is a stub model backend for tests of "baum internal generate":
+// Package generatetest is a stub model backend for tests of "the generation pipeline":
 // it returns canned documents without calling a model, and records the run
 // directories it was given.
 package generatetest

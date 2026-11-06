@@ -51,6 +51,11 @@ func CheckoutStamp(dir string) (stamp, root string, ok bool) {
 			commonDir = filepath.Join(gitDir, commonDir)
 		}
 	}
+	// A reftable-backed repository keeps its refs in reftables, not in loose
+	// refs or packed-refs, and its HEAD is a dummy; only git can read it.
+	if _, err := os.Stat(filepath.Join(commonDir, "reftable")); err == nil {
+		return "", "", false
+	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s\x00%s", gitDir, strings.TrimSpace(string(head)))
 	if config, err := os.Stat(filepath.Join(commonDir, "config")); err == nil {

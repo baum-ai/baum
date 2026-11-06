@@ -1,5 +1,5 @@
 /* baum's bundled type: the viewer's default (viewer.css imports this), so the
-   local application, `baum internal view` and the desktop's connecting and setup
+   local application, `the reference viewer host` and the desktop's connecting and setup
    screens all use it. Instrument Sans sets the text and Manrope the headings,
    as the brand world draws them; the hosted service sets its own face through
    `--viewer-font-sans`. Both are under the SIL

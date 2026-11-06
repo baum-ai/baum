@@ -8,10 +8,10 @@
 // It never fetches. Commits the clone does not hold make the answer
 // unavailable rather than being downloaded, and nothing here contacts a
 // server. Every piece of text Resolve returns has been redacted the way
-// "baum internal sessions" redacts its listing.
+// "the local session reader" redacts its listing.
 //
-// A caller such as "baum internal view" serves the Result. BuildSessionEvidence gives
-// "baum internal bundle" the same linked sessions as bundle sessions, which the
+// A caller such as "the reference viewer host" serves the Result. BuildSessionEvidence gives
+// "the bundle assembler" the same linked sessions as bundle sessions, which the
 // bundle's own input redaction masks.
 package locallink
 
@@ -79,7 +79,7 @@ type Request struct {
 	// Entire-Checkpoint trailer names from being read.
 	Sessions sessions.Options
 	// Warn receives one line for each session store file that could not be
-	// read, as "baum internal sessions" prints them, and for each malformed
+	// read, as "the local session reader" prints them, and for each malformed
 	// Entire-Checkpoint value skipped beside a valid one. It defaults to
 	// discarding them.
 	Warn io.Writer
@@ -250,7 +250,8 @@ func loadSessions(ctx context.Context, dir string, opts sessions.Options, commit
 	if err != nil {
 		return nil, nil, err
 	}
-	return loadDiscovered(ctx, d, dir, commits, remote, warn)
+	found, associations, _, err := loadDiscovered(ctx, d, dir, commits, remote, warn)
+	return found, associations, err
 }
 
 // discoverSessions finds the sessions loadSessions reads for the commits,
@@ -269,13 +270,15 @@ func discoverSessions(ctx context.Context, dir string, opts sessions.Options, co
 	return d, nil
 }
 
-// loadDiscovered is loadSessions over sessions already discovered.
-func loadDiscovered(ctx context.Context, d *sessions.Discovery, dir string, commits []gitlocal.Commit, remote string, warn io.Writer) ([]sessions.Session, map[string][]string, error) {
+// loadDiscovered is loadSessions over sessions already discovered. complete
+// is false when a session store file was skipped or a session did not map.
+func loadDiscovered(ctx context.Context, d *sessions.Discovery, dir string, commits []gitlocal.Commit, remote string, warn io.Writer) ([]sessions.Session, map[string][]string, bool, error) {
 	workstats.Inc("locallink.load_sessions")
 	found, report, err := d.Load(ctx)
 	if err != nil {
-		return nil, nil, fmt.Errorf("reading sessions: %w", err)
+		return nil, nil, false, fmt.Errorf("reading sessions: %w", err)
 	}
+	complete := len(report.Skipped) == 0 && len(report.Failures) == 0
 	if warn != nil {
 		for _, skipped := range report.Skipped {
 			_, _ = fmt.Fprintf(warn, "warning: skipped %s: %s\n", skipped.Path, skipped.Reason)
@@ -286,7 +289,7 @@ func loadDiscovered(ctx context.Context, d *sessions.Discovery, dir string, comm
 	}
 	associations, extra := checkpointLinks(ctx, dir, commits, found, remote, warn)
 	found, associations = withoutGenerationRuns(append(found, extra...), associations)
-	return found, associations, nil
+	return found, associations, complete, nil
 }
 
 // match builds the redacted result, keeping checkpoint candidates separate

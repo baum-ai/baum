@@ -620,7 +620,7 @@ func TestRegisteredCloneHostsGetTheirOwnTokenCheck(t *testing.T) {
 	wantStatus(t, find(t, report, "store-a"), StatusInfo)
 	gone := find(t, report, "store-c")
 	wantStatus(t, gone, StatusWarning)
-	wantContains(t, "fix", gone.Fix, "/work/gone", "baum internal repos remove c")
+	wantContains(t, "fix", gone.Fix, "/work/gone", "Repositories settings")
 	wantContains(t, "registry", find(t, report, "registry").Detail, "3 registered clones")
 }
 

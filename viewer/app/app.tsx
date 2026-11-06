@@ -30,7 +30,7 @@ import {
 } from "./local-sessions";
 import { SessionTranscript } from "./session-transcript";
 
-/** The standalone viewer: one review document, served by `baum internal view` from the
+/** The standalone viewer: one review document, served by `the reference viewer host` from the
  *  same origin. It reads `/api/document` and refetches it whenever
  *  `/api/events` says the document changed. It also asks `/api/sessions` for the
  *  sessions and commits on this machine, which fill the Sessions and Commits
