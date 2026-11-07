@@ -142,7 +142,6 @@ export function Sidebar({
         <div
           key={target}
           title={`${label} (${pageKeyLabel(target, modifier)})`}
-          aria-keyshortcuts={pageKeyShortcut(target, modifier)}
           className="local-rail-link local-rail-heading"
           onContextMenu={
             inboxes
@@ -378,6 +377,13 @@ function InboxRows({
     const target = next ? next.querySelector<HTMLElement>("a.local-rail-sub") : null;
     return target;
   };
+  // The first row left, where the page goes once the open inbox is gone.
+  const firstLeft = () =>
+    Array.from(
+      menu.current?.parentElement?.querySelectorAll<HTMLElement>(".local-rail-inbox") ?? [],
+    )
+      .find((row) => row !== menu.current)
+      ?.querySelector<HTMLElement>("a.local-rail-sub") ?? null;
   return (
     <div className="local-rail-inboxes">
       {inboxes.list.map((inbox) => {
@@ -438,7 +444,8 @@ function InboxRows({
                   aria-describedby={last ? keepId : undefined}
                   title={last ? KEEP_ONE : undefined}
                   onClick={() => {
-                    const next = neighbour();
+                    // The open inbox's deletion opens the first one left: focus its row.
+                    const next = inboxes.selected === inbox.id ? firstLeft() : neighbour();
                     setOpen(null);
                     inboxes.remove(inbox, () => next?.focus());
                   }}

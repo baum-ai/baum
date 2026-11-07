@@ -3,7 +3,6 @@ import { LocalRequestError, type Entry } from "./api";
 import {
   createInboxSaver,
   unusedInboxColor,
-  fromQuery,
   fromTemplate,
   templates,
   INBOX_COLORS,
@@ -327,9 +326,8 @@ it("reads a malformed entry defensively and drops one without an id or name", ()
   expect(matches(list!.inboxes[0]!, item("review"))).toBe(true);
 });
 
-it("uses an unused default color for filtered and template inboxes, falling back when full", () => {
+it("uses an unused default color for template inboxes, falling back when full", () => {
   const existing = [inbox({ color: "blue" })];
-  expect(fromQuery("org=acme", existing).color).toBe("green");
   expect(fromTemplate(templates([], "sam")[0]!, existing).color).toBe("green");
   expect(unusedInboxColor(existing, "red")).toBe("red");
   const full = INBOX_COLORS.map((color) => inbox({ color }));

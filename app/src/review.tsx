@@ -918,7 +918,7 @@ export function LocalReview({
                   if (anchor.type === "pr") {
                     navigate(
                       appURL(
-                        `?${clone ? `clone=${encodeURIComponent(clone)}` : `repository=${encodeURIComponent(pr.repository)}`}&pr=${anchor.number}`,
+                        `?${back.prefix}${clone ? `clone=${encodeURIComponent(clone)}` : `repository=${encodeURIComponent(pr.repository)}`}&pr=${anchor.number}`,
                       ),
                     );
                     return true;

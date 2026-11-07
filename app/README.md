@@ -942,7 +942,10 @@ while another remains), and the app root, a legacy link to it, an `inbox` the
 daemon does not have (as one just deleted) and the start-up and the end of
 setup all open the first inbox in the sidebar's order. The address is replaced
 by `?inbox=<first id>` in the same history entry, so Back does not return to
-the root, and its other parameters stay. Until the first read of the inboxes has
+the root, and its other parameters stay. An address naming no page counts as the root. A pull request or group
+link with no `inbox` (from the Timeline, Go to or a session) keeps its address,
+and while its pull request is not in the index the page behind it is the first
+inbox's queue, never empty. Until the first read of the inboxes has
 answered the page says "Loading inboxes…", and after a first read that failed it
 shows the read error with Retry; with an older daemon it says "Inboxes need a
 newer baum". None of them shows a queue. An inbox's queue has the same groups, order, panel, keys, snoozes and **Merge all N** (which counts only

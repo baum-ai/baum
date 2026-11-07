@@ -308,23 +308,6 @@ export function fromTemplate(template: Template, inboxes: Inbox[], id = newInbox
   });
 }
 
-/** A page's filter as an inbox of its own: anything waiting that matches it,
- *  named so no other inbox has the name. */
-export function fromQuery(query: string, inboxes: Inbox[]): Inbox {
-  return {
-    id: newInboxId(),
-    name: freeName("Filtered", inboxes),
-    color: unusedInboxColor(inboxes),
-    what: "any",
-    owners: [],
-    risk: "any",
-    repositories: [],
-    query,
-    no_bots: false,
-    badge: true,
-  };
-}
-
 /** How many of `items` the inbox holds. */
 export function countOf(inbox: Inbox, items: Matchable[]): number {
   return items.filter((item) => matches(inbox, item)).length;

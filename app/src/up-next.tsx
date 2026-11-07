@@ -989,7 +989,7 @@ export function UpNextPage({
   /** Makes a new inbox catching what the page shows with its filter: from
    *  the inbox shown (`base`) with its query and the filter, or else anything
    *  waiting that matches the filter. */
-  saveAsInbox?: (query: string, base?: Inbox) => void;
+  saveAsInbox?: (query: string, base: Inbox) => void;
   /** Changes the inbox shown: its query (the page's filter added), name or
    *  colour. */
   updateInbox?: (patch: Partial<Inbox>) => void;

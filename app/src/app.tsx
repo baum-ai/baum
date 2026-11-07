@@ -36,7 +36,6 @@ import {
 import {
   freeName,
   unusedInboxColor,
-  fromQuery,
   withQuery,
   inboxBadgeCount,
   matches,
@@ -410,7 +409,7 @@ function Workspace({ url }: { url: UrlState }) {
   const [groupsError, setGroupsError] = useState("");
   const inboxes = useInboxes();
   const [draftInboxSource, setDraftInboxSource] = useState<string | null>(null);
-  const draftSourceFilter = usePageFilter(draftInboxSource ?? "inbox");
+  const draftSourceFilter = usePageFilter(`inbox:${draftInboxSource ?? ""}`);
   // An inbox started from a template, not saved until its edit page's Save.
   const [draftInbox, setDraftInbox] = useState<SavedInbox | null>(null);
   // Deleting an inbox says so on any page, with a way back.
@@ -725,7 +724,25 @@ function Workspace({ url }: { url: UrlState }) {
   // The pages that make and change inboxes need a daemon that has them.
   const inboxPage =
     requestedPage === "inbox-new" || requestedPage === "inbox-edit" || requestedPage === "inboxes";
-  const page = inboxPage && inboxes.status === "older" ? "inbox" : requestedPage;
+  const knownPages = [
+    "inbox",
+    "inbox-new",
+    "inbox-edit",
+    "inboxes",
+    "pulls",
+    "jobs",
+    "repositories",
+    "sessions",
+    "analytics",
+    "timeline",
+    "settings",
+    "diagnostics",
+  ];
+  // An address naming no page is the inbox page.
+  const page =
+    (inboxPage && inboxes.status === "older") || !knownPages.includes(requestedPage)
+      ? "inbox"
+      : requestedPage;
   // The inbox page shows a saved inbox's queue, never the whole one: it waits
   // for the inboxes, and the root or an address naming no inbox opens the
   // first.
@@ -737,9 +754,8 @@ function Workspace({ url }: { url: UrlState }) {
     !url.search.get("repository");
   // Before the first read they wait; after a failed one they say so; a daemon
   // without inboxes says it needs a newer baum.
-  const inboxWaiting =
-    (inboxPage || inboxQueuePage) &&
-    (inboxes.status === "loading" || inboxes.status === "failed") ? (
+  const inboxStatusView =
+    inboxes.status === "loading" || inboxes.status === "failed" ? (
       <section>
         <PageBar title="Inboxes" />
         <div className="local-page-body">
@@ -752,7 +768,7 @@ function Workspace({ url }: { url: UrlState }) {
           )}
         </div>
       </section>
-    ) : inboxQueuePage && inboxes.status === "older" ? (
+    ) : inboxes.status === "older" ? (
       <section>
         <PageBar title="Inboxes" />
         <div className="local-page-body local-stack">
@@ -761,6 +777,10 @@ function Workspace({ url }: { url: UrlState }) {
         </div>
       </section>
     ) : null;
+  const inboxWaiting = inboxPage || inboxQueuePage ? inboxStatusView : null;
+  // The inbox page of a pull request or group link that names no inbox (or
+  // whose pull request is not read yet) is the first inbox's, address kept.
+  const detailPage = page === "inbox" && !inboxQueuePage;
   // The inbox's queue counts in the sidebar on every page. Its record of what
   // was cleared waits for the first complete read, and pauses while reads
   // fail, so an empty or failed read clears nothing.
@@ -783,6 +803,7 @@ function Workspace({ url }: { url: UrlState }) {
       ? (inboxes.inboxes.find((candidate) => candidate.id === url.search.get("inbox")) ?? null)
       : null;
   const firstInbox = inboxes.status === "ready" ? (inboxes.inboxes[0] ?? null) : null;
+  const queueInbox = page === "inbox" ? (selectedInbox ?? (detailPage ? firstInbox : null)) : null;
   // The root, a legacy link to the whole queue, or an inbox that is gone:
   // the current entry becomes the first inbox, so Back does not return here.
   const missingInbox = inboxQueuePage && !selectedInbox ? firstInbox : null;
@@ -790,6 +811,7 @@ function Workspace({ url }: { url: UrlState }) {
     if (!missingInbox) return;
     url.update(
       (current) => {
+        if (!knownPages.includes(requestedPage)) current.delete("page");
         current.set("inbox", missingInbox.id);
         return current;
       },
@@ -1227,21 +1249,19 @@ function Workspace({ url }: { url: UrlState }) {
   // The Inbox's filter as an inbox of its own.
   const saveAsInbox =
     inboxes.status === "ready" && inboxes.inboxes.length < MAX_INBOXES
-      ? (query: string, base?: SavedInbox) => {
+      ? (query: string, base: SavedInbox) => {
           // From an inbox: a copy of it, named so no other inbox has the name.
-          const made = base
-            ? withQuery(
-                {
-                  ...base,
-                  id: newInboxId(),
-                  name: freeName(base.name, inboxes.inboxes),
-                  color: unusedInboxColor(inboxes.inboxes, base.color),
-                },
-                query,
-              )
-            : fromQuery(query, inboxes.inboxes);
+          const made = withQuery(
+            {
+              ...base,
+              id: newInboxId(),
+              name: freeName(base.name, inboxes.inboxes),
+              color: unusedInboxColor(inboxes.inboxes, base.color),
+            },
+            query,
+          );
           setDraftInbox(made);
-          setDraftInboxSource(base ? `inbox:${base.id}` : "inbox");
+          setDraftInboxSource(base.id);
           navigate(editInboxHref(made.id));
         }
       : undefined;
@@ -1717,21 +1737,23 @@ function Workspace({ url }: { url: UrlState }) {
                 chats={chatJobs(selectedEntry, jobs)}
               />
             </DecisionsRevision.Provider>
-          ) : page !== "pulls" && inboxQueuePage && !selectedInbox ? (
+          ) : page === "inbox" && !queueInbox ? (
             // The first inbox is being opened; the whole queue is never shown.
-            <section>
-              <PageBar title="Inboxes" />
-              <div className="local-page-body">
-                <LoadingStatus block>Loading inboxes…</LoadingStatus>
-              </div>
-            </section>
-          ) : page !== "pulls" && selectedInbox ? (
+            (inboxStatusView ?? (
+              <section>
+                <PageBar title="Inboxes" />
+                <div className="local-page-body">
+                  <LoadingStatus block>Loading inboxes…</LoadingStatus>
+                </div>
+              </section>
+            ))
+          ) : page === "inbox" && queueInbox ? (
             <UpNextPage
               inbox={inbox}
               jobs={jobs}
               inboxes={inboxes.inboxes}
-              selected={selectedInbox}
-              onEdit={() => navigate(editInboxHref(selectedInbox.id))}
+              selected={queueInbox}
+              onEdit={() => navigate(editInboxHref(queueInbox.id))}
               // Until a read succeeds there is nothing to say an empty inbox about.
               loading={revision === 0}
               hasRepositories={hasRepositories}
@@ -1750,7 +1772,7 @@ function Workspace({ url }: { url: UrlState }) {
                   ? (patch) =>
                       inboxes.save(
                         inboxes.inboxes.map((one) =>
-                          one.id === selectedInbox.id ? { ...one, ...patch } : one,
+                          one.id === queueInbox.id ? { ...one, ...patch } : one,
                         ),
                       )
                   : undefined

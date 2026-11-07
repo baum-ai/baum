@@ -258,6 +258,7 @@ it("keeps Inbox as a heading, never a link or the current page, whose chevron fo
   expect(heading.getAttribute("href")).toBeNull();
   expect(heading.getAttribute("role")).toBeNull();
   expect(heading.getAttribute("aria-current")).toBeNull();
+  expect(heading.getAttribute("aria-keyshortcuts")).toBeNull();
   expect(rail().querySelector('a[href="/s/test-ns/"]')).toBe(
     rail().querySelector(".local-rail-mark"),
   );
@@ -411,6 +412,27 @@ it("opens the first inbox for an unknown or just deleted inbox, in the same entr
   expect(node.querySelector(".upnext-list-head h1")!.textContent).toBe("Reviews");
 });
 
+it("shows the first inbox for a pull request link with no inbox, keeping its address", async () => {
+  // Nothing in the index matches: the page is still the first inbox's.
+  await render("?repository=acme%2Fdemo&pr=99");
+  expect(location.search).toBe("?repository=acme%2Fdemo&pr=99");
+  expect(node.querySelector(".upnext-list-head h1")!.textContent).toBe("Reviews");
+  expect(titles()).toEqual(["Change 1"]);
+  // A lone detail key is the same.
+  await render("?clone=clone");
+  expect(location.search).toBe("?clone=clone");
+  expect(node.querySelector(".upnext-list-head h1")!.textContent).toBe("Reviews");
+  await render("?repository=acme%2Fdemo");
+  expect(node.querySelector(".upnext-list-head h1")!.textContent).toBe("Reviews");
+});
+
+it("opens the first inbox for an unknown page", async () => {
+  const before = await opens("?page=foo");
+  expect(location.search).toBe("?inbox=Reviews");
+  expect(history.length).toBe(before);
+  expect(node.querySelector(".upnext-list-head h1")!.textContent).toBe("Reviews");
+});
+
 it("shows no queue while the inboxes load, fail to read or are not supported", async () => {
   const queue = () => node.querySelectorAll(".upnext-row, .upnext-list").length;
   let release!: () => void;
@@ -511,6 +533,8 @@ it("opens the first inbox left when the open one is deleted", async () => {
   expect(history.length).toBe(before);
   expect(node.querySelector(".upnext-list-head h1")!.textContent).toBe("Merges");
   expect(titles()).toEqual(["Change 3", "Change 4"]);
+  // Focus follows to that inbox's row, not to a sibling of the deleted one.
+  expect(document.activeElement).toBe(subLink("Merges"));
 });
 
 it("cannot delete the last inbox from the sidebar", async () => {
