@@ -325,7 +325,7 @@ func (r *reader) readFile(path string, index *fileIndex, vendor vendors.Slug) {
 		r.note("native transcript unavailable")
 		return
 	}
-	defer root.Close()
+	defer func() { _ = root.Close() }()
 	f, err := root.Open(rel)
 	if err != nil {
 		r.note("native transcript unavailable")
@@ -339,7 +339,7 @@ func (r *reader) readFile(path string, index *fileIndex, vendor vendors.Slug) {
 	}
 	scan := bufio.NewReaderSize(f, 64<<10)
 	turns := map[string]entity{}
-	activeTurn := ""
+	var activeTurn codexTurn
 	var waiting []pendingCodex
 	for line := 1; ; line++ {
 		if r.ctx.Err() != nil || len(r.result.Images) >= r.limits.MaxImages || r.total >= r.limits.MaxTotalBytes {
@@ -502,7 +502,14 @@ type pendingCodex struct {
 	at     *time.Time
 }
 
-func (r *reader) codex(raw []byte, index *fileIndex, line int, activeTurn *string) (*pendingCodex, string, entity) {
+// codexTurn mirrors the mapper's turn tracking: the open turn, and the latest
+// input written before a task_started, which belongs to the turn it opens.
+type codexTurn struct {
+	open    string
+	pending *entity
+}
+
+func (r *reader) codex(raw []byte, index *fileIndex, line int, activeTurn *codexTurn) (*pendingCodex, string, entity) {
 	var record struct {
 		Type      string     `json:"type"`
 		Timestamp *time.Time `json:"timestamp"`
@@ -525,13 +532,29 @@ func (r *reader) codex(raw []byte, index *fileIndex, line int, activeTurn *strin
 		return nil, "", entity{}
 	}
 	p := record.Payload
-	if record.Type == "event_msg" && p.Type == "task_started" && p.TurnID != "" {
-		*activeTurn = p.TurnID
+	if record.Type == "event_msg" {
+		switch p.Type {
+		case "task_started":
+			if p.TurnID != "" {
+				activeTurn.open = p.TurnID
+				if pending := activeTurn.pending; pending != nil {
+					activeTurn.pending = nil
+					return nil, p.TurnID, *pending
+				}
+			}
+		case "task_complete", "turn_aborted":
+			activeTurn.open = ""
+		}
 	}
 	if ent, ok := index.inputLines[line]; ok {
 		turn := p.TurnID
-		if turn == "" && record.Type == "event_msg" && p.Type == "user_message" {
-			turn = *activeTurn
+		if turn == "" && record.Type == "event_msg" && (p.Type == "user_message" || p.Type == "item_completed") {
+			if activeTurn.open == "" {
+				pending := ent
+				activeTurn.pending = &pending
+				return nil, "", entity{}
+			}
+			turn = activeTurn.open
 		}
 		if turn != "" {
 			return nil, turn, ent
