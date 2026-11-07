@@ -1336,9 +1336,17 @@ func (q *Queue) worker(chat bool) {
 					q.mu.Lock()
 					cancel()
 					delete(q.cancels, j.ID)
-					result := q.jobs[q.find(j.ID)]
+					k := q.find(j.ID)
+					var result Job
+					if k >= 0 {
+						result = q.jobs[k]
+					} else if q.log != nil {
+						q.log.Error("requeued job missing from the history", "job", j.ID)
+					}
 					q.mu.Unlock()
-					q.notify(result)
+					if k >= 0 {
+						q.notify(result)
+					}
 					q.signal()
 					continue
 				}
@@ -1348,7 +1356,19 @@ func (q *Queue) worker(chat bool) {
 			}
 			q.mu.Lock()
 			// A running job is never archived, but archiving may move it.
-			current := &q.jobs[q.find(j.ID)]
+			k := q.find(j.ID)
+			if k < 0 {
+				cancel()
+				delete(q.cancels, j.ID)
+				delete(q.drafts, j.ID)
+				delete(q.superseded, j.ID)
+				if q.log != nil {
+					q.log.Error("ended job missing from the history", "job", j.ID)
+				}
+				q.mu.Unlock()
+				continue
+			}
+			current := &q.jobs[k]
 			current.ActualCostUSD = cost
 			if cost == nil && current.CostReason == "" {
 				current.CostReason = "usage_not_reported"

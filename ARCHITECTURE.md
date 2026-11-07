@@ -3084,8 +3084,9 @@ A job that ended more than 120 days ago (`jobs.ArchiveAfter`, by its
 the API, and its transcript file is deleted. Its row stays, with `archived`
 set, and `Open` no longer loads it. Nothing deletes a row. Archiving runs at
 `Open` and then daily, until the queue stops. Queued and running jobs are
-never archived, nor are the jobs of a head that has an unsettled job in the
-history (see `Refused` below). One transaction sets the flags, writes the
+never archived. Nor is an unsettled job that is its head's latest, which
+`Refused` lists (see below), or a job whose archiving would leave an
+unsettled job its head's latest. One transaction sets the flags, writes the
 latest content of an archived job changed since its last write, and adds the
 archived jobs to `job_heads`, which counts, per head (`headKey`: repository
 case-insensitively, then pull request and head, or group and member heads),

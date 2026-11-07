@@ -58,20 +58,14 @@ func (q *Queue) archive() error {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	cutoff := q.clock0().Add(-ArchiveAfter)
-	// Refused answers from the jobs of a head with an unsettled job, which
-	// the scheduler may make pending again: they all stay, so its answer
-	// never changes.
-	unsettledHeads := map[string]bool{}
+	candidates := map[string]bool{}
+	encoded := map[string][]byte{}
+	byHead := map[string][]Job{}
 	for _, j := range q.jobs {
-		if unsettled(j) {
-			unsettledHeads[headKey(j)] = true
+		if j.Kind != KindFix {
+			byHead[headKey(j)] = append(byHead[headKey(j)], j)
 		}
-	}
-	var ids []string
-	var rows []journalRow
-	heads := map[string]headRuns{}
-	for _, j := range q.jobs {
-		if j.State == "queued" || j.State == "running" || q.cancels[j.ID] != nil || !j.UpdatedAt.Before(cutoff) || (j.Kind != KindFix && unsettledHeads[headKey(j)]) {
+		if j.State == "queued" || j.State == "running" || q.cancels[j.ID] != nil || !j.UpdatedAt.Before(cutoff) {
 			continue
 		}
 		if q.dirty[j.ID] {
@@ -80,6 +74,38 @@ func (q *Queue) archive() error {
 				// It stays until it can be written.
 				continue
 			}
+			encoded[j.ID] = raw
+		}
+		candidates[j.ID] = true
+	}
+	// Refused lists an unsettled job while it is the latest non-fix job of
+	// its head. Archiving keeps that answer: the latest job stays when it is
+	// unsettled, and so does every job after the last one staying when that
+	// one is unsettled, so an unsettled job never becomes the latest.
+	for _, jobs := range byHead {
+		if latest := jobs[len(jobs)-1]; unsettled(latest) {
+			delete(candidates, latest.ID)
+		}
+		for n := len(jobs) - 1; n >= 0; n-- {
+			if candidates[jobs[n].ID] {
+				continue
+			}
+			if unsettled(jobs[n]) {
+				for _, later := range jobs[n+1:] {
+					delete(candidates, later.ID)
+				}
+			}
+			break
+		}
+	}
+	var ids []string
+	var rows []journalRow
+	heads := map[string]headRuns{}
+	for _, j := range q.jobs {
+		if !candidates[j.ID] {
+			continue
+		}
+		if raw, ok := encoded[j.ID]; ok {
 			rows = append(rows, journalRow{j, raw})
 		}
 		ids = append(ids, j.ID)

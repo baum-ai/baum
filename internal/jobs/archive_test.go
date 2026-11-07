@@ -191,7 +191,7 @@ func TestFailedArchiveKeepsTheJobs(t *testing.T) {
 
 func TestArchivedHeadsStayDeduplicated(t *testing.T) {
 	path := filepath.Join(privateDir(t), "app.sqlite")
-	f := &autoExecutor{heads: map[int]string{1: "a1", 2: "b1", 3: "c1", 4: "d1", 5: "e1", 6: "f1"}, backend: "claude", started: make(chan Prepared, 10), release: make(chan struct{}),
+	f := &autoExecutor{heads: map[int]string{1: "a1", 2: "b1", 3: "c1", 4: "d1", 5: "e1", 6: "f1", 7: "g1", 8: "h1", 9: "i1"}, backend: "claude", started: make(chan Prepared, 10), release: make(chan struct{}),
 		members: map[string]string{"g": "1@a1,2@b1"}}
 	open := func() *Queue {
 		q, err := Open(path, f, 1, nil)
@@ -222,32 +222,60 @@ func TestArchivedHeadsStayDeduplicated(t *testing.T) {
 	fixed.Kind = KindFix
 	refusedThenRun := pr("refused-then-run", 6, "f1", "cancelled")
 	refusedThenRun.Reason = ReasonNeedsClone
+	refusedLast := pr("refused-last", 7, "g1", "cancelled")
+	refusedLast.Reason = ReasonDraft
+	refusedRecently := pr("refused-recently", 8, "h1", "cancelled")
+	refusedRecently.Reason, refusedRecently.UpdatedAt = ReasonDraft, now
+	// A details job counts for Interrupted (others), not for ErrDuplicate.
+	details := pr("details", 9, "i1", "completed")
+	details.Kind, details.Automatic = KindDetails, false
+	interruptedAfterDetails := pr("after-details", 9, "i1", "interrupted")
+	interruptedAfterDetails.UpdatedAt = now
 	addJobs(t, q,
 		pr("done", 1, "a1", "completed"), group,
 		// Interrupted long ago: archived, it is never retried.
 		pr("lost", 5, "e1", "interrupted"),
-		// Neither a fix nor a refused draft uses up a head.
+		// Neither a fix nor a refused draft uses up a head; the refused
+		// draft is its head's latest job, which Refused lists: it stays.
 		fixed, draft,
-		// The jobs of a head with a refused job stay: archiving the run
-		// would make Refused list the refusal.
+		// A refusal and a later run of one head both go: Refused listed
+		// neither.
 		refusedThenRun, pr("ran", 6, "f1", "completed"),
+		// A run and a later refusal: the refusal stays, the run goes.
+		pr("ran-before", 7, "g1", "completed"), refusedLast,
+		// A recent refusal and a later old run: the run stays, or the
+		// refusal would become the latest.
+		refusedRecently, pr("ran-after", 8, "h1", "completed"),
+		details, interruptedAfterDetails,
 		interrupted, interruptedGroup, refusedNow)
 	refusedBefore := ids(q.Refused())
+	// Before archiving only "lost" may run again: "after-details" shares its
+	// head with a details job, "again" and "group-again" with a run. Once
+	// archived, "lost" is never retried; the others stay unlisted.
+	if got := ids(q.Interrupted()); !slices.Equal(got, []string{"lost"}) {
+		t.Fatalf("interrupted before archiving %v", got)
+	}
 	if err := q.archive(); err != nil {
 		t.Fatal(err)
 	}
-	if got := ids(q.List()); !slices.Equal(got, []string{"draft", "refused-then-run", "ran", "again", "group-again", "refused-now"}) {
+	if got := ids(q.List()); !slices.Equal(got, []string{"draft", "refused-last", "refused-recently", "ran-after", "after-details", "again", "group-again", "refused-now"}) {
 		t.Fatalf("history %v", got)
 	}
+	q.mu.Lock()
+	if h := q.heads["org/repo#9@i1"]; h.runs != 0 || h.others != 1 {
+		t.Errorf("details head %+v", h)
+	}
+	q.mu.Unlock()
 	check := func(q *Queue) {
 		t.Helper()
-		for _, r := range []AutomaticRequest{auto(1, "a1"), auto(5, "e1"), auto(6, "f1"),
+		for _, r := range []AutomaticRequest{auto(1, "a1"), auto(5, "e1"), auto(6, "f1"), auto(7, "g1"),
 			{Item: Item{Clone: "clone", Group: "g"}, Repository: "org/repo", Head: "1@a1,2@b1", Trigger: TriggerStackReviewed}} {
 			if _, err := q.SubmitAutomatic(context.Background(), r); !errors.Is(err, ErrDuplicate) {
 				t.Fatalf("%+v: %v", r, err)
 			}
 		}
-		// The interrupted runs of archived heads are not the only ones.
+		// The interrupted runs of archived heads, a details job's included,
+		// are not the only ones: as before archiving.
 		if got := q.Interrupted(); len(got) != 0 {
 			t.Fatalf("interrupted %v", ids(got))
 		}
