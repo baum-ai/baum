@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
 	"regexp"
 	"strings"
 	"sync"
@@ -41,6 +40,7 @@ const (
 	CodeInvalidRequest = "invalid_request"
 	CodeInvalidInbox   = "invalid_inbox"
 	CodeTooMany        = "too_many_inboxes"
+	CodeLastInbox      = "last_inbox"
 	CodeDuplicateName  = "duplicate_name"
 	CodeDuplicateID    = "duplicate_id"
 	CodeStale          = "stale_revision"
@@ -66,6 +66,9 @@ type Inbox struct {
 type State struct {
 	Revision int     `json:"revision"`
 	Inboxes  []Inbox `json:"inboxes"`
+	// Initialized is set once the default inbox has been created, so that
+	// deleting it later is not undone.
+	Initialized bool `json:"initialized"`
 }
 
 // InvalidError is a refused request: a stable code and a message for a person.
@@ -101,22 +104,108 @@ type Store struct {
 // Open returns a store backed by the application database at path.
 func Open(path string) *Store { return &Store{path: path} }
 
-// Read returns stored state; a missing document is revision 0 with no inboxes.
+// DefaultName is the name of the inbox every installation starts with.
+const DefaultName = "Default"
+
+// Read returns stored state. The first read of an installation creates the
+// default inbox.
 func (s *Store) Read() (State, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.read()
+	return s.ensure()
 }
 
-func (s *Store) read() (State, error) {
+// ensure initializes the document when it has not been, and returns the
+// stored state. Initialized documents are only read. Unreadable ones are
+// reported and never written.
+func (s *Store) ensure() (State, error) {
+	// Any read failure falls through to the transaction: a database another
+	// store has created but not yet set up fails a read-only open, and the
+	// transaction waits for it. One that is really unreadable fails there
+	// before anything is written.
 	data, err := appdb.Read(s.path, "state", "inboxes")
-	if errors.Is(err, os.ErrNotExist) {
-		return State{Inboxes: []Inbox{}}, nil
+	if err == nil {
+		state, err := decode(data)
+		if err != nil || state.Initialized {
+			return state, err
+		}
 	}
-	if err != nil {
+	var state State
+	entered := false
+	err = appdb.Update(s.path, "state", "inboxes", func(raw []byte) ([]byte, error) {
+		entered = true
+		out, st, err := initialize(raw)
+		state = st
+		return out, err
+	})
+	if err != nil && !entered {
 		return State{}, &UnreadableError{err}
 	}
-	return decode(data)
+	return state, err
+}
+
+// initialize adds the default inbox to a document that has none of the
+// marker. Stored entries are carried over untouched. Twenty inboxes leave no
+// room, so none is added.
+func initialize(raw []byte) ([]byte, State, error) {
+	current, err := decode(raw)
+	if err != nil || current.Initialized {
+		return raw, current, err
+	}
+	doc := map[string]json.RawMessage{}
+	if raw != nil {
+		if err := json.Unmarshal(raw, &doc); err != nil {
+			return nil, State{}, &UnreadableError{err}
+		}
+	}
+	items := []json.RawMessage{}
+	if stored, ok := doc["inboxes"]; ok {
+		if err := json.Unmarshal(stored, &items); err != nil {
+			return nil, State{}, &UnreadableError{err}
+		}
+		if items == nil {
+			items = []json.RawMessage{}
+		}
+	}
+	if len(items) < MaxInboxes {
+		def, err := json.Marshal(Inbox{
+			ID: newID(), Name: freeName(current.Inboxes), Color: "blue", What: "any",
+			Owners: []string{}, Risk: "any", Repositories: []string{}, Badge: true,
+		})
+		if err != nil {
+			return nil, State{}, err
+		}
+		items = append(items, def)
+	}
+	for key, value := range map[string]any{"inboxes": items, "initialized": true, "revision": current.Revision + 1} {
+		if doc[key], err = json.Marshal(value); err != nil {
+			return nil, State{}, err
+		}
+	}
+	out, err := json.Marshal(doc)
+	if err != nil {
+		return nil, State{}, err
+	}
+	state, err := decode(out)
+	return out, state, err
+}
+
+// freeName is "Default", or "Default 2", "Default 3", ... when the name is
+// taken ignoring case.
+func freeName(existing []Inbox) string {
+	taken := func(name string) bool {
+		for _, inbox := range existing {
+			if strings.EqualFold(strings.TrimSpace(inbox.Name), name) {
+				return true
+			}
+		}
+		return false
+	}
+	name := DefaultName
+	for n := 2; taken(name); n++ {
+		name = fmt.Sprintf("%s %d", DefaultName, n)
+	}
+	return name
 }
 
 func decode(data []byte) (State, error) {
@@ -141,6 +230,11 @@ func decode(data []byte) (State, error) {
 func (s *Store) Replace(revision int, inboxes []Inbox) (State, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	// A client still at revision 0 gets the initialized list with a stale
+	// answer, which must not be rolled back with the refused save.
+	if _, err := s.ensure(); err != nil {
+		return State{}, err
+	}
 	var next State
 	read := false
 	err := appdb.Update(s.path, "state", "inboxes", func(raw []byte) ([]byte, error) {
@@ -160,7 +254,7 @@ func (s *Store) Replace(revision int, inboxes []Inbox) (State, error) {
 		if err != nil {
 			return nil, err
 		}
-		next = State{Revision: current.Revision + 1, Inboxes: clean}
+		next = State{Revision: current.Revision + 1, Inboxes: clean, Initialized: true}
 		return json.Marshal(next)
 	})
 	if err != nil && !read {
@@ -178,6 +272,9 @@ func newID() string {
 }
 
 func normalize(in []Inbox, known map[string]bool) ([]Inbox, error) {
+	if len(in) == 0 {
+		return nil, invalid(CodeLastInbox, "Keep at least one inbox.")
+	}
 	if len(in) > MaxInboxes {
 		return nil, invalid(CodeTooMany, "At most %d inboxes are allowed.", MaxInboxes)
 	}

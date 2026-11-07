@@ -58,7 +58,7 @@ func TestBaselineStoresShareOneDatabaseAndSurviveReopen(t *testing.T) {
 	if err = decisions.Skip(ctx, decisionlog.Meta{Agent: "codex", ID: "session", Repository: "owner/repo"}, "empty"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = inboxes.Open(path).Replace(0, nil); err != nil {
+	if _, err = inboxes.Open(path).Read(); err != nil {
 		t.Fatal(err)
 	}
 	if err = appdb.Write(path, "state", "jobs", []byte(`[{"id":"job","state":"queued"}]`)); err != nil {
@@ -255,10 +255,17 @@ func TestDatabaseAndRollbackJournalArePrivate(t *testing.T) {
 
 func TestInboxRevisionIsAtomicAcrossStores(t *testing.T) {
 	path := filepath.Join(appdbtest.TempDir(t), "app.sqlite")
+	if _, err := inboxes.Open(path).Read(); err != nil {
+		t.Fatal(err)
+	}
 	start := make(chan struct{})
 	results := make(chan error, 2)
 	for range 2 {
-		go func() { <-start; _, err := inboxes.Open(path).Replace(0, nil); results <- err }()
+		go func() {
+			<-start
+			_, err := inboxes.Open(path).Replace(1, []inboxes.Inbox{{Name: "A", Color: "blue", What: "any", Risk: "any"}})
+			results <- err
+		}()
 	}
 	close(start)
 	successes, stale := 0, 0
@@ -278,7 +285,7 @@ func TestInboxRevisionIsAtomicAcrossStores(t *testing.T) {
 		t.Fatalf("successes %d stale %d", successes, stale)
 	}
 	state, err := inboxes.Open(path).Read()
-	if err != nil || state.Revision != 1 {
+	if err != nil || state.Revision != 2 {
 		t.Fatalf("state %v %v", state, err)
 	}
 }
