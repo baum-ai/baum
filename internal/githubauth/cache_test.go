@@ -59,7 +59,7 @@ func mustToken(t *testing.T, m *Manager, want string) {
 	t.Helper()
 	got, err := m.Token(context.Background())
 	if err != nil || got != want {
-		t.Fatalf("Token = %q, %v; want %q", got, err, want)
+		t.Errorf("Token = %q, %v; want %q", got, err, want)
 	}
 }
 
@@ -86,6 +86,33 @@ func TestConcurrentTokenCallsLaunchTheStoreOnce(t *testing.T) {
 	}
 	if id := m.AccountForToken("tok"); id != 1 {
 		t.Fatalf("hit path lost the issued account: %d", id)
+	}
+}
+
+func TestStatusDropsTheCacheWhenTheCredentialWasDeletedElsewhere(t *testing.T) {
+	m, store, _ := cachedManager(Credential{AccessToken: "tok", Login: "alice", ID: 1})
+	mustToken(t, m, "tok")
+	store.set(Credential{})
+	if st, err := m.Status(context.Background()); err != nil || st.State != "disconnected" {
+		t.Fatal(st, err)
+	}
+	if _, err := m.Token(context.Background()); err == nil {
+		t.Fatal("deleted credential still served")
+	}
+}
+
+func TestFailedRefreshSaveDropsTheCache(t *testing.T) {
+	m, s, now, reply, _ := fixture(t)
+	s.c = Credential{AccessToken: "old", RefreshToken: "r", RefreshExpiresAt: now.Unix() + 7200, ExpiresAt: now.Unix() + 600, ID: 1, Login: "octocat"}
+	mustToken(t, m, "old")
+	*now = now.Add(9*time.Minute + 30*time.Second)
+	*reply = `{"access_token":"new","token_type":"bearer","expires_in":3600,"refresh_token":"r2","refresh_token_expires_in":7200}`
+	m.store = writeFailure{s}
+	if _, err := m.Token(context.Background()); err == nil {
+		t.Fatal("save failure not reported")
+	}
+	if _, ok := m.cachedAccess(); ok {
+		t.Fatal("cache survived a failed credential save")
 	}
 }
 

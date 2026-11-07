@@ -152,14 +152,18 @@ func (m *Manager) WithIdentity(ctx context.Context, publish func() error) error 
 }
 
 // cachedAccess returns the cached token while it is trusted. It takes only a
-// read lock, so a slow store read never delays a hit.
-func (m *Manager) cachedAccess() (cachedToken, bool) {
+// read lock, so a slow store read never delays a hit. The hit is recorded as
+// issued while that lock is held: changedIdentity drops the cache (a write
+// lock) before it clears the issued state, so a hit that raced it cannot
+// restore state for an account that was just replaced.
+func (m *Manager) cachedAccess() (string, bool) {
 	m.cacheMu.RLock()
 	defer m.cacheMu.RUnlock()
 	if c := m.cached; c != nil && m.now().Before(c.validUntil) {
-		return *c, true
+		m.issue(c.token, c.accountID)
+		return c.token, true
 	}
-	return cachedToken{}, false
+	return "", false
 }
 
 func (m *Manager) cacheGeneration() uint64 {
@@ -502,7 +506,9 @@ func (m *Manager) Status(ctx context.Context) (Status, error) {
 	}
 	defer m.unlock()
 	c, err := m.store.Load(ctx)
-	if err == nil {
+	if errors.Is(err, ErrNotConnected) {
+		m.dropCache() // deleted without passing through this manager
+	} else if err == nil {
 		// The saved account moved without passing through this manager.
 		m.cacheMu.RLock()
 		stale := m.cached != nil && (m.cached.accountID != c.ID || m.cached.token != c.AccessToken)
@@ -547,17 +553,15 @@ func (m *Manager) Disconnect(ctx context.Context) error {
 // queue on the lock, and the first one's read fills the cache for the rest, so
 // one helper launch serves them all.
 func (m *Manager) Token(ctx context.Context) (token string, returnedErr error) {
-	if c, ok := m.cachedAccess(); ok {
-		m.issue(c.token, c.accountID)
-		return c.token, nil
+	if token, ok := m.cachedAccess(); ok {
+		return token, nil
 	}
 	if err := m.lock(ctx); err != nil {
 		return "", err
 	}
 	defer m.unlock()
-	if c, ok := m.cachedAccess(); ok {
-		m.issue(c.token, c.accountID)
-		return c.token, nil
+	if token, ok := m.cachedAccess(); ok {
+		return token, nil
 	}
 	gen := m.cacheGeneration()
 	var accountID int64

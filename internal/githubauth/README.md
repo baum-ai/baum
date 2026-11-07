@@ -66,8 +66,11 @@ sign-in, a save, a refresh and any identity change drop the entry immediately,
 as does a 401 for the cached token reported through `ObserveResponse` (a 401
 for an older token leaves a newer entry alone) and a `Status` read that finds a
 different saved account. A read that began before a drop cannot repopulate the
-cache. After a 401 the GitHub transports resolve the token once more and resend
-the request once only if that token differs and the body can be replayed. A
+cache. After a 401 the GraphQL transport resolves the token once more and resends
+the request once, only if that token differs and the body can be replayed. A
+REST discovery reader only drops the cache: it keeps its credential partition,
+so the next reader re-reads. A `Status` read also drops the entry when the
+saved credential is gone. A
 credential GitHub keeps rejecting costs one helper launch per rejected request.
 Explicit environment and config tokens never reach the manager.
 
