@@ -39,7 +39,7 @@ test("daemon bootstrap keeps credentials private and opens saved review versions
   });
   const launch = await launchURL();
   await page.goto(launch);
-  await expect(page.getByRole("heading", { name: "Up next", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Default", exact: true })).toBeVisible();
   expect(page.url()).not.toContain("token");
   const base = new URL(page.url()).pathname;
   expect(base).toMatch(/^\/s\/[A-Za-z0-9_-]{43}\/$/);
@@ -50,7 +50,7 @@ test("daemon bootstrap keeps credentials private and opens saved review versions
   const relaunched = await browser.newPage();
   try {
     await relaunched.goto(launch);
-    await expect(relaunched.getByRole("heading", { name: "Up next", exact: true })).toBeVisible();
+    await expect(relaunched.getByRole("heading", { name: "Default", exact: true })).toBeVisible();
     expect(relaunched.url()).not.toContain("token");
   } finally {
     await relaunched.close();
@@ -193,7 +193,7 @@ test("review JSON stays folded and scrollable in an existing job transcript", as
     }),
   );
   await page.goto(await launchURL());
-  await expect(page.getByRole("heading", { name: "Up next", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Default", exact: true })).toBeVisible();
   const url = new URL(page.url());
   url.search = "?page=jobs&job=review-output";
   await page.goto(url.href);
@@ -393,7 +393,7 @@ test("walks through a review, comments on a behaviour and submits the review", a
   try {
     const freshPage = await freshContext.newPage();
     await freshPage.goto(await launchURL());
-    await expect(freshPage.getByRole("heading", { name: "Up next", exact: true })).toBeVisible();
+    await expect(freshPage.getByRole("heading", { name: "Default", exact: true })).toBeVisible();
     await freshPage.goto(retainedURL);
     await expect(
       freshPage

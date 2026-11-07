@@ -20,7 +20,7 @@ async function launchURL(): Promise<string> {
 /** Opens the app, then `search` on its namespaced address. */
 async function open(page: Page, search = "") {
   await page.goto(await launchURL());
-  await expect(page.getByRole("heading", { name: "Up next", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Default", exact: true })).toBeVisible();
   if (search) await page.goto(new URL(search, page.url()).toString());
 }
 
@@ -133,7 +133,7 @@ test("a refresh pressed again drops one that never answers on another page", asy
   await page.getByRole("button", { name: "Refresh from GitHub" }).click();
   await expect.poll(refresh.count).toBe(1);
   await page
-    .getByRole("link", { name: /^Inbox/ })
+    .getByRole("link", { name: /^Default/ })
     .first()
     .click();
   const inboxRefresh = page.getByRole("button", { name: "Refresh from GitHub" }).first();

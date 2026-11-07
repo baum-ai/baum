@@ -1,33 +1,207 @@
-import { expect, test, type Page } from "@playwright/test";
-import { deleteAllInboxes, launchURL } from "./inbox-helpers";
+import { expect, test, type Locator, type Page } from "@playwright/test";
+import { launchURL, resetInboxes } from "./inbox-helpers";
 
-/** The number on the Inbox link in the sidebar; 0 when it shows none. */
-async function inboxBadge(page: Page): Promise<number> {
-  const badge = page.locator('.local-rail-link[href$="/"] .local-rail-badge');
+/** The sidebar's Inbox heading, which is not a link. */
+const heading = (page: Page): Locator =>
+  page.getByRole("navigation", { name: "Main" }).locator(".local-rail-heading");
+
+/** The total on the Inbox heading; 0 when it shows none. */
+async function inboxTotal(page: Page): Promise<number> {
+  const badge = heading(page).locator(".local-rail-badge");
   return (await badge.count()) === 0 ? 0 : Number(await badge.textContent());
 }
 
-// A failed or retried run leaves no inbox for the specs that follow.
+const SHAPE = {
+  color: "blue",
+  what: "any",
+  owners: [],
+  risk: "any",
+  repositories: [],
+  no_bots: false,
+};
+
+/** Saves these inboxes (id, name, query, badge) through the daemon's API from
+ *  the signed-in page, then reloads so the app reads them. */
+async function saveInboxes(
+  page: Page,
+  list: { id: string; name: string; query: string; badge?: boolean }[],
+): Promise<void> {
+  await page.evaluate(
+    async ({ list, shape }) => {
+      const read = await fetch("api/inboxes", { cache: "no-store" });
+      const { revision } = (await read.json()) as { revision: number };
+      const write = await fetch("api/inboxes", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          revision,
+          inboxes: list.map((one) => ({ ...shape, badge: true, ...one })),
+        }),
+      });
+      if (!write.ok) throw new Error(`saving inboxes answered ${write.status}`);
+    },
+    { list, shape: SHAPE },
+  );
+  await page.reload();
+}
+
+const ONE = "0000000000000000000000000000000a";
+const TWO = "0000000000000000000000000000000b";
+
+// A failed or retried run leaves just the Default inbox for the specs that
+// follow.
 test.afterEach(async ({ page }) => {
-  await deleteAllInboxes(page);
+  await resetInboxes(page);
+});
+
+test("a first launch opens the Default inbox, and a stale link opens the first inbox", async ({
+  page,
+}) => {
+  await page.goto(await launchURL());
+  await expect(page).toHaveURL(/\?inbox=[0-9a-f]{32}/);
+  await expect(page.getByRole("heading", { name: "Default", exact: true })).toBeVisible();
+  const sidebar = page.getByRole("navigation", { name: "Main" });
+  await expect(sidebar.getByRole("link", { name: /^Default/ })).toHaveAttribute(
+    "aria-current",
+    "page",
+  );
+  // Inbox is a heading with the total, not a link.
+  await expect(sidebar.getByRole("link", { name: /^Inbox/ })).toHaveCount(0);
+  await expect(heading(page)).toContainText("Inbox");
+  await expect(page.locator("button.upnext-row").first()).toBeVisible({ timeout: 15000 });
+
+  const first = new URL(page.url()).searchParams.get("inbox")!;
+  await page.goto(new URL("?inbox=nobody-has-this", page.url()).toString());
+  await expect(page).toHaveURL(new RegExp(`\\?inbox=${first}$`));
+  await expect(page.getByRole("heading", { name: "Default", exact: true })).toBeVisible();
+});
+
+test("the Inbox total counts each pull request once, those in no inbox, and badge-off inboxes", async ({
+  page,
+}) => {
+  await page.goto(await launchURL());
+  await expect(page.locator("button.upnext-row").first()).toBeVisible({ timeout: 15000 });
+  await expect.poll(() => inboxTotal(page)).toBeGreaterThan(1);
+  const total = await inboxTotal(page);
+  await expect(heading(page).locator(".sr-only")).toHaveText(`, ${total} waiting`);
+
+  // Two inboxes holding the whole queue: every pull request is in both, and
+  // the second has its count switched off.
+  await saveInboxes(page, [
+    { id: ONE, name: "Everything", query: "" },
+    { id: TWO, name: "Quiet everything", query: "", badge: false },
+  ]);
+  const sidebar = page.getByRole("navigation", { name: "Main" });
+  const everything = sidebar.getByRole("link", { name: /^Everything/ });
+  const quiet = sidebar.getByRole("link", { name: /^Quiet everything/ });
+  await expect(everything.locator(".local-rail-sub-count")).toHaveText(String(total));
+  await expect(quiet.locator(".local-rail-sub-count")).toHaveCount(0);
+  await expect(heading(page).locator(".local-rail-badge")).toHaveText(String(total));
+
+  // Only the second, badge off: its pull requests still make the total.
+  await saveInboxes(page, [{ id: TWO, name: "Quiet everything", query: "", badge: false }]);
+  await expect(quiet.locator(".local-rail-sub-count")).toHaveCount(0);
+  await expect(heading(page).locator(".local-rail-badge")).toHaveText(String(total));
+
+  // An inbox holding some of them leaves the others in none, yet counted.
+  await saveInboxes(page, [{ id: ONE, name: "Conflicts", query: "is=conflict" }]);
+  const conflicts = sidebar.getByRole("link", { name: /^Conflicts/ });
+  await expect(conflicts.locator(".local-rail-sub-count")).toBeVisible();
+  const some = Number(await conflicts.locator(".local-rail-sub-count").textContent());
+  expect(some).toBeGreaterThan(0);
+  expect(some).toBeLessThan(total);
+  await expect(heading(page).locator(".local-rail-badge")).toHaveText(String(total));
+  await expect(heading(page).locator(".sr-only")).toHaveText(`, ${total} waiting`);
+});
+
+test("the last inbox cannot be deleted", async ({ page }) => {
+  await page.goto(await launchURL());
+  await expect(page.locator("button.upnext-row").first()).toBeVisible({ timeout: 15000 });
+  const sidebar = page.getByRole("navigation", { name: "Main" });
+  await sidebar.getByRole("link", { name: /^Default/ }).hover();
+  await page.getByRole("button", { name: "More for Default" }).click();
+  const remove = page.locator(".local-rail-menu").getByRole("button", { name: "Delete inbox" });
+  await expect(remove).toBeDisabled();
+  await expect(remove).toHaveAttribute("title", "Keep at least one inbox");
+  await expect(page.locator(".local-rail-menu")).toContainText("Keep at least one inbox");
+  await page.keyboard.press("Escape");
+
+  // Nor from its own edit page.
+  await page.locator(".upnext-list-title h1").click({ button: "right" });
+  await page.getByRole("menuitem", { name: "Edit…" }).click();
+  await expect(page.getByRole("button", { name: "Delete inbox" })).toBeDisabled();
+  await expect(page.getByText("Keep at least one inbox")).toBeVisible();
+});
+
+test("a snooze in one inbox hides the pull request in the others, lowers the total and survives a reload", async ({
+  page,
+}) => {
+  await page.goto(await launchURL());
+  await expect(page.locator("button.upnext-row").first()).toBeVisible({ timeout: 15000 });
+  await saveInboxes(page, [
+    { id: ONE, name: "First", query: "" },
+    { id: TWO, name: "Second", query: "" },
+  ]);
+  const sidebar = page.getByRole("navigation", { name: "Main" });
+  const rows = page.locator("button.upnext-row");
+  await expect(rows.first()).toBeVisible({ timeout: 15000 });
+  await expect.poll(() => inboxTotal(page)).toBeGreaterThan(1);
+  const total = await inboxTotal(page);
+  const row = rows.first();
+  const title = (await row.locator(".upnext-row-title").textContent())!;
+
+  await row.click();
+  await page.getByRole("button", { name: /^Snooze/ }).click();
+  const saved = page.waitForResponse(
+    (response) =>
+      response.url().includes("api/ui-state/inbox") &&
+      response.request().method() === "PUT" &&
+      response.status() === 200,
+  );
+  await page.getByRole("menuitem", { name: /Tomorrow morning/ }).click();
+  await saved;
+  const hidden = rows.filter({ hasText: title });
+  await expect(hidden).toHaveCount(0);
+  await expect.poll(() => inboxTotal(page)).toBe(total - 1);
+
+  const second = sidebar.getByRole("link", { name: /^Second/ });
+  const checkOther = async () => {
+    await second.click();
+    await expect(page.locator(".upnext-list-title h1")).toHaveText("Second");
+    await expect(hidden).toHaveCount(0);
+    await expect(second.locator(".local-rail-sub-count")).toHaveText(String(total - 1));
+    await expect(page.getByRole("region", { name: "Snoozed" })).toContainText(title);
+    await expect(heading(page).locator(".local-rail-badge")).toHaveText(String(total - 1));
+  };
+  await checkOther();
+  await page.evaluate(() => localStorage.clear());
+  await page.reload();
+  await checkOther();
+
+  // Bring it back, so the fixture is as the specs that follow expect.
+  const snoozed = page.getByRole("region", { name: "Snoozed" });
+  await snoozed.getByRole("button", { name: /Snoozed/ }).click();
+  await snoozed.getByRole("listitem").filter({ hasText: title }).click({ button: "right" });
+  await page.getByRole("menuitem", { name: "Bring back" }).click();
+  await expect(heading(page).locator(".local-rail-badge")).toHaveText(String(total));
 });
 
 // The fixture runs a real inbox store, so an inbox made here is saved by the
-// daemon and shows in the sidebar, in its queue and in the Inbox badge.
-test("makes an inbox from a template, edits it, counts it in the badge and deletes it with Undo", async ({
+// daemon and shows in the sidebar, in its queue and in the Inbox total.
+test("makes an inbox from a template, edits it, hides its count and deletes it with Undo", async ({
   page,
 }) => {
   const errors: string[] = [];
   page.on("pageerror", (e) => errors.push(e.message));
   await page.goto(await launchURL());
-  await expect(page.getByRole("heading", { name: "Up next", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Default", exact: true })).toBeVisible();
   await expect(page.locator("button.upnext-row").first()).toBeVisible({ timeout: 15000 });
   const sidebar = page.getByRole("navigation", { name: "Main" });
 
   // New inbox and Manage inboxes are in Inbox's right-click menu.
   await expect(sidebar.getByRole("link", { name: "New inbox" })).toHaveCount(0);
   const inboxMenu = async (item: string) => {
-    await sidebar.getByRole("link", { name: /^Inbox/ }).click({ button: "right" });
+    await heading(page).click({ button: "right" });
     await page.getByRole("menuitem", { name: item }).click();
   };
 
@@ -46,8 +220,9 @@ test("makes an inbox from a template, edits it, counts it in the badge and delet
   await page.keyboard.press("Control+Enter");
   await expect(page).toHaveURL(/\?inbox=[0-9a-f]{32}/);
   await expect(inboxLink).toBeVisible();
+  // Shift+K and Shift+J move between the saved inboxes.
   await page.keyboard.press("Shift+K");
-  await expect(page.getByRole("heading", { name: "Up next", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Default", exact: true })).toBeVisible();
   await page.keyboard.press("Shift+J");
   await expect(page.locator(".upnext-list-title h1")).toHaveText("For an agent");
   await page.locator(".upnext-list-title h1").click({ button: "right" });
@@ -77,31 +252,28 @@ test("makes an inbox from a template, edits it, counts it in the badge and delet
   await expect(page.getByLabel("Name")).toHaveValue("For an agent");
   await expect(query).toHaveCount(0);
 
-  // Counting it in the Inbox badge: with it on, its pull requests add to the
-  // number; leaving it out takes away those that are in no other inbox.
-  const badge = page.getByRole("switch", { name: "Count it in the Inbox badge" });
+  // Its badge switch only shows or hides the count on its own row: the
+  // Inbox total never moves.
+  const badge = page.getByRole("switch", { name: "Show its count in the sidebar" });
   await expect(badge).toBeChecked();
-  await expect.poll(() => inboxBadge(page)).toBeGreaterThan(0);
-  await page.locator("summary.filter-menu-button").click();
-  await page.getByRole("combobox", { name: "Add filter", exact: true }).fill("waiting=agent");
-  await page.keyboard.press("Enter");
-  await expect(page.locator(".inbox-preview-count")).toHaveText(String(reviews));
-  const withBadge = await inboxBadge(page);
-  // Pull requests of the inbox are in no other inbox, so leaving them out
-  // lowers the badge by as many as the inbox holds.
+  await expect.poll(() => inboxTotal(page)).toBeGreaterThan(0);
+  const total = await inboxTotal(page);
+  await expect(inboxLink.locator(".local-rail-sub-count")).toHaveCount(1);
   await badge.uncheck();
-  await expect(page.getByText("Left out of the badge, so it never nags.")).toBeVisible();
-  await expect.poll(() => inboxBadge(page)).toBe(withBadge - reviews);
+  await expect(page.getByText("No count beside it, so it never nags.")).toBeVisible();
+  await expect(inboxLink.locator(".local-rail-sub-count")).toHaveCount(0);
+  expect(await inboxTotal(page)).toBe(total);
   await badge.check();
-  await expect.poll(() => inboxBadge(page)).toBe(withBadge);
+  await expect(inboxLink.locator(".local-rail-sub-count")).toHaveCount(1);
+  expect(await inboxTotal(page)).toBe(total);
 
-  // Manage lists it, with its badge choice in its menu.
+  // Manage lists it, with its count choice in its menu.
   await inboxMenu("Manage inboxes…");
   await expect(page.getByRole("heading", { name: "Inboxes", exact: true })).toBeVisible();
   await page.getByRole("listitem").filter({ hasText: "For an agent" }).hover();
   await page.getByRole("button", { name: "Actions for For an agent", exact: true }).click();
   await expect(
-    page.getByRole("menuitemcheckbox", { name: "Count in the Inbox badge" }),
+    page.getByRole("menuitemcheckbox", { name: "Show count in the sidebar" }),
   ).toHaveAttribute("aria-checked", "true");
   await page.keyboard.press("Escape");
 
@@ -112,22 +284,20 @@ test("makes an inbox from a template, edits it, counts it in the badge and delet
     (response) =>
       response.request().method() === "PUT" &&
       response.url().endsWith("/api/inboxes") &&
-      response.request().postDataJSON().inboxes.length === 0,
+      response.request().postDataJSON().inboxes.length === 1,
   );
   await page.locator(".local-rail-menu").getByRole("button", { name: "Delete inbox" }).click();
   // It asks first.
   await expect(page.getByRole("dialog")).toContainText("Only this view goes.");
   await page.getByRole("dialog").getByRole("button", { name: "Delete inbox" }).click();
   expect((await deleted).ok()).toBe(true);
-  await expect(
-    page.getByText("Deleted For an agent. Its pull requests stay in Inbox."),
-  ).toBeVisible();
+  await expect(page.getByText("Deleted For an agent.")).toBeVisible();
   await expect(inboxLink).toHaveCount(0);
   const restored = page.waitForResponse(
     (response) =>
       response.request().method() === "PUT" &&
       response.url().endsWith("/api/inboxes") &&
-      response.request().postDataJSON().inboxes.length === 1,
+      response.request().postDataJSON().inboxes.length === 2,
   );
   await page.getByRole("status").getByRole("button", { name: "Undo" }).click();
   expect((await restored).ok()).toBe(true);
@@ -143,6 +313,7 @@ test("makes an inbox from a template, edits it, counts it in the badge and delet
   await page.getByRole("button", { name: "Delete inbox" }).click();
   await page.getByRole("dialog").getByRole("button", { name: "Delete inbox" }).click();
   await expect(sidebar.getByRole("link", { name: /^For an agent/ })).toHaveCount(0);
-  await expect(sidebar.getByRole("link", { name: /^Inbox/ })).toBeFocused();
+  // Deleting the open inbox opens the first one left.
+  await expect(page.getByRole("heading", { name: "Default", exact: true })).toBeVisible();
   expect(errors).toEqual([]);
 });

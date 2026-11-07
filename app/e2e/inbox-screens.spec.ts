@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { deleteAllInboxes, launchURL } from "./inbox-helpers";
+import { resetInboxes, launchURL } from "./inbox-helpers";
 
 // Pictures of the inbox pages for a pull request, light and dark. They are
 // taken only when asked for (INBOX_SCREENSHOTS=1) and written to
@@ -8,7 +8,7 @@ test.skip(!process.env.INBOX_SCREENSHOTS, "screenshots are taken on request");
 
 // The inboxes made here are not left for the specs that follow.
 test.afterEach(async ({ page }) => {
-  await deleteAllInboxes(page);
+  await resetInboxes(page);
 });
 
 test("pictures of the inbox pages", async ({ page }) => {
@@ -20,7 +20,7 @@ test("pictures of the inbox pages", async ({ page }) => {
 
   // Four inboxes from templates; the last is left with its badge off.
   for (const name of [/^Custom/, /^Quick merges/, /^For an agent/, /^Personal/]) {
-    await sidebar.getByRole("link", { name: /^Inbox/ }).click({ button: "right" });
+    await sidebar.locator(".local-rail-heading").click({ button: "right" });
     await page.getByRole("menuitem", { name: "New inbox…" }).click();
     await page.getByRole("button", { name }).click();
     await expect(page).toHaveURL(/page=inbox-edit/);
@@ -49,7 +49,7 @@ test("pictures of the inbox pages", async ({ page }) => {
     await shot("2-queue", scheme);
 
     // New inbox.
-    await sidebar.getByRole("link", { name: /^Inbox/ }).click({ button: "right" });
+    await sidebar.locator(".local-rail-heading").click({ button: "right" });
     await page.getByRole("menuitem", { name: "New inbox…" }).click();
     await expect(
       page.getByRole("heading", { name: "What should this inbox catch?" }),
@@ -74,7 +74,7 @@ test("pictures of the inbox pages", async ({ page }) => {
     await shot("4-edit-diff", scheme);
 
     // Manage.
-    await sidebar.getByRole("link", { name: /^Inbox/ }).click({ button: "right" });
+    await sidebar.locator(".local-rail-heading").click({ button: "right" });
     await page.getByRole("menuitem", { name: "Manage inboxes…" }).click();
     await expect(page.getByRole("heading", { name: "Inboxes", exact: true })).toBeVisible();
     await shot("5-manage", scheme);

@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { deleteAllInboxes, launchURL } from "./inbox-helpers";
+import { resetInboxes, launchURL } from "./inbox-helpers";
 
 /** Clears every page's filter and saved tab through the daemon, so a failed
  *  run leaves none for the specs that follow. */
@@ -28,7 +28,7 @@ async function clearFilters(page: Page) {
 
 test.afterEach(async ({ page }) => {
   await clearFilters(page);
-  await deleteAllInboxes(page);
+  await resetInboxes(page);
 });
 
 // Pictures for a pull request are taken only when asked for
@@ -131,7 +131,8 @@ test("filters the Inbox from the menu and as typed, saves an inbox, and edits a 
   await bar.press("Control+Enter");
   await expect(page).toHaveURL(/page=inbox-edit&inbox=[0-9a-f]{32}/);
   const name = page.getByLabel("Name", { exact: true });
-  await expect(name).toHaveValue("Filtered");
+  // Made from the Default inbox's filter, it is named after it.
+  await expect(name).toHaveValue("Default 2");
   await expect(name).toBeFocused();
   await name.fill("Filtered");
   await name.press("Control+Enter");
@@ -140,7 +141,7 @@ test("filters the Inbox from the menu and as typed, saves an inbox, and edits a 
   const edited = page.locator(".inbox-query textarea");
   const sidebar = page.getByRole("navigation", { name: "Main" });
   await sidebar
-    .getByRole("link", { name: /^Inbox/ })
+    .getByRole("link", { name: /^Default/ })
     .first()
     .click();
   await expect(filter).toHaveAccessibleName("Filter");
