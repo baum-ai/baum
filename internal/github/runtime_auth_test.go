@@ -111,3 +111,52 @@ func TestEnterpriseFailureCannotRejectPublicGitHubConnection(t *testing.T) {
 		t.Fatal("public revocation was not recorded", err)
 	}
 }
+
+func TestUnauthorizedRereadsTheTokenOnceAndRetriesOnlyWithANewOne(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		reread       string
+		wantRequests int
+		wantStatus   int
+	}{
+		{"replaced credential is retried once", "second", 2, 200},
+		{"same credential is not retried", "first", 1, 401},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			resolutions, requests := 0, 0
+			tokens := func(context.Context, string) (string, error) {
+				resolutions++
+				if resolutions == 1 {
+					return "first", nil
+				}
+				return tc.reread, nil
+			}
+			var observed []string
+			c := New(tokens, Options{
+				AuthResult: func(_, token string, status int, _ http.Header) {
+					observed = append(observed, token+":"+http.StatusText(status))
+				},
+				Transport: runtimeTransport(func(r *http.Request) (*http.Response, error) {
+					requests++
+					status := 200
+					if r.Header.Get("Authorization") == "token first" {
+						status = 401
+					}
+					body, _ := io.ReadAll(r.Body)
+					if string(body) != "payload" {
+						t.Errorf("request %d body %q", requests, body)
+					}
+					return &http.Response{StatusCode: status, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(`{}`)), Request: r}, nil
+				}),
+			})
+			request, _ := http.NewRequest(http.MethodPost, "https://api.github.com/graphql", strings.NewReader("payload"))
+			response, err := authTransport{host: "api.github.com", tokens: c.tokens, tokenHost: "github.com", base: c.transport, result: c.authResult}.RoundTrip(request)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if requests != tc.wantRequests || response.StatusCode != tc.wantStatus || resolutions != 2 {
+				t.Fatalf("requests %d status %d resolutions %d (observed %v)", requests, response.StatusCode, resolutions, observed)
+			}
+		})
+	}
+}

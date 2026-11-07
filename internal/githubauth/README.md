@@ -54,13 +54,30 @@ token nears expiry during an outage, its latest refresh token obtains a new
 pair before validation and persistence resume. A daemon crash before successful
 persistence can require reconnecting; credentials are never cached on disk.
 
+`Token` caches the access token it reads in memory, with its account, so a
+request does not start the credential helper. A cache hit takes no manager
+lock and never waits behind a store read; callers that miss together queue on
+the lock and the first read fills the cache for the rest, so concurrent misses
+launch the helper once. An entry is trusted for ten minutes at most, which
+bounds how stale a credential replaced outside this process can be (a grant
+with no expiry would otherwise never be re-read), and never within a minute of
+the credential's own expiry, where `Token` refreshes instead. Sign-out,
+sign-in, a save, a refresh and any identity change drop the entry immediately,
+as does a 401 for the cached token reported through `ObserveResponse` (a 401
+for an older token leaves a newer entry alone) and a `Status` read that finds a
+different saved account. A read that began before a drop cannot repopulate the
+cache. After a 401 the GitHub transports resolve the token once more and resend
+the request once only if that token differs and the body can be replayed. A
+credential GitHub keeps rejecting costs one helper launch per rejected request.
+Explicit environment and config tokens never reach the manager.
+
 Run `just oss-go test -race ./internal/githubauth` from the repository root.
 
 The daemon shares one manager with configuration, GitHub HTTP clients and the
 local authentication controller. Explicit environment/config credentials take
 precedence. No GitHub CLI executable, token store or host registry is consulted.
 Enterprise credentials require an explicit matching `GH_HOST`; device sign-in
-is GitHub.com only. Cached GraphQL clients resolve credentials on every request;
+is GitHub.com only. Cached GraphQL clients resolve credentials on every request (from the manager's in-memory cache);
 a discovery reader aborts if its credential partition changes mid-transaction.
 
 The local `/api/github-auth` namespace uses the existing Host, session, Origin

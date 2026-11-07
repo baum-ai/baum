@@ -194,7 +194,43 @@ func (t authTransport) RoundTrip(request *http.Request) (*http.Response, error) 
 	if err == nil && response != nil && usedToken != "" && t.result != nil {
 		t.result(t.tokenHost, usedToken, response.StatusCode, response.Header)
 	}
+	if err == nil && response != nil && response.StatusCode == http.StatusUnauthorized && usedToken != "" && t.tokens != nil {
+		return t.retryUnauthorized(request, response, usedToken)
+	}
 	return response, err
+}
+
+// retryUnauthorized answers a 401. The result callback has already told the
+// token source to forget usedToken, so one fresh resolution may find a
+// credential replaced behind the process. The request is sent once more only
+// when that token differs and the body can be replayed; otherwise the 401
+// stands. It never retries twice.
+func (t authTransport) retryUnauthorized(request *http.Request, response *http.Response, usedToken string) (*http.Response, error) {
+	token, err := t.tokens(request.Context(), t.tokenHost)
+	if err != nil || token == "" || token == usedToken {
+		return response, nil
+	}
+	retry := request.Clone(request.Context())
+	if request.Body != nil && request.Body != http.NoBody {
+		if request.GetBody == nil {
+			return response, nil
+		}
+		body, err := request.GetBody()
+		if err != nil {
+			return response, nil
+		}
+		retry.Body = body
+	}
+	retry.Header.Set("Authorization", "token "+token)
+	again, err := t.base.RoundTrip(retry)
+	if err != nil {
+		return response, nil
+	}
+	_ = response.Body.Close()
+	if again != nil && t.result != nil {
+		t.result(t.tokenHost, token, again.StatusCode, again.Header)
+	}
+	return again, nil
 }
 
 // errRedirect reports a redirect the client refused to follow.
