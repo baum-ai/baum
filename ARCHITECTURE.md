@@ -3133,6 +3133,32 @@ again against the new daemon. Workers use the same `generate.Publish`
 entry point as the terminal: previous-version lookup, run lease, generation and
 strict validation, then atomic version publication. Running journal entries are
 interrupted on restart; queued entries retain their confirmed input fingerprint.
+`GET /api/jobs` reads the queue in three forms, so no client reads the whole
+history on every refresh; each answers `{"available":true,"jobs":[…]}`:
+
+- With no parameters, the current jobs, oldest first (history order): every
+  queued or running job, every failed job not yet seen (`seen_at` unset), and
+  the latest job of each subject for each kind (`Queue.Current`). A subject is
+  a review group, or a pull request (repository compared without regard to
+  case), or, for a repository's feature build, the repository with pull request
+  0; a kind is the review's empty kind, `details`, `fix`, `chat` or
+  `feature_build`. That is what the app's global list and the desktop tray read.
+- `?repository=owner/name&pr=N`: every loaded job of that pull request, oldest
+  first, without the jobs of a group (`Queue.OfPullRequest`). The PR page reads
+  its fixes and questions this way.
+- `?limit=N` and/or `?before=<job id>`: a page of the whole history, newest
+  first (`Queue.Page`), from the newest job or just before the named one, at
+  most `limit` jobs (1 to 200, 50 when only `before` is given), with
+  `"next":"<job id>"` for the following older page while older jobs exist
+  (omitted when none). The Jobs page loads finished jobs this way.
+
+The forms are exclusive: `repository` with `pr` together, and neither with
+`limit` or `before`. An unknown parameter, a missing or non-positive `pr`, a
+`limit` outside 1 to 200 and a `before` naming no loaded job answer `400`.
+`GET /api/jobs/{id}` is one loaded job wherever it is in the history (`404`
+otherwise), for the transcript page of a job the current jobs no longer hold;
+`GET /api/jobs/{id}/transcript` likewise finds any loaded job.
+
 `POST /api/jobs` with `items` and `mode` starts reviews, a group's review or a
 fix at once (`Queue.Generate`): it prepares the items and queues them in one
 request, with no estimate to confirm and nothing about the price that stops a

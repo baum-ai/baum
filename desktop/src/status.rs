@@ -82,8 +82,10 @@ pub struct Jobs {
     pub failed: Vec<Failed>,
 }
 
-/// `GET /api/jobs`. A daemon without a runner answers `{"available":false}`,
-/// which has no jobs.
+/// `GET /api/jobs`, the current jobs: every running, queued and unseen failed
+/// job, with the latest finished ones, and `next` only when paged, which the
+/// tray does not ask for. A daemon without a runner answers
+/// `{"available":false}`, which has no jobs.
 pub fn parse_jobs(body: &[u8]) -> Result<Jobs, String> {
     let body: JobsBody =
         serde_json::from_slice(body).map_err(|e| format!("unreadable jobs list: {e}"))?;
@@ -811,6 +813,16 @@ mod tests {
             Jobs::default()
         );
         assert!(parse_jobs(b"not json").is_err());
+    }
+
+    #[test]
+    fn parses_the_current_jobs_and_ignores_a_next_cursor() {
+        let body = br#"{"available":true,"next":"older","jobs":[
+            {"id":"a","state":"completed","kind":"fix","repository":"acme/widgets","pr":7},
+            {"id":"b","state":"running"},
+            {"id":"c","state":"failed","seen_at":"2026-11-03T09:00:00Z"},
+            {"id":"d","state":"failed","kind":"fix","repository":"acme/widgets","pr":8}]}"#;
+        assert_eq!(parse_jobs(body).unwrap(), jobs(1, 0, &["d"]));
     }
 
     #[test]
