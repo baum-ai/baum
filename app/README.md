@@ -671,8 +671,8 @@ the sheet read). Every page is reached from the keyboard. With the command key
 (their modifier can be changed in Settings › General: Command, Control or
 Option on a Mac, Ctrl or Alt elsewhere; the sidebar, its tooltips and the sheet
 show the chosen one, and the other app-wide keys keep the command key)
-(Inbox, Sessions, Timeline, Pull requests, Analytics, Repositories, Jobs,
-Settings; digits
+(Inbox, which opens the first saved inbox, Sessions, Timeline, Pull requests,
+Analytics, Repositories, Jobs, Settings; digits
 are read by their place on the keyboard, so layouts that shift them work),
 `,` opens Settings, `K` opens **Go to** (`src/go-to.tsx`) and `R` refreshes
 the page (above); letters are read by their place on a layout without Latin
@@ -680,9 +680,10 @@ ones. Back and forward
 are `⌘[` and `⌘]` on a Mac and `Alt+←` and `Alt+→` elsewhere. These work in
 text fields too, but not under a dialog other than the sheet or Go to, which
 they close. Go to searches the pages, the pull requests (by title, repository,
-number, author or branch; what waits in the Inbox first), the review groups and
-the agent sessions, and, with a daemon that has inboxes, each inbox by its name
-(opening its queue) with **New inbox** and **Manage inboxes**: every word typed must match, a label that starts with the
+number, author or branch; what waits in an inbox first), the review groups and
+the agent sessions, and, with a daemon that has inboxes, each saved inbox by its
+name (opening its queue) with **New inbox** and **Manage inboxes**. There is no
+Inbox page to go to, as no page shows the whole queue: every word typed must match, a label that starts with the
 query ranks first, `↑` and `↓` move, `Enter` opens and `Esc` closes. The sidebar
 draws each page's key while Alt is held and names it in the link's tooltip and
 `aria-keyshortcuts`.
@@ -712,7 +713,7 @@ rows, tabs, menus, dialogs and Settings keep a click's focus, being where the
 keys act. Rings show only for the keyboard (`:focus-visible`). `Esc` in a text
 field gives it up, as before. On a pull request, a group, a job's
 transcript or a session, `Esc` and `u` go back to the page it was opened from
-(the Inbox, an inbox, Pull requests, a group), past moves within it (a
+(an inbox, Pull requests, a group), past moves within it (a
 walkthrough step, the Ask panel): each history entry the app adds records its
 place and the entry it was opened from (`writeHistory`, `backToOpener`). A window
 opened on the page itself goes to its list.
@@ -789,8 +790,9 @@ place, keeps that row too, so coming back from what a row opened
 Keys are ignored with Ctrl, Meta or Alt held, in text fields, selects, text areas
 and editable content (checkboxes and radios still pass them) and while any dialog
 is open. On a pull request or group page, `u`, or `Esc` with nothing focused,
-returns to the page it was opened from (the Inbox, or Pull requests with the
-filter kept); on a session's or job's transcript the same keys return to
+returns to the page it was opened from (the inbox it was opened in, whose
+address the pull request or group keeps as `inbox=<id>`, or Pull requests with
+the filter kept; a link with no inbox goes to the first one); on a session's or job's transcript the same keys return to
 Sessions or Jobs. Analytics has no keys of its own beyond Tab: its controls
 are native buttons (its window, chart and breakdown toggles are pressed
 buttons in a group), and its charts' bars take the focus for their tooltips.
@@ -826,7 +828,7 @@ because GitHub merges asynchronously; a re-run where GitHub refused only some
 runs stays open and names them. Either success makes the daemon re-read the
 repository's pull requests.
 
-The Inbox (the app's root, `src/up-next.tsx`) is a split view: a list of
+An inbox's queue (`?inbox=<id>` on the app root, `src/up-next.tsx`) is a split view: a list of
 what waits on the person, grouped by what they do about it, beside the panel
 of the selected pull request. The page uses the shared palette in both themes; its list and
 panel scroll on their own, and below 760px the list stacks above the panel.
@@ -916,7 +918,7 @@ Snoozes and today's record are kept in the daemon's `app.sqlite`,
 independently of the browser origin, and start again each local day, snoozes
 excepted. Initial bookkeeping waits until saved state has loaded. Failed reads
 or saves show a retry action and preserve unsaved changes in the window. The
-sidebar's Inbox badge counts the queue without snoozed pull
+sidebar's Inbox heading counts the queue without snoozed pull
 requests. The daemon counts the same queue for the desktop tray and dock badge
 (`internal/inboxcount`), so a change to these rules belongs there too; it does
 not yet apply inboxes left out of the badge.
@@ -933,24 +935,30 @@ pull requests a fix agent is working on now) or, for the person's own,
 `repo=`; and leaving out bots as `is!=bot`, each before the query, which is
 parenthesised when it has an `OR`. The next save writes the inbox with only the
 query. A pull request can
-be in several inboxes. An inbox's queue is `?inbox=<id>` on the app root (an
-unknown id shows the Inbox): the same page, with only the matching items, the
-same groups, order, panel, keys, snoozes and **Merge all N** (which counts only
+be in several inboxes. The app never shows the whole queue: the daemon always
+keeps at least one inbox (a fresh installation gets **Default**, which matches
+everything, and is an ordinary inbox that can be renamed, edited or deleted
+while another remains), and the app root, a legacy link to it, an `inbox` the
+daemon does not have (as one just deleted) and the start-up and the end of
+setup all open the first inbox in the sidebar's order. The address is replaced
+by `?inbox=<first id>` in the same history entry, so Back does not return to
+the root, and its other parameters stay. Until the first read of the inboxes has
+answered the page says "Loading inboxes…", and after a first read that failed it
+shows the read error with Retry; with an older daemon it says "Inboxes need a
+newer baum". None of them shows a queue. An inbox's queue has the same groups, order, panel, keys, snoozes and **Merge all N** (which counts only
 that inbox's Merge items). Its header shows the inbox's colour dot and name:
 the dot opens its six colours, and a click on the name renames it in place
 (Enter or leaving saves, Esc keeps the old name, a blank or taken name is
 refused there); a right click on the head offers **Edit…**. An empty one says
-"Nothing here right now." under a dozing Stumpy, as the Inbox's "Inbox zero"
-does (an awake one while no repository is picked). Snoozed, **Done today**, the header's done count and
+"Nothing here right now." under a dozing Stumpy (an awake one while no repository
+is picked). Snoozed, **Done today**, the header's done count and
 progress bar, and the group of the person's own pull requests that wait on
-checks or reviews list only the inbox's pull requests, as the Inbox's filter
-narrows them there too. A pull request done today matches as it was when last
+checks or reviews list only the inbox's pull requests. A pull request done today matches as it was when last
 in the queue, from its row kept with today's record, even once the app no
-longer lists it. In the Inbox a row
-carries a quiet tag after its number and repository, the colour dot and name
-of the first inbox it is in (one waiting on others included), and its panel a
-tag for each; in an inbox the panel tags the other inboxes it is
-also in. Colours are six palette names (`--inbox-*` in `src/style.css`, with
+longer lists it. A row carries no inbox tag; the panel tags the other inboxes
+the pull request is also in. A pull request or group opened from an inbox keeps
+`inbox=<id>` in its address, so its back link and `u` or `Esc` return to that
+inbox. Colours are six palette names (`--inbox-*` in `src/style.css`, with
 dark variants).
 
 A Help button at the right of the sidebar's baum title (under it when the
@@ -966,39 +974,44 @@ the sheet open `?` hides it. Opened by the key, the menu gives the keys back to
 where they were rather than to the button. With the glyph-only rail the button
 sits under the Settings glyph.
 
-In the sidebar a chevron beside Inbox folds the inboxes nested under it
+In the sidebar Inbox is a heading, not a link: it has no address, is never the
+current page and shows the badge count, and its chevron folds the saved inboxes
+nested under it
 (remembered in `localStorage`; hidden with the glyph-only rail). The pages and
 inboxes scroll within the sidebar, so with many inboxes plan usage, Jobs and
 Settings stay in view; a row's menu is placed against the window, under its row
 or above it near the bottom, and closes when the sidebar scrolls. Each row links
-to `?inbox=<id>`, is the current page when selected (then Inbox is not), and
+to `?inbox=<id>`, is the current page when selected, and
 shows a dot, the name and how many unsnoozed items match, none when 0 (muted,
 and said so to screen readers, when the inbox is left out of the badge). The
 `⋯` button, or a right click on the row, opens a short list of buttons,
 focused on the first: **Edit inbox**, which opens the inbox's edit page, and
-**Delete inbox**. Esc, a click elsewhere or choosing closes it and returns
-focus to the `⋯` button (after a delete, to the neighbouring inbox, or Inbox;
-after a cancelled one, to the `⋯`); focus never drops to the page. Delete first
-asks (only the view goes), then toasts "Deleted <name>. Its pull requests stay
-in Inbox." with **Undo**, which puts back only that inbox,
+**Delete inbox**, which is disabled with "Keep at least one inbox" when only one
+is left. Esc, a click elsewhere or choosing closes it and returns
+focus to the `⋯` button (after a delete, to the neighbouring inbox; after a
+cancelled one, to the `⋯`); focus never drops to the page. Delete first
+asks (only the view goes), then toasts "Deleted <name>." with **Undo**, which puts back only that inbox,
 with its id so links to it still work, into the list as it is then, at its old
 place (or the end), so a change made while the toast was up is kept; an inbox
-with that id already there is left alone. The chevron is labelled "Inboxes",
+with that id already there is left alone. Deleting the open inbox opens the first
+one left, in its entry. The chevron is labelled "Inboxes",
 with `aria-expanded` and `aria-controls` for the nested list. The Inbox badge counts the unsnoozed
 queue items that are in no inbox or in at least one that counts in the badge;
-with no inboxes it is the count above. Changes show at once and are sent to the
+the daemon always has an inbox, so the count above only shows with an older daemon. Changes show at once and are sent to the
 daemon one at a time, each carrying the newest revision, so an older change
 cannot overwrite a newer one; a conflict adopts the daemon's list and any other
-failure restores the last saved list with an error. An older daemon (the read
-answers 404, or `available: false`) has none of this: no chevron, rows, tags or
-changed badge. Any other failed read (a 500 `inboxes_unreadable`, a dropped
+failure restores the last saved list with an error. The daemon refuses to save an empty list (400 `last_inbox`), and the app does
+not offer it; if it answers so, its message is shown as any failed save. An older
+daemon (the read answers 404, or `available: false`) has none of this: no
+chevron, rows, tags or changed badge, and the inbox page says it needs a newer
+baum. Any other failed read (a 500 `inboxes_unreadable`, a dropped
 connection) is not an older daemon: it keeps the list shown (on the very first
-read, nothing inbox-related) and says "Couldn't read your inboxes" in an alert
-until a read succeeds, and later saves still go out. Entries the daemon sends
+read, no queue, only the error with Retry) and says "Couldn't read your inboxes"
+in an alert until a read succeeds, and later saves still go out. Entries the daemon sends
 are read defensively (missing lists are empty, unknown values the plain ones,
 entries without an id and name dropped).
 
-**The filter** narrows the Inbox, each inbox's queue and Pull requests. It is a
+**The filter** narrows each inbox's queue and Pull requests. It is a
 query written like a GitHub search, parsed and matched in `src/pr-filter.ts`.
 A term is a field, an operator and a value:
 
@@ -1062,11 +1075,9 @@ on), and Esc closes them, then the menu. Each edit that reads applies a moment
 after the last key, and at Enter or leaving the box; one longer than 500
 characters is not applied and says so.
 
-In the Inbox (all) the save is **Create inbox**, which appends an inbox named
-"Filtered" (or "Filtered 2"…) holding the query. First it opens an unsaved
-name form with the suggested name selected. Save creates it and opens its
-queue, clearing the source page's temporary filter (a saved inbox returns to
-its saved query). It is not offered at 20 inboxes or with an older daemon. In a saved inbox the menu starts from the
+There is no whole-queue filter: the filter is always an inbox's own. **Create
+inbox** (below, and Command+Enter) is not offered at 20 inboxes or with an
+older daemon. In a saved inbox the menu starts from the
 inbox's own query, its values ticked; a change is a draft that narrows the
 queue (kept per inbox) until the save, as GitHub's merge button: **Update
 inbox** gives the inbox the query, and the arrow beside it offers **Create
@@ -1075,16 +1086,15 @@ the draft differs; the draft goes once the inbox holds it, so a failed save
 keeps it). **Clear** there empties the draft, which then shows the whole queue.
 `waiting=` is refused outside an inbox's queue. With nothing matching while
 the filter hides something, the queue's panel says "Nothing matches the
-filter", how many it hides, and **Clear the filter** (in a saved inbox,
-**Discard the changes**). Tabbing out of the menu closes it. Each page keeps its own filter or draft (`inbox`,
+filter", how many it hides, and **Discard the changes**. Tabbing out of the menu closes it. Each page keeps its own filter or draft (`inbox`,
 `inbox:<id>`, `pulls` or a saved tab's `tab:<id>`) in the daemon's
 `ui/filters` document (see the [uistate README](../internal/uistate/README.md)),
 across windows and restarts; a failed save says so with **Retry**.
 
 Inboxes are made and changed on three pages that sit under Inbox in the sidebar
-but are not sidebar pages of their own, so they have no number key and ⌘1 still
-opens Inbox (`src/inbox-pages.tsx`; routed in `src/app.tsx` by `?page=`). A
-right click on Inbox in the sidebar offers **New inbox…** and **Manage
+but are not sidebar pages of their own, so they have no number key, and ⌘1 opens
+the first saved inbox (`src/inbox-pages.tsx`; routed in `src/app.tsx` by `?page=`). A
+right click on the Inbox heading in the sidebar offers **New inbox…** and **Manage
 inboxes…**; a right click on an inbox's row, like its ⋯, offers **Edit inbox**
 and **Delete inbox**, and on its queue head **Edit…**. A right click on a pull request in
 an inbox's queue (or ⌘. on it) offers what its panel and keys do: **Open**, the
@@ -1095,11 +1105,11 @@ row under Done today, **Open** and **Open on GitHub**. Deleting an inbox, from
 there or its edit page, first asks, saying only the view goes and its pull
 requests, reviews and snoozes stay; then it is deleted with Undo. With an
 older daemon none of these links, pages or Go to entries exist, and a direct
-address to them shows Inbox, but only for an older daemon (the read answers 404
-or `available: false`): before the first read has answered the page shows
-"Loading inboxes…" rather than Inbox, and after a first read that failed it
-shows the read error with Retry. On New inbox and Manage inboxes Inbox is only
-the section, not the current page (as when an inbox's row is selected); the
+address to them says "Inboxes need a newer baum", only for an older daemon (the
+read answers 404 or `available: false`): before the first read has answered the
+page shows "Loading inboxes…", and after a first read that failed it
+shows the read error with Retry. On New inbox and Manage inboxes the Inbox
+heading is only the section (it is never the current page); the
 edit page keeps the inbox's own row current.
 Every control is a real button, link or input with
 a label, with no key of its own, reached with Tab.
@@ -1129,7 +1139,9 @@ a label, with no key of its own, reached with Tab.
 the inbox's whole query: the filter icon with its menu (Waiting for among the
 fields) beside the query as text, each change saved a moment after it reads. A
 switch counts the inbox in the Inbox badge. **Delete inbox** asks, then
-deletes with Undo and goes to Inbox with focus on the sidebar's Inbox link.
+deletes with Undo and goes to the first inbox left with focus on its row in the
+sidebar; with only one inbox it is disabled and the page says "Keep at least one
+inbox".
 The right-hand preview is "Would show right now" with the same unsnoozed queue
 items and `matches` as the queue, grouped like it, each row with its
 repository and tags of the other inboxes it is in. A change that alters the
@@ -1137,13 +1149,14 @@ matches says "N added", "N removed" or "N added · N removed" (a zero half is
 left out) for four seconds, in a live region that is always on
 the page and empty otherwise, the removed rows struck through and fading out
   over the last moments (no fade with reduced motion). An unknown id says "This inbox no longer
-  exists" and links to Inbox.
+  exists" and links to Inbox, which opens the first inbox.
 - **Manage** (`?page=inboxes`): the inboxes in the sidebar's order, each with
   its colour dot, name (a link to edit it) and how many are in it now ("not
   counted in the badge" when it is left out). Its menu holds
   Edit…, Move up and Move down (each only where the inbox can move) and
   **Count in the Inbox badge**, an on-or-off choice; a save sends the whole
-  list in its new order. With none, it leads to New inbox.
+  list in its new order. It has no delete: an inbox is deleted from its row in the
+  sidebar or its edit page, neither of which deletes the last one.
 
 Pull requests (`?page=pulls`, `src/inbox.tsx`) lists every open pull request
 of the picked repositories, with or without a local clone, with Risk,
@@ -1319,8 +1332,8 @@ ChatGPT; otherwise they come from its last session and, once older than 15
 minutes, say how old they are.
 See the daemon's [plan usage README](../internal/planusage/README.md).
 
-The app's sidebar leads to the Inbox, Sessions, Timeline, Pull requests, Analytics, Repositories, Jobs
-and Settings; the Inbox shows how many things wait on the person there (its inboxes are nested beneath it), and Sessions shows the number of agent sessions waiting on the person (in the caution tone), or
+The app's sidebar leads to the saved inboxes under an Inbox heading, Sessions, Timeline, Pull requests, Analytics, Repositories, Jobs
+and Settings; the Inbox heading shows how many things wait on the person there (a heading, not a link; its inboxes are nested beneath it), and Sessions shows the number of agent sessions waiting on the person (in the caution tone), or
 else the number working now. The sidebar and the page's panel stay in place:
 the panel's notices and each page's bar (`PageBar`) stay at its top, and only
 what is under them scrolls (`.local-main`, which pages scroll through
@@ -2087,11 +2100,11 @@ hooks run `baum` from the PATH and report nothing without it. It links to
 whichever fixes apply: Connect an agent (Settings, Connections) and Install
 baum CLI (Settings, This computer).
 
-On Inbox and Pull requests, `/` opens the filter with Add filter focused.
+On an inbox and Pull requests, `/` opens the filter with Add filter focused.
 Escape closes the filter without leaving a focus ring on its button.
 The query box appears only with an actual filter and has no placeholder.
 Organisation option counts show each organisation’s matching pull requests.
-On Inbox, Command+Enter or Control+Enter creates an inbox from the current filter.
+On an inbox, Command+Enter or Control+Enter creates an inbox from the current filter.
 When creating an inbox, Command+Enter (Control+Enter on other keyboards) saves it.
 
 While the filter menu is open, Command+C or Control+C clears its filters and
@@ -2100,8 +2113,8 @@ Create inbox button shortcuts.
 
 New inboxes choose a colour not used by another inbox, preserving their template’s
 preferred colour when available; once all colours are used, that preference repeats.
-Shift+J/K or Ctrl+Down/Up moves between the global Inbox and saved inboxes in
-sidebar order (global Inbox first), stopping at either end. Typing fields and dialogs keep their keys.
+Shift+J/K or Ctrl+Down/Up moves between the saved inboxes in
+sidebar order, stopping at the first and the last. Typing fields and dialogs keep their keys.
 Ctrl+K always opens Go to.
 Enter is drawn as ↵ in button shortcut hints.
 

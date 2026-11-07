@@ -841,7 +841,17 @@ export function jobHref(job: Job) {
  *  view, when the page was opened from there, else the Inbox. `prefix` starts
  *  the query of a link that should go back to the same place. */
 export function backTo(search: URLSearchParams): { href: string; label: string; prefix: string } {
-  if (search.get("page") !== "pulls") return { href: appURL(), label: "Inbox", prefix: "" };
+  if (search.get("page") !== "pulls") {
+    // Back to the inbox it was opened from; the root opens the first one.
+    const inbox = search.get("inbox");
+    return inbox
+      ? {
+          href: appURL(`?inbox=${encodeURIComponent(inbox)}`),
+          label: "Inbox",
+          prefix: `inbox=${encodeURIComponent(inbox)}&`,
+        }
+      : { href: appURL(), label: "Inbox", prefix: "" };
+  }
   const back = new URLSearchParams({ page: "pulls" });
   const filter = search.get("filter");
   if (filter) back.set("filter", filter);

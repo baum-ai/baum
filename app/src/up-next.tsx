@@ -654,11 +654,13 @@ export function waitingOn(entry: Entry, base?: number) {
   return "Waiting on GitHub";
 }
 
-function prHref(entry: Entry, cloneFor: (entry: Entry) => string) {
+/** A pull request's page, carrying the inbox it was opened from so back
+ *  returns there. */
+function prHref(entry: Entry, cloneFor: (entry: Entry) => string, inbox?: Inbox) {
   const pr = entry.pull_request;
   const clone = cloneFor(entry);
   return appURL(
-    `?${clone ? `clone=${encodeURIComponent(clone)}` : `repository=${encodeURIComponent(pr.repository)}`}&pr=${pr.number}`,
+    `?${inbox ? `inbox=${encodeURIComponent(inbox.id)}&` : ""}${clone ? `clone=${encodeURIComponent(clone)}` : `repository=${encodeURIComponent(pr.repository)}`}&pr=${pr.number}`,
   );
 }
 
@@ -939,7 +941,7 @@ function InboxHeadEdit({
 export function UpNextPage({
   inbox: all,
   inboxes = [],
-  selected: scope = null,
+  selected: scope,
   onEdit,
   loading,
   hasRepositories,
@@ -967,8 +969,8 @@ export function UpNextPage({
   inboxes?: Inbox[];
   /** The review groups and stacks, whose shown members the list nests under one row. */
   reviewGroups?: ReviewGroup[];
-  /** The inbox whose queue this is; none for the Inbox. */
-  selected?: Inbox | null;
+  /** The saved inbox whose queue this is. */
+  selected: Inbox;
   /** Opens the inbox's edit page, from a right click on its head. */
   onEdit?: () => void;
   loading: boolean;
@@ -1017,14 +1019,10 @@ export function UpNextPage({
   // The page's filter. In a saved inbox it starts as the inbox's own query,
   // and a change is a draft that narrows the queue until Update inbox saves it
   // (kept per inbox; none kept is the saved query).
-  const saved = scope ? foldedQuery(scope) : "";
-  const quick = useFilterDraft(
-    scope ? `inbox:${scope.id}` : "inbox",
-    scope ? saved : null,
-    inboxSaves,
-  );
+  const saved = foldedQuery(scope);
+  const quick = useFilterDraft(`inbox:${scope.id}`, saved, inboxSaves);
   const { query, set: setQuery } = quick;
-  const filtering = scope ? quick.dirty : query !== "";
+  const filtering = quick.dirty;
   useEffect(() => {
     const create = (event: KeyboardEvent) => {
       if (
@@ -1045,7 +1043,7 @@ export function UpNextPage({
       if (queryProblem(text, true)) return;
       event.preventDefault();
       if (event.target instanceof HTMLTextAreaElement) event.target.blur();
-      saveAsInbox(text, scope ?? undefined);
+      saveAsInbox(text, scope);
     };
     window.addEventListener("keydown", create);
     return () => window.removeEventListener("keydown", create);
@@ -1292,9 +1290,7 @@ export function UpNextPage({
     : actionable === 0
       ? cleared.length
         ? `Nothing left. ${formatCount(cleared.length)} handled today.`
-        : scope
-          ? "Nothing waiting."
-          : "Nothing waits on you."
+        : "Nothing waiting."
       : [
           yours ? `${plural(yours, "thing")} for you` : "",
           minutes ? `about ${plural(minutes, "minute")}` : "",
@@ -1318,7 +1314,7 @@ export function UpNextPage({
     const { entry, item, job, waiting } = row;
     const pr = entry.pull_request;
     const items: MenuItem[] = [
-      { label: "Open", hint: "↵", onSelect: () => navigate(prHref(entry, cloneFor)) },
+      { label: "Open", hint: "↵", onSelect: () => navigate(prHref(entry, cloneFor, scope)) },
     ];
     const watchable = inbox.watchable(entry);
     const run = job ?? watchable;
@@ -1360,7 +1356,12 @@ export function UpNextPage({
     {
       label: "Open",
       hint: "↵",
-      onSelect: () => navigate(appURL(`?group=${encodeURIComponent(line.group.id)}`)),
+      onSelect: () =>
+        navigate(
+          appURL(
+            `?inbox=${encodeURIComponent(scope.id)}&group=${encodeURIComponent(line.group.id)}`,
+          ),
+        ),
     },
     {
       label: groupOpen(line) ? "Hide pull requests" : "Show pull requests",
@@ -1382,12 +1383,12 @@ export function UpNextPage({
       },
     },
   ];
-  const alsoIn = (row: Row) => rowInboxes(row, inboxes).filter((other) => other.id !== scope?.id);
+  const alsoIn = (row: Row) => rowInboxes(row, inboxes).filter((other) => other.id !== scope.id);
   const saveOptions: SaveOption[] =
     !filtering || queryProblem(query)
       ? []
       : [
-          ...(scope && updateInbox
+          ...(updateInbox
             ? [
                 {
                   label: "Update inbox",
@@ -1400,16 +1401,14 @@ export function UpNextPage({
             ? [
                 {
                   label: "Create inbox",
-                  onSelect: () => saveAsInbox(query, scope ?? undefined),
+                  onSelect: () => saveAsInbox(query, scope),
                 },
               ]
             : []),
-          ...(scope ? [{ label: "Discard changes", onSelect: () => quick.reset() }] : []),
+          { label: "Discard changes", onSelect: () => quick.reset() },
         ];
   // What the filter hides: of the inbox's own, in a saved inbox.
-  const hidden = scope
-    ? unfiltered.filter((entry) => matchesQuery(saved, entry, kinds.get(entry))).length
-    : unfiltered.length;
+  const hidden = unfiltered.filter((entry) => matchesQuery(saved, entry, kinds.get(entry))).length;
   // The filter offers every repository, organization, author and branch
   // known, not only those of what the inbox holds now.
   const known = { entries, repositories };
@@ -1425,7 +1424,7 @@ export function UpNextPage({
         <>
           <FilterBar
             // A page's text is its own: moving to another inbox starts afresh.
-            key={scope?.id ?? "inbox"}
+            key={scope.id}
             query={query}
             onChange={setQuery}
             entries={unfiltered}
@@ -1443,38 +1442,25 @@ export function UpNextPage({
       <div className="upnext-page">
         <div className="upnext-list">
           <header className="upnext-list-head">
-            {scope ? (
-              <>
-                <div
-                  className={`upnext-list-title inbox-${scope.color}`}
-                  onContextMenu={(event) =>
-                    onEdit &&
-                    actionsMenu.open(event, [{ label: "Edit…", onSelect: onEdit }], scope.name)
-                  }
-                >
-                  {updateInbox ? (
-                    <InboxHeadEdit inbox={scope} inboxes={inboxes} update={updateInbox} />
-                  ) : (
-                    <>
-                      <span aria-hidden="true" className="inbox-dot inbox-dot-large" />
-                      <h1>{scope.name}</h1>
-                    </>
-                  )}
-                  {filterButton}
-                  {refreshButton}
-                </div>
-                <p className="upnext-list-summary">{summary}</p>
-              </>
-            ) : (
-              <>
-                <div className="upnext-list-heading">
-                  <h1>Up next</h1>
-                  {filterButton}
-                  {refreshButton}
-                </div>
-                <p>{summary}</p>
-              </>
-            )}
+            <div
+              className={`upnext-list-title inbox-${scope.color}`}
+              onContextMenu={(event) =>
+                onEdit &&
+                actionsMenu.open(event, [{ label: "Edit…", onSelect: onEdit }], scope.name)
+              }
+            >
+              {updateInbox ? (
+                <InboxHeadEdit inbox={scope} inboxes={inboxes} update={updateInbox} />
+              ) : (
+                <>
+                  <span aria-hidden="true" className="inbox-dot inbox-dot-large" />
+                  <h1>{scope.name}</h1>
+                </>
+              )}
+              {filterButton}
+              {refreshButton}
+            </div>
+            <p className="upnext-list-summary">{summary}</p>
             <div
               className="upnext-bar"
               role="progressbar"
@@ -1512,7 +1498,6 @@ export function UpNextPage({
                 >
                   <ListRow
                     row={row}
-                    tag={scope ? undefined : rowInboxes(row, inboxes)[0]}
                     on={row.key === line?.key}
                     tabbable={row.key === tabbable}
                     pick={select}
@@ -1621,7 +1606,7 @@ export function UpNextPage({
                     </span>
                     {/* Its page while the app still lists it, otherwise GitHub. */}
                     {item.entry ? (
-                      <Link href={prHref(item.entry, cloneFor)} className="upnext-done-text">
+                      <Link href={prHref(item.entry, cloneFor, scope)} className="upnext-done-text">
                         {KINDS[item.kind].done} #{item.number} {item.title}
                       </Link>
                     ) : item.url ? (
@@ -1656,7 +1641,7 @@ export function UpNextPage({
               row={selected}
               doc={doc}
               tags={alsoIn(selected)}
-              href={prHref(selected.entry, cloneFor)}
+              href={prHref(selected.entry, cloneFor, scope)}
               Link={Link}
               fix={selectedFix}
               fixState={selectedFixState}
@@ -1675,7 +1660,9 @@ export function UpNextPage({
               line={selectedGroup}
               doc={groupDoc}
               entries={entries}
-              href={appURL(`?group=${encodeURIComponent(selectedGroup.group.id)}`)}
+              href={appURL(
+                `?inbox=${encodeURIComponent(scope.id)}&group=${encodeURIComponent(selectedGroup.group.id)}`,
+              )}
               pick={(key) => {
                 toggleGroup(selectedGroup, true);
                 select(key);
@@ -1692,12 +1679,10 @@ export function UpNextPage({
                 {formatCount(hidden)} pull {hidden === 1 ? "request is" : "requests are"} hidden by
                 it.
               </p>
-              <Button onClick={() => quick.reset()}>
-                {scope ? "Discard the changes" : "Clear the filter"}
-              </Button>
+              <Button onClick={() => quick.reset()}>Discard the changes</Button>
             </div>
           ) : (
-            <Zero inbox={inbox} scoped={!!scope} hasRepositories={hasRepositories} Link={Link} />
+            <Zero inbox={inbox} hasRepositories={hasRepositories} Link={Link} />
           )}
         </div>
         {toast ? (
@@ -1749,15 +1734,12 @@ export function UpNextPage({
 
 function ListRow({
   row,
-  tag,
   on,
   tabbable,
   pick,
   inGroup = false,
 }: {
   row: Row;
-  /** The first inbox the row is in, in the Inbox. */
-  tag?: Inbox;
   on: boolean;
   tabbable: boolean;
   pick: (key: string) => void;
@@ -1809,7 +1791,6 @@ function ListRow({
               sub
             )}
           </span>
-          {tag ? <InboxTag inbox={tag} /> : null}
         </span>
       </span>
       {hot ? (
@@ -2797,12 +2778,10 @@ function GroupPanel({
 
 function Zero({
   inbox,
-  scoped,
   hasRepositories,
   Link,
 }: {
   inbox: UpNextState;
-  scoped: boolean;
   hasRepositories: boolean;
   Link: ComponentType<ViewerLinkProps>;
 }) {
@@ -2820,30 +2799,16 @@ function Zero({
       </div>
     );
   const { snoozed, cleared } = inbox;
-  if (scoped)
-    return (
-      <div className="upnext-zero">
-        <Stumpy mood="dozing" size={88} className="upnext-zero-stumpy" />
-        <h2>Nothing here right now.</h2>
-        <p>
-          {snoozed.length > 0
-            ? `Everything here is handled except ${plural(snoozed.length, "snoozed pull request")}; they come back on their own.`
-            : cleared.length > 0
-              ? `All ${formatCount(cleared.length)} handled. Nothing needs you right now.`
-              : "It fills up as matching pull requests come in."}
-        </p>
-      </div>
-    );
   return (
     <div className="upnext-zero">
       <Stumpy mood="dozing" size={88} className="upnext-zero-stumpy" />
-      <h2>Inbox zero</h2>
+      <h2>Nothing here right now.</h2>
       <p>
         {snoozed.length > 0
-          ? `Everything is handled except ${plural(snoozed.length, "snoozed pull request")}; they come back on their own.`
+          ? `Everything here is handled except ${plural(snoozed.length, "snoozed pull request")}; they come back on their own.`
           : cleared.length > 0
             ? `All ${formatCount(cleared.length)} handled. Nothing needs you right now.`
-            : "No review is asked of you and none of your pull requests needs you."}
+            : "It fills up as matching pull requests come in."}
       </p>
     </div>
   );

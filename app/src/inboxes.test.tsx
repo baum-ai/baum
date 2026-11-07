@@ -94,6 +94,8 @@ let daemon: { revision: number; inboxes: Inbox[] } | null = null;
 let puts: { revision: number; inboxes: Inbox[] }[] = [];
 // A status other than 0 makes GET api/inboxes fail with it.
 let readStatus = 0;
+// Holds GET api/inboxes until released, for the first read still loading.
+let inboxesHold: Promise<void> | null = null;
 let listeners: Record<string, (() => void)[]> = {};
 
 beforeEach(() => {
@@ -108,6 +110,7 @@ beforeEach(() => {
   daemon = { revision: 1, inboxes: [reviews, merges, acme, quiet] };
   puts = [];
   readStatus = 0;
+  inboxesHold = null;
   listeners = {};
   node = document.createElement("div");
   document.body.append(node);
@@ -125,6 +128,7 @@ beforeEach(() => {
     "fetch",
     mockStateFetch(async (path: string, init?: RequestInit) => {
       if (path.endsWith("api/inboxes")) {
+        if (inboxesHold) await inboxesHold;
         if (init?.method === "PUT") {
           const body = JSON.parse(init.body as string) as { revision: number; inboxes: Inbox[] };
           puts.push(body);
@@ -183,10 +187,8 @@ const subLink = (name: string) =>
   Array.from(node.querySelectorAll<HTMLAnchorElement>("a.local-rail-sub")).find((a) =>
     a.textContent?.startsWith(name),
   )!;
-const inboxLink = () =>
-  Array.from(rail().querySelectorAll<HTMLAnchorElement>("a.local-rail-link")).find((a) =>
-    a.textContent?.startsWith("Inbox"),
-  )!;
+// Inbox in the sidebar: a heading over the saved inboxes, not a link.
+const inboxHeading = () => rail().querySelector<HTMLElement>(".local-rail-heading")!;
 const titles = () =>
   Array.from(node.querySelectorAll(".upnext-row-title")).map((title) => title.textContent);
 // Lets a save's request and its answer finish.
@@ -225,6 +227,7 @@ const snoozeUntilLater = (...keys: string[]) =>
   });
 
 it("nests the inboxes under Inbox with their counts and the current one", async () => {
+  // The root opens the first inbox.
   await render();
   expect(subRows().map((row) => row.textContent?.replace("⋯", ""))).toEqual([
     "Reviews1",
@@ -234,16 +237,38 @@ it("nests the inboxes under Inbox with their counts and the current one", async 
     "Quiet",
   ]);
   // The badge counts what is in no inbox or in one that counts: all but 4.
-  expect(inboxLink().querySelector(".local-rail-badge")?.textContent).toBe("3");
+  expect(inboxHeading().querySelector(".local-rail-badge")?.textContent).toBe("3");
   expect(subLink("Merges").querySelector(".local-rail-sub-count")?.className).toContain("muted");
   expect(subLink("Acme").querySelector(".local-rail-sub-count")?.className).not.toContain("muted");
   expect(subLink("Acme").getAttribute("href")).toBe("/s/test-ns/?inbox=Acme");
-  expect(inboxLink().getAttribute("aria-current")).toBe("page");
+  expect(subLink("Reviews").getAttribute("aria-current")).toBe("page");
   expect(subLink("Acme").getAttribute("aria-current")).toBeNull();
 
   await click(subLink("Acme"));
   expect(subLink("Acme").getAttribute("aria-current")).toBe("page");
-  expect(inboxLink().getAttribute("aria-current")).toBeNull();
+  expect(subLink("Reviews").getAttribute("aria-current")).toBeNull();
+});
+
+it("keeps Inbox as a heading, never a link or the current page, whose chevron folds the list", async () => {
+  await render("?inbox=Acme");
+  const heading = inboxHeading();
+  expect(heading.textContent).toContain("Inbox");
+  expect(heading.closest("a")).toBeNull();
+  expect(heading.querySelector("a")).toBeNull();
+  expect(heading.getAttribute("href")).toBeNull();
+  expect(heading.getAttribute("role")).toBeNull();
+  expect(heading.getAttribute("aria-current")).toBeNull();
+  expect(rail().querySelector('a[href="/s/test-ns/"]')).toBe(
+    rail().querySelector(".local-rail-mark"),
+  );
+  const fold = rail().querySelector<HTMLButtonElement>(".local-rail-fold")!;
+  expect(fold.getAttribute("aria-expanded")).toBe("true");
+  expect(subRows()).toHaveLength(4);
+  await click(fold);
+  expect(fold.getAttribute("aria-expanded")).toBe("false");
+  expect(subRows()).toHaveLength(0);
+  await click(fold);
+  expect(subRows()).toHaveLength(4);
 });
 
 it("folds the nested list with its chevron and remembers it", async () => {
@@ -326,14 +351,6 @@ it("lists an inbox's own pull requests done today and waiting on others", async 
   expect(headings()).toContain("Waiting on checks or reviews 1");
   expect(titles()).toContain("Change 5");
   expect(titles()).not.toContain("Change 6");
-  // In the Inbox, a pull request waiting on others is tagged with its inbox too.
-  await render();
-  const tagOf = (title: string) =>
-    Array.from(node.querySelectorAll(".upnext-row"))
-      .find((row) => row.textContent?.includes(title))
-      ?.querySelector(".upnext-tag")?.textContent;
-  expect(tagOf("Change 5")).toBe("Acme");
-  expect(tagOf("Change 6")).toBeUndefined();
   // A merge inbox matches the merges done, and no pull request waiting on others.
   await render("?inbox=Merges");
   expect((await done()).sort()).toEqual(["Merged #3 Change 3", "Merged #4 Change 4"]);
@@ -346,33 +363,114 @@ it("lists an inbox's own pull requests done today and waiting on others", async 
   expect(await done()).toEqual([]);
 });
 
-it("says an inbox with nothing in it fills up, and falls back to Inbox for an unknown one", async () => {
+it("says an inbox with nothing in it fills up", async () => {
   await render("?inbox=Quiet");
   // Under a dozing Stumpy, whose artwork is no part of the text.
   expect(node.querySelector(".upnext-zero svg")).not.toBeNull();
   expect(
     [...node.querySelectorAll(".upnext-zero :is(h2, p)")].map((one) => one.textContent),
   ).toEqual(["Nothing here right now.", "It fills up as matching pull requests come in."]);
-  await render("?inbox=gone");
-  expect(titles()).toEqual(["Change 1", "Change 3", "Change 4", "Change 2"]);
-  expect(node.querySelector(".upnext-list-head h1")!.textContent).toBe("Up next");
-  expect(inboxLink().getAttribute("aria-current")).toBe("page");
 });
 
-it("tags rows with their first inbox and the panel with all of them in Inbox", async () => {
+// How many history entries there are, to see that an address was replaced.
+const opens = async (search: string) => {
+  history.replaceState(null, "", `/s/test-ns/${search}`);
+  const before = history.length;
+  await act(async () => {
+    root.unmount();
+    root = createRoot(node);
+    root.render(<App />);
+  });
+  return before;
+};
+
+it("opens the first inbox for the root, replacing its entry rather than adding one", async () => {
+  const before = await opens("");
+  expect(location.search).toBe("?inbox=Reviews");
+  expect(history.length).toBe(before);
+  expect(titles()).toEqual(["Change 1"]);
+  expect(node.querySelector(".upnext-list-head h1")!.textContent).toBe("Reviews");
+  expect(subLink("Reviews").getAttribute("aria-current")).toBe("page");
+  expect(node.querySelector(".upnext-list-head")!.textContent).not.toContain("Up next");
+});
+
+it("opens the first inbox for an unknown or just deleted inbox, in the same entry", async () => {
+  const before = await opens("?inbox=gone");
+  expect(location.search).toBe("?inbox=Reviews");
+  expect(history.length).toBe(before);
+  expect(titles()).toEqual(["Change 1"]);
+  // Acme is deleted somewhere else; a link to it opens the first inbox.
+  await render("?inbox=Acme");
+  expect(node.querySelector(".upnext-list-head h1")!.textContent).toBe("Acme");
+  daemon = { revision: 2, inboxes: [reviews, merges, quiet] };
+  await act(async () => {
+    listeners["index"]!.forEach((listener) => listener());
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+  expect(location.search).toBe("?inbox=Reviews");
+  expect(node.querySelector(".upnext-list-head h1")!.textContent).toBe("Reviews");
+});
+
+it("shows no queue while the inboxes load, fail to read or are not supported", async () => {
+  const queue = () => node.querySelectorAll(".upnext-row, .upnext-list").length;
+  let release!: () => void;
+  inboxesHold = new Promise<void>((resolve) => (release = resolve));
   await render();
-  const tagOf = (title: string) =>
-    Array.from(node.querySelectorAll(".upnext-row"))
-      .find((row) => row.textContent?.includes(title))
-      ?.querySelector(".upnext-tag")?.textContent;
-  expect(tagOf("Change 1")).toBe("Reviews");
-  expect(tagOf("Change 3")).toBe("Merges");
-  expect(tagOf("Change 4")).toBe("Merges");
-  expect(tagOf("Change 2")).toBe("Acme");
+  expect(node.textContent).toContain("Loading inboxes…");
+  expect(queue()).toBe(0);
+  expect(location.search).toBe("");
+  await act(async () => {
+    release();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+  expect(titles()).toEqual(["Change 1"]);
+
+  inboxesHold = null;
+  readStatus = 500;
+  await render();
+  expect(node.textContent).toContain("Couldn't read your inboxes");
+  expect(Array.from(node.querySelectorAll("button")).some((b) => b.textContent === "Retry")).toBe(
+    true,
+  );
+  expect(queue()).toBe(0);
+  readStatus = 0;
+  await click(Array.from(node.querySelectorAll("button")).find((b) => b.textContent === "Retry"));
+  expect(titles()).toEqual(["Change 1"]);
+
+  daemon = null;
+  await render();
+  expect(node.textContent).toContain("Inboxes need a newer baum");
+  expect(queue()).toBe(0);
+});
+
+it("tags no row, and the panel with the other inboxes the pull request is in", async () => {
+  await render("?inbox=Reviews");
+  expect(node.querySelector(".upnext-row .upnext-tag")).toBeNull();
   // Change 1 is in Reviews and Acme.
   expect(
     Array.from(node.querySelectorAll(".upnext-panel .upnext-tag")).map((t) => t.textContent),
-  ).toEqual(["Reviews", "Acme"]);
+  ).toEqual(["Acme"]);
+});
+
+it("opens a pull request with its inbox, and goes back to that inbox", async () => {
+  await render("?inbox=Acme");
+  const open = node.querySelector<HTMLAnchorElement>(".upnext-panel a.upnext-primary")!;
+  expect(open.getAttribute("href")).toBe("/s/test-ns/?inbox=Acme&clone=clone&pr=1");
+  // A pull request that needs a clone says where Back goes.
+  entries = [{ ...entry(4, "other/thing", { authored_by_me: true }), needs_clone: true }];
+  entries[0]!.clone_id = undefined;
+  await render("?inbox=Merges&repository=other%2Fthing&pr=4");
+  expect(node.textContent).toContain("Needs a local clone");
+  const back = Array.from(node.querySelectorAll<HTMLAnchorElement>("a")).find(
+    (a) => a.textContent === "Inbox",
+  )!;
+  expect(back.getAttribute("href")).toBe("/s/test-ns/?inbox=Merges");
+  await press("u");
+  expect(location.search).toBe("?inbox=Merges");
+  expect(node.querySelector(".upnext-list-head h1")!.textContent).toBe("Merges");
+  await render("?inbox=Merges&repository=other%2Fthing&pr=4");
+  await press("Escape");
+  expect(location.search).toBe("?inbox=Merges");
 });
 
 it("deletes an inbox with Undo", async () => {
@@ -388,9 +486,8 @@ it("deletes an inbox with Undo", async () => {
   expect(puts[0]!.revision).toBe(1);
   expect(puts[0]!.inboxes.map((one) => one.id)).toEqual(["Reviews", "Merges", "Quiet"]);
   expect(subRows().map((row) => row.textContent)).not.toContain("Acme3⋯");
-  expect(node.querySelector(".inbox-toast")!.textContent).toContain(
-    "Deleted Acme. Its pull requests stay in Inbox.",
-  );
+  expect(node.querySelector(".inbox-toast")!.textContent).toContain("Deleted Acme.");
+  expect(node.querySelector(".inbox-toast")!.textContent).not.toContain("stay in Inbox");
   await click(node.querySelector(".inbox-toast button"));
   expect(puts).toHaveLength(2);
   // It goes back with its id, so links to it still lead there, at its place.
@@ -403,6 +500,33 @@ it("deletes an inbox with Undo", async () => {
     "Quiet",
   ]);
   expect(node.querySelector(".inbox-toast")).toBeNull();
+});
+
+it("opens the first inbox left when the open one is deleted", async () => {
+  const before = await opens("?inbox=Reviews");
+  await click(more("Reviews"));
+  await click(menuItem("Delete inbox"));
+  await confirmDelete();
+  expect(location.search).toBe("?inbox=Merges");
+  expect(history.length).toBe(before);
+  expect(node.querySelector(".upnext-list-head h1")!.textContent).toBe("Merges");
+  expect(titles()).toEqual(["Change 3", "Change 4"]);
+});
+
+it("cannot delete the last inbox from the sidebar", async () => {
+  daemon = { revision: 1, inboxes: [acme] };
+  await render();
+  await click(more("Acme"));
+  const del = menuItem("Delete inbox") as HTMLButtonElement;
+  expect(del.disabled).toBe(true);
+  expect(del.getAttribute("title")).toBe("Keep at least one inbox");
+  expect(node.querySelector(`#${del.getAttribute("aria-describedby")}`)!.textContent).toBe(
+    "Keep at least one inbox",
+  );
+  await click(del);
+  expect(node.querySelector("dialog")).toBeNull();
+  expect(puts).toHaveLength(0);
+  expect(subRows()).toHaveLength(1);
 });
 
 it("closes an inbox's menu when the sidebar scrolls, giving focus back to its button", async () => {
@@ -494,15 +618,16 @@ it("opens an inbox's menu from its ⋯ and from a right click, and closes it wit
   expect(node.querySelector(".local-rail-menu")).toBeNull();
 });
 
-it("shows no inbox controls and today's badge with an older daemon", async () => {
+it("shows no inbox controls and today's badge with an older daemon, and no queue", async () => {
   daemon = null;
   await render();
   expect(rail().querySelector(".local-rail-fold")).toBeNull();
   expect(subRows()).toHaveLength(0);
-  expect(inboxLink().querySelector(".local-rail-badge")?.textContent).toBe("4");
+  expect(inboxHeading().querySelector(".local-rail-badge")?.textContent).toBe("4");
   expect(node.querySelector(".upnext-tag")).toBeNull();
-  expect(node.querySelector(".upnext-list-head h1")!.textContent).toBe("Up next");
-  expect(titles()).toEqual(["Change 1", "Change 3", "Change 4", "Change 2"]);
+  expect(node.querySelector(".upnext-list-head")).toBeNull();
+  expect(node.textContent).toContain("Inboxes need a newer baum");
+  expect(titles()).toEqual([]);
 });
 
 it("returns focus to the menu button after Esc and after choosing, never to the page", async () => {
@@ -666,7 +791,7 @@ it("shows Snoozed with Bring back in an inbox whose queue is empty", async () =>
 });
 
 it("counts only the inbox's own Merge items in Merge all", async () => {
-  await render();
+  await render("?inbox=Merges");
   expect(node.querySelector(".upnext-batch")!.textContent).toBe("Merge all 2");
   // Acme holds one merge item (Change 3): nothing to merge all of.
   await render("?inbox=Acme");
@@ -710,11 +835,15 @@ for (const [modifier, key, start, expected] of [
   ["Shift", "K", "Merges", "Reviews"],
   ["Control", "ArrowDown", "Reviews", "Merges"],
   ["Control", "ArrowUp", "Merges", "Reviews"],
-  ["Shift", "K", "Reviews", "Up next"],
-  ["Control", "ArrowUp", "Reviews", "Up next"],
-  ["Shift", "J", "", "Reviews"],
-  ["Control", "ArrowDown", "", "Reviews"],
-  ["Shift", "K", "", "Up next"],
+  // Clamped at the first and the last inbox: no whole-queue slot, no wrap.
+  ["Shift", "K", "Reviews", "Reviews"],
+  ["Control", "ArrowUp", "Reviews", "Reviews"],
+  ["Shift", "J", "Quiet", "Quiet"],
+  ["Control", "ArrowDown", "Quiet", "Quiet"],
+  // The root is the first inbox.
+  ["Shift", "J", "", "Merges"],
+  ["Control", "ArrowDown", "", "Merges"],
+  ["Shift", "K", "", "Reviews"],
 ]) {
   it(`switches inboxes with ${modifier}+${key} from ${start}`, async () => {
     await render(start ? `?inbox=${start}` : "");

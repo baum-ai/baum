@@ -137,6 +137,7 @@ import {
   type AgentRequests,
   LocalRequestError,
   parseGroups,
+  backTo,
   backToOpener,
   sameRepository,
   MAX_GROUP_MEMBERS,
@@ -725,9 +726,20 @@ function Workspace({ url }: { url: UrlState }) {
   const inboxPage =
     requestedPage === "inbox-new" || requestedPage === "inbox-edit" || requestedPage === "inboxes";
   const page = inboxPage && inboxes.status === "older" ? "inbox" : requestedPage;
-  // Before the first read they wait; after a failed one they say so.
+  // The inbox page shows a saved inbox's queue, never the whole one: it waits
+  // for the inboxes, and the root or an address naming no inbox opens the
+  // first.
+  const inboxQueuePage =
+    page === "inbox" &&
+    !groupId &&
+    !url.search.get("pr") &&
+    !url.search.get("clone") &&
+    !url.search.get("repository");
+  // Before the first read they wait; after a failed one they say so; a daemon
+  // without inboxes says it needs a newer baum.
   const inboxWaiting =
-    inboxPage && (inboxes.status === "loading" || inboxes.status === "failed") ? (
+    (inboxPage || inboxQueuePage) &&
+    (inboxes.status === "loading" || inboxes.status === "failed") ? (
       <section>
         <PageBar title="Inboxes" />
         <div className="local-page-body">
@@ -735,9 +747,17 @@ function Workspace({ url }: { url: UrlState }) {
             <Alert>
               {inboxes.error} <Button onClick={() => void reload()}>Retry</Button>
             </Alert>
-          ) : loading ? (
+          ) : (
             <LoadingStatus block>Loading inboxes…</LoadingStatus>
-          ) : null}
+          )}
+        </div>
+      </section>
+    ) : inboxQueuePage && inboxes.status === "older" ? (
+      <section>
+        <PageBar title="Inboxes" />
+        <div className="local-page-body local-stack">
+          <h2>Inboxes need a newer baum</h2>
+          <p>Update baum to see your pull requests in an inbox.</p>
         </div>
       </section>
     ) : null;
@@ -762,10 +782,24 @@ function Workspace({ url }: { url: UrlState }) {
     railPage === "inbox"
       ? (inboxes.inboxes.find((candidate) => candidate.id === url.search.get("inbox")) ?? null)
       : null;
+  const firstInbox = inboxes.status === "ready" ? (inboxes.inboxes[0] ?? null) : null;
+  // The root, a legacy link to the whole queue, or an inbox that is gone:
+  // the current entry becomes the first inbox, so Back does not return here.
+  const missingInbox = inboxQueuePage && !selectedInbox ? firstInbox : null;
+  useEffect(() => {
+    if (!missingInbox) return;
+    url.update(
+      (current) => {
+        current.set("inbox", missingInbox.id);
+        return current;
+      },
+      { replace: true },
+    );
+  }, [missingInbox?.id, url.search]);
   useEffect(() => {
     const switchInbox = (event: KeyboardEvent) => {
       if (
-        inboxes.inboxes.length === 0 ||
+        !selectedInbox ||
         page !== "inbox" ||
         selectedEntry ||
         groupId ||
@@ -788,13 +822,12 @@ function Workspace({ url }: { url: UrlState }) {
       if (!step) return;
       event.preventDefault();
       event.stopImmediatePropagation();
-      const index = selectedInbox
-        ? inboxes.inboxes.findIndex((inbox) => inbox.id === selectedInbox.id) + 1
-        : 0;
-      const nextIndex = Math.max(0, Math.min(inboxes.inboxes.length, index + step));
+      // Only the saved inboxes, stopping at the first and the last.
+      const index = inboxes.inboxes.findIndex((inbox) => inbox.id === selectedInbox.id);
+      const nextIndex = Math.max(0, Math.min(inboxes.inboxes.length - 1, index + step));
       if (nextIndex === index) return;
-      const next = inboxes.inboxes[nextIndex - 1];
-      navigate(next ? appURL(`?inbox=${encodeURIComponent(next.id)}`) : appURL());
+      const next = inboxes.inboxes[nextIndex];
+      if (next) navigate(appURL(`?inbox=${encodeURIComponent(next.id)}`));
     };
     window.addEventListener("keydown", switchInbox, true);
     return () => window.removeEventListener("keydown", switchInbox, true);
@@ -807,15 +840,32 @@ function Workspace({ url }: { url: UrlState }) {
     inbox: SavedInbox;
     after?: () => void;
   } | null>(null);
-  const askRemoveInbox = (inbox: SavedInbox, after?: () => void) =>
-    setDeletingInbox({ inbox, after });
+  // The last inbox is never deleted: Inbox always opens one.
+  const askRemoveInbox = (inbox: SavedInbox, after?: () => void) => {
+    if (inboxes.inboxes.length > 1) setDeletingInbox({ inbox, after });
+  };
   const removeInbox = (target: SavedInbox) => {
     const before = inboxes.inboxes;
+    if (before.length <= 1) return;
     const at = before.findIndex((candidate) => candidate.id === target.id);
-    inboxes.save(before.filter((candidate) => candidate.id !== target.id));
+    const rest = before.filter((candidate) => candidate.id !== target.id);
+    inboxes.save(rest);
+    // Deleting the inbox that is open (its queue or its edit page) opens the
+    // first one left, in its place.
+    const first = rest[0];
+    if (first && url.search.get("inbox") === target.id)
+      url.update(
+        (current) => {
+          for (const key of ["page", "pr", "clone", "repository", "group", "walk"])
+            current.delete(key);
+          current.set("inbox", first.id);
+          return current;
+        },
+        { replace: true },
+      );
     setInboxToast({
       id: Date.now(),
-      text: `Deleted ${target.name}. Its pull requests stay in Inbox.`,
+      text: `Deleted ${target.name}.`,
       undo: () => {
         const now = currentInboxes.current;
         if (now.some((candidate) => candidate.id === target.id)) return;
@@ -1108,7 +1158,8 @@ function Workspace({ url }: { url: UrlState }) {
       .slice()
       .sort((a, b) => Number(queued.has(rowKey(b))) - Number(queued.has(rowKey(a))));
     return [
-      ...PAGES.map((item) => ({
+      // Inbox is its saved inboxes below, not a page of its own.
+      ...PAGES.filter((item) => item.page !== "inbox").map((item) => ({
         id: `page:${item.page}`,
         kind: "Page" as const,
         label: item.label,
@@ -1293,7 +1344,6 @@ function Workspace({ url }: { url: UrlState }) {
                   ]),
                 ),
                 selected: selectedInbox?.id ?? null,
-                elsewhere: page === "inbox-new" || page === "inboxes",
                 remove: askRemoveInbox,
                 edit: (target) => navigate(editInboxHref(target.id)),
                 create: () => navigate(newInboxHref()),
@@ -1614,7 +1664,7 @@ function Workspace({ url }: { url: UrlState }) {
                 {page === "pulls" ? (
                   <LocalLink href={appURL("?page=pulls")}>Pull requests</LocalLink>
                 ) : (
-                  <LocalLink href={appURL()}>Inbox</LocalLink>
+                  <LocalLink href={backTo(url.search).href}>Inbox</LocalLink>
                 )}
                 <h2>Needs a local clone</h2>
                 <p>
@@ -1667,13 +1717,21 @@ function Workspace({ url }: { url: UrlState }) {
                 chats={chatJobs(selectedEntry, jobs)}
               />
             </DecisionsRevision.Provider>
-          ) : page !== "pulls" ? (
+          ) : page !== "pulls" && inboxQueuePage && !selectedInbox ? (
+            // The first inbox is being opened; the whole queue is never shown.
+            <section>
+              <PageBar title="Inboxes" />
+              <div className="local-page-body">
+                <LoadingStatus block>Loading inboxes…</LoadingStatus>
+              </div>
+            </section>
+          ) : page !== "pulls" && selectedInbox ? (
             <UpNextPage
               inbox={inbox}
               jobs={jobs}
               inboxes={inboxes.inboxes}
               selected={selectedInbox}
-              onEdit={selectedInbox ? () => navigate(editInboxHref(selectedInbox.id)) : undefined}
+              onEdit={() => navigate(editInboxHref(selectedInbox.id))}
               // Until a read succeeds there is nothing to say an empty inbox about.
               loading={revision === 0}
               hasRepositories={hasRepositories}
@@ -1688,7 +1746,7 @@ function Workspace({ url }: { url: UrlState }) {
               inboxSaves={inboxes.saves}
               repositories={repositories}
               updateInbox={
-                selectedInbox && inboxes.status === "ready"
+                inboxes.status === "ready"
                   ? (patch) =>
                       inboxes.save(
                         inboxes.inboxes.map((one) =>
@@ -1700,7 +1758,7 @@ function Workspace({ url }: { url: UrlState }) {
               entries={indexedEntries}
               Link={LocalLink}
             />
-          ) : (
+          ) : page === "pulls" ? (
             <>
               <PageBar
                 title="Pull requests"
@@ -1928,7 +1986,7 @@ function Workspace({ url }: { url: UrlState }) {
                 />
               ) : null}
             </>
-          )}
+          ) : null}
           {generationError ? <Alert>{generationError}</Alert> : null}
           {/* The PR page and Up next show a fix's refusal beside its button. */}
           {fixError && onList ? (
@@ -1985,8 +2043,7 @@ function Workspace({ url }: { url: UrlState }) {
                 setTimeout(() => after?.());
               }}
             >
-              Only this view goes. Its pull requests, reviews and snoozes stay, and they still show
-              in Inbox.
+              Only this view goes. Its pull requests, reviews and snoozes stay.
             </ConfirmDialog>
           ) : null}
           {inboxToast ? (

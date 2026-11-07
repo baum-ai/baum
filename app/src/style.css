@@ -108,6 +108,19 @@ body {
   color: var(--text-primary);
   font-weight: 500;
 }
+/* Inbox is a heading over its inboxes: not a link, so no hover fill. */
+.local-rail-heading,
+.local-rail-heading:hover {
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: default;
+}
+.local-rail-menu-note {
+  display: block;
+  padding: 0.25rem 0.75rem;
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+}
 .local-rail-glyph {
   flex: none;
 }
@@ -304,6 +317,10 @@ body {
   background: var(--surface-popup);
   box-shadow: var(--shadow-overlay);
   animation: upnext-drop 0.15s ease-out;
+}
+.local-rail-menu button:disabled {
+  color: var(--text-tertiary);
+  cursor: not-allowed;
 }
 .local-rail-menu button {
   padding: 7px 10px;

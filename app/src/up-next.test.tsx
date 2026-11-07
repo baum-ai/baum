@@ -1,4 +1,4 @@
-import { mockStateFetch } from "./ui-state-test-helper";
+import { DEFAULT_INBOX, mockStateFetch } from "./ui-state-test-helper";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
@@ -351,13 +351,15 @@ it("groups what waits on the person and opens on the first", async () => {
   // Open is always the default action.
   const open = panel().querySelector<HTMLAnchorElement>("a.upnext-primary")!;
   expect(open.textContent).toBe("Open↵");
-  expect(open.getAttribute("href")).toBe("/s/test-ns/?clone=clone&pr=1");
+  expect(open.getAttribute("href")).toBe(`/s/test-ns/?inbox=${DEFAULT_INBOX.id}&clone=clone&pr=1`);
   expect(row("Change 5").textContent).toContain("#5 · Draft");
-  const inbox = Array.from(node.querySelectorAll(".local-rail a")).find((a) =>
-    a.textContent?.startsWith("Inbox"),
-  )!;
-  expect(inbox.getAttribute("aria-current")).toBe("page");
-  expect(inbox.querySelector(".local-rail-badge")?.textContent).toBe("4");
+  // Inbox is a heading with the count; Default under it is the current page.
+  const heading = node.querySelector(".local-rail-heading")!;
+  expect(heading.getAttribute("aria-current")).toBeNull();
+  expect(heading.querySelector(".local-rail-badge")?.textContent).toBe("4");
+  expect(node.querySelector(".local-rail a.local-rail-sub")!.getAttribute("aria-current")).toBe(
+    "page",
+  );
 });
 
 it("moves with j and k, opens with Enter and merges with m", async () => {
@@ -375,7 +377,7 @@ it("moves with j and k, opens with Enter and merges with m", async () => {
   // Drawn again, with no dialog open, it comes back on the same pull request.
   await render();
   await press("Enter");
-  expect(location.search).toBe("?clone=clone&pr=3");
+  expect(location.search).toBe(`?inbox=${DEFAULT_INBOX.id}&clone=clone&pr=3`);
 });
 
 // A right click on a row opens its menu, without picking the row.
@@ -423,7 +425,7 @@ it("opens a pull request from its row's menu", async () => {
   await render();
   await rightClick("Change 3");
   await choose("Open");
-  expect(location.search).toBe("?clone=clone&pr=3");
+  expect(location.search).toBe(`?inbox=${DEFAULT_INBOX.id}&clone=clone&pr=3`);
 });
 
 it("snoozes, undoes and brings back, and remembers it", async () => {
@@ -579,7 +581,7 @@ it("counts what left the queue as cleared today", async () => {
   // repository in the read.
   entries = [entry(6)];
   await render();
-  expect(node.textContent).toContain("Inbox zero");
+  expect(node.textContent).toContain("Nothing here right now.");
   expect(node.textContent).toContain("All 4 handled. Nothing needs you right now.");
 });
 
@@ -594,7 +596,9 @@ it("links what was done today to its page, or to GitHub once the app no longer l
   await render();
   expect(await cleared()).toBe("Merged #3 Change 3");
   const done = () => node.querySelector<HTMLAnchorElement>("a.upnext-done-text")!;
-  expect(done().getAttribute("href")).toBe("/s/test-ns/?clone=clone&pr=3");
+  expect(done().getAttribute("href")).toBe(
+    `/s/test-ns/?inbox=${DEFAULT_INBOX.id}&clone=clone&pr=3`,
+  );
   expect(done().getAttribute("target")).toBeNull();
   // Without a saved review it leaves the list; GitHub still has it.
   entries = entries.filter((e) => e.pull_request.number !== 3);
