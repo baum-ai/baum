@@ -48,7 +48,7 @@ func TestGraphQLPaginationEndpointsStatesAndIndependentBudgets(t *testing.T) {
 					if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 						t.Fatal(err)
 					}
-					if !strings.Contains(request.Query, "pullRequests(states: OPEN, first: 50, after: $cursor)") || request.Variables.Owner != "acme" || request.Variables.Name != "app" {
+					if !strings.Contains(request.Query, "pullRequests(states: OPEN, orderBy: {field: UPDATED_AT, direction: DESC}, first: 50, after: $cursor)") || request.Variables.Owner != "acme" || request.Variables.Name != "app" {
 						t.Fatalf("query %#v", request)
 					}
 					node := `{"number":1,"title":"First","headRefOid":"head1","headRefName":"branch","author":{"login":"viewer"},"headRepository":{"databaseId":1,"nameWithOwner":"acme/app"},"baseRepository":{"databaseId":1,"nameWithOwner":"acme/app"},"reviewDecision":"APPROVED","commits":{"nodes":[{"commit":{"statusCheckRollup":{"state":"SUCCESS"}}}]},"mergeable":"MERGEABLE","mergeStateStatus":"CLEAN","reviewThreads":{"nodes":[{"isResolved":false},{"isResolved":true},{"isResolved":false}],"pageInfo":{"hasNextPage":true}}}`

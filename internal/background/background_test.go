@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -38,6 +39,8 @@ func (r registry) Repositories(context.Context) ([]repos.Repository, error) {
 }
 
 type fakeDiscovery struct {
+	// mu guards the fields Sync's concurrent polls reach.
+	mu           sync.Mutex
 	polls        int
 	forced       []string
 	probes       int
@@ -57,6 +60,11 @@ type fakeDiscovery struct {
 // Poll lists pull request 1 as open, with the latest observation of each
 // pull request, as discovery's cache keeps them.
 func (f *fakeDiscovery) Poll(_ context.Context, repo github.Repository) (discovery.Snapshot, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.poll(repo)
+}
+func (f *fakeDiscovery) poll(repo github.Repository) (discovery.Snapshot, error) {
 	f.polls++
 	latest := map[int]discovery.Observation{}
 	for _, o := range f.observations {
@@ -72,9 +80,11 @@ func (f *fakeDiscovery) Poll(_ context.Context, repo github.Repository) (discove
 	}
 	return discovery.Snapshot{Repository: repo.String(), NextPoll: f.next, Settling: f.settling, PullRequests: open, Observations: observations}, f.err
 }
-func (f *fakeDiscovery) PollNow(ctx context.Context, repo github.Repository) (discovery.Snapshot, error) {
+func (f *fakeDiscovery) PollNow(_ context.Context, repo github.Repository) (discovery.Snapshot, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.forced = append(f.forced, repo.String())
-	return f.Poll(ctx, repo)
+	return f.poll(repo)
 }
 func (f *fakeDiscovery) Probe(context.Context, []github.Repository) (map[string]bool, error) {
 	f.probes++
@@ -84,6 +94,8 @@ func (f *fakeDiscovery) Probe(context.Context, []github.Repository) (map[string]
 	return f.changed, nil
 }
 func (f *fakeDiscovery) Observe(_ context.Context, _ github.Repository, o discovery.Observation) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.observations = append(f.observations, o)
 	return nil
 }
@@ -531,5 +543,69 @@ func TestPullRequestReadOpenIsReadAgainWhenItLeaves(t *testing.T) {
 	s.Sync(context.Background())
 	if calls != 2 {
 		t.Fatalf("calls=%d, want no read of a merged pull request", calls)
+	}
+}
+
+// blockingDiscovery holds each poll until pollConcurrency of them are under
+// way at once, or a second passes.
+type blockingDiscovery struct {
+	fakeDiscovery
+	inflight, most int
+	full           chan struct{}
+}
+
+func (b *blockingDiscovery) Poll(ctx context.Context, repo github.Repository) (discovery.Snapshot, error) {
+	b.mu.Lock()
+	b.inflight++
+	b.most = max(b.most, b.inflight)
+	if b.inflight == pollConcurrency {
+		close(b.full)
+	}
+	b.mu.Unlock()
+	select {
+	case <-b.full:
+	case <-time.After(time.Second):
+	}
+	b.mu.Lock()
+	b.inflight--
+	b.mu.Unlock()
+	return b.fakeDiscovery.Poll(ctx, repo)
+}
+
+// Repositories poll a few at once, and every one is still polled and its
+// snapshot delivered.
+func TestRepositoriesPollConcurrently(t *testing.T) {
+	now := time.Now()
+	d := &blockingDiscovery{full: make(chan struct{})}
+	var seen []string
+	s := &Service{Registry: registry{{Repository: "acme/a"}, {Repository: "acme/b"}, {Repository: "acme/c"}, {Repository: "acme/d"}}, Discovery: d, Now: func() time.Time { return now }, Saved: func(context.Context, repos.Clone) ([]int, error) { return nil, nil }, Refresh: func(context.Context, repos.Clone, int) (discovery.Observation, error) {
+		return discovery.Observation{}, nil
+	}, Discovered: func(_ context.Context, snapshot discovery.Snapshot) { seen = append(seen, snapshot.Repository) }}
+	s.Sync(context.Background())
+	if d.most != pollConcurrency || d.polls != 4 {
+		t.Fatalf("at most %d polls at once of %d, want %d", d.most, d.polls, pollConcurrency)
+	}
+	slices.Sort(seen)
+	if !slices.Equal(seen, []string{"acme/a", "acme/b", "acme/c", "acme/d"}) {
+		t.Fatalf("delivered %v", seen)
+	}
+	for _, name := range seen {
+		if st := s.state(name); st.Error != "" || st.NextRefresh.IsZero() {
+			t.Fatalf("%s state %+v", name, st)
+		}
+	}
+}
+
+// A poll that ran out of time is reported as a timeout, not as GitHub being
+// unavailable or the account changing.
+func TestPollTimeoutIsReportedAsATimeout(t *testing.T) {
+	now := time.Now()
+	d := &fakeDiscovery{err: fmt.Errorf("poll: %w", discovery.ErrTimeout)}
+	s := &Service{Registry: registry{{Repository: "acme/app"}}, Discovery: d, Now: func() time.Time { return now }, Saved: func(context.Context, repos.Clone) ([]int, error) { return nil, nil }, Refresh: func(context.Context, repos.Clone, int) (discovery.Observation, error) {
+		return discovery.Observation{}, nil
+	}}
+	s.Sync(context.Background())
+	if st := s.state("acme/app"); st.Error != "discovery_timeout" || st.Failures != 1 {
+		t.Fatalf("state %+v", st)
 	}
 }

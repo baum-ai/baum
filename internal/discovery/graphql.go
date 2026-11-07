@@ -1,39 +1,19 @@
 package discovery
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net/http"
-	"sort"
+	"maps"
+	"slices"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/baum-ai/baum/internal/github"
 )
-
-const inboxQuery = `query LocalInbox($owner: String!, $name: String!, $cursor: String) {
- viewer { login }
- rateLimit { cost remaining resetAt }
- repository(owner: $owner, name: $name) {
-  viewerPermission
-  pullRequests(states: OPEN, first: 50, after: $cursor) {
-   pageInfo { hasNextPage endCursor }
-   nodes {
-    number title headRefOid headRefName baseRefName isDraft additions deletions changedFiles updatedAt author { __typename login }
-    headRepository { databaseId nameWithOwner } baseRepository { databaseId nameWithOwner }
-    assignees(first: 20) { nodes { login } }
-    reviewRequests(first: 100) { nodes { requestedReviewer { __typename ... on User { login } ... on Team { databaseId } } } pageInfo { hasNextPage } }
-    reviewDecision latestOpinionatedReviews(first: 100) { nodes { state } pageInfo { hasNextPage } }
-    latestReviews: reviews(last: 100) { nodes { state } pageInfo { hasPreviousPage } }
-    commits(last: 1) { nodes { commit { statusCheckRollup { state contexts(first: 1) { checkRunCountsByState { state count } statusContextCountsByState { state count } } } } } }
-    mergeable mergeStateStatus
-    reviewThreads(first: 100) { nodes { isResolved } pageInfo { hasNextPage } }
-   }
-  }
- }
-}`
 
 // rollup is a commit's checks: GitHub's combined state, and how many of its
 // check runs and commit statuses are in each state.
@@ -81,14 +61,17 @@ type gqlRepository struct {
 	NameWithOwner string
 }
 type gqlPR struct {
-	Number                                      int
+	Number int
+	// State is OPEN, CLOSED or MERGED; a query of open ones may leave it out.
+	State                                       string `json:",omitempty"`
 	Title, HeadRefOid, HeadRefName, BaseRefName string
 	IsDraft                                     bool
 	// Additions, Deletions and ChangedFiles size the change; they take part
 	// in the unchanged comparison like the head.
 	Additions, Deletions, ChangedFiles int
-	// UpdatedAt feeds the probe's fingerprint and the snapshot; it is left
-	// out of the unchanged comparison so the backoff is unaffected.
+	// UpdatedAt orders the incremental reads and feeds the cursor, the
+	// probe's fingerprint and the snapshot; it is left out of the unchanged
+	// comparison so the backoff is unaffected.
 	UpdatedAt      time.Time `json:",omitzero"`
 	Author         actor
 	HeadRepository *gqlRepository
@@ -239,22 +222,66 @@ func (pr gqlPR) states() (review, checks, merge string, unresolved *int, capped 
 	return
 }
 
-// openPulls reads the open pull requests, the viewer and whether the viewer
-// may push to the repository (nil when GitHub did not say).
-func (p *poll) openPulls(ctx context.Context, repository github.Repository) ([]gqlPR, actor, *bool, error) {
-	result, viewer, permission, err := p.openPullPages(ctx, repository)
-	if err != nil {
-		return nil, viewer, nil, err
-	}
-	var push *bool
-	switch permission {
-	case "ADMIN", "MAINTAIN", "WRITE":
-		push = new(true)
-	case "READ", "TRIAGE":
-		push = new(false)
-	}
-	return result, viewer, push, nil
+// inboxFields are what discovery reads of each pull request.
+const inboxFields = `fragment Inbox on PullRequest {
+ number state title headRefOid headRefName baseRefName isDraft additions deletions changedFiles updatedAt author { __typename login }
+ headRepository { databaseId nameWithOwner } baseRepository { databaseId nameWithOwner }
+ assignees(first: 20) { nodes { login } }
+ reviewRequests(first: 100) { nodes { requestedReviewer { __typename ... on User { login } ... on Team { databaseId } } } pageInfo { hasNextPage } }
+ reviewDecision latestOpinionatedReviews(first: 100) { nodes { state } pageInfo { hasNextPage } }
+ latestReviews: reviews(last: 100) { nodes { state } pageInfo { hasPreviousPage } }
+ commits(last: 1) { nodes { commit { statusCheckRollup { state contexts(first: 1) { checkRunCountsByState { state count } statusContextCountsByState { state count } } } } } }
+ mergeable mergeStateStatus
+ reviewThreads(first: 100) { nodes { isResolved } pageInfo { hasNextPage } }
+}`
+
+// sweepQuery reads every open pull request, the most recently updated first,
+// so the pages a poll gets before it runs out of time are the liveliest.
+const sweepQuery = `query LocalInbox($owner: String!, $name: String!, $cursor: String) {
+ viewer { login }
+ rateLimit { cost remaining resetAt }
+ repository(owner: $owner, name: $name) {
+  viewerPermission
+  pullRequests(states: OPEN, orderBy: {field: UPDATED_AT, direction: DESC}, first: 50, after: $cursor) {
+   pageInfo { hasNextPage endCursor }
+   nodes { ...Inbox }
+  }
+ }
 }
+` + inboxFields
+
+// windowQuery reads the pull requests of every state, the most recently
+// updated first, with GitHub's count of open ones and the newest's number,
+// which the cache must match.
+const windowQuery = `query LocalInboxChanges($owner: String!, $name: String!, $cursor: String) {
+ viewer { login }
+ rateLimit { cost remaining resetAt }
+ repository(owner: $owner, name: $name) {
+  viewerPermission
+  open: pullRequests(states: OPEN) { totalCount }
+  newest: pullRequests(states: OPEN, orderBy: {field: CREATED_AT, direction: DESC}, first: 1) { nodes { number } }
+  pullRequests(orderBy: {field: UPDATED_AT, direction: DESC}, first: 50, after: $cursor) {
+   pageInfo { hasNextPage endCursor }
+   nodes { ...Inbox }
+  }
+ }
+}
+` + inboxFields
+
+// numbersQuery reads pull requests by number, under the aliases p0, p1, ….
+func numbersQuery(repository github.Repository, numbers []int) (string, map[string]any) {
+	var parameters []string
+	var fields strings.Builder
+	variables := map[string]any{"owner": repository.Owner, "name": repository.Name}
+	for i, number := range numbers {
+		parameters = append(parameters, fmt.Sprintf("$n%d: Int!", i))
+		fmt.Fprintf(&fields, "  p%d: pullRequest(number: $n%d) { ...Inbox }\n", i, i)
+		variables[fmt.Sprintf("n%d", i)] = number
+	}
+	return "query LocalInboxPulls($owner: String!, $name: String!, " + strings.Join(parameters, ", ") + ") {\n viewer { login }\n rateLimit { cost remaining resetAt }\n repository(owner: $owner, name: $name) {\n  viewerPermission\n" + fields.String() + " }\n}\n" + inboxFields, variables
+}
+
+var errInvalid = errors.New("invalid GitHub discovery response")
 
 type graphQLError struct {
 	Type string
@@ -266,19 +293,14 @@ type graphQLError struct {
 // a rate-limited response into errRateLimit. The caller judges the data and
 // errors it returns.
 func (p *poll) graphQL(ctx context.Context, query string, variables map[string]any) (json.RawMessage, []graphQLError, error) {
-	if rateDeadline(p.graphRate).After(p.now) {
+	if _, graph := p.budget.budgets(); rateDeadline(graph).After(p.now) {
 		return nil, nil, errRateLimit
 	}
-	status, headers, body, err := p.reader.GraphQL(ctx, query, variables)
+	request, cancel := context.WithTimeout(ctx, requestTimeout)
+	defer cancel()
+	status, headers, body, err := p.reader.GraphQL(request, query, variables)
 	if err != nil {
-		return nil, nil, err
-	}
-	// GraphQL response headers describe its point budget, never the REST budget.
-	if n, e := strconv.Atoi(headers.Get("X-RateLimit-Remaining")); e == nil {
-		p.graphRate.Remaining = &n
-	}
-	if n, e := strconv.ParseInt(headers.Get("X-RateLimit-Reset"), 10, 64); e == nil {
-		p.graphRate.Reset = time.Unix(n, 0)
+		return nil, nil, failed(ctx, request, err)
 	}
 	var response struct {
 		Data   json.RawMessage
@@ -291,89 +313,381 @@ func (p *poll) graphQL(ctx context.Context, query string, variables map[string]a
 			ResetAt         time.Time
 		}
 	}
-	if json.Unmarshal(response.Data, &budget) == nil && budget.RateLimit != nil {
-		rate := budget.RateLimit
-		p.graphRate.Cost, p.graphRate.Remaining, p.graphRate.Reset = &rate.Cost, &rate.Remaining, rate.ResetAt
-	}
 	limited := status == 429 || status == 403 && (headers.Get("X-RateLimit-Remaining") == "0" || headers.Get("Retry-After") != "")
 	for _, issue := range response.Errors {
 		limited = limited || issue.Type == "RATE_LIMITED"
 	}
-	if limited {
-		resume := p.now.Add(time.Minute)
-		if seconds, e := strconv.Atoi(headers.Get("Retry-After")); e == nil && seconds >= 0 {
-			resume = p.now.Add(time.Duration(seconds) * time.Second)
-		} else if at, e := http.ParseTime(headers.Get("Retry-After")); e == nil {
-			resume = at
+	p.budget.update(func(_, graph *RateLimit) {
+		// GraphQL response headers describe its point budget, never the REST budget.
+		var reset time.Time
+		if n, e := strconv.ParseInt(headers.Get("X-RateLimit-Reset"), 10, 64); e == nil {
+			reset = time.Unix(n, 0)
 		}
-		p.graphRate.RetryAt = resume
+		if n, e := strconv.Atoi(headers.Get("X-RateLimit-Remaining")); e == nil {
+			observe(graph, &n, reset)
+		} else {
+			observe(graph, nil, reset)
+		}
+		if json.Unmarshal(response.Data, &budget) == nil && budget.RateLimit != nil {
+			rate := budget.RateLimit
+			graph.Cost = &rate.Cost
+			observe(graph, &rate.Remaining, rate.ResetAt)
+		}
+		if limited {
+			graph.RetryAt = maxTime(graph.RetryAt, retryAt(p.now, headers))
+		}
+	})
+	if limited {
 		return nil, nil, errRateLimit
 	}
 	if status != 200 {
-		return nil, nil, fmt.Errorf("GitHub discovery HTTP %d", status)
+		return nil, nil, &statusError{status}
 	}
 	if parseErr != nil {
-		return nil, nil, errors.New("invalid GitHub discovery response")
+		return nil, nil, errInvalid
 	}
 	return response.Data, response.Errors, nil
 }
 
-func (p *poll) openPullPages(ctx context.Context, repository github.Repository) ([]gqlPR, actor, string, error) {
-	var result []gqlPR
-	var viewer actor
-	var permission string
-	var cursor any
-	for page := 0; page < 1000; page++ {
-		data, issues, err := p.graphQL(ctx, inboxQuery, map[string]any{"owner": repository.Owner, "name": repository.Name, "cursor": cursor})
-		if err != nil {
-			return nil, viewer, "", err
+// pullsPage is one page of a window or sweep.
+type pullsPage struct {
+	Viewer     actor
+	Repository *struct {
+		ViewerPermission string
+		Open             *struct{ TotalCount int }
+		Newest           *struct{ Nodes []struct{ Number int } }
+		PullRequests     struct {
+			Nodes    []gqlPR
+			PageInfo pageInfo
 		}
-		var response struct {
-			Viewer     actor
-			Repository *struct {
-				ViewerPermission string
-				PullRequests     struct {
-					Nodes    []gqlPR
-					PageInfo pageInfo
+	}
+}
+
+// page reads one page and checks every pull request on it before any is
+// used, so a page is kept whole or not at all.
+func (p *poll) page(ctx context.Context, repository github.Repository, query string, cursor any) (pullsPage, error) {
+	data, issues, err := p.graphQL(ctx, query, map[string]any{"owner": repository.Owner, "name": repository.Name, "cursor": cursor})
+	if err != nil {
+		return pullsPage{}, err
+	}
+	var response pullsPage
+	if len(issues) > 0 || json.Unmarshal(data, &response) != nil || response.Repository == nil {
+		return pullsPage{}, errInvalid
+	}
+	for _, row := range response.Repository.PullRequests.Nodes {
+		if err := valid(row); err != nil {
+			return pullsPage{}, err
+		}
+	}
+	p.identify(response.Viewer, response.Repository.ViewerPermission)
+	return response, nil
+}
+
+func (p *poll) identify(viewer actor, permission string) {
+	p.viewer, p.permission, p.identified = viewer, permission, true
+}
+
+// valid refuses a pull request discovery cannot list: an open one without a
+// head, or an open one whose review requests did not fit, which could conceal
+// automatic eligibility.
+func valid(row gqlPR) error {
+	if row.Number <= 0 || open(row) && row.HeadRefOid == "" {
+		return errors.New("incomplete GitHub pull request")
+	}
+	if open(row) && row.ReviewRequests.PageInfo.HasNextPage {
+		return errors.New("GitHub review requests exceeded limit")
+	}
+	return nil
+}
+
+// open is whether a row GitHub returned is an open pull request. A row of a
+// query that only lists open ones may leave out its state.
+func open(row gqlPR) bool { return row.State == "" || row.State == "OPEN" }
+
+// apply merges one pull request GitHub described into the rows: an open one
+// replaces what was cached, a closed or merged one leaves.
+func (p *poll) apply(row gqlPR) {
+	p.read[row.Number] = true
+	if open(row) {
+		p.rows[row.Number] = row
+		delete(p.removed, row.Number)
+		return
+	}
+	p.gone(row.Number)
+	if row.State == "MERGED" && row.BaseRefName != "" {
+		p.merged[row.BaseRefName] = true
+	}
+}
+
+func (p *poll) gone(number int) {
+	p.read[number] = true
+	delete(p.rows, number)
+	p.removed[number] = true
+}
+
+// refresh brings the rows up to date. With a cursor it reads the window of
+// pull requests updated since, then re-reads the ones GitHub's update time
+// does not follow (watch). It sweeps every open pull request when there is no
+// complete cache yet, a sweep is due or under way, or the window's count or
+// newest pull request disagrees with the rows. Rows read before an error are
+// kept; nothing is removed for not being seen, and the cursor moves only once
+// its whole window was read.
+func (p *poll) refresh(ctx context.Context, repository github.Repository) error {
+	p.rows = map[int]gqlPR{}
+	for _, row := range p.cache.Pulls {
+		p.rows[row.Number] = row
+	}
+	p.read, p.removed, p.merged = map[int]bool{}, map[int]bool{}, map[string]bool{}
+	if !p.cache.Complete {
+		p.legacy = map[int]PullRequest{}
+		for _, pr := range p.cache.Snapshot.PullRequests {
+			p.legacy[pr.Number] = pr
+		}
+	}
+	sweeping := !p.cache.Complete || p.cache.Sweep != nil || p.cache.Cursor.IsZero() || !p.now.Before(p.cache.Swept.Add(sweepInterval)) || p.now.Before(p.cache.Swept)
+	// A first sweep that a poll left unfinished has no cursor yet: the window
+	// goes back to when it began, so what changed since is not missed.
+	base := p.cache.Cursor
+	if base.IsZero() && p.cache.Sweep != nil {
+		base = p.cache.Sweep.Floor
+	}
+	if !base.IsZero() {
+		if err := p.window(ctx, repository, base); err != nil {
+			return err
+		}
+	}
+	if !sweeping {
+		if err := p.numbers(ctx, repository, p.watch()); err != nil {
+			return err
+		}
+		sweeping = p.drifted()
+	}
+	if sweeping {
+		return p.sweep(ctx, repository)
+	}
+	return nil
+}
+
+// drifted is whether the rows disagree with what the window said of the open
+// pull requests: one deleted, or a change the window could not show.
+func (p *poll) drifted() bool {
+	if p.open != nil && *p.open != len(p.rows) {
+		return true
+	}
+	if p.newest != nil {
+		newest := 0
+		for number := range p.rows {
+			newest = max(newest, number)
+		}
+		return *p.newest != newest
+	}
+	return false
+}
+
+// window reads the pull requests updated since base, newest first, down to
+// the first page that reaches below base less the overlap. Only once it has
+// read them all does the cursor move, to the newest update it saw.
+func (p *poll) window(ctx context.Context, repository github.Repository, base time.Time) error {
+	threshold := base.Add(-cursorOverlap)
+	newest := base
+	var cursor any
+	for page := 0; page < pageLimit; page++ {
+		response, err := p.page(ctx, repository, windowQuery, cursor)
+		if err != nil {
+			return err
+		}
+		found := response.Repository
+		if page == 0 {
+			if found.Open != nil {
+				p.open = new(found.Open.TotalCount)
+			}
+			if found.Newest != nil {
+				p.newest = new(0)
+				if len(found.Newest.Nodes) > 0 {
+					*p.newest = found.Newest.Nodes[0].Number
 				}
 			}
 		}
-		if len(issues) > 0 || json.Unmarshal(data, &response) != nil || response.Repository == nil {
-			return nil, viewer, "", errors.New("invalid GitHub discovery response")
+		nodes := found.PullRequests.Nodes
+		for _, row := range nodes {
+			newest = maxTime(newest, row.UpdatedAt)
+			p.apply(row)
 		}
-		viewer = response.Viewer
-		permission = response.Repository.ViewerPermission
-		pulls := response.Repository.PullRequests
-		for _, pr := range pulls.Nodes {
-			// Missing request pages could conceal automatic eligibility; do not publish
-			// a partial inbox as if it represented all requests.
-			if pr.ReviewRequests.PageInfo.HasNextPage {
-				return nil, viewer, "", errors.New("GitHub review requests exceeded limit")
-			}
+		info := found.PullRequests.PageInfo
+		if !info.HasNextPage || len(nodes) == 0 || nodes[len(nodes)-1].UpdatedAt.Before(threshold) {
+			p.cache.Cursor = newest
+			return nil
 		}
-		result = append(result, pulls.Nodes...)
-		if !pulls.PageInfo.HasNextPage {
-			p.fingerprint = fingerprint{Open: len(result)}
-			stable := append([]gqlPR(nil), result...)
-			for i := range stable {
-				p.fingerprint.Newest = max(p.fingerprint.Newest, stable[i].Number)
-				p.fingerprint.Updated = maxTime(p.fingerprint.Updated, stable[i].UpdatedAt)
-				stable[i].UpdatedAt = time.Time{}
-			}
-			// Compare only the typed, minimal result: no raw GraphQL payload is cached.
-			sort.Slice(stable, func(i, j int) bool { return stable[i].Number < stable[j].Number })
-			minimal, _ := json.Marshal(stable)
-			const cacheKey = "graphql:open-pulls"
-			if string(minimal) != string(p.cache.Responses[cacheKey].Body) {
-				p.unchanged = false
-			}
-			p.cache.Responses[cacheKey] = cachedResponse{Body: minimal}
-			return result, viewer, permission, nil
+		if info.EndCursor == "" || info.EndCursor == cursor {
+			return errors.New("invalid GitHub pagination cursor")
 		}
-		if pulls.PageInfo.EndCursor == "" || pulls.PageInfo.EndCursor == cursor {
-			return nil, viewer, "", errors.New("invalid GitHub pagination cursor")
-		}
-		cursor = pulls.PageInfo.EndCursor
+		cursor = info.EndCursor
 	}
-	return nil, viewer, "", errors.New("GitHub discovery pagination exceeded limit")
+	return errors.New("GitHub discovery pagination exceeded limit")
+}
+
+// watch are the open pull requests this poll did not read whose state can
+// change with no update GitHub reports: checks still running, a mergeability
+// still being worked out while the last poll settles, and those on a base a
+// pull request just merged into, which GitHub works out again once asked.
+func (p *poll) watch() []int {
+	type candidate struct {
+		number, rank int
+		at           time.Time
+	}
+	var candidates []candidate
+	for number, row := range p.rows {
+		if p.read[number] {
+			continue
+		}
+		_, checks, _, _, _ := row.states()
+		unknown := !row.IsDraft && (row.Mergeable == "UNKNOWN" || row.MergeStateStatus == "UNKNOWN")
+		switch {
+		case unknown && p.cache.Settling > 0, !row.IsDraft && p.merged[row.BaseRefName]:
+			candidates = append(candidates, candidate{number, 0, row.UpdatedAt})
+		case checks == "running":
+			candidates = append(candidates, candidate{number, 1, row.UpdatedAt})
+		}
+	}
+	slices.SortFunc(candidates, func(a, b candidate) int {
+		return cmp.Or(cmp.Compare(a.rank, b.rank), b.at.Compare(a.at), cmp.Compare(a.number, b.number))
+	})
+	numbers := make([]int, 0, min(len(candidates), watchLimit))
+	for _, c := range candidates[:min(len(candidates), watchLimit)] {
+		numbers = append(numbers, c.number)
+	}
+	return numbers
+}
+
+// numbers re-reads pull requests by number, 50 to a query. One GitHub no
+// longer has (deleted, or its number now an issue) is gone.
+func (p *poll) numbers(ctx context.Context, repository github.Repository, numbers []int) error {
+	const batch = 50
+	for start := 0; start < len(numbers); start += batch {
+		chunk := numbers[start:min(start+batch, len(numbers))]
+		query, variables := numbersQuery(repository, chunk)
+		data, issues, err := p.graphQL(ctx, query, variables)
+		if err != nil {
+			return err
+		}
+		missing := map[string]bool{}
+		for _, issue := range issues {
+			if issue.Type != "NOT_FOUND" || len(issue.Path) != 2 || issue.Path[0] != "repository" {
+				return errInvalid
+			}
+			alias, _ := issue.Path[1].(string)
+			missing[alias] = true
+		}
+		var response struct {
+			Viewer     actor
+			Repository map[string]json.RawMessage
+		}
+		if json.Unmarshal(data, &response) != nil || response.Repository == nil {
+			return errInvalid
+		}
+		var permission string
+		if raw, ok := response.Repository["viewerPermission"]; !ok || json.Unmarshal(raw, &permission) != nil {
+			return errInvalid
+		}
+		rows := make([]*gqlPR, len(chunk))
+		for i, number := range chunk {
+			alias := fmt.Sprintf("p%d", i)
+			raw, ok := response.Repository[alias]
+			if !ok || string(raw) == "null" {
+				if !missing[alias] && !(ok && len(issues) == 0) {
+					return errInvalid
+				}
+				continue
+			}
+			var row gqlPR
+			if json.Unmarshal(raw, &row) != nil || row.Number != number {
+				return errInvalid
+			}
+			if err := valid(row); err != nil {
+				return err
+			}
+			rows[i] = &row
+		}
+		p.identify(response.Viewer, permission)
+		for i, row := range rows {
+			if row == nil {
+				p.gone(chunk[i])
+			} else {
+				p.apply(*row)
+			}
+		}
+	}
+	return nil
+}
+
+// sweep reads every open pull request, going on from where an earlier poll's
+// sweep stopped. Once it has read them all, the cached pull requests it did
+// not see are asked about by number, so one is dropped only when GitHub says
+// it closed, merged or is gone, however the pages shifted meanwhile.
+func (p *poll) sweep(ctx context.Context, repository github.Repository) error {
+	if p.cache.Sweep == nil {
+		p.cache.Sweep = &sweep{}
+	}
+	progress := p.cache.Sweep
+	seen := map[int]bool{}
+	for _, number := range progress.Seen {
+		seen[number] = true
+	}
+	var cursor any
+	if progress.After != "" {
+		cursor = progress.After
+	}
+	for page := 0; ; page++ {
+		if page >= pageLimit {
+			return errors.New("GitHub discovery pagination exceeded limit")
+		}
+		response, err := p.page(ctx, repository, sweepQuery, cursor)
+		if err != nil {
+			var status *statusError
+			if cursor != nil && (errors.Is(err, errInvalid) || errors.As(err, &status)) {
+				// GitHub may no longer accept the saved cursor: start again.
+				p.cache.Sweep = nil
+			}
+			return err
+		}
+		nodes := response.Repository.PullRequests.Nodes
+		for _, row := range nodes {
+			if progress.Floor.IsZero() && len(progress.Seen) == 0 {
+				progress.Floor = row.UpdatedAt
+			}
+			p.apply(row)
+			seen[row.Number] = true
+		}
+		progress.Seen = slices.Sorted(maps.Keys(seen))
+		info := response.Repository.PullRequests.PageInfo
+		if !info.HasNextPage {
+			break
+		}
+		if info.EndCursor == "" || info.EndCursor == cursor {
+			return errors.New("invalid GitHub pagination cursor")
+		}
+		cursor = info.EndCursor
+		progress.After = info.EndCursor
+	}
+	var missing []int
+	for number := range p.rows {
+		if !seen[number] {
+			missing = append(missing, number)
+		}
+	}
+	for number := range p.legacy {
+		if _, ok := p.rows[number]; !ok && !seen[number] && !p.removed[number] {
+			missing = append(missing, number)
+		}
+	}
+	slices.Sort(missing)
+	if err := p.numbers(ctx, repository, missing[:min(len(missing), verifyLimit)]); err != nil {
+		return err
+	}
+	if p.cache.Cursor.IsZero() {
+		// Every change since the sweep began is newer than its first page.
+		p.cache.Cursor = progress.Floor
+	}
+	p.cache.Sweep, p.cache.Complete, p.cache.Swept, p.legacy = nil, true, p.now, nil
+	return nil
 }

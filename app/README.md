@@ -1163,9 +1163,12 @@ unknown states (no score, no estimate, no GitHub review, no unresolved
 threads, nothing reported) leave the cell empty and are read only by screen
 readers. A review being generated shows the nine-dots loader under the title.
 Discovery fetches
-open pull requests with a paginated GraphQL query per repository, including
+open pull requests with paginated GraphQL queries per repository, including
 review decisions, head checks, merge state and the first 100 review threads;
-when more threads exist the unresolved count shows a lower bound (`N+`). The
+when more threads exist the unresolved count shows a lower bound (`N+`). Most
+polls read only the pull requests updated since the last one and merge them
+into the cache; every open one is read again at least every ten minutes (see
+`internal/discovery`). The
 columns follow the hosted Focus view's labels, icons and tones and fold under
 the title below 72rem. The list is drawn as the Up next design's live table,
 with the shared palette on the app's type scale. The page bar says
@@ -1215,8 +1218,9 @@ GitHub is disconnected or needs attention, and links to Settings' Connections; a
 covers an exhausted GitHub allowance. Neither appears merely because the cache
 is old. Refresh asks
 GitHub through the local server, which gives up on a repository after 45 s
-and answers it as not refreshed (stale, with the error), which the app names
-in the refresh's alert; the app gives up on an answer after 60 s and names
+(20 s for any one GitHub request) and answers it as not refreshed (stale, with
+the error, and with whatever it read before), which the app names in the
+refresh's alert; the app gives up on an answer after 60 s and names
 the repository as one baum did not answer for in time, so a
 connection that drops mid-refresh cannot leave the loader running. While anything is selected a dark bar over
 the list counts it and offers **Merge N** for the selected pull requests that

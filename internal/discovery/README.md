@@ -1,0 +1,102 @@
+# discovery
+
+Keeps a private cache of each picked repository's open pull requests (the
+local app's inbox), read from GitHub with the user's token. It makes no git
+fetch, no generation and no write to GitHub. `Cached` never makes a request;
+`Poll`, `PollNow` and `Probe` do, on the credential's shared budget.
+
+The cache lives in `app.sqlite` under `cache/discovery/<hash>`, partitioned by
+host, credential identity and repository. The credential's record (`<hash>.budget`)
+holds its REST and GraphQL budgets and its team memberships, which every
+repository shares.
+
+## A poll
+
+Most polls are **incremental**. A poll reads the window of pull requests
+updated since the cursor, newest first and of any state, 50 to a page. It
+stops after the first page that reaches below the cursor less a two-minute
+overlap. The overlap re-reads a pull request updated in the cursor's second,
+or one that GitHub recorded a little late. An open pull request replaces its
+cached row; a closed or merged one leaves the cache. The cursor is GitHub's
+`updatedAt`, never this computer's clock.
+
+The window also reads GitHub's count of open pull requests and the newest
+one's number. When the cache disagrees with either, the same poll runs a full
+sweep. That happens when a pull request was deleted, or when a change was
+missed for any other reason.
+
+Some changes leave a pull request's `updatedAt` as it was. An incremental poll
+therefore re-reads by number, in one aliased query capped at 50:
+
+- pull requests whose mergeability GitHub is still working out while the poll
+  settles after a push (`settleInterval`);
+- open pull requests on a base that a pull request in the window merged into,
+  which GitHub works out again once asked;
+- pull requests whose checks are still running.
+
+A **full sweep** reads every open pull request, the most recently updated
+first. It runs on the first poll, after a cache-format upgrade, every
+`sweepInterval` (10 minutes) and when the window's count disagrees.
+
+A sweep cut short by a timeout or an error keeps the pages it read and saves
+its GraphQL cursor; the next poll goes on from there. Until a first sweep
+finishes, each poll also reads the window from when that sweep began. Once a
+sweep finishes, the cached pull requests it did not see are asked about by
+number (at most `verifyLimit`). One is dropped only when GitHub says it
+closed, merged or no longer exists, however the pages shifted meanwhile.
+
+**Partial results.** Pages read before a failed request are merged into the
+cache and shown, stale, with the error. Nothing is dropped because a failed
+poll did not see it. The cursor moves only once the poll has read its whole
+window.
+
+**Upgrades.** A cache of an older format (before 3) keeps its snapshot, which
+stays shown. The first sweep updates it pull request by pull request; it is
+replaced only when the sweep finishes. Its conditional responses are dropped
+and not reused.
+
+## Teams, permissions and budgets
+
+- `/user/teams` is read once per credential every `teamsInterval` (10
+  minutes), and every repository's poll uses that answer. A 401, 403 or 404
+  (no `read:org`) is kept as "membership unknown" for as long. A failed request
+  keeps the previous answer.
+- An author's write permission (`/collaborators/<login>/permission`) is kept
+  per repository for `permissionTTL` (1 hour), and a 403 or 404 (unknown) is
+  kept as long as any other answer. A rate limit or a failed request is not
+  kept; the next poll asks again.
+- The REST and GraphQL budgets are kept in memory per credential and shared by
+  every poll and probe under way. Each request checks them first, so a rate
+  limit one poll meets stops the next request of the others. Within one rate
+  window the lower remaining count stands. They are saved with each poll and
+  merged with the saved record at the start of the next, so a restart honours
+  them.
+
+## Time limits and concurrency
+
+Each GitHub request of a poll or probe has a 20-second limit (`requestTimeout`).
+The callers bound the whole poll: 45 seconds for the background service and for
+the app's refresh. A request or poll that runs out of time returns
+`ErrTimeout`, and what it read is saved. Only an identity reset
+(`ResetIdentity`), or a credential that changed under the requests, returns
+`github.ErrIdentityChanged`. That case discards what the poll read.
+
+Polls of different repositories run at the same time. Each repository has its
+own lock. `Poll`, `Observe`, `Merged` and `Unresolved` take that lock, so a
+call for one repository never waits for another repository's poll. `Probe`
+takes none. A repository's lock is still held across its poll's GitHub
+requests. Cache and budget writes go through one service-wide lock,
+so `app.sqlite` has no more concurrent writers than before.
+
+## Probe
+
+`Probe` asks in one GraphQL query per 50 repositories for each repository's
+newest open pull request, open count and latest update. It compares them with
+the fingerprint the last successful poll left. A repository that differs is
+polled at once.
+
+## Tests
+
+```sh
+just oss-go test -race ./internal/discovery ./internal/background
+```
