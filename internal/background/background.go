@@ -71,6 +71,9 @@ type Service struct {
 	epoch       uint64
 	probedEpoch uint64
 	probed      time.Time
+	// probeFailed says the latest probe failed, as every request does while
+	// the machine is offline.
+	probeFailed bool
 	retained    map[string]retention
 }
 
@@ -333,6 +336,7 @@ func (s *Service) Sync(ctx context.Context) {
 	epoch := s.identityEpoch()
 	if s.probedEpoch != epoch {
 		s.probed = time.Time{}
+		s.probeFailed = false
 		s.probedEpoch = epoch
 	}
 	picked, err := s.Registry.Repositories(ctx)
@@ -365,7 +369,7 @@ func (s *Service) Sync(ctx context.Context) {
 		names = append(names, name)
 	}
 	sort.Strings(names)
-	changed := s.probe(ctx, names)
+	changed, reconnected := s.probe(ctx, names)
 
 	type polled struct {
 		repo     github.Repository
@@ -395,13 +399,17 @@ func (s *Service) Sync(ctx context.Context) {
 			continue
 		}
 		previous := s.state(name)
-		if s.now().Before(previous.NextRefresh) && !changed[repo.String()] {
+		// GitHub answers again after the probes failed, as when the machine
+		// comes back online: a repository whose poll failed meanwhile polls
+		// now rather than after its backoff, which grew while offline.
+		retry := reconnected && previous.Error != "" && previous.Error != "rate_limited"
+		if s.now().Before(previous.NextRefresh) && !changed[repo.String()] && !retry {
 			continue
 		}
 		p := &polled{repo: repo, state: State{Repository: name}, previous: previous}
 		passed = append(passed, p)
 		poll := s.Discovery.Poll
-		if changed[repo.String()] {
+		if changed[repo.String()] || retry {
 			poll = s.Discovery.PollNow
 		}
 		requestCtx, cancel := context.WithTimeout(ctx, 45*time.Second)
@@ -561,10 +569,10 @@ func (s *Service) Sync(ctx context.Context) {
 // pull requests changed since their last poll: those poll at once rather than
 // after discovery's backoff, so a pull request opened or pushed from anywhere
 // shows within about a minute. A failed probe changes nothing; the scheduled
-// polls go on.
-func (s *Service) probe(ctx context.Context, names []string) map[string]bool {
+// polls go on. reconnected says this probe succeeded after one that failed.
+func (s *Service) probe(ctx context.Context, names []string) (changed map[string]bool, reconnected bool) {
 	if s.now().Before(s.probed.Add(s.interval())) {
-		return nil
+		return nil, false
 	}
 	s.probed = s.now()
 	repositories := make([]github.Repository, 0, len(names))
@@ -577,9 +585,12 @@ func (s *Service) probe(ctx context.Context, names []string) map[string]bool {
 	defer cancel()
 	changed, err := s.Discovery.Probe(requestCtx, repositories)
 	if err != nil {
-		return nil
+		s.probeFailed = true
+		return nil, false
 	}
-	return changed
+	reconnected = s.probeFailed
+	s.probeFailed = false
+	return changed, reconnected
 }
 
 // pause is when the host's rate limit lets refreshes resume.

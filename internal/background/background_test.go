@@ -42,6 +42,7 @@ type fakeDiscovery struct {
 	forced       []string
 	probes       int
 	changed      map[string]bool
+	probeErr     error
 	observations []discovery.Observation
 	err          error
 	next         time.Time
@@ -77,6 +78,9 @@ func (f *fakeDiscovery) PollNow(ctx context.Context, repo github.Repository) (di
 }
 func (f *fakeDiscovery) Probe(context.Context, []github.Repository) (map[string]bool, error) {
 	f.probes++
+	if f.probeErr != nil {
+		return nil, f.probeErr
+	}
 	return f.changed, nil
 }
 func (f *fakeDiscovery) Observe(_ context.Context, _ github.Repository, o discovery.Observation) error {
@@ -360,6 +364,45 @@ func TestProbedChangePollsBeforeItsSchedule(t *testing.T) {
 	s.Sync(context.Background())
 	if d.probes != 2 || d.polls != 3 || len(d.forced) != 1 || d.forced[0] != "acme/b" {
 		t.Fatalf("changed repository not polled now: probes=%d polls=%d forced=%v", d.probes, d.polls, d.forced)
+	}
+}
+
+// Offline, a failed poll backs off for up to 15 minutes. Once a probe
+// succeeds again, every repository whose poll failed polls at once, so the
+// failure clears without waiting out that backoff.
+func TestReconnectPollsFailedRepositoriesAtOnce(t *testing.T) {
+	now := time.Now()
+	offline := errors.New("dial tcp: lookup api.github.com: no such host")
+	d := &fakeDiscovery{err: offline, probeErr: offline}
+	s := &Service{Registry: registry{{Repository: "acme/a"}, {Repository: "acme/b"}}, Discovery: d, Now: func() time.Time { return now }, Interval: time.Minute, Saved: func(context.Context, repos.Clone) ([]int, error) { return nil, nil }, Refresh: func(_ context.Context, _ repos.Clone, n int) (discovery.Observation, error) {
+		return discovery.Observation{Number: n}, nil
+	}}
+	for range 5 {
+		now = maxTime(now, s.state("acme/a").NextRefresh)
+		s.Sync(context.Background())
+	}
+	if st := s.state("acme/a"); st.Error != "discovery_unavailable" || st.NextRefresh.Sub(now) < 8*time.Minute {
+		t.Fatalf("offline state = %+v, want a long backoff", st)
+	}
+	// Back online, a minute later: nothing changed on GitHub, but both
+	// repositories poll now and their failures clear.
+	now = now.Add(time.Minute)
+	d.err, d.probeErr = nil, nil
+	polls := d.polls
+	s.Sync(context.Background())
+	if d.polls != polls+2 || len(d.forced) != 2 {
+		t.Fatalf("polls=%d forced=%v, want both repositories polled at once", d.polls-polls, d.forced)
+	}
+	for _, name := range []string{"acme/a", "acme/b"} {
+		if st := s.state(name); st.Error != "" || st.Failures != 0 {
+			t.Fatalf("%s state = %+v, want the failure cleared", name, st)
+		}
+	}
+	// Later successful probes do not force polls again.
+	now = now.Add(time.Minute)
+	s.Sync(context.Background())
+	if len(d.forced) != 2 {
+		t.Fatalf("forced=%v, want no further forced polls", d.forced)
 	}
 }
 

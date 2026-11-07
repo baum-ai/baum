@@ -3509,6 +3509,10 @@ error; the daemon passes them to the automatic scheduler, which alone decides
 about jobs. It polls immediately without
 blocking HTTP startup, then schedules discovery and latest-review evidence with
 conditional-cache deadlines, bounded requests, error backoff and host rate resets.
+The first probe that succeeds after one failed, as when the machine comes back
+online, polls every repository whose last poll failed (other than on a rate
+limit) at once, so the failure clears without waiting out a backoff that grew
+while offline.
 Every picked repository is polled, with or without a clone: discovery needs
 only `owner/name`. A repository without an available clone gets no per-PR
 refresh (that reads a store and the clone's saved reviews), and polling it
