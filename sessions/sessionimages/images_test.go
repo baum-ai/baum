@@ -239,6 +239,28 @@ func TestCodexPastedImageCanPrecedeHumanEventAndToolOutput(t *testing.T) {
 	}
 }
 
+func TestCodexUserMessageItemSuppliesRetainedImageOnce(t *testing.T) {
+	item := `{"type":"event_msg","payload":{"type":"item_completed","item":{"type":"UserMessage","content":[{"type":"text","text":"Look"},{"type":"local_image","path":"/tmp/a.png"},{"type":"image","image_url":"data:image/png;base64,` + png + `"}]}}}`
+	response := `{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_image","image_url":"data:image/png;base64,` + png + `"}],"internal_chat_message_metadata_passthrough":{"turn_id":"turn"}}}`
+	for name, lines := range map[string][]string{
+		"item only":          {item},
+		"item then response": {`{"type":"event_msg","payload":{"type":"task_started","turn_id":"turn"}}`, item, response},
+		"response then item": {response, `{"type":"event_msg","payload":{"type":"task_started","turn_id":"turn"}}`, item},
+	} {
+		s := fixture(t, vendors.Codex, lines...)
+		for i, line := range lines {
+			if line == item {
+				s.Graph.VendorIDs[0].VendorIDKind = "rollout.line"
+				s.Graph.VendorIDs[0].SourceRef = ptr(fmt.Sprintf("root.jsonl#%d", i+1))
+			}
+		}
+		got := Read(context.Background(), s, Limits{})
+		if len(got.Images) != 1 || got.Images[0].Source.Kind != HumanInput || got.Images[0].Source.TurnID != "prompt" {
+			t.Fatalf("%s: images %d diagnostics %v", name, len(got.Images), got.Diagnostics)
+		}
+	}
+}
+
 func TestOnlyReachableNativeEntitiesSupplyImages(t *testing.T) {
 	line := `{"type":"user","uuid":"human","message":{"content":[` + claudeImage(png) + `]}}`
 	for _, vendor := range []vendors.Slug{sessions.Entire, vendors.Cursor} {

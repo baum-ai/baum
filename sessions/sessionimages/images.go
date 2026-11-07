@@ -105,6 +105,9 @@ type reader struct {
 	storeBase string
 	positions map[string]int
 	files     map[string]*fileIndex
+	// humanKinds records which Codex record kind supplied a human input's
+	// images, so a prompt retained in both forms is not counted twice.
+	humanKinds map[string]string
 }
 
 // Read extracts payloads attached to reachable graph inputs or tool calls.
@@ -117,7 +120,7 @@ func Read(ctx context.Context, s sessions.Session, limits Limits) Result {
 	if s.Graph == nil || s.Graph.Root() == nil || sessions.IsGenerationRun(s.Graph) {
 		return Result{}
 	}
-	r := &reader{ctx: ctx, limits: limits.defaults(), root: s.Graph.Root().ID, id: s.ID, files: map[string]*fileIndex{}, positions: map[string]int{}}
+	r := &reader{ctx: ctx, limits: limits.defaults(), root: s.Graph.Root().ID, id: s.ID, files: map[string]*fileIndex{}, positions: map[string]int{}, humanKinds: map[string]string{}}
 	r.index(s.Graph)
 	names := make([]string, 0, len(r.files))
 	main := filepath.Base(s.Path)
@@ -359,9 +362,7 @@ func (r *reader) readFile(path string, index *fileIndex, vendor vendors.Slug) {
 					kept := waiting[:0]
 					for _, pending := range waiting {
 						if pending.turn == turn {
-							if ent.human {
-								r.collect(pending.blocks, ent.source, pending.at, 0)
-							}
+							r.collectHuman(pending.blocks, ent, pending.at, codexResponseKind)
 						} else {
 							kept = append(kept, pending)
 						}
@@ -370,9 +371,7 @@ func (r *reader) readFile(path string, index *fileIndex, vendor vendors.Slug) {
 				}
 				if p != nil {
 					if ent, ok := turns[p.turn]; ok {
-						if ent.human {
-							r.collect(p.blocks, ent.source, p.at, 0)
-						}
+						r.collectHuman(p.blocks, ent, p.at, codexResponseKind)
 					} else if len(waiting) < r.limits.MaxImages {
 						waiting = append(waiting, *p)
 					}
@@ -387,9 +386,32 @@ func (r *reader) readFile(path string, index *fileIndex, vendor vendors.Slug) {
 		}
 	}
 	for _, p := range waiting {
-		if ent, ok := turns[p.turn]; ok && ent.human {
-			r.collect(p.blocks, ent.source, p.at, 0)
+		if ent, ok := turns[p.turn]; ok {
+			r.collectHuman(p.blocks, ent, p.at, codexResponseKind)
 		}
+	}
+}
+
+const (
+	codexResponseKind = "response_item"
+	codexItemKind     = "item_completed"
+)
+
+// collectHuman collects a confirmed human input's images from one Codex record
+// kind. Once one kind has supplied images for an input, the other kind's copy
+// of the same prompt is skipped.
+func (r *reader) collectHuman(raw json.RawMessage, ent entity, at *time.Time, kind string) {
+	if !ent.human {
+		return
+	}
+	key := ent.source.ChildSessionID + "\x00" + ent.source.TurnID
+	if prior, ok := r.humanKinds[key]; ok && prior != kind {
+		return
+	}
+	before := len(r.result.Images)
+	r.collect(raw, ent.source, at, 0)
+	if len(r.result.Images) > before {
+		r.humanKinds[key] = kind
 	}
 }
 
@@ -520,6 +542,7 @@ func (r *reader) codex(raw []byte, index *fileIndex, line int, activeTurn *codex
 			TurnID   string          `json:"turn_id"`
 			Content  json.RawMessage `json:"content"`
 			Output   json.RawMessage `json:"output"`
+			Item     json.RawMessage `json:"item"`
 			Metadata struct {
 				TurnID string `json:"turn_id"`
 			} `json:"internal_chat_message_metadata_passthrough"`
@@ -547,6 +570,17 @@ func (r *reader) codex(raw []byte, index *fileIndex, line int, activeTurn *codex
 		}
 	}
 	if ent, ok := index.inputLines[line]; ok {
+		if record.Type == "event_msg" && p.Type == "item_completed" && bytes.Contains(p.Item, []byte("image")) {
+			// Newer Codex versions may retain a pasted image only in the
+			// UserMessage item the mapper turned into this human input.
+			var item struct {
+				Type    string          `json:"type"`
+				Content json.RawMessage `json:"content"`
+			}
+			if json.Unmarshal(p.Item, &item) == nil && item.Type == "UserMessage" {
+				r.collectHuman(item.Content, ent, record.Timestamp, codexItemKind)
+			}
+		}
 		turn := p.TurnID
 		if turn == "" && record.Type == "event_msg" && (p.Type == "user_message" || p.Type == "item_completed") {
 			if activeTurn.open == "" {
