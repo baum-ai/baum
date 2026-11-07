@@ -208,9 +208,9 @@ const (
 	// watchLimit bounds the pull requests an incremental poll re-reads by
 	// number because GitHub's update time does not follow what changed.
 	watchLimit = 50
-	// verifyLimit bounds the pull requests a finished sweep did not see and
-	// asks about by number before dropping them.
-	verifyLimit = 100
+	// windowPageLimit bounds an incremental read; a longer window is
+	// replaced by a sweep.
+	windowPageLimit = 10
 	// pageLimit bounds the pages of one read.
 	pageLimit = 1000
 )
@@ -233,9 +233,11 @@ type Service struct {
 	directory string
 	// mu guards locks, the per-repository locks that serialize a repository's
 	// polls and cache writes. Polls of different repositories run at once.
-	mu        sync.Mutex
-	locks     map[string]*sync.Mutex
-	liveMu    sync.Mutex
+	mu     sync.Mutex
+	locks  map[string]*sync.Mutex
+	liveMu sync.Mutex
+	// writeMu serializes this service's cache writes to app.sqlite.
+	writeMu   sync.Mutex
 	now       func() time.Time
 	validated map[string]bool
 	epoch     uint64
@@ -350,6 +352,8 @@ func (s *Service) load(key string) (diskCache, error) {
 }
 
 func (s *Service) save(key string, cache diskCache) error {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
 	raw, err := json.Marshal(cache)
 	if err != nil {
 		return err
@@ -417,6 +421,12 @@ type poll struct {
 	// read are the pull requests GitHub described in this poll, and removed
 	// those it reported closed, merged or gone.
 	read, removed map[int]bool
+	// readAt is each read pull request's update time, so an older copy of it
+	// on a later page does not replace a newer one.
+	readAt map[int]time.Time
+	// windowCursor is where the cursor moves once the poll's window and
+	// re-reads are read.
+	windowCursor time.Time
 	// merged are the base branches a pull request merged into since the cursor.
 	merged map[string]bool
 	// open and newest are GitHub's count of open pull requests and the newest
@@ -676,6 +686,11 @@ func (s *Service) poll(ctx context.Context, repository github.Repository, force 
 		snapshot.Observations = cache.Snapshot.Observations
 		snapshot.FetchedAt = cache.Snapshot.FetchedAt
 		snapshot.Settling = false
+		// The failed poll's snapshot is saved with a new head it read: the next
+		// one would not see the head move, so the settling starts here.
+		if p.moved || p.forgot {
+			p.cache.Settling = max(p.cache.Settling, 1)
+		}
 		snapshot.Rate = p.visibleRate()
 		snapshot.NextPoll = maxTime(now.Add(time.Minute), p.ResetIfExhausted())
 	} else {
@@ -850,7 +865,12 @@ func (p *poll) build(ctx context.Context, repository github.Repository, fresh bo
 				item.ReviewRequestedFromMe = true
 			}
 		}
-		item.AuthorHasWrite = p.cache.Authors[strings.ToLower(pr.User.Login)].Push
+		if answer, ok := p.cache.Authors[strings.ToLower(pr.User.Login)]; ok {
+			item.AuthorHasWrite = answer.Push
+		} else if legacy, ok := p.legacy[number]; ok && strings.EqualFold(legacy.Author, pr.User.Login) {
+			// Not asked yet since an upgrade: the older snapshot's answer.
+			item.AuthorHasWrite = legacy.AuthorHasWrite
+		}
 		item.ViewerCanPush = push
 		if !p.identified {
 			item.ViewerCanPush = old.ViewerCanPush

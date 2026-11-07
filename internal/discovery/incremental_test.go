@@ -196,10 +196,12 @@ func (h *hub) roundTrip(r *http.Request) (*http.Response, error) {
 	case "LocalInbox", "LocalInboxChanges":
 		var list []*hubPR
 		open, newest := 0, 0
+		var latest time.Time
 		for _, pr := range prs {
 			if pr.deleted {
 				continue
 			}
+			latest = maxTime(latest, pr.updated)
 			if pr.state == "OPEN" {
 				open++
 				newest = max(newest, pr.number)
@@ -232,6 +234,13 @@ func (h *hub) roundTrip(r *http.Request) (*http.Response, error) {
 			endCursor = fmt.Sprintf("k:%d:%d", last.updated.Unix(), last.number)
 		}
 		repository["pullRequests"] = map[string]any{"nodes": nodes, "pageInfo": map[string]any{"hasNextPage": end < len(list), "endCursor": endCursor}}
+		if q.name == "LocalInbox" {
+			latestNodes := []any{}
+			if !latest.IsZero() {
+				latestNodes = append(latestNodes, map[string]any{"updatedAt": latest.Format(time.RFC3339)})
+			}
+			repository["latest"] = map[string]any{"nodes": latestNodes}
+		}
 		if q.name == "LocalInboxChanges" {
 			repository["open"] = map[string]any{"totalCount": open}
 			newestNodes := []any{}
@@ -852,5 +861,72 @@ func TestAppRecordsHoldAcrossIncrementalPolls(t *testing.T) {
 	}
 	if pr := got.PullRequests[0]; pr.Unresolved == nil || *pr.Unresolved != 1 {
 		t.Fatalf("thread count %v, want the app's 1", pr.Unresolved)
+	}
+}
+
+// A window too long to read, as after days asleep on a busy repository, gives
+// way to a sweep, which asks about what it did not see and drops what closed.
+// A sweep's window begins at GitHub's latest update of any pull request, not
+// at the newest open one's, however long ago that was.
+func TestLongWindowGivesWayToASweep(t *testing.T) {
+	h := newHub()
+	h.add("acme/app", &hubPR{number: 1, updated: hubStart.Add(-365 * 24 * time.Hour)})
+	h.add("acme/app", &hubPR{number: 2, state: "CLOSED", updated: minutes(-60)})
+	for n := 3; n <= 2+2*windowPageLimit+1; n++ {
+		h.add("acme/app", &hubPR{number: n, updated: minutes(n - 60)})
+	}
+	s, now := hubService(t, h)
+	if _, err := s.PollNow(context.Background(), appRepo); err != nil {
+		t.Fatal(err)
+	}
+	if cursor := loadCache(t, s, appRepo).Cursor; !cursor.Equal(minutes(2 + 2*windowPageLimit + 1 - 60)) {
+		t.Fatalf("cursor %v, want the latest update", cursor)
+	}
+	for n := 3; n <= 2+2*windowPageLimit+1; n++ {
+		h.change("acme/app", n, func(pr *hubPR) { pr.state, pr.updated = "MERGED", minutes(n) })
+	}
+	*now = minutes(30)
+	got, err := s.PollNow(context.Background(), appRepo)
+	if err != nil || !slices.Equal(numbersOf(got), []int{1}) {
+		t.Fatalf("after the long window %v %v", numbersOf(got), err)
+	}
+	cache := loadCache(t, s, appRepo)
+	if !cache.Complete || cache.Sweep != nil || !cache.Cursor.Equal(minutes(2+2*windowPageLimit+1)) {
+		t.Fatalf("complete=%v sweep=%+v cursor=%v", cache.Complete, cache.Sweep, cache.Cursor)
+	}
+}
+
+// A poll that reads a new head and then fails still settles: the next poll
+// reads its mergeability again soon.
+func TestFailedPollAfterANewHeadStillSettles(t *testing.T) {
+	h := newHub()
+	h.pageSize = 1
+	h.add("acme/app", &hubPR{number: 1, updated: minutes(-20)})
+	h.add("acme/app", &hubPR{number: 2, updated: minutes(-40), base: "dev", checks: "PENDING"})
+	h.add("acme/app", &hubPR{number: 3, updated: minutes(-25), base: "dev"})
+	s, now := hubService(t, h)
+	if _, err := s.PollNow(context.Background(), appRepo); err != nil {
+		t.Fatal(err)
+	}
+	h.change("acme/app", 1, func(pr *hubPR) {
+		pr.head, pr.updated, pr.mergeable, pr.mergeState = "pushed", minutes(1), "UNKNOWN", "UNKNOWN"
+	})
+	fail := true
+	h.before = func(r *http.Request, q hubQuery) (*http.Response, error) {
+		if fail && q.name == "LocalInboxPulls" {
+			return nil, errors.New("network unreachable")
+		}
+		return nil, nil
+	}
+	*now = minutes(2)
+	if got, err := s.PollNow(context.Background(), appRepo); err == nil || got.PullRequests[0].HeadSHA != "pushed" {
+		t.Fatalf("failed poll %+v %v", got.PullRequests, err)
+	}
+	fail = false
+	h.change("acme/app", 1, func(pr *hubPR) { pr.mergeable, pr.mergeState = "CONFLICTING", "DIRTY" })
+	*now = minutes(10)
+	got, err := s.PollNow(context.Background(), appRepo)
+	if err != nil || got.PullRequests[0].Merge != "conflict" {
+		t.Fatalf("settle %+v %v", got.PullRequests[0], err)
 	}
 }

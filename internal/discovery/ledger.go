@@ -121,7 +121,11 @@ func (p *poll) membership(ctx context.Context) (map[int64]bool, bool, error) {
 		var status *statusError
 		switch {
 		case errors.Is(err, errRateLimit):
-			return nil, false, err
+			ids := map[int64]bool{}
+			for _, id := range current.IDs {
+				ids[id] = true
+			}
+			return ids, current.Known, err
 		case err == nil:
 			current = teamMembership{Known: true, Read: p.now}
 			for _, t := range teams {

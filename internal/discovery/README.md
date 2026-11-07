@@ -17,8 +17,12 @@ updated since the cursor, newest first and of any state, 50 to a page. It
 stops after the first page that reaches below the cursor less a two-minute
 overlap. The overlap re-reads a pull request updated in the cursor's second,
 or one that GitHub recorded a little late. An open pull request replaces its
-cached row; a closed or merged one leaves the cache. The cursor is GitHub's
-`updatedAt`, never this computer's clock.
+cached row; a closed or merged one leaves the cache. If GitHub reads the same
+pull request twice in one poll, the older copy never replaces the newer. The
+cursor is GitHub's `updatedAt`, never this computer's clock. An update time
+recorded more than the overlap behind a newer one waits for the next sweep, at
+most `sweepInterval` away. A window longer than `windowPageLimit` (10) pages,
+as after days asleep, gives way to a fresh sweep.
 
 The window also reads GitHub's count of open pull requests and the newest
 one's number. When the cache disagrees with either, the same poll runs a full
@@ -40,15 +44,19 @@ first. It runs on the first poll, after a cache-format upgrade, every
 
 A sweep cut short by a timeout or an error keeps the pages it read and saves
 its GraphQL cursor; the next poll goes on from there. Until a first sweep
-finishes, each poll also reads the window from when that sweep began. Once a
-sweep finishes, the cached pull requests it did not see are asked about by
-number (at most `verifyLimit`). One is dropped only when GitHub says it
-closed, merged or no longer exists, however the pages shifted meanwhile.
+finishes, each poll also reads the window from GitHub's latest update of any
+pull request when that sweep began, which also becomes the cursor. Once a sweep
+finishes, the cached pull requests it did not see, and those of an older
+format's snapshot, are asked about by number, 50 to a query. One is dropped
+only when GitHub says it closed, merged or no longer exists, however the pages
+shifted meanwhile.
 
 **Partial results.** Pages read before a failed request are merged into the
 cache and shown, stale, with the error. Nothing is dropped because a failed
 poll did not see it. The cursor moves only once the poll has read its whole
-window.
+window and the re-reads by number it called for. A poll that read a new head
+and then failed still settles. Authors not yet asked about since an upgrade
+keep the older snapshot's permission.
 
 **Upgrades.** A cache of an older format (before 3) keeps its snapshot, which
 stays shown. The first sweep updates it pull request by pull request; it is
@@ -77,16 +85,19 @@ and not reused.
 Each GitHub request of a poll or probe has a 20-second limit (`requestTimeout`).
 The callers bound the whole poll: 45 seconds for the background service and for
 the app's refresh. A request or poll that runs out of time returns
-`ErrTimeout`, and what it read is saved. Only an identity reset
-(`ResetIdentity`), or a credential that changed under the requests, returns
-`github.ErrIdentityChanged`. That case discards what the poll read.
+`ErrTimeout`, and what it read is saved. An identity reset (`ResetIdentity`)
+during a poll returns `github.ErrIdentityChanged` and discards what the poll
+read. A credential that changes under a poll's requests fails them, and what
+was read before stays in the old credential's partition.
 
 Polls of different repositories run at the same time. Each repository has its
 own lock. `Poll`, `Observe`, `Merged` and `Unresolved` take that lock, so a
-call for one repository never waits for another repository's poll. `Probe`
-takes none. A repository's lock is still held across its poll's GitHub
-requests. Cache and budget writes go through one service-wide lock,
-so `app.sqlite` has no more concurrent writers than before.
+call for one repository does not wait for another repository's GitHub
+requests. The exceptions are brief: a poll may wait for another's read of
+`/user/teams`, and for a cache write. `Probe` takes no repository lock. A
+repository's lock is still held across its own poll's GitHub requests. Every
+cache and budget write goes through one service-wide write lock, so
+`app.sqlite` has no more concurrent writers from discovery than before.
 
 ## Probe
 

@@ -236,12 +236,15 @@ const inboxFields = `fragment Inbox on PullRequest {
 }`
 
 // sweepQuery reads every open pull request, the most recently updated first,
-// so the pages a poll gets before it runs out of time are the liveliest.
+// so the pages a poll gets before it runs out of time are the liveliest, and
+// the latest update of a pull request of any state, where a sweep's window
+// begins.
 const sweepQuery = `query LocalInbox($owner: String!, $name: String!, $cursor: String) {
  viewer { login }
  rateLimit { cost remaining resetAt }
  repository(owner: $owner, name: $name) {
   viewerPermission
+  latest: pullRequests(orderBy: {field: UPDATED_AT, direction: DESC}, first: 1) { nodes { updatedAt } }
   pullRequests(states: OPEN, orderBy: {field: UPDATED_AT, direction: DESC}, first: 50, after: $cursor) {
    pageInfo { hasNextPage endCursor }
    nodes { ...Inbox }
@@ -355,8 +358,11 @@ type pullsPage struct {
 	Repository *struct {
 		ViewerPermission string
 		Open             *struct{ TotalCount int }
-		Newest           *struct{ Nodes []struct{ Number int } }
-		PullRequests     struct {
+		Latest           *struct {
+			Nodes []struct{ UpdatedAt time.Time }
+		}
+		Newest       *struct{ Nodes []struct{ Number int } }
+		PullRequests struct {
 			Nodes    []gqlPR
 			PageInfo pageInfo
 		}
@@ -407,6 +413,10 @@ func open(row gqlPR) bool { return row.State == "" || row.State == "OPEN" }
 // apply merges one pull request GitHub described into the rows: an open one
 // replaces what was cached, a closed or merged one leaves.
 func (p *poll) apply(row gqlPR) {
+	if at, ok := p.readAt[row.Number]; ok && row.UpdatedAt.Before(at) {
+		return
+	}
+	p.readAt[row.Number] = row.UpdatedAt
 	p.read[row.Number] = true
 	if open(row) {
 		p.rows[row.Number] = row
@@ -437,7 +447,7 @@ func (p *poll) refresh(ctx context.Context, repository github.Repository) error 
 	for _, row := range p.cache.Pulls {
 		p.rows[row.Number] = row
 	}
-	p.read, p.removed, p.merged = map[int]bool{}, map[int]bool{}, map[string]bool{}
+	p.read, p.removed, p.merged, p.readAt = map[int]bool{}, map[int]bool{}, map[string]bool{}, map[int]time.Time{}
 	if !p.cache.Complete {
 		p.legacy = map[int]PullRequest{}
 		for _, pr := range p.cache.Snapshot.PullRequests {
@@ -452,7 +462,13 @@ func (p *poll) refresh(ctx context.Context, repository github.Repository) error 
 		base = p.cache.Sweep.Floor
 	}
 	if !base.IsZero() {
-		if err := p.window(ctx, repository, base); err != nil {
+		switch err := p.window(ctx, repository, base); {
+		case errors.Is(err, errLongWindow):
+			// Start a sweep afresh: its window begins at GitHub's latest
+			// update, and verifying what it did not see drops what closed.
+			p.cache.Cursor, p.cache.Sweep, p.open, p.newest = time.Time{}, nil, nil, nil
+			return p.sweep(ctx, repository)
+		case err != nil:
 			return err
 		}
 	}
@@ -462,6 +478,10 @@ func (p *poll) refresh(ctx context.Context, repository github.Repository) error 
 		}
 		sweeping = p.drifted()
 	}
+	// The cursor moves once the window and the re-reads it called for were
+	// read: a pull request merged in the window is not passed over before the
+	// pull requests on its base are read again.
+	p.cache.Cursor = maxTime(p.cache.Cursor, p.windowCursor)
 	if sweeping {
 		return p.sweep(ctx, repository)
 	}
@@ -491,7 +511,10 @@ func (p *poll) window(ctx context.Context, repository github.Repository, base ti
 	threshold := base.Add(-cursorOverlap)
 	newest := base
 	var cursor any
-	for page := 0; page < pageLimit; page++ {
+	for page := 0; ; page++ {
+		if page >= windowPageLimit {
+			return errLongWindow
+		}
 		response, err := p.page(ctx, repository, windowQuery, cursor)
 		if err != nil {
 			return err
@@ -515,7 +538,7 @@ func (p *poll) window(ctx context.Context, repository github.Repository, base ti
 		}
 		info := found.PullRequests.PageInfo
 		if !info.HasNextPage || len(nodes) == 0 || nodes[len(nodes)-1].UpdatedAt.Before(threshold) {
-			p.cache.Cursor = newest
+			p.windowCursor = newest
 			return nil
 		}
 		if info.EndCursor == "" || info.EndCursor == cursor {
@@ -523,8 +546,12 @@ func (p *poll) window(ctx context.Context, repository github.Repository, base ti
 		}
 		cursor = info.EndCursor
 	}
-	return errors.New("GitHub discovery pagination exceeded limit")
 }
+
+// errLongWindow is a window longer than windowPageLimit pages: the cursor is
+// too old (after days asleep, say), and a sweep, which resumes when cut short,
+// replaces it.
+var errLongWindow = errors.New("GitHub discovery window too long")
 
 // watch are the open pull requests this poll did not read whose state can
 // change with no update GitHub reports: checks still running, a mergeability
@@ -622,8 +649,8 @@ func (p *poll) numbers(ctx context.Context, repository github.Repository, number
 
 // sweep reads every open pull request, going on from where an earlier poll's
 // sweep stopped. Once it has read them all, the cached pull requests it did
-// not see are asked about by number, so one is dropped only when GitHub says
-// it closed, merged or is gone, however the pages shifted meanwhile.
+// not see are asked about by number, 50 to a query, so one is dropped only
+// when GitHub says it closed, merged or is gone, however the pages shifted.
 func (p *poll) sweep(ctx context.Context, repository github.Repository) error {
 	if p.cache.Sweep == nil {
 		p.cache.Sweep = &sweep{}
@@ -651,10 +678,10 @@ func (p *poll) sweep(ctx context.Context, repository github.Repository) error {
 			return err
 		}
 		nodes := response.Repository.PullRequests.Nodes
+		if latest := response.Repository.Latest; cursor == nil && latest != nil && len(latest.Nodes) > 0 {
+			progress.Floor = latest.Nodes[0].UpdatedAt
+		}
 		for _, row := range nodes {
-			if progress.Floor.IsZero() && len(progress.Seen) == 0 {
-				progress.Floor = row.UpdatedAt
-			}
 			p.apply(row)
 			seen[row.Number] = true
 		}
@@ -681,7 +708,7 @@ func (p *poll) sweep(ctx context.Context, repository github.Repository) error {
 		}
 	}
 	slices.Sort(missing)
-	if err := p.numbers(ctx, repository, missing[:min(len(missing), verifyLimit)]); err != nil {
+	if err := p.numbers(ctx, repository, missing); err != nil {
 		return err
 	}
 	if p.cache.Cursor.IsZero() {
