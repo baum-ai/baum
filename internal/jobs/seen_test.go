@@ -18,6 +18,8 @@ func TestSeenRecordsAFailedJobOnceAndSurvivesARestart(t *testing.T) {
 	}
 	q.mu.Lock()
 	q.jobs = append(q.jobs, Job{ID: "broken", State: "failed"}, Job{ID: "fine", State: "completed"})
+	q.mark("broken")
+	q.mark("fine")
 	err = q.save()
 	q.mu.Unlock()
 	if err != nil {

@@ -139,6 +139,7 @@ func (q *Queue) SubmitAutomatic(ctx context.Context, r AutomaticRequest) (Job, e
 		superseded, stop = q.supersedeDetails(p.Repository, p.PR, p.HeadSHA)
 	}
 	q.jobs = append(q.jobs, j)
+	q.mark(j.ID)
 	if err := q.save(); err != nil {
 		q.jobs = before
 		return Job{}, err
@@ -194,6 +195,7 @@ func (q *Queue) refuseAutomatic(i int) (Job, bool) {
 	if reason == ReasonSettingsUnreadable {
 		j.State = "interrupted"
 	}
+	q.mark(j.ID)
 	if q.save() != nil {
 		*j = old
 		return Job{}, false

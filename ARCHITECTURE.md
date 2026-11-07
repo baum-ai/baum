@@ -3061,9 +3061,18 @@ was not shown.
 
 ### Persistent generation jobs
 
-`internal/jobs` serializes queue mutations in the `state/jobs` JSON document
-in the shared private `app.sqlite` application database,
-without duplicating review documents. `jobs.Open` takes an exclusive
+`internal/jobs` serializes queue mutations in the `jobs` table of the shared
+private `app.sqlite` application database, without duplicating review
+documents. Each job is one row: its id, a creation sequence (`seq`, which
+keeps the history oldest first), created and updated times, state, an
+`archived` flag and the job as JSON. A save writes only the jobs changed
+since the last successful write, in one transaction; a job dropped by a
+rolled-back submission has its row deleted. One job's JSON may be at most
+1 MiB (`maxJobJSON`); the history has no size limit. A database from an older
+baum keeps the history in the `state/jobs` document: the first `jobs.Open`
+moves it into rows, in order, and deletes the document in the same
+transaction, so a failed move leaves it in place and `Open` fails.
+`jobs.Open` takes an exclusive
 `internal/filelock` lock beside the database (`<database path>.jobs.lock.sqlite`) and keeps it
 until its workers stop, so two processes never run one queue; it waits up to
 10 s for a predecessor whose shutdown timed out and that is exiting.
@@ -3434,7 +3443,7 @@ to it (`agent.TitlePath`). `Job.has_transcript` says one exists, and
 never leave the machine.
 
 `POST /api/jobs/{id}/seen` (body `{}`) records that the user looked at a failed
-job: it sets `Job.seen_at` once, in the queue's `state/jobs` record, and
+job: it sets `Job.seen_at` once, in the job's row of the queue's journal, and
 leaves jobs in any other state unchanged (`404` for an unknown job). A failed
 job never runs again, so the desktop tray never flags one with `seen_at`.
 
