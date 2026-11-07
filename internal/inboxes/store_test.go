@@ -2,6 +2,7 @@ package inboxes
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 	"sync"
@@ -86,13 +87,27 @@ func TestConcurrentFirstReadsCreateOneDefault(t *testing.T) {
 
 func TestUpgradeKeepsExistingInboxesAndAppendsDefault(t *testing.T) {
 	h := newFresh(t)
-	const a = `{"id":"0123456789abcdef0123456789abcdef","name":"Zeta","color":"red","what":"review","owners":["x"],"risk":"4","repositories":["x/y"],"query":"q","no_bots":true,"badge":false}`
+	const a = `{"id":"0123456789abcdef0123456789abcdef","name":"Équipe","color":"red","what":"review","owners":["x"],"risk":"4","repositories":["x/y"],"query":"q","no_bots":true,"badge":false}`
 	const b = `{"id":"fedcba9876543210fedcba9876543210","name":"Alpha","color":"grey","what":"mine","owners":[],"risk":"3","repositories":[],"no_bots":false,"badge":true,"extra":1}`
-	seed(t, h, `{"revision":5,"inboxes":[`+a+`,`+b+`]}`)
+	seed(t, h, `{"revision":5,"unknown":{"k":[1]},"inboxes":[`+a+`,`+b+`]}`)
 	_, body := h.do(http.MethodGet, "")
 	got := list(body)
 	if body["revision"] != float64(6) || len(got) != 3 || got[2]["name"] != "Default" {
 		t.Fatalf("%v", body)
+	}
+	var doc map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(stored(t, h.path)), &doc); err != nil {
+		t.Fatal(err)
+	}
+	if string(doc["unknown"]) != `{"k":[1]}` || string(doc["initialized"]) != "true" || string(doc["revision"]) != "6" {
+		t.Fatalf("document fields: %s", stored(t, h.path))
+	}
+	if got[0]["name"] != "Équipe" || got[0]["query"] != "q" || got[0]["risk"] != "4" {
+		t.Fatalf("fields lost: %v", got[0])
+	}
+	def := got[2]
+	if id, _ := def["id"].(string); !idPattern.MatchString(id) || def["query"] != "" || def["what"] != "any" || def["risk"] != "any" || def["badge"] != true {
+		t.Fatalf("default: %v", def)
 	}
 	items := storedItems(t, h.path)
 	if len(items) != 3 || items[0] != a || items[1] != b {
@@ -104,7 +119,7 @@ func TestUpgradeAtTheLimitAddsNothing(t *testing.T) {
 	h := newFresh(t)
 	var items []string
 	for i := range MaxInboxes {
-		items = append(items, `{"id":"`+strings.Repeat("a", 31)+string(rune('a'+i%6))+`","name":"n`+strings.Repeat("x", i)+`","color":"blue","what":"any","owners":[],"risk":"any","repositories":[],"query":"","no_bots":false,"badge":true}`)
+		items = append(items, `{"id":"`+fmt.Sprintf("%032x", i+1)+`","name":"n`+strings.Repeat("x", i)+`","color":"blue","what":"any","owners":[],"risk":"any","repositories":[],"query":"","no_bots":false,"badge":true}`)
 	}
 	seed(t, h, `{"revision":2,"inboxes":[`+strings.Join(items, ",")+`]}`)
 	_, body := h.do(http.MethodGet, "")
@@ -180,7 +195,7 @@ func TestLastInboxCannotBeDeleted(t *testing.T) {
 
 func TestCorruptDocumentIsNeverInitialized(t *testing.T) {
 	h := newFresh(t)
-	for _, corrupt := range []string{`{"revision": 3, "inboxes": [`, `{"revision":-1,"inboxes":[]}`, `{"revision":1,"inboxes":"x"}`} {
+	for _, corrupt := range []string{`{"revision": 3, "inboxes": [`, `{"revision":-1,"inboxes":[]}`, `{"revision":1,"inboxes":"x"}`, `null`, `[]`, `{"Revision":3,"Inboxes":[` + entry("A") + `]}`, `{"revision":3,"INITIALIZED":false,"inboxes":[` + entry("A") + `]}`} {
 		seed(t, h, corrupt)
 		if code, body := h.do(http.MethodGet, ""); code != 500 || body["code"] != CodeUnreadable {
 			t.Fatalf("get %d %v", code, body)

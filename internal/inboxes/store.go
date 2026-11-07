@@ -145,7 +145,7 @@ func (s *Store) ensure() (State, error) {
 }
 
 // initialize adds the default inbox to a document that has none of the
-// marker. Stored entries are carried over untouched. Twenty inboxes leave no
+// marker. Stored entries are carried over as stored JSON, re-encoded compactly. Twenty inboxes leave no
 // room, so none is added.
 func initialize(raw []byte) ([]byte, State, error) {
 	current, err := decode(raw)
@@ -156,6 +156,16 @@ func initialize(raw []byte) ([]byte, State, error) {
 	if raw != nil {
 		if err := json.Unmarshal(raw, &doc); err != nil {
 			return nil, State{}, &UnreadableError{err}
+		}
+	}
+	// decode matches keys ignoring case and doc does not: a differently cased
+	// key would be read as state but not extended, hiding the inboxes behind
+	// a new one.
+	for key := range doc {
+		for _, known := range []string{"inboxes", "revision", "initialized"} {
+			if key != known && strings.EqualFold(key, known) {
+				return nil, State{}, &UnreadableError{fmt.Errorf("key %q must be spelled %q", key, known)}
+			}
 		}
 	}
 	items := []json.RawMessage{}
@@ -211,6 +221,15 @@ func freeName(existing []Inbox) string {
 func decode(data []byte) (State, error) {
 	if data == nil {
 		return State{Inboxes: []Inbox{}}, nil
+	}
+	// The document must be a JSON object: null, arrays and scalars are not
+	// state, and initialize could not extend them.
+	var top map[string]json.RawMessage
+	if err := json.Unmarshal(data, &top); err != nil {
+		return State{}, &UnreadableError{err}
+	}
+	if top == nil {
+		return State{}, &UnreadableError{errors.New("document is not an object")}
 	}
 	var state State
 	if err := json.Unmarshal(data, &state); err != nil {

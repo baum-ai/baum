@@ -42,14 +42,15 @@ transaction, so independent stores and concurrent clients agree:
 - A fresh installation gets one inbox named `Default`: what `any`, no owners,
   risk `any`, no repositories, empty query, `no_bots` false, badge on, color
   `blue`, with a daemon-assigned id. The revision becomes 1.
-- An upgrade keeps every stored inbox untouched (ids, fields, order) and
-  appends `Default` last. If a name equal to `Default` ignoring case exists, it
+- An upgrade carries stored inboxes over as stored JSON, re-encoded compactly,
+  with fields, ids and order unchanged, and appends `Default` last. If a name equal to `Default` ignoring case exists, it
   is `Default 2`, `Default 3`, and so on. With 20 inboxes already stored,
   nothing is added or removed and the document is only marked initialized.
 - `Default` is an ordinary inbox: it can be renamed, edited or deleted while
   another inbox remains, and is not recreated afterwards.
 - A saved list is never empty: the last inbox cannot be deleted.
-- An initialized document is only read, never written, by `GET`.
+- `GET` never changes an initialized document (a racing first read may rewrite
+  identical bytes).
 
 A document that does not parse is **never overwritten**: `GET` and `PUT` answer 500
 `inboxes_unreadable`. Fix or remove the document to continue. Writes compare
