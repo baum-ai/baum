@@ -9,8 +9,8 @@ import (
 	"github.com/baum-ai/baum/internal/appdb"
 )
 
-// maxJobJSON bounds one job's journal record. A save that would write a
-// larger one is refused; the history as a whole has no limit.
+// maxJobJSON bounds one job's journal record; the history as a whole has no
+// limit. A larger job is journaled reduced (encodeJob), or not at all.
 const maxJobJSON = 1 << 20
 
 // The journal keeps one row per job. seq is its creation order, which the
@@ -99,19 +99,42 @@ func writeJob(tx *sql.Tx, j Job, raw []byte) error {
 	return err
 }
 
-// writeJournal writes the given jobs and deletes the rows of gone, which are
+// errJobTooLarge is a job whose record, even reduced, is over maxJobJSON.
+var errJobTooLarge = errors.New("job too large for the journal")
+
+// encodeJob returns the record of j, or of a reduced copy of it (reduced is
+// then true) when j's own is over maxJobJSON: the reduced copy keeps the
+// job's identity, state, reason, times, counts and cost and drops its
+// variable-size text and lists. It is errJobTooLarge when even that is over.
+func encodeJob(j Job) (raw []byte, reduced bool, err error) {
+	if raw, err = json.Marshal(j); err != nil || len(raw) <= maxJobJSON {
+		return raw, false, err
+	}
+	j.Summary, j.Detail, j.ThreadOutcomes, j.FailedSections, j.FixThreads = "", "", nil, nil, nil
+	if j.Accounting != nil {
+		accounting := *j.Accounting
+		accounting.Attempts = nil
+		j.Accounting = &accounting
+	}
+	if raw, err = json.Marshal(j); err != nil {
+		return nil, true, err
+	}
+	if len(raw) > maxJobJSON {
+		return nil, true, fmt.Errorf("%w: %d bytes over %d", errJobTooLarge, len(raw), maxJobJSON)
+	}
+	return raw, true, nil
+}
+
+// journalRow is a job and the record writeJournal stores for it.
+type journalRow struct {
+	job Job
+	raw []byte
+}
+
+// writeJournal writes the given rows and deletes the rows of gone, which are
 // jobs dropped from memory before any write kept them (a rolled-back
 // submission), in one transaction.
-func writeJournal(path string, jobs []Job, gone []string) (err error) {
-	encoded := make([][]byte, len(jobs))
-	for i, j := range jobs {
-		if encoded[i], err = json.Marshal(j); err != nil {
-			return err
-		}
-		if len(encoded[i]) > maxJobJSON {
-			return fmt.Errorf("job %s is %d bytes, more than the journal keeps for one job (%d)", j.ID, len(encoded[i]), maxJobJSON)
-		}
-	}
+func writeJournal(path string, rows []journalRow, gone []string) (err error) {
 	db, err := appdb.Open(path, false)
 	if err != nil {
 		return err
@@ -126,8 +149,8 @@ func writeJournal(path string, jobs []Job, gone []string) (err error) {
 			_ = tx.Rollback()
 		}
 	}()
-	for i, j := range jobs {
-		if err = writeJob(tx, j, encoded[i]); err != nil {
+	for _, row := range rows {
+		if err = writeJob(tx, row.job, row.raw); err != nil {
 			return err
 		}
 	}

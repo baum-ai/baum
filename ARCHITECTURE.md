@@ -3067,11 +3067,17 @@ documents. Each job is one row: its id, a creation sequence (`seq`, which
 keeps the history oldest first), created and updated times, state, an
 `archived` flag and the job as JSON. A save writes only the jobs changed
 since the last successful write, in one transaction; a job dropped by a
-rolled-back submission has its row deleted. One job's JSON may be at most
-1 MiB (`maxJobJSON`); the history has no size limit. A database from an older
-baum keeps the history in the `state/jobs` document: the first `jobs.Open`
-moves it into rows, in order, and deletes the document in the same
-transaction, so a failed move leaves it in place and `Open` fails.
+rolled-back submission has its row deleted. The history has no size limit.
+A fix's summary is cut to 16 KiB and a job's failure detail to 4 KiB, each
+marked as truncated. A job whose JSON is still over 1 MiB (`maxJobJSON`) is
+journaled without its summary, detail, thread outcomes, failed sections,
+fix threads and usage attempts, and the error is logged. One still over the
+limit is not journaled at all; the other jobs of the write are. A database
+from an older baum keeps the history in the `state/jobs` document: the first
+`jobs.Open` moves it into rows, in order, and deletes the document in the
+same transaction, so a failed move leaves it in place and `Open` fails. An
+older baum run after that sees no `state/jobs` and starts a new document;
+the next upgrade appends its jobs after the existing rows.
 `jobs.Open` takes an exclusive
 `internal/filelock` lock beside the database (`<database path>.jobs.lock.sqlite`) and keeps it
 until its workers stop, so two processes never run one queue; it waits up to

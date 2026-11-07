@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io/fs"
+	"log/slog"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -265,17 +266,97 @@ func TestFailedWriteKeepsChangesForTheRetry(t *testing.T) {
 	waitJournal(t, q, "b", "cancelled")
 }
 
-func TestOversizedJobIsRefused(t *testing.T) {
-	q := openAt(t, filepath.Join(privateDir(t), "app.sqlite"))
+// rowOf reads one job's row, or false when it has none.
+func rowOf(t *testing.T, path, id string) (Job, bool) {
+	t.Helper()
+	saved, err := readJournal(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, j := range saved {
+		if j.ID == id {
+			return j, true
+		}
+	}
+	return Job{}, false
+}
+
+func TestOversizedJobIsJournaledReducedOrSkipped(t *testing.T) {
+	path := filepath.Join(privateDir(t), "app.sqlite")
+	q := openAt(t, path)
+	logs := &logBuffer{}
+	q.SetLogger(slog.New(slog.NewTextHandler(logs, nil)))
+	cost := 1.5
+	huge := Job{ID: "huge", State: "completed", Reason: "", Calls: 3, Tokens: 40, ActualCostUSD: &cost, Summary: strings.Repeat("x", maxJobJSON),
+		Accounting: &agent.Accounting{ChargedTokens: 40, Attempts: []agent.UsageAttempt{{Model: "m"}}}}
+	// Members are not reduced: this one cannot be journaled at all.
+	hopeless := Job{ID: "hopeless", State: "completed", Prepared: Prepared{Members: strings.Repeat("1@sha,", maxJobJSON/6+1)}}
+	addJobs(t, q, Job{ID: "small", State: "completed"}, huge, hopeless)
+
+	row, ok := rowOf(t, path, "huge")
+	if !ok || row.Summary != "" || row.Calls != 3 || row.Tokens != 40 || row.ActualCostUSD == nil || *row.ActualCostUSD != cost || row.Accounting.ChargedTokens != 40 || row.Accounting.Attempts != nil {
+		t.Fatalf("reduced row %+v", row)
+	}
+	if _, ok = rowOf(t, path, "small"); !ok {
+		t.Fatal("the other jobs were not written")
+	}
+	if _, ok = rowOf(t, path, "hopeless"); ok {
+		t.Fatal("a job over the limit even reduced was written")
+	}
+	q.mu.Lock()
+	if q.jobs[1].Summary == "" || len(q.jobs[1].Accounting.Attempts) != 1 {
+		t.Error("reducing the record changed the job in memory")
+	}
+	if len(q.dirty) != 1 || !q.dirty["hopeless"] {
+		t.Errorf("changes left: %v", q.dirty)
+	}
+	q.mu.Unlock()
+	if logs.count("huge") == 0 || logs.count("hopeless") == 0 {
+		t.Fatalf("not logged: %s", logs.b.String())
+	}
+}
+
+func TestOversizedJobBlocksNoOtherWrite(t *testing.T) {
+	q, f := newQueue(t)
+	addJobs(t, q, Job{ID: "huge", State: "completed", Summary: strings.Repeat("x", maxJobJSON)},
+		Job{ID: "hopeless", State: "completed", Prepared: Prepared{Members: strings.Repeat("1@sha,", maxJobJSON/6+1)}})
+	e := estimate(t, q, "single", Item{Clone: "clone", PR: 1})
+	jobs, err := q.Submit(context.Background(), e.ID, true, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	awaitStart(t, q, f, jobs[0].ID)
+	releaseJob(t, f)
+	waitJournal(t, q, jobs[0].ID, "completed")
 	q.mu.Lock()
 	defer q.mu.Unlock()
-	q.jobs = append(q.jobs, Job{ID: "huge", State: "completed", Summary: strings.Repeat("x", maxJobJSON)})
-	q.mark("huge")
-	if err := q.save(); err == nil || !strings.Contains(err.Error(), "huge") {
-		t.Fatalf("oversized job written: %v", err)
+	if q.unsaved || q.retrying {
+		t.Fatalf("a write failed: unsaved %v, retrying %v", q.unsaved, q.retrying)
 	}
-	if !q.dirty["huge"] {
-		t.Fatal("refused job forgotten")
+}
+
+func TestOpenMovesAnOversizedRunningJob(t *testing.T) {
+	path := filepath.Join(privateDir(t), "app.sqlite")
+	raw, _ := json.Marshal([]Job{{ID: "big", State: "running", Draft: 2, Summary: strings.Repeat("x", maxJobJSON)}, {ID: "next", State: "completed"}})
+	if err := appdb.Write(path, "state", "jobs", raw); err != nil {
+		t.Fatal(err)
+	}
+	q := openAt(t, path)
+	if got := ids(q.List()); !slices.Equal(got, []string{"big", "next"}) {
+		t.Fatalf("order %v", got)
+	}
+	if row, ok := rowOf(t, path, "big"); !ok || row.State != "interrupted" || row.Draft != 0 || row.Summary != "" {
+		t.Fatalf("row %+v", row)
+	}
+}
+
+func TestTruncateMarksTheCut(t *testing.T) {
+	if got := truncate("short", 10); got != "short" {
+		t.Fatal(got)
+	}
+	got := truncate(strings.Repeat("é", 10), 5)
+	if got != "éé… (truncated)" {
+		t.Fatalf("%q", got)
 	}
 }
 
@@ -294,5 +375,33 @@ func TestHistoryLargerThanTheOldLimitSavesAndReopens(t *testing.T) {
 	listed := reopened.List()
 	if !slices.Equal(ids(listed), ids(history)) || len(listed[69].Summary) != len(summary) {
 		t.Fatalf("history after reopen: %d jobs", len(listed))
+	}
+}
+
+// wordyExecutor reports an agent's very long account and fails with a very
+// long error.
+type wordyExecutor struct{ *fakeExecutor }
+
+func (w wordyExecutor) Execute(_ context.Context, _ Prepared, progress func(Progress)) (*float64, error) {
+	progress(Progress{Phase: "finishing", Summary: strings.Repeat("s", maxJobJSON)})
+	return nil, &StoppedError{Reason: "failed", Err: errors.New(strings.Repeat("e", maxJobJSON))}
+}
+
+func TestJobCapsItsSummaryAndDetail(t *testing.T) {
+	path := filepath.Join(privateDir(t), "app.sqlite")
+	q, err := Open(path, wordyExecutor{&fakeExecutor{head: "first"}}, 1, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(q.Close)
+	e := estimate(t, q, "single", Item{Clone: "clone", PR: 1})
+	jobs, err := q.Submit(context.Background(), e.ID, true, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitJournal(t, q, jobs[0].ID, "failed")
+	row, _ := rowOf(t, path, jobs[0].ID)
+	if len(row.Summary) > maxSummary+32 || !strings.HasSuffix(row.Summary, "(truncated)") || len(row.Detail) > maxDetail+32 || !strings.HasSuffix(row.Detail, "(truncated)") {
+		t.Fatalf("summary %d bytes, detail %d bytes", len(row.Summary), len(row.Detail))
 	}
 }

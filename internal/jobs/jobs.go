@@ -476,15 +476,28 @@ func Open(path string, executor Executor, concurrency int, changed func(Job)) (*
 
 // save writes the jobs marked changed (mark) in one transaction. A failed
 // write keeps them marked, so the next save or retrySave writes them again.
-// mu is held.
+// A job too large for the journal never fails the write: it is journaled
+// reduced, or stays marked and unwritten, and the others are written. mu is
+// held.
 func (q *Queue) save() error {
-	var changed []Job
+	var rows []journalRow
 	present := map[string]bool{}
 	for _, j := range q.jobs {
-		if q.dirty[j.ID] {
-			changed = append(changed, j)
-			present[j.ID] = true
+		if !q.dirty[j.ID] {
+			continue
 		}
+		present[j.ID] = true
+		raw, reduced, err := encodeJob(j)
+		if err != nil {
+			if q.log != nil {
+				q.log.Error("job not journaled", "job", j.ID, "error", err)
+			}
+			continue
+		}
+		if reduced && q.log != nil {
+			q.log.Error("job journaled without its text and lists", "job", j.ID, "error", "record over the journal's limit")
+		}
+		rows = append(rows, journalRow{j, raw})
 	}
 	var gone []string
 	for id := range q.dirty {
@@ -492,12 +505,17 @@ func (q *Queue) save() error {
 			gone = append(gone, id)
 		}
 	}
-	if len(changed) > 0 || len(gone) > 0 {
-		if e := writeJournal(q.path, changed, gone); e != nil {
+	if len(rows) > 0 || len(gone) > 0 {
+		if e := writeJournal(q.path, rows, gone); e != nil {
 			return e
 		}
 	}
-	clear(q.dirty)
+	for _, row := range rows {
+		delete(q.dirty, row.job.ID)
+	}
+	for _, id := range gone {
+		delete(q.dirty, id)
+	}
 	q.unsaved = false
 	return nil
 }
@@ -1265,7 +1283,7 @@ func (q *Queue) worker(chat bool) {
 					q.jobs[i].Commit, q.jobs[i].CommitURL = p.Commit, p.CommitURL
 				}
 				if p.Summary != "" {
-					q.jobs[i].Summary = p.Summary
+					q.jobs[i].Summary = truncate(p.Summary, maxSummary)
 				}
 				if p.Threads != nil {
 					q.jobs[i].ThreadOutcomes = p.Threads
@@ -1409,6 +1427,7 @@ func (q *Queue) worker(chat bool) {
 					current.State = "interrupted"
 				}
 			}
+			current.Detail = truncate(current.Detail, maxDetail)
 			if q.superseded[j.ID] {
 				delete(q.superseded, j.ID)
 				if current.State != "completed" {
@@ -1433,6 +1452,19 @@ func (q *Queue) worker(chat bool) {
 			}
 		}
 	}
+}
+
+// maxSummary and maxDetail bound a job's Summary, a fix agent's own account
+// of what it did, and Detail, so a job stays far below maxJobJSON.
+const maxSummary, maxDetail = 16 << 10, 4 << 10
+
+// truncate cuts s to at most n bytes, on a character boundary, and marks
+// the cut.
+func truncate(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return strings.ToValidUTF8(s[:n], "") + "… (truncated)"
 }
 
 func validConcurrency(n int) bool { return n >= 1 && n <= repos.MaxJobConcurrency }
