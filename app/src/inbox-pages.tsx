@@ -389,12 +389,12 @@ function EditInbox({
           </div>
           <div className="settings-list inbox-badge-block">
             <SettingRow
-              label="Count it in the Inbox badge"
+              label="Show its count in the sidebar"
               htmlFor={`${ids}-badge`}
               detail={
                 inbox.badge
-                  ? "Its pull requests add to the number on Inbox."
-                  : "Left out of the badge, so it never nags. It still shows here."
+                  ? "The sidebar shows how many of its pull requests wait."
+                  : "No count beside it, so it never nags. Its pull requests still add to the Inbox total."
               }
             >
               <input
@@ -532,7 +532,7 @@ export function ManageInboxesPage({ inboxes, items, saves, save, go, Link }: Inb
     if (index < inboxes.length - 1)
       choices.push({ label: "Move down", onSelect: () => move(index, 1) });
     choices.push({
-      label: "Count in the Inbox badge",
+      label: "Show count in the sidebar",
       checked: inbox.badge,
       onSelect: () =>
         save(inboxes.map((one) => (one.id === inbox.id ? { ...one, badge: !one.badge } : one))),
@@ -576,7 +576,7 @@ export function ManageInboxesPage({ inboxes, items, saves, save, go, Link }: Inb
                     </Link>
                     <span>
                       {countOf(inbox, items)} now
-                      {inbox.badge ? "" : " · not counted in the badge"}
+                      {inbox.badge ? "" : " · count hidden"}
                     </span>
                   </span>
                 </div>

@@ -6,7 +6,6 @@ import {
   fromTemplate,
   templates,
   INBOX_COLORS,
-  inboxBadgeCount,
   inboxesOf,
   matches,
   folded,
@@ -150,23 +149,6 @@ it("lists every inbox a pull request is in, in order", () => {
   ];
   expect(inboxesOf(item("review"), list).map((i) => i.id)).toEqual(["a", "c"]);
   expect(inboxesOf(item("merge", { repository: "x/y" }), list).map((i) => i.id)).toEqual(["b"]);
-});
-
-it("counts in the badge what is in no inbox or in one that counts", () => {
-  const items = [
-    item("review"),
-    item("merge"),
-    item("merge", { repository: "x/y" }),
-    item("fix", { repository: "z/w" }),
-  ];
-  const quiet = inbox({ id: "q", what: "merge", badge: false });
-  const loud = inbox({ id: "l", owners: ["acme"], badge: true });
-  // Today's count with none.
-  expect(inboxBadgeCount(items, [])).toBe(4);
-  // x/y is only in the quiet inbox; the second merge is also in a counting one.
-  expect(inboxBadgeCount(items, [quiet, loud])).toBe(3);
-  expect(inboxBadgeCount(items, [{ ...quiet, badge: true }, loud])).toBe(4);
-  expect(inboxBadgeCount(items, [{ ...loud, badge: false }, quiet])).toBe(1);
 });
 
 it("reads the daemon's list, and nothing from an older daemon", () => {

@@ -47,6 +47,12 @@ export type RailInboxes = {
   manage: () => void;
 };
 
+/** What the Inbox heading says to a screen reader besides its name: the
+ *  total of what waits, as its visual badge shows it. */
+export function inboxWaitingText(count: number) {
+  return `, ${count} waiting`;
+}
+
 /** Why the last inbox cannot be deleted. */
 export const KEEP_ONE = "Keep at least one inbox";
 const FOLD_KEY = "baum.inbox.folded.v1";
@@ -77,7 +83,8 @@ export function Sidebar({
   Link,
 }: {
   page: Page;
-  /** What waits on the person in the inbox, not counting snoozed. */
+  /** What waits on the person: each pull request once, snoozed left out,
+   *  whichever saved inbox holds it or none. */
   inbox: number;
   activeJobs: number;
   runningSessions: number;
@@ -125,6 +132,9 @@ export function Sidebar({
       <>
         <Icon size={18} className="local-rail-glyph" />
         <span className="local-rail-label">{label}</span>
+        {target === "inbox" && inbox > 0 ? (
+          <span className="sr-only">{inboxWaitingText(inbox)}</span>
+        ) : null}
         {badge ? (
           <span aria-hidden="true" className={`local-rail-badge ${tone ?? ""}`.trim()}>
             {badge}
@@ -406,16 +416,8 @@ function InboxRows({
             >
               <span aria-hidden="true" className="inbox-dot" />
               <span className="local-rail-label">{inbox.name}</span>
-              {count > 0 ? (
-                <span
-                  className={`local-rail-sub-count${inbox.badge ? "" : " muted"}`}
-                  title={inbox.badge ? undefined : "Not counted in the Inbox badge"}
-                >
-                  {count}
-                </span>
-              ) : null}
-              {count > 0 && !inbox.badge ? (
-                <span className="sr-only"> (not counted in the Inbox badge)</span>
+              {count > 0 && inbox.badge ? (
+                <span className="local-rail-sub-count">{count}</span>
               ) : null}
             </Link>
             <button

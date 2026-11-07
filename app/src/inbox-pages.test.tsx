@@ -525,12 +525,12 @@ it("folds what an inbox holds, its owners, risk, repositories and bots into its 
 it("counts the inbox in the badge or not", async () => {
   await render("?page=inbox-edit&inbox=Acme");
   const badge = node.querySelector<HTMLInputElement>('input[role="switch"]')!;
-  expect(badge.labels![0]!.textContent).toBe("Count it in the Inbox badge");
-  expect(node.textContent).toContain("Its pull requests add to the number on Inbox.");
+  expect(badge.labels![0]!.textContent).toBe("Show its count in the sidebar");
+  expect(node.textContent).toContain("The sidebar shows how many of its pull requests wait.");
   await click(badge);
   expect(puts[0]!.inboxes[1]!.badge).toBe(false);
   expect(node.textContent).toContain(
-    "Left out of the badge, so it never nags. It still shows here.",
+    "No count beside it, so it never nags. Its pull requests still add to the Inbox total.",
   );
 });
 
@@ -626,9 +626,9 @@ it("lists the inboxes in order with their counts and controls", async () => {
   ]);
   // The first has nothing to move up to, the last nothing to move down to.
   await openActions("Reviews");
-  expect(choices()).toEqual(["Edit…", "Move down", "Count in the Inbox badge"]);
+  expect(choices()).toEqual(["Edit…", "Move down", "Show count in the sidebar"]);
   await openActions("Acme");
-  expect(choices()).toEqual(["Edit…", "Move up", "Count in the Inbox badge"]);
+  expect(choices()).toEqual(["Edit…", "Move up", "Show count in the sidebar"]);
   expect(node.querySelector('[aria-label="Edit Reviews"]')!.getAttribute("href")).toBe(
     "/s/test-ns/?page=inbox-edit&inbox=Reviews",
   );
@@ -658,12 +658,10 @@ it("reorders inboxes, saving the new order, and switches the badge", async () =>
   expect(puts[1]!.inboxes.map((one) => one.id)).toEqual(["Reviews", "Acme"]);
 
   await openActions("Reviews");
-  expect(choice("Count in the Inbox badge")!.getAttribute("aria-checked")).toBe("true");
-  await click(choice("Count in the Inbox badge"));
+  expect(choice("Show count in the sidebar")!.getAttribute("aria-checked")).toBe("true");
+  await click(choice("Show count in the sidebar"));
   expect(puts[2]!.inboxes[0]).toMatchObject({ id: "Reviews", badge: false });
-  expect(node.querySelector(".inbox-manage-row")!.textContent).toContain(
-    "· not counted in the badge",
-  );
+  expect(node.querySelector(".inbox-manage-row")!.textContent).toContain("· count hidden");
 });
 
 it("leads to New inbox from Manage inboxes", async () => {

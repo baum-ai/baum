@@ -231,15 +231,16 @@ it("nests the inboxes under Inbox with their counts and the current one", async 
   await render();
   expect(subRows().map((row) => row.textContent?.replace("⋯", ""))).toEqual([
     "Reviews1",
-    "Merges2 (not counted in the Inbox badge)",
+    "Merges",
     "Acme3",
     // Nothing matches: no count.
     "Quiet",
   ]);
-  // The badge counts what is in no inbox or in one that counts: all but 4.
-  expect(inboxHeading().querySelector(".local-rail-badge")?.textContent).toBe("3");
-  expect(subLink("Merges").querySelector(".local-rail-sub-count")?.className).toContain("muted");
-  expect(subLink("Acme").querySelector(".local-rail-sub-count")?.className).not.toContain("muted");
+  // The total counts each pull request once, Merges' badge switch aside:
+  // Change 1 is in Reviews and Acme, and 3 in Merges and Acme.
+  expect(inboxHeading().querySelector(".local-rail-badge")?.textContent).toBe("4");
+  expect(subLink("Merges").querySelector(".local-rail-sub-count")).toBeNull();
+  expect(subLink("Acme").querySelector(".local-rail-sub-count")?.textContent).toBe("3");
   expect(subLink("Acme").getAttribute("href")).toBe("/s/test-ns/?inbox=Acme");
   expect(subLink("Reviews").getAttribute("aria-current")).toBe("page");
   expect(subLink("Acme").getAttribute("aria-current")).toBeNull();
@@ -738,19 +739,43 @@ it("keeps the inbox controls and reports a failed read, but hides them for an ol
   expect(node.textContent).not.toContain("Couldn't read your inboxes");
 });
 
-it("says a muted count is not counted in the Inbox badge to screen readers too", async () => {
+it("says the Inbox total to screen readers, in the heading that stays no link", async () => {
   await render();
-  const hidden = subLink("Merges").querySelector(".sr-only");
-  expect(hidden?.textContent).toContain("not counted in the Inbox badge");
-  expect(subLink("Acme").querySelector(".sr-only")).toBeNull();
+  const heading = inboxHeading();
+  expect(heading.querySelector(".sr-only")?.textContent).toBe(", 4 waiting");
+  expect(heading.textContent).toContain("Inbox");
+  expect(heading.closest("a")).toBeNull();
+});
+
+it("counts a pull request in no inbox in the total", async () => {
+  daemon = { revision: 1, inboxes: [reviews, quiet] };
+  await render();
+  expect(subLink("Reviews").querySelector(".local-rail-sub-count")?.textContent).toBe("1");
+  expect(inboxHeading().querySelector(".local-rail-badge")?.textContent).toBe("4");
+});
+
+it("counts a badge-off inbox's pull requests in the total while its row shows no count", async () => {
+  daemon = { revision: 1, inboxes: [merges] };
+  await render();
+  expect(subLink("Merges").querySelector(".local-rail-sub-count")).toBeNull();
+  expect(inboxHeading().querySelector(".local-rail-badge")?.textContent).toBe("4");
+});
+
+it("shows no total and no screen reader count when nothing waits", async () => {
+  entries = [];
+  await render();
+  expect(inboxHeading().querySelector(".local-rail-badge")).toBeNull();
+  expect(inboxHeading().querySelector(".sr-only")).toBeNull();
 });
 
 it("leaves a snoozed pull request out of an inbox's count and queue, and lists it under Snoozed", async () => {
   snoozeUntilLater("acme/demo#3");
   await render();
   // Merges: only Change 4 waits; Acme: Changes 1 and 2.
-  expect(subLink("Merges").querySelector(".local-rail-sub-count")?.textContent).toBe("1");
   expect(subLink("Acme").querySelector(".local-rail-sub-count")?.textContent).toBe("2");
+  // Merges hides its own count; the total drops from 4 to 3.
+  expect(subLink("Merges").querySelector(".local-rail-sub-count")).toBeNull();
+  expect(inboxHeading().querySelector(".local-rail-badge")?.textContent).toBe("3");
   await render("?inbox=Merges");
   expect(titles()).toEqual(["Change 4"]);
   const snoozed = node.querySelector('section[aria-label="Snoozed"]')!;

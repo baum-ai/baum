@@ -918,10 +918,11 @@ Snoozes and today's record are kept in the daemon's `app.sqlite`,
 independently of the browser origin, and start again each local day, snoozes
 excepted. Initial bookkeeping waits until saved state has loaded. Failed reads
 or saves show a retry action and preserve unsaved changes in the window. The
-sidebar's Inbox heading counts the queue without snoozed pull
-requests. The daemon counts the same queue for the desktop tray and dock badge
-(`internal/inboxcount`), so a change to these rules belongs there too; it does
-not yet apply inboxes left out of the badge.
+sidebar's Inbox heading shows the total of the queue without snoozed pull
+requests: each pull request once, whether it is in several saved inboxes or in
+none, and whatever the inboxes' badge switches say. The daemon counts the same
+total for the desktop tray and dock badge (`internal/inboxcount`), so a change
+to these rules belongs there too.
 
 **Inboxes** are saved filters over this same queue, defined in the daemon (see
 its [inboxes README](../internal/inboxes/README.md)) and matched here
@@ -978,15 +979,17 @@ where they were rather than to the button. With the glyph-only rail the button
 sits under the Settings glyph.
 
 In the sidebar Inbox is a heading, not a link: it has no address, is never the
-current page and shows the badge count, and its chevron folds the saved inboxes
+current page and shows the total of what waits (and, for screen readers, ", N
+waiting" after its name; nothing at zero), and its chevron folds the saved inboxes
 nested under it
 (remembered in `localStorage`; hidden with the glyph-only rail). The pages and
 inboxes scroll within the sidebar, so with many inboxes plan usage, Jobs and
 Settings stay in view; a row's menu is placed against the window, under its row
 or above it near the bottom, and closes when the sidebar scrolls. Each row links
 to `?inbox=<id>`, is the current page when selected, and
-shows a dot, the name and how many unsnoozed items match, none when 0 (muted,
-and said so to screen readers, when the inbox is left out of the badge). The
+shows a dot, the name and how many unsnoozed items match, none when 0 or when
+the inbox's badge switch is off (that switch hides only this row's count, never
+the Inbox total). The
 `⋯` button, or a right click on the row, opens a short list of buttons,
 focused on the first: **Edit inbox**, which opens the inbox's edit page, and
 **Delete inbox**, which is disabled with "Keep at least one inbox" when only one
@@ -998,9 +1001,8 @@ with its id so links to it still work, into the list as it is then, at its old
 place (or the end), so a change made while the toast was up is kept; an inbox
 with that id already there is left alone. Deleting the open inbox opens the first
 one left, in its entry. The chevron is labelled "Inboxes",
-with `aria-expanded` and `aria-controls` for the nested list. The Inbox badge counts the unsnoozed
-queue items that are in no inbox or in at least one that counts in the badge;
-the daemon always has an inbox, so the count above only shows with an older daemon. Changes show at once and are sent to the
+with `aria-expanded` and `aria-controls` for the nested list. The Inbox total counts the distinct unsnoozed
+queue items, ignoring the selected inbox, filters and badge switches; with an older daemon, which has no inboxes, it is the same count. Changes show at once and are sent to the
 daemon one at a time, each carrying the newest revision, so an older change
 cannot overwrite a newer one; a conflict adopts the daemon's list and any other
 failure restores the last saved list with an error. The daemon refuses to save an empty list (400 `last_inbox`), and the app does
@@ -1141,7 +1143,8 @@ a label, with no key of its own, reached with Tab.
   and not sent. Six colour swatches have radio semantics. "What it catches" is
 the inbox's whole query: the filter icon with its menu (Waiting for among the
 fields) beside the query as text, each change saved a moment after it reads. A
-switch counts the inbox in the Inbox badge. **Delete inbox** asks, then
+switch shows or hides the inbox's count in the sidebar; its pull requests still
+count in the Inbox total. **Delete inbox** asks, then
 deletes with Undo and goes to the first inbox left with focus on its row in the
 sidebar; with only one inbox it is disabled and the page says "Keep at least one
 inbox".
@@ -1154,10 +1157,10 @@ the page and empty otherwise, the removed rows struck through and fading out
   over the last moments (no fade with reduced motion). An unknown id says "This inbox no longer
   exists" and links to Inbox, which opens the first inbox.
 - **Manage** (`?page=inboxes`): the inboxes in the sidebar's order, each with
-  its colour dot, name (a link to edit it) and how many are in it now ("not
-  counted in the badge" when it is left out). Its menu holds
+  its colour dot, name (a link to edit it) and how many are in it now ("count
+  hidden" when its badge switch is off). Its menu holds
   Edit…, Move up and Move down (each only where the inbox can move) and
-  **Count in the Inbox badge**, an on-or-off choice; a save sends the whole
+  **Show count in the sidebar**, an on-or-off choice; a save sends the whole
   list in its new order. It has no delete: an inbox is deleted from its row in the
   sidebar or its edit page, neither of which deletes the last one.
 
@@ -1686,7 +1689,7 @@ the row. Pull requests: Peek, Merge… or the fix, the fix's transcript,
 Generate review, Select, Open on GitHub. Jobs: Open pull request, Watch or
 Transcript, Show usage, Cancel job. Repositories: Settings…, Change local
 clone… or, without a clone, Choose folder… and Clone it…. Manage inboxes:
-Edit…, Move up, Move down, Count in the Inbox badge. Snoozed: Bring back.
+Edit…, Move up, Move down, Show count in the sidebar. Snoozed: Bring back.
 Sessions: the session menu below.
 
 The Sessions page (`?page=sessions`) is a live feed of the same sessions, in three

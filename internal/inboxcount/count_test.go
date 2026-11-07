@@ -229,3 +229,18 @@ func TestHandlerAnswersTheCountAndPassesTheRest(t *testing.T) {
 		t.Fatal(w.Code, w.Body.String())
 	}
 }
+
+func TestNothingWaitingCountsZero(t *testing.T) {
+	if got := Count(nil, nil, nil, Snoozes{}, now); got != 0 {
+		t.Fatal("no entries", got)
+	}
+	// Everything snoozed, or nothing asked of the user, leaves zero.
+	entries := []reviewindex.Entry{
+		mine(1, func(e *reviewindex.Entry) { e.Checks = "failing" }),
+		entry(2, nil),
+	}
+	snoozed := Snoozes{Snoozed: map[string]int64{"acme/a#1": now.Add(time.Hour).UnixMilli()}}
+	if got := Count(entries, nil, nil, snoozed, now); got != 0 {
+		t.Fatal("snoozed", got)
+	}
+}

@@ -37,7 +37,6 @@ import {
   freeName,
   unusedInboxColor,
   withQuery,
-  inboxBadgeCount,
   matches,
   MAX_INBOXES,
   newInboxId,
@@ -1352,7 +1351,7 @@ function Workspace({ url }: { url: UrlState }) {
     <div className="local-shell">
       <Sidebar
         page={railPage}
-        inbox={inboxBadgeCount(inbox.queue, inboxes.inboxes)}
+        inbox={inbox.queue.length}
         inboxes={
           inboxes.available
             ? {

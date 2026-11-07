@@ -154,15 +154,6 @@ export function inboxesOf(item: Matchable, inboxes: Inbox[]): Inbox[] {
   return inboxes.filter((inbox) => matches(inbox, item));
 }
 
-/** What the Inbox badge counts: queue items that are in no inbox, or in at
- *  least one that counts in the badge. */
-export function inboxBadgeCount(items: Matchable[], inboxes: Inbox[]): number {
-  return items.filter((item) => {
-    const own = inboxesOf(item, inboxes);
-    return own.length === 0 || own.some((inbox) => inbox.badge);
-  }).length;
-}
-
 const WHAT_WORDS: Record<InboxWhat, string> = {
   any: "anything waiting on me",
   review: "reviews I’m asked for",
