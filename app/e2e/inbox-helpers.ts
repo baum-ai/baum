@@ -64,3 +64,31 @@ export async function resetInboxes(page: Page): Promise<void> {
     // A page that never loaded has made none.
   }
 }
+
+/** Clears the inbox's snoozes through the daemon, so a run that failed with a
+ *  pull request snoozed leaves the specs that follow their whole queue. */
+export async function clearSnoozes(page: Page): Promise<void> {
+  try {
+    if (!page.url().includes("/s/")) return;
+    await page.evaluate(async () => {
+      const read = await fetch("api/ui-state/inbox", { cache: "no-store" });
+      if (!read.ok) return;
+      const { revision, value } = (await read.json()) as {
+        revision: number;
+        value: Record<string, unknown> | null;
+      };
+      if (!value) return;
+      await fetch("api/ui-state/inbox", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          revision,
+          mutation_id: `${crypto.randomUUID()}:1`,
+          value: { ...value, snoozed: {}, held: {} },
+        }),
+      });
+    });
+  } catch {
+    // A page that never loaded set none.
+  }
+}

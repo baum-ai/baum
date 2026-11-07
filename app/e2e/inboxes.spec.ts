@@ -1,5 +1,5 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
-import { launchURL, resetInboxes } from "./inbox-helpers";
+import { clearSnoozes, launchURL, resetInboxes } from "./inbox-helpers";
 
 /** The sidebar's Inbox heading, which is not a link. */
 const heading = (page: Page): Locator =>
@@ -48,10 +48,11 @@ async function saveInboxes(
 const ONE = "0000000000000000000000000000000a";
 const TWO = "0000000000000000000000000000000b";
 
-// A failed or retried run leaves just the Default inbox for the specs that
-// follow.
+// A failed or retried run leaves just the Default inbox and no snooze for the
+// specs that follow.
 test.afterEach(async ({ page }) => {
   await resetInboxes(page);
+  await clearSnoozes(page);
 });
 
 test("a first launch opens the Default inbox, and a stale link opens the first inbox", async ({

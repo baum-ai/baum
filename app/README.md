@@ -936,7 +936,8 @@ pull requests a fix agent is working on now) or, for the person's own,
 `repo=`; and leaving out bots as `is!=bot`, each before the query, which is
 parenthesised when it has an `OR`. The next save writes the inbox with only the
 query. A pull request can
-be in several inboxes. The app never shows the whole queue: the daemon always
+be in several inboxes. There is no separate page of everything; Default, with
+no query, lists the whole queue. The daemon always
 keeps at least one inbox (a fresh installation gets **Default**, which matches
 everything, and is an ordinary inbox that can be renamed, edited or deleted
 while another remains), and the app root, a legacy link to it, an `inbox` the
@@ -980,7 +981,9 @@ sits under the Settings glyph.
 
 In the sidebar Inbox is a heading, not a link: it has no address, is never the
 current page and shows the total of what waits (and, for screen readers, ", N
-waiting" after its name; nothing at zero), and its chevron folds the saved inboxes
+waiting" after its name; nothing at zero). That total counts the distinct
+unsnoozed queue items, ignoring the selected inbox, filters and badge switches;
+with an older daemon, which has no inboxes, it is the same count. Its chevron folds the saved inboxes
 nested under it
 (remembered in `localStorage`; hidden with the glyph-only rail). The pages and
 inboxes scroll within the sidebar, so with many inboxes plan usage, Jobs and
@@ -1001,8 +1004,7 @@ with its id so links to it still work, into the list as it is then, at its old
 place (or the end), so a change made while the toast was up is kept; an inbox
 with that id already there is left alone. Deleting the open inbox opens the first
 one left, in its entry. The chevron is labelled "Inboxes",
-with `aria-expanded` and `aria-controls` for the nested list. The Inbox total counts the distinct unsnoozed
-queue items, ignoring the selected inbox, filters and badge switches; with an older daemon, which has no inboxes, it is the same count. Changes show at once and are sent to the
+with `aria-expanded` and `aria-controls` for the nested list. Changes show at once and are sent to the
 daemon one at a time, each carrying the newest revision, so an older change
 cannot overwrite a newer one; a conflict adopts the daemon's list and any other
 failure restores the last saved list with an error. The daemon refuses to save an empty list (400 `last_inbox`), and the app does

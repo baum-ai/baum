@@ -747,6 +747,30 @@ it("says the Inbox total to screen readers, in the heading that stays no link", 
   expect(heading.closest("a")).toBeNull();
 });
 
+it("keeps the Inbox total the same under a draft filter and when another inbox is selected", async () => {
+  await render("?inbox=Merges");
+  const total = () => inboxHeading().querySelector(".local-rail-badge")?.textContent;
+  expect(total()).toBe("4");
+  await click(node.querySelector("summary.filter-menu-button"));
+  const box = node.querySelector<HTMLTextAreaElement>(".filter-menu-query textarea")!;
+  await act(async () => {
+    box.focus();
+    const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!;
+    setter.call(box, "repo=other/thing");
+    box.dispatchEvent(new Event("input", { bubbles: true }));
+    box.blur();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+  // The draft narrows the list, not the total.
+  expect(titles()).toEqual(["Change 4"]);
+  expect(total()).toBe("4");
+  await click(subLink("Acme"));
+  expect(subLink("Acme").getAttribute("aria-current")).toBe("page");
+  expect(total()).toBe("4");
+  await click(subLink("Reviews"));
+  expect(total()).toBe("4");
+});
+
 it("counts a pull request in no inbox in the total", async () => {
   daemon = { revision: 1, inboxes: [reviews, quiet] };
   await render();
