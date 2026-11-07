@@ -3078,6 +3078,24 @@ from an older baum keeps the history in the `state/jobs` document: the first
 same transaction, so a failed move leaves it in place and `Open` fails. An
 older baum run after that sees no `state/jobs` and starts a new document;
 the next upgrade appends its jobs after the existing rows.
+
+A job that ended more than 120 days ago (`jobs.ArchiveAfter`, by its
+`updated_at` and the queue's clock) is archived: it leaves memory, `List` and
+the API, and its transcript file is deleted. Its row stays, with `archived`
+set, and `Open` no longer loads it. Nothing deletes a row. Archiving runs at
+`Open` and then daily, until the queue stops. Queued and running jobs are
+never archived, nor are the jobs of a head that has an unsettled job in the
+history (see `Refused` below). One transaction sets the flags, writes the
+latest content of an archived job changed since its last write, and adds the
+archived jobs to `job_heads`, which counts, per head (`headKey`: repository
+case-insensitively, then pull request and head, or group and member heads),
+the archived runs `ErrDuplicate` compares (`runs`) and the archived chat and
+details jobs only `Interrupted` also counts (`others`). The queue loads the
+counts at `Open` and keeps them in memory. A failed archive keeps the jobs
+until the next pass. Seen, cancel, transcript and draft answer `404` for an
+archived job, and a question's turn reads it as interrupted. Analytics'
+longest window counts jobs created in the last 90 days, so archiving
+changes none of its figures.
 `jobs.Open` takes an exclusive
 `internal/filelock` lock beside the database (`<database path>.jobs.lock.sqlite`) and keeps it
 until its workers stop, so two processes never run one queue; it waits up to
@@ -3222,7 +3240,9 @@ group) has a queued or running job (it never joins or supersedes one),
 `ErrDuplicate` when any job, manual or automatic, already exists for that head
 (a group's: its member heads) (except a single
 automatic job a daemon stop or restart interrupted, which `Interrupted` lists
-and which may run once more; failed and cancelled jobs are final). Jobs
+and which may run once more; failed and cancelled jobs are final). An
+archived job still counts for its head (`job_heads`), and is never retried:
+any archived run of a head makes it `ErrDuplicate`. Jobs
 record `automatic` and `trigger` (`new_head`, `review_requested`,
 `ready_for_review`, `retry`, `stack_reviewed`, `setup`). A job an older baum cancelled with reason
 `daily_cap`, for the spending cap baum no longer has, loads as an ordinary

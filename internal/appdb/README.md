@@ -13,7 +13,7 @@ configuration is still read from `config.toml`.
 | `repositories`, `clones`, `picked`, `aliases`, `preferences` | `repos`: picked repositories, clones, settings and global preferences |
 | `groups`, `versions` | `reviewgroups`: group definitions and combined review versions |
 | `capture_session`, `decision`, `decision_file`, `capture_attempt`, feature/PR/link/search tables | `decisionlog`: decisions, coverage, call ledger and feature history |
-| `jobs` | `jobs`: queue/history, progress, accounting and fix outcomes, one row per job; it replaces the `state/jobs` document, which the queue moves into it on first open |
+| `jobs`, `job_heads` | `jobs`: queue/history, progress, accounting and fix outcomes, one row per job, kept when archived 120 days after the job ended; and the archived runs of each pull request or group head, which keep automatic generation from running it again. `jobs` replaces the `state/jobs` document, which the queue moves into it on first open |
 | `attribution/commits/<repository>/<sha>` | `commitattribution`: permanent session-owned post-commit and pre-push observations, with event provenance |
 | `state/automatic` | `automatic`: observed heads, pending triggers, retries and notices |
 | `state/inboxes` | `inboxes`: saved filters and their revision |

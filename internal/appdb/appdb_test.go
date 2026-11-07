@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/baum-ai/baum/internal/appdb"
 	"github.com/baum-ai/baum/internal/appdb/appdbtest"
@@ -64,7 +65,7 @@ func TestBaselineStoresShareOneDatabaseAndSurviveReopen(t *testing.T) {
 		t.Fatal(err)
 	}
 	// A journal from before the jobs table: the queue moves it into rows.
-	if err = appdb.Write(path, "state", "jobs", []byte(`[{"id":"job","state":"completed"}]`)); err != nil {
+	if err = appdb.Write(path, "state", "jobs", []byte(`[{"id":"job","state":"completed","updated_at":"`+time.Now().UTC().Format(time.RFC3339)+`"}]`)); err != nil {
 		t.Fatal(err)
 	}
 	queue, err := jobs.Open(path, idleExecutor{}, 1, nil)

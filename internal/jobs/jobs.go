@@ -368,6 +368,9 @@ type Queue struct {
 	// the next save writes. A job no longer in jobs, a rolled-back
 	// submission, has its row deleted instead.
 	dirty map[string]bool
+	// heads are the archived runs of each head (headKey), as job_heads
+	// keeps them.
+	heads map[string]headRuns
 }
 
 // mark records that the job with this id changed; mu is held.
@@ -433,7 +436,7 @@ func Open(path string, executor Executor, concurrency int, changed func(Job)) (*
 		}
 	}()
 	var e error
-	if q.jobs, e = loadJournal(path); e != nil {
+	if q.jobs, q.heads, e = loadJournal(path); e != nil {
 		cancel()
 		return nil, e
 	}
@@ -460,6 +463,10 @@ func Open(path string, executor Executor, concurrency int, changed func(Job)) (*
 		cancel()
 		return nil, e
 	}
+	// A failed archive leaves the jobs in the history until the next pass.
+	_ = q.archive()
+	q.wg.Add(1)
+	go q.archiveLoop()
 	// Every worker a limit may need runs; limit decides how many take a job.
 	for range repos.MaxJobConcurrency {
 		q.wg.Add(1)
@@ -1273,36 +1280,43 @@ func (q *Queue) worker(chat bool) {
 			inputs.RefuseDraft = j.Automatic
 			cost, err := q.executor.Execute(ctx, inputs, func(p Progress) {
 				q.mu.Lock()
-				q.jobs[i].Phase = p.Phase
-				q.jobs[i].Calls = p.Calls
-				q.jobs[i].Tokens = p.Tokens
-				q.jobs[i].Repairs = p.Repairs
-				q.jobs[i].Accounting = p.Accounting.Clone()
-				q.jobs[i].ActualCostUSD, q.jobs[i].CostReason = p.CostUSD, p.CostReason
+				// Archiving may move the job in the history: find it again.
+				k := q.find(j.ID)
+				if k < 0 {
+					q.mu.Unlock()
+					return
+				}
+				job := &q.jobs[k]
+				job.Phase = p.Phase
+				job.Calls = p.Calls
+				job.Tokens = p.Tokens
+				job.Repairs = p.Repairs
+				job.Accounting = p.Accounting.Clone()
+				job.ActualCostUSD, job.CostReason = p.CostUSD, p.CostReason
 				if p.Commit != "" {
-					q.jobs[i].Commit, q.jobs[i].CommitURL = p.Commit, p.CommitURL
+					job.Commit, job.CommitURL = p.Commit, p.CommitURL
 				}
 				if p.Summary != "" {
-					q.jobs[i].Summary = truncate(p.Summary, maxSummary)
+					job.Summary = truncate(p.Summary, maxSummary)
 				}
 				if p.Threads != nil {
-					q.jobs[i].ThreadOutcomes = p.Threads
+					job.ThreadOutcomes = p.Threads
 				}
 				if p.HasTranscript {
-					q.jobs[i].HasTranscript = true
+					job.HasTranscript = true
 				}
 				if p.Backend != "" {
-					q.jobs[i].Backend, q.jobs[i].Model = p.Backend, p.Model
+					job.Backend, job.Model = p.Backend, p.Model
 				}
 				if p.Draft != nil {
 					q.drafts[j.ID] = p.Draft
-					q.jobs[i].Draft++
+					job.Draft++
 				}
 				if p.Gaps {
-					q.jobs[i].FailedSections, q.jobs[i].ContextFailed = p.FailedSections, p.ContextFailed
+					job.FailedSections, job.ContextFailed = p.FailedSections, p.ContextFailed
 				}
-				q.jobs[i].UpdatedAt = time.Now().UTC()
-				q.mark(q.jobs[i].ID)
+				job.UpdatedAt = time.Now().UTC()
+				q.mark(job.ID)
 				// Save every reported usage update before publishing it. A crash
 				// may lose in-flight provider usage, never the reports we received.
 				if e := q.save(); e != nil {
@@ -1310,7 +1324,7 @@ func (q *Queue) worker(chat bool) {
 					q.mu.Unlock()
 					return
 				}
-				current := q.jobs[i]
+				current := *job
 				current.Accounting = current.Accounting.Clone()
 				q.mu.Unlock()
 				q.notify(current)
@@ -1322,7 +1336,7 @@ func (q *Queue) worker(chat bool) {
 					q.mu.Lock()
 					cancel()
 					delete(q.cancels, j.ID)
-					result := q.jobs[i]
+					result := q.jobs[q.find(j.ID)]
 					q.mu.Unlock()
 					q.notify(result)
 					q.signal()
@@ -1333,7 +1347,8 @@ func (q *Queue) worker(chat bool) {
 				}
 			}
 			q.mu.Lock()
-			current := &q.jobs[i]
+			// A running job is never archived, but archiving may move it.
+			current := &q.jobs[q.find(j.ID)]
 			current.ActualCostUSD = cost
 			if cost == nil && current.CostReason == "" {
 				current.CostReason = "usage_not_reported"
@@ -1465,6 +1480,12 @@ func truncate(s string, n int) string {
 		return s
 	}
 	return strings.ToValidUTF8(s[:n], "") + "… (truncated)"
+}
+
+// find returns the index of the job with this id in the history, or -1; mu
+// is held.
+func (q *Queue) find(id string) int {
+	return slices.IndexFunc(q.jobs, func(j Job) bool { return j.ID == id })
 }
 
 func validConcurrency(n int) bool { return n >= 1 && n <= repos.MaxJobConcurrency }

@@ -421,7 +421,8 @@ func TestUnpricedBackendRuns(t *testing.T) {
 
 func TestRestartInterruptsRunningAndKeepsHistory(t *testing.T) {
 	path := filepath.Join(privateDir(t), "jobs.json")
-	raw, _ := json.Marshal([]Job{{ID: "old", State: "running", Phase: "generating"}, {ID: "completed", State: "completed"}})
+	now := time.Now().UTC()
+	raw, _ := json.Marshal([]Job{{ID: "old", State: "running", Phase: "generating"}, {ID: "completed", State: "completed", UpdatedAt: now}})
 	if e := appdb.Write(path, "state", "jobs", raw); e != nil {
 		t.Fatal(e)
 	}

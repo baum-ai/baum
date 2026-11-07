@@ -79,8 +79,8 @@ func addJobs(t *testing.T, q *Queue, jobs ...Job) {
 
 func TestOpenMovesTheJobDocumentIntoRows(t *testing.T) {
 	path := filepath.Join(privateDir(t), "app.sqlite")
-	seen := time.Date(2026, 3, 1, 9, 0, 0, 0, time.UTC)
-	created := time.Date(2026, 3, 1, 8, 0, 0, 0, time.UTC)
+	created := time.Now().UTC().Add(-48 * time.Hour).Truncate(time.Second)
+	seen := created.Add(time.Hour)
 	old := []Job{
 		{ID: "z-first", State: "completed", Phase: "finished", Summary: "fixed it", SeenAt: &seen, CreatedAt: created, UpdatedAt: created},
 		{ID: "a-running", State: "running", Phase: "generating", Draft: 3, Accounting: &agent.Accounting{}, CreatedAt: created.Add(time.Minute), UpdatedAt: created.Add(time.Minute)},
@@ -121,7 +121,8 @@ func TestOpenMovesTheJobDocumentIntoRows(t *testing.T) {
 
 func TestFailedMoveKeepsTheDocument(t *testing.T) {
 	path := filepath.Join(privateDir(t), "app.sqlite")
-	raw, _ := json.Marshal([]Job{{ID: "good", State: "completed"}, {ID: "bad", State: "completed"}})
+	now := time.Now().UTC()
+	raw, _ := json.Marshal([]Job{{ID: "good", State: "completed", UpdatedAt: now}, {ID: "bad", State: "completed", UpdatedAt: now}})
 	if err := appdb.Write(path, "state", "jobs", raw); err != nil {
 		t.Fatal(err)
 	}
@@ -162,8 +163,8 @@ func TestReopenKeepsCreationOrder(t *testing.T) {
 	q := openAt(t, path)
 	now := time.Now().UTC()
 	// Neither the ids nor the times sort like the history does.
-	addJobs(t, q, Job{ID: "z", State: "completed", CreatedAt: now}, Job{ID: "a", State: "completed", CreatedAt: now.Add(-time.Hour)})
-	addJobs(t, q, Job{ID: "m", State: "completed", CreatedAt: now.Add(-2 * time.Hour)})
+	addJobs(t, q, Job{ID: "z", State: "completed", CreatedAt: now, UpdatedAt: now}, Job{ID: "a", State: "completed", CreatedAt: now.Add(-time.Hour), UpdatedAt: now})
+	addJobs(t, q, Job{ID: "m", State: "completed", CreatedAt: now.Add(-2 * time.Hour), UpdatedAt: now})
 	// Rewriting the oldest keeps its place.
 	q.mu.Lock()
 	q.jobs[0].Summary = "changed"
@@ -337,7 +338,7 @@ func TestOversizedJobBlocksNoOtherWrite(t *testing.T) {
 
 func TestOpenMovesAnOversizedRunningJob(t *testing.T) {
 	path := filepath.Join(privateDir(t), "app.sqlite")
-	raw, _ := json.Marshal([]Job{{ID: "big", State: "running", Draft: 2, Summary: strings.Repeat("x", maxJobJSON)}, {ID: "next", State: "completed"}})
+	raw, _ := json.Marshal([]Job{{ID: "big", State: "running", Draft: 2, Summary: strings.Repeat("x", maxJobJSON)}, {ID: "next", State: "completed", UpdatedAt: time.Now().UTC()}})
 	if err := appdb.Write(path, "state", "jobs", raw); err != nil {
 		t.Fatal(err)
 	}
@@ -366,7 +367,7 @@ func TestHistoryLargerThanTheOldLimitSavesAndReopens(t *testing.T) {
 	summary := strings.Repeat("s", 512<<10)
 	var history []Job
 	for i := range 70 {
-		history = append(history, Job{ID: "job-" + string(rune('A'+i)), State: "completed", Summary: summary})
+		history = append(history, Job{ID: "job-" + string(rune('A'+i)), State: "completed", Summary: summary, UpdatedAt: time.Now().UTC()})
 	}
 	// 70 × 512 KiB is past the 32 MB a single document could hold.
 	addJobs(t, q, history...)
