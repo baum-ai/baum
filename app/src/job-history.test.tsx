@@ -2,10 +2,22 @@ import { mockStateFetch } from "./ui-state-test-helper";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import type { ReviewViewerProps } from "@baum/viewer/components/review-viewer";
 import { App } from "./app";
 import { forgetLastRows } from "./shortcuts";
 import { usePullRequestJobs } from "./job-history";
+import { GeneratedBy } from "./review";
 import type { Entry, Job } from "./api";
+
+// The review viewer needs a browser layout; the notices around it are enough.
+vi.mock("@baum/viewer/components/review-viewer", () => ({
+  ReviewViewer: ({ notices, placeholder }: ReviewViewerProps) => (
+    <div>
+      {notices}
+      {placeholder}
+    </div>
+  ),
+}));
 
 const job = (id: string, state = "completed", patch: Partial<Job> = {}): Job => ({
   id,
@@ -54,7 +66,11 @@ beforeEach(() => {
     mockStateFetch(async (path: string) => {
       requests.push(path);
       const key = path.replace("/s/test-ns/", "");
-      if (key in answers) return Response.json(answers[key]);
+      if (key in answers) {
+        const answer = answers[key];
+        const given = typeof answer === "function" ? await answer() : answer;
+        return given instanceof Response ? given : Response.json(given);
+      }
       if (key.startsWith("api/index")) return Response.json({ entries: [], problems: [] });
       if (key === "api/repos" || key === "api/repositories" || key === "api/prs")
         return Response.json([]);
@@ -140,7 +156,7 @@ it("opens a job's transcript page from the daemon when the current jobs lack it"
 });
 
 it("reads the jobs of a pull request on its page, again when the app reads its jobs", async () => {
-  const entry = {
+  const entry: Entry = {
     pull_request: {
       repository: "acme/demo",
       number: 1,
@@ -150,22 +166,43 @@ it("reads the jobs of a pull request on its page, again when the app reads its j
       state: "OPEN",
       draft: false,
       fork: false,
+      authored_by_me: false,
+      review_requested_from_me: true,
+      author_has_write: true,
+      team_membership_known: true,
+      review: "",
+      checks: "",
+      merge: "",
+      unresolved: null,
+      unresolved_capped: false,
     },
     clone_id: "clone",
     status: "no_review",
     version_count: 0,
     latest: null,
+    risk_score: { score: 5, status: "assessed" },
     historical: false,
     stale: false,
-  } as unknown as Entry;
+    review: "",
+    checks: "",
+    merge: "",
+    unresolved: null,
+    unresolved_capped: false,
+    review_minutes: null,
+  };
   history.replaceState(null, "", "/s/test-ns/?filter=all&repository=acme%2Fdemo&pr=1");
   answers["api/index?history=1"] = { entries: [entry], problems: [] };
   answers["api/jobs?repository=acme%2Fdemo&pr=1"] = {
     available: true,
-    jobs: [job("f1", "completed", { kind: "fix" })],
+    jobs: [
+      job("f1", "completed", { kind: "fix", created_at: "2026-11-01T10:00:00Z" }),
+      job("f2", "failed", { kind: "fix", created_at: "2026-11-02T10:00:00Z" }),
+    ],
   };
   await act(async () => root.render(<App />));
   await act(async () => {});
+  // The current jobs hold no fix, so the runs are the per-PR read's.
+  expect(node.querySelector(".local-fix-runs")!.textContent).toContain("2 fix runs");
   const own = "/s/test-ns/api/jobs?repository=acme%2Fdemo&pr=1";
   expect(requests.filter((path) => path === own)).toHaveLength(1);
   await act(async () => listeners.get("index")!());
@@ -194,4 +231,98 @@ it("reads a pull request's jobs and drops them when another opens", async () => 
   expect(node.textContent).toBe("");
   await act(async () => answer(Response.json({ jobs: [job("b")] })));
   expect(node.textContent).toBe("b");
+});
+
+it("keeps the transcript page mounted when its job leaves the current jobs", async () => {
+  history.replaceState(null, "", "/s/test-ns/?page=jobs&job=a");
+  answers["api/jobs"] = { available: true, jobs: [job("a", "completed", { kind: "fix" })] };
+  await act(async () => root.render(<App />));
+  expect(node.textContent).toContain("acme/demo #1");
+  // A newer fix of the pull request takes the current view's place of "a",
+  // which the daemon is then asked for.
+  let answer: (response: Response) => void = () => {};
+  answers["api/jobs/a"] = () => new Promise<Response>((resolve) => (answer = resolve));
+  answers["api/jobs"] = { available: true, jobs: [job("b", "completed", { kind: "fix" })] };
+  await act(async () => listeners.get("index")!());
+  await act(async () => {});
+  expect(node.textContent).toContain("acme/demo #1");
+  expect(node.textContent).not.toContain("Loading job");
+  expect(node.textContent).not.toContain("Job not found");
+  await act(async () => answer(Response.json(job("a", "failed", { kind: "fix" }))));
+  expect(node.textContent).toContain("acme/demo #1");
+  expect(node.textContent).not.toContain("Loading job");
+});
+
+it("links a review's job to its transcript page, whatever its age", async () => {
+  const entry = { latest: { version: 1 } } as unknown as Entry;
+  history.replaceState(null, "", "/s/test-ns/");
+  await act(async () =>
+    root.render(
+      <GeneratedBy
+        saved={{ version: 1, model: "m", recorded_cost_usd: null }}
+        entry={entry}
+        version={1}
+        job={job("old job")}
+      />,
+    ),
+  );
+  expect(node.querySelector("a")!.getAttribute("href")).toBe("/s/test-ns/?page=jobs&job=old%20job");
+});
+
+it("starts the list again from the newest page when the cursor's job was archived", async () => {
+  answers["api/jobs?limit=50"] = {
+    available: true,
+    jobs: ids(51, 100).map((id) => job(id)),
+    next: "j51",
+  };
+  answers["api/jobs?limit=50&before=j51"] = () => new Response("unknown job", { status: 400 });
+  await act(async () => root.render(<App />));
+  const more = () =>
+    [...node.querySelectorAll("button")].find((b) => b.textContent === "Load older jobs");
+  const newest = () => requests.filter((p) => p === "/s/test-ns/api/jobs?limit=50").length;
+  const before = newest();
+  answers["api/jobs?limit=50"] = {
+    available: true,
+    jobs: ids(1, 50).map((id) => job(id)),
+    next: "j1",
+  };
+  await act(async () => more()!.click());
+  await act(async () => {});
+  expect(newest()).toBeGreaterThan(before);
+  expect(rowIds(node)).toEqual(ids(1, 50).map((id) => `job-${id}`));
+  expect(node.querySelector("[role=alert]")).toBeNull();
+});
+
+it("does not leave older jobs loading when the newest page fails meanwhile", async () => {
+  answers["api/jobs?limit=50"] = {
+    available: true,
+    jobs: ids(51, 100).map((id) => job(id)),
+    next: "j51",
+  };
+  answers["api/jobs?limit=50&before=j51"] = () => new Promise<Response>(() => {});
+  await act(async () => root.render(<App />));
+  await act(async () =>
+    [...node.querySelectorAll("button")].find((b) => b.textContent === "Load older jobs")!.click(),
+  );
+  expect(node.textContent).toContain("Loading older jobs");
+  answers["api/jobs?limit=50"] = () => new Response("boom", { status: 500 });
+  await act(async () => listeners.get("index")!());
+  await act(async () => {});
+  expect(node.textContent).not.toContain("Loading older jobs");
+  expect(node.textContent).toContain("boom");
+});
+
+it("reads the newest page again when a job it showed running left the current jobs", async () => {
+  let reads = 0;
+  answers["api/jobs"] = { available: true, jobs: [] };
+  answers["api/jobs?limit=50"] = () => ({
+    available: true,
+    jobs: [job("r", ++reads === 1 ? "running" : "completed")],
+  });
+  await act(async () => root.render(<App />));
+  await act(async () => {});
+  expect(reads).toBeGreaterThan(1);
+  const row = node.querySelector("#job-r")!;
+  expect(row.textContent).toContain("Completed");
+  expect(node.textContent).toContain("Finished");
 });

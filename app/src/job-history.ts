@@ -1,5 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { readJob, readJobPage, readPullRequestJobs, type Entry, type Job } from "./api";
+import {
+  LocalRequestError,
+  readJob,
+  readJobPage,
+  readPullRequestJobs,
+  type Entry,
+  type Job,
+} from "./api";
 
 const errorText = (e: unknown) => (e instanceof Error ? e.message : "Local request failed.");
 
@@ -11,6 +18,8 @@ export type JobHistory = {
   jobs: Job[];
   /** Whether older jobs remain to load. */
   more: boolean;
+  /** Starts the list again from the newest page. */
+  restart: () => void;
   /** Whether the newest page was read. */
   read: boolean;
   /** Loading the newest page failed, or an older one did. */
@@ -38,18 +47,29 @@ export function useJobHistory(revision: number, enabled: boolean): JobHistory {
   // Bumped by every read of the newest page, so an older page that was being
   // loaded for the list it replaced is dropped.
   const generation = useRef(0);
+  // Set to drop the pages loaded and keep only the newest, and the read that
+  // does it.
+  const startOver = useRef(false);
+  const [restarts, setRestarts] = useState(0);
+  const restart = useCallback(() => {
+    startOver.current = true;
+    setRestarts((n) => n + 1);
+  }, []);
   useEffect(() => {
     if (!enabled) return;
     const abort = new AbortController();
     const mine = ++generation.current;
+    // A page being loaded for the list this read replaces is dropped.
+    setLoadingMore(false);
     readJobPage(undefined, JOB_PAGE, abort.signal)
       .then((page) => {
         if (abort.signal.aborted) return;
         setError("");
-        setLoadingMore(false);
+        const replace = startOver.current;
+        startOver.current = false;
         setState((previous) => {
           const known = new Set(previous.jobs.map((job) => job.id));
-          if (!previous.read || !page.jobs.some((job) => known.has(job.id)))
+          if (replace || !previous.read || !page.jobs.some((job) => known.has(job.id)))
             return { jobs: page.jobs, next: page.next, read: true };
           const ids = new Set(page.jobs.map((job) => job.id));
           return {
@@ -63,7 +83,7 @@ export function useJobHistory(revision: number, enabled: boolean): JobHistory {
         if (!abort.signal.aborted && mine === generation.current) setError(errorText(e));
       });
     return () => abort.abort();
-  }, [revision, enabled]);
+  }, [revision, enabled, restarts]);
   const loadMore = useCallback(() => {
     const { next } = current.current;
     if (!next) return;
@@ -86,9 +106,12 @@ export function useJobHistory(revision: number, enabled: boolean): JobHistory {
       .catch((e) => {
         if (mine !== generation.current) return;
         setLoadingMore(false);
-        setError(errorText(e));
+        // The job the cursor names was archived: only the newest page is left
+        // to read from.
+        if (e instanceof LocalRequestError && e.status === 400) restart();
+        else setError(errorText(e));
       });
-  }, []);
+  }, [restart]);
   return {
     jobs: state.jobs,
     more: !!state.next,
@@ -96,6 +119,7 @@ export function useJobHistory(revision: number, enabled: boolean): JobHistory {
     error,
     loadingMore,
     loadMore,
+    restart,
   };
 }
 
@@ -125,25 +149,35 @@ export function usePullRequestJobs(entry: Entry | undefined, revision: number): 
 
 /**
  * The job a transcript page opens: the current jobs' copy when they have it,
- * else the daemon's, which finds any loaded job. `undefined` while it is read,
- * null when there is none.
+ * else the daemon's, which finds any loaded job. When it leaves the current
+ * jobs the last copy stays while the daemon is asked, so the page is not
+ * rebuilt. `undefined` while the first copy is read, null when there is none.
  */
 export function useOpenJob(id: string | null, current: Job[]): Job | null | undefined {
   const [read, setRead] = useState<{ id: string; job: Job | null } | undefined>();
+  const last = useRef<{ id: string; job: Job | null } | undefined>(undefined);
   const inCurrent = id === null ? undefined : current.find((job) => job.id === id);
   useEffect(() => {
-    if (id === null || inCurrent) return;
+    if (id === null) return;
+    if (inCurrent) {
+      // The current copy is the freshest; an older fetched one is dropped.
+      setRead(undefined);
+      return;
+    }
     const abort = new AbortController();
     readJob(id, abort.signal)
       .then((job) => {
         if (!abort.signal.aborted) setRead({ id, job });
       })
       .catch(() => {
-        if (!abort.signal.aborted) setRead({ id, job: null });
+        // A copy already shown stays when the daemon cannot be asked.
+        if (!abort.signal.aborted && last.current?.id !== id) setRead({ id, job: null });
       });
     return () => abort.abort();
   }, [id, inCurrent]);
   if (id === null) return null;
-  if (inCurrent) return inCurrent;
-  return read?.id === id ? read.job : undefined;
+  const fetched = read?.id === id ? read.job : undefined;
+  const fresh = inCurrent ?? fetched;
+  if (fresh !== undefined) last.current = { id, job: fresh };
+  return fresh ?? (last.current?.id === id ? last.current.job : undefined);
 }

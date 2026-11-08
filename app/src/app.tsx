@@ -2184,14 +2184,20 @@ function Jobs({
     event.preventDefault();
     navigate(jobHref(job));
   });
-  // A link from a review opens the job that generated it, once the newest
-  // page is there.
+  // A page job read while it ran can finish and leave the current jobs
+  // unseen by either section: read the newest page again, once per read of
+  // the current jobs.
+  const restarted = useRef(-1);
   useEffect(() => {
-    if (history.read && location.hash.startsWith("#job-"))
-      document.getElementById(decodeURIComponent(location.hash.slice(1)))?.scrollIntoView({
-        block: "center",
-      });
-  }, [history.read]);
+    const running = new Set(active.map((job) => job.id));
+    if (
+      restarted.current !== revision &&
+      history.jobs.some((job) => isActiveJob(job) && !running.has(job.id))
+    ) {
+      restarted.current = revision;
+      history.restart();
+    }
+  }, [history, active, revision]);
   return (
     <section
       ref={rows.list}

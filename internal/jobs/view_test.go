@@ -54,6 +54,10 @@ func TestCurrentViewKeepsWhatTheClientsRead(t *testing.T) {
 		j.Group = g
 		return j
 	}
+	groupOf := func(j Job, g string) Job {
+		j.Group = g
+		return j
+	}
 	h := seed(t,
 		job("review-old", "completed", "o/a", 1, ""),
 		job("fix-old", "completed", "o/a", 1, KindFix),
@@ -65,6 +69,10 @@ func TestCurrentViewKeepsWhatTheClientsRead(t *testing.T) {
 		job("other-pr", "completed", "o/a", 2, ""),
 		group("group-old", "g1", "completed"),
 		group("group-new", "g1", "completed"),
+		job("details-old", "completed", "o/a", 1, KindDetails),
+		job("details-new", "completed", "o/a", 1, KindDetails),
+		groupOf(job("group-fix-old", "completed", "o/a", 0, KindFix), "g1"),
+		groupOf(job("group-fix-new", "completed", "o/a", 0, KindFix), "g1"),
 		job("build-old", "completed", "o/a", 0, KindFeatureBuild),
 		job("build-new", "cancelled", "o/a", 0, KindFeatureBuild),
 		job("other-repo", "completed", "o/b", 1, ""),
@@ -73,9 +81,9 @@ func TestCurrentViewKeepsWhatTheClientsRead(t *testing.T) {
 		job("running", "running", "o/c", 5, ""),
 	)
 	code, ids, next := get(t, h, "")
-	want := []string{"fix-new", "chat-new", "review-new", "other-pr", "group-new", "build-new", "other-repo", "queued-old", "running"}
+	want := []string{"fix-new", "chat-new", "review-new", "other-pr", "details-new", "group-new", "group-fix-new", "build-new", "other-repo", "queued-old", "running"}
 	// History order is kept.
-	order := []string{"review-old", "fix-old", "review-new", "fix-new", "failed-seen", "chat-old", "chat-new", "other-pr", "group-old", "group-new", "build-old", "build-new", "other-repo", "queued-old", "queued-new", "running"}
+	order := []string{"review-old", "fix-old", "review-new", "fix-new", "failed-seen", "chat-old", "chat-new", "other-pr", "group-old", "group-new", "details-old", "details-new", "group-fix-old", "group-fix-new", "build-old", "build-new", "other-repo", "queued-old", "queued-new", "running"}
 	slices.SortFunc(want, func(a, b string) int { return slices.Index(order, a) - slices.Index(order, b) })
 	if code != 200 || !slices.Equal(ids, want) || next != "" {
 		t.Fatalf("%d %v want %v", code, ids, want)

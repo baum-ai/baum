@@ -1451,7 +1451,7 @@ function StatusMenu({ entry, items }: { entry: Entry; items: MenuItem[] }) {
   );
 }
 
-function GeneratedBy({
+export function GeneratedBy({
   saved,
   entry,
   version,
@@ -1473,7 +1473,7 @@ function GeneratedBy({
         <>
           {" · "}
           <a
-            href={appURL(`?page=jobs#job-${encodeURIComponent(made.id)}`)}
+            href={jobHref(made)}
             onClick={(event) => {
               event.preventDefault();
               navigate(event.currentTarget.href);
