@@ -1,11 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import {
-  readJob,
-  readJobPage,
-  readPullRequestJobs,
-  type Entry,
-  type Job,
-} from "./api";
+import { readJob, readJobPage, readPullRequestJobs, type Entry, type Job } from "./api";
 
 const errorText = (e: unknown) => (e instanceof Error ? e.message : "Local request failed.");
 

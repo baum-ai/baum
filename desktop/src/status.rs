@@ -822,7 +822,10 @@ mod tests {
             {"id":"b","state":"running"},
             {"id":"c","state":"failed","seen_at":"2026-11-03T09:00:00Z"},
             {"id":"d","state":"failed","kind":"fix","repository":"acme/widgets","pr":8}]}"#;
-        assert_eq!(parse_jobs(body).unwrap(), jobs(1, 0, &["d"]));
+        let parsed = parse_jobs(body).unwrap();
+        assert_eq!((parsed.running, parsed.queued), (1, 0));
+        let failed: Vec<&str> = parsed.failed.iter().map(|f| f.id.as_str()).collect();
+        assert_eq!(failed, ["d"]);
     }
 
     #[test]
