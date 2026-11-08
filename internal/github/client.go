@@ -223,10 +223,10 @@ func (t authTransport) retryUnauthorized(request *http.Request, response *http.R
 	}
 	retry.Header.Set("Authorization", "token "+token)
 	again, err := t.base.RoundTrip(retry)
-	if err != nil {
-		return response, nil
-	}
 	_ = response.Body.Close()
+	if err != nil {
+		return nil, err
+	}
 	if again != nil && t.result != nil {
 		t.result(t.tokenHost, token, again.StatusCode, again.Header)
 	}
