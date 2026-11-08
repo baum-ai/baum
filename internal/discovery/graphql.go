@@ -13,12 +13,12 @@ import (
 	"github.com/baum-ai/baum/internal/github"
 )
 
-const inboxQuery = `query LocalInbox($owner: String!, $name: String!, $cursor: String) {
+const inboxQuery = `query LocalInbox($owner: String!, $name: String!, $cursor: String, $first: Int!) {
  viewer { login }
  rateLimit { cost remaining resetAt }
  repository(owner: $owner, name: $name) {
   viewerPermission
-  pullRequests(states: OPEN, first: 50, after: $cursor) {
+  pullRequests(states: OPEN, first: $first, after: $cursor) {
    pageInfo { hasNextPage endCursor }
    nodes {
     number title headRefOid headRefName baseRefName isDraft additions deletions changedFiles updatedAt author { __typename login }
@@ -34,6 +34,26 @@ const inboxQuery = `query LocalInbox($owner: String!, $name: String!, $cursor: S
   }
  }
 }`
+
+// GitHub gives up on a GraphQL query after about ten seconds and answers with
+// a gateway error. inboxQuery takes about 0.2 seconds per pull request on a busy
+// repository, so a page stays well under that, and a page GitHub gave up on is
+// asked for again, smaller, from the same cursor, keeping the pages already read.
+const (
+	inboxPageSize     = 25
+	inboxMinPageSize  = 5
+	inboxPageAttempts = 4
+)
+
+// inboxRetryDelay is the pause before a page's second attempt; later attempts
+// wait longer.
+var inboxRetryDelay = 2 * time.Second
+
+// gatewayError is GitHub's gateway answering instead of its API, usually
+// because the query took too long. It may succeed if asked again.
+type gatewayError struct{ status int }
+
+func (e gatewayError) Error() string { return fmt.Sprintf("GitHub discovery HTTP %d", e.status) }
 
 // rollup is a commit's checks: GitHub's combined state, and how many of its
 // check runs and commit statuses are in each state.
@@ -273,6 +293,7 @@ func (p *poll) graphQL(ctx context.Context, query string, variables map[string]a
 	if err != nil {
 		return nil, nil, err
 	}
+	answered(ctx)
 	// GraphQL response headers describe its point budget, never the REST budget.
 	if n, e := strconv.Atoi(headers.Get("X-RateLimit-Remaining")); e == nil {
 		p.graphRate.Remaining = &n
@@ -309,7 +330,11 @@ func (p *poll) graphQL(ctx context.Context, query string, variables map[string]a
 		p.graphRate.RetryAt = resume
 		return nil, nil, errRateLimit
 	}
-	if status != 200 {
+	switch status {
+	case http.StatusOK:
+	case http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout:
+		return nil, nil, gatewayError{status}
+	default:
 		return nil, nil, fmt.Errorf("GitHub discovery HTTP %d", status)
 	}
 	if parseErr != nil {
@@ -318,13 +343,34 @@ func (p *poll) graphQL(ctx context.Context, query string, variables map[string]a
 	return response.Data, response.Errors, nil
 }
 
+// openPullPage reads one page from cursor. A gateway error asks again with a
+// smaller page; size keeps the smaller page for the rest of the walk.
+func (p *poll) openPullPage(ctx context.Context, repository github.Repository, cursor any, size *int) (json.RawMessage, []graphQLError, error) {
+	for attempt := 1; ; attempt++ {
+		data, issues, err := p.graphQL(ctx, inboxQuery, map[string]any{"owner": repository.Owner, "name": repository.Name, "cursor": cursor, "first": *size})
+		var gateway gatewayError
+		if !errors.As(err, &gateway) || attempt == inboxPageAttempts {
+			return data, issues, err
+		}
+		*size = max(*size/2, inboxMinPageSize)
+		timer := time.NewTimer(time.Duration(attempt) * inboxRetryDelay)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return nil, nil, err
+		case <-timer.C:
+		}
+	}
+}
+
 func (p *poll) openPullPages(ctx context.Context, repository github.Repository) ([]gqlPR, actor, string, error) {
 	var result []gqlPR
 	var viewer actor
 	var permission string
 	var cursor any
+	size := inboxPageSize
 	for page := 0; page < 1000; page++ {
-		data, issues, err := p.graphQL(ctx, inboxQuery, map[string]any{"owner": repository.Owner, "name": repository.Name, "cursor": cursor})
+		data, issues, err := p.openPullPage(ctx, repository, cursor, &size)
 		if err != nil {
 			return nil, viewer, "", err
 		}

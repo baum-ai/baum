@@ -412,7 +412,9 @@ func (s *Service) Sync(ctx context.Context) {
 		if changed[repo.String()] || retry {
 			poll = s.Discovery.PollNow
 		}
-		requestCtx, cancel := context.WithTimeout(ctx, 45*time.Second)
+		// A busy repository's poll takes minutes; it stops only once GitHub
+		// stops answering.
+		requestCtx, cancel := discovery.WithIdleTimeout(ctx, 45*time.Second)
 		snapshot, pollErr := poll(requestCtx, repo)
 		cancel()
 		if pollErr == nil && s.Discovered != nil {
