@@ -567,12 +567,19 @@ func (p *poll) watch() []int {
 		if p.read[number] {
 			continue
 		}
-		_, checks, _, _, _ := row.states()
+		// The raw rollup, not the shown state: one already failing may still
+		// have checks running, and a retry can turn it passing.
+		running := false
+		if row.Commits != nil && len(row.Commits.Nodes) > 0 {
+			if rollup := row.Commits.Nodes[0].Commit.StatusCheckRollup; rollup != nil {
+				running = rollup.State == "PENDING" || rollup.State == "EXPECTED"
+			}
+		}
 		unknown := !row.IsDraft && (row.Mergeable == "UNKNOWN" || row.MergeStateStatus == "UNKNOWN")
 		switch {
 		case unknown && p.cache.Settling > 0, !row.IsDraft && p.merged[row.BaseRefName]:
 			candidates = append(candidates, candidate{number, 0, row.UpdatedAt})
-		case checks == "running":
+		case running:
 			candidates = append(candidates, candidate{number, 1, row.UpdatedAt})
 		}
 	}
@@ -621,7 +628,7 @@ func (p *poll) numbers(ctx context.Context, repository github.Repository, number
 			alias := fmt.Sprintf("p%d", i)
 			raw, ok := response.Repository[alias]
 			if !ok || string(raw) == "null" {
-				if !missing[alias] && !(ok && len(issues) == 0) {
+				if !missing[alias] && (!ok || len(issues) != 0) {
 					return errInvalid
 				}
 				continue

@@ -714,7 +714,15 @@ func (s *Service) poll(ctx context.Context, repository github.Repository, force 
 		}
 		snapshot.Observations = cache.Snapshot.Observations
 		snapshot.FetchedAt = now
-		snapshot.NextPoll = maxTime(now.Add(interval), p.ResetIfExhausted())
+		next := now.Add(interval)
+		// The backoff does not put off the next full sweep, though the
+		// server's poll interval still does.
+		if !p.cache.Swept.IsZero() {
+			if due := maxTime(p.cache.Swept.Add(sweepInterval), now.Add(p.minimum)); due.Before(next) {
+				next = due
+			}
+		}
+		snapshot.NextPoll = maxTime(next, p.ResetIfExhausted())
 		snapshot.Rate = p.visibleRate()
 		p.cache.Interval = interval
 		p.cache.Fingerprint = p.fingerprint()
