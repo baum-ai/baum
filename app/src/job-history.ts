@@ -152,8 +152,14 @@ export function usePullRequestJobs(entry: Entry | undefined, revision: number): 
  * else the daemon's, which finds any loaded job. When it leaves the current
  * jobs the last copy stays while the daemon is asked, so the page is not
  * rebuilt. `undefined` while the first copy is read, null when there is none.
+ * A failed read is not taken for a missing job: it is tried again whenever
+ * `revision` changes (the app's reads of the current jobs).
  */
-export function useOpenJob(id: string | null, current: Job[]): Job | null | undefined {
+export function useOpenJob(
+  id: string | null,
+  current: Job[],
+  revision: number,
+): Job | null | undefined {
   const [read, setRead] = useState<{ id: string; job: Job | null } | undefined>();
   const last = useRef<{ id: string; job: Job | null } | undefined>(undefined);
   const inCurrent = id === null ? undefined : current.find((job) => job.id === id);
@@ -170,11 +176,11 @@ export function useOpenJob(id: string | null, current: Job[]): Job | null | unde
         if (!abort.signal.aborted) setRead({ id, job });
       })
       .catch(() => {
-        // A copy already shown stays when the daemon cannot be asked.
-        if (!abort.signal.aborted && last.current?.id !== id) setRead({ id, job: null });
+        // readJob answers null for a missing job; any other failure keeps what
+        // is shown (a copy, or still loading) until the next revision retries.
       });
     return () => abort.abort();
-  }, [id, inCurrent]);
+  }, [id, inCurrent, revision]);
   if (id === null) return null;
   const fetched = read?.id === id ? read.job : undefined;
   const fresh = inCurrent ?? fetched;

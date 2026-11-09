@@ -117,11 +117,9 @@ func TestPullRequestViewIsEveryJobOfOnePullRequest(t *testing.T) {
 
 func TestPagedViewWalksNewestFirstWithACursor(t *testing.T) {
 	var all []Job
-	var ids []string
 	for i := 1; i <= 7; i++ {
 		id := "j" + strconv.Itoa(i)
 		all = append(all, job(id, "completed", "o/a", i, ""))
-		ids = append(ids, id)
 	}
 	h := seed(t, all...)
 	code, page, next := get(t, h, "?limit=3")

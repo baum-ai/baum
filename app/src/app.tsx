@@ -1067,7 +1067,7 @@ function Workspace({ url }: { url: UrlState }) {
   // A job's transcript, `?page=jobs&job=<id>`.
   const openJob = page === "jobs" ? url.search.get("job") : null;
   // The current jobs rarely hold an older job: the daemon finds it.
-  const openedJob = useOpenJob(openJob, jobs);
+  const openedJob = useOpenJob(openJob, jobs, revision);
   // The pull request page's own jobs: its fixes and questions, all of them.
   const pullRequestJobs = usePullRequestJobs(selectedEntry, revision);
   // The shortcuts sheet lists the keys of where it was opened first.
