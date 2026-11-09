@@ -47,6 +47,15 @@ test("pictures of the inbox pages", async ({ page }) => {
     await row.click();
     await expect(page.locator(".upnext-list-title h1")).toHaveText("Custom");
     await shot("2-queue", scheme);
+    // Renaming in place: the filter and refresh stay right of the field.
+    await page.locator(".upnext-list-title h1 button").click();
+    const name = page.getByRole("textbox", { name: "Inbox name" });
+    await expect(name).toBeFocused();
+    const field = (await name.boundingBox())!;
+    const filter = (await page.locator(".upnext-list-title > .filter-menu").boundingBox())!;
+    expect(field.x + field.width).toBeLessThanOrEqual(filter.x);
+    await shot("2-rename", scheme);
+    await page.keyboard.press("Escape");
 
     // New inbox.
     await sidebar.locator(".local-rail-heading").click({ button: "right" });
