@@ -7,8 +7,8 @@ import { uiState, useUIState } from "./ui-state";
  *
  *  - A term is a field, an operator and a value: `key=value` keeps the pull
  *    requests whose field has the value (`key:value` reads the same), and
- *    `key=a,b` either value; `key!=value` leaves them out, as do `-` and
- *    `NOT` before any term; risk also compares (`risk>=3`, `<`, `<=`, `>`).
+ *    `key=a,b` either value; `key!=value` leaves them out, as does `-` before
+ *    any term or group; risk also compares (`risk>=3`, `<`, `<=`, `>`).
  *  - Terms next to each other must all hold (`AND` may be written); `OR`
  *    takes either side and binds looser than `AND`; parentheses group.
  *  - Any other word, or a "quoted phrase", is looked for in the title, the
@@ -87,7 +87,7 @@ export function ownerOf(repository: string): string {
 
 /** Another page's filter, written in the same syntax: its fields, and why a
  *  query that reads still cannot be applied there ("" when it can). Its
- *  suggestions leave out AND, OR and NOT. */
+ *  suggestions leave out AND and OR. */
 export type PageFilter = {
   /** What the query box filters, for screen readers. */
   label: string;
@@ -261,10 +261,10 @@ const FIELDS: Field[] = [
 const fieldOf = (key: string, fields: readonly Field[] = FIELDS) =>
   fields.find((one) => one.key === key.toLowerCase());
 
-const OPERATORS = ["AND", "OR", "NOT"] as const;
+const OPERATORS = ["AND", "OR"] as const;
 
 type Token =
-  | { kind: "(" | ")" | "AND" | "OR" | "NOT"; start: number; end: number }
+  | { kind: "(" | ")" | "AND" | "OR" | "-("; start: number; end: number }
   | { kind: "word"; text: string; start: number; end: number; quoted: boolean };
 
 /** Splits the query into parentheses, operators and words; a word keeps any
@@ -279,7 +279,7 @@ function tokenize(query: string): Token[] {
     } else if (c === "(" || c === ")") {
       out.push({ kind: c, start: i, end: ++i });
     } else if (c === "-" && query[i + 1] === "(") {
-      out.push({ kind: "NOT", start: i, end: ++i });
+      out.push({ kind: "-(", start: i, end: ++i });
     } else {
       const start = i;
       let text = "";
@@ -294,7 +294,7 @@ function tokenize(query: string): Token[] {
         } else text += query[i++];
       }
       const raw = query.slice(start, i);
-      if (raw === "AND" || raw === "OR" || raw === "NOT") out.push({ kind: raw, start, end: i });
+      if (raw === "AND" || raw === "OR") out.push({ kind: raw, start, end: i });
       else out.push({ kind: "word", text, start, end: i, quoted });
     }
   }
@@ -336,6 +336,8 @@ export type Parsed = { expr: Expr | null; error: string };
 /** Where each parsed expression stands in its query, parentheses included:
  *  `[start, end)`. */
 const spans = new WeakMap<Expr, [number, number]>();
+/** The expressions written in parentheses of their own. */
+const grouped = new WeakSet<Expr>();
 
 function parse(query: string, fields: readonly Field[]): Parsed {
   const tokens = tokenize(query);
@@ -353,7 +355,7 @@ function parse(query: string, fields: readonly Field[]): Parsed {
     const token = tokens[at];
     if (!token) return fail("The query ends where a filter should follow.");
     at++;
-    if (token.kind === "NOT") {
+    if (token.kind === "-(") {
       const item = operand();
       return spanned({ kind: "not", item }, from);
     }
@@ -361,6 +363,7 @@ function parse(query: string, fields: readonly Field[]): Parsed {
       const inner = or();
       if (tokens[at]?.kind !== ")") fail("A parenthesis is not closed.");
       at++;
+      grouped.add(inner);
       return spanned(inner, from);
     }
     if (token.kind !== "word") return fail(`${token.kind} needs a filter before it.`);
@@ -526,35 +529,85 @@ function describe(expr: Expr, fields: readonly Field[]): string {
   }
 }
 
-/** A query's conditions as a filter's chips show them: each one that must
- *  hold, or with an `OR` at the top each choice, in words, with the query
- *  once it is taken out. None for a query that does not read. */
-export function queryParts(
-  query: string,
-  fields: readonly Field[] = FIELDS,
-): { joiner: "and" | "or"; parts: { label: string; without: string }[] } {
+/** A term of a query as its filter box draws it: where it stands, `[start,
+ *  end)`, a `-` before it included, and what it means in words. */
+export type QueryTerm = { start: number; end: number; label: string };
+
+/** A term, or a `-` one, which the box draws and removes as one. */
+const leafOf = (expr: Expr) =>
+  expr.kind === "term" ||
+  expr.kind === "text" ||
+  (expr.kind === "not" && (expr.item.kind === "term" || expr.item.kind === "text"));
+
+/** The query's terms in order, each with its span and words; none for a
+ *  query that does not read. */
+export function queryTerms(query: string, fields: readonly Field[] = FIELDS): QueryTerm[] {
   const { expr } = parseQuery(query, fields);
-  if (!expr) return { joiner: "and", parts: [] };
-  const joiner = expr.kind === "or" ? "or" : "and";
-  const items = expr.kind === "or" || expr.kind === "and" ? expr.items : [expr];
-  const text = (item: Expr) => {
-    const span = spans.get(item);
+  const out: QueryTerm[] = [];
+  const walk = (one: Expr) => {
+    if (leafOf(one)) {
+      const span = spans.get(one);
+      if (span) out.push({ start: span[0], end: span[1], label: describe(one, fields) });
+    } else if (one.kind === "not") walk(one.item);
+    else if (one.kind === "and" || one.kind === "or") one.items.forEach(walk);
+  };
+  if (expr) walk(expr);
+  return out.sort((a, b) => a.start - b.start);
+}
+
+/** The query without the term that starts at `start`: an OR or AND beside it
+ *  goes with it, a group left with one choice loses its parentheses, and an
+ *  emptied group (or `-(…)`) goes too. What the removal does not touch keeps its
+ *  text as written. A query that does not read is returned as it is. */
+export function withoutTerm(
+  query: string,
+  start: number,
+  fields: readonly Field[] = FIELDS,
+): string {
+  const { expr } = parseQuery(query, fields);
+  if (!expr) return query;
+  const text = (one: Expr) => {
+    const span = spans.get(one);
     return span ? query.slice(span[0], span[1]) : "";
   };
-  return {
-    joiner,
-    parts: items.map((item, index) => ({
-      label: describe(item, fields),
-      // What is left reads as it was written: an AND's parts side by side,
-      // an OR's choices with OR between them.
-      without: tidy(
-        items
-          .filter((_, other) => other !== index)
-          .map(text)
-          .join(joiner === "or" ? " OR " : " "),
-      ),
-    })),
+  const holds = (one: Expr) => {
+    const span = spans.get(one);
+    return !!span && span[0] <= start && start < span[1];
   };
+  // What a piece of text is, for where it goes: one operand (a term, a `-(…)` or
+  // a parenthesised group), or terms side by side, or choices joined by OR.
+  type Piece = { text: string; kind: "one" | "and" | "or" };
+  const wrap = (piece: Piece) => `(${piece.text})`;
+  // The expression as text, or null once nothing of it is left.
+  const emit = (one: Expr): Piece | null => {
+    if (!holds(one))
+      return {
+        text: text(one),
+        kind: grouped.has(one) || (one.kind !== "and" && one.kind !== "or") ? "one" : one.kind,
+      };
+    if (leafOf(one)) return spans.get(one)![0] === start ? null : { text: text(one), kind: "one" };
+    if (one.kind === "not") {
+      const item = emit(one.item);
+      if (item === null) return null;
+      // `-` goes straight before one operand; anything else, or one already
+      // negated, is grouped first.
+      const bare = item.kind === "one" && !item.text.startsWith("-");
+      return { text: `-${bare ? item.text : wrap(item)}`, kind: "one" };
+    }
+    if (one.kind === "and" || one.kind === "or") {
+      const items = one.items.map(emit).filter((item): item is Piece => item !== null);
+      if (items.length === 0) return null;
+      if (items.length === 1) return items[0]!;
+      // OR binds looser than terms side by side: a choice inside them needs
+      // its parentheses.
+      const texts = items.map((item) =>
+        one.kind === "and" && item.kind === "or" ? wrap(item) : item.text,
+      );
+      return { text: texts.join(one.kind === "or" ? " OR " : " "), kind: one.kind };
+    }
+    return { text: text(one), kind: "one" };
+  };
+  return tidy(emit(expr)?.text ?? "");
 }
 
 /** The fields a page offers: `waiting` only where queue items have a kind. */
@@ -567,7 +620,7 @@ export function quote(value: string): string {
   return /^[^\s,()"]+$/.test(value) ? value : `"${value.replaceAll('"', "")}"`;
 }
 
-/** The query's terms that must all hold, outside any OR or NOT. */
+/** The query's terms that must all hold, outside any OR or `-(…)`. */
 function topTerms(query: string, fields: readonly Field[]) {
   const { expr } = parseQuery(query, fields);
   const items = !expr ? [] : expr.kind === "and" ? expr.items : [expr];
@@ -669,7 +722,7 @@ export type Suggestion = {
 /** What to offer at the caret: the values of the field being typed, or the
  *  fields and operators that start with the word being typed. `fields` are
  *  another page's, in place of the pull requests'; `operators` false leaves
- *  AND, OR and NOT out, for a page whose filter takes none; `known` adds
+ *  AND and OR out, for a page whose filter takes none; `known` adds
  *  values from beyond `entries`. */
 export function suggest(
   query: string,
@@ -756,16 +809,16 @@ export function suggest(
   const word = body.toLowerCase();
   // Upper case starts an operator: the fields are written in lower case.
   const before = tokenize(query.slice(0, start)).at(-1);
-  // After a filter or a closing parenthesis, AND and OR may follow.
+  // Only after a filter or a closing parenthesis are AND and OR offered.
   const afterOperand = before?.kind === "word" || before?.kind === ")";
   const words =
-    negated || !operators
+    negated || !operators || !afterOperand
       ? []
-      : OPERATORS.filter(
-          (op) =>
-            (op === "NOT" || afterOperand) &&
-            (word ? op.toLowerCase().startsWith(word) : afterOperand),
-        ).map((op) => ({ ...take(op), label: op, detail: OPERATOR_HELP[op] }));
+      : OPERATORS.filter((op) => !word || op.toLowerCase().startsWith(word)).map((op) => ({
+          ...take(op),
+          label: op,
+          detail: OPERATOR_HELP[op],
+        }));
   if (words.length > 0 && body !== word) return words;
   const offered = (fields ?? fieldsFor(inbox))
     .filter(
@@ -787,13 +840,13 @@ export function suggest(
       detail: negated ? `Not ${field.label.toLowerCase()}` : field.label,
       field: true,
     }));
-  return [...whole, ...offered, ...words];
+  // With nothing typed after a filter, joining it to the next comes first.
+  return word ? [...whole, ...offered, ...words] : [...whole, ...words, ...offered];
 }
 
 const OPERATOR_HELP: Record<(typeof OPERATORS)[number], string> = {
   AND: "Both sides hold (the default)",
   OR: "Either side holds",
-  NOT: "Leaves out what follows",
 };
 
 /** The page a filter belongs to: `inbox`, `inbox:<id>` or `pulls`. */

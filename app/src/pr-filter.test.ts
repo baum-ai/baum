@@ -5,7 +5,8 @@ import {
   matchesQuery,
   ownerOf,
   parseQuery,
-  queryParts,
+  queryTerms,
+  withoutTerm,
   queryProblem,
   quote,
   suggest,
@@ -80,11 +81,10 @@ it("reads = and : alike, and != as not any of the values", () => {
   expect(passes("-is=draft", entry({ draft: true }))).toBe(false);
 });
 
-it("combines terms with AND, OR, NOT, - and parentheses", () => {
+it("combines terms with AND, OR, - and parentheses", () => {
   const approvedDraft = entry({ draft: true }, { review: "approved" });
   expect(passes("review:approved is:draft", approvedDraft)).toBe(true);
   expect(passes("review:approved AND -is:draft", approvedDraft)).toBe(false);
-  expect(passes("review:approved NOT is:draft", approvedDraft)).toBe(false);
   expect(passes("checks:failing OR is:draft", approvedDraft)).toBe(true);
   // AND binds tighter than OR.
   expect(passes("checks:failing OR review:approved is:draft", approvedDraft)).toBe(true);
@@ -141,7 +141,7 @@ it("adds a picked value to the field's term, takes it out again, and wraps an OR
   expect(toggleValue("is=draft", "is", "bot", "!=")).toBe("is=draft is!=bot");
   expect(toggleValue("is!=bot,draft", "is", "bot", "!=")).toBe("is!=draft");
   expect(toggleValue("", "risk", "3", ">=")).toBe("risk>=3");
-  // A term under NOT is not the field's choice: a new one is added.
+  // A negated term is not the field's choice: a new one is added.
   expect(toggleValue("-is=draft", "is", "conflict")).toBe("-is=draft is=conflict");
   expect(toggleValue("", "base", "release 1")).toBe('base="release 1"');
   expect(hasValue("review=approved,none", "review", "None")).toBe(true);
@@ -183,9 +183,11 @@ it("suggests a field, then its operators, then its values", () => {
   expect(labels("risk>")[0]).toBe("risk>=");
   expect(labels("review>=")).toEqual([]);
   expect(labels("is=draft O")).toEqual(["OR"]);
-  expect(labels("N")).toEqual(["NOT"]);
-  expect(labels("is=draft ").slice(-3)).toEqual(["AND", "OR", "NOT"]);
-  expect(labels("")).not.toContain("OR");
+  expect(labels("is=draft N")).toEqual([]);
+  // Operators only follow a filter, and come first while nothing is typed.
+  expect(labels("is=draft ").slice(0, 2)).toEqual(["AND", "OR"]);
+  expect(labels("(is=draft OR is=bot) ").slice(0, 2)).toEqual(["AND", "OR"]);
+  expect(labels("N")).toEqual([]);
   expect(labels("colour=")).toEqual([]);
   // Inside a word, nothing: taking one would drop the rest of the word.
   expect(labels("review=approved,none", 10)).toEqual([]);
@@ -256,56 +258,62 @@ it("matches waiting=other only for a pull request listed as nothing from the per
   );
 });
 
-it("reads a query's conditions in words, each with the query once it is taken out", () => {
-  expect(queryParts("")).toEqual({ joiner: "and", parts: [] });
-  expect(queryParts("   ")).toEqual({ joiner: "and", parts: [] });
-  expect(queryParts("author=@me")).toEqual({
-    joiner: "and",
-    parts: [{ label: "Author is Me", without: "" }],
-  });
-  expect(queryParts("author=@me risk>=4 flaky")).toEqual({
-    joiner: "and",
-    parts: [
-      { label: "Author is Me", without: "risk>=4 flaky" },
-      { label: expect.stringContaining("Risk"), without: "author=@me flaky" },
-      { label: "“flaky”", without: "author=@me risk>=4" },
-    ],
-  });
-  // An AND written out reads the same.
-  expect(queryParts("author=@me AND is=draft").parts.map((part) => part.without)).toEqual([
-    "is=draft",
-    "author=@me",
+/** The query without the term written as `term`. */
+const drop = (query: string, term: string) => {
+  const found = queryTerms(query).find((one) => query.slice(one.start, one.end) === term);
+  if (!found) throw new Error(`no term ${term} in ${query}`);
+  return withoutTerm(query, found.start);
+};
+
+it("finds a query's terms in order, with where they stand and their words", () => {
+  expect(queryTerms("")).toEqual([]);
+  expect(queryTerms("   ")).toEqual([]);
+  const query = "org=x (author=@me OR assignee=@me) -repo=y flaky";
+  expect(queryTerms(query).map((term) => [query.slice(term.start, term.end), term.label])).toEqual([
+    ["org=x", "Organization is x"],
+    ["author=@me", "Author is Me"],
+    ["assignee=@me", "Assignee is Me"],
+    ["-repo=y", "Repository is not y"],
+    ["flaky", "“flaky”"],
   ]);
+  // One that does not read has none, and stays as it is.
+  expect(queryTerms("colour:red")).toEqual([]);
+  expect(queryTerms("(is:draft")).toEqual([]);
+  expect(withoutTerm("(is:draft", 1)).toBe("(is:draft");
 });
 
-it("reads an OR at the top as choices, and a taken-out choice leaves the others joined by OR", () => {
-  const { joiner, parts } = queryParts("author=@me OR assignee=@me OR review-requested=@me");
-  expect(joiner).toBe("or");
-  expect(parts).toEqual([
-    { label: "Author is Me", without: "assignee=@me OR review-requested=@me" },
-    { label: "Assignee is Me", without: "author=@me OR review-requested=@me" },
-    { label: "Review requested is Me", without: "author=@me OR assignee=@me" },
-  ]);
+it("takes a term out with the AND or OR beside it, keeping the rest as written", () => {
+  expect(drop("author=@me", "author=@me")).toBe("");
+  expect(drop("author=@me risk>=4 flaky", "risk>=4")).toBe("author=@me flaky");
+  expect(drop("author=@me AND is=draft", "author=@me")).toBe("is=draft");
+  expect(drop("author=@me AND is=draft", "is=draft")).toBe("author=@me");
+  const forMe = "author=@me OR assignee=@me OR review-requested=@me";
+  expect(drop(forMe, "assignee=@me")).toBe("author=@me OR review-requested=@me");
+  expect(drop(forMe, "author=@me")).toBe("assignee=@me OR review-requested=@me");
+  expect(drop(forMe, "review-requested=@me")).toBe("author=@me OR assignee=@me");
 });
 
-it("keeps a parenthesised group's parentheses when its sibling is taken out, and words the group", () => {
-  const { joiner, parts } = queryParts("org=x (author=@me OR assignee=@me)");
-  expect(joiner).toBe("and");
-  expect(parts).toEqual([
-    { label: "Organization is x", without: "(author=@me OR assignee=@me)" },
-    { label: "Author is Me or Assignee is Me", without: "org=x" },
-  ]);
+it("keeps a group's parentheses while it holds several choices, and drops them at one", () => {
+  const query = "org=baum-ai (author=@me OR assignee=@me OR review-requested=@me) review=none";
+  expect(drop(query, "assignee=@me")).toBe(
+    "org=baum-ai (author=@me OR review-requested=@me) review=none",
+  );
+  expect(drop(query, "org=baum-ai")).toBe(
+    "(author=@me OR assignee=@me OR review-requested=@me) review=none",
+  );
+  expect(drop(query, "review=none")).toBe(
+    "org=baum-ai (author=@me OR assignee=@me OR review-requested=@me)",
+  );
+  expect(drop("org=x (author=@me OR assignee=@me)", "assignee=@me")).toBe("org=x author=@me");
+  expect(drop("(is=draft author=@me) OR review=none", "is=draft")).toBe(
+    "author=@me OR review=none",
+  );
 });
 
-it("words a negation as its field is not the value", () => {
-  const { parts } = queryParts("-repo=x NOT is=draft");
-  expect(parts).toEqual([
-    { label: "Repository is not x", without: "NOT is=draft" },
-    { label: "State is not Draft", without: "-repo=x" },
-  ]);
-});
-
-it("gives no parts for a query that does not read", () => {
-  expect(queryParts("colour:red")).toEqual({ joiner: "and", parts: [] });
-  expect(queryParts("(is:draft")).toEqual({ joiner: "and", parts: [] });
+it("takes a negated term out whole, and a -(…) goes once nothing is left in it", () => {
+  expect(drop("-repo=x -is=draft", "-is=draft")).toBe("-repo=x");
+  expect(drop("-repo=x -is=draft", "-repo=x")).toBe("-is=draft");
+  expect(drop("-(is=draft OR author=@me)", "is=draft")).toBe("-author=@me");
+  expect(drop("-(is=draft OR author=@me) org=x", "org=x")).toBe("-(is=draft OR author=@me)");
+  expect(drop("-(is=draft OR -author=@me)", "is=draft")).toBe("-(-author=@me)");
 });

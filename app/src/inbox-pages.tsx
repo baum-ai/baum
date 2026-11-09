@@ -20,7 +20,6 @@ import { KEEP_ONE, PageBar } from "./shell";
 import { queryProblem, tidyQuery } from "./pr-filter";
 import { SettingRow } from "./settings";
 import { ColourSwatches, GROUPS, InboxTag, OTHERS_TITLE, type QueueItem } from "./up-next";
-import { FilterChips } from "./filter-chips";
 
 /** The preview's groups: the queue's, then others' pull requests. */
 const PREVIEW_GROUPS = [
@@ -376,28 +375,28 @@ function EditInbox({
           </div>
           <div className="inbox-block">
             <h2 className="settings-row-label">What it catches</h2>
-            {/* Each condition, removed by its own ×; then the whole query,
-                picked from the filter menu or typed. */}
-            <FilterChips
-              query={inbox.query}
-              onChange={(query) => change({ query })}
-              empty="No filter: every open pull request. Add filters to narrow it."
-            />
+            {/* The inbox's query, picked from the filter menu or typed; away
+                from the box each term is a token its × removes. */}
             <div className="inbox-query">
-              <FilterButton
-                query={inbox.query}
-                onChange={(query) => change({ query })}
-                entries={items.map((item) => item.entry)}
-                known={{ entries, repositories }}
-                kindOf={(entry) => kinds.get(entry)}
-                inbox
-              />
               <FilterBar
                 query={inbox.query}
                 onChange={(query) => change({ query })}
                 entries={items.map((item) => item.entry)}
                 known={{ entries, repositories }}
                 inbox
+                menu={
+                  <FilterButton
+                    query={inbox.query}
+                    onChange={(query) => change({ query })}
+                    entries={items.map((item) => item.entry)}
+                    known={{ entries, repositories }}
+                    kindOf={(entry) => kinds.get(entry)}
+                    inbox
+                    label="Add filter"
+                  />
+                }
+                clearable={false}
+                placeholder="No filter: every open pull request"
               />
             </div>
           </div>

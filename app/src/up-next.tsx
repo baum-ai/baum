@@ -1505,6 +1505,7 @@ export function UpNextPage({
             entries={unfiltered}
             known={known}
             inbox
+            clearable={false}
             actions={<SaveButton options={saveOptions} />}
           />
           <FilterSaveError error={quick.error} retry={quick.retry} />

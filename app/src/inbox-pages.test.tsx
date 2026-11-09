@@ -454,7 +454,7 @@ const queryBox = () => node.querySelector<HTMLTextAreaElement>(".inbox-query tex
 it("shows the inbox as one query, saving each change once and saying what it added and removed", async () => {
   await render("?page=inbox-edit&inbox=Acme");
   expect(queryBox().value).toBe("org=acme");
-  expect(node.querySelector(".inbox-query summary.filter-menu-button")).not.toBeNull();
+  expect(node.querySelector(".inbox-query summary.filter-menu-lead")).not.toBeNull();
   expect(node.querySelector(".inbox-preview-count")!.textContent).toBe("3");
   expect(previewTitles()).toEqual(["Change 1", "Change 3", "Change 2"]);
   await typeQuery("org=acme waiting=review");
@@ -858,65 +858,106 @@ it("catches an unclaimed pull request in the Unclaimed inbox, and not a claimed 
   expect(previewTitles()).toEqual(["Change 5"]);
 });
 
-const chips = () =>
-  Array.from(node.querySelectorAll(".filter-chip-label")).map((label) => label.textContent);
-const removeChip = (label: string) =>
-  node.querySelector<HTMLButtonElement>(`button[aria-label="Remove ${label}"]`)!;
+/** The query box's terms as its tokens show them, away from the box. */
+const tokens = () =>
+  Array.from(node.querySelectorAll(".inbox-query .filter-token")).map(
+    (token) => token.firstElementChild!.textContent,
+  );
+const remove = (label: string) =>
+  node.querySelector<HTMLButtonElement>(`.inbox-query button[aria-label="Remove ${label}"]`)!;
 
-it("shows each condition of the query as a chip, and a chip's Remove saves the query without it", async () => {
+it("shows the query's terms as tokens in the box, and a token's × saves the query without it", async () => {
   daemon = {
     revision: 1,
-    inboxes: [inbox("Hot", { query: "org=acme risk>=4 waiting=review" })],
+    inboxes: [
+      inbox("Hot", {
+        query: "org=baum-ai (author=@me OR assignee=@me OR review-requested=@me) review=none",
+      }),
+    ],
   };
   await render("?page=inbox-edit&inbox=Hot");
-  expect(chips()).toHaveLength(3);
-  expect(chips()[0]).toBe("Organization is acme");
-  expect(node.querySelector(".filter-chips-or")).toBeNull();
-  expect(node.querySelector(".filter-chips-empty")).toBeNull();
-  await click(removeChip("Organization is acme"));
+  expect(tokens()).toEqual([
+    "org=baum-ai",
+    "author=@me",
+    "assignee=@me",
+    "review-requested=@me",
+    "review=none",
+  ]);
+  // The operators and parentheses stay as text between them.
+  expect(node.querySelector(".inbox-query .filter-bar-tokens")!.textContent).toContain(" OR ");
+  await click(remove("Assignee is Me"));
   expect(puts).toHaveLength(1);
-  expect(puts[0]!.inboxes[0]!.query).toBe("risk>=4 waiting=review");
-  expect(queryBox().value).toBe("risk>=4 waiting=review");
-  expect(chips()).toHaveLength(2);
-  expect(chips()).not.toContain("Organization is acme");
+  expect(puts[0]!.inboxes[0]!.query).toBe(
+    "org=baum-ai (author=@me OR review-requested=@me) review=none",
+  );
+  expect(queryBox().value).toBe("org=baum-ai (author=@me OR review-requested=@me) review=none");
+  expect(tokens()).toEqual(["org=baum-ai", "author=@me", "review-requested=@me", "review=none"]);
+  // A group left with one choice loses its parentheses.
+  await click(remove("Author is Me"));
+  expect(puts.at(-1)!.inboxes[0]!.query).toBe("org=baum-ai review-requested=@me review=none");
 });
 
-it("says what no filter means, and shows it again once the last chip is removed", async () => {
+it("shows the text while the box has the focus, and the tokens again once it leaves", async () => {
+  daemon = { revision: 1, inboxes: [inbox("Hot", { query: "org=acme risk>=4" })] };
+  await render("?page=inbox-edit&inbox=Hot");
+  expect(queryBox().classList.contains("filter-bar-input-under")).toBe(true);
+  await act(async () => queryBox().focus());
+  expect(tokens()).toEqual([]);
+  expect(queryBox().classList.contains("filter-bar-input-under")).toBe(false);
+  await act(async () => queryBox().blur());
+  expect(tokens()).toEqual(["org=acme", "risk>=4"]);
+});
+
+it("offers what may follow the query once the box has the focus, the operators first", async () => {
+  daemon = { revision: 1, inboxes: [inbox("Hot", { query: "org=acme review=none" })] };
+  await render("?page=inbox-edit&inbox=Hot");
+  await act(async () => {
+    queryBox().dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
+  });
+  const offered = () =>
+    Array.from(node.querySelectorAll(".inbox-query [role='option'] code")).map(
+      (one) => one.textContent,
+    );
+  expect(offered().slice(0, 2)).toEqual(["AND", "OR"]);
+  expect(offered()).toContain("author");
+  // Tab moves on rather than joining an operator onto a whole filter.
+  expect(queryBox().hasAttribute("data-own-tab")).toBe(false);
+  // Taken, the operator comes after a space.
+  await act(async () => {
+    node
+      .querySelectorAll<HTMLElement>(".inbox-query [role='option']")[1]!
+      .dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
+  });
+  expect(queryBox().value).toBe("org=acme review=none OR ");
+  // An empty box offers the fields alone.
+  daemon = { revision: 1, inboxes: [inbox("Open", { query: "" })] };
+  await render("?page=inbox-edit&inbox=Open");
+  await act(async () => queryBox().focus());
+  expect(offered()).toContain("author");
+  expect(offered()).not.toContain("AND");
+});
+
+it("keeps the box with no query, saying what no filter means, also once the last token goes", async () => {
   daemon = {
     revision: 1,
     inboxes: [inbox("Open", { query: "" }), inbox("One", { query: "org=acme" })],
   };
   await render("?page=inbox-edit&inbox=Open");
-  expect(node.querySelector(".filter-chips")).toBeNull();
-  expect(node.querySelector(".filter-chips-empty")!.textContent).toBe(
-    "No filter: every open pull request. Add filters to narrow it.",
-  );
+  expect(queryBox().value).toBe("");
+  expect(queryBox().placeholder).toBe("No filter: every open pull request");
+  // The labelled button opens the menu, which has no box of its own to write in.
+  await click(node.querySelector<HTMLElement>(".inbox-query summary.filter-menu-lead")!);
+  expect(node.querySelector(".inbox-query .filter-menu-write")).toBeNull();
   await render("?page=inbox-edit&inbox=One");
-  expect(node.querySelector(".filter-chips-empty")).toBeNull();
-  await click(removeChip("Organization is acme"));
+  await click(remove("Organization is acme"));
   expect(puts.at(-1)!.inboxes[1]!.query).toBe("");
-  expect(node.querySelector(".filter-chips-empty")!.textContent).toContain("No filter");
+  expect(queryBox().value).toBe("");
+  expect(queryBox().placeholder).toContain("No filter");
 });
 
-it("puts or between the chips of an OR query, and removing a choice keeps the rest joined by OR", async () => {
-  daemon = {
-    revision: 1,
-    inboxes: [inbox("Mine", { query: "author=@me OR assignee=@me OR review-requested=@me" })],
-  };
-  await render("?page=inbox-edit&inbox=Mine");
-  expect(chips()).toEqual(["Author is Me", "Assignee is Me", "Review requested is Me"]);
-  expect(
-    Array.from(node.querySelectorAll(".filter-chips-or")).map((one) => one.textContent),
-  ).toEqual(["or", "or"]);
-  await click(removeChip("Assignee is Me"));
-  expect(puts[0]!.inboxes[0]!.query).toBe("author=@me OR review-requested=@me");
-  expect(chips()).toEqual(["Author is Me", "Review requested is Me"]);
-  expect(node.querySelectorAll(".filter-chips-or")).toHaveLength(1);
-});
-
-it("shows no chips for a query that does not read", async () => {
+it("shows no tokens for a query that does not read", async () => {
   daemon = { revision: 1, inboxes: [inbox("Bad", { query: "colour:red" })] };
   await render("?page=inbox-edit&inbox=Bad");
-  expect(node.querySelector(".filter-chips")).toBeNull();
-  expect(node.querySelector(".filter-chips-empty")).toBeNull();
+  expect(tokens()).toEqual([]);
+  expect(queryBox().value).toBe("colour:red");
 });

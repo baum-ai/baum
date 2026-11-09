@@ -106,6 +106,36 @@ it("counts each organisation's matches rather than the combined selection", asyn
   node.remove();
 });
 
+it("offers Write a query… only while no query shows its box", async () => {
+  const node = document.createElement("div");
+  document.body.append(node);
+  const root = createRoot(node);
+  const write = () =>
+    Array.from(node.querySelectorAll("[data-filter-row]")).filter((row) =>
+      row.textContent?.includes("Write a query"),
+    );
+  const menu = (query: string) => (
+    <FilterButton
+      query={query}
+      onChange={vi.fn()}
+      entries={[]}
+      footer={<FilterBar query={query} onChange={vi.fn()} entries={[]} />}
+    />
+  );
+  try {
+    await act(async () => root.render(menu("")));
+    await act(async () => node.querySelector<HTMLElement>("summary")!.click());
+    expect(write()).toHaveLength(1);
+    expect(node.querySelector(".filter-menu-query textarea")).toBeNull();
+    await act(async () => root.render(menu("org=acme")));
+    expect(write()).toHaveLength(0);
+    expect(node.querySelector(".filter-menu-query textarea")).not.toBeNull();
+  } finally {
+    await act(async () => root.unmount());
+    node.remove();
+  }
+});
+
 it("hides the empty query box", async () => {
   const node = document.createElement("div");
   const root = createRoot(node);

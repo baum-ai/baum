@@ -1055,7 +1055,7 @@ A term is a field, an operator and a value:
 The operators are `=` and `!=` (not any of the values), and for risk also
 `>=`, `<=`, `>` and `<`; `:` reads as `=` (`risk:>=3` as `risk>=3`), and a
 comparison takes scores only. Keys and values ignore case. `key=a,b` takes
-either value, `-` or `NOT` before a term leaves it out, terms side by side must
+either value, `-` before a term or a group leaves it out, terms side by side must
 all hold (`AND` may be written), `OR` takes either side and binds looser than
 `AND`, and parentheses group. A query that does not read leaves the last one
 in force, and the bar says why ("Not applied: …").
@@ -1084,19 +1084,32 @@ parentheses left empty), and adds a term when there is none (around a query
 with `OR`, in parentheses); the menu stays open. Typed text also lists
 matching values of every field, then adds the text itself (a phrase to look
 for, quoted when it would read as syntax, or a query that reads); **Write a
-query…** puts the focus in the query. Esc or ← steps out of the values, then
-closes the menu.
+query…**, offered only while there is no query (one shows its box already)
+and only in a menu with the box at its foot, puts the focus in the query. Esc or ← steps out of the values, then closes
+the menu.
 
 The menu's foot holds the query as text (`FilterBar`), wrapping onto more
-lines as it grows, with **Clear** and the page's save. As it is typed it
+lines as it grows, with **Clear** (not on an inbox's queue or edit page,
+where the tokens' × and Command+C empty it) and the page's save. As it is typed it
 suggests, one part at a time, the fields that start with the word at the caret
-(`-` for not), then the field's operators, then its values, and `AND`, `OR`
-and `NOT` after a term, above the box; nothing is suggested inside a word or
-at its start. The arrows move through them, Enter or a click takes one, Tab
-takes the highlighted or first while a word is being typed (otherwise it moves
-on), and Esc closes them, then the menu. Each edit that reads applies a moment
+(`-` for not), then the field's operators, then its values, and `AND` and
+`OR` only after a term or a closing parenthesis (first, while nothing
+is typed), above the box; nothing is suggested inside a word or at its start.
+With the caret right after a whole term (as on focus, which puts it at the
+end), the list opens with what may follow, taken with a space before it. The
+arrows move through them, Enter or a click takes one, Tab takes the
+highlighted or first while a word is being typed (otherwise, and after a whole
+term, it moves on), and Esc closes them, then the menu. Each edit that reads applies a moment
 after the last key, and at Enter or leaving the box; one longer than 500
-characters is not applied and says so.
+characters is not applied and says so. Without the focus, a box holding the
+query in force draws each term as a token (`queryTerms`), its text as written
+with a × whose label says it in words ("Remove Assignee is Me"); parentheses,
+`AND`, `OR` and `-(` stay plain text between them. The × applies the query
+without that term (`withoutTerm`): the `AND` or `OR` beside it goes too, a
+group left with one choice loses its parentheses, an emptied group (with any `-` before it)
+goes, and what the removal does not touch keeps its text. The box lies
+under the tokens: a click anywhere but a × focuses it with the caret at the
+end, and the text shows until the focus leaves.
 
 There is no whole-queue filter: the filter is always an inbox's own. **Create
 inbox** (below, and Command+Enter) is not offered at 20 inboxes or with an
@@ -1106,7 +1119,7 @@ queue (kept per inbox) until the save, as GitHub's merge button: **Update
 inbox** gives the inbox the query, and the arrow beside it offers **Create
 inbox**, a copy of the inbox with it, and **Discard changes** (all only while
 the draft differs; the draft goes once the inbox holds it, so a failed save
-keeps it). **Clear** there empties the draft, which then shows every open pull request.
+keeps it). Command+C there empties the draft, which then shows every open pull request.
 `waiting=` is refused outside an inbox's queue. With nothing matching while
 the filter hides something, the queue's panel says "Nothing matches the
 filter", how many it hides, and **Discard the changes**. Tabbing out of the menu closes it. Each page keeps its own filter or draft (`inbox`,
@@ -1162,13 +1175,11 @@ a label, with no key of its own, reached with Tab.
   make them". The name is an input saved on blur or Enter; a blank or
   too-long name, or one another inbox has (ignoring case), is refused in place
   and not sent. Six colour swatches have radio semantics. "What it catches" is
-the inbox's whole query: first its conditions as chips (`FilterChips`,
-`queryParts`), each what must hold (or, with an `OR` at the top, each choice,
-"or" between them) in words, as "Author is Me", with a **Remove <condition>**
-button that saves the query without it, keeping the rest as written; with no
-query it says "No filter: every open pull request. Add filters to narrow it.".
-Below them, the filter icon with its menu (Waiting for among the fields)
-beside the query as text, each change saved a moment after it reads. A
+the inbox's whole query in one box, a quiet **+ Add filter** at its end
+(opening the same menu, Waiting for among the fields); the
+query, its terms tokens whose × saves the query without them (see the filter
+above), each change saved a moment after it reads. The box stays with no
+query, its placeholder "No filter: every open pull request". A
 switch shows or hides the inbox's count in the sidebar; its pull requests still
 count in the Inbox total. **Delete inbox** asks, then
 deletes with Undo and goes to the first inbox left with focus on its row in the
@@ -1397,7 +1408,7 @@ the text. The query is written into the address the shared page reads (`q`,
 `file`, `person`, `who`, `category`, `from`, `to`, `superseded`, `agent`,
 `status`) and read back from it. The server applies the filter to each page it
 reads, so every term must hold and each field is named once (`who=a,b` for
-either): OR, NOT, `-` and parentheses are refused with a reason, and the last
+either): OR, `-` and parentheses are refused with a reason, and the last
 filter stays. The sidebar, its key and
 Go to open it on human decisions (`who=human`), as the hosted rail does;
 clearing the filters there shows every decision. The app supplies its
@@ -2141,7 +2152,7 @@ On an inbox, Command+Enter or Control+Enter creates an inbox from the current fi
 When creating an inbox, Command+Enter (Control+Enter on other keyboards) saves it.
 
 While the filter menu is open, Command+C or Control+C clears its filters and
-returns focus to Add filter. Holding Option/Alt reveals the filter, Clear and
+returns focus to Add filter. Holding Option/Alt reveals the filter, Clear (where shown) and
 Create inbox button shortcuts.
 
 New inboxes choose a colour not used by another inbox, preserving their template’s

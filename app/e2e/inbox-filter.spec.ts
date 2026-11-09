@@ -94,9 +94,8 @@ test("filters the Inbox from the menu and as typed, saves an inbox, and edits a 
   await filter.click();
   await page.keyboard.down("Alt");
   await expect(filter.locator(".key-hint")).toBeVisible();
-  await expect(
-    panel.getByRole("button", { name: "Clear", exact: true }).locator(".key-hint"),
-  ).toBeVisible();
+  // An inbox's bar has no Clear button; Command+C still clears it.
+  await expect(panel.getByRole("button", { name: "Clear", exact: true })).toHaveCount(0);
   await page.keyboard.up("Alt");
   await expect(filter.locator(".key-hint")).toBeHidden();
   await page.keyboard.press("Control+c");
