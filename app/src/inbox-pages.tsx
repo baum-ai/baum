@@ -5,10 +5,13 @@ import {
   sentence,
   templateInbox,
   countOf,
+  foldedQuery,
   fromTemplate,
   inboxesOf,
   matches,
   MAX_INBOXES,
+  useHeld,
+  type Held,
   nameProblem,
   ownersOf,
   QUICK_FILTERS,
@@ -36,6 +39,9 @@ import { CheckIcon, ExternalLinkIcon } from "@baum/viewer/components/icons";
 export type InboxPageProps = {
   inboxes: Inbox[];
   items: QueueItem[];
+  /** Which inboxes hold each pull request, as the daemon matched them; the
+   *  pages ask it about inboxes not saved yet too. */
+  held?: Held | null;
   /** The signed-in GitHub account. */
   login?: string;
   /** The person's repositories, as owner/name. */
@@ -83,6 +89,7 @@ function prLine(item: QueueItem) {
 export function NewInboxPage({
   inboxes,
   items,
+  held = null,
   login,
   repositories,
   start,
@@ -93,6 +100,14 @@ export function NewInboxPage({
 }) {
   const owners = ownersOf(repositories, login);
   const full = inboxes.length >= MAX_INBOXES;
+  const starts = templates(owners, login).map((template) => ({
+    template,
+    made: fromTemplate(template, inboxes, "preview"),
+  }));
+  const view = useHeld(
+    held,
+    starts.map(({ made }) => foldedQuery(made)),
+  );
   return (
     <section>
       <PageBar title="What should this inbox catch?" />
@@ -106,9 +121,8 @@ export function NewInboxPage({
           </p>
         ) : null}
         <ul className="inbox-templates">
-          {templates(owners, login).map((template) => {
-            const made = fromTemplate(template, inboxes, "preview");
-            const count = countOf(made, items);
+          {starts.map(({ template, made }) => {
+            const count = countOf(made, items, view);
             return (
               <li key={template.name}>
                 <button
@@ -214,6 +228,7 @@ function EditInbox({
   saveDraft,
   inboxes,
   items,
+  held = null,
   repositories,
   entries,
   saves,
@@ -251,20 +266,33 @@ function EditInbox({
     return () => clearTimeout(timer);
   }, [diff]);
 
-  const mine = items.filter((item) => matches(inbox, item));
+  // The daemon says what the inbox holds, asked again as its query changes.
+  const query = foldedQuery(inbox);
+  const view = useHeld(held, [query]);
+  const mine = items.filter((item) => matches(inbox, item, view));
+  // What the inbox held before its query last changed, until the daemon
+  // says what it holds now.
+  const [before, setBefore] = useState<{ query: string; mine: QueueItem[] } | null>(null);
 
   /** Saves a change, and notes what it added to and took out of the preview. */
   const change = (patch: Partial<Inbox>) => {
     const next = { ...inbox, ...patch };
     if (keepDraft) keepDraft(next);
     else save(inboxes.map((one) => (one.id === inbox.id ? next : one)));
-    const was = new Set(mine.map((item) => item.key));
-    const after = items.filter((item) => matches(next, item));
-    const now = new Set(after.map((item) => item.key));
-    const added = after.filter((item) => !was.has(item.key)).map((item) => item.key);
-    const removed = mine.filter((item) => !now.has(item.key));
-    if (added.length + removed.length > 0) setDiff({ added: new Set(added), removed });
+    const after = foldedQuery(next);
+    if (after !== query) setBefore({ query: after, mine });
   };
+  useEffect(() => {
+    // Once the page shows the change and the daemon (when there is one)
+    // answered for it.
+    if (!before || before.query !== query || (held && !view?.byQuery.has(query))) return;
+    setBefore(null);
+    const was = new Set(before.mine.map((item) => item.key));
+    const now = new Set(mine.map((item) => item.key));
+    const added = mine.filter((item) => !was.has(item.key)).map((item) => item.key);
+    const removed = before.mine.filter((item) => !now.has(item.key));
+    if (added.length + removed.length > 0) setDiff({ added: new Set(added), removed });
+  });
 
   const commitName = () => {
     const problem = nameProblem(draft, inboxes, inbox.id);
@@ -535,7 +563,7 @@ function EditInbox({
                       <span className="inbox-preview-title">{title}</span>
                       <span className="inbox-preview-meta">
                         <span>{where}</span>
-                        {inboxesOf(item, inboxes)
+                        {inboxesOf(item, inboxes, view)
                           .filter((other) => other.id !== inbox.id)
                           .map((other) => (
                             <InboxTag key={other.id} inbox={other} />
@@ -563,7 +591,7 @@ function EditInbox({
 
 /** `?page=inboxes`: every inbox in the sidebar's order, to reorder, switch in
  *  or out of the badge, and open. */
-export function ManageInboxesPage({ inboxes, items, saves, save, go, Link }: InboxPageProps) {
+export function ManageInboxesPage({ inboxes, items, held, saves, save, go, Link }: InboxPageProps) {
   const saved = useSavedMark(saves);
   const move = (index: number, by: -1 | 1) => {
     const next = inboxes.slice();
@@ -625,7 +653,7 @@ export function ManageInboxesPage({ inboxes, items, saves, save, go, Link }: Inb
                       <strong>{inbox.name}</strong>
                     </Link>
                     <span>
-                      {countOf(inbox, items)} now
+                      {countOf(inbox, items, held)} now
                       {inbox.badge ? "" : " · count hidden"}
                     </span>
                   </span>

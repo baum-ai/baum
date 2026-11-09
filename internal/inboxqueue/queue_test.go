@@ -1,4 +1,4 @@
-package inboxcount
+package inboxqueue
 
 import (
 	"context"
@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/baum-ai/baum/internal/discovery"
+	"github.com/baum-ai/baum/internal/inboxes"
 	"github.com/baum-ai/baum/internal/jobs"
 	"github.com/baum-ai/baum/internal/reviewgroups"
 	"github.com/baum-ai/baum/internal/reviewindex"
@@ -230,7 +231,7 @@ func TestHandlerAnswersTheCountAndPassesTheRest(t *testing.T) {
 	index := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte("index")) })
 	get := func(target string) *httptest.ResponseRecorder {
 		w := httptest.NewRecorder()
-		service.Handler(index).ServeHTTP(w, httptest.NewRequest("GET", target, nil))
+		service.CountHandler(index).ServeHTTP(w, httptest.NewRequest("GET", target, nil))
 		return w
 	}
 	if w := get("/api/index?view=waiting"); strings.TrimSpace(w.Body.String()) != `{"waiting":2}` || w.Header().Get("Cache-Control") != "no-store" {
@@ -259,5 +260,150 @@ func TestNothingWaitingCountsZero(t *testing.T) {
 	snoozed := Snoozes{Snoozed: map[string]int64{"acme/a#1": now.Add(time.Hour).UnixMilli()}}
 	if got := Count(entries, nil, nil, snoozed, now); got != 0 {
 		t.Fatal("snoozed", got)
+	}
+}
+
+// inboxEntries: a review asked of the person, one of theirs to fix, one of
+// theirs an agent is fixing, one of theirs waiting on others, someone else's
+// nobody claimed, and a closed one.
+func inboxEntries() ([]reviewindex.Entry, []jobs.Job) {
+	entries := []reviewindex.Entry{
+		entry(1, func(e *reviewindex.Entry) {
+			e.PullRequest.ReviewRequestedFromMe, e.PullRequest.Title = true, "Add login"
+		}),
+		mine(2, func(e *reviewindex.Entry) { e.Checks = "failing" }),
+		mine(3, func(e *reviewindex.Entry) { e.Checks = "failing" }),
+		mine(4, nil),
+		entry(5, func(e *reviewindex.Entry) { e.PullRequest.Repository = "other/b" }),
+		entry(6, func(e *reviewindex.Entry) { e.PullRequest.ReviewRequestedFromMe, e.PullRequest.State = true, "CLOSED" }),
+	}
+	fix := jobs.Job{State: "running"}
+	fix.Kind, fix.Repository, fix.PR = "fix", "acme/a", 3
+	return entries, []jobs.Job{fix}
+}
+
+func TestBuildMatchesEachInbox(t *testing.T) {
+	entries, queue := inboxEntries()
+	saved := []inboxes.Inbox{
+		{ID: "all"},
+		{ID: "review", Query: "waiting=review"},
+		{ID: "agent", Query: "waiting=agent"},
+		{ID: "acme", Query: "org=acme"},
+		{ID: "unclaimed", Query: "waiting=other assignee=none review-requested=none"},
+		// Older parts fold into the query: what the person wrote.
+		{ID: "mine", What: "mine"},
+		// A query that does not read narrows nothing.
+		{ID: "broken", Query: "repo="},
+	}
+	snoozes := Snoozes{Snoozed: map[string]int64{"acme/a#2": now.Add(time.Hour).UnixMilli()}}
+	got := Build(entries, queue, nil, snoozes, saved, now)
+	type row struct {
+		kind    string
+		fixing  bool
+		snoozed bool
+		inboxes string
+	}
+	want := map[string]row{
+		"acme/a#1":  {Review, false, false, "all review acme broken"},
+		"acme/a#2":  {Fix, false, true, "all agent acme mine broken"},
+		"acme/a#3":  {Fix, true, false, "all agent acme mine broken"},
+		"acme/a#4":  {Waiting, false, false, "all acme mine broken"},
+		"other/b#5": {Other, false, false, "all unclaimed broken"},
+	}
+	if len(got.Items) != len(want) {
+		t.Fatalf("items = %+v", got.Items)
+	}
+	for _, item := range got.Items {
+		w, ok := want[item.Key]
+		if !ok || item.Kind != w.kind || item.Fixing != w.fixing || item.Snoozed != w.snoozed || strings.Join(item.Inboxes, " ") != w.inboxes {
+			t.Errorf("%s = %+v, want %+v", item.Key, item, w)
+		}
+	}
+	// The total is the unsnoozed queue: the review alone. An inbox counts
+	// what the queue holds and others' pull requests, unsnoozed.
+	if got.Count != 1 {
+		t.Errorf("count = %d", got.Count)
+	}
+	counts := map[string]int{}
+	for _, inbox := range got.Inboxes {
+		counts[inbox.ID] = inbox.Count
+	}
+	wantCounts := map[string]int{"all": 2, "review": 1, "agent": 0, "acme": 1, "unclaimed": 1, "mine": 0, "broken": 2}
+	for id, n := range wantCounts {
+		if counts[id] != n {
+			t.Errorf("count of %s = %d, want %d", id, counts[id], n)
+		}
+	}
+	if q := got.Inboxes[5].Query; q != "author=@me" {
+		t.Errorf("folded query = %q", q)
+	}
+}
+
+func TestMatchingADraftQuery(t *testing.T) {
+	entries, queue := inboxEntries()
+	items := Items(entries, queue, nil, Snoozes{}, now)
+	for query, want := range map[string]string{
+		"":                     "acme/a#1 acme/a#2 acme/a#3 acme/a#4 other/b#5",
+		"login":                "acme/a#1",
+		"waiting=merge":        "",
+		"waiting=agent -#2":    "acme/a#3",
+		"repo=b OR #1":         "acme/a#1 other/b#5",
+		"unknown=x":            "acme/a#1 acme/a#2 acme/a#3 acme/a#4 other/b#5",
+		"author!=@me org=acme": "acme/a#1",
+	} {
+		if got := strings.Join(Matching(items, query), " "); got != want {
+			t.Errorf("Matching(%q) = %q, want %q", query, got, want)
+		}
+	}
+}
+
+func TestInboxHandler(t *testing.T) {
+	entries, queue := inboxEntries()
+	var inboxFailure error
+	service := &Service{
+		Index: func(context.Context) (reviewindex.Snapshot, error) {
+			return reviewindex.Snapshot{Entries: entries}, nil
+		},
+		Jobs:    func() []jobs.Job { return queue },
+		Groups:  func(context.Context) ([]reviewgroups.Group, error) { return nil, nil },
+		Snoozes: func() (json.RawMessage, error) { return nil, nil },
+		Inboxes: func() ([]inboxes.Inbox, error) {
+			return []inboxes.Inbox{{ID: "review", Query: "waiting=review"}}, inboxFailure
+		},
+		Now: func() time.Time { return now },
+	}
+	get := func(method, target string) *httptest.ResponseRecorder {
+		w := httptest.NewRecorder()
+		service.Handler().ServeHTTP(w, httptest.NewRequest(method, target, nil))
+		return w
+	}
+	var queueBody Queue
+	w := get("GET", "/api/inbox")
+	if err := json.Unmarshal(w.Body.Bytes(), &queueBody); err != nil || w.Header().Get("Cache-Control") != "no-store" {
+		t.Fatal(w.Body.String(), err)
+	}
+	if queueBody.Count != 2 || len(queueBody.Items) != 5 || len(queueBody.Inboxes) != 1 || queueBody.Inboxes[0].Count != 1 ||
+		strings.Join(queueBody.Items[0].Inboxes, ",") != "review" {
+		t.Fatal(w.Body.String())
+	}
+	// Unreadable inboxes leave the queue, with no inbox holding anything.
+	inboxFailure = errors.New("unreadable")
+	if body := get("GET", "/api/inbox").Body.String(); !strings.Contains(body, `"inboxes":null`) || !strings.Contains(body, `"count":2`) {
+		t.Fatal(body)
+	}
+	var draft Draft
+	if err := json.Unmarshal(get("GET", "/api/inbox?query=waiting%3Dreview").Body.Bytes(), &draft); err != nil ||
+		draft.Problem != "" || strings.Join(draft.Matches, ",") != "acme/a#1" {
+		t.Fatal(draft, err)
+	}
+	if err := json.Unmarshal(get("GET", "/api/inbox?query=repo%3D").Body.Bytes(), &draft); err != nil ||
+		draft.Problem == "" || len(draft.Matches) != 5 {
+		t.Fatal(draft, err)
+	}
+	if w := get("GET", "/api/inbox?query="+strings.Repeat("a", maxDraft+1)); w.Code != http.StatusRequestEntityTooLarge {
+		t.Fatal(w.Code)
+	}
+	if w := get("POST", "/api/inbox"); w.Code != http.StatusMethodNotAllowed {
+		t.Fatal(w.Code)
 	}
 }

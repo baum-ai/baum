@@ -67,10 +67,13 @@ import { phaseText, type FixState } from "./fix";
 import {
   COLOR_NAMES,
   foldedQuery,
+  holds,
   INBOX_COLORS,
   withQuery,
   inboxesOf,
   nameProblem,
+  useHeld,
+  type Held,
   type Inbox,
   type InboxColor,
 } from "./inboxes";
@@ -853,10 +856,11 @@ function useReviewDocument(entry: Entry | undefined, clone: string, job: Job | u
 /** The row's inboxes, in the sidebar's order. A pull request an agent is
  *  fixing is in those that take a fix; one that waits on others is in those
  *  that ask for no kind of work. */
-function rowInboxes(row: Row, inboxes: Inbox[]) {
+function rowInboxes(row: Row, inboxes: Inbox[], held: Held | null) {
   return inboxesOf(
     row.item ?? (row.job ? { kind: "fix" as const, entry: row.entry } : { entry: row.entry }),
     inboxes,
+    held,
   );
 }
 
@@ -1002,6 +1006,7 @@ function InboxHeadEdit({
 export function UpNextPage({
   inbox: all,
   inboxes = [],
+  held = null,
   selected: scope,
   onEdit,
   loading,
@@ -1028,6 +1033,8 @@ export function UpNextPage({
   jobs?: Job[];
   /** All of the person's inboxes, for the tags. */
   inboxes?: Inbox[];
+  /** Which inboxes hold each pull request, as the daemon matched them. */
+  held?: Held | null;
   /** The review groups and stacks, whose shown members the list nests under one row. */
   reviewGroups?: ReviewGroup[];
   /** The saved inbox whose queue this is. */
@@ -1109,8 +1116,9 @@ export function UpNextPage({
     window.addEventListener("keydown", create);
     return () => window.removeEventListener("keydown", create);
   }, [query, saveAsInbox, scope]);
-  const inScope = (item: { kind?: QueueKind; entry: Entry }) =>
-    matchesQuery(query, item.entry, item.kind);
+  // The daemon says what the filter holds, asked again as it changes.
+  const view = useHeld(held, [query]);
+  const inScope = (item: { kind?: QueueKind; entry: Entry }) => holds(view, query, item);
   const queue = all.queue.filter(inScope);
   const snoozed = all.snoozed.filter(inScope);
   const fixing = all.fixing.filter(({ entry }) => inScope({ kind: "fix", entry }));
@@ -1120,8 +1128,8 @@ export function UpNextPage({
     const entry = (item.last as Entry | undefined) ?? item.entry;
     return entry ? matchesQuery(query, entry, item.kind) : !parseQuery(query).expr;
   });
-  const waiting = all.waiting.filter((entry) => matchesQuery(query, entry));
-  const others = all.others.filter((entry) => matchesQuery(query, entry, "other"));
+  const waiting = all.waiting.filter((entry) => inScope({ entry }));
+  const others = all.others.filter((entry) => inScope({ kind: "other", entry }));
   // What the filter's counts and values come from: the whole queue, each
   // pull request with what it waits for.
   const kinds = new Map<Entry, QueueKind>([
@@ -1458,7 +1466,8 @@ export function UpNextPage({
       },
     },
   ];
-  const alsoIn = (row: Row) => rowInboxes(row, inboxes).filter((other) => other.id !== scope.id);
+  const alsoIn = (row: Row) =>
+    rowInboxes(row, inboxes, view).filter((other) => other.id !== scope.id);
   const saveOptions: SaveOption[] =
     !filtering || queryProblem(query)
       ? []
@@ -1483,7 +1492,9 @@ export function UpNextPage({
           { label: "Discard changes", onSelect: () => quick.reset() },
         ];
   // What the filter hides: of the inbox's own, in a saved inbox.
-  const hidden = unfiltered.filter((entry) => matchesQuery(saved, entry, kinds.get(entry))).length;
+  const hidden = unfiltered.filter((entry) =>
+    holds(view, saved, { entry, kind: kinds.get(entry) }),
+  ).length;
   // The filter offers every repository, organization, author and branch
   // known, not only those of what the inbox holds now.
   const known = { entries, repositories };

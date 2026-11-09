@@ -2708,13 +2708,20 @@ event: it gets a `reset` and then only new events.
 
 `GET /api/index?view=waiting` answers `{"waiting":N}`, the number of pull
 requests in the app's Inbox, which is what the desktop app polls for its tray
-icon, tray text and dock badge. `internal/inboxcount` counts it on each request
+icon, tray text and dock badge. `internal/inboxqueue` counts it on each request
 from the cached index, the job queue, the stack groups and the saved `inbox`
 ui-state, with the app's queue rules: each open pull request asking for the
 user's review, and each of their own with something to fix, merge or update
 and no fix running, once across clones, less stacked pull requests that must
-wait to merge and snoozed ones. It does not apply saved inboxes that leave
-the badge, so with such an inbox it can be higher than the app's badge.
+wait to merge and snoozed ones. Saved inboxes and their badge switches play
+no part, as in the app's Inbox total.
+
+`GET /api/inbox` answers the same queue with which saved inboxes hold each
+open pull request (`{count, items: [{key, kind, fixing, snoozed, inboxes}],
+inboxes: [{id, query, count}]}`), matched with `internal/prfilter`, the Go
+twin of the app's filter language; `?query=Q` answers which pull requests a
+query not saved yet holds (`{query, problem, matches}`). The app reads it with
+the index and matches nothing itself while the daemon has answered.
 
 Version image copies use an additive `attachments` table keyed by repository,
 PR, immutable version and attachment ID, committed atomically by `Store.Put`.

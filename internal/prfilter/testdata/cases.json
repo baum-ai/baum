@@ -1,0 +1,5073 @@
+{
+ "entries": {
+  "a_plain": {
+   "pull_request": {
+    "repository": "acme/app",
+    "number": 1,
+    "head_sha": "abc1",
+    "head_ref": "h1",
+    "base_ref": "main",
+    "additions": 1,
+    "deletions": 1,
+    "changed_files": 1,
+    "title": "Fix flaky login test",
+    "url": "https://example.test/1",
+    "author": "alice",
+    "author_bot": false,
+    "state": "OPEN",
+    "draft": false,
+    "fork": false,
+    "authored_by_me": false,
+    "review_requested_from_me": false,
+    "assigned_to_me": false,
+    "assigned": false,
+    "review_requested": false,
+    "team_membership_known": true,
+    "review": "",
+    "checks": "",
+    "merge": "",
+    "behind": false,
+    "unresolved": null,
+    "unresolved_capped": false
+   },
+   "status": "ready",
+   "version_count": 1,
+   "latest": null,
+   "historical": false,
+   "stale": false,
+   "review": "approved",
+   "merge": "ready",
+   "checks": "passing",
+   "review_minutes": null,
+   "unresolved": null,
+   "unresolved_capped": false,
+   "risk_score": {
+    "score": 2,
+    "status": "scored"
+   }
+  },
+  "b_draft": {
+   "pull_request": {
+    "repository": "acme/app",
+    "number": 2,
+    "head_sha": "abc2",
+    "head_ref": "h2",
+    "base_ref": "main",
+    "additions": 1,
+    "deletions": 1,
+    "changed_files": 1,
+    "title": "Draft: new billing",
+    "url": "https://example.test/2",
+    "author": "bob",
+    "author_bot": false,
+    "state": "OPEN",
+    "draft": true,
+    "fork": false,
+    "authored_by_me": false,
+    "review_requested_from_me": false,
+    "assigned_to_me": false,
+    "assigned": false,
+    "review_requested": false,
+    "team_membership_known": true,
+    "review": "",
+    "checks": "",
+    "merge": "",
+    "behind": false,
+    "unresolved": null,
+    "unresolved_capped": false
+   },
+   "status": "ready",
+   "version_count": 1,
+   "latest": null,
+   "historical": false,
+   "stale": false,
+   "review": "",
+   "merge": "blocked",
+   "checks": "running",
+   "review_minutes": null,
+   "unresolved": null,
+   "unresolved_capped": false,
+   "risk_score": null
+  },
+  "c_mine": {
+   "pull_request": {
+    "repository": "acme/web",
+    "number": 3,
+    "head_sha": "abc3",
+    "head_ref": "h3",
+    "base_ref": "release",
+    "additions": 1,
+    "deletions": 1,
+    "changed_files": 1,
+    "title": "Update README",
+    "url": "https://example.test/3",
+    "author": "alice",
+    "author_bot": false,
+    "state": "OPEN",
+    "draft": false,
+    "fork": false,
+    "authored_by_me": true,
+    "review_requested_from_me": false,
+    "assigned_to_me": true,
+    "assigned": true,
+    "review_requested": false,
+    "team_membership_known": true,
+    "review": "",
+    "checks": "",
+    "merge": "",
+    "behind": false,
+    "unresolved": null,
+    "unresolved_capped": false
+   },
+   "status": "ready",
+   "version_count": 1,
+   "latest": null,
+   "historical": false,
+   "stale": false,
+   "review": "",
+   "merge": "conflict",
+   "checks": "failing",
+   "review_minutes": null,
+   "unresolved": null,
+   "unresolved_capped": false,
+   "risk_score": {
+    "score": 4,
+    "status": "scored"
+   }
+  },
+  "d_review_me": {
+   "pull_request": {
+    "repository": "other/Lib",
+    "number": 4,
+    "head_sha": "abc4",
+    "head_ref": "h4",
+    "base_ref": "main",
+    "additions": 1,
+    "deletions": 1,
+    "changed_files": 1,
+    "title": "Add retry to client",
+    "url": "https://example.test/4",
+    "author": "carol",
+    "author_bot": false,
+    "state": "OPEN",
+    "draft": false,
+    "fork": false,
+    "authored_by_me": false,
+    "review_requested_from_me": true,
+    "assigned_to_me": false,
+    "assigned": false,
+    "review_requested": true,
+    "team_membership_known": true,
+    "review": "",
+    "checks": "",
+    "merge": "",
+    "behind": true,
+    "unresolved": null,
+    "unresolved_capped": false
+   },
+   "status": "ready",
+   "version_count": 1,
+   "latest": null,
+   "historical": false,
+   "stale": false,
+   "review": "changes_requested",
+   "merge": "blocked",
+   "checks": "none",
+   "review_minutes": null,
+   "unresolved": null,
+   "unresolved_capped": false,
+   "risk_score": {
+    "score": 5,
+    "status": "scored"
+   }
+  },
+  "e_bot": {
+   "pull_request": {
+    "repository": "acme/app",
+    "number": 5,
+    "head_sha": "abc5",
+    "head_ref": "h5",
+    "base_ref": "main",
+    "additions": 1,
+    "deletions": 1,
+    "changed_files": 1,
+    "title": "Bump lodash",
+    "url": "https://example.test/5",
+    "author": "dependabot[bot]",
+    "author_bot": true,
+    "state": "CLOSED",
+    "draft": false,
+    "fork": false,
+    "authored_by_me": false,
+    "review_requested_from_me": false,
+    "assigned_to_me": false,
+    "assigned": false,
+    "review_requested": false,
+    "team_membership_known": true,
+    "review": "",
+    "checks": "",
+    "merge": "",
+    "behind": false,
+    "unresolved": null,
+    "unresolved_capped": false
+   },
+   "status": "ready",
+   "version_count": 1,
+   "latest": null,
+   "historical": false,
+   "stale": false,
+   "review": "",
+   "merge": "",
+   "checks": "",
+   "review_minutes": null,
+   "unresolved": null,
+   "unresolved_capped": false
+  },
+  "f_ghe": {
+   "pull_request": {
+    "repository": "ghe.example.com/acme/tools",
+    "number": 6,
+    "head_sha": "abc6",
+    "head_ref": "h6",
+    "base_ref": "main",
+    "additions": 1,
+    "deletions": 1,
+    "changed_files": 1,
+    "title": "GHE thing",
+    "url": "https://example.test/6",
+    "author": "Dana",
+    "author_bot": false,
+    "state": "",
+    "draft": false,
+    "fork": false,
+    "authored_by_me": false,
+    "review_requested_from_me": false,
+    "assigned_to_me": false,
+    "assigned": true,
+    "review_requested": true,
+    "team_membership_known": true,
+    "review": "",
+    "checks": "",
+    "merge": "",
+    "behind": false,
+    "unresolved": null,
+    "unresolved_capped": false
+   },
+   "status": "ready",
+   "version_count": 1,
+   "latest": null,
+   "historical": false,
+   "stale": false,
+   "review": "none",
+   "merge": "ready",
+   "checks": "passing",
+   "review_minutes": null,
+   "unresolved": null,
+   "unresolved_capped": false,
+   "risk_score": {
+    "score": 1,
+    "status": "scored"
+   }
+  },
+  "g_unicode": {
+   "pull_request": {
+    "repository": "Org-é/Ápp",
+    "number": 12,
+    "head_sha": "abc12",
+    "head_ref": "h12",
+    "base_ref": "main",
+    "additions": 1,
+    "deletions": 1,
+    "changed_files": 1,
+    "title": "Ünïcode 修正 tést",
+    "url": "https://example.test/12",
+    "author": "Zoë",
+    "author_bot": false,
+    "state": "OPEN",
+    "draft": false,
+    "fork": false,
+    "authored_by_me": false,
+    "review_requested_from_me": false,
+    "assigned_to_me": false,
+    "assigned": false,
+    "review_requested": false,
+    "team_membership_known": true,
+    "review": "",
+    "checks": "",
+    "merge": "",
+    "behind": false,
+    "unresolved": null,
+    "unresolved_capped": false
+   },
+   "status": "ready",
+   "version_count": 1,
+   "latest": null,
+   "historical": false,
+   "stale": false,
+   "review": "approved",
+   "merge": "behind",
+   "checks": "none",
+   "review_minutes": null,
+   "unresolved": null,
+   "unresolved_capped": false,
+   "risk_score": {
+    "score": 3,
+    "status": "scored"
+   }
+  },
+  "h_minimal": {
+   "pull_request": {
+    "repository": "acme/min",
+    "number": 9,
+    "title": "Minimal",
+    "state": "OPEN"
+   },
+   "checks": "",
+   "risk_score": {
+    "score": null,
+    "status": "pending"
+   }
+  },
+  "i_quotes": {
+   "pull_request": {
+    "repository": "acme/app",
+    "number": 100,
+    "head_sha": "abc100",
+    "head_ref": "h100",
+    "base_ref": "feature/x",
+    "additions": 1,
+    "deletions": 1,
+    "changed_files": 1,
+    "title": "Say \"hello\" (world), ok",
+    "url": "https://example.test/100",
+    "author": "alice",
+    "author_bot": false,
+    "state": "OPEN",
+    "draft": false,
+    "fork": false,
+    "authored_by_me": false,
+    "review_requested_from_me": false,
+    "assigned_to_me": false,
+    "assigned": false,
+    "review_requested": false,
+    "team_membership_known": true,
+    "review": "",
+    "checks": "",
+    "merge": "",
+    "behind": false,
+    "unresolved": null,
+    "unresolved_capped": false
+   },
+   "status": "ready",
+   "version_count": 1,
+   "latest": null,
+   "historical": false,
+   "stale": false,
+   "review": "",
+   "merge": "ready",
+   "checks": "passing",
+   "review_minutes": null,
+   "unresolved": null,
+   "unresolved_capped": false,
+   "risk_score": {
+    "score": 3,
+    "status": "scored"
+   }
+  },
+  "j_space": {
+   "pull_request": {
+    "repository": "acme/Docs",
+    "number": 7,
+    "head_sha": "abc7",
+    "head_ref": "h7",
+    "base_ref": "main",
+    "additions": 1,
+    "deletions": 1,
+    "changed_files": 1,
+    "title": "non breaking﻿title two　words",
+    "url": "https://example.test/7",
+    "author": "ALICE",
+    "author_bot": false,
+    "state": "OPEN",
+    "draft": false,
+    "fork": false,
+    "authored_by_me": false,
+    "review_requested_from_me": false,
+    "assigned_to_me": false,
+    "assigned": false,
+    "review_requested": false,
+    "team_membership_known": true,
+    "review": "",
+    "checks": "",
+    "merge": "",
+    "behind": false,
+    "unresolved": null,
+    "unresolved_capped": false
+   },
+   "status": "ready",
+   "version_count": 1,
+   "latest": null,
+   "historical": false,
+   "stale": false,
+   "review": "changes_requested",
+   "merge": "conflict",
+   "checks": "failing",
+   "review_minutes": null,
+   "unresolved": null,
+   "unresolved_capped": false,
+   "risk_score": {
+    "score": 5,
+    "status": "scored"
+   }
+  },
+  "k_emoji": {
+   "pull_request": {
+    "repository": "acme/app",
+    "number": 8,
+    "head_sha": "abc8",
+    "head_ref": "h8",
+    "base_ref": "main",
+    "additions": 1,
+    "deletions": 1,
+    "changed_files": 1,
+    "title": "Emoji 🎉 party",
+    "url": "https://example.test/8",
+    "author": "alice",
+    "author_bot": false,
+    "state": "OPEN",
+    "draft": false,
+    "fork": false,
+    "authored_by_me": false,
+    "review_requested_from_me": false,
+    "assigned_to_me": false,
+    "assigned": false,
+    "review_requested": false,
+    "team_membership_known": true,
+    "review": "",
+    "checks": "",
+    "merge": "",
+    "behind": false,
+    "unresolved": null,
+    "unresolved_capped": false
+   },
+   "status": "ready",
+   "version_count": 1,
+   "latest": null,
+   "historical": false,
+   "stale": false,
+   "review": "",
+   "merge": "blocked",
+   "checks": "running",
+   "review_minutes": null,
+   "unresolved": null,
+   "unresolved_capped": false,
+   "risk_score": {
+    "score": 2,
+    "status": "scored"
+   }
+  },
+  "l_nullscore": {
+   "pull_request": {
+    "repository": "acme/web",
+    "number": 10,
+    "head_sha": "abc10",
+    "head_ref": "h10",
+    "base_ref": "main",
+    "additions": 1,
+    "deletions": 1,
+    "changed_files": 1,
+    "title": "Score missing",
+    "url": "https://example.test/10",
+    "author": "alice",
+    "author_bot": false,
+    "state": "OPEN",
+    "draft": false,
+    "fork": false,
+    "authored_by_me": false,
+    "review_requested_from_me": false,
+    "assigned_to_me": false,
+    "assigned": false,
+    "review_requested": false,
+    "team_membership_known": true,
+    "review": "",
+    "checks": "",
+    "merge": "",
+    "behind": false,
+    "unresolved": null,
+    "unresolved_capped": false
+   },
+   "status": "ready",
+   "version_count": 1,
+   "latest": null,
+   "historical": false,
+   "stale": false,
+   "review": "approved",
+   "merge": "ready",
+   "checks": "passing",
+   "review_minutes": null,
+   "unresolved": null,
+   "unresolved_capped": false,
+   "risk_score": {
+    "status": "pending"
+   }
+  }
+ },
+ "queries": [
+  {
+   "query": "repo=acme/app",
+   "matches": [
+    "a_plain",
+    "b_draft",
+    "e_bot",
+    "i_quotes",
+    "k_emoji"
+   ]
+  },
+  {
+   "query": "repo=app",
+   "matches": [
+    "a_plain",
+    "b_draft",
+    "e_bot",
+    "i_quotes",
+    "k_emoji"
+   ]
+  },
+  {
+   "query": "repo=APP",
+   "matches": [
+    "a_plain",
+    "b_draft",
+    "e_bot",
+    "i_quotes",
+    "k_emoji"
+   ]
+  },
+  {
+   "query": "repo=acme/APP",
+   "matches": [
+    "a_plain",
+    "b_draft",
+    "e_bot",
+    "i_quotes",
+    "k_emoji"
+   ]
+  },
+  {
+   "query": "repo:acme/web",
+   "matches": [
+    "c_mine",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "repo=ghe.example.com/acme/tools",
+   "matches": [
+    "f_ghe"
+   ]
+  },
+  {
+   "query": "repo=tools",
+   "matches": [
+    "f_ghe"
+   ]
+  },
+  {
+   "query": "repo=acme/tools",
+   "matches": []
+  },
+  {
+   "query": "repo=lib",
+   "matches": [
+    "d_review_me"
+   ]
+  },
+  {
+   "query": "repo=other/lib",
+   "matches": [
+    "d_review_me"
+   ]
+  },
+  {
+   "query": "repo=ápp",
+   "matches": [
+    "g_unicode"
+   ]
+  },
+  {
+   "query": "repo=Org-é/Ápp",
+   "matches": [
+    "g_unicode"
+   ]
+  },
+  {
+   "query": "repo=docs",
+   "matches": [
+    "j_space"
+   ]
+  },
+  {
+   "query": "repo!=app",
+   "matches": [
+    "c_mine",
+    "d_review_me",
+    "f_ghe",
+    "g_unicode",
+    "h_minimal",
+    "j_space",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "repo=app,web",
+   "matches": [
+    "a_plain",
+    "b_draft",
+    "c_mine",
+    "e_bot",
+    "i_quotes",
+    "k_emoji",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "repo!=app,web",
+   "matches": [
+    "d_review_me",
+    "f_ghe",
+    "g_unicode",
+    "h_minimal",
+    "j_space"
+   ]
+  },
+  {
+   "query": "org=acme",
+   "matches": [
+    "a_plain",
+    "b_draft",
+    "c_mine",
+    "e_bot",
+    "f_ghe",
+    "h_minimal",
+    "i_quotes",
+    "j_space",
+    "k_emoji",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "org=ACME",
+   "matches": [
+    "a_plain",
+    "b_draft",
+    "c_mine",
+    "e_bot",
+    "f_ghe",
+    "h_minimal",
+    "i_quotes",
+    "j_space",
+    "k_emoji",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "org=other",
+   "matches": [
+    "d_review_me"
+   ]
+  },
+  {
+   "query": "org=ghe.example.com",
+   "matches": []
+  },
+  {
+   "query": "org=acme/app",
+   "matches": []
+  },
+  {
+   "query": "org=org-é",
+   "matches": [
+    "g_unicode"
+   ]
+  },
+  {
+   "query": "org!=acme",
+   "matches": [
+    "d_review_me",
+    "g_unicode"
+   ]
+  },
+  {
+   "query": "org=acme,other",
+   "matches": [
+    "a_plain",
+    "b_draft",
+    "c_mine",
+    "d_review_me",
+    "e_bot",
+    "f_ghe",
+    "h_minimal",
+    "i_quotes",
+    "j_space",
+    "k_emoji",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "author=alice",
+   "matches": [
+    "a_plain",
+    "c_mine",
+    "i_quotes",
+    "j_space",
+    "k_emoji",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "author=ALICE",
+   "matches": [
+    "a_plain",
+    "c_mine",
+    "i_quotes",
+    "j_space",
+    "k_emoji",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "author=@me",
+   "matches": [
+    "c_mine"
+   ]
+  },
+  {
+   "query": "author=@ME",
+   "matches": [
+    "c_mine"
+   ]
+  },
+  {
+   "query": "author!=@me",
+   "matches": [
+    "a_plain",
+    "b_draft",
+    "d_review_me",
+    "e_bot",
+    "f_ghe",
+    "g_unicode",
+    "h_minimal",
+    "i_quotes",
+    "j_space",
+    "k_emoji",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "author=dependabot[bot]",
+   "matches": [
+    "e_bot"
+   ]
+  },
+  {
+   "query": "author=zoë",
+   "matches": [
+    "g_unicode"
+   ]
+  },
+  {
+   "query": "author=bob,carol",
+   "matches": [
+    "b_draft",
+    "d_review_me"
+   ]
+  },
+  {
+   "query": "author!=alice",
+   "matches": [
+    "b_draft",
+    "d_review_me",
+    "e_bot",
+    "f_ghe",
+    "g_unicode",
+    "h_minimal"
+   ]
+  },
+  {
+   "query": "author=nobody",
+   "matches": []
+  },
+  {
+   "query": "assignee=@me",
+   "matches": [
+    "c_mine"
+   ]
+  },
+  {
+   "query": "assignee=none",
+   "matches": [
+    "a_plain",
+    "b_draft",
+    "d_review_me",
+    "e_bot",
+    "g_unicode",
+    "h_minimal",
+    "i_quotes",
+    "j_space",
+    "k_emoji",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "assignee!=none",
+   "matches": [
+    "c_mine",
+    "f_ghe"
+   ]
+  },
+  {
+   "query": "assignee!=@me",
+   "matches": [
+    "a_plain",
+    "b_draft",
+    "d_review_me",
+    "e_bot",
+    "f_ghe",
+    "g_unicode",
+    "h_minimal",
+    "i_quotes",
+    "j_space",
+    "k_emoji",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "assignee=@ME,none",
+   "matches": [
+    "a_plain",
+    "b_draft",
+    "c_mine",
+    "d_review_me",
+    "e_bot",
+    "g_unicode",
+    "h_minimal",
+    "i_quotes",
+    "j_space",
+    "k_emoji",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "review-requested=@me",
+   "matches": [
+    "d_review_me"
+   ]
+  },
+  {
+   "query": "review-requested=none",
+   "matches": [
+    "a_plain",
+    "b_draft",
+    "c_mine",
+    "e_bot",
+    "g_unicode",
+    "h_minimal",
+    "i_quotes",
+    "j_space",
+    "k_emoji",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "review-requested!=none",
+   "matches": [
+    "d_review_me",
+    "f_ghe"
+   ]
+  },
+  {
+   "query": "review-requested!=@me",
+   "matches": [
+    "a_plain",
+    "b_draft",
+    "c_mine",
+    "e_bot",
+    "f_ghe",
+    "g_unicode",
+    "h_minimal",
+    "i_quotes",
+    "j_space",
+    "k_emoji",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "Review-Requested=@me",
+   "matches": [
+    "d_review_me"
+   ]
+  },
+  {
+   "query": "review=approved",
+   "matches": [
+    "a_plain",
+    "g_unicode",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "review=changes_requested",
+   "matches": [
+    "d_review_me",
+    "j_space"
+   ]
+  },
+  {
+   "query": "review=none",
+   "matches": [
+    "b_draft",
+    "c_mine",
+    "e_bot",
+    "f_ghe",
+    "h_minimal",
+    "i_quotes",
+    "k_emoji"
+   ]
+  },
+  {
+   "query": "review=NONE",
+   "matches": [
+    "b_draft",
+    "c_mine",
+    "e_bot",
+    "f_ghe",
+    "h_minimal",
+    "i_quotes",
+    "k_emoji"
+   ]
+  },
+  {
+   "query": "review!=approved",
+   "matches": [
+    "b_draft",
+    "c_mine",
+    "d_review_me",
+    "e_bot",
+    "f_ghe",
+    "h_minimal",
+    "i_quotes",
+    "j_space",
+    "k_emoji"
+   ]
+  },
+  {
+   "query": "review!=none",
+   "matches": [
+    "a_plain",
+    "d_review_me",
+    "g_unicode",
+    "j_space",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "review=approved,changes_requested",
+   "matches": [
+    "a_plain",
+    "d_review_me",
+    "g_unicode",
+    "j_space",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "checks=passing",
+   "matches": [
+    "a_plain",
+    "f_ghe",
+    "i_quotes",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "checks=failing",
+   "matches": [
+    "c_mine",
+    "j_space"
+   ]
+  },
+  {
+   "query": "checks=running",
+   "matches": [
+    "b_draft",
+    "k_emoji"
+   ]
+  },
+  {
+   "query": "checks=none",
+   "matches": [
+    "d_review_me",
+    "e_bot",
+    "g_unicode",
+    "h_minimal"
+   ]
+  },
+  {
+   "query": "checks!=passing",
+   "matches": [
+    "b_draft",
+    "c_mine",
+    "d_review_me",
+    "e_bot",
+    "g_unicode",
+    "h_minimal",
+    "j_space",
+    "k_emoji"
+   ]
+  },
+  {
+   "query": "checks!=none",
+   "matches": [
+    "a_plain",
+    "b_draft",
+    "c_mine",
+    "f_ghe",
+    "i_quotes",
+    "j_space",
+    "k_emoji",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "checks=passing,failing",
+   "matches": [
+    "a_plain",
+    "c_mine",
+    "f_ghe",
+    "i_quotes",
+    "j_space",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "is=draft",
+   "matches": [
+    "b_draft"
+   ]
+  },
+  {
+   "query": "is=mergeable",
+   "matches": [
+    "a_plain",
+    "f_ghe",
+    "i_quotes",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "is=conflict",
+   "matches": [
+    "c_mine",
+    "j_space"
+   ]
+  },
+  {
+   "query": "is=blocked",
+   "matches": [
+    "b_draft",
+    "d_review_me",
+    "k_emoji"
+   ]
+  },
+  {
+   "query": "is=behind",
+   "matches": [
+    "d_review_me"
+   ]
+  },
+  {
+   "query": "is=bot",
+   "matches": [
+    "e_bot"
+   ]
+  },
+  {
+   "query": "is!=draft",
+   "matches": [
+    "a_plain",
+    "c_mine",
+    "d_review_me",
+    "e_bot",
+    "f_ghe",
+    "g_unicode",
+    "h_minimal",
+    "i_quotes",
+    "j_space",
+    "k_emoji",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "is!=bot",
+   "matches": [
+    "a_plain",
+    "b_draft",
+    "c_mine",
+    "d_review_me",
+    "f_ghe",
+    "g_unicode",
+    "h_minimal",
+    "i_quotes",
+    "j_space",
+    "k_emoji",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "is!=bot,draft",
+   "matches": [
+    "a_plain",
+    "c_mine",
+    "d_review_me",
+    "f_ghe",
+    "g_unicode",
+    "h_minimal",
+    "i_quotes",
+    "j_space",
+    "k_emoji",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "is=draft,bot",
+   "matches": [
+    "b_draft",
+    "e_bot"
+   ]
+  },
+  {
+   "query": "IS=Draft",
+   "matches": [
+    "b_draft"
+   ]
+  },
+  {
+   "query": "risk=3",
+   "matches": [
+    "g_unicode",
+    "i_quotes"
+   ]
+  },
+  {
+   "query": "risk:3",
+   "matches": [
+    "g_unicode",
+    "i_quotes"
+   ]
+  },
+  {
+   "query": "risk!=3",
+   "matches": [
+    "a_plain",
+    "b_draft",
+    "c_mine",
+    "d_review_me",
+    "e_bot",
+    "f_ghe",
+    "h_minimal",
+    "j_space",
+    "k_emoji",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "risk>=3",
+   "matches": [
+    "c_mine",
+    "d_review_me",
+    "g_unicode",
+    "i_quotes",
+    "j_space"
+   ]
+  },
+  {
+   "query": "risk:>=3",
+   "matches": [
+    "c_mine",
+    "d_review_me",
+    "g_unicode",
+    "i_quotes",
+    "j_space"
+   ]
+  },
+  {
+   "query": "risk<=2",
+   "matches": [
+    "a_plain",
+    "f_ghe",
+    "k_emoji"
+   ]
+  },
+  {
+   "query": "risk:<=2",
+   "matches": [
+    "a_plain",
+    "f_ghe",
+    "k_emoji"
+   ]
+  },
+  {
+   "query": "risk>3",
+   "matches": [
+    "c_mine",
+    "d_review_me",
+    "j_space"
+   ]
+  },
+  {
+   "query": "risk:>3",
+   "matches": [
+    "c_mine",
+    "d_review_me",
+    "j_space"
+   ]
+  },
+  {
+   "query": "risk<3",
+   "matches": [
+    "a_plain",
+    "f_ghe",
+    "k_emoji"
+   ]
+  },
+  {
+   "query": "risk:<3",
+   "matches": [
+    "a_plain",
+    "f_ghe",
+    "k_emoji"
+   ]
+  },
+  {
+   "query": "risk>=5",
+   "matches": [
+    "d_review_me",
+    "j_space"
+   ]
+  },
+  {
+   "query": "risk<1",
+   "matches": []
+  },
+  {
+   "query": "risk=none",
+   "matches": [
+    "b_draft",
+    "e_bot",
+    "h_minimal",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "risk!=none",
+   "matches": [
+    "a_plain",
+    "c_mine",
+    "d_review_me",
+    "f_ghe",
+    "g_unicode",
+    "i_quotes",
+    "j_space",
+    "k_emoji"
+   ]
+  },
+  {
+   "query": "risk=1,5",
+   "matches": [
+    "d_review_me",
+    "f_ghe",
+    "j_space"
+   ]
+  },
+  {
+   "query": "risk>=3,5",
+   "matches": [
+    "c_mine",
+    "d_review_me",
+    "g_unicode",
+    "i_quotes",
+    "j_space"
+   ]
+  },
+  {
+   "query": "risk:>=4",
+   "matches": [
+    "c_mine",
+    "d_review_me",
+    "j_space"
+   ]
+  },
+  {
+   "query": "risk>=1",
+   "matches": [
+    "a_plain",
+    "c_mine",
+    "d_review_me",
+    "f_ghe",
+    "g_unicode",
+    "i_quotes",
+    "j_space",
+    "k_emoji"
+   ]
+  },
+  {
+   "query": "risk<=5",
+   "matches": [
+    "a_plain",
+    "c_mine",
+    "d_review_me",
+    "f_ghe",
+    "g_unicode",
+    "i_quotes",
+    "j_space",
+    "k_emoji"
+   ]
+  },
+  {
+   "query": "base=main",
+   "matches": [
+    "a_plain",
+    "b_draft",
+    "d_review_me",
+    "e_bot",
+    "f_ghe",
+    "g_unicode",
+    "j_space",
+    "k_emoji",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "base=MAIN",
+   "matches": [
+    "a_plain",
+    "b_draft",
+    "d_review_me",
+    "e_bot",
+    "f_ghe",
+    "g_unicode",
+    "j_space",
+    "k_emoji",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "base=release",
+   "matches": [
+    "c_mine"
+   ]
+  },
+  {
+   "query": "base=feature/x",
+   "matches": [
+    "i_quotes"
+   ]
+  },
+  {
+   "query": "base!=main",
+   "matches": [
+    "c_mine",
+    "h_minimal",
+    "i_quotes"
+   ]
+  },
+  {
+   "query": "base=main,release",
+   "matches": [
+    "a_plain",
+    "b_draft",
+    "c_mine",
+    "d_review_me",
+    "e_bot",
+    "f_ghe",
+    "g_unicode",
+    "j_space",
+    "k_emoji",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "waiting=review",
+   "matches": []
+  },
+  {
+   "query": "waiting!=review",
+   "matches": [
+    "a_plain",
+    "b_draft",
+    "c_mine",
+    "d_review_me",
+    "e_bot",
+    "f_ghe",
+    "g_unicode",
+    "h_minimal",
+    "i_quotes",
+    "j_space",
+    "k_emoji",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "waiting=review,merge",
+   "matches": []
+  },
+  {
+   "query": "waiting=review",
+   "kind": "review",
+   "matches": [
+    "a_plain",
+    "b_draft",
+    "c_mine",
+    "d_review_me",
+    "e_bot",
+    "f_ghe",
+    "g_unicode",
+    "h_minimal",
+    "i_quotes",
+    "j_space",
+    "k_emoji",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "waiting=merge",
+   "kind": "review",
+   "matches": []
+  },
+  {
+   "query": "waiting=agent",
+   "kind": "review",
+   "matches": []
+  },
+  {
+   "query": "waiting=other",
+   "kind": "review",
+   "matches": []
+  },
+  {
+   "query": "waiting!=review",
+   "kind": "review",
+   "matches": []
+  },
+  {
+   "query": "waiting=review,merge",
+   "kind": "review",
+   "matches": [
+    "a_plain",
+    "b_draft",
+    "c_mine",
+    "d_review_me",
+    "e_bot",
+    "f_ghe",
+    "g_unicode",
+    "h_minimal",
+    "i_quotes",
+    "j_space",
+    "k_emoji",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "WAITING=Agent",
+   "kind": "review",
+   "matches": []
+  },
+  {
+   "query": "waiting=review",
+   "kind": "clone",
+   "matches": [
+    "a_plain",
+    "b_draft",
+    "c_mine",
+    "d_review_me",
+    "e_bot",
+    "f_ghe",
+    "g_unicode",
+    "h_minimal",
+    "i_quotes",
+    "j_space",
+    "k_emoji",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "waiting=agent",
+   "kind": "clone",
+   "matches": []
+  },
+  {
+   "query": "waiting=review",
+   "kind": "merge",
+   "matches": []
+  },
+  {
+   "query": "waiting=merge",
+   "kind": "merge",
+   "matches": [
+    "a_plain",
+    "b_draft",
+    "c_mine",
+    "d_review_me",
+    "e_bot",
+    "f_ghe",
+    "g_unicode",
+    "h_minimal",
+    "i_quotes",
+    "j_space",
+    "k_emoji",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "waiting=agent",
+   "kind": "merge",
+   "matches": []
+  },
+  {
+   "query": "waiting=other",
+   "kind": "merge",
+   "matches": []
+  },
+  {
+   "query": "waiting!=review",
+   "kind": "merge",
+   "matches": [
+    "a_plain",
+    "b_draft",
+    "c_mine",
+    "d_review_me",
+    "e_bot",
+    "f_ghe",
+    "g_unicode",
+    "h_minimal",
+    "i_quotes",
+    "j_space",
+    "k_emoji",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "waiting=review,merge",
+   "kind": "merge",
+   "matches": [
+    "a_plain",
+    "b_draft",
+    "c_mine",
+    "d_review_me",
+    "e_bot",
+    "f_ghe",
+    "g_unicode",
+    "h_minimal",
+    "i_quotes",
+    "j_space",
+    "k_emoji",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "WAITING=Agent",
+   "kind": "merge",
+   "matches": []
+  },
+  {
+   "query": "waiting=review",
+   "kind": "fix",
+   "matches": []
+  },
+  {
+   "query": "waiting=agent",
+   "kind": "fix",
+   "matches": [
+    "a_plain",
+    "b_draft",
+    "c_mine",
+    "d_review_me",
+    "e_bot",
+    "f_ghe",
+    "g_unicode",
+    "h_minimal",
+    "i_quotes",
+    "j_space",
+    "k_emoji",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "waiting=review",
+   "kind": "update",
+   "matches": []
+  },
+  {
+   "query": "waiting=agent",
+   "kind": "update",
+   "matches": [
+    "a_plain",
+    "b_draft",
+    "c_mine",
+    "d_review_me",
+    "e_bot",
+    "f_ghe",
+    "g_unicode",
+    "h_minimal",
+    "i_quotes",
+    "j_space",
+    "k_emoji",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "waiting=review",
+   "kind": "other",
+   "matches": []
+  },
+  {
+   "query": "waiting=merge",
+   "kind": "other",
+   "matches": []
+  },
+  {
+   "query": "waiting=agent",
+   "kind": "other",
+   "matches": []
+  },
+  {
+   "query": "waiting=other",
+   "kind": "other",
+   "matches": [
+    "a_plain",
+    "b_draft",
+    "c_mine",
+    "d_review_me",
+    "e_bot",
+    "f_ghe",
+    "g_unicode",
+    "h_minimal",
+    "i_quotes",
+    "j_space",
+    "k_emoji",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "waiting!=review",
+   "kind": "other",
+   "matches": [
+    "a_plain",
+    "b_draft",
+    "c_mine",
+    "d_review_me",
+    "e_bot",
+    "f_ghe",
+    "g_unicode",
+    "h_minimal",
+    "i_quotes",
+    "j_space",
+    "k_emoji",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "waiting=review,merge",
+   "kind": "other",
+   "matches": []
+  },
+  {
+   "query": "WAITING=Agent",
+   "kind": "other",
+   "matches": []
+  },
+  {
+   "query": "waiting=review",
+   "kind": "unknown",
+   "matches": []
+  },
+  {
+   "query": "waiting=other",
+   "kind": "unknown",
+   "matches": []
+  },
+  {
+   "query": "waiting=review is!=draft",
+   "kind": "review",
+   "matches": [
+    "a_plain",
+    "c_mine",
+    "d_review_me",
+    "e_bot",
+    "f_ghe",
+    "g_unicode",
+    "h_minimal",
+    "i_quotes",
+    "j_space",
+    "k_emoji",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "-waiting=review",
+   "kind": "review",
+   "matches": []
+  },
+  {
+   "query": "is=draft OR waiting=merge",
+   "kind": "merge",
+   "matches": [
+    "a_plain",
+    "b_draft",
+    "c_mine",
+    "d_review_me",
+    "e_bot",
+    "f_ghe",
+    "g_unicode",
+    "h_minimal",
+    "i_quotes",
+    "j_space",
+    "k_emoji",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "-is=draft",
+   "matches": [
+    "a_plain",
+    "c_mine",
+    "d_review_me",
+    "e_bot",
+    "f_ghe",
+    "g_unicode",
+    "h_minimal",
+    "i_quotes",
+    "j_space",
+    "k_emoji",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "-repo=app",
+   "matches": [
+    "c_mine",
+    "d_review_me",
+    "f_ghe",
+    "g_unicode",
+    "h_minimal",
+    "j_space",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "-risk>=3",
+   "matches": [
+    "a_plain",
+    "b_draft",
+    "e_bot",
+    "f_ghe",
+    "h_minimal",
+    "k_emoji",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "-(is=draft OR is=bot)",
+   "matches": [
+    "a_plain",
+    "c_mine",
+    "d_review_me",
+    "f_ghe",
+    "g_unicode",
+    "h_minimal",
+    "i_quotes",
+    "j_space",
+    "k_emoji",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "-(repo=app review=approved)",
+   "matches": [
+    "b_draft",
+    "c_mine",
+    "d_review_me",
+    "e_bot",
+    "f_ghe",
+    "g_unicode",
+    "h_minimal",
+    "i_quotes",
+    "j_space",
+    "k_emoji",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "-(-is=draft)",
+   "matches": [
+    "b_draft"
+   ]
+  },
+  {
+   "query": "- (is=draft)",
+   "matches": []
+  },
+  {
+   "query": "-(is=draft) -(is=bot)",
+   "matches": [
+    "a_plain",
+    "c_mine",
+    "d_review_me",
+    "f_ghe",
+    "g_unicode",
+    "h_minimal",
+    "i_quotes",
+    "j_space",
+    "k_emoji",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "is=draft OR is=bot",
+   "matches": [
+    "b_draft",
+    "e_bot"
+   ]
+  },
+  {
+   "query": "is=draft AND is=bot",
+   "matches": []
+  },
+  {
+   "query": "is=draft is=bot",
+   "matches": []
+  },
+  {
+   "query": "review=approved AND checks=passing",
+   "matches": [
+    "a_plain",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "review=approved checks=passing",
+   "matches": [
+    "a_plain",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "review=approved OR checks=failing",
+   "matches": [
+    "a_plain",
+    "c_mine",
+    "g_unicode",
+    "j_space",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "is=draft OR review=approved checks=passing",
+   "matches": [
+    "a_plain",
+    "b_draft",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "review=approved checks=passing OR is=draft",
+   "matches": [
+    "a_plain",
+    "b_draft",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "(is=draft OR review=approved) checks=passing",
+   "matches": [
+    "a_plain",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "is=draft OR (review=approved checks=passing)",
+   "matches": [
+    "a_plain",
+    "b_draft",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "((is=draft))",
+   "matches": [
+    "b_draft"
+   ]
+  },
+  {
+   "query": "(is=draft) OR (is=bot)",
+   "matches": [
+    "b_draft",
+    "e_bot"
+   ]
+  },
+  {
+   "query": "(repo=app OR repo=web) AND (risk>=3 OR is=draft)",
+   "matches": [
+    "b_draft",
+    "c_mine",
+    "i_quotes"
+   ]
+  },
+  {
+   "query": "a OR b OR c",
+   "matches": [
+    "a_plain",
+    "b_draft",
+    "c_mine",
+    "d_review_me",
+    "e_bot",
+    "f_ghe",
+    "g_unicode",
+    "h_minimal",
+    "i_quotes",
+    "j_space",
+    "k_emoji",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "is=draft AND is=bot AND repo=app",
+   "matches": []
+  },
+  {
+   "query": "is=draft AND OR is=bot",
+   "error": "OR needs a filter before it.",
+   "matches": [
+    "a_plain",
+    "b_draft",
+    "c_mine",
+    "d_review_me",
+    "e_bot",
+    "f_ghe",
+    "g_unicode",
+    "h_minimal",
+    "i_quotes",
+    "j_space",
+    "k_emoji",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "(repo=app OR repo=web) -is=draft",
+   "matches": [
+    "a_plain",
+    "c_mine",
+    "e_bot",
+    "i_quotes",
+    "k_emoji",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "flaky",
+   "matches": [
+    "a_plain"
+   ]
+  },
+  {
+   "query": "FLAKY",
+   "matches": [
+    "a_plain"
+   ]
+  },
+  {
+   "query": "login test",
+   "matches": [
+    "a_plain"
+   ]
+  },
+  {
+   "query": "\"login test\"",
+   "matches": [
+    "a_plain"
+   ]
+  },
+  {
+   "query": "\"Login Test\"",
+   "matches": [
+    "a_plain"
+   ]
+  },
+  {
+   "query": "readme",
+   "matches": [
+    "c_mine"
+   ]
+  },
+  {
+   "query": "acme",
+   "matches": [
+    "a_plain",
+    "b_draft",
+    "c_mine",
+    "e_bot",
+    "f_ghe",
+    "h_minimal",
+    "i_quotes",
+    "j_space",
+    "k_emoji",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "acme/app",
+   "matches": [
+    "a_plain",
+    "b_draft",
+    "e_bot",
+    "i_quotes",
+    "k_emoji"
+   ]
+  },
+  {
+   "query": "web",
+   "matches": [
+    "c_mine",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "#1",
+   "matches": [
+    "a_plain"
+   ]
+  },
+  {
+   "query": "#100",
+   "matches": [
+    "i_quotes"
+   ]
+  },
+  {
+   "query": "100",
+   "matches": [
+    "i_quotes"
+   ]
+  },
+  {
+   "query": "1",
+   "matches": [
+    "a_plain"
+   ]
+  },
+  {
+   "query": "#",
+   "matches": []
+  },
+  {
+   "query": "# 1",
+   "matches": []
+  },
+  {
+   "query": "9",
+   "matches": [
+    "h_minimal"
+   ]
+  },
+  {
+   "query": "#9",
+   "matches": [
+    "h_minimal"
+   ]
+  },
+  {
+   "query": "hello",
+   "matches": [
+    "i_quotes"
+   ]
+  },
+  {
+   "query": "\"hello\"",
+   "matches": [
+    "i_quotes"
+   ]
+  },
+  {
+   "query": "(world)",
+   "matches": [
+    "i_quotes"
+   ]
+  },
+  {
+   "query": "\"(world)\"",
+   "matches": [
+    "i_quotes"
+   ]
+  },
+  {
+   "query": "\"say \\\"hello\\\"\"",
+   "matches": []
+  },
+  {
+   "query": "\"Say \"hello\"",
+   "matches": []
+  },
+  {
+   "query": "ünïcode",
+   "matches": [
+    "g_unicode"
+   ]
+  },
+  {
+   "query": "ÜNÏCODE",
+   "matches": [
+    "g_unicode"
+   ]
+  },
+  {
+   "query": "修正",
+   "matches": [
+    "g_unicode"
+   ]
+  },
+  {
+   "query": "tést",
+   "matches": [
+    "g_unicode"
+   ]
+  },
+  {
+   "query": "\"修正 tést\"",
+   "matches": [
+    "g_unicode"
+   ]
+  },
+  {
+   "query": "Org-é",
+   "matches": [
+    "g_unicode"
+   ]
+  },
+  {
+   "query": "ápp",
+   "matches": [
+    "g_unicode"
+   ]
+  },
+  {
+   "query": "non breaking",
+   "matches": [
+    "j_space"
+   ]
+  },
+  {
+   "query": "non﻿breaking",
+   "matches": [
+    "j_space"
+   ]
+  },
+  {
+   "query": "two",
+   "matches": [
+    "j_space"
+   ]
+  },
+  {
+   "query": "🎉",
+   "matches": [
+    "k_emoji"
+   ]
+  },
+  {
+   "query": "\"🎉 party\"",
+   "matches": [
+    "k_emoji"
+   ]
+  },
+  {
+   "query": "party",
+   "matches": [
+    "k_emoji"
+   ]
+  },
+  {
+   "query": "min",
+   "matches": [
+    "h_minimal"
+   ]
+  },
+  {
+   "query": "minimal",
+   "matches": [
+    "h_minimal"
+   ]
+  },
+  {
+   "query": "-flaky",
+   "matches": [
+    "b_draft",
+    "c_mine",
+    "d_review_me",
+    "e_bot",
+    "f_ghe",
+    "g_unicode",
+    "h_minimal",
+    "i_quotes",
+    "j_space",
+    "k_emoji",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "-acme",
+   "matches": [
+    "d_review_me",
+    "g_unicode"
+   ]
+  },
+  {
+   "query": "-\"login test\"",
+   "matches": [
+    "b_draft",
+    "c_mine",
+    "d_review_me",
+    "e_bot",
+    "f_ghe",
+    "g_unicode",
+    "h_minimal",
+    "i_quotes",
+    "j_space",
+    "k_emoji",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "-\"x\"",
+   "matches": [
+    "b_draft",
+    "c_mine",
+    "d_review_me",
+    "e_bot",
+    "g_unicode",
+    "h_minimal",
+    "i_quotes",
+    "j_space",
+    "k_emoji",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "-#1",
+   "matches": [
+    "b_draft",
+    "c_mine",
+    "d_review_me",
+    "e_bot",
+    "f_ghe",
+    "g_unicode",
+    "h_minimal",
+    "i_quotes",
+    "j_space",
+    "k_emoji",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "-\"\"",
+   "error": "A - needs a filter after it.",
+   "matches": [
+    "a_plain",
+    "b_draft",
+    "c_mine",
+    "d_review_me",
+    "e_bot",
+    "f_ghe",
+    "g_unicode",
+    "h_minimal",
+    "i_quotes",
+    "j_space",
+    "k_emoji",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "\"\"",
+   "error": "A - needs a filter after it.",
+   "matches": [
+    "a_plain",
+    "b_draft",
+    "c_mine",
+    "d_review_me",
+    "e_bot",
+    "f_ghe",
+    "g_unicode",
+    "h_minimal",
+    "i_quotes",
+    "j_space",
+    "k_emoji",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "\"unclosed",
+   "matches": []
+  },
+  {
+   "query": "\"unclosed phrase",
+   "matches": []
+  },
+  {
+   "query": "flaky\"x",
+   "matches": []
+  },
+  {
+   "query": "fl\"ak\"y",
+   "matches": [
+    "a_plain"
+   ]
+  },
+  {
+   "query": "\"fl\"aky",
+   "matches": [
+    "a_plain"
+   ]
+  },
+  {
+   "query": "-",
+   "matches": [
+    "g_unicode"
+   ]
+  },
+  {
+   "query": "- flaky",
+   "matches": []
+  },
+  {
+   "query": "--flaky",
+   "matches": [
+    "a_plain",
+    "b_draft",
+    "c_mine",
+    "d_review_me",
+    "e_bot",
+    "f_ghe",
+    "g_unicode",
+    "h_minimal",
+    "i_quotes",
+    "j_space",
+    "k_emoji",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "a-b",
+   "matches": []
+  },
+  {
+   "query": "-a",
+   "matches": [
+    "g_unicode"
+   ]
+  },
+  {
+   "query": "repo",
+   "matches": []
+  },
+  {
+   "query": "repo=",
+   "error": "repo= needs a value.",
+   "matches": [
+    "a_plain",
+    "b_draft",
+    "c_mine",
+    "d_review_me",
+    "e_bot",
+    "f_ghe",
+    "g_unicode",
+    "h_minimal",
+    "i_quotes",
+    "j_space",
+    "k_emoji",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "review:",
+   "error": "review= needs a value.",
+   "matches": [
+    "a_plain",
+    "b_draft",
+    "c_mine",
+    "d_review_me",
+    "e_bot",
+    "f_ghe",
+    "g_unicode",
+    "h_minimal",
+    "i_quotes",
+    "j_space",
+    "k_emoji",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "notafield",
+   "matches": []
+  },
+  {
+   "query": "word:value",
+   "error": "Unknown filter \"word\". Try repo, org, author, assignee, review-requested, review, checks, is, waiting, risk, base.",
+   "matches": [
+    "a_plain",
+    "b_draft",
+    "c_mine",
+    "d_review_me",
+    "e_bot",
+    "f_ghe",
+    "g_unicode",
+    "h_minimal",
+    "i_quotes",
+    "j_space",
+    "k_emoji",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "http://x",
+   "error": "Unknown filter \"http\". Try repo, org, author, assignee, review-requested, review, checks, is, waiting, risk, base.",
+   "matches": [
+    "a_plain",
+    "b_draft",
+    "c_mine",
+    "d_review_me",
+    "e_bot",
+    "f_ghe",
+    "g_unicode",
+    "h_minimal",
+    "i_quotes",
+    "j_space",
+    "k_emoji",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "flaky review=approved",
+   "matches": [
+    "a_plain"
+   ]
+  },
+  {
+   "query": "login OR billing",
+   "matches": [
+    "a_plain",
+    "b_draft"
+   ]
+  },
+  {
+   "query": "-login -billing",
+   "matches": [
+    "c_mine",
+    "d_review_me",
+    "e_bot",
+    "f_ghe",
+    "g_unicode",
+    "h_minimal",
+    "i_quotes",
+    "j_space",
+    "k_emoji",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "\"new billing\" is=draft",
+   "matches": [
+    "b_draft"
+   ]
+  },
+  {
+   "query": "",
+   "matches": [
+    "a_plain",
+    "b_draft",
+    "c_mine",
+    "d_review_me",
+    "e_bot",
+    "f_ghe",
+    "g_unicode",
+    "h_minimal",
+    "i_quotes",
+    "j_space",
+    "k_emoji",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "   ",
+   "matches": [
+    "a_plain",
+    "b_draft",
+    "c_mine",
+    "d_review_me",
+    "e_bot",
+    "f_ghe",
+    "g_unicode",
+    "h_minimal",
+    "i_quotes",
+    "j_space",
+    "k_emoji",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "\t\n",
+   "matches": [
+    "a_plain",
+    "b_draft",
+    "c_mine",
+    "d_review_me",
+    "e_bot",
+    "f_ghe",
+    "g_unicode",
+    "h_minimal",
+    "i_quotes",
+    "j_space",
+    "k_emoji",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": " ",
+   "matches": [
+    "a_plain",
+    "b_draft",
+    "c_mine",
+    "d_review_me",
+    "e_bot",
+    "f_ghe",
+    "g_unicode",
+    "h_minimal",
+    "i_quotes",
+    "j_space",
+    "k_emoji",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "﻿",
+   "matches": [
+    "a_plain",
+    "b_draft",
+    "c_mine",
+    "d_review_me",
+    "e_bot",
+    "f_ghe",
+    "g_unicode",
+    "h_minimal",
+    "i_quotes",
+    "j_space",
+    "k_emoji",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "　",
+   "matches": [
+    "a_plain",
+    "b_draft",
+    "c_mine",
+    "d_review_me",
+    "e_bot",
+    "f_ghe",
+    "g_unicode",
+    "h_minimal",
+    "i_quotes",
+    "j_space",
+    "k_emoji",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": " is=draft ",
+   "matches": [
+    "b_draft"
+   ]
+  },
+  {
+   "query": "is=draft OR is=bot",
+   "matches": [
+    "b_draft",
+    "e_bot"
+   ]
+  },
+  {
+   "query": "is=draft﻿OR﻿is=bot",
+   "matches": [
+    "b_draft",
+    "e_bot"
+   ]
+  },
+  {
+   "query": " (is=draft) ",
+   "matches": [
+    "b_draft"
+   ]
+  },
+  {
+   "query": "review=approved\n\nchecks=passing",
+   "matches": [
+    "a_plain",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "review=approved checks=passing",
+   "matches": [
+    "a_plain",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "is=draft",
+   "matches": []
+  },
+  {
+   "query": "is=draft",
+   "error": "is takes draft, mergeable, conflict, blocked, behind, bot.",
+   "matches": [
+    "a_plain",
+    "b_draft",
+    "c_mine",
+    "d_review_me",
+    "e_bot",
+    "f_ghe",
+    "g_unicode",
+    "h_minimal",
+    "i_quotes",
+    "j_space",
+    "k_emoji",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "​is=draft",
+   "matches": []
+  },
+  {
+   "query": "  repo=app   is!=draft  ",
+   "matches": [
+    "a_plain",
+    "e_bot",
+    "i_quotes",
+    "k_emoji"
+   ]
+  },
+  {
+   "query": "is=draft is=bot",
+   "matches": []
+  },
+  {
+   "query": "foo=bar",
+   "error": "Unknown filter \"foo\". Try repo, org, author, assignee, review-requested, review, checks, is, waiting, risk, base.",
+   "matches": [
+    "a_plain",
+    "b_draft",
+    "c_mine",
+    "d_review_me",
+    "e_bot",
+    "f_ghe",
+    "g_unicode",
+    "h_minimal",
+    "i_quotes",
+    "j_space",
+    "k_emoji",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "Foo=bar",
+   "error": "Unknown filter \"foo\". Try repo, org, author, assignee, review-requested, review, checks, is, waiting, risk, base.",
+   "matches": [
+    "a_plain",
+    "b_draft",
+    "c_mine",
+    "d_review_me",
+    "e_bot",
+    "f_ghe",
+    "g_unicode",
+    "h_minimal",
+    "i_quotes",
+    "j_space",
+    "k_emoji",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "repo",
+   "matches": []
+  },
+  {
+   "query": "unknown:x",
+   "error": "Unknown filter \"unknown\". Try repo, org, author, assignee, review-requested, review, checks, is, waiting, risk, base.",
+   "matches": [
+    "a_plain",
+    "b_draft",
+    "c_mine",
+    "d_review_me",
+    "e_bot",
+    "f_ghe",
+    "g_unicode",
+    "h_minimal",
+    "i_quotes",
+    "j_space",
+    "k_emoji",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "repo>3",
+   "error": "repo takes = or !=.",
+   "matches": [
+    "a_plain",
+    "b_draft",
+    "c_mine",
+    "d_review_me",
+    "e_bot",
+    "f_ghe",
+    "g_unicode",
+    "h_minimal",
+    "i_quotes",
+    "j_space",
+    "k_emoji",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "repo>=a",
+   "error": "repo takes = or !=.",
+   "matches": [
+    "a_plain",
+    "b_draft",
+    "c_mine",
+    "d_review_me",
+    "e_bot",
+    "f_ghe",
+    "g_unicode",
+    "h_minimal",
+    "i_quotes",
+    "j_space",
+    "k_emoji",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "repo<a",
+   "error": "repo takes = or !=.",
+   "matches": [
+    "a_plain",
+    "b_draft",
+    "c_mine",
+    "d_review_me",
+    "e_bot",
+    "f_ghe",
+    "g_unicode",
+    "h_minimal",
+    "i_quotes",
+    "j_space",
+    "k_emoji",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "review>=approved",
+   "error": "review takes = or !=.",
+   "matches": [
+    "a_plain",
+    "b_draft",
+    "c_mine",
+    "d_review_me",
+    "e_bot",
+    "f_ghe",
+    "g_unicode",
+    "h_minimal",
+    "i_quotes",
+    "j_space",
+    "k_emoji",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "is>=x",
+   "error": "is takes = or !=.",
+   "matches": [
+    "a_plain",
+    "b_draft",
+    "c_mine",
+    "d_review_me",
+    "e_bot",
+    "f_ghe",
+    "g_unicode",
+    "h_minimal",
+    "i_quotes",
+    "j_space",
+    "k_emoji",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "base>main",
+   "error": "base takes = or !=.",
+   "matches": [
+    "a_plain",
+    "b_draft",
+    "c_mine",
+    "d_review_me",
+    "e_bot",
+    "f_ghe",
+    "g_unicode",
+    "h_minimal",
+    "i_quotes",
+    "j_space",
+    "k_emoji",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "author<x",
+   "error": "author takes = or !=.",
+   "matches": [
+    "a_plain",
+    "b_draft",
+    "c_mine",
+    "d_review_me",
+    "e_bot",
+    "f_ghe",
+    "g_unicode",
+    "h_minimal",
+    "i_quotes",
+    "j_space",
+    "k_emoji",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "risk=",
+   "error": "risk= needs a value.",
+   "matches": [
+    "a_plain",
+    "b_draft",
+    "c_mine",
+    "d_review_me",
+    "e_bot",
+    "f_ghe",
+    "g_unicode",
+    "h_minimal",
+    "i_quotes",
+    "j_space",
+    "k_emoji",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "risk=6",
+   "error": "risk takes 1 to 5, or none.",
+   "matches": [
+    "a_plain",
+    "b_draft",
+    "c_mine",
+    "d_review_me",
+    "e_bot",
+    "f_ghe",
+    "g_unicode",
+    "h_minimal",
+    "i_quotes",
+    "j_space",
+    "k_emoji",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "risk=0",
+   "error": "risk takes 1 to 5, or none.",
+   "matches": [
+    "a_plain",
+    "b_draft",
+    "c_mine",
+    "d_review_me",
+    "e_bot",
+    "f_ghe",
+    "g_unicode",
+    "h_minimal",
+    "i_quotes",
+    "j_space",
+    "k_emoji",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "risk=high",
+   "error": "risk takes 1 to 5, or none.",
+   "matches": [
+    "a_plain",
+    "b_draft",
+    "c_mine",
+    "d_review_me",
+    "e_bot",
+    "f_ghe",
+    "g_unicode",
+    "h_minimal",
+    "i_quotes",
+    "j_space",
+    "k_emoji",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "risk=1,",
+   "error": "risk= needs a value.",
+   "matches": [
+    "a_plain",
+    "b_draft",
+    "c_mine",
+    "d_review_me",
+    "e_bot",
+    "f_ghe",
+    "g_unicode",
+    "h_minimal",
+    "i_quotes",
+    "j_space",
+    "k_emoji",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "risk=,1",
+   "error": "risk= needs a value.",
+   "matches": [
+    "a_plain",
+    "b_draft",
+    "c_mine",
+    "d_review_me",
+    "e_bot",
+    "f_ghe",
+    "g_unicode",
+    "h_minimal",
+    "i_quotes",
+    "j_space",
+    "k_emoji",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "risk=1,,2",
+   "error": "risk= needs a value.",
+   "matches": [
+    "a_plain",
+    "b_draft",
+    "c_mine",
+    "d_review_me",
+    "e_bot",
+    "f_ghe",
+    "g_unicode",
+    "h_minimal",
+    "i_quotes",
+    "j_space",
+    "k_emoji",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "risk>=none",
+   "error": "risk compares only scores: none takes = or !=.",
+   "matches": [
+    "a_plain",
+    "b_draft",
+    "c_mine",
+    "d_review_me",
+    "e_bot",
+    "f_ghe",
+    "g_unicode",
+    "h_minimal",
+    "i_quotes",
+    "j_space",
+    "k_emoji",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "risk<none",
+   "error": "risk compares only scores: none takes = or !=.",
+   "matches": [
+    "a_plain",
+    "b_draft",
+    "c_mine",
+    "d_review_me",
+    "e_bot",
+    "f_ghe",
+    "g_unicode",
+    "h_minimal",
+    "i_quotes",
+    "j_space",
+    "k_emoji",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "risk>none",
+   "error": "risk compares only scores: none takes = or !=.",
+   "matches": [
+    "a_plain",
+    "b_draft",
+    "c_mine",
+    "d_review_me",
+    "e_bot",
+    "f_ghe",
+    "g_unicode",
+    "h_minimal",
+    "i_quotes",
+    "j_space",
+    "k_emoji",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "risk:>=none",
+   "error": "risk compares only scores: none takes = or !=.",
+   "matches": [
+    "a_plain",
+    "b_draft",
+    "c_mine",
+    "d_review_me",
+    "e_bot",
+    "f_ghe",
+    "g_unicode",
+    "h_minimal",
+    "i_quotes",
+    "j_space",
+    "k_emoji",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "risk:>none",
+   "error": "risk compares only scores: none takes = or !=.",
+   "matches": [
+    "a_plain",
+    "b_draft",
+    "c_mine",
+    "d_review_me",
+    "e_bot",
+    "f_ghe",
+    "g_unicode",
+    "h_minimal",
+    "i_quotes",
+    "j_space",
+    "k_emoji",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "risk=1.5",
+   "error": "risk takes 1 to 5, or none.",
+   "matches": [
+    "a_plain",
+    "b_draft",
+    "c_mine",
+    "d_review_me",
+    "e_bot",
+    "f_ghe",
+    "g_unicode",
+    "h_minimal",
+    "i_quotes",
+    "j_space",
+    "k_emoji",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "risk=-1",
+   "error": "risk takes 1 to 5, or none.",
+   "matches": [
+    "a_plain",
+    "b_draft",
+    "c_mine",
+    "d_review_me",
+    "e_bot",
+    "f_ghe",
+    "g_unicode",
+    "h_minimal",
+    "i_quotes",
+    "j_space",
+    "k_emoji",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "risk= 3",
+   "error": "risk= needs a value.",
+   "matches": [
+    "a_plain",
+    "b_draft",
+    "c_mine",
+    "d_review_me",
+    "e_bot",
+    "f_ghe",
+    "g_unicode",
+    "h_minimal",
+    "i_quotes",
+    "j_space",
+    "k_emoji",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "review=maybe",
+   "error": "review takes approved, changes_requested, none.",
+   "matches": [
+    "a_plain",
+    "b_draft",
+    "c_mine",
+    "d_review_me",
+    "e_bot",
+    "f_ghe",
+    "g_unicode",
+    "h_minimal",
+    "i_quotes",
+    "j_space",
+    "k_emoji",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "review=approved,maybe",
+   "error": "review takes approved, changes_requested, none.",
+   "matches": [
+    "a_plain",
+    "b_draft",
+    "c_mine",
+    "d_review_me",
+    "e_bot",
+    "f_ghe",
+    "g_unicode",
+    "h_minimal",
+    "i_quotes",
+    "j_space",
+    "k_emoji",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "checks=ok",
+   "error": "checks takes passing, failing, running, none.",
+   "matches": [
+    "a_plain",
+    "b_draft",
+    "c_mine",
+    "d_review_me",
+    "e_bot",
+    "f_ghe",
+    "g_unicode",
+    "h_minimal",
+    "i_quotes",
+    "j_space",
+    "k_emoji",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "checks=",
+   "error": "checks= needs a value.",
+   "matches": [
+    "a_plain",
+    "b_draft",
+    "c_mine",
+    "d_review_me",
+    "e_bot",
+    "f_ghe",
+    "g_unicode",
+    "h_minimal",
+    "i_quotes",
+    "j_space",
+    "k_emoji",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "is=nothing",
+   "error": "is takes draft, mergeable, conflict, blocked, behind, bot.",
+   "matches": [
+    "a_plain",
+    "b_draft",
+    "c_mine",
+    "d_review_me",
+    "e_bot",
+    "f_ghe",
+    "g_unicode",
+    "h_minimal",
+    "i_quotes",
+    "j_space",
+    "k_emoji",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "is=",
+   "error": "is= needs a value.",
+   "matches": [
+    "a_plain",
+    "b_draft",
+    "c_mine",
+    "d_review_me",
+    "e_bot",
+    "f_ghe",
+    "g_unicode",
+    "h_minimal",
+    "i_quotes",
+    "j_space",
+    "k_emoji",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "waiting=sometimes",
+   "error": "waiting takes review, merge, agent, other.",
+   "matches": [
+    "a_plain",
+    "b_draft",
+    "c_mine",
+    "d_review_me",
+    "e_bot",
+    "f_ghe",
+    "g_unicode",
+    "h_minimal",
+    "i_quotes",
+    "j_space",
+    "k_emoji",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "waiting=",
+   "error": "waiting= needs a value.",
+   "matches": [
+    "a_plain",
+    "b_draft",
+    "c_mine",
+    "d_review_me",
+    "e_bot",
+    "f_ghe",
+    "g_unicode",
+    "h_minimal",
+    "i_quotes",
+    "j_space",
+    "k_emoji",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "assignee=bob",
+   "error": "assignee takes @me, none.",
+   "matches": [
+    "a_plain",
+    "b_draft",
+    "c_mine",
+    "d_review_me",
+    "e_bot",
+    "f_ghe",
+    "g_unicode",
+    "h_minimal",
+    "i_quotes",
+    "j_space",
+    "k_emoji",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "assignee=@you",
+   "error": "assignee takes @me, none.",
+   "matches": [
+    "a_plain",
+    "b_draft",
+    "c_mine",
+    "d_review_me",
+    "e_bot",
+    "f_ghe",
+    "g_unicode",
+    "h_minimal",
+    "i_quotes",
+    "j_space",
+    "k_emoji",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "review-requested=bob",
+   "error": "review-requested takes @me, none.",
+   "matches": [
+    "a_plain",
+    "b_draft",
+    "c_mine",
+    "d_review_me",
+    "e_bot",
+    "f_ghe",
+    "g_unicode",
+    "h_minimal",
+    "i_quotes",
+    "j_space",
+    "k_emoji",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "review-requested=",
+   "error": "review-requested= needs a value.",
+   "matches": [
+    "a_plain",
+    "b_draft",
+    "c_mine",
+    "d_review_me",
+    "e_bot",
+    "f_ghe",
+    "g_unicode",
+    "h_minimal",
+    "i_quotes",
+    "j_space",
+    "k_emoji",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "repo=\"\"",
+   "error": "repo= needs a value.",
+   "matches": [
+    "a_plain",
+    "b_draft",
+    "c_mine",
+    "d_review_me",
+    "e_bot",
+    "f_ghe",
+    "g_unicode",
+    "h_minimal",
+    "i_quotes",
+    "j_space",
+    "k_emoji",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "repo=\" \"",
+   "error": "repo= needs a value.",
+   "matches": [
+    "a_plain",
+    "b_draft",
+    "c_mine",
+    "d_review_me",
+    "e_bot",
+    "f_ghe",
+    "g_unicode",
+    "h_minimal",
+    "i_quotes",
+    "j_space",
+    "k_emoji",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "repo=\"a b\"",
+   "matches": []
+  },
+  {
+   "query": "repo=a,\"\"",
+   "error": "repo= needs a value.",
+   "matches": [
+    "a_plain",
+    "b_draft",
+    "c_mine",
+    "d_review_me",
+    "e_bot",
+    "f_ghe",
+    "g_unicode",
+    "h_minimal",
+    "i_quotes",
+    "j_space",
+    "k_emoji",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "repo=a,",
+   "error": "repo= needs a value.",
+   "matches": [
+    "a_plain",
+    "b_draft",
+    "c_mine",
+    "d_review_me",
+    "e_bot",
+    "f_ghe",
+    "g_unicode",
+    "h_minimal",
+    "i_quotes",
+    "j_space",
+    "k_emoji",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "repo=,a",
+   "error": "repo= needs a value.",
+   "matches": [
+    "a_plain",
+    "b_draft",
+    "c_mine",
+    "d_review_me",
+    "e_bot",
+    "f_ghe",
+    "g_unicode",
+    "h_minimal",
+    "i_quotes",
+    "j_space",
+    "k_emoji",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "author=",
+   "error": "author= needs a value.",
+   "matches": [
+    "a_plain",
+    "b_draft",
+    "c_mine",
+    "d_review_me",
+    "e_bot",
+    "f_ghe",
+    "g_unicode",
+    "h_minimal",
+    "i_quotes",
+    "j_space",
+    "k_emoji",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "org=",
+   "error": "org= needs a value.",
+   "matches": [
+    "a_plain",
+    "b_draft",
+    "c_mine",
+    "d_review_me",
+    "e_bot",
+    "f_ghe",
+    "g_unicode",
+    "h_minimal",
+    "i_quotes",
+    "j_space",
+    "k_emoji",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "(",
+   "error": "The query ends where a filter should follow.",
+   "matches": [
+    "a_plain",
+    "b_draft",
+    "c_mine",
+    "d_review_me",
+    "e_bot",
+    "f_ghe",
+    "g_unicode",
+    "h_minimal",
+    "i_quotes",
+    "j_space",
+    "k_emoji",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "(is=draft",
+   "error": "A parenthesis is not closed.",
+   "matches": [
+    "a_plain",
+    "b_draft",
+    "c_mine",
+    "d_review_me",
+    "e_bot",
+    "f_ghe",
+    "g_unicode",
+    "h_minimal",
+    "i_quotes",
+    "j_space",
+    "k_emoji",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "is=draft)",
+   "error": "A closing parenthesis has no opening one.",
+   "matches": [
+    "a_plain",
+    "b_draft",
+    "c_mine",
+    "d_review_me",
+    "e_bot",
+    "f_ghe",
+    "g_unicode",
+    "h_minimal",
+    "i_quotes",
+    "j_space",
+    "k_emoji",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": ")",
+   "error": ") needs a filter before it.",
+   "matches": [
+    "a_plain",
+    "b_draft",
+    "c_mine",
+    "d_review_me",
+    "e_bot",
+    "f_ghe",
+    "g_unicode",
+    "h_minimal",
+    "i_quotes",
+    "j_space",
+    "k_emoji",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "()",
+   "error": ") needs a filter before it.",
+   "matches": [
+    "a_plain",
+    "b_draft",
+    "c_mine",
+    "d_review_me",
+    "e_bot",
+    "f_ghe",
+    "g_unicode",
+    "h_minimal",
+    "i_quotes",
+    "j_space",
+    "k_emoji",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "(()",
+   "error": ") needs a filter before it.",
+   "matches": [
+    "a_plain",
+    "b_draft",
+    "c_mine",
+    "d_review_me",
+    "e_bot",
+    "f_ghe",
+    "g_unicode",
+    "h_minimal",
+    "i_quotes",
+    "j_space",
+    "k_emoji",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": ")(",
+   "error": ") needs a filter before it.",
+   "matches": [
+    "a_plain",
+    "b_draft",
+    "c_mine",
+    "d_review_me",
+    "e_bot",
+    "f_ghe",
+    "g_unicode",
+    "h_minimal",
+    "i_quotes",
+    "j_space",
+    "k_emoji",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "is=draft))",
+   "error": "A closing parenthesis has no opening one.",
+   "matches": [
+    "a_plain",
+    "b_draft",
+    "c_mine",
+    "d_review_me",
+    "e_bot",
+    "f_ghe",
+    "g_unicode",
+    "h_minimal",
+    "i_quotes",
+    "j_space",
+    "k_emoji",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "((is=draft)",
+   "error": "A parenthesis is not closed.",
+   "matches": [
+    "a_plain",
+    "b_draft",
+    "c_mine",
+    "d_review_me",
+    "e_bot",
+    "f_ghe",
+    "g_unicode",
+    "h_minimal",
+    "i_quotes",
+    "j_space",
+    "k_emoji",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "(is=draft OR",
+   "error": "The query ends where a filter should follow.",
+   "matches": [
+    "a_plain",
+    "b_draft",
+    "c_mine",
+    "d_review_me",
+    "e_bot",
+    "f_ghe",
+    "g_unicode",
+    "h_minimal",
+    "i_quotes",
+    "j_space",
+    "k_emoji",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "is=draft OR",
+   "error": "The query ends where a filter should follow.",
+   "matches": [
+    "a_plain",
+    "b_draft",
+    "c_mine",
+    "d_review_me",
+    "e_bot",
+    "f_ghe",
+    "g_unicode",
+    "h_minimal",
+    "i_quotes",
+    "j_space",
+    "k_emoji",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "OR",
+   "error": "OR needs a filter before it.",
+   "matches": [
+    "a_plain",
+    "b_draft",
+    "c_mine",
+    "d_review_me",
+    "e_bot",
+    "f_ghe",
+    "g_unicode",
+    "h_minimal",
+    "i_quotes",
+    "j_space",
+    "k_emoji",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "AND",
+   "error": "AND needs a filter before it.",
+   "matches": [
+    "a_plain",
+    "b_draft",
+    "c_mine",
+    "d_review_me",
+    "e_bot",
+    "f_ghe",
+    "g_unicode",
+    "h_minimal",
+    "i_quotes",
+    "j_space",
+    "k_emoji",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "OR is=draft",
+   "error": "OR needs a filter before it.",
+   "matches": [
+    "a_plain",
+    "b_draft",
+    "c_mine",
+    "d_review_me",
+    "e_bot",
+    "f_ghe",
+    "g_unicode",
+    "h_minimal",
+    "i_quotes",
+    "j_space",
+    "k_emoji",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "AND is=draft",
+   "error": "AND needs a filter before it.",
+   "matches": [
+    "a_plain",
+    "b_draft",
+    "c_mine",
+    "d_review_me",
+    "e_bot",
+    "f_ghe",
+    "g_unicode",
+    "h_minimal",
+    "i_quotes",
+    "j_space",
+    "k_emoji",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "is=draft AND",
+   "error": "The query ends where a filter should follow.",
+   "matches": [
+    "a_plain",
+    "b_draft",
+    "c_mine",
+    "d_review_me",
+    "e_bot",
+    "f_ghe",
+    "g_unicode",
+    "h_minimal",
+    "i_quotes",
+    "j_space",
+    "k_emoji",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "is=draft OR OR is=bot",
+   "error": "OR needs a filter before it.",
+   "matches": [
+    "a_plain",
+    "b_draft",
+    "c_mine",
+    "d_review_me",
+    "e_bot",
+    "f_ghe",
+    "g_unicode",
+    "h_minimal",
+    "i_quotes",
+    "j_space",
+    "k_emoji",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "is=draft AND AND is=bot",
+   "error": "AND needs a filter before it.",
+   "matches": [
+    "a_plain",
+    "b_draft",
+    "c_mine",
+    "d_review_me",
+    "e_bot",
+    "f_ghe",
+    "g_unicode",
+    "h_minimal",
+    "i_quotes",
+    "j_space",
+    "k_emoji",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "is=draft OR AND is=bot",
+   "error": "AND needs a filter before it.",
+   "matches": [
+    "a_plain",
+    "b_draft",
+    "c_mine",
+    "d_review_me",
+    "e_bot",
+    "f_ghe",
+    "g_unicode",
+    "h_minimal",
+    "i_quotes",
+    "j_space",
+    "k_emoji",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "is=draft AND OR",
+   "error": "OR needs a filter before it.",
+   "matches": [
+    "a_plain",
+    "b_draft",
+    "c_mine",
+    "d_review_me",
+    "e_bot",
+    "f_ghe",
+    "g_unicode",
+    "h_minimal",
+    "i_quotes",
+    "j_space",
+    "k_emoji",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "is=draft OR )",
+   "error": ") needs a filter before it.",
+   "matches": [
+    "a_plain",
+    "b_draft",
+    "c_mine",
+    "d_review_me",
+    "e_bot",
+    "f_ghe",
+    "g_unicode",
+    "h_minimal",
+    "i_quotes",
+    "j_space",
+    "k_emoji",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "(OR)",
+   "error": "OR needs a filter before it.",
+   "matches": [
+    "a_plain",
+    "b_draft",
+    "c_mine",
+    "d_review_me",
+    "e_bot",
+    "f_ghe",
+    "g_unicode",
+    "h_minimal",
+    "i_quotes",
+    "j_space",
+    "k_emoji",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "-(",
+   "error": "The query ends where a filter should follow.",
+   "matches": [
+    "a_plain",
+    "b_draft",
+    "c_mine",
+    "d_review_me",
+    "e_bot",
+    "f_ghe",
+    "g_unicode",
+    "h_minimal",
+    "i_quotes",
+    "j_space",
+    "k_emoji",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "-()",
+   "error": ") needs a filter before it.",
+   "matches": [
+    "a_plain",
+    "b_draft",
+    "c_mine",
+    "d_review_me",
+    "e_bot",
+    "f_ghe",
+    "g_unicode",
+    "h_minimal",
+    "i_quotes",
+    "j_space",
+    "k_emoji",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "-(is=draft",
+   "error": "A parenthesis is not closed.",
+   "matches": [
+    "a_plain",
+    "b_draft",
+    "c_mine",
+    "d_review_me",
+    "e_bot",
+    "f_ghe",
+    "g_unicode",
+    "h_minimal",
+    "i_quotes",
+    "j_space",
+    "k_emoji",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "-(is=draft))",
+   "error": "A closing parenthesis has no opening one.",
+   "matches": [
+    "a_plain",
+    "b_draft",
+    "c_mine",
+    "d_review_me",
+    "e_bot",
+    "f_ghe",
+    "g_unicode",
+    "h_minimal",
+    "i_quotes",
+    "j_space",
+    "k_emoji",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "is=draft -(",
+   "error": "The query ends where a filter should follow.",
+   "matches": [
+    "a_plain",
+    "b_draft",
+    "c_mine",
+    "d_review_me",
+    "e_bot",
+    "f_ghe",
+    "g_unicode",
+    "h_minimal",
+    "i_quotes",
+    "j_space",
+    "k_emoji",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "is=draft -",
+   "matches": []
+  },
+  {
+   "query": "is=draft OR -",
+   "matches": [
+    "b_draft",
+    "g_unicode"
+   ]
+  },
+  {
+   "query": "(is=draft) )",
+   "error": "A closing parenthesis has no opening one.",
+   "matches": [
+    "a_plain",
+    "b_draft",
+    "c_mine",
+    "d_review_me",
+    "e_bot",
+    "f_ghe",
+    "g_unicode",
+    "h_minimal",
+    "i_quotes",
+    "j_space",
+    "k_emoji",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "is=draft ) is=bot",
+   "error": "A closing parenthesis has no opening one.",
+   "matches": [
+    "a_plain",
+    "b_draft",
+    "c_mine",
+    "d_review_me",
+    "e_bot",
+    "f_ghe",
+    "g_unicode",
+    "h_minimal",
+    "i_quotes",
+    "j_space",
+    "k_emoji",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "a b )",
+   "error": "A closing parenthesis has no opening one.",
+   "matches": [
+    "a_plain",
+    "b_draft",
+    "c_mine",
+    "d_review_me",
+    "e_bot",
+    "f_ghe",
+    "g_unicode",
+    "h_minimal",
+    "i_quotes",
+    "j_space",
+    "k_emoji",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "x ( y",
+   "error": "A parenthesis is not closed.",
+   "matches": [
+    "a_plain",
+    "b_draft",
+    "c_mine",
+    "d_review_me",
+    "e_bot",
+    "f_ghe",
+    "g_unicode",
+    "h_minimal",
+    "i_quotes",
+    "j_space",
+    "k_emoji",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "--(is=draft)",
+   "matches": [
+    "b_draft"
+   ]
+  },
+  {
+   "query": "- (",
+   "error": "The query ends where a filter should follow.",
+   "matches": [
+    "a_plain",
+    "b_draft",
+    "c_mine",
+    "d_review_me",
+    "e_bot",
+    "f_ghe",
+    "g_unicode",
+    "h_minimal",
+    "i_quotes",
+    "j_space",
+    "k_emoji",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "\"unclosed is=draft",
+   "matches": []
+  },
+  {
+   "query": "\"(\"",
+   "matches": [
+    "i_quotes"
+   ]
+  },
+  {
+   "query": "\"(\" is=draft",
+   "matches": []
+  },
+  {
+   "query": "\")\"",
+   "matches": [
+    "i_quotes"
+   ]
+  },
+  {
+   "query": "(\")\")",
+   "matches": [
+    "i_quotes"
+   ]
+  },
+  {
+   "query": "\"AND\"",
+   "matches": []
+  },
+  {
+   "query": "\"OR\"",
+   "matches": [
+    "g_unicode",
+    "i_quotes",
+    "j_space",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "AND OR",
+   "error": "AND needs a filter before it.",
+   "matches": [
+    "a_plain",
+    "b_draft",
+    "c_mine",
+    "d_review_me",
+    "e_bot",
+    "f_ghe",
+    "g_unicode",
+    "h_minimal",
+    "i_quotes",
+    "j_space",
+    "k_emoji",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "and",
+   "matches": []
+  },
+  {
+   "query": "or",
+   "matches": [
+    "g_unicode",
+    "i_quotes",
+    "j_space",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "or is=draft",
+   "matches": []
+  },
+  {
+   "query": "is=draft or is=bot",
+   "matches": []
+  },
+  {
+   "query": "is=draft and is=bot",
+   "matches": []
+  },
+  {
+   "query": "ANDis=draft",
+   "error": "Unknown filter \"andis\". Try repo, org, author, assignee, review-requested, review, checks, is, waiting, risk, base.",
+   "matches": [
+    "a_plain",
+    "b_draft",
+    "c_mine",
+    "d_review_me",
+    "e_bot",
+    "f_ghe",
+    "g_unicode",
+    "h_minimal",
+    "i_quotes",
+    "j_space",
+    "k_emoji",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "is=draftAND",
+   "error": "is takes draft, mergeable, conflict, blocked, behind, bot.",
+   "matches": [
+    "a_plain",
+    "b_draft",
+    "c_mine",
+    "d_review_me",
+    "e_bot",
+    "f_ghe",
+    "g_unicode",
+    "h_minimal",
+    "i_quotes",
+    "j_space",
+    "k_emoji",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "risk=1",
+   "kind": "review",
+   "matches": [
+    "f_ghe"
+   ]
+  },
+  {
+   "query": "is=draft:x",
+   "error": "is takes draft, mergeable, conflict, blocked, behind, bot.",
+   "matches": [
+    "a_plain",
+    "b_draft",
+    "c_mine",
+    "d_review_me",
+    "e_bot",
+    "f_ghe",
+    "g_unicode",
+    "h_minimal",
+    "i_quotes",
+    "j_space",
+    "k_emoji",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "review==approved",
+   "error": "review takes approved, changes_requested, none.",
+   "matches": [
+    "a_plain",
+    "b_draft",
+    "c_mine",
+    "d_review_me",
+    "e_bot",
+    "f_ghe",
+    "g_unicode",
+    "h_minimal",
+    "i_quotes",
+    "j_space",
+    "k_emoji",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "review=approved=x",
+   "error": "review takes approved, changes_requested, none.",
+   "matches": [
+    "a_plain",
+    "b_draft",
+    "c_mine",
+    "d_review_me",
+    "e_bot",
+    "f_ghe",
+    "g_unicode",
+    "h_minimal",
+    "i_quotes",
+    "j_space",
+    "k_emoji",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "repo=a=b",
+   "matches": []
+  },
+  {
+   "query": "repo:a:b",
+   "matches": []
+  },
+  {
+   "query": "repo=a:b",
+   "matches": []
+  },
+  {
+   "query": "author=a,b,c",
+   "matches": []
+  },
+  {
+   "query": "repo=\"a,b\"",
+   "matches": []
+  },
+  {
+   "query": "repo=\"acme/app\"",
+   "matches": [
+    "a_plain",
+    "b_draft",
+    "e_bot",
+    "i_quotes",
+    "k_emoji"
+   ]
+  },
+  {
+   "query": "repo=\"acme/app\",\"acme/web\"",
+   "matches": [
+    "a_plain",
+    "b_draft",
+    "c_mine",
+    "e_bot",
+    "i_quotes",
+    "k_emoji",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "repo=acme/\"app\"",
+   "matches": [
+    "a_plain",
+    "b_draft",
+    "e_bot",
+    "i_quotes",
+    "k_emoji"
+   ]
+  },
+  {
+   "query": "author=\"@me\"",
+   "matches": [
+    "c_mine"
+   ]
+  },
+  {
+   "query": "risk=\"3\"",
+   "matches": [
+    "g_unicode",
+    "i_quotes"
+   ]
+  },
+  {
+   "query": "risk>=\"3\"",
+   "matches": [
+    "c_mine",
+    "d_review_me",
+    "g_unicode",
+    "i_quotes",
+    "j_space"
+   ]
+  },
+  {
+   "query": "-repo=\"acme/app\"",
+   "matches": [
+    "c_mine",
+    "d_review_me",
+    "f_ghe",
+    "g_unicode",
+    "h_minimal",
+    "j_space",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "repo=acme/app,",
+   "error": "repo= needs a value.",
+   "matches": [
+    "a_plain",
+    "b_draft",
+    "c_mine",
+    "d_review_me",
+    "e_bot",
+    "f_ghe",
+    "g_unicode",
+    "h_minimal",
+    "i_quotes",
+    "j_space",
+    "k_emoji",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "is-=draft",
+   "error": "Unknown filter \"is-\". Try repo, org, author, assignee, review-requested, review, checks, is, waiting, risk, base.",
+   "matches": [
+    "a_plain",
+    "b_draft",
+    "c_mine",
+    "d_review_me",
+    "e_bot",
+    "f_ghe",
+    "g_unicode",
+    "h_minimal",
+    "i_quotes",
+    "j_space",
+    "k_emoji",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "a-b=c",
+   "error": "Unknown filter \"a-b\". Try repo, org, author, assignee, review-requested, review, checks, is, waiting, risk, base.",
+   "matches": [
+    "a_plain",
+    "b_draft",
+    "c_mine",
+    "d_review_me",
+    "e_bot",
+    "f_ghe",
+    "g_unicode",
+    "h_minimal",
+    "i_quotes",
+    "j_space",
+    "k_emoji",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "repo-x=y",
+   "error": "Unknown filter \"repo-x\". Try repo, org, author, assignee, review-requested, review, checks, is, waiting, risk, base.",
+   "matches": [
+    "a_plain",
+    "b_draft",
+    "c_mine",
+    "d_review_me",
+    "e_bot",
+    "f_ghe",
+    "g_unicode",
+    "h_minimal",
+    "i_quotes",
+    "j_space",
+    "k_emoji",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "1repo=a",
+   "matches": []
+  },
+  {
+   "query": "risk:>=3,4",
+   "matches": [
+    "c_mine",
+    "d_review_me",
+    "g_unicode",
+    "i_quotes",
+    "j_space"
+   ]
+  },
+  {
+   "query": "risk::3",
+   "error": "risk takes 1 to 5, or none.",
+   "matches": [
+    "a_plain",
+    "b_draft",
+    "c_mine",
+    "d_review_me",
+    "e_bot",
+    "f_ghe",
+    "g_unicode",
+    "h_minimal",
+    "i_quotes",
+    "j_space",
+    "k_emoji",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "risk:=3",
+   "error": "risk takes 1 to 5, or none.",
+   "matches": [
+    "a_plain",
+    "b_draft",
+    "c_mine",
+    "d_review_me",
+    "e_bot",
+    "f_ghe",
+    "g_unicode",
+    "h_minimal",
+    "i_quotes",
+    "j_space",
+    "k_emoji",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "risk=>3",
+   "error": "risk takes 1 to 5, or none.",
+   "matches": [
+    "a_plain",
+    "b_draft",
+    "c_mine",
+    "d_review_me",
+    "e_bot",
+    "f_ghe",
+    "g_unicode",
+    "h_minimal",
+    "i_quotes",
+    "j_space",
+    "k_emoji",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "repo=\n",
+   "error": "repo= needs a value.",
+   "matches": [
+    "a_plain",
+    "b_draft",
+    "c_mine",
+    "d_review_me",
+    "e_bot",
+    "f_ghe",
+    "g_unicode",
+    "h_minimal",
+    "i_quotes",
+    "j_space",
+    "k_emoji",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "repo=a\nb",
+   "matches": []
+  },
+  {
+   "query": "risk>= 3",
+   "error": "risk>= needs a value.",
+   "matches": [
+    "a_plain",
+    "b_draft",
+    "c_mine",
+    "d_review_me",
+    "e_bot",
+    "f_ghe",
+    "g_unicode",
+    "h_minimal",
+    "i_quotes",
+    "j_space",
+    "k_emoji",
+    "l_nullscore"
+   ]
+  },
+  {
+   "query": "flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky fl",
+   "matches": [
+    "a_plain"
+   ]
+  },
+  {
+   "query": "flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flx",
+   "matches": []
+  },
+  {
+   "query": "flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky ",
+   "matches": [
+    "a_plain"
+   ]
+  },
+  {
+   "query": "🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉",
+   "matches": []
+  },
+  {
+   "query": "🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉",
+   "matches": []
+  },
+  {
+   "query": "éééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééé",
+   "matches": []
+  },
+  {
+   "query": "ééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééé",
+   "matches": []
+  }
+ ],
+ "problems": [
+  {
+   "query": "",
+   "problem": ""
+  },
+  {
+   "query": "is=draft",
+   "problem": ""
+  },
+  {
+   "query": "foo=bar",
+   "problem": "Unknown filter \"foo\". Try repo, org, author, assignee, review-requested, review, checks, is, waiting, risk, base."
+  },
+  {
+   "query": "(",
+   "problem": "The query ends where a filter should follow."
+  },
+  {
+   "query": "flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky fl",
+   "problem": ""
+  },
+  {
+   "query": "flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flaky flx",
+   "problem": "A filter is at most 500 characters."
+  },
+  {
+   "query": "🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉",
+   "problem": ""
+  },
+  {
+   "query": "🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉",
+   "problem": "A filter is at most 500 characters."
+  },
+  {
+   "query": "ééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééé",
+   "problem": "A filter is at most 500 characters."
+  },
+  {
+   "query": "risk=none",
+   "problem": ""
+  },
+  {
+   "query": "risk>none",
+   "problem": "risk compares only scores: none takes = or !=."
+  },
+  {
+   "query": "-\"x\"",
+   "problem": ""
+  },
+  {
+   "query": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+   "problem": ""
+  },
+  {
+   "query": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+   "problem": "A filter is at most 500 characters."
+  },
+  {
+   "query": "review=approved                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          is=draft",
+   "problem": "A filter is at most 500 characters."
+  },
+  {
+   "query": "(xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx)",
+   "problem": ""
+  },
+  {
+   "query": ")xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+   "problem": ") needs a filter before it."
+  }
+ ],
+ "folded": [
+  {
+   "inbox": {
+    "what": "any",
+    "owners": [],
+    "risk": "any",
+    "repositories": [],
+    "query": "",
+    "no_bots": false
+   },
+   "query": ""
+  },
+  {
+   "inbox": {
+    "what": "review",
+    "owners": [],
+    "risk": "any",
+    "repositories": [],
+    "query": "",
+    "no_bots": false
+   },
+   "query": "waiting=review"
+  },
+  {
+   "inbox": {
+    "what": "merge",
+    "owners": [],
+    "risk": "any",
+    "repositories": [],
+    "query": "",
+    "no_bots": false
+   },
+   "query": "waiting=merge"
+  },
+  {
+   "inbox": {
+    "what": "agent",
+    "owners": [],
+    "risk": "any",
+    "repositories": [],
+    "query": "",
+    "no_bots": false
+   },
+   "query": "waiting=agent"
+  },
+  {
+   "inbox": {
+    "what": "mine",
+    "owners": [],
+    "risk": "any",
+    "repositories": [],
+    "query": "",
+    "no_bots": false
+   },
+   "query": "author=@me"
+  },
+  {
+   "inbox": {
+    "what": "any",
+    "owners": [
+     "acme"
+    ],
+    "risk": "any",
+    "repositories": [],
+    "query": "",
+    "no_bots": false
+   },
+   "query": "org=acme"
+  },
+  {
+   "inbox": {
+    "what": "any",
+    "owners": [
+     "acme",
+     "other"
+    ],
+    "risk": "any",
+    "repositories": [],
+    "query": "",
+    "no_bots": false
+   },
+   "query": "org=acme,other"
+  },
+  {
+   "inbox": {
+    "what": "any",
+    "owners": [
+     "a b",
+     "c,d",
+     "e(f)",
+     "g\"h",
+     ""
+    ],
+    "risk": "any",
+    "repositories": [],
+    "query": "",
+    "no_bots": false
+   },
+   "query": "org=\"a b\",\"c,d\",\"e(f)\",\"gh\",\"\""
+  },
+  {
+   "inbox": {
+    "what": "any",
+    "owners": [],
+    "risk": "3",
+    "repositories": [],
+    "query": "",
+    "no_bots": false
+   },
+   "query": "risk>=3"
+  },
+  {
+   "inbox": {
+    "what": "any",
+    "owners": [],
+    "risk": "4",
+    "repositories": [],
+    "query": "",
+    "no_bots": false
+   },
+   "query": "risk>=4"
+  },
+  {
+   "inbox": {
+    "what": "any",
+    "owners": [],
+    "risk": "any",
+    "repositories": [
+     "acme/app"
+    ],
+    "query": "",
+    "no_bots": false
+   },
+   "query": "repo=acme/app"
+  },
+  {
+   "inbox": {
+    "what": "any",
+    "owners": [],
+    "risk": "any",
+    "repositories": [
+     "acme/app",
+     "acme/web"
+    ],
+    "query": "",
+    "no_bots": false
+   },
+   "query": "repo=acme/app,acme/web"
+  },
+  {
+   "inbox": {
+    "what": "any",
+    "owners": [],
+    "risk": "any",
+    "repositories": [
+     "ac me/app"
+    ],
+    "query": "",
+    "no_bots": false
+   },
+   "query": "repo=\"ac me/app\""
+  },
+  {
+   "inbox": {
+    "what": "any",
+    "owners": [],
+    "risk": "any",
+    "repositories": [],
+    "query": "",
+    "no_bots": true
+   },
+   "query": "is!=bot"
+  },
+  {
+   "inbox": {
+    "what": "review",
+    "owners": [
+     "acme"
+    ],
+    "risk": "3",
+    "repositories": [
+     "acme/app"
+    ],
+    "query": "flaky",
+    "no_bots": true
+   },
+   "query": "waiting=review org=acme risk>=3 repo=acme/app is!=bot flaky"
+  },
+  {
+   "inbox": {
+    "what": "any",
+    "owners": [],
+    "risk": "any",
+    "repositories": [],
+    "query": "flaky",
+    "no_bots": false
+   },
+   "query": "flaky"
+  },
+  {
+   "inbox": {
+    "what": "any",
+    "owners": [],
+    "risk": "any",
+    "repositories": [],
+    "query": "  flaky  ",
+    "no_bots": false
+   },
+   "query": "flaky"
+  },
+  {
+   "inbox": {
+    "what": "any",
+    "owners": [],
+    "risk": "any",
+    "repositories": [],
+    "query": "is=draft OR is=bot",
+    "no_bots": false
+   },
+   "query": "is=draft OR is=bot"
+  },
+  {
+   "inbox": {
+    "what": "any",
+    "owners": [],
+    "risk": "any",
+    "repositories": [],
+    "query": "(is=draft OR is=bot)",
+    "no_bots": false
+   },
+   "query": "(is=draft OR is=bot)"
+  },
+  {
+   "inbox": {
+    "what": "any",
+    "owners": [],
+    "risk": "any",
+    "repositories": [],
+    "query": "((is=draft OR is=bot))",
+    "no_bots": false
+   },
+   "query": "((is=draft OR is=bot))"
+  },
+  {
+   "inbox": {
+    "what": "any",
+    "owners": [],
+    "risk": "any",
+    "repositories": [],
+    "query": "(is=draft OR is=bot) review=approved",
+    "no_bots": false
+   },
+   "query": "(is=draft OR is=bot) review=approved"
+  },
+  {
+   "inbox": {
+    "what": "any",
+    "owners": [],
+    "risk": "any",
+    "repositories": [],
+    "query": "is=draft OR is=bot review=approved",
+    "no_bots": false
+   },
+   "query": "is=draft OR is=bot review=approved"
+  },
+  {
+   "inbox": {
+    "what": "review",
+    "owners": [],
+    "risk": "any",
+    "repositories": [],
+    "query": "is=draft OR is=bot",
+    "no_bots": false
+   },
+   "query": "waiting=review (is=draft OR is=bot)"
+  },
+  {
+   "inbox": {
+    "what": "review",
+    "owners": [],
+    "risk": "any",
+    "repositories": [],
+    "query": "(is=draft OR is=bot)",
+    "no_bots": false
+   },
+   "query": "waiting=review (is=draft OR is=bot)"
+  },
+  {
+   "inbox": {
+    "what": "mine",
+    "owners": [],
+    "risk": "any",
+    "repositories": [],
+    "query": "a OR b",
+    "no_bots": false
+   },
+   "query": "author=@me (a OR b)"
+  },
+  {
+   "inbox": {
+    "what": "any",
+    "owners": [],
+    "risk": "any",
+    "repositories": [],
+    "query": "a OR b",
+    "no_bots": true
+   },
+   "query": "is!=bot (a OR b)"
+  },
+  {
+   "inbox": {
+    "what": "any",
+    "owners": [],
+    "risk": "any",
+    "repositories": [],
+    "query": "(is=draft",
+    "no_bots": false
+   },
+   "query": ""
+  },
+  {
+   "inbox": {
+    "what": "review",
+    "owners": [],
+    "risk": "any",
+    "repositories": [],
+    "query": "(is=draft",
+    "no_bots": false
+   },
+   "query": "waiting=review"
+  },
+  {
+   "inbox": {
+    "what": "review",
+    "owners": [],
+    "risk": "any",
+    "repositories": [],
+    "query": "foo=bar",
+    "no_bots": false
+   },
+   "query": "waiting=review"
+  },
+  {
+   "inbox": {
+    "what": "any",
+    "owners": [],
+    "risk": "any",
+    "repositories": [],
+    "query": "foo=bar",
+    "no_bots": false
+   },
+   "query": ""
+  },
+  {
+   "inbox": {
+    "what": "any",
+    "owners": [],
+    "risk": "any",
+    "repositories": [],
+    "query": "  ",
+    "no_bots": false
+   },
+   "query": ""
+  },
+  {
+   "inbox": {
+    "what": "review",
+    "owners": [],
+    "risk": "any",
+    "repositories": [],
+    "query": "  \t  ",
+    "no_bots": false
+   },
+   "query": "waiting=review"
+  },
+  {
+   "inbox": {
+    "what": "any",
+    "owners": [],
+    "risk": "any",
+    "repositories": [],
+    "query": "a\n\tb",
+    "no_bots": false
+   },
+   "query": "a b"
+  },
+  {
+   "inbox": {
+    "what": "merge",
+    "owners": [],
+    "risk": "any",
+    "repositories": [],
+    "query": "a  b",
+    "no_bots": false
+   },
+   "query": "waiting=merge a b"
+  },
+  {
+   "inbox": {
+    "what": "merge",
+    "owners": [],
+    "risk": "any",
+    "repositories": [],
+    "query": "a\u0001b",
+    "no_bots": false
+   },
+   "query": "waiting=merge a b"
+  },
+  {
+   "inbox": {
+    "what": "merge",
+    "owners": [],
+    "risk": "any",
+    "repositories": [],
+    "query": " a OR b　",
+    "no_bots": false
+   },
+   "query": "waiting=merge (a OR b)"
+  },
+  {
+   "inbox": {
+    "what": "any",
+    "owners": [
+     "acme"
+    ],
+    "risk": "any",
+    "repositories": [],
+    "query": "-(a OR b)",
+    "no_bots": false
+   },
+   "query": "org=acme -(a OR b)"
+  },
+  {
+   "inbox": {
+    "what": "any",
+    "owners": [],
+    "risk": "3",
+    "repositories": [],
+    "query": "x OR y",
+    "no_bots": false
+   },
+   "query": "risk>=3 (x OR y)"
+  },
+  {
+   "inbox": {
+    "what": "any",
+    "owners": [
+     "O"
+    ],
+    "risk": "any",
+    "repositories": [
+     "R"
+    ],
+    "query": "(a OR b) OR c",
+    "no_bots": false
+   },
+   "query": "org=O repo=R ((a OR b) OR c)"
+  }
+ ]
+}

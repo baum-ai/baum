@@ -929,12 +929,25 @@ or saves show a retry action and preserve unsaved changes in the window. The
 sidebar's Inbox heading shows the total of the queue without snoozed pull
 requests: each pull request once, whether it is in several saved inboxes or in
 none, and whatever the inboxes' badge switches say. The daemon counts the same
-total for the desktop tray and dock badge (`internal/inboxcount`), so a change
+total for the desktop tray and dock badge (`internal/inboxqueue`), so a change
 to these rules belongs there too.
 
 **Inboxes** are saved filters over this same queue, defined in the daemon (see
-its [inboxes README](../internal/inboxes/README.md)) and matched here
-(`src/inboxes.ts`): the app never builds a second queue. An inbox holds the
+its [inboxes README](../internal/inboxes/README.md)) and matched by it:
+`GET api/inbox` ([`internal/inboxqueue`](../internal/inboxqueue/README.md)),
+read with the index, says which saved inboxes hold each open pull request, so
+the page does not run every inbox's query over every pull request. The
+inbox's page, its sidebar count, the panel's tags, the edit page's preview and
+the new-inbox page's counts all take it from there (`Held` and `holds` in
+`src/inboxes.ts`). A filter typed over an inbox, an inbox changed on its edit
+page and the templates are asked of the daemon too, as
+`api/inbox?query=…`, 150 ms after the query last changed and again after each
+read of the index. Until the daemon has answered for a query, when it matched a
+pull request as another kind than the page did (a read in between), and with
+an older daemon, the page matches itself with the same language
+(`src/pr-filter.ts`, whose Go twin is `internal/prfilter`; both run the
+shared cases in `internal/prfilter/testdata/cases.json`). A pull request done
+today, and the filter menu's counts of each value, are still matched here. An inbox holds the
 open pull requests of this page (the queue's items, the person's own that
 wait, and others' as `waiting=other`) that match its query (see the filter
 below; one that does not read narrows nothing). An inbox with no query filters

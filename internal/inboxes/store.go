@@ -47,8 +47,8 @@ const (
 	CodeUnreadable     = "inboxes_unreadable"
 )
 
-// Inbox is a saved filter over the app's Up next queue. The daemon stores it
-// and never evaluates it.
+// Inbox is a saved filter over the app's Up next queue. This package stores
+// it; internal/inboxqueue matches it.
 type Inbox struct {
 	ID           string   `json:"id"`
 	Name         string   `json:"name"`
