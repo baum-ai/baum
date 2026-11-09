@@ -1179,7 +1179,15 @@ the inbox's whole query in one box, a quiet **+ Add filter** at its end
 (opening the same menu, Waiting for among the fields); the
 query, its terms tokens whose × saves the query without them (see the filter
 above), each change saved a moment after it reads. The box stays with no
-query, its placeholder "No filter: every open pull request". A
+query, its placeholder "No filter: every open pull request". Under it, **Quick
+filters** (`QUICK_FILTERS` in `inboxes.ts`: For me, Risky, Unclaimed,
+No drafts, No bots) each put their
+query into the box as one more thing that must hold, an OR in parentheses
+(`togglePart`); a pressed one (ticked, `aria-pressed`) takes it out again.
+They are pressed while every part of their query must already hold as written
+(`hasPart`), and disabled while the query does not read. A small **Filter
+syntax** link beside the "What it catches" heading opens the docs' Inbox page
+at "Filter what you see" (`DOCS_URL` + `inbox/#filter-what-you-see`). A
 switch shows or hides the inbox's count in the sidebar; its pull requests still
 count in the Inbox total. **Delete inbox** asks, then
 deletes with Undo and goes to the first inbox left with focus on its row in the

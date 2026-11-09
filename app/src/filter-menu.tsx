@@ -432,7 +432,7 @@ export function FilterButton({
           detailsProps.onToggle();
         }}
       >
-        {label ? <PlusIcon size={14} /> : <FilterIcon size={16} />}
+        {label ? <PlusIcon size={12} /> : <FilterIcon size={16} />}
         {label}
         <kbd aria-hidden="true" className="key-hint">
           /

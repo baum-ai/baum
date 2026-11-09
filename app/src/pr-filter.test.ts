@@ -1,8 +1,10 @@
 import { expect, it } from "vitest";
 import type { Entry } from "./api";
 import {
+  hasPart,
   hasValue,
   matchesQuery,
+  togglePart,
   ownerOf,
   parseQuery,
   queryTerms,
@@ -316,4 +318,31 @@ it("takes a negated term out whole, and a -(…) goes once nothing is left in it
   expect(drop("-(is=draft OR author=@me)", "is=draft")).toBe("-author=@me");
   expect(drop("-(is=draft OR author=@me) org=x", "org=x")).toBe("-(is=draft OR author=@me)");
   expect(drop("-(is=draft OR -author=@me)", "is=draft")).toBe("-(-author=@me)");
+});
+
+it("puts a quick filter's query in, and takes it out again, as written", () => {
+  const forMe = "author=@me OR assignee=@me OR review-requested=@me";
+  // Added, an OR goes in parentheses; added again, it comes out.
+  expect(togglePart("", forMe)).toBe(forMe);
+  expect(togglePart("risk>=4", forMe)).toBe(`risk>=4 (${forMe})`);
+  expect(hasPart(`risk>=4 (${forMe})`, forMe)).toBe(true);
+  expect(togglePart(`risk>=4 (${forMe})`, forMe)).toBe("risk>=4");
+  expect(togglePart(forMe, forMe)).toBe("");
+  // Spacing and case do not hide it; a part only inside an OR is not on.
+  expect(hasPart("org=x (  AUTHOR=@me OR assignee=@me OR review-requested=@me )", forMe)).toBe(
+    true,
+  );
+  expect(hasPart("risk>=4 OR is!=draft", "risk>=4")).toBe(false);
+  expect(togglePart("risk>=4 OR is!=draft", "risk>=4")).toBe("(risk>=4 OR is!=draft) risk>=4");
+  // Several parts: on only when all hold; on adds the missing, off takes all.
+  const unclaimed = "assignee=none review-requested=none";
+  expect(hasPart("assignee=none", unclaimed)).toBe(false);
+  expect(togglePart("assignee=none org=x", unclaimed)).toBe(
+    "assignee=none org=x review-requested=none",
+  );
+  expect(togglePart("assignee=none org=x review-requested=none", unclaimed)).toBe("org=x");
+  // A query that does not read is left alone.
+  expect(togglePart("(org=x", "risk>=4")).toBe("(org=x");
+  // A group already in parentheses is not wrapped twice.
+  expect(togglePart("(org=x OR org=y)", "risk>=4")).toBe("(org=x OR org=y) risk>=4");
 });

@@ -955,6 +955,34 @@ it("keeps the box with no query, saying what no filter means, also once the last
   expect(queryBox().placeholder).toContain("No filter");
 });
 
+it("puts a quick filter's query into the box, and takes it out when pressed again", async () => {
+  daemon = { revision: 1, inboxes: [inbox("Hot", { query: "org=acme" })] };
+  await render("?page=inbox-edit&inbox=Hot");
+  const quick = (label: string) =>
+    Array.from(
+      node.querySelectorAll<HTMLButtonElement>('[role="group"][aria-label="Quick filters"] button'),
+    ).find((one) => one.textContent === label)!;
+  expect(quick("Risky").getAttribute("aria-pressed")).toBe("false");
+  await click(quick("Risky"));
+  expect(puts.at(-1)!.inboxes[0]!.query).toBe("org=acme risk>=4");
+  expect(queryBox().value).toBe("org=acme risk>=4");
+  expect(quick("Risky").getAttribute("aria-pressed")).toBe("true");
+  await click(quick("For me"));
+  expect(puts.at(-1)!.inboxes[0]!.query).toBe(
+    "org=acme risk>=4 (author=@me OR assignee=@me OR review-requested=@me)",
+  );
+  await click(quick("Risky"));
+  expect(puts.at(-1)!.inboxes[0]!.query).toBe(
+    "org=acme (author=@me OR assignee=@me OR review-requested=@me)",
+  );
+  expect(quick("Risky").getAttribute("aria-pressed")).toBe("false");
+  // The filter's syntax is a link away, in the docs.
+  const docs = node.querySelector<HTMLAnchorElement>(".inbox-docs-link")!;
+  expect(docs.textContent).toBe("Filter syntax");
+  expect(docs.href).toBe("https://docs.usebaum.com/inbox/#filter-what-you-see");
+  expect(docs.target).toBe("_blank");
+});
+
 it("shows no tokens for a query that does not read", async () => {
   daemon = { revision: 1, inboxes: [inbox("Bad", { query: "colour:red" })] };
   await render("?page=inbox-edit&inbox=Bad");

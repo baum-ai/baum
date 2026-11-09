@@ -6750,6 +6750,25 @@ a.upnext-done-text:hover {
 .inbox-block h2 {
   margin: 0;
 }
+/* A block's heading with a small link at its end, as to the filter docs. */
+.inbox-block-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+.inbox-docs-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+  text-decoration: none;
+}
+.inbox-docs-link:hover {
+  color: var(--text-link-hover);
+  text-decoration: underline;
+}
 .inbox-fresh {
   margin: 0;
   padding: 0.6rem 1.25rem;

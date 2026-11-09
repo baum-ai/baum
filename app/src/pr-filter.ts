@@ -693,11 +693,56 @@ export function toggleValue(
 export function andQuery(first: string, second: string): string {
   const wrap = (query: string) => {
     const { expr, error } = parseQuery(query);
-    return !error && expr?.kind === "or" ? `(${query.trim()})` : query.trim();
+    const bare = !error && expr?.kind === "or" && !grouped.has(expr);
+    return bare ? `(${query.trim()})` : query.trim();
   };
   const parts = [first, second].filter((one) => one.trim());
   // One alone needs no parentheses.
   return tidy(parts.length > 1 ? parts.map(wrap).join(" ") : (parts[0] ?? ""));
+}
+
+/** What must all hold in the query, each as written (`text`) and as compared
+ *  (`key`: a group without its parentheses, tidied, in lower case); null for
+ *  a query that does not read. */
+function partsOf(query: string, fields: readonly Field[]) {
+  const { expr, error } = parseQuery(query, fields);
+  if (error) return null;
+  if (!expr) return [];
+  const items = expr.kind === "and" && !grouped.has(expr) ? expr.items : [expr];
+  return items.map((one) => {
+    const span = spans.get(one) ?? [0, query.length];
+    const text = query.slice(span[0], span[1]);
+    const inner = grouped.has(one) ? text.trim().slice(1, -1) : text;
+    return { text, key: tidy(inner).toLowerCase() };
+  });
+}
+
+/** Whether every part of `part` must already hold in the query, as written
+ *  there (a quick filter that is on). */
+export function hasPart(query: string, part: string, fields: readonly Field[] = FIELDS): boolean {
+  const have = partsOf(query, fields);
+  const want = partsOf(part, fields);
+  if (!have || !want || want.length === 0) return false;
+  return want.every((one) => have.some((other) => other.key === one.key));
+}
+
+/** The query with `part` on or off: off takes each of its parts out of what
+ *  must hold, on adds those missing. A query that does not read is returned
+ *  as it is. */
+export function togglePart(query: string, part: string, fields: readonly Field[] = FIELDS): string {
+  const have = partsOf(query, fields);
+  const want = partsOf(part, fields);
+  if (!have || !want) return query;
+  if (hasPart(query, part, fields))
+    return tidy(
+      have
+        .filter((one) => !want.some((other) => other.key === one.key))
+        .map((one) => one.text)
+        .join(" "),
+    );
+  return want
+    .filter((one) => !have.some((other) => other.key === one.key))
+    .reduce((out, one) => andQuery(out, one.text), query);
 }
 
 /** The query with a phrase looked for, as typed in the menu's search. */

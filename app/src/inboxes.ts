@@ -101,6 +101,16 @@ export type Matchable = { kind?: QueueKind; entry: Entry };
  *  wrote, is assigned or was asked to review. */
 export const FOR_ME = "author=@me OR assignee=@me OR review-requested=@me";
 
+/** Quick filters on an inbox's edit page: each puts its query into the
+ *  inbox's (or takes it out again), as the person could type it. */
+export const QUICK_FILTERS: { label: string; query: string }[] = [
+  { label: "For me", query: FOR_ME },
+  { label: "Risky", query: "risk>=4" },
+  { label: "Unclaimed", query: "assignee=none review-requested=none" },
+  { label: "No drafts", query: "is!=draft" },
+  { label: "No bots", query: "is!=bot" },
+];
+
 /** An inbox's parts as one query: what it holds (`waiting=` or, for the
  *  person's own, `author=@me`), owners (`org=`), risk (`risk>=`),
  *  repositories (`repo=`) and bots (`is!=bot`), then its own query. */

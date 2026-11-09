@@ -11,13 +11,14 @@ import {
   MAX_INBOXES,
   nameProblem,
   ownersOf,
+  QUICK_FILTERS,
   templates,
   type Inbox,
 } from "./inboxes";
 import { MenuButton, useContextMenu, type MenuItem } from "./context-menu";
 import { FilterBar, FilterButton } from "./filter-menu";
-import { KEEP_ONE, PageBar } from "./shell";
-import { queryProblem, tidyQuery } from "./pr-filter";
+import { DOCS_URL, KEEP_ONE, PageBar } from "./shell";
+import { hasPart, queryProblem, tidyQuery, togglePart } from "./pr-filter";
 import { SettingRow } from "./settings";
 import { ColourSwatches, GROUPS, InboxTag, OTHERS_TITLE, type QueueItem } from "./up-next";
 
@@ -27,6 +28,7 @@ const PREVIEW_GROUPS = [
   { id: "others", title: OTHERS_TITLE, kinds: ["other"] as QueueItem["kind"][] },
 ];
 import { DANGER, PRIMARY, SECONDARY } from "./action-classes";
+import { CheckIcon, ExternalLinkIcon } from "@baum/viewer/components/icons";
 
 /** What the three inbox pages share: the person's inboxes and the unsnoozed
  *  pull requests they are matched against (the queue and others' open
@@ -374,7 +376,18 @@ function EditInbox({
             ) : null}
           </div>
           <div className="inbox-block">
-            <h2 className="settings-row-label">What it catches</h2>
+            <div className="inbox-block-head">
+              <h2 className="settings-row-label">What it catches</h2>
+              <a
+                className="inbox-docs-link"
+                href={`${DOCS_URL}inbox/#filter-what-you-see`}
+                target="_blank"
+                rel="noreferrer"
+              >
+                Filter syntax
+                <ExternalLinkIcon size={12} />
+              </a>
+            </div>
             {/* The inbox's query, picked from the filter menu or typed; away
                 from the box each term is a token its × removes. */}
             <div className="inbox-query">
@@ -398,6 +411,30 @@ function EditInbox({
                 clearable={false}
                 placeholder="No filter: every open pull request"
               />
+            </div>
+            {/* Each puts its query into the box, or takes it out again. */}
+            <div role="group" aria-label="Quick filters" className="inbox-quick">
+              <span aria-hidden="true" className="inbox-quick-label">
+                Quick filters
+              </span>
+              {QUICK_FILTERS.map((quick) => {
+                const on = hasPart(inbox.query, quick.query);
+                return (
+                  <button
+                    key={quick.label}
+                    type="button"
+                    className="inbox-quick-option"
+                    aria-pressed={on}
+                    title={quick.query}
+                    // A query that does not read is fixed in the box first.
+                    disabled={!!queryProblem(inbox.query, true)}
+                    onClick={() => change({ query: togglePart(inbox.query, quick.query) })}
+                  >
+                    {on ? <CheckIcon size={12} /> : null}
+                    {quick.label}
+                  </button>
+                );
+              })}
             </div>
           </div>
           <div className="settings-list inbox-badge-block">
