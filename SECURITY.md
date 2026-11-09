@@ -839,7 +839,7 @@ computer, plus one GitHub search per picked repository:
 - **Fix transcripts.** What a fix's agent said and ran, with its tool output,
   in `transcripts/` beside `app.sqlite` (private files, secrets masked, bounded,
   the 50 latest fixes). It stays on your machine.
-- **baum's own work.** The jobs document (`state/jobs` in `app.sqlite`) and a
+- **baum's own work.** The jobs table (`jobs` in `app.sqlite`) and a
   small ledger (`state/analytics-actions` in that database) of the merges,
   branch updates and check re-runs you made from the app (time, kind,
   repository and pull request number), kept 90 days.

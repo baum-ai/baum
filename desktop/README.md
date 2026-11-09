@@ -513,7 +513,9 @@ Two channels, each the least that does the job:
    over its control socket, owns the stopped-by-user marker, and the app needs
    no credential for it.
 2. **The app API on loopback, with the launch capability as a bearer token**,
-   for what the daemon exposes only there: `GET /api/jobs`,
+   for what the daemon exposes only there: `GET /api/jobs` (without parameters:
+   the current jobs, which hold every running, queued and unseen failed job,
+   not the whole history),
    `GET /api/automatic`, `GET /api/index?view=waiting` and
    `GET /api/live-sessions`, read when the daemon's events stream
    (`GET /api/events`, held open by a thread of its own and reopened with a

@@ -895,6 +895,45 @@ export async function request<T>(
   if (response.status === 204) return undefined as T;
   return response.json();
 }
+/** The jobs a page of `api/jobs?limit=` holds, newest first, and the id to
+ *  pass as `before` for the next older page; absent when there is none. */
+export type JobPage = { jobs: Job[]; next?: string };
+export async function readJobPage(
+  before: string | undefined,
+  limit: number,
+  signal?: AbortSignal,
+): Promise<JobPage> {
+  const query = new URLSearchParams({ limit: String(limit) });
+  if (before) query.set("before", before);
+  const answer = await request<{ jobs?: Job[]; next?: string | null }>(
+    `api/jobs?${query}`,
+    undefined,
+    "GET",
+    signal,
+  );
+  return { jobs: answer.jobs ?? [], ...(answer.next ? { next: answer.next } : {}) };
+}
+/** Every loaded job of one pull request, oldest first (`api/jobs` without
+ *  the group's jobs, which belong to the group). */
+export async function readPullRequestJobs(
+  repository: string,
+  pr: number,
+  signal?: AbortSignal,
+): Promise<Job[]> {
+  const query = new URLSearchParams({ repository, pr: String(pr) });
+  const answer = await request<{ jobs?: Job[] }>(`api/jobs?${query}`, undefined, "GET", signal);
+  return answer.jobs ?? [];
+}
+/** One loaded job wherever it is in the history, or null when the daemon
+ *  does not have it (it may be archived). */
+export async function readJob(id: string, signal?: AbortSignal): Promise<Job | null> {
+  try {
+    return await request<Job>(`api/jobs/${encodeURIComponent(id)}`, undefined, "GET", signal);
+  } catch (e) {
+    if (e instanceof LocalRequestError && e.status === 404) return null;
+    throw e;
+  }
+}
 /** Queues reviews of these pull requests at once. A fork or an author
  *  without known write access needs the user's confirmation first: then
  *  nothing is queued and the answer is "isolation". */

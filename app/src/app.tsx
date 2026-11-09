@@ -2,6 +2,7 @@ import { SavedStateNotice } from "./ui-state";
 import { PreferencesProvider } from "./preferences";
 import { formatCount } from "@baum/viewer/components/format";
 import { UsageDetails } from "./usage";
+import { useJobHistory, useOpenJob, usePullRequestJobs } from "./job-history";
 import { JobTiming, jobOrigin, jobTarget, jobType } from "./job-info";
 import {
   useCallback,
@@ -1067,6 +1068,10 @@ function Workspace({ url }: { url: UrlState }) {
   const openSession = url.search.get("session");
   // A job's transcript, `?page=jobs&job=<id>`.
   const openJob = page === "jobs" ? url.search.get("job") : null;
+  // The current jobs rarely hold an older job: the daemon finds it.
+  const openedJob = useOpenJob(openJob, jobs, revision);
+  // The pull request page's own jobs: its fixes and questions, all of them.
+  const pullRequestJobs = usePullRequestJobs(selectedEntry, revision);
   // The shortcuts sheet lists the keys of where it was opened first.
   const shortcutsPlace: ShortcutsPlace = onList
     ? "pulls"
@@ -1513,12 +1518,9 @@ function Workspace({ url }: { url: UrlState }) {
             </>
           ) : page === "jobs" && url.search.get("job") ? (
             <JobPage
-              job={jobs.find((j) => j.id === url.search.get("job")) ?? null}
-              title={jobPRTitle(
-                snapshot.entries,
-                jobs.find((j) => j.id === url.search.get("job")),
-              )}
-              loading={loading}
+              job={openedJob ?? null}
+              title={jobPRTitle(snapshot.entries, openedJob ?? undefined)}
+              loading={loading || openedJob === undefined}
               Link={LocalLink}
             />
           ) : page === "jobs" ? (
@@ -1529,7 +1531,13 @@ function Workspace({ url }: { url: UrlState }) {
                 actions={<RefreshButton refresh={(run) => reload({ restart: run.restart })} />}
               />
               <div className="local-page-body local-list-page">
-                <Jobs jobs={jobs} entries={snapshot.entries} loading={loading} changed={reload} />
+                <Jobs
+                  jobs={jobs}
+                  entries={snapshot.entries}
+                  loading={loading}
+                  revision={revision}
+                  changed={reload}
+                />
               </div>
             </>
           ) : inboxWaiting ? (
@@ -1665,8 +1673,8 @@ function Workspace({ url }: { url: UrlState }) {
                 }
                 fixState={fixState(selectedEntry)}
                 fixJob={fixJob(selectedEntry, jobs)}
-                fixRuns={fixJobs(selectedEntry, jobs)}
-                chats={chatJobs(selectedEntry, jobs)}
+                fixRuns={fixJobs(selectedEntry, pullRequestJobs)}
+                chats={chatJobs(selectedEntry, pullRequestJobs)}
               />
             </DecisionsRevision.Provider>
           ) : page !== "pulls" ? (
@@ -2090,37 +2098,40 @@ function ForkConfirmation({
   );
 }
 /** The jobs, newest first: those running or waiting to, then those that
- *  finished. The keyboard moves through them as through any list; Enter
- *  opens the job's pull request or group and `t` its transcript. */
+ *  finished, a page at a time (`useJobHistory`). The keyboard moves through
+ *  them as through any list; Enter opens the job's pull request or group and
+ *  `t` its transcript. */
 function Jobs({
-  jobs,
+  jobs: current,
   entries,
   loading,
+  revision,
   changed,
 }: {
+  /** The current jobs: every running or waiting one, whatever its age. */
   jobs: Job[];
   /** The pull requests baum knows, for their titles; a job of one it no longer
    *  lists shows its number alone. */
   entries: Entry[];
   loading: boolean;
+  /** Changes when the app read the jobs again. */
+  revision: number;
   changed: () => Promise<void>;
 }) {
   const [error, setError] = useState("");
   const [folded, setFolded] = useState<ReadonlySet<string>>(new Set());
-  const newest = jobs.slice().reverse();
+  const history = useJobHistory(revision, true);
+  // A job's state is the current read's where it has the job: a page read a
+  // moment earlier may still show it running.
+  const currentById = new Map(current.map((job) => [job.id, job]));
+  const active = current.filter(isActiveJob).reverse();
+  const finished = history.jobs
+    .map((job) => currentById.get(job.id) ?? job)
+    .filter((job) => !isActiveJob(job));
+  const jobs = [...active, ...finished];
   const sections = [
-    {
-      id: "active",
-      title: "Running now",
-      tone: "positive" as const,
-      jobs: newest.filter(isActiveJob),
-    },
-    {
-      id: "finished",
-      title: "Finished",
-      tone: "quiet" as const,
-      jobs: newest.filter((job) => !isActiveJob(job)),
-    },
+    { id: "active", title: "Running now", tone: "positive" as const, jobs: active },
+    { id: "finished", title: "Finished", tone: "quiet" as const, jobs: finished },
   ].filter((section) => section.jobs.length > 0);
   const rows = useRowFocus<HTMLElement>(
     "jobs",
@@ -2175,13 +2186,20 @@ function Jobs({
     event.preventDefault();
     navigate(jobHref(job));
   });
-  // A link from a review opens the job that generated it.
+  // A page job read while it ran can finish and leave the current jobs
+  // unseen by either section: read the newest page again, once per read of
+  // the current jobs.
+  const restarted = useRef(-1);
   useEffect(() => {
-    if (location.hash.startsWith("#job-"))
-      document.getElementById(decodeURIComponent(location.hash.slice(1)))?.scrollIntoView({
-        block: "center",
-      });
-  }, []);
+    const running = new Set(active.map((job) => job.id));
+    if (
+      restarted.current !== revision &&
+      history.jobs.some((job) => isActiveJob(job) && !running.has(job.id))
+    ) {
+      restarted.current = revision;
+      history.restart();
+    }
+  }, [history, active, revision]);
   return (
     <section
       ref={rows.list}
@@ -2195,9 +2213,19 @@ function Jobs({
           <Alert>{error}</Alert>
         </div>
       ) : null}
-      {jobs.length === 0 && loading ? (
+      {history.error ? (
+        <div className="local-list-note">
+          <Alert>
+            {history.error}{" "}
+            <Button variant="secondary" size="compact" onClick={() => void changed()}>
+              Retry
+            </Button>
+          </Alert>
+        </div>
+      ) : null}
+      {jobs.length === 0 && (loading || (!history.read && !history.error)) ? (
         <LoadingStatus block>Loading jobs…</LoadingStatus>
-      ) : jobs.length === 0 ? (
+      ) : jobs.length === 0 && !history.more ? (
         <div className="local-empty">
           <h2>No jobs yet</h2>
           <p>Reviews and fixes you start, or that run automatically, show here.</p>
@@ -2234,6 +2262,17 @@ function Jobs({
           </ListSection>
         ))
       )}
+      {history.more ? (
+        <div className="flex justify-center py-4">
+          {history.loadingMore ? (
+            <LoadingStatus>Loading older jobs…</LoadingStatus>
+          ) : (
+            <Button variant="secondary" size="compact" onClick={history.loadMore}>
+              Load older jobs
+            </Button>
+          )}
+        </div>
+      ) : null}
     </section>
   );
 }

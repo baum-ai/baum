@@ -139,6 +139,7 @@ func (q *Queue) SubmitAutomatic(ctx context.Context, r AutomaticRequest) (Job, e
 		superseded, stop = q.supersedeDetails(p.Repository, p.PR, p.HeadSHA)
 	}
 	q.jobs = append(q.jobs, j)
+	q.mark(j.ID)
 	if err := q.save(); err != nil {
 		q.jobs = before
 		return Job{}, err
@@ -194,6 +195,7 @@ func (q *Queue) refuseAutomatic(i int) (Job, bool) {
 	if reason == ReasonSettingsUnreadable {
 		j.State = "interrupted"
 	}
+	q.mark(j.ID)
 	if q.save() != nil {
 		*j = old
 		return Job{}, false
@@ -244,7 +246,10 @@ func (q *Queue) automaticConflict(repository string, pr int, group, head string)
 		}
 	}
 	// A head runs once, except that one automatic run a daemon stop or
-	// restart interrupted is retried once.
+	// restart interrupted is retried once. An archived run is never retried.
+	if archived := q.archivedRuns(repository, pr, group, head); archived > 0 {
+		sameHead, retryable = sameHead+archived, false
+	}
 	if sameHead > 1 || (sameHead == 1 && !retryable) {
 		return ErrDuplicate
 	}
@@ -300,7 +305,8 @@ func (q *Queue) Refused() []Job {
 }
 
 // Interrupted lists automatic jobs that a daemon stop or restart interrupted
-// and that may be retried once: the only job ever recorded for their head.
+// and that may be retried once: the only job ever recorded for their head,
+// archived ones included.
 func (q *Queue) Interrupted() []Job {
 	q.mu.Lock()
 	defer q.mu.Unlock()
@@ -312,7 +318,8 @@ func (q *Queue) Interrupted() []Job {
 	}
 	var out []Job
 	for _, j := range q.jobs {
-		if j.Automatic && j.State == "interrupted" && count[headKey(j)] == 1 {
+		key := headKey(j)
+		if j.Automatic && j.State == "interrupted" && count[key]+q.heads[key].runs+q.heads[key].others == 1 {
 			j.Accounting = j.Accounting.Clone()
 			out = append(out, j)
 		}

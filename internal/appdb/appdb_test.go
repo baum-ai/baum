@@ -5,17 +5,20 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/baum-ai/baum/internal/appdb"
 	"github.com/baum-ai/baum/internal/appdb/appdbtest"
 	"github.com/baum-ai/baum/internal/decisionlog"
 	"github.com/baum-ai/baum/internal/inboxes"
+	"github.com/baum-ai/baum/internal/jobs"
 	"github.com/baum-ai/baum/internal/privatefs"
 	"github.com/baum-ai/baum/internal/repos"
 	"github.com/baum-ai/baum/internal/reviewgroups"
@@ -61,9 +64,15 @@ func TestBaselineStoresShareOneDatabaseAndSurviveReopen(t *testing.T) {
 	if _, err = inboxes.Open(path).Replace(0, nil); err != nil {
 		t.Fatal(err)
 	}
-	if err = appdb.Write(path, "state", "jobs", []byte(`[{"id":"job","state":"queued"}]`)); err != nil {
+	// A journal from before the jobs table: the queue moves it into rows.
+	if err = appdb.Write(path, "state", "jobs", []byte(`[{"id":"job","state":"completed","updated_at":"`+time.Now().UTC().Format(time.RFC3339)+`"}]`)); err != nil {
 		t.Fatal(err)
 	}
+	queue, err := jobs.Open(path, idleExecutor{}, 1, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	queue.Close()
 	if err = appdb.Write(path, "cache", "discovery/account/repo", []byte(`{"head":"abc"}`)); err != nil {
 		t.Fatal(err)
 	}
@@ -103,9 +112,17 @@ func TestBaselineStoresShareOneDatabaseAndSurviveReopen(t *testing.T) {
 	if state, err := inboxes.Open(path).Read(); err != nil || state.Revision != 1 {
 		t.Fatalf("inboxes %v %v", state, err)
 	}
-	if raw, err := appdb.Read(path, "state", "jobs"); err != nil || !strings.Contains(string(raw), "queued") {
-		t.Fatalf("jobs %s %v", raw, err)
+	if raw, err := appdb.Read(path, "state", "jobs"); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("jobs document kept: %s %v", raw, err)
 	}
+	queue, err = jobs.Open(path, idleExecutor{}, 1, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if listed := queue.List(); len(listed) != 1 || listed[0].ID != "job" || listed[0].State != "completed" {
+		t.Fatalf("jobs %+v", listed)
+	}
+	queue.Close()
 	db, err := appdb.Open(path, true)
 	if err != nil {
 		t.Fatal(err)
@@ -119,6 +136,16 @@ func TestBaselineStoresShareOneDatabaseAndSurviveReopen(t *testing.T) {
 	if err = db.QueryRow("PRAGMA integrity_check").Scan(&integrity); err != nil || integrity != "ok" {
 		t.Fatalf("integrity %q %v", integrity, err)
 	}
+}
+
+// idleExecutor runs nothing: the baseline queue holds only finished jobs.
+type idleExecutor struct{}
+
+func (idleExecutor) Prepare(context.Context, jobs.Item) (jobs.Prepared, string, error) {
+	return jobs.Prepared{}, "", errors.New("not used")
+}
+func (idleExecutor) Execute(context.Context, jobs.Prepared, func(jobs.Progress)) (*float64, error) {
+	return nil, errors.New("not used")
 }
 
 func TestConcurrentDocumentUpdatesAndFailedTransaction(t *testing.T) {
