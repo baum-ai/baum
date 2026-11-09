@@ -25,15 +25,15 @@ func TestProbeComparesWithTheLastCompletePoll(t *testing.T) {
 		if r.Method == http.MethodPost {
 			var request struct {
 				Query     string
-				Variables map[string]string
+				Variables map[string]any
 			}
 			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 				t.Fatal(err)
 			}
 			if strings.HasPrefix(request.Query, "query Probe(") {
 				asked = asked[:0]
-				for i := 0; request.Variables[fmt.Sprintf("o%d", i)] != ""; i++ {
-					asked = append(asked, request.Variables[fmt.Sprintf("o%d", i)]+"/"+request.Variables[fmt.Sprintf("n%d", i)])
+				for i := 0; request.Variables[fmt.Sprintf("o%d", i)] != nil; i++ {
+					asked = append(asked, fmt.Sprintf("%s/%s", request.Variables[fmt.Sprintf("o%d", i)], request.Variables[fmt.Sprintf("n%d", i)]))
 				}
 				body = probe
 			} else {

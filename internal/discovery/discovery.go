@@ -320,6 +320,7 @@ func (p *poll) get(ctx context.Context, path string, into any) error {
 	if err != nil {
 		return err
 	}
+	answered(ctx)
 	if remaining, err := strconv.Atoi(headers.Get("X-RateLimit-Remaining")); err == nil {
 		p.rate.Remaining = &remaining
 	}
