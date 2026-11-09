@@ -5,6 +5,7 @@ import {
   matchesQuery,
   ownerOf,
   parseQuery,
+  queryParts,
   queryProblem,
   quote,
   suggest,
@@ -107,7 +108,7 @@ it("says why a query does not read, and then narrows nothing", () => {
     ["review>=approved", "review takes = or !=."],
     ["risk=7", "risk takes 1 to 5, or none."],
     ["risk>=none", "risk compares only scores"],
-    ["assignee=sam", "assignee takes @me."],
+    ["assignee=sam", "assignee takes @me, none."],
     ["repo=", "repo= needs a value."],
     ["(is:draft", "A parenthesis is not closed."],
     ["is:draft)", "A closing parenthesis has no opening one."],
@@ -220,4 +221,91 @@ it("finds the owner of an Enterprise repository", () => {
   expect(ownerOf("acme/demo")).toBe("acme");
   expect(ownerOf("github.example.com/acme/demo")).toBe("acme");
   expect(ownerOf("nothing")).toBe("");
+});
+
+it("matches assignee=none and review-requested=none when nobody holds it, and not the person", () => {
+  // The daemon's fields absent read as nobody.
+  expect(passes("assignee=none", entry())).toBe(true);
+  expect(passes("review-requested=none", entry())).toBe(true);
+  expect(passes("assignee=none", entry({ assigned: false }))).toBe(true);
+  expect(passes("review-requested=none", entry({ review_requested: false }))).toBe(true);
+  // Someone is assigned or asked.
+  expect(passes("assignee=none", entry({ assigned: true }))).toBe(false);
+  expect(passes("review-requested=none", entry({ review_requested: true }))).toBe(false);
+  // The person counts as someone, whatever the daemon says of anyone.
+  expect(passes("assignee=none", entry({ assigned_to_me: true }))).toBe(false);
+  expect(passes("review-requested=none", entry({ review_requested_from_me: true }))).toBe(false);
+  // != none is somebody.
+  expect(passes("assignee!=none", entry({ assigned: true }))).toBe(true);
+  expect(passes("assignee!=none", entry())).toBe(false);
+  // @me still means the person alone.
+  expect(passes("assignee=@me", entry({ assigned: true }))).toBe(false);
+  expect(passes("review-requested=@me", entry({ review_requested: true }))).toBe(false);
+});
+
+it("matches waiting=other only for a pull request listed as nothing from the person", () => {
+  expect(passes("waiting=other", entry())).toBe(false);
+  expect(matchesQuery("waiting=other", entry(), "other")).toBe(true);
+  for (const kind of ["review", "clone", "merge", "fix", "update"]) {
+    expect(matchesQuery("waiting=other", entry(), kind)).toBe(false);
+  }
+  expect(matchesQuery("waiting!=other", entry(), "review")).toBe(true);
+  expect(matchesQuery("waiting!=other", entry(), "other")).toBe(false);
+  expect(matchesQuery("waiting=other assignee=none review-requested=none", entry(), "other")).toBe(
+    true,
+  );
+});
+
+it("reads a query's conditions in words, each with the query once it is taken out", () => {
+  expect(queryParts("")).toEqual({ joiner: "and", parts: [] });
+  expect(queryParts("   ")).toEqual({ joiner: "and", parts: [] });
+  expect(queryParts("author=@me")).toEqual({
+    joiner: "and",
+    parts: [{ label: "Author is Me", without: "" }],
+  });
+  expect(queryParts("author=@me risk>=4 flaky")).toEqual({
+    joiner: "and",
+    parts: [
+      { label: "Author is Me", without: "risk>=4 flaky" },
+      { label: expect.stringContaining("Risk"), without: "author=@me flaky" },
+      { label: "“flaky”", without: "author=@me risk>=4" },
+    ],
+  });
+  // An AND written out reads the same.
+  expect(queryParts("author=@me AND is=draft").parts.map((part) => part.without)).toEqual([
+    "is=draft",
+    "author=@me",
+  ]);
+});
+
+it("reads an OR at the top as choices, and a taken-out choice leaves the others joined by OR", () => {
+  const { joiner, parts } = queryParts("author=@me OR assignee=@me OR review-requested=@me");
+  expect(joiner).toBe("or");
+  expect(parts).toEqual([
+    { label: "Author is Me", without: "assignee=@me OR review-requested=@me" },
+    { label: "Assignee is Me", without: "author=@me OR review-requested=@me" },
+    { label: "Review requested is Me", without: "author=@me OR assignee=@me" },
+  ]);
+});
+
+it("keeps a parenthesised group's parentheses when its sibling is taken out, and words the group", () => {
+  const { joiner, parts } = queryParts("org=x (author=@me OR assignee=@me)");
+  expect(joiner).toBe("and");
+  expect(parts).toEqual([
+    { label: "Organization is x", without: "(author=@me OR assignee=@me)" },
+    { label: "Author is Me or Assignee is Me", without: "org=x" },
+  ]);
+});
+
+it("words a negation as its field is not the value", () => {
+  const { parts } = queryParts("-repo=x NOT is=draft");
+  expect(parts).toEqual([
+    { label: "Repository is not x", without: "NOT is=draft" },
+    { label: "State is not Draft", without: "-repo=x" },
+  ]);
+});
+
+it("gives no parts for a query that does not read", () => {
+  expect(queryParts("colour:red")).toEqual({ joiner: "and", parts: [] });
+  expect(queryParts("(is:draft")).toEqual({ joiner: "and", parts: [] });
 });

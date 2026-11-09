@@ -17,7 +17,10 @@ export async function launchURL(): Promise<string> {
   throw new Error("the daemon did not publish its credential");
 }
 
-/** Leaves exactly one inbox, the empty-query Default, through the daemon's
+/** The Default inbox's query, as a fresh installation gets it. */
+export const FOR_ME = "author=@me OR assignee=@me OR review-requested=@me";
+
+/** Leaves exactly one inbox, the Default with its query, through the daemon's
  *  API, from the signed-in page, so a failed or retried test leaves the
  *  fixture as a fresh installation is: the daemon refuses an empty list, and
  *  the app opens the first inbox. The first inbox keeps its id and becomes the
@@ -25,7 +28,7 @@ export async function launchURL(): Promise<string> {
 export async function resetInboxes(page: Page): Promise<void> {
   try {
     if (!page.url().includes("/s/")) return;
-    await page.evaluate(async () => {
+    await page.evaluate(async (query) => {
       const read = await fetch("api/inboxes", { cache: "no-store" });
       if (!read.ok) return;
       const { revision, inboxes } = (await read.json()) as {
@@ -33,7 +36,7 @@ export async function resetInboxes(page: Page): Promise<void> {
         inboxes: Record<string, unknown>[];
       };
       const first = inboxes[0];
-      if (inboxes.length === 1 && first?.name === "Default" && first.query === "" && first.badge)
+      if (inboxes.length === 1 && first?.name === "Default" && first.query === query && first.badge)
         return;
       const base = first ?? {
         id: "00000000000000000000000000000001",
@@ -53,13 +56,13 @@ export async function resetInboxes(page: Page): Promise<void> {
               risk: "any",
               repositories: [],
               no_bots: false,
-              query: "",
+              query,
               badge: true,
             },
           ],
         }),
       });
-    });
+    }, FOR_ME);
   } catch {
     // A page that never loaded has made none.
   }

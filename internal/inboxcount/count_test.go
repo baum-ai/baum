@@ -48,6 +48,23 @@ func TestCountsWhatTheInboxLists(t *testing.T) {
 	// Asked for a review, with or without a clone to review it in.
 	one(t, 1, entry(1, func(e *reviewindex.Entry) { e.PullRequest.ReviewRequestedFromMe = true }))
 	one(t, 1, entry(1, func(e *reviewindex.Entry) { e.PullRequest.ReviewRequestedFromMe, e.NeedsClone = true, true }))
+	// Assigned to them but written by someone else: like a requested review.
+	one(t, 1, entry(1, func(e *reviewindex.Entry) { e.PullRequest.AssignedToMe = true }))
+	one(t, 1, entry(1, func(e *reviewindex.Entry) { e.PullRequest.AssignedToMe, e.NeedsClone = true, true }))
+	kind := func(e reviewindex.Entry, want string) {
+		t.Helper()
+		if got := kindOf(e, nil); got != want {
+			t.Fatalf("kindOf = %q, want %q", got, want)
+		}
+	}
+	kind(entry(1, func(e *reviewindex.Entry) { e.PullRequest.AssignedToMe = true }), "review")
+	kind(entry(1, func(e *reviewindex.Entry) { e.PullRequest.AssignedToMe, e.NeedsClone = true, true }), "clone")
+	// Assigned and written by them: the own-pull-request path, unchanged.
+	kind(mine(1, func(e *reviewindex.Entry) { e.PullRequest.AssignedToMe = true }), "")
+	kind(mine(1, func(e *reviewindex.Entry) { e.PullRequest.AssignedToMe, e.Merge = true, "ready" }), "merge")
+	kind(mine(1, func(e *reviewindex.Entry) { e.PullRequest.AssignedToMe, e.Checks = true, "failing" }), "fix")
+	// Someone else's with nothing for them.
+	one(t, 0, entry(1, func(e *reviewindex.Entry) { e.PullRequest.Assigned, e.PullRequest.ReviewRequested = true, true }))
 	// Their own, to fix.
 	one(t, 1, mine(1, func(e *reviewindex.Entry) { e.Review = "changes_requested" }))
 	one(t, 1, mine(1, func(e *reviewindex.Entry) { e.Merge = "conflict" }))

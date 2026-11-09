@@ -70,9 +70,10 @@ test("filters the Inbox from the menu and as typed, saves an inbox, and edits a 
   await page.getByRole("option", { name: /^Author/ }).hover();
   await page.getByRole("listbox", { name: "Author" }).getByRole("option", { name: /^Me/ }).click();
   await expect(requested).toHaveCount(0);
-  // The query is at the menu's foot, and only there.
+  // The query is at the menu's foot, and only there: the Default inbox's own,
+  // with the pick added.
   const bar = panel.getByRole("combobox", { name: "Filter pull requests" });
-  await expect(bar).toHaveValue("author=@me");
+  await expect(bar).toHaveValue("(author=@me OR assignee=@me OR review-requested=@me) author=@me");
   await shot(page, "1-inbox-menu");
   // The panel stays on screen.
   const box = (await panel.boundingBox())!;
@@ -144,9 +145,11 @@ test("filters the Inbox from the menu and as typed, saves an inbox, and edits a 
     .getByRole("link", { name: /^Default/ })
     .first()
     .click();
-  await expect(filter).toHaveAccessibleName("Filter");
+  // The draft went into the new inbox: Default is back to its own query.
+  const own = /^Filter: author=@me OR assignee=@me OR review-requested=@me \(/;
+  await expect(filter).toHaveAttribute("title", own);
   await page.reload();
-  await expect(filter).toHaveAccessibleName("Filter");
+  await expect(filter).toHaveAttribute("title", own);
   await sidebar.getByRole("link", { name: /^Filtered/ }).click();
   await expect(filter).toHaveAccessibleName("Filter, in force");
   await filter.click();

@@ -107,6 +107,15 @@ func Open(path string) *Store { return &Store{path: path} }
 // DefaultName is the name of the inbox every installation starts with.
 const DefaultName = "Default"
 
+// DefaultQuery is the query of the default inbox: the pull requests the
+// person wrote, is assigned or was asked to review.
+const DefaultQuery = "author=@me OR assignee=@me OR review-requested=@me"
+
+// QueueScope is the app's filter for "not someone else's pull request that
+// waits on nothing from the person". It is the shorter form of DefaultQuery
+// that upgrades use when the combined query would be too long.
+const QueueScope = "waiting!=other"
+
 // Read returns stored state. The first read of an installation creates the
 // default inbox.
 func (s *Store) Read() (State, error) {
@@ -144,9 +153,11 @@ func (s *Store) ensure() (State, error) {
 	return state, err
 }
 
-// initialize adds the default inbox to a document that has none of the
-// marker. Stored entries are carried over as stored JSON, re-encoded compactly. Twenty inboxes leave no
-// room, so none is added.
+// initialize marks a document that lacks the marker. With no inboxes stored it
+// adds the default inbox. Otherwise it adds nothing and narrows each stored
+// inbox's query to what the inbox showed before an empty query meant every
+// open pull request: the person's own queue. Stored entries are carried over
+// as stored JSON, re-encoded compactly, with only the query changed.
 func initialize(raw []byte) ([]byte, State, error) {
 	current, err := decode(raw)
 	if err != nil || current.Initialized {
@@ -177,15 +188,22 @@ func initialize(raw []byte) ([]byte, State, error) {
 			items = []json.RawMessage{}
 		}
 	}
-	if len(items) < MaxInboxes {
+	if len(items) == 0 {
 		def, err := json.Marshal(Inbox{
-			ID: newID(), Name: freeName(current.Inboxes), Color: "blue", What: "any",
-			Owners: []string{}, Risk: "any", Repositories: []string{}, Badge: true,
+			ID: newID(), Name: DefaultName, Color: "blue", What: "any",
+			Owners: []string{}, Risk: "any", Repositories: []string{}, Query: DefaultQuery, Badge: true,
 		})
 		if err != nil {
 			return nil, State{}, err
 		}
 		items = append(items, def)
+	}
+	for i := range items {
+		if i < len(current.Inboxes) {
+			if items[i], err = scopeQuery(items[i], current.Inboxes[i].Query); err != nil {
+				return nil, State{}, err
+			}
+		}
 	}
 	for key, value := range map[string]any{"inboxes": items, "initialized": true, "revision": current.Revision + 1} {
 		if doc[key], err = json.Marshal(value); err != nil {
@@ -200,22 +218,44 @@ func initialize(raw []byte) ([]byte, State, error) {
 	return out, state, err
 }
 
-// freeName is "Default", or "Default 2", "Default 3", ... when the name is
-// taken ignoring case.
-func freeName(existing []Inbox) string {
-	taken := func(name string) bool {
-		for _, inbox := range existing {
-			if strings.EqualFold(strings.TrimSpace(inbox.Name), name) {
-				return true
-			}
+// scopedQuery is the query that shows what an inbox with this query showed
+// before: the person's own queue, narrowed by the query.
+func scopedQuery(query string) string {
+	query = strings.TrimSpace(query)
+	if query == "" {
+		return DefaultQuery
+	}
+	for _, scoped := range []string{"(" + DefaultQuery + ") (" + query + ")", QueueScope + " (" + query + ")"} {
+		if utf8.RuneCountInString(scoped) <= MaxQueryLength {
+			return scoped
 		}
-		return false
 	}
-	name := DefaultName
-	for n := 2; taken(name); n++ {
-		name = fmt.Sprintf("%s %d", DefaultName, n)
+	return query
+}
+
+// scopeQuery rewrites the query key of one stored inbox, keeping its other
+// keys. An inbox whose query cannot be scoped within the limit is unchanged.
+func scopeQuery(item json.RawMessage, query string) (json.RawMessage, error) {
+	next := scopedQuery(query)
+	if next == query {
+		return item, nil
 	}
-	return name
+	fields := map[string]json.RawMessage{}
+	if err := json.Unmarshal(item, &fields); err != nil {
+		return nil, &UnreadableError{err}
+	}
+	// decode matches keys ignoring case: replace whichever spelling was read.
+	for key := range fields {
+		if strings.EqualFold(key, "query") {
+			delete(fields, key)
+		}
+	}
+	encoded, err := json.Marshal(next)
+	if err != nil {
+		return nil, err
+	}
+	fields["query"] = encoded
+	return json.Marshal(fields)
 }
 
 func decode(data []byte) (State, error) {

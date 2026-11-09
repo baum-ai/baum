@@ -223,17 +223,18 @@ const railHeading = () => node.querySelector<HTMLElement>(".local-rail-heading")
 
 // --- New inbox -------------------------------------------------------------
 
-it("lists the six templates with their sentence and how many pull requests each would show", async () => {
+it("lists the seven templates with their sentence and how many pull requests each would show", async () => {
   await render("?page=inbox-new");
   expect(node.querySelector("h1")!.textContent).toBe("What should this inbox catch?");
   expect(node.textContent).not.toContain("Start from one of these");
   expect(Array.from(node.querySelectorAll(".inbox-template")).map((t) => t.textContent)).toEqual([
-    "Custom4 nowStart from nothing and set the filters yourself.",
-    "Urgent1 nowAnything waiting on me in any repository, when risk is 4 or 5.",
-    "Work1 nowAnything waiting on me in other, whatever the risk.",
-    "Personal3 nowAnything waiting on me in my own repositories, whatever the risk.",
+    "Custom4 nowEvery open pull request, until you add filters.",
+    "Urgent1 nowMine, assigned to me or asking for my review, at risk 4 or 5.",
+    "Work1 nowMine, assigned to me or asking for my review, in other.",
+    "Personal3 nowEvery open pull request in my own repositories, whatever the risk.",
     "Quick merges2 nowThings ready to merge in any repository, whatever the risk.",
     "For an agent1 nowThings an agent can fix in any repository, whatever the risk.",
+    "Unclaimed0 nowOthers' pull requests with no one assigned and no review requested.",
   ]);
   expect(template("Urgent").className).toContain("inbox-red");
   expect(node.textContent).toContain("A pull request can sit in more than one inbox.");
@@ -268,7 +269,9 @@ it("opens a template unsaved, and Save adds it, from the owners of the person's 
   );
   expect(byText("button", "Delete inbox")).toBeUndefined();
   expect(railLink("Work")).toBeUndefined();
-  expect(node.querySelector<HTMLTextAreaElement>(".inbox-query textarea")!.value).toBe("org=other");
+  expect(node.querySelector<HTMLTextAreaElement>(".inbox-query textarea")!.value).toBe(
+    "org=other (author=@me OR assignee=@me OR review-requested=@me)",
+  );
   await click(button("Save"));
   expect(puts).toHaveLength(1);
   const made = puts[0]!.inboxes;
@@ -279,7 +282,7 @@ it("opens a template unsaved, and Save adds it, from the owners of the person's 
     color: "blue",
     what: "any",
     owners: [],
-    query: "org=other",
+    query: "org=other (author=@me OR assignee=@me OR review-requested=@me)",
     badge: true,
   });
   expect(made[2]!.id).toMatch(/^[0-9a-f]{32}$/);
@@ -322,7 +325,10 @@ it("checks the name as typed on Save, and keeps the unsaved inbox when the save 
   expect(nameInput().value).toBe("Hot");
   inboxesFail = null;
   await click(button("Save"));
-  expect(puts.at(-1)!.inboxes.at(-1)).toMatchObject({ name: "Hot", query: "risk>=4" });
+  expect(puts.at(-1)!.inboxes.at(-1)).toMatchObject({
+    name: "Hot",
+    query: "risk>=4 (author=@me OR assignee=@me OR review-requested=@me)",
+  });
   expect(search().get("inbox")).toBe(puts.at(-1)!.inboxes.at(-1)!.id);
 });
 
@@ -335,7 +341,10 @@ it("makes Personal from the login with the badge off, and the others as their qu
     badge: false,
   });
   await saveTemplate("Urgent");
-  expect(puts[1]!.inboxes.at(-1)).toMatchObject({ color: "red", query: "risk>=4" });
+  expect(puts[1]!.inboxes.at(-1)).toMatchObject({
+    color: "red",
+    query: "risk>=4 (author=@me OR assignee=@me OR review-requested=@me)",
+  });
   await saveTemplate("Quick merges");
   expect(puts[2]!.inboxes.at(-1)).toMatchObject({ color: "amber", query: "waiting=merge" });
   await saveTemplate("For an agent");
@@ -361,7 +370,7 @@ it("disables the templates at twenty inboxes and says so", async () => {
   await render("?page=inbox-new");
   expect(node.querySelector('[role="status"]')!.textContent).toContain("You have 20 inboxes");
   const all = Array.from(node.querySelectorAll<HTMLButtonElement>(".inbox-template"));
-  expect(all).toHaveLength(6);
+  expect(all).toHaveLength(7);
   expect(all.every((one) => one.disabled)).toBe(true);
   await click(all[0]);
   expect(puts).toHaveLength(0);
@@ -812,3 +821,102 @@ for (const modifier of ["metaKey", "ctrlKey"]) {
     expect(puts.at(-1)?.inboxes.at(-1)).toMatchObject({ name: "Keyboard inbox" });
   });
 }
+
+// --- Unclaimed template and the condition chips ------------------------------
+
+it("opens the Unclaimed template on others' pull requests that nobody holds, and Save adds it", async () => {
+  await render("?page=inbox-new");
+  await click(template("Unclaimed"));
+  expect(search().get("page")).toBe("inbox-edit");
+  expect(nameInput().value).toBe("Unclaimed");
+  expect(queryBox().value).toBe(
+    "waiting=other assignee=none review-requested=none is!=draft is!=bot",
+  );
+  // The fixture has no one else's pull request: none to show yet.
+  expect(node.querySelector(".inbox-preview-count")!.textContent).toBe("0");
+  await click(button("Save"));
+  expect(puts).toHaveLength(1);
+  expect(puts[0]!.inboxes.at(-1)).toMatchObject({
+    name: "Unclaimed",
+    query: "waiting=other assignee=none review-requested=none is!=draft is!=bot",
+    badge: true,
+  });
+});
+
+it("catches an unclaimed pull request in the Unclaimed inbox, and not a claimed one", async () => {
+  entries = [
+    ...fixture(),
+    entry(5, "acme/demo", { author: "sam" }),
+    entry(6, "acme/demo", { author: "sam", assigned: true }),
+    entry(7, "acme/demo", { author: "sam", review_requested: true }),
+    entry(8, "acme/demo", { author: "sam", draft: true }, { merge: "draft" }),
+    entry(9, "acme/demo", { author: "dependabot", author_bot: true }),
+  ];
+  await render("?page=inbox-new");
+  expect(template("Unclaimed").textContent).toContain("1 now");
+  await click(template("Unclaimed"));
+  expect(previewTitles()).toEqual(["Change 5"]);
+});
+
+const chips = () =>
+  Array.from(node.querySelectorAll(".filter-chip-label")).map((label) => label.textContent);
+const removeChip = (label: string) =>
+  node.querySelector<HTMLButtonElement>(`button[aria-label="Remove ${label}"]`)!;
+
+it("shows each condition of the query as a chip, and a chip's Remove saves the query without it", async () => {
+  daemon = {
+    revision: 1,
+    inboxes: [inbox("Hot", { query: "org=acme risk>=4 waiting=review" })],
+  };
+  await render("?page=inbox-edit&inbox=Hot");
+  expect(chips()).toHaveLength(3);
+  expect(chips()[0]).toBe("Organization is acme");
+  expect(node.querySelector(".filter-chips-or")).toBeNull();
+  expect(node.querySelector(".filter-chips-empty")).toBeNull();
+  await click(removeChip("Organization is acme"));
+  expect(puts).toHaveLength(1);
+  expect(puts[0]!.inboxes[0]!.query).toBe("risk>=4 waiting=review");
+  expect(queryBox().value).toBe("risk>=4 waiting=review");
+  expect(chips()).toHaveLength(2);
+  expect(chips()).not.toContain("Organization is acme");
+});
+
+it("says what no filter means, and shows it again once the last chip is removed", async () => {
+  daemon = {
+    revision: 1,
+    inboxes: [inbox("Open", { query: "" }), inbox("One", { query: "org=acme" })],
+  };
+  await render("?page=inbox-edit&inbox=Open");
+  expect(node.querySelector(".filter-chips")).toBeNull();
+  expect(node.querySelector(".filter-chips-empty")!.textContent).toBe(
+    "No filter: every open pull request. Add filters to narrow it.",
+  );
+  await render("?page=inbox-edit&inbox=One");
+  expect(node.querySelector(".filter-chips-empty")).toBeNull();
+  await click(removeChip("Organization is acme"));
+  expect(puts.at(-1)!.inboxes[1]!.query).toBe("");
+  expect(node.querySelector(".filter-chips-empty")!.textContent).toContain("No filter");
+});
+
+it("puts or between the chips of an OR query, and removing a choice keeps the rest joined by OR", async () => {
+  daemon = {
+    revision: 1,
+    inboxes: [inbox("Mine", { query: "author=@me OR assignee=@me OR review-requested=@me" })],
+  };
+  await render("?page=inbox-edit&inbox=Mine");
+  expect(chips()).toEqual(["Author is Me", "Assignee is Me", "Review requested is Me"]);
+  expect(
+    Array.from(node.querySelectorAll(".filter-chips-or")).map((one) => one.textContent),
+  ).toEqual(["or", "or"]);
+  await click(removeChip("Assignee is Me"));
+  expect(puts[0]!.inboxes[0]!.query).toBe("author=@me OR review-requested=@me");
+  expect(chips()).toEqual(["Author is Me", "Review requested is Me"]);
+  expect(node.querySelectorAll(".filter-chips-or")).toHaveLength(1);
+});
+
+it("shows no chips for a query that does not read", async () => {
+  daemon = { revision: 1, inboxes: [inbox("Bad", { query: "colour:red" })] };
+  await render("?page=inbox-edit&inbox=Bad");
+  expect(node.querySelector(".filter-chips")).toBeNull();
+  expect(node.querySelector(".filter-chips-empty")).toBeNull();
+});

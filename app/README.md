@@ -833,8 +833,9 @@ what waits on the person, grouped by what they do about it, beside the panel
 of the selected pull request. The page uses the shared palette in both themes; its list and
 panel scroll on their own, and below 760px the list stacks above the panel.
 `upNext` places each open pull request in at most one kind, from discovery's
-flags only: **Review** (their review is requested), **Clone** (a requested
-review whose repository has no local clone), **Merge** (theirs, `canMerge`
+flags only: **Review** (their review is requested, or someone else's pull
+request is assigned to them), **Clone** (such a pull request whose repository
+has no local clone), **Merge** (theirs, `canMerge`
 and no checks running: GitHub can call a head just pushed clean before its
 checks are queued), **Fix** (theirs, with changes requested, unresolved threads, a
 conflict or failing checks) and **Update** (theirs, and `canUpdateBranch`).
@@ -844,9 +845,16 @@ an agent** (Fix, Update, then the person's pull requests a fix agent is working
 on, each with the loader and the fix's phase). Within Review a saved review
 ready to read comes before one being written, then the riskier first;
 otherwise the lower number first. Each pull request appears once, whatever
-clones hold it. Their own pull requests with nothing to do (drafts, and those
-waiting on reviewers or checks) are counted at the foot of the list and linked
-to Pull requests; everyone else's are only there.
+clones hold it. After the groups, their own pull requests with nothing to do
+(drafts, and those waiting on reviewers or checks) are listed under **Waiting
+on checks or reviews**, and every other open pull request (`others`: someone
+else's that neither asks for their review nor is assigned to them), oldest
+first, under **Not waiting on you**. Rows of both say where the pull request
+stands instead of a kind: the person's own what it waits on, others' "Draft",
+"Unclaimed" (no assignee and no review requested from anyone), "Approved",
+"Changes requested", "Review requested" or "Assigned" (`othersState`). Both are
+waiting rows: the selection does not open on them, they have no kind's action,
+and the Inbox total leaves them out.
 
 The list's header counts what is the person's, sums baum's reading estimates
 into minutes (only reviews have one), counts the fixes with agents and what was
@@ -927,8 +935,10 @@ to these rules belongs there too.
 **Inboxes** are saved filters over this same queue, defined in the daemon (see
 its [inboxes README](../internal/inboxes/README.md)) and matched here
 (`src/inboxes.ts`): the app never builds a second queue. An inbox holds the
-queue items that match its query (see the filter below; one that does not read
-narrows nothing). The daemon's older parts of an inbox read as part of it
+open pull requests of this page (the queue's items, the person's own that
+wait, and others' as `waiting=other`) that match its query (see the filter
+below; one that does not read narrows nothing). An inbox with no query filters
+nothing: it lists every open pull request. The daemon's older parts of an inbox read as part of it
 (`foldedQuery`): what it holds as `waiting=review` (Review and Clone items),
 `waiting=merge` (Merge items), `waiting=agent` (Fix and Update items and the
 pull requests a fix agent is working on now) or, for the person's own,
@@ -936,11 +946,14 @@ pull requests a fix agent is working on now) or, for the person's own,
 `repo=`; and leaving out bots as `is!=bot`, each before the query, which is
 parenthesised when it has an `OR`. The next save writes the inbox with only the
 query. A pull request can
-be in several inboxes. There is no separate page of everything; Default, with
-no query, lists the whole queue. The daemon always
-keeps at least one inbox (a fresh installation gets **Default**, which matches
-everything, and is an ordinary inbox that can be renamed, edited or deleted
-while another remains), and the app root, a legacy link to it, an `inbox` the
+be in several inboxes. There is no separate page of everything. The daemon
+always keeps at least one inbox (a fresh installation gets **Default**, whose
+query `author=@me OR assignee=@me OR review-requested=@me` (`FOR_ME`) keeps
+what the person wrote, is assigned or was asked to review, and which is an
+ordinary inbox that can be renamed, edited or deleted while another remains;
+an upgrade with saved inboxes adds none and instead puts that query in front
+of each inbox's own, since inboxes used to filter only the queue), and the app
+root, a legacy link to it, an `inbox` the
 daemon does not have (as one just deleted) and the start-up and the end of
 setup all open the first inbox in the sidebar's order. The address is replaced
 by `?inbox=<first id>` in the same history entry, so Back does not return to
@@ -990,7 +1003,9 @@ inboxes scroll within the sidebar, so with many inboxes plan usage, Jobs and
 Settings stay in view; a row's menu is placed against the window, under its row
 or above it near the bottom, and closes when the sidebar scrolls. Each row links
 to `?inbox=<id>`, is the current page when selected, and
-shows a dot, the name and how many unsnoozed items match, none when 0 or when
+shows a dot, the name and how many unsnoozed items match (`queueItems`: the
+queue's items and others' open pull requests, not the person's own that
+wait), none when 0 or when
 the inbox's badge switch is off (that switch hides only this row's count, never
 the Inbox total). The
 `⋯` button, or a right click on the row, opens a short list of buttons,
@@ -1028,12 +1043,13 @@ A term is a field, an operator and a value:
 | `org=acme` | whose repository's owner is acme (an Enterprise one's too) |
 | `author=@me`, `author=sam` | by the person, or by that login |
 | `assignee=@me`, `review-requested=@me` | assigned to the person (first 20 assignees), asking for their review |
+| `assignee=none`, `review-requested=none` | assigned to nobody, asking nobody (no person or team) for a review |
 | `review=approved`, `changes_requested`, `none` | with GitHub's review decision (none: neither) |
 | `checks=passing`, `failing`, `running`, `none` | with that state of checks |
 | `is=draft`, `mergeable`, `conflict`, `blocked`, `behind`, `bot` | drafts, GitHub's merge state, behind their base, by a bot |
 | `risk=4`, `risk>=3`, `risk<3`, `risk=none` | by the baum review's score (1 to 5); without a score only `risk=none` |
 | `base=main` | merging into the branch |
-| `waiting=review`, `merge`, `agent` | in an inbox's queue only: waiting for the person's review, to merge, or for an agent's fix |
+| `waiting=review`, `merge`, `agent`, `other` | in an inbox's queue only: waiting for the person's review, to merge, for an agent's fix, or someone else's waiting on nothing from the person |
 | any other word, or a "quoted phrase" | with it in the title or repository, or that `#number` |
 
 The operators are `=` and `!=` (not any of the values), and for risk also
@@ -1090,7 +1106,7 @@ queue (kept per inbox) until the save, as GitHub's merge button: **Update
 inbox** gives the inbox the query, and the arrow beside it offers **Create
 inbox**, a copy of the inbox with it, and **Discard changes** (all only while
 the draft differs; the draft goes once the inbox holds it, so a failed save
-keeps it). **Clear** there empties the draft, which then shows the whole queue.
+keeps it). **Clear** there empties the draft, which then shows every open pull request.
 `waiting=` is refused outside an inbox's queue. With nothing matching while
 the filter hides something, the queue's panel says "Nothing matches the
 filter", how many it hides, and **Discard the changes**. Tabbing out of the menu closes it. Each page keeps its own filter or draft (`inbox`,
@@ -1121,14 +1137,17 @@ edit page keeps the inbox's own row current.
 Every control is a real button, link or input with
 a label, with no key of its own, reached with Tab.
 
-- **New inbox** (`?page=inbox-new`): "What should this inbox catch?" and six
+- **New inbox** (`?page=inbox-new`): "What should this inbox catch?" and seven
   templates, each a button with a colour dot, name, sentence and how many
   unsnoozed pull requests it would show now. Custom (blue) has no filter and
-  says "Start from nothing and set the filters yourself.";
-  Urgent (red) is any repository at risk 4 or 5; Work (blue) is every owner of
-  the person's repositories except their login (empty when there is none);
+  says "Every open pull request, until you add filters.";
+  Urgent (red) is what is the person's (`FOR_ME`) at risk 4 or 5; Work (blue)
+  is what is the person's in every owner of their repositories except their
+  login (any repository when there is none);
   Personal (green) is the login's own repositories with the badge off; Quick
-  merges (amber) and For an agent (grey) pick that kind. A name another inbox
+  merges (amber) and For an agent (grey) pick that kind; Unclaimed (purple) is
+  `waiting=other assignee=none review-requested=none is!=draft is!=bot`,
+  others' pull requests nobody has picked up. A name another inbox
   has becomes "Urgent 2", "Urgent 3"… Picking one saves nothing: it opens the
   edit page, titled New inbox, on an inbox not saved yet ("Not saved yet.
   Adjust anything below, then Save.", its Name input focused, "← New inbox"
@@ -1143,15 +1162,21 @@ a label, with no key of its own, reached with Tab.
   make them". The name is an input saved on blur or Enter; a blank or
   too-long name, or one another inbox has (ignoring case), is refused in place
   and not sent. Six colour swatches have radio semantics. "What it catches" is
-the inbox's whole query: the filter icon with its menu (Waiting for among the
-fields) beside the query as text, each change saved a moment after it reads. A
+the inbox's whole query: first its conditions as chips (`FilterChips`,
+`queryParts`), each what must hold (or, with an `OR` at the top, each choice,
+"or" between them) in words, as "Author is Me", with a **Remove <condition>**
+button that saves the query without it, keeping the rest as written; with no
+query it says "No filter: every open pull request. Add filters to narrow it.".
+Below them, the filter icon with its menu (Waiting for among the fields)
+beside the query as text, each change saved a moment after it reads. A
 switch shows or hides the inbox's count in the sidebar; its pull requests still
 count in the Inbox total. **Delete inbox** asks, then
 deletes with Undo and goes to the first inbox left with focus on its row in the
 sidebar; with only one inbox it is disabled and the page says "Keep at least one
 inbox".
-The right-hand preview is "Would show right now" with the same unsnoozed queue
-items and `matches` as the queue, grouped like it, each row with its
+The right-hand preview is "Would show right now" with the same unsnoozed
+items (`queueItems`) and `matches` as the sidebar's count, grouped like the
+queue with Not waiting on you last, each row with its
 repository and tags of the other inboxes it is in. A change that alters the
 matches says "N added", "N removed" or "N added · N removed" (a zero half is
 left out) for four seconds, in a live region that is always on

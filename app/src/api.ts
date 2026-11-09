@@ -53,6 +53,11 @@ export type PR = GitHubState & {
   review_requested_from_me: boolean;
   /** The person is among its first 20 assignees; absent in data from an older daemon. */
   assigned_to_me?: boolean;
+  /** It has an assignee; absent in data from an older daemon. */
+  assigned?: boolean;
+  /** A review is requested from someone, a person or a team; absent in data
+   *  from an older daemon. */
+  review_requested?: boolean;
   author_has_write: boolean | null;
   team_membership_known: boolean;
   head_ref?: string;

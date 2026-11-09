@@ -40,12 +40,23 @@ read (or save) of a document without it initializes it in one immediate
 transaction, so independent stores and concurrent clients agree:
 
 - A fresh installation gets one inbox named `Default`: what `any`, no owners,
-  risk `any`, no repositories, empty query, `no_bots` false, badge on, color
+  risk `any`, no repositories, query `author=@me OR assignee=@me OR review-requested=@me`
+  (the pull requests the person wrote, is assigned or was asked to review; an
+  inbox with an empty query lists every open pull request), `no_bots` false, badge on, color
   `blue`, with a daemon-assigned id. The revision becomes 1.
-- An upgrade carries stored inboxes over as stored JSON, re-encoded compactly,
-  with fields, ids and order unchanged, and appends `Default` last. If a name equal to `Default` ignoring case exists, it
-  is `Default 2`, `Default 3`, and so on. With 20 inboxes already stored,
-  nothing is added or removed and the document is only marked initialized.
+- An upgrade with stored inboxes adds no `Default`. The app used to show only
+  the Up next queue in an inbox (the person's review requests, own pull
+  requests and assigned pull requests), and an empty query now means every
+  open pull request, so each stored inbox keeps what it showed: its entry is
+  carried over as stored JSON, re-encoded compactly, with id, name, color,
+  order and all other fields unchanged and only `query` rewritten. An empty
+  query becomes the default query. A query `q` becomes
+  `(<default query>) (q)`; the parentheses keep a top-level `OR` in `q` inside
+  it. If that exceeds 500 characters it becomes `waiting!=other (q)` (the
+  app's filter for "not someone else's pull request that waits on nothing from
+  the person"), and if that is too long as well the query is left unchanged.
+  The revision increments and the document is marked initialized, so this runs
+  once. An upgrade from a document with no inboxes gets `Default` as above.
 - `Default` is an ordinary inbox: it can be renamed, edited or deleted while
   another inbox remains, and is not recreated afterwards.
 - A saved list is never empty: the last inbox cannot be deleted.

@@ -356,3 +356,54 @@
 .inbox-query > .filter-bar {
   flex: 1;
 }
+/* The query's conditions as chips, each with its own ×, above the query. */
+.filter-chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem;
+  margin: 0 0 0.5rem;
+  padding: 0;
+  list-style: none;
+}
+.filter-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.15rem;
+  max-width: 100%;
+  padding: 0.15rem 0.15rem 0.15rem 0.5rem;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  background: var(--surface-sunken);
+  color: var(--text-primary);
+  font-size: var(--text-xs);
+}
+.filter-chip-label {
+  overflow-wrap: anywhere;
+}
+.filter-chip-remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.25rem;
+  height: 1.25rem;
+  border-radius: var(--radius-sm);
+  color: var(--text-tertiary);
+}
+.filter-chip-remove:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+.filter-chip-remove svg {
+  width: 0.75rem;
+  height: 0.75rem;
+}
+.filter-chips-or {
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+}
+.filter-chips-empty {
+  margin: 0 0 0.5rem;
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+}

@@ -19,8 +19,9 @@ queue. It follows the app's queue (`upNext` and `kindOf` in
 - the ui-state `inbox` record, whose snoozes (until a time, or while the head
   stays the one it was held on) hide a pull request.
 
-An open pull request counts when the user's review is requested, or when it is
-theirs and has changes requested, a conflict, failing checks or unresolved
+An open pull request counts when the user's review is requested, when it is
+assigned to them and they did not write it (it is classified like a requested
+review: `clone` when it needs a clone, else `review`), or when it is theirs and has changes requested, a conflict, failing checks or unresolved
 threads, is ready to merge, or is behind a base they can push to. With nothing
 waiting the count is zero.
 

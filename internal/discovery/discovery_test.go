@@ -160,6 +160,12 @@ func TestFlagsAndPrivateOfflineCache(t *testing.T) {
 	if !prs[2].AssignedToMe || prs[0].AssignedToMe || prs[1].AssignedToMe || prs[3].AssignedToMe {
 		t.Fatalf("assigned flags %#v", prs)
 	}
+	if !prs[2].Assigned || prs[0].Assigned || prs[1].Assigned || prs[3].Assigned {
+		t.Fatalf("assigned any flags %#v", prs)
+	}
+	if prs[0].ReviewRequested || !prs[1].ReviewRequested || !prs[2].ReviewRequested || prs[3].ReviewRequested {
+		t.Fatalf("review requested any flags %#v", prs)
+	}
 	if prs[3].AuthorHasWrite != nil {
 		t.Fatal("unreadable permission treated as known")
 	}

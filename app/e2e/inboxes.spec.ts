@@ -1,5 +1,5 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
-import { clearSnoozes, launchURL, resetInboxes } from "./inbox-helpers";
+import { clearSnoozes, FOR_ME, launchURL, resetInboxes } from "./inbox-helpers";
 
 /** The sidebar's Inbox heading, which is not a link. */
 const heading = (page: Page): Locator =>
@@ -89,8 +89,8 @@ test("the Inbox total counts each pull request once, those in no inbox, and badg
   // Two inboxes holding the whole queue: every pull request is in both, and
   // the second has its count switched off.
   await saveInboxes(page, [
-    { id: ONE, name: "Everything", query: "" },
-    { id: TWO, name: "Quiet everything", query: "", badge: false },
+    { id: ONE, name: "Everything", query: FOR_ME },
+    { id: TWO, name: "Quiet everything", query: FOR_ME, badge: false },
   ]);
   const sidebar = page.getByRole("navigation", { name: "Main" });
   const everything = sidebar.getByRole("link", { name: /^Everything/ });
@@ -100,7 +100,7 @@ test("the Inbox total counts each pull request once, those in no inbox, and badg
   await expect(heading(page).locator(".local-rail-badge")).toHaveText(String(total));
 
   // Only the second, badge off: its pull requests still make the total.
-  await saveInboxes(page, [{ id: TWO, name: "Quiet everything", query: "", badge: false }]);
+  await saveInboxes(page, [{ id: TWO, name: "Quiet everything", query: FOR_ME, badge: false }]);
   await expect(quiet.locator(".local-rail-sub-count")).toHaveCount(0);
   await expect(heading(page).locator(".local-rail-badge")).toHaveText(String(total));
 
@@ -113,6 +113,30 @@ test("the Inbox total counts each pull request once, those in no inbox, and badg
   expect(some).toBeLessThan(total);
   await expect(heading(page).locator(".local-rail-badge")).toHaveText(String(total));
   await expect(heading(page).locator(".sr-only")).toHaveText(`, ${total} waiting`);
+
+  // An inbox without a query lists every open pull request, others' too, and
+  // counts them; the total still counts only what waits on the person.
+  await saveInboxes(page, [{ id: ONE, name: "All open", query: "" }]);
+  const all = sidebar.getByRole("link", { name: /^All open/ });
+  await expect(all.locator(".local-rail-sub-count")).toBeVisible();
+  expect(Number(await all.locator(".local-rail-sub-count").textContent())).toBeGreaterThan(total);
+  await expect(page.getByRole("region", { name: "Not waiting on you" })).toBeVisible();
+  await expect(heading(page).locator(".local-rail-badge")).toHaveText(String(total));
+});
+
+test("a new inbox starts from Unclaimed, and a condition's chip removes it", async ({ page }) => {
+  await page.goto(await launchURL());
+  await expect(page.locator("button.upnext-row").first()).toBeVisible({ timeout: 15000 });
+  await page.goto(new URL("?page=inbox-new", page.url()).toString());
+  await page.getByRole("button", { name: /^Unclaimed/ }).click();
+  await expect(page).toHaveURL(/page=inbox-edit&inbox=[0-9a-f]{32}/);
+  const chips = page.getByRole("list", { name: "Conditions" });
+  await expect(chips.locator(".filter-chip")).toHaveCount(5);
+  await chips.getByRole("button", { name: "Remove State is not Draft" }).click();
+  await expect(chips.locator(".filter-chip")).toHaveCount(4);
+  await expect(page.locator(".inbox-query textarea")).toHaveValue(
+    "waiting=other assignee=none review-requested=none is!=bot",
+  );
 });
 
 test("the last inbox cannot be deleted", async ({ page }) => {
@@ -140,8 +164,8 @@ test("a snooze in one inbox hides the pull request in the others, lowers the tot
   await page.goto(await launchURL());
   await expect(page.locator("button.upnext-row").first()).toBeVisible({ timeout: 15000 });
   await saveInboxes(page, [
-    { id: ONE, name: "First", query: "" },
-    { id: TWO, name: "Second", query: "" },
+    { id: ONE, name: "First", query: FOR_ME },
+    { id: TWO, name: "Second", query: FOR_ME },
   ]);
   const sidebar = page.getByRole("navigation", { name: "Main" });
   const rows = page.locator("button.upnext-row");

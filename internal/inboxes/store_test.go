@@ -49,7 +49,7 @@ func TestFreshReadCreatesDefault(t *testing.T) {
 		t.Fatalf("%d %v", code, body)
 	}
 	got := list(body)
-	if len(got) != 1 || got[0]["name"] != "Default" || got[0]["query"] != "" || got[0]["what"] != "any" ||
+	if len(got) != 1 || got[0]["name"] != "Default" || got[0]["query"] != DefaultQuery || got[0]["what"] != "any" ||
 		got[0]["risk"] != "any" || got[0]["badge"] != true || got[0]["no_bots"] != false ||
 		len(got[0]["owners"].([]any)) != 0 || len(got[0]["repositories"].([]any)) != 0 || !idPattern.MatchString(got[0]["id"].(string)) {
 		t.Fatalf("default: %v", got)
@@ -85,15 +85,38 @@ func TestConcurrentFirstReadsCreateOneDefault(t *testing.T) {
 	}
 }
 
-func TestUpgradeKeepsExistingInboxesAndAppendsDefault(t *testing.T) {
+func TestUpgradeWithoutInboxesAddsDefault(t *testing.T) {
 	h := newFresh(t)
-	const a = `{"id":"0123456789abcdef0123456789abcdef","name":"Équipe","color":"red","what":"review","owners":["x"],"risk":"4","repositories":["x/y"],"query":"q","no_bots":true,"badge":false}`
-	const b = `{"id":"fedcba9876543210fedcba9876543210","name":"Alpha","color":"grey","what":"mine","owners":[],"risk":"3","repositories":[],"no_bots":false,"badge":true,"extra":1}`
-	seed(t, h, `{"revision":5,"unknown":{"k":[1]},"inboxes":[`+a+`,`+b+`]}`)
+	seed(t, h, `{"revision":4,"unknown":1,"inboxes":[]}`)
 	_, body := h.do(http.MethodGet, "")
 	got := list(body)
-	if body["revision"] != float64(6) || len(got) != 3 || got[2]["name"] != "Default" {
+	if body["revision"] != float64(5) || body["initialized"] != true || len(got) != 1 || got[0]["name"] != "Default" || got[0]["query"] != DefaultQuery {
 		t.Fatalf("%v", body)
+	}
+	if !strings.Contains(stored(t, h.path), `"unknown":1`) {
+		t.Fatalf("document fields: %s", stored(t, h.path))
+	}
+}
+
+func TestUpgradeScopesExistingInboxesAndAddsNoDefault(t *testing.T) {
+	h := newFresh(t)
+	const a = `{"id":"0123456789abcdef0123456789abcdef","name":"Équipe","color":"red","what":"review","owners":["x"],"risk":"4","repositories":["x/y"],"query":"repo=a","no_bots":true,"badge":false}`
+	const b = `{"id":"fedcba9876543210fedcba9876543210","name":"Alpha","color":"grey","what":"mine","owners":[],"risk":"3","repositories":[],"no_bots":false,"badge":true,"extra":1}`
+	const c = `{"id":"00000000000000000000000000000003","name":"Or","color":"blue","what":"any","owners":[],"risk":"any","repositories":[],"query":"  a OR b ","no_bots":false,"badge":true}`
+	long := strings.Repeat("x", MaxQueryLength-len(DefaultQuery)-4) // too long with DefaultQuery, short enough for QueueScope
+	atLimit := strings.Repeat("y", MaxQueryLength)
+	d := `{"id":"00000000000000000000000000000004","name":"Long","color":"blue","what":"any","owners":[],"risk":"any","repositories":[],"query":"` + long + `","no_bots":false,"badge":true}`
+	e := `{"id":"00000000000000000000000000000005","name":"Limit","color":"blue","what":"any","owners":[],"risk":"any","repositories":[],"query":"` + atLimit + `","no_bots":false,"badge":true}`
+	seed(t, h, `{"revision":5,"unknown":{"k":[1]},"inboxes":[`+a+`,`+b+`,`+c+`,`+d+`,`+e+`]}`)
+	_, body := h.do(http.MethodGet, "")
+	got := list(body)
+	if body["revision"] != float64(6) || len(got) != 5 {
+		t.Fatalf("%v", body)
+	}
+	for _, g := range got {
+		if g["name"] == "Default" {
+			t.Fatal("added a default")
+		}
 	}
 	var doc map[string]json.RawMessage
 	if err := json.Unmarshal([]byte(stored(t, h.path)), &doc); err != nil {
@@ -102,20 +125,33 @@ func TestUpgradeKeepsExistingInboxesAndAppendsDefault(t *testing.T) {
 	if string(doc["unknown"]) != `{"k":[1]}` || string(doc["initialized"]) != "true" || string(doc["revision"]) != "6" {
 		t.Fatalf("document fields: %s", stored(t, h.path))
 	}
-	if got[0]["name"] != "Équipe" || got[0]["query"] != "q" || got[0]["risk"] != "4" {
-		t.Fatalf("fields lost: %v", got[0])
+	wantQuery := []string{
+		"(" + DefaultQuery + ") (repo=a)",
+		DefaultQuery,
+		"(" + DefaultQuery + ") (a OR b)",
+		QueueScope + " (" + long + ")",
+		atLimit,
 	}
-	def := got[2]
-	if id, _ := def["id"].(string); !idPattern.MatchString(id) || def["query"] != "" || def["what"] != "any" || def["risk"] != "any" || def["badge"] != true {
-		t.Fatalf("default: %v", def)
+	for i, g := range got {
+		if g["query"] != wantQuery[i] {
+			t.Fatalf("inbox %d query %q, want %q", i, g["query"], wantQuery[i])
+		}
 	}
-	items := storedItems(t, h.path)
-	if len(items) != 3 || items[0] != a || items[1] != b {
-		t.Fatalf("existing inboxes changed: %s", stored(t, h.path))
+	if got[0]["name"] != "Équipe" || got[0]["risk"] != "4" || got[0]["id"] != "0123456789abcdef0123456789abcdef" || got[1]["name"] != "Alpha" || got[2]["id"] != "00000000000000000000000000000003" {
+		t.Fatalf("fields or order changed: %v", got)
+	}
+	if !strings.Contains(storedItems(t, h.path)[1], `"extra":1`) {
+		t.Fatalf("unknown inbox key dropped: %s", stored(t, h.path))
+	}
+	if storedItems(t, h.path)[4] != e {
+		t.Fatalf("query at the limit changed: %s", storedItems(t, h.path)[4])
+	}
+	if _, again := h.do(http.MethodGet, ""); again["revision"] != float64(6) || list(again)[0]["query"] != wantQuery[0] {
+		t.Fatalf("written again: %v", again)
 	}
 }
 
-func TestUpgradeAtTheLimitAddsNothing(t *testing.T) {
+func TestUpgradeAtTheLimitScopesAndAddsNothing(t *testing.T) {
 	h := newFresh(t)
 	var items []string
 	for i := range MaxInboxes {
@@ -128,27 +164,12 @@ func TestUpgradeAtTheLimitAddsNothing(t *testing.T) {
 		t.Fatalf("%v", body)
 	}
 	for _, g := range got {
-		if g["name"] == "Default" {
-			t.Fatal("added a default beyond the limit")
-		}
-	}
-	for i, raw := range storedItems(t, h.path) {
-		if raw != items[i] {
-			t.Fatalf("inbox %d changed: %s", i, raw)
+		if g["name"] == "Default" || g["query"] != DefaultQuery {
+			t.Fatalf("not scoped or default added: %v", g)
 		}
 	}
 	if _, again := h.do(http.MethodGet, ""); again["revision"] != float64(3) {
 		t.Fatalf("written again: %v", again)
-	}
-}
-
-func TestDefaultNameAvoidsCollisions(t *testing.T) {
-	h := newFresh(t)
-	seed(t, h, `{"revision":1,"inboxes":[`+strings.Replace(entry("default"), `{"name"`, `{"id":"0123456789abcdef0123456789abcdef","name"`, 1)+`]}`)
-	_, body := h.do(http.MethodGet, "")
-	got := list(body)
-	if len(got) != 2 || got[0]["name"] != "default" || got[1]["name"] != "Default 2" {
-		t.Fatalf("%v", got)
 	}
 }
 

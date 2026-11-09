@@ -106,6 +106,11 @@ import { cn } from "@baum/viewer/components/classnames";
  *  asked for, unblock their own, merge it, bring it up to date with its base,
  *  or give baum a clone so a requested review can be written. */
 export type UpNextKind = "review" | "fix" | "merge" | "update" | "clone";
+/** What an inbox matches a pull request as: its kind in the queue, or
+ *  `other` for someone else's that waits on nothing from the person. */
+export type QueueKind = UpNextKind | "other";
+/** A pull request as the inboxes match and count it. */
+export type QueueItem = { key: string; kind: QueueKind; entry: Entry };
 
 export type UpNextItem = {
   /** The pull request across clones: repository and number. */
@@ -142,12 +147,16 @@ export const GROUPS: { id: "eyes" | "merge" | "agent"; title: string; kinds: UpN
   { id: "agent", title: "Hand to an agent", kinds: ["fix", "update"] },
 ];
 /** Each group's dot, as Pull requests colours the same states. */
-const GROUP_TONES: Record<(typeof GROUPS)[number]["id"] | "waiting", ListTone> = {
+const GROUP_TONES: Record<(typeof GROUPS)[number]["id"] | "waiting" | "others", ListTone> = {
   eyes: "caution",
   merge: "positive",
   agent: "critical",
   waiting: "info",
+  others: "quiet",
 };
+/** The section of other people's pull requests that wait on nothing from
+ *  the person, after the person's own that wait. */
+export const OTHERS_TITLE = "Not waiting on you";
 
 export function upNextKey(pr: Pick<Entry["pull_request"], "repository" | "number">) {
   return `${pr.repository.toLowerCase()}#${pr.number}`;
@@ -171,7 +180,9 @@ function blocked(entry: Entry) {
 function kindOf(entry: Entry, jobs: Job[]): UpNextKind | null {
   const pr = entry.pull_request;
   if (!isOpen(entry)) return null;
-  if (pr.review_requested_from_me) return entry.needs_clone ? "clone" : "review";
+  // Assigned someone else's pull request, the person is asked to look at it.
+  if (pr.review_requested_from_me || (pr.assigned_to_me && !pr.authored_by_me))
+    return entry.needs_clone ? "clone" : "review";
   if (!pr.authored_by_me) return null;
   // An agent already fixing it leaves nothing for the person until it ends.
   if (isActiveJob(fixJob(entry, jobs))) return null;
@@ -290,11 +301,12 @@ export function stackBases(entries: Entry[], groups: ReviewGroup[]): Map<string,
   return bases;
 }
 
-/** The pull requests waiting on the person, in the order to take them, and
- *  their own that wait on someone or something else. Each pull request is
- *  listed once, whichever clones hold it. A stacked pull request GitHub would
- *  merge is not ready while an open one of its stack lies under it: it waits
- *  on that one (`stackedOn`), which must merge first. */
+/** The pull requests waiting on the person, in the order to take them, their
+ *  own that wait on someone or something else, and everyone else's open ones
+ *  (`others`), oldest first. Each pull request is listed once, whichever
+ *  clones hold it. A stacked pull request GitHub would merge is not ready
+ *  while an open one of its stack lies under it: it waits on that one
+ *  (`stackedOn`), which must merge first. */
 export function upNext(
   entries: Entry[],
   live: LiveSession[] = [],
@@ -303,6 +315,7 @@ export function upNext(
 ): {
   items: UpNextItem[];
   waiting: Entry[];
+  others: Entry[];
   fixing: { entry: Entry; job: Job }[];
   stackedOn: Map<string, number>;
 } {
@@ -318,17 +331,19 @@ export function upNext(
   }
   const items: UpNextItem[] = [];
   const waiting: Entry[] = [];
+  const others: Entry[] = [];
   const fixing: { entry: Entry; job: Job }[] = [];
   const stackedOn = stackBases([...best.values()], groups);
   for (const [key, entry] of best) {
     const own = kindOf(entry, jobs);
     const kind = own === "merge" && stackedOn.has(key) ? null : own;
     if (!kind) {
-      if (isOpen(entry) && entry.pull_request.authored_by_me) {
+      if (!isOpen(entry)) continue;
+      if (entry.pull_request.authored_by_me) {
         waiting.push(entry);
         const job = fixJob(entry, jobs);
         if (job && isActiveJob(job)) fixing.push({ entry, job });
-      }
+      } else others.push(entry);
       continue;
     }
     const last = kind === "fix" ? fixJob(entry, jobs) : undefined;
@@ -354,7 +369,8 @@ export function upNext(
       (a.kind === "review" ? readable(a) - readable(b) || risk(b) - risk(a) : 0) ||
       a.entry.pull_request.number - b.entry.pull_request.number,
   );
-  return { items, waiting, fixing, stackedOn };
+  others.sort((a, b) => a.pull_request.number - b.pull_request.number);
+  return { items, waiting, others, fixing, stackedOn };
 }
 
 type Seen = {
@@ -500,16 +516,21 @@ export function useUpNext(
   const day = dayOf(now);
   const state =
     stored.day === day ? stored : fresh(day, stillSnoozed(stored.snoozed, now), stored.held);
-  const { items, waiting, fixing, stackedOn } = upNext(entries, live, jobs, groups);
+  const { items, waiting, others, fixing, stackedOn } = upNext(entries, live, jobs, groups);
   const snoozedNow = (entry: Entry) => {
     const key = upNextKey(entry.pull_request);
     return (state.snoozed[key] ?? 0) > now || state.held[key] === entry.pull_request.head_sha;
   };
-  const snoozed = [
+  const snoozed: { key: string; entry: Entry; kind?: QueueKind }[] = [
     ...items.filter((item) => snoozedNow(item.entry)),
     ...waiting.filter(snoozedNow).map((entry) => ({
       key: upNextKey(entry.pull_request),
       entry,
+    })),
+    ...others.filter(snoozedNow).map((entry) => ({
+      key: upNextKey(entry.pull_request),
+      entry,
+      kind: "other" as const,
     })),
   ];
   const queue = items.filter((item) => !snoozedNow(item.entry));
@@ -540,12 +561,16 @@ export function useUpNext(
         return `waiting:${upNextKey(entry.pull_request)}:${entry.pull_request.head_sha}:${job?.id ?? ""}:${job?.state ?? ""}`;
       }),
     ...[...listed].map((repository) => `listed:${repository}`),
+    // A snooze until the next push of someone else's pull request ends on it.
+    ...others.map(
+      (entry) => `other:${upNextKey(entry.pull_request)}:${entry.pull_request.head_sha}`,
+    ),
   ].join("\n");
   useEffect(() => {
     if (!ready || !persistence.ready) return;
     const keys = new Set(items.map((item) => item.key));
     const heads = new Map(
-      [...items.map((item) => item.entry), ...waiting].map((entry) => [
+      [...items.map((item) => item.entry), ...waiting, ...others].map((entry) => [
         upNextKey(entry.pull_request),
         entry.pull_request.head_sha,
       ]),
@@ -620,6 +645,9 @@ export function useUpNext(
     queue,
     snoozed,
     waiting: waiting.filter((entry) => !snoozedNow(entry)),
+    /** Everyone else's open pull requests that wait on nothing from the
+     *  person, unsnoozed. */
+    others: others.filter((entry) => !snoozedNow(entry)),
     fixing: fixing.filter(({ entry }) => !snoozedNow(entry)),
     cleared,
     /** The open pull request each stacked one waits on to merge first. */
@@ -654,6 +682,37 @@ export function waitingOn(entry: Entry, base?: number) {
   return "Waiting on GitHub";
 }
 
+/** What a waiting row waits on: the person's own, or where someone else's
+ *  stands. */
+function rowWaiting(row: { entry: Entry; base?: number; other?: boolean }) {
+  return row.other ? othersState(row.entry) : waitingOn(row.entry, row.base);
+}
+
+/** Where someone else's pull request that waits on nothing from the person
+ *  stands, in a few words: no one assigned or asked to review it is
+ *  "Unclaimed". */
+export function othersState(entry: Entry) {
+  const pr = entry.pull_request;
+  if (pr.draft || entry.merge === "draft") return "Draft";
+  if (!pr.assigned && !pr.review_requested) return "Unclaimed";
+  if (entry.review === "approved") return "Approved";
+  if (entry.review === "changes_requested") return "Changes requested";
+  return pr.review_requested ? "Review requested" : "Assigned";
+}
+
+/** The pull requests the inboxes match and count: the queue's items and
+ *  everyone else's open ones (`other`). */
+export function queueItems(inbox: { queue: UpNextItem[]; others: Entry[] }): QueueItem[] {
+  return [
+    ...inbox.queue,
+    ...inbox.others.map((entry) => ({
+      key: upNextKey(entry.pull_request),
+      kind: "other" as const,
+      entry,
+    })),
+  ];
+}
+
 /** A pull request's page, carrying the inbox it was opened from so back
  *  returns there. */
 function prHref(entry: Entry, cloneFor: (entry: Entry) => string, inbox?: Inbox) {
@@ -671,14 +730,16 @@ function minutesText(minutes: number) {
 const sumMinutes = (items: { minutes?: number | null }[]) =>
   items.reduce((sum, item) => sum + (typeof item.minutes === "number" ? item.minutes : 0), 0);
 
-/** A row of the list: a queued item, a pull request an agent is fixing, or
- *  one of the person's own that waits on checks or reviewers. */
+/** A row of the list: a queued item, a pull request an agent is fixing, one
+ *  of the person's own that waits on checks or reviewers, or someone else's
+ *  that waits on nothing from the person (`other`, a waiting row too). */
 type Row = {
   key: string;
   entry: Entry;
   item?: UpNextItem;
   job?: Job;
   waiting?: boolean;
+  other?: boolean;
   /** The open pull request of its stack a waiting row must merge after. */
   base?: number;
 };
@@ -1048,7 +1109,7 @@ export function UpNextPage({
     window.addEventListener("keydown", create);
     return () => window.removeEventListener("keydown", create);
   }, [query, saveAsInbox, scope]);
-  const inScope = (item: { kind?: UpNextKind; entry: Entry }) =>
+  const inScope = (item: { kind?: QueueKind; entry: Entry }) =>
     matchesQuery(query, item.entry, item.kind);
   const queue = all.queue.filter(inScope);
   const snoozed = all.snoozed.filter(inScope);
@@ -1060,18 +1121,20 @@ export function UpNextPage({
     return entry ? matchesQuery(query, entry, item.kind) : !parseQuery(query).expr;
   });
   const waiting = all.waiting.filter((entry) => matchesQuery(query, entry));
+  const others = all.others.filter((entry) => matchesQuery(query, entry, "other"));
   // What the filter's counts and values come from: the whole queue, each
   // pull request with what it waits for.
-  const kinds = new Map<Entry, UpNextKind>([
-    ...all.queue.map((item): [Entry, UpNextKind] => [item.entry, item.kind]),
-    ...all.fixing.map(({ entry }): [Entry, UpNextKind] => [entry, "fix"]),
+  const kinds = new Map<Entry, QueueKind>([
+    ...all.queue.map((item): [Entry, QueueKind] => [item.entry, item.kind]),
+    ...all.fixing.map(({ entry }): [Entry, QueueKind] => [entry, "fix"]),
+    ...all.others.map((entry): [Entry, QueueKind] => [entry, "other"]),
   ]);
   const unfiltered = [...kinds.keys(), ...all.waiting];
-  const inbox = { ...all, queue, snoozed, fixing, cleared, waiting };
+  const inbox = { ...all, queue, snoozed, fixing, cleared, waiting, others };
   const { now } = all;
   // Those an agent is fixing are listed under Hand to an agent.
   const fixingKeys = new Set(fixing.map(({ entry }) => upNextKey(entry.pull_request)));
-  const others = waiting.filter((entry) => !fixingKeys.has(upNextKey(entry.pull_request)));
+  const ownWaiting = waiting.filter((entry) => !fixingKeys.has(upNextKey(entry.pull_request)));
   const sections = [
     ...GROUPS.map((group) => ({
       id: group.id as keyof typeof GROUP_TONES,
@@ -1090,13 +1153,20 @@ export function UpNextPage({
     {
       id: "waiting" as const,
       title: "Waiting on checks or reviews",
-      rows: others.map(
+      rows: ownWaiting.map(
         (entry): Row => ({
           key: upNextKey(entry.pull_request),
           entry,
           waiting: true,
           base: inbox.stackedOn.get(upNextKey(entry.pull_request)),
         }),
+      ),
+    },
+    {
+      id: "others" as const,
+      title: OTHERS_TITLE,
+      rows: others.map(
+        (entry): Row => ({ key: upNextKey(entry.pull_request), entry, waiting: true, other: true }),
       ),
     },
   ];
@@ -1113,13 +1183,18 @@ export function UpNextPage({
   const rows = groups.flatMap((group) => visible(group.lines));
   // A selected pull request that leaves the list hands the selection to the
   // one that takes its place. Waiting rows come last and are shown only when
-  // picked, so an emptied queue still reads as inbox zero.
+  // picked, so an emptied queue still reads as inbox zero; an inbox of
+  // others' pull requests alone (as Unclaimed) opens on its first.
   const last = useRef(0);
   const found = chosen ? rows.findIndex((row) => row.key === chosen) : -1;
   const actionable = rows.filter(
     (row) => !(isGroup(row) ? row.members.every((member) => member.waiting) : row.waiting),
   ).length;
-  const index = found >= 0 ? found : Math.min(last.current, actionable - 1);
+  const firstOther = rows.findIndex((row) =>
+    isGroup(row) ? row.members.some((member) => member.other) : row.other,
+  );
+  const index =
+    found >= 0 ? found : actionable > 0 ? Math.min(last.current, actionable - 1) : firstOther;
   const line = index >= 0 ? rows[index] : undefined;
   const selected = isGroup(line) ? undefined : line;
   const selectedGroup = isGroup(line) ? line : undefined;
@@ -1672,7 +1747,7 @@ export function UpNextPage({
           ) : filtering &&
             hidden > 0 &&
             // Waiting rows are never selected, so the lists say what is left.
-            queue.length + fixing.length + waiting.length + snoozed.length === 0 ? (
+            queue.length + fixing.length + waiting.length + others.length + snoozed.length === 0 ? (
             <div className="upnext-zero">
               <h2>Nothing matches the filter</h2>
               <p>
@@ -1757,7 +1832,7 @@ function ListRow({
     ...(row.job
       ? ["Agent fixing", phaseText(row.job)]
       : row.waiting
-        ? [waitingOn(row.entry, row.base), repository]
+        ? [rowWaiting(row), repository]
         : row.item?.failedFix
           ? [inGroup ? memberLabel(row.item.kind, row.entry) : "", "Last fix failed"]
           : [
@@ -2099,7 +2174,11 @@ function Panel({
   }, [menu]);
   const who = pr.review_requested_from_me
     ? `${pr.author ?? "Someone"} asked for your review`
-    : "Yours";
+    : pr.authored_by_me
+      ? "Yours"
+      : pr.assigned_to_me
+        ? `${pr.author ?? "Someone"}'s, assigned to you`
+        : `By ${pr.author ?? "someone else"}`;
   // Opening the pull request is always the default; what the kind asks for
   // follows it. A merge or branch update opens its confirmation; a fix starts
   // at once.
@@ -2161,7 +2240,7 @@ function Panel({
     <article className="upnext-panel" aria-labelledby="upnext-title">
       <div className="upnext-panel-meta">
         {waiting ? (
-          <span className="upnext-chip upnext-chip-waiting">{waitingOn(entry, row.base)}</span>
+          <span className="upnext-chip upnext-chip-waiting">{rowWaiting(row)}</span>
         ) : (
           <span className={`upnext-chip upnext-chip-${kind}`}>{KINDS[kind].label}</span>
         )}
@@ -2499,7 +2578,7 @@ function RiskCard({
  *  an agent at work, what needs fixing, ready to merge, or waiting. */
 function memberState(row: Row): { text: string; tone: string } {
   if (row.job) return { text: `Agent fixing · ${phaseText(row.job)}`, tone: "working" };
-  if (row.waiting) return { text: waitingOn(row.entry, row.base), tone: "waiting" };
+  if (row.waiting) return { text: rowWaiting(row), tone: "waiting" };
   if (!row.item) return { text: "", tone: "waiting" };
   const label = memberLabel(row.item.kind, row.entry);
   return {

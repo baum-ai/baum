@@ -111,12 +111,15 @@ func blocked(e reviewindex.Entry) bool {
 
 func kindOf(e reviewindex.Entry, queue []jobs.Job) string {
 	pr := e.PullRequest
+	// A pull request assigned to the viewer waits on them like a requested
+	// review, unless they wrote it.
+	mine := pr.ReviewRequestedFromMe || pr.AssignedToMe && !pr.AuthoredByMe
 	switch {
 	case !isOpen(e):
 		return ""
-	case pr.ReviewRequestedFromMe && e.NeedsClone:
+	case mine && e.NeedsClone:
 		return "clone"
-	case pr.ReviewRequestedFromMe:
+	case mine:
 		return "review"
 	case !pr.AuthoredByMe:
 		return ""

@@ -58,6 +58,14 @@ type PullRequest struct {
 	// AssignedToMe is true when the viewer is one of the first 20 assignees.
 	// Snapshots cached before it existed decode as false.
 	AssignedToMe bool `json:"assigned_to_me"`
+	// Assigned is true when the pull request has at least one of the first 20
+	// assignees fetched, whoever they are. Snapshots cached before it existed
+	// decode as false.
+	Assigned bool `json:"assigned"`
+	// ReviewRequested is true when a review is requested from at least one
+	// user or team, whoever they are. Snapshots cached before it existed
+	// decode as false.
+	ReviewRequested bool `json:"review_requested"`
 	// Nil means the token could not establish repository write permission.
 	AuthorHasWrite *bool `json:"author_has_write"`
 	// ViewerCanPush is whether the signed-in account may push to the
@@ -613,6 +621,8 @@ func (p *poll) discover(ctx context.Context, repository github.Repository) (Snap
 				item.HeadRepository = strings.ToLower(head.String())
 			}
 		}
+		item.Assigned = len(row.Assignees.Nodes) > 0
+		item.ReviewRequested = len(pr.RequestedReviewers) > 0 || len(pr.RequestedTeams) > 0
 		for _, user := range row.Assignees.Nodes {
 			if strings.EqualFold(user.Login, viewer.Login) {
 				item.AssignedToMe = true

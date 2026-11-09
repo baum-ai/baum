@@ -19,14 +19,22 @@ import { FilterBar, FilterButton } from "./filter-menu";
 import { KEEP_ONE, PageBar } from "./shell";
 import { queryProblem, tidyQuery } from "./pr-filter";
 import { SettingRow } from "./settings";
-import { ColourSwatches, GROUPS, InboxTag, type UpNextItem } from "./up-next";
+import { ColourSwatches, GROUPS, InboxTag, OTHERS_TITLE, type QueueItem } from "./up-next";
+import { FilterChips } from "./filter-chips";
+
+/** The preview's groups: the queue's, then others' pull requests. */
+const PREVIEW_GROUPS = [
+  ...GROUPS,
+  { id: "others", title: OTHERS_TITLE, kinds: ["other"] as QueueItem["kind"][] },
+];
 import { DANGER, PRIMARY, SECONDARY } from "./action-classes";
 
 /** What the three inbox pages share: the person's inboxes and the unsnoozed
- *  queue they are matched against, the same items the sidebar counts. */
+ *  pull requests they are matched against (the queue and others' open
+ *  ones), the same items the sidebar counts. */
 export type InboxPageProps = {
   inboxes: Inbox[];
-  items: UpNextItem[];
+  items: QueueItem[];
   /** The signed-in GitHub account. */
   login?: string;
   /** The person's repositories, as owner/name. */
@@ -64,7 +72,7 @@ function useSavedMark(saves: number) {
 }
 
 /** A pull request a bit of the page names: its title and where it is. */
-function prLine(item: UpNextItem) {
+function prLine(item: QueueItem) {
   const pr = item.entry.pull_request;
   return { title: pr.title, where: `${pr.repository} #${pr.number}` };
 }
@@ -128,7 +136,7 @@ export function NewInboxPage({
   );
 }
 
-type Diff = { added: Set<string>; removed: UpNextItem[] };
+type Diff = { added: Set<string>; removed: QueueItem[] };
 
 /** `?page=inbox-edit&inbox=<id>`: one inbox, saved as it is changed, beside
  *  what it would show right now. */
@@ -273,7 +281,7 @@ function EditInbox({
   const removedKeys = new Set(diff?.removed.map((item) => item.key));
   const nowKeys = new Set(mine.map((item) => item.key));
   const shown = items.filter((item) => nowKeys.has(item.key) || removedKeys.has(item.key));
-  const groups = GROUPS.map((group) => ({
+  const groups = PREVIEW_GROUPS.map((group) => ({
     ...group,
     rows: shown.filter((item) => group.kinds.includes(item.kind)),
   })).filter((group) => group.rows.length > 0);
@@ -368,7 +376,13 @@ function EditInbox({
           </div>
           <div className="inbox-block">
             <h2 className="settings-row-label">What it catches</h2>
-            {/* The inbox's query, picked from the filter menu or typed. */}
+            {/* Each condition, removed by its own ×; then the whole query,
+                picked from the filter menu or typed. */}
+            <FilterChips
+              query={inbox.query}
+              onChange={(query) => change({ query })}
+              empty="No filter: every open pull request. Add filters to narrow it."
+            />
             <div className="inbox-query">
               <FilterButton
                 query={inbox.query}

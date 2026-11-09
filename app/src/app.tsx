@@ -44,7 +44,7 @@ import {
   useInboxes,
   type Inbox as SavedInbox,
 } from "./inboxes";
-import { UpNextPage, useUpNext } from "./up-next";
+import { queueItems, UpNextPage, useUpNext } from "./up-next";
 import {
   FilterBar,
   FilterButton,
@@ -1236,7 +1236,7 @@ function Workspace({ url }: { url: UrlState }) {
   };
   const inboxPageProps = {
     inboxes: inboxes.inboxes,
-    items: inbox.queue,
+    items: queueItems(inbox),
     login: github?.login,
     repositories,
     entries: indexedEntries,
@@ -1356,10 +1356,13 @@ function Workspace({ url }: { url: UrlState }) {
           inboxes.available
             ? {
                 list: inboxes.inboxes,
+                // An inbox counts everything it lists but the person's own
+                // that wait, others' pull requests included; the Inbox
+                // total above counts only the queue.
                 counts: Object.fromEntries(
                   inboxes.inboxes.map((candidate) => [
                     candidate.id,
-                    inbox.queue.filter((item) => matches(candidate, item)).length,
+                    inboxPageProps.items.filter((item) => matches(candidate, item)).length,
                   ]),
                 ),
                 selected: selectedInbox?.id ?? null,
