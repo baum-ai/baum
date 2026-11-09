@@ -278,11 +278,14 @@ func TestIdleTimeoutStopsOnlyAPollGitHubStoppedAnswering(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
 		stall  int
+		queued bool
 		failed bool
 	}{
 		// Twelve pages take longer than idle, but each is answered within it.
 		{name: "a long poll that keeps being answered completes"},
 		{name: "a poll whose request is not answered stops", stall: 3, failed: true},
+		// Waiting behind another poll is not waiting on GitHub.
+		{name: "a poll queued behind another for longer than idle completes", queued: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			s, _ := inboxService(t, func(r *http.Request, call int) (int, string) {
@@ -296,6 +299,10 @@ func TestIdleTimeoutStopsOnlyAPollGitHubStoppedAnswering(t *testing.T) {
 			ctx, cancel := WithIdleTimeout(context.Background(), idle)
 			defer cancel()
 			started := time.Now()
+			if tc.queued {
+				s.mu.Lock()
+				time.AfterFunc(2*idle, s.mu.Unlock)
+			}
 			got, err := s.Poll(ctx, testRepo)
 			if tc.failed != (err != nil) || !tc.failed && len(got.PullRequests) != 12 {
 				t.Fatalf("snapshot=%+v err=%v", got, err)

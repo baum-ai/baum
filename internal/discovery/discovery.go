@@ -320,7 +320,7 @@ func (p *poll) get(ctx context.Context, path string, into any) error {
 	if err != nil {
 		return err
 	}
-	answered(ctx)
+	restartIdle(ctx)
 	if remaining, err := strconv.Atoi(headers.Get("X-RateLimit-Remaining")); err == nil {
 		p.rate.Remaining = &remaining
 	}
@@ -438,6 +438,7 @@ func (s *Service) PollNow(ctx context.Context, repository github.Repository) (Sn
 }
 
 func (s *Service) poll(ctx context.Context, repository github.Repository, force bool) (Snapshot, error) {
+	pauseIdle(ctx)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	ctx, cancel := context.WithCancel(ctx)
@@ -448,6 +449,7 @@ func (s *Service) poll(ctx context.Context, repository github.Repository, force 
 	s.liveMu.Unlock()
 	budgetMu.Lock()
 	defer budgetMu.Unlock()
+	restartIdle(ctx)
 	reader, err := s.client.REST(ctx, repository)
 	if err != nil {
 		return Snapshot{}, err

@@ -293,7 +293,7 @@ func (p *poll) graphQL(ctx context.Context, query string, variables map[string]a
 	if err != nil {
 		return nil, nil, err
 	}
-	answered(ctx)
+	restartIdle(ctx)
 	// GraphQL response headers describe its point budget, never the REST budget.
 	if n, e := strconv.Atoi(headers.Get("X-RateLimit-Remaining")); e == nil {
 		p.graphRate.Remaining = &n
