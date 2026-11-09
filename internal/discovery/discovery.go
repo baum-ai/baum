@@ -208,16 +208,12 @@ const (
 	// watchLimit bounds the pull requests an incremental poll re-reads by
 	// number because GitHub's update time does not follow what changed.
 	watchLimit = 50
-	// windowPageLimit bounds an incremental read; a longer window is
-	// replaced by a sweep.
-	windowPageLimit = 10
+	// windowPageLimit bounds an incremental read, 500 pull requests at
+	// inboxPageSize; a longer window is replaced by a sweep.
+	windowPageLimit = 20
 	// pageLimit bounds the pages of one read.
 	pageLimit = 1000
 )
-
-// requestTimeout bounds one GitHub request of a poll or probe; their callers
-// bound the whole of it.
-var requestTimeout = 20 * time.Second
 
 // cacheFormat changes when the cache keeps more than before: 1 added the pull
 // requests' head branch, 2 their base branch, 3 GitHub's rows, the cursor and
@@ -427,6 +423,9 @@ type poll struct {
 	// windowCursor is where the cursor moves once the poll's window and
 	// re-reads are read.
 	windowCursor time.Time
+	// size is how many pull requests a query asks for (shrinking); zero
+	// until the first.
+	size int
 	// merged are the base branches a pull request merged into since the cursor.
 	merged map[string]bool
 	// open and newest are GitHub's count of open pull requests and the newest
@@ -452,13 +451,20 @@ func (e *statusError) refused() bool {
 	return e.status == http.StatusUnauthorized || e.status == http.StatusForbidden || e.status == http.StatusNotFound
 }
 
+// gateway is GitHub's gateway answering instead of its API, usually because
+// the query took too long. It may succeed if asked again.
+func (e *statusError) gateway() bool {
+	return e.status == http.StatusBadGateway || e.status == http.StatusServiceUnavailable || e.status == http.StatusGatewayTimeout
+}
+
 // failed turns a request that returned no response into the poll's error: a
-// request or poll out of time is a timeout.
-func failed(ctx, request context.Context, err error) error {
+// poll out of time, or one GitHub stopped answering (WithIdleTimeout), is a
+// timeout.
+func failed(ctx context.Context, err error) error {
 	switch {
 	case errors.Is(err, github.ErrIdentityChanged):
 		return err
-	case errors.Is(ctx.Err(), context.DeadlineExceeded), ctx.Err() == nil && errors.Is(request.Err(), context.DeadlineExceeded):
+	case errors.Is(context.Cause(ctx), context.DeadlineExceeded):
 		return ErrTimeout
 	case ctx.Err() != nil:
 		return ctx.Err()
@@ -471,12 +477,11 @@ func (p *poll) get(ctx context.Context, responses map[string]cachedResponse, pat
 		return errRateLimit
 	}
 	old := responses[path]
-	request, cancel := context.WithTimeout(ctx, requestTimeout)
-	defer cancel()
-	status, headers, body, err := p.reader.Read(request, path, old.ETag)
+	status, headers, body, err := p.reader.Read(ctx, path, old.ETag)
 	if err != nil {
-		return failed(ctx, request, err)
+		return failed(ctx, err)
 	}
+	restartIdle(ctx)
 	var remaining *int
 	if n, err := strconv.Atoi(headers.Get("X-RateLimit-Remaining")); err == nil {
 		remaining = &n
@@ -618,7 +623,9 @@ func upgrade(cache diskCache) diskCache {
 }
 
 func (s *Service) poll(ctx context.Context, repository github.Repository, force bool) (Snapshot, error) {
+	pauseIdle(ctx)
 	defer s.lock(repository)()
+	restartIdle(ctx)
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	epoch, done := s.begin(cancel)
@@ -670,7 +677,7 @@ func (s *Service) poll(ctx context.Context, repository github.Repository, force 
 	}
 	err = p.refresh(ctx, repository)
 	if err != nil && ctx.Err() != nil && !errors.Is(err, errRateLimit) {
-		err = failed(ctx, ctx, err)
+		err = failed(ctx, err)
 	}
 	snapshot, buildErr := p.build(ctx, repository, err == nil)
 	if err == nil {
@@ -950,7 +957,7 @@ func (p *poll) permissions(ctx context.Context, repository github.Repository) er
 		case errors.As(err, &status) && status.refused():
 			entry = authorPermission{Read: p.now}
 		case ctx.Err() != nil:
-			return failed(ctx, ctx, err)
+			return failed(ctx, err)
 		default:
 			continue
 		}

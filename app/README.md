@@ -1217,10 +1217,10 @@ one notice covers every repository GitHub could not refresh, says whether
 GitHub is disconnected or needs attention, and links to Settings' Connections; another
 covers an exhausted GitHub allowance. Neither appears merely because the cache
 is old. Refresh asks
-GitHub through the local server, which gives up on a repository after 45 s
-(20 s for any one GitHub request) and answers it as not refreshed (stale, with
+GitHub through the local server, which gives up on a repository once GitHub
+has not answered for 45 s and answers it as not refreshed (stale, with
 the error, and with whatever it read before), which the app names in the
-refresh's alert; the app gives up on an answer after 60 s and names
+refresh's alert; the app gives up on an answer after 10 minutes and names
 the repository as one baum did not answer for in time, so a
 connection that drops mid-refresh cannot leave the loader running. While anything is selected a dark bar over
 the list counts it and offers **Merge N** for the selected pull requests that

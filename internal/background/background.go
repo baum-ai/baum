@@ -245,8 +245,9 @@ const (
 	// pollConcurrency is how many repositories poll at once. They share the
 	// credential's GitHub budget, which discovery checks before every request.
 	pollConcurrency = 3
-	// pollTimeout bounds one repository's poll; discovery bounds each of its
-	// requests and keeps what it read when this runs out.
+	// pollTimeout is how long a repository's poll waits for GitHub to answer
+	// one of its requests (discovery.WithIdleTimeout); discovery keeps what it
+	// read when this runs out. It bounds a whole probe.
 	pollTimeout = 45 * time.Second
 )
 
@@ -433,7 +434,9 @@ func (s *Service) Sync(ctx context.Context) {
 		}
 		polls.Go(func() {
 			defer func() { <-slots }()
-			requestCtx, cancel := context.WithTimeout(ctx, pollTimeout)
+			// A busy repository's sweep takes minutes; it stops only once
+			// GitHub stops answering.
+			requestCtx, cancel := discovery.WithIdleTimeout(ctx, pollTimeout)
 			snapshot, pollErr := poll(requestCtx, repo)
 			cancel()
 			handle.Lock()

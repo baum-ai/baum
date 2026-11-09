@@ -222,8 +222,10 @@ const VIEWS = [
   ["history", "Closed"],
 ] as const;
 const PULLS_TAB_KEY = "baum.pulls.tab.v1";
-// Longer than the daemon's own limit on a refresh, so its answer comes first.
-const REFRESH_TIMEOUT_MS = 60_000;
+// The daemon stops a refresh once GitHub stops answering it, but one that
+// GitHub keeps answering reads every open pull request, minutes for a busy
+// repository; this bounds only a daemon that never answers at all.
+const REFRESH_TIMEOUT_MS = 600_000;
 /** The Pull requests tab last shown in this window's browser, if any. */
 function lastPullsTab(): string | null {
   try {
@@ -975,7 +977,7 @@ function Workspace({ url }: { url: UrlState }) {
         for (const { repository, clone } of targets) {
           if (signal.aborted) return;
           // A request that never answers gives up, so it cannot hold the
-          // queue and the loader; the daemon gives up on GitHub sooner.
+          // queue and the loader; the daemon gives up on a stalled GitHub sooner.
           const one = new AbortController();
           const stop = () => one.abort();
           signal.addEventListener("abort", stop, { once: true });

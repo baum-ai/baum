@@ -15,6 +15,20 @@ import (
 	"github.com/baum-ai/baum/internal/github"
 )
 
+// GitHub gives up on a GraphQL query after about ten seconds and answers with
+// a gateway error. The inbox fields take about 0.2 seconds per pull request on
+// a busy repository, so a query asks for at most inboxPageSize of them, and one
+// GitHub gave up on is asked again for fewer, keeping what was already read.
+const (
+	inboxPageSize     = 25
+	inboxMinPageSize  = 5
+	inboxPageAttempts = 4
+)
+
+// inboxRetryDelay is the pause before a query's second attempt; later attempts
+// wait longer.
+var inboxRetryDelay = 2 * time.Second
+
 // rollup is a commit's checks: GitHub's combined state, and how many of its
 // check runs and commit statuses are in each state.
 type rollup struct {
@@ -239,13 +253,13 @@ const inboxFields = `fragment Inbox on PullRequest {
 // so the pages a poll gets before it runs out of time are the liveliest, and
 // the latest update of a pull request of any state, where a sweep's window
 // begins.
-const sweepQuery = `query LocalInbox($owner: String!, $name: String!, $cursor: String) {
+const sweepQuery = `query LocalInbox($owner: String!, $name: String!, $cursor: String, $first: Int!) {
  viewer { login }
  rateLimit { cost remaining resetAt }
  repository(owner: $owner, name: $name) {
   viewerPermission
   latest: pullRequests(orderBy: {field: UPDATED_AT, direction: DESC}, first: 1) { nodes { updatedAt } }
-  pullRequests(states: OPEN, orderBy: {field: UPDATED_AT, direction: DESC}, first: 50, after: $cursor) {
+  pullRequests(states: OPEN, orderBy: {field: UPDATED_AT, direction: DESC}, first: $first, after: $cursor) {
    pageInfo { hasNextPage endCursor }
    nodes { ...Inbox }
   }
@@ -256,14 +270,14 @@ const sweepQuery = `query LocalInbox($owner: String!, $name: String!, $cursor: S
 // windowQuery reads the pull requests of every state, the most recently
 // updated first, with GitHub's count of open ones and the newest's number,
 // which the cache must match.
-const windowQuery = `query LocalInboxChanges($owner: String!, $name: String!, $cursor: String) {
+const windowQuery = `query LocalInboxChanges($owner: String!, $name: String!, $cursor: String, $first: Int!) {
  viewer { login }
  rateLimit { cost remaining resetAt }
  repository(owner: $owner, name: $name) {
   viewerPermission
   open: pullRequests(states: OPEN) { totalCount }
   newest: pullRequests(states: OPEN, orderBy: {field: CREATED_AT, direction: DESC}, first: 1) { nodes { number } }
-  pullRequests(orderBy: {field: UPDATED_AT, direction: DESC}, first: 50, after: $cursor) {
+  pullRequests(orderBy: {field: UPDATED_AT, direction: DESC}, first: $first, after: $cursor) {
    pageInfo { hasNextPage endCursor }
    nodes { ...Inbox }
   }
@@ -299,12 +313,11 @@ func (p *poll) graphQL(ctx context.Context, query string, variables map[string]a
 	if _, graph := p.budget.budgets(); rateDeadline(graph).After(p.now) {
 		return nil, nil, errRateLimit
 	}
-	request, cancel := context.WithTimeout(ctx, requestTimeout)
-	defer cancel()
-	status, headers, body, err := p.reader.GraphQL(request, query, variables)
+	status, headers, body, err := p.reader.GraphQL(ctx, query, variables)
 	if err != nil {
-		return nil, nil, failed(ctx, request, err)
+		return nil, nil, failed(ctx, err)
 	}
+	restartIdle(ctx)
 	var response struct {
 		Data   json.RawMessage
 		Errors []graphQLError
@@ -372,7 +385,9 @@ type pullsPage struct {
 // page reads one page and checks every pull request on it before any is
 // used, so a page is kept whole or not at all.
 func (p *poll) page(ctx context.Context, repository github.Repository, query string, cursor any) (pullsPage, error) {
-	data, issues, err := p.graphQL(ctx, query, map[string]any{"owner": repository.Owner, "name": repository.Name, "cursor": cursor})
+	data, issues, err := p.shrinking(ctx, func(size int) (json.RawMessage, []graphQLError, error) {
+		return p.graphQL(ctx, query, map[string]any{"owner": repository.Owner, "name": repository.Name, "cursor": cursor, "first": size})
+	})
 	if err != nil {
 		return pullsPage{}, err
 	}
@@ -387,6 +402,30 @@ func (p *poll) page(ctx context.Context, repository github.Repository, query str
 	}
 	p.identify(response.Viewer, response.Repository.ViewerPermission)
 	return response, nil
+}
+
+// shrinking sends a query for up to p.size pull requests. A gateway error,
+// GitHub giving up on a query that took too long, asks again for half as many,
+// and the smaller size stays for the rest of the poll.
+func (p *poll) shrinking(ctx context.Context, ask func(size int) (json.RawMessage, []graphQLError, error)) (json.RawMessage, []graphQLError, error) {
+	if p.size == 0 {
+		p.size = inboxPageSize
+	}
+	for attempt := 1; ; attempt++ {
+		data, issues, err := ask(p.size)
+		var status *statusError
+		if !errors.As(err, &status) || !status.gateway() || attempt == inboxPageAttempts {
+			return data, issues, err
+		}
+		p.size = max(p.size/2, inboxMinPageSize)
+		timer := time.NewTimer(time.Duration(attempt) * inboxRetryDelay)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return nil, nil, err
+		case <-timer.C:
+		}
+	}
 }
 
 func (p *poll) identify(viewer actor, permission string) {
@@ -593,17 +632,20 @@ func (p *poll) watch() []int {
 	return numbers
 }
 
-// numbers re-reads pull requests by number, 50 to a query. One GitHub no
-// longer has (deleted, or its number now an issue) is gone.
+// numbers re-reads pull requests by number, a page's worth to a query. One
+// GitHub no longer has (deleted, or its number now an issue) is gone.
 func (p *poll) numbers(ctx context.Context, repository github.Repository, numbers []int) error {
-	const batch = 50
-	for start := 0; start < len(numbers); start += batch {
-		chunk := numbers[start:min(start+batch, len(numbers))]
-		query, variables := numbersQuery(repository, chunk)
-		data, issues, err := p.graphQL(ctx, query, variables)
+	for start := 0; start < len(numbers); {
+		var chunk []int
+		data, issues, err := p.shrinking(ctx, func(size int) (json.RawMessage, []graphQLError, error) {
+			chunk = numbers[start:min(start+size, len(numbers))]
+			query, variables := numbersQuery(repository, chunk)
+			return p.graphQL(ctx, query, variables)
+		})
 		if err != nil {
 			return err
 		}
+		start += len(chunk)
 		missing := map[string]bool{}
 		for _, issue := range issues {
 			if issue.Type != "NOT_FOUND" || len(issue.Path) != 2 || issue.Path[0] != "repository" {
@@ -656,7 +698,7 @@ func (p *poll) numbers(ctx context.Context, repository github.Repository, number
 
 // sweep reads every open pull request, going on from where an earlier poll's
 // sweep stopped. Once it has read them all, the cached pull requests it did
-// not see are asked about by number, 50 to a query, so one is dropped only
+// not see are asked about by number, so one is dropped only
 // when GitHub says it closed, merged or is gone, however the pages shifted.
 func (p *poll) sweep(ctx context.Context, repository github.Repository) error {
 	if p.cache.Sweep == nil {
@@ -678,8 +720,9 @@ func (p *poll) sweep(ctx context.Context, repository github.Repository) error {
 		response, err := p.page(ctx, repository, sweepQuery, cursor)
 		if err != nil {
 			var status *statusError
-			if cursor != nil && (errors.Is(err, errInvalid) || errors.As(err, &status)) {
+			if cursor != nil && (errors.Is(err, errInvalid) || errors.As(err, &status) && !status.gateway()) {
 				// GitHub may no longer accept the saved cursor: start again.
+				// A gateway error is GitHub out of time, not refusing it.
 				p.cache.Sweep = nil
 			}
 			return err

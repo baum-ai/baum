@@ -17,8 +17,9 @@ due sooner, as one settling after a new head is. A pass (`Sync`):
    one that failed makes every repository whose poll failed meanwhile poll at
    once.
 2. **Polls** every due repository, `pollConcurrency` (3) at a time. Each poll
-   gets `pollTimeout` (45 s). Discovery limits each of its requests and keeps
-   what it read when time runs out. The polls share the credential's GitHub
+   stops once GitHub has not answered it for `pollTimeout` (45 s), so a busy
+   repository's sweep may take minutes. Discovery keeps what it read when time
+   runs out. The polls share the credential's GitHub
    budget, which discovery checks before every request. Their results are
    handled one at a time: `Discovered`, the repository's state, and the reads
    each poll makes due.

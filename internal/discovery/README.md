@@ -13,7 +13,8 @@ repository shares.
 ## A poll
 
 Most polls are **incremental**. A poll reads the window of pull requests
-updated since the cursor, newest first and of any state, 50 to a page. It
+updated since the cursor, newest first and of any state, 25 to a page (see
+[Time limits](#time-limits-and-concurrency) for smaller pages). It
 stops after the first page that reaches below the cursor less a two-minute
 overlap. The overlap re-reads a pull request updated in the cursor's second,
 or one that GitHub recorded a little late. An open pull request replaces its
@@ -21,7 +22,7 @@ cached row; a closed or merged one leaves the cache. If GitHub reads the same
 pull request twice in one poll, the older copy never replaces the newer. The
 cursor is GitHub's `updatedAt`, never this computer's clock. An update time
 recorded more than the overlap behind a newer one waits for the next sweep, at
-most `sweepInterval` away. A window longer than `windowPageLimit` (10) pages,
+most `sweepInterval` away. A window longer than `windowPageLimit` (20) pages,
 as after days asleep, gives way to a fresh sweep.
 
 The window also reads GitHub's count of open pull requests and the newest
@@ -30,7 +31,7 @@ sweep. That happens when a pull request was deleted, or when a change was
 missed for any other reason.
 
 Some changes leave a pull request's `updatedAt` as it was. An incremental poll
-therefore re-reads by number, in one aliased query capped at 50:
+therefore re-reads by number, in aliased queries of a page each, at most 50:
 
 - pull requests whose mergeability GitHub is still working out while the poll
   settles after a push (`settleInterval`);
@@ -47,7 +48,7 @@ its GraphQL cursor; the next poll goes on from there. Until a first sweep
 finishes, each poll also reads the window from GitHub's latest update of any
 pull request when that sweep began, which also becomes the cursor. Once a sweep
 finishes, the cached pull requests it did not see, and those of an older
-format's snapshot, are asked about by number, 50 to a query. One is dropped
+format's snapshot, are asked about by number, a page to a query. One is dropped
 only when GitHub says it closed, merged or no longer exists, however the pages
 shifted meanwhile.
 
@@ -82,10 +83,19 @@ and not reused.
 
 ## Time limits and concurrency
 
-Each GitHub request of a poll or probe has a 20-second limit (`requestTimeout`).
-The callers bound the whole poll: 45 seconds for the background service and for
-the app's refresh. A request or poll that runs out of time returns
-`ErrTimeout`, and what it read is saved. An identity reset (`ResetIdentity`)
+A poll has no fixed deadline: a sweep of a busy repository takes minutes. Its
+callers pass a `WithIdleTimeout` context instead, which ends the poll once
+GitHub has not answered one of its requests for 45 seconds (the background
+service and the app's refresh). The timeout pauses while the poll waits for its
+repository's lock or for another poll's read of `/user/teams`. A probe has a
+fixed 45-second deadline. A poll or probe that runs out of time returns
+`ErrTimeout`, and what it read is saved.
+
+GitHub gives up on a GraphQL query after about ten seconds and answers 502, 503
+or 504. A query asks for 25 pull requests (`inboxPageSize`); one that gets a
+gateway error is asked again, up to four times, for half as many (at least 5),
+and the smaller size stays for the rest of the poll. A sweep that still fails
+keeps its cursor. An identity reset (`ResetIdentity`)
 during a poll returns `github.ErrIdentityChanged` and discards what the poll
 read. A credential that changes under a poll's requests fails them, and what
 was read before stays in the old credential's partition.

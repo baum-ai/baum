@@ -111,8 +111,11 @@ func (l *ledger) record() diskCache {
 // request keeps the previous answer and is retried by the next poll.
 func (p *poll) membership(ctx context.Context) (map[int64]bool, bool, error) {
 	l := p.budget
+	// Waiting for another poll's read is not waiting on GitHub.
+	pauseIdle(ctx)
 	l.teamsMu.Lock()
 	defer l.teamsMu.Unlock()
+	restartIdle(ctx)
 	l.mu.Lock()
 	current := l.teams
 	l.mu.Unlock()

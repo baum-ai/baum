@@ -552,6 +552,9 @@ type blockingDiscovery struct {
 	fakeDiscovery
 	inflight, most int
 	full           chan struct{}
+	// filled closes full once: a later poll may bring pollConcurrency under
+	// way again after an earlier one finished.
+	filled sync.Once
 }
 
 func (b *blockingDiscovery) Poll(ctx context.Context, repo github.Repository) (discovery.Snapshot, error) {
@@ -559,7 +562,7 @@ func (b *blockingDiscovery) Poll(ctx context.Context, repo github.Repository) (d
 	b.inflight++
 	b.most = max(b.most, b.inflight)
 	if b.inflight == pollConcurrency {
-		close(b.full)
+		b.filled.Do(func() { close(b.full) })
 	}
 	b.mu.Unlock()
 	select {

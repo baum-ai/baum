@@ -272,7 +272,18 @@ func hubService(t *testing.T, h *hub) (*Service, *time.Time) {
 	now := hubStart
 	var mu sync.Mutex
 	s.now = func() time.Time { mu.Lock(); defer mu.Unlock(); return now }
+	before := inboxRetryDelay
+	inboxRetryDelay = 0
+	t.Cleanup(func() { inboxRetryDelay = before })
 	return s, &now
+}
+
+// stalls is a poll context that gives up once GitHub has not answered for
+// 100 ms.
+func stalls(t *testing.T) context.Context {
+	ctx, cancel := WithIdleTimeout(context.Background(), 100*time.Millisecond)
+	t.Cleanup(cancel)
+	return ctx
 }
 
 // minutes is hubStart moved by n minutes.
@@ -451,9 +462,7 @@ func TestSlowSweepKeepsItsPagesAndResumes(t *testing.T) {
 				ctx, cancel = context.WithTimeout(ctx, 200*time.Millisecond)
 				defer cancel()
 			} else {
-				old := requestTimeout
-				requestTimeout = 100 * time.Millisecond
-				defer func() { requestTimeout = old }()
+				ctx = stalls(t)
 			}
 			stall := true
 			h.before = func(r *http.Request, q hubQuery) (*http.Response, error) {
@@ -501,9 +510,6 @@ func TestResumedSweepDropsOnlyWhatGitHubSaysLeft(t *testing.T) {
 		h.add("acme/app", &hubPR{number: n, updated: minutes(n - 11)})
 	}
 	s, now := hubService(t, h)
-	old := requestTimeout
-	requestTimeout = 100 * time.Millisecond
-	defer func() { requestTimeout = old }()
 	stall := true
 	h.before = func(r *http.Request, q hubQuery) (*http.Response, error) {
 		if stall && q.name == "LocalInbox" && q.cursor != "" {
@@ -512,7 +518,7 @@ func TestResumedSweepDropsOnlyWhatGitHubSaysLeft(t *testing.T) {
 		}
 		return nil, nil
 	}
-	if _, err := s.PollNow(context.Background(), appRepo); !errors.Is(err, ErrTimeout) {
+	if _, err := s.PollNow(stalls(t), appRepo); !errors.Is(err, ErrTimeout) {
 		t.Fatal(err)
 	}
 	// Seen: 5 and 4. Meanwhile 5 closes, 3 is edited (moving ahead of the
@@ -631,9 +637,6 @@ func TestOlderCacheFormatKeepsTheInboxUntilASweep(t *testing.T) {
 	}
 	offline := true
 	stall := false
-	oldTimeout := requestTimeout
-	requestTimeout = 100 * time.Millisecond
-	defer func() { requestTimeout = oldTimeout }()
 	h.before = func(r *http.Request, q hubQuery) (*http.Response, error) {
 		if offline {
 			return nil, errors.New("network unreachable")
@@ -650,7 +653,7 @@ func TestOlderCacheFormatKeepsTheInboxUntilASweep(t *testing.T) {
 	}
 	offline, stall = false, true
 	*now = minutes(1)
-	got, err = s.PollNow(context.Background(), appRepo)
+	got, err = s.PollNow(stalls(t), appRepo)
 	if !errors.Is(err, ErrTimeout) || !slices.Equal(numbersOf(got), []int{1, 2, 3, 99}) || titleOf(got, 3) != "PR 3" || titleOf(got, 1) != "Old 1" {
 		t.Fatalf("cut-short sweep %v %q %v", numbersOf(got), titleOf(got, 1), err)
 	}
@@ -928,5 +931,38 @@ func TestFailedPollAfterANewHeadStillSettles(t *testing.T) {
 	got, err := s.PollNow(context.Background(), appRepo)
 	if err != nil || got.PullRequests[0].Merge != "conflict" {
 		t.Fatalf("settle %+v %v", got.PullRequests[0], err)
+	}
+}
+
+// A gateway error on a sweep's later page is GitHub out of time, not a cursor
+// it refuses: the page is asked again, and when it still fails the sweep keeps
+// its place for the next poll.
+func TestGatewayErrorKeepsTheSweepCursor(t *testing.T) {
+	h := newHub()
+	for n := 1; n <= 5; n++ {
+		h.add("acme/app", &hubPR{number: n, updated: minutes(n - 11)})
+	}
+	s, _ := hubService(t, h)
+	h.before = func(r *http.Request, q hubQuery) (*http.Response, error) {
+		if q.name == "LocalInbox" && q.cursor != "" {
+			return &http.Response{StatusCode: http.StatusGatewayTimeout, Header: http.Header{}, Body: io.NopCloser(strings.NewReader("{}")), Request: r}, nil
+		}
+		return nil, nil
+	}
+	got, err := s.PollNow(context.Background(), appRepo)
+	if err == nil || !got.Stale || !slices.Equal(numbersOf(got), []int{4, 5}) {
+		t.Fatalf("poll %v stale=%v err=%v", numbersOf(got), got.Stale, err)
+	}
+	attempts := 0
+	for _, q := range h.asked() {
+		if q.name == "LocalInbox" && q.cursor != "" {
+			attempts++
+		}
+	}
+	if attempts != inboxPageAttempts {
+		t.Fatalf("asked the failing page %d times, want %d", attempts, inboxPageAttempts)
+	}
+	if cache := loadCache(t, s, appRepo); cache.Sweep == nil || cache.Sweep.After == "" {
+		t.Fatalf("sweep progress dropped: %+v", cache.Sweep)
 	}
 }

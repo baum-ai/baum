@@ -2468,7 +2468,7 @@ it("gives up on a refresh that never answers and names the repository", async ()
     );
     expect(node.textContent).not.toContain("did not answer in time");
     await act(async () => {
-      vi.advanceTimersByTime(60_000);
+      vi.advanceTimersByTime(600_000);
     });
   } finally {
     vi.useRealTimers();
