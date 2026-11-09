@@ -558,7 +558,8 @@ What the agent can do, per backend:
 What reaches the agent: the pull request's title and branches, the conflicted
 paths, and for failing checks the failing check runs and commit statuses of
 the head (name, conclusion, output title, summary and text, each bounded) and
-the last 200 lines of the job logs of up to four failing GitHub Actions jobs.
+up to 200 lines of the job logs of up to four failing GitHub Actions jobs,
+ending with the step that failed rather than the runner's cleanup after it.
 baum reads them with your GitHub token from the API; a job log's signed
 download URL is read without the token. All of it is untrusted: it goes into
 the prompt between markers that carry a random tag it cannot know, with

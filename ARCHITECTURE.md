@@ -3416,9 +3416,13 @@ preferences' fix agent (`fix_backend` and `fix_model`, Claude Code or Codex,
 set with `PUT /api/automatic` or `baum internal reviews set --fix-backend`) when one
 is chosen (`Preferences.ResolveFix`), and otherwise the review's. Before running, the executor prepares
 again and refuses a changed head (`head_changed`) or changed fix inputs, then
-reads the failing checks' output and the last 200 lines of up to four GitHub
-Actions job logs (`RESTReader.Tail`, which follows the signed log redirect
-without the token), and reads the review threads again, refusing threads whose
+reads the failing checks' output and up to four GitHub Actions job logs
+(`RESTReader.Download`, which follows the signed log redirect without the
+token). Of each log it keeps the last 200 lines up to the end of the last step
+that logged an `##[error]` line, preferring the job's steps over its post-job
+cleanup, without timestamps or terminal escapes (`fix.jobLog`); a log without
+an error line gives its last 200 lines. It then reads the review threads
+again, refusing threads whose
 digest changed (`threads_changed`).
 
 `fix.Run` then works in a `gitlocal.Fix`: a linked worktree of the
