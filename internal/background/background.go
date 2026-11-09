@@ -196,7 +196,8 @@ func (s *Service) Handler() http.Handler {
 
 // Run starts immediately in its caller's goroutine. The host runs it separately
 // from HTTP startup; a slow/offline GitHub never holds the cached inbox hostage.
-// One worker bounds both GitHub and local session reads across all repositories.
+// One pass runs at a time: its polls run pollConcurrency at once, its reads
+// one at a time.
 func (s *Service) Run(ctx context.Context) {
 	for {
 		if ctx.Err() != nil {
@@ -241,6 +242,13 @@ const (
 	// pass's polls never wait long behind them; the oldest due reads go first
 	// and the rest wait for the next pass.
 	refreshBudget = 30 * time.Second
+	// pollConcurrency is how many repositories poll at once. They share the
+	// credential's GitHub budget, which discovery checks before every request.
+	pollConcurrency = 3
+	// pollTimeout is how long a repository's poll waits for GitHub to answer
+	// one of its requests (discovery.WithIdleTimeout); discovery keeps what it
+	// read when this runs out. It bounds a whole probe.
+	pollTimeout = 45 * time.Second
 )
 
 // read is this process's last read of a saved pull request in a clone.
@@ -326,9 +334,10 @@ func (s *Service) dueReason(r read, observation discovery.Observation, observed 
 
 // Sync is a single serialized scheduling pass, exposed for deterministic tests.
 // Discovery itself owns conditional requests and credential-wide rate budgets.
-// It polls every due repository first, so no repository's pull requests wait
-// behind another's reads, then reads the saved pull requests that are due,
-// those GitHub reported changed first, within refreshBudget.
+// It polls every due repository first, pollConcurrency at a time, so no
+// repository's pull requests wait behind another's reads, then reads the saved
+// pull requests that are due, those GitHub reported changed first, within
+// refreshBudget.
 func (s *Service) Sync(ctx context.Context) {
 	workstats.Inc("background.passes")
 	s.runMu.Lock()
@@ -390,9 +399,15 @@ func (s *Service) Sync(ctx context.Context) {
 	}
 	var passed []*polled
 	var targets []target
+	// A few repositories poll at once, on discovery's shared budget. What a
+	// poll returned is handled one at a time: Discovered, and the reads it
+	// makes due.
+	var handle sync.Mutex
+	var polls sync.WaitGroup
+	slots := make(chan struct{}, pollConcurrency)
 	for _, name := range names {
 		if ctx.Err() != nil {
-			return
+			break
 		}
 		repo, err := github.ParseRepository(name)
 		if err != nil {
@@ -412,75 +427,92 @@ func (s *Service) Sync(ctx context.Context) {
 		if changed[repo.String()] || retry {
 			poll = s.Discovery.PollNow
 		}
-		// A busy repository's poll takes minutes; it stops only once GitHub
-		// stops answering.
-		requestCtx, cancel := discovery.WithIdleTimeout(ctx, 45*time.Second)
-		snapshot, pollErr := poll(requestCtx, repo)
-		cancel()
-		if pollErr == nil && s.Discovered != nil {
-			s.Discovered(ctx, snapshot)
+		select {
+		case slots <- struct{}{}:
+		case <-ctx.Done():
+			continue
 		}
-		p.next = s.now().Add(s.interval())
-		// A new head: discovery reads its mergeability again soon.
-		if pollErr == nil && snapshot.Settling && snapshot.NextPoll.Before(p.next) {
-			p.next = snapshot.NextPoll
-		}
-		if pollErr != nil {
-			p.state.Error = "discovery_unavailable"
-			p.state.Failures = previous.Failures + 1
-			backoff := min(s.interval()*time.Duration(1<<min(p.state.Failures-1, 8)), 15*time.Minute)
-			p.next = s.now().Add(backoff)
-			if snapshot.NextPoll.After(p.next) {
+		polls.Go(func() {
+			defer func() { <-slots }()
+			// A busy repository's sweep takes minutes; it stops only once
+			// GitHub stops answering.
+			requestCtx, cancel := discovery.WithIdleTimeout(ctx, pollTimeout)
+			snapshot, pollErr := poll(requestCtx, repo)
+			cancel()
+			handle.Lock()
+			defer handle.Unlock()
+			if pollErr == nil && s.Discovered != nil {
+				s.Discovered(ctx, snapshot)
+			}
+			p.next = s.now().Add(s.interval())
+			// A new head: discovery reads its mergeability again soon.
+			if pollErr == nil && snapshot.Settling && snapshot.NextPoll.Before(p.next) {
 				p.next = snapshot.NextPoll
 			}
-			continue
-		}
-		pause := s.pause(repo.Host)
-		exhausted := snapshot.Rate.Remaining != nil && *snapshot.Rate.Remaining == 0
-		if exhausted || snapshot.Rate.RetryAt.After(s.now()) || pause.After(s.now()) {
-			p.state.Error = "rate_limited"
-			p.next = maxTime(p.next, pause)
-			if exhausted || snapshot.Rate.RetryAt.After(s.now()) {
-				p.next = maxTime(p.next, maxTime(snapshot.Rate.Reset, snapshot.Rate.RetryAt))
+			if pollErr != nil {
+				p.state.Error = "discovery_unavailable"
+				if errors.Is(pollErr, discovery.ErrTimeout) {
+					p.state.Error = "discovery_timeout"
+				}
+				p.state.Failures = previous.Failures + 1
+				backoff := min(s.interval()*time.Duration(1<<min(p.state.Failures-1, 8)), 15*time.Minute)
+				p.next = s.now().Add(backoff)
+				if snapshot.NextPoll.After(p.next) {
+					p.next = snapshot.NextPoll
+				}
+				return
 			}
-			continue
-		}
-		open := map[int]discovery.PullRequest{}
-		for _, pr := range snapshot.PullRequests {
-			open[pr.Number] = pr
-		}
-		observations := map[int]discovery.Observation{}
-		for _, observation := range snapshot.Observations {
-			observations[observation.Number] = observation
-		}
-		for cloneIndex, clone := range groups[name] {
-			numbers := map[int]bool{}
-			if cloneIndex == 0 {
-				for number := range open {
+			pause := s.pause(repo.Host)
+			exhausted := snapshot.Rate.Remaining != nil && *snapshot.Rate.Remaining == 0
+			if exhausted || snapshot.Rate.RetryAt.After(s.now()) || pause.After(s.now()) {
+				p.state.Error = "rate_limited"
+				p.next = maxTime(p.next, pause)
+				if exhausted || snapshot.Rate.RetryAt.After(s.now()) {
+					p.next = maxTime(p.next, maxTime(snapshot.Rate.Reset, snapshot.Rate.RetryAt))
+				}
+				return
+			}
+			open := map[int]discovery.PullRequest{}
+			for _, pr := range snapshot.PullRequests {
+				open[pr.Number] = pr
+			}
+			observations := map[int]discovery.Observation{}
+			for _, observation := range snapshot.Observations {
+				observations[observation.Number] = observation
+			}
+			for cloneIndex, clone := range groups[name] {
+				numbers := map[int]bool{}
+				if cloneIndex == 0 {
+					for number := range open {
+						numbers[number] = true
+					}
+				}
+				saved, err := s.Saved(ctx, clone)
+				if err != nil {
+					p.state.Error = "store_unreadable"
+				}
+				for _, number := range saved {
 					numbers[number] = true
 				}
-			}
-			saved, err := s.Saved(ctx, clone)
-			if err != nil {
-				p.state.Error = "store_unreadable"
-			}
-			for _, number := range saved {
-				numbers[number] = true
-			}
-			for number := range numbers {
-				key := readKey(clone, number)
-				r := s.lastRead(key)
-				observation, observed := observations[number]
-				pr, isOpen := open[number]
-				if due, urgent := s.due(r, observation, observed, pr, isOpen); due {
-					head := pr.HeadSHA
-					if !isOpen {
-						head = observation.HeadSHA
+				for number := range numbers {
+					key := readKey(clone, number)
+					r := s.lastRead(key)
+					observation, observed := observations[number]
+					pr, isOpen := open[number]
+					if due, urgent := s.due(r, observation, observed, pr, isOpen); due {
+						head := pr.HeadSHA
+						if !isOpen {
+							head = observation.HeadSHA
+						}
+						targets = append(targets, target{p, clone, number, key, urgent, maxTime(observation.FetchedAt, r.at), head, isOpen})
 					}
-					targets = append(targets, target{p, clone, number, key, urgent, maxTime(observation.FetchedAt, r.at), head, isOpen})
 				}
 			}
-		}
+		})
+	}
+	polls.Wait()
+	if ctx.Err() != nil {
+		return
 	}
 	if len(passed) > 0 && s.Changed != nil {
 		s.Changed()
@@ -583,7 +615,7 @@ func (s *Service) probe(ctx context.Context, names []string) (changed map[string
 			repositories = append(repositories, repo)
 		}
 	}
-	requestCtx, cancel := context.WithTimeout(ctx, 45*time.Second)
+	requestCtx, cancel := context.WithTimeout(ctx, pollTimeout)
 	defer cancel()
 	changed, err := s.Discovery.Probe(requestCtx, repositories)
 	if err != nil {
