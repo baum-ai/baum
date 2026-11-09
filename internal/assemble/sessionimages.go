@@ -162,14 +162,32 @@ func mergeImages(descriptions []bundle.DescriptionImage, contents map[string][]b
 			continue
 		}
 		sum := sha256.Sum256(candidate.Bytes)
-		hash := hex.EncodeToString(sum[:])
+		original := hex.EncodeToString(sum[:])
+		data, hash := candidate.Bytes, original
+		// Deduplicate on the captured bytes first, so a session copy of a
+		// description image, or a repeat of an already resized image, is not
+		// decoded again and merges with the copy already kept.
+		if at, seen := byHash[original]; seen {
+			hash = images[at].SHA256
+		} else if len(images) >= limits.MaxImages {
+			// A new image would be dropped; do not decode it first.
+			notes = append(notes, "image omitted beyond the shared description/session image-count limit")
+			continue
+		} else if small, smallMime, w, h, ok := downscale(candidate.Bytes, mime, width, height); ok {
+			data, mime, width, height = small, smallMime, w, h
+			sum = sha256.Sum256(data)
+			hash = hex.EncodeToString(sum[:])
+		}
 		alt := "Agent session image"
 		if candidate.Origin.Kind == "human_input" {
 			alt = "Human-supplied session image"
 		}
 		add(bundle.DescriptionImage{ID: "att_" + hash[:32], State: bundle.AttachmentStored,
-			ContentType: mime, Width: width, Height: height, Size: int64(len(candidate.Bytes)),
-			SHA256: hash, Alt: alt, Origins: []bundle.ImageOrigin{candidate.Origin}}, candidate.Bytes)
+			ContentType: mime, Width: width, Height: height, Size: int64(len(data)),
+			SHA256: hash, Alt: alt, Origins: []bundle.ImageOrigin{candidate.Origin}}, data)
+		if at, kept := byHash[hash]; kept {
+			byHash[original] = at
+		}
 	}
 	return images, contents, notes
 }

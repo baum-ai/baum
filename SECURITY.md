@@ -101,7 +101,10 @@ decoded-byte limits. Unsupported or missing images are nonfatal diagnostics.
 Image bytes are sniffed as PNG/JPEG/GIF/WebP and session images above 40 million
 pixels are rejected. The shared capture limit is 20 images of at most 10 MiB
 each by default; description images come first and identical bytes share one
-copy while retaining their origins.
+copy while retaining their origins. Session images longer than 1568 px on a
+side and at most 24 million pixels are decoded and re-encoded at that size
+when the result is smaller; colour profiles are not carried over. Saved
+versions share one stored copy of identical image bytes.
 
 These pixels are not text-redacted. Eligible images are made available to the
 configured review model, just as PR-description images are, and stored with the
