@@ -16,7 +16,7 @@ import (
 )
 
 // Renderer writes a session's transcript as the local servers serve it: the
-// review page's linked sessions (baum internal view and the app) and the
+// review page's linked sessions (the reference viewer host and the app) and the
 // app's live sessions both answer with what Render returns, so the two cannot
 // differ in what they mask. It is safe for concurrent use.
 type Renderer struct {
@@ -39,7 +39,7 @@ func NewRenderer(home string) *Renderer {
 // Render shapes and bounds the graph first (DefaultLimits), so nothing past
 // the limits is ever redacted or held, then redacts what is left: each text
 // as it is kept, before it is cut, and the encoded transcript as a whole,
-// every string and key of it, with the engine "baum internal sessions --dump"
+// every string and key of it, with the engine "locallink.RedactGraph"
 // uses. The home directory is written as ~ last.
 func (r *Renderer) Render(ctx context.Context, graph *session.Graph, meta Meta) ([]byte, error) {
 	r.once.Do(func() { r.engine, r.engineErr = redact.New() })

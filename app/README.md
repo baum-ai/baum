@@ -315,6 +315,8 @@ icon, its name (a GitHub Actions job's after its workflow, as GitHub lists it:
 and a **Details** link (`url`). While any check fails, only the failing ones
 (and any retried from the list) show, the rest behind **Show N other checks**,
 which **Hide other checks** folds again; with none failing every check shows.
+The same bordered rows align the icon, name and status, and actions in the
+review's Activity pane, independently of the Up next panel.
 The row's title carries a pill counting them out of them all (`checksCount`):
 red "1/9 failing" while any fails, else amber "2/9 running" while any runs,
 else green "9/9 passing", with the count by state (`checksSummary`) as its
@@ -1161,9 +1163,12 @@ unknown states (no score, no estimate, no GitHub review, no unresolved
 threads, nothing reported) leave the cell empty and are read only by screen
 readers. A review being generated shows the nine-dots loader under the title.
 Discovery fetches
-open pull requests with a paginated GraphQL query per repository, including
+open pull requests with paginated GraphQL queries per repository, including
 review decisions, head checks, merge state and the first 100 review threads;
-when more threads exist the unresolved count shows a lower bound (`N+`). The
+when more threads exist the unresolved count shows a lower bound (`N+`). Most
+polls read only the pull requests updated since the last one and merge them
+into the cache; every open one is read again at least every ten minutes (see
+`internal/discovery`). The
 columns follow the hosted Focus view's labels, icons and tones and fold under
 the title below 72rem. The list is drawn as the Up next design's live table,
 with the shared palette on the app's type scale. The page bar says
@@ -1212,9 +1217,10 @@ one notice covers every repository GitHub could not refresh, says whether
 GitHub is disconnected or needs attention, and links to Settings' Connections; another
 covers an exhausted GitHub allowance. Neither appears merely because the cache
 is old. Refresh asks
-GitHub through the local server, which gives up on a repository after 45 s
-and answers it as not refreshed (stale, with the error), which the app names
-in the refresh's alert; the app gives up on an answer after 60 s and names
+GitHub through the local server, which gives up on a repository once GitHub
+has not answered for 45 s and answers it as not refreshed (stale, with
+the error, and with whatever it read before), which the app names in the
+refresh's alert; the app gives up on an answer after 10 minutes and names
 the repository as one baum did not answer for in time, so a
 connection that drops mid-refresh cannot leave the loader running. While anything is selected a dark bar over
 the list counts it and offers **Merge N** for the selected pull requests that
@@ -1981,17 +1987,22 @@ the provider reported them. Missing older accounting remains unknown,
 and interrupted providers show reported subtotals rather than exact totals.
 Saved review usage follows the version selected in history. Its cost reads
 "At API prices": what the usage would cost at API prices, not what a
-subscription charges. Unknown costs show a reason; configured model identity
-is distinguished from a provider report. When only the configured model is known,
+subscription charges. A cost is shown whenever any of the usage can be priced:
+usage that is incomplete (a call still running or cut off), or that lacks a
+speed, cache TTL or prompt tier, is priced at the lowest rates it could have
+been billed at and shown as a lower bound ("≥") with a note naming what was
+missing. Only usage with no tokens, or with no model the price list covers,
+leaves the cost unknown, with a reason. Configured model identity is
+distinguished from a provider report: when only the configured model is known,
 its rates are used and the cost is labelled "estimated" with an explanation.
-A running review is priced the same way while the provider's model and speed
-strings are masked: each update carries an estimate at the configured model's
-rates, replaced by the exact cost once masking finishes. A run interrupted by
-a restart keeps no estimate, because it left out the call in flight.
-Each attempt is priced independently
-when its model and pricing inputs are known. A cost with `unpriced_calls` (a
-feature build some of whose calls could not be priced) is a lower bound, shown
-"≥" with a note. Pricing only reports: no budget, cap, confirmation or decision
+A running review is priced as its calls report usage, not only between calls
+(at most every two seconds, as each update is saved): while the provider's
+model and speed strings are masked, each attempt is priced at the configured
+model's rates, or at the model it reported when none is configured, without
+showing that string, and the exact cost replaces the estimate once masking
+finishes. A run interrupted by a restart keeps its last estimate as a lower
+bound. Each attempt is priced independently. A cost with `unpriced_calls` (a
+feature build some of whose calls could not be priced) is also a lower bound. Pricing only reports: no budget, cap, confirmation or decision
 about a run reads it.
 
 GitHub browser coverage uses the real auth manager/controller with mocked
@@ -2021,6 +2032,12 @@ such commit or push shows its directory's PR.
 
 A session retains up to 32 timestamped Git work observations across branch
 changes; these are context associations, not asserted code contributions.
+The daemon separately retains session-owned post-commit and pre-push hook
+observations in the application database, beyond live-session expiry. Reviews,
+bundles and feature attribution use post-commit observations as creation
+links, even when transcript parsing misses the commit. Pushes alone remain
+context. Existing saved hook records are backfilled on startup; failed writes
+are retried without discarding the observations.
 
 ## Your review
 

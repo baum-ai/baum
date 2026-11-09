@@ -12,17 +12,19 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/spf13/cobra"
 
-	"github.com/baum-ai/baum/hosted/agentplugins"
 	"github.com/baum-ai/baum/internal/agentcli"
+	"github.com/baum-ai/baum/internal/agentplugins"
 	"github.com/baum-ai/baum/internal/agentrequests"
 	"github.com/baum-ai/baum/internal/analytics"
 	"github.com/baum-ai/baum/internal/appdb"
@@ -30,6 +32,7 @@ import (
 	"github.com/baum-ai/baum/internal/background"
 	"github.com/baum-ai/baum/internal/chat"
 	"github.com/baum-ai/baum/internal/clonefind"
+	"github.com/baum-ai/baum/internal/commitattribution"
 	"github.com/baum-ai/baum/internal/config"
 	"github.com/baum-ai/baum/internal/daemon"
 	"github.com/baum-ai/baum/internal/decisionlog"
@@ -266,7 +269,7 @@ func runDaemonRun(cmd *cobra.Command, _ []string) error {
 		logger = slog.New(slog.NewTextHandler(w, nil))
 		return logger, func() { _ = logFile.Close() }, nil
 	}
-	ctx, stop := viewContext()
+	ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	err = daemon.Run(ctx, daemon.Options{
 		Paths:      paths,
@@ -835,10 +838,11 @@ func (h hookEvents) liveSessions(paths daemon.Paths, registry *repos.Registry, d
 		Linker: &livesessions.Resolver{Registry: registry, Discovery: discover},
 		// Ended sessions are kept for a day, longer than the record may reach,
 		// and a Claude Code session waiting for its user while its process runs.
-		StateDir: hookevents.RecordDir(paths),
-		Alive:    liveAlive(),
-		Notify:   func() { _ = server.Publish("live", struct{}{}) },
-		Log:      log,
+		StateDir:     hookevents.RecordDir(paths),
+		Attributions: &commitattribution.Store{},
+		Alive:        liveAlive(),
+		Notify:       func() { _ = server.Publish("live", struct{}{}) },
+		Log:          log,
 	}
 }
 

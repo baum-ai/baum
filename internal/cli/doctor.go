@@ -2,17 +2,22 @@ package cli
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/spf13/cobra"
 
 	"github.com/baum-ai/baum/internal/doctor"
+	"github.com/baum-ai/baum/internal/generate"
 )
 
 // doctorOptions builds the report's options; tests replace it to stand in for
 // the machine.
 var doctorOptions = func(fetchPrices bool) doctor.Options {
-	return doctor.Options{FetchPrices: fetchPrices, Daemon: daemonReport}
+	return doctor.Options{FetchPrices: fetchPrices, Daemon: daemonReport, Desktop: true}
 }
 
 // problemsError is returned by "baum internal doctor" when the report has a problem, so
@@ -30,20 +35,18 @@ func newDoctorCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "doctor",
 		Short: "Show why a backend or GitHub token is not found, with a fix for each problem",
-		Long: `Doctor reports what baum found on this machine: the path and version of git,
-claude, codex and cursor-agent; which backend --backend auto would pick and
-why; where the GitHub token comes from (the environment, the config file or
-baum's operating system credential store), never the token itself; whether ANTHROPIC_API_KEY is set; where the price
-list comes from; and where the config file, repository registry, job queue,
-discovery cache and review stores live. Every problem and warning has a fix
-line, for example setting backend_paths.claude in the config file.
+		Long: `Doctor reports the desktop runtime on this machine: git, Claude Code and
+Codex paths and versions; which desktop backend automatic selection would
+pick; the source of the GitHub credential, never its value; the price list;
+and the config, registry, job queue, discovery cache and review stores.
+Every problem and warning includes a fix.
 
-It runs --version on git, the same checks "baum internal generate" runs for
-claude, codex (including codex's read-only sandbox check, which makes and
-removes a temporary directory) and cursor-agent (its --help and --version)
-and reads baum's operating system credential store when no token is configured. It creates no files of its own and opens the registry
-read-only. Its one network request is the signed price list; --offline skips
-it.
+It runs bounded version and desktop engine checks, including Codex's read-only
+sandbox preflight in a temporary directory. It opens the registry read-only,
+queries a running daemon without starting one, and reads baum's operating
+system credential store when no token is configured. Its only network request
+is the signed price list; --offline skips it. Automatic selection considers
+only Claude Code and Codex and never falls back to an API-key backend.
 
 Exit codes: 0 no problems (warnings allowed); 6 at least one problem.`,
 		Args: cobra.NoArgs,
@@ -57,11 +60,11 @@ Exit codes: 0 no problems (warnings allowed); 6 at least one problem.`,
 func runDoctor(cmd *cobra.Command, _ []string) error {
 	asJSON, _ := cmd.Flags().GetBool("json")
 	offline, _ := cmd.Flags().GetBool("offline")
-	ctx, stop := bundleContext(cmd.Context())
+	ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	report := doctor.Run(ctx, doctorOptions(!offline))
 	if ctx.Err() != nil {
-		return interruptedError()
+		return &generate.Error{Category: generate.CategoryInterrupted, Err: errors.New("interrupted")}
 	}
 	if err := writeDoctor(cmd, report, asJSON); err != nil {
 		return err

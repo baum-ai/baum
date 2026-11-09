@@ -5612,14 +5612,16 @@ a.upnext-done-text:hover {
 }
 /* A detail's items (threads, checks, conflicting files) sit in one bordered
    list, each a row of its icon, its text and its actions. */
-.upnext-block .upnext-threads ul {
+.upnext-block .upnext-threads ul,
+.upnext-checks > ul {
   margin: 0;
   padding: 0;
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-md);
   list-style: none;
 }
-.upnext-block .upnext-threads li {
+.upnext-block .upnext-threads li,
+.upnext-checks > ul > li {
   display: flex;
   align-items: center;
   gap: 10px;
@@ -5627,7 +5629,8 @@ a.upnext-done-text:hover {
   border-top: 1px solid var(--border-subtle);
   font-size: var(--text-base);
 }
-.upnext-block .upnext-threads li:first-child {
+.upnext-block .upnext-threads li:first-child,
+.upnext-checks > ul > li:first-child {
   border-top: none;
 }
 /* A thread that opens to its conversation lines its details up under the
@@ -5664,7 +5667,7 @@ a.upnext-done-text:hover {
   flex: none;
 }
 /* Show other checks, under a list folded to its failing checks. */
-.upnext-page .upnext-checks-more {
+.upnext-checks .upnext-checks-more {
   margin-top: 6px;
   padding: 0;
   border: 0;
@@ -5672,7 +5675,7 @@ a.upnext-done-text:hover {
   color: var(--text-tertiary);
   font-size: var(--text-xs);
 }
-.upnext-page .upnext-checks-more:hover {
+.upnext-checks .upnext-checks-more:hover {
   color: var(--text-secondary);
   text-decoration: underline;
 }

@@ -99,6 +99,12 @@ type Request struct {
 	// Transcript, when set, receives each step of the run as the person
 	// watching sees it (see TranscriptEntry); nil when none is kept.
 	Transcript func(TranscriptEntry)
+	// Usage, when set, receives the run's usage so far each time a model call
+	// reports some, as the attempts Result.UsageAttempts will hold: a call
+	// still running is Unreported with what it reported so far. Each report
+	// replaces the previous one. It is called on the run's goroutine; a
+	// backend that reports usage only at the end of a run never calls it.
+	Usage func([]UsageAttempt)
 	// Stage and Pass name a task's call (Generator.RunTask): the task's
 	// Label, empty for a one-pass review, and 1 for its first pass, more for
 	// each validation repair. Zero outside a task.

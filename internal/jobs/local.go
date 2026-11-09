@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"maps"
 	"net/url"
 	"slices"
 	"strings"
@@ -572,7 +573,13 @@ type trackedBackend struct {
 	redacted               bool
 	calls, tokens, repairs int
 	accounting             *agent.Accounting
-	phase                  string
+	// live is what each run in progress has reported so far
+	// (agent.Request.Usage), by the order the runs started in: a staged
+	// review runs several at once. liveAt is when it was last reported.
+	live   map[int][]agent.UsageAttempt
+	runs   int
+	liveAt time.Time
+	phase  string
 	// transcript, when set, keeps every call's steps, each call marked by a
 	// "call" entry; marked counts them.
 	transcript func(agent.TranscriptEntry)
@@ -585,6 +592,8 @@ func (b *trackedBackend) ConcurrentCalls() bool { return generate.ConcurrentCall
 
 func (b *trackedBackend) Run(ctx context.Context, r agent.Request) (agent.Result, error) {
 	b.mu.Lock()
+	b.runs++
+	run := b.runs
 	b.report("generating", nil)
 	id := ""
 	if b.transcript != nil && r.Transcript == nil {
@@ -606,6 +615,24 @@ func (b *trackedBackend) Run(ctx context.Context, r agent.Request) (agent.Result
 		}
 		r.Emit(agent.TranscriptEntry{Kind: "call", ID: id, Title: name, Status: "running"})
 	}
+	watch := r.Usage
+	r.Usage = func(attempts []agent.UsageAttempt) {
+		if watch != nil {
+			watch(attempts)
+		}
+		b.mu.Lock()
+		defer b.mu.Unlock()
+		if b.live == nil {
+			b.live = map[int][]agent.UsageAttempt{}
+		}
+		b.live[run] = attempts
+		// Each update is saved before it is published, so a stream's many
+		// reports are sent at most every liveUsageInterval.
+		if time.Since(b.liveAt) >= liveUsageInterval {
+			b.liveAt = time.Now()
+			b.report(b.phase, nil)
+		}
+	}
 	result, e := b.Backend.Run(ctx, r)
 	if id != "" {
 		status := "completed"
@@ -616,6 +643,7 @@ func (b *trackedBackend) Run(ctx context.Context, r agent.Request) (agent.Result
 	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	delete(b.live, run)
 	b.calls += result.Calls
 	b.tokens += result.Tokens
 	next := &agent.Accounting{}
@@ -674,7 +702,8 @@ func (b *trackedBackend) finish(result generate.Result, staged bool) {
 	b.accounting = result.Outcome.Accounting.Clone()
 	b.redacted = true
 	b.phase = "publishing"
-	cost, reason := b.cost()
+	b.live = nil
+	cost, reason := b.cost(b.accounting)
 	p := Progress{Phase: b.phase, Calls: b.calls, Tokens: b.tokens, Repairs: b.repairs, Accounting: b.accounting.Clone(), CostUSD: cost, CostReason: reason, HasTranscript: b.transcript != nil}
 	if staged {
 		p.Gaps, p.FailedSections, p.ContextFailed = true, result.FailedSections, result.ContextFailed
@@ -689,45 +718,69 @@ func (b *trackedBackend) report(phase string, draft []byte) {
 		phase = "generating"
 	}
 	b.phase = phase
-	safe := b.accounting.Clone()
-	cost, reason := b.cost()
+	current := b.current()
+	safe := current.Clone()
+	cost, reason := b.cost(current)
 	if !b.redacted {
 		safe.ClearStrings()
 	}
-	b.progress(Progress{Phase: phase, Calls: b.calls, Tokens: b.tokens, Repairs: b.repairs, Accounting: safe, CostUSD: cost, CostReason: reason, Draft: draft, HasTranscript: b.transcript != nil})
+	calls, tokens := b.calls, b.tokens
+	for _, attempts := range b.live {
+		for _, attempt := range attempts {
+			calls, tokens = calls+attempt.Calls, tokens+attempt.ChargedTokens
+		}
+	}
+	b.progress(Progress{Phase: phase, Calls: calls, Tokens: tokens, Repairs: b.repairs, Accounting: safe, CostUSD: cost, CostReason: reason, Draft: draft, HasTranscript: b.transcript != nil})
 }
 
-// cost is what the usage so far costs at API prices, or why it has no price.
-// Until the provider's strings are masked, each attempt is priced at the
-// configured model's rates and the cost is an estimate. The caller holds mu.
-func (b *trackedBackend) cost() (*float64, string) {
+// liveUsageInterval is how often a run in progress reports its usage.
+const liveUsageInterval = 2 * time.Second
+
+// current is the usage so far: the finished runs' accounting and what the run
+// in progress has reported. The caller holds mu.
+func (b *trackedBackend) current() *agent.Accounting {
+	if len(b.live) == 0 {
+		return b.accounting
+	}
+	next := b.accounting.Clone()
+	if next == nil {
+		next = &agent.Accounting{}
+	}
+	for _, run := range slices.Sorted(maps.Keys(b.live)) {
+		for _, attempt := range b.live[run] {
+			next.Usage.Add(attempt.Usage)
+			next.ChargedTokens += attempt.ChargedTokens
+			next.Attempts = append(next.Attempts, attempt)
+		}
+	}
+	return next
+}
+
+// cost is what the usage so far costs at API prices, estimated where it is
+// incomplete (pricing.List.AccountingCost). Until the provider's strings are
+// masked they are not shown, but each attempt is still priced: at the
+// configured model's rates, or at the model it reported when none was
+// configured, with a speed other than a known one treated as unreported. The
+// caller holds mu.
+func (b *trackedBackend) cost(accounting *agent.Accounting) (*float64, string) {
 	list := b.prices
 	if list == nil {
 		list = pricing.Active()
 	}
-	if b.redacted {
-		if b.accounting == nil {
-			return nil, "usage_not_reported"
-		}
-		return list.BackendAccountingCost(b.Name(), b.accounting)
+	if b.redacted || accounting == nil {
+		return list.BackendAccountingCost(b.Name(), accounting)
 	}
-	if b.model == "" || b.accounting == nil {
-		return nil, "metadata_pending_redaction"
-	}
-	estimate := b.accounting.Clone()
+	estimate := accounting.Clone()
 	for i := range estimate.Attempts {
 		attempt := &estimate.Attempts[i]
-		attempt.Model, attempt.ModelSource = b.model, "configured"
-		// A reported speed only chooses a rate; anything but a known one
-		// leaves the estimate unknown.
+		if b.model != "" {
+			attempt.Model, attempt.ModelSource = b.model, "configured"
+		}
 		if s := attempt.Usage.Speed; s != nil && !knownSpeed(*s) {
 			attempt.Usage.Speed = nil
 		}
 	}
-	if cost, reason := list.BackendAccountingCost(b.Name(), estimate); cost != nil {
-		return cost, reason
-	}
-	return nil, "metadata_pending_redaction"
+	return list.BackendAccountingCost(b.Name(), estimate)
 }
 
 func knownSpeed(s string) bool {

@@ -19,8 +19,16 @@ last signed pair, as v1 did.
 
 Accounting prices each attempt using its reported model, or its configured
 model when the actual model was not reported. A total using any configured
-model carries `estimated_from_configured_model`; missing usage or other
-required pricing inputs still leaves the total unknown.
+model carries `estimated_from_configured_model`. Agent costs (`OutcomeCost`,
+`AccountingCost`) estimate rather than stay unknown: an attempt with no tokens
+costs nothing, an incomplete one is priced from what it reported, and a missing
+speed, cache TTL or prompt tier takes the lowest rate the usage could have been
+billed at (standard speed, the 5-minute write, the base tier). The reason then
+names what was missing (`usage_incomplete`, `model_or_prompt_rates_unknown`,
+`speed_not_reported`, `cache_ttl_not_reported`) and the cost is a lower bound.
+An attempt with no model or no rates is left out of the sum; the cost is nil
+only when no attempt can be priced. `Cost` itself stays exact: it reports not
+priced rather than guess, for the hosted ledger and analytics.
 
 `oss/internal/pricing` is an import facade for local consumers; it owns no
 price list or mutable state. Hosted fixture-model coverage stays in the

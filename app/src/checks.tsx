@@ -249,7 +249,7 @@ export function PullRequestChecks({
     );
   }
   return (
-    <div className="upnext-threads">
+    <div className="upnext-threads upnext-checks">
       <ul aria-label={failingOnly ? "Failing checks" : "Checks"}>
         {shown.map((check, index) => {
           const state = checkState(check);

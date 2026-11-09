@@ -1,5 +1,5 @@
-// Package apiclient is the Go client for the hosted baum HTTP API, used by the
-// hosted commands of the baum CLI.
+// Package apiclient retains the legacy appliance HTTP client and shared
+// protocol constants. The desktop CLI does not use this client.
 package apiclient
 
 import (

@@ -1,5 +1,5 @@
 // Package scanskip lists the folders a search for checkouts never enters. The
-// daemon's clone finder and `baum setup --all` share it.
+// daemon's clone finder uses it.
 package scanskip
 
 import (

@@ -22,10 +22,28 @@ type LocalSessions struct {
 	Warn io.Writer
 }
 
+// FrozenSessions is a Sessions that can answer for a pull request that is
+// closed or merged with the evidence it last built for the same commits,
+// without looking at the session stores again.
+type FrozenSessions interface {
+	Sessions
+	FrozenEvidence(ctx context.Context, commits []gitlocal.Commit, maxPrompts, maxCommandEvents int) ([]bundle.Session, error)
+}
+
 // Evidence implements Sessions.
 func (l LocalSessions) Evidence(ctx context.Context, commits []gitlocal.Commit, maxPrompts, maxCommandEvents int) ([]bundle.Session, error) {
-	return locallink.BuildSessionEvidence(ctx, locallink.EvidenceRequest{
+	return locallink.BuildSessionEvidence(ctx, l.request(commits, maxPrompts, maxCommandEvents, false))
+}
+
+// FrozenEvidence implements FrozenSessions.
+func (l LocalSessions) FrozenEvidence(ctx context.Context, commits []gitlocal.Commit, maxPrompts, maxCommandEvents int) ([]bundle.Session, error) {
+	return locallink.BuildSessionEvidence(ctx, l.request(commits, maxPrompts, maxCommandEvents, true))
+}
+
+func (l LocalSessions) request(commits []gitlocal.Commit, maxPrompts, maxCommandEvents int, frozen bool) locallink.EvidenceRequest {
+	return locallink.EvidenceRequest{
 		Dir: l.Dir, Commits: commits, Sessions: l.Stores,
 		MaxPromptsPerSession: maxPrompts, MaxCommandEventsPerSession: maxCommandEvents, Warn: l.Warn,
-	})
+		Frozen: frozen,
+	}
 }

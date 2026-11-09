@@ -44,6 +44,9 @@ func candidateOf(s sessions.Session, correlated sessioncorrelate.Result) linkage
 			candidate.StartingCommitSHA = ref.SHA
 		}
 	}
+	for _, sha := range s.CreatedCommits {
+		candidate.CommitRefs = append(candidate.CommitRefs, linkage.CommitRef{SHA: sha, Role: linkage.RoleCreated})
+	}
 	seen := map[string]bool{}
 	edited := map[string]bool{}
 	for _, file := range correlated.Files {

@@ -2,7 +2,7 @@
 # Check what "just release-snapshot" left under dist/: the five archives and
 # checksums.txt exist, there is no windows/arm64 build, every binary was built
 # with CGO off and embeds the viewer bundle the before hook built, and, on a
-# linux/amd64 host, the linux/amd64 binary serves the sample review. The bundle marker is
+# linux/amd64 host, the linux/amd64 binary starts the desktop daemon and serves the app. The bundle marker is
 # the hashed main chunk that internal/viewer/dist/index.html loads.
 set -euo pipefail
 
@@ -79,52 +79,6 @@ done
 
 # Run the binary this host can run.
 if [ -n "$linux_amd64" ] && [ "$(uname -s)-$(uname -m)" = Linux-x86_64 ]; then
-  work=$(mktemp -d)
-  server_pid=
-  # shellcheck disable=SC2329 # run through the EXIT trap
-  cleanup() {
-    if [ -n "$server_pid" ]; then kill "$server_pid" 2>/dev/null || true; fi
-    rm -rf "$work"
-  }
-  trap cleanup EXIT
-
-  started=
-  for _ in 1 2 3 4 5; do
-    port=$((20000 + RANDOM % 40000))
-    : >"$work/stdout"
-    "$linux_amd64" internal view --sample --no-open --port "$port" >"$work/stdout" 2>"$work/stderr" &
-    server_pid=$!
-    for _ in $(seq 1 100); do
-      if [ -s "$work/stdout" ] || ! kill -0 "$server_pid" 2>/dev/null; then break; fi
-      sleep 0.2
-    done
-    if [ -s "$work/stdout" ]; then
-      started=1
-      break
-    fi
-    wait "$server_pid" 2>/dev/null || true
-    server_pid=
-  done
-  if [ -z "$started" ]; then
-    echo "FAIL linux_amd64: baum internal view did not start" >&2
-    cat "$work/stderr" >&2
-    exit 1
-  fi
-  url=$(head -n 1 "$work/stdout" | tr -d '\r')
-  url=${url%/}
-
-  if [ "$(curl --silent --fail --max-time 20 "$url/api/health")" = '{"status":"ok"}' ]; then
-    echo "ok   linux_amd64 serves $url/api/health"
-  else
-    echo "FAIL linux_amd64: /api/health" >&2
-    status=1
-  fi
-  if curl --silent --fail --max-time 20 "$url/api/document" >"$work/document.json" &&
-    cmp -s "$work/document.json" schema/review-example.json; then
-    echo "ok   linux_amd64 serves the sample document"
-  else
-    echo "FAIL linux_amd64: /api/document differs from schema/review-example.json" >&2
-    status=1
-  fi
+  go run scripts/daemon-smoke.go "$linux_amd64"
 fi
 exit "$status"

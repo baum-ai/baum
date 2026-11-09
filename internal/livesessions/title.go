@@ -131,20 +131,45 @@ var safeID = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
 // WorkingRecheckEvery, which reads a working session's files when they grew
 // (only what they appended) and the others' no more often than describe
 // allows.
+//
+// It looks every WorkingRecheckEvery only while a session is running, every
+// TitleRecheckEvery while sessions are listed but none runs, and every
+// QuietRecheckEvery when none is live, so an idle daemon does not wake every
+// second.
 func (t *Transcripts) Watch(ctx context.Context, notify func()) {
-	ticker := time.NewTicker(WorkingRecheckEvery)
-	defer ticker.Stop()
 	var last []byte
+	timer := time.NewTimer(WorkingRecheckEvery)
+	defer timer.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-ticker.C:
+		case <-timer.C:
 			if t.moved(&last) {
 				notify()
 			}
+			timer.Reset(t.recheckEvery())
 		}
 	}
+}
+
+// QuietRecheckEvery is how often Watch looks while no session is live; a
+// hook event announces a new session without it.
+const QuietRecheckEvery = 15 * time.Second
+
+// recheckEvery is how long Watch waits before its next look.
+func (t *Transcripts) recheckEvery() time.Duration {
+	every := QuietRecheckEvery
+	for _, s := range t.Tracker.Sessions() {
+		switch s.State {
+		case StateRunning:
+			return WorkingRecheckEvery
+		case StateEnded:
+		default:
+			every = TitleRecheckEvery
+		}
+	}
+	return every
 }
 
 // moved reports whether the list differs from last, which it then holds. The

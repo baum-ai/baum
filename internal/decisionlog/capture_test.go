@@ -505,35 +505,38 @@ func TestReservationCountsClaudesRetry(t *testing.T) {
 	}
 }
 
-// TestCostFollowsReviewAccounting: usage review accounting cannot price is
-// unknown, and usage of more than one request is not priced as one.
+// TestCostFollowsReviewAccounting: usage review accounting cannot price
+// exactly is estimated at the lowest rates it could have been billed at, and
+// usage of more than one request is not priced as one.
 func TestCostFollowsReviewAccounting(t *testing.T) {
 	list := pricing.Active()
 	standard := "standard"
 	n := func(v int64) *int64 { return &v }
 	priced := agent.Usage{Input: 1000, Output: 100, Speed: &standard, MinPrompt: n(1000), MaxPrompt: n(1000)}
-	if cost(list, "claude-haiku-5-5", priced) == nil {
+	exact := cost(list, "claude-haiku-5-5", priced)
+	if exact == nil {
 		t.Fatal("reported usage is not priced")
 	}
 	noSpeed := priced
 	noSpeed.Speed = nil
+	if c := cost(list, "claude-haiku-5-5", noSpeed); c == nil || *c != *exact {
+		t.Fatalf("usage without a speed priced at %v, want $%v at standard speed", c, *exact)
+	}
 	noSplit := priced
 	noSplit.CacheCreate = 500
-	if c := cost(list, "claude-haiku-5-5", noSpeed); c != nil {
-		t.Fatalf("usage without a speed priced at $%v", *c)
-	}
-	if c := cost(list, "claude-haiku-5-5", noSplit); c != nil {
-		t.Fatalf("cache writes without a 1-hour split priced at $%v", *c)
+	if c := cost(list, "claude-haiku-5-5", noSplit); c == nil || math.Abs(*c-(*exact+500*0.125/1e6)) > 1e-12 {
+		t.Fatalf("cache writes without a 1-hour split priced at %v, want the 5-minute rate", c)
 	}
 	// Two 60,000-token calls: claude-haiku-5-5's long-prompt tier starts at
-	// 100,000 tokens, so the combined 120,000 must not select it.
+	// 100,000 tokens, so the combined 120,000 must not select it, with or
+	// without a prompt range.
 	two := agent.Usage{Input: 120_000, Output: 200, Speed: &standard}
-	if c := cost(list, "claude-haiku-5-5", two); c != nil {
-		t.Fatalf("two calls without a prompt range priced as one at $%v", *c)
+	want := (120_000*0.1 + 200*0.5) / 1e6
+	if c := cost(list, "claude-haiku-5-5", two); c == nil || math.Abs(*c-want) > 1e-12 {
+		t.Fatalf("two calls without a prompt range priced at %v, want $%v at the base tier", c, want)
 	}
 	two.MinPrompt, two.MaxPrompt = n(60_000), n(60_000)
-	c := cost(list, "claude-haiku-5-5", two)
-	if want := (120_000*0.1 + 200*0.5) / 1e6; c == nil || math.Abs(*c-want) > 1e-12 {
+	if c := cost(list, "claude-haiku-5-5", two); c == nil || math.Abs(*c-want) > 1e-12 {
 		t.Fatalf("two calls priced at %v, want $%v at the base tier", c, want)
 	}
 }

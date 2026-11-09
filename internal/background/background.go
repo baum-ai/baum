@@ -20,6 +20,7 @@ import (
 	"github.com/baum-ai/baum/internal/repos"
 	"github.com/baum-ai/baum/internal/store"
 	"github.com/baum-ai/baum/internal/workstats"
+	"github.com/baum-ai/baum/sessions"
 )
 
 type Registry interface {
@@ -70,6 +71,9 @@ type Service struct {
 	epoch       uint64
 	probedEpoch uint64
 	probed      time.Time
+	// probeFailed says the latest probe failed, as every request does while
+	// the machine is offline.
+	probeFailed bool
 	retained    map[string]retention
 }
 
@@ -192,7 +196,8 @@ func (s *Service) Handler() http.Handler {
 
 // Run starts immediately in its caller's goroutine. The host runs it separately
 // from HTTP startup; a slow/offline GitHub never holds the cached inbox hostage.
-// One worker bounds both GitHub and local session reads across all repositories.
+// One pass runs at a time: its polls run pollConcurrency at once, its reads
+// one at a time.
 func (s *Service) Run(ctx context.Context) {
 	for {
 		if ctx.Err() != nil {
@@ -237,6 +242,13 @@ const (
 	// pass's polls never wait long behind them; the oldest due reads go first
 	// and the rest wait for the next pass.
 	refreshBudget = 30 * time.Second
+	// pollConcurrency is how many repositories poll at once. They share the
+	// credential's GitHub budget, which discovery checks before every request.
+	pollConcurrency = 3
+	// pollTimeout is how long a repository's poll waits for GitHub to answer
+	// one of its requests (discovery.WithIdleTimeout); discovery keeps what it
+	// read when this runs out. It bounds a whole probe.
+	pollTimeout = 45 * time.Second
 )
 
 // read is this process's last read of a saved pull request in a clone.
@@ -284,6 +296,16 @@ func (s *Service) recordRead(key string, err error, epoch uint64, head string, o
 // due says whether a saved pull request's evidence should be read now, and
 // whether first (urgent): GitHub reported a change since the last read.
 func (s *Service) due(r read, observation discovery.Observation, observed bool, pr discovery.PullRequest, open bool) (due, urgent bool) {
+	due, urgent, reason := s.dueReason(r, observation, observed, pr, open)
+	if due {
+		workstats.Inc("background.due." + reason)
+	}
+	return due, urgent
+}
+
+// dueReason is due with the rule that decided it, which the work counters
+// record.
+func (s *Service) dueReason(r read, observation discovery.Observation, observed bool, pr discovery.PullRequest, open bool) (due, urgent bool, reason string) {
 	last := maxTime(observation.FetchedAt, r.at)
 	// Unread in this process: what was last observed stands for it.
 	head, wasOpen := r.head, r.open
@@ -292,29 +314,30 @@ func (s *Service) due(r read, observation discovery.Observation, observed bool, 
 	}
 	switch {
 	case last.IsZero():
-		return true, true
+		return true, true, "never_read"
 	case open && pr.UpdatedAt.After(last):
-		return true, true
+		return true, true, "updated"
 	case r.failures > 0:
-		return !s.now().Before(r.at.Add(min(s.interval()*time.Duration(1<<min(r.failures-1, 8)), openReadAge))), false
+		return !s.now().Before(r.at.Add(min(s.interval()*time.Duration(1<<min(r.failures-1, 8)), openReadAge))), false, "retry"
 	case open && observed && pr.HeadSHA != head:
-		return true, true
+		return true, true, "new_head"
 	// It left the open pull requests since it was read open: merged or closed.
 	case !open && observed && observation.State == "OPEN" && wasOpen:
-		return true, true
+		return true, true, "closed"
 	}
 	age := closedReadAge
 	if open {
 		age = openReadAge
 	}
-	return !s.now().Before(last.Add(age)), false
+	return !s.now().Before(last.Add(age)), false, "age"
 }
 
 // Sync is a single serialized scheduling pass, exposed for deterministic tests.
 // Discovery itself owns conditional requests and credential-wide rate budgets.
-// It polls every due repository first, so no repository's pull requests wait
-// behind another's reads, then reads the saved pull requests that are due,
-// those GitHub reported changed first, within refreshBudget.
+// It polls every due repository first, pollConcurrency at a time, so no
+// repository's pull requests wait behind another's reads, then reads the saved
+// pull requests that are due, those GitHub reported changed first, within
+// refreshBudget.
 func (s *Service) Sync(ctx context.Context) {
 	workstats.Inc("background.passes")
 	s.runMu.Lock()
@@ -322,6 +345,7 @@ func (s *Service) Sync(ctx context.Context) {
 	epoch := s.identityEpoch()
 	if s.probedEpoch != epoch {
 		s.probed = time.Time{}
+		s.probeFailed = false
 		s.probedEpoch = epoch
 	}
 	picked, err := s.Registry.Repositories(ctx)
@@ -354,7 +378,7 @@ func (s *Service) Sync(ctx context.Context) {
 		names = append(names, name)
 	}
 	sort.Strings(names)
-	changed := s.probe(ctx, names)
+	changed, reconnected := s.probe(ctx, names)
 
 	type polled struct {
 		repo     github.Repository
@@ -375,91 +399,120 @@ func (s *Service) Sync(ctx context.Context) {
 	}
 	var passed []*polled
 	var targets []target
+	// A few repositories poll at once, on discovery's shared budget. What a
+	// poll returned is handled one at a time: Discovered, and the reads it
+	// makes due.
+	var handle sync.Mutex
+	var polls sync.WaitGroup
+	slots := make(chan struct{}, pollConcurrency)
 	for _, name := range names {
 		if ctx.Err() != nil {
-			return
+			break
 		}
 		repo, err := github.ParseRepository(name)
 		if err != nil {
 			continue
 		}
 		previous := s.state(name)
-		if s.now().Before(previous.NextRefresh) && !changed[repo.String()] {
+		// GitHub answers again after the probes failed, as when the machine
+		// comes back online: a repository whose poll failed meanwhile polls
+		// now rather than after its backoff, which grew while offline.
+		retry := reconnected && previous.Error != "" && previous.Error != "rate_limited"
+		if s.now().Before(previous.NextRefresh) && !changed[repo.String()] && !retry {
 			continue
 		}
 		p := &polled{repo: repo, state: State{Repository: name}, previous: previous}
 		passed = append(passed, p)
 		poll := s.Discovery.Poll
-		if changed[repo.String()] {
+		if changed[repo.String()] || retry {
 			poll = s.Discovery.PollNow
 		}
-		requestCtx, cancel := context.WithTimeout(ctx, 45*time.Second)
-		snapshot, pollErr := poll(requestCtx, repo)
-		cancel()
-		if pollErr == nil && s.Discovered != nil {
-			s.Discovered(ctx, snapshot)
+		select {
+		case slots <- struct{}{}:
+		case <-ctx.Done():
+			continue
 		}
-		p.next = s.now().Add(s.interval())
-		// A new head: discovery reads its mergeability again soon.
-		if pollErr == nil && snapshot.Settling && snapshot.NextPoll.Before(p.next) {
-			p.next = snapshot.NextPoll
-		}
-		if pollErr != nil {
-			p.state.Error = "discovery_unavailable"
-			p.state.Failures = previous.Failures + 1
-			backoff := min(s.interval()*time.Duration(1<<min(p.state.Failures-1, 8)), 15*time.Minute)
-			p.next = s.now().Add(backoff)
-			if snapshot.NextPoll.After(p.next) {
+		polls.Go(func() {
+			defer func() { <-slots }()
+			// A busy repository's sweep takes minutes; it stops only once
+			// GitHub stops answering.
+			requestCtx, cancel := discovery.WithIdleTimeout(ctx, pollTimeout)
+			snapshot, pollErr := poll(requestCtx, repo)
+			cancel()
+			handle.Lock()
+			defer handle.Unlock()
+			if pollErr == nil && s.Discovered != nil {
+				s.Discovered(ctx, snapshot)
+			}
+			p.next = s.now().Add(s.interval())
+			// A new head: discovery reads its mergeability again soon.
+			if pollErr == nil && snapshot.Settling && snapshot.NextPoll.Before(p.next) {
 				p.next = snapshot.NextPoll
 			}
-			continue
-		}
-		pause := s.pause(repo.Host)
-		exhausted := snapshot.Rate.Remaining != nil && *snapshot.Rate.Remaining == 0
-		if exhausted || snapshot.Rate.RetryAt.After(s.now()) || pause.After(s.now()) {
-			p.state.Error = "rate_limited"
-			p.next = maxTime(p.next, pause)
-			if exhausted || snapshot.Rate.RetryAt.After(s.now()) {
-				p.next = maxTime(p.next, maxTime(snapshot.Rate.Reset, snapshot.Rate.RetryAt))
+			if pollErr != nil {
+				p.state.Error = "discovery_unavailable"
+				if errors.Is(pollErr, discovery.ErrTimeout) {
+					p.state.Error = "discovery_timeout"
+				}
+				p.state.Failures = previous.Failures + 1
+				backoff := min(s.interval()*time.Duration(1<<min(p.state.Failures-1, 8)), 15*time.Minute)
+				p.next = s.now().Add(backoff)
+				if snapshot.NextPoll.After(p.next) {
+					p.next = snapshot.NextPoll
+				}
+				return
 			}
-			continue
-		}
-		open := map[int]discovery.PullRequest{}
-		for _, pr := range snapshot.PullRequests {
-			open[pr.Number] = pr
-		}
-		observations := map[int]discovery.Observation{}
-		for _, observation := range snapshot.Observations {
-			observations[observation.Number] = observation
-		}
-		for cloneIndex, clone := range groups[name] {
-			numbers := map[int]bool{}
-			if cloneIndex == 0 {
-				for number := range open {
+			pause := s.pause(repo.Host)
+			exhausted := snapshot.Rate.Remaining != nil && *snapshot.Rate.Remaining == 0
+			if exhausted || snapshot.Rate.RetryAt.After(s.now()) || pause.After(s.now()) {
+				p.state.Error = "rate_limited"
+				p.next = maxTime(p.next, pause)
+				if exhausted || snapshot.Rate.RetryAt.After(s.now()) {
+					p.next = maxTime(p.next, maxTime(snapshot.Rate.Reset, snapshot.Rate.RetryAt))
+				}
+				return
+			}
+			open := map[int]discovery.PullRequest{}
+			for _, pr := range snapshot.PullRequests {
+				open[pr.Number] = pr
+			}
+			observations := map[int]discovery.Observation{}
+			for _, observation := range snapshot.Observations {
+				observations[observation.Number] = observation
+			}
+			for cloneIndex, clone := range groups[name] {
+				numbers := map[int]bool{}
+				if cloneIndex == 0 {
+					for number := range open {
+						numbers[number] = true
+					}
+				}
+				saved, err := s.Saved(ctx, clone)
+				if err != nil {
+					p.state.Error = "store_unreadable"
+				}
+				for _, number := range saved {
 					numbers[number] = true
 				}
-			}
-			saved, err := s.Saved(ctx, clone)
-			if err != nil {
-				p.state.Error = "store_unreadable"
-			}
-			for _, number := range saved {
-				numbers[number] = true
-			}
-			for number := range numbers {
-				key := readKey(clone, number)
-				r := s.lastRead(key)
-				observation, observed := observations[number]
-				pr, isOpen := open[number]
-				if due, urgent := s.due(r, observation, observed, pr, isOpen); due {
-					head := pr.HeadSHA
-					if !isOpen {
-						head = observation.HeadSHA
+				for number := range numbers {
+					key := readKey(clone, number)
+					r := s.lastRead(key)
+					observation, observed := observations[number]
+					pr, isOpen := open[number]
+					if due, urgent := s.due(r, observation, observed, pr, isOpen); due {
+						head := pr.HeadSHA
+						if !isOpen {
+							head = observation.HeadSHA
+						}
+						targets = append(targets, target{p, clone, number, key, urgent, maxTime(observation.FetchedAt, r.at), head, isOpen})
 					}
-					targets = append(targets, target{p, clone, number, key, urgent, maxTime(observation.FetchedAt, r.at), head, isOpen})
 				}
 			}
-		}
+		})
+	}
+	polls.Wait()
+	if ctx.Err() != nil {
+		return
 	}
 	if len(passed) > 0 && s.Changed != nil {
 		s.Changed()
@@ -481,6 +534,12 @@ func (s *Service) Sync(ctx context.Context) {
 		return a.number < b.number
 	})
 	started := s.now()
+	// The pull requests of one clone read mostly the same sessions: decode
+	// each once in this pass.
+	if len(targets) > 1 {
+		release := sessions.HoldMappings()
+		defer release()
+	}
 	for _, current := range targets {
 		if ctx.Err() != nil {
 			return
@@ -544,10 +603,10 @@ func (s *Service) Sync(ctx context.Context) {
 // pull requests changed since their last poll: those poll at once rather than
 // after discovery's backoff, so a pull request opened or pushed from anywhere
 // shows within about a minute. A failed probe changes nothing; the scheduled
-// polls go on.
-func (s *Service) probe(ctx context.Context, names []string) map[string]bool {
+// polls go on. reconnected says this probe succeeded after one that failed.
+func (s *Service) probe(ctx context.Context, names []string) (changed map[string]bool, reconnected bool) {
 	if s.now().Before(s.probed.Add(s.interval())) {
-		return nil
+		return nil, false
 	}
 	s.probed = s.now()
 	repositories := make([]github.Repository, 0, len(names))
@@ -556,13 +615,16 @@ func (s *Service) probe(ctx context.Context, names []string) map[string]bool {
 			repositories = append(repositories, repo)
 		}
 	}
-	requestCtx, cancel := context.WithTimeout(ctx, 45*time.Second)
+	requestCtx, cancel := context.WithTimeout(ctx, pollTimeout)
 	defer cancel()
 	changed, err := s.Discovery.Probe(requestCtx, repositories)
 	if err != nil {
-		return nil
+		s.probeFailed = true
+		return nil, false
 	}
-	return changed
+	reconnected = s.probeFailed
+	s.probeFailed = false
+	return changed, reconnected
 }
 
 // pause is when the host's rate limit lets refreshes resume.

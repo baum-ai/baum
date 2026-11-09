@@ -167,6 +167,7 @@ spending limits.
 
 ## CLI
 
-`baum internal repos add|remove|list` manage clones. `pick <owner/name>` and
-`unpick <owner/name>` manage picked repositories, and `repositories [--json]`
-lists them, including those without a clone.
+`baum internal repos add <path>` registers an existing clone for desktop
+onboarding. Repository selection, removal and settings are managed through
+the desktop app and the authenticated HTTP routes above. Registration changes
+no Git configuration or hooks and starts no daemon.

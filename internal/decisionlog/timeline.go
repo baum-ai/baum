@@ -103,7 +103,26 @@ type Timeline struct {
 	selfMu  sync.Mutex
 	selfAt  time.Time
 	self    *Person
+	// listMu guards lists, the repositories' snapshots the lists share.
+	listMu sync.Mutex
+	lists  map[string]listSnapshot
 }
+
+// listMaxAge bounds how long a list's snapshot is served while the store
+// holds still, for what its version does not cover: a connection the pool
+// replaced, whose counts start again.
+const listMaxAge = 30 * time.Second
+
+type listSnapshot struct {
+	snap    *timelineSnapshot
+	version storeVersion
+	at      time.Time
+}
+
+// storeVersion moves with every write the store's connection makes
+// (total_changes) and every commit another connection or process makes
+// (data_version).
+type storeVersion struct{ changes, data int64 }
 
 // timelineRepository names the repository a row is listed under, as the
 // viewer's DecisionRepository: the registry's name is both its id and its
@@ -821,7 +840,7 @@ func (t *Timeline) listed(ctx context.Context, repositories []string, q url.Valu
 	reader := t.reader()
 	var listed []*snapshotFeature
 	for _, repository := range repositories {
-		snap, err := t.snapshot(ctx, reader, repository, q.Get("q"), "")
+		snap, err := t.listSnapshot(ctx, reader, repository, q.Get("q"))
 		if err != nil {
 			return nil, err
 		}
@@ -855,6 +874,39 @@ func (t *Timeline) listed(ctx context.Context, repositories []string, q url.Valu
 	}
 	slices.SortFunc(listed, featureOrder)
 	return listed, nil
+}
+
+// listSnapshot is the repository's snapshot for a list. Without a search, as
+// the review index is, it is built once and shared by every list until the
+// store changes (storeVersion), the user's identity is read again (selfTTL)
+// or it is listMaxAge old; readers never change it, and wait for a build
+// under way.
+func (t *Timeline) listSnapshot(ctx context.Context, reader *timelineReader, repository, q string) (*timelineSnapshot, error) {
+	if q != "" {
+		return t.snapshot(ctx, reader, repository, q, "")
+	}
+	t.listMu.Lock()
+	defer t.listMu.Unlock()
+	// Read before the build: a write it races leaves the snapshot older
+	// than its version, so the next list builds again.
+	var version storeVersion
+	if err := t.Store.db.QueryRowContext(ctx, "SELECT total_changes(), data_version FROM pragma_data_version").
+		Scan(&version.changes, &version.data); err != nil {
+		return nil, err
+	}
+	now := t.Store.now()
+	if c, ok := t.lists[repository]; ok && c.version == version && c.snap.self == reader.self(ctx) && now.Sub(c.at) < listMaxAge {
+		return c.snap, nil
+	}
+	snap, err := t.snapshot(ctx, reader, repository, "", "")
+	if err != nil {
+		return nil, err
+	}
+	if t.lists == nil {
+		t.lists = map[string]listSnapshot{}
+	}
+	t.lists[repository] = listSnapshot{snap: snap, version: version, at: now}
+	return snap, nil
 }
 
 // under reports whether path is file, or inside it as a folder.
