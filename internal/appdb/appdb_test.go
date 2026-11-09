@@ -150,13 +150,16 @@ func (idleExecutor) Execute(context.Context, jobs.Prepared, func(jobs.Progress))
 
 func TestConcurrentDocumentUpdatesAndFailedTransaction(t *testing.T) {
 	path := filepath.Join(appdbtest.TempDir(t), "app.sqlite")
-	const writers = 8
+	// SQLite's busy wait is not fair: a writer can lose every retry for as long
+	// as the others keep the lock busy. Keep the serialized work well under the
+	// 10 s busy_timeout; 96 updates took over 12 s on a Windows runner.
+	const writers, updates = 4, 12
 	var wg sync.WaitGroup
 	for range writers {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			for range 12 {
+			for range updates {
 				err := appdb.Update(path, "state", "counter", func(raw []byte) ([]byte, error) {
 					n := 0
 					if raw != nil {
@@ -181,7 +184,7 @@ func TestConcurrentDocumentUpdatesAndFailedTransaction(t *testing.T) {
 		t.Fatalf("failure %v", err)
 	}
 	raw, err := appdb.Read(path, "state", "counter")
-	if err != nil || string(raw) != strconv.Itoa(writers*12) {
+	if err != nil || string(raw) != strconv.Itoa(writers*updates) {
 		t.Fatalf("counter %s %v", raw, err)
 	}
 	if _, err := appdb.Read(path, "cache", "counter"); !errors.Is(err, os.ErrNotExist) {

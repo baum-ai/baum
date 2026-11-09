@@ -591,7 +591,9 @@ func TestHostedManyExecCompletionsScanInLinearTime(t *testing.T) {
 	)
 	started := time.Now()
 	graph, _ := hostedBuildLines(t, lines...)
-	if elapsed := time.Since(started); elapsed > 10*time.Second {
+	// A linear scan takes about a second; a loaded macOS runner has taken
+	// over ten. The quadratic one this guards against takes many minutes.
+	if elapsed := time.Since(started); elapsed > time.Minute {
 		t.Fatalf("mapping %d exec completions took %v", completions, elapsed)
 	}
 	if graph.Root().Outcome != session.OutcomeCommitted {
