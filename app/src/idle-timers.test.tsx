@@ -83,3 +83,26 @@ test("the deadline clock rolls over at midnight when asked", () => {
   });
   expect(new Date(result.current).getDate()).toBe(11);
 });
+
+test("the deadline clock waits while hidden and catches up when shown", () => {
+  let hidden = true;
+  Object.defineProperty(document, "hidden", { configurable: true, get: () => hidden });
+  vi.setSystemTime(new Date(2026, 10, 10, 12, 0, 0));
+  const end = Date.now() + 60_000;
+  let renders = 0;
+  const { result } = renderHook(() => {
+    renders += 1;
+    return useDeadlineNow([end]);
+  });
+  act(() => {
+    vi.advanceTimersByTime(120_000);
+  });
+  expect(renders).toBe(1);
+  hidden = false;
+  act(() => {
+    document.dispatchEvent(new Event("visibilitychange"));
+  });
+  expect(renders).toBe(2);
+  expect(result.current).toBeGreaterThanOrEqual(end);
+  delete (document as { hidden?: boolean }).hidden;
+});
