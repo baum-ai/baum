@@ -329,6 +329,8 @@ func stackedOn(keys []string, best map[string]reviewindex.Entry, groups []review
 // saved ui-state and saved inboxes, read on each request.
 type Service struct {
 	Index   func(context.Context) (reviewindex.Snapshot, error)
+	// Jobs reads the jobs the Queue looks at, which are only the queued or
+	// running fixes (jobs.Queue.ActiveFixes), not the history.
 	Jobs    func() []jobs.Job
 	Groups  func(context.Context) ([]reviewgroups.Group, error)
 	Snoozes func() (json.RawMessage, error)
