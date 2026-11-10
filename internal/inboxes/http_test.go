@@ -21,7 +21,17 @@ type harness struct {
 	changed int
 }
 
+// newHarness starts from an initialized, empty list at revision 0, so tests of
+// saving do not depend on the default inbox. newFresh starts from nothing.
 func newHarness(t *testing.T) *harness {
+	h := newFresh(t)
+	if err := appdb.Write(h.path, "state", "inboxes", []byte(`{"revision":0,"inboxes":[],"initialized":true}`)); err != nil {
+		t.Fatal(err)
+	}
+	return h
+}
+
+func newFresh(t *testing.T) *harness {
 	h := &harness{t: t, path: filepath.Join(appdbtest.TempDir(t), "inboxes.json")}
 	h.handler = (&API{Store: Open(h.path), Changed: func() { h.changed++ }}).Handler()
 	return h
@@ -51,17 +61,6 @@ func list(v map[string]any) []map[string]any {
 		out = append(out, e.(map[string]any))
 	}
 	return out
-}
-
-func TestMissingFileReadsEmpty(t *testing.T) {
-	h := newHarness(t)
-	code, body := h.do(http.MethodGet, "")
-	if code != 200 || body["available"] != true || body["revision"] != float64(0) || len(list(body)) != 0 {
-		t.Fatalf("%d %v", code, body)
-	}
-	if _, err := os.Stat(h.path); err == nil {
-		t.Fatal("a read created the file")
-	}
 }
 
 func TestRoundTripOrderAndIDs(t *testing.T) {
@@ -112,7 +111,7 @@ func TestDeletedInboxComesBackWithItsID(t *testing.T) {
 	h := newHarness(t)
 	_, saved := h.put(`{"revision":0,"inboxes":[` + entry("One") + `]}`)
 	id := list(saved)[0]["id"].(string)
-	h.put(`{"revision":1,"inboxes":[]}`)
+	h.put(`{"revision":1,"inboxes":[` + entry("Two") + `]}`)
 	code, body := h.put(`{"revision":2,"inboxes":[{"id":"` + id + `",` + entry("One")[1:] + `]}`)
 	if code != 200 || list(body)[0]["id"] != id {
 		t.Fatalf("%d %v", code, body)

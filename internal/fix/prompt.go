@@ -79,7 +79,7 @@ func buildPrompt(ctx context.Context, t task, conflicts, checks bool) (string, s
 		for _, check := range t.Checks {
 			var text strings.Builder
 			fmt.Fprintf(&text, "Check: %s\nConclusion: %s\n", check.Name, check.Conclusion)
-			for _, part := range []struct{ name, value string }{{"Title", check.Title}, {"Summary", check.Summary}, {"Details", check.Text}, {fmt.Sprintf("Last lines of the job log (at most %d)", MaxLogLines), check.Log}} {
+			for _, part := range []struct{ name, value string }{{"Title", check.Title}, {"Summary", check.Summary}, {"Details", check.Text}, {fmt.Sprintf("Job log, up to the end of the failed step when the log marks one (at most %d lines)", MaxLogLines), check.Log}} {
 				if strings.TrimSpace(part.value) != "" {
 					fmt.Fprintf(&text, "\n%s:\n%s\n", part.name, part.value)
 				}

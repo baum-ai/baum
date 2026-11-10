@@ -84,6 +84,9 @@ type Transcripts struct {
 	// Enders stop a session's agent, by agent (end.go); an agent without
 	// one cannot be ended from the app.
 	Enders map[string]Ender
+	// EndChecks tell, by agent, whether its Ender would end a session now
+	// (end.go); an agent without one is offered End whenever it waits.
+	EndChecks map[string]EndCheck
 	// Senders put a message from the app into a session, by agent
 	// (message.go); an agent without one cannot be messaged.
 	Senders map[string]Sender

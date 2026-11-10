@@ -16,7 +16,8 @@ import (
 type ClaudeProcess struct {
 	PID       int    `json:"pid"`
 	SessionID string `json:"sessionId"`
-	// Status is "idle" or "busy".
+	// Status is "idle", "busy", or "shell" while its turn is over but a
+	// background command it started still runs.
 	Status string `json:"status"`
 	// Socket is the session's cross-session inbox, a Unix socket.
 	Socket string `json:"messagingSocketPath"`
@@ -68,7 +69,9 @@ func FindClaude(home, id string) (ClaudeProcess, error) {
 // session's process, which then exits in under a second, leaves its terminal
 // at the shell, fires its SessionEnd hook (reason "other") and can be resumed
 // with `claude --resume <id>`. Only a process that reports itself idle is
-// signalled: a busy one would lose the turn it is in.
+// signalled: a busy one would lose the turn it is in, and one whose turn is
+// over but that still runs a background command (status "shell") would lose
+// the command (ErrRunningCommand).
 type ClaudeExit struct {
 	// Home holds ~/.claude; empty is the user's home.
 	Home string
@@ -76,18 +79,36 @@ type ClaudeExit struct {
 
 // End is an Ender.
 func (c ClaudeExit) End(_ context.Context, id string) error {
-	home, err := orHome(c.Home)
+	p, err := c.idle(id)
 	if err != nil {
 		return err
+	}
+	return terminate(p.PID)
+}
+
+// Check is an EndCheck: whether End would signal the session now.
+func (c ClaudeExit) Check(id string) error {
+	_, err := c.idle(id)
+	return err
+}
+
+// idle is the process of session id when End may signal it, or why not.
+func (c ClaudeExit) idle(id string) (ClaudeProcess, error) {
+	home, err := orHome(c.Home)
+	if err != nil {
+		return ClaudeProcess{}, err
 	}
 	p, err := FindClaude(home, id)
 	if err != nil {
-		return err
+		return ClaudeProcess{}, err
 	}
-	if p.Status != "idle" {
-		return errNotEndable
+	switch p.Status {
+	case "idle":
+		return p, nil
+	case "shell":
+		return ClaudeProcess{}, ErrRunningCommand
 	}
-	return terminate(p.PID)
+	return ClaudeProcess{}, errNotEndable
 }
 
 // ClaudeAlive is a Tracker's Alive: whether the process of a Claude Code

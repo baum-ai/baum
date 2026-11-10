@@ -82,6 +82,10 @@ func TestJobDoneIgnoresOtherStatesAndUnscoredReviews(t *testing.T) {
 	build := job("failed", "backend_unavailable", false)
 	build.Kind = jobs.KindFeatureBuild
 	s.JobDone(context.Background(), build)
+	// A fix whose agent changed nothing completes without a commit: not news.
+	unchanged := job("completed", "no_changes", false)
+	unchanged.Kind = jobs.KindFix
+	s.JobDone(context.Background(), unchanged)
 	if len(*got) != 0 {
 		t.Fatalf("%v", *got)
 	}

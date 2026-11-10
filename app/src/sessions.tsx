@@ -24,6 +24,7 @@ import {
   WarningIcon,
 } from "@baum/viewer/components/icons";
 import { Badge, Button, LiveDot } from "@baum/viewer/components/ui";
+import { JumpLink } from "@baum/viewer/components/review-parts";
 import type { ViewerLinkProps } from "@baum/viewer/navigation";
 import {
   agentName,
@@ -342,7 +343,6 @@ export function LiveSessions({
   sessions: LiveSession[];
   Link: ComponentType<ViewerLinkProps>;
 }) {
-  const now = useNow();
   if (sessions.length === 0) return null;
   return (
     <section aria-label="Sessions in progress" className="mb-3 local-panel local-pr-sessions">
@@ -350,40 +350,77 @@ export function LiveSessions({
       <ul>
         {sessions.map((s) => (
           <li key={sessionKey(s)}>
-            <span className="local-pr-session-who">
-              <Agent agent={s.agent} />
-              {s.state !== "running" && s.waiting_reason ? (
-                <WaitingFor reason={s.waiting_reason} />
-              ) : (
-                <SessionState session={s} />
-              )}
-            </span>
-            {s.title ? (
-              <span className="local-pr-session-title" title={s.title}>
-                {s.title}
-              </span>
-            ) : null}
-            <span className="local-pr-session-meta">
-              {s.branch ? (
-                <code className="local-session-branch" title={s.branch}>
-                  {s.branch}
-                </code>
-              ) : null}
-              <span title={absolute(s.last_activity_at)}>
-                Last activity {formatRelative(s.last_activity_at, now)}
-              </span>
-              <Link
-                href={transcriptHref(s)}
-                aria-label={`Open transcript: ${agentName(s.agent)} on ${s.branch ?? s.repository}`}
-              >
-                Open transcript
-              </Link>
-            </span>
-            <LiveSessionDecisions session={s} />
+            <LiveSessionCard session={s} Link={Link} />
           </li>
         ))}
       </ul>
     </section>
+  );
+}
+
+/** What names a listed session in a pull request's Sessions list: its title,
+ *  else its agent's name. */
+export const liveSessionLabel = (s: Pick<LiveSession, "title" | "agent">) =>
+  s.title || `${agentName(s.agent)} session`;
+
+/** A session the daemon lists, as the PR page draws it: its agent and what it
+ *  is doing, its title (a button that `open`s it, when given), branch, last
+ *  activity or end, the way into its transcript on the Sessions page, and
+ *  its decisions. */
+export function LiveSessionCard({
+  session: s,
+  open,
+  titled = true,
+  Link,
+}: {
+  session: LiveSession;
+  open?: () => void;
+  /** False under a pane already headed by the session's title. */
+  titled?: boolean;
+  Link: ComponentType<ViewerLinkProps>;
+}) {
+  const now = useNow();
+  return (
+    <div className="local-pr-session">
+      <span className="local-pr-session-who">
+        <Agent agent={s.agent} />
+        {s.state !== "running" && s.waiting_reason ? (
+          <WaitingFor reason={s.waiting_reason} />
+        ) : (
+          <SessionState session={s} />
+        )}
+      </span>
+      {open ? (
+        <JumpLink tone="primary" className="local-pr-session-title font-medium" onClick={open}>
+          {liveSessionLabel(s)}
+        </JumpLink>
+      ) : titled && s.title ? (
+        <span className="local-pr-session-title" title={s.title}>
+          {s.title}
+        </span>
+      ) : null}
+      <span className="local-pr-session-meta">
+        {s.branch ? (
+          <code className="local-session-branch" title={s.branch}>
+            {s.branch}
+          </code>
+        ) : null}
+        {s.state === "ended" && s.ended_at ? (
+          <span title={absolute(s.ended_at)}>Ended {formatRelative(s.ended_at, now)}</span>
+        ) : (
+          <span title={absolute(s.last_activity_at)}>
+            Last activity {formatRelative(s.last_activity_at, now)}
+          </span>
+        )}
+        <Link
+          href={transcriptHref(s)}
+          aria-label={`Open transcript: ${agentName(s.agent)} on ${s.branch ?? s.repository}`}
+        >
+          Open transcript
+        </Link>
+      </span>
+      <LiveSessionDecisions session={s} />
+    </div>
   );
 }
 
@@ -1903,6 +1940,14 @@ export function SessionsPage({
                 error: true,
               }),
           ),
+      });
+    else if (s.end_blocked === "running_command")
+      items.push({
+        label: "End session",
+        danger: true,
+        disabled: true,
+        note: "A background command is still running",
+        onSelect: () => undefined,
       });
     return items;
   };

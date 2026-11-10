@@ -9,7 +9,7 @@ import (
 type Limits struct {
 	Caps     bundle.Caps
 	Checkout bundle.CheckoutConfig
-	// MaxImages and MaxImageBytes bound the description images downloaded.
+	// MaxImages and MaxImageBytes bound captured description and session images.
 	MaxImages     int
 	MaxImageBytes int64
 }

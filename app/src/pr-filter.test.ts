@@ -1,10 +1,14 @@
 import { expect, it } from "vitest";
 import type { Entry } from "./api";
 import {
+  hasPart,
   hasValue,
   matchesQuery,
+  togglePart,
   ownerOf,
   parseQuery,
+  queryTerms,
+  withoutTerm,
   queryProblem,
   quote,
   suggest,
@@ -79,11 +83,10 @@ it("reads = and : alike, and != as not any of the values", () => {
   expect(passes("-is=draft", entry({ draft: true }))).toBe(false);
 });
 
-it("combines terms with AND, OR, NOT, - and parentheses", () => {
+it("combines terms with AND, OR, - and parentheses", () => {
   const approvedDraft = entry({ draft: true }, { review: "approved" });
   expect(passes("review:approved is:draft", approvedDraft)).toBe(true);
   expect(passes("review:approved AND -is:draft", approvedDraft)).toBe(false);
-  expect(passes("review:approved NOT is:draft", approvedDraft)).toBe(false);
   expect(passes("checks:failing OR is:draft", approvedDraft)).toBe(true);
   // AND binds tighter than OR.
   expect(passes("checks:failing OR review:approved is:draft", approvedDraft)).toBe(true);
@@ -107,7 +110,7 @@ it("says why a query does not read, and then narrows nothing", () => {
     ["review>=approved", "review takes = or !=."],
     ["risk=7", "risk takes 1 to 5, or none."],
     ["risk>=none", "risk compares only scores"],
-    ["assignee=sam", "assignee takes @me."],
+    ["assignee=sam", "assignee takes @me, none."],
     ["repo=", "repo= needs a value."],
     ["(is:draft", "A parenthesis is not closed."],
     ["is:draft)", "A closing parenthesis has no opening one."],
@@ -140,7 +143,7 @@ it("adds a picked value to the field's term, takes it out again, and wraps an OR
   expect(toggleValue("is=draft", "is", "bot", "!=")).toBe("is=draft is!=bot");
   expect(toggleValue("is!=bot,draft", "is", "bot", "!=")).toBe("is!=draft");
   expect(toggleValue("", "risk", "3", ">=")).toBe("risk>=3");
-  // A term under NOT is not the field's choice: a new one is added.
+  // A negated term is not the field's choice: a new one is added.
   expect(toggleValue("-is=draft", "is", "conflict")).toBe("-is=draft is=conflict");
   expect(toggleValue("", "base", "release 1")).toBe('base="release 1"');
   expect(hasValue("review=approved,none", "review", "None")).toBe(true);
@@ -182,9 +185,11 @@ it("suggests a field, then its operators, then its values", () => {
   expect(labels("risk>")[0]).toBe("risk>=");
   expect(labels("review>=")).toEqual([]);
   expect(labels("is=draft O")).toEqual(["OR"]);
-  expect(labels("N")).toEqual(["NOT"]);
-  expect(labels("is=draft ").slice(-3)).toEqual(["AND", "OR", "NOT"]);
-  expect(labels("")).not.toContain("OR");
+  expect(labels("is=draft N")).toEqual([]);
+  // Operators only follow a filter, and come first while nothing is typed.
+  expect(labels("is=draft ").slice(0, 2)).toEqual(["AND", "OR"]);
+  expect(labels("(is=draft OR is=bot) ").slice(0, 2)).toEqual(["AND", "OR"]);
+  expect(labels("N")).toEqual([]);
   expect(labels("colour=")).toEqual([]);
   // Inside a word, nothing: taking one would drop the rest of the word.
   expect(labels("review=approved,none", 10)).toEqual([]);
@@ -220,4 +225,124 @@ it("finds the owner of an Enterprise repository", () => {
   expect(ownerOf("acme/demo")).toBe("acme");
   expect(ownerOf("github.example.com/acme/demo")).toBe("acme");
   expect(ownerOf("nothing")).toBe("");
+});
+
+it("matches assignee=none and review-requested=none when nobody holds it, and not the person", () => {
+  // The daemon's fields absent read as nobody.
+  expect(passes("assignee=none", entry())).toBe(true);
+  expect(passes("review-requested=none", entry())).toBe(true);
+  expect(passes("assignee=none", entry({ assigned: false }))).toBe(true);
+  expect(passes("review-requested=none", entry({ review_requested: false }))).toBe(true);
+  // Someone is assigned or asked.
+  expect(passes("assignee=none", entry({ assigned: true }))).toBe(false);
+  expect(passes("review-requested=none", entry({ review_requested: true }))).toBe(false);
+  // The person counts as someone, whatever the daemon says of anyone.
+  expect(passes("assignee=none", entry({ assigned_to_me: true }))).toBe(false);
+  expect(passes("review-requested=none", entry({ review_requested_from_me: true }))).toBe(false);
+  // != none is somebody.
+  expect(passes("assignee!=none", entry({ assigned: true }))).toBe(true);
+  expect(passes("assignee!=none", entry())).toBe(false);
+  // @me still means the person alone.
+  expect(passes("assignee=@me", entry({ assigned: true }))).toBe(false);
+  expect(passes("review-requested=@me", entry({ review_requested: true }))).toBe(false);
+});
+
+it("matches waiting=other only for a pull request listed as nothing from the person", () => {
+  expect(passes("waiting=other", entry())).toBe(false);
+  expect(matchesQuery("waiting=other", entry(), "other")).toBe(true);
+  for (const kind of ["review", "clone", "merge", "fix", "update"]) {
+    expect(matchesQuery("waiting=other", entry(), kind)).toBe(false);
+  }
+  expect(matchesQuery("waiting!=other", entry(), "review")).toBe(true);
+  expect(matchesQuery("waiting!=other", entry(), "other")).toBe(false);
+  expect(matchesQuery("waiting=other assignee=none review-requested=none", entry(), "other")).toBe(
+    true,
+  );
+});
+
+/** The query without the term written as `term`. */
+const drop = (query: string, term: string) => {
+  const found = queryTerms(query).find((one) => query.slice(one.start, one.end) === term);
+  if (!found) throw new Error(`no term ${term} in ${query}`);
+  return withoutTerm(query, found.start);
+};
+
+it("finds a query's terms in order, with where they stand and their words", () => {
+  expect(queryTerms("")).toEqual([]);
+  expect(queryTerms("   ")).toEqual([]);
+  const query = "org=x (author=@me OR assignee=@me) -repo=y flaky";
+  expect(queryTerms(query).map((term) => [query.slice(term.start, term.end), term.label])).toEqual([
+    ["org=x", "Organization is x"],
+    ["author=@me", "Author is Me"],
+    ["assignee=@me", "Assignee is Me"],
+    ["-repo=y", "Repository is not y"],
+    ["flaky", "“flaky”"],
+  ]);
+  // One that does not read has none, and stays as it is.
+  expect(queryTerms("colour:red")).toEqual([]);
+  expect(queryTerms("(is:draft")).toEqual([]);
+  expect(withoutTerm("(is:draft", 1)).toBe("(is:draft");
+});
+
+it("takes a term out with the AND or OR beside it, keeping the rest as written", () => {
+  expect(drop("author=@me", "author=@me")).toBe("");
+  expect(drop("author=@me risk>=4 flaky", "risk>=4")).toBe("author=@me flaky");
+  expect(drop("author=@me AND is=draft", "author=@me")).toBe("is=draft");
+  expect(drop("author=@me AND is=draft", "is=draft")).toBe("author=@me");
+  const forMe = "author=@me OR assignee=@me OR review-requested=@me";
+  expect(drop(forMe, "assignee=@me")).toBe("author=@me OR review-requested=@me");
+  expect(drop(forMe, "author=@me")).toBe("assignee=@me OR review-requested=@me");
+  expect(drop(forMe, "review-requested=@me")).toBe("author=@me OR assignee=@me");
+});
+
+it("keeps a group's parentheses while it holds several choices, and drops them at one", () => {
+  const query = "org=baum-ai (author=@me OR assignee=@me OR review-requested=@me) review=none";
+  expect(drop(query, "assignee=@me")).toBe(
+    "org=baum-ai (author=@me OR review-requested=@me) review=none",
+  );
+  expect(drop(query, "org=baum-ai")).toBe(
+    "(author=@me OR assignee=@me OR review-requested=@me) review=none",
+  );
+  expect(drop(query, "review=none")).toBe(
+    "org=baum-ai (author=@me OR assignee=@me OR review-requested=@me)",
+  );
+  expect(drop("org=x (author=@me OR assignee=@me)", "assignee=@me")).toBe("org=x author=@me");
+  expect(drop("(is=draft author=@me) OR review=none", "is=draft")).toBe(
+    "author=@me OR review=none",
+  );
+});
+
+it("takes a negated term out whole, and a -(…) goes once nothing is left in it", () => {
+  expect(drop("-repo=x -is=draft", "-is=draft")).toBe("-repo=x");
+  expect(drop("-repo=x -is=draft", "-repo=x")).toBe("-is=draft");
+  expect(drop("-(is=draft OR author=@me)", "is=draft")).toBe("-author=@me");
+  expect(drop("-(is=draft OR author=@me) org=x", "org=x")).toBe("-(is=draft OR author=@me)");
+  expect(drop("-(is=draft OR -author=@me)", "is=draft")).toBe("-(-author=@me)");
+});
+
+it("puts a quick filter's query in, and takes it out again, as written", () => {
+  const forMe = "author=@me OR assignee=@me OR review-requested=@me";
+  // Added, an OR goes in parentheses; added again, it comes out.
+  expect(togglePart("", forMe)).toBe(forMe);
+  expect(togglePart("risk>=4", forMe)).toBe(`risk>=4 (${forMe})`);
+  expect(hasPart(`risk>=4 (${forMe})`, forMe)).toBe(true);
+  expect(togglePart(`risk>=4 (${forMe})`, forMe)).toBe("risk>=4");
+  expect(togglePart(forMe, forMe)).toBe("");
+  // Spacing and case do not hide it; a part only inside an OR is not on.
+  expect(hasPart("org=x (  AUTHOR=@me OR assignee=@me OR review-requested=@me )", forMe)).toBe(
+    true,
+  );
+  expect(hasPart("risk>=4 OR is!=draft", "risk>=4")).toBe(false);
+  expect(togglePart("risk>=4 OR is!=draft", "risk>=4")).toBe("(risk>=4 OR is!=draft) risk>=4");
+  // Several parts: on only when all hold; on adds the missing, off takes all.
+  const unclaimed = "assignee=none review-requested=none";
+  expect(hasPart("assignee=none", unclaimed)).toBe(false);
+  expect(togglePart("assignee=none org=x", unclaimed)).toBe(
+    "assignee=none org=x review-requested=none",
+  );
+  expect(togglePart("assignee=none org=x review-requested=none", unclaimed)).toBe("org=x");
+  // A query that does not read is left alone.
+  expect(togglePart("(org=x", "risk>=4")).toBe("(org=x");
+  // A group already in parentheses is not wrapped twice.
+  expect(togglePart("(org=x OR org=y)", "risk>=4")).toBe("(org=x OR org=y) risk>=4");
 });

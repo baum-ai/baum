@@ -59,6 +59,14 @@ type PullRequest struct {
 	// AssignedToMe is true when the viewer is one of the first 20 assignees.
 	// Snapshots cached before it existed decode as false.
 	AssignedToMe bool `json:"assigned_to_me"`
+	// Assigned is true when the pull request has at least one of the first 20
+	// assignees fetched, whoever they are. Snapshots cached before it existed
+	// decode as false.
+	Assigned bool `json:"assigned"`
+	// ReviewRequested is true when a review is requested from at least one
+	// user or team, whoever they are. Snapshots cached before it existed
+	// decode as false.
+	ReviewRequested bool `json:"review_requested"`
 	// Nil means the token could not establish repository write permission.
 	AuthorHasWrite *bool `json:"author_has_write"`
 	// ViewerCanPush is whether the signed-in account may push to the
@@ -74,9 +82,14 @@ type PullRequest struct {
 	// Behind is GitHub's report (mergeStateStatus BEHIND) that the head
 	// branch is out of date with its base and not conflicting, which Update
 	// branch fixes. A draft never reports it.
-	Behind           bool `json:"behind"`
-	Unresolved       *int `json:"unresolved"`
-	UnresolvedCapped bool `json:"unresolved_capped"`
+	Behind bool `json:"behind"`
+	// ReviewRequired is whether GitHub still waits for a required approving
+	// review (reviewDecision REVIEW_REQUIRED). False says no approval holds
+	// it up: none is required, or the one required is given. Nil when
+	// unknown, as in snapshots cached before it existed.
+	ReviewRequired   *bool `json:"review_required"`
+	Unresolved       *int  `json:"unresolved"`
+	UnresolvedCapped bool  `json:"unresolved_capped"`
 	// UpdatedAt is GitHub's last update of the pull request: a push, an edit,
 	// a review or a comment. The background refresh re-reads a saved review's
 	// evidence when it is newer than the last read.
@@ -865,6 +878,8 @@ func (p *poll) build(ctx context.Context, repository github.Repository, fresh bo
 				item.HeadRepository = strings.ToLower(head.String())
 			}
 		}
+		item.Assigned = len(row.Assignees.Nodes) > 0
+		item.ReviewRequested = len(pr.RequestedReviewers) > 0 || len(pr.RequestedTeams) > 0
 		for _, user := range row.Assignees.Nodes {
 			if strings.EqualFold(user.Login, snapshot.Viewer) {
 				item.AssignedToMe = true
@@ -892,6 +907,7 @@ func (p *poll) build(ctx context.Context, repository github.Repository, fresh bo
 		}
 		item.Review, item.Checks, item.Merge, item.Unresolved, item.UnresolvedCapped = row.states()
 		item.Behind = row.behind()
+		item.ReviewRequired = new(row.ReviewDecision != nil && *row.ReviewDecision == "REVIEW_REQUIRED")
 		if compare && carryMerge(old, row, unknown) {
 			if p.carried == nil {
 				p.carried = map[int]PullRequest{}

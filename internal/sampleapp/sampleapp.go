@@ -15,6 +15,7 @@ package sampleapp
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -34,6 +35,7 @@ import (
 	"github.com/baum-ai/baum/internal/github"
 	"github.com/baum-ai/baum/internal/hookevents"
 	"github.com/baum-ai/baum/internal/inboxes"
+	"github.com/baum-ai/baum/internal/inboxqueue"
 	"github.com/baum-ai/baum/internal/jobs"
 	"github.com/baum-ai/baum/internal/livesessions"
 	"github.com/baum-ai/baum/internal/planusage"
@@ -212,12 +214,20 @@ func (w *Workspace) build(ctx context.Context, now time.Time) (http.Handler, err
 	timeline := &decisionlog.Timeline{Store: decided, Registry: registry, Home: home, Login: login, Transcripts: transcripts,
 		Clone: func(context.Context, string) decisionlog.TimelineClone { return owner{} }}
 	uiState := &uistate.Store{Path: appDB}
+	savedInboxes := inboxes.Open(appDB)
+	inboxQueue := &inboxqueue.Service{Index: index.Build, Jobs: queue.List, Groups: groups.List, Snoozes: func() (json.RawMessage, error) {
+		record, err := uiState.Read("inbox", "")
+		return record.Value, err
+	}, Inboxes: func() ([]inboxes.Inbox, error) {
+		state, err := savedInboxes.Read()
+		return state.Inboxes, err
+	}}
 	quiet := func() {}
 	api := uiserver.LocalAPI{Registry: registry, Config: cfg, Changed: quiet,
 		// A pull request's sessions are the sample's, never this computer's.
 		Sessions:   sessions.Options{Sources: []vendors.Slug{vendors.ClaudeCode}, ClaudeProjectsDir: filepath.Join(home, ".claude", "projects")},
 		PRs:        uiserver.DiscoveryHandler(registry, disc, nil),
-		Index:      index.Handler(),
+		Index:      inboxQueue.CountHandler(index.Handler()),
 		Jobs:       queue.Handler(),
 		Chat:       uiserver.ChatHandler(registry, queue),
 		Automatic:  (&automatic.Scheduler{Registry: registry, Path: appDB, Discover: disc.Poll}).Handler(),
@@ -229,7 +239,8 @@ func (w *Workspace) build(ctx context.Context, now time.Time) (http.Handler, err
 		Analytics:  insights.Handler(),
 		Timeline:   timeline.Handler(),
 		UIState:    uiState.Handler(),
-		Inboxes:    (&inboxes.API{Store: inboxes.Open(appDB)}).Handler(),
+		Inboxes:    (&inboxes.API{Store: savedInboxes}).Handler(),
+		Inbox:      inboxQueue.Handler(),
 		Groups:     (&reviewgroups.API{Store: groups, Registry: registry, Index: index.Build, Changed: quiet}).Handler(),
 		Decisions: func(linked uiserver.LinkedSessions) http.Handler {
 			return (&decisionlog.API{Store: decided, Registry: registry, Live: live.Sessions, Linked: linked}).Handler()

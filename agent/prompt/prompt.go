@@ -75,7 +75,7 @@ import (
 
 // Version is the prompt version recorded in the document's generator block.
 // Change it with the text of review-public-v6.md.
-const Version = "review-public-v6"
+const Version = "review-public-v7"
 
 //go:embed review-public-v6.md
 var reviewPublic string
@@ -85,7 +85,7 @@ var submitClaude string
 
 // GroupVersion is the prompt version of a review group's combined review.
 // Change it with the text of group-public-v1.md or review-public-v6.md.
-const GroupVersion = "group-review-public-v4"
+const GroupVersion = "group-review-public-v5"
 
 //go:embed group-public-v1.md
 var groupPublic string
@@ -148,7 +148,7 @@ func (g GroupPrompts) Instructions(_ context.Context, backend string) (agent.Pro
 
 // StagedVersion is the prompt version of a staged review. Change it with the
 // text of any review-*-public-v1.md file of the staged review.
-const StagedVersion = "review-staged-public-v1"
+const StagedVersion = "review-staged-public-v2"
 
 //go:embed review-shared-public-v1.md
 var stagedShared string

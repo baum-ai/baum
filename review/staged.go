@@ -610,8 +610,14 @@ func (v *DocumentValidator) PrepareContext(outline, reply []byte, b *bundlepkg.B
 // blocks and tiles, in the shape the details stage writes. A mitigated risk
 // is left out, so completion keeps it mitigated. A host validates what it
 // reuses (PrepareSectionDetails) and asks the model for any it rejects.
-func ReusableSectionDetails(previous *bundlepkg.PreviousVersion, outline []byte) map[string][]byte {
-	if previous == nil {
+//
+// Nothing is reusable when the bundle offers an image (offered) the previous
+// version was not offered: only the details stage opens images and places
+// them, and any section may be the one an image shows. Images often arrive
+// after the code, as a session is linked later, so a version whose hunks are
+// unchanged would otherwise never look at them.
+func ReusableSectionDetails(previous *bundlepkg.PreviousVersion, outline []byte, offered []bundlepkg.Attachment) map[string][]byte {
+	if previous == nil || NewImages(previous, offered) {
 		return nil
 	}
 	var document struct {
@@ -659,6 +665,21 @@ func ReusableSectionDetails(previous *bundlepkg.PreviousVersion, outline []byte)
 		}
 	}
 	return reusable
+}
+
+// NewImages reports whether offered holds an image the previous version was
+// not offered. Image IDs are stable across versions: a description image's
+// comes from its URL and a session image's from its bytes.
+func NewImages(previous *bundlepkg.PreviousVersion, offered []bundlepkg.Attachment) bool {
+	if previous == nil {
+		return false
+	}
+	for _, attachment := range offered {
+		if !slices.Contains(previous.Attachments, attachment.ID) {
+			return true
+		}
+	}
+	return false
 }
 
 func sameHunks(a, b []string) bool {

@@ -556,6 +556,42 @@ const TranscriptBody = memo(function TranscriptBody({
   );
 });
 
+/** A listed session's transcript inside the PR page's Sessions pane, read
+ *  through the daemon's live record as the Sessions page reads it, and
+ *  reread while the session runs. */
+export function EmbeddedLiveTranscript({ session }: { session: LiveSession }) {
+  const poll =
+    session.state === "running" ? POLL_RUNNING : session.state === "idle" ? POLL_IDLE : null;
+  // The session's record changing (a new event, or its end) reads the
+  // transcript again, as the app's live events do for the Sessions page:
+  // polling stops once it ends, and its last turn must still be read.
+  const signal = `${session.state}\n${session.last_activity_at}\n${session.last_event}`;
+  const [seen, setSeen] = useState({ signal, tick: 0 });
+  if (seen.signal !== signal) setSeen({ signal, tick: seen.tick + 1 });
+  const { state, retry } = useLiveTranscript(session.agent, session.session_id, {
+    tick: seen.tick,
+    poll,
+  });
+  switch (state.kind) {
+    case "loading":
+      return <LoadingStatus block>Reading redacted local transcript…</LoadingStatus>;
+    case "unavailable":
+      return <p className="local-transcript-note">{state.message}</p>;
+    case "failed":
+      return <ReadFailed what="the transcript" message={state.message} retry={retry} />;
+  }
+  return (
+    <TranscriptCard
+      transcript={state.transcript}
+      version={state.version}
+      summary={state.summary}
+      live={session.state !== "ended"}
+      title={session.title}
+      embedded
+    />
+  );
+}
+
 /** The transcript's loader, answering from the transcript shown. */
 function useLocalSource(transcript: LocalTranscript, version: string | undefined) {
   const latest = useRef<LocalTranscript>(transcript);

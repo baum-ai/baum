@@ -5,6 +5,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { TranscriptSession } from "@baum/viewer/transcript";
 import type { LiveSession } from "./api";
 import {
+  EmbeddedLiveTranscript,
   LIVE_DEBOUNCE,
   parseLiveTranscript,
   POLL_RUNNING,
@@ -256,6 +257,25 @@ it("polls a running session, which grows between hook events, and stops once it 
   expect(prompts()).toEqual(["Add a retry budget", "Now test it"]);
   await show(session({ state: "ended", ended_at: new Date().toISOString(), last_event: "end" }));
   expect(node.querySelector('[aria-label="Session"]')!.textContent).toContain("Ended");
+  const before = requests.length;
+  await wait(10 * POLL_RUNNING);
+  expect(requests.length).toBe(before);
+});
+
+it("reads an embedded transcript again when its session ends, then stops", async () => {
+  await act(async () => root.render(<EmbeddedLiveTranscript session={session()} />));
+  expect(prompts()).toEqual(["Add a retry budget"]);
+  // The last turn lands as the session ends, before the next poll.
+  answer = { version: "v2", prompts: ["Add a retry budget", "Now test it"] };
+  const ended = session({
+    state: "ended",
+    ended_at: new Date().toISOString(),
+    last_activity_at: new Date().toISOString(),
+    last_event: "end",
+  });
+  await act(async () => root.render(<EmbeddedLiveTranscript session={ended} />));
+  await wait(LIVE_DEBOUNCE);
+  expect(prompts()).toEqual(["Add a retry budget", "Now test it"]);
   const before = requests.length;
   await wait(10 * POLL_RUNNING);
   expect(requests.length).toBe(before);

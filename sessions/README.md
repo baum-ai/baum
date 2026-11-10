@@ -81,6 +81,11 @@ unchanged. The local analytics index rebuilds after this evidence change.
 These differences preserve current product contracts. They are not upgrade
 paths, and neither profile changes the local application's database.
 
+For the local image reader, an ordinary Claude image-only user envelope is a
+prompt with human origin even though it has no text. Meta, system-injected,
+peer and unknown-source records remain system inputs; child-session asks keep
+their agent origin. The hosted interpretation is unchanged.
+
 ## Verification
 
 Run commands in the configured development containers from the monorepo root:

@@ -1,11 +1,12 @@
-import { mockStateFetch } from "./ui-state-test-helper";
+import { DEFAULT_INBOX, mockStateFetch } from "./ui-state-test-helper";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import example from "../../schema/review-example.json" with { type: "json" };
 import { App } from "./app";
 import type { Entry, Job, LiveSession, ReviewGroup } from "./api";
-import { snoozeOptions, snoozeText, upNext, waitingOn } from "./up-next";
+import { FOR_ME } from "./inboxes";
+import { othersState, queueItems, snoozeOptions, snoozeText, upNext, waitingOn } from "./up-next";
 import { forgetLastRows } from "./shortcuts";
 
 type Overrides = Partial<Omit<Entry, "pull_request">> & {
@@ -131,7 +132,22 @@ it("keeps a stacked pull request GitHub would merge waiting on the lowest open o
   ]);
 });
 
-it("orders what waits on the person and leaves out what waits on others", () => {
+it("says no checks reported for a blocked pull request with no checks and no review required", () => {
+  const stuck = (review_required: boolean | null | undefined) =>
+    entry(1, {
+      checks: "none",
+      merge: "blocked",
+      review: "unreviewed",
+      pull_request: { authored_by_me: true, review_required },
+    });
+  expect(waitingOn(stuck(false))).toBe("No checks reported");
+  // A required review may be what blocks it; an older daemon doesn't say.
+  expect(waitingOn(stuck(true))).toBe("Waiting on review");
+  expect(waitingOn(stuck(undefined))).toBe("Waiting on review");
+  expect(waitingOn({ ...stuck(false), checks: "passing" })).toBe("Waiting on review");
+});
+
+it("orders what waits on the person and sets apart what waits on others", () => {
   const fixing: Job = {
     id: "job",
     clone: "clone",
@@ -155,7 +171,7 @@ it("orders what waits on the person and leaves out what waits on others", () => 
     repository: "acme/demo",
     pr: 1,
   };
-  const { items, waiting } = upNext(
+  const { items, waiting, others } = upNext(
     [
       ...fixture(),
       mine(7, { merge: "conflict" }),
@@ -178,6 +194,8 @@ it("orders what waits on the person and leaves out what waits on others", () => 
   ]);
   // A draft waits on its author's work, and a fix already running on its agent.
   expect(waiting.map((e) => e.pull_request.number)).toEqual([5, 7]);
+  // Someone else's waits on nothing from the person: listed apart, not left out.
+  expect(others.map((e) => e.pull_request.number)).toEqual([6]);
   const [review, clone, merge, , fix] = items;
   expect(review!.why).toBe(
     "baum's review is ready, risk 4 of 5. 1 agent session is still working on its branch, so reviewing now catches problems before more commits pile up.",
@@ -343,21 +361,25 @@ it("groups what waits on the person and opens on the first", async () => {
     "Ready to merge · 2",
     "Hand to an agent · 1",
     "Waiting on checks or reviews · 1",
+    "Not waiting on you · 1",
   ]);
-  // The person's own pull requests that wait on others come last.
-  expect(list()).toEqual(["Change 1", "Change 3", "Change 4", "Change 2", "Change 5"]);
+  // The person's own pull requests that wait on others come next, then
+  // everyone else's.
+  expect(list()).toEqual(["Change 1", "Change 3", "Change 4", "Change 2", "Change 5", "Change 6"]);
   expect(shown()).toBe("Change 1");
   expect(panel().textContent).toContain("sam asked for your review");
   // Open is always the default action.
   const open = panel().querySelector<HTMLAnchorElement>("a.upnext-primary")!;
   expect(open.textContent).toBe("Open↵");
-  expect(open.getAttribute("href")).toBe("/s/test-ns/?clone=clone&pr=1");
+  expect(open.getAttribute("href")).toBe(`/s/test-ns/?inbox=${DEFAULT_INBOX.id}&clone=clone&pr=1`);
   expect(row("Change 5").textContent).toContain("#5 · Draft");
-  const inbox = Array.from(node.querySelectorAll(".local-rail a")).find((a) =>
-    a.textContent?.startsWith("Inbox"),
-  )!;
-  expect(inbox.getAttribute("aria-current")).toBe("page");
-  expect(inbox.querySelector(".local-rail-badge")?.textContent).toBe("4");
+  // Inbox is a heading with the count; Default under it is the current page.
+  const heading = node.querySelector(".local-rail-heading")!;
+  expect(heading.getAttribute("aria-current")).toBeNull();
+  expect(heading.querySelector(".local-rail-badge")?.textContent).toBe("4");
+  expect(node.querySelector(".local-rail a.local-rail-sub")!.getAttribute("aria-current")).toBe(
+    "page",
+  );
 });
 
 it("moves with j and k, opens with Enter and merges with m", async () => {
@@ -375,7 +397,7 @@ it("moves with j and k, opens with Enter and merges with m", async () => {
   // Drawn again, with no dialog open, it comes back on the same pull request.
   await render();
   await press("Enter");
-  expect(location.search).toBe("?clone=clone&pr=3");
+  expect(location.search).toBe(`?inbox=${DEFAULT_INBOX.id}&clone=clone&pr=3`);
 });
 
 // A right click on a row opens its menu, without picking the row.
@@ -423,7 +445,7 @@ it("opens a pull request from its row's menu", async () => {
   await render();
   await rightClick("Change 3");
   await choose("Open");
-  expect(location.search).toBe("?clone=clone&pr=3");
+  expect(location.search).toBe(`?inbox=${DEFAULT_INBOX.id}&clone=clone&pr=3`);
 });
 
 it("snoozes, undoes and brings back, and remembers it", async () => {
@@ -434,7 +456,7 @@ it("snoozes, undoes and brings back, and remembers it", async () => {
   expect(node.querySelector('[role="status"]')!.textContent).toMatch(/^Snoozed #3 until /);
   // The pull request that takes its place is selected.
   expect(shown()).toBe("Change 4");
-  expect(list()).toEqual(["Change 1", "Change 4", "Change 2", "Change 5"]);
+  expect(list()).toEqual(["Change 1", "Change 4", "Change 2", "Change 5", "Change 6"]);
   await press("u");
   expect(shown()).toBe("Change 3");
   expect(list()).toContain("Change 3");
@@ -446,7 +468,7 @@ it("snoozes, undoes and brings back, and remembers it", async () => {
   expect(node.querySelector<HTMLElement>(".upnext-snoozed")!.hidden).toBe(true);
   // A reload keeps the snooze.
   await render();
-  expect(list()).toEqual(["Change 1", "Change 4", "Change 2", "Change 5"]);
+  expect(list()).toEqual(["Change 1", "Change 4", "Change 2", "Change 5", "Change 6"]);
   await act(async () => button("Snoozed").click());
   await act(async () =>
     node.querySelector<HTMLButtonElement>('button[aria-label="Actions for acme/demo #3"]')!.click(),
@@ -579,8 +601,12 @@ it("counts what left the queue as cleared today", async () => {
   // repository in the read.
   entries = [entry(6)];
   await render();
-  expect(node.textContent).toContain("Inbox zero");
-  expect(node.textContent).toContain("All 4 handled. Nothing needs you right now.");
+  // Nothing waits on the person, so the zero state gives way to the
+  // other's pull request, opened.
+  expect(node.textContent).not.toContain("Nothing here right now.");
+  expect(node.textContent).toContain("Nothing left. 4 handled today.");
+  expect(groups()).toContain("Not waiting on you · 1");
+  expect(shown()).toBe("Change 6");
 });
 
 it("links what was done today to its page, or to GitHub once the app no longer lists it", async () => {
@@ -594,7 +620,9 @@ it("links what was done today to its page, or to GitHub once the app no longer l
   await render();
   expect(await cleared()).toBe("Merged #3 Change 3");
   const done = () => node.querySelector<HTMLAnchorElement>("a.upnext-done-text")!;
-  expect(done().getAttribute("href")).toBe("/s/test-ns/?clone=clone&pr=3");
+  expect(done().getAttribute("href")).toBe(
+    `/s/test-ns/?inbox=${DEFAULT_INBOX.id}&clone=clone&pr=3`,
+  );
   expect(done().getAttribute("target")).toBeNull();
   // Without a saved review it leaves the list; GitHub still has it.
   entries = entries.filter((e) => e.pull_request.number !== 3);
@@ -618,7 +646,7 @@ it("clears only what the person finished, and nothing of a repository missing fr
   await render();
   expect(await cleared()).toBe("Fixed #2 Change 2");
   // Both now wait on their checks.
-  expect(list()).toEqual(["Change 1", "Change 4", "Change 3", "Change 2", "Change 5"]);
+  expect(list()).toEqual(["Change 1", "Change 4", "Change 3", "Change 2", "Change 5", "Change 6"]);
   // GitHub could not be read: nothing of acme/demo is listed.
   entries = [];
   await render();
@@ -671,11 +699,14 @@ it("does not clear a pull request whose fix is running, and offers to watch it",
   // Pressing Fix starts a job; the agent's row stays in its group.
   jobsList = [fixJobOf()];
   await render();
-  expect(list()).toEqual(["Change 1", "Change 3", "Change 4", "Change 2", "Change 5"]);
-  expect(row("Change 2").textContent).toContain("Agent fixing · The agent is fixing it");
+  expect(list()).toEqual(["Change 1", "Change 3", "Change 4", "Change 2", "Change 5", "Change 6"]);
+  // While the agent itself works, the line says so once.
+  expect(row("Change 2").textContent).toContain("Agent fixing");
+  expect(row("Change 2").textContent).not.toContain("The agent is fixing it");
   expect(await cleared()).toBeNull();
   await act(async () => row("Change 2").click());
-  expect(panel().textContent).toContain("An agent is fixing it · The agent is fixing it.");
+  expect(panel().textContent).toContain("An agent is fixing it.");
+  expect(panel().textContent).not.toContain("The agent is fixing it");
   const watch = Array.from(panel().querySelectorAll("a")).find((a) =>
     a.textContent?.startsWith("Watch the agent"),
   )!;
@@ -709,6 +740,7 @@ it("waits on checks that run before calling a pull request ready to merge", asyn
     "Ready to merge · 1",
     "Hand to an agent · 1",
     "Waiting on checks or reviews · 2",
+    "Not waiting on you · 1",
   ]);
 });
 
@@ -733,6 +765,33 @@ it("brings back a pull request whose fix failed, with what happened", async () =
   )!;
   expect(see.getAttribute("href")).toBe("/s/test-ns/?page=jobs&job=fix-1");
   expect(panel().querySelector("button.upnext-secondary")!.textContent).toMatch(/^Fix/);
+});
+
+it("says why the last fix changed nothing, without calling it a failure", async () => {
+  await render();
+  jobsList = [
+    fixJobOf({
+      state: "completed",
+      reason: "no_changes",
+      summary: "I couldn't find a cause this pull request is responsible for.\n\n- Details.",
+    }),
+  ];
+  await render();
+  // Nothing was pushed, so the pull request stays to fix.
+  expect(await cleared()).toBeNull();
+  expect(row("Change 2").textContent).toContain("Last fix changed nothing");
+  expect(row("Change 2").querySelector(".upnext-row-failed")).toBeNull();
+  await act(async () => row("Change 2").click());
+  expect(panel().querySelector(".upnext-failed")).toBeNull();
+  const notice = panel().querySelector(".upnext-unchanged")!;
+  expect(notice.textContent).toContain("The last fix changed nothing, so nothing was pushed.");
+  expect(notice.querySelector(".upnext-unchanged-why")!.textContent).toBe(
+    "I couldn't find a cause this pull request is responsible for.",
+  );
+  const read = Array.from(notice.querySelectorAll("a")).find((a) =>
+    a.textContent?.startsWith("Read what the agent said"),
+  )!;
+  expect(read.getAttribute("href")).toBe("/s/test-ns/?page=jobs&job=fix-1");
 });
 
 it("keeps a failed fix of a pull request in the queue for its panel", () => {
@@ -1292,4 +1351,192 @@ it("links the agent sessions working on the pull request to their cards on Sessi
   expect(new URLSearchParams(location.search).get("session")).toBeNull();
   expect(node.querySelector('[data-row-id="claude-code:s1"]')).not.toBeNull();
   expect(node.querySelector(".local-feed-peek-row")).not.toBeNull();
+});
+
+// --- Everyone else's pull requests -------------------------------------------
+
+it("lists everyone else's open pull requests that wait on nothing from the person, by number", () => {
+  const { items, waiting, others } = upNext([
+    entry(9),
+    entry(6, { pull_request: { author: "sam" } }),
+    // Merged or closed, in the app only as history or by its state: not open.
+    entry(7, { historical: true, pull_request: { state: "MERGED" } }),
+    entry(8, { pull_request: { state: "CLOSED" } }),
+    // A second clone of the same pull request lists it once.
+    { ...entry(6), clone_id: "other-clone" },
+    entry(5, { pull_request: { draft: true } }),
+    // The person's own waits under their own, and what asks for them is queued.
+    mine(10, { checks: "running" }),
+    requested(11),
+  ]);
+  expect(others.map((e) => e.pull_request.number)).toEqual([5, 6, 9]);
+  expect(waiting.map((e) => e.pull_request.number)).toEqual([10]);
+  expect(items.map((item) => [item.kind, item.entry.pull_request.number])).toEqual([
+    ["review", 11],
+  ]);
+});
+
+it("treats a pull request assigned to the person, not theirs, as a review, and a clone to make", () => {
+  const assigned = (number: number, overrides: Overrides = {}) =>
+    entry(number, {
+      ...overrides,
+      pull_request: { assigned_to_me: true, author: "sam", ...overrides.pull_request },
+    });
+  const { items, others } = upNext([
+    assigned(1),
+    assigned(2, { needs_clone: true, clone_id: undefined }),
+    // Assigned to the person and closed: nothing to do.
+    assigned(3, { pull_request: { state: "CLOSED" } }),
+  ]);
+  expect(items.map((item) => [item.kind, item.entry.pull_request.number])).toEqual([
+    ["review", 1],
+    ["clone", 2],
+  ]);
+  expect(others).toEqual([]);
+  // One the person wrote, assigned to themselves, follows the path of their own.
+  const own = upNext([
+    mine(4, {
+      merge: "ready",
+      checks: "passing",
+      pull_request: { assigned_to_me: true },
+    }),
+    mine(5, { checks: "running", pull_request: { assigned_to_me: true } }),
+    mine(6, { checks: "failing", pull_request: { assigned_to_me: true } }),
+  ]);
+  expect(own.items.map((item) => [item.kind, item.entry.pull_request.number])).toEqual([
+    ["merge", 4],
+    ["fix", 6],
+  ]);
+  expect(own.waiting.map((e) => e.pull_request.number)).toEqual([5]);
+  expect(own.others).toEqual([]);
+});
+
+it("says where someone else's pull request stands", () => {
+  const state = (overrides: Overrides = {}) => othersState(entry(1, overrides));
+  expect(state()).toBe("Unclaimed");
+  expect(state({ pull_request: { draft: true } })).toBe("Draft");
+  expect(state({ merge: "draft" })).toBe("Draft");
+  // A draft is a draft, whoever is asked.
+  expect(state({ pull_request: { draft: true, assigned: true } })).toBe("Draft");
+  expect(state({ pull_request: { assigned: true } })).toBe("Assigned");
+  expect(state({ pull_request: { review_requested: true } })).toBe("Review requested");
+  expect(state({ pull_request: { assigned: true, review_requested: true } })).toBe(
+    "Review requested",
+  );
+  expect(state({ review: "approved", pull_request: { assigned: true } })).toBe("Approved");
+  expect(state({ review: "changes_requested", pull_request: { review_requested: true } })).toBe(
+    "Changes requested",
+  );
+  // Nobody holds it: unclaimed, whatever reviews it has.
+  expect(state({ review: "approved" })).toBe("Unclaimed");
+});
+
+it("joins the queue's items and the others as what the inboxes match", () => {
+  const { items, others } = upNext(fixture());
+  const all = queueItems({ queue: items, others });
+  expect(all.map((item) => [item.kind, item.entry.pull_request.number])).toEqual([
+    ["review", 1],
+    ["merge", 3],
+    ["merge", 4],
+    ["fix", 2],
+    ["other", 6],
+  ]);
+  expect(all.at(-1)!.key).toBe("acme/demo#6");
+});
+
+it("lists someone else's pull request under Not waiting on you, with where it stands", async () => {
+  entries = [
+    ...fixture(),
+    entry(7, { pull_request: { author: "kim", draft: true } }),
+    entry(8, { review: "approved", pull_request: { author: "lee", assigned: true } }),
+  ].map((e) => (e.pull_request.number === 6 ? entry(6, { pull_request: { author: "ana" } }) : e));
+  await render();
+  expect(groups().at(-1)).toBe("Not waiting on you · 3");
+  expect(list().slice(-3)).toEqual(["Change 6", "Change 7", "Change 8"]);
+  expect(row("Change 6").textContent).toContain("#6 · Unclaimed");
+  expect(row("Change 7").textContent).toContain("#7 · Draft");
+  expect(row("Change 8").textContent).toContain("#8 · Approved");
+  // They wait on nothing from the person: not counted as the queue.
+  expect(node.querySelector(".local-rail-heading .local-rail-badge")?.textContent).toBe("4");
+  expect(progress()).toBe("0 of 4");
+  await act(async () => row("Change 6").click());
+  expect(shown()).toBe("Change 6");
+  expect(panel().textContent).toContain("By ana");
+  expect(panel().querySelector(".upnext-chip-waiting")!.textContent).toBe("Unclaimed");
+  await act(async () => row("Change 8").click());
+  expect(panel().textContent).toContain("By lee");
+  expect(panel().querySelector(".upnext-chip-waiting")!.textContent).toBe("Approved");
+});
+
+it("says a pull request is assigned to the person in the panel", async () => {
+  entries = [
+    ...fixture(),
+    // Assigned to the person: asked of them, so in the queue as a review.
+    entry(7, { pull_request: { author: "kim", assigned_to_me: true } }),
+  ];
+  await render();
+  expect(groups()[0]).toBe("Needs your eyes · 2");
+  await act(async () => row("Change 7").click());
+  expect(panel().textContent).toContain("kim's, assigned to you");
+});
+
+// Gives the app an inbox with this query.
+const withQuery = (query: string) => {
+  const original = vi.mocked(fetch).getMockImplementation()!;
+  vi.mocked(fetch).mockImplementation(async (path, init) =>
+    String(path).endsWith("api/inboxes") && init?.method !== "PUT"
+      ? Response.json({
+          available: true,
+          revision: 1,
+          inboxes: [{ ...DEFAULT_INBOX, query }],
+        })
+      : original(path, init),
+  );
+};
+
+it("lists those others match with waiting=other alone, and leaves them out of the person's own scope", async () => {
+  withQuery("waiting=other");
+  await render();
+  expect(groups()).toEqual(["Not waiting on you · 1"]);
+  expect(list()).toEqual(["Change 6"]);
+  // With nothing actionable, the first of them is open, not a zero state.
+  expect(shown()).toBe("Change 6");
+  expect(panel().textContent).toContain("By someone else");
+  expect(node.textContent).not.toContain("Nothing here right now.");
+  withQuery("waiting=review");
+  await render();
+  expect(groups()).toEqual(["Needs your eyes · 1"]);
+  withQuery(FOR_ME);
+  await render();
+  expect(groups()).not.toContain("Not waiting on you · 1");
+  expect(list()).not.toContain("Change 6");
+  expect(list()).toContain("Change 1");
+});
+
+it("snoozes someone else's pull request under Snoozed", async () => {
+  await render();
+  await act(async () => row("Change 6").click());
+  await press("s");
+  await press("1");
+  expect(node.querySelector('[role="status"]')!.textContent).toMatch(/^Snoozed #6 until /);
+  expect(groups()).toContain("Snoozed · 1");
+  expect(groups()).not.toContain("Not waiting on you · 1");
+  await act(async () => button("Snoozed").click());
+  expect(node.querySelector<HTMLElement>(".upnext-snoozed")!.textContent).toContain("Change 6");
+  // Undo brings it back under Not waiting on you.
+  await press("u");
+  expect(groups()).toContain("Not waiting on you · 1");
+  expect(groups()).not.toContain("Snoozed · 1");
+});
+
+it("counts a review as done once its request goes, while the pull request is listed as not waiting on the person", async () => {
+  await render();
+  expect(await cleared()).toBeNull();
+  // The review request is withdrawn: nothing is asked of the person now.
+  entries = entries.map((e) => (e.pull_request.number === 1 ? entry(1, { status: "current" }) : e));
+  await render();
+  expect(await cleared()).toBe("Reviewed #1 Change 1");
+  expect(groups()).toContain("Not waiting on you · 2");
+  expect(list()).toEqual(expect.arrayContaining(["Change 1", "Change 6"]));
+  expect(progress()).toBe("1 of 4");
 });

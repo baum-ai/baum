@@ -125,24 +125,62 @@ function SessionCard({
   );
 }
 
+/** A session the host draws itself, such as one running on the pull request
+ *  now. It is listed first, and in place of a session of `state` with the
+ *  same id: one session is one row, whatever told the host about it. */
+export type HostSessionView = {
+  id: string;
+  label: string;
+  /** Marks it on the rail: `live` while it works, `attention` while it waits
+   *  on the reader. */
+  indicator?: "live" | "attention";
+  /** Its card's content in the list; `open` shows it alone. */
+  renderCard: (open: () => void) => ReactNode;
+  /** The pane under its name when it is opened alone. */
+  renderPane: () => ReactNode;
+};
+
 /** The Sessions pane: every session of the list, or the one `selected`. It
  *  takes the sessions as data and never fetches them; `renderSession` adds a
- *  host's own content, such as the transcript, under the one session opened. */
+ *  host's own content, such as the transcript, under the one session opened.
+ *  `hosted` sessions are the host's own rows (see `HostSessionView`), and
+ *  `empty` says what puts a session in the list when none is. */
 export function SessionList({
   state,
   selected,
   actions,
   renderSession,
+  focusTurn,
+  hosted = [],
+  empty = "No agent session on this machine matches a commit of this pull request.",
 }: {
   state: SessionListState;
   selected: string | null;
   actions: ReviewViewerActions;
-  renderSession?: (session: SessionView) => ReactNode;
+  renderSession?: (session: SessionView, focusTurn?: number) => ReactNode;
+  focusTurn?: number;
+  hosted?: HostSessionView[];
+  empty?: ReactNode;
 }) {
+  const own = selected ? hosted.find((session) => session.id === selected) : undefined;
+  if (own) {
+    return (
+      <>
+        <CardHeader size="pane" title={own.label} />
+        <div className="min-h-0 flex-1 xl:overflow-y-auto">{own.renderPane()}</div>
+      </>
+    );
+  }
+  const hostedItems = hosted.map((session) => (
+    <Item key={session.id} id={`session-${session.id}`} className="space-y-2">
+      {session.renderCard(() => actions.select({ kind: "session", id: session.id }))}
+    </Item>
+  ));
   if (state.status !== "ready") {
     return (
       <>
         <CardHeader size="pane" title="Sessions" />
+        {hosted.length > 0 ? <ol className="flex flex-col gap-3 pb-3">{hostedItems}</ol> : null}
         {state.status === "loading" ? (
           <div role="status" aria-label="Loading sessions" className="space-y-3">
             <p className="text-base text-(--text-tertiary)">
@@ -157,10 +195,16 @@ export function SessionList({
       </>
     );
   }
-  const { sessions, note } = state;
-  const shown = selected ? sessions.filter((session) => session.id === selected) : sessions;
-  const single = Boolean(selected) && shown.length > 0;
-  const count = pluralize("session", sessions.length, true);
+  const { note } = state;
+  const hostedIds = new Set(hosted.map((session) => session.id));
+  const sessions = state.sessions.filter((session) => !hostedIds.has(session.id));
+  const picked = selected ? sessions.filter((session) => session.id === selected) : [];
+  // A session no longer listed (one that stopped running unlinked, say)
+  // leaves the whole list in view rather than an empty pane.
+  const single = picked.length > 0;
+  const shown = single ? picked : sessions;
+  const total = hosted.length + sessions.length;
+  const count = pluralize("session", total, true);
   // One session opened with the host's own view of it (its transcript, which
   // names its agent, branch, times and size): the pane is headed by the
   // session and keeps only its linked commits, rather than a card repeating
@@ -199,7 +243,7 @@ export function SessionList({
             ))}
           </ul>
         ) : null}
-        <div className="min-h-0 flex-1 xl:overflow-y-auto">{renderSession(session)}</div>
+        <div className="min-h-0 flex-1 xl:overflow-y-auto">{renderSession(session, focusTurn)}</div>
       </>
     );
   }
@@ -208,13 +252,7 @@ export function SessionList({
       <CardHeader
         size="pane"
         title="Sessions"
-        detail={
-          sessions.length === 0
-            ? "No agent session is linked to this pull request."
-            : single
-              ? `1 of ${count}`
-              : count
-        }
+        detail={total === 0 ? undefined : single ? `1 of ${count}` : count}
         aside={
           single ? (
             <JumpLink className="text-xs" onClick={() => actions.select({ kind: "sessions" })}>
@@ -225,12 +263,11 @@ export function SessionList({
       />
       {note ? <p className="pb-3 text-base text-(--text-secondary)">{note}</p> : null}
       <div className="min-h-0 flex-1 xl:overflow-y-auto">
-        {shown.length === 0 ? (
-          <Empty title="No agent session is linked to this">
-            Either nobody used an agent here, or no session on this machine matches a commit.
-          </Empty>
+        {total === 0 ? (
+          <Empty title="No agent sessions">{empty}</Empty>
         ) : (
           <ol className="flex flex-col gap-3">
+            {single ? null : hostedItems}
             {shown.map((session) => (
               <SessionCard
                 key={session.id}

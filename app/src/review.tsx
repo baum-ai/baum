@@ -13,6 +13,11 @@ import {
   type ReviewSteps,
 } from "@baum/viewer/components/review-viewer";
 import { sessionsSlot, commitsSlot } from "@baum/viewer/components/list-slots";
+import type {
+  HostSessionView,
+  SessionListState,
+  SessionView,
+} from "@baum/viewer/components/session-list";
 import { useVisibleInterval } from "./visible-interval";
 import { Alert, Button, LiveDot } from "@baum/viewer/components/ui";
 import {
@@ -53,6 +58,7 @@ import {
   jobReasonText,
   LocalRequestError,
   liveFor,
+  listedFor,
   fixEligible,
   fixLabel,
   jobHref,
@@ -64,8 +70,8 @@ import { FixNotice, FixRuns, type FixState, type FixChat, useDismissedFixes } fr
 import { CloneActions } from "./repositories";
 import { useModal } from "./modal";
 import { Notice, RefreshButton, type RefreshRun, usePageRefreshAction } from "./shell";
-import { LiveSessions } from "./sessions";
-import { TranscriptCard } from "./session-transcript";
+import { LiveSessionCard, LiveSessions, liveSessionLabel } from "./sessions";
+import { EmbeddedLiveTranscript, TranscriptCard } from "./session-transcript";
 import { withCommitRows } from "./commit-rows";
 import {
   PullRequestDecisionsList,
@@ -125,6 +131,7 @@ export function Transcript({
   query,
   route = "api/sessions",
   title,
+  focusTurn,
 }: {
   id: string;
   query: string;
@@ -132,6 +139,7 @@ export function Transcript({
   route?: string;
   /** The listed session's title, for a transcript that holds none. */
   title?: string;
+  focusTurn?: number;
 }) {
   const [load, setLoad] = useState<LocalTranscript | null>(null);
   const [error, setError] = useState(false);
@@ -159,29 +167,57 @@ export function Transcript({
     );
   if (!load) return <LoadingStatus block>Reading redacted local transcript…</LoadingStatus>;
   // Drawn as the Sessions page draws a session, not as a chat.
-  return <TranscriptCard transcript={load} title={title} embedded />;
+  return <TranscriptCard transcript={load} title={title} focusTurn={focusTurn} embedded />;
 }
 
-/** The pull request's Sessions group with the sessions running on it now:
- *  marked on its rail row (amber while one waits on the reader), and listed
- *  at the top of the whole list's pane, above the sessions linked to it. */
-export function withRunning(slot: ReviewListSlot, running: LiveSession[]): ReviewListSlot {
-  if (running.length === 0) return slot;
-  return {
-    ...slot,
-    indicator: running.some((s) => s.state !== "running" && s.waiting_reason)
-      ? "attention"
-      : "live",
-    renderPane: (selected, actions) =>
-      selected === null ? (
+/** The pull request's Sessions group: one list of the sessions linked to it
+ *  through its commits (`linked`) and the sessions the daemon lists on it
+ *  (`listed`: working, waiting, or ended and still listed). A listed session
+ *  is a row of its own, first, marked on the rail while it works (amber while
+ *  it waits on the reader), and counted once when it is linked too. */
+export function pullRequestSessions(
+  linked: SessionListState,
+  listed: LiveSession[],
+  renderSession: (session: SessionView, focusTurn?: number) => ReactNode,
+): ReviewListSlot {
+  return sessionsSlot(linked, {
+    renderSession,
+    hosted: listedSessionRows(listed, linked),
+    empty:
+      "Sessions on this computer show here while they work on this pull request, and once one of their commits is in it.",
+  });
+}
+
+/** `listed` as the Sessions list's own rows. One that ended and is linked is
+ *  left to its linked row, which reads the full session from disk. */
+export function listedSessionRows(
+  listed: LiveSession[],
+  linked: SessionListState,
+): HostSessionView[] {
+  const linkedIds = new Set(
+    linked.status === "ready" ? linked.sessions.map((session) => session.id) : [],
+  );
+  return listed
+    .filter((s) => s.state !== "ended" || !linkedIds.has(s.session_id))
+    .map((s) => ({
+      id: s.session_id,
+      label: liveSessionLabel(s),
+      indicator:
+        s.state === "ended"
+          ? undefined
+          : s.state !== "running" && s.waiting_reason
+            ? "attention"
+            : "live",
+      renderCard: (open) => <LiveSessionCard session={s} open={open} Link={ViewerLink} />,
+      renderPane: () => (
         <>
-          <LiveSessions sessions={running} Link={ViewerLink} />
-          {slot.renderPane(selected, actions)}
+          <div className="pb-3">
+            <LiveSessionCard session={s} titled={false} Link={ViewerLink} />
+          </div>
+          <EmbeddedLiveTranscript session={s} />
         </>
-      ) : (
-        slot.renderPane(selected, actions)
       ),
-  };
+    }));
 }
 /** Whether the window matches a media query, as it changes. */
 function useMedia(query: string) {
@@ -319,6 +355,7 @@ export function LocalReview({
   const earlierRuns = fixRuns.filter((run) => !showFix || run.id !== fixJob?.id);
   const watchable = [fixJob, ...fixRuns].find((run) => run?.has_transcript);
   const running = liveFor(live, pr);
+  const listed = listedFor(live, pr);
   // A session that ends is read from disk like any other: reload the list
   // when one leaves the live section.
   const [ended, setEnded] = useState(0);
@@ -918,7 +955,7 @@ export function LocalReview({
                   if (anchor.type === "pr") {
                     navigate(
                       appURL(
-                        `?${clone ? `clone=${encodeURIComponent(clone)}` : `repository=${encodeURIComponent(pr.repository)}`}&pr=${anchor.number}`,
+                        `?${back.prefix}${clone ? `clone=${encodeURIComponent(clone)}` : `repository=${encodeURIComponent(pr.repository)}`}&pr=${anchor.number}`,
                       ),
                     );
                     return true;
@@ -1204,31 +1241,29 @@ export function LocalReview({
                   </>
                 }
                 sessions={
-                  (lists && !(showingDraft && doc)) || running.length > 0
-                    ? withRunning(
-                        sessionsSlot(
-                          lists && !(showingDraft && doc)
-                            ? lists.sessions
-                            : { status: "ready", sessions: [] },
-                          {
-                            renderSession: (session) =>
-                              viewedDocument ? (
-                                <Transcript
-                                  id={session.id}
-                                  query={query}
-                                  title={session.title ?? undefined}
-                                />
-                              ) : (
-                                <Transcript
-                                  id={session.id}
-                                  query={factsSelector}
-                                  route="api/facts/sessions"
-                                  title={session.title ?? undefined}
-                                />
-                              ),
-                          },
-                        ),
-                        running,
+                  (lists && !(showingDraft && doc)) || listed.length > 0
+                    ? pullRequestSessions(
+                        lists && !(showingDraft && doc)
+                          ? lists.sessions
+                          : { status: "ready", sessions: [] },
+                        listed,
+                        (session, focusTurn) =>
+                          viewedDocument ? (
+                            <Transcript
+                              id={session.id}
+                              query={query}
+                              title={session.title ?? undefined}
+                              focusTurn={focusTurn}
+                            />
+                          ) : (
+                            <Transcript
+                              id={session.id}
+                              query={factsSelector}
+                              route="api/facts/sessions"
+                              title={session.title ?? undefined}
+                              focusTurn={focusTurn}
+                            />
+                          ),
                       )
                     : undefined
                 }
@@ -1479,7 +1514,7 @@ export function GeneratedBy({
         <>
           {" · "}
           <a
-            href={appURL(`?page=jobs#job-${encodeURIComponent(made.id)}`)}
+            href={jobHref(made)}
             onClick={(event) => {
               event.preventDefault();
               navigate(event.currentTarget.href);

@@ -49,6 +49,8 @@ import {
   jobHref,
   agentName,
   jobReasonText,
+  changedNothing,
+  summaryLead,
   joinAnd,
   liveFor,
   navigate,
@@ -63,14 +65,17 @@ import {
   type LiveSession,
   type ReviewGroup,
 } from "./api";
-import { phaseText, type FixState } from "./fix";
+import { fixStep, type FixState } from "./fix";
 import {
   COLOR_NAMES,
   foldedQuery,
+  holds,
   INBOX_COLORS,
   withQuery,
   inboxesOf,
   nameProblem,
+  useHeld,
+  type Held,
   type Inbox,
   type InboxColor,
 } from "./inboxes";
@@ -106,6 +111,11 @@ import { cn } from "@baum/viewer/components/classnames";
  *  asked for, unblock their own, merge it, bring it up to date with its base,
  *  or give baum a clone so a requested review can be written. */
 export type UpNextKind = "review" | "fix" | "merge" | "update" | "clone";
+/** What an inbox matches a pull request as: its kind in the queue, or
+ *  `other` for someone else's that waits on nothing from the person. */
+export type QueueKind = UpNextKind | "other";
+/** A pull request as the inboxes match and count it. */
+export type QueueItem = { key: string; kind: QueueKind; entry: Entry };
 
 export type UpNextItem = {
   /** The pull request across clones: repository and number. */
@@ -121,6 +131,9 @@ export type UpNextItem = {
   working: LiveSession[];
   /** The latest fix of a pull request in the queue as a fix, when it failed. */
   failedFix?: Job;
+  /** The latest fix, when it ended without changing anything: not a failure,
+   *  so it is shown with the agent's reason instead. */
+  unchangedFix?: Job;
 };
 
 // The order of the queue, which is the order of its groups: what someone
@@ -142,12 +155,16 @@ export const GROUPS: { id: "eyes" | "merge" | "agent"; title: string; kinds: UpN
   { id: "agent", title: "Hand to an agent", kinds: ["fix", "update"] },
 ];
 /** Each group's dot, as Pull requests colours the same states. */
-const GROUP_TONES: Record<(typeof GROUPS)[number]["id"] | "waiting", ListTone> = {
+const GROUP_TONES: Record<(typeof GROUPS)[number]["id"] | "waiting" | "others", ListTone> = {
   eyes: "caution",
   merge: "positive",
   agent: "critical",
   waiting: "info",
+  others: "quiet",
 };
+/** The section of other people's pull requests that wait on nothing from
+ *  the person, after the person's own that wait. */
+export const OTHERS_TITLE = "Not waiting on you";
 
 export function upNextKey(pr: Pick<Entry["pull_request"], "repository" | "number">) {
   return `${pr.repository.toLowerCase()}#${pr.number}`;
@@ -171,7 +188,9 @@ function blocked(entry: Entry) {
 function kindOf(entry: Entry, jobs: Job[]): UpNextKind | null {
   const pr = entry.pull_request;
   if (!isOpen(entry)) return null;
-  if (pr.review_requested_from_me) return entry.needs_clone ? "clone" : "review";
+  // Assigned someone else's pull request, the person is asked to look at it.
+  if (pr.review_requested_from_me || (pr.assigned_to_me && !pr.authored_by_me))
+    return entry.needs_clone ? "clone" : "review";
   if (!pr.authored_by_me) return null;
   // An agent already fixing it leaves nothing for the person until it ends.
   if (isActiveJob(fixJob(entry, jobs))) return null;
@@ -290,11 +309,12 @@ export function stackBases(entries: Entry[], groups: ReviewGroup[]): Map<string,
   return bases;
 }
 
-/** The pull requests waiting on the person, in the order to take them, and
- *  their own that wait on someone or something else. Each pull request is
- *  listed once, whichever clones hold it. A stacked pull request GitHub would
- *  merge is not ready while an open one of its stack lies under it: it waits
- *  on that one (`stackedOn`), which must merge first. */
+/** The pull requests waiting on the person, in the order to take them, their
+ *  own that wait on someone or something else, and everyone else's open ones
+ *  (`others`), oldest first. Each pull request is listed once, whichever
+ *  clones hold it. A stacked pull request GitHub would merge is not ready
+ *  while an open one of its stack lies under it: it waits on that one
+ *  (`stackedOn`), which must merge first. */
 export function upNext(
   entries: Entry[],
   live: LiveSession[] = [],
@@ -303,6 +323,7 @@ export function upNext(
 ): {
   items: UpNextItem[];
   waiting: Entry[];
+  others: Entry[];
   fixing: { entry: Entry; job: Job }[];
   stackedOn: Map<string, number>;
 } {
@@ -318,17 +339,19 @@ export function upNext(
   }
   const items: UpNextItem[] = [];
   const waiting: Entry[] = [];
+  const others: Entry[] = [];
   const fixing: { entry: Entry; job: Job }[] = [];
   const stackedOn = stackBases([...best.values()], groups);
   for (const [key, entry] of best) {
     const own = kindOf(entry, jobs);
     const kind = own === "merge" && stackedOn.has(key) ? null : own;
     if (!kind) {
-      if (isOpen(entry) && entry.pull_request.authored_by_me) {
+      if (!isOpen(entry)) continue;
+      if (entry.pull_request.authored_by_me) {
         waiting.push(entry);
         const job = fixJob(entry, jobs);
         if (job && isActiveJob(job)) fixing.push({ entry, job });
-      }
+      } else others.push(entry);
       continue;
     }
     const last = kind === "fix" ? fixJob(entry, jobs) : undefined;
@@ -340,7 +363,11 @@ export function upNext(
       why: why(kind, entry, working.length),
       minutes: kind === "review" ? (entry.review_minutes ?? null) : null,
       working,
-      ...(last?.state === "failed" ? { failedFix: last } : {}),
+      ...(last && changedNothing(last)
+        ? { unchangedFix: last }
+        : last?.state === "failed"
+          ? { failedFix: last }
+          : {}),
     });
   }
   // A review ready to read comes before one still being written; then the
@@ -354,7 +381,8 @@ export function upNext(
       (a.kind === "review" ? readable(a) - readable(b) || risk(b) - risk(a) : 0) ||
       a.entry.pull_request.number - b.entry.pull_request.number,
   );
-  return { items, waiting, fixing, stackedOn };
+  others.sort((a, b) => a.pull_request.number - b.pull_request.number);
+  return { items, waiting, others, fixing, stackedOn };
 }
 
 type Seen = {
@@ -500,16 +528,21 @@ export function useUpNext(
   const day = dayOf(now);
   const state =
     stored.day === day ? stored : fresh(day, stillSnoozed(stored.snoozed, now), stored.held);
-  const { items, waiting, fixing, stackedOn } = upNext(entries, live, jobs, groups);
+  const { items, waiting, others, fixing, stackedOn } = upNext(entries, live, jobs, groups);
   const snoozedNow = (entry: Entry) => {
     const key = upNextKey(entry.pull_request);
     return (state.snoozed[key] ?? 0) > now || state.held[key] === entry.pull_request.head_sha;
   };
-  const snoozed = [
+  const snoozed: { key: string; entry: Entry; kind?: QueueKind }[] = [
     ...items.filter((item) => snoozedNow(item.entry)),
     ...waiting.filter(snoozedNow).map((entry) => ({
       key: upNextKey(entry.pull_request),
       entry,
+    })),
+    ...others.filter(snoozedNow).map((entry) => ({
+      key: upNextKey(entry.pull_request),
+      entry,
+      kind: "other" as const,
     })),
   ];
   const queue = items.filter((item) => !snoozedNow(item.entry));
@@ -540,12 +573,16 @@ export function useUpNext(
         return `waiting:${upNextKey(entry.pull_request)}:${entry.pull_request.head_sha}:${job?.id ?? ""}:${job?.state ?? ""}`;
       }),
     ...[...listed].map((repository) => `listed:${repository}`),
+    // A snooze until the next push of someone else's pull request ends on it.
+    ...others.map(
+      (entry) => `other:${upNextKey(entry.pull_request)}:${entry.pull_request.head_sha}`,
+    ),
   ].join("\n");
   useEffect(() => {
     if (!ready || !persistence.ready) return;
     const keys = new Set(items.map((item) => item.key));
     const heads = new Map(
-      [...items.map((item) => item.entry), ...waiting].map((entry) => [
+      [...items.map((item) => item.entry), ...waiting, ...others].map((entry) => [
         upNextKey(entry.pull_request),
         entry.pull_request.head_sha,
       ]),
@@ -620,6 +657,9 @@ export function useUpNext(
     queue,
     snoozed,
     waiting: waiting.filter((entry) => !snoozedNow(entry)),
+    /** Everyone else's open pull requests that wait on nothing from the
+     *  person, unsnoozed. */
+    others: others.filter((entry) => !snoozedNow(entry)),
     fixing: fixing.filter(({ entry }) => !snoozedNow(entry)),
     cleared,
     /** The open pull request each stacked one waits on to merge first. */
@@ -644,21 +684,59 @@ export function useUpNext(
 }
 
 /** What one of the person's own pull requests waits on, in a few words; a
- *  stacked one waits on the open pull request under it (`base`). */
+ *  stacked one waits on the open pull request under it (`base`). One GitHub
+ *  blocks with no check reported and no approval required waits on checks
+ *  that never started, such as a CI run that failed to start: "No checks
+ *  reported", not a review. */
 export function waitingOn(entry: Entry, base?: number) {
   if (entry.pull_request.draft || entry.merge === "draft") return "Draft";
   if (base != null) return `Waiting on #${base}`;
   if (entry.checks === "running") return "Checks running";
   if (entry.review === "changes_requested") return "Changes requested";
+  const unchecked = entry.merge === "blocked" && entry.checks === "none";
+  if (unchecked && entry.pull_request.review_required === false) return "No checks reported";
   if (entry.review !== "approved") return "Waiting on review";
   return "Waiting on GitHub";
 }
 
-function prHref(entry: Entry, cloneFor: (entry: Entry) => string) {
+/** What a waiting row waits on: the person's own, or where someone else's
+ *  stands. */
+function rowWaiting(row: { entry: Entry; base?: number; other?: boolean }) {
+  return row.other ? othersState(row.entry) : waitingOn(row.entry, row.base);
+}
+
+/** Where someone else's pull request that waits on nothing from the person
+ *  stands, in a few words: no one assigned or asked to review it is
+ *  "Unclaimed". */
+export function othersState(entry: Entry) {
+  const pr = entry.pull_request;
+  if (pr.draft || entry.merge === "draft") return "Draft";
+  if (!pr.assigned && !pr.review_requested) return "Unclaimed";
+  if (entry.review === "approved") return "Approved";
+  if (entry.review === "changes_requested") return "Changes requested";
+  return pr.review_requested ? "Review requested" : "Assigned";
+}
+
+/** The pull requests the inboxes match and count: the queue's items and
+ *  everyone else's open ones (`other`). */
+export function queueItems(inbox: { queue: UpNextItem[]; others: Entry[] }): QueueItem[] {
+  return [
+    ...inbox.queue,
+    ...inbox.others.map((entry) => ({
+      key: upNextKey(entry.pull_request),
+      kind: "other" as const,
+      entry,
+    })),
+  ];
+}
+
+/** A pull request's page, carrying the inbox it was opened from so back
+ *  returns there. */
+function prHref(entry: Entry, cloneFor: (entry: Entry) => string, inbox?: Inbox) {
   const pr = entry.pull_request;
   const clone = cloneFor(entry);
   return appURL(
-    `?${clone ? `clone=${encodeURIComponent(clone)}` : `repository=${encodeURIComponent(pr.repository)}`}&pr=${pr.number}`,
+    `?${inbox ? `inbox=${encodeURIComponent(inbox.id)}&` : ""}${clone ? `clone=${encodeURIComponent(clone)}` : `repository=${encodeURIComponent(pr.repository)}`}&pr=${pr.number}`,
   );
 }
 
@@ -669,14 +747,16 @@ function minutesText(minutes: number) {
 const sumMinutes = (items: { minutes?: number | null }[]) =>
   items.reduce((sum, item) => sum + (typeof item.minutes === "number" ? item.minutes : 0), 0);
 
-/** A row of the list: a queued item, a pull request an agent is fixing, or
- *  one of the person's own that waits on checks or reviewers. */
+/** A row of the list: a queued item, a pull request an agent is fixing, one
+ *  of the person's own that waits on checks or reviewers, or someone else's
+ *  that waits on nothing from the person (`other`, a waiting row too). */
 type Row = {
   key: string;
   entry: Entry;
   item?: UpNextItem;
   job?: Job;
   waiting?: boolean;
+  other?: boolean;
   /** The open pull request of its stack a waiting row must merge after. */
   base?: number;
 };
@@ -790,10 +870,11 @@ function useReviewDocument(entry: Entry | undefined, clone: string, job: Job | u
 /** The row's inboxes, in the sidebar's order. A pull request an agent is
  *  fixing is in those that take a fix; one that waits on others is in those
  *  that ask for no kind of work. */
-function rowInboxes(row: Row, inboxes: Inbox[]) {
+function rowInboxes(row: Row, inboxes: Inbox[], held: Held | null) {
   return inboxesOf(
     row.item ?? (row.job ? { kind: "fix" as const, entry: row.entry } : { entry: row.entry }),
     inboxes,
+    held,
   );
 }
 
@@ -939,7 +1020,8 @@ function InboxHeadEdit({
 export function UpNextPage({
   inbox: all,
   inboxes = [],
-  selected: scope = null,
+  held = null,
+  selected: scope,
   onEdit,
   loading,
   hasRepositories,
@@ -965,10 +1047,12 @@ export function UpNextPage({
   jobs?: Job[];
   /** All of the person's inboxes, for the tags. */
   inboxes?: Inbox[];
+  /** Which inboxes hold each pull request, as the daemon matched them. */
+  held?: Held | null;
   /** The review groups and stacks, whose shown members the list nests under one row. */
   reviewGroups?: ReviewGroup[];
-  /** The inbox whose queue this is; none for the Inbox. */
-  selected?: Inbox | null;
+  /** The saved inbox whose queue this is. */
+  selected: Inbox;
   /** Opens the inbox's edit page, from a right click on its head. */
   onEdit?: () => void;
   loading: boolean;
@@ -987,7 +1071,7 @@ export function UpNextPage({
   /** Makes a new inbox catching what the page shows with its filter: from
    *  the inbox shown (`base`) with its query and the filter, or else anything
    *  waiting that matches the filter. */
-  saveAsInbox?: (query: string, base?: Inbox) => void;
+  saveAsInbox?: (query: string, base: Inbox) => void;
   /** Changes the inbox shown: its query (the page's filter added), name or
    *  colour. */
   updateInbox?: (patch: Partial<Inbox>) => void;
@@ -1017,14 +1101,10 @@ export function UpNextPage({
   // The page's filter. In a saved inbox it starts as the inbox's own query,
   // and a change is a draft that narrows the queue until Update inbox saves it
   // (kept per inbox; none kept is the saved query).
-  const saved = scope ? foldedQuery(scope) : "";
-  const quick = useFilterDraft(
-    scope ? `inbox:${scope.id}` : "inbox",
-    scope ? saved : null,
-    inboxSaves,
-  );
+  const saved = foldedQuery(scope);
+  const quick = useFilterDraft(`inbox:${scope.id}`, saved, inboxSaves);
   const { query, set: setQuery } = quick;
-  const filtering = scope ? quick.dirty : query !== "";
+  const filtering = quick.dirty;
   useEffect(() => {
     const create = (event: KeyboardEvent) => {
       if (
@@ -1045,13 +1125,14 @@ export function UpNextPage({
       if (queryProblem(text, true)) return;
       event.preventDefault();
       if (event.target instanceof HTMLTextAreaElement) event.target.blur();
-      saveAsInbox(text, scope ?? undefined);
+      saveAsInbox(text, scope);
     };
     window.addEventListener("keydown", create);
     return () => window.removeEventListener("keydown", create);
   }, [query, saveAsInbox, scope]);
-  const inScope = (item: { kind?: UpNextKind; entry: Entry }) =>
-    matchesQuery(query, item.entry, item.kind);
+  // The daemon says what the filter holds, asked again as it changes.
+  const view = useHeld(held, [query]);
+  const inScope = (item: { kind?: QueueKind; entry: Entry }) => holds(view, query, item);
   const queue = all.queue.filter(inScope);
   const snoozed = all.snoozed.filter(inScope);
   const fixing = all.fixing.filter(({ entry }) => inScope({ kind: "fix", entry }));
@@ -1061,19 +1142,21 @@ export function UpNextPage({
     const entry = (item.last as Entry | undefined) ?? item.entry;
     return entry ? matchesQuery(query, entry, item.kind) : !parseQuery(query).expr;
   });
-  const waiting = all.waiting.filter((entry) => matchesQuery(query, entry));
+  const waiting = all.waiting.filter((entry) => inScope({ entry }));
+  const others = all.others.filter((entry) => inScope({ kind: "other", entry }));
   // What the filter's counts and values come from: the whole queue, each
   // pull request with what it waits for.
-  const kinds = new Map<Entry, UpNextKind>([
-    ...all.queue.map((item): [Entry, UpNextKind] => [item.entry, item.kind]),
-    ...all.fixing.map(({ entry }): [Entry, UpNextKind] => [entry, "fix"]),
+  const kinds = new Map<Entry, QueueKind>([
+    ...all.queue.map((item): [Entry, QueueKind] => [item.entry, item.kind]),
+    ...all.fixing.map(({ entry }): [Entry, QueueKind] => [entry, "fix"]),
+    ...all.others.map((entry): [Entry, QueueKind] => [entry, "other"]),
   ]);
   const unfiltered = [...kinds.keys(), ...all.waiting];
-  const inbox = { ...all, queue, snoozed, fixing, cleared, waiting };
+  const inbox = { ...all, queue, snoozed, fixing, cleared, waiting, others };
   const { now } = all;
   // Those an agent is fixing are listed under Hand to an agent.
   const fixingKeys = new Set(fixing.map(({ entry }) => upNextKey(entry.pull_request)));
-  const others = waiting.filter((entry) => !fixingKeys.has(upNextKey(entry.pull_request)));
+  const ownWaiting = waiting.filter((entry) => !fixingKeys.has(upNextKey(entry.pull_request)));
   const sections = [
     ...GROUPS.map((group) => ({
       id: group.id as keyof typeof GROUP_TONES,
@@ -1092,13 +1175,20 @@ export function UpNextPage({
     {
       id: "waiting" as const,
       title: "Waiting on checks or reviews",
-      rows: others.map(
+      rows: ownWaiting.map(
         (entry): Row => ({
           key: upNextKey(entry.pull_request),
           entry,
           waiting: true,
           base: inbox.stackedOn.get(upNextKey(entry.pull_request)),
         }),
+      ),
+    },
+    {
+      id: "others" as const,
+      title: OTHERS_TITLE,
+      rows: others.map(
+        (entry): Row => ({ key: upNextKey(entry.pull_request), entry, waiting: true, other: true }),
       ),
     },
   ];
@@ -1115,13 +1205,18 @@ export function UpNextPage({
   const rows = groups.flatMap((group) => visible(group.lines));
   // A selected pull request that leaves the list hands the selection to the
   // one that takes its place. Waiting rows come last and are shown only when
-  // picked, so an emptied queue still reads as inbox zero.
+  // picked, so an emptied queue still reads as inbox zero; an inbox of
+  // others' pull requests alone (as Unclaimed) opens on its first.
   const last = useRef(0);
   const found = chosen ? rows.findIndex((row) => row.key === chosen) : -1;
   const actionable = rows.filter(
     (row) => !(isGroup(row) ? row.members.every((member) => member.waiting) : row.waiting),
   ).length;
-  const index = found >= 0 ? found : Math.min(last.current, actionable - 1);
+  const firstOther = rows.findIndex((row) =>
+    isGroup(row) ? row.members.some((member) => member.other) : row.other,
+  );
+  const index =
+    found >= 0 ? found : actionable > 0 ? Math.min(last.current, actionable - 1) : firstOther;
   const line = index >= 0 ? rows[index] : undefined;
   const selected = isGroup(line) ? undefined : line;
   const selectedGroup = isGroup(line) ? line : undefined;
@@ -1292,9 +1387,7 @@ export function UpNextPage({
     : actionable === 0
       ? cleared.length
         ? `Nothing left. ${formatCount(cleared.length)} handled today.`
-        : scope
-          ? "Nothing waiting."
-          : "Nothing waits on you."
+        : "Nothing waiting."
       : [
           yours ? `${plural(yours, "thing")} for you` : "",
           minutes ? `about ${plural(minutes, "minute")}` : "",
@@ -1318,7 +1411,7 @@ export function UpNextPage({
     const { entry, item, job, waiting } = row;
     const pr = entry.pull_request;
     const items: MenuItem[] = [
-      { label: "Open", hint: "↵", onSelect: () => navigate(prHref(entry, cloneFor)) },
+      { label: "Open", hint: "↵", onSelect: () => navigate(prHref(entry, cloneFor, scope)) },
     ];
     const watchable = inbox.watchable(entry);
     const run = job ?? watchable;
@@ -1360,7 +1453,12 @@ export function UpNextPage({
     {
       label: "Open",
       hint: "↵",
-      onSelect: () => navigate(appURL(`?group=${encodeURIComponent(line.group.id)}`)),
+      onSelect: () =>
+        navigate(
+          appURL(
+            `?inbox=${encodeURIComponent(scope.id)}&group=${encodeURIComponent(line.group.id)}`,
+          ),
+        ),
     },
     {
       label: groupOpen(line) ? "Hide pull requests" : "Show pull requests",
@@ -1382,12 +1480,13 @@ export function UpNextPage({
       },
     },
   ];
-  const alsoIn = (row: Row) => rowInboxes(row, inboxes).filter((other) => other.id !== scope?.id);
+  const alsoIn = (row: Row) =>
+    rowInboxes(row, inboxes, view).filter((other) => other.id !== scope.id);
   const saveOptions: SaveOption[] =
     !filtering || queryProblem(query)
       ? []
       : [
-          ...(scope && updateInbox
+          ...(updateInbox
             ? [
                 {
                   label: "Update inbox",
@@ -1400,16 +1499,16 @@ export function UpNextPage({
             ? [
                 {
                   label: "Create inbox",
-                  onSelect: () => saveAsInbox(query, scope ?? undefined),
+                  onSelect: () => saveAsInbox(query, scope),
                 },
               ]
             : []),
-          ...(scope ? [{ label: "Discard changes", onSelect: () => quick.reset() }] : []),
+          { label: "Discard changes", onSelect: () => quick.reset() },
         ];
   // What the filter hides: of the inbox's own, in a saved inbox.
-  const hidden = scope
-    ? unfiltered.filter((entry) => matchesQuery(saved, entry, kinds.get(entry))).length
-    : unfiltered.length;
+  const hidden = unfiltered.filter((entry) =>
+    holds(view, saved, { entry, kind: kinds.get(entry) }),
+  ).length;
   // The filter offers every repository, organization, author and branch
   // known, not only those of what the inbox holds now.
   const known = { entries, repositories };
@@ -1425,12 +1524,13 @@ export function UpNextPage({
         <>
           <FilterBar
             // A page's text is its own: moving to another inbox starts afresh.
-            key={scope?.id ?? "inbox"}
+            key={scope.id}
             query={query}
             onChange={setQuery}
             entries={unfiltered}
             known={known}
             inbox
+            clearable={false}
             actions={<SaveButton options={saveOptions} />}
           />
           <FilterSaveError error={quick.error} retry={quick.retry} />
@@ -1443,38 +1543,25 @@ export function UpNextPage({
       <div className="upnext-page">
         <div className="upnext-list">
           <header className="upnext-list-head">
-            {scope ? (
-              <>
-                <div
-                  className={`upnext-list-title inbox-${scope.color}`}
-                  onContextMenu={(event) =>
-                    onEdit &&
-                    actionsMenu.open(event, [{ label: "Edit…", onSelect: onEdit }], scope.name)
-                  }
-                >
-                  {updateInbox ? (
-                    <InboxHeadEdit inbox={scope} inboxes={inboxes} update={updateInbox} />
-                  ) : (
-                    <>
-                      <span aria-hidden="true" className="inbox-dot inbox-dot-large" />
-                      <h1>{scope.name}</h1>
-                    </>
-                  )}
-                  {filterButton}
-                  {refreshButton}
-                </div>
-                <p className="upnext-list-summary">{summary}</p>
-              </>
-            ) : (
-              <>
-                <div className="upnext-list-heading">
-                  <h1>Up next</h1>
-                  {filterButton}
-                  {refreshButton}
-                </div>
-                <p>{summary}</p>
-              </>
-            )}
+            <div
+              className={`upnext-list-title inbox-${scope.color}`}
+              onContextMenu={(event) =>
+                onEdit &&
+                actionsMenu.open(event, [{ label: "Edit…", onSelect: onEdit }], scope.name)
+              }
+            >
+              {updateInbox ? (
+                <InboxHeadEdit inbox={scope} inboxes={inboxes} update={updateInbox} />
+              ) : (
+                <>
+                  <span aria-hidden="true" className="inbox-dot inbox-dot-large" />
+                  <h1>{scope.name}</h1>
+                </>
+              )}
+              {filterButton}
+              {refreshButton}
+            </div>
+            <p className="upnext-list-summary">{summary}</p>
             <div
               className="upnext-bar"
               role="progressbar"
@@ -1512,7 +1599,6 @@ export function UpNextPage({
                 >
                   <ListRow
                     row={row}
-                    tag={scope ? undefined : rowInboxes(row, inboxes)[0]}
                     on={row.key === line?.key}
                     tabbable={row.key === tabbable}
                     pick={select}
@@ -1621,7 +1707,7 @@ export function UpNextPage({
                     </span>
                     {/* Its page while the app still lists it, otherwise GitHub. */}
                     {item.entry ? (
-                      <Link href={prHref(item.entry, cloneFor)} className="upnext-done-text">
+                      <Link href={prHref(item.entry, cloneFor, scope)} className="upnext-done-text">
                         {KINDS[item.kind].done} #{item.number} {item.title}
                       </Link>
                     ) : item.url ? (
@@ -1656,7 +1742,7 @@ export function UpNextPage({
               row={selected}
               doc={doc}
               tags={alsoIn(selected)}
-              href={prHref(selected.entry, cloneFor)}
+              href={prHref(selected.entry, cloneFor, scope)}
               Link={Link}
               fix={selectedFix}
               fixState={selectedFixState}
@@ -1675,7 +1761,9 @@ export function UpNextPage({
               line={selectedGroup}
               doc={groupDoc}
               entries={entries}
-              href={appURL(`?group=${encodeURIComponent(selectedGroup.group.id)}`)}
+              href={appURL(
+                `?inbox=${encodeURIComponent(scope.id)}&group=${encodeURIComponent(selectedGroup.group.id)}`,
+              )}
               pick={(key) => {
                 toggleGroup(selectedGroup, true);
                 select(key);
@@ -1685,19 +1773,17 @@ export function UpNextPage({
           ) : filtering &&
             hidden > 0 &&
             // Waiting rows are never selected, so the lists say what is left.
-            queue.length + fixing.length + waiting.length + snoozed.length === 0 ? (
+            queue.length + fixing.length + waiting.length + others.length + snoozed.length === 0 ? (
             <div className="upnext-zero">
               <h2>Nothing matches the filter</h2>
               <p>
                 {formatCount(hidden)} pull {hidden === 1 ? "request is" : "requests are"} hidden by
                 it.
               </p>
-              <Button onClick={() => quick.reset()}>
-                {scope ? "Discard the changes" : "Clear the filter"}
-              </Button>
+              <Button onClick={() => quick.reset()}>Discard the changes</Button>
             </div>
           ) : (
-            <Zero inbox={inbox} scoped={!!scope} hasRepositories={hasRepositories} Link={Link} />
+            <Zero inbox={inbox} hasRepositories={hasRepositories} Link={Link} />
           )}
         </div>
         {toast ? (
@@ -1749,15 +1835,12 @@ export function UpNextPage({
 
 function ListRow({
   row,
-  tag,
   on,
   tabbable,
   pick,
   inGroup = false,
 }: {
   row: Row;
-  /** The first inbox the row is in, in the Inbox. */
-  tag?: Inbox;
   on: boolean;
   tabbable: boolean;
   pick: (key: string) => void;
@@ -1773,11 +1856,14 @@ function ListRow({
   const sub = [
     `#${pr.number}`,
     ...(row.job
-      ? ["Agent fixing", phaseText(row.job)]
+      ? ["Agent fixing", fixStep(row.job)]
       : row.waiting
-        ? [waitingOn(row.entry, row.base), repository]
-        : row.item?.failedFix
-          ? [inGroup ? memberLabel(row.item.kind, row.entry) : "", "Last fix failed"]
+        ? [rowWaiting(row), repository]
+        : row.item?.failedFix || row.item?.unchangedFix
+          ? [
+              inGroup ? memberLabel(row.item.kind, row.entry) : "",
+              row.item.failedFix ? "Last fix failed" : "Last fix changed nothing",
+            ]
           : [
               inGroup && row.item ? memberLabel(row.item.kind, row.entry) : repository,
               row.item?.minutes != null ? minutesText(row.item.minutes) : "",
@@ -1809,7 +1895,6 @@ function ListRow({
               sub
             )}
           </span>
-          {tag ? <InboxTag inbox={tag} /> : null}
         </span>
       </span>
       {hot ? (
@@ -2118,7 +2203,11 @@ function Panel({
   }, [menu]);
   const who = pr.review_requested_from_me
     ? `${pr.author ?? "Someone"} asked for your review`
-    : "Yours";
+    : pr.authored_by_me
+      ? "Yours"
+      : pr.assigned_to_me
+        ? `${pr.author ?? "Someone"}'s, assigned to you`
+        : `By ${pr.author ?? "someone else"}`;
   // Opening the pull request is always the default; what the kind asks for
   // follows it. A merge or branch update opens its confirmation; a fix starts
   // at once.
@@ -2180,7 +2269,7 @@ function Panel({
     <article className="upnext-panel" aria-labelledby="upnext-title">
       <div className="upnext-panel-meta">
         {waiting ? (
-          <span className="upnext-chip upnext-chip-waiting">{waitingOn(entry, row.base)}</span>
+          <span className="upnext-chip upnext-chip-waiting">{rowWaiting(row)}</span>
         ) : (
           <span className={`upnext-chip upnext-chip-${kind}`}>{KINDS[kind].label}</span>
         )}
@@ -2205,7 +2294,7 @@ function Panel({
       {job ? (
         <div className="upnext-working" role="status">
           <NineDots size={14} />
-          <span>An agent is fixing it · {phaseText(job)}.</span>
+          <span>An agent is fixing it{fixStep(job) ? ` · ${fixStep(job)}` : ""}.</span>
           <span className="upnext-working-aside">You can move on</span>
         </div>
       ) : null}
@@ -2228,6 +2317,7 @@ function Panel({
           </Link>
         </div>
       ) : null}
+      {item?.unchangedFix ? <UnchangedFix job={item.unchangedFix} Link={Link} /> : null}
       <div className="upnext-actions">
         {actions}
         {reviewable(entry) ? (
@@ -2514,15 +2604,47 @@ function RiskCard({
   );
 }
 
+/** The last fix ended without changing anything, which is the agent's
+ *  judgement, not an error: said in neutral words, with the agent's reason
+ *  (the first paragraph of what it said) and the way to the rest. */
+function UnchangedFix({ job, Link }: { job: Job; Link: ComponentType<ViewerLinkProps> }) {
+  const why = summaryLead(job.summary);
+  return (
+    <div className="upnext-unchanged" role="status">
+      <p className="upnext-unchanged-title">The last fix changed nothing, so nothing was pushed.</p>
+      {why ? (
+        <Markdown html={false} className="upnext-prose upnext-unchanged-why">
+          {why}
+        </Markdown>
+      ) : null}
+      <Link href={jobHref(job)}>
+        {why ? "Read what the agent said" : "See what the agent did"}
+        {job.has_transcript ? (
+          <kbd aria-hidden="true" className="key-hint">
+            t
+          </kbd>
+        ) : null}
+      </Link>
+    </div>
+  );
+}
+
 /** What a group's member waits on, in a few words, and the tone of its dot:
  *  an agent at work, what needs fixing, ready to merge, or waiting. */
 function memberState(row: Row): { text: string; tone: string } {
-  if (row.job) return { text: `Agent fixing · ${phaseText(row.job)}`, tone: "working" };
-  if (row.waiting) return { text: waitingOn(row.entry, row.base), tone: "waiting" };
+  if (row.job) {
+    const step = fixStep(row.job);
+    return { text: step ? `Agent fixing · ${step}` : "Agent fixing", tone: "working" };
+  }
+  if (row.waiting) return { text: rowWaiting(row), tone: "waiting" };
   if (!row.item) return { text: "", tone: "waiting" };
   const label = memberLabel(row.item.kind, row.entry);
   return {
-    text: row.item.failedFix ? `${label} · Last fix failed` : label,
+    text: row.item.failedFix
+      ? `${label} · Last fix failed`
+      : row.item.unchangedFix
+        ? `${label} · Last fix changed nothing`
+        : label,
     tone: row.item.kind,
   };
 }
@@ -2797,12 +2919,10 @@ function GroupPanel({
 
 function Zero({
   inbox,
-  scoped,
   hasRepositories,
   Link,
 }: {
   inbox: UpNextState;
-  scoped: boolean;
   hasRepositories: boolean;
   Link: ComponentType<ViewerLinkProps>;
 }) {
@@ -2820,30 +2940,16 @@ function Zero({
       </div>
     );
   const { snoozed, cleared } = inbox;
-  if (scoped)
-    return (
-      <div className="upnext-zero">
-        <Stumpy mood="dozing" size={88} className="upnext-zero-stumpy" />
-        <h2>Nothing here right now.</h2>
-        <p>
-          {snoozed.length > 0
-            ? `Everything here is handled except ${plural(snoozed.length, "snoozed pull request")}; they come back on their own.`
-            : cleared.length > 0
-              ? `All ${formatCount(cleared.length)} handled. Nothing needs you right now.`
-              : "It fills up as matching pull requests come in."}
-        </p>
-      </div>
-    );
   return (
     <div className="upnext-zero">
       <Stumpy mood="dozing" size={88} className="upnext-zero-stumpy" />
-      <h2>Inbox zero</h2>
+      <h2>Nothing here right now.</h2>
       <p>
         {snoozed.length > 0
-          ? `Everything is handled except ${plural(snoozed.length, "snoozed pull request")}; they come back on their own.`
+          ? `Everything here is handled except ${plural(snoozed.length, "snoozed pull request")}; they come back on their own.`
           : cleared.length > 0
             ? `All ${formatCount(cleared.length)} handled. Nothing needs you right now.`
-            : "No review is asked of you and none of your pull requests needs you."}
+            : "It fills up as matching pull requests come in."}
       </p>
     </div>
   );

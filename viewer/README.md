@@ -349,7 +349,13 @@ branch, start, duration and files edited on one line (the rail leads back to
 the list) and its linked commits as links under it, and draws no
 card for it. `SessionCard`'s `headless` draws a session open with no header of
 its own, for such a pane. A session whose outcome is unknown shows no outcome
-badge.
+badge. A host that knows of sessions the list does not, such as ones running
+now, passes them as `hosted` (`HostSessionView`, also an option of
+`sessionsSlot`): each brings its rail label, an optional `indicator`, its card
+and its pane when opened alone. They come first, replace a listed session with
+the same id, are counted with the rest, and mark their own rail row and the
+group's. With none of either, the pane shows one empty state, whose sentence
+`empty` sets.
 
 `commitsSlot(state, { loadCommit, loadPatch })` (and `CommitList`'s
 `loaders`) gives a commit opened alone more than its list entry, read through
@@ -885,6 +891,15 @@ hosted app's integration with the viewer stays covered by `ui/e2e`.
 Attachment resolvers may receive the rendered document as a second argument,
 so a host whose captures are version-scoped can serve each comparison pane’s
 images from that snapshot. Existing one-argument resolvers remain supported.
+
+An indexed image may also carry native-session `origins`, with its owning
+session and prompt/turn, tool call, optional child session and timestamp.
+The image UI labels human-supplied images separately from agent tool results
+and offers the owning prompt through the host's source opener, including in
+the full-size dialog. Session-only images have no `source_url`; their image
+blocks cite an attachment ID. Old description-image records remain valid.
+Identical image bytes can retain both PR-description URLs and several session
+origins while sharing one stored image.
 
 The local multi-repository app in [`../app/`](../app/README.md) consumes the
 same public viewer components and uses the exported `local-sessions` and

@@ -1,6 +1,6 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { LocalRequestError, request, type Entry } from "./api";
-import type { UpNextKind } from "./up-next";
+import type { QueueKind } from "./up-next";
 import { andQuery, matchesQuery, parseQuery, queryProblem, quote } from "./pr-filter";
 
 export const INBOX_COLORS = ["blue", "green", "red", "amber", "purple", "grey"] as const;
@@ -22,7 +22,7 @@ export const COLOR_NAMES: Record<InboxColor, string> = {
 export type InboxWhat = "any" | "review" | "merge" | "agent" | "mine";
 
 /** A saved filter over the queue, as the daemon stores it (see its
- *  `internal/inboxes` README). Matching lives here, not in the daemon. */
+ *  `internal/inboxes` README). The daemon also matches it (`Held`). */
 export type Inbox = {
   id: string;
   name: string;
@@ -91,10 +91,25 @@ export async function readInboxes(
   }
 }
 
-/** What `matches` needs of a queue item. A pull request an agent is fixing
+/** What `matches` needs of a pull request: a queue item, `other` for someone
+ *  else's that waits on nothing from the person, or without `kind` one of
+ *  the person's own that waits on others. A pull request an agent is fixing
  *  now is one of kind `fix`. */
-/** A queue item, or without `kind` one that waits on others. */
-export type Matchable = { kind?: UpNextKind; entry: Entry };
+export type Matchable = { kind?: QueueKind; entry: Entry };
+
+/** The default inbox's query, as the daemon creates it: what the person
+ *  wrote, is assigned or was asked to review. */
+export const FOR_ME = "author=@me OR assignee=@me OR review-requested=@me";
+
+/** Quick filters on an inbox's edit page: each puts its query into the
+ *  inbox's (or takes it out again), as the person could type it. */
+export const QUICK_FILTERS: { label: string; query: string }[] = [
+  { label: "For me", query: FOR_ME },
+  { label: "Risky", query: "risk>=4" },
+  { label: "Unclaimed", query: "assignee=none review-requested=none" },
+  { label: "No drafts", query: "is!=draft" },
+  { label: "No bots", query: "is!=bot" },
+];
 
 /** An inbox's parts as one query: what it holds (`waiting=` or, for the
  *  person's own, `author=@me`), owners (`org=`), risk (`risk>=`),
@@ -145,26 +160,121 @@ export function withQuery(inbox: Inbox, query: string): Inbox {
   };
 }
 
-export function matches(inbox: Inbox, { kind, entry }: Matchable): boolean {
-  return matchesQuery(foldedQuery(inbox), entry, kind);
+/** What the daemon answered about which pull requests queries hold
+ *  (`GET api/inbox`, see its `internal/inboxqueue` README): each pull
+ *  request's kind as it matched it, by key, and the keys each query holds.
+ *  The daemon matches, so the page does not run every inbox's query over
+ *  every pull request. */
+export type Held = {
+  kinds: ReadonlyMap<string, string>;
+  byQuery: ReadonlyMap<string, ReadonlySet<string>>;
+};
+
+/** The daemon's queue as `GET api/inbox` answers it: null for an older
+ *  daemon or an answer that does not read, and no queries when it could not
+ *  read the saved inboxes. */
+export function parseHeld(body: unknown): Held | null {
+  const value = body as { items?: unknown; inboxes?: unknown } | null;
+  if (!value || typeof value !== "object" || !Array.isArray(value.items)) return null;
+  const kinds = new Map<string, string>();
+  const ids = new Map<string, Set<string>>();
+  for (const raw of value.items) {
+    const item = raw as { key?: unknown; kind?: unknown; inboxes?: unknown } | null;
+    if (!item || !isString(item.key) || !isString(item.kind)) continue;
+    kinds.set(item.key, item.kind);
+    for (const id of strings(item.inboxes)) {
+      let keys = ids.get(id);
+      if (!keys) ids.set(id, (keys = new Set()));
+      keys.add(item.key);
+    }
+  }
+  const byQuery = new Map<string, Set<string>>();
+  for (const raw of Array.isArray(value.inboxes) ? value.inboxes : []) {
+    const inbox = raw as { id?: unknown; query?: unknown } | null;
+    if (inbox && isString(inbox.id) && isString(inbox.query))
+      byQuery.set(inbox.query, ids.get(inbox.id) ?? new Set());
+  }
+  return { kinds, byQuery };
+}
+
+/** Whether `query` holds the item. The daemon's answer decides when it has
+ *  one for the query and matched the pull request as the same kind; else
+ *  (an older daemon, a query not saved or not asked yet, a read in between)
+ *  the page matches it itself. */
+export function holds(held: Held | null | undefined, query: string, item: Matchable): boolean {
+  const keys = held?.byQuery.get(query);
+  const pr = item.entry.pull_request;
+  // As `upNextKey` and the daemon name it.
+  const key = `${pr.repository.toLowerCase()}#${pr.number}`;
+  if (keys && held!.kinds.get(key) === (item.kind ?? "")) return keys.has(key);
+  return matchesQuery(query, item.entry, item.kind);
+}
+
+/** `held` with the daemon's answers for queries not saved, as `useHeld`
+ *  read them. */
+function withAnswers(held: Held, answers: ReadonlyMap<string, ReadonlySet<string>>): Held {
+  if (answers.size === 0) return held;
+  return { kinds: held.kinds, byQuery: new Map([...answers, ...held.byQuery]) };
+}
+
+/** `held`, with the daemon also asked which pull requests each of `queries`
+ *  holds, for those it has no answer for: a filter being typed, or an inbox
+ *  not saved yet. Each is asked a moment after it last changed, and again
+ *  whenever `held` is read again; until it answers the page matches. */
+export function useHeld(held: Held | null, queries: readonly string[]): Held | null {
+  const [answers, setAnswers] = useState<{
+    from: Held | null;
+    byQuery: Map<string, ReadonlySet<string>>;
+  }>({ from: null, byQuery: new Map() });
+  const wanted = [...new Set(queries)].filter((query) => held && !held.byQuery.has(query));
+  const signature = wanted.join("\n");
+  useEffect(() => {
+    if (!held || wanted.length === 0) return;
+    const abort = new AbortController();
+    const timer = setTimeout(() => {
+      void Promise.all(
+        wanted.map((query) =>
+          request<unknown>(
+            `api/inbox?query=${encodeURIComponent(query)}`,
+            undefined,
+            "GET",
+            abort.signal,
+          )
+            .then((body) => {
+              const matches = (body as { matches?: unknown } | null)?.matches;
+              return Array.isArray(matches) ? ([query, new Set(strings(matches))] as const) : null;
+            })
+            .catch(() => null),
+        ),
+      ).then((read) => {
+        if (abort.signal.aborted) return;
+        setAnswers({
+          from: held,
+          byQuery: new Map(read.flatMap((one) => (one ? [one] : []))),
+        });
+      });
+    }, 150);
+    return () => {
+      abort.abort();
+      clearTimeout(timer);
+    };
+  }, [held, signature]);
+  if (!held) return null;
+  // Answers about an older read of the queue no longer hold.
+  return answers.from === held ? withAnswers(held, answers.byQuery) : held;
+}
+
+export function matches(inbox: Inbox, item: Matchable, held?: Held | null): boolean {
+  return holds(held, foldedQuery(inbox), item);
 }
 
 /** Every inbox the item is in, in the sidebar's order. */
-export function inboxesOf(item: Matchable, inboxes: Inbox[]): Inbox[] {
-  return inboxes.filter((inbox) => matches(inbox, item));
-}
-
-/** What the Inbox badge counts: queue items that are in no inbox, or in at
- *  least one that counts in the badge. */
-export function inboxBadgeCount(items: Matchable[], inboxes: Inbox[]): number {
-  return items.filter((item) => {
-    const own = inboxesOf(item, inboxes);
-    return own.length === 0 || own.some((inbox) => inbox.badge);
-  }).length;
+export function inboxesOf(item: Matchable, inboxes: Inbox[], held?: Held | null): Inbox[] {
+  return inboxes.filter((inbox) => matches(inbox, item, held));
 }
 
 const WHAT_WORDS: Record<InboxWhat, string> = {
-  any: "anything waiting on me",
+  any: "every open pull request",
   review: "reviews I’m asked for",
   merge: "things ready to merge",
   agent: "things an agent can fix",
@@ -201,7 +311,7 @@ function sentenceParts(inbox: Inbox, login?: string) {
   };
 }
 
-/** What the inbox holds, in a sentence: "Anything waiting on me in any
+/** What the inbox holds, in a sentence: "Every open pull request in any
  *  repository, whatever the risk." */
 export function sentence(inbox: Inbox, login?: string): string {
   const { what, where, risk } = sentenceParts(inbox, login);
@@ -265,10 +375,13 @@ export type Template = Pick<Inbox, "color" | "what" | "risk" | "owners" | "badge
   name: string;
   /** What its tile says, in place of the sentence its parts make. */
   description?: string;
+  /** A query on top of its parts. */
+  query?: string;
 };
 
-/** The six starting points. `owners` is every owner of the person's
- *  repositories except their login (see `ownersOf`). */
+/** The seven starting points. `owners` is every owner of the person's
+ *  repositories except their login (see `ownersOf`). Custom starts with no
+ *  filter, so it holds every open pull request. */
 export function templates(owners: string[], login?: string): Template[] {
   const base = { what: "any", risk: "any", owners: [] as string[], badge: true } as const;
   return [
@@ -276,25 +389,46 @@ export function templates(owners: string[], login?: string): Template[] {
       ...base,
       name: "Custom",
       color: "blue",
-      description: "Start from nothing and set the filters yourself.",
+      description: "Every open pull request, until you add filters.",
     },
-    { ...base, name: "Urgent", color: "red", risk: "4" },
-    { ...base, name: "Work", color: "blue", owners },
+    {
+      ...base,
+      name: "Urgent",
+      color: "red",
+      risk: "4",
+      query: FOR_ME,
+      description: "Mine, assigned to me or asking for my review, at risk 4 or 5.",
+    },
+    {
+      ...base,
+      name: "Work",
+      color: "blue",
+      owners,
+      query: FOR_ME,
+      description: `Mine, assigned to me or asking for my review, ${owners.length ? `in ${joinOr(owners)}` : "in any repository"}.`,
+    },
     { ...base, name: "Personal", color: "green", owners: login ? [login] : [], badge: false },
     { ...base, name: "Quick merges", color: "amber", what: "merge" },
     { ...base, name: "For an agent", color: "grey", what: "agent" },
+    {
+      ...base,
+      name: "Unclaimed",
+      color: "purple",
+      query: "waiting=other assignee=none review-requested=none is!=draft is!=bot",
+      description: "Others' pull requests with no one assigned and no review requested.",
+    },
   ];
 }
 
 /** A template as an inbox of its parts, as its tile describes it. */
 export function templateInbox(template: Template, inboxes: Inbox[], id = newInboxId()): Inbox {
-  const { description: _, ...parts } = template;
+  const { description: _, query = "", ...parts } = template;
   return {
     id,
     ...parts,
     name: freeName(template.name, inboxes),
     repositories: [],
-    query: "",
+    query,
     no_bots: false,
   };
 }
@@ -308,26 +442,9 @@ export function fromTemplate(template: Template, inboxes: Inbox[], id = newInbox
   });
 }
 
-/** A page's filter as an inbox of its own: anything waiting that matches it,
- *  named so no other inbox has the name. */
-export function fromQuery(query: string, inboxes: Inbox[]): Inbox {
-  return {
-    id: newInboxId(),
-    name: freeName("Filtered", inboxes),
-    color: unusedInboxColor(inboxes),
-    what: "any",
-    owners: [],
-    risk: "any",
-    repositories: [],
-    query,
-    no_bots: false,
-    badge: true,
-  };
-}
-
 /** How many of `items` the inbox holds. */
-export function countOf(inbox: Inbox, items: Matchable[]): number {
-  return items.filter((item) => matches(inbox, item)).length;
+export function countOf(inbox: Inbox, items: Matchable[], held?: Held | null): number {
+  return items.filter((item) => matches(inbox, item, held)).length;
 }
 
 type SaverIO = {

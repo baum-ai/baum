@@ -32,7 +32,7 @@ import {
  *
  *  The server applies the filter to each page it reads, so every term must
  *  hold and each field is named once (`who=human,agent` for either): no OR,
- *  NOT, `-` or parentheses. `who!=agent` hides the agents' own decisions;
+ *  `-` or parentheses. `who!=agent` hides the agents' own decisions;
  *  any other word is looked for in the text. */
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
 const never = () => false;
@@ -157,7 +157,7 @@ function problem(query: string, fields: readonly Field[]): string {
   const seen = new Set<string>();
   for (const item of items) {
     if (item.kind !== "term" && item.kind !== "text")
-      return "The Timeline's filters must all hold: write no OR, NOT, - or parentheses.";
+      return "The Timeline's filters must all hold: write no OR, - or parentheses.";
     if (item.kind !== "term") continue;
     const twice = `${item.key}${item.op}`;
     if (seen.has(twice))
@@ -256,7 +256,7 @@ export function timelineQuery(
   term("date", filters.to ? [filters.to] : [], "<=");
   if (!features && filters.superseded) term("is", ["superseded"]);
   // Quoted where the words would read as syntax.
-  const plain = !/[()":=<>]|(^|\s)(-|AND\s|OR\s|NOT\s|AND$|OR$|NOT$)/.test(filters.q);
+  const plain = !/[()":=<>]|(^|\s)(-|AND\s|OR\s|AND$|OR$)/.test(filters.q);
   if (filters.q) words.push(plain ? filters.q : `"${filters.q.replaceAll('"', "")}"`);
   return words.join(" ");
 }

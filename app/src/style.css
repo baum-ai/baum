@@ -108,6 +108,19 @@ body {
   color: var(--text-primary);
   font-weight: 500;
 }
+/* Inbox is a heading over its inboxes: not a link, so no hover fill. */
+.local-rail-heading,
+.local-rail-heading:hover {
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: default;
+}
+.local-rail-menu-note {
+  display: block;
+  padding: 0.25rem 0.75rem;
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+}
 .local-rail-glyph {
   flex: none;
 }
@@ -304,6 +317,10 @@ body {
   background: var(--surface-popup);
   box-shadow: var(--shadow-overlay);
   animation: upnext-drop 0.15s ease-out;
+}
+.local-rail-menu button:disabled {
+  color: var(--text-tertiary);
+  cursor: not-allowed;
 }
 .local-rail-menu button {
   padding: 7px 10px;
@@ -2629,8 +2646,9 @@ a.local-session-pr:hover {
   padding: 0;
   list-style: none;
 }
-.local-pr-sessions li {
+.local-pr-session {
   display: grid;
+  justify-items: start;
   gap: 0.2rem;
 }
 .local-pr-session-who {
@@ -3129,6 +3147,17 @@ a.local-session-pr:hover {
 }
 .context-menu-label {
   flex: 1;
+}
+/* A choice that cannot be made now, with why under it. */
+.context-menu button:disabled {
+  color: var(--text-disabled);
+  cursor: default;
+}
+.context-menu-note {
+  display: block;
+  margin-top: 2px;
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
 }
 .context-menu kbd {
   margin-left: 1rem;
@@ -4786,6 +4815,17 @@ dialog form {
 .local-fix-notice-failed {
   color: var(--status-critical);
 }
+.local-fix-notice-why {
+  margin-top: 0.125rem;
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+.local-fix-notice-why > :first-child {
+  margin-top: 0;
+}
+.local-fix-notice-why > :last-child {
+  margin-bottom: 0;
+}
 .local-fix-notice-actions {
   display: flex;
   flex: none;
@@ -5445,6 +5485,35 @@ a.upnext-done-text:hover {
   border: 1px solid var(--border-subtle);
   background: var(--status-critical-bg);
   color: var(--text-primary);
+}
+/* The last fix changed nothing: the agent's judgement, not an error, so it
+   is neutral, with the agent's reason under the line that says so. */
+.upnext-unchanged {
+  display: grid;
+  gap: 4px;
+  padding: 12px 14px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  background: var(--surface-wash);
+  color: var(--text-secondary);
+  font-size: var(--text-base);
+  animation: upnext-drop 0.15s ease-out;
+}
+.upnext-unchanged-title {
+  margin: 0;
+  color: var(--text-primary);
+}
+.upnext-unchanged-why {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
+}
+.upnext-unchanged-why > :first-child {
+  margin-top: 0;
+}
+.upnext-unchanged-why > :last-child {
+  margin-bottom: 0;
 }
 .upnext-actions {
   display: flex;
@@ -6148,6 +6217,7 @@ a.upnext-done-text:hover {
   .upnext-zero,
   .upnext-working,
   .upnext-failed,
+  .upnext-unchanged,
   .upnext-menu,
   .upnext-toast {
     animation: none;
@@ -6853,6 +6923,25 @@ a.upnext-done-text:hover {
 .inbox-block h2 {
   margin: 0;
 }
+/* A block's heading with a small link at its end, as to the filter docs. */
+.inbox-block-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+.inbox-docs-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+  text-decoration: none;
+}
+.inbox-docs-link:hover {
+  color: var(--text-link-hover);
+  text-decoration: underline;
+}
 .inbox-fresh {
   margin: 0;
   padding: 0.6rem 1.25rem;
@@ -7159,8 +7248,15 @@ dialog.local-file-dialog {
 .inbox-head-rename {
   display: grid;
   flex: 1;
+  grid-template-columns: minmax(0, 1fr);
   min-width: 0;
   gap: 0.2rem;
+}
+/* The field shrinks to its column, so the filter and refresh stay beside it
+   rather than under its right end. */
+.inbox-head-rename .local-field {
+  width: 100%;
+  min-width: 0;
 }
 /* The heading-sized field takes a tight ring: the shared one's 2px gap and
    2px band read as a heavy double frame around it. */

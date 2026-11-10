@@ -1,13 +1,13 @@
 import { expect, it, vi } from "vitest";
 import { LocalRequestError, type Entry } from "./api";
 import {
+  countOf,
   createInboxSaver,
+  FOR_ME,
   unusedInboxColor,
-  fromQuery,
   fromTemplate,
   templates,
   INBOX_COLORS,
-  inboxBadgeCount,
   inboxesOf,
   matches,
   folded,
@@ -16,7 +16,7 @@ import {
   type Inbox,
   type InboxList,
 } from "./inboxes";
-import type { UpNextKind } from "./up-next";
+import type { QueueKind, UpNextKind } from "./up-next";
 
 const inbox = (overrides: Partial<Inbox> = {}): Inbox => ({
   id: "i1",
@@ -33,7 +33,7 @@ const inbox = (overrides: Partial<Inbox> = {}): Inbox => ({
 });
 
 const item = (
-  kind: UpNextKind,
+  kind: QueueKind,
   pr: Partial<Entry["pull_request"]> = {},
   risk: Entry["risk_score"] = null,
 ) => ({
@@ -117,7 +117,7 @@ it("matches its query on top of the rest", () => {
 });
 
 it("says what an inbox holds", () => {
-  expect(sentence(inbox())).toBe("Anything waiting on me in any repository, whatever the risk.");
+  expect(sentence(inbox())).toBe("Every open pull request in any repository, whatever the risk.");
   expect(sentence(inbox({ what: "review", risk: "3" }))).toBe(
     "Reviews I’m asked for in any repository, when risk is 3 or more.",
   );
@@ -132,11 +132,11 @@ it("says what an inbox holds", () => {
   );
   // Only the signed-in account's alone is "my own".
   expect(sentence(inbox({ owners: ["dan", "acme"] }), "dan")).toBe(
-    "Anything waiting on me in dan or acme, whatever the risk.",
+    "Every open pull request in dan or acme, whatever the risk.",
   );
   expect(sentence(inbox({ owners: ["a", "b", "c"] }))).toContain("in a, b or c, whatever");
   expect(sentence(inbox({ repositories: ["acme/demo"], no_bots: true }))).toBe(
-    "Anything waiting on me in any repository, whatever the risk, only in acme/demo, without bots.",
+    "Every open pull request in any repository, whatever the risk, only in acme/demo, without bots.",
   );
   expect(sentence(inbox({ repositories: ["a/b", "a/c", "a/d"] }))).toContain(
     ", only in 3 repositories.",
@@ -151,23 +151,6 @@ it("lists every inbox a pull request is in, in order", () => {
   ];
   expect(inboxesOf(item("review"), list).map((i) => i.id)).toEqual(["a", "c"]);
   expect(inboxesOf(item("merge", { repository: "x/y" }), list).map((i) => i.id)).toEqual(["b"]);
-});
-
-it("counts in the badge what is in no inbox or in one that counts", () => {
-  const items = [
-    item("review"),
-    item("merge"),
-    item("merge", { repository: "x/y" }),
-    item("fix", { repository: "z/w" }),
-  ];
-  const quiet = inbox({ id: "q", what: "merge", badge: false });
-  const loud = inbox({ id: "l", owners: ["acme"], badge: true });
-  // Today's count with none.
-  expect(inboxBadgeCount(items, [])).toBe(4);
-  // x/y is only in the quiet inbox; the second merge is also in a counting one.
-  expect(inboxBadgeCount(items, [quiet, loud])).toBe(3);
-  expect(inboxBadgeCount(items, [{ ...quiet, badge: true }, loud])).toBe(4);
-  expect(inboxBadgeCount(items, [{ ...loud, badge: false }, quiet])).toBe(1);
 });
 
 it("reads the daemon's list, and nothing from an older daemon", () => {
@@ -327,11 +310,32 @@ it("reads a malformed entry defensively and drops one without an id or name", ()
   expect(matches(list!.inboxes[0]!, item("review"))).toBe(true);
 });
 
-it("uses an unused default color for filtered and template inboxes, falling back when full", () => {
+it("uses an unused default color for template inboxes, falling back when full", () => {
   const existing = [inbox({ color: "blue" })];
-  expect(fromQuery("org=acme", existing).color).toBe("green");
   expect(fromTemplate(templates([], "sam")[0]!, existing).color).toBe("green");
   expect(unusedInboxColor(existing, "red")).toBe("red");
   const full = INBOX_COLORS.map((color) => inbox({ color }));
   expect(unusedInboxColor(full, "purple")).toBe("purple");
+});
+
+it("holds and counts someone else's pull request that waits on nothing from the person, by its query", () => {
+  const other = item("other", { author: "sam" });
+  // No query: every open pull request, so it is held too.
+  expect(matches(inbox(), other)).toBe(true);
+  expect(matches(inbox({ query: "waiting=other" }), other)).toBe(true);
+  expect(matches(inbox({ query: "waiting=review" }), other)).toBe(false);
+  // The default inbox's scope is the person's own, assigned and asked-for.
+  expect(matches(inbox({ query: FOR_ME }), other)).toBe(false);
+  expect(
+    matches(inbox({ query: FOR_ME }), item("review", { review_requested_from_me: true })),
+  ).toBe(true);
+  expect(matches(inbox({ query: FOR_ME }), item("merge", { authored_by_me: true }))).toBe(true);
+  const items = [
+    other,
+    item("review", { review_requested_from_me: true }),
+    item("merge", { authored_by_me: false }),
+  ];
+  expect(countOf(inbox(), items)).toBe(3);
+  expect(countOf(inbox({ query: FOR_ME }), items)).toBe(1);
+  expect(countOf(inbox({ query: "waiting=other" }), items)).toBe(1);
 });
