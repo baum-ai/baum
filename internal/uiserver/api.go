@@ -389,26 +389,15 @@ func (a LocalAPI) Handler() *LocalHandler {
 		}
 		writeJSON(w, map[string]int{"job_concurrency": prefs.Concurrency()})
 	})
-	// Runs are shared only while one is in flight; a later request runs the
-	// checks again. That is deliberate: the endpoint is local, authenticated
-	// and user-triggered, so there is no cache.
-	var hookTrust singleflight.Group
+	// Each fresh read starts Codex processes, so answers are cached for a few
+	// minutes; ?refresh=1 reads again.
+	hookTrust := newHookTrustCache(a.HookTrust)
 	mux.HandleFunc("GET /api/agent-hooks/codex", func(w http.ResponseWriter, r *http.Request) {
 		if a.HookTrust == nil {
 			writeJSON(w, map[string]bool{"available": false})
 			return
 		}
-		result := hookTrust.DoChan("codex", func() (any, error) {
-			ctx, cancel := context.WithTimeout(context.Background(), 2*agentplugins.StatusTimeout)
-			defer cancel()
-			return a.HookTrust(ctx), nil
-		})
-		select {
-		case <-r.Context().Done():
-			return
-		case res := <-result:
-			writeJSON(w, res.Val)
-		}
+		writeJSON(w, hookTrust.Get(r.URL.Query().Get("refresh") == "1"))
 	})
 	var diagnostics singleflight.Group
 	mux.HandleFunc("GET /api/diagnostics", func(w http.ResponseWriter, r *http.Request) {
