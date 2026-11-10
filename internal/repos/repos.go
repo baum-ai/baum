@@ -21,6 +21,7 @@ import (
 	"github.com/baum-ai/baum/internal/config"
 	"github.com/baum-ai/baum/internal/github"
 	"github.com/baum-ai/baum/internal/gitlocal"
+	"golang.org/x/sync/singleflight"
 )
 
 // ErrNotFound reports a clone or picked repository the registry does not hold.
@@ -823,12 +824,12 @@ const ProbeMaxAge = 5 * time.Minute
 // probeCache remembers whether each registered clone was available, so the
 // many registry reads of the daemon (the app, its tray, the schedulers and
 // the background refresh) do not each run git in every clone. An answer is
-// reused while the clone's directory, its .git entry and its common
-// directory's config, where its remotes live, are as they were, for at most
-// ProbeMaxAge.
+// reused while what it is read from is as it was (see cloneStamp), for at
+// most ProbeMaxAge. Concurrent misses for one clone share a single probe.
 type probeCache struct {
 	mu      sync.Mutex
 	entries map[string]probeEntry
+	flight  singleflight.Group
 }
 
 type probeEntry struct {
@@ -846,35 +847,69 @@ func (p *probeCache) available(ctx context.Context, clone Clone) bool {
 		return false
 	}
 	key := clone.Path + "\x00" + clone.CommonDir + "\x00" + clone.Repository
-	now := time.Now()
 	p.mu.Lock()
 	entry, cached := p.entries[key]
 	p.mu.Unlock()
-	if cached && entry.stamp == stamp && now.Sub(entry.at) < ProbeMaxAge {
+	if cached && entry.stamp == stamp && time.Since(entry.at) < ProbeMaxAge {
 		return entry.available
 	}
-	// Any remote may name the clone's repository, as AddFor allows.
-	current, err := inspectFor(ctx, clone.Path, clone.Repository)
-	available := err == nil && current.Path == clone.Path && current.CommonDir == clone.CommonDir && current.Repository == clone.Repository
-	if ctx.Err() == nil {
-		p.mu.Lock()
-		p.entries[key] = probeEntry{stamp: stamp, at: now, available: available}
-		p.mu.Unlock()
+	// The stamp is part of the flight key so a probe that began before a
+	// change is never handed to a caller that saw the change. The probe runs
+	// independently of the request that started it, so one cancelled request
+	// cannot fail the others sharing it.
+	ch := p.flight.DoChan(key+"\x00"+stamp, func() (any, error) {
+		probeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), probeTimeout)
+		defer cancel()
+		// Any remote may name the clone's repository, as AddFor allows.
+		current, err := inspectFor(probeCtx, clone.Path, clone.Repository)
+		available := err == nil && current.Path == clone.Path && current.CommonDir == clone.CommonDir && current.Repository == clone.Repository
+		if probeCtx.Err() == nil {
+			p.mu.Lock()
+			p.entries[key] = probeEntry{stamp: stamp, at: time.Now(), available: available}
+			p.mu.Unlock()
+		}
+		return available, nil
+	})
+	select {
+	case res := <-ch:
+		return res.Val.(bool)
+	case <-ctx.Done():
+		return false
 	}
-	return available
 }
 
-// cloneStamp describes what a clone's availability is read from: its
-// directory, its .git entry (a directory, or a linked worktree's file) and
-// its common directory's config. ok is false when one is missing.
+// probeTimeout bounds a shared probe.
+const probeTimeout = time.Minute
+
+// cloneStamp describes what a clone's availability is read from: that its
+// directory and .git entry exist and are of the same kind, which git
+// directory a linked worktree's .git file points at, and its common
+// directory's config, where its remotes live. The directories' own
+// modification times are left out: they move on every index write and every
+// new top-level file without changing the answer. ok is false when one is
+// missing.
 func cloneStamp(clone Clone) (string, bool) {
 	var b strings.Builder
-	for _, path := range []string{clone.Path, filepath.Join(clone.Path, ".git"), filepath.Join(clone.CommonDir, "config")} {
+	dotGit := filepath.Join(clone.Path, ".git")
+	for _, path := range []string{clone.Path, dotGit, filepath.Join(clone.CommonDir, "config")} {
 		info, err := os.Stat(path)
 		if err != nil {
 			return "", false
 		}
-		fmt.Fprintf(&b, "%s\x00%d\x00%d\x00%o\x00", path, info.Size(), info.ModTime().UnixNano(), info.Mode())
+		fmt.Fprintf(&b, "%s\x00%o\x00", path, info.Mode())
+		switch {
+		case info.IsDir():
+		case path == dotGit:
+			// A linked worktree's .git file names its git directory.
+			data, err := os.ReadFile(path)
+			if err != nil {
+				return "", false
+			}
+			b.Write(data)
+			b.WriteByte(0)
+		default:
+			fmt.Fprintf(&b, "%d\x00%d\x00", info.Size(), info.ModTime().UnixNano())
+		}
 	}
 	return b.String(), true
 }

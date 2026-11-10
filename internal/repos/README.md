@@ -123,9 +123,14 @@ and run no git, unlike `List` and `Repositories`, which probe every clone.
 A probe runs git in the clone only when something its answer is read from
 changed. The process keeps each clone's last availability with a stamp of:
 
-* its directory;
-* its `.git` entry (a directory, or a linked worktree's file);
-* its common directory's `config`, where the remotes live.
+* that its directory exists;
+* its `.git` entry's kind, and for a linked worktree's file its contents;
+* its common directory's `config` size and modification time, where the
+  remotes live.
+
+The modification times of the directory and its `.git` directory are not part
+of the stamp: they move on every index write and new file without changing the
+answer. Concurrent misses for one clone share a single probe.
 
 While the stamp is unchanged the answer is reused, for at most `ProbeMaxAge`
 (5 minutes). A rewrite that only global git configuration makes, such as
