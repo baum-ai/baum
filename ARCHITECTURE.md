@@ -68,7 +68,7 @@ bundle types to resolve anchors and carry history; `bundle` never imports
 | `decisions` | the decisions an agent session made: the decision schema, the cleaned transcript a model reads, the strict reply schema and parser, the citation validator, and the published extraction prompt |
 | `features` | grouping work into features: the assigner, summarizer and consolidation model calls with their published prompt versions, decision attribution, status and the large-update rule; [rules](features/README.md) |
 | `validation/commitlabel` | deterministic validation-run commit labels from supplied session events and verified Git objects; [rule and limits](validation/commitlabel/README.md) |
-| `redact` | the one redaction engine used for input, output and logs |
+| `redact` | the one redaction engine used for input, output and logs; `redact.Shared` compiles it once per process (again only if `redact.Config` changes), and `redact.Memo` remembers masked text by a salted hash of its input, for text masked again unchanged, such as the live sessions' lines (`transcript.Renderer.Mask`) every second |
 | `githubapi` | GitHub API plumbing every host shares: the GraphQL transport that turns primary and secondary rate limits into a typed error with the reset time, and GitHub's `BigInt` and `GitObjectID` scalars |
 | `hosted/...` | the hosted service's client: the `baumcli` commands, the `apiclient` HTTP client and its protocol handshake, the `traceupload` archive builder, and the committed agent-hook vocabulary in `agenthooks`, which the hosted onboarding pull request writes too, and `agentplugins`, which installs user-scoped marketplace plugins through native agent CLIs |
 
