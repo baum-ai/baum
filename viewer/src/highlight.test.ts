@@ -11,6 +11,7 @@ import {
   mapHunkTokens,
   MAX_HIGHLIGHT_CHARS,
   MAX_HIGHLIGHT_LINES,
+  TokenCache,
   tokenize,
 } from "./highlight";
 
@@ -220,5 +221,88 @@ describe("fallbacks", () => {
   it("maps tokens from the tokenizer for a known language", async () => {
     const tokens = await highlightHunks("a.ts", [hunk], fake);
     expect(tokens?.[0]?.[0]?.[0]?.color).toBe("c");
+  });
+});
+
+const echo = async (code: string) => [[{ content: code }]];
+
+describe("tokenize scheduling", () => {
+  it("yields between texts once the work has run past the slice", async () => {
+    let clock = 0;
+    const yieldFn = vi.fn(async () => {});
+    const slow = vi.fn(async (code: string) => {
+      clock += 5;
+      return [[{ content: code }]];
+    });
+    const codes = Array.from({ length: 10 }, (_, i) => `c${i}`);
+    const tokens = await tokenize(codes, "typescript", slow, { yieldFn, now: () => clock });
+    expect(tokens).toHaveLength(10);
+    expect(tokens?.[9]?.[0]?.[0]?.content).toBe("c9");
+    expect(yieldFn).toHaveBeenCalledTimes(4);
+  });
+
+  it("does not yield for quick work", async () => {
+    const yieldFn = vi.fn(async () => {});
+    await tokenize(["a", "b", "c"], "typescript", echo, { yieldFn, now: () => 0 });
+    expect(yieldFn).not.toHaveBeenCalled();
+  });
+
+  it("stops at the next yield when aborted, tokenising nothing more", async () => {
+    let clock = 0;
+    const controller = new AbortController();
+    const tokenizer = vi.fn(async (code: string) => {
+      clock += 10;
+      return [[{ content: code }]];
+    });
+    const yieldFn = vi.fn(async () => controller.abort());
+    const result = await tokenize(["a", "b", "c", "d"], "typescript", tokenizer, {
+      signal: controller.signal,
+      yieldFn,
+      now: () => clock,
+    });
+    expect(result).toBeNull();
+    expect(tokenizer).toHaveBeenCalledTimes(1);
+  });
+
+  it("does nothing when already aborted", async () => {
+    const tokenizer = vi.fn(echo);
+    const result = await tokenize(["a"], "typescript", tokenizer, {
+      signal: AbortSignal.abort(),
+    });
+    expect(result).toBeNull();
+    expect(tokenizer).not.toHaveBeenCalled();
+  });
+});
+
+const lines = (text: string): HighlightedLine[] => [[{ content: text }]];
+
+describe("TokenCache", () => {
+  it("returns what was stored, per language and code", () => {
+    const cache = new TokenCache(10, 1000);
+    cache.set("typescript", "a", lines("a"));
+    expect(cache.get("typescript", "a")).toEqual(lines("a"));
+    expect(cache.get("go", "a")).toBeUndefined();
+  });
+
+  it("evicts the least recently used entry past the entry bound", () => {
+    const cache = new TokenCache(2, 1000);
+    cache.set("go", "a", lines("a"));
+    cache.set("go", "b", lines("b"));
+    cache.get("go", "a");
+    cache.set("go", "c", lines("c"));
+    expect(cache.get("go", "b")).toBeUndefined();
+    expect(cache.get("go", "a")).toBeDefined();
+    expect(cache.get("go", "c")).toBeDefined();
+  });
+
+  it("evicts past the character bound and skips an entry bigger than it", () => {
+    const cache = new TokenCache(10, 10);
+    cache.set("go", "aaaa", lines("a"));
+    cache.set("go", "bbbb", lines("b"));
+    cache.set("go", "cccc", lines("c"));
+    expect(cache.get("go", "aaaa")).toBeUndefined();
+    expect(cache.size).toBe(2);
+    cache.set("go", "x".repeat(11), lines("x"));
+    expect(cache.size).toBe(2);
   });
 });
