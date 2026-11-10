@@ -1430,3 +1430,39 @@ it("keeps counting a waiting card's wait without rendering the card again", asyn
     vi.useRealTimers();
   }
 });
+
+it("links a session's pull request once its link resolves, rendering only that card again", async () => {
+  const said = { steps: [], last_message: "Working on it." };
+  // The same session objects throughout: only what the resolver answers changes.
+  const sessions = [
+    session({ session_id: "a", pr: 5, pr_state: "OPEN", activity: said }),
+    session({ session_id: "b", pr: 6, pr_state: "OPEN", activity: said }),
+  ];
+  const draw = (links: Record<number, string>) =>
+    act(async () =>
+      root.render(
+        <ToastProvider>
+          <SessionsPage
+            sessions={sessions}
+            requests={requests()}
+            prHref={(s) => links[s.pr!] ?? null}
+            Link={Link}
+          />
+        </ToastProvider>,
+      ),
+    );
+  await draw({});
+  const cards = () => [...node.querySelectorAll('[aria-label="Running now"] li')];
+  const [first, second] = cards();
+  expect(first!.querySelector("a.local-session-pr")).toBeNull();
+  const renders = markdownRenders.count;
+
+  await draw({ 5: "/s/test-ns/?page=pr&number=5" });
+  expect(first!.querySelector("a.local-session-pr")?.getAttribute("href")).toBe(
+    "/s/test-ns/?page=pr&number=5",
+  );
+  expect(cards()[1]).toBe(second);
+  expect(second!.querySelector("a.local-session-pr")).toBeNull();
+  // Only the card whose link changed rendered again.
+  expect(markdownRenders.count).toBe(renders + 1);
+});
