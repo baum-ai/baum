@@ -1,7 +1,7 @@
 import { mockStateFetch } from "./ui-state-test-helper";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import type { ComponentType } from "react";
+import type { ComponentProps, ComponentType } from "react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type * as Markdown from "@baum/viewer/components/markdown";
 import type { ViewerLinkProps } from "@baum/viewer/navigation";
@@ -29,9 +29,11 @@ vi.mock("@baum/viewer/components/markdown", async (importOriginal) => {
   const actual = await importOriginal<typeof Markdown>();
   return {
     ...actual,
-    InlineMarkdown: (props: Parameters<typeof actual.InlineMarkdown>[0]) => {
+    // The real component is memoised, so it is rendered as an element rather
+    // than called.
+    InlineMarkdown: (props: ComponentProps<typeof actual.InlineMarkdown>) => {
       markdownRenders.count++;
-      return actual.InlineMarkdown(props);
+      return <actual.InlineMarkdown {...props} />;
     },
   };
 });
