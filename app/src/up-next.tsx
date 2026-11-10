@@ -675,12 +675,17 @@ export function useUpNext(
 }
 
 /** What one of the person's own pull requests waits on, in a few words; a
- *  stacked one waits on the open pull request under it (`base`). */
+ *  stacked one waits on the open pull request under it (`base`). One GitHub
+ *  blocks with no check reported and no approval required waits on checks
+ *  that never started, such as a CI run that failed to start: "No checks
+ *  reported", not a review. */
 export function waitingOn(entry: Entry, base?: number) {
   if (entry.pull_request.draft || entry.merge === "draft") return "Draft";
   if (base != null) return `Waiting on #${base}`;
   if (entry.checks === "running") return "Checks running";
   if (entry.review === "changes_requested") return "Changes requested";
+  const unchecked = entry.merge === "blocked" && entry.checks === "none";
+  if (unchecked && entry.pull_request.review_required === false) return "No checks reported";
   if (entry.review !== "approved") return "Waiting on review";
   return "Waiting on GitHub";
 }

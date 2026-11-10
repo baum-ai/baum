@@ -82,9 +82,14 @@ type PullRequest struct {
 	// Behind is GitHub's report (mergeStateStatus BEHIND) that the head
 	// branch is out of date with its base and not conflicting, which Update
 	// branch fixes. A draft never reports it.
-	Behind           bool `json:"behind"`
-	Unresolved       *int `json:"unresolved"`
-	UnresolvedCapped bool `json:"unresolved_capped"`
+	Behind bool `json:"behind"`
+	// ReviewRequired is whether GitHub still waits for a required approving
+	// review (reviewDecision REVIEW_REQUIRED). False says no approval holds
+	// it up: none is required, or the one required is given. Nil when
+	// unknown, as in snapshots cached before it existed.
+	ReviewRequired   *bool `json:"review_required"`
+	Unresolved       *int  `json:"unresolved"`
+	UnresolvedCapped bool  `json:"unresolved_capped"`
 	// UpdatedAt is GitHub's last update of the pull request: a push, an edit,
 	// a review or a comment. The background refresh re-reads a saved review's
 	// evidence when it is newer than the last read.
@@ -902,6 +907,7 @@ func (p *poll) build(ctx context.Context, repository github.Repository, fresh bo
 		}
 		item.Review, item.Checks, item.Merge, item.Unresolved, item.UnresolvedCapped = row.states()
 		item.Behind = row.behind()
+		item.ReviewRequired = new(row.ReviewDecision != nil && *row.ReviewDecision == "REVIEW_REQUIRED")
 		if compare && carryMerge(old, row, unknown) {
 			if p.carried == nil {
 				p.carried = map[int]PullRequest{}
