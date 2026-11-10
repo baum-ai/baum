@@ -93,7 +93,7 @@ cached for five minutes.
 
 ## baum's work
 
-From the jobs ledger (`state/jobs` in `app.sqlite`), jobs created in the window: reviews, group
+From the jobs ledger (the `jobs` table in `app.sqlite`), jobs created in the window: reviews, group
 reviews and fixes, retries of a review's failed section details (counted
 apart, never as reviews; one that stood down because its version changed or
 the pull request moved is not counted as cancelled), automatic ones, their

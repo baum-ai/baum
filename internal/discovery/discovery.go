@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"net/http"
 	"net/url"
 	"os"
@@ -138,7 +139,8 @@ type cachedResponse struct {
 }
 type diskCache struct {
 	// Format is cacheFormat when the cache was written; a cache of an older
-	// format drops its conditional responses, so they are read in full once.
+	// format drops what it cannot trust (upgrade) but keeps its snapshot, which
+	// stays shown until the first full sweep replaces it.
 	Format      int `json:",omitempty"`
 	Snapshot    Snapshot
 	Responses   map[string]cachedResponse
@@ -151,6 +153,42 @@ type diskCache struct {
 	// Carried are the pull requests whose merge state the last poll kept from
 	// an earlier one while GitHub worked it out again (carryMerge).
 	Carried map[int]bool `json:",omitempty"`
+	// Pulls are the open pull requests as GitHub last described them, by
+	// number. Each poll builds the snapshot from them.
+	Pulls []gqlPR `json:",omitempty"`
+	// Complete says Pulls holds every open pull request: a full sweep finished
+	// since the cache took this format. Until then the snapshot keeps the
+	// older format's pull requests that no read has replaced or closed.
+	Complete bool `json:",omitempty"`
+	// Cursor is GitHub's update time up to which every change is in Pulls.
+	// The next incremental read stops below Cursor minus cursorOverlap.
+	Cursor time.Time `json:",omitzero"`
+	// Swept is when the last full sweep finished, on this computer's clock.
+	Swept time.Time `json:",omitzero"`
+	// Sweep is a full sweep that a poll left unfinished; the next poll goes on
+	// from its cursor.
+	Sweep *sweep `json:",omitempty"`
+	// Authors are the pull request authors' write permission, by lower-case
+	// login, as GitHub answered within permissionTTL.
+	Authors map[string]authorPermission `json:",omitempty"`
+	// Teams is the account's team memberships; only the budget record, which
+	// the credential's repositories share, keeps it.
+	Teams teamMembership `json:",omitzero"`
+}
+
+// sweep is a full sweep under way: the cursor after its last page read, the
+// pull requests it has seen, and GitHub's newest update when it began.
+type sweep struct {
+	After string    `json:",omitempty"`
+	Seen  []int     `json:",omitempty"`
+	Floor time.Time `json:",omitzero"`
+}
+
+// authorPermission is one author's write permission: nil Push when GitHub
+// refused to say (403 or 404), which is an answer kept as long as the others.
+type authorPermission struct {
+	Push *bool     `json:",omitempty"`
+	Read time.Time `json:",omitzero"`
 }
 
 // After a push GitHub works out in the background whether the pull request
@@ -166,25 +204,55 @@ const (
 	maxSettles     = 3
 )
 
-// cacheFormat changes when the minimal responses keep more fields: 1 added
-// the pull requests' head branch, 2 their base branch. A 304 answer reuses
-// the stored body, which would otherwise never gain the new fields.
-const cacheFormat = 2
+// How a poll reads the open pull requests. Most polls are incremental: they
+// read the pull requests updated since the cursor, newest first and of any
+// state, so one that closed or merged is seen and leaves the cache. A full
+// sweep reads every open one at least every sweepInterval, and whenever the
+// cache's count or newest pull request disagrees with GitHub's.
+const (
+	sweepInterval = 10 * time.Minute
+	// cursorOverlap is how far below the cursor an incremental read goes on:
+	// GitHub's update times have one-second precision and are set by more
+	// than one server, so a pull request updated in the cursor's second, or
+	// recorded a little late, is read again rather than skipped.
+	cursorOverlap = 2 * time.Minute
+	// permissionTTL is how long an author's permission answer is reused.
+	permissionTTL = time.Hour
+	// watchLimit bounds the pull requests an incremental poll re-reads by
+	// number because GitHub's update time does not follow what changed.
+	watchLimit = 50
+	// windowPageLimit bounds an incremental read, 500 pull requests at
+	// inboxPageSize; a longer window is replaced by a sweep.
+	windowPageLimit = 20
+	// pageLimit bounds the pages of one read.
+	pageLimit = 1000
+)
 
-// Budget files are shared by service instances, alongside repository caches.
-// Serialize in-process polls so a newly exhausted budget is visible before the
-// next repository starts. Atomic disk replacement also preserves it on restart.
-var budgetMu sync.Mutex
+// cacheFormat changes when the cache keeps more than before: 1 added the pull
+// requests' head branch, 2 their base branch, 3 GitHub's rows, the cursor and
+// the permission answers of incremental polling.
+const cacheFormat = 3
+
+// ErrTimeout is a poll or probe that ran out of time. Whatever it read before
+// is kept.
+var ErrTimeout = errors.New("GitHub discovery timed out")
 
 type Service struct {
 	client    *github.Client
 	directory string
-	mu        sync.Mutex
-	liveMu    sync.Mutex
+	// mu guards locks, the per-repository locks that serialize a repository's
+	// polls and cache writes. Polls of different repositories run at once.
+	mu     sync.Mutex
+	locks  map[string]*sync.Mutex
+	liveMu sync.Mutex
+	// writeMu serializes this service's cache writes to app.sqlite.
+	writeMu   sync.Mutex
 	now       func() time.Time
 	validated map[string]bool
 	epoch     uint64
-	active    context.CancelFunc
+	// active cancels the polls and probes under way at an identity reset.
+	active map[uint64]context.CancelFunc
+	nextID uint64
 	// Updated, when set before use, is called after anything Cached reads
 	// changes: a cache write, or live freshness. It may run with the
 	// service's locks held, so it must not call the service.
@@ -197,15 +265,15 @@ func (s *Service) updated() {
 	}
 }
 
-// ResetIdentity cancels the old transaction and invalidates live discovery.
+// ResetIdentity cancels the old transactions and invalidates live discovery.
 // Disk partitions remain private and are keyed by their original credential.
 func (s *Service) ResetIdentity() {
 	s.liveMu.Lock()
 	defer s.liveMu.Unlock()
 	s.epoch++
-	if s.active != nil {
-		s.active()
-		s.active = nil
+	for id, cancel := range s.active {
+		cancel()
+		delete(s.active, id)
 	}
 	s.validated = map[string]bool{}
 	s.updated()
@@ -214,6 +282,41 @@ func (s *Service) Epoch() uint64 {
 	s.liveMu.Lock()
 	defer s.liveMu.Unlock()
 	return s.epoch
+}
+
+// begin registers a transaction's cancel for ResetIdentity and returns the
+// epoch it runs in.
+func (s *Service) begin(cancel context.CancelFunc) (uint64, func()) {
+	s.liveMu.Lock()
+	defer s.liveMu.Unlock()
+	if s.active == nil {
+		s.active = map[uint64]context.CancelFunc{}
+	}
+	s.nextID++
+	id := s.nextID
+	s.active[id] = cancel
+	return s.epoch, func() {
+		s.liveMu.Lock()
+		defer s.liveMu.Unlock()
+		delete(s.active, id)
+	}
+}
+
+// lock serializes one repository's polls and cache writes.
+func (s *Service) lock(repository github.Repository) func() {
+	key := strings.ToLower(repository.String())
+	s.mu.Lock()
+	if s.locks == nil {
+		s.locks = map[string]*sync.Mutex{}
+	}
+	m := s.locks[key]
+	if m == nil {
+		m = &sync.Mutex{}
+		s.locks[key] = m
+	}
+	s.mu.Unlock()
+	m.Lock()
+	return m.Unlock
 }
 
 // New uses app.sqlite in directory, or the shared application database when empty.
@@ -258,6 +361,8 @@ func (s *Service) load(key string) (diskCache, error) {
 }
 
 func (s *Service) save(key string, cache diskCache) error {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
 	raw, err := json.Marshal(cache)
 	if err != nil {
 		return err
@@ -302,13 +407,12 @@ func (s *Service) Cached(ctx context.Context, repository github.Repository) (Sna
 }
 
 type poll struct {
-	reader    *github.RESTReader
-	cache     diskCache
-	rate      RateLimit
-	graphRate RateLimit
-	now       time.Time
-	unchanged bool
-	minimum   time.Duration
+	reader *github.RESTReader
+	cache  diskCache
+	budget *ledger
+	now    time.Time
+	// minimum is the shortest interval the responses allow.
+	minimum time.Duration
 	// server is the polling interval GitHub asked for, if any.
 	server time.Duration
 	// moved: a pull request has a head the last poll did not see. unknown: a
@@ -318,39 +422,99 @@ type poll struct {
 	// carried is the earlier poll's pull request whose merge state each
 	// unknown one keeps (carryMerge).
 	carried map[int]PullRequest
-	// fingerprint is the open pull requests' when all pages were read.
-	fingerprint fingerprint
+	// rows are the open pull requests as this poll leaves them.
+	rows map[int]gqlPR
+	// legacy are an older format's pull requests a first sweep has not yet
+	// replaced; nil once the cache is complete.
+	legacy map[int]PullRequest
+	// read are the pull requests GitHub described in this poll, and removed
+	// those it reported closed, merged or gone.
+	read, removed map[int]bool
+	// readAt is each read pull request's update time, so an older copy of it
+	// on a later page does not replace a newer one.
+	readAt map[int]time.Time
+	// windowCursor is where the cursor moves once the poll's window and
+	// re-reads are read.
+	windowCursor time.Time
+	// size is how many pull requests a query asks for (shrinking); zero
+	// until the first.
+	size int
+	// merged are the base branches a pull request merged into since the cursor.
+	merged map[string]bool
+	// open and newest are GitHub's count of open pull requests and the newest
+	// one's number when the incremental read began; nil when it did not say.
+	open, newest *int
+	// viewer and permission are the latest response's; identified once one
+	// arrived.
+	viewer     actor
+	permission string
+	identified bool
 }
 
 var errRateLimit = errors.New("GitHub rate limit exhausted")
 
-func (p *poll) get(ctx context.Context, path string, into any) error {
-	if rateDeadline(p.rate).After(p.now) {
+// statusError is a GitHub answer other than success or a rate limit.
+type statusError struct{ status int }
+
+func (e *statusError) Error() string { return fmt.Sprintf("GitHub discovery HTTP %d", e.status) }
+
+// refused is GitHub declining to answer this token: a permission it may not
+// read, or teams without read:org. It is an answer, kept like one.
+func (e *statusError) refused() bool {
+	return e.status == http.StatusUnauthorized || e.status == http.StatusForbidden || e.status == http.StatusNotFound
+}
+
+// gateway is GitHub's gateway answering instead of its API, usually because
+// the query took too long. It may succeed if asked again.
+func (e *statusError) gateway() bool {
+	return e.status == http.StatusBadGateway || e.status == http.StatusServiceUnavailable || e.status == http.StatusGatewayTimeout
+}
+
+// failed turns a request that returned no response into the poll's error: a
+// poll out of time, or one GitHub stopped answering (WithIdleTimeout), is a
+// timeout.
+func failed(ctx context.Context, err error) error {
+	switch {
+	case errors.Is(err, github.ErrIdentityChanged):
+		return err
+	case errors.Is(context.Cause(ctx), context.DeadlineExceeded):
+		return ErrTimeout
+	case ctx.Err() != nil:
+		return ctx.Err()
+	}
+	return err
+}
+
+func (p *poll) get(ctx context.Context, responses map[string]cachedResponse, path string, into any) error {
+	if rest, _ := p.budget.budgets(); rateDeadline(rest).After(p.now) {
 		return errRateLimit
 	}
-	old := p.cache.Responses[path]
+	old := responses[path]
 	status, headers, body, err := p.reader.Read(ctx, path, old.ETag)
 	if err != nil {
-		return err
+		return failed(ctx, err)
 	}
-	if remaining, err := strconv.Atoi(headers.Get("X-RateLimit-Remaining")); err == nil {
-		p.rate.Remaining = &remaining
+	restartIdle(ctx)
+	var remaining *int
+	if n, err := strconv.Atoi(headers.Get("X-RateLimit-Remaining")); err == nil {
+		remaining = &n
 	}
-	if reset, err := strconv.ParseInt(headers.Get("X-RateLimit-Reset"), 10, 64); err == nil {
-		p.rate.Reset = time.Unix(reset, 0)
+	var reset time.Time
+	if n, err := strconv.ParseInt(headers.Get("X-RateLimit-Reset"), 10, 64); err == nil {
+		reset = time.Unix(n, 0)
 	}
 	if seconds, err := strconv.Atoi(headers.Get("X-Poll-Interval")); err == nil && seconds > 0 {
 		p.minimum = max(p.minimum, time.Duration(seconds)*time.Second)
 		p.server = max(p.server, time.Duration(seconds)*time.Second)
 	}
-	if status == 429 || status == 403 && (headers.Get("X-RateLimit-Remaining") == "0" || headers.Get("Retry-After") != "") {
-		resume := p.now.Add(time.Minute)
-		if seconds, err := strconv.Atoi(headers.Get("Retry-After")); err == nil && seconds >= 0 {
-			resume = p.now.Add(time.Duration(seconds) * time.Second)
-		} else if parsed, err := http.ParseTime(headers.Get("Retry-After")); err == nil {
-			resume = parsed
+	limited := status == 429 || status == 403 && (headers.Get("X-RateLimit-Remaining") == "0" || headers.Get("Retry-After") != "")
+	p.budget.update(func(rest, _ *RateLimit) {
+		observe(rest, remaining, reset)
+		if limited {
+			rest.RetryAt = maxTime(rest.RetryAt, retryAt(p.now, headers))
 		}
-		p.rate.RetryAt = resume
+	})
+	if limited {
 		return errRateLimit
 	}
 	if status == 304 {
@@ -359,24 +523,34 @@ func (p *poll) get(ctx context.Context, path string, into any) error {
 		}
 		body = old.Body
 	} else if status != 200 {
-		return fmt.Errorf("GitHub discovery HTTP %d", status)
+		return &statusError{status}
 	}
 	if err := json.Unmarshal(body, into); err != nil {
-		return errors.New("invalid GitHub discovery response")
+		return errInvalid
 	}
 	if status == 200 {
 		// Persist only inbox fields, never full PR bodies or signed URLs.
 		minimal, err := json.Marshal(into)
 		if err != nil {
-			return errors.New("invalid GitHub discovery response")
+			return errInvalid
 		}
-		if string(minimal) != string(old.Body) {
-			p.unchanged = false
-		}
-		p.cache.Responses[path] = cachedResponse{ETag: headers.Get("ETag"), Body: minimal}
+		responses[path] = cachedResponse{ETag: headers.Get("ETag"), Body: minimal}
 	}
 	return nil
 }
+
+// retryAt is when a rate-limited response says to ask again: its Retry-After,
+// or a minute.
+func retryAt(now time.Time, headers http.Header) time.Time {
+	if seconds, err := strconv.Atoi(headers.Get("Retry-After")); err == nil && seconds >= 0 {
+		return now.Add(time.Duration(seconds) * time.Second)
+	}
+	if at, err := http.ParseTime(headers.Get("Retry-After")); err == nil {
+		return at
+	}
+	return now.Add(time.Minute)
+}
+
 func maxTime(a, b time.Time) time.Time {
 	if a.After(b) {
 		return a
@@ -416,7 +590,7 @@ type apiPR struct {
 	RequestedTeams     []team  `json:"requested_teams"`
 }
 
-func collect[T any](ctx context.Context, p *poll, path string) ([]T, error) {
+func collect[T any](ctx context.Context, p *poll, responses map[string]cachedResponse, path string) ([]T, error) {
 	var result []T
 	for page := 1; page <= 1000; page++ {
 		var rows []T
@@ -424,7 +598,7 @@ func collect[T any](ctx context.Context, p *poll, path string) ([]T, error) {
 		if strings.Contains(path, "?") {
 			separator = "&"
 		}
-		if err := p.get(ctx, path+separator+"per_page=100&page="+strconv.Itoa(page), &rows); err != nil {
+		if err := p.get(ctx, responses, path+separator+"per_page=100&page="+strconv.Itoa(page), &rows); err != nil {
 			return nil, err
 		}
 		result = append(result, rows...)
@@ -435,9 +609,10 @@ func collect[T any](ctx context.Context, p *poll, path string) ([]T, error) {
 	return nil, errors.New("GitHub discovery pagination exceeded limit")
 }
 
-// Poll refreshes GraphQL pull pages and conditional REST metadata without waiting through a rate limit.
-// Callers schedule NextPoll; unchanged results back off from 30s to 15m.
-// Failure returns the last complete snapshot, explicitly stale, and an error.
+// Poll refreshes the open pull requests and conditional REST metadata without
+// waiting through a rate limit. Callers schedule NextPoll; unchanged results
+// back off from 30s to 15m. Failure returns the cached snapshot, with what this
+// poll did read merged into it, explicitly stale, and an error.
 func (s *Service) Poll(ctx context.Context, repository github.Repository) (Snapshot, error) {
 	return s.poll(ctx, repository, false)
 }
@@ -449,17 +624,25 @@ func (s *Service) PollNow(ctx context.Context, repository github.Repository) (Sn
 	return s.poll(ctx, repository, true)
 }
 
+// upgrade drops what an older cache format cannot vouch for. Its snapshot
+// stays, so the inbox is still shown until the first full sweep.
+func upgrade(cache diskCache) diskCache {
+	if cache.Format >= cacheFormat {
+		return cache
+	}
+	cache.Responses = nil
+	cache.Pulls, cache.Complete, cache.Cursor, cache.Swept, cache.Sweep, cache.Authors = nil, false, time.Time{}, time.Time{}, nil, nil
+	return cache
+}
+
 func (s *Service) poll(ctx context.Context, repository github.Repository, force bool) (Snapshot, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	pauseIdle(ctx)
+	defer s.lock(repository)()
+	restartIdle(ctx)
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	s.liveMu.Lock()
-	epoch := s.epoch
-	s.active = cancel
-	s.liveMu.Unlock()
-	budgetMu.Lock()
-	defer budgetMu.Unlock()
+	epoch, done := s.begin(cancel)
+	defer done()
 	reader, err := s.client.REST(ctx, repository)
 	if err != nil {
 		return Snapshot{}, err
@@ -473,49 +656,66 @@ func (s *Service) poll(ctx context.Context, repository github.Repository, force 
 		return Snapshot{}, loadErr
 	}
 	cache.Snapshot.Epoch = epoch
-	if cache.Format < cacheFormat {
-		cache.Responses = nil
-	}
+	cache = upgrade(cache)
 	cache.Format = cacheFormat
 	budgetPath, err := s.path(reader.CacheIdentity(), "")
 	if err != nil {
 		return Snapshot{}, err
 	}
 	budgetPath += ".budget"
-	budget, budgetErr := s.load(budgetPath)
-	if budgetErr != nil && !errors.Is(budgetErr, os.ErrNotExist) {
-		return Snapshot{}, budgetErr
+	budget, err := s.ledger(budgetPath)
+	if err != nil {
+		return Snapshot{}, err
 	}
 	now := s.now()
-	shared := poll{rate: budget.Snapshot.Rate, graphRate: budget.GraphQLRate, now: now}
-	if deadline := shared.ResetIfExhausted(); deadline.After(now) {
+	p := poll{reader: reader, cache: cache, budget: budget, now: now, minimum: 30 * time.Second}
+	if deadline := p.ResetIfExhausted(); deadline.After(now) {
 		s.setValidated(path, false)
 		snapshot := cache.Snapshot
 		snapshot.Repository = repository.String()
 		snapshot.Stale = true
 		snapshot.Error = errRateLimit.Error()
-		snapshot.Rate = shared.visibleRate()
+		snapshot.Rate = p.visibleRate()
 		snapshot.NextPoll = maxTime(snapshot.NextPoll, deadline)
 		return snapshot, errRateLimit
 	}
 	if !force && now.Before(cache.Snapshot.NextPoll) {
 		return cache.Snapshot, nil
 	}
-	if cache.Responses == nil {
-		cache.Responses = map[string]cachedResponse{}
+	if p.cache.Responses == nil {
+		p.cache.Responses = map[string]cachedResponse{}
 	}
-	p := poll{reader: reader, cache: cache, rate: shared.rate, graphRate: shared.graphRate, now: now, unchanged: true, minimum: 30 * time.Second}
-	snapshot, err := p.discover(ctx, repository)
+	if p.cache.Authors == nil {
+		p.cache.Authors = map[string]authorPermission{}
+	}
+	err = p.refresh(ctx, repository)
+	if err != nil && ctx.Err() != nil && !errors.Is(err, errRateLimit) {
+		err = failed(ctx, err)
+	}
+	snapshot, buildErr := p.build(ctx, repository, err == nil)
+	if err == nil {
+		err = buildErr
+	}
 	if err != nil {
-		snapshot = cache.Snapshot
+		if !p.identified && len(p.removed) == 0 {
+			snapshot = cache.Snapshot
+		}
 		snapshot.Repository = repository.String()
 		snapshot.Stale = true
 		snapshot.Error = err.Error()
+		snapshot.Observations = cache.Snapshot.Observations
+		snapshot.FetchedAt = cache.Snapshot.FetchedAt
+		snapshot.Settling = false
+		// The failed poll's snapshot is saved with a new head it read: the next
+		// one would not see the head move, so the settling starts here.
+		if p.moved || p.forgot {
+			p.cache.Settling = max(p.cache.Settling, 1)
+		}
 		snapshot.Rate = p.visibleRate()
 		snapshot.NextPoll = maxTime(now.Add(time.Minute), p.ResetIfExhausted())
 	} else {
 		interval := 30 * time.Second
-		if p.unchanged {
+		if unchanged(cache.Snapshot.PullRequests, snapshot.PullRequests) {
 			interval = min(max(cache.Interval, 30*time.Second)*2, 15*time.Minute)
 		}
 		interval = max(interval, p.minimum)
@@ -534,10 +734,18 @@ func (s *Service) poll(ctx context.Context, repository github.Repository, force 
 		}
 		snapshot.Observations = cache.Snapshot.Observations
 		snapshot.FetchedAt = now
-		snapshot.NextPoll = maxTime(now.Add(interval), p.ResetIfExhausted())
+		next := now.Add(interval)
+		// The backoff does not put off the next full sweep, though the
+		// server's poll interval still does.
+		if !p.cache.Swept.IsZero() {
+			if due := maxTime(p.cache.Swept.Add(sweepInterval), now.Add(p.minimum)); due.Before(next) {
+				next = due
+			}
+		}
+		snapshot.NextPoll = maxTime(next, p.ResetIfExhausted())
 		snapshot.Rate = p.visibleRate()
 		p.cache.Interval = interval
-		p.cache.Fingerprint = p.fingerprint
+		p.cache.Fingerprint = p.fingerprint()
 		p.cache.Carried = nil
 		for number := range p.carried {
 			if p.cache.Carried == nil {
@@ -548,14 +756,16 @@ func (s *Service) poll(ctx context.Context, repository github.Repository, force 
 	}
 	s.liveMu.Lock()
 	defer s.liveMu.Unlock()
-	if s.epoch != epoch || ctx.Err() != nil {
+	// A reset meanwhile, or a credential that changed under the requests:
+	// nothing read under the old identity is kept.
+	if s.epoch != epoch || errors.Is(err, github.ErrIdentityChanged) {
 		return Snapshot{}, github.ErrIdentityChanged
 	}
 	s.validated[path] = err == nil
 	s.updated()
 	snapshot.Epoch = epoch
 	p.cache.Snapshot = snapshot
-	if saveErr := s.save(budgetPath, diskCache{Snapshot: Snapshot{Rate: p.rate}, GraphQLRate: p.graphRate}); saveErr != nil {
+	if saveErr := s.save(budgetPath, budget.record()); saveErr != nil {
 		return snapshot, fmt.Errorf("save discovery rate budget: %w", saveErr)
 	}
 	if saveErr := s.save(path, p.cache); saveErr != nil {
@@ -563,63 +773,105 @@ func (s *Service) poll(ctx context.Context, repository github.Repository, force 
 	}
 	return snapshot, err
 }
+
 func (p *poll) ResetIfExhausted() time.Time {
-	resume := maxTime(p.rate.RetryAt, p.graphRate.RetryAt)
-	if p.graphRate.Remaining != nil && *p.graphRate.Remaining == 0 {
-		resume = maxTime(resume, p.graphRate.Reset)
+	rest, graph := p.budget.budgets()
+	resume := maxTime(rest.RetryAt, graph.RetryAt)
+	if graph.Remaining != nil && *graph.Remaining == 0 {
+		resume = maxTime(resume, graph.Reset)
 	}
-	if p.rate.Remaining != nil && *p.rate.Remaining == 0 {
-		resume = maxTime(resume, p.rate.Reset)
+	if rest.Remaining != nil && *rest.Remaining == 0 {
+		resume = maxTime(resume, rest.Reset)
 	}
 	return resume
 }
 
-func (p *poll) discover(ctx context.Context, repository github.Repository) (Snapshot, error) {
-	snapshot := Snapshot{Repository: repository.String(), PullRequests: []PullRequest{}}
-	prs, viewer, canPush, err := p.openPulls(ctx, repository)
-	if err != nil {
-		return snapshot, err
+// unchanged is whether a poll found the pull requests as the last one left
+// them. Update times are left out: a comment alone does not reset the backoff.
+func unchanged(before, after []PullRequest) bool {
+	strip := func(prs []PullRequest) string {
+		stable := slices.Clone(prs)
+		for i := range stable {
+			stable[i].UpdatedAt = time.Time{}
+		}
+		raw, _ := json.Marshal(stable)
+		return string(raw)
 	}
-	if viewer.Login == "" {
+	return len(before) == len(after) && strip(before) == strip(after)
+}
+
+// fingerprint is the open pull requests' as this poll leaves them, which the
+// probe compares with GitHub's.
+func (p *poll) fingerprint() fingerprint {
+	f := fingerprint{Open: len(p.rows)}
+	for number, row := range p.rows {
+		f.Newest = max(f.Newest, number)
+		f.Updated = maxTime(f.Updated, row.UpdatedAt)
+	}
+	return f
+}
+
+// build makes the snapshot from the rows: the viewer's flags, the account's
+// teams and the authors' permissions, which fresh asks GitHub for when they
+// are due. A poll that failed builds from what it has, without asking.
+func (p *poll) build(ctx context.Context, repository github.Repository, fresh bool) (Snapshot, error) {
+	snapshot := Snapshot{Repository: repository.String(), PullRequests: []PullRequest{}, Viewer: p.cache.Snapshot.Viewer}
+	if p.identified {
+		snapshot.Viewer = p.viewer.Login
+	}
+	if snapshot.Viewer == "" {
 		return snapshot, errors.New("GitHub token has no user identity")
 	}
-	snapshot.Viewer = viewer.Login
-	if !p.cache.Snapshot.FetchedAt.IsZero() {
-		known := map[int]PullRequest{}
-		for _, pr := range p.cache.Snapshot.PullRequests {
-			known[pr.Number] = pr
+	var buildErr error
+	var membership map[int64]bool
+	var known bool
+	if fresh {
+		membership, known, buildErr = p.membership(ctx)
+	} else {
+		p.budget.mu.Lock()
+		teams := p.budget.teams
+		p.budget.mu.Unlock()
+		membership, known = map[int64]bool{}, teams.Known
+		for _, id := range teams.IDs {
+			membership[id] = true
 		}
-		for _, row := range prs {
-			old := known[row.Number]
-			unknown := !row.IsDraft && (row.Mergeable == "UNKNOWN" || row.MergeStateStatus == "UNKNOWN")
+	}
+	if fresh && buildErr == nil {
+		buildErr = p.permissions(ctx, repository)
+	}
+	var push *bool
+	permission := p.permission
+	if !p.identified {
+		permission = ""
+	}
+	switch permission {
+	case "ADMIN", "MAINTAIN", "WRITE":
+		push = new(true)
+	case "READ", "TRIAGE":
+		push = new(false)
+	}
+	numbers := slices.Sorted(maps.Keys(p.rows))
+	known0 := map[int]PullRequest{}
+	for _, pr := range p.cache.Snapshot.PullRequests {
+		known0[pr.Number] = pr
+	}
+	compare := !p.cache.Snapshot.FetchedAt.IsZero()
+	items := map[int]PullRequest{}
+	for number, item := range p.legacy {
+		if !p.removed[number] {
+			items[number] = item
+		}
+	}
+	for _, number := range numbers {
+		row := p.rows[number]
+		pr := row.legacy()
+		old := known0[number]
+		unknown := !row.IsDraft && (row.Mergeable == "UNKNOWN" || row.MergeStateStatus == "UNKNOWN")
+		if compare {
 			p.moved = p.moved || old.HeadSHA != row.HeadRefOid
 			p.unknown = p.unknown || unknown
-			if carryMerge(old, row, unknown) {
-				if p.carried == nil {
-					p.carried = map[int]PullRequest{}
-				}
-				p.carried[row.Number] = old
-				p.forgot = p.forgot || !p.cache.Carried[row.Number]
-			}
 		}
-	}
-	prefix := "/repos/" + url.PathEscape(repository.Owner) + "/" + url.PathEscape(repository.Name)
-
-	teams, teamErr := collect[team](ctx, p, "/user/teams")
-	if errors.Is(teamErr, errRateLimit) {
-		return snapshot, teamErr
-	}
-	membership := map[int64]bool{}
-	for _, team := range teams {
-		membership[team.ID] = true
-	}
-	permissions := map[string]*bool{}
-	for _, row := range prs {
-		pr := row.legacy()
-		if pr.Number <= 0 || pr.Head.SHA == "" {
-			return snapshot, errors.New("incomplete GitHub pull request")
-		}
-		item := PullRequest{Repository: repository.String(), Number: pr.Number, Title: pr.Title, URL: "https://" + repository.Host + "/" + repository.Owner + "/" + repository.Name + "/pull/" + strconv.Itoa(pr.Number), HeadSHA: pr.Head.SHA, HeadRef: pr.Head.Ref, BaseRef: pr.Base.Ref, Additions: row.Additions, Deletions: row.Deletions, ChangedFiles: row.ChangedFiles, Author: pr.User.Login, AuthorBot: pr.User.Typename == "Bot", State: "OPEN", Draft: pr.Draft, Fork: pr.Head.Repo == nil || pr.Base.Repo.ID == 0 || pr.Head.Repo.ID != pr.Base.Repo.ID || !strings.EqualFold(pr.Head.Repo.FullName, pr.Base.Repo.FullName), AuthoredByMe: strings.EqualFold(pr.User.Login, viewer.Login), TeamMembershipKnown: teamErr == nil}
+		item := PullRequest{Repository: repository.String(), Number: pr.Number, Title: pr.Title, URL: "https://" + repository.Host + "/" + repository.Owner + "/" + repository.Name + "/pull/" + strconv.Itoa(pr.Number), HeadSHA: pr.Head.SHA, HeadRef: pr.Head.Ref, BaseRef: pr.Base.Ref, Additions: row.Additions, Deletions: row.Deletions, ChangedFiles: row.ChangedFiles, Author: pr.User.Login, AuthorBot: pr.User.Typename == "Bot", State: "OPEN", Draft: pr.Draft, Fork: pr.Head.Repo == nil || pr.Base.Repo.ID == 0 || pr.Head.Repo.ID != pr.Base.Repo.ID || !strings.EqualFold(pr.Head.Repo.FullName, pr.Base.Repo.FullName), AuthoredByMe: strings.EqualFold(pr.User.Login, snapshot.Viewer), TeamMembershipKnown: known}
 		if pr.Head.Repo != nil {
 			head, parseErr := github.ParseRepository(repository.Host + "/" + pr.Head.Repo.FullName)
 			if parseErr == nil {
@@ -629,12 +881,12 @@ func (p *poll) discover(ctx context.Context, repository github.Repository) (Snap
 		item.Assigned = len(row.Assignees.Nodes) > 0
 		item.ReviewRequested = len(pr.RequestedReviewers) > 0 || len(pr.RequestedTeams) > 0
 		for _, user := range row.Assignees.Nodes {
-			if strings.EqualFold(user.Login, viewer.Login) {
+			if strings.EqualFold(user.Login, snapshot.Viewer) {
 				item.AssignedToMe = true
 			}
 		}
 		for _, user := range pr.RequestedReviewers {
-			if strings.EqualFold(user.Login, viewer.Login) {
+			if strings.EqualFold(user.Login, snapshot.Viewer) {
 				item.ReviewRequestedFromMe = true
 			}
 		}
@@ -643,45 +895,110 @@ func (p *poll) discover(ctx context.Context, repository github.Repository) (Snap
 				item.ReviewRequestedFromMe = true
 			}
 		}
-		key := strings.ToLower(pr.User.Login)
-		permission, seen := permissions[key]
-		if !seen && pr.User.Login != "" {
-			var response struct {
-				Permission string `json:"permission"`
-				User       struct {
-					Permissions struct {
-						Push *bool `json:"push"`
-					} `json:"permissions"`
-				} `json:"user"`
-			}
-			if err := p.get(ctx, prefix+"/collaborators/"+url.PathEscape(pr.User.Login)+"/permission", &response); errors.Is(err, errRateLimit) {
-				return snapshot, err
-			} else if err == nil {
-				switch response.Permission {
-				case "admin", "write", "maintain":
-					value := true
-					permission = &value
-				case "read", "triage", "none":
-					value := false
-					permission = &value
-				default:
-					permission = response.User.Permissions.Push
-				}
-			}
-			permissions[key] = permission
+		if answer, ok := p.cache.Authors[strings.ToLower(pr.User.Login)]; ok {
+			item.AuthorHasWrite = answer.Push
+		} else if legacy, ok := p.legacy[number]; ok && strings.EqualFold(legacy.Author, pr.User.Login) {
+			// Not asked yet since an upgrade: the older snapshot's answer.
+			item.AuthorHasWrite = legacy.AuthorHasWrite
 		}
-		item.AuthorHasWrite = permission
-		item.ViewerCanPush = canPush
+		item.ViewerCanPush = push
+		if !p.identified {
+			item.ViewerCanPush = old.ViewerCanPush
+		}
 		item.Review, item.Checks, item.Merge, item.Unresolved, item.UnresolvedCapped = row.states()
 		item.Behind = row.behind()
 		item.ReviewRequired = new(row.ReviewDecision != nil && *row.ReviewDecision == "REVIEW_REQUIRED")
-		if old, ok := p.carried[pr.Number]; ok {
+		if compare && carryMerge(old, row, unknown) {
+			if p.carried == nil {
+				p.carried = map[int]PullRequest{}
+			}
+			p.carried[number] = old
+			p.forgot = p.forgot || !p.cache.Carried[number]
 			item.Merge, item.Behind = old.Merge, old.Behind
 		}
 		item.UpdatedAt = row.UpdatedAt
-		snapshot.PullRequests = append(snapshot.PullRequests, item)
+		items[number] = item
 	}
-	return snapshot, nil
+	for _, number := range slices.Sorted(maps.Keys(items)) {
+		snapshot.PullRequests = append(snapshot.PullRequests, items[number])
+	}
+	p.cache.Pulls = make([]gqlPR, 0, len(numbers))
+	for _, number := range numbers {
+		p.cache.Pulls = append(p.cache.Pulls, p.rows[number])
+	}
+	return snapshot, buildErr
+}
+
+// permissions asks GitHub for the write permission of each author of an open
+// pull request whose answer is missing or older than permissionTTL. A 403 or
+// 404 is an answer too; a failed request keeps the earlier answer and is
+// asked again by the next poll. Authors with no open pull request left are
+// forgotten once the cache is complete.
+func (p *poll) permissions(ctx context.Context, repository github.Repository) error {
+	logins := map[string]string{}
+	for _, row := range p.rows {
+		if row.Author.Login != "" {
+			logins[strings.ToLower(row.Author.Login)] = row.Author.Login
+		}
+	}
+	prefix := "/repos/" + url.PathEscape(repository.Owner) + "/" + url.PathEscape(repository.Name)
+	for _, key := range slices.Sorted(maps.Keys(logins)) {
+		entry, ok := p.cache.Authors[key]
+		if ok && !p.now.Before(entry.Read) && p.now.Before(entry.Read.Add(permissionTTL)) {
+			continue
+		}
+		var response struct {
+			Permission string `json:"permission"`
+			User       struct {
+				Permissions struct {
+					Push *bool `json:"push"`
+				} `json:"permissions"`
+			} `json:"user"`
+		}
+		err := p.get(ctx, p.cache.Responses, permissionPath(prefix, logins[key]), &response)
+		var status *statusError
+		switch {
+		case errors.Is(err, errRateLimit):
+			return err
+		case err == nil:
+			entry = authorPermission{Read: p.now}
+			switch response.Permission {
+			case "admin", "write", "maintain":
+				entry.Push = new(true)
+			case "read", "triage", "none":
+				entry.Push = new(false)
+			default:
+				entry.Push = response.User.Permissions.Push
+			}
+		case errors.As(err, &status) && status.refused():
+			entry = authorPermission{Read: p.now}
+		case ctx.Err() != nil:
+			return failed(ctx, err)
+		default:
+			continue
+		}
+		p.cache.Authors[key] = entry
+	}
+	if p.cache.Complete {
+		for key := range p.cache.Authors {
+			if _, ok := logins[key]; !ok {
+				delete(p.cache.Authors, key)
+			}
+		}
+		for path := range p.cache.Responses {
+			if strings.HasPrefix(path, prefix+"/collaborators/") {
+				login, _ := url.PathUnescape(strings.TrimSuffix(strings.TrimPrefix(path, prefix+"/collaborators/"), "/permission"))
+				if _, ok := logins[strings.ToLower(login)]; !ok {
+					delete(p.cache.Responses, path)
+				}
+			}
+		}
+	}
+	return nil
+}
+
+func permissionPath(prefix, login string) string {
+	return prefix + "/collaborators/" + url.PathEscape(login) + "/permission"
 }
 
 // carryMerge is whether a pull request GitHub reports an unknown mergeability
@@ -704,8 +1021,7 @@ func carryMerge(old PullRequest, row gqlPR, unknown bool) bool {
 // An observation older than the one kept is dropped: a read under way when
 // the app merged the pull request (Merged) does not undo it.
 func (s *Service) Observe(ctx context.Context, repository github.Repository, value Observation) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	defer s.lock(repository)()
 	reader, err := s.client.REST(ctx, repository)
 	if err != nil {
 		return err
@@ -738,8 +1054,7 @@ func (s *Service) Observe(ctx context.Context, repository github.Repository, val
 // accepted the merge, so it leaves the open pull requests and is observed
 // merged without another read. Its title and draft state are the cached ones.
 func (s *Service) Merged(ctx context.Context, repository github.Repository, number int, head string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	defer s.lock(repository)()
 	reader, err := s.client.REST(ctx, repository)
 	if err != nil {
 		return err
@@ -760,6 +1075,9 @@ func (s *Service) Merged(ctx context.Context, repository github.Repository, numb
 		}
 	}
 	cache.Snapshot.PullRequests = slices.DeleteFunc(cache.Snapshot.PullRequests, func(pr PullRequest) bool { return pr.Number == number })
+	// The rows the next poll builds from leave it too, so a poll that fails
+	// before reading the merge does not list it open again.
+	cache.Pulls = slices.DeleteFunc(cache.Pulls, func(row gqlPR) bool { return row.Number == number })
 	for i, old := range cache.Snapshot.Observations {
 		if old.Number == number {
 			observation.Title = cmp.Or(observation.Title, old.Title)
@@ -779,8 +1097,7 @@ func (s *Service) Merged(ctx context.Context, repository github.Repository, numb
 // reports no update to a pull request when a thread is resolved, so a probe
 // cannot see it. It reports whether the count changed.
 func (s *Service) Unresolved(ctx context.Context, repository github.Repository, number, count int) (bool, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	defer s.lock(repository)()
 	reader, err := s.client.REST(ctx, repository)
 	if err != nil {
 		return false, err
@@ -798,6 +1115,13 @@ func (s *Service) Unresolved(ctx context.Context, repository github.Repository, 
 			continue
 		}
 		cache.Snapshot.PullRequests[i].Unresolved = &count
+		// A resolution moves no update time, so an incremental poll would not
+		// read the pull request again: its row takes the count too.
+		for j, row := range cache.Pulls {
+			if row.Number == number && row.ReviewThreads != nil && !row.ReviewThreads.PageInfo.HasNextPage {
+				cache.Pulls[j].ReviewThreads.Nodes = make([]struct{ IsResolved bool }, count)
+			}
+		}
 		return true, s.save(path, cache)
 	}
 	return false, nil
@@ -818,10 +1142,11 @@ func (s *Service) setValidated(path string, value bool) {
 // visibleRate exposes the active limiting budget without combining REST request
 // allowances with GraphQL points, which GitHub accounts independently.
 func (p *poll) visibleRate() RateLimit {
-	if rateDeadline(p.rate).After(p.now) {
-		return p.rate
+	rest, graph := p.budget.budgets()
+	if rateDeadline(rest).After(p.now) {
+		return rest
 	}
-	return p.graphRate
+	return graph
 }
 func rateDeadline(rate RateLimit) time.Time {
 	deadline := rate.RetryAt

@@ -8,9 +8,9 @@ import (
 	"testing"
 )
 
-// A job log redirects to a signed URL on another host: Tail follows it once,
-// without the token, and keeps only the end of the body.
-func TestTailFollowsOneRedirectWithoutTheToken(t *testing.T) {
+// A job log redirects to a signed URL on another host: Download follows it
+// once, without the token, and writes the body.
+func TestDownloadFollowsOneRedirectWithoutTheToken(t *testing.T) {
 	var hosts []string
 	client := New(func(context.Context, string) (string, error) { return "private-value", nil }, Options{Transport: restTransportFunc(func(request *http.Request) (*http.Response, error) {
 		hosts = append(hosts, request.URL.Host)
@@ -35,14 +35,15 @@ func TestTailFollowsOneRedirectWithoutTheToken(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	status, body, err := reader.Tail(context.Background(), "/repos/acme/app/actions/jobs/1/logs", 10)
-	if err != nil || status != 200 || string(body) != "xxxthe end" {
-		t.Fatalf("status %d body %q err %v", status, body, err)
+	var body strings.Builder
+	status, err := reader.Download(context.Background(), "/repos/acme/app/actions/jobs/1/logs", &body)
+	if err != nil || status != 200 || body.String() != strings.Repeat("x", 100)+"the end" {
+		t.Fatalf("status %d body %q err %v", status, body.String(), err)
 	}
 	if strings.Join(hosts, ",") != "api.github.com,logs.example" {
 		t.Fatalf("requests to %v", hosts)
 	}
-	if _, _, err := reader.Tail(context.Background(), "/repos/acme/app/insecure", 10); err == nil {
+	if _, err := reader.Download(context.Background(), "/repos/acme/app/insecure", io.Discard); err == nil {
 		t.Fatal("followed a redirect to plain http")
 	}
 }

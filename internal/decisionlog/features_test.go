@@ -20,6 +20,7 @@ import (
 	"github.com/baum-ai/baum/internal/livesessions"
 	"github.com/baum-ai/baum/internal/locallink/linktest"
 	"github.com/baum-ai/baum/internal/repos"
+	"github.com/baum-ai/baum/internal/workstats"
 	"github.com/baum-ai/baum/sessions"
 	"github.com/baum-ai/baum/sessions/vendors"
 )
@@ -226,6 +227,33 @@ func TestFeatureSyncAndIndex(t *testing.T) {
 	if head, _ := s.pathsAt(t, 7); head != "" {
 		t.Fatal("unknown paths are not retried")
 	}
+	// A window re-link after the daily one links its commits; with nothing
+	// it reads changed, the next reads no session and keeps the links. One
+	// after a session was written links again.
+	relink := func(name string, unchanged bool) {
+		t.Helper()
+		c.now = c.now.Add(FeatureQuiet)
+		before := workstats.Take().Counters["locallink.link_commits"]
+		indexed, err := w.Index(ctx, linktest.Repository, f.Repo, nil, false)
+		read := workstats.Take().Counters["locallink.link_commits"] > before
+		if err != nil || indexed.Unchanged != unchanged || read == unchanged || (!unchanged && indexed.Links != 1) {
+			t.Fatalf("%s = %+v (sessions read: %t), %v", name, indexed, read, err)
+		}
+	}
+	relink("window re-link", false)
+	relink("unchanged window re-link", true)
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM session_commit`).Scan(&linked); err != nil || linked != 1 {
+		t.Fatalf("%d links after an unchanged re-link, %v", linked, err)
+	}
+	transcripts, err := filepath.Glob(filepath.Join(f.Store.ClaudeProjectsDir, "*", linktest.SessionID+".jsonl"))
+	if err != nil || len(transcripts) != 1 {
+		t.Fatalf("transcripts %v, %v", transcripts, err)
+	}
+	written := time.Now().Add(time.Hour)
+	if err := os.Chtimes(transcripts[0], written, written); err != nil {
+		t.Fatal(err)
+	}
+	relink("window re-link after a session was written", false)
 
 	// The session's decisions go to pull request 5's feature once the
 	// session was captured.

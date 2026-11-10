@@ -1627,7 +1627,7 @@ it("shows a job's pull request title, when it started and how long it took", asy
   entries = [entry(1)];
   const original = vi.mocked(fetch).getMockImplementation()!;
   vi.mocked(fetch).mockImplementation((...args) =>
-    String(args[0]) === "/s/test-ns/api/jobs"
+    String(args[0]).startsWith("/s/test-ns/api/jobs")
       ? Promise.resolve(
           Response.json({
             jobs: [
@@ -1697,7 +1697,7 @@ it("marks automatically started jobs in the jobs list", async () => {
     trigger,
   });
   vi.mocked(fetch).mockImplementation((...args) =>
-    String(args[0]) === "/s/test-ns/api/jobs"
+    String(args[0]).startsWith("/s/test-ns/api/jobs")
       ? Promise.resolve(
           Response.json({
             jobs: [
@@ -1734,7 +1734,7 @@ it("names a feature build by its repository in the jobs list", async () => {
   history.replaceState(null, "", "/s/test-ns/?page=jobs");
   const original = vi.mocked(fetch).getMockImplementation()!;
   vi.mocked(fetch).mockImplementation((...args) =>
-    String(args[0]) === "/s/test-ns/api/jobs"
+    String(args[0]).startsWith("/s/test-ns/api/jobs")
       ? Promise.resolve(
           Response.json({
             jobs: [
@@ -2468,7 +2468,7 @@ it("gives up on a refresh that never answers and names the repository", async ()
     );
     expect(node.textContent).not.toContain("did not answer in time");
     await act(async () => {
-      vi.advanceTimersByTime(60_000);
+      vi.advanceTimersByTime(600_000);
     });
   } finally {
     vi.useRealTimers();
