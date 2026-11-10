@@ -2859,9 +2859,11 @@ published. The first read publishes.
 With no event stream connected the watcher builds nothing, since nobody would
 be told: a moved fingerprint still invalidates the cache, so a reader of
 `/api/index` never gets a stale snapshot, and the read it owes happens when a
-stream connects (which wakes the watcher). The desktop window's stream is the
-usual subscriber; the tray shell only runs `baum daemon ensure` and holds none,
-so a hidden or closed window leaves the daemon idle. A run's 30-second lease
+stream connects (which wakes the watcher). The desktop shell's tray keeps its
+own `/api/events` stream open (with reconnect), so while the desktop app runs
+there is always a subscriber and this idle skip rarely applies; it covers a
+daemon running without the shell. What helps while the app runs is the next
+point. A run's 30-second lease
 renewal (`store.HeartbeatRun`) rewrites `versions.sqlite` but changes nothing
 the index shows, so the fingerprint looks through the latest renewal made by
 this process (`store.SeenThroughHeartbeats`: the file stamp the renewal left
