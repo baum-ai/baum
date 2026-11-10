@@ -7,11 +7,13 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
 	"slices"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -23,21 +25,21 @@ import (
 )
 
 const (
-	// maxReflogBytes skips a reflog file larger than this, and maxReflogLines
-	// bounds the lines read from one.
+	// maxReflogBytes bounds what is read of one reflog: the newest entries
+	// of a larger file.
 	maxReflogBytes = 8 << 20
-	maxReflogLines = 100000
+	// maxReflogLine bounds one reflog line; a longer one is skipped.
+	maxReflogLine = 64 << 10
 	// reflogSlack is how far outside a tool call a reflog entry may fall: git
 	// records whole seconds and the transcript's clock is not git's.
 	reflogSlack = 2 * time.Second
 )
 
 // creationMessage matches the reflog messages of commits made in a working
-// tree. Merges are left out on purpose: the matcher excludes merge commits.
-var creationMessage = regexp.MustCompile(`^(commit( \((amend|initial)\))?|cherry-pick|revert|rebase( -i)? \((pick|continue|squash|fixup|edit|reword)\)): `)
-
-// writesGit matches a command that can create a commit.
-var writesGit = regexp.MustCompile(`\bgit\b[^\n;&|]*\b(commit|rebase|cherry-pick|revert|am)\b`)
+// tree: commits, amends, cherry-picks, reverts, applied patches and the picks
+// of a rebase (also those of "pull --rebase"). Merges are left out on purpose:
+// the matcher excludes merge commits.
+var creationMessage = regexp.MustCompile(`^(commit( \((amend|initial)\))?|cherry-pick|revert|am|[^:]*\((pick|continue|squash|fixup|edit|reword)\)): `)
 
 // shellTools are the tools that run a command, or poll one that still runs.
 var shellTools = map[string]bool{
@@ -45,13 +47,16 @@ var shellTools = map[string]bool{
 	"local_shell": true, "exec": true, "write_stdin": true, "wait": true,
 }
 
-// reflogFile is one reflog of the clone. worktree is the working tree a HEAD
-// log belongs to; a branch log has none.
+// gitWriteCommands are the git subcommands that can create a commit.
+var gitWriteCommands = map[string]bool{"commit": true, "rebase": true, "cherry-pick": true, "revert": true, "am": true, "pull": true}
+
+// reflogFile is one reflog of the clone. A HEAD log belongs to the working
+// tree worktree, "" when that is unknown; a branch log belongs to none.
 type reflogFile struct {
 	path     string
+	head     bool
 	worktree string
 	size     int64
-	modTime  time.Time
 }
 
 // mainRootOf is the main working tree of a clone whose git directory sits
@@ -67,12 +72,12 @@ func mainRootOf(common string) string {
 // each linked worktree's, and every branch log, which outlives its worktree.
 func reflogFiles(common string) []reflogFile {
 	var files []reflogFile
-	add := func(path, worktree string) {
+	add := func(path string, head bool, worktree string) {
 		if info, err := os.Lstat(path); err == nil && info.Mode().IsRegular() {
-			files = append(files, reflogFile{path: path, worktree: worktree, size: info.Size(), modTime: info.ModTime()})
+			files = append(files, reflogFile{path: path, head: head, worktree: worktree, size: info.Size()})
 		}
 	}
-	add(filepath.Join(common, "logs", "HEAD"), mainRootOf(common))
+	add(filepath.Join(common, "logs", "HEAD"), true, mainRootOf(common))
 	if entries, err := os.ReadDir(filepath.Join(common, "worktrees")); err == nil {
 		for _, e := range entries {
 			admin := filepath.Join(common, "worktrees", e.Name())
@@ -80,63 +85,104 @@ func reflogFiles(common string) []reflogFile {
 			if err != nil {
 				continue
 			}
-			root := filepath.Dir(filepath.Clean(strings.TrimSpace(string(recorded))))
-			add(filepath.Join(admin, "logs", "HEAD"), root)
+			gitdir := filepath.FromSlash(strings.TrimSpace(string(recorded)))
+			if !filepath.IsAbs(gitdir) {
+				gitdir = filepath.Join(admin, gitdir)
+			}
+			add(filepath.Join(admin, "logs", "HEAD"), true, filepath.Dir(filepath.Clean(gitdir)))
 		}
 	}
-	heads := filepath.Join(common, "logs", "refs", "heads")
-	_ = filepath.WalkDir(heads, func(path string, d fs.DirEntry, err error) error {
+	_ = filepath.WalkDir(filepath.Join(common, "logs", "refs", "heads"), func(path string, d fs.DirEntry, err error) error {
 		if err == nil && d.Type().IsRegular() {
-			add(path, "")
+			add(path, false, "")
 		}
 		return nil
 	})
 	return files
 }
 
-// ReflogFingerprint describes the state of the reflogs of the clone containing
-// dir, for a cache that must notice a new commit. It is empty when they cannot
-// be listed. Only file metadata is read.
-func ReflogFingerprint(ctx context.Context, dir string) string {
-	common, err := gitlocal.CommonDir(ctx, dir)
-	if err != nil {
-		return ""
-	}
-	h := sha256.New()
-	for _, f := range reflogFiles(common) {
-		_, _ = fmt.Fprintf(h, "%s\x00%d\x00%d\x01", f.path, f.size, f.modTime.UnixNano())
-	}
-	return hex.EncodeToString(h.Sum(nil))
-}
-
 // creation is one reflog entry that records the making of a wanted commit.
 type creation struct {
 	sha      string
 	at       time.Time
+	head     bool
 	worktree string
+	kind     string
 }
 
+// reflog is what the clone's reflogs say about some commits.
+type reflog struct {
+	creations []creation
+	// roots are the working trees that have a HEAD log.
+	roots []string
+	// mainRoot is the main working tree, "" when unknown.
+	mainRoot string
+}
+
+// readReflog reads the creations of the wanted commits from the clone
+// containing dir. Unreadable reflogs give no evidence.
+func readReflog(ctx context.Context, dir string, wanted map[string]bool) reflog {
+	common, err := gitlocal.CommonDir(ctx, dir)
+	if err != nil {
+		return reflog{}
+	}
+	files := reflogFiles(common)
+	log := reflog{mainRoot: mainRootOf(common)}
+	for _, f := range files {
+		if f.head && f.worktree != "" {
+			log.roots = append(log.roots, f.worktree)
+		}
+	}
+	log.creations = readCreations(files, wanted)
+	return log
+}
+
+// readCreations reads the creation entries of the wanted commits. A file over
+// the size bound is read from its newest end, and a line that cannot be read
+// is skipped.
 func readCreations(files []reflogFile, wanted map[string]bool) []creation {
 	var found []creation
 	for _, f := range files {
-		if f.size > maxReflogBytes {
-			continue
-		}
-		file, err := os.Open(f.path)
-		if err != nil {
-			continue
-		}
-		scanner := bufio.NewScanner(file)
-		scanner.Buffer(nil, 1<<20)
-		for lines := 0; scanner.Scan() && lines < maxReflogLines; lines++ {
-			if c, ok := parseCreation(scanner.Text(), wanted); ok {
-				c.worktree = f.worktree
+		readLines(f, func(line string) {
+			if c, ok := parseCreation(line, wanted); ok {
+				c.head, c.worktree = f.head, f.worktree
 				found = append(found, c)
 			}
-		}
-		_ = file.Close()
+		})
 	}
 	return found
+}
+
+func readLines(f reflogFile, each func(string)) {
+	file, err := os.Open(f.path)
+	if err != nil {
+		return
+	}
+	defer func() { _ = file.Close() }()
+	skipFirst := false
+	if f.size > maxReflogBytes {
+		if _, err := file.Seek(f.size-maxReflogBytes, io.SeekStart); err != nil {
+			return
+		}
+		skipFirst = true
+	}
+	r := bufio.NewReaderSize(file, maxReflogLine)
+	for {
+		line, err := r.ReadSlice('\n')
+		long := false
+		for err == bufio.ErrBufferFull {
+			long = true
+			_, err = r.ReadSlice('\n')
+		}
+		if skipFirst {
+			skipFirst = false
+		} else if !long && len(line) > 0 {
+			each(strings.TrimRight(string(line), "\r\n"))
+		}
+		if err != nil {
+			return
+		}
+	}
 }
 
 // parseCreation reads "<old> <new> <name> <<email>> <seconds> <zone>\t<message>".
@@ -153,49 +199,58 @@ func parseCreation(line string, wanted map[string]bool) (creation, bool) {
 	if err != nil {
 		return creation{}, false
 	}
-	return creation{sha: fields[1], at: time.Unix(seconds, 0)}, true
+	kind, _, _ := strings.Cut(message, ": ")
+	return creation{sha: fields[1], at: time.Unix(seconds, 0), kind: kind}, true
 }
 
-// callWindow is the time a session's shell tool call ran, and where.
+// ReflogFingerprint describes the creation entries the clone's reflogs hold
+// for the commits, for a cache that must notice a new one. Moving HEAD or a
+// branch without making one of the commits does not change it. It is empty
+// when the reflogs cannot be listed.
+func ReflogFingerprint(ctx context.Context, dir string, commits []string) string {
+	wanted := make(map[string]bool, len(commits))
+	for _, sha := range commits {
+		wanted[sha] = true
+	}
+	log := readReflog(ctx, dir, wanted)
+	lines := make([]string, 0, len(log.creations))
+	for _, c := range log.creations {
+		lines = append(lines, fmt.Sprintf("%s|%d|%t|%s|%s", c.sha, c.at.Unix(), c.head, c.worktree, c.kind))
+	}
+	sort.Strings(lines)
+	h := sha256.New()
+	for _, line := range lines {
+		_, _ = fmt.Fprintf(h, "%s\x01", line)
+	}
+	return hex.EncodeToString(h.Sum(nil))
+}
+
+// callWindow is the time a session's Git-writing shell call ran, and where.
 type callWindow struct {
-	session   string
-	start     time.Time
-	end       time.Time
-	root      string
-	writesGit bool
+	session    string
+	start, end time.Time
+	root       string
 }
 
 // addReflogCommits supplies commit creation evidence from the clone's reflogs:
-// a commit made while one session's shell call ran in the same working tree was
-// made by that session. It outranks hook observations, which guess the session
-// from the process tree. Unreadable reflogs give no evidence.
+// a commit made while one session's Git-writing shell call ran in the same
+// working tree was made by that session. It outranks hook observations, which
+// guess the session from the process tree. Unreadable reflogs give no evidence.
 func addReflogCommits(ctx context.Context, dir string, found []sessions.Session, commits []gitlocal.Commit) []sessions.Session {
-	common, err := gitlocal.CommonDir(ctx, dir)
-	if err != nil {
-		return found
-	}
 	wanted := make(map[string]bool, len(commits))
 	for _, c := range commits {
 		wanted[c.OID] = true
 	}
-	files := reflogFiles(common)
-	creations := readCreations(files, wanted)
-	if len(creations) == 0 {
+	log := readReflog(ctx, dir, wanted)
+	if len(log.creations) == 0 {
 		return found
 	}
-	var roots []string
-	for _, f := range files {
-		if f.worktree != "" {
-			roots = append(roots, f.worktree)
-		}
-	}
-	locate := rootLocator(mainRootOf(common), roots)
-
+	locate := rootLocator(log.mainRoot, log.roots)
 	var windows []callWindow
 	for _, s := range found {
 		windows = append(windows, callWindows(s, locate)...)
 	}
-	for sha, creator := range creatorsOf(creations, windows) {
+	for sha, creator := range creatorsOf(log, windows) {
 		applied := false
 		for i := range found {
 			if found[i].ID == creator && found[i].Vendor != "" {
@@ -217,44 +272,40 @@ func addReflogCommits(ctx context.Context, dir string, found []sessions.Session,
 	return found
 }
 
-// creatorsOf names the session that made each commit, where exactly one did.
-func creatorsOf(creations []creation, windows []callWindow) map[string]string {
-	type match struct{ scoped, any, writing map[string]bool }
-	matches := map[string]*match{}
-	for _, c := range creations {
-		m := matches[c.sha]
-		if m == nil {
-			m = &match{scoped: map[string]bool{}, any: map[string]bool{}, writing: map[string]bool{}}
-			matches[c.sha] = m
-		}
-		for _, w := range windows {
-			if w.root == "" || (c.worktree != "" && w.root != c.worktree) ||
-				c.at.Before(w.start.Add(-reflogSlack)) || c.at.After(w.end.Add(reflogSlack)) {
-				continue
-			}
-			if c.worktree != "" {
-				m.scoped[w.session] = true
-			}
-			m.any[w.session] = true
-			if w.writesGit {
-				m.writing[w.session] = true
-			}
-		}
+// creatorsOf names the session that made each commit, where exactly one
+// Git-writing call fits.
+//
+// HEAD logs are authoritative: a commit one records is placed only by it, in
+// the working tree it belongs to, and never falls back to branch logs (a
+// HEAD log of unknown working tree places nothing). A commit no HEAD log
+// records comes from a branch log, which knows no working tree, so only calls
+// in working trees that no longer exist can match: a live working tree would
+// have recorded the commit itself.
+func creatorsOf(log reflog, windows []callWindow) map[string]string {
+	live := map[string]bool{}
+	for _, root := range log.roots {
+		live[root] = true
+	}
+	bySHA := map[string][]creation{}
+	for _, c := range log.creations {
+		bySHA[c.sha] = append(bySHA[c.sha], c)
 	}
 	creators := map[string]string{}
-	for sha, m := range matches {
-		candidates := m.any
-		if len(m.scoped) > 0 {
-			candidates = m.scoped
-		}
-		if len(candidates) > 1 {
-			narrowed := map[string]bool{}
-			for id := range candidates {
-				if m.writing[id] {
-					narrowed[id] = true
+	for sha, entries := range bySHA {
+		inHead := slices.ContainsFunc(entries, func(c creation) bool { return c.head })
+		candidates := map[string]bool{}
+		for _, c := range entries {
+			if c.head != inHead || (inHead && c.worktree == "") {
+				continue
+			}
+			for _, w := range windows {
+				if w.root == "" || c.at.Before(w.start.Add(-reflogSlack)) || c.at.After(w.end.Add(reflogSlack)) {
+					continue
+				}
+				if (inHead && w.root == c.worktree) || (!inHead && !live[w.root]) {
+					candidates[w.session] = true
 				}
 			}
-			candidates = narrowed
 		}
 		if len(candidates) == 1 {
 			for id := range candidates {
@@ -303,8 +354,10 @@ func within(root, path string) (string, bool) {
 	return rel, true
 }
 
-// callWindows lists the shell calls of one session, every nested session
-// included, that finished with a timestamp.
+// callWindows lists the Git-writing shell calls of one session, every nested
+// session included, that finished with a timestamp. A call whose command
+// does not write to Git, a poll of a running command among them, establishes
+// nothing and has no window.
 func callWindows(s sessions.Session, locate func(string) string) []callWindow {
 	g := s.Graph
 	if g == nil {
@@ -332,8 +385,10 @@ func callWindows(s sessions.Session, locate func(string) string) []callWindow {
 		if use.Timestamp == nil || !ok || !shellTools[strings.ToLower(use.Name)] {
 			continue
 		}
-		input := traceprocessing.NormalizeCodexExecInput(use.Name, use.Input)
-		command := commandText(input)
+		command := commandText(traceprocessing.NormalizeCodexExecInput(use.Name, use.Input))
+		if command == "" {
+			continue
+		}
 		base := cwdAt(g, use.SessionID, top, *use.Timestamp)
 		if base == "" {
 			base = workingDirs[use.SessionID]
@@ -344,16 +399,24 @@ func callWindows(s sessions.Session, locate func(string) string) []callWindow {
 		if base == "" {
 			base = s.WorktreeRoot
 		}
-		for _, dir := range callDirs(use.Input, base) {
-			windows = append(windows, callWindow{
-				session: s.ID, start: *use.Timestamp, end: end, root: locate(dir), writesGit: writesGit.MatchString(command),
-			})
+		var dirs []string
+		for _, named := range callDirs(use.Input, base) {
+			for _, dir := range writeDirs(command, named) {
+				if !slices.Contains(dirs, dir) {
+					dirs = append(dirs, dir)
+				}
+			}
+		}
+		for _, dir := range dirs {
+			windows = append(windows, callWindow{session: s.ID, start: *use.Timestamp, end: end, root: locate(dir)})
 		}
 	}
 	return windows
 }
 
-var workdirInSource = regexp.MustCompile("\\bworkdir\\s*:\\s*[\"'`]([^\"'`]+)[\"'`]")
+// workdirInSource finds a workdir property of a code-mode program, whose key
+// may be bare or quoted (escaped quotes included).
+var workdirInSource = regexp.MustCompile(`(?:\\?["'\x60])?\bworkdir(?:\\?["'\x60])?\s*:\s*\\?["'\x60]([^"'\x60\\]+)`)
 
 // callDirs are the directories a call ran in: its own workdir fields when it
 // names any, else base.
@@ -391,6 +454,84 @@ func callDirs(input json.RawMessage, base string) []string {
 	return dirs
 }
 
+var commandSeparators = regexp.MustCompile(`&&|\|\||[\n;|&]`)
+
+// writeDirs are the directories in which the command runs a Git subcommand
+// that can create a commit, one for each such simple command. A "cd" and a
+// "git -C" move the directory when they name a path; one that cannot be
+// followed (a variable, "~") leaves it unknown and the call places nothing.
+func writeDirs(command, cwd string) []string {
+	var dirs []string
+	for _, simple := range commandSeparators.Split(command, -1) {
+		words := strings.Fields(simple)
+		for len(words) > 0 && strings.Contains(words[0], "=") && !strings.HasPrefix(words[0], "-") {
+			words = words[1:]
+		}
+		if len(words) == 0 {
+			continue
+		}
+		switch name := filepath.Base(unquote(words[0])); name {
+		case "cd":
+			target := ""
+			if len(words) > 1 {
+				target = words[1]
+			}
+			cwd = moveTo(cwd, target)
+		case "git":
+			if dir, ok := gitWriteDir(words[1:], cwd); ok && dir != "" {
+				dirs = append(dirs, dir)
+			}
+		case "bash", "sh", "zsh":
+			if len(words) >= 3 && strings.HasPrefix(words[1], "-") && strings.Contains(words[1], "c") {
+				dirs = append(dirs, writeDirs(unquote(strings.Join(words[2:], " ")), cwd)...)
+			}
+		}
+	}
+	return dirs
+}
+
+// gitWriteDir reads the arguments of a git command: it reports the directory
+// it runs in and whether its subcommand can create a commit. The subcommand is
+// the first word that is not an option or an option's value.
+func gitWriteDir(args []string, cwd string) (string, bool) {
+	dir := cwd
+	for i := 0; i < len(args); i++ {
+		arg := unquote(args[i])
+		switch {
+		case arg == "-C" || arg == "--work-tree":
+			if i+1 < len(args) {
+				dir = moveTo(dir, args[i+1])
+				i++
+			}
+		case strings.HasPrefix(arg, "--work-tree="):
+			dir = moveTo(dir, strings.TrimPrefix(arg, "--work-tree="))
+		case arg == "-c" || arg == "--git-dir" || arg == "--namespace" || arg == "--exec-path":
+			i++
+		case strings.HasPrefix(arg, "-"):
+		default:
+			return dir, gitWriteCommands[arg]
+		}
+	}
+	return dir, false
+}
+
+// moveTo is the directory after changing from dir to target: "" when it
+// cannot be known.
+func moveTo(dir, target string) string {
+	target = unquote(target)
+	switch {
+	case target == "" || target == "-" || strings.ContainsAny(target[:1], "~$"):
+		return ""
+	case filepath.IsAbs(target):
+		return filepath.Clean(target)
+	case dir == "":
+		return ""
+	}
+	return filepath.Join(dir, target)
+}
+
+func unquote(word string) string { return strings.Trim(word, `"'`) }
+
 // cwdAt is the "cwd" attribute in effect at time at, for the nested session
 // that made the call and else the top-level session.
 func cwdAt(g *session.Graph, nested, top string, at time.Time) string {
@@ -415,7 +556,8 @@ func cwdAt(g *session.Graph, nested, top string, at time.Time) string {
 }
 
 // commandText reads the command of a shell tool input: Claude Code's
-// {"command": "..."} and Codex's {"cmd": "..."} or {"command": [...]}.
+// {"command": "..."} and Codex's {"cmd": "..."} or {"command": [...]}; an
+// argv that runs a shell script is that script.
 func commandText(input json.RawMessage) string {
 	var shape struct {
 		Cmd     string          `json:"cmd"`
@@ -433,6 +575,9 @@ func commandText(input json.RawMessage) string {
 	}
 	var parts []string
 	if json.Unmarshal(shape.Command, &parts) == nil {
+		if len(parts) >= 3 && strings.HasPrefix(parts[1], "-") && strings.Contains(parts[1], "c") {
+			return parts[2]
+		}
 		return strings.Join(parts, " ")
 	}
 	return ""

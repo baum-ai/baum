@@ -287,7 +287,7 @@ func TestReflogIgnoresMerges(t *testing.T) {
 	r.commit(r.main, "c.txt", "Main", "10:25:00")
 	r.git(wt, "10:30:00", "merge", "-q", "--no-ff", "-m", "Merge main", "main")
 	merge := r.git(wt, "10:30:00", "rev-parse", "HEAD")
-	s := reflogSession("session-a", "claude-code", wt, bash("git merge main", "10:29:58", "10:30:02"))
+	s := reflogSession("session-a", "claude-code", wt, bash("git commit -q -m x", "10:29:58", "10:30:02"))
 	found, links := resolveReflog(t, r, []sessions.Session{s}, r.commits(merge))
 	assertLinks(t, links, merge)
 	if got := created(found, "session-a"); slices.Contains(got, merge) {
@@ -321,17 +321,26 @@ func TestReflogUsesAttributeAndCodexWorkdir(t *testing.T) {
 	assertLinks(t, links, second, "session-codex")
 }
 
-func TestReflogFingerprintChangesWithNewEntries(t *testing.T) {
+func TestReflogFingerprintTracksOnlyCreationsOfTheCommits(t *testing.T) {
 	r := newReflogRepo(t)
 	wt := r.worktree("fingerprint", "feature")
 	ctx := context.Background()
-	before := ReflogFingerprint(ctx, r.main)
-	if before == "" || before != ReflogFingerprint(ctx, wt) || before != ReflogFingerprint(ctx, r.main) {
+	sha := r.commit(wt, "b.txt", "More", "10:30:00")
+	before := ReflogFingerprint(ctx, r.main, []string{sha})
+	if before == "" || before != ReflogFingerprint(ctx, wt, []string{sha}) || before != ReflogFingerprint(ctx, r.main, []string{sha}) {
 		t.Fatalf("fingerprint %q is empty or unstable", before)
 	}
-	r.commit(wt, "b.txt", "More", "10:30:00")
-	if after := ReflogFingerprint(ctx, r.main); after == before {
-		t.Fatal("a new reflog entry did not change the fingerprint")
+	// Moving HEAD and making another commit are not creations of sha.
+	r.git(wt, "10:31:00", "checkout", "-q", "--detach")
+	r.git(wt, "10:32:00", "checkout", "-q", "feature")
+	r.commit(wt, "c.txt", "Unrelated", "10:33:00")
+	if after := ReflogFingerprint(ctx, r.main, []string{sha}); after != before {
+		t.Fatal("an unrelated reflog entry changed the fingerprint")
+	}
+	r.git(wt, "10:35:00", "commit", "-q", "--amend", "-m", "Amended")
+	amended := r.git(wt, "10:35:00", "rev-parse", "HEAD")
+	if ReflogFingerprint(ctx, r.main, []string{sha, amended}) == ReflogFingerprint(ctx, r.main, []string{sha}) {
+		t.Fatal("a new creation did not change the fingerprint")
 	}
 }
 
@@ -344,7 +353,8 @@ func TestParseCreationFiltersMessages(t *testing.T) {
 	for message, keep := range map[string]bool{
 		"commit: x": true, "commit (amend): x": true, "commit (initial): x": true, "cherry-pick: x": true,
 		"revert: x": true, "rebase (pick): x": true, "rebase -i (squash): x": true,
-		"commit (merge): x": false, "merge main: Fast-forward": false, "checkout: moving from a to b": false,
+		"am: x": true, "pull -q --rebase . main (pick): x": true, "rebase -i (pick): x": true, "rebase (continue): x": true,
+		"rebase (start): checkout main": false, "commit (merge): x": false, "merge main: Fast-forward": false, "checkout: moving from a to b": false,
 		"rebase (finish): returning to refs/heads/a": false, "pull: Fast-forward": false, "reset: moving to HEAD~1": false,
 	} {
 		if _, ok := parseCreation(line(message), wanted); ok != keep {

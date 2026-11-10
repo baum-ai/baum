@@ -25,24 +25,39 @@ session, hook event and observation time. A missing transcript keeps the link
 and metadata-only review context; it does not invent conversation or usage.
 Push observations are retained separately and never establish creation.
 
-Git reflogs supply creation evidence too, for commits, amends, rebase picks,
-cherry-picks and reverts. The resolver reads the clone's HEAD logs (the main
-working tree's and each linked worktree's) and its branch logs, which outlive a
-removed worktree. An entry made while one session's shell tool call ran, in the
-same working tree, establishes that session as the creator; subagent calls
-count for their top-level session. Calls are placed by their `workdir`, else
-the session's `cwd` attribute, else its working directory, and map to a working
-tree by path (a removed worktree kept in an agent's conventional folder inside
-the main working tree still maps). Branch-log entries know no working tree, so a session matched
-through a HEAD-log entry outranks one matched only through them. When several
-sessions match, those whose command writes Git (`commit`, `rebase`,
-`cherry-pick`, `revert`, `am`) are kept; if that does not leave exactly one the
-commit stays unresolved. Merges are never reflog evidence. A reflog match
-outranks a hook observation of the same commit, which guesses the session from
-the process tree. Limits: a background command that commits after its tool call
-returned lies outside every window, and reflogs expire with Git's gc (90 days by
-default). `ReflogFingerprint` lets the evidence and feature caches notice a new
-entry.
+Git reflogs supply creation evidence too, for commits, amends, cherry-picks,
+reverts, applied patches and rebase picks (`pull --rebase` included). A reflog
+entry made while one session's shell tool call ran, in the same working tree,
+establishes that session as the creator, but only when that call's command
+writes Git: its first Git subcommand (after global options such as `-C` and
+`-c`) is `commit`, `rebase`, `cherry-pick`, `revert`, `am` or `pull`. A call
+that merely overlaps, such as a long test run, a poll of a running command or a
+call waiting for permission, establishes nothing. Commits made through a wrapper
+script (`make release`) get no reflog evidence and fall back to the other
+evidence. Subagent calls count for their top-level session.
+
+The HEAD logs (the main working tree's and each linked worktree's) are
+authoritative: a commit one records is placed only by a call in that working
+tree, and a HEAD log of unknown working tree places nothing. Only a commit no
+HEAD log records comes from the branch logs, which know no working tree, so only
+calls in working trees that no longer exist may match. This covers plain
+commits, amends, cherry-picks and reverts of a removed worktree, not its rebase
+picks (a branch log records only the end of a rebase) and not once the branch
+is deleted. Reflogs expire with Git's gc (90 days by default).
+
+A call is placed by its `workdir`, else the session's `cwd` attribute, else its
+working directory; a `cd` or `git -C` to an absolute path moves it, and one that
+cannot be followed (`~`, a variable) leaves the call unplaced. Directories map
+to a working tree by path, and a removed worktree kept in an agent's
+conventional folder inside the main working tree still maps. When several
+sessions fit, or none, the commit stays unresolved. Merges are never reflog
+evidence. A reflog match outranks a hook observation of the same commit, which
+guesses the session from the process tree; hook observations still decide when
+the reflog has no single Git-writing creator. A background command that commits
+after its tool call returned lies outside every window. Entries are read from
+the newest 8 MiB of each reflog. `ReflogFingerprint` hashes the creation entries
+of the pull request's commits so the evidence and feature caches notice a new
+one and ignore other reflog activity.
 
 Quiet commits followed immediately by `git log` on a new line also supply
 creation evidence when the tool succeeded and its output has no explicit
