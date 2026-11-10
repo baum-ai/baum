@@ -58,7 +58,12 @@ const UP_NEXT_SHORTCUTS: Shortcut[] = [
     short: "review",
   },
   { keys: ["s"], label: "Snooze, then 1–4 to choose until when", short: "snooze" },
-  { keys: ["u"], label: "Undo a snooze", short: "undo" },
+  {
+    keys: ["e"],
+    label: "Archive: never show it in an inbox again (its page unarchives it)",
+    short: "archive",
+  },
+  { keys: ["u"], label: "Undo a snooze or an archive", short: "undo" },
 ];
 /** The walkthrough's keys, which `Walkthrough` handles itself. */
 const WALKTHROUGH_SHORTCUTS: Shortcut[] = [

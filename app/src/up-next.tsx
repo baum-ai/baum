@@ -442,7 +442,7 @@ function snapshot(entry: Entry): Snapshot {
   };
 }
 /** What the inbox remembers on this computer: today's pull requests and
- *  which it cleared, and the person's snoozes. */
+ *  which it cleared, and the person's snoozes and archives. */
 type Stored = {
   day: string;
   seen: Record<string, Seen>;
@@ -450,6 +450,9 @@ type Stored = {
   snoozed: Record<string, number>;
   /** Snoozes until the pull request changes: the head it had then. */
   held: Record<string, string>;
+  /** Archived pull requests, which never show in an inbox again, and when
+   *  each was archived. Absent from a record saved before archiving. */
+  archived?: Record<string, number>;
 };
 
 /** A snooze's end: a time, or the pull request's next push. */
@@ -460,13 +463,39 @@ function dayOf(time: number) {
   return `${date.getFullYear()}-${date.getMonth() + 1}-${date.getDate()}`;
 }
 
-/** A new day starts empty, keeping only the snoozes that still run. */
-function fresh(
-  day: string,
-  snoozed: Record<string, number> = {},
-  held: Record<string, string> = {},
-): Stored {
-  return { day, seen: {}, snoozed, held };
+/** A new day starts empty, keeping only the snoozes that still run and the
+ *  archives. */
+function fresh(day: string, previous?: Stored, now = Date.now()): Stored {
+  return {
+    day,
+    seen: {},
+    snoozed: previous ? stillSnoozed(previous.snoozed, now) : {},
+    held: previous?.held ?? {},
+    archived: previous?.archived ?? {},
+  };
+}
+
+/** The inbox's record, as stored by the daemon: one per window, shared by
+ *  the inbox and the pull request page. */
+function inboxRecord() {
+  return uiState<Stored>("api/ui-state/inbox", () => fresh(dayOf(Date.now())));
+}
+
+/** Whether the person archived a pull request, and the way back: archived
+ *  ones never show in an inbox, but their page offers Unarchive. */
+export function useArchive(pr: Pick<Entry["pull_request"], "repository" | "number">) {
+  const persistence = useUIState(inboxRecord());
+  const key = upNextKey(pr);
+  return {
+    archived: persistence.ready && key in (persistence.value.archived ?? {}),
+    unarchive: () => persistence.update((s) => withoutArchive(s, key)),
+  };
+}
+
+function withoutArchive(s: Stored, key: string): Stored {
+  if (!s.archived || !(key in s.archived)) return s;
+  const { [key]: _at, ...archived } = s.archived;
+  return { ...s, archived };
 }
 
 function stillSnoozed(snoozed: Record<string, number>, now: number) {
@@ -521,18 +550,22 @@ export function useUpNext(
   groups: ReviewGroup[] = [],
 ) {
   const now = useNow(30_000);
-  const persistence = useUIState(
-    uiState<Stored>("api/ui-state/inbox", () => fresh(dayOf(Date.now()))),
-  );
+  const persistence = useUIState(inboxRecord());
   const stored = persistence.value;
   const day = dayOf(now);
-  const state =
-    stored.day === day ? stored : fresh(day, stillSnoozed(stored.snoozed, now), stored.held);
+  const state = stored.day === day ? stored : fresh(day, stored, now);
+  const archived = state.archived ?? {};
   const { items, waiting, others, fixing, stackedOn } = upNext(entries, live, jobs, groups);
+  const isArchived = (entry: Entry) => upNextKey(entry.pull_request) in archived;
+  // An archived pull request is not snoozed as well: it never comes back.
   const snoozedNow = (entry: Entry) => {
     const key = upNextKey(entry.pull_request);
-    return (state.snoozed[key] ?? 0) > now || state.held[key] === entry.pull_request.head_sha;
+    return (
+      !(key in archived) &&
+      ((state.snoozed[key] ?? 0) > now || state.held[key] === entry.pull_request.head_sha)
+    );
   };
+  const hidden = (entry: Entry) => isArchived(entry) || snoozedNow(entry);
   const snoozed: { key: string; entry: Entry; kind?: QueueKind }[] = [
     ...items.filter((item) => snoozedNow(item.entry)),
     ...waiting.filter(snoozedNow).map((entry) => ({
@@ -545,14 +578,11 @@ export function useUpNext(
       kind: "other" as const,
     })),
   ];
-  const queue = items.filter((item) => !snoozedNow(item.entry));
+  const queue = items.filter((item) => !hidden(item.entry));
   const update = (change: (state: Stored) => Stored) =>
     persistence.update((previous) => {
       const time = Date.now();
-      const base =
-        previous.day === dayOf(time)
-          ? previous
-          : fresh(dayOf(time), stillSnoozed(previous.snoozed, time), previous.held);
+      const base = previous.day === dayOf(time) ? previous : fresh(dayOf(time), previous, time);
       const next = change(base);
       return next;
     });
@@ -577,6 +607,8 @@ export function useUpNext(
     ...others.map(
       (entry) => `other:${upNextKey(entry.pull_request)}:${entry.pull_request.head_sha}`,
     ),
+    // One unarchived is recorded again.
+    ...Object.keys(archived).map((key) => `archived:${key}`),
   ].join("\n");
   useEffect(() => {
     if (!ready || !persistence.ready) return;
@@ -601,9 +633,17 @@ export function useUpNext(
     // A snooze until the next push ends once the pull request is in the
     // inbox on another head, or gone from it.
     const pushed = (key: string, head: string) => heads.get(key) !== head;
+    // An archive ends once its pull request closed or merged: its repository
+    // is read and lists it open no more. One reopened comes back.
+    const open = new Set(entries.filter(isOpen).map((entry) => upNextKey(entry.pull_request)));
+    const closed = (key: string) =>
+      !open.has(key) && listed.has(key.slice(0, key.lastIndexOf("#")));
+    // An archived pull request keeps no record of today, so it is never done.
+    const recorded = (previous: Stored) =>
+      items.filter((item) => !(item.key in (previous.archived ?? {})));
     const changed =
       stored.day !== day ||
-      items.some((item) => {
+      recorded(stored).some((item) => {
         const seen = stored.seen[item.key];
         return (
           !seen ||
@@ -615,13 +655,14 @@ export function useUpNext(
         );
       }) ||
       Object.entries(stored.seen).some(([key, record]) => clears(key, record)) ||
-      Object.entries(stored.held).some(([key, head]) => pushed(key, head));
+      Object.entries(stored.held).some(([key, head]) => pushed(key, head)) ||
+      Object.keys(stored.archived ?? {}).some(closed);
     if (!changed) return;
     update((previous) => {
       const seen: Record<string, Seen> = {};
       for (const [key, record] of Object.entries(previous.seen))
         seen[key] = clears(key, record) ? { ...record, cleared: Date.now() } : record;
-      for (const item of items) {
+      for (const item of recorded(previous)) {
         const pr = item.entry.pull_request;
         seen[item.key] = {
           kind: item.kind,
@@ -636,13 +677,16 @@ export function useUpNext(
       const held = Object.fromEntries(
         Object.entries(previous.held).filter(([key, head]) => !pushed(key, head)),
       );
-      return { ...previous, seen, held };
+      const archived = Object.fromEntries(
+        Object.entries(previous.archived ?? {}).filter(([key]) => !closed(key)),
+      );
+      return { ...previous, seen, held, archived };
     });
     // `signature` stands for `items`.
   }, [ready, signature, day, persistence.ready]);
   const snoozedKeys = new Set(snoozed.map((item) => item.key));
   const cleared = Object.entries(state.seen)
-    .filter(([key, seen]) => seen.cleared != null && !snoozedKeys.has(key))
+    .filter(([key, seen]) => seen.cleared != null && !snoozedKeys.has(key) && !(key in archived))
     .sort(([, a], [, b]) => (b.cleared ?? 0) - (a.cleared ?? 0))
     // Its row in the latest read, which a merged pull request keeps while a
     // saved review holds it, so its page can open.
@@ -656,11 +700,11 @@ export function useUpNext(
     now,
     queue,
     snoozed,
-    waiting: waiting.filter((entry) => !snoozedNow(entry)),
+    waiting: waiting.filter((entry) => !hidden(entry)),
     /** Everyone else's open pull requests that wait on nothing from the
-     *  person, unsnoozed. */
-    others: others.filter((entry) => !snoozedNow(entry)),
-    fixing: fixing.filter(({ entry }) => !snoozedNow(entry)),
+     *  person, neither snoozed nor archived. */
+    others: others.filter((entry) => !hidden(entry)),
+    fixing: fixing.filter(({ entry }) => !hidden(entry)),
     cleared,
     /** The open pull request each stacked one waits on to merge first. */
     stackedOn,
@@ -680,6 +724,14 @@ export function useUpNext(
         const { [key]: _head, ...held } = s.held;
         return { ...s, snoozed, held };
       }),
+    /** Hides a pull request from every inbox for good. Its record of today
+     *  goes, so it is never done; a snooze it had waits, for an unarchive. */
+    archive: (key: string) =>
+      update((s) => {
+        const { [key]: _seen, ...seen } = s.seen;
+        return { ...s, seen, archived: { ...s.archived, [key]: Date.now() } };
+      }),
+    unarchive: (key: string) => update((s) => withoutArchive(s, key)),
   };
 }
 
@@ -1302,6 +1354,21 @@ export function UpNextPage({
       },
     });
   };
+  // Archiving hides the pull request from every inbox for good; as a snooze,
+  // the next one takes the selection and the toast offers Undo.
+  const archive = (row: Pick<Row, "key" | "entry"> | undefined = selected) => {
+    if (!row) return;
+    inbox.archive(row.key);
+    setMenu(false);
+    setToast({
+      id: Date.now(),
+      text: `Archived #${row.entry.pull_request.number}`,
+      undo: () => {
+        inbox.unarchive(row.key);
+        setChosen(row.key);
+      },
+    });
+  };
   const undo = () => {
     if (!toast?.undo) return;
     toast.undo();
@@ -1364,6 +1431,10 @@ export function UpNextPage({
       if (!selected) return;
       event.preventDefault();
       setMenu((open) => !open);
+    } else if (key === "e") {
+      if (!selected) return;
+      event.preventDefault();
+      archive();
     } else if (key === "v") {
       // As a click on the panel's review button: its menu of verdicts.
       const button = detail.current?.querySelector<HTMLElement>("[data-review-button]");
@@ -1458,6 +1529,7 @@ export function UpNextPage({
         setMenu(true);
       },
     });
+    items.push({ label: "Archive", hint: "e", onSelect: () => archive(row) });
     if (pr.url) items.push({ label: "Open on GitHub", onSelect: () => openExternal(pr.url) });
     return items;
   };
@@ -1491,6 +1563,7 @@ export function UpNextPage({
         select(item.key);
       },
     },
+    { label: "Archive", onSelect: () => archive(item) },
   ];
   const alsoIn = (row: Row) =>
     rowInboxes(row, inboxes, view).filter((other) => other.id !== scope.id);
@@ -1767,6 +1840,7 @@ export function UpNextPage({
               setMenu={setMenu}
               options={options}
               snooze={snooze}
+              archive={() => archive(selected)}
               now={now}
             />
           ) : selectedGroup ? (
@@ -2184,6 +2258,7 @@ function Panel({
   setMenu,
   options,
   snooze,
+  archive,
   now,
 }: {
   row: Row;
@@ -2204,6 +2279,8 @@ function Panel({
   setMenu: (open: boolean | ((open: boolean) => boolean)) => void;
   options: { label: string; until: SnoozeEnd }[];
   snooze: (until: SnoozeEnd) => void;
+  /** Hides the pull request from every inbox for good. */
+  archive: () => void;
   now: number;
 }) {
   const { entry, item, job, waiting } = row;
@@ -2378,6 +2455,12 @@ function Panel({
             </div>
           ) : null}
         </div>
+        <button type="button" className={cn("upnext-secondary", SECONDARY)} onClick={archive}>
+          Archive
+          <kbd aria-hidden="true" className="key-hint">
+            e
+          </kbd>
+        </button>
       </div>
       {/* Until the review's summary is written there is nothing under the
           actions to read, so say it is on its way. */}

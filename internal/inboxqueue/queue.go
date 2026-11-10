@@ -29,10 +29,12 @@ import (
 
 // Snoozes is what the app saved as ui-state "inbox" that hides a pull request
 // from the queue: until a time (Unix milliseconds) or while its head stays
-// the one it was held on. Both are keyed by Key.
+// the one it was held on, or for good once archived (when, in Unix
+// milliseconds). All are keyed by Key.
 type Snoozes struct {
-	Snoozed map[string]int64  `json:"snoozed"`
-	Held    map[string]string `json:"held"`
+	Snoozed  map[string]int64  `json:"snoozed"`
+	Held     map[string]string `json:"held"`
+	Archived map[string]int64  `json:"archived"`
 }
 
 // ParseSnoozes reads the ui-state "inbox" value; null, as before the app
@@ -78,6 +80,9 @@ type Item struct {
 	Fixing bool   `json:"fixing,omitempty"`
 	// Snoozed is set while the person's snooze hides it.
 	Snoozed bool `json:"snoozed,omitempty"`
+	// Archived is set once the person archived it: it never shows in an
+	// inbox again.
+	Archived bool `json:"archived,omitempty"`
 	// Inboxes are the ids of the saved inboxes that hold it, in their order.
 	Inboxes []string `json:"inboxes"`
 
@@ -91,9 +96,15 @@ func (i Item) Queued() bool {
 }
 
 // Listed reports whether an inbox's own count includes the item: what the
-// queue holds and others' pull requests, unsnoozed.
+// queue holds and others' pull requests, neither snoozed nor archived.
 func (i Item) Listed() bool {
-	return !i.Snoozed && (i.Queued() || i.Kind == Other)
+	return !i.Hidden() && (i.Queued() || i.Kind == Other)
+}
+
+// Hidden reports whether the person's snooze or archive keeps the item out
+// of every inbox.
+func (i Item) Hidden() bool {
+	return i.Snoozed || i.Archived
 }
 
 // Inbox is a saved inbox as matched: the query its parts fold into, and how
@@ -115,7 +126,8 @@ type Queue struct {
 
 // Items classifies the open pull requests of entries (the index's, in its
 // order), one per Key, with queue the job queue's and groups the review
-// groups, and marks those snoozed at now. Their Inboxes are empty.
+// groups, and marks those snoozed at now and those archived. Their Inboxes
+// are empty.
 func Items(entries []reviewindex.Entry, queue []jobs.Job, groups []reviewgroups.Group, snoozes Snoozes, now time.Time) []Item {
 	// Of the clones that hold a pull request, the one with a readable saved
 	// review and a clone speaks for it; a tie keeps the first.
@@ -166,6 +178,7 @@ func Items(entries []reviewindex.Entry, queue []jobs.Job, groups []reviewgroups.
 		}
 		head, held := snoozes.Held[key]
 		item.Snoozed = snoozes.Snoozed[key] > ms || held && head == e.PullRequest.HeadSHA
+		_, item.Archived = snoozes.Archived[key]
 		out = append(out, item)
 	}
 	return out
@@ -194,7 +207,7 @@ func match(items []Item, saved []inboxes.Inbox) Queue {
 		out.Inboxes = append(out.Inboxes, counted)
 	}
 	for _, item := range items {
-		if item.Queued() && !item.Snoozed {
+		if item.Queued() && !item.Hidden() {
 			out.Count++
 		}
 	}
@@ -236,7 +249,7 @@ func Matching(items []Item, query string) []string {
 // Count is the number of pull requests in the Inbox: each open one asking
 // for the user's review or assigned to them, and each of their own with
 // something for them to do (fix, merge or update), less those snoozed at
-// now. Saved inboxes play no part.
+// now or archived. Saved inboxes play no part.
 func Count(entries []reviewindex.Entry, queue []jobs.Job, groups []reviewgroups.Group, snoozes Snoozes, now time.Time) int {
 	return Build(entries, queue, groups, snoozes, nil, now).Count
 }

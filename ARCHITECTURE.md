@@ -2673,7 +2673,7 @@ See its [README](internal/analytics/README.md).
 
 ## Durable desktop reading state
 
-`internal/uistate` stores the Inbox's seen/cleared record and snoozes, and the
+`internal/uistate` stores the Inbox's seen/cleared record, snoozes and archives, and the
 walkthrough's seen stops and draft comments, in `app.sqlite`'s `ui` document
 bucket. The records survive changing loopback origins and fresh webviews;
 localStorage is used only for presentation choices. Walkthrough keys include
@@ -2763,11 +2763,11 @@ from the cached index, the job queue, the stack groups and the saved `inbox`
 ui-state, with the app's queue rules: each open pull request asking for the
 user's review, and each of their own with something to fix, merge or update
 and no fix running, once across clones, less stacked pull requests that must
-wait to merge and snoozed ones. Saved inboxes and their badge switches play
+wait to merge and snoozed or archived ones. Saved inboxes and their badge switches play
 no part, as in the app's Inbox total.
 
 `GET /api/inbox` answers the same queue with which saved inboxes hold each
-open pull request (`{count, items: [{key, kind, fixing, snoozed, inboxes}],
+open pull request (`{count, items: [{key, kind, fixing, snoozed, archived, inboxes}],
 inboxes: [{id, query, count}]}`), matched with `internal/prfilter`, the Go
 twin of the app's filter language; `?query=Q` answers which pull requests a
 query not saved yet holds (`{query, problem, matches}`). The app reads it with

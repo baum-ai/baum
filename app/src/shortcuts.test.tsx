@@ -478,6 +478,7 @@ it("lists exactly the keys that work in the sheet", async () => {
     "t",
     "v",
     "s",
+    "e",
     "u",
     "/",
     "Shift+J",
@@ -1007,6 +1008,7 @@ it("draws a place's key bar from the sheet's table, keys sharing a name together
     "f fix",
     "v review",
     "s snooze",
+    "e archive",
     "u undo",
   ]);
   expect(await bar("settings")).not.toContain(`${command}. actions`);
