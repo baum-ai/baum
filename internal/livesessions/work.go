@@ -223,7 +223,45 @@ func (s *entry) storeWork(read []workItem) bool {
 			s.work[i] = r
 		}
 	}
-	return slices.ContainsFunc(s.work, func(w workItem) bool { return !w.read && w.dir != "" })
+	return slices.ContainsFunc(s.work, toRead)
+}
+
+// toRead reports an item still to be looked up with git.
+func toRead(w workItem) bool { return !w.read && w.dir != "" }
+
+func sameLink(a, b workItem) bool {
+	return a.id == b.id && a.branch == b.branch && a.read == b.read && a.link == b.link
+}
+
+// generations are the generations (GenerationLinker) a Relink of a session
+// of repository and of its read work would link against now, by repository,
+// each asked once per pass; nil when the Linker cannot tell one.
+func (t *Tracker) generations(ctx context.Context, repository string, work []workItem, pass map[string]*Generation) map[string]Generation {
+	linker, ok := t.Linker.(GenerationLinker)
+	if !ok {
+		return nil
+	}
+	repositories := []string{repository}
+	for _, w := range work {
+		if w.read && w.link.Repository != "" {
+			repositories = append(repositories, w.link.Repository)
+		}
+	}
+	out := map[string]Generation{}
+	for _, name := range repositories {
+		g, asked := pass[name]
+		if !asked {
+			if generation, ok := linker.Generation(ctx, name); ok {
+				g = &generation
+			}
+			pass[name] = g
+		}
+		if g == nil {
+			return nil
+		}
+		out[name] = *g
+	}
+	return out
 }
 
 // withWork is the pull request of the session's latest commit or push that

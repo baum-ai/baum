@@ -258,7 +258,11 @@ type Service struct {
 	locks  map[string]*sync.Mutex
 	liveMu sync.Mutex
 	// writeMu serializes this service's cache writes to app.sqlite.
-	writeMu   sync.Mutex
+	writeMu sync.Mutex
+	// writesMu guards writes, how many times this service wrote each cache
+	// key (Revision).
+	writesMu  sync.Mutex
+	writes    map[string]uint64
 	now       func() time.Time
 	validated map[string]bool
 	epoch     uint64
@@ -386,11 +390,50 @@ func (s *Service) save(key string, cache diskCache) error {
 	if err != nil {
 		return err
 	}
-	if err = appdb.Write(path, "cache", "discovery/"+key, raw); err != nil {
+	err = appdb.Write(path, "cache", "discovery/"+key, raw)
+	// Counted after the write, failed or not, so a Revision read before it
+	// never vouches for what it wrote.
+	s.writesMu.Lock()
+	if s.writes == nil {
+		s.writes = map[string]uint64{}
+	}
+	s.writes[key]++
+	s.writesMu.Unlock()
+	if err != nil {
 		return err
 	}
 	s.updated()
 	return nil
+}
+
+// Revision stamps what Cached reads of a repository without opening the
+// cache: Cached reads the same snapshot at two equal revisions, except that
+// its Stale turns true once NextPoll passes. It changes when the identity
+// resets or the credential changes, when this service writes the repository's
+// cache, and when a poll validates it or fails. Only this service writes the
+// cache, and only the daemon, which runs once, makes one on app.sqlite.
+type Revision struct {
+	Epoch     uint64
+	Partition string
+	Writes    uint64
+	Validated bool
+}
+
+// Revision never makes a request and reads nothing from disk.
+func (s *Service) Revision(ctx context.Context, repository github.Repository) (Revision, error) {
+	epoch := s.Epoch()
+	reader, err := s.client.REST(ctx, repository)
+	if err != nil {
+		return Revision{}, err
+	}
+	path, err := s.path(reader.CacheIdentity(), repository.String())
+	if err != nil {
+		return Revision{}, err
+	}
+	s.writesMu.Lock()
+	writes := s.writes[path]
+	s.writesMu.Unlock()
+	return Revision{Epoch: epoch, Partition: path, Writes: writes, Validated: s.isValidated(path)}, nil
 }
 
 // Cached never makes a network request. Resolving the configured local token

@@ -11,7 +11,9 @@ import (
 
 	"github.com/baum-ai/baum/internal/appdb/appdbtest"
 	"github.com/baum-ai/baum/internal/commitattribution"
+	"github.com/baum-ai/baum/internal/discovery"
 	"github.com/baum-ai/baum/internal/hookevents"
+	"github.com/baum-ai/baum/internal/prlink"
 )
 
 // workRoot holds the directories the sessions below work in. A Git hook
@@ -208,6 +210,85 @@ func TestOwnCommitSurvivesTheDirectorySwitchingBranch(t *testing.T) {
 		c.advance(RelinkEvery)
 		tr.Sweep()
 		tr.ResolvePending(context.Background())
+	}
+}
+
+// gitless is a Resolver that links directories and Git work without git:
+// every directory is acme/demo's checkout on main.
+type gitless struct{ *Resolver }
+
+func (g gitless) Link(ctx context.Context, _ string) (Link, bool) {
+	return g.resolve(ctx, "acme/demo", prlink.Work{Repository: "acme/demo", Branch: "main"})
+}
+
+func (g gitless) LinkCommit(ctx context.Context, _, branch, head string) (Link, bool) {
+	return g.resolve(ctx, "acme/demo", prlink.Work{Repository: "acme/demo", Branch: branch, Head: head})
+}
+
+func (g gitless) LinkPush(ctx context.Context, _, _, branch, head string) (Link, bool) {
+	return g.resolve(ctx, "acme/demo", prlink.Work{Repository: "acme/demo", Branch: branch, Head: head})
+}
+
+// Ended sessions and their commits are relinked against the discovery cache
+// read once per sweep, and not at all while discovery has not written it; a
+// pull request opened since is still found at the next sweep.
+func TestEndedSessionsRelinkOnlyOnceDiscoveryWrote(t *testing.T) {
+	c := &clock{t0}
+	cached := &revisedCache{cache: cache{next: t0.Add(48 * time.Hour)}}
+	tr := newTracker(c, gitless{&Resolver{Discovery: cached, Now: c.Now}})
+	ctx := context.Background()
+	const sessions, commits = 6, 4
+	for i := range sessions {
+		agent := hookevents.Process{PID: 5000 + i, Start: "1", Name: "claude"}
+		id := fmt.Sprintf("s-%d", i)
+		apply(tr, prompt(id, c.now, agent))
+		for j := range commits {
+			c.advance(time.Second)
+			apply(tr, commit(workDir("trees/fix"), fmt.Sprintf("fix-%d-%d", i, j), c.now, agent))
+		}
+		c.advance(time.Second)
+		apply(tr, event(id, "session-end", c.now, workDir("main")))
+	}
+	sweep := func() {
+		t.Helper()
+		cached.calls, cached.revisions = 0, 0
+		c.advance(RelinkEvery)
+		tr.Sweep()
+		tr.ResolvePending(ctx)
+		if cached.calls > 1 {
+			t.Fatalf("a sweep read the cache %d times", cached.calls)
+		}
+	}
+	// The first sweeps find each link as it was, then later ones skip it.
+	sweep()
+	sweep()
+	for range 3 {
+		sweep()
+		if cached.calls != 0 || cached.revisions > 1 {
+			t.Fatalf("an unchanged cache was read %d times, its revision asked %d times", cached.calls, cached.revisions)
+		}
+	}
+	for _, s := range tr.Sessions() {
+		if s.State != StateEnded || s.PR != 0 {
+			t.Fatalf("before the pull request: %+v", s)
+		}
+	}
+
+	cached.write(discovery.PullRequest{Number: 21, HeadRef: "fix-2-1"})
+	sweep()
+	if cached.calls != 1 {
+		t.Fatalf("the written cache was read %d times", cached.calls)
+	}
+	for _, s := range tr.Sessions() {
+		committed := s.ID == "s-2"
+		if committed && (s.PR != 21 || s.Branch != "fix-2-1" || s.LinkMethod != MethodCommit) || !committed && s.PR != 0 {
+			t.Fatalf("after the pull request opened: %+v", s)
+		}
+	}
+	sweep()
+	sweep()
+	if cached.calls != 0 {
+		t.Fatalf("the cache was read again %d times", cached.calls)
 	}
 }
 

@@ -2708,7 +2708,18 @@ providers. The server is hosted only by the daemon (see "Local daemon"),
 which builds every provider, the generation runner included, once it owns
 the per-user lock. SSE has a bounded
 in-memory event log; reconnect replays notifications or asks for an index reset.
-It does not persist a second review index.
+It does not persist a second review index. An event's data is at most 16 KiB.
+
+The generation queue's changes go out as two kinds. A `progress` event
+`{"job": <job>}` announces anything but a running job's usage: queued, started,
+a phase, a draft, a transcript, an end. A report that changes only usage (calls,
+tokens, repairs, accounting, cost; `jobs.Queue.SetUsageChanged`), which a
+running job sends every two seconds, is a `job` event
+`{"job": {id, state, phase, calls, tokens, repairs, actual_cost_usd,
+cost_reason, accounting, updated_at}}`, so listeners that read everything again
+on `progress` (the app, the desktop tray) are not woken by it. Data over the
+limit, a long run's accounting or a large job, goes out as `progress` with `{}`
+instead, so a change is never dropped.
 
 The stream also carries `notice` events for the desktop app's notifications
 (`internal/notices`), which the web app ignores: `{"kind","repository","pr",
@@ -3680,7 +3691,7 @@ Retries and repairs append reports; partial or absent reports are marked
 `Unreported`. While a run is in progress, the backend reports its calls' usage
 so far (`agent.Request.Usage`: Claude Code per stream event, Codex per turn,
 the Anthropic API per response), and the queue adds it to the accounting it
-publishes, at most every two seconds.
+publishes, at most every two seconds, as `job` events (see "Authenticated local application host").
 Queue progress is saved before SSE publication and snapshots detach mutable
 accounting. Existing version records are never backfilled. Pricing sums
 individually attributable model reports and estimates the rest at the lowest
@@ -4364,6 +4375,22 @@ replace it.
   reuses the branch, head, upstream and remotes git last gave, for at most
   10 minutes, and matches them against the current discovery cache, so a
   newly opened pull request still links.
+
+  The cache is decoded again only when discovery changed it. `Resolver`
+  keeps each repository's last decoded snapshot with the
+  `discovery.Revision` read before it. The revision is read from memory:
+  the credential's partition, the identity epoch, whether the last poll
+  validated the cache, and how many times the daemon's discovery service
+  wrote it. Only that service writes the cache. Every session, commit and
+  push of a repository then links against one decoded snapshot. A snapshot
+  whose next poll is due counts as stale, as `Cached` would read it. An
+  ended session, or a restored one with no directory, is relinked from its
+  recorded evidence (`Relink`) each sweep. Once a relink leaves it and its
+  commits and pushes as they were, the tracker keeps the generation of each
+  repository involved: its revision, and whether it was stale. Later sweeps
+  skip the session while those generations hold. A write of the cache, a new
+  validation or a due poll changes the generation, so the next sweep relinks
+  it, within the same 30 seconds as before.
 - **Commits and pushes.** An agent often works away from its directory: it
   commits in another worktree of the clone, or creates a branch, pushes it and
   checks its directory back out on `main`. The tracker also follows Git's
