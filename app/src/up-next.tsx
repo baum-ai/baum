@@ -49,6 +49,8 @@ import {
   jobHref,
   agentName,
   jobReasonText,
+  changedNothing,
+  summaryLead,
   joinAnd,
   liveFor,
   navigate,
@@ -63,7 +65,7 @@ import {
   type LiveSession,
   type ReviewGroup,
 } from "./api";
-import { phaseText, type FixState } from "./fix";
+import { fixStep, type FixState } from "./fix";
 import {
   COLOR_NAMES,
   foldedQuery,
@@ -129,6 +131,9 @@ export type UpNextItem = {
   working: LiveSession[];
   /** The latest fix of a pull request in the queue as a fix, when it failed. */
   failedFix?: Job;
+  /** The latest fix, when it ended without changing anything: not a failure,
+   *  so it is shown with the agent's reason instead. */
+  unchangedFix?: Job;
 };
 
 // The order of the queue, which is the order of its groups: what someone
@@ -358,7 +363,11 @@ export function upNext(
       why: why(kind, entry, working.length),
       minutes: kind === "review" ? (entry.review_minutes ?? null) : null,
       working,
-      ...(last?.state === "failed" ? { failedFix: last } : {}),
+      ...(last && changedNothing(last)
+        ? { unchangedFix: last }
+        : last?.state === "failed"
+          ? { failedFix: last }
+          : {}),
     });
   }
   // A review ready to read comes before one still being written; then the
@@ -1847,11 +1856,14 @@ function ListRow({
   const sub = [
     `#${pr.number}`,
     ...(row.job
-      ? ["Agent fixing", phaseText(row.job)]
+      ? ["Agent fixing", fixStep(row.job)]
       : row.waiting
         ? [rowWaiting(row), repository]
-        : row.item?.failedFix
-          ? [inGroup ? memberLabel(row.item.kind, row.entry) : "", "Last fix failed"]
+        : row.item?.failedFix || row.item?.unchangedFix
+          ? [
+              inGroup ? memberLabel(row.item.kind, row.entry) : "",
+              row.item.failedFix ? "Last fix failed" : "Last fix changed nothing",
+            ]
           : [
               inGroup && row.item ? memberLabel(row.item.kind, row.entry) : repository,
               row.item?.minutes != null ? minutesText(row.item.minutes) : "",
@@ -2282,7 +2294,7 @@ function Panel({
       {job ? (
         <div className="upnext-working" role="status">
           <NineDots size={14} />
-          <span>An agent is fixing it · {phaseText(job)}.</span>
+          <span>An agent is fixing it{fixStep(job) ? ` · ${fixStep(job)}` : ""}.</span>
           <span className="upnext-working-aside">You can move on</span>
         </div>
       ) : null}
@@ -2305,6 +2317,7 @@ function Panel({
           </Link>
         </div>
       ) : null}
+      {item?.unchangedFix ? <UnchangedFix job={item.unchangedFix} Link={Link} /> : null}
       <div className="upnext-actions">
         {actions}
         {reviewable(entry) ? (
@@ -2591,15 +2604,47 @@ function RiskCard({
   );
 }
 
+/** The last fix ended without changing anything, which is the agent's
+ *  judgement, not an error: said in neutral words, with the agent's reason
+ *  (the first paragraph of what it said) and the way to the rest. */
+function UnchangedFix({ job, Link }: { job: Job; Link: ComponentType<ViewerLinkProps> }) {
+  const why = summaryLead(job.summary);
+  return (
+    <div className="upnext-unchanged" role="status">
+      <p className="upnext-unchanged-title">The last fix changed nothing, so nothing was pushed.</p>
+      {why ? (
+        <Markdown html={false} className="upnext-prose upnext-unchanged-why">
+          {why}
+        </Markdown>
+      ) : null}
+      <Link href={jobHref(job)}>
+        {why ? "Read what the agent said" : "See what the agent did"}
+        {job.has_transcript ? (
+          <kbd aria-hidden="true" className="key-hint">
+            t
+          </kbd>
+        ) : null}
+      </Link>
+    </div>
+  );
+}
+
 /** What a group's member waits on, in a few words, and the tone of its dot:
  *  an agent at work, what needs fixing, ready to merge, or waiting. */
 function memberState(row: Row): { text: string; tone: string } {
-  if (row.job) return { text: `Agent fixing · ${phaseText(row.job)}`, tone: "working" };
+  if (row.job) {
+    const step = fixStep(row.job);
+    return { text: step ? `Agent fixing · ${step}` : "Agent fixing", tone: "working" };
+  }
   if (row.waiting) return { text: rowWaiting(row), tone: "waiting" };
   if (!row.item) return { text: "", tone: "waiting" };
   const label = memberLabel(row.item.kind, row.entry);
   return {
-    text: row.item.failedFix ? `${label} · Last fix failed` : label,
+    text: row.item.failedFix
+      ? `${label} · Last fix failed`
+      : row.item.unchangedFix
+        ? `${label} · Last fix changed nothing`
+        : label,
     tone: row.item.kind,
   };
 }

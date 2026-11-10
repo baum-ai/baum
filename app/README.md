@@ -871,7 +871,7 @@ The list's header counts what is the person's, sums baum's reading estimates
 into minutes (only reviews have one), counts the fixes with agents and what was
 done today, and draws a bar of cleared against cleared plus remaining. A row
 shows the title, then the kind, repository and reading estimate (or the
-agent's phase, or "last fix failed"), and a red dot at risk 5. With two or more
+agent's phase, "last fix failed" or "last fix changed nothing"), and a red dot at risk 5. With two or more
 Merge items, Ready to merge offers **Merge all N**: one confirmation that reads
 each pull request's merge options, merges each with GitHub's default method for
 the person at the head commit shown, one after another, and names any GitHub
@@ -900,7 +900,12 @@ Until a summary exists, a live line under the actions says the review is
 being generated. A saved review stays visible while a replacement is being generated.
 A pull request back in the queue as a Fix whose latest fix job
 failed says "The last fix failed: <reason>", with **See what the agent did**
-(the transcript, else the job in the list). Agent sessions working on its
+(the transcript, else the job in the list). One whose latest fix changed
+nothing (`no_changes`, which is the agent's judgement, not a failure) says so
+in a neutral notice with the first paragraph of what the agent said, which
+says why, and **Read what the agent said**; its row says "last fix changed
+nothing". The PR page's fix notice and the job page say it the same way,
+without the failure icon. Agent sessions working on its
 branch are counted at the foot of the panel, as a link to Sessions
 (`?page=sessions&peek=<agent:id>`) that opens that session's card there, its
 peek and its reply where it takes one, as a click on it does (with several,

@@ -2719,7 +2719,8 @@ or superseded) and when a discovery snapshot shows a pull request newly
 review-requested from the user (a repository's first snapshot after the
 daemon starts is only a baseline). A fix job gives `fix_pushed` with the
 pushed commit's first seven characters in `commit`, or `fix_failed` with its
-`reason`, instead of a review notice; a details retry gives nothing when it
+`reason`, instead of a review notice, and nothing when it completes without a
+commit (its agent changed nothing); a details retry gives nothing when it
 completes and `details_failed` with its `reason` when it fails. The four pull request kinds are
 transitions of the user's own pull requests between two successive snapshots
 of one repository: checks became failing, the pull request became conflicting,
@@ -3483,9 +3484,13 @@ marker, commits what was left (completing the merge), requires a new commit
 that descends from the head, and pushes it with a plain `git push` to the head
 branch. Phases are `reading checks`, `reading review comments`, `fetching`,
 `merging`, `fixing`, `committing`, `pushing` and `replying`. A finished fix
-records `commit`, `commit_url` and the agent's masked `summary`; a failed one
-a reason (`head_changed`, `threads_changed`, `no_remote`, `git`, `backend`,
-`budget`, `no_changes`, `conflicts_remain`, `history_rewritten`,
+records `commit`, `commit_url` and the agent's masked `summary`. A fix whose
+agent changed nothing completes without a commit, with reason `no_changes`
+and its `summary`, which says why: it is the agent's judgement, not a
+failure, so it sends no notice and the app shows that summary in neutral
+words (jobs saved as failed by an older daemon are shown the same way). A
+failed fix records a reason (`head_changed`, `threads_changed`, `no_remote`,
+`git`, `backend`, `budget`, `conflicts_remain`, `history_rewritten`,
 `workflow_changed`, `push_rejected`, `push_failed`, `signed_out`) and a
 bounded detail. `signed_out` is an agent failure whose provider refused its
 sign-in (`agent.SignInRejected`); review and chat jobs report the same reason

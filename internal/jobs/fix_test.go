@@ -309,7 +309,9 @@ func TestFixJobPushesAndReportsTheCommit(t *testing.T) {
 	}
 }
 
-func TestFixJobFailsWhenTheAgentChangesNothing(t *testing.T) {
+// A fix whose agent changed nothing completes without a commit: it is the
+// agent's judgement, read in its summary, not a failure to notify about.
+func TestFixJobCompletesWithoutPushingWhenTheAgentChangesNothing(t *testing.T) {
 	r := newFixRepositories(t)
 	ctx := context.Background()
 	backend := &fixBackend{name: agent.BackendClaude, fix: func(string) error { return nil }}
@@ -324,11 +326,11 @@ func TestFixJobFailsWhenTheAgentChangesNothing(t *testing.T) {
 		t.Fatal(err)
 	}
 	job := waitFinished(t, q, jobs[0].ID)
-	if job.State != "failed" || job.Reason != fix.ReasonNoChanges || job.Commit != "" || job.Detail == "" {
+	if job.State != "completed" || job.Reason != fix.ReasonNoChanges || job.Commit != "" || job.Detail != "" {
 		t.Fatalf("job %+v", job)
 	}
 	if got := gitFor(t, r.remote, "rev-parse", "refs/heads/feature"); got != r.head {
-		t.Fatal("a failed fix was pushed")
+		t.Fatal("a fix that changed nothing was pushed")
 	}
 }
 
