@@ -56,11 +56,13 @@ import { LiveBadge, useNow } from "./live";
 import { LoadingStatus, NineDots } from "./nine-dots";
 import { canMerge, MergeDialog } from "./merge";
 import {
+  GITHUB_KEY_LABEL,
   inboxAction,
   moveFocus,
   onBody,
   returnsToRow,
   useFocusRow,
+  useGitHubKey,
   useLastRow,
   useShortcuts,
 } from "./shortcuts";
@@ -258,6 +260,7 @@ export function Inbox({
   // Focus goes to the row's own link, so a screen reader reads the row as it
   // moves, and the row scrolls into view.
   useFocusRow(focusedKey, rowLink);
+  useGitHubKey(focused?.entry?.pull_request.url || undefined);
   useShortcuts((event) => {
     if (event.key === "Escape") {
       if (!focusedKey) return;
@@ -392,7 +395,12 @@ export function Inbox({
         hint: "x",
         onSelect: () => toggle(key, !selection.has(key)),
       });
-    if (pr.url) items.push({ label: "Open on GitHub", onSelect: () => openExternal(pr.url) });
+    if (pr.url)
+      items.push({
+        label: "Open on GitHub",
+        hint: GITHUB_KEY_LABEL,
+        onSelect: () => openExternal(pr.url),
+      });
     return items;
   };
   const rowMenu = (event: MouseEvent) => {

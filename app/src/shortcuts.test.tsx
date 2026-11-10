@@ -6,6 +6,7 @@ import {
   commandAction,
   forgetLastRows,
   INBOX_SHORTCUTS,
+  isGitHubKey,
   KeyBar,
   listKeys,
   MAC,
@@ -163,6 +164,71 @@ it("moves the row focus through the drawn rows, group rows included, and stops a
   await press("k");
   await press("ArrowUp");
   expect(focusedTitle()).toBe("Auth rework");
+});
+
+it("opens the focused pull request on GitHub with the command key, Shift and G", async () => {
+  const opened: string[] = [];
+  vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (
+    this: HTMLAnchorElement,
+  ) {
+    if (this.target === "_blank") opened.push(this.href);
+  });
+  await render();
+  const github = { ...(MAC ? { metaKey: true } : { ctrlKey: true }), shiftKey: true, code: "KeyG" };
+  await press("G", github);
+  expect(opened).toEqual([]);
+  await press("j");
+  await press("G", github);
+  expect(opened).toEqual(["https://github.com/acme/demo/pull/2"]);
+  // A group's row has no one pull request to open.
+  await press("j");
+  await press("G", github);
+  expect(opened).toHaveLength(1);
+  // Not g or Shift+G alone, nor under a dialog.
+  await press("j");
+  await press("g", { code: "KeyG" });
+  await press("G", { shiftKey: true, code: "KeyG" });
+  const dialog = document.createElement("dialog");
+  dialog.open = true;
+  document.body.append(dialog);
+  await press("G", github);
+  dialog.remove();
+  expect(opened).toHaveLength(1);
+  // It works while typing, as the app-wide keys do.
+  const input = document.createElement("input");
+  document.body.append(input);
+  await press("G", github, input);
+  input.remove();
+  expect(opened).toEqual([
+    "https://github.com/acme/demo/pull/2",
+    "https://github.com/acme/demo/pull/1",
+  ]);
+  vi.restoreAllMocks();
+});
+
+it("reads the GitHub key by its letter, or its place without Latin letters", () => {
+  const key = (patch: Partial<KeyboardEvent>) => ({
+    key: "",
+    code: "",
+    ctrlKey: false,
+    metaKey: false,
+    altKey: false,
+    shiftKey: false,
+    ...patch,
+  });
+  const ctrl = { ctrlKey: true, shiftKey: true, code: "KeyG" };
+  const cmd = { metaKey: true, shiftKey: true, code: "KeyG" };
+  expect(isGitHubKey(key({ ...ctrl, key: "G" }), false)).toBe(true);
+  expect(isGitHubKey(key({ ...cmd, key: "G" }), true)).toBe(true);
+  expect(isGitHubKey(key({ ...ctrl, key: "П" }), false)).toBe(true);
+  // A Latin layout with another letter on G's place reads the letter.
+  expect(isGitHubKey(key({ ...ctrl, key: "J" }), false)).toBe(false);
+  // The other platform's modifier, or none, or without Shift.
+  expect(isGitHubKey(key({ ...cmd, key: "G" }), false)).toBe(false);
+  expect(isGitHubKey(key({ ...ctrl, key: "G" }), true)).toBe(false);
+  expect(isGitHubKey(key({ shiftKey: true, key: "G", code: "KeyG" }), false)).toBe(false);
+  expect(isGitHubKey(key({ ctrlKey: true, key: "g", code: "KeyG" }), false)).toBe(false);
+  expect(isGitHubKey(key({ ...ctrl, altKey: true, key: "G" }), false)).toBe(false);
 });
 
 it("visits a group's members once it is expanded", async () => {
@@ -479,6 +545,7 @@ it("lists exactly the keys that work in the sheet", async () => {
     "v",
     "s",
     "u",
+    "Ctrl+Shift+G",
     "/",
     "Shift+J",
     "Shift+K",
@@ -498,6 +565,7 @@ it("lists exactly the keys that work in the sheet", async () => {
     "f",
     "t",
     "r",
+    "Ctrl+Shift+G",
     "/",
     "Esc",
     "h",
@@ -521,6 +589,7 @@ it("lists exactly the keys that work in the sheet", async () => {
     "m",
     "f",
     "t",
+    "Ctrl+Shift+G",
     "c",
     "v",
     "a",
