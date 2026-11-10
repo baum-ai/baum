@@ -562,8 +562,14 @@ const TranscriptBody = memo(function TranscriptBody({
 export function EmbeddedLiveTranscript({ session }: { session: LiveSession }) {
   const poll =
     session.state === "running" ? POLL_RUNNING : session.state === "idle" ? POLL_IDLE : null;
+  // The session's record changing (a new event, or its end) reads the
+  // transcript again, as the app's live events do for the Sessions page:
+  // polling stops once it ends, and its last turn must still be read.
+  const signal = `${session.state}\n${session.last_activity_at}\n${session.last_event}`;
+  const [seen, setSeen] = useState({ signal, tick: 0 });
+  if (seen.signal !== signal) setSeen({ signal, tick: seen.tick + 1 });
   const { state, retry } = useLiveTranscript(session.agent, session.session_id, {
-    tick: 0,
+    tick: seen.tick,
     poll,
   });
   switch (state.kind) {
