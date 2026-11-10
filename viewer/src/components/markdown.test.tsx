@@ -336,6 +336,8 @@ describe("hunk IDs in review prose", () => {
     );
     const chip = host.querySelector("button")!;
     expect(chip.textContent).toBe("ui-state.tsx:42");
+    // Prose laid over a row's link turns pointer events off for all but links.
+    expect(chip.classList).toContain("pointer-events-auto");
     act(() => chip.click());
     expect(open).toHaveBeenCalledWith("oss/app/src/ui-state.tsx", 42);
   });

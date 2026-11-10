@@ -116,7 +116,9 @@ function HunkRef({ id }: { id: string }) {
       line={hunk.line}
       href={hunk.href}
       title={hunk.title}
-      className={cn(chipLinkClass, "mx-0.5 align-baseline font-mono")}
+      // Clickable even in prose laid over a row's own link with pointer
+      // events off (the risks overview), where only `a` gets them back.
+      className={cn(chipLinkClass, "pointer-events-auto mx-0.5 align-baseline font-mono")}
     >
       {hunk.line ? `${name}:${hunk.line}` : name}
     </CodeFileLink>
