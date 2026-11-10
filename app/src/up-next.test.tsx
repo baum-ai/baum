@@ -1307,6 +1307,33 @@ it("formats Markdown in the review summary, risk explanation and section titles"
   expect(panel().querySelector(".upnext-block-text code")!.textContent).toBe("repository");
 });
 
+it("shows a hunk ID in the review's prose as a chip for its file and line", async () => {
+  const doc = structuredClone(example);
+  const hunk = doc.index.hunks[0]!;
+  const reason = doc.summary.risk_score.reasons[0]!;
+  reason.text = `Skips events already handled (${hunk.id}).`;
+  doc.summary.text = `See \`${hunk.id}\` and h_000000000000.`;
+  entries = [fixture()[2]!];
+  const original = vi.mocked(fetch).getMockImplementation()!;
+  vi.mocked(fetch).mockImplementation(async (...args) =>
+    String(args[0]).includes("api/document") ? Response.json(doc) : original(...args),
+  );
+  await render();
+  const name = hunk.path.slice(hunk.path.lastIndexOf("/") + 1);
+  // Up next has no file view, so the chip opens the hunk on GitHub.
+  for (const prose of [
+    panel().querySelector(".upnext-risk .upnext-prose")!,
+    panel().querySelector(".upnext-lead")!,
+  ]) {
+    expect(prose.textContent).not.toContain(hunk.id);
+    const chip = prose.querySelector("a")!;
+    expect(chip.textContent).toMatch(new RegExp(`^${name}`));
+    expect(chip.getAttribute("href")).toContain("https://github.com/");
+  }
+  // An ID the review does not have stays as written.
+  expect(panel().querySelector(".upnext-lead")!.textContent).toContain("h_000000000000");
+});
+
 it("lists the files that conflict with the base", async () => {
   entries = [mine(2, { merge: "conflict" })];
   const original = vi.mocked(fetch).getMockImplementation()!;
