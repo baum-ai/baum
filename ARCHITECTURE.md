@@ -4032,10 +4032,14 @@ report to the daemon; the hook side is in `internal/hookcli` (see its
   daemon installs in registered clones (`internal/githooks`: they chain a
   hook the clone had, saved as `<hook>.pre-baum`, are skipped in a clone
   with `core.hooksPath` and are taken out again for a clone that sets `git
-  config baum.hooks false` or leaves the registry). They carry the session
+  config baum.hooks false`, which also makes `--check-dispatcher` decline, or
+  leaves the registry; where `.entire/settings.json` exists, legacy dispatchers
+  that run Entire's hooks are left, elsewhere the legacy `commit-msg` and
+  `prepare-commit-msg` ones are retired). They carry the session
   their agent names in its environment (`CLAUDE_CODE_SESSION_ID` becomes
   `agent` `claude-code` and `session.id`, with `session.agent_pid` from
-  `CLAUDE_PID`, only when that process is among the ancestors; no other
+  `CLAUDE_PID`, only when that process is among the ancestors and is named like
+  the agent; no other
   variable is kept) and `terminal` with `processes`
   alone (`focus.Ancestors`), so live sessions can tell which agent committed or
   pushed when no session is named. A `post-commit` carries `git.head` and

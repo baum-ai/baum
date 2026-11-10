@@ -33,7 +33,9 @@ most 128 characters) sets the event's `agent` to `claude-code` and
 `session.id`, but only when `CLAUDE_PID`, the agent's own process id, is a
 positive integer among the hook's ancestor processes. Processes an agent starts
 (a tmux server, an editor, another agent) inherit its variables, and their Git
-commands are not the agent's. The id is sent as `session.agent_pid`; nothing
+commands are not the agent's. The process must also be named like the agent
+(`claude`, or `node` or `bun` running it), so a pid reused after the agent
+exited is not taken for it. The id is sent as `session.agent_pid`; nothing
 else of the environment is kept. The ancestors are always sent: the daemon
 prefers a tracked agent nearer the hook than `agent_pid`, and falls back to them
 for agents that name no session. `post-rewrite` keeps its `amend` or `rebase`
@@ -42,7 +44,9 @@ entry of `sessionEnv`.
 
 `hooks git --check-dispatcher HOOK` is the check of the dispatchers the daemon
 installs: like the user-wide agent check, it succeeds only in a Git worktree
-after the daemon has run. The older `hooks git --check HOOK` always declines, so
+after the daemon has run, and declines when `git config --bool baum.hooks` is
+false there (one `git config` call, bounded to a second), which silences a
+dispatcher the daemon could not take out. The older `hooks git --check HOOK` always declines, so
 dispatchers of earlier versions keep running their own fallback, until the
 daemon repairs those it recognises as baum's (the repaired dispatcher no longer
 falls back to `entire`). A hook Entire manages is left as it is. Other legacy
@@ -51,6 +55,8 @@ hooks and checkpoint refs.
 
 The dispatchers guard against loops: one that finds its own hook already running
 (`BAUM_GIT_HOOK_ACTIVE`) does nothing, and none runs a backup that is itself a
-dispatcher of baum's. They run baum from `PATH`, or else from the binary path
+dispatcher of baum's. A commit made inside a hook of the same repository
+runs neither baum nor the chained hooks for that nested commit, which is what
+ends the loop. They run baum from `PATH`, or else from the binary path
 recorded when the daemon installed them. The daemon does not pass the agent's
 session variables or that guard to a daemon it starts from a hook.

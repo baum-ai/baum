@@ -1,10 +1,12 @@
 package hookcli
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -27,8 +29,16 @@ var gitHookArgumentCounts = map[string]int{
 // sessionEnv are the variables a coding agent exports to the commands it runs,
 // so a Git hook such as post-commit names the session that ran Git. An agent
 // not listed here is found through the hook's ancestor processes instead.
-var sessionEnv = []struct{ agent, name, pid string }{
-	{"claude-code", "CLAUDE_CODE_SESSION_ID", "CLAUDE_PID"},
+var sessionEnv = []struct {
+	agent, name, pid string
+	// process says whether a process name (comm) can be the agent, so a pid
+	// reused after the agent exited is not taken for it.
+	process func(name string) bool
+}{
+	{"claude-code", "CLAUDE_CODE_SESSION_ID", "CLAUDE_PID", func(name string) bool {
+		name = strings.ToLower(name)
+		return strings.HasPrefix(name, "claude") || name == "node" || name == "bun"
+	}},
 }
 
 // maxSessionID bounds an environment session id, like a stored observation's.
@@ -64,7 +74,10 @@ func newGitHooksCommand() *cobra.Command {
 				if _, ok := gitHookArgumentCounts[args[1]]; !ok {
 					return fmt.Errorf("unsupported Git hook %q", args[1])
 				}
-				return hooksEnabled()
+				if err := hooksEnabled(); err != nil {
+					return err
+				}
+				return repositoryHooksOn(cmd.Context())
 			}
 			if _, ok := gitHookArgumentCounts[args[0]]; !ok {
 				return fmt.Errorf("unsupported Git hook %q", args[0])
@@ -174,12 +187,28 @@ func environmentSession(getenv func(string) string, processes []hookevents.Proce
 			continue
 		}
 		pid, err := strconv.Atoi(getenv(v.pid))
-		if err != nil || pid <= 0 || !slices.ContainsFunc(processes, func(p hookevents.Process) bool { return p.PID == pid }) {
+		if err != nil || pid <= 0 || !slices.ContainsFunc(processes, func(p hookevents.Process) bool { return p.PID == pid && v.process(p.Name) }) {
 			continue
 		}
 		return v.agent, &hookevents.Session{ID: id, AgentPID: pid}
 	}
 	return "", nil
+}
+
+// gitConfigWait bounds the one git call a dispatcher check makes.
+const gitConfigWait = time.Second
+
+// repositoryHooksOn reports an error when the repository opted out of baum's
+// Git hooks with `git config baum.hooks false`. That keeps a dispatcher the
+// daemon could not take out (another tool moved it aside) from running baum.
+func repositoryHooksOn(ctx context.Context) error {
+	ctx, cancel := context.WithTimeout(ctx, gitConfigWait)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "git", "config", "--bool", "--get", "baum.hooks").Output()
+	if err == nil && strings.TrimSpace(string(out)) == "false" {
+		return errors.New("baum hooks are off in this repository (baum.hooks is false)")
+	}
+	return nil
 }
 
 // Checks are local and never inspect credentials or third-party hook settings.

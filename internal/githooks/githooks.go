@@ -16,6 +16,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 )
 
@@ -172,6 +173,7 @@ func EnsureWith(ctx context.Context, root string, opts Options) (Report, error) 
 	if out, err := gitOutput(ctx, root, opts, "config", "--bool", "--get", "baum.hooks"); err == nil && out == "false" {
 		optedOut = true
 	}
+	entire := entireEnabled(ctx, root, opts)
 	var report Report
 	var errs []error
 	if !optedOut {
@@ -182,15 +184,20 @@ func EnsureWith(ctx context.Context, root string, opts Options) (Report, error) 
 	for _, hook := range Hooks {
 		var result HookResult
 		if optedOut {
-			result, err = restoreHook(dir, hook)
+			result, err = restoreHook(dir, hook, entire)
 		} else {
-			result, err = ensureHook(dir, hook, opts)
+			result, err = ensureHook(dir, hook, opts, entire)
 		}
 		if err != nil {
 			errs = append(errs, err)
 			continue
 		}
 		report.Hooks = append(report.Hooks, result)
+	}
+	legacy, err := retireLegacy(dir, entire)
+	report.Hooks = append(report.Hooks, legacy...)
+	if err != nil {
+		errs = append(errs, err)
 	}
 	return report, errors.Join(errs...)
 }
@@ -203,15 +210,21 @@ func Restore(ctx context.Context, root string, opts Options) (Report, error) {
 	if err != nil || skipped != "" {
 		return Report{Skipped: skipped}, err
 	}
+	entire := entireEnabled(ctx, root, opts)
 	var report Report
 	var errs []error
 	for _, hook := range Hooks {
-		result, err := restoreHook(dir, hook)
+		result, err := restoreHook(dir, hook, entire)
 		if err != nil {
 			errs = append(errs, err)
 			continue
 		}
 		report.Hooks = append(report.Hooks, result)
+	}
+	legacy, err := retireLegacy(dir, entire)
+	report.Hooks = append(report.Hooks, legacy...)
+	if err != nil {
+		errs = append(errs, err)
 	}
 	return report, errors.Join(errs...)
 }
@@ -233,7 +246,7 @@ func hooksDirectory(ctx context.Context, root string, opts Options) (dir, skippe
 	return filepath.Clean(dir), "", nil
 }
 
-func ensureHook(dir, hook string, opts Options) (HookResult, error) {
+func ensureHook(dir, hook string, opts Options, entire bool) (HookResult, error) {
 	path := filepath.Join(dir, hook)
 	script := Dispatcher(hook, opts.Baum)
 	result := HookResult{Hook: hook}
@@ -267,9 +280,11 @@ func ensureHook(dir, hook string, opts Options) (HookResult, error) {
 		return result, fmt.Errorf("read Git hook %s: %w", hook, err)
 	}
 	switch {
-	case contents == script:
+	case contents == script, sameScript(contents, hook, opts):
 		result.Outcome = Current
 		return result, nil
+	case entire && ours(contents) && runsEntire(contents, hook):
+		return unclaimed(entireEnabledReason)
 	case ours(contents):
 		// The mode stays: a dispatcher the user made non-executable is off.
 		if err := writeAtomic(path, script, "", info.Mode().Perm()); err != nil {
@@ -300,7 +315,7 @@ func ensureHook(dir, hook string, opts Options) (HookResult, error) {
 }
 
 // restoreHook takes baum's dispatcher out of dir and puts its backup back.
-func restoreHook(dir, hook string) (HookResult, error) {
+func restoreHook(dir, hook string, entire bool) (HookResult, error) {
 	path := filepath.Join(dir, hook)
 	result := HookResult{Hook: hook, Outcome: Absent}
 	if info, err := os.Lstat(path); err != nil || !info.Mode().IsRegular() {
@@ -311,6 +326,15 @@ func restoreHook(dir, hook string) (HookResult, error) {
 		return result, fmt.Errorf("read Git hook %s: %w", hook, err)
 	}
 	if !ours(contents) {
+		// A dispatcher another tool moved aside still runs baum, unless the
+		// repository declines it.
+		if name := siblingDispatcher(dir, hook); name != "" {
+			result.Outcome, result.Reason = Unclaimed, "a dispatcher of baum's is still in "+name
+		}
+		return result, nil
+	}
+	if entire && runsEntire(contents, hook) {
+		result.Outcome, result.Reason = Unclaimed, entireEnabledReason
 		return result, nil
 	}
 	backup := path + backupSuffix
@@ -342,6 +366,101 @@ func restoreHook(dir, hook string) (HookResult, error) {
 	}
 	result.Outcome = Restored
 	return result, nil
+}
+
+const entireEnabledReason = "Entire is enabled in this repository"
+
+// legacyOnly are the hooks earlier versions of baum replaced with a dispatcher
+// and this one installs none for.
+var legacyOnly = []string{"commit-msg", "prepare-commit-msg"}
+
+// runsEntire reports whether a dispatcher of an earlier version runs Entire's
+// hook for hook.
+func runsEntire(contents, hook string) bool {
+	return strings.Contains(contents, "entire hooks git "+hook)
+}
+
+// entireEnabled reports whether the repository has Entire's settings, in the
+// working tree at root or the main one of its common directory.
+func entireEnabled(ctx context.Context, root string, opts Options) bool {
+	roots := []string{root}
+	if common, err := gitOutput(ctx, root, opts, "rev-parse", "--path-format=absolute", "--git-common-dir"); err == nil && filepath.Base(common) == ".git" {
+		roots = append(roots, filepath.Dir(common))
+	}
+	for _, r := range roots {
+		if info, err := os.Stat(filepath.Join(r, ".entire", "settings.json")); err == nil && info.Mode().IsRegular() {
+			return true
+		}
+	}
+	return false
+}
+
+// retireLegacy takes out the dispatchers earlier versions of baum put in place
+// of Entire's other hooks, which now would run Entire for some hooks and not
+// others: the hook they replaced comes back, or the dispatcher goes. Where
+// Entire is enabled they are left, since Entire needs them.
+func retireLegacy(dir string, entire bool) ([]HookResult, error) {
+	var results []HookResult
+	var errs []error
+	for _, hook := range legacyOnly {
+		path := filepath.Join(dir, hook)
+		if info, err := os.Lstat(path); err != nil || !info.Mode().IsRegular() {
+			continue
+		}
+		contents, err := readHook(path)
+		if err != nil || !strings.Contains(contents, legacyMarker) {
+			continue
+		}
+		result := HookResult{Hook: hook}
+		switch {
+		case entire:
+			result.Outcome, result.Reason = Unclaimed, entireEnabledReason
+		default:
+			backup := path + legacySuffix
+			info, err := os.Lstat(backup)
+			switch {
+			case errors.Is(err, os.ErrNotExist):
+				if err := os.Remove(path); err != nil {
+					errs = append(errs, fmt.Errorf("remove Git hook %s: %w", hook, err))
+					continue
+				}
+				result.Outcome = Removed
+			case err != nil:
+				errs = append(errs, fmt.Errorf("inspect Git hook backup %s: %w", hook, err))
+				continue
+			default:
+				if saved, err := readHook(backup); !info.Mode().IsRegular() || err != nil || ours(saved) {
+					result.Outcome, result.Reason = Unclaimed, "the hook's backup is not the hook it replaced"
+				} else if err := os.Rename(backup, path); err != nil {
+					errs = append(errs, fmt.Errorf("restore Git hook %s: %w", hook, err))
+					continue
+				} else {
+					result.Outcome = Restored
+				}
+			}
+		}
+		results = append(results, result)
+	}
+	return results, errors.Join(errs...)
+}
+
+// bakedPath matches the fallback binary a dispatcher was installed with.
+var bakedPath = regexp.MustCompile(`if \[ -z "\$baum_bin" \] && \[ -x ('(?:[^']|'\\'')*') \]`)
+
+// sameScript reports whether contents is the dispatcher for hook but for the
+// fallback binary, which is still there and runs: a binary that moved is not a
+// reason to rewrite hooks, while one that is gone is.
+func sameScript(contents, hook string, opts Options) bool {
+	m := bakedPath.FindStringSubmatch(contents)
+	if m == nil {
+		return false
+	}
+	path := strings.ReplaceAll(m[1][1:len(m[1])-1], `'\''`, "'")
+	if path == opts.Baum {
+		return false
+	}
+	info, err := os.Stat(path)
+	return err == nil && info.Mode().IsRegular() && info.Mode().Perm()&0o111 != 0 && contents == Dispatcher(hook, path)
 }
 
 // ours reports whether contents is a dispatcher of baum's, of any version.

@@ -152,4 +152,7 @@ registry opened elsewhere, such as the CLI's, has no such hook.
 `git config baum.hooks false` in a clone opts it out: the daemon takes the
 dispatchers out and restores the hooks they replaced. `Remove` and `Unpick` call
 `Registry.Removed` for each clone they delete, and the daemon then does the same,
-unless another registered clone shares the clone's common Git directory.
+unless a registered clone, the same one registered again included, shares the
+clone's path or common Git directory; the daemon reads the registry again
+before it installs or restores, so a sweep cannot reinstall hooks of a clone
+removed meanwhile. A removal before the service starts is restored when it does.

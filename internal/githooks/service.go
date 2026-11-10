@@ -3,6 +3,7 @@ package githooks
 import (
 	"context"
 	"log/slog"
+	"slices"
 	"sync"
 	"time"
 )
@@ -33,6 +34,9 @@ type Service struct {
 
 	mu  sync.Mutex
 	run context.Context
+	// removedEarly are the clones removed before Run started, whose hooks
+	// Run restores first.
+	removedEarly []Clone
 	// ensuring holds the work on a clone's hooks to one caller at a time, so a
 	// registration and the sweep do not both chain the same hook.
 	ensuring sync.Mutex
@@ -42,7 +46,12 @@ type Service struct {
 func (s *Service) Run(ctx context.Context) {
 	s.mu.Lock()
 	s.run = ctx
+	early := s.removedEarly
+	s.removedEarly = nil
 	s.mu.Unlock()
+	for _, c := range early {
+		s.one(ctx, c, false)
+	}
 	every := s.Every
 	if every <= 0 {
 		every = 24 * time.Hour
@@ -87,6 +96,11 @@ func (s *Service) Removed(c Clone) { s.background(c, false) }
 func (s *Service) background(c Clone, ensure bool) {
 	s.mu.Lock()
 	ctx := s.run
+	if ctx == nil && !ensure {
+		// The first sweep ensures a clone just registered; a clone just
+		// removed is not in it, so Run restores it.
+		s.removedEarly = append(s.removedEarly, c)
+	}
 	s.mu.Unlock()
 	if ctx == nil || ctx.Err() != nil {
 		return
@@ -94,10 +108,30 @@ func (s *Service) background(c Clone, ensure bool) {
 	go s.one(ctx, c, ensure)
 }
 
+// one ensures or restores the hooks of a clone. The registry is read again with
+// the lock held, since the clone may have been removed or added while the call
+// waited: a clone is ensured only while registered, and restored only while no
+// registered clone has its hooks.
 func (s *Service) one(ctx context.Context, c Clone, ensure bool) {
 	s.ensuring.Lock()
 	defer s.ensuring.Unlock()
 	log := s.logger().With("clone", c.ID)
+	if s.Registered != nil {
+		registered, err := s.Registered(ctx)
+		if err != nil {
+			// Unknown: change nothing.
+			return
+		}
+		if ensure {
+			if !slices.ContainsFunc(registered, func(o Clone) bool { return o.ID == c.ID }) {
+				return
+			}
+		} else if slices.ContainsFunc(registered, func(o Clone) bool {
+			return o.ID == c.ID || o.Path == c.Path || (c.CommonDir != "" && o.CommonDir == c.CommonDir)
+		}) {
+			return
+		}
+	}
 	var report Report
 	var err error
 	if ensure {
@@ -107,9 +141,6 @@ func (s *Service) one(ctx context.Context, c Clone, ensure bool) {
 		}
 		report, err = fn(ctx, c.Path)
 	} else {
-		if s.sharesHooks(ctx, c) {
-			return
-		}
 		fn := s.Restore
 		if fn == nil {
 			fn = func(ctx context.Context, root string) (Report, error) { return Restore(ctx, root, s.Options) }
@@ -134,25 +165,6 @@ func (s *Service) one(ctx context.Context, c Clone, ensure bool) {
 			log.Info("Git hook handled", "hook", h.Hook, "outcome", string(h.Outcome))
 		}
 	}
-}
-
-// sharesHooks reports whether another registered clone has c's hooks directory,
-// which linked worktrees of one repository share.
-func (s *Service) sharesHooks(ctx context.Context, c Clone) bool {
-	if s.Registered == nil || c.CommonDir == "" {
-		return false
-	}
-	clones, err := s.Registered(ctx)
-	if err != nil {
-		// Unknown: leave the hooks rather than take them from a clone in use.
-		return true
-	}
-	for _, other := range clones {
-		if other.ID != c.ID && other.CommonDir == c.CommonDir {
-			return true
-		}
-	}
-	return false
 }
 
 func (s *Service) logger() *slog.Logger {

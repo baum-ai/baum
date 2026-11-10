@@ -290,6 +290,10 @@ func TestDispatcherFallsBackToTheInstalledBinary(t *testing.T) {
 	if calls(t, log) != 1 {
 		t.Fatalf("the installed binary was not run: %q", read(t, log))
 	}
+	// The binary is gone: a dispatcher naming another one is repaired.
+	if err := os.Remove(filepath.Join(dir, "baum")); err != nil {
+		t.Fatal(err)
+	}
 	opts.Baum = "/elsewhere/baum"
 	report, err := EnsureWith(t.Context(), repo, opts)
 	if err != nil || outcomes(report)["post-commit"] != Repaired {
