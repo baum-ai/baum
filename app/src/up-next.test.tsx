@@ -552,6 +552,40 @@ it("says under the actions that the review is generating until its summary is wr
   expect(status?.previousElementSibling?.classList.contains("upnext-actions")).toBe(true);
 });
 
+it("says there is no review yet and generates one from the panel", async () => {
+  entries = [requested(7)];
+  await render();
+  const card = panel().querySelector(".upnext-noreview")!;
+  expect(card.textContent).toContain("No review yet.");
+  expect(card.previousElementSibling?.classList.contains("upnext-actions")).toBe(true);
+  // The next read has the queued job.
+  entries = [requested(7, { status: "generating" })];
+  await act(async () => button("Generate").click());
+  const starts = vi.mocked(fetch).mock.calls.filter(isStart);
+  expect(starts.map(([, init]) => JSON.parse(String(init!.body)))).toEqual([
+    { items: [{ clone: "clone", pr: 7 }], mode: "single", confirm_isolation: false },
+  ]);
+  // From the click it reads as generating, not as missing.
+  expect(panel().querySelector(".upnext-noreview")).toBeNull();
+  expect(panel().textContent).toContain("Generating the review.");
+});
+
+it("offers to try again when the review failed", async () => {
+  entries = [requested(7, { status: "failed", failure_reason: "the agent timed out" })];
+  await render();
+  const card = panel().querySelector(".upnext-noreview")!;
+  expect(card.textContent).toContain("baum's review failed: the agent timed out");
+  expect(button("Try again")).toBeTruthy();
+});
+
+it("lists what baum will do instead of the card when it needs a clone", async () => {
+  entries = [requested(7, { needs_clone: true })];
+  await render();
+  // A clone item lists what baum will do instead of the card.
+  expect(panel().querySelector(".upnext-noreview")).toBeNull();
+  expect(panel().textContent).toContain("What baum will do");
+});
+
 it("shows the available summary in a Fix preview while its first review is being written", async () => {
   entries = [mine(7, { status: "generating", unresolved: 1 }), mine(8, { checks: "failing" })];
   jobsList = [fixJobOf({ id: "review-7", kind: undefined, pr: 7, draft: 1 })];

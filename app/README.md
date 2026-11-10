@@ -898,6 +898,11 @@ new version. While the first review is being generated, What changed shows
 the available draft summary and section titles, updating as the draft advances.
 Until a summary exists, a live line under the actions says the review is
 being generated. A saved review stays visible while a replacement is being generated.
+Without a review, or when the last one failed, a card in the same place says
+"No review yet." (or "baum's review failed: <reason>") with **Generate** (or
+**Try again**), which queues it as the PR page's Generate does; a refusal shows
+in the card. A pull request without a clone has no button; a Clone item lists
+what baum will do instead.
 A pull request back in the queue as a Fix whose latest fix job
 failed says "The last fix failed: <reason>", with **See what the agent did**
 (the transcript, else the job in the list). Agent sessions working on its

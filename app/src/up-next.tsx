@@ -238,9 +238,9 @@ function why(kind: UpNextKind, entry: Entry, working: number): string {
         entry.status === "generating"
           ? "baum is writing its review now."
           : entry.status === "failed"
-            ? "baum's review failed; its page can try again."
+            ? "baum's review failed."
             : entry.version_count === 0
-              ? "There is no baum review yet; generate one from its page."
+              ? "There is no baum review yet."
               : entry.status === "outdated" || entry.stale
                 ? "baum's review covers an earlier commit."
                 : `baum's review is ready${riskText(entry) ? `, risk ${riskText(entry)}` : ""}.`;
@@ -1019,6 +1019,8 @@ export function UpNextPage({
   cloneFor,
   fix,
   fixState = () => ({ starting: false, error: "" }),
+  generate,
+  generateState = () => ({ starting: false, error: "" }),
   changed,
   refresh,
   refreshing = false,
@@ -1053,6 +1055,10 @@ export function UpNextPage({
   fix: (entry: Entry, only?: FixOnly) => void;
   /** A pull request's fix that is starting or did not start. */
   fixState?: (entry: Entry) => FixState;
+  /** Starts the review of a pull request, as its page's Generate does. */
+  generate?: (entry: Entry) => void;
+  /** A pull request's review that is starting or did not start. */
+  generateState?: (entry: Entry) => FixState;
   /** Reloads the inbox after a write to GitHub. */
   changed: () => Promise<void>;
   /** Reads the pull requests from GitHub again, from the head's refresh. */
@@ -1266,6 +1272,12 @@ export function UpNextPage({
       ? () => fix(selected.entry)
       : undefined;
   const selectedFixState = selected ? fixState(selected.entry) : { starting: false, error: "" };
+  // The panel's generate button, shown while there is no review: it needs a
+  // clone to write one in.
+  const selectedGenerate =
+    selected && generate && cloneFor(selected.entry) && !selected.entry.needs_clone
+      ? () => generate(selected.entry)
+      : undefined;
   const options = snoozeOptions(now);
   const snooze = (until: SnoozeEnd) => {
     const item = selected;
@@ -1737,6 +1749,8 @@ export function UpNextPage({
               Link={Link}
               fix={selectedFix}
               fixState={selectedFixState}
+              generate={selectedGenerate}
+              generateState={generateState(selected.entry)}
               merge={() => setMerging(selected.entry)}
               review={(event) => setReviewing({ entry: selected.entry, event })}
               update={() => setUpdating(selected.entry)}
@@ -2149,6 +2163,8 @@ function Panel({
   Link,
   fix,
   fixState,
+  generate,
+  generateState,
   merge,
   review,
   update,
@@ -2166,6 +2182,9 @@ function Panel({
   Link: ComponentType<ViewerLinkProps>;
   fix?: () => void;
   fixState: FixState;
+  /** Starts the review; none without a clone to write it in. */
+  generate?: () => void;
+  generateState: FixState;
   merge: () => void;
   review: (event: ReviewEvent) => void;
   update: () => void;
@@ -2354,6 +2373,11 @@ function Panel({
           <NineDots size={14} />
           <span>Generating the review.</span>
         </div>
+      ) : kind !== "clone" &&
+        entry.status !== "generating" &&
+        (entry.status === "failed" || entry.version_count === 0) ? (
+        // A clone item says what baum will do instead.
+        <NoReview entry={entry} generate={generate} state={generateState} />
       ) : null}
       {score != null ? (
         <RiskCard score={score} text={riskText(entry)}>
@@ -2409,6 +2433,47 @@ function Panel({
         </p>
       ) : null}
     </article>
+  );
+}
+
+/** Where the review stands while there is none to read, or the last one
+ *  failed, with the button that writes it. */
+function NoReview({
+  entry,
+  generate,
+  state,
+}: {
+  entry: Entry;
+  generate?: () => void;
+  state: FixState;
+}) {
+  const failed = entry.status === "failed";
+  const text = failed
+    ? `baum's review failed${entry.failure_reason ? `: ${entry.failure_reason}` : "."}`
+    : entry.needs_clone
+      ? `No review yet. baum needs a local clone of ${entry.pull_request.repository} to write one; choose a folder or clone it in Repositories.`
+      : "No review yet.";
+  return (
+    <div className="upnext-noreview" role={state.error ? "alert" : undefined}>
+      <div className="upnext-noreview-copy">
+        <span>{text}</span>
+        {state.error ? (
+          <span className="upnext-noreview-sub">Couldn't start the review: {state.error}</span>
+        ) : generate && !failed ? (
+          <span className="upnext-noreview-sub">Writing one usually takes a few minutes.</span>
+        ) : null}
+      </div>
+      {generate ? (
+        <button
+          type="button"
+          className={cn("upnext-secondary", SECONDARY)}
+          disabled={state.starting}
+          onClick={generate}
+        >
+          {state.starting ? "Starting…" : failed ? "Try again" : "Generate"}
+        </button>
+      ) : null}
+    </div>
   );
 }
 
