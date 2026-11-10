@@ -127,9 +127,11 @@ async function measureSidebar(page: Page) {
   const nav = page.getByRole("navigation", { name: "Main" });
   const links: Box[] = [];
   for (const title of ["Inbox", "Pull requests", "Timeline", "Sessions"]) {
-    const link = nav
-      .getByRole("link", title === "Inbox" ? { name: /^Inbox/ } : { name: title, exact: true })
-      .first();
+    // Inbox is a heading over the saved inboxes; its chapter opens the first.
+    const link =
+      title === "Inbox"
+        ? nav.locator(".local-rail-heading")
+        : nav.getByRole("link", { name: title, exact: true }).first();
     const box = await link.boundingBox();
     if (!box) throw new Error(`the sidebar's ${title} is not on screen`);
     links.push({ title, ...box });
@@ -225,7 +227,7 @@ test("product video", async ({ page }) => {
   await page.addInitScript(hideControls);
   await page.goto(await launchURL());
   const sidebar = page.getByRole("navigation", { name: "Main" });
-  await expect(page.getByRole("heading", { name: "Up next", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Default", exact: true })).toBeVisible();
   // Let reviews, plan usage and the sidebar settle before the first frame.
   await page.waitForTimeout(2500);
   await page.mouse.move(at.x, at.y);
@@ -236,7 +238,7 @@ test("product video", async ({ page }) => {
   await page.waitForTimeout(2200);
 
   // The Inbox: what waits on you. Then a new inbox for work.
-  await click(page, sidebar.getByRole("link", { name: /^Inbox/ }), { button: "right" });
+  await click(page, sidebar.locator(".local-rail-heading"), { button: "right" });
   await page.waitForTimeout(1300);
   await click(page, page.getByRole("menuitem", { name: "New inbox…" }));
   await page.waitForTimeout(2100);
@@ -247,8 +249,8 @@ test("product video", async ({ page }) => {
   await measureSidebar(page);
   await page.waitForTimeout(1900);
 
-  // Back to the Inbox, to the pull request that needs you, and a fix.
-  await click(page, sidebar.getByRole("link", { name: /^Inbox/ }));
+  // Back to the first inbox, to the pull request that needs you, and a fix.
+  await click(page, sidebar.getByRole("link", { name: /^Default/ }));
   await page.waitForTimeout(1200);
   await click(
     page,

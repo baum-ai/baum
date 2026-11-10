@@ -20,7 +20,7 @@ import {
 export function sessionsSlot(
   state: SessionListState,
   options: {
-    renderSession?: (session: SessionView) => ReactNode;
+    renderSession?: (session: SessionView, focusTurn?: number) => ReactNode;
     hosted?: HostSessionView[];
     empty?: ReactNode;
   } = {},
@@ -46,12 +46,13 @@ export function sessionsSlot(
           }
         : { status: state.status },
     indicator: groupIndicator,
-    renderPane: (selected, actions) => (
+    renderPane: (selected, actions, focusTurn) => (
       <SessionList
         state={state}
         selected={selected}
         actions={actions}
         renderSession={options.renderSession}
+        focusTurn={focusTurn}
         hosted={hosted}
         empty={options.empty}
       />

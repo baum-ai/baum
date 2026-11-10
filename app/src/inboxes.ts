@@ -1,6 +1,6 @@
 import { useRef, useState } from "react";
 import { LocalRequestError, request, type Entry } from "./api";
-import type { UpNextKind } from "./up-next";
+import type { QueueKind } from "./up-next";
 import { andQuery, matchesQuery, parseQuery, queryProblem, quote } from "./pr-filter";
 
 export const INBOX_COLORS = ["blue", "green", "red", "amber", "purple", "grey"] as const;
@@ -91,10 +91,25 @@ export async function readInboxes(
   }
 }
 
-/** What `matches` needs of a queue item. A pull request an agent is fixing
+/** What `matches` needs of a pull request: a queue item, `other` for someone
+ *  else's that waits on nothing from the person, or without `kind` one of
+ *  the person's own that waits on others. A pull request an agent is fixing
  *  now is one of kind `fix`. */
-/** A queue item, or without `kind` one that waits on others. */
-export type Matchable = { kind?: UpNextKind; entry: Entry };
+export type Matchable = { kind?: QueueKind; entry: Entry };
+
+/** The default inbox's query, as the daemon creates it: what the person
+ *  wrote, is assigned or was asked to review. */
+export const FOR_ME = "author=@me OR assignee=@me OR review-requested=@me";
+
+/** Quick filters on an inbox's edit page: each puts its query into the
+ *  inbox's (or takes it out again), as the person could type it. */
+export const QUICK_FILTERS: { label: string; query: string }[] = [
+  { label: "For me", query: FOR_ME },
+  { label: "Risky", query: "risk>=4" },
+  { label: "Unclaimed", query: "assignee=none review-requested=none" },
+  { label: "No drafts", query: "is!=draft" },
+  { label: "No bots", query: "is!=bot" },
+];
 
 /** An inbox's parts as one query: what it holds (`waiting=` or, for the
  *  person's own, `author=@me`), owners (`org=`), risk (`risk>=`),
@@ -154,17 +169,8 @@ export function inboxesOf(item: Matchable, inboxes: Inbox[]): Inbox[] {
   return inboxes.filter((inbox) => matches(inbox, item));
 }
 
-/** What the Inbox badge counts: queue items that are in no inbox, or in at
- *  least one that counts in the badge. */
-export function inboxBadgeCount(items: Matchable[], inboxes: Inbox[]): number {
-  return items.filter((item) => {
-    const own = inboxesOf(item, inboxes);
-    return own.length === 0 || own.some((inbox) => inbox.badge);
-  }).length;
-}
-
 const WHAT_WORDS: Record<InboxWhat, string> = {
-  any: "anything waiting on me",
+  any: "every open pull request",
   review: "reviews I’m asked for",
   merge: "things ready to merge",
   agent: "things an agent can fix",
@@ -201,7 +207,7 @@ function sentenceParts(inbox: Inbox, login?: string) {
   };
 }
 
-/** What the inbox holds, in a sentence: "Anything waiting on me in any
+/** What the inbox holds, in a sentence: "Every open pull request in any
  *  repository, whatever the risk." */
 export function sentence(inbox: Inbox, login?: string): string {
   const { what, where, risk } = sentenceParts(inbox, login);
@@ -265,10 +271,13 @@ export type Template = Pick<Inbox, "color" | "what" | "risk" | "owners" | "badge
   name: string;
   /** What its tile says, in place of the sentence its parts make. */
   description?: string;
+  /** A query on top of its parts. */
+  query?: string;
 };
 
-/** The six starting points. `owners` is every owner of the person's
- *  repositories except their login (see `ownersOf`). */
+/** The seven starting points. `owners` is every owner of the person's
+ *  repositories except their login (see `ownersOf`). Custom starts with no
+ *  filter, so it holds every open pull request. */
 export function templates(owners: string[], login?: string): Template[] {
   const base = { what: "any", risk: "any", owners: [] as string[], badge: true } as const;
   return [
@@ -276,25 +285,46 @@ export function templates(owners: string[], login?: string): Template[] {
       ...base,
       name: "Custom",
       color: "blue",
-      description: "Start from nothing and set the filters yourself.",
+      description: "Every open pull request, until you add filters.",
     },
-    { ...base, name: "Urgent", color: "red", risk: "4" },
-    { ...base, name: "Work", color: "blue", owners },
+    {
+      ...base,
+      name: "Urgent",
+      color: "red",
+      risk: "4",
+      query: FOR_ME,
+      description: "Mine, assigned to me or asking for my review, at risk 4 or 5.",
+    },
+    {
+      ...base,
+      name: "Work",
+      color: "blue",
+      owners,
+      query: FOR_ME,
+      description: `Mine, assigned to me or asking for my review, ${owners.length ? `in ${joinOr(owners)}` : "in any repository"}.`,
+    },
     { ...base, name: "Personal", color: "green", owners: login ? [login] : [], badge: false },
     { ...base, name: "Quick merges", color: "amber", what: "merge" },
     { ...base, name: "For an agent", color: "grey", what: "agent" },
+    {
+      ...base,
+      name: "Unclaimed",
+      color: "purple",
+      query: "waiting=other assignee=none review-requested=none is!=draft is!=bot",
+      description: "Others' pull requests with no one assigned and no review requested.",
+    },
   ];
 }
 
 /** A template as an inbox of its parts, as its tile describes it. */
 export function templateInbox(template: Template, inboxes: Inbox[], id = newInboxId()): Inbox {
-  const { description: _, ...parts } = template;
+  const { description: _, query = "", ...parts } = template;
   return {
     id,
     ...parts,
     name: freeName(template.name, inboxes),
     repositories: [],
-    query: "",
+    query,
     no_bots: false,
   };
 }
@@ -306,23 +336,6 @@ export function fromTemplate(template: Template, inboxes: Inbox[], id = newInbox
     ...templateInbox(template, inboxes, id),
     color: unusedInboxColor(inboxes, template.color),
   });
-}
-
-/** A page's filter as an inbox of its own: anything waiting that matches it,
- *  named so no other inbox has the name. */
-export function fromQuery(query: string, inboxes: Inbox[]): Inbox {
-  return {
-    id: newInboxId(),
-    name: freeName("Filtered", inboxes),
-    color: unusedInboxColor(inboxes),
-    what: "any",
-    owners: [],
-    risk: "any",
-    repositories: [],
-    query,
-    no_bots: false,
-    badge: true,
-  };
 }
 
 /** How many of `items` the inbox holds. */

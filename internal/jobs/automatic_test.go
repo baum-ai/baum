@@ -510,7 +510,8 @@ func TestAutomaticJobWithoutACloneFailsNeedsClone(t *testing.T) {
 // cancelled job: nothing offers its head again, and its estimate is dropped.
 func TestAutomaticJobCancelledForTheOldDailyCapLoads(t *testing.T) {
 	path := filepath.Join(privateDir(t), "jobs.json")
-	old := `[{"id":"old","clone":"clone","pr":1,"repository":"org/repo","head_sha":"a1","backend":"claude","model":"m","estimate_usd":2,"automatic":true,"trigger":"new_head","state":"cancelled","phase":"finished","reason":"daily_cap","calls":0,"tokens":0,"repairs":0,"actual_cost_usd":null,"created_at":"2026-10-20T10:00:00Z","updated_at":"2026-10-20T10:00:00Z"}]`
+	at := time.Now().UTC().Add(-time.Hour).Format(time.RFC3339)
+	old := `[{"id":"old","clone":"clone","pr":1,"repository":"org/repo","head_sha":"a1","backend":"claude","model":"m","estimate_usd":2,"automatic":true,"trigger":"new_head","state":"cancelled","phase":"finished","reason":"daily_cap","calls":0,"tokens":0,"repairs":0,"actual_cost_usd":null,"created_at":"` + at + `","updated_at":"` + at + `"}]`
 	if err := appdb.Write(path, "state", "jobs", []byte(old)); err != nil {
 		t.Fatal(err)
 	}

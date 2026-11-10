@@ -1,9 +1,12 @@
-// Package inboxcount counts the pull requests in the app's Inbox, so the
-// desktop app's dock badge and tray show the number the app's sidebar does.
+// Package inboxcount counts what waits in the app's Inbox, so the desktop
+// app's dock badge and tray show the number the sidebar's Inbox heading does.
 //
-// It mirrors the app's queue (upNext, kindOf and the snooze filter in
-// app/src/up-next.tsx). Saved inboxes whose badge is off are not applied:
-// that needs the inbox filter language, which only the app has for now.
+// That number is the shared definition of the total: the distinct unsnoozed
+// actionable pull requests in the queue (upNext, kindOf and the snooze filter
+// in app/src/up-next.tsx), each once however many clones hold it. It ignores
+// saved inboxes, their badge switches and any filter, so a pull request in
+// two inboxes or in none counts once; the daemon never needs the inbox filter
+// language.
 package inboxcount
 
 import (
@@ -108,12 +111,15 @@ func blocked(e reviewindex.Entry) bool {
 
 func kindOf(e reviewindex.Entry, queue []jobs.Job) string {
 	pr := e.PullRequest
+	// A pull request assigned to the viewer waits on them like a requested
+	// review, unless they wrote it.
+	mine := pr.ReviewRequestedFromMe || pr.AssignedToMe && !pr.AuthoredByMe
 	switch {
 	case !isOpen(e):
 		return ""
-	case pr.ReviewRequestedFromMe && e.NeedsClone:
+	case mine && e.NeedsClone:
 		return "clone"
-	case pr.ReviewRequestedFromMe:
+	case mine:
 		return "review"
 	case !pr.AuthoredByMe:
 		return ""

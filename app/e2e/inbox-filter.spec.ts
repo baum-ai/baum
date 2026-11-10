@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { deleteAllInboxes, launchURL } from "./inbox-helpers";
+import { resetInboxes, launchURL } from "./inbox-helpers";
 
 /** Clears every page's filter and saved tab through the daemon, so a failed
  *  run leaves none for the specs that follow. */
@@ -28,7 +28,7 @@ async function clearFilters(page: Page) {
 
 test.afterEach(async ({ page }) => {
   await clearFilters(page);
-  await deleteAllInboxes(page);
+  await resetInboxes(page);
 });
 
 // Pictures for a pull request are taken only when asked for
@@ -70,9 +70,10 @@ test("filters the Inbox from the menu and as typed, saves an inbox, and edits a 
   await page.getByRole("option", { name: /^Author/ }).hover();
   await page.getByRole("listbox", { name: "Author" }).getByRole("option", { name: /^Me/ }).click();
   await expect(requested).toHaveCount(0);
-  // The query is at the menu's foot, and only there.
+  // The query is at the menu's foot, and only there: the Default inbox's own,
+  // with the pick added.
   const bar = panel.getByRole("combobox", { name: "Filter pull requests" });
-  await expect(bar).toHaveValue("author=@me");
+  await expect(bar).toHaveValue("(author=@me OR assignee=@me OR review-requested=@me) author=@me");
   await shot(page, "1-inbox-menu");
   // The panel stays on screen.
   const box = (await panel.boundingBox())!;
@@ -93,9 +94,8 @@ test("filters the Inbox from the menu and as typed, saves an inbox, and edits a 
   await filter.click();
   await page.keyboard.down("Alt");
   await expect(filter.locator(".key-hint")).toBeVisible();
-  await expect(
-    panel.getByRole("button", { name: "Clear", exact: true }).locator(".key-hint"),
-  ).toBeVisible();
+  // An inbox's bar has no Clear button; Command+C still clears it.
+  await expect(panel.getByRole("button", { name: "Clear", exact: true })).toHaveCount(0);
   await page.keyboard.up("Alt");
   await expect(filter.locator(".key-hint")).toBeHidden();
   await page.keyboard.press("Control+c");
@@ -131,7 +131,8 @@ test("filters the Inbox from the menu and as typed, saves an inbox, and edits a 
   await bar.press("Control+Enter");
   await expect(page).toHaveURL(/page=inbox-edit&inbox=[0-9a-f]{32}/);
   const name = page.getByLabel("Name", { exact: true });
-  await expect(name).toHaveValue("Filtered");
+  // Made from the Default inbox's filter, it is named after it.
+  await expect(name).toHaveValue("Default 2");
   await expect(name).toBeFocused();
   await name.fill("Filtered");
   await name.press("Control+Enter");
@@ -140,12 +141,14 @@ test("filters the Inbox from the menu and as typed, saves an inbox, and edits a 
   const edited = page.locator(".inbox-query textarea");
   const sidebar = page.getByRole("navigation", { name: "Main" });
   await sidebar
-    .getByRole("link", { name: /^Inbox/ })
+    .getByRole("link", { name: /^Default/ })
     .first()
     .click();
-  await expect(filter).toHaveAccessibleName("Filter");
+  // The draft went into the new inbox: Default is back to its own query.
+  const own = /^Filter: author=@me OR assignee=@me OR review-requested=@me \(/;
+  await expect(filter).toHaveAttribute("title", own);
   await page.reload();
-  await expect(filter).toHaveAccessibleName("Filter");
+  await expect(filter).toHaveAttribute("title", own);
   await sidebar.getByRole("link", { name: /^Filtered/ }).click();
   await expect(filter).toHaveAccessibleName("Filter, in force");
   await filter.click();

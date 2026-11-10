@@ -91,6 +91,28 @@ credentials, and only these hosts are contacted: `github.com`
 `github-production-user-asset-*.s3.amazonaws.com`, over HTTPS. A redirect to
 any other host is refused, and an image hosted elsewhere is not downloaded.
 
+Local review generation also reads retained inline image payloads from linked
+Claude Code and Codex native transcripts and reachable subagent transcripts.
+Human-pasted images and tool-result images keep distinct provenance. Entire
+checkpoint images are excluded. Image discovery does not fetch transcript URLs
+or open image-file paths mentioned in session text. Native transcript reads
+are confined to the session stores and bounded by line, scan, image-count and
+decoded-byte limits. Unsupported or missing images are nonfatal diagnostics.
+Image bytes are sniffed as PNG/JPEG/GIF/WebP and session images above 40 million
+pixels are rejected. The shared capture limit is 20 images of at most 10 MiB
+each by default; description images come first and identical bytes share one
+copy while retaining their origins. Session images longer than 1568 px on a
+side and at most 24 million pixels are decoded and re-encoded at that size
+when the result is smaller; colour profiles are not carried over. Saved
+versions share one stored copy of identical image bytes.
+
+These pixels are not text-redacted. Eligible images are made available to the
+configured review model, just as PR-description images are, and stored with the
+local review version. They are served only through authenticated local image
+routes and are not published to GitHub. Treat sensitive pixels in session
+images as sensitive model input; provenance does not imply a test passed or
+that an image depicts the reviewed revision.
+
 baum sends no telemetry. Its desktop runtime contacts GitHub, the selected
 model provider and
 `static.usebaum.com`, from which it downloads the public price list used to
@@ -558,7 +580,8 @@ What the agent can do, per backend:
 What reaches the agent: the pull request's title and branches, the conflicted
 paths, and for failing checks the failing check runs and commit statuses of
 the head (name, conclusion, output title, summary and text, each bounded) and
-the last 200 lines of the job logs of up to four failing GitHub Actions jobs.
+up to 200 lines of the job logs of up to four failing GitHub Actions jobs,
+ending with the step that failed rather than the runner's cleanup after it.
 baum reads them with your GitHub token from the API; a job log's signed
 download URL is read without the token. All of it is untrusted: it goes into
 the prompt between markers that carry a random tag it cannot know, with
@@ -839,7 +862,7 @@ computer, plus one GitHub search per picked repository:
 - **Fix transcripts.** What a fix's agent said and ran, with its tool output,
   in `transcripts/` beside `app.sqlite` (private files, secrets masked, bounded,
   the 50 latest fixes). It stays on your machine.
-- **baum's own work.** The jobs document (`state/jobs` in `app.sqlite`) and a
+- **baum's own work.** The jobs table (`jobs` in `app.sqlite`) and a
   small ledger (`state/analytics-actions` in that database) of the merges,
   branch updates and check re-runs you made from the app (time, kind,
   repository and pull request number), kept 90 days.

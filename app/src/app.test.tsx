@@ -1,4 +1,4 @@
-import { mockStateFetch } from "./ui-state-test-helper";
+import { DEFAULT_INBOX, mockStateFetch } from "./ui-state-test-helper";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { beforeEach, afterEach, expect, it, vi } from "vitest";
@@ -1627,7 +1627,7 @@ it("shows a job's pull request title, when it started and how long it took", asy
   entries = [entry(1)];
   const original = vi.mocked(fetch).getMockImplementation()!;
   vi.mocked(fetch).mockImplementation((...args) =>
-    String(args[0]) === "/s/test-ns/api/jobs"
+    String(args[0]).startsWith("/s/test-ns/api/jobs")
       ? Promise.resolve(
           Response.json({
             jobs: [
@@ -1697,7 +1697,7 @@ it("marks automatically started jobs in the jobs list", async () => {
     trigger,
   });
   vi.mocked(fetch).mockImplementation((...args) =>
-    String(args[0]) === "/s/test-ns/api/jobs"
+    String(args[0]).startsWith("/s/test-ns/api/jobs")
       ? Promise.resolve(
           Response.json({
             jobs: [
@@ -1734,7 +1734,7 @@ it("names a feature build by its repository in the jobs list", async () => {
   history.replaceState(null, "", "/s/test-ns/?page=jobs");
   const original = vi.mocked(fetch).getMockImplementation()!;
   vi.mocked(fetch).mockImplementation((...args) =>
-    String(args[0]) === "/s/test-ns/api/jobs"
+    String(args[0]).startsWith("/s/test-ns/api/jobs")
       ? Promise.resolve(
           Response.json({
             jobs: [
@@ -2575,13 +2575,14 @@ it("goes back to the inbox from a pull request page with u or Escape, keeping th
   await press("u", { ctrlKey: true });
   expect(location.search).toContain("pr=42");
   await press("u");
-  expect(location.search).toBe("?filter=requested");
+  // The list the legacy link opens is the first inbox, in the same entry.
+  expect(location.search).toBe(`?filter=requested&inbox=${DEFAULT_INBOX.id}`);
   expect(node.textContent).not.toContain("Needs a local clone");
   history.pushState(null, "", page);
   await act(async () => dispatchEvent(new PopStateEvent("popstate")));
   expect(node.textContent).toContain("Needs a local clone");
   await press("Escape");
-  expect(location.search).toBe("?filter=requested");
+  expect(location.search).toBe(`?filter=requested&inbox=${DEFAULT_INBOX.id}`);
 });
 
 it("adds a history entry for an address write, and replaces it when asked", () => {

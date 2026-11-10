@@ -421,7 +421,8 @@ func TestUnpricedBackendRuns(t *testing.T) {
 
 func TestRestartInterruptsRunningAndKeepsHistory(t *testing.T) {
 	path := filepath.Join(privateDir(t), "jobs.json")
-	raw, _ := json.Marshal([]Job{{ID: "old", State: "running", Phase: "generating"}, {ID: "completed", State: "completed"}})
+	now := time.Now().UTC()
+	raw, _ := json.Marshal([]Job{{ID: "old", State: "running", Phase: "generating"}, {ID: "completed", State: "completed", UpdatedAt: now}})
 	if e := appdb.Write(path, "state", "jobs", raw); e != nil {
 		t.Fatal(e)
 	}
@@ -435,11 +436,7 @@ func TestRestartInterruptsRunningAndKeepsHistory(t *testing.T) {
 	if jobs[0].State != "interrupted" || jobs[0].Reason != "interrupted" || jobs[1].State != "completed" {
 		t.Fatal(jobs)
 	}
-	raw, e = appdb.Read(path, "state", "jobs")
-	if e != nil {
-		t.Fatal(e)
-	}
-	if e = json.Unmarshal(raw, &jobs); e != nil || jobs[0].State != "interrupted" {
+	if jobs, e = readJournal(path); e != nil || jobs[0].State != "interrupted" {
 		t.Fatal("restart not persisted", e)
 	}
 }
@@ -455,13 +452,9 @@ func TestShutdownRecordsRunningJobInterrupted(t *testing.T) {
 	if err = q.Shutdown(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	raw, err := appdb.Read(q.path, "state", "jobs")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var saved []Job
-	if err = json.Unmarshal(raw, &saved); err != nil || saved[0].State != "interrupted" || saved[0].Reason != "interrupted" {
-		t.Fatalf("journal %s, %v", raw, err)
+	saved, err := readJournal(q.path)
+	if err != nil || saved[0].State != "interrupted" || saved[0].Reason != "interrupted" {
+		t.Fatalf("journal %+v, %v", saved, err)
 	}
 }
 func TestShutdownStopsWaitingAtDeadline(t *testing.T) {
@@ -664,12 +657,7 @@ func TestQueuedMutationsNotifyAfterPersistenceOutsideMutex(t *testing.T) {
 	notifications := make(chan Job, 10)
 	q.changed = func(job Job) {
 		_ = q.List()
-		raw, e := appdb.Read(q.path, "state", "jobs")
-		if e != nil {
-			t.Error(e)
-		}
-		var saved []Job
-		if e = json.Unmarshal(raw, &saved); e != nil {
+		if _, e := readJournal(q.path); e != nil {
 			t.Error(e)
 		}
 		notifications <- job
@@ -731,16 +719,12 @@ func TestUsageProgressIsDurableAndDetached(t *testing.T) {
 	if q.List()[0].Accounting.Usage.Input != 6 {
 		t.Fatal("List leaked mutable accounting")
 	}
-	raw, err := appdb.Read(q.path, "state", "jobs")
+	persisted, err := readJournal(q.path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var persisted []Job
-	if err = json.Unmarshal(raw, &persisted); err != nil {
-		t.Fatal(err)
-	}
 	if persisted[0].Accounting.Usage.CacheRead != 100 {
-		t.Fatal("running usage not saved", string(raw))
+		t.Fatalf("running usage not saved: %+v", persisted[0])
 	}
 	if _, err = q.Cancel(jobs[0].ID); err != nil {
 		t.Fatal(err)
@@ -815,12 +799,8 @@ func journalState(q *Queue, id string) string {
 	q.mu.Lock()
 	path := q.path
 	q.mu.Unlock()
-	raw, err := appdb.Read(path, "state", "jobs")
+	saved, err := readJournal(path)
 	if err != nil {
-		return ""
-	}
-	var saved []Job
-	if json.Unmarshal(raw, &saved) != nil {
 		return ""
 	}
 	for _, j := range saved {

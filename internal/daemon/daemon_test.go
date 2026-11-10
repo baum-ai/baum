@@ -571,22 +571,15 @@ func TestStopRecordsRunningJobInterrupted(t *testing.T) {
 	if _, err := c.Ensure(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	raw, err := appdb.Read(filepath.Join(h.paths.State, "app.sqlite"), "state", "jobs")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var journal []jobs.Job
-	if err = json.Unmarshal(raw, &journal); err != nil || len(journal) != 1 || journal[0].State != "running" {
-		t.Fatalf("before stop: %s %v", raw, err)
+	journal, err := readJobJournal(filepath.Join(h.paths.State, "app.sqlite"))
+	if err != nil || len(journal) != 1 || journal[0].State != "running" {
+		t.Fatalf("before stop: %+v %v", journal, err)
 	}
 	if stopped, err := c.Stop(context.Background()); err != nil || !stopped {
 		t.Fatal(stopped, err)
 	}
-	if raw, err = appdb.Read(filepath.Join(h.paths.State, "app.sqlite"), "state", "jobs"); err != nil {
-		t.Fatal(err)
-	}
-	if err = json.Unmarshal(raw, &journal); err != nil || journal[0].State != "interrupted" || journal[0].Reason != "interrupted" {
-		t.Fatalf("after stop: %s %v", raw, err)
+	if journal, err = readJobJournal(filepath.Join(h.paths.State, "app.sqlite")); err != nil || journal[0].State != "interrupted" || journal[0].Reason != "interrupted" {
+		t.Fatalf("after stop: %+v %v", journal, err)
 	}
 }
 
@@ -1005,13 +998,9 @@ func TestUpgradeWaitsUntilJobsFinish(t *testing.T) {
 	if current.PID == old.PID {
 		t.Fatal("same process")
 	}
-	raw, err := appdb.Read(filepath.Join(h.paths.State, "app.sqlite"), "state", "jobs")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var journal []jobs.Job
-	if err = json.Unmarshal(raw, &journal); err != nil || len(journal) != 1 || journal[0].State != "completed" {
-		t.Fatalf("journal %s %v", raw, err)
+	journal, err := readJobJournal(filepath.Join(h.paths.State, "app.sqlite"))
+	if err != nil || len(journal) != 1 || journal[0].State != "completed" {
+		t.Fatalf("journal %+v %v", journal, err)
 	}
 }
 
@@ -1196,4 +1185,31 @@ func TestStopDoesNotWaitForWorkThatIgnoresItsContext(t *testing.T) {
 	case <-time.After(10 * time.Second):
 		t.Fatal("the daemon waited for work that ignores its context")
 	}
+}
+
+// readJobJournal reads the job queue's rows (internal/jobs), oldest first.
+func readJobJournal(path string) ([]jobs.Job, error) {
+	db, err := appdb.Open(path, true)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = db.Close() }()
+	rows, err := db.Query(`SELECT job FROM jobs ORDER BY seq`)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var out []jobs.Job
+	for rows.Next() {
+		var raw []byte
+		if err = rows.Scan(&raw); err != nil {
+			return nil, err
+		}
+		var j jobs.Job
+		if err = json.Unmarshal(raw, &j); err != nil {
+			return nil, err
+		}
+		out = append(out, j)
+	}
+	return out, rows.Err()
 }

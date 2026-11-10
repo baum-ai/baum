@@ -150,13 +150,15 @@ export function SessionList({
   selected,
   actions,
   renderSession,
+  focusTurn,
   hosted = [],
   empty = "No agent session on this machine matches a commit of this pull request.",
 }: {
   state: SessionListState;
   selected: string | null;
   actions: ReviewViewerActions;
-  renderSession?: (session: SessionView) => ReactNode;
+  renderSession?: (session: SessionView, focusTurn?: number) => ReactNode;
+  focusTurn?: number;
   hosted?: HostSessionView[];
   empty?: ReactNode;
 }) {
@@ -241,7 +243,7 @@ export function SessionList({
             ))}
           </ul>
         ) : null}
-        <div className="min-h-0 flex-1 xl:overflow-y-auto">{renderSession(session)}</div>
+        <div className="min-h-0 flex-1 xl:overflow-y-auto">{renderSession(session, focusTurn)}</div>
       </>
     );
   }

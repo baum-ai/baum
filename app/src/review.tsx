@@ -131,6 +131,7 @@ export function Transcript({
   query,
   route = "api/sessions",
   title,
+  focusTurn,
 }: {
   id: string;
   query: string;
@@ -138,6 +139,7 @@ export function Transcript({
   route?: string;
   /** The listed session's title, for a transcript that holds none. */
   title?: string;
+  focusTurn?: number;
 }) {
   const [load, setLoad] = useState<LocalTranscript | null>(null);
   const [error, setError] = useState(false);
@@ -165,7 +167,7 @@ export function Transcript({
     );
   if (!load) return <LoadingStatus block>Reading redacted local transcript…</LoadingStatus>;
   // Drawn as the Sessions page draws a session, not as a chat.
-  return <TranscriptCard transcript={load} title={title} embedded />;
+  return <TranscriptCard transcript={load} title={title} focusTurn={focusTurn} embedded />;
 }
 
 /** The pull request's Sessions group: one list of the sessions linked to it
@@ -176,7 +178,7 @@ export function Transcript({
 export function pullRequestSessions(
   linked: SessionListState,
   listed: LiveSession[],
-  renderSession: (session: SessionView) => ReactNode,
+  renderSession: (session: SessionView, focusTurn?: number) => ReactNode,
 ): ReviewListSlot {
   return sessionsSlot(linked, {
     renderSession,
@@ -953,7 +955,7 @@ export function LocalReview({
                   if (anchor.type === "pr") {
                     navigate(
                       appURL(
-                        `?${clone ? `clone=${encodeURIComponent(clone)}` : `repository=${encodeURIComponent(pr.repository)}`}&pr=${anchor.number}`,
+                        `?${back.prefix}${clone ? `clone=${encodeURIComponent(clone)}` : `repository=${encodeURIComponent(pr.repository)}`}&pr=${anchor.number}`,
                       ),
                     );
                     return true;
@@ -1245,12 +1247,13 @@ export function LocalReview({
                           ? lists.sessions
                           : { status: "ready", sessions: [] },
                         listed,
-                        (session) =>
+                        (session, focusTurn) =>
                           viewedDocument ? (
                             <Transcript
                               id={session.id}
                               query={query}
                               title={session.title ?? undefined}
+                              focusTurn={focusTurn}
                             />
                           ) : (
                             <Transcript
@@ -1258,6 +1261,7 @@ export function LocalReview({
                               query={factsSelector}
                               route="api/facts/sessions"
                               title={session.title ?? undefined}
+                              focusTurn={focusTurn}
                             />
                           ),
                       )
@@ -1482,7 +1486,7 @@ function StatusMenu({ entry, items }: { entry: Entry; items: MenuItem[] }) {
   );
 }
 
-function GeneratedBy({
+export function GeneratedBy({
   saved,
   entry,
   version,
@@ -1504,7 +1508,7 @@ function GeneratedBy({
         <>
           {" · "}
           <a
-            href={appURL(`?page=jobs#job-${encodeURIComponent(made.id)}`)}
+            href={jobHref(made)}
             onClick={(event) => {
               event.preventDefault();
               navigate(event.currentTarget.href);

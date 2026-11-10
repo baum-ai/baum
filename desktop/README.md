@@ -232,7 +232,7 @@ Open baum uses the app's CLI independently of the command on the user's PATH.
 Installing that command and connecting agent hooks remain optional.
 Failed actions leave the user on the step with their output and a retry action.
 "Check again" rereads the installed state. Finishing records `desktop.json`'s
-setup section, attaches to the daemon and opens the inbox. If diagnostics find a problem,
+setup section, attaches to the daemon and opens the app's first saved inbox. If diagnostics find a problem,
 the inbox shows a notice linking to the fixes. Setup points to Settings to finish
 later, with inline controls for the command and each agent plugin.
 "Command Line and Hooks…" in the window's menu bar also reopens the same steps;
@@ -453,8 +453,10 @@ The daemon outlives the app, so the app's presence is a tray icon.
   supports, ignored silently elsewhere) shows the count. The tray icon does
   not: its dot means only that something runs or needs the user. Zero, an
   unknown count and a daemon that is not
-  running clear all of them. The daemon counts the Inbox as the app does,
-  except that saved inboxes left out of the app's badge still count:
+  running clear all of them. The daemon counts what the app's Inbox heading
+  totals, by the same definition: each unsnoozed pull request waiting on the
+  user once, whichever saved inboxes hold it or none, and whatever their badge
+  switches say (see [`internal/inboxcount`](../internal/inboxcount/README.md)):
   `GET /api/index?view=waiting`, read with the other tray requests.
 - **Quit** ends the app only. Background refresh and automatic generation
   continue in the daemon.
@@ -513,7 +515,9 @@ Two channels, each the least that does the job:
    over its control socket, owns the stopped-by-user marker, and the app needs
    no credential for it.
 2. **The app API on loopback, with the launch capability as a bearer token**,
-   for what the daemon exposes only there: `GET /api/jobs`,
+   for what the daemon exposes only there: `GET /api/jobs` (without parameters:
+   the current jobs, which hold every running, queued and unseen failed job,
+   not the whole history),
    `GET /api/automatic`, `GET /api/index?view=waiting` and
    `GET /api/live-sessions`, read when the daemon's events stream
    (`GET /api/events`, held open by a thread of its own and reopened with a

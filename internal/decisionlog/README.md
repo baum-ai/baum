@@ -253,6 +253,11 @@ they had:
   fetching, at the head their commits were recorded at;
 - once a day, every commit of the last 7 days.
 
+A 15-minute re-link without fresh commits reads no session when its commits,
+the session stores it reads (`sessions.Discovery`'s fingerprint) and the
+commits' observed creations are as at the repository's last links: it would
+link the same. The daily re-link and a daemon start always link again.
+
 A commit linked to a session more than one way keeps its strongest link.
 
 `Store.SessionLinks` reads what attributes a captured session's decisions

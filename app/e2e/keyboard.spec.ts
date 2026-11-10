@@ -44,7 +44,7 @@ test("Tab on the Inbox: the sidebar and the list are one stop each", async ({ pa
   await page.keyboard.press("Tab");
   // The sidebar's stop is its current page; ↓ moves within it.
   const inboxLink = await focused(page);
-  expect(inboxLink).toMatchObject({ place: "sidebar", text: expect.stringMatching(/^Inbox/) });
+  expect(inboxLink).toMatchObject({ place: "sidebar", text: expect.stringMatching(/^Default/) });
   await page.keyboard.press("ArrowDown");
   expect((await focused(page)).place).toBe("sidebar");
   expect((await focused(page)).text).not.toBe(inboxLink.text);
@@ -195,9 +195,9 @@ test("a click leaves no focus ring behind, and j and k still move the selection"
     }),
   ).toBe(true);
 
-  // The Inbox: a sidebar click and j show no ring on the sidebar either.
+  // The first inbox: a sidebar click and j show no ring on the sidebar either.
   await sidebar
-    .getByRole("link", { name: /^Inbox/ })
+    .getByRole("link", { name: /^Default/ })
     .first()
     .click();
   await expect(page.locator("button.upnext-row").first()).toBeVisible();

@@ -11,22 +11,31 @@ import {
   MAX_INBOXES,
   nameProblem,
   ownersOf,
+  QUICK_FILTERS,
   templates,
   type Inbox,
 } from "./inboxes";
 import { MenuButton, useContextMenu, type MenuItem } from "./context-menu";
 import { FilterBar, FilterButton } from "./filter-menu";
-import { PageBar } from "./shell";
-import { queryProblem, tidyQuery } from "./pr-filter";
+import { DOCS_URL, KEEP_ONE, PageBar } from "./shell";
+import { hasPart, queryProblem, tidyQuery, togglePart } from "./pr-filter";
 import { SettingRow } from "./settings";
-import { ColourSwatches, GROUPS, InboxTag, type UpNextItem } from "./up-next";
+import { ColourSwatches, GROUPS, InboxTag, OTHERS_TITLE, type QueueItem } from "./up-next";
+
+/** The preview's groups: the queue's, then others' pull requests. */
+const PREVIEW_GROUPS = [
+  ...GROUPS,
+  { id: "others", title: OTHERS_TITLE, kinds: ["other"] as QueueItem["kind"][] },
+];
 import { DANGER, PRIMARY, SECONDARY } from "./action-classes";
+import { CheckIcon, ExternalLinkIcon } from "@baum/viewer/components/icons";
 
 /** What the three inbox pages share: the person's inboxes and the unsnoozed
- *  queue they are matched against, the same items the sidebar counts. */
+ *  pull requests they are matched against (the queue and others' open
+ *  ones), the same items the sidebar counts. */
 export type InboxPageProps = {
   inboxes: Inbox[];
-  items: UpNextItem[];
+  items: QueueItem[];
   /** The signed-in GitHub account. */
   login?: string;
   /** The person's repositories, as owner/name. */
@@ -64,7 +73,7 @@ function useSavedMark(saves: number) {
 }
 
 /** A pull request a bit of the page names: its title and where it is. */
-function prLine(item: UpNextItem) {
+function prLine(item: QueueItem) {
   const pr = item.entry.pull_request;
   return { title: pr.title, where: `${pr.repository} #${pr.number}` };
 }
@@ -122,15 +131,13 @@ export function NewInboxPage({
             );
           })}
         </ul>
-        <p className="settings-footnote">
-          A pull request can sit in more than one inbox. Inbox at the top always shows everything.
-        </p>
+        <p className="settings-footnote">A pull request can sit in more than one inbox.</p>
       </div>
     </section>
   );
 }
 
-type Diff = { added: Set<string>; removed: UpNextItem[] };
+type Diff = { added: Set<string>; removed: QueueItem[] };
 
 /** `?page=inbox-edit&inbox=<id>`: one inbox, saved as it is changed, beside
  *  what it would show right now. */
@@ -211,7 +218,6 @@ function EditInbox({
   entries,
   saves,
   save,
-  go,
   Link,
 }: InboxPageProps & {
   inbox: Inbox;
@@ -224,6 +230,8 @@ function EditInbox({
 }) {
   const saved = useSavedMark(saves);
   const ids = useId();
+  // The last inbox cannot go: Inbox always has one to open.
+  const last = inboxes.length <= 1;
   const [draft, setDraft] = useState(inbox.name);
   const [nameError, setNameError] = useState("");
   const [diff, setDiff] = useState<Diff | null>(null);
@@ -274,7 +282,7 @@ function EditInbox({
   const removedKeys = new Set(diff?.removed.map((item) => item.key));
   const nowKeys = new Set(mine.map((item) => item.key));
   const shown = items.filter((item) => nowKeys.has(item.key) || removedKeys.has(item.key));
-  const groups = GROUPS.map((group) => ({
+  const groups = PREVIEW_GROUPS.map((group) => ({
     ...group,
     rows: shown.filter((item) => group.kinds.includes(item.kind)),
   })).filter((group) => group.rows.length > 0);
@@ -368,34 +376,75 @@ function EditInbox({
             ) : null}
           </div>
           <div className="inbox-block">
-            <h2 className="settings-row-label">What it catches</h2>
-            {/* The inbox's query, picked from the filter menu or typed. */}
+            <div className="inbox-block-head">
+              <h2 className="settings-row-label">What it catches</h2>
+              <a
+                className="inbox-docs-link"
+                href={`${DOCS_URL}inbox/#filter-what-you-see`}
+                target="_blank"
+                rel="noreferrer"
+              >
+                Filter syntax
+                <ExternalLinkIcon size={12} />
+              </a>
+            </div>
+            {/* The inbox's query, picked from the filter menu or typed; away
+                from the box each term is a token its × removes. */}
             <div className="inbox-query">
-              <FilterButton
-                query={inbox.query}
-                onChange={(query) => change({ query })}
-                entries={items.map((item) => item.entry)}
-                known={{ entries, repositories }}
-                kindOf={(entry) => kinds.get(entry)}
-                inbox
-              />
               <FilterBar
                 query={inbox.query}
                 onChange={(query) => change({ query })}
                 entries={items.map((item) => item.entry)}
                 known={{ entries, repositories }}
                 inbox
+                menu={
+                  <FilterButton
+                    query={inbox.query}
+                    onChange={(query) => change({ query })}
+                    entries={items.map((item) => item.entry)}
+                    known={{ entries, repositories }}
+                    kindOf={(entry) => kinds.get(entry)}
+                    inbox
+                    label="Add filter"
+                  />
+                }
+                clearable={false}
+                placeholder="No filter: every open pull request"
               />
+            </div>
+            {/* Each puts its query into the box, or takes it out again. */}
+            <div role="group" aria-label="Quick filters" className="inbox-quick">
+              <span aria-hidden="true" className="inbox-quick-label">
+                Quick filters
+              </span>
+              {QUICK_FILTERS.map((quick) => {
+                const on = hasPart(inbox.query, quick.query);
+                return (
+                  <button
+                    key={quick.label}
+                    type="button"
+                    className="inbox-quick-option"
+                    aria-pressed={on}
+                    title={quick.query}
+                    // A query that does not read is fixed in the box first.
+                    disabled={!!queryProblem(inbox.query, true)}
+                    onClick={() => change({ query: togglePart(inbox.query, quick.query) })}
+                  >
+                    {on ? <CheckIcon size={12} /> : null}
+                    {quick.label}
+                  </button>
+                );
+              })}
             </div>
           </div>
           <div className="settings-list inbox-badge-block">
             <SettingRow
-              label="Count it in the Inbox badge"
+              label="Show its count in the sidebar"
               htmlFor={`${ids}-badge`}
               detail={
                 inbox.badge
-                  ? "Its pull requests add to the number on Inbox."
-                  : "Left out of the badge, so it never nags. It still shows here and in Inbox."
+                  ? "The sidebar shows how many of its pull requests wait."
+                  : "No count beside it, so it never nags. Its pull requests still add to the Inbox total."
               }
             >
               <input
@@ -426,19 +475,24 @@ function EditInbox({
             </div>
           ) : (
             <div className="inbox-block inbox-delete">
-              <p className="settings-row-detail">
-                Deleting an inbox leaves its pull requests in Inbox.
+              <p id={`${ids}-delete-note`} className="settings-row-detail">
+                {last
+                  ? KEEP_ONE
+                  : "Deleting an inbox keeps its pull requests, reviews and snoozes."}
               </p>
               <button
                 type="button"
                 className={DANGER}
+                disabled={last}
+                aria-describedby={last ? `${ids}-delete-note` : undefined}
                 onClick={() =>
                   remove(inbox, () => {
-                    go(appURL());
-                    // The button goes with the page: focus lands on Inbox.
+                    // The page goes to the first inbox left; focus lands on its row.
+                    const next = inboxes.find((one) => one.id !== inbox.id);
+                    if (!next) return;
                     document
                       .querySelector<HTMLElement>(
-                        `.local-rail a.local-rail-link[href="${appURL()}"]`,
+                        `.local-rail a.local-rail-sub[href="${appURL(`?inbox=${encodeURIComponent(next.id)}`)}"]`,
                       )
                       ?.focus();
                   })
@@ -528,7 +582,7 @@ export function ManageInboxesPage({ inboxes, items, saves, save, go, Link }: Inb
     if (index < inboxes.length - 1)
       choices.push({ label: "Move down", onSelect: () => move(index, 1) });
     choices.push({
-      label: "Count in the Inbox badge",
+      label: "Show count in the sidebar",
       checked: inbox.badge,
       onSelect: () =>
         save(inboxes.map((one) => (one.id === inbox.id ? { ...one, badge: !one.badge } : one))),
@@ -547,52 +601,40 @@ export function ManageInboxesPage({ inboxes, items, saves, save, go, Link }: Inb
         actions={
           <>
             {saved}
-            {inboxes.length > 0 ? newLink : null}
+            {newLink}
           </>
         }
       />
       <div className="local-page-body local-list-page">
-        {inboxes.length === 0 ? (
-          <div className="local-empty">
-            <h2>No inboxes yet</h2>
-            <p>
-              An inbox is a saved view of Inbox, such as everything urgent or only your work. Start
-              with one.
-            </p>
-            {newLink}
-          </div>
-        ) : (
-          <>
-            <p className="local-list-note inbox-lede">
-              Inbox shows everything. These sit under it in the sidebar, in this order. A pull
-              request can be in several.
-            </p>
-            {menu.menu}
-            <ul className="list inbox-manage">
-              {inboxes.map((inbox, index) => (
-                <li
-                  key={inbox.id}
-                  className={`list-row inbox-manage-row inbox-${inbox.color}`}
-                  onContextMenu={(event) => menu.open(event, actions(inbox, index), inbox.name)}
-                >
-                  <span aria-hidden="true" className="inbox-dot inbox-dot-large" />
-                  <div className="inbox-manage-text">
-                    <span className="inbox-manage-name">
-                      <Link href={editInboxHref(inbox.id)} aria-label={`Edit ${inbox.name}`}>
-                        <strong>{inbox.name}</strong>
-                      </Link>
-                      <span>
-                        {countOf(inbox, items)} now
-                        {inbox.badge ? "" : " · not counted in the badge"}
-                      </span>
+        <>
+          <p className="local-list-note inbox-lede">
+            These are your inboxes, in their order in the sidebar. A pull request can be in several.
+          </p>
+          {menu.menu}
+          <ul className="list inbox-manage">
+            {inboxes.map((inbox, index) => (
+              <li
+                key={inbox.id}
+                className={`list-row inbox-manage-row inbox-${inbox.color}`}
+                onContextMenu={(event) => menu.open(event, actions(inbox, index), inbox.name)}
+              >
+                <span aria-hidden="true" className="inbox-dot inbox-dot-large" />
+                <div className="inbox-manage-text">
+                  <span className="inbox-manage-name">
+                    <Link href={editInboxHref(inbox.id)} aria-label={`Edit ${inbox.name}`}>
+                      <strong>{inbox.name}</strong>
+                    </Link>
+                    <span>
+                      {countOf(inbox, items)} now
+                      {inbox.badge ? "" : " · count hidden"}
                     </span>
-                  </div>
-                  <MenuButton label={inbox.name} items={() => actions(inbox, index)} menu={menu} />
-                </li>
-              ))}
-            </ul>
-          </>
-        )}
+                  </span>
+                </div>
+                <MenuButton label={inbox.name} items={() => actions(inbox, index)} menu={menu} />
+              </li>
+            ))}
+          </ul>
+        </>
       </div>
     </section>
   );

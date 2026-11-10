@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
 	"regexp"
 	"strings"
 	"sync"
@@ -41,6 +40,7 @@ const (
 	CodeInvalidRequest = "invalid_request"
 	CodeInvalidInbox   = "invalid_inbox"
 	CodeTooMany        = "too_many_inboxes"
+	CodeLastInbox      = "last_inbox"
 	CodeDuplicateName  = "duplicate_name"
 	CodeDuplicateID    = "duplicate_id"
 	CodeStale          = "stale_revision"
@@ -66,6 +66,9 @@ type Inbox struct {
 type State struct {
 	Revision int     `json:"revision"`
 	Inboxes  []Inbox `json:"inboxes"`
+	// Initialized is set once the default inbox has been created, so that
+	// deleting it later is not undone.
+	Initialized bool `json:"initialized"`
 }
 
 // InvalidError is a refused request: a stable code and a message for a person.
@@ -101,27 +104,172 @@ type Store struct {
 // Open returns a store backed by the application database at path.
 func Open(path string) *Store { return &Store{path: path} }
 
-// Read returns stored state; a missing document is revision 0 with no inboxes.
+// DefaultName is the name of the inbox every installation starts with.
+const DefaultName = "Default"
+
+// DefaultQuery is the query of the default inbox: the pull requests the
+// person wrote, is assigned or was asked to review.
+const DefaultQuery = "author=@me OR assignee=@me OR review-requested=@me"
+
+// QueueScope is the app's filter for "not someone else's pull request that
+// waits on nothing from the person". It is the shorter form of DefaultQuery
+// that upgrades use when the combined query would be too long.
+const QueueScope = "waiting!=other"
+
+// Read returns stored state. The first read of an installation creates the
+// default inbox.
 func (s *Store) Read() (State, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.read()
+	return s.ensure()
 }
 
-func (s *Store) read() (State, error) {
+// ensure initializes the document when it has not been, and returns the
+// stored state. Initialized documents are only read. Unreadable ones are
+// reported and never written.
+func (s *Store) ensure() (State, error) {
+	// Any read failure falls through to the transaction: a database another
+	// store has created but not yet set up fails a read-only open, and the
+	// transaction waits for it. One that is really unreadable fails there
+	// before anything is written.
 	data, err := appdb.Read(s.path, "state", "inboxes")
-	if errors.Is(err, os.ErrNotExist) {
-		return State{Inboxes: []Inbox{}}, nil
+	if err == nil {
+		state, err := decode(data)
+		if err != nil || state.Initialized {
+			return state, err
+		}
 	}
-	if err != nil {
+	var state State
+	entered := false
+	err = appdb.Update(s.path, "state", "inboxes", func(raw []byte) ([]byte, error) {
+		entered = true
+		out, st, err := initialize(raw)
+		state = st
+		return out, err
+	})
+	if err != nil && !entered {
 		return State{}, &UnreadableError{err}
 	}
-	return decode(data)
+	return state, err
+}
+
+// initialize marks a document that lacks the marker. With no inboxes stored it
+// adds the default inbox. Otherwise it adds nothing and narrows each stored
+// inbox's query to what the inbox showed before an empty query meant every
+// open pull request: the person's own queue. Stored entries are carried over
+// as stored JSON, re-encoded compactly, with only the query changed.
+func initialize(raw []byte) ([]byte, State, error) {
+	current, err := decode(raw)
+	if err != nil || current.Initialized {
+		return raw, current, err
+	}
+	doc := map[string]json.RawMessage{}
+	if raw != nil {
+		if err := json.Unmarshal(raw, &doc); err != nil {
+			return nil, State{}, &UnreadableError{err}
+		}
+	}
+	// decode matches keys ignoring case and doc does not: a differently cased
+	// key would be read as state but not extended, hiding the inboxes behind
+	// a new one.
+	for key := range doc {
+		for _, known := range []string{"inboxes", "revision", "initialized"} {
+			if key != known && strings.EqualFold(key, known) {
+				return nil, State{}, &UnreadableError{fmt.Errorf("key %q must be spelled %q", key, known)}
+			}
+		}
+	}
+	items := []json.RawMessage{}
+	if stored, ok := doc["inboxes"]; ok {
+		if err := json.Unmarshal(stored, &items); err != nil {
+			return nil, State{}, &UnreadableError{err}
+		}
+		if items == nil {
+			items = []json.RawMessage{}
+		}
+	}
+	if len(items) == 0 {
+		def, err := json.Marshal(Inbox{
+			ID: newID(), Name: DefaultName, Color: "blue", What: "any",
+			Owners: []string{}, Risk: "any", Repositories: []string{}, Query: DefaultQuery, Badge: true,
+		})
+		if err != nil {
+			return nil, State{}, err
+		}
+		items = append(items, def)
+	}
+	for i := range items {
+		if i < len(current.Inboxes) {
+			if items[i], err = scopeQuery(items[i], current.Inboxes[i].Query); err != nil {
+				return nil, State{}, err
+			}
+		}
+	}
+	for key, value := range map[string]any{"inboxes": items, "initialized": true, "revision": current.Revision + 1} {
+		if doc[key], err = json.Marshal(value); err != nil {
+			return nil, State{}, err
+		}
+	}
+	out, err := json.Marshal(doc)
+	if err != nil {
+		return nil, State{}, err
+	}
+	state, err := decode(out)
+	return out, state, err
+}
+
+// scopedQuery is the query that shows what an inbox with this query showed
+// before: the person's own queue, narrowed by the query.
+func scopedQuery(query string) string {
+	query = strings.TrimSpace(query)
+	if query == "" {
+		return DefaultQuery
+	}
+	for _, scoped := range []string{"(" + DefaultQuery + ") (" + query + ")", QueueScope + " (" + query + ")"} {
+		if utf8.RuneCountInString(scoped) <= MaxQueryLength {
+			return scoped
+		}
+	}
+	return query
+}
+
+// scopeQuery rewrites the query key of one stored inbox, keeping its other
+// keys. An inbox whose query cannot be scoped within the limit is unchanged.
+func scopeQuery(item json.RawMessage, query string) (json.RawMessage, error) {
+	next := scopedQuery(query)
+	if next == query {
+		return item, nil
+	}
+	fields := map[string]json.RawMessage{}
+	if err := json.Unmarshal(item, &fields); err != nil {
+		return nil, &UnreadableError{err}
+	}
+	// decode matches keys ignoring case: replace whichever spelling was read.
+	for key := range fields {
+		if strings.EqualFold(key, "query") {
+			delete(fields, key)
+		}
+	}
+	encoded, err := json.Marshal(next)
+	if err != nil {
+		return nil, err
+	}
+	fields["query"] = encoded
+	return json.Marshal(fields)
 }
 
 func decode(data []byte) (State, error) {
 	if data == nil {
 		return State{Inboxes: []Inbox{}}, nil
+	}
+	// The document must be a JSON object: null, arrays and scalars are not
+	// state, and initialize could not extend them.
+	var top map[string]json.RawMessage
+	if err := json.Unmarshal(data, &top); err != nil {
+		return State{}, &UnreadableError{err}
+	}
+	if top == nil {
+		return State{}, &UnreadableError{errors.New("document is not an object")}
 	}
 	var state State
 	if err := json.Unmarshal(data, &state); err != nil {
@@ -141,6 +289,11 @@ func decode(data []byte) (State, error) {
 func (s *Store) Replace(revision int, inboxes []Inbox) (State, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	// A client still at revision 0 gets the initialized list with a stale
+	// answer, which must not be rolled back with the refused save.
+	if _, err := s.ensure(); err != nil {
+		return State{}, err
+	}
 	var next State
 	read := false
 	err := appdb.Update(s.path, "state", "inboxes", func(raw []byte) ([]byte, error) {
@@ -160,7 +313,7 @@ func (s *Store) Replace(revision int, inboxes []Inbox) (State, error) {
 		if err != nil {
 			return nil, err
 		}
-		next = State{Revision: current.Revision + 1, Inboxes: clean}
+		next = State{Revision: current.Revision + 1, Inboxes: clean, Initialized: true}
 		return json.Marshal(next)
 	})
 	if err != nil && !read {
@@ -178,6 +331,9 @@ func newID() string {
 }
 
 func normalize(in []Inbox, known map[string]bool) ([]Inbox, error) {
+	if len(in) == 0 {
+		return nil, invalid(CodeLastInbox, "Keep at least one inbox.")
+	}
 	if len(in) > MaxInboxes {
 		return nil, invalid(CodeTooMany, "At most %d inboxes are allowed.", MaxInboxes)
 	}

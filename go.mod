@@ -13,10 +13,11 @@ require (
 	github.com/pelletier/go-toml/v2 v2.4.3
 	github.com/spf13/cobra v1.10.2
 	github.com/zalando/go-keyring v0.2.6
+	golang.org/x/image v0.47.0
 	golang.org/x/mod v0.41.0
 	golang.org/x/net v0.60.0
 	golang.org/x/sync v0.23.0
-	golang.org/x/sys v0.48.0
+	golang.org/x/sys v0.49.0
 	modernc.org/sqlite v1.54.0
 	mvdan.cc/sh/v3 v3.13.1
 )

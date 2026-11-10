@@ -54,7 +54,7 @@ func TestInstructionsComposeBackendSubmitBlock(t *testing.T) {
 		if !strings.HasPrefix(got.Body, shared) || !strings.HasSuffix(got.Body, block) {
 			t.Fatalf("%s: body is not the shared text then %s", backend, file)
 		}
-		if got.Version != "review-public-v6" {
+		if got.Version != prompt.Version {
 			t.Fatalf("version %q", got.Version)
 		}
 		sum := sha256.Sum256([]byte(got.Body))
