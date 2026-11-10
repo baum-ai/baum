@@ -61,12 +61,12 @@ func TestASessionTheEndCheckRefusesIsNotOfferedEnd(t *testing.T) {
 		stopped++
 		return nil
 	}}
-	f.live.EndChecks = map[string]EndCheck{AgentClaudeCode: func(id string) error {
+	f.live.EndChecks = map[string]EndChecker{AgentClaudeCode: checker(func(id string) error {
 		if id != "s1" {
 			t.Errorf("checked %q", id)
 		}
 		return refusal
-	}}
+	})}
 	f.clock.advance(1)
 	stop(f)
 	if listedEndable(t, f) {
@@ -87,12 +87,12 @@ func TestASessionTheEndCheckRefusesIsNotOfferedEnd(t *testing.T) {
 		t.Fatal("a busy session is offered End, or told it runs a command")
 	}
 	// A process that is gone is left for the Ender to record ended.
-	f.live.EndChecks[AgentClaudeCode] = func(string) error { return ErrAgentGone }
+	f.live.EndChecks[AgentClaudeCode] = checker(func(string) error { return ErrAgentGone })
 	if !listedEndable(t, f) {
 		t.Fatal("a session whose agent is gone is not offered End")
 	}
 	refusal = nil
-	f.live.EndChecks[AgentClaudeCode] = func(string) error { return nil }
+	f.live.EndChecks[AgentClaudeCode] = checker(func(string) error { return nil })
 	if !listedEndable(t, f) || postEnd(f, "claude-code", "s1") != http.StatusAccepted || stopped != 1 {
 		t.Fatalf("an idle session was not ended: stopped %d", stopped)
 	}
@@ -108,6 +108,11 @@ func TestASessionWhoseAgentIsGoneIsRecordedEnded(t *testing.T) {
 	if s := served(t, f)["claude-code/s1"]; s.State != StateEnded || s.WaitingReason != "" {
 		t.Fatalf("served %+v", s)
 	}
+}
+
+// checker is an EndChecker whose every look answers with check.
+func checker(check EndCheck) EndChecker {
+	return func() EndCheck { return check }
 }
 
 // stop ends the fixture session's turn.

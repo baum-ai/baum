@@ -518,7 +518,10 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 		// The live transcripts are written as the review page's are, and a
 		// waiting session's message is masked the same way.
 		renderer := transcript.NewRenderer("")
-		live := events.liveSessions(paths, registry, discover, server, log)
+		// The list and the tracker share what was confirmed of Claude Code's
+		// processes.
+		claude := &livesessions.ClaudeProcesses{}
+		live := events.liveSessions(paths, registry, discover, server, log, claude)
 		var liveAPI, requestsAPI http.Handler
 		var requests *agentrequests.Store
 		var requestEvents <-chan hookevents.Record
@@ -529,7 +532,7 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 			// A session that starts waiting for a permission or an answer is
 			// a notice; reading the registry for it must not hold the tracker.
 			live.Waiting = func(session livesessions.Session) { go notify.SessionWaiting(ctx, session) }
-			transcripts = &livesessions.Transcripts{Tracker: live, Render: renderer.Render, Log: log, Senders: liveSenders(), Enders: liveEnders(), EndChecks: liveEndChecks(), Focus: &focus.Focuser{}}
+			transcripts = &livesessions.Transcripts{Tracker: live, Render: renderer.Render, Log: log, Senders: liveSenders(), Enders: liveEnders(), EndChecks: liveEndChecks(claude), Focus: &focus.Focuser{}}
 			liveAPI = transcripts.Handler()
 			// What agents wait on the app to answer, and the messages queued
 			// for running sessions, stay in memory, masked as the sessions
@@ -834,7 +837,7 @@ func (h hookEvents) Methods() map[string]daemon.Method {
 // liveSessions tracks the agent sessions the record's events show, or nothing
 // when the record is not open. It tells the app over the events stream when
 // they change.
-func (h hookEvents) liveSessions(paths daemon.Paths, registry *repos.Registry, discover *discovery.Service, server *uiserver.Server, log *slog.Logger) *livesessions.Tracker {
+func (h hookEvents) liveSessions(paths daemon.Paths, registry *repos.Registry, discover *discovery.Service, server *uiserver.Server, log *slog.Logger, claude *livesessions.ClaudeProcesses) *livesessions.Tracker {
 	if h.service == nil {
 		return nil
 	}
@@ -845,7 +848,7 @@ func (h hookEvents) liveSessions(paths daemon.Paths, registry *repos.Registry, d
 		// and a Claude Code session waiting for its user while its process runs.
 		StateDir:     hookevents.RecordDir(paths),
 		Attributions: &commitattribution.Store{},
-		Alive:        liveAlive(),
+		Alive:        liveAlive(claude),
 		Notify:       func() { _ = server.Publish("live", struct{}{}) },
 		Log:          log,
 	}
@@ -854,11 +857,11 @@ func (h hookEvents) liveSessions(paths daemon.Paths, registry *repos.Registry, d
 // liveAlive is how the tracker tells a silent session's agent still runs:
 // Claude Code registers its processes (macOS and Linux). Codex's run in a
 // shared app server, so there is none for them.
-func liveAlive() func(agent, id string) bool {
+func liveAlive(claude *livesessions.ClaudeProcesses) func(agent, id string) bool {
 	if runtime.GOOS == "windows" {
 		return nil
 	}
-	return livesessions.ClaudeAlive{}.Alive
+	return claude.Alive
 }
 
 // liveSenders are how the app's messages reach a waiting session: Claude
@@ -887,12 +890,13 @@ func liveEnders() map[string]livesessions.Ender {
 
 // liveEndChecks tell the list whether liveEnders would end a session now,
 // so it offers End only where ending would go through: a Claude Code
-// session still running a background command is not offered it.
-func liveEndChecks() map[string]livesessions.EndCheck {
+// session still running a background command is not offered it. End itself
+// confirms the process again.
+func liveEndChecks(claude *livesessions.ClaudeProcesses) map[string]livesessions.EndChecker {
 	if runtime.GOOS == "windows" {
 		return nil
 	}
-	return map[string]livesessions.EndCheck{livesessions.AgentClaudeCode: livesessions.ClaudeExit{}.Check}
+	return map[string]livesessions.EndChecker{livesessions.AgentClaudeCode: claude.EndCheck}
 }
 
 // Run drains the spool until ctx ends.

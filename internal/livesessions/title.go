@@ -201,6 +201,7 @@ func (t *Transcripts) listed() []Listed {
 	sessions := t.Tracker.Sessions()
 	out := make([]Listed, 0, len(sessions))
 	keep := make(map[key]bool, len(sessions))
+	checks := t.endChecks()
 	for _, s := range sessions {
 		_, path, _ := t.Tracker.Lookup(s.Agent, s.ID)
 		k := key{s.Agent, s.ID}
@@ -213,7 +214,7 @@ func (t *Transcripts) listed() []Listed {
 			continue
 		}
 		l := Listed{Session: settle(s, activity), Title: title, Summary: excerpt, Activity: activity}
-		refusal := t.endRefusal(l.Session)
+		refusal := t.endRefusal(l.Session, checks)
 		l.Endable, l.Messageable = refusal == nil, t.messageable(l.Session)
 		if errors.Is(refusal, ErrRunningCommand) {
 			l.EndBlocked = EndBlockedRunningCommand

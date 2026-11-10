@@ -95,6 +95,35 @@ func TestClaudeExitEndsAnIdleSessionsOwnProcessOnly(t *testing.T) {
 	}
 }
 
+// End confirms the process itself, whatever the list was told of it.
+func TestClaudeExitConfirmsTheProcessTheListTrusted(t *testing.T) {
+	child := exec.Command("sleep", "30")
+	if err := child.Start(); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- child.Wait() }()
+	t.Cleanup(func() { _ = child.Process.Kill() })
+	pid := child.Process.Pid
+	const id = "75673aad-0000-4000-8000-000000000002"
+	home := t.TempDir()
+	// The session's process exited and another took its pid, which the list
+	// still trusts from before.
+	register(t, home, pid, id, "idle", "1", "")
+	listing := &ClaudeProcesses{Home: home, same: func(ClaudeProcess) error { return nil }}
+	if err := listing.EndCheck()(id); err != nil {
+		t.Fatalf("the list's check: %v", err)
+	}
+	if err := (ClaudeExit{Home: home}).End(context.Background(), id); !errors.Is(err, ErrAgentGone) {
+		t.Fatalf("ended a reused pid: %v", err)
+	}
+	select {
+	case <-done:
+		t.Fatal("signalled a reused pid")
+	case <-time.After(100 * time.Millisecond):
+	}
+}
+
 func TestAPIDDomainIsThisMachinesNamespace(t *testing.T) {
 	const ns = "pid:[4026531836]"
 	for _, c := range []struct {

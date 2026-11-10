@@ -36,16 +36,43 @@ const EndBlockedRunningCommand = "running_command"
 // left for the Ender to settle.
 type EndCheck func(id string) error
 
+// EndChecker begins one look at an agent's sessions: its EndCheck answers
+// for each session that look asks about, and may answer them all from what
+// it reads once.
+type EndChecker func() EndCheck
+
+// endChecks are one look's EndCheck of each agent, begun when a session of
+// the agent first needs one.
+type endChecks struct {
+	checkers map[string]EndChecker
+	begun    map[string]EndCheck
+}
+
+func (t *Transcripts) endChecks() *endChecks {
+	return &endChecks{checkers: t.EndChecks, begun: map[string]EndCheck{}}
+}
+
+func (c *endChecks) of(agent string) EndCheck {
+	check, ok := c.begun[agent]
+	if !ok {
+		if begin := c.checkers[agent]; begin != nil {
+			check = begin()
+		}
+		c.begun[agent] = check
+	}
+	return check
+}
+
 // endRefusal is why the app may not end the session, or nil when it may: it
 // waits on its user or went quiet (settled), so stopping it cuts no work
 // short, its agent has an Ender, and that agent's EndCheck, where it has
 // one, does not refuse it. The list then offers End only where ending would
 // go through.
-func (t *Transcripts) endRefusal(s Session) error {
+func (t *Transcripts) endRefusal(s Session, checks *endChecks) error {
 	if s.State != StateIdle || s.WaitingReason == "" || t.Enders[s.Agent] == nil {
 		return errNotEndable
 	}
-	check := t.EndChecks[s.Agent]
+	check := checks.of(s.Agent)
 	if check == nil {
 		return nil
 	}
@@ -70,7 +97,7 @@ func (t *Transcripts) end(ctx context.Context, agent, id string) error {
 		return ErrNotTracked
 	}
 	// Asked again rather than read from found.Endable, to say why.
-	if err := t.endRefusal(found.Session); err != nil {
+	if err := t.endRefusal(found.Session, t.endChecks()); err != nil {
 		return err
 	}
 	err := t.Enders[agent](ctx, id)
