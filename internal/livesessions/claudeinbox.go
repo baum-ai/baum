@@ -41,21 +41,47 @@ func FindClaude(home, id string) (ClaudeProcess, error) {
 	if !safeID.MatchString(id) {
 		return ClaudeProcess{}, ErrAgentGone
 	}
-	entries, err := filepath.Glob(filepath.Join(home, ".claude", "sessions", "*.json"))
+	byID, err := readClaudeRegistry(home)
 	if err != nil {
 		return ClaudeProcess{}, err
 	}
-	unconfirmed := ErrAgentGone
+	return pickClaude(byID[id], func(p ClaudeProcess) error {
+		if !running(p.PID) {
+			return ErrAgentGone
+		}
+		return sameProcess(p)
+	})
+}
+
+// readClaudeRegistry is the entries under home's ~/.claude/sessions that name
+// a session and a pid, by session id. An entry it cannot read is passed over.
+func readClaudeRegistry(home string) (map[string][]ClaudeProcess, error) {
+	entries, err := filepath.Glob(filepath.Join(home, ".claude", "sessions", "*.json"))
+	if err != nil {
+		return nil, err
+	}
+	byID := make(map[string][]ClaudeProcess, len(entries))
 	for _, path := range entries {
 		data, err := os.ReadFile(path)
 		if err != nil {
 			continue
 		}
 		var p ClaudeProcess
-		if json.Unmarshal(data, &p) != nil || p.SessionID != id || p.PID <= 0 || !running(p.PID) {
+		if json.Unmarshal(data, &p) != nil || p.SessionID == "" || p.PID <= 0 {
 			continue
 		}
-		switch err := sameProcess(p); {
+		byID[p.SessionID] = append(byID[p.SessionID], p)
+	}
+	return byID, nil
+}
+
+// pickClaude is the first of a session's entries whose process confirm
+// confirms, else ErrAgentGone when each one's is gone, else why one could
+// not be confirmed.
+func pickClaude(entries []ClaudeProcess, confirm func(ClaudeProcess) error) (ClaudeProcess, error) {
+	unconfirmed := ErrAgentGone
+	for _, p := range entries {
+		switch err := confirm(p); {
 		case err == nil:
 			return p, nil
 		case !errors.Is(err, ErrAgentGone):
@@ -98,7 +124,11 @@ func (c ClaudeExit) idle(id string) (ClaudeProcess, error) {
 	if err != nil {
 		return ClaudeProcess{}, err
 	}
-	p, err := FindClaude(home, id)
+	return idleClaude(FindClaude(home, id))
+}
+
+// idleClaude is p, found with err, when End may signal it, or why not.
+func idleClaude(p ClaudeProcess, err error) (ClaudeProcess, error) {
 	if err != nil {
 		return ClaudeProcess{}, err
 	}
@@ -109,27 +139,6 @@ func (c ClaudeExit) idle(id string) (ClaudeProcess, error) {
 		return ClaudeProcess{}, ErrRunningCommand
 	}
 	return ClaudeProcess{}, errNotEndable
-}
-
-// ClaudeAlive is a Tracker's Alive: whether the process of a Claude Code
-// session still runs under home's ~/.claude (empty is the user's home), as
-// FindClaude confirms it. Other agents register no process, so theirs are
-// never confirmed.
-type ClaudeAlive struct {
-	Home string
-}
-
-// Alive is a Tracker's Alive.
-func (c ClaudeAlive) Alive(agent, id string) bool {
-	if agent != AgentClaudeCode {
-		return false
-	}
-	home, err := orHome(c.Home)
-	if err != nil {
-		return false
-	}
-	_, err = FindClaude(home, id)
-	return err == nil
 }
 
 func orHome(home string) (string, error) {

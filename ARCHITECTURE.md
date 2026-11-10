@@ -4265,8 +4265,9 @@ replace it.
   waits at its prompt (a finished turn, or for Claude Code gone quiet) and
   `endable` when it waits or went quiet, each only where baum can reach its
   agent (`Transcripts.Senders`, `Transcripts.Enders`), and `endable` only
-  where its agent's end check (`Transcripts.EndChecks`, `ClaudeExit.Check`)
-  says ending would go through, so End is never offered to fail. `POST
+  where its agent's end check (`Transcripts.EndChecks`, begun once per list,
+  `ClaudeProcesses.EndCheck`) says ending would go through, so End is never
+  offered to fail. `POST
   api/live-sessions/{agent}/{id}/message` with `{"text"}` (at most 10 000
   characters) puts it into the session: Claude Code's through its cross-session inbox
   (`ClaudeInbox`, one JSON line on the socket its
@@ -4291,7 +4292,17 @@ replace it.
   `pidDomain` against this pid namespace on Linux, `ps -o lstart=` on macOS),
   since an entry a killed session left can name a reused pid; a session with
   no such process is recorded ended (`Tracker.Gone`), one baum cannot confirm
-  is left alone. The session's `last_prompt` is the latest thing the user
+  is left alone. The list's end check and the tracker's `Alive`
+  (`ClaudeProcesses`, shared by both) read the registry once per look for
+  every session they ask about, and trust a process they confirmed while
+  `kill(pid, 0)` finds it and its entry still names the same pid, start and
+  namespace, for at most `ReconfirmEvery` (30 seconds), so a listing forks no
+  `ps` per session each second; a process is gone the moment its pid is, and
+  only a killed session whose pid another process took between two looks can
+  be trusted that long. Sending and ending confirm the process themselves
+  (`FindClaude`), with no cache, just before they reach it. On Linux the
+  daemon's pid namespace and machine id are read once.
+  The session's `last_prompt` is the latest thing the user
   wrote to it: a prompt, a message the app sent (which Claude Code records as
   a peer's meta line), an answer to its question (`toolUseResult.answers`) or
   a message sent while it worked (a `queued_command` attachment, read from the
@@ -4316,8 +4327,8 @@ replace it.
   ignored. A late-delivered older event never moves `last_activity_at` back,
   but an older start can move `started_at` earlier. A session silent for
   `DropAfter` (2 hours) is dropped, unless `Tracker.Alive` confirms its agent
-  still runs (a Claude Code session's process, as `FindClaude` finds it; no
-  other agent registers one), which `Sweep` asks again each time, so one
+  still runs (a Claude Code session's process, as `ClaudeProcesses` finds it;
+  no other agent registers one), which `Sweep` asks again each time, so one
   waiting hours for its user stays and one whose agent exited without its end
   event goes within a minute. An ended one goes `EndedFor` (24 hours) after
   its end, so the Sessions page can list what ended recently. At most
