@@ -50,7 +50,7 @@ const STREAM_BACKOFF_FIRST: Duration = Duration::from_secs(1);
 const STREAM_BACKOFF_MAX: Duration = Duration::from_secs(30);
 const DIAGNOSTICS_INTERVAL: Duration = Duration::from_secs(30 * 60);
 /// The daemon caches plan usage this long, so asking sooner repeats it.
-const PLAN_USAGE_INTERVAL: Duration = Duration::from_secs(300);
+const PLAN_USAGE_INTERVAL: Duration = Duration::from_secs(15 * 60);
 /// The prefix of a waiting session's menu id, before its `agent:id` key.
 pub const SESSION_PREFIX: &str = "session:";
 
@@ -325,6 +325,8 @@ struct Inner {
     stream_kick: Mutex<Option<mpsc::Sender<()>>>,
     /// Wakes the diagnostics and plan usage worker.
     periodic_kick: Mutex<Option<mpsc::Sender<()>>>,
+    /// The person opened the panel or menu: the next plan usage read is forced.
+    plan_refresh: AtomicBool,
 }
 
 #[derive(Clone, Default)]
@@ -487,6 +489,13 @@ fn build_tray(app: &AppHandle, login: bool) -> Result<TrayIcon, String> {
         .show_menu_on_left_click(false)
         .on_tray_icon_event(|tray, event| {
             if let tauri::tray::TrayIconEvent::Click {
+                button_state: tauri::tray::MouseButtonState::Down,
+                ..
+            } = event
+            {
+                request_plan_refresh(tray.app_handle());
+            }
+            if let tauri::tray::TrayIconEvent::Click {
                 button: tauri::tray::MouseButton::Left,
                 button_state: tauri::tray::MouseButtonState::Up,
                 rect,
@@ -498,6 +507,19 @@ fn build_tray(app: &AppHandle, login: bool) -> Result<TrayIcon, String> {
         })
         .build(app)
         .map_err(e)
+}
+
+/// A click on the tray icon opens the panel or the menu: read the plan usage
+/// afresh so it is current when shown. The daemon still reads at most once a
+/// minute. Hosts that report no clicks (Linux) keep the periodic reading.
+fn request_plan_refresh(app: &AppHandle) {
+    let Some(shared) = shared(app) else {
+        return;
+    };
+    shared.0.plan_refresh.store(true, Ordering::Relaxed);
+    if let Some(sender) = lock(&shared.0.periodic_kick).as_ref() {
+        let _ = sender.send(());
+    }
 }
 
 fn icon(state: Icon) -> Result<Image<'static>, String> {
@@ -1024,8 +1046,9 @@ fn stream_loop(shared: &Shared, kick: &mpsc::Receiver<()>) {
     }
 }
 
-/// Reads what no event announces: diagnostics and plan usage, each every
-/// five minutes and again for a new daemon. Sleeps until the next is due,
+/// Reads what no event announces: diagnostics every 30 minutes and plan usage
+/// every 15 (from the daemon's cache, forced when the tray is clicked), each
+/// again for a new daemon. Sleeps until the next is due,
 /// and with no daemon until one is attached.
 fn periodic_loop(app: &AppHandle, shared: &Shared, kick: &mpsc::Receiver<()>) {
     let mut diagnostics: Option<(u64, Instant)> = None;
@@ -1040,7 +1063,12 @@ fn periodic_loop(app: &AppHandle, shared: &Shared, kick: &mpsc::Receiver<()>) {
             continue;
         };
         let now = Instant::now();
-        let plan_wait = until_due(plans, generation, PLAN_USAGE_INTERVAL, now);
+        let forced = shared.0.plan_refresh.swap(false, Ordering::Relaxed);
+        let plan_wait = if forced {
+            Duration::ZERO
+        } else {
+            until_due(plans, generation, PLAN_USAGE_INTERVAL, now)
+        };
         let diagnostics_wait = until_due(diagnostics, generation, DIAGNOSTICS_INTERVAL, now);
         let wait = plan_wait.min(diagnostics_wait);
         if !wait.is_zero() {
@@ -1054,7 +1082,7 @@ fn periodic_loop(app: &AppHandle, shared: &Shared, kick: &mpsc::Receiver<()>) {
             // The figures are a convenience: a failed reading keeps the last
             // one, and a daemon without the route has none to show.
             if let Ok(found) =
-                client::plan_usage(&launch).and_then(|b| status::parse_plan_usage(&b))
+                client::plan_usage(&launch, forced).and_then(|b| status::parse_plan_usage(&b))
             {
                 lock(&shared.0.observed).plans = Some(found);
                 render(app, shared, false);
