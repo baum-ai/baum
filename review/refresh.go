@@ -1,10 +1,14 @@
 package review
 
 import (
+	"bytes"
 	"cmp"
+	"encoding/json"
+	"io"
 	"slices"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	bundlepkg "github.com/baum-ai/baum/bundle"
 )
@@ -99,6 +103,44 @@ func refreshReviewMetadata(review *documentReview, b *bundlepkg.Bundle, now time
 		review.PRState = "merged"
 	}
 	review.EvidenceRefreshedAt = now.UTC().Format(time.RFC3339Nano)
+}
+
+// RefreshChanged reports whether a refreshed document differs from the
+// stored one in anything but review.evidence_refreshed_at, which every
+// refresh sets. Both documents are compared whole, as canonical JSON with
+// that one field blanked in each, so key order and spacing aside any other
+// difference counts. A document that cannot be read, or lacks the field,
+// counts as changed, as does one that is not valid UTF-8, which decoding
+// would rewrite.
+func RefreshChanged(stored, refreshed []byte) bool {
+	a, ok := withoutRefreshTime(stored)
+	if !ok {
+		return true
+	}
+	b, ok := withoutRefreshTime(refreshed)
+	return !ok || !bytes.Equal(a, b)
+}
+
+func withoutRefreshTime(document []byte) ([]byte, bool) {
+	if !utf8.Valid(document) {
+		return nil, false
+	}
+	decoder := json.NewDecoder(bytes.NewReader(document))
+	decoder.UseNumber()
+	var doc map[string]any
+	if decoder.Decode(&doc) != nil || decoder.Decode(new(any)) != io.EOF {
+		return nil, false
+	}
+	header, ok := doc["review"].(map[string]any)
+	if !ok {
+		return nil, false
+	}
+	if _, ok := header["evidence_refreshed_at"]; !ok {
+		return nil, false
+	}
+	header["evidence_refreshed_at"] = nil
+	canonical, err := json.Marshal(doc)
+	return canonical, err == nil
 }
 
 // Index the validated document once for all evidence-anchor lookups.
