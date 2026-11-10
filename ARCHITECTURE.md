@@ -4028,12 +4028,18 @@ report to the daemon; the hook side is in `internal/hookcli` (see its
   start hooks without one), and `processes`, the hook's ancestors, parent
   first, as `pid`, `start` (`/proc` starttime on Linux, `kern.proc.pid` start
   time on macOS) and `name`, at most 24 (see "Focus" under "Live sessions").
-  Git's `post-commit` and `pre-push` carry `terminal` with `processes` alone
-  (`focus.Ancestors`), so live sessions can tell which agent committed or
-  pushed, and a `post-commit` carries `git.head` and `git.branch` (empty when
-  detached), the commit and the branch it was made on, read with one `git
-  rev-parse` as the hook ran (see "Commits and pushes" under "Live
-  sessions").
+  Git's `post-commit`, `post-rewrite` and `pre-push` run from dispatchers the
+  daemon installs in registered clones (`internal/githooks`: they chain a
+  hook the clone had, saved as `<hook>.pre-baum`, and are skipped in a clone
+  with `core.hooksPath`). They carry the session their agent names in its
+  environment (`CLAUDE_CODE_SESSION_ID` becomes `agent` `claude-code` and
+  `session.id`; no other variable is kept) and `terminal` with `processes`
+  alone (`focus.Ancestors`), so live sessions can tell which agent committed or
+  pushed when no session is named. A `post-commit` carries `git.head` and
+  `git.branch` (empty when detached), the commit and the branch it was made
+  on, read with one `git rev-parse` as the hook ran, and a `post-rewrite` its
+  `amend` or `rebase` argument and the `old new` pairs in `git.lines` (see
+  "Commits and pushes" under "Live sessions").
   `Event.Bound` cuts fields at character boundaries and keeps only
   `TerminalEnv`, then trims Git lines, drops `terminal` and halves the longest
   fields until the escaped encoding fits one control line. The daemon ignores fields it does not know and records
@@ -4367,12 +4373,19 @@ replace it.
 - **Commits and pushes.** An agent often works away from its directory: it
   commits in another worktree of the clone, or creates a branch, pushes it and
   checks its directory back out on `main`. The tracker also follows Git's
-  `post-commit` and `pre-push` (one that let the push go) events, whose
-  `terminal.processes` are the hook's ancestors: the session whose agent is
-  the nearest of them (the parent its own start and prompt events recorded,
-  matched by `pid` and `start`) made the commit or push; a process two open
-  sessions name is neither's, and Git run by no session's agent belongs to
-  none. A commit (`LinkCommit`) is the commit and branch its hook recorded,
+  `post-commit`, `post-rewrite` and `pre-push` (one that let the push go)
+  events. A hook whose environment names a session of a known agent
+  (`agent` and `session.id`) made the work of that session, whatever its
+  ancestors are; if the tracker holds no entry for it (it ended and was
+  dropped, or was not seen), the work is still looked up (`LinkCommit`,
+  `LinkPush`) and recorded as an observation, without a session to show.
+  Otherwise `terminal.processes` are the hook's ancestors: the session whose
+  agent is the nearest of them (the parent its own start and prompt events
+  recorded, matched by `pid` and `start`) made the commit or push; a process
+  two open sessions name is neither's, and Git run by no session's agent
+  belongs to none. A `post-rewrite` records each new commit of its `old new`
+  lines (a malformed line is skipped), unless the session already recorded
+  that commit from the `post-commit` of the same amend or pick. A commit (`LinkCommit`) is the commit and branch its hook recorded,
   with the clone's remotes and the branch's upstream (`prlink.At`), never what
   the worktree has checked out by the time the daemon looks, so a branch
   switched or a worktree reused right after does not move it; a commit without
@@ -4391,7 +4404,7 @@ replace it.
   state file keeps those looked up (repository, branch, commit, pull request
   and event id, no directory), so a restart after the record rotated keeps
   them. Independently, `commitattribution` retains all resolved session-owned
-  post-commit and pre-push observations in the application database, with the
+  post-commit, post-rewrite and pre-push observations in the application database, with the
   repository, exact SHA, agent, session, kind, event id and observation time.
   They have no live-session TTL. Pending writes are retried and retained in
   the recovery file, including after the live session expires; unsaved work
