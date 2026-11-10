@@ -952,7 +952,7 @@ func gitHooks(registry *repos.Registry, log *slog.Logger) *githooks.Service {
 		seen := map[string]bool{}
 		for _, c := range clones {
 			// Linked worktrees of one repository share its hooks.
-			if (c.Available || !available) && !(available && seen[c.CommonDir]) {
+			if (c.Available || !available) && (!available || !seen[c.CommonDir]) {
 				seen[c.CommonDir] = true
 				out = append(out, githooks.Clone{ID: c.ID, Path: c.Path, CommonDir: c.CommonDir})
 			}
