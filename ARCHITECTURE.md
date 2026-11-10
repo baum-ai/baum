@@ -4257,7 +4257,8 @@ replace it.
   reports `shell` has finished its turn but still runs a background command
   it started, which ending would kill: neither is offered End, and a request
   for one is refused with 409 (`session_running_command` for the second,
-  saying so). Codex has no clean way to close a session from outside, so
+  saying so). The list marks the second `end_blocked: "running_command"`, and
+  the app's menu shows its End disabled, noting the command still runs. Codex has no clean way to close a session from outside, so
   none is offered. Both find the process by its registry entry, confirmed as
   the one that wrote it (`procStart` against `/proc/<pid>/stat` field 22 and
   `pidDomain` against this pid namespace on Linux, `ps -o lstart=` on macOS),

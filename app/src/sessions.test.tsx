@@ -770,6 +770,33 @@ it("never shows End session on a card: the menu offers it where the daemon can s
   expect(await menuOf("claude-code:s2")).not.toContain("End session");
 });
 
+it("shows End session disabled, saying why, while a background command still runs", async () => {
+  await render([
+    session({
+      state: "idle",
+      waiting_reason: "turn_finished",
+      waiting_since: ago(60),
+      end_blocked: "running_command",
+    }),
+  ]);
+  await act(async () => {
+    node
+      .querySelector('[data-row-id="claude-code:s1"] h3')!
+      .dispatchEvent(
+        new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 9, clientY: 9 }),
+      );
+  });
+  const end = [...node.querySelectorAll<HTMLButtonElement>('[role="menu"] [role="menuitem"]')].find(
+    (b) => b.textContent?.startsWith("End session"),
+  )!;
+  expect(end.disabled).toBe(true);
+  expect(end.querySelector(".context-menu-note")!.textContent).toBe(
+    "A background command is still running",
+  );
+  await click(end);
+  expect(posts()).toEqual([]);
+});
+
 it("offers a session's actions on a right click, in place of the browser's menu", async () => {
   const went: string[] = [];
   await act(async () =>

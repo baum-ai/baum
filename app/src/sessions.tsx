@@ -1941,6 +1941,14 @@ export function SessionsPage({
               }),
           ),
       });
+    else if (s.end_blocked === "running_command")
+      items.push({
+        label: "End session",
+        danger: true,
+        disabled: true,
+        note: "A background command is still running",
+        onSelect: () => undefined,
+      });
     return items;
   };
   const cardMenu = (event: MouseEvent) => {

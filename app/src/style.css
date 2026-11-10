@@ -3028,6 +3028,17 @@ a.local-session-pr:hover {
 .context-menu-label {
   flex: 1;
 }
+/* A choice that cannot be made now, with why under it. */
+.context-menu button:disabled {
+  color: var(--text-disabled);
+  cursor: default;
+}
+.context-menu-note {
+  display: block;
+  margin-top: 2px;
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+}
 .context-menu kbd {
   margin-left: 1rem;
 }

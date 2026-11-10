@@ -465,6 +465,10 @@ export type LiveSession = {
    *  quiet, and the daemon can stop its agent now (not while a Claude Code
    *  session still runs a background command). */
   endable?: boolean;
+  /** Why a waiting session is not `endable`, where the app can say so:
+   *  `running_command` while a Claude Code session still runs a background
+   *  command. */
+  end_blocked?: "running_command";
   /** Whether the app may send it a message (`messageSession`): it waits at
    *  its prompt, and the daemon can reach its agent. */
   messageable?: boolean;

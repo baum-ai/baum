@@ -72,6 +72,9 @@ func TestASessionTheEndCheckRefusesIsNotOfferedEnd(t *testing.T) {
 	if listedEndable(t, f) {
 		t.Fatal("a session running a background command is offered End")
 	}
+	if blocked := listedS1(t, f).EndBlocked; blocked != EndBlockedRunningCommand {
+		t.Fatalf("end_blocked = %q", blocked)
+	}
 	// A request sent from a list served before the command started.
 	w := httptest.NewRecorder()
 	f.live.Handler().ServeHTTP(w, httptest.NewRequest("POST", "/api/live-sessions/claude-code/s1/end", nil))
@@ -80,8 +83,8 @@ func TestASessionTheEndCheckRefusesIsNotOfferedEnd(t *testing.T) {
 	}
 	// A busy process is not offered End either.
 	refusal = errNotEndable
-	if listedEndable(t, f) {
-		t.Fatal("a busy session is offered End")
+	if listedEndable(t, f) || listedS1(t, f).EndBlocked != "" {
+		t.Fatal("a busy session is offered End, or told it runs a command")
 	}
 	// A process that is gone is left for the Ender to record ended.
 	f.live.EndChecks[AgentClaudeCode] = func(string) error { return ErrAgentGone }
@@ -117,11 +120,17 @@ func stop(f *transcriptFixture) {
 // listedEndable is whether the list offers to end the fixture's session.
 func listedEndable(t *testing.T, f *transcriptFixture) bool {
 	t.Helper()
+	return listedS1(t, f).Endable
+}
+
+// listedS1 is the fixture's session as the list serves it.
+func listedS1(t *testing.T, f *transcriptFixture) Listed {
+	t.Helper()
 	for _, l := range f.live.listed() {
 		if l.ID == "s1" {
-			return l.Endable
+			return l
 		}
 	}
 	t.Fatal("s1 not listed")
-	return false
+	return Listed{}
 }

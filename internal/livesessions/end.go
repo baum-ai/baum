@@ -26,14 +26,15 @@ var errNotEndable = errors.New("the session is not waiting")
 // the session.
 var ErrRunningCommand = errors.New("a background command is still running in the session")
 
+// EndBlockedRunningCommand is a listed session's EndBlocked when it is not
+// endable because of ErrRunningCommand.
+const EndBlockedRunningCommand = "running_command"
+
 // EndCheck reports whether a session of its agent may be ended now, by the
 // session's id: nil, or why its Ender would refuse (errNotEndable,
 // ErrRunningCommand). Any other error, such as a process that is gone, is
 // left for the Ender to settle.
 type EndCheck func(id string) error
-
-// endable reports whether the app may end the session (endRefusal).
-func (t *Transcripts) endable(s Session) bool { return t.endRefusal(s) == nil }
 
 // endRefusal is why the app may not end the session, or nil when it may: it
 // waits on its user or went quiet (settled), so stopping it cuts no work
