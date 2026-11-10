@@ -19,34 +19,34 @@ var backends = []string{agent.BackendClaude, agent.BackendAnthropic, agent.Backe
 
 // digests captured from the code before overrides existed.
 var baseline = map[string]string{
-	"claude review":       "b666ef1471b6a1db31217ee6ad34f14f4c7abfaea41f4040cbcf8dcd6eef499f",
-	"claude group":        "47a28c59cd707efd66b8fe8f6c770d4224ba6dd7bd8b08e437316c6a19c8463f",
-	"claude staged":       "453d63f9a9cd75da50659d7076510b70d2c25d3cf846763ba794854e76629792",
-	"anthropic review":    "b666ef1471b6a1db31217ee6ad34f14f4c7abfaea41f4040cbcf8dcd6eef499f",
-	"anthropic group":     "47a28c59cd707efd66b8fe8f6c770d4224ba6dd7bd8b08e437316c6a19c8463f",
-	"anthropic staged":    "453d63f9a9cd75da50659d7076510b70d2c25d3cf846763ba794854e76629792",
-	"codex review":        "d8593ec4a1ec9b8cf9713980d7328e152f6160c9c17a367ae3fd7d4c5ecc4d55",
-	"codex group":         "aa337087b03b90f28e3bcf6d07e8b592ca8e665b3d8ee08020cb2815936e327c",
-	"codex staged":        "3a984550f93ab9d3d2530798bcc9245d45986e3cc7fefc249d82f9f62b585b8d",
-	"cursor-agent review": "94478c8269453fd045919a2849b2725ffc6b5efade3c84c25297d30ac3a4f2ea",
-	"cursor-agent group":  "7c1b9df2dab338e2758f08bfdb6530420bc0fbfa5767d2c2a3f65e0b250df608",
-	"cursor-agent staged": "5e1b2ba1f7891a7a8ec660930b29973d46d5cef2342c6a55a7baa6c418b52c03",
+	"claude review":       "ec2a09922981dc4b1e4df337c7d102eaee0deadfd3376370d1c42d798aa3e111",
+	"claude group":        "2223a1768e7d376e07d9532919ecbd97b76bed1a3400d6872078ace60ffd264f",
+	"claude staged":       "45d56a1f43e410ce3c088de15c71adeacaf132a3d07e1e4547dfe725b657f1e1",
+	"anthropic review":    "ec2a09922981dc4b1e4df337c7d102eaee0deadfd3376370d1c42d798aa3e111",
+	"anthropic group":     "2223a1768e7d376e07d9532919ecbd97b76bed1a3400d6872078ace60ffd264f",
+	"anthropic staged":    "45d56a1f43e410ce3c088de15c71adeacaf132a3d07e1e4547dfe725b657f1e1",
+	"codex review":        "3b34612b55551568b77006fc5615e95012c53345670270c6670184f9bdd5f79d",
+	"codex group":         "5beacba3c5cd18dec186fea10a1ba5d32e2833886c39f3b7553a401fcd021485",
+	"codex staged":        "ebd06c34a7d614cdc6883b2c5679d53bfb8184d7f644f5ef6b15274282cc8c44",
+	"cursor-agent review": "f2fb1940ac321a4a5e46ebbb807ecad2832ccc72519a7cdf27b9b824310f9c76",
+	"cursor-agent group":  "117b6e8d260439b09ebd477a2940993d9737802efb5cfe52ddf28b6300addc71",
+	"cursor-agent staged": "8f46365dab08f2407992c39cca4bd8e81806520afd2bbacbd170b4d730e826a8",
 	"fix 0":               "5ff07cb79658980528df0d7dc38c2e8f2bd3c211422f66c769a21408237e4971",
 	"fix 1":               "a01d046cb31bb35be38e4304c9957a47a87a8dfdd682def427ab00251a9848aa",
-	"fix 2":               "de4b9899bccbfacc12a6661bcc20822f94a9f84dfab70e0916affeb24870489e",
-	"fix 3":               "77e23a06289827b3c32e6b00e1d45db1e11d3241e927f66a48735aeca58ba082",
+	"fix 2":               "e7f530cb2f66b78c599930498089aaa8d060c968d5fda760c7a75a7dada877bf",
+	"fix 3":               "1c89f7afe44e7185189ad34b6860c8972fc56da3e9c67ada6cc8092baef1d0d9",
 	"fix 4":               "8e02ce5a96bc1903eccf6724d5083133c405faf41ffa33005168f6aa447b84b4",
 	"fix 5":               "e6d92e17a48ee22166dfc0b0ffdfc5f2f98c8cc0ec1e53b3e7859977dc9862dc",
-	"fix 6":               "defc8bab46da2203065af95cc1f1c24dee74ae3af9504bfed0a70ce7064132f6",
-	"fix 7":               "f21776eb2a4075460f23be290f8a4acb556d3fb073a48acd18f25c3570e537e6",
+	"fix 6":               "b53355f2d107721a9ecbd9bbc1406c00d7d1e07a724c6f1408e95464ddfb3319",
+	"fix 7":               "d0594de5f7d903a824013544c234902ab9e357e8559df28ae064e819ff316462",
 	"fix 8":               "3767be0d9d0e81ea6173e9b2bb2763184d29defdebcba8015770e41ca53aecec",
 	"fix 9":               "16016895652a6f3fdc94430be7675d782e445fe5299e376ad19b21b6d01eef86",
-	"fix 10":              "8439fadcb33063bbdfa427ece752f33c8d9cab8d4a4185100ff760e5592ffd73",
-	"fix 11":              "121e23de3414c63c9c8b1b542a8d652f9b8f587c9bbbba98fd95158f7f1bdd25",
+	"fix 10":              "56091500cf46af68dcdd47f4812c0367555de42e4f2f51adf99c1811abd27827",
+	"fix 11":              "16698369e9727e1550e43c7c688421838261220ae0fd02ac7ba1558895c4a8e5",
 	"fix 12":              "1839eb22fbf2c3296b69984e52e616a5dff8fa3ab6a32b43aa6516cafcc96684",
 	"fix 13":              "dd115a648650fa176de95287b3997141ea7fc68c798cf78519d2b30b6c06ce84",
-	"fix 14":              "5bc9d09b8a5e8f6bfb7e5debd67f507bb82804c27bef1c245034678e831b3ebe",
-	"fix 15":              "279238a2205c9da73f01828171b3b7362bb6f695546e617efa35c050b2280d2c",
+	"fix 14":              "741d2786e9150947a1ef445a7f5b7a6c28984adc0584bfc338f95fc03ac9ecc2",
+	"fix 15":              "2b4db4dd265428b3a70d920ebc12441f681457c9afa20559799f21d662d729a1",
 }
 
 func sha(s string) string {
@@ -59,15 +59,15 @@ func TestZeroValueMatchesPreviousOutput(t *testing.T) {
 	for _, b := range backends {
 		for _, o := range []prompt.Overrides{nil, {}, {prompt.IDReview: "", prompt.IDFix: ""}} {
 			p, err := prompt.Prompts{Overrides: o}.Instructions(ctx, b)
-			if err != nil || p.Version != "review-public-v6" || p.Digest != baseline[b+" review"] || sha(p.Body) != p.Digest {
+			if err != nil || p.Version != prompt.Version || p.Digest != baseline[b+" review"] || sha(p.Body) != p.Digest {
 				t.Errorf("%s review: %v %q %s", b, err, p.Version, p.Digest)
 			}
 			g, err := prompt.GroupPrompts{Overrides: o}.Instructions(ctx, b)
-			if err != nil || g.Version != "group-review-public-v4" || g.Digest != baseline[b+" group"] {
+			if err != nil || g.Version != prompt.GroupVersion || g.Digest != baseline[b+" group"] {
 				t.Errorf("%s group: %v %q %s", b, err, g.Version, g.Digest)
 			}
 			s, err := prompt.StagedPrompts{Overrides: o}.StagedInstructions(ctx, b)
-			if err != nil || s.Version != "review-staged-public-v1" || s.Digest != baseline[b+" staged"] {
+			if err != nil || s.Version != prompt.StagedVersion || s.Digest != baseline[b+" staged"] {
 				t.Errorf("%s staged: %v %q %s", b, err, s.Version, s.Digest)
 			}
 		}
@@ -94,7 +94,7 @@ func TestOverridesAreUsed(t *testing.T) {
 		// review, with and without a trailing newline
 		for _, text := range []string{"MY REVIEW\n", "MY REVIEW"} {
 			p, _ := prompt.Prompts{Overrides: prompt.Overrides{prompt.IDReview: text}}.Instructions(ctx, b)
-			if p.Body != "MY REVIEW\n## 10. Submitting\n\n"+submit || p.Version != "review-public-v6+custom" || p.Digest != sha(p.Body) {
+			if p.Body != "MY REVIEW\n## 10. Submitting\n\n"+submit || p.Version != prompt.Version+"+custom" || p.Digest != sha(p.Body) {
 				t.Errorf("%s review override: %q %q", b, p.Version, p.Body)
 			}
 		}
@@ -116,7 +116,7 @@ func TestOverridesAreUsed(t *testing.T) {
 				text = "G"
 			}
 			g, _ := prompt.GroupPrompts{Overrides: prompt.Overrides{o: text}}.Instructions(ctx, b)
-			if g.Body != want || g.Version != "group-review-public-v4+custom" || g.Digest != sha(g.Body) {
+			if g.Body != want || g.Version != prompt.GroupVersion+"+custom" || g.Digest != sha(g.Body) {
 				t.Errorf("%s group override %s: %q", b, o, g.Version)
 			}
 		}
@@ -125,7 +125,7 @@ func TestOverridesAreUsed(t *testing.T) {
 		def, _ := prompt.StagedPrompts{}.StagedInstructions(ctx, b)
 		for _, id := range []prompt.ID{prompt.IDReviewStagedShared, prompt.IDReviewStagedOutline, prompt.IDReviewStagedDetails, prompt.IDReviewStagedContext} {
 			s, err := prompt.StagedPrompts{Overrides: prompt.Overrides{id: "CUSTOM"}}.StagedInstructions(ctx, b)
-			if err != nil || s.Version != "review-staged-public-v1+custom" {
+			if err != nil || s.Version != prompt.StagedVersion+"+custom" {
 				t.Fatalf("%s %s: %v %q", b, id, err, s.Version)
 			}
 			got := map[prompt.ID]*[2]string{
