@@ -209,7 +209,7 @@ export function DiagnosticsSection({
     setRunning(true);
     setError("");
     try {
-      const body = await request<Diagnostics>("api/diagnostics");
+      const body = await request<Diagnostics>("api/diagnostics?refresh=1");
       if (mine === sequence.current) {
         setReport(body.report);
         setHome(body.home);

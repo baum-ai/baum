@@ -526,7 +526,8 @@ Two channels, each the least that does the job:
    500 ms (at most 2 s) for a burst of events to end; as a safety net also
    every 60 s while the stream is up and every 30 s while it is down, and
    never with no daemon attached,
-   `GET /api/diagnostics` every 5 minutes (it runs the doctor's checks),
+   `GET /api/diagnostics` every 30 minutes (the daemon caches the report for 30
+   minutes; only the app's Diagnostics dialog forces a fresh run),
    `GET /api/plan-usage?refresh=1` every 5 minutes (a fresh reading; the
    daemon reads again at most once a minute; no event announces either, so
    one worker sleeps until the next is due and does nothing with no daemon
