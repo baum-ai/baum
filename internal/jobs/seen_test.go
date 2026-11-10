@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestSeenRecordsAFailedJobOnceAndSurvivesARestart(t *testing.T) {
@@ -17,7 +18,10 @@ func TestSeenRecordsAFailedJobOnceAndSurvivesARestart(t *testing.T) {
 		t.Fatal(err)
 	}
 	q.mu.Lock()
-	q.jobs = append(q.jobs, Job{ID: "broken", State: "failed"}, Job{ID: "fine", State: "completed"})
+	now := time.Now().UTC()
+	q.jobs = append(q.jobs, Job{ID: "broken", State: "failed", UpdatedAt: now}, Job{ID: "fine", State: "completed", UpdatedAt: now})
+	q.mark("broken")
+	q.mark("fine")
 	err = q.save()
 	q.mu.Unlock()
 	if err != nil {

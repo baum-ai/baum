@@ -112,6 +112,7 @@ func (q *Queue) Ask(ctx context.Context, ask chat.Ask) (ChatQueued, error) {
 	failed := q.draining
 	if !failed {
 		q.jobs = append(q.jobs, j)
+		q.mark(j.ID)
 		if err = q.save(); err != nil {
 			q.jobs = q.jobs[:len(q.jobs)-1]
 			failed = true

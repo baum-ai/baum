@@ -124,7 +124,11 @@ test("Add repositories searches beyond suggestions and picks the result", async 
     // disabled box is lost, so wait for the first to settle.
     await cached.uncheck();
     await expect(result).toBeEnabled();
-    await result.uncheck();
+    // Without a search, the unpicked result leaves the list. uncheck() reads
+    // the box again after its click and, if the row has already gone, waits
+    // for it until the test times out.
+    await result.click();
+    await expect(result).toHaveCount(0);
     await expect(
       page.getByRole("button", { name: "Settings for acme/search-only", exact: true }),
     ).toHaveCount(0);

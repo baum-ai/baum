@@ -11,6 +11,13 @@ import (
 	"github.com/baum-ai/baum/internal/reviewgroups"
 )
 
+// A page of GET /api/jobs?limit=&before= holds defaultJobsPage jobs unless
+// limit says otherwise, at most maxJobsPage.
+const (
+	defaultJobsPage = 50
+	maxJobsPage     = 200
+)
+
 func (q *Queue) Handler() http.Handler {
 	mux := http.NewServeMux()
 	respond := func(w http.ResponseWriter, v any) {
@@ -56,7 +63,61 @@ func (q *Queue) Handler() http.Handler {
 		return true
 	}
 	mux.HandleFunc("GET /api/jobs", func(w http.ResponseWriter, r *http.Request) {
-		respond(w, map[string]any{"available": true, "jobs": q.List()})
+		query := r.URL.Query()
+		repository, pr, limit, before := query.Get("repository"), query.Get("pr"), query.Get("limit"), query.Get("before")
+		for name := range query {
+			if name != "repository" && name != "pr" && name != "limit" && name != "before" {
+				http.Error(w, "unknown parameter "+name, 400)
+				return
+			}
+		}
+		paged := limit != "" || query.Has("before")
+		switch {
+		case (repository != "" || pr != "") && paged:
+			http.Error(w, "repository and pr cannot be combined with limit or before", 400)
+		case repository != "" || pr != "":
+			number, e := strconv.Atoi(pr)
+			if repository == "" || e != nil || number < 1 {
+				http.Error(w, "repository and a positive pr are both required", 400)
+				return
+			}
+			respond(w, map[string]any{"available": true, "jobs": q.OfPullRequest(repository, number)})
+		case paged:
+			n := defaultJobsPage
+			if limit != "" {
+				var e error
+				if n, e = strconv.Atoi(limit); e != nil || n < 1 || n > maxJobsPage {
+					http.Error(w, "limit must be 1 to "+strconv.Itoa(maxJobsPage), 400)
+					return
+				}
+			}
+			if query.Has("before") && before == "" {
+				http.Error(w, "unknown job", 400)
+				return
+			}
+			page, next, e := q.Page(before, n)
+			if e != nil {
+				http.Error(w, "unknown job", 400)
+				return
+			}
+			answer := map[string]any{"available": true, "jobs": page}
+			if next != "" {
+				answer["next"] = next
+			}
+			respond(w, answer)
+		default:
+			respond(w, map[string]any{"available": true, "jobs": q.Current()})
+		}
+	})
+	// GET /api/jobs/{id} is one loaded job, wherever it is in the history,
+	// for the transcript page of a job the current view no longer holds.
+	mux.HandleFunc("GET /api/jobs/{id}", func(w http.ResponseWriter, r *http.Request) {
+		job, ok := q.Find(r.PathValue("id"))
+		if !ok {
+			http.Error(w, http.StatusText(404), 404)
+			return
+		}
+		respond(w, job)
 	})
 	// POST /api/jobs starts what the person asked for at once: reviews, a
 	// group's review or a fix. Only a fork or an author without known write
@@ -162,13 +223,7 @@ func (q *Queue) Handler() http.Handler {
 			}
 			after = n
 		}
-		var job Job
-		found := false
-		for _, j := range q.List() {
-			if j.ID == r.PathValue("id") {
-				job, found = j, true
-			}
-		}
+		job, found := q.Find(r.PathValue("id"))
 		if !found || !job.HasTranscript {
 			http.Error(w, http.StatusText(404), 404)
 			return

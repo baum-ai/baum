@@ -3,9 +3,7 @@ package discovery
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
-	"os"
 	"strings"
 	"time"
 
@@ -31,22 +29,17 @@ const probeBatch = 50
 // about one point each, on the polls' shared budget. A repository never
 // polled, or one GitHub does not return (renamed, or access lost), is left to
 // its scheduled poll, as is one whose credential differs from the first
-// repository's.
+// repository's. It takes no repository's lock, so polls under way do not hold
+// it up.
 func (s *Service) Probe(ctx context.Context, repositories []github.Repository) (map[string]bool, error) {
 	changed := map[string]bool{}
 	if len(repositories) == 0 {
 		return changed, nil
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	s.liveMu.Lock()
-	epoch := s.epoch
-	s.active = cancel
-	s.liveMu.Unlock()
-	budgetMu.Lock()
-	defer budgetMu.Unlock()
+	epoch, done := s.begin(cancel)
+	defer done()
 	reader, err := s.client.REST(ctx, repositories[0])
 	if err != nil {
 		return nil, err
@@ -78,11 +71,11 @@ func (s *Service) Probe(ctx context.Context, repositories []github.Repository) (
 		return nil, err
 	}
 	budgetPath += ".budget"
-	budget, err := s.load(budgetPath)
-	if err != nil && !errors.Is(err, os.ErrNotExist) {
+	budget, err := s.ledger(budgetPath)
+	if err != nil {
 		return nil, err
 	}
-	p := poll{reader: reader, rate: budget.Snapshot.Rate, graphRate: budget.GraphQLRate, now: s.now()}
+	p := poll{reader: reader, budget: budget, now: s.now()}
 	if p.ResetIfExhausted().After(p.now) {
 		return nil, errRateLimit
 	}
@@ -101,7 +94,7 @@ func (s *Service) Probe(ctx context.Context, repositories []github.Repository) (
 		}
 		var response map[string]json.RawMessage
 		if json.Unmarshal(data, &response) != nil {
-			probeErr = errors.New("invalid GitHub discovery response")
+			probeErr = errInvalid
 			break
 		}
 		for i, t := range batch {
@@ -129,10 +122,12 @@ func (s *Service) Probe(ctx context.Context, repositories []github.Repository) (
 			}
 		}
 	}
-	if s.Epoch() != epoch || ctx.Err() != nil {
+	s.liveMu.Lock()
+	defer s.liveMu.Unlock()
+	if s.epoch != epoch {
 		return nil, github.ErrIdentityChanged
 	}
-	if err := s.save(budgetPath, diskCache{Snapshot: Snapshot{Rate: p.rate}, GraphQLRate: p.graphRate}); err != nil {
+	if err := s.save(budgetPath, budget.record()); err != nil {
 		return nil, fmt.Errorf("save discovery rate budget: %w", err)
 	}
 	if probeErr != nil {

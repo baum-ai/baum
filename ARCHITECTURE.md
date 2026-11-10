@@ -3061,9 +3061,43 @@ was not shown.
 
 ### Persistent generation jobs
 
-`internal/jobs` serializes queue mutations in the `state/jobs` JSON document
-in the shared private `app.sqlite` application database,
-without duplicating review documents. `jobs.Open` takes an exclusive
+`internal/jobs` serializes queue mutations in the `jobs` table of the shared
+private `app.sqlite` application database, without duplicating review
+documents. Each job is one row: its id, a creation sequence (`seq`, which
+keeps the history oldest first), created and updated times, state, an
+`archived` flag and the job as JSON. A save writes only the jobs changed
+since the last successful write, in one transaction; a job dropped by a
+rolled-back submission has its row deleted. The history has no size limit.
+A fix's summary is cut to 16 KiB and a job's failure detail to 4 KiB, each
+marked as truncated. A job whose JSON is still over 1 MiB (`maxJobJSON`) is
+journaled without its summary, detail, thread outcomes, failed sections,
+fix threads and usage attempts, and the error is logged. One still over the
+limit is not journaled at all; the other jobs of the write are. A database
+from an older baum keeps the history in the `state/jobs` document: the first
+`jobs.Open` moves it into rows, in order, and deletes the document in the
+same transaction, so a failed move leaves it in place and `Open` fails. An
+older baum run after that sees no `state/jobs` and starts a new document;
+the next upgrade appends its jobs after the existing rows.
+
+A job that ended more than 120 days ago (`jobs.ArchiveAfter`, by its
+`updated_at` and the queue's clock) is archived: it leaves memory, `List` and
+the API, and its transcript file is deleted. Its row stays, with `archived`
+set, and `Open` no longer loads it. Nothing deletes a row. Archiving runs at
+`Open` and then daily, until the queue stops. Queued and running jobs are
+never archived. Nor is an unsettled job that is its head's latest, which
+`Refused` lists (see below), or a job whose archiving would leave an
+unsettled job its head's latest. One transaction sets the flags, writes the
+latest content of an archived job changed since its last write, and adds the
+archived jobs to `job_heads`, which counts, per head (`headKey`: repository
+case-insensitively, then pull request and head, or group and member heads),
+the archived runs `ErrDuplicate` compares (`runs`) and the archived chat and
+details jobs only `Interrupted` also counts (`others`). The queue loads the
+counts at `Open` and keeps them in memory. A failed archive keeps the jobs
+until the next pass. Seen, cancel, transcript and draft answer `404` for an
+archived job, and a question's turn reads it as interrupted. Analytics'
+longest window counts jobs created in the last 90 days, so archiving
+changes none of its figures.
+`jobs.Open` takes an exclusive
 `internal/filelock` lock beside the database (`<database path>.jobs.lock.sqlite`) and keeps it
 until its workers stop, so two processes never run one queue; it waits up to
 10 s for a predecessor whose shutdown timed out and that is exiting.
@@ -3099,6 +3133,32 @@ again against the new daemon. Workers use the same `generate.Publish`
 entry point as the terminal: previous-version lookup, run lease, generation and
 strict validation, then atomic version publication. Running journal entries are
 interrupted on restart; queued entries retain their confirmed input fingerprint.
+`GET /api/jobs` reads the queue in three forms, so no client reads the whole
+history on every refresh; each answers `{"available":true,"jobs":[…]}`:
+
+- With no parameters, the current jobs, oldest first (history order): every
+  queued or running job, every failed job not yet seen (`seen_at` unset), and
+  the latest job of each subject for each kind (`Queue.Current`). A subject is
+  a review group, or a pull request (repository compared without regard to
+  case), or, for a repository's feature build, the repository with pull request
+  0; a kind is the review's empty kind, `details`, `fix`, `chat` or
+  `feature_build`. That is what the app's global list and the desktop tray read.
+- `?repository=owner/name&pr=N`: every loaded job of that pull request, oldest
+  first, without the jobs of a group (`Queue.OfPullRequest`). The PR page reads
+  its fixes and questions this way.
+- `?limit=N` and/or `?before=<job id>`: a page of the whole history, newest
+  first (`Queue.Page`), from the newest job or just before the named one, at
+  most `limit` jobs (1 to 200, 50 when only `before` is given), with
+  `"next":"<job id>"` for the following older page while older jobs exist
+  (omitted when none). The Jobs page loads finished jobs this way.
+
+The forms are exclusive: `repository` with `pr` together, and neither with
+`limit` or `before`. An unknown parameter, a missing or non-positive `pr`, a
+`limit` outside 1 to 200 and a `before` naming no loaded job answer `400`.
+`GET /api/jobs/{id}` is one loaded job wherever it is in the history (`404`
+otherwise), for the transcript page of a job the current jobs no longer hold;
+`GET /api/jobs/{id}/transcript` likewise finds any loaded job.
+
 `POST /api/jobs` with `items` and `mode` starts reviews, a group's review or a
 fix at once (`Queue.Generate`): it prepares the items and queues them in one
 request, with no estimate to confirm and nothing about the price that stops a
@@ -3207,7 +3267,9 @@ group) has a queued or running job (it never joins or supersedes one),
 `ErrDuplicate` when any job, manual or automatic, already exists for that head
 (a group's: its member heads) (except a single
 automatic job a daemon stop or restart interrupted, which `Interrupted` lists
-and which may run once more; failed and cancelled jobs are final). Jobs
+and which may run once more; failed and cancelled jobs are final). An
+archived job still counts for its head (`job_heads`), and is never retried:
+any archived run of a head makes it `ErrDuplicate`. Jobs
 record `automatic` and `trigger` (`new_head`, `review_requested`,
 `ready_for_review`, `retry`, `stack_reviewed`, `setup`). A job an older baum cancelled with reason
 `daily_cap`, for the spending cap baum no longer has, loads as an ordinary
@@ -3354,9 +3416,13 @@ preferences' fix agent (`fix_backend` and `fix_model`, Claude Code or Codex,
 set with `PUT /api/automatic` or `baum internal reviews set --fix-backend`) when one
 is chosen (`Preferences.ResolveFix`), and otherwise the review's. Before running, the executor prepares
 again and refuses a changed head (`head_changed`) or changed fix inputs, then
-reads the failing checks' output and the last 200 lines of up to four GitHub
-Actions job logs (`RESTReader.Tail`, which follows the signed log redirect
-without the token), and reads the review threads again, refusing threads whose
+reads the failing checks' output and up to four GitHub Actions job logs
+(`RESTReader.Download`, which follows the signed log redirect without the
+token). Of each log it keeps the last 200 lines up to the end of the last step
+that logged an `##[error]` line, preferring the job's steps over its post-job
+cleanup, without timestamps or terminal escapes (`fix.jobLog`); a log without
+an error line gives its last 200 lines. It then reads the review threads
+again, refusing threads whose
 digest changed (`threads_changed`).
 
 `fix.Run` then works in a `gitlocal.Fix`: a linked worktree of the
@@ -3434,7 +3500,7 @@ to it (`agent.TitlePath`). `Job.has_transcript` says one exists, and
 never leave the machine.
 
 `POST /api/jobs/{id}/seen` (body `{}`) records that the user looked at a failed
-job: it sets `Job.seen_at` once, in the queue's `state/jobs` record, and
+job: it sets `Job.seen_at` once, in the job's row of the queue's journal, and
 leaves jobs in any other state unchanged (`404` for an unknown job). A failed
 job never runs again, so the desktop tray never flags one with `seen_at`.
 
