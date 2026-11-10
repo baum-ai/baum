@@ -162,7 +162,8 @@ func environmentSession(getenv func(string) string) (string, *hookevents.Session
 	for _, v := range sessionEnv {
 		id := getenv(v.name)
 		if id == "" || len(id) > maxSessionID || strings.ContainsFunc(id, func(r rune) bool {
-			return !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '-' || r == '_' || r == '.' || r == ':')
+			letter := r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9'
+			return !letter && !strings.ContainsRune("-_.:", r)
 		}) {
 			continue
 		}
