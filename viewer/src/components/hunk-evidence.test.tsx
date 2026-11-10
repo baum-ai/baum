@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act } from "react";
+import { act, type ReactElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
@@ -25,6 +25,24 @@ const settle = (until: () => boolean, tries = 100) =>
       await new Promise((resolve) => setTimeout(resolve, 20));
   });
 
+async function mount(element: ReactElement) {
+  const container = globalThis.document.createElement("div");
+  root = createRoot(container);
+  await act(async () => root!.render(element));
+  return container;
+}
+
+// Any way of opening a <details> fires toggle, which is what the evidence reads.
+async function open(container: HTMLElement) {
+  const details = container.querySelector("details")!;
+  await act(async () => {
+    details.open = true;
+    details.dispatchEvent(new Event("toggle"));
+  });
+}
+
+const rows = (container: HTMLElement) => container.querySelectorAll("tr").length;
+
 function document(): ReviewDocument {
   const value = structuredClone(reviewDocumentFor("acme/widgets", 42)) as ReviewDocument;
   const hunk = value.index.hunks.find((candidate) => candidate.id === "h_picker")!;
@@ -43,13 +61,15 @@ function document(): ReviewDocument {
 }
 
 describe("hunk evidence", () => {
-  it("renders a selected range with two surrounding diff rows", () => {
-    const html = renderToStaticMarkup(
+  it("renders a selected range with two surrounding diff rows", async () => {
+    const container = await mount(
       <HunkEvidence
         document={document()}
         anchors={[{ type: "hunk", id: "h_picker", lines: [12, 12] }]}
       />,
     );
+    await open(container);
+    const html = container.innerHTML;
     expect(html).toContain("Code evidence");
     expect(html).toContain("1 excerpt in 1 file · +1 −1");
     expect(html).not.toContain(">ten<");
@@ -58,7 +78,7 @@ describe("hunk evidence", () => {
     expect(html).toContain("@@ -11,4 +11,4 @@");
   });
 
-  it("selects ranges from new-side coordinates only", () => {
+  it("selects ranges from new-side coordinates only", async () => {
     const doc = document();
     const hunk = doc.index.hunks.find((candidate) => candidate.id === "h_picker")!;
     hunk.diff = {
@@ -73,14 +93,16 @@ describe("hunk evidence", () => {
         { kind: "context", old_line: 16, new_line: 13, text: "new thirteen" },
       ],
     };
-    const html = renderToStaticMarkup(
+    const container = await mount(
       <HunkEvidence document={doc} anchors={[{ type: "hunk", id: "h_picker", lines: [12, 12] }]} />,
     );
+    await open(container);
+    const html = container.textContent;
     expect(html).toContain("selected new twelve");
     expect(html).not.toContain("unrelated old twelve");
   });
 
-  it("advances the missing side of an interior add-only excerpt", () => {
+  it("advances the missing side of an interior add-only excerpt", async () => {
     const doc = document();
     const hunk = doc.index.hunks.find((candidate) => candidate.id === "h_picker")!;
     hunk.diff = {
@@ -100,9 +122,11 @@ describe("hunk evidence", () => {
         { kind: "context", old_line: 6, new_line: 12, text: "context 6" },
       ],
     };
-    const html = renderToStaticMarkup(
+    const container = await mount(
       <HunkEvidence document={doc} anchors={[{ type: "hunk", id: "h_picker", lines: [8, 8] }]} />,
     );
+    await open(container);
+    const html = container.innerHTML;
     expect(html).toContain("@@ -5,0 +6,5 @@");
     expect(html).not.toContain("@@ -1,0");
   });
@@ -126,12 +150,12 @@ describe("hunk evidence", () => {
     );
   });
 
-  it("opens code in the review's file view when the pull request changes the file", () => {
+  it("opens code in the review's file view when the pull request changes the file", async () => {
     const files = {
       has: (path: string) => path.endsWith("repository-picker.tsx"),
       open: () => true,
     };
-    const html = renderToStaticMarkup(
+    const container = await mount(
       <ReviewFilesProvider files={files}>
         <HunkEvidence
           document={document()}
@@ -139,6 +163,8 @@ describe("hunk evidence", () => {
         />
       </ReviewFilesProvider>,
     );
+    await open(container);
+    const html = container.innerHTML;
     expect(html).toContain("web/app/components/repository-picker.tsx");
     expect(html).not.toContain("github.com");
   });
@@ -181,5 +207,43 @@ describe("hunk evidence", () => {
     });
     await settle(highlighted);
     expect(highlighted()).toBe(true);
+  });
+
+  it("draws no diff rows until opened, then keeps them when closed", async () => {
+    const anchors = [
+      { type: "hunk" as const, id: "h_picker", lines: [12, 12] as [number, number] },
+    ];
+    const html = renderToStaticMarkup(<HunkEvidence document={document()} anchors={anchors} />);
+    expect(html).toContain("Code evidence");
+    expect(html).not.toContain("<tr");
+    expect(html).not.toContain("thirteen");
+    const container = await mount(<HunkEvidence document={document()} anchors={anchors} />);
+    expect(rows(container)).toBe(0);
+    await open(container);
+    const opened = rows(container);
+    expect(opened).toBeGreaterThan(0);
+    const details = container.querySelector("details")!;
+    await act(async () => {
+      details.open = false;
+      details.dispatchEvent(new Event("toggle"));
+    });
+    expect(rows(container)).toBe(opened);
+  });
+
+  it("mounts the diff when the summary is clicked", async () => {
+    const container = await mount(
+      <HunkEvidence
+        document={document()}
+        anchors={[{ type: "hunk", id: "h_picker", lines: [12, 12] }]}
+      />,
+    );
+    expect(rows(container)).toBe(0);
+    // A click opens the details natively; jsdom does not, so do both halves.
+    await act(async () => {
+      container.querySelector("summary")!.click();
+      container.querySelector("details")!.open = true;
+      container.querySelector("details")!.dispatchEvent(new Event("toggle"));
+    });
+    expect(rows(container)).toBeGreaterThan(0);
   });
 });
