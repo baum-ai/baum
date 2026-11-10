@@ -107,7 +107,8 @@ func (c *evidenceCache) store(key string, evidence []bundle.Session, complete bo
 // the sessions discovered for it (sessions.Discovery.Fingerprint, which
 // covers the clone's worktrees and Entire refs), the home directory, and the
 // state of the clone's checkouts, whose files bound the paths a session
-// touched, and the reflog entries that created the commits. ok is false when any of it cannot be described.
+// touched, and the reflog entries that created the commits. ok is false when
+// any of it cannot be described.
 func evidenceKey(ctx context.Context, req EvidenceRequest, dir string, d *sessions.Discovery) (string, bool) {
 	discovered, ok := d.Fingerprint()
 	if !ok {

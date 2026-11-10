@@ -577,8 +577,8 @@ func (w *FeatureWorker) Index(ctx context.Context, repository, dir string, fresh
 // linkInputs describes what LinkCommits reads for the commits: the commits,
 // the session stores from the session window before the earliest of them
 // (sessions.Discovery's fingerprint) and the commits' observed creations
-// under each repository the clone's remotes name, and the reflog entries that created them. It is empty when something
-// cannot be described.
+// under each repository the clone's remotes name, and the reflog entries
+// that created them. It is empty when something cannot be described.
 func linkInputs(ctx context.Context, dir string, commits []gitlocal.Commit, opts sessions.Options) string {
 	var earliest time.Time
 	for _, c := range commits {

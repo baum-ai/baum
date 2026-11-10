@@ -101,6 +101,8 @@ func (r *reflogRepo) commits(head string) []gitlocal.Commit {
 type call struct {
 	tool, input string
 	start, end  time.Time
+	// status is the outcome; the zero value is a success.
+	status session.ToolStatus
 }
 
 func bash(command, start, end string) call {
@@ -119,13 +121,23 @@ func reflogSession(id, vendor, cwd string, calls ...call) sessions.Session {
 	for i, c := range calls {
 		use := id + "-use-" + string(rune('a'+i))
 		start, end := c.start, c.end
-		g.ToolUses = append(g.ToolUses, session.ToolUse{ID: use, SessionID: id, Name: c.tool, Input: json.RawMessage(c.input), Timestamp: &start})
-		g.ToolResults = append(g.ToolResults, session.ToolResult{ID: use + "-result", ToolUseID: use, SessionID: id, Timestamp: &end})
+		status := c.status
+		if status == "" {
+			status = session.StatusOK
+		}
+		g.ToolUses = append(g.ToolUses, session.ToolUse{ID: use, SessionID: id, Name: c.tool, Verb: session.VerbExecute, Input: json.RawMessage(c.input), Status: status, Timestamp: &start})
+		g.ToolResults = append(g.ToolResults, session.ToolResult{ID: use + "-result", ToolUseID: use, SessionID: id, Status: status, Timestamp: &end})
 	}
 	return sessions.Session{ID: id, Vendor: vendor, Source: "claude_code", Graph: g}
 }
 
-// attribute records the session's working directory from the start.
+// withBranch records the branch the session ran on.
+func withBranch(s sessions.Session, branch string) sessions.Session {
+	s.Graph.Sessions[0].GitBranch = &branch
+	return s
+}
+
+// withCwdAttribute records the session's working directory from the start.
 func withCwdAttribute(s sessions.Session, cwd string) sessions.Session {
 	value, _ := json.Marshal(cwd)
 	s.Graph.Attributes = append(s.Graph.Attributes, session.SessionAttribute{ID: "attr", SessionID: s.ID, Key: "cwd", Value: value, ValidFrom: at("09:00:00")})
@@ -263,7 +275,7 @@ func TestReflogSurvivesRemovedWorktree(t *testing.T) {
 	sha := r.commit(wt, "b.txt", "Gone", "10:30:00")
 	commits := r.commits(sha)
 	r.git(r.main, "10:40:00", "worktree", "remove", "--force", wt)
-	s := reflogSession("session-a", "claude-code", wt, bash("git commit -q -m Gone", "10:29:58", "10:30:02"))
+	s := withBranch(reflogSession("session-a", "claude-code", wt, bash("git commit -q -m Gone", "10:29:58", "10:30:02")), "feature")
 	_, links := resolveReflog(t, r, []sessions.Session{s}, commits)
 	assertLinks(t, links, sha, "session-a")
 }
@@ -353,7 +365,7 @@ func TestParseCreationFiltersMessages(t *testing.T) {
 	for message, keep := range map[string]bool{
 		"commit: x": true, "commit (amend): x": true, "commit (initial): x": true, "cherry-pick: x": true,
 		"revert: x": true, "rebase (pick): x": true, "rebase -i (squash): x": true,
-		"am: x": true, "pull -q --rebase . main (pick): x": true, "rebase -i (pick): x": true, "rebase (continue): x": true,
+		"am: x": true, "commit (cherry-pick): x": true, "cherry-pick: fast-forward": false, "pull -q --rebase . main (pick): x": true, "rebase -i (pick): x": true, "rebase (continue): x": true,
 		"rebase (start): checkout main": false, "commit (merge): x": false, "merge main: Fast-forward": false, "checkout: moving from a to b": false,
 		"rebase (finish): returning to refs/heads/a": false, "pull: Fast-forward": false, "reset: moving to HEAD~1": false,
 	} {

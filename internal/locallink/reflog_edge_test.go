@@ -70,19 +70,42 @@ func TestWriteDirs(t *testing.T) {
 	}{
 		{"git commit -q -m m", []string{"/w"}},
 		{"git -C /x commit -q -m m", []string{"/x"}},
+		{"git -C sub commit -q", []string{"/w/sub"}},
 		{"git -c user.name=a --no-pager commit -m m", []string{"/w"}},
 		{"cd /x && git commit -q", []string{"/x"}},
 		{"cd sub && git commit -q", []string{"/w/sub"}},
+		{"cd -P /x && git commit -q", []string{"/x"}},
+		{"pushd /x && git commit", []string{"/x"}},
+		{"(cd /x && git commit -q)", []string{"/x"}},
+		{"(cd /x); git commit -q", []string{"/w"}},
+		{"bash -lc 'git am p.patch'", []string{"/w"}},
+		{"bash -lc 'cd /x && git commit -q'", []string{"/x"}},
+		{"cd /x && sh -c 'git commit -q'", []string{"/x"}},
 		{"FOO=1 git rebase main", []string{"/w"}},
 		{"git pull --rebase", []string{"/w"}},
 		{"git status; git cherry-pick abc; git revert def", []string{"/w", "/w"}},
-		{"bash -lc 'git am p.patch'", []string{"/w"}},
+		{"git commit -q; cd /x", []string{"/w"}},
+		{"git commit -m \"$(cat <<'EOF'\nmessage\nEOF\n)\"", []string{"/w"}},
+		{"git --git-dir=/x/.git -C /y commit -q", []string{"/y"}},
 		{"git log -- rebase.go", nil},
 		{"git log --grep=revert", nil},
 		{"git show HEAD:commit.go", nil},
 		{"git status && echo commit", nil},
+		{"git commit --dry-run", nil},
+		{"echo \"done; git commit later\"", nil},
+		{"gh pr comment 1 --body \"Rebased; git pull --rebase to update\"", nil},
+		{"cat > release.sh <<'EOF'\ngit commit -am release\nEOF", nil},
+		{"cd - && git commit", nil},
 		{"cd ~ && git commit", nil},
 		{"cd $HOME && git commit", nil},
+		{"cd \"$DIR\" && git commit", nil},
+		{"git -C \"$X\" commit", nil},
+		{"if true; then cd /x; fi; git commit -q", nil},
+		{"GIT_DIR=/x/.git git commit -m m", nil},
+		{"export GIT_DIR=/x/.git; git commit -m m", nil},
+		{"git --git-dir=/x/.git commit -m m", nil},
+		{"git --work-tree /x commit -m m", nil},
+		{"git commit -m 'unterminated", nil},
 		{"go test ./...", nil},
 	} {
 		if got := writeDirs(tc.command, "/w"); !slices.Equal(got, tc.want) {
@@ -91,19 +114,32 @@ func TestWriteDirs(t *testing.T) {
 	}
 }
 
-func TestCallDirsReadsQuotedCodeModeWorkdir(t *testing.T) {
-	source := `text(await tools.exec_command({cmd:"git rebase origin/main; git status --short --branch","workdir":"/abs/wt","sandbox_permissions":"require_escalated"}))`
+func TestShellCallsPairCodeModeCommandsWithTheirWorkdirs(t *testing.T) {
+	source := `await tools.exec_command({cmd:"git commit -q -m x", workdir:"/a"});
+await tools.exec_command({cmd:"cd /b && ls", workdir:"/a"});
+await tools.exec_command({cmd:"git commit -q -m y"});
+await tools.exec_command({cmd:` + "`git commit -m ${message}`" + `, workdir:"/c"});
+await tools.exec_command({cmd:"git commit -q -m z", workdir:dir});`
 	input, _ := json.Marshal(source)
-	if got := callDirs(input, "/base"); !slices.Equal(got, []string{"/abs/wt"}) {
-		t.Errorf("string input: %v", got)
+	calls := shellCalls("exec", input, "/base")
+	want := []shellCall{{"git commit -q -m x", "/a"}, {"cd /b && ls", "/a"}, {"git commit -q -m y", "/base"}}
+	if !slices.Equal(calls, want) {
+		t.Fatalf("calls = %v, want %v", calls, want)
 	}
-	escaped, _ := json.Marshal(map[string]string{"input": strings.ReplaceAll(source, `"`, `\"`)})
-	if got := callDirs(escaped, "/base"); !slices.Equal(got, []string{"/abs/wt"}) {
-		t.Errorf("escaped quotes: %v", got)
+	var dirs []string
+	for _, c := range calls {
+		dirs = append(dirs, writeDirs(c.command, c.dir)...)
 	}
-	bare, _ := json.Marshal(`tools.exec_command({cmd: 'git commit', workdir: '/abs/other'})`)
-	if got := callDirs(bare, "/base"); !slices.Equal(got, []string{"/abs/other"}) {
-		t.Errorf("bare key: %v", got)
+	if !slices.Equal(dirs, []string{"/a", "/base"}) {
+		t.Fatalf("write dirs = %v", dirs)
+	}
+	object, _ := json.Marshal(map[string]string{"input": source})
+	if got := shellCalls("exec", object, "/base"); !slices.Equal(got, want) {
+		t.Fatalf("object input: %v", got)
+	}
+	plain := shellCalls("exec_command", json.RawMessage(`{"cmd":"git commit -q","workdir":"sub"}`), "/base")
+	if !slices.Equal(plain, []shellCall{{"git commit -q", "/base/sub"}}) {
+		t.Fatalf("plain call: %v", plain)
 	}
 }
 
@@ -146,8 +182,8 @@ func TestReflogCountsSubagentCallsForTheTopLevelSession(t *testing.T) {
 	parent, spawned, cwd := "session-top", "toolu_spawn", wt
 	s.Graph.Sessions = append(s.Graph.Sessions, session.Session{ID: "session-child", ParentSessionID: &parent, SpawnedByToolUseID: &spawned, WorkingDir: &cwd})
 	start, end := at("10:29:58"), at("10:30:02")
-	s.Graph.ToolUses = append(s.Graph.ToolUses, session.ToolUse{ID: "child-use", SessionID: "session-child", Name: "Bash", Input: json.RawMessage(`{"command":"git commit -q -m x"}`), Timestamp: &start})
-	s.Graph.ToolResults = append(s.Graph.ToolResults, session.ToolResult{ID: "child-result", ToolUseID: "child-use", SessionID: "session-child", Timestamp: &end})
+	s.Graph.ToolUses = append(s.Graph.ToolUses, session.ToolUse{ID: "child-use", SessionID: "session-child", Name: "Bash", Verb: session.VerbExecute, Status: session.StatusOK, Input: json.RawMessage(`{"command":"git commit -q -m x"}`), Timestamp: &start})
+	s.Graph.ToolResults = append(s.Graph.ToolResults, session.ToolResult{ID: "child-result", ToolUseID: "child-use", SessionID: "session-child", Status: session.StatusOK, Timestamp: &end})
 	_, links := resolveReflog(t, r, []sessions.Session{s}, r.commits(sha))
 	assertLinks(t, links, sha, "session-top")
 }

@@ -65,6 +65,10 @@ func isShellScript(call *syntax.CallExpr) bool {
 	return true
 }
 
+// StaticWord is the text of a shell word that has no expansion in it, and
+// false for one that does.
+func StaticWord(word *syntax.Word) (string, bool) { return staticWord(word) }
+
 func staticWord(word *syntax.Word) (string, bool) {
 	var text strings.Builder
 	var appendParts func([]syntax.WordPart) bool

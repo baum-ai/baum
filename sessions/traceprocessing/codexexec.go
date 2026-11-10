@@ -91,6 +91,73 @@ func CodexExecCommand(source string) string {
 	return strings.Join(commands, "\n")
 }
 
+// CodexExecCall is one command a Codex code-mode program runs: an object
+// literal with a `cmd` or `command` property, with the `workdir` property
+// beside it.
+type CodexExecCall struct {
+	Command string
+	// CommandStatic is false when the command is built at run time.
+	CommandStatic bool
+	Workdir       string
+	// HasWorkdir is set when the object names a workdir, WorkdirStatic when
+	// its value is a literal.
+	HasWorkdir, WorkdirStatic bool
+}
+
+const maxObjectTokens = 4000
+
+// CodexExecCalls returns the commands of a code-mode program one by one, each
+// with its own workdir, in source order. Like CodexExecCommand it scans
+// tokens, so text inside strings, comments and regular expressions is not a
+// call; only properties of an object literal count.
+func CodexExecCalls(source string) []CodexExecCall {
+	tokens := tokenize(source)
+	var calls []CodexExecCall
+	for i := 1; i < len(tokens); i++ {
+		if !tokens[i].isPunct("{") {
+			continue
+		}
+		var call CodexExecCall
+		found := false
+		depth := 0
+	object:
+		// An object literal that is not closed within maxObjectTokens is not
+		// a call, which keeps a run of unclosed braces from rescanning.
+		for j := i + 1; j < len(tokens) && j < i+maxObjectTokens; j++ {
+			t := tokens[j]
+			switch {
+			case t.kind == tokPunct && (t.text == "{" || t.text == "[" || t.text == "("):
+				depth++
+			case t.kind == tokPunct && (t.text == "}" || t.text == "]" || t.text == ")"):
+				if depth == 0 {
+					break object
+				}
+				depth--
+			case depth == 0 && t.isKey() && j+2 < len(tokens) && tokens[j+1].isPunct(":") && (tokens[j-1].isPunct("{") || tokens[j-1].isPunct(",")):
+				switch t.value {
+				case "cmd", "command":
+					if !found {
+						call.Command, call.CommandStatic = commandValue(tokens, j+2)
+						found = true
+					}
+				case "workdir":
+					call.HasWorkdir = true
+					value := tokens[j+2]
+					call.WorkdirStatic = value.kind == tokString && value.static && value.value != "" &&
+						(j+3 >= len(tokens) || !tokens[j+3].isOperator("+"))
+					if call.WorkdirStatic {
+						call.Workdir = value.value
+					}
+				}
+			}
+		}
+		if found {
+			calls = append(calls, call)
+		}
+	}
+	return calls
+}
+
 // parsesAsBash reports whether command is a whole bash script, as the
 // command readers (gitevidence, prreview) parse it.
 func parsesAsBash(command string) bool {
