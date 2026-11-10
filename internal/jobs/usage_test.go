@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"sync"
 	"testing"
+	"time"
 )
 
 // usageExecutor reports a phase, then usage alone, then a draft.
@@ -44,6 +45,15 @@ func TestUsageOnlyReportsSkipTheChangedCallback(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitState(t, q, submitted[0].ID, "completed")
+	// The queue lists the finished job before it calls changed for it.
+	finished := func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return len(changed) > 0 && changed[len(changed)-1].State == "completed"
+	}
+	for deadline := time.Now().Add(3 * time.Second); !finished() && time.Now().Before(deadline); {
+		time.Sleep(time.Millisecond)
+	}
 	mu.Lock()
 	defer mu.Unlock()
 	if len(usage) != 1 {

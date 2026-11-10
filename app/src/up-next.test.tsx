@@ -7,7 +7,7 @@ import { App } from "./app";
 import type { Entry, Job, LiveSession, ReviewGroup } from "./api";
 import { FOR_ME } from "./inboxes";
 import { othersState, queueItems, snoozeOptions, snoozeText, upNext, waitingOn } from "./up-next";
-import { forgetLastRows } from "./shortcuts";
+import { forgetLastRows, MAC } from "./shortcuts";
 
 type Overrides = Partial<Omit<Entry, "pull_request">> & {
   pull_request?: Partial<Entry["pull_request"]>;
@@ -380,6 +380,31 @@ it("groups what waits on the person and opens on the first", async () => {
   expect(node.querySelector(".local-rail a.local-rail-sub")!.getAttribute("aria-current")).toBe(
     "page",
   );
+});
+
+const githubKey = () =>
+  new KeyboardEvent("keydown", {
+    key: "G",
+    code: "KeyG",
+    shiftKey: true,
+    ...(MAC ? { metaKey: true } : { ctrlKey: true }),
+    bubbles: true,
+    cancelable: true,
+  });
+
+it("opens the selected pull request on GitHub with the command key, Shift and G", async () => {
+  const opened: string[] = [];
+  vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (
+    this: HTMLAnchorElement,
+  ) {
+    if (this.target === "_blank") opened.push(this.href);
+  });
+  await render();
+  await press("j");
+  expect(shown()).toBe("Change 3");
+  await act(async () => document.body.dispatchEvent(githubKey()));
+  expect(opened).toEqual(["https://github.com/acme/demo/pull/3"]);
+  vi.restoreAllMocks();
 });
 
 it("moves with j and k, opens with Enter and merges with m", async () => {

@@ -94,7 +94,14 @@ import {
 } from "./merge";
 import { useModal } from "./modal";
 import { LoadingStatus, NineDots } from "./nine-dots";
-import { KeyBar, onBody, useLastRow, useShortcuts } from "./shortcuts";
+import {
+  GITHUB_KEY_LABEL,
+  KeyBar,
+  onBody,
+  useGitHubKey,
+  useLastRow,
+  useShortcuts,
+} from "./shortcuts";
 import { PullRequestChecks, checksCount, checksSummary, useChecks } from "./checks";
 import { ConflictingFiles } from "./conflicts";
 import { RefreshButton, type RefreshRun } from "./shell";
@@ -1284,6 +1291,7 @@ export function UpNextPage({
   const line = index >= 0 ? rows[index] : undefined;
   const selected = isGroup(line) ? undefined : line;
   const selectedGroup = isGroup(line) ? line : undefined;
+  useGitHubKey(selected?.entry.pull_request.url || undefined);
   useEffect(() => {
     if (index >= 0) last.current = index;
   });
@@ -1536,7 +1544,12 @@ export function UpNextPage({
       },
     });
     items.push({ label: "Archive", hint: "e", onSelect: () => archive(row) });
-    if (pr.url) items.push({ label: "Open on GitHub", onSelect: () => openExternal(pr.url) });
+    if (pr.url)
+      items.push({
+        label: "Open on GitHub",
+        hint: GITHUB_KEY_LABEL,
+        onSelect: () => openExternal(pr.url),
+      });
     return items;
   };
   const groupActions = (line: GroupRow): MenuItem[] => [

@@ -699,7 +699,10 @@ the page (above); letters are read by their place on a layout without Latin
 ones. Back and forward
 are `⌘[` and `⌘]` on a Mac and `Alt+←` and `Alt+→` elsewhere. These work in
 text fields too, but not under a dialog other than the sheet or Go to, which
-they close. Go to searches the pages, the pull requests (by title, repository,
+they close. `Shift+G` (`useGitHubKey`, GitHub Desktop's View on GitHub key)
+opens the pull request in hand on GitHub: the one a pull request's page shows,
+Up next's selected one or the focused row on Pull requests; a group's row has
+none. The rows' **Open on GitHub** menu items show it. Go to searches the pages, the pull requests (by title, repository,
 number, author or branch; what waits in an inbox first), the review groups and
 the agent sessions, and, with a daemon that has inboxes, each saved inbox by its
 name (opening its queue) with **New inbox** and **Manage inboxes**. There is no
@@ -2039,7 +2042,9 @@ fragment. Desktop setup opens the inbox instead. The dialog groups the
 checks into needs attention, working and details, and shows this user's home
 directory, which the response's `home` names, as `~`. Each warning and
 problem shows its fix. Copy puts the report on the clipboard as Markdown for a
-GitHub issue, with the same `~` paths. The app runs the diagnostics once when it opens and,
+GitHub issue, with the same `~` paths. The dialog asks for a fresh run
+(`api/diagnostics?refresh=1`) every time it opens or re-runs; the daemon
+otherwise serves a report up to 30 minutes old. The app reads the diagnostics once when it opens and,
 while they find a problem, shows a notice on every page linking to them; the dialog
 updates it when it runs the checks again. GitHub discovery shows a note only
 when a refresh failed or the request allowance is used up; a cache that is
@@ -2221,7 +2226,10 @@ hook, restarts Codex or starts a conversation.
 In the desktop app the same badge and description also cover a missing baum
 CLI: one the app could install but hasn't (a CLI the app can't install on this
 system raises nothing). The app reads `setup_state` on load, on window focus
-and after native Settings actions. While the CLI is missing, every Settings
+(at most once every five minutes, since the native check runs each agent's CLI)
+and after native Settings actions, which are never throttled. Window focus
+also rereads preferences and saved UI state, which notify the app only when
+the stored data changed. While the CLI is missing, every Settings
 section opens with a banner whose Install the CLI button goes to This computer
 and scrolls to the Command line card; the section list marks This computer
 with a caution dot and "baum CLI not installed", and the card itself is

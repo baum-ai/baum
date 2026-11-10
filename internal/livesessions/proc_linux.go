@@ -8,6 +8,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 )
 
 // sameProcess reports whether p's pid is still the process that registered
@@ -16,11 +17,11 @@ import (
 // tell.
 func sameProcess(p ClaudeProcess) error {
 	if p.PIDDomain != "" {
-		own, err := os.Readlink("/proc/self/ns/pid")
+		own, err := ownPIDNamespace()
 		if err != nil {
 			return fmt.Errorf("reading this pid namespace: %w", err)
 		}
-		if !inDomain(p.PIDDomain, machineID(), own) {
+		if !inDomain(p.PIDDomain, thisMachineID(), own) {
 			// Another machine's or namespace's pid (a container's) names
 			// something else here.
 			return fmt.Errorf("claude code session in pid namespace %s, not this one", p.PIDDomain)
@@ -60,6 +61,13 @@ func inDomain(domain, machine, namespace string) bool {
 	}
 	return theirs == "" || machine == "" || theirs == machine
 }
+
+// ownPIDNamespace and thisMachineID do not change while the daemon runs, so
+// they are read once.
+var (
+	ownPIDNamespace = sync.OnceValues(func() (string, error) { return os.Readlink("/proc/self/ns/pid") })
+	thisMachineID   = sync.OnceValue(machineID)
+)
 
 // machineID is this machine's id, as systemd and D-Bus keep it, or "".
 func machineID() string {

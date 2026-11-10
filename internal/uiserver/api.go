@@ -400,6 +400,7 @@ func (a LocalAPI) Handler() *LocalHandler {
 		writeJSON(w, hookTrust.Get(r.URL.Query().Get("refresh") == "1"))
 	})
 	var diagnostics singleflight.Group
+	diagnosticsReports := newDiagnosticsCache()
 	mux.HandleFunc("GET /api/diagnostics", func(w http.ResponseWriter, r *http.Request) {
 		body := map[string]any{"local": true, "generation_runner": a.Jobs != nil, "discovery": a.PRs != nil, "index": a.Index != nil, "report": nil}
 		// The report's paths are this user's; the app shows the home directory as ~.
@@ -413,7 +414,7 @@ func (a LocalAPI) Handler() *LocalHandler {
 			}
 			// Concurrent requests share one run, which a single client
 			// disconnecting does not cancel.
-			result := diagnostics.DoChan("report", func() (any, error) {
+			result := diagnosticsReports.doChan(&diagnostics, r.URL.Query().Get("refresh") != "", func() (any, error) {
 				ctx, cancel := context.WithTimeout(context.Background(), timeout)
 				defer cancel()
 				done := make(chan doctor.Report, 1)

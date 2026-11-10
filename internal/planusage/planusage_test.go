@@ -305,12 +305,12 @@ func TestClaudeKeepsTheLastReadingAndBacksOffWhenRateLimited(t *testing.T) {
 		t.Fatalf("%+v", p)
 	}
 	wantCalls(2)
-	// The endpoint is left alone for five minutes, then ten.
-	read(4 * time.Minute)
+	// The endpoint is left alone for four minutes, then eight.
+	read(3 * time.Minute)
 	wantCalls(2)
 	read(time.Minute)
 	wantCalls(3)
-	read(9 * time.Minute)
+	read(7 * time.Minute)
 	wantCalls(3)
 	// A window that reset meanwhile loses its figure; the other keeps its own.
 	p := read(50 * time.Minute)

@@ -1,5 +1,5 @@
 import { Fragment, memo, useEffect, useState, type ReactNode } from "react";
-import ReactMarkdown, { type Components } from "react-markdown";
+import ReactMarkdown, { type Components, type Options } from "react-markdown";
 import rehypeRaw from "rehype-raw";
 import rehypeSanitize from "rehype-sanitize";
 import remarkBreaks from "remark-breaks";
@@ -11,8 +11,11 @@ import {
   type HighlightedLine,
   type Lang,
 } from "../highlight";
+import { chipLinkClass } from "./chip-classes";
 import { cn } from "./classnames";
+import { CodeFileLink } from "./code-file-link";
 import { HighlightedText } from "./highlighted-text";
+import { useReviewHunks, type ReviewHunk } from "./review-contexts";
 
 const REMARK_PLUGINS = [remarkGfm, remarkBreaks];
 const INLINE_REMARK_PLUGINS = [remarkGfm];
@@ -35,6 +38,92 @@ const REHYPE_PLUGINS = [
   rehypeRaw,
   rehypeSanitize,
 ];
+
+/** A hunk ID as a generated review sometimes writes it into its prose, beside
+ *  the anchors that cite it properly. */
+const HUNK_ID = /\bh_[0-9a-f]{12}\b/;
+const HUNK_IDS = new RegExp(HUNK_ID.source, "g");
+
+type HastText = { type: "text"; value: string };
+type HastElement = {
+  type: "element";
+  tagName: string;
+  properties: Record<string, unknown>;
+  children: HastNode[];
+};
+type HastNode =
+  | HastText
+  | HastElement
+  | { type: "root" | "comment" | "doctype"; children?: HastNode[] };
+
+function hunkRefNode(id: string): HastElement {
+  return {
+    type: "element",
+    tagName: "a",
+    properties: { dataHunkRef: id },
+    children: [{ type: "text", value: id }],
+  };
+}
+
+/** Turns each ID of a known hunk in the text, bare or as a whole code span,
+ *  into a link the `a` component renders as a chip for its file and line.
+ *  It runs after sanitising, so only this pass makes such links: a comment's
+ *  own `data-*` attributes never survive. Links and code blocks keep their
+ *  text, and an unknown ID stays as written. */
+function rehypeHunkRefs(hunks: ReadonlyMap<string, ReviewHunk>) {
+  const split = (value: string): HastNode[] | null => {
+    const parts: HastNode[] = [];
+    let last = 0;
+    for (const match of value.matchAll(HUNK_IDS)) {
+      if (!hunks.has(match[0])) continue;
+      if (match.index > last) parts.push({ type: "text", value: value.slice(last, match.index) });
+      parts.push(hunkRefNode(match[0]));
+      last = match.index + match[0].length;
+    }
+    if (last === 0) return null;
+    if (last < value.length) parts.push({ type: "text", value: value.slice(last) });
+    return parts;
+  };
+  const walk = (node: HastNode) => {
+    if (node.type === "text" || !node.children) return;
+    node.children = node.children.flatMap((child): HastNode[] => {
+      if (child.type === "text") return split(child.value) ?? [child];
+      if (child.type !== "element") return [child];
+      if (child.tagName === "a" || child.tagName === "pre") return [child];
+      if (child.tagName === "code") {
+        const [only] = child.children;
+        const id = child.children.length === 1 && only?.type === "text" ? only.value.trim() : "";
+        return hunks.has(id) ? [hunkRefNode(id)] : [child];
+      }
+      walk(child);
+      return [child];
+    });
+  };
+  return () => (tree: HastNode) => walk(tree);
+}
+
+type RehypePlugin = NonNullable<Options["rehypePlugins"]>[number];
+
+/** A hunk the prose names, as a chip for its file and first line that opens
+ *  the file view, or the diff on GitHub where the file view cannot. */
+function HunkRef({ id }: { id: string }) {
+  const hunk = useReviewHunks()?.get(id);
+  if (!hunk) return <code>{id}</code>;
+  const name = hunk.path.slice(hunk.path.lastIndexOf("/") + 1);
+  return (
+    <CodeFileLink
+      path={hunk.path}
+      line={hunk.line}
+      href={hunk.href}
+      title={hunk.title}
+      // Clickable even in prose laid over a row's own link with pointer
+      // events off (the risks overview), where only `a` gets them back.
+      className={cn(chipLinkClass, "pointer-events-auto mx-0.5 align-baseline font-mono")}
+    >
+      {hunk.line ? `${name}:${hunk.line}` : name}
+    </CodeFileLink>
+  );
+}
 
 const linesText = (lines: readonly HighlightedLine[]) =>
   lines.map((line) => line.map((token) => token.content).join("")).join("\n");
@@ -110,11 +199,15 @@ function codeBlock(className: string | undefined, children: ReactNode) {
 }
 
 const COMPONENTS: Components = {
-  a: ({ href, children }) => (
-    <a href={href} target="_blank" rel="noreferrer" className="text-(--text-link) underline">
-      {children}
-    </a>
-  ),
+  a: ({ href, children, node }) => {
+    const hunk = node?.properties?.dataHunkRef;
+    if (typeof hunk === "string") return <HunkRef id={hunk} />;
+    return (
+      <a href={href} target="_blank" rel="noreferrer" className="text-(--text-link) underline">
+        {children}
+      </a>
+    );
+  },
   // No pre-wrap: `remark-breaks` turns each line break into a <br> and keeps
   // the newline after it as text, so preserving whitespace would break twice.
   p: ({ children }) => <p>{children}</p>,
@@ -274,11 +367,14 @@ export const Markdown = memo(function Markdown({
   /** Long text read on its own (READING_COMPONENTS). */
   reading?: boolean;
 }) {
-  const rehypePlugins = html
-    ? NEEDS_RAW.test(children)
-      ? REHYPE_PLUGINS
-      : SANITIZE_ONLY
-    : undefined;
+  const hunks = useReviewHunks();
+  const sanitize = html ? (NEEDS_RAW.test(children) ? REHYPE_PLUGINS : SANITIZE_ONLY) : [];
+  const rehypePlugins =
+    hunks?.size && HUNK_ID.test(children)
+      ? [...sanitize, rehypeHunkRefs(hunks) as RehypePlugin]
+      : html
+        ? sanitize
+        : undefined;
   return (
     <div className={cn(reading ? "space-y-3" : "space-y-2", className)} title={title}>
       {/* GitHub renders every line break in a comment body, not only ones

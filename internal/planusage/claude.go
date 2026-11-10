@@ -57,8 +57,10 @@ const (
 	// staleFor is how long the last reading stands in for one that failed.
 	// It keeps its own FetchedAt, so its age shows.
 	staleFor = 6 * time.Hour
-	// The wait after a 429 that names none: doubled each time in a row.
-	firstRateLimitWait = 5 * time.Minute
+	// The wait after a 429 that names none: doubled each time in a row. It
+	// starts under CacheTTL so the read that follows the cache asks again,
+	// rather than arriving a moment early and waiting out another cache.
+	firstRateLimitWait = 4 * time.Minute
 	maxRateLimitWait   = time.Hour
 )
 
