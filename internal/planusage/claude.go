@@ -10,7 +10,9 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -40,7 +42,37 @@ type Claude struct {
 	// URL overrides the endpoint in tests.
 	URL string
 	Now func() time.Time
+
+	mu sync.Mutex
+	// last is the newest reading that worked, served while the endpoint
+	// fails for a reason that should pass.
+	last *Plan
+	// notBefore is when the endpoint may be asked again after it limited
+	// the rate, and limited how many times in a row it has.
+	notBefore time.Time
+	limited   int
 }
+
+const (
+	// staleFor is how long the last reading stands in for one that failed.
+	// It keeps its own FetchedAt, so its age shows.
+	staleFor = 6 * time.Hour
+	// The wait after a 429 that names none: doubled each time in a row.
+	firstRateLimitWait = 5 * time.Minute
+	maxRateLimitWait   = time.Hour
+)
+
+type outcome int
+
+const (
+	read outcome = iota
+	// signedOut needs the person: no credential, or one Anthropic refuses.
+	signedOut
+	// rateLimited is a 429; the duration with it is its Retry-After, if any.
+	rateLimited
+	// failed is anything else that may pass by itself.
+	failed
+)
 
 func NewClaude() *Claude { return &Claude{} }
 
@@ -56,7 +88,56 @@ func (c *Claude) unavailable(reason string) Plan {
 }
 
 // Read never refreshes the token: that would rotate Claude Code's credential.
+// A failure that should pass (the endpoint limits the rate, is down or cannot
+// be reached) serves the last reading for up to staleFor, and after a 429 the
+// endpoint is left alone for a while: asking again only keeps the limit.
 func (c *Claude) Read(ctx context.Context) Plan {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.now().Before(c.notBefore) {
+		return c.stale(c.unavailable("Claude's usage is unavailable right now."))
+	}
+	plan, result, wait := c.fetch(ctx)
+	if result == rateLimited {
+		if wait <= 0 {
+			wait = firstRateLimitWait << min(c.limited, 8)
+		}
+		c.limited++
+		c.notBefore = c.now().Add(min(wait, maxRateLimitWait))
+	} else {
+		c.limited, c.notBefore = 0, time.Time{}
+	}
+	switch result {
+	case read:
+		c.last = &plan
+	case signedOut:
+		c.last = nil
+	case rateLimited, failed:
+		return c.stale(plan)
+	}
+	return plan
+}
+
+// stale is the last reading while it is recent enough to stand in for a
+// failure, without the figure of a window that has reset since; otherwise the
+// failure itself.
+func (c *Claude) stale(failure Plan) Plan {
+	now := c.now()
+	if c.last == nil || now.Sub(c.last.FetchedAt) >= staleFor {
+		return failure
+	}
+	plan := *c.last
+	plan.Windows = make([]Window, len(c.last.Windows))
+	for i, w := range c.last.Windows {
+		if w.ResetsAt != nil && !w.ResetsAt.After(now) {
+			w.Reset, w.UsedPercent = true, nil
+		}
+		plan.Windows[i] = w
+	}
+	return plan
+}
+
+func (c *Claude) fetch(ctx context.Context) (Plan, outcome, time.Duration) {
 	find := c.Credential
 	if find == nil {
 		find = StoredCredential
@@ -64,9 +145,9 @@ func (c *Claude) Read(ctx context.Context) Plan {
 	cred, err := find(ctx)
 	switch {
 	case err != nil || cred.Token == "":
-		return c.unavailable("Claude Code is not signed in on this computer.")
+		return c.unavailable("Claude Code is not signed in on this computer."), signedOut, 0
 	case !cred.ExpiresAt.IsZero() && !cred.ExpiresAt.After(c.now()):
-		return c.unavailable("Open Claude Code to refresh its sign-in.")
+		return c.unavailable("Open Claude Code to refresh its sign-in."), signedOut, 0
 	}
 	client := c.Client
 	if client == nil {
@@ -81,7 +162,7 @@ func (c *Claude) Read(ctx context.Context) Plan {
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
-		return c.unavailable("Claude's usage could not be requested.")
+		return c.unavailable("Claude's usage could not be requested."), failed, 0
 	}
 	req.Header.Set("Authorization", "Bearer "+cred.Token)
 	req.Header.Set("anthropic-beta", "oauth-2025-04-20")
@@ -89,24 +170,28 @@ func (c *Claude) Read(ctx context.Context) Plan {
 	resp, err := client.Do(req)
 	if err != nil {
 		// The error is dropped: nothing in it is safe or useful to show.
-		return c.unavailable("Claude's usage could not be reached.")
+		return c.unavailable("Claude's usage could not be reached."), failed, 0
 	}
 	defer func() { _ = resp.Body.Close() }()
 	switch {
 	case resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden:
-		return c.unavailable("Open Claude Code to refresh its sign-in.")
+		return c.unavailable("Open Claude Code to refresh its sign-in."), signedOut, 0
+	case resp.StatusCode == http.StatusTooManyRequests:
+		// Retry-After in seconds; absent, zero or a date leaves the wait to Read.
+		seconds, _ := strconv.Atoi(resp.Header.Get("Retry-After"))
+		return c.unavailable("Claude's usage is unavailable right now."), rateLimited, time.Duration(seconds) * time.Second
 	case resp.StatusCode != http.StatusOK:
-		return c.unavailable("Claude's usage is unavailable right now.")
+		return c.unavailable("Claude's usage is unavailable right now."), failed, 0
 	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err != nil {
-		return c.unavailable("Claude's usage could not be read.")
+		return c.unavailable("Claude's usage could not be read."), failed, 0
 	}
 	windows, ok := parseClaudeUsage(body)
 	if !ok {
-		return c.unavailable("Claude's usage came back in a form baum does not understand.")
+		return c.unavailable("Claude's usage came back in a form baum does not understand."), failed, 0
 	}
-	return Plan{Provider: "claude", Available: true, Plan: cred.Plan, Windows: windows, FetchedAt: c.now()}
+	return Plan{Provider: "claude", Available: true, Plan: cred.Plan, Windows: windows, FetchedAt: c.now()}, read, 0
 }
 
 type claudeWindow struct {
