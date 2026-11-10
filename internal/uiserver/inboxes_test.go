@@ -29,3 +29,22 @@ func TestLocalAPIMountsTheInboxesProvider(t *testing.T) {
 		t.Errorf("body = %s", rec.Body)
 	}
 }
+
+func TestLocalAPIMountsTheInboxQueue(t *testing.T) {
+	registry, err := repos.Open(filepath.Join(appdbtest.TempDir(t), "registry.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = registry.Close() }()
+	provider := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte(r.URL.RawQuery)) })
+	rec := httptest.NewRecorder()
+	LocalAPI{Registry: registry, Inbox: provider}.Handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/inbox?query=x", nil))
+	if rec.Body.String() != "query=x" {
+		t.Errorf("body = %q", rec.Body)
+	}
+	rec = httptest.NewRecorder()
+	LocalAPI{Registry: registry}.Handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/inbox", nil))
+	if !strings.Contains(rec.Body.String(), `"available":false`) || !strings.Contains(rec.Body.String(), "inbox_unavailable") {
+		t.Errorf("body = %s", rec.Body)
+	}
+}

@@ -138,6 +138,24 @@ export function SideNavNest({ id, children }: { id?: string; children: ReactNode
   );
 }
 
+/** Something happening now on a rail row: a pulsing dot, green for work in
+ *  progress and amber for work waiting on the reader. */
+export function RowIndicator({ indicator }: { indicator: "live" | "attention" }) {
+  return (
+    <span
+      role="img"
+      aria-label={indicator === "attention" ? "Needs you" : "In progress"}
+      className="inline-flex flex-none"
+    >
+      <LiveDot
+        className={
+          indicator === "attention" ? "text-(--status-caution)" : "text-(--status-positive)"
+        }
+      />
+    </span>
+  );
+}
+
 /** A row that folds a group of rows away and, in the same click, shows what
  *  the whole group holds. Two behaviours in one control because they are one
  *  intent: a reader opening "Risks" wants to see the risks, and a reader who
@@ -217,19 +235,7 @@ export function SideNavDisclosure({
       />
       <Icon className={glyphClass(state, tint)} />
       <Label>{label}</Label>
-      {indicator ? (
-        <span
-          role="img"
-          aria-label={indicator === "attention" ? "Needs you" : "In progress"}
-          className="inline-flex flex-none"
-        >
-          <LiveDot
-            className={
-              indicator === "attention" ? "text-(--status-caution)" : "text-(--status-positive)"
-            }
-          />
-        </span>
-      ) : null}
+      {indicator ? <RowIndicator indicator={indicator} /> : null}
       {busy ? <Spinner size={11} className="text-(--text-tertiary)" /> : null}
       {trailing ? (
         <span aria-hidden className="flex-none text-xs tabular-nums text-(--text-tertiary)">

@@ -38,8 +38,62 @@ test("daemon bootstrap keeps credentials private and opens saved review versions
     else local.push(new URL(request.url()).pathname);
   });
   const launch = await launchURL();
+  await page.route("**/api/sessions?*", (route) =>
+    route.fulfill({
+      json: {
+        available: true,
+        sessions: [{ id: "native-fixture", vendor: "claude_code", title: "Screenshot source" }],
+        commits: [],
+      },
+    }),
+  );
+  await page.route("**/api/sessions/native-fixture?*", (route) =>
+    route.fulfill({
+      json: {
+        session: {
+          run_id: "native-fixture",
+          source: "claude_code",
+          title: "Screenshot source",
+          git_branch: "feature",
+          working_dir: "~/demo",
+          outcome: "unknown",
+          turn_count: 1,
+          commit_count: 0,
+          confidence: 1,
+          tokens: 0,
+          estimated_tokens: 0,
+          prompts_truncated: false,
+          cost_per_prompt: false,
+          has_inner_trace: true,
+          started_at: null,
+          ended_at: null,
+          models: [],
+          totals: null,
+          unattributed: null,
+          prompts: [
+            {
+              turn_id: "native-prompt",
+              ordinal: 1,
+              started_at: null,
+              text: "Source screenshot request",
+              text_length: 25,
+              truncated: false,
+              effects: null,
+              tokens: 0,
+              estimated_tokens: 0,
+              replies: [],
+              replies_omitted: 0,
+            },
+          ],
+        },
+        activity: {},
+        truncated: false,
+        limit_bytes: 32768,
+      },
+    }),
+  );
   await page.goto(launch);
-  await expect(page.getByRole("heading", { name: "Up next", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Default", exact: true })).toBeVisible();
   expect(page.url()).not.toContain("token");
   const base = new URL(page.url()).pathname;
   expect(base).toMatch(/^\/s\/[A-Za-z0-9_-]{43}\/$/);
@@ -50,7 +104,7 @@ test("daemon bootstrap keeps credentials private and opens saved review versions
   const relaunched = await browser.newPage();
   try {
     await relaunched.goto(launch);
-    await expect(relaunched.getByRole("heading", { name: "Up next", exact: true })).toBeVisible();
+    await expect(relaunched.getByRole("heading", { name: "Default", exact: true })).toBeVisible();
     expect(relaunched.url()).not.toContain("token");
   } finally {
     await relaunched.close();
@@ -58,6 +112,30 @@ test("daemon bootstrap keeps credentials private and opens saved review versions
 
   await page.getByRole("link", { name: "Pull requests", exact: true }).first().click();
   await page.getByRole("link", { name: /Reuse the existing PR page/ }).click();
+  await expect(page.getByText("Local fixture review version 2", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Docs and dependency bump", exact: true }).click();
+  const sessionImage = page.getByRole("img", { name: "Captured image v2", exact: true });
+  await sessionImage.scrollIntoViewIfNeeded();
+  await expect(sessionImage).toBeVisible();
+  await expect
+    .poll(() => sessionImage.evaluate((image: HTMLImageElement) => image.naturalWidth))
+    .toBe(320);
+  await expect(page.getByText("Human-supplied image", { exact: true })).toBeVisible();
+  await page
+    .getByRole("button", { name: "View full size: Captured image v2", exact: true })
+    .click();
+  const imageDialog = page.getByRole("dialog", { name: "Captured image v2", exact: true });
+  await expect(imageDialog).toBeVisible();
+  await expect(imageDialog.getByText("Human-supplied image", { exact: true })).toBeVisible();
+  await imageDialog.getByRole("button", { name: "Close image", exact: true }).click();
+  await page
+    .getByLabel("Image provenance")
+    .getByRole("link", { name: "Prompt 1", exact: true })
+    .click();
+  await expect(page.getByText("Source screenshot request", { exact: true })).toBeVisible();
+  await expect(page.locator('[aria-current="step"]')).toContainText("Source screenshot request");
+  await page.goBack();
+  await page.getByRole("button", { name: "Summary", exact: true }).click();
   await expect(page.getByText("Local fixture review version 2", { exact: true })).toBeVisible();
   await page.reload();
   await expect(page.getByText("Local fixture review version 2", { exact: true })).toBeVisible();
@@ -124,7 +202,11 @@ test("Add repositories searches beyond suggestions and picks the result", async 
     // disabled box is lost, so wait for the first to settle.
     await cached.uncheck();
     await expect(result).toBeEnabled();
-    await result.uncheck();
+    // Without a search, the unpicked result leaves the list. uncheck() reads
+    // the box again after its click and, if the row has already gone, waits
+    // for it until the test times out.
+    await result.click();
+    await expect(result).toHaveCount(0);
     await expect(
       page.getByRole("button", { name: "Settings for acme/search-only", exact: true }),
     ).toHaveCount(0);
@@ -193,7 +275,7 @@ test("review JSON stays folded and scrollable in an existing job transcript", as
     }),
   );
   await page.goto(await launchURL());
-  await expect(page.getByRole("heading", { name: "Up next", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Default", exact: true })).toBeVisible();
   const url = new URL(page.url());
   url.search = "?page=jobs&job=review-output";
   await page.goto(url.href);
@@ -393,7 +475,7 @@ test("walks through a review, comments on a behaviour and submits the review", a
   try {
     const freshPage = await freshContext.newPage();
     await freshPage.goto(await launchURL());
-    await expect(freshPage.getByRole("heading", { name: "Up next", exact: true })).toBeVisible();
+    await expect(freshPage.getByRole("heading", { name: "Default", exact: true })).toBeVisible();
     await freshPage.goto(retainedURL);
     await expect(
       freshPage

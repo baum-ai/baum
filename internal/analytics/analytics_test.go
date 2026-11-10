@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -793,5 +794,41 @@ func TestFlowCountsOpenedAndMergedPerDay(t *testing.T) {
 	}
 	if len(tuesday.Mine.MergeSeconds) != 1 || tuesday.Mine.MergeSeconds[0] != 25*3600 {
 		t.Errorf("merge seconds = %v", tuesday.Mine.MergeSeconds)
+	}
+}
+
+// The jobs queue archives a job that ended jobs.ArchiveAfter ago: no window
+// counts it, so archiving changes no figure.
+func TestArchivedJobsAreOutsideEveryWindow(t *testing.T) {
+	now := time.Date(2026, 10, 27, 12, 0, 0, 0, time.UTC)
+	var list []jobs.Job
+	for _, days := range []int{0, 6, 13, 29, 89, 95, 119, 121, 200} {
+		created := now.AddDate(0, 0, -days)
+		for _, ended := range []time.Duration{0, time.Hour, 48 * time.Hour} {
+			j := jobs.Job{State: "completed", CreatedAt: created, UpdatedAt: created.Add(ended), Tokens: 10, Calls: 1, ActualCostUSD: ptr(1.0)}
+			j.Repository, j.Backend = "acme/demo", "claude"
+			list = append(list, j)
+		}
+	}
+	kept := slices.DeleteFunc(slices.Clone(list), func(j jobs.Job) bool { return j.UpdatedAt.Before(now.Add(-jobs.ArchiveAfter)) })
+	if len(kept) == len(list) {
+		t.Fatal("nothing would be archived")
+	}
+	report := func(list []jobs.Job, days int) BaumWork {
+		s := &Service{Registry: fakeRegistry{picked: []repos.Repository{{Repository: "acme/demo"}}}, Location: time.UTC, Now: func() time.Time { return now },
+			Jobs: func() []jobs.Job { return list }}
+		r, err := s.Report(context.Background(), Query{Days: days})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return r.Baum
+	}
+	if b := report(list, 90); b.Reviews == 0 {
+		t.Fatalf("no job counted: %+v", b)
+	}
+	for _, days := range Windows {
+		if before, after := report(list, days), report(kept, days); !reflect.DeepEqual(before, after) {
+			t.Errorf("%d days: %+v before archiving, %+v after", days, before, after)
+		}
 	}
 }

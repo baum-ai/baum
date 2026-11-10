@@ -70,7 +70,7 @@ export type Anchor =
   | { type: "issue"; system: string; key: string }
   | { type: "spec"; page: string; assertion?: string }
   | { type: "external_url"; url: string; label?: string }
-  | { type: "attachment"; url: string; id?: string };
+  | { type: "attachment"; url?: string; id?: string };
 
 export type Risk = {
   tiles?: unknown[];
@@ -403,17 +403,32 @@ export type Implements =
    *  rather than fail the page or be filed under a type we do know. */
   | { type: string };
 
-/** A stored description image. `source_url` is where it was copied from and is
- *  never loaded: the page serves the stored copy. */
+/** A captured image. Description copies have `source_url`; native session
+ *  copies have `origins`. The page always serves the host's stored bytes. */
 export type IndexedAttachment = {
   id: string;
   position: number;
-  source_url: string;
+  source_url?: string;
+  source_urls?: string[];
+  origins?: ImageOrigin[];
   content_type: string;
   width: number;
   height: number;
   alt?: string;
   heading?: string;
+};
+
+export type ImageOrigin = {
+  session: string;
+  child_session?: string;
+  child_input?: string;
+  turn: number;
+  input?: string;
+  tool?: string;
+  tool_name?: string;
+  kind: "human_input" | "tool_result";
+  position: number;
+  timestamp?: string;
 };
 
 /** The stack a stack review covers. Absent on a single-pull-request review. */

@@ -37,7 +37,7 @@ import { useModal } from "./modal";
 import { Notice, PageBar, RefreshButton, type RefreshRun, usePageRefreshAction } from "./shell";
 import { openActiveBlock, reviewKeyStep, toggleActiveBlock, useShortcuts } from "./shortcuts";
 import { LoadingStatus, NineDots } from "./nine-dots";
-import { liveForGroup, useGroupRail, type RailMember } from "./group-rail";
+import { listedForGroup, useGroupRail, type RailMember } from "./group-rail";
 
 const errorText = (error: unknown) =>
   error instanceof Error ? error.message : "Local request failed.";
@@ -302,7 +302,7 @@ export function GroupPage({
     repository: group.repository,
     members: railMembers,
     numbers: group.members,
-    running: liveForGroup(live, group.repository, group.members),
+    listed: listedForGroup(live, group.repository, group.members),
     document: doc,
     revision: `${group.version_count}:${group.updated_at}:${revision}`,
   });

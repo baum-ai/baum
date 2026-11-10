@@ -1,5 +1,6 @@
 import {
   createContext,
+  Fragment,
   useContext,
   useEffect,
   useId,
@@ -14,7 +15,9 @@ import {
   CheckIcon,
   ChevronDownIcon,
   ChevronRightIcon,
+  CloseIcon,
   FilterIcon,
+  PlusIcon,
 } from "@baum/viewer/components/icons";
 import { SMALL_PRIMARY } from "./action-classes";
 import { useDisclosure } from "@baum/viewer/components/use-disclosure";
@@ -25,6 +28,8 @@ import {
   OP_LABELS,
   matchesQuery,
   queryProblem,
+  queryTerms,
+  withoutTerm,
   suggest,
   tidyQuery,
   toggleValue,
@@ -72,6 +77,7 @@ export function FilterButton({
   onClosed,
   page,
   slashOpens = true,
+  label,
   known,
 }: {
   query: string;
@@ -95,6 +101,9 @@ export function FilterButton({
   page?: PageFilter;
   /** `/` opens the menu; false on a page whose `/` goes to its own search. */
   slashOpens?: boolean;
+  /** Words beside the icon, where the button leads a `FilterBar` (its
+   *  `lead`) as the page's main control. */
+  label?: string;
 }) {
   const { detailsProps, close, open } = useDisclosure();
   const given = page?.fields;
@@ -190,8 +199,13 @@ export function FilterButton({
   const words = search.trim().toLowerCase();
   const fits = (option: Option) =>
     option.value.toLowerCase().includes(words) || option.label.toLowerCase().includes(words);
+  // "Write a query…" only shows the box, which a query already shows below.
+  const offerWrite = !query.trim() && !writing && !!footer;
   const rows: Row[] = !words
-    ? [...fields.map((field) => ({ kind: "field" as const, field })), { kind: "write" }]
+    ? [
+        ...fields.map((field) => ({ kind: "field" as const, field })),
+        ...(offerWrite ? [{ kind: "write" as const }] : []),
+      ]
     : [
         ...fields
           .filter(
@@ -401,11 +415,16 @@ export function FilterButton({
       }}
     >
       <summary
-        aria-label={lit ? "Filter, in force" : "Filter"}
+        // A labelled button is named by its words.
+        aria-label={label ? undefined : lit ? "Filter, in force" : "Filter"}
         title={lit ? `Filter: ${query} (/)` : "Filter (/)"}
         aria-keyshortcuts="/"
         className={
-          lit ? "local-icon-button filter-menu-button on" : "local-icon-button filter-menu-button"
+          label
+            ? "filter-menu-lead"
+            : lit
+              ? "local-icon-button filter-menu-button on"
+              : "local-icon-button filter-menu-button"
         }
         onClick={(event) => {
           event.preventDefault();
@@ -413,11 +432,12 @@ export function FilterButton({
           detailsProps.onToggle();
         }}
       >
-        <FilterIcon size={16} />
+        {label ? <PlusIcon size={12} /> : <FilterIcon size={16} />}
+        {label}
         <kbd aria-hidden="true" className="key-hint">
           /
         </kbd>
-        {lit ? <span aria-hidden="true" className="filter-menu-dot" /> : null}
+        {lit && !label ? <span aria-hidden="true" className="filter-menu-dot" /> : null}
       </summary>
       {/* Drawn only while open: a closed menu's controls are no Tab stops. */}
       {open ? (
@@ -550,6 +570,9 @@ export function FilterBar({
   entries,
   inbox = false,
   actions,
+  menu,
+  clearable = true,
+  placeholder,
   page,
   known,
 }: {
@@ -563,20 +586,38 @@ export function FilterBar({
   inbox?: boolean;
   /** Saving the filter, at the end of the bar. */
   actions?: ReactNode;
+  /** The filter menu's button, quietly in the bar before Clear. */
+  menu?: ReactNode;
+  /** A Clear button empties the query; an inbox's pages leave it to the
+   *  tokens' × and the menu's Command+C. */
+  clearable?: boolean;
   /** Another page's filter, in place of the pull requests'. */
   page?: PageFilter;
+  /** What an empty box says. With it the box always shows, even empty. */
+  placeholder?: string;
 }) {
   const id = useId();
   const writing = useContext(WritingQuery);
   const input = useRef<HTMLTextAreaElement>(null);
   // The box grows with the query, which wraps rather than scrolling sideways.
+  const [text, setText] = useState(query);
+  // Away from the box, the query it holds shows its terms as tokens, each
+  // removed by its ×; the box, under them, takes a click and shows the text.
+  const [focused, setFocused] = useState(false);
+  const fields = page?.fields;
+  const terms = !focused && tidyQuery(text) === query && query ? queryTerms(query, fields) : [];
+  const tokens = terms.length > 0;
   useLayoutEffect(() => {
     const box = input.current;
     if (!box) return;
+    if (tokens) {
+      // It lies under the tokens, as tall as they are.
+      box.style.height = "";
+      return;
+    }
     box.style.height = "auto";
     box.style.height = `${box.scrollHeight}px`;
   });
-  const [text, setText] = useState(query);
   const [caret, setCaret] = useState(query.length);
   // The value being typed, for a page that reads a field's values by prefix.
   useEffect(() => {
@@ -604,9 +645,14 @@ export function FilterBar({
 
   const problem = (one: string) => (page ? page.problem(one) : queryProblem(one, inbox));
   const error = problem(text);
-  const options = state.open
-    ? suggest(text, caret, entries, inbox, page?.fields, !page, known).slice(0, 12)
-    : [];
+  const at = state.open ? suggest(text, caret, entries, inbox, page?.fields, !page, known) : [];
+  // The caret right after a whole filter (as on focus, which puts it at the
+  // end): what may come next, as if a space were typed, the space with it.
+  const ahead =
+    state.open && at.length === 0 && caret === text.length && /\S$/.test(text) && !error;
+  const options = (
+    ahead ? suggest(`${text} `, caret + 1, entries, inbox, page?.fields, !page, known) : at
+  ).slice(0, 12);
   const apply = (next: string, now = false) => {
     clearTimeout(timer.current);
     pending.current = null;
@@ -639,11 +685,12 @@ export function FilterBar({
   const tabTakes =
     state.active >= 0 && options[state.active]
       ? state.active + 1
-      : options.length > 0 && /[^\s()]$/.test(text.slice(0, caret))
+      : // What comes next is offered, not taken: Tab moves on from a whole filter.
+        !ahead && options.length > 0 && /[^\s()]$/.test(text.slice(0, caret))
         ? 1
         : 0;
 
-  if (!writing && !query.trim() && !text.trim())
+  if (!writing && placeholder === undefined && !query.trim() && !text.trim())
     return actions ? <div className="filter-bar-actions">{actions}</div> : null;
 
   return (
@@ -652,6 +699,36 @@ export function FilterBar({
         <label htmlFor={id} className="sr-only">
           {page?.label ?? "Filter pull requests"}
         </label>
+        {tokens ? (
+          <div className="filter-bar-tokens">
+            {terms.map((term, index) => (
+              <Fragment key={term.start}>
+                <span aria-hidden="true">
+                  {query.slice(index === 0 ? 0 : terms[index - 1]!.end, term.start)}
+                </span>
+                <span className="filter-token" title={term.label}>
+                  <span aria-hidden="true">{query.slice(term.start, term.end)}</span>
+                  <button
+                    type="button"
+                    className="filter-token-remove"
+                    aria-label={`Remove ${term.label}`}
+                    // The box stays as it is: no focus moves to it first.
+                    onMouseDown={(event) => event.preventDefault()}
+                    onClick={() => {
+                      const next = withoutTerm(query, term.start, fields);
+                      setText(next);
+                      setCaret(next.length);
+                      apply(next, true);
+                    }}
+                  >
+                    <CloseIcon size={12} />
+                  </button>
+                </span>
+              </Fragment>
+            ))}
+            <span aria-hidden="true">{query.slice(terms[terms.length - 1]!.end)}</span>
+          </div>
+        ) : null}
         <textarea
           ref={input}
           rows={1}
@@ -666,6 +743,7 @@ export function FilterBar({
           aria-describedby={error ? `${id}-error` : undefined}
           autoComplete="off"
           spellCheck={false}
+          placeholder={placeholder}
           value={text}
           onChange={(event) =>
             edit(event.target.value, event.target.selectionStart ?? event.target.value.length)
@@ -677,9 +755,25 @@ export function FilterBar({
             setCaret(at);
             setState((now) => ({ ...now, active: -1 }));
           }}
-          onFocus={() => setState({ open: true, active: -1 })}
+          // Clicked through the tokens, whose places differ from the text's:
+          // the caret goes to the end, at once, before any key is typed.
+          onMouseDown={
+            tokens
+              ? (event) => {
+                  event.preventDefault();
+                  const box = event.currentTarget;
+                  box.focus();
+                  box.setSelectionRange(box.value.length, box.value.length);
+                }
+              : undefined
+          }
+          onFocus={() => {
+            setState({ open: true, active: -1 });
+            setFocused(true);
+          }}
           onBlur={() => {
             setState(CLOSED);
+            setFocused(false);
             apply(text, true);
           }}
           onKeyDown={(event) => {
@@ -697,7 +791,7 @@ export function FilterBar({
             else if (result.action === "commit") apply(text, true);
             else if (result.action === "clear") input.current?.blur();
           }}
-          className="filter-bar-input"
+          className={tokens ? "filter-bar-input filter-bar-input-under" : "filter-bar-input"}
         />
         <div
           id={`${id}-list`}
@@ -727,20 +821,23 @@ export function FilterBar({
         </div>
       </div>
       <div className="filter-bar-actions">
-        <button
-          type="button"
-          className="filter-bar-text-button"
-          aria-keyshortcuts={`${MAC ? "Meta" : "Control"}+c`}
-          onClick={() => {
-            edit("", 0, false);
-            apply("", true);
-          }}
-        >
-          Clear
-          <kbd aria-hidden="true" className="key-hint">
-            {COMMAND}C
-          </kbd>
-        </button>
+        {menu}
+        {clearable ? (
+          <button
+            type="button"
+            className="filter-bar-text-button"
+            aria-keyshortcuts={`${MAC ? "Meta" : "Control"}+c`}
+            onClick={() => {
+              edit("", 0, false);
+              apply("", true);
+            }}
+          >
+            Clear
+            <kbd aria-hidden="true" className="key-hint">
+              {COMMAND}C
+            </kbd>
+          </button>
+        ) : null}
         {actions}
       </div>
       {error && text.trim() ? (

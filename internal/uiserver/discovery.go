@@ -20,9 +20,10 @@ type DiscoveryCache interface {
 	PollNow(context.Context, github.Repository) (discovery.Snapshot, error)
 }
 
-// refreshTimeout bounds a refresh the person asks for, as the background
-// poll of one repository is bounded: a connection that stalls (the network
-// dropping mid-read) answers as a failed refresh instead of never.
+// refreshTimeout is how long a refresh the person asks for waits for GitHub to
+// answer, as the background poll of one repository waits: a connection that
+// stalls (the network dropping mid-read) answers as a failed refresh instead
+// of never, while a busy repository's refresh may take minutes.
 var refreshTimeout = 45 * time.Second
 
 func DiscoveryHandler(registry *repos.Registry, service DiscoveryCache, changed func()) http.Handler {
@@ -83,7 +84,7 @@ func DiscoveryHandler(registry *repos.Registry, service DiscoveryCache, changed 
 			apiError(w, err)
 			return
 		}
-		ctx, cancel := context.WithTimeout(r.Context(), refreshTimeout)
+		ctx, cancel := discovery.WithIdleTimeout(r.Context(), refreshTimeout)
 		snapshot, err := service.PollNow(ctx, repo)
 		cancel()
 		if err != nil {

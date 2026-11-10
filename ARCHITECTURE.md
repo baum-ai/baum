@@ -332,6 +332,10 @@ copy:
   lifecycle fields, evidence, blocks and tiles. A mitigated risk is left
   out, so completion keeps it mitigated. The generator validates what it
   reuses like model output and sends a section it rejects to the model.
+  Nothing is reused when the bundle offers an image the previous version
+  was not offered (`NewImages`, against `PreviousVersion.Attachments` from
+  its `index.attachments`): only the details stage opens and places images,
+  and images often arrive after the code, as a session is linked later.
 - **Reading time.** `ReviewMinutes` replaces the model's estimate in a
   staged review: the words of the overview (text, attention, review
   exchange, release note, breaking change), the context, and each section's
@@ -984,7 +988,8 @@ when no section has its details. A host that wraps a backend must forward
    error).
 2. **Section details**, once the outline is accepted. A section whose hunks
    are unchanged since a previous version with complete details keeps those
-   (`review.ReusableSectionDetails`) and is not sent. The model writes the
+   (`review.ReusableSectionDetails`) and is not sent, unless the bundle
+   offers an image that version was not offered. The model writes the
    rest in one call; each section is validated on its own
    (`review.PrepareSectionDetails`), and a repair sends only the sections
    still failing, each with its rejected details and its findings, and
@@ -2114,7 +2119,12 @@ A desktop generation job uses `internal/generate` to:
 4. reads the pull request's rendered body with the user's token, which carries
    image URLs GitHub has already signed, and downloads the description images
    from them without credentials; `bundle` caches nothing, and writes the
-   images only to the attachments archive `generate` reads;
+   images only to the attachments archive `generate` reads. After session
+   linkage and count caps, native Claude Code and Codex transcripts also supply
+   retained inline pasted and tool-result images through `sessions/sessionimages`.
+   Only readable linked roots and reachable subagents contribute; Entire
+   checkpoints and baum generation sessions supply no images. Native image
+   discovery follows no image paths or URLs from transcript text;
 5. loads the previous local version, if any, and builds the bundle, with the
    previous version's hunk anchors refitted to the diff
    (`review.FitPreviousHunkAnchors`, as the hosted builder does);
@@ -2374,8 +2384,9 @@ pull request's objects is reported, not fetched from on demand.
 `internal/assemble` follows the shared assembler's order behind small source
 interfaces (`GitHub`, `Git`, `Sessions`, `ImageFetcher`): description images,
 the pull request header, checks and conversation, diff index, commit changes,
-sessions, references, attachments, `REVIEW.md` at the base commit, checkout
-export, then caps, redaction, per-hunk line limits, byte trimming and digest.
+sessions, caps, native session images, references, attachments, `REVIEW.md` at
+the base commit, checkout export, then redaction, per-hunk line limits, byte
+trimming and digest.
 Sessions follow comparison because they need its merge base. The linker and
 `bundle.KeepKnownCommandTargets` check command targets against the pull
 request's diff paths, independent of the working tree. A failed session source
@@ -2387,6 +2398,25 @@ review; optional writers receive bounded checkout and attachment archives. The
 checkout is exported even without a writer because omitted files make their
 hunks textless. Bundle JSON has no timestamp of its own: the same inputs
 produce the same bytes and SHA-256 digest.
+
+Native images retain human-input or tool-result origins, their root prompt,
+optional child input and tool ID. The host deduplicates content across both
+image sources, retaining all origins and additional description URLs. The
+20-image/10-MiB-per-image defaults are shared; description images come first.
+Session images are content-sniffed and limited to 40 million pixels. A
+session image longer than 1568 px on either side is resized to fit
+(`assemble.MaxSessionImageEdge`; a JPEG stays a JPEG, PNG and WebP become PNG)
+when that makes it smaller; its ID, hash and size describe the resized bytes.
+GIF and APNG animations, JPEGs with EXIF data (whose orientation would be
+lost) and images above 24 million pixels are kept as captured, and an image
+past the count limit is dropped before it is decoded.
+Content is matched against description images before resizing, so a session
+copy of a description image still merges with it. Origins
+of sessions removed during fitting are pruned; an image with no remaining
+source is omitted before the archive is written. Session-only images use
+attachment-ID source anchors, never a fabricated PR-body source. Saved versions
+keep their provenance and their images through the existing store and
+authenticated attachment route.
 
 `internal/refresh` fetches current GitHub metadata with checks pinned to the
 saved head, re-links local sessions against the saved merge-base/head range
@@ -2708,19 +2738,36 @@ event: it gets a `reset` and then only new events.
 
 `GET /api/index?view=waiting` answers `{"waiting":N}`, the number of pull
 requests in the app's Inbox, which is what the desktop app polls for its tray
-icon, tray text and dock badge. `internal/inboxcount` counts it on each request
+icon, tray text and dock badge. `internal/inboxqueue` counts it on each request
 from the cached index, the job queue, the stack groups and the saved `inbox`
 ui-state, with the app's queue rules: each open pull request asking for the
 user's review, and each of their own with something to fix, merge or update
 and no fix running, once across clones, less stacked pull requests that must
-wait to merge and snoozed ones. It does not apply saved inboxes that leave
-the badge, so with such an inbox it can be higher than the app's badge.
+wait to merge and snoozed ones. Saved inboxes and their badge switches play
+no part, as in the app's Inbox total.
 
-Version image copies use an additive `attachments` table keyed by repository,
-PR, immutable version and attachment ID, committed atomically by `Store.Put`.
-`generate` returns copies from the original, hash-checked assembly archive,
-not agent-visible files. Reads expose only raster images listed in that
-version's document. Existing stores without the table remain readable.
+`GET /api/inbox` answers the same queue with which saved inboxes hold each
+open pull request (`{count, items: [{key, kind, fixing, snoozed, inboxes}],
+inboxes: [{id, query, count}]}`), matched with `internal/prfilter`, the Go
+twin of the app's filter language; `?query=Q` answers which pull requests a
+query not saved yet holds (`{query, problem, matches}`). The app reads it with
+the index and matches nothing itself while the daemon has answered.
+
+Version images are content-addressed. `attachment_blobs` holds one copy of
+each distinct image, keyed by the SHA-256 of its bytes, and
+`version_attachments` maps each repository, PR, immutable version and
+attachment ID to a copy; `Store.Put` commits both with the version, and
+regenerating a review with the same images stores no new bytes. Reads check
+the copy against its hash. `generate` returns copies from the original,
+hash-checked assembly archive, not agent-visible files. Reads expose only
+raster images listed in that version's document. Existing stores without the
+tables remain readable. A writable open moves an earlier store's per-version
+`attachments` rows into the shared copies in `BEGIN IMMEDIATE` batches of at
+most 32 MiB, deleting each batch's rows as it commits and dropping the table
+once it is empty. Concurrent openers wait for each batch rather than fail, a
+move that cannot finish resumes on the next writable open without failing
+this one, and reads fall back to rows not moved yet, including any an older
+binary writes afterwards.
 `internal/reviewindex` rebuilds an in-memory projection of discovery and registered
 version stores. `store.Snapshot` reads latest metadata, count and small document
 summaries in one transaction, plus separate latest-started run records. It does
@@ -3068,9 +3115,43 @@ was not shown.
 
 ### Persistent generation jobs
 
-`internal/jobs` serializes queue mutations in the `state/jobs` JSON document
-in the shared private `app.sqlite` application database,
-without duplicating review documents. `jobs.Open` takes an exclusive
+`internal/jobs` serializes queue mutations in the `jobs` table of the shared
+private `app.sqlite` application database, without duplicating review
+documents. Each job is one row: its id, a creation sequence (`seq`, which
+keeps the history oldest first), created and updated times, state, an
+`archived` flag and the job as JSON. A save writes only the jobs changed
+since the last successful write, in one transaction; a job dropped by a
+rolled-back submission has its row deleted. The history has no size limit.
+A fix's summary is cut to 16 KiB and a job's failure detail to 4 KiB, each
+marked as truncated. A job whose JSON is still over 1 MiB (`maxJobJSON`) is
+journaled without its summary, detail, thread outcomes, failed sections,
+fix threads and usage attempts, and the error is logged. One still over the
+limit is not journaled at all; the other jobs of the write are. A database
+from an older baum keeps the history in the `state/jobs` document: the first
+`jobs.Open` moves it into rows, in order, and deletes the document in the
+same transaction, so a failed move leaves it in place and `Open` fails. An
+older baum run after that sees no `state/jobs` and starts a new document;
+the next upgrade appends its jobs after the existing rows.
+
+A job that ended more than 120 days ago (`jobs.ArchiveAfter`, by its
+`updated_at` and the queue's clock) is archived: it leaves memory, `List` and
+the API, and its transcript file is deleted. Its row stays, with `archived`
+set, and `Open` no longer loads it. Nothing deletes a row. Archiving runs at
+`Open` and then daily, until the queue stops. Queued and running jobs are
+never archived. Nor is an unsettled job that is its head's latest, which
+`Refused` lists (see below), or a job whose archiving would leave an
+unsettled job its head's latest. One transaction sets the flags, writes the
+latest content of an archived job changed since its last write, and adds the
+archived jobs to `job_heads`, which counts, per head (`headKey`: repository
+case-insensitively, then pull request and head, or group and member heads),
+the archived runs `ErrDuplicate` compares (`runs`) and the archived chat and
+details jobs only `Interrupted` also counts (`others`). The queue loads the
+counts at `Open` and keeps them in memory. A failed archive keeps the jobs
+until the next pass. Seen, cancel, transcript and draft answer `404` for an
+archived job, and a question's turn reads it as interrupted. Analytics'
+longest window counts jobs created in the last 90 days, so archiving
+changes none of its figures.
+`jobs.Open` takes an exclusive
 `internal/filelock` lock beside the database (`<database path>.jobs.lock.sqlite`) and keeps it
 until its workers stop, so two processes never run one queue; it waits up to
 10 s for a predecessor whose shutdown timed out and that is exiting.
@@ -3106,6 +3187,32 @@ again against the new daemon. Workers use the same `generate.Publish`
 entry point as the terminal: previous-version lookup, run lease, generation and
 strict validation, then atomic version publication. Running journal entries are
 interrupted on restart; queued entries retain their confirmed input fingerprint.
+`GET /api/jobs` reads the queue in three forms, so no client reads the whole
+history on every refresh; each answers `{"available":true,"jobs":[…]}`:
+
+- With no parameters, the current jobs, oldest first (history order): every
+  queued or running job, every failed job not yet seen (`seen_at` unset), and
+  the latest job of each subject for each kind (`Queue.Current`). A subject is
+  a review group, or a pull request (repository compared without regard to
+  case), or, for a repository's feature build, the repository with pull request
+  0; a kind is the review's empty kind, `details`, `fix`, `chat` or
+  `feature_build`. That is what the app's global list and the desktop tray read.
+- `?repository=owner/name&pr=N`: every loaded job of that pull request, oldest
+  first, without the jobs of a group (`Queue.OfPullRequest`). The PR page reads
+  its fixes and questions this way.
+- `?limit=N` and/or `?before=<job id>`: a page of the whole history, newest
+  first (`Queue.Page`), from the newest job or just before the named one, at
+  most `limit` jobs (1 to 200, 50 when only `before` is given), with
+  `"next":"<job id>"` for the following older page while older jobs exist
+  (omitted when none). The Jobs page loads finished jobs this way.
+
+The forms are exclusive: `repository` with `pr` together, and neither with
+`limit` or `before`. An unknown parameter, a missing or non-positive `pr`, a
+`limit` outside 1 to 200 and a `before` naming no loaded job answer `400`.
+`GET /api/jobs/{id}` is one loaded job wherever it is in the history (`404`
+otherwise), for the transcript page of a job the current jobs no longer hold;
+`GET /api/jobs/{id}/transcript` likewise finds any loaded job.
+
 `POST /api/jobs` with `items` and `mode` starts reviews, a group's review or a
 fix at once (`Queue.Generate`): it prepares the items and queues them in one
 request, with no estimate to confirm and nothing about the price that stops a
@@ -3214,7 +3321,9 @@ group) has a queued or running job (it never joins or supersedes one),
 `ErrDuplicate` when any job, manual or automatic, already exists for that head
 (a group's: its member heads) (except a single
 automatic job a daemon stop or restart interrupted, which `Interrupted` lists
-and which may run once more; failed and cancelled jobs are final). Jobs
+and which may run once more; failed and cancelled jobs are final). An
+archived job still counts for its head (`job_heads`), and is never retried:
+any archived run of a head makes it `ErrDuplicate`. Jobs
 record `automatic` and `trigger` (`new_head`, `review_requested`,
 `ready_for_review`, `retry`, `stack_reviewed`, `setup`). A job an older baum cancelled with reason
 `daily_cap`, for the spending cap baum no longer has, loads as an ordinary
@@ -3361,9 +3470,13 @@ preferences' fix agent (`fix_backend` and `fix_model`, Claude Code or Codex,
 set with `PUT /api/automatic` or `baum internal reviews set --fix-backend`) when one
 is chosen (`Preferences.ResolveFix`), and otherwise the review's. Before running, the executor prepares
 again and refuses a changed head (`head_changed`) or changed fix inputs, then
-reads the failing checks' output and the last 200 lines of up to four GitHub
-Actions job logs (`RESTReader.Tail`, which follows the signed log redirect
-without the token), and reads the review threads again, refusing threads whose
+reads the failing checks' output and up to four GitHub Actions job logs
+(`RESTReader.Download`, which follows the signed log redirect without the
+token). Of each log it keeps the last 200 lines up to the end of the last step
+that logged an `##[error]` line, preferring the job's steps over its post-job
+cleanup, without timestamps or terminal escapes (`fix.jobLog`); a log without
+an error line gives its last 200 lines. It then reads the review threads
+again, refusing threads whose
 digest changed (`threads_changed`).
 
 `fix.Run` then works in a `gitlocal.Fix`: a linked worktree of the
@@ -3441,7 +3554,7 @@ to it (`agent.TitlePath`). `Job.has_transcript` says one exists, and
 never leave the machine.
 
 `POST /api/jobs/{id}/seen` (body `{}`) records that the user looked at a failed
-job: it sets `Job.seen_at` once, in the queue's `state/jobs` record, and
+job: it sets `Job.seen_at` once, in the job's row of the queue's journal, and
 leaves jobs in any other state unchanged (`404` for an unknown job). A failed
 job never runs again, so the desktop tray never flags one with `seen_at`.
 
@@ -3516,6 +3629,10 @@ error; the daemon passes them to the automatic scheduler, which alone decides
 about jobs. It polls immediately without
 blocking HTTP startup, then schedules discovery and latest-review evidence with
 conditional-cache deadlines, bounded requests, error backoff and host rate resets.
+The first probe that succeeds after one failed, as when the machine comes back
+online, polls every repository whose last poll failed (other than on a rate
+limit) at once, so the failure clears without waiting out a backoff that grew
+while offline.
 Every picked repository is polled, with or without a clone: discovery needs
 only `owner/name`. A repository without an available clone gets no per-PR
 refresh (that reads a store and the clone's saved reviews), and polling it
@@ -4470,7 +4587,8 @@ replace it.
   inbox row shows "Agent running" or "Agent idle" (a count when several) for
   sessions of its pull request, matched by repository and number across
   clones; the PR page lists them in a "Sessions in progress" panel, with their
-  agent, state, branch, start and last activity, above the review. The
+  agent, state, branch, start and last activity, above the review, and in its
+  Sessions list with the sessions linked through its commits, once each. The
   Sessions page (`?page=sessions`, with a sidebar entry counting the sessions
   waiting on the user, in the caution tone, or else the running ones) lists
   first, under "Needs you", the sessions with a `waiting_reason` the app

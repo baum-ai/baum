@@ -334,20 +334,22 @@ type documentIndex struct {
 	Threads         []documentThread           `json:"threads"`
 	Sessions        []documentSession          `json:"sessions"`
 	PRs             json.RawMessage            `json:"prs"`
-	// Attachments are the stored description images generation was offered;
+	// Attachments are the captured images generation was offered;
 	// a version's images blocks may name only these.
 	Attachments []documentAttachment `json:"attachments,omitempty"`
 }
 
 type documentAttachment struct {
-	ID          string `json:"id"`
-	Alt         string `json:"alt,omitempty"`
-	Heading     string `json:"heading,omitempty"`
-	Position    int    `json:"position"`
-	ContentType string `json:"content_type"`
-	Width       int    `json:"width"`
-	Height      int    `json:"height"`
-	SourceURL   string `json:"source_url"`
+	Origins     []bundlepkg.ImageOrigin `json:"origins,omitempty"`
+	SourceURLs  []string                `json:"source_urls,omitempty"`
+	ID          string                  `json:"id"`
+	Alt         string                  `json:"alt,omitempty"`
+	Heading     string                  `json:"heading,omitempty"`
+	Position    int                     `json:"position"`
+	ContentType string                  `json:"content_type"`
+	Width       int                     `json:"width"`
+	Height      int                     `json:"height"`
+	SourceURL   string                  `json:"source_url,omitempty"`
 }
 
 type documentHunk struct {

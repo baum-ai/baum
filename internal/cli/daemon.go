@@ -46,8 +46,8 @@ import (
 	"github.com/baum-ai/baum/internal/gitlocal"
 	"github.com/baum-ai/baum/internal/hookevents"
 	"github.com/baum-ai/baum/internal/hookrefresh"
-	"github.com/baum-ai/baum/internal/inboxcount"
 	"github.com/baum-ai/baum/internal/inboxes"
+	"github.com/baum-ai/baum/internal/inboxqueue"
 	"github.com/baum-ai/baum/internal/jobs"
 	"github.com/baum-ai/baum/internal/livesessions"
 	"github.com/baum-ai/baum/internal/localapp"
@@ -679,14 +679,19 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 		}
 		groupsAPI := &reviewgroups.API{Store: groups, Registry: registry, Index: index.Snapshot, Changed: changed}
 		uiState := &uistate.Store{Path: database}
-		// The desktop app's badge and tray count what the app's Inbox lists.
-		inboxCount := &inboxcount.Service{Index: index.Snapshot, Jobs: queue.List, Groups: groups.List, Snoozes: func() (json.RawMessage, error) {
+		savedInboxes := inboxes.Open(database)
+		// The app's Inbox, and which saved inboxes hold each pull request;
+		// the desktop app's badge and tray count what it lists.
+		inboxQueue := &inboxqueue.Service{Index: index.Snapshot, Jobs: queue.List, Groups: groups.List, Snoozes: func() (json.RawMessage, error) {
 			record, err := uiState.Read("inbox", "")
 			return record.Value, err
+		}, Inboxes: func() ([]inboxes.Inbox, error) {
+			state, err := savedInboxes.Read()
+			return state.Inboxes, err
 		}}
-		api := uiserver.LocalAPI{GitHubAuth: githubConnection.Handler(), Registry: registry, Config: cfg, PRs: uiserver.DiscoveryHandler(registry, discover, changed), Index: inboxCount.Handler(index.Handler()), Jobs: queue.Handler(), Chat: uiserver.ChatHandler(registry, queue), Background: worker.Handler(), Automatic: scheduler.Handler(), Live: liveAPI, AgentRequests: requestsAPI, Clones: clones.Handler(), GitHubRepositories: pickList.Handler(), CurrentName: currentName(githubClient), PlanUsage: plans.Handler(), Analytics: insights.Handler(), Timeline: timeline, Merge: uiserver.MergeHandler(registry, actions.RecordMerges(githubClient), mergedPullRequest, changed), Review: uiserver.ReviewHandler(registry, githubClient, changed), Update: uiserver.UpdateHandler(registry, actions.RecordUpdates(prupdate.Service{Client: githubClient, Cache: panelCache, Counted: countedThreads, Clone: availableClone}), refreshRepository, changed), Changed: settingsChanged,
+		api := uiserver.LocalAPI{GitHubAuth: githubConnection.Handler(), Registry: registry, Config: cfg, PRs: uiserver.DiscoveryHandler(registry, discover, changed), Index: inboxQueue.CountHandler(index.Handler()), Inbox: inboxQueue.Handler(), Jobs: queue.Handler(), Chat: uiserver.ChatHandler(registry, queue), Background: worker.Handler(), Automatic: scheduler.Handler(), Live: liveAPI, AgentRequests: requestsAPI, Clones: clones.Handler(), GitHubRepositories: pickList.Handler(), CurrentName: currentName(githubClient), PlanUsage: plans.Handler(), Analytics: insights.Handler(), Timeline: timeline, Merge: uiserver.MergeHandler(registry, actions.RecordMerges(githubClient), mergedPullRequest, changed), Review: uiserver.ReviewHandler(registry, githubClient, changed), Update: uiserver.UpdateHandler(registry, actions.RecordUpdates(prupdate.Service{Client: githubClient, Cache: panelCache, Counted: countedThreads, Clone: availableClone}), refreshRepository, changed), Changed: settingsChanged,
 			UIState:   uiState.Handler(),
-			Inboxes:   (&inboxes.API{Store: inboxes.Open(database), Changed: changed}).Handler(),
+			Inboxes:   (&inboxes.API{Store: savedInboxes, Changed: changed}).Handler(),
 			Groups:    groupsAPI.Handler(),
 			Decisions: decisionsAPI, Facts: pageFacts, Log: log,
 			DecisionsChanged:   func() { _ = server.Publish("decisions", struct{}{}) },

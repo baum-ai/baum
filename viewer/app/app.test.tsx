@@ -575,7 +575,7 @@ describe("sessions and commits", () => {
     await mount();
 
     await openGroup("Sessions");
-    expect(railText()).toContain("No linked sessions.");
+    expect(railText()).toContain("No sessions.");
     expect(pane()).toContain("this is not a clone");
   });
 
@@ -633,7 +633,7 @@ describe("sessions and commits", () => {
         }),
       ),
     );
-    expect(pane()).toContain("No agent session is linked");
+    expect(pane()).toContain("No agent sessions");
     await openGroup("Commits");
     expect(rows("Only")).toHaveLength(1);
   });

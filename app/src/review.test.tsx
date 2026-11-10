@@ -466,6 +466,25 @@ it("opens the description a source chip cites in a panel, and another pull reque
     node.querySelector<HTMLButtonElement>('[data-source="pull-request"]')!.click(),
   );
   expect(location.search).toBe("?clone=selected-clone&pr=9");
+  // Opened from an inbox, the linked pull request keeps it for Back.
+  await act(async () =>
+    root.render(
+      <UrlStateProvider value={{ search: new URLSearchParams("inbox=work"), update: () => {} }}>
+        <LocalReview
+          entry={entry}
+          clone="selected-clone"
+          revision={0}
+          job={job("completed")}
+          changed={changed}
+          generate={generate}
+        />
+      </UrlStateProvider>,
+    ),
+  );
+  await act(async () =>
+    node.querySelector<HTMLButtonElement>('[data-source="pull-request"]')!.click(),
+  );
+  expect(location.search).toBe("?inbox=work&clone=selected-clone&pr=9");
 });
 it("opens a file a context chip cites in a panel, marking its symbol's definition", async () => {
   Object.defineProperty(HTMLDialogElement.prototype, "showModal", {

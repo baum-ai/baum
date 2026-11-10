@@ -7,7 +7,7 @@ import { UrlStateProvider } from "@baum/viewer/navigation";
 import example from "../../schema/review-example.json" with { type: "json" };
 import { App } from "./app";
 import { Inbox } from "./inbox";
-import { LocalReview } from "./review";
+import { LocalReview, listedSessionRows } from "./review";
 import { liveFor, parseLive, type Entry, type LiveSession } from "./api";
 import { forgetFoldedSections } from "./sessions";
 import { forgetLastRows } from "./shortcuts";
@@ -405,23 +405,58 @@ async function renderReview(live: LiveSession[]) {
   );
 }
 
-it("lists sessions in progress on the pull request page and has no section without them", async () => {
+it("lists sessions in progress in the pull request's Sessions list, and not another's", async () => {
   await renderReview([
     session({ title: "Add a retry budget" }),
     session({ session_id: "s2", state: "idle", agent: "codex" }),
   ]);
-  const section = node.querySelector('[aria-label="Sessions in progress"]')!;
-  expect(section.querySelector(".local-pr-session-title")?.textContent).toBe("Add a retry budget");
-  expect(section.textContent).toContain("Claude Code");
-  expect(section.textContent).toContain("Working");
-  expect(section.textContent).toContain("feature");
-  expect(section.textContent).toContain("Last activity 20 seconds ago");
-  expect(section.textContent).toContain("Codex");
-  expect(section.textContent).toContain("Waiting for you");
+  const working = node.querySelector("li#session-s1")!;
+  expect(working.querySelector(".local-pr-session-title")?.textContent).toBe("Add a retry budget");
+  expect(working.textContent).toContain("Claude Code");
+  expect(working.textContent).toContain("Working");
+  expect(working.textContent).toContain("feature");
+  expect(working.textContent).toContain("Last activity 20 seconds ago");
+  const waiting = node.querySelector("li#session-s2")!;
+  expect(waiting.textContent).toContain("Codex");
+  expect(waiting.textContent).toContain("Waiting for you");
+  expect(node.textContent).toContain("2 sessions");
   // Each session opens its transcript, as on the Sessions page.
-  expect(section.querySelectorAll('a[aria-label^="Open transcript"]')).toHaveLength(2);
+  expect(node.querySelectorAll('li a[aria-label^="Open transcript"]')).toHaveLength(2);
   await renderReview([session({ pr: 8 })]);
-  expect(node.querySelector('[aria-label="Sessions in progress"]')).toBeNull();
+  expect(node.querySelector("li#session-s1")).toBeNull();
+});
+
+it("lists each session on the pull request once, leaving an ended linked one to its linked row", () => {
+  const rows = listedSessionRows(
+    [
+      session(),
+      session({ session_id: "s2", state: "idle", waiting_reason: "input" }),
+      session({ session_id: "s3", state: "ended" }),
+      session({ session_id: "s4", state: "ended" }),
+    ],
+    {
+      status: "ready",
+      sessions: [
+        { id: "s1", vendor: "claude_code" },
+        { id: "s3", vendor: "codex" },
+      ],
+    },
+  );
+  expect(rows.map((row) => [row.id, row.indicator])).toEqual([
+    ["s1", "live"],
+    ["s2", "attention"],
+    ["s4", undefined],
+  ]);
+});
+
+it("counts a running session with no linked commit in the Sessions list", async () => {
+  // The daemon links no session through the commits (the fetch mock's answer).
+  await renderReview([session({ title: "Fix the conflict" })]);
+  const list = node.querySelector("li#session-s1");
+  expect(list?.textContent).toContain("Fix the conflict");
+  expect(list?.textContent).toContain("Working");
+  expect(node.textContent).toContain("1 session");
+  expect(node.textContent).not.toContain("No agent sessions");
 });
 
 it("reads the sessions from disk again once a session in progress ends", async () => {
@@ -436,10 +471,10 @@ it("reads the sessions from disk again once a session in progress ends", async (
   expect(sessionReads()).toBe(first);
   await renderReview([session({ session_id: "s2" })]);
   expect(sessionReads()).toBe(first + 1);
-  expect(node.textContent).toContain("Sessions in progress");
+  expect(node.querySelector("li#session-s2")).not.toBeNull();
   await renderReview([]);
   expect(sessionReads()).toBe(first + 2);
-  expect(node.querySelector('[aria-label="Sessions in progress"]')).toBeNull();
+  expect(node.querySelector("li#session-s2")).toBeNull();
 });
 
 it("rereads a session's decisions once for a burst of events", async () => {
@@ -451,7 +486,7 @@ it("rereads a session's decisions once for a burst of events", async () => {
       .mock.calls.filter(([url]) => String(url).startsWith("/s/test-ns/api/decisions?agent="))
       .length;
   await act(async () => root.render(<App />));
-  expect(node.textContent).toContain("Sessions in progress");
+  expect(node.querySelector("li#session-s1")).not.toBeNull();
   const before = reads();
   expect(before).toBeGreaterThan(0);
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });

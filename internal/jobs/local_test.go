@@ -718,6 +718,9 @@ func TestBaumTokenRotationPreservesQueuedConfirmationButAccountSwitchDoesNot(t *
 	if err := store.Save(context.Background(), githubauth.Credential{AccessToken: "rotated", Login: "alice", ID: 1}); err != nil {
 		t.Fatal(err)
 	}
+	// The manager caches the token it read; a 401 for it stands in for the
+	// refresh or sign-in that would drop the cache in production.
+	config.GitHubAuth.ObserveResponse("first", http.StatusUnauthorized, http.Header{})
 	current, _, err := local.Prepare(context.Background(), prepared.Item)
 	if err != nil {
 		t.Fatal(err)
@@ -731,6 +734,7 @@ func TestBaumTokenRotationPreservesQueuedConfirmationButAccountSwitchDoesNot(t *
 	if err := store.Save(context.Background(), githubauth.Credential{AccessToken: "replacement", Login: "bob", ID: 2}); err != nil {
 		t.Fatal(err)
 	}
+	config.GitHubAuth.ObserveResponse("rotated", http.StatusUnauthorized, http.Header{})
 	if _, err := local.Execute(context.Background(), prepared, func(Progress) {}); err == nil || !strings.Contains(err.Error(), "generation inputs changed") {
 		t.Fatalf("replacement account executed old confirmation: %v", err)
 	}

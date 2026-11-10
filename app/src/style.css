@@ -108,6 +108,19 @@ body {
   color: var(--text-primary);
   font-weight: 500;
 }
+/* Inbox is a heading over its inboxes: not a link, so no hover fill. */
+.local-rail-heading,
+.local-rail-heading:hover {
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: default;
+}
+.local-rail-menu-note {
+  display: block;
+  padding: 0.25rem 0.75rem;
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+}
 .local-rail-glyph {
   flex: none;
 }
@@ -304,6 +317,10 @@ body {
   background: var(--surface-popup);
   box-shadow: var(--shadow-overlay);
   animation: upnext-drop 0.15s ease-out;
+}
+.local-rail-menu button:disabled {
+  color: var(--text-tertiary);
+  cursor: not-allowed;
 }
 .local-rail-menu button {
   padding: 7px 10px;
@@ -2509,8 +2526,9 @@ a.local-session-pr:hover {
   padding: 0;
   list-style: none;
 }
-.local-pr-sessions li {
+.local-pr-session {
   display: grid;
+  justify-items: start;
   gap: 0.2rem;
 }
 .local-pr-session-who {
@@ -6733,6 +6751,25 @@ a.upnext-done-text:hover {
 .inbox-block h2 {
   margin: 0;
 }
+/* A block's heading with a small link at its end, as to the filter docs. */
+.inbox-block-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+.inbox-docs-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+  text-decoration: none;
+}
+.inbox-docs-link:hover {
+  color: var(--text-link-hover);
+  text-decoration: underline;
+}
 .inbox-fresh {
   margin: 0;
   padding: 0.6rem 1.25rem;
@@ -7039,8 +7076,15 @@ dialog.local-file-dialog {
 .inbox-head-rename {
   display: grid;
   flex: 1;
+  grid-template-columns: minmax(0, 1fr);
   min-width: 0;
   gap: 0.2rem;
+}
+/* The field shrinks to its column, so the filter and refresh stay beside it
+   rather than under its right end. */
+.inbox-head-rename .local-field {
+  width: 100%;
+  min-width: 0;
 }
 /* The heading-sized field takes a tight ring: the shared one's 2px gap and
    2px band read as a heavy double frame around it. */

@@ -218,27 +218,28 @@ const railLink = (name: string) =>
   Array.from(node.querySelectorAll<HTMLAnchorElement>(".local-rail a")).find((a) =>
     a.textContent?.includes(name),
   )!;
+// Inbox in the sidebar: a heading over the saved inboxes, not a link.
+const railHeading = () => node.querySelector<HTMLElement>(".local-rail-heading")!;
 
 // --- New inbox -------------------------------------------------------------
 
-it("lists the six templates with their sentence and how many pull requests each would show", async () => {
+it("lists the seven templates with their sentence and how many pull requests each would show", async () => {
   await render("?page=inbox-new");
   expect(node.querySelector("h1")!.textContent).toBe("What should this inbox catch?");
   expect(node.textContent).not.toContain("Start from one of these");
   expect(Array.from(node.querySelectorAll(".inbox-template")).map((t) => t.textContent)).toEqual([
-    "Custom4 nowStart from nothing and set the filters yourself.",
-    "Urgent1 nowAnything waiting on me in any repository, when risk is 4 or 5.",
-    "Work1 nowAnything waiting on me in other, whatever the risk.",
-    "Personal3 nowAnything waiting on me in my own repositories, whatever the risk.",
+    "Custom4 nowEvery open pull request, until you add filters.",
+    "Urgent1 nowMine, assigned to me or asking for my review, at risk 4 or 5.",
+    "Work1 nowMine, assigned to me or asking for my review, in other.",
+    "Personal3 nowEvery open pull request in my own repositories, whatever the risk.",
     "Quick merges2 nowThings ready to merge in any repository, whatever the risk.",
     "For an agent1 nowThings an agent can fix in any repository, whatever the risk.",
+    "Unclaimed0 nowOthers' pull requests with no one assigned and no review requested.",
   ]);
   expect(template("Urgent").className).toContain("inbox-red");
-  expect(node.textContent).toContain(
-    "A pull request can sit in more than one inbox. Inbox at the top always shows everything.",
-  );
+  expect(node.textContent).toContain("A pull request can sit in more than one inbox.");
   // The sidebar keeps Inbox as its section, and has no New inbox entry.
-  expect(railLink("Inbox").getAttribute("aria-current")).toBeNull();
+  expect(railHeading().getAttribute("aria-current")).toBeNull();
   expect(railLink("New inbox")).toBeUndefined();
 });
 
@@ -268,7 +269,9 @@ it("opens a template unsaved, and Save adds it, from the owners of the person's 
   );
   expect(byText("button", "Delete inbox")).toBeUndefined();
   expect(railLink("Work")).toBeUndefined();
-  expect(node.querySelector<HTMLTextAreaElement>(".inbox-query textarea")!.value).toBe("org=other");
+  expect(node.querySelector<HTMLTextAreaElement>(".inbox-query textarea")!.value).toBe(
+    "org=other (author=@me OR assignee=@me OR review-requested=@me)",
+  );
   await click(button("Save"));
   expect(puts).toHaveLength(1);
   const made = puts[0]!.inboxes;
@@ -279,7 +282,7 @@ it("opens a template unsaved, and Save adds it, from the owners of the person's 
     color: "blue",
     what: "any",
     owners: [],
-    query: "org=other",
+    query: "org=other (author=@me OR assignee=@me OR review-requested=@me)",
     badge: true,
   });
   expect(made[2]!.id).toMatch(/^[0-9a-f]{32}$/);
@@ -322,7 +325,10 @@ it("checks the name as typed on Save, and keeps the unsaved inbox when the save 
   expect(nameInput().value).toBe("Hot");
   inboxesFail = null;
   await click(button("Save"));
-  expect(puts.at(-1)!.inboxes.at(-1)).toMatchObject({ name: "Hot", query: "risk>=4" });
+  expect(puts.at(-1)!.inboxes.at(-1)).toMatchObject({
+    name: "Hot",
+    query: "risk>=4 (author=@me OR assignee=@me OR review-requested=@me)",
+  });
   expect(search().get("inbox")).toBe(puts.at(-1)!.inboxes.at(-1)!.id);
 });
 
@@ -335,7 +341,10 @@ it("makes Personal from the login with the badge off, and the others as their qu
     badge: false,
   });
   await saveTemplate("Urgent");
-  expect(puts[1]!.inboxes.at(-1)).toMatchObject({ color: "red", query: "risk>=4" });
+  expect(puts[1]!.inboxes.at(-1)).toMatchObject({
+    color: "red",
+    query: "risk>=4 (author=@me OR assignee=@me OR review-requested=@me)",
+  });
   await saveTemplate("Quick merges");
   expect(puts[2]!.inboxes.at(-1)).toMatchObject({ color: "amber", query: "waiting=merge" });
   await saveTemplate("For an agent");
@@ -361,7 +370,7 @@ it("disables the templates at twenty inboxes and says so", async () => {
   await render("?page=inbox-new");
   expect(node.querySelector('[role="status"]')!.textContent).toContain("You have 20 inboxes");
   const all = Array.from(node.querySelectorAll<HTMLButtonElement>(".inbox-template"));
-  expect(all).toHaveLength(6);
+  expect(all).toHaveLength(7);
   expect(all.every((one) => one.disabled)).toBe(true);
   await click(all[0]);
   expect(puts).toHaveLength(0);
@@ -445,7 +454,7 @@ const queryBox = () => node.querySelector<HTMLTextAreaElement>(".inbox-query tex
 it("shows the inbox as one query, saving each change once and saying what it added and removed", async () => {
   await render("?page=inbox-edit&inbox=Acme");
   expect(queryBox().value).toBe("org=acme");
-  expect(node.querySelector(".inbox-query summary.filter-menu-button")).not.toBeNull();
+  expect(node.querySelector(".inbox-query summary.filter-menu-lead")).not.toBeNull();
   expect(node.querySelector(".inbox-preview-count")!.textContent).toBe("3");
   expect(previewTitles()).toEqual(["Change 1", "Change 3", "Change 2"]);
   await typeQuery("org=acme waiting=review");
@@ -525,12 +534,12 @@ it("folds what an inbox holds, its owners, risk, repositories and bots into its 
 it("counts the inbox in the badge or not", async () => {
   await render("?page=inbox-edit&inbox=Acme");
   const badge = node.querySelector<HTMLInputElement>('input[role="switch"]')!;
-  expect(badge.labels![0]!.textContent).toBe("Count it in the Inbox badge");
-  expect(node.textContent).toContain("Its pull requests add to the number on Inbox.");
+  expect(badge.labels![0]!.textContent).toBe("Show its count in the sidebar");
+  expect(node.textContent).toContain("The sidebar shows how many of its pull requests wait.");
   await click(badge);
   expect(puts[0]!.inboxes[1]!.badge).toBe(false);
   expect(node.textContent).toContain(
-    "Left out of the badge, so it never nags. It still shows here and in Inbox.",
+    "No count beside it, so it never nags. Its pull requests still add to the Inbox total.",
   );
 });
 
@@ -561,14 +570,16 @@ it("leaves snoozed pull requests out of the preview, as the queue does", async (
   expect(previewTitles()).toEqual(["Change 1", "Change 2"]);
 });
 
-it("deletes the inbox from its page once confirmed, with Undo, and goes to Inbox", async () => {
+it("deletes the inbox from its page once confirmed, with Undo, and goes to the first inbox left", async () => {
   await render("?page=inbox-edit&inbox=Acme");
-  expect(node.textContent).toContain("Deleting an inbox leaves its pull requests in Inbox.");
+  expect(node.textContent).toContain(
+    "Deleting an inbox keeps its pull requests, reviews and snoozes.",
+  );
   await click(button("Delete inbox"));
   // It asks first, saying only the view goes.
   expect(puts).toHaveLength(0);
   expect(node.querySelector("dialog")!.textContent).toContain(
-    "Only this view goes. Its pull requests, reviews and snoozes stay, and they still show in Inbox.",
+    "Only this view goes. Its pull requests, reviews and snoozes stay.",
   );
   await click(byText("dialog button", "Cancel"));
   expect(node.querySelector("dialog")).toBeNull();
@@ -577,15 +588,28 @@ it("deletes the inbox from its page once confirmed, with Undo, and goes to Inbox
   await click(byText("dialog button", "Delete inbox"));
   expect(puts).toHaveLength(1);
   expect(puts[0]!.inboxes.map((one) => one.id)).toEqual(["Reviews"]);
-  expect(location.search).toBe("");
-  expect(node.querySelector(".upnext-list-head h1")!.textContent).toBe("Up next");
-  // Focus goes to Inbox in the sidebar, not to the page.
-  expect(document.activeElement).toBe(railLink("Inbox"));
-  expect(node.querySelector(".inbox-toast")!.textContent).toContain(
-    "Deleted Acme. Its pull requests stay in Inbox.",
-  );
+  // The edit page's entry becomes the first inbox left.
+  expect(location.search).toBe("?inbox=Reviews");
+  expect(node.querySelector(".upnext-list-head h1")!.textContent).toBe("Reviews");
+  // Focus goes to that inbox in the sidebar, not to the page.
+  expect(document.activeElement).toBe(node.querySelector('.local-rail a[href$="?inbox=Reviews"]'));
+  expect(node.querySelector(".inbox-toast")!.textContent).toContain("Deleted Acme.");
   await click(node.querySelector(".inbox-toast button"));
   expect(puts[1]!.inboxes.map((one) => one.id)).toEqual(["Reviews", "Acme"]);
+});
+
+it("cannot delete the last inbox from its edit page", async () => {
+  daemon = { revision: 1, inboxes: [acme] };
+  await render("?page=inbox-edit&inbox=Acme");
+  const del = button("Delete inbox");
+  expect(del.disabled).toBe(true);
+  expect(node.querySelector(".inbox-delete")!.textContent).toContain("Keep at least one inbox");
+  expect(del.getAttribute("aria-describedby")).toBe(
+    node.querySelector(".inbox-delete p")!.getAttribute("id"),
+  );
+  await click(del);
+  expect(node.querySelector("dialog")).toBeNull();
+  expect(puts).toHaveLength(0);
 });
 
 it("says an inbox that is gone no longer exists", async () => {
@@ -600,8 +624,10 @@ it("lists the inboxes in order with their counts and controls", async () => {
   await render("?page=inboxes");
   expect(node.querySelector("h1")!.textContent).toBe("Inboxes");
   expect(node.textContent).toContain(
-    "Inbox shows everything. These sit under it in the sidebar, in this order. A pull request can be in several.",
+    "These are your inboxes, in their order in the sidebar. A pull request can be in several.",
   );
+  // Nothing here deletes an inbox, so the last one cannot go from this page.
+  expect(button(/^Delete/)).toBeUndefined();
   const rows = Array.from(node.querySelectorAll(".inbox-manage-row"));
   expect(rows.map((row) => row.querySelector(".inbox-manage-text")!.textContent)).toEqual([
     "Reviews1 now",
@@ -609,15 +635,15 @@ it("lists the inboxes in order with their counts and controls", async () => {
   ]);
   // The first has nothing to move up to, the last nothing to move down to.
   await openActions("Reviews");
-  expect(choices()).toEqual(["Edit…", "Move down", "Count in the Inbox badge"]);
+  expect(choices()).toEqual(["Edit…", "Move down", "Show count in the sidebar"]);
   await openActions("Acme");
-  expect(choices()).toEqual(["Edit…", "Move up", "Count in the Inbox badge"]);
+  expect(choices()).toEqual(["Edit…", "Move up", "Show count in the sidebar"]);
   expect(node.querySelector('[aria-label="Edit Reviews"]')!.getAttribute("href")).toBe(
     "/s/test-ns/?page=inbox-edit&inbox=Reviews",
   );
   expect(link("New inbox").getAttribute("href")).toBe("/s/test-ns/?page=inbox-new");
   expect(railLink("Manage inboxes")).toBeUndefined();
-  expect(railLink("Inbox").getAttribute("aria-current")).toBeNull();
+  expect(railHeading().getAttribute("aria-current")).toBeNull();
 });
 
 it("reorders inboxes, saving the new order, and switches the badge", async () => {
@@ -641,18 +667,14 @@ it("reorders inboxes, saving the new order, and switches the badge", async () =>
   expect(puts[1]!.inboxes.map((one) => one.id)).toEqual(["Reviews", "Acme"]);
 
   await openActions("Reviews");
-  expect(choice("Count in the Inbox badge")!.getAttribute("aria-checked")).toBe("true");
-  await click(choice("Count in the Inbox badge"));
+  expect(choice("Show count in the sidebar")!.getAttribute("aria-checked")).toBe("true");
+  await click(choice("Show count in the sidebar"));
   expect(puts[2]!.inboxes[0]).toMatchObject({ id: "Reviews", badge: false });
-  expect(node.querySelector(".inbox-manage-row")!.textContent).toContain(
-    "· not counted in the badge",
-  );
+  expect(node.querySelector(".inbox-manage-row")!.textContent).toContain("· count hidden");
 });
 
-it("leads to New inbox when there are no inboxes", async () => {
-  daemon = { revision: 1, inboxes: [] };
+it("leads to New inbox from Manage inboxes", async () => {
   await render("?page=inboxes");
-  expect(node.querySelector(".local-empty h2")!.textContent).toBe("No inboxes yet");
   await click(link("New inbox"));
   expect(search().get("page")).toBe("inbox-new");
 });
@@ -660,12 +682,11 @@ it("leads to New inbox when there are no inboxes", async () => {
 // --- Links, Go to and an older daemon ----------------------------------------
 
 it("puts New inbox and Manage inboxes in Inbox's right-click menu, and Edit in an inbox's and its queue head's", async () => {
-  daemon = { revision: 1, inboxes: [] };
   await render();
   expect(railLink("New inbox")).toBeUndefined();
   expect(railLink("Manage inboxes")).toBeUndefined();
   await act(async () => {
-    railLink("Inbox").dispatchEvent(
+    railHeading().dispatchEvent(
       new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 9, clientY: 9 }),
     );
   });
@@ -695,12 +716,9 @@ it("puts New inbox and Manage inboxes in Inbox's right-click menu, and Edit in a
   await click(edit[0]!);
   expect(search().get("page")).toBe("inbox-edit");
   expect(search().get("inbox")).toBe("Acme");
-  // The Inbox itself has none.
-  await render();
-  expect(node.querySelector(".upnext-list-title")).toBeNull();
 });
 
-it("lists the inboxes, New inbox and Manage inboxes in Go to", async () => {
+it("lists each saved inbox, New inbox and Manage inboxes in Go to, with no Inbox page", async () => {
   await render("?page=pulls");
   await act(async () => {
     window.dispatchEvent(new KeyboardEvent("keydown", { key: "k", ctrlKey: true, bubbles: true }));
@@ -709,6 +727,7 @@ it("lists the inboxes, New inbox and Manage inboxes in Go to", async () => {
     Array.from(node.querySelectorAll('[data-go-to] [role="option"]')).map((o) => o.textContent);
   expect(options()).toContain("AcmeInbox");
   expect(options()).toContain("ReviewsInbox");
+  expect(options()).not.toContain("InboxPage");
   expect(options()).toContain("New inboxPage");
   expect(options()).toContain("Manage inboxesPage");
   // Found by name; opening one shows its queue.
@@ -718,20 +737,23 @@ it("lists the inboxes, New inbox and Manage inboxes in Go to", async () => {
   await click(node.querySelector('[data-go-to] [role="option"]'));
   expect(search().get("inbox")).toBe("Acme");
   expect(node.querySelector(".upnext-list-head h1")!.textContent).toBe("Acme");
-  // ⌘1 still opens Inbox.
+  // ⌘1 opens the first saved inbox.
   await act(async () => {
     window.dispatchEvent(
       new KeyboardEvent("keydown", { key: "1", code: "Digit1", ctrlKey: true, bubbles: true }),
     );
   });
-  expect(location.search).toBe("");
+  expect(location.search).toBe("?inbox=Reviews");
+  expect(node.querySelector(".upnext-list-head h1")!.textContent).toBe("Reviews");
 });
 
-it("shows none of it with an older daemon, and Inbox for a direct address", async () => {
+it("shows none of it with an older daemon, and says it needs a newer baum for a direct address", async () => {
   daemon = null;
   for (const page of ["inbox-new", "inbox-edit&inbox=Acme", "inboxes"]) {
     await render(`?page=${page}`);
-    expect(node.querySelector(".upnext-list-head h1")!.textContent).toBe("Up next");
+    expect(node.querySelector(".upnext-list-head")).toBeNull();
+    expect(node.querySelector(".upnext-row")).toBeNull();
+    expect(node.textContent).toContain("Inboxes need a newer baum");
     expect(node.querySelector(".inbox-page")).toBeNull();
   }
   expect(node.textContent).not.toContain("New inbox");
@@ -773,10 +795,11 @@ it("says the read failed on an inbox page when the first read fails, and recover
   expect(nameInput().value).toBe("Acme");
 });
 
-it("falls back to Inbox for a daemon that says it has no inboxes", async () => {
+it("says it needs a newer baum for a daemon that says it has no inboxes", async () => {
   daemon = null;
   await render("?page=inboxes");
-  expect(node.querySelector(".upnext-list-head h1")!.textContent).toBe("Up next");
+  expect(node.querySelector(".upnext-list-head")).toBeNull();
+  expect(node.textContent).toContain("Inboxes need a newer baum");
   expect(node.querySelector('[role="alert"]')).toBeNull();
 });
 
@@ -798,3 +821,171 @@ for (const modifier of ["metaKey", "ctrlKey"]) {
     expect(puts.at(-1)?.inboxes.at(-1)).toMatchObject({ name: "Keyboard inbox" });
   });
 }
+
+// --- Unclaimed template and the condition chips ------------------------------
+
+it("opens the Unclaimed template on others' pull requests that nobody holds, and Save adds it", async () => {
+  await render("?page=inbox-new");
+  await click(template("Unclaimed"));
+  expect(search().get("page")).toBe("inbox-edit");
+  expect(nameInput().value).toBe("Unclaimed");
+  expect(queryBox().value).toBe(
+    "waiting=other assignee=none review-requested=none is!=draft is!=bot",
+  );
+  // The fixture has no one else's pull request: none to show yet.
+  expect(node.querySelector(".inbox-preview-count")!.textContent).toBe("0");
+  await click(button("Save"));
+  expect(puts).toHaveLength(1);
+  expect(puts[0]!.inboxes.at(-1)).toMatchObject({
+    name: "Unclaimed",
+    query: "waiting=other assignee=none review-requested=none is!=draft is!=bot",
+    badge: true,
+  });
+});
+
+it("catches an unclaimed pull request in the Unclaimed inbox, and not a claimed one", async () => {
+  entries = [
+    ...fixture(),
+    entry(5, "acme/demo", { author: "sam" }),
+    entry(6, "acme/demo", { author: "sam", assigned: true }),
+    entry(7, "acme/demo", { author: "sam", review_requested: true }),
+    entry(8, "acme/demo", { author: "sam", draft: true }, { merge: "draft" }),
+    entry(9, "acme/demo", { author: "dependabot", author_bot: true }),
+  ];
+  await render("?page=inbox-new");
+  expect(template("Unclaimed").textContent).toContain("1 now");
+  await click(template("Unclaimed"));
+  expect(previewTitles()).toEqual(["Change 5"]);
+});
+
+/** The query box's terms as its tokens show them, away from the box. */
+const tokens = () =>
+  Array.from(node.querySelectorAll(".inbox-query .filter-token")).map(
+    (token) => token.firstElementChild!.textContent,
+  );
+const remove = (label: string) =>
+  node.querySelector<HTMLButtonElement>(`.inbox-query button[aria-label="Remove ${label}"]`)!;
+
+it("shows the query's terms as tokens in the box, and a token's × saves the query without it", async () => {
+  daemon = {
+    revision: 1,
+    inboxes: [
+      inbox("Hot", {
+        query: "org=baum-ai (author=@me OR assignee=@me OR review-requested=@me) review=none",
+      }),
+    ],
+  };
+  await render("?page=inbox-edit&inbox=Hot");
+  expect(tokens()).toEqual([
+    "org=baum-ai",
+    "author=@me",
+    "assignee=@me",
+    "review-requested=@me",
+    "review=none",
+  ]);
+  // The operators and parentheses stay as text between them.
+  expect(node.querySelector(".inbox-query .filter-bar-tokens")!.textContent).toContain(" OR ");
+  await click(remove("Assignee is Me"));
+  expect(puts).toHaveLength(1);
+  expect(puts[0]!.inboxes[0]!.query).toBe(
+    "org=baum-ai (author=@me OR review-requested=@me) review=none",
+  );
+  expect(queryBox().value).toBe("org=baum-ai (author=@me OR review-requested=@me) review=none");
+  expect(tokens()).toEqual(["org=baum-ai", "author=@me", "review-requested=@me", "review=none"]);
+  // A group left with one choice loses its parentheses.
+  await click(remove("Author is Me"));
+  expect(puts.at(-1)!.inboxes[0]!.query).toBe("org=baum-ai review-requested=@me review=none");
+});
+
+it("shows the text while the box has the focus, and the tokens again once it leaves", async () => {
+  daemon = { revision: 1, inboxes: [inbox("Hot", { query: "org=acme risk>=4" })] };
+  await render("?page=inbox-edit&inbox=Hot");
+  expect(queryBox().classList.contains("filter-bar-input-under")).toBe(true);
+  await act(async () => queryBox().focus());
+  expect(tokens()).toEqual([]);
+  expect(queryBox().classList.contains("filter-bar-input-under")).toBe(false);
+  await act(async () => queryBox().blur());
+  expect(tokens()).toEqual(["org=acme", "risk>=4"]);
+});
+
+it("offers what may follow the query once the box has the focus, the operators first", async () => {
+  daemon = { revision: 1, inboxes: [inbox("Hot", { query: "org=acme review=none" })] };
+  await render("?page=inbox-edit&inbox=Hot");
+  await act(async () => {
+    queryBox().dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
+  });
+  const offered = () =>
+    Array.from(node.querySelectorAll(".inbox-query [role='option'] code")).map(
+      (one) => one.textContent,
+    );
+  expect(offered().slice(0, 2)).toEqual(["AND", "OR"]);
+  expect(offered()).toContain("author");
+  // Tab moves on rather than joining an operator onto a whole filter.
+  expect(queryBox().hasAttribute("data-own-tab")).toBe(false);
+  // Taken, the operator comes after a space.
+  await act(async () => {
+    node
+      .querySelectorAll<HTMLElement>(".inbox-query [role='option']")[1]!
+      .dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
+  });
+  expect(queryBox().value).toBe("org=acme review=none OR ");
+  // An empty box offers the fields alone.
+  daemon = { revision: 1, inboxes: [inbox("Open", { query: "" })] };
+  await render("?page=inbox-edit&inbox=Open");
+  await act(async () => queryBox().focus());
+  expect(offered()).toContain("author");
+  expect(offered()).not.toContain("AND");
+});
+
+it("keeps the box with no query, saying what no filter means, also once the last token goes", async () => {
+  daemon = {
+    revision: 1,
+    inboxes: [inbox("Open", { query: "" }), inbox("One", { query: "org=acme" })],
+  };
+  await render("?page=inbox-edit&inbox=Open");
+  expect(queryBox().value).toBe("");
+  expect(queryBox().placeholder).toBe("No filter: every open pull request");
+  // The labelled button opens the menu, which has no box of its own to write in.
+  await click(node.querySelector<HTMLElement>(".inbox-query summary.filter-menu-lead")!);
+  expect(node.querySelector(".inbox-query .filter-menu-write")).toBeNull();
+  await render("?page=inbox-edit&inbox=One");
+  await click(remove("Organization is acme"));
+  expect(puts.at(-1)!.inboxes[1]!.query).toBe("");
+  expect(queryBox().value).toBe("");
+  expect(queryBox().placeholder).toContain("No filter");
+});
+
+it("puts a quick filter's query into the box, and takes it out when pressed again", async () => {
+  daemon = { revision: 1, inboxes: [inbox("Hot", { query: "org=acme" })] };
+  await render("?page=inbox-edit&inbox=Hot");
+  const quick = (label: string) =>
+    Array.from(
+      node.querySelectorAll<HTMLButtonElement>('[role="group"][aria-label="Quick filters"] button'),
+    ).find((one) => one.textContent === label)!;
+  expect(quick("Risky").getAttribute("aria-pressed")).toBe("false");
+  await click(quick("Risky"));
+  expect(puts.at(-1)!.inboxes[0]!.query).toBe("org=acme risk>=4");
+  expect(queryBox().value).toBe("org=acme risk>=4");
+  expect(quick("Risky").getAttribute("aria-pressed")).toBe("true");
+  await click(quick("For me"));
+  expect(puts.at(-1)!.inboxes[0]!.query).toBe(
+    "org=acme risk>=4 (author=@me OR assignee=@me OR review-requested=@me)",
+  );
+  await click(quick("Risky"));
+  expect(puts.at(-1)!.inboxes[0]!.query).toBe(
+    "org=acme (author=@me OR assignee=@me OR review-requested=@me)",
+  );
+  expect(quick("Risky").getAttribute("aria-pressed")).toBe("false");
+  // The filter's syntax is a link away, in the docs.
+  const docs = node.querySelector<HTMLAnchorElement>(".inbox-docs-link")!;
+  expect(docs.textContent).toBe("Filter syntax");
+  expect(docs.href).toBe("https://docs.usebaum.com/inbox/#filter-what-you-see");
+  expect(docs.target).toBe("_blank");
+});
+
+it("shows no tokens for a query that does not read", async () => {
+  daemon = { revision: 1, inboxes: [inbox("Bad", { query: "colour:red" })] };
+  await render("?page=inbox-edit&inbox=Bad");
+  expect(tokens()).toEqual([]);
+  expect(queryBox().value).toBe("colour:red");
+});

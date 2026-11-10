@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -48,7 +50,7 @@ func TestGraphQLPaginationEndpointsStatesAndIndependentBudgets(t *testing.T) {
 					if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 						t.Fatal(err)
 					}
-					if !strings.Contains(request.Query, "pullRequests(states: OPEN, first: 50, after: $cursor)") || request.Variables.Owner != "acme" || request.Variables.Name != "app" {
+					if !strings.Contains(request.Query, "pullRequests(states: OPEN, orderBy: {field: UPDATED_AT, direction: DESC}, first: $first, after: $cursor)") || request.Variables.Owner != "acme" || request.Variables.Name != "app" {
 						t.Fatalf("query %#v", request)
 					}
 					node := `{"number":1,"title":"First","headRefOid":"head1","headRefName":"branch","author":{"login":"viewer"},"headRepository":{"databaseId":1,"nameWithOwner":"acme/app"},"baseRepository":{"databaseId":1,"nameWithOwner":"acme/app"},"reviewDecision":"APPROVED","commits":{"nodes":[{"commit":{"statusCheckRollup":{"state":"SUCCESS"}}}]},"mergeable":"MERGEABLE","mergeStateStatus":"CLEAN","reviewThreads":{"nodes":[{"isResolved":false},{"isResolved":true},{"isResolved":false}],"pageInfo":{"hasNextPage":true}}}`
@@ -87,6 +89,10 @@ func TestGraphQLPaginationEndpointsStatesAndIndependentBudgets(t *testing.T) {
 			}
 			if second.Review != "commented" || second.ReviewRequired == nil || !*second.ReviewRequired || second.Checks != "none" || second.Merge != "draft" || second.Unresolved == nil || *second.Unresolved != 0 || second.UnresolvedCapped {
 				t.Fatalf("second=%+v", second)
+			}
+			// An approval no longer holds the first up; the second still needs one.
+			if first.ReviewRequired == nil || *first.ReviewRequired || second.ReviewRequired == nil || !*second.ReviewRequired {
+				t.Fatalf("review required: first=%v second=%v", first.ReviewRequired, second.ReviewRequired)
 			}
 			if got.Rate.Cost == nil || *got.Rate.Cost != 2 || got.Rate.Remaining == nil || *got.Rate.Remaining != 4998 || !got.Rate.Reset.Equal(reset) {
 				t.Fatalf("rate=%+v", got.Rate)
@@ -214,6 +220,141 @@ func TestGraphQLRequestCapAndRateErrorPreserveCache(t *testing.T) {
 			}
 			if strings.Contains(response, "RATE_LIMITED") && (err != errRateLimit || !got.Rate.RetryAt.Equal(now.Add(time.Minute))) {
 				t.Fatalf("rate=%+v %v", got.Rate, err)
+			}
+		})
+	}
+}
+
+// inboxService answers the inbox query with answer and records each attempt's
+// page size and cursor.
+func inboxService(t *testing.T, answer func(r *http.Request, call int) (int, string)) (*Service, *[][2]any) {
+	t.Helper()
+	before := inboxRetryDelay
+	inboxRetryDelay = 0
+	t.Cleanup(func() { inboxRetryDelay = before })
+	var mu sync.Mutex
+	calls := &[][2]any{}
+	client := github.New(func(context.Context, string) (string, error) { return "synthetic", nil }, github.Options{Transport: roundTrip(func(r *http.Request) (*http.Response, error) {
+		status, body := http.StatusOK, `[]`
+		switch {
+		case r.Method == http.MethodPost:
+			var request struct {
+				Variables struct {
+					First  int
+					Cursor *string
+				}
+			}
+			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+				t.Fatal(err)
+			}
+			cursor := ""
+			if request.Variables.Cursor != nil {
+				cursor = *request.Variables.Cursor
+			}
+			mu.Lock()
+			*calls = append(*calls, [2]any{request.Variables.First, cursor})
+			call := len(*calls)
+			mu.Unlock()
+			status, body = answer(r, call)
+			if err := r.Context().Err(); err != nil {
+				return nil, err
+			}
+		case strings.Contains(r.URL.Path, "/permission"):
+			body = `{"permission":"write"}`
+		}
+		return &http.Response{StatusCode: status, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(body))}, nil
+	})})
+	s := New(client, appdbtest.TempDir(t))
+	s.now = func() time.Time { return time.Date(2026, 11, 8, 12, 0, 0, 0, time.UTC) }
+	return s, calls
+}
+
+// inboxPage is page number of last, with one pull request numbered number.
+func inboxPage(number, last int) string {
+	return fmt.Sprintf(`{"data":{"viewer":{"login":"viewer"},"repository":{"pullRequests":{"nodes":[{"number":%d,"headRefOid":"head","author":{"login":"viewer"},"baseRepository":{"databaseId":1,"nameWithOwner":"acme/app"}}],"pageInfo":{"hasNextPage":%t,"endCursor":"page%d"}}}}}`, number, number < last, number+1)
+}
+
+func TestInboxPageGatewayErrors(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		answer  func(call int) (int, string)
+		pulls   int
+		failed  string
+		attempt [][2]any
+	}{{
+		// The failed page repeats its cursor at half the size, which stays
+		// for the rest of the walk.
+		name: "a gateway error is asked again smaller",
+		answer: func(call int) (int, string) {
+			return map[int]int{1: 200, 2: 502, 3: 200, 4: 200}[call], map[int]string{1: inboxPage(1, 3), 3: inboxPage(2, 3), 4: inboxPage(3, 3)}[call]
+		},
+		pulls:   3,
+		attempt: [][2]any{{25, ""}, {25, "page2"}, {12, "page2"}, {12, "page3"}},
+	}, {
+		name:    "every gateway status is asked again",
+		answer:  func(call int) (int, string) { return map[int]int{1: 503, 2: 504, 3: 200}[call], inboxPage(1, 1) },
+		pulls:   1,
+		attempt: [][2]any{{25, ""}, {12, ""}, {6, ""}},
+	}, {
+		name:    "a page gives up after its attempts",
+		answer:  func(int) (int, string) { return http.StatusBadGateway, `` },
+		failed:  "GitHub discovery HTTP 502",
+		attempt: [][2]any{{25, ""}, {12, ""}, {6, ""}, {5, ""}},
+	}, {
+		name:    "another failure is not asked again",
+		answer:  func(int) (int, string) { return http.StatusInternalServerError, `` },
+		failed:  "GitHub discovery HTTP 500",
+		attempt: [][2]any{{25, ""}},
+	}} {
+		t.Run(tc.name, func(t *testing.T) {
+			s, calls := inboxService(t, func(_ *http.Request, call int) (int, string) { return tc.answer(call) })
+			got, err := s.Poll(context.Background(), testRepo)
+			if (err != nil) != (tc.failed != "") || got.Error != tc.failed || got.Stale != (tc.failed != "") || len(got.PullRequests) != tc.pulls {
+				t.Fatalf("snapshot=%+v err=%v", got, err)
+			}
+			if !reflect.DeepEqual(*calls, tc.attempt) {
+				t.Fatalf("calls=%v want=%v", *calls, tc.attempt)
+			}
+		})
+	}
+}
+
+func TestIdleTimeoutStopsOnlyAPollGitHubStoppedAnswering(t *testing.T) {
+	const idle = 200 * time.Millisecond
+	for _, tc := range []struct {
+		name   string
+		stall  int
+		queued bool
+		failed bool
+	}{
+		// Twelve pages take longer than idle, but each is answered within it.
+		{name: "a long poll that keeps being answered completes"},
+		{name: "a poll whose request is not answered stops", stall: 3, failed: true},
+		// Waiting behind another poll is not waiting on GitHub.
+		{name: "a poll queued behind another for longer than idle completes", queued: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s, _ := inboxService(t, func(r *http.Request, call int) (int, string) {
+				if call == tc.stall {
+					<-r.Context().Done()
+				} else {
+					time.Sleep(idle / 8)
+				}
+				return http.StatusOK, inboxPage(call, 12)
+			})
+			ctx, cancel := WithIdleTimeout(context.Background(), idle)
+			defer cancel()
+			started := time.Now()
+			if tc.queued {
+				unlock := s.lock(testRepo)
+				time.AfterFunc(2*idle, unlock)
+			}
+			got, err := s.Poll(ctx, testRepo)
+			if tc.failed != (err != nil) || !tc.failed && len(got.PullRequests) != 12 {
+				t.Fatalf("snapshot=%+v err=%v", got, err)
+			}
+			if took := time.Since(started); tc.failed && took > 10*idle || !tc.failed && took < idle {
+				t.Fatalf("took %s", took)
 			}
 		})
 	}

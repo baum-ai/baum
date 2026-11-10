@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 
@@ -107,6 +108,9 @@ func TestMapCachesFailures(t *testing.T) {
 }
 
 func TestMapRetriesFilesThatCouldNotBeOpened(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("chmod 0 only marks a file read-only on Windows; it stays readable")
+	}
 	if os.Geteuid() == 0 {
 		t.Skip("root opens unreadable files")
 	}
