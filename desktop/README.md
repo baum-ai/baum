@@ -521,10 +521,13 @@ Two channels, each the least that does the job:
    `GET /api/automatic`, `GET /api/index?view=waiting` and
    `GET /api/live-sessions`, read when the daemon's events stream
    (`GET /api/events`, held open by a thread of its own and reopened with a
-   backoff from 1 s to 30 s) announces a `progress`, `automatic`, `live`,
-   `index` or `reset` event (not a `job` event, a running job's usage, which
-   changes no count), or when the stream (re)connects, after a pause of
-   500 ms (at most 2 s) for a burst of events to end; as a safety net also
+   backoff from 1 s to 30 s) announces a change, and then only the requests that event can affect:
+   `progress` reads jobs, `automatic` the pause switch, `index` the waiting
+   count, `live` the live sessions (`reset` and a kind this app does not know
+   read all four; a `job` event, a running job's usage, changes no count and
+   reads none). Everything is read when the stream (re)connects. The read
+   follows a pause of 500 ms (at most 2 s) for a burst of events to end, and
+   reads each request once for the whole burst; as a safety net also
    every 60 s while the stream is up and every 30 s while it is down, and
    never with no daemon attached,
    `GET /api/diagnostics` every 30 minutes (the daemon caches the report for 30
