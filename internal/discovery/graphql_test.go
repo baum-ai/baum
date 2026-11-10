@@ -88,6 +88,10 @@ func TestGraphQLPaginationEndpointsStatesAndIndependentBudgets(t *testing.T) {
 			if second.Review != "commented" || second.Checks != "none" || second.Merge != "draft" || second.Unresolved == nil || *second.Unresolved != 0 || second.UnresolvedCapped {
 				t.Fatalf("second=%+v", second)
 			}
+			// An approval no longer holds the first up; the second still needs one.
+			if first.ReviewRequired == nil || *first.ReviewRequired || second.ReviewRequired == nil || !*second.ReviewRequired {
+				t.Fatalf("review required: first=%v second=%v", first.ReviewRequired, second.ReviewRequired)
+			}
 			if got.Rate.Cost == nil || *got.Rate.Cost != 2 || got.Rate.Remaining == nil || *got.Rate.Remaining != 4998 || !got.Rate.Reset.Equal(reset) {
 				t.Fatalf("rate=%+v", got.Rate)
 			}

@@ -132,6 +132,21 @@ it("keeps a stacked pull request GitHub would merge waiting on the lowest open o
   ]);
 });
 
+it("says no checks reported for a blocked pull request with no checks and no review required", () => {
+  const stuck = (review_required: boolean | null | undefined) =>
+    entry(1, {
+      checks: "none",
+      merge: "blocked",
+      review: "unreviewed",
+      pull_request: { authored_by_me: true, review_required },
+    });
+  expect(waitingOn(stuck(false))).toBe("No checks reported");
+  // A required review may be what blocks it; an older daemon doesn't say.
+  expect(waitingOn(stuck(true))).toBe("Waiting on review");
+  expect(waitingOn(stuck(undefined))).toBe("Waiting on review");
+  expect(waitingOn({ ...stuck(false), checks: "passing" })).toBe("Waiting on review");
+});
+
 it("orders what waits on the person and sets apart what waits on others", () => {
   const fixing: Job = {
     id: "job",
