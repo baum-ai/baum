@@ -1,0 +1,300 @@
+package hookcli
+
+import (
+	"bufio"
+	"bytes"
+	"cmp"
+	"context"
+	"io"
+	"maps"
+	"os"
+	"os/exec"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/baum-ai/baum/internal/daemon"
+	"github.com/baum-ai/baum/internal/focus"
+	"github.com/baum-ai/baum/internal/hookevents"
+)
+
+// Seams for tests: where the daemon is, and how a hook starts it (nil runs
+// this executable as `baum daemon run`).
+var (
+	hookDaemonPaths = daemon.DefaultPaths
+	hookDaemonSpawn daemon.Spawner
+)
+
+// sendHookEvent hands a hook's event to the user's daemon, starting it when it
+// is not running, within hookevents.Budget, and reports whether the daemon
+// recorded it. It never fails the hook and writes nothing to the hook's
+// output: what it spools or drops goes to the hook log.
+func sendHookEvent(ctx context.Context, event hookevents.Event) bool {
+	paths, err := hookDaemonPaths()
+	if err != nil {
+		return false
+	}
+	sender := &hookevents.Sender{Paths: paths, Version: version(), Spawn: hookDaemonSpawn}
+	return sender.Send(context.WithoutCancel(ctx), event) == hookevents.Delivered
+}
+
+// newHookEvent starts the event of a hook run in the working directory,
+// stamped with when the hook started rather than when its work ended: the
+// daemon orders a tool call's events against the requests of later calls by
+// these times.
+func newHookEvent(kind, agent, name string, started time.Time) hookevents.Event {
+	dir, _ := os.Getwd()
+	event := hookevents.New(kind, agent, name, dir, version())
+	event.Time = started.UTC()
+	return event
+}
+
+// Bounds on reading a hook's standard input for its event.
+const (
+	// maxHookInput bounds the payload kept while reading session identifiers.
+	maxHookInput = 256 << 10
+	// hookInputWait bounds the wait for agents and Git to close their input.
+	hookInputWait = 300 * time.Millisecond
+)
+
+// payloadIdentifiers are the members of an agent hook's payload its event
+// keeps; agentSession keeps the last two for a notification only.
+var payloadIdentifiers = []string{"session_id", "conversation_id", "transcript_path", "cwd", "hook_event_name", "source", "reason", "agent_id", "notification_type", "message"}
+
+// notificationEvent is Claude Code's Notification hook, the one event whose
+// event keeps the text the agent showed its user.
+const notificationEvent = "notification"
+
+// hookInput keeps, for the hook's event, a bounded copy of its standard input
+// and the identifiers of the JSON payload it carries, read from all of it.
+type hookInput struct {
+	source io.Reader
+	mu     sync.Mutex
+	data   []byte
+	// limit bounds data; zero is maxHookInput. over is set once the input
+	// carried more.
+	limit  int
+	over   bool
+	fields *topLevelStrings
+	done   chan struct{}
+}
+
+// newHookInput captures in, unless it is a terminal or a device such as
+// /dev/null, which carry no payload and are passed on untouched.
+func newHookInput(in io.Reader) *hookInput {
+	if in == nil {
+		return nil
+	}
+	if file, ok := in.(*os.File); ok {
+		info, err := file.Stat()
+		if err != nil || info.Mode()&os.ModeCharDevice != 0 {
+			return nil
+		}
+	}
+	return &hookInput{source: in, fields: newTopLevelStrings(payloadIdentifiers...), done: make(chan struct{})}
+}
+
+// read captures the input when no command reads it.
+func (h *hookInput) read() {
+	if h == nil {
+		return
+	}
+	go func() {
+		h.copy()
+		close(h.done)
+	}()
+}
+
+func (h *hookInput) copy() {
+	buf := make([]byte, 32<<10)
+	for {
+		n, err := h.source.Read(buf)
+		if n > 0 {
+			h.mu.Lock()
+			room := cmp.Or(h.limit, maxHookInput) - len(h.data)
+			if room > 0 {
+				h.data = append(h.data, buf[:min(n, room)]...)
+			}
+			h.over = h.over || n > room
+			_, _ = h.fields.Write(buf[:n])
+			h.mu.Unlock()
+		}
+		if err != nil {
+			return
+		}
+	}
+}
+
+// wait waits until the input ended or hookInputWait passed.
+func (h *hookInput) wait() {
+	select {
+	case <-h.done:
+	case <-time.After(hookInputWait):
+	}
+}
+
+// complete is all the input carried, once it ended, waiting up to wait for
+// that; false when it did not end in time or was longer than its limit.
+func (h *hookInput) complete(wait time.Duration) ([]byte, bool) {
+	if h == nil {
+		return nil, false
+	}
+	select {
+	case <-h.done:
+	case <-time.After(wait):
+		return nil, false
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.over {
+		return nil, false
+	}
+	return bytes.Clone(h.data), true
+}
+
+// payload is the bounded copy of what the input carried.
+func (h *hookInput) payload() []byte {
+	if h == nil {
+		return nil
+	}
+	h.wait()
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return bytes.Clone(h.data)
+}
+
+// identifiers are the payload's identifier members.
+func (h *hookInput) identifiers() map[string]string {
+	if h == nil {
+		return nil
+	}
+	h.wait()
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return maps.Clone(h.fields.values)
+}
+
+// agentSession builds an event's session from the payload's identifiers. Only
+// these string members are kept, never prompts or tool input and output; a
+// notification also keeps its type and the line it showed the user
+// ("Claude needs your permission to use Bash"), which Event.Bound cuts short.
+func agentSession(event string, fields map[string]string) *hookevents.Session {
+	text := func(names ...string) string {
+		for _, name := range names {
+			if value := fields[name]; value != "" {
+				return value
+			}
+		}
+		return ""
+	}
+	session := &hookevents.Session{
+		ID:             text("session_id", "conversation_id"),
+		TranscriptPath: text("transcript_path"),
+		Cwd:            text("cwd"),
+		HookEvent:      text("hook_event_name"),
+		Source:         text("source"),
+		Reason:         text("reason"),
+		AgentID:        text("agent_id"),
+	}
+	if event == notificationEvent {
+		session.NotificationType, session.Message = text("notification_type"), text("message")
+	}
+	if *session == (hookevents.Session{}) {
+		return nil
+	}
+	return session
+}
+
+// captureTerminal is a seam for tests: where an agent hook ran.
+var captureTerminal = focus.Capture
+
+// captureAncestors is a seam for tests: the processes a Git hook ran under.
+var captureAncestors = focus.Ancestors
+
+// captureCommit is a seam for tests: the commit a post-commit hook follows and
+// the branch it was made on.
+var captureCommit = commitCheckout
+
+// commitReadTimeout bounds reading the commit a post-commit hook follows.
+const commitReadTimeout = 2 * time.Second
+
+// commitCheckout reads, with one git run, the commit HEAD names and the branch
+// checked out, "" when detached; both "" when git cannot tell.
+func commitCheckout(ctx context.Context) (head, branch string) {
+	ctx, cancel := context.WithTimeout(ctx, commitReadTimeout)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "git", "rev-parse", "HEAD", "--symbolic-full-name", "HEAD").Output()
+	if err != nil {
+		return "", ""
+	}
+	fields := strings.Fields(string(out))
+	if len(fields) != 2 {
+		return "", ""
+	}
+	branch, _ = strings.CutPrefix(fields[1], "refs/heads/")
+	if branch == fields[1] {
+		branch = ""
+	}
+	return fields[0], branch
+}
+
+// tiesToSession reports the Git hooks whose events carry the hook's ancestors
+// (Terminal.Processes, nothing else of the terminal), so the daemon can tell
+// which agent session committed or pushed: the agent is one of them when its
+// own command ran Git.
+func tiesToSession(hook string) bool {
+	return hook == "post-commit" || hook == "pre-push"
+}
+
+// locatesTerminal reports the agent hook events that record where the agent
+// runs (Terminal): a session's start, and its prompts, so a session started
+// before the daemon recorded it, or resumed elsewhere, is located from its
+// next prompt. Tool events, the most frequent, do not.
+func locatesTerminal(event string) bool {
+	switch event {
+	case "session-start", "user-prompt-submit", "before-submit-prompt":
+		return true
+	}
+	return false
+}
+
+// gitHookEvent describes a Git hook run: its arguments, except a pre-push
+// hook's remote URL, which can carry credentials, and the lines Git wrote to
+// its standard input.
+func gitHookEvent(args []string, input []byte) *hookevents.Git {
+	git := &hookevents.Git{}
+	if len(args) > 1 {
+		if args[0] == "pre-push" {
+			if name := pushRemoteName(args[1:]); name != "" {
+				git.Args = []string{name}
+			}
+		} else {
+			git.Args = append(git.Args, args[1:]...)
+		}
+	}
+	scanner := bufio.NewScanner(bytes.NewReader(input))
+	for scanner.Scan() {
+		if line := strings.TrimSpace(scanner.Text()); line != "" {
+			git.Lines = append(git.Lines, line)
+		}
+	}
+	if len(git.Args) == 0 && len(git.Lines) == 0 {
+		return nil
+	}
+	return git
+}
+
+// pushRemoteName is a pre-push hook's remote name. Git passes the name and
+// the URL, or, for a push to a URL that names no remote, the URL twice, which
+// can carry credentials. A name equal to the URL, or that reads as a URL or
+// an scp-style address, is not kept.
+func pushRemoteName(args []string) string {
+	name := args[0]
+	if len(args) > 1 && name == args[1] {
+		return ""
+	}
+	if strings.Contains(name, "://") || strings.ContainsAny(name, ":@") {
+		return ""
+	}
+	return name
+}

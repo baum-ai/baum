@@ -31,7 +31,7 @@ type Service struct {
 	Registry  Registry
 	Discovery Discovery
 	// OpenStore may resolve an explicit --store registration in a future host.
-	// The default uses the same common-dir/XDG selection as baum internal generate.
+	// The default uses the same common-dir/XDG selection as the generation pipeline.
 	OpenStore func(commonDir string) (Reader, error)
 }
 

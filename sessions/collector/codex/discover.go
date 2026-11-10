@@ -111,10 +111,14 @@ func buildSession(c candidate, index []Entry, scanWarning string) model.Session 
 	} else {
 		files = found
 	}
-	return model.Session{
+	s := model.Session{
 		Source: vendors.Codex, Path: c.entry.Path, SessionID: c.entry.Meta.ID,
 		WorkingDir: c.cwd, ModifiedAt: c.modTime, Files: files, Warnings: warnings,
 	}
+	if c.entry.Meta.Timestamp != nil {
+		s.StartedAt = c.entry.Meta.Timestamp.UTC()
+	}
+	return s
 }
 
 // ScanStore builds the first-line metadata index used by FIND. Rollout bodies

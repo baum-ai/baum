@@ -2,9 +2,10 @@
 
 An inbox is a saved filter over the desktop app's Up next queue. People define
 inboxes and the app lists them under Inbox in the sidebar, each showing the
-queue entries that match. **Matching lives in the app**; this package only
-stores the definitions in the daemon and serves them at `/api/inboxes`, so
-they follow the person across app restarts. Per-inbox notifications are a
+queue entries that match. This package only stores the definitions in the
+daemon and serves them at `/api/inboxes`, so they follow the person across
+app restarts; [`internal/inboxqueue`](../inboxqueue/README.md) matches them
+against the queue for the app (`/api/inbox`). Per-inbox notifications are a
 later step.
 
 ## An inbox
@@ -22,7 +23,7 @@ later step.
 | `no_bots` | leave out pull requests by bot authors (`author_bot` in discovery) |
 | `badge` | show a count badge in the sidebar |
 
-At most 20 inboxes. The array order is the sidebar order. Owners and
+At least one and at most 20 inboxes. The array order is the sidebar order. Owners and
 repositories are compared and de-duplicated ignoring case; the first spelling
 given is kept.
 
@@ -32,22 +33,50 @@ The `state/inboxes` document in the shared private
 [`app.sqlite`](../appdb/README.md) application database:
 
 ```json
-{"revision": 3, "inboxes": [{"id": "...", "name": "Platform", "color": "blue", "what": "any", "owners": ["baum-ai"], "risk": "any", "repositories": ["baum-ai/baum"], "no_bots": false, "badge": true}]}
+{"revision": 3, "initialized": true, "inboxes": [{"id": "...", "name": "Platform", "color": "blue", "what": "any", "owners": ["baum-ai"], "risk": "any", "repositories": ["baum-ai/baum"], "no_bots": false, "badge": true}]}
 ```
 
-A missing document reads as revision 0 with no inboxes. A document that does
-not parse is **never overwritten**: `GET` and `PUT` answer 500
+`initialized` marks that the default inbox has been dealt with. The first
+read (or save) of a document without it initializes it in one immediate
+transaction, so independent stores and concurrent clients agree:
+
+- A fresh installation gets one inbox named `Default`: what `any`, no owners,
+  risk `any`, no repositories, query `author=@me OR assignee=@me OR review-requested=@me`
+  (the pull requests the person wrote, is assigned or was asked to review; an
+  inbox with an empty query lists every open pull request), `no_bots` false, badge on, color
+  `blue`, with a daemon-assigned id. The revision becomes 1.
+- An upgrade with stored inboxes adds no `Default`. The app used to show only
+  the Up next queue in an inbox (the person's review requests, own pull
+  requests and assigned pull requests), and an empty query now means every
+  open pull request, so each stored inbox keeps what it showed: its entry is
+  carried over as stored JSON, re-encoded compactly, with id, name, color,
+  order and all other fields unchanged and only `query` rewritten. An empty
+  query becomes the default query. A query `q` becomes
+  `(<default query>) (q)`; the parentheses keep a top-level `OR` in `q` inside
+  it. If that exceeds 500 characters it becomes `waiting!=other (q)` (the
+  app's filter for "not someone else's pull request that waits on nothing from
+  the person"), and if that is too long as well the query is left unchanged.
+  The revision increments and the document is marked initialized, so this runs
+  once. An upgrade from a document with no inboxes gets `Default` as above.
+- `Default` is an ordinary inbox: it can be renamed, edited or deleted while
+  another inbox remains, and is not recreated afterwards.
+- A saved list is never empty: the last inbox cannot be deleted.
+- `GET` never changes an initialized document (a racing first read may rewrite
+  identical bytes).
+
+A document that does not parse is **never overwritten**: `GET` and `PUT` answer 500
 `inboxes_unreadable`. Fix or remove the document to continue. Writes compare
 the revision and replace the document in one immediate SQLite transaction,
 including across independent store instances.
 
 ## API
 
-- `GET /api/inboxes` answers `{"available": true, "revision": n, "inboxes": [...]}`.
+- `GET /api/inboxes` answers `{"available": true, "revision": n, "initialized": true, "inboxes": [...]}`.
 - `PUT /api/inboxes` takes `{"revision": n, "inboxes": [...]}` and replaces the
   whole list, answering the saved list in the shape of `GET`. `revision` is
   the one the client read; any other answers 409 `stale_revision` with the
-  current list. Each save increments the revision. An entry without an `id`
+  current list, including a client still holding revision 0 on a fresh
+  installation. Each save increments the revision. An entry without an `id`
   gets one. An `id` in the daemon's shape (32 lower-case hex characters) is
   kept even when the stored list no longer holds it, so an inbox deleted and
   brought back by Undo keeps its links; any other `id` is refused. Other
@@ -61,6 +90,7 @@ changes nothing.
 | 400 | `invalid_request` | the body is not one JSON object of the expected shape, has no `revision`, or is over 256 KB |
 | 400 | `invalid_inbox` | a field is out of range: an id the daemon did not assign, name length, color, what, risk, owner or repository shape, too many owners or repositories, or a query that is too long or has more than one line |
 | 400 | `too_many_inboxes` | more than 20 inboxes |
+| 400 | `last_inbox` | an empty list: at least one inbox must remain |
 | 400 | `duplicate_name` | two names equal ignoring case |
 | 400 | `duplicate_id` | the same id twice |
 | 409 | `stale_revision` | the revision is not the stored one; the body carries the current list |

@@ -204,7 +204,10 @@ guides, Settings' Reviews section says so and Diagnostics reports the `auto`
 check as a problem. The daemon refuses a job whose backend is `cursor-agent` or
 `anthropic`, for example one set in `config.toml`, failing it with a message
 that names the allowed choices; it does not switch backends, and pre-release
-configurations are not migrated. `baum internal generate` keeps every backend.
+configurations are not migrated. The CLI exposes only desktop runtime and
+support commands; reviews run through the daemon. baum's local agent plugins
+never install, configure or run Entire. Independently recorded checkpoints
+remain readable without the Entire executable.
 
 ### Model effort choices
 
@@ -229,7 +232,7 @@ Open baum uses the app's CLI independently of the command on the user's PATH.
 Installing that command and connecting agent hooks remain optional.
 Failed actions leave the user on the step with their output and a retry action.
 "Check again" rereads the installed state. Finishing records `desktop.json`'s
-setup section, attaches to the daemon and opens the inbox. If diagnostics find a problem,
+setup section, attaches to the daemon and opens the app's first saved inbox. If diagnostics find a problem,
 the inbox shows a notice linking to the fixes. Setup points to Settings to finish
 later, with inline controls for the command and each agent plugin.
 "Command Line and Hooks…" in the window's menu bar also reopens the same steps;
@@ -450,8 +453,10 @@ The daemon outlives the app, so the app's presence is a tray icon.
   supports, ignored silently elsewhere) shows the count. The tray icon does
   not: its dot means only that something runs or needs the user. Zero, an
   unknown count and a daemon that is not
-  running clear all of them. The daemon counts the Inbox as the app does,
-  except that saved inboxes left out of the app's badge still count:
+  running clear all of them. The daemon counts what the app's Inbox heading
+  totals, by the same definition: each unsnoozed pull request waiting on the
+  user once, whichever saved inboxes hold it or none, and whatever their badge
+  switches say (see [`internal/inboxqueue`](../internal/inboxqueue/README.md)):
   `GET /api/index?view=waiting`, read with the other tray requests.
 - **Quit** ends the app only. Background refresh and automatic generation
   continue in the daemon.
@@ -462,7 +467,7 @@ The daemon outlives the app, so the app's presence is a tray icon.
   started and are not mentioned as interrupted). If the daemon will not stop,
   the app shows the error and offers **Quit anyway**, which quits and leaves
   the daemon as it is; Cancel keeps the app open. The daemon's own stop is
-  bounded (see the [daemon README](../internal/daemon/README.md)), so this is
+  bounded (see the [daemon implementation](../internal/daemon/daemon.go)), so this is
   for a daemon that does not answer at all.
 - **Pause automatic reviews** sets the daemon's global automatic switch
   (`PUT /api/automatic {"enabled":false}`), the same switch as the app's
@@ -510,7 +515,9 @@ Two channels, each the least that does the job:
    over its control socket, owns the stopped-by-user marker, and the app needs
    no credential for it.
 2. **The app API on loopback, with the launch capability as a bearer token**,
-   for what the daemon exposes only there: `GET /api/jobs`,
+   for what the daemon exposes only there: `GET /api/jobs` (without parameters:
+   the current jobs, which hold every running, queued and unseen failed job,
+   not the whole history),
    `GET /api/automatic`, `GET /api/index?view=waiting` and
    `GET /api/live-sessions`, read when the daemon's events stream
    (`GET /api/events`, held open by a thread of its own and reopened with a

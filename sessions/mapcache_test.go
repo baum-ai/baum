@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 
@@ -107,6 +108,9 @@ func TestMapCachesFailures(t *testing.T) {
 }
 
 func TestMapRetriesFilesThatCouldNotBeOpened(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("chmod 0 only marks a file read-only on Windows; it stays readable")
+	}
 	if os.Geteuid() == 0 {
 		t.Skip("root opens unreadable files")
 	}
@@ -164,6 +168,57 @@ func TestMapCacheLimit(t *testing.T) {
 	SetMapCacheLimit(0)
 	if c.order.Len() != 0 || c.held != 0 {
 		t.Errorf("a zero limit left %d entries holding %d bytes", c.order.Len(), c.held)
+	}
+}
+
+func TestDiscoverDropsSessionsThatStartedLater(t *testing.T) {
+	fx := newFixture(t)
+	useCache(t, DefaultMapCacheBytes)
+	ids := func(before time.Time) map[vendors.Slug]int {
+		opts := fx.options()
+		opts.Sources = []vendors.Slug{vendors.ClaudeCode, vendors.Codex}
+		opts.StartedBefore = before
+		found, _, err := Load(context.Background(), fx.repo, opts)
+		if err != nil {
+			t.Fatal(err)
+		}
+		bySource := map[vendors.Slug]int{}
+		for _, s := range found {
+			bySource[s.Source]++
+		}
+		return bySource
+	}
+	if got := ids(time.Time{}); got[vendors.ClaudeCode] != 1 || got[vendors.Codex] != 1 {
+		t.Fatalf("unbounded = %v", got)
+	}
+	// The Claude Code fixture began in 2026; the Codex rollout records no
+	// start in its session_meta, so it is kept.
+	if got := ids(time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)); got[vendors.ClaudeCode] != 0 || got[vendors.Codex] != 1 {
+		t.Errorf("bounded before every start = %v", got)
+	}
+	if got := ids(time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)); got[vendors.ClaudeCode] != 1 || got[vendors.Codex] != 1 {
+		t.Errorf("bounded after every start = %v", got)
+	}
+}
+
+func TestHoldMappingsRaisesTheLimitForItsDuration(t *testing.T) {
+	c := useCache(t, 10)
+	put := func(key string, cost int64) { c.put(&mapEntry{key: key, cost: cost}) }
+	put("small", 5)
+	put("large", 100)
+	if c.order.Len() != 1 {
+		t.Fatalf("entries = %d before a hold, want only the one under the limit", c.order.Len())
+	}
+	release := HoldMappings()
+	put("large", 100)
+	put("other", 100)
+	if c.order.Len() != 3 {
+		t.Errorf("entries = %d during a hold, want 3", c.order.Len())
+	}
+	release()
+	release() // a second call does nothing
+	if c.held > 10 || c.holds != 0 {
+		t.Errorf("after release: %d bytes held, %d holds", c.held, c.holds)
 	}
 }
 

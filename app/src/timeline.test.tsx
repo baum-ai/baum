@@ -378,7 +378,8 @@ it("filters with the Inbox's filter, offering the tab's people and the cited fil
     files: [{ path: "oss/app/", kind: "folder", decision_count: 3 }],
   };
   await show("page=timeline&person=me%40example.com&from=2026-10-01&to=2026-10-31&file=oss/app");
-  expect(requests).toContain("/s/test-ns/api/timeline/features/people");
+  // Read once: the shared page's own person filter is not drawn here.
+  expect(requests.filter((path) => path.endsWith("/features/people"))).toHaveLength(1);
   const query = new URLSearchParams({
     file: "oss/app",
     person: "me@example.com",

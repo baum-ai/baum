@@ -22,7 +22,7 @@ import (
 // what neither an invalidation, the watcher's fingerprint nor a computed
 // expiry covers, such as a clone becoming unavailable through a change the
 // fingerprint does not stat, or a GitHub credential edited outside baum.
-const MaxAge = 30 * time.Second
+const MaxAge = 2 * time.Minute
 
 // Cache serves one built snapshot to every reader until it is invalidated or
 // expires. Concurrent readers share one build, which runs under the cache's

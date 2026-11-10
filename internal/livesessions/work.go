@@ -6,6 +6,7 @@ import (
 	"slices"
 	"time"
 
+	"github.com/baum-ai/baum/internal/commitattribution"
 	"github.com/baum-ai/baum/internal/hookevents"
 )
 
@@ -40,8 +41,10 @@ type workItem struct {
 	remote, branch, head string
 	// link is what the item was found to be once read, with the clone's
 	// remotes; its Repository is empty when it links to no registered clone.
-	link Link
-	read bool
+	link    Link
+	read    bool
+	durable bool
+	queued  bool
 }
 
 func (w workItem) same(o workItem) bool {
@@ -150,9 +153,7 @@ func (t *Tracker) applyWorkLocked(e hookevents.Event, now time.Time) {
 		return
 	}
 	slices.SortStableFunc(s.work, func(a, b workItem) int { return a.at.Compare(b.at) })
-	if len(s.work) > maxWork {
-		s.work = slices.Clone(s.work[len(s.work)-maxWork:])
-	}
+	s.trimWork(t.Attributions != nil)
 	if !s.unlinked {
 		t.queue(k)
 	}
@@ -217,6 +218,8 @@ func (t *Tracker) readWork(ctx context.Context, work []workItem, fallback bool) 
 func (s *entry) storeWork(read []workItem) bool {
 	for _, r := range read {
 		if i := slices.IndexFunc(s.work, r.same); i >= 0 {
+			r.durable = r.durable || s.work[i].durable
+			r.queued = r.queued || s.work[i].queued
 			s.work[i] = r
 		}
 	}
@@ -281,3 +284,83 @@ func restoredWork(saved []savedWork) []workItem {
 }
 
 func savedKey(k key) string { return k.agent + "/" + k.id }
+
+// trimWork bounds live history without discarding observations awaiting durable
+// storage. A failed database write is retried by the next resolve or sweep.
+func (s *entry) trimWork(durable bool) {
+	drop := len(s.work) - maxWork
+	if drop <= 0 {
+		return
+	}
+	kept := make([]workItem, 0, len(s.work))
+	for _, w := range s.work {
+		if drop > 0 && (!durable || w.durable) {
+			drop--
+			continue
+		}
+		kept = append(kept, w)
+	}
+	s.work = kept
+}
+
+func workObservation(k key, w savedWork) commitattribution.Observation {
+	repository := w.HeadRepository
+	if repository == "" {
+		repository = w.Repository
+	}
+	kind := commitattribution.Commit
+	if w.Push {
+		kind = commitattribution.Push
+	}
+	return commitattribution.Observation{Repository: repository, CommitSHA: w.HeadSHA, Agent: k.agent, SessionID: k.id, Kind: kind, EventID: w.ID, At: w.At}
+}
+
+func (t *Tracker) persistAttributions(ctx context.Context) {
+	if t.Attributions == nil || ctx.Err() != nil {
+		return
+	}
+	t.attributionMu.Lock()
+	defer t.attributionMu.Unlock()
+	t.mu.Lock()
+	pending := map[key][]workItem{}
+	for k, s := range t.sessions {
+		for i := range s.work {
+			w := &s.work[i]
+			if w.durable || !w.read || w.link.Repository == "" {
+				continue
+			}
+			if !w.queued {
+				l := w.link
+				saved := savedWork{WorkObservation: WorkObservation{At: w.at, Repository: l.Repository, HeadRepository: l.HeadRepository, HeadSHA: l.HeadSHA}, ID: w.id, Push: w.pushed}
+				observation := workObservation(k, saved)
+				if !slices.Contains(t.pendingAttributions, observation) {
+					t.pendingAttributions = append(t.pendingAttributions, observation)
+				}
+				w.queued = true
+			}
+			pending[k] = append(pending[k], *w)
+		}
+	}
+	observations := slices.Clone(t.pendingAttributions)
+	t.mu.Unlock()
+	if len(observations) == 0 {
+		return
+	}
+	if err := t.Attributions.Record(observations); err != nil {
+		t.logger().Warn("commit observations not persisted", "error", err)
+		return
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.pendingAttributions = t.pendingAttributions[len(observations):]
+	for k, work := range pending {
+		if s := t.sessions[k]; s != nil {
+			for i := range s.work {
+				if slices.ContainsFunc(work, s.work[i].same) {
+					s.work[i].durable = true
+				}
+			}
+			s.trimWork(true)
+		}
+	}
+}

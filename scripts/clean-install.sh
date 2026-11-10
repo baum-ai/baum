@@ -33,11 +33,7 @@ native() {
 }
 
 work=$(mktemp -d)
-server_pid=
 cleanup() {
-  if [ -n "$server_pid" ] && kill -0 "$server_pid" 2>/dev/null; then
-    kill -9 "$server_pid" 2>/dev/null || true
-  fi
   # The module cache is read-only unless -modcacherw is set; this also covers
   # a cache created without it.
   chmod -R u+w "$work" 2>/dev/null || true
@@ -149,66 +145,7 @@ binary=$work/bin/baum
 [ -x "$binary" ] || fail "go install produced no baum binary in $work/bin"
 echo "installed $binary"
 
-step "serve the sample review"
-port=
-for _ in 1 2 3 4 5; do
-  candidate=$((20000 + RANDOM % 40000))
-  : >"$work/stdout"
-  : >"$work/stderr"
-  "$binary" internal view --sample --no-open --port "$candidate" >"$work/stdout" 2>"$work/stderr" &
-  server_pid=$!
-  # The URL is printed alone on stdout once the server listens; an early exit
-  # means the port was taken.
-  for _ in $(seq 1 100); do
-    if [ -s "$work/stdout" ] || ! kill -0 "$server_pid" 2>/dev/null; then break; fi
-    sleep 0.2
-  done
-  if [ -s "$work/stdout" ]; then
-    port=$candidate
-    break
-  fi
-  wait "$server_pid" 2>/dev/null || true
-  server_pid=
-done
-if [ -z "$port" ]; then
-  cat "$work/stderr" >&2
-  fail "baum internal view did not start"
-fi
-url=$(head -n 1 "$work/stdout" | tr -d '\r')
-url=${url%/}
-echo "serving $url"
-
-fetch() { curl --silent --show-error --fail --max-time 20 "$@"; }
-
-health=$(fetch "$url/api/health") || fail "/api/health failed"
-echo "/api/health: $health"
-
-fetch "$url/" >"$work/index.html" || fail "/ failed"
-grep -q '<div id="root">' "$work/index.html" || fail "/ is not the viewer page"
-echo "/: $(wc -c <"$work/index.html" | tr -d ' ') bytes"
-
-asset=$(grep -m1 -o '/assets/[A-Za-z0-9_.-]*' "$work/index.html" || true)
-[ -n "$asset" ] || fail "index.html references no /assets/ file"
-fetch "$url$asset" >"$work/asset" || fail "$asset failed"
-[ -s "$work/asset" ] || fail "$asset is empty"
-echo "$asset: $(wc -c <"$work/asset" | tr -d ' ') bytes"
-
-fetch "$url/api/document" >"$work/document.json" || fail "/api/document failed"
-# The example as committed, like the zip, not the working tree's copy.
-git -C "$work/src" show "HEAD:${subdir:+$subdir/}schema/review-example.json" >"$work/example.json"
-cmp "$work/document.json" "$work/example.json" || fail "/api/document differs from schema/review-example.json"
-echo "/api/document matches schema/review-example.json"
-
-step "stop the server"
-kill "$server_pid" 2>/dev/null || true
-for _ in $(seq 1 50); do
-  kill -0 "$server_pid" 2>/dev/null || break
-  sleep 0.2
-done
-if kill -0 "$server_pid" 2>/dev/null; then
-  fail "baum internal view is still running after kill"
-fi
-server_pid=
-echo "baum internal view exited"
+step "check the desktop daemon and embedded app"
+go run scripts/daemon-smoke.go "$binary"
 
 printf '\nclean-install: ok\n'

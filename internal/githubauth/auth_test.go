@@ -429,6 +429,7 @@ func TestIssuedAccountIdentitySurvivesRotationButNeverMovesOldTokens(t *testing.
 	if id := m.AccountForToken("first"); id != 1 {
 		t.Fatal(id)
 	}
+	m.dropCache() // the store changed behind the manager; Token caches what it read
 	store.c.AccessToken = "rotated"
 	if _, err := m.Token(context.Background()); err != nil {
 		t.Fatal(err)
@@ -439,6 +440,7 @@ func TestIssuedAccountIdentitySurvivesRotationButNeverMovesOldTokens(t *testing.
 	if id := m.AccountForToken("first"); id != 0 {
 		t.Fatal("old token acquired identity", id)
 	}
+	m.dropCache()
 	store.c = Credential{AccessToken: "replacement", Login: "bob", ID: 2}
 	if _, err := m.Token(context.Background()); err != nil {
 		t.Fatal(err)

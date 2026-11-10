@@ -1,17 +1,5 @@
-// Package assemble builds the baum.review/1 generation bundle for one pull
-// request on this machine, with no model call. It runs the same steps in the
-// same order as the hosted assembler, over the same bundle package, with
-// local sources: the user's clone through gitlocal instead of the hosted
-// mirrors, GitHub through the user's own token instead of synchronized rows,
-// and the coding-agent sessions in the home directory instead of uploaded
-// traces.
-//
-// The sources are small interfaces, so a test builds a complete bundle
-// without a network. Assemble also writes the checkout archive and the
-// description image archive that "baum internal generate" hands to its agent; "baum
-// bundle" discards them. The checkout export matters to the bundle itself,
-// since a file the checkout budget omits makes its hunks textless. A facts
-// assembly (Request.Facts), which no model reads, exports nothing.
+// Package assemble builds a review evidence bundle and optional checkout and
+// description-image archives for the local generation pipeline.
 package assemble
 
 import (
@@ -22,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 	"sort"
 	"strings"
 
@@ -103,9 +92,9 @@ type Request struct {
 	Limits     Limits
 	// Previous is the pull request's current document, in the form the
 	// hosted builder carries it into the next version's bundle; nil when
-	// there is none, as for "baum internal bundle".
+	// there is none, as for "the bundle assembler".
 	Previous *bundle.PreviousVersion
-	// Checkout, when not nil, receives the checkout archive "baum internal generate"
+	// Checkout, when not nil, receives the checkout archive "the generation pipeline"
 	// reads: a gzip-compressed tar holding the head/ and merge-base/ trees,
 	// as bundle.UnpackCheckout unpacks it. Nil exports the same trees to
 	// nowhere, since what the budget omits still shapes the bundle.
@@ -131,7 +120,7 @@ type Result struct {
 	JSON []byte
 	// Head, Base and MergeBase are the commits the bundle describes.
 	Head, Base, MergeBase string
-	// Images are the description images in the attachments archive.
+	// Images are the captured images in the attachments archive.
 	Images []bundle.DescriptionImage
 }
 
@@ -211,22 +200,10 @@ func (a *Assembler) Assemble(ctx context.Context, req Request) (Result, error) {
 	// Description images come first, as the hosted assembler captures them
 	// before it builds the evidence. Facts download none.
 	var images []bundle.DescriptionImage
+	var contents map[string][]byte
 	altMasked := 0
 	if !req.Facts {
-		var contents map[string][]byte
 		images, contents, altMasked = a.captureImages(ctx, evidence.Images, redactor, limits)
-		attachmentsTar := io.Discard
-		if req.Attachments != nil {
-			attachmentsTar = req.Attachments
-		}
-		images, err = bundle.WriteAttachments(ctx, images, attachmentsTar, func(_ context.Context, image bundle.DescriptionImage) (io.ReadCloser, error) {
-			return io.NopCloser(bytes.NewReader(contents[image.ID])), nil
-		}, func(image bundle.DescriptionImage, err error) {
-			a.warn("description image %s left out: %v", image.ID, err)
-		})
-		if err != nil {
-			return Result{}, fmt.Errorf("writing description images: %w", err)
-		}
 	}
 
 	b := bundle.Bundle{Sources: bundle.Sources{}}
@@ -268,6 +245,25 @@ func (a *Assembler) Assemble(ctx context.Context, req Request) (Result, error) {
 		diffPaths = append(diffPaths, hunk.Path, hunk.OldPath)
 	}
 	bundle.KeepKnownCommandTargets(b.Sessions, bundle.KnownPaths(diffPaths...))
+	bundle.ApplyCaps(&b, limits.Caps)
+	if !req.Facts {
+		var candidates []SessionImage
+		if source, ok := a.Sessions.(SessionImages); ok {
+			var notes []string
+			candidates, notes, err = source.ImageEvidence(ctx, b.Sessions, limits.MaxImages, limits.MaxImageBytes)
+			if ctx.Err() != nil {
+				return Result{}, ctx.Err()
+			}
+			if err != nil {
+				a.warn("session images unavailable")
+				b.Truncated = append(b.Truncated, "session images unavailable")
+			}
+			b.Truncated = append(b.Truncated, notes...)
+		}
+		var notes []string
+		images, contents, notes = mergeImages(images, contents, candidates, limits)
+		b.Truncated = append(b.Truncated, notes...)
+	}
 
 	b.References = bundle.CollectReferences(b)
 	b.Sources["references"] = len(b.References) > 0
@@ -286,7 +282,7 @@ func (a *Assembler) Assemble(ctx context.Context, req Request) (Result, error) {
 	}
 	b.ReviewConfig = reviewConfig
 	b.Sources["review_md"] = reviewConfig.Present
-	// The previous version is the caller's: "baum internal bundle" has none.
+	// The previous version is the caller's: "the bundle assembler" has none.
 	b.Previous = req.Previous
 	b.Sources["previous_version"] = b.Previous != nil
 	// As the hosted builder does, the previous version's anchors move to
@@ -309,7 +305,6 @@ func (a *Assembler) Assemble(ctx context.Context, req Request) (Result, error) {
 
 	// Redaction runs before the patch line cap and trimming, so a cut cannot
 	// leave part of a secret unmasked.
-	bundle.ApplyCaps(&b, limits.Caps)
 	if err := bundle.Redact(ctx, &b, redactor); err != nil {
 		return Result{}, err
 	}
@@ -318,6 +313,23 @@ func (a *Assembler) Assemble(ctx context.Context, req Request) (Result, error) {
 	b.MaskedSpanCount += altMasked
 	if err := bundle.Fit(&b, limits.Caps); err != nil {
 		return Result{}, err
+	}
+	pruneImageOrigins(&b)
+	kept := map[string]bool{}
+	for _, attachment := range b.Attachments {
+		kept[attachment.ID] = true
+	}
+	images = slices.DeleteFunc(images, func(image bundle.DescriptionImage) bool { return !kept[image.ID] })
+	if !req.Facts {
+		archive := io.Discard
+		if req.Attachments != nil {
+			archive = req.Attachments
+		}
+		if _, err := bundle.WriteAttachments(ctx, images, archive, func(_ context.Context, image bundle.DescriptionImage) (io.ReadCloser, error) {
+			return io.NopCloser(bytes.NewReader(contents[image.ID])), nil
+		}, nil); err != nil {
+			return Result{}, fmt.Errorf("writing review images: %w", err)
+		}
 	}
 	if err := bundle.SetDigest(&b); err != nil {
 		return Result{}, err

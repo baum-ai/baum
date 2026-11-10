@@ -90,6 +90,29 @@ type Manager struct {
 	orgs            OrganizationAccess
 	orgsKey         [sha256.Size]byte
 	orgsAt          time.Time
+	cacheMu         sync.RWMutex
+	cached          *cachedToken
+	cacheGen        uint64
+}
+
+// tokenCacheTTL bounds how long Token trusts an access token it already read.
+// A token GitHub reports no expiry for (the OAuth App has expiration off) would
+// otherwise be cached forever, so a credential replaced behind the manager's
+// back would never be noticed. Ten minutes keeps the helper to a handful of
+// launches an hour, and every in-process change (sign-out, account switch,
+// save, refresh) and every 401 drops the entry at once.
+const tokenCacheTTL = 10 * time.Minute
+
+// tokenExpiryMargin is how long before a credential's expiry Token stops
+// serving it and refreshes instead.
+const tokenExpiryMargin = 60 * time.Second
+
+// cachedToken is the access token Token last resolved, with the account it
+// belongs to and the moment it stops being trusted.
+type cachedToken struct {
+	token      string
+	accountID  int64
+	validUntil time.Time
 }
 
 type Options struct{ Transport http.RoundTripper }
@@ -132,8 +155,80 @@ func (m *Manager) WithIdentity(ctx context.Context, publish func() error) error 
 	}
 	return publish()
 }
+
+// cachedAccess returns the cached token while it is trusted. It takes only a
+// read lock, so a slow store read never delays a hit. The hit is recorded as
+// issued while that lock is held: changedIdentity drops the cache (a write
+// lock) before it clears the issued state, so a hit that raced it cannot
+// restore state for an account that was just replaced.
+func (m *Manager) cachedAccess() (string, bool) {
+	m.cacheMu.RLock()
+	defer m.cacheMu.RUnlock()
+	if c := m.cached; c != nil && m.now().Before(c.validUntil) {
+		m.issue(c.token, c.accountID)
+		return c.token, true
+	}
+	return "", false
+}
+
+func (m *Manager) cacheGeneration() uint64 {
+	m.cacheMu.RLock()
+	defer m.cacheMu.RUnlock()
+	return m.cacheGen
+}
+
+// dropCache forgets the cached token. A read that began before the drop cannot
+// repopulate it: remember checks the generation it started under.
+func (m *Manager) dropCache() {
+	m.cacheMu.Lock()
+	m.cached = nil
+	m.cacheGen++
+	m.cacheMu.Unlock()
+}
+
+// dropCacheFor forgets the cached token only when it is token, so a late
+// failure for a credential already replaced leaves the replacement alone.
+func (m *Manager) dropCacheFor(token string) {
+	m.cacheMu.Lock()
+	if m.cached != nil && m.cached.token == token {
+		m.cached = nil
+		m.cacheGen++
+	}
+	m.cacheMu.Unlock()
+}
+
+// remember caches c's access token unless the cache was dropped since gen.
+func (m *Manager) remember(c Credential, gen uint64) {
+	now := m.now()
+	until := now.Add(tokenCacheTTL)
+	if c.ExpiresAt > 0 {
+		if expiry := time.Unix(c.ExpiresAt, 0).Add(-tokenExpiryMargin); expiry.Before(until) {
+			until = expiry
+		}
+	}
+	if !until.After(now) {
+		return
+	}
+	m.cacheMu.Lock()
+	if m.cacheGen == gen {
+		m.cached = &cachedToken{token: c.AccessToken, accountID: c.ID, validUntil: until}
+	}
+	m.cacheMu.Unlock()
+}
+
+// issue records the token Token handed out, for AccountForToken and health.
+func (m *Manager) issue(token string, accountID int64) {
+	m.healthMu.Lock()
+	defer m.healthMu.Unlock()
+	if token != m.issuedToken {
+		m.issuedToken = token
+		m.health = nil
+	}
+	m.issuedAccountID = accountID
+}
 func (m *Manager) changedIdentity() {
 	m.revision.Add(1)
+	m.dropCache()
 	m.healthMu.Lock()
 	m.issuedToken = ""
 	m.issuedAccountID = 0
@@ -161,6 +256,11 @@ func (m *Manager) AccountForToken(token string) int64 {
 // ObserveResponse ignores late failures for a credential no longer in use.
 // Upstream bodies and header values are never retained or exposed.
 func (m *Manager) ObserveResponse(token string, status int, headers http.Header) {
+	if status == 401 {
+		// The next Token call re-reads the store once, in case the credential
+		// was replaced or revoked behind this process.
+		m.dropCacheFor(token)
+	}
 	m.healthMu.Lock()
 	defer m.healthMu.Unlock()
 	if token == "" || token != m.issuedToken {
@@ -421,6 +521,17 @@ func (m *Manager) Status(ctx context.Context) (Status, error) {
 	}
 	defer m.unlock()
 	c, err := m.store.Load(ctx)
+	if errors.Is(err, ErrNotConnected) {
+		m.dropCache() // deleted without passing through this manager
+	} else if err == nil {
+		// The saved account moved without passing through this manager.
+		m.cacheMu.RLock()
+		stale := m.cached != nil && (m.cached.accountID != c.ID || m.cached.token != c.AccessToken)
+		m.cacheMu.RUnlock()
+		if stale {
+			m.dropCache()
+		}
+	}
 	if err == nil || errors.Is(err, ErrNotConnected) {
 		m.healthMu.Lock()
 		if errors.Is(m.health, ErrStore) {
@@ -449,11 +560,25 @@ func (m *Manager) Disconnect(ctx context.Context) error {
 	}
 	return nil
 }
+
+// Token returns the access token to use now. A token already read is served
+// from memory without the manager's lock or the credential store; the store is
+// read again only after the cache expires or is dropped (sign-out, account
+// change, save, refresh, or a 401 from GitHub). Callers that miss together
+// queue on the lock, and the first one's read fills the cache for the rest, so
+// one helper launch serves them all.
 func (m *Manager) Token(ctx context.Context) (token string, returnedErr error) {
+	if token, ok := m.cachedAccess(); ok {
+		return token, nil
+	}
 	if err := m.lock(ctx); err != nil {
 		return "", err
 	}
 	defer m.unlock()
+	if token, ok := m.cachedAccess(); ok {
+		return token, nil
+	}
+	gen := m.cacheGeneration()
 	var accountID int64
 	defer func() {
 		m.healthMu.Lock()
@@ -483,6 +608,7 @@ func (m *Manager) Token(ctx context.Context) (token string, returnedErr error) {
 	}
 	accountID = c.ID
 	if c.ExpiresAt == 0 || m.now().Unix()+60 < c.ExpiresAt {
+		m.remember(c, gen)
 		return c.AccessToken, nil
 	}
 	if c.RefreshToken == "" || (c.RefreshExpiresAt != 0 && m.now().Unix() >= c.RefreshExpiresAt) {
@@ -511,10 +637,13 @@ func (m *Manager) persistRotation(ctx context.Context) (string, error) {
 	if next.ID != m.rotatedID {
 		return "", ErrReconnect
 	}
+	// A save may commit even when its reply is lost, so drop the cache first.
+	m.dropCache()
 	if m.store.Save(ctx, next) != nil {
 		return "", ErrStore
 	}
 	m.rotated = nil
+	m.remember(next, m.cacheGeneration())
 	return next.AccessToken, nil
 }
 

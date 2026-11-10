@@ -18,7 +18,7 @@ import (
 
 	"golang.org/x/sync/singleflight"
 
-	"github.com/baum-ai/baum/hosted/agentplugins"
+	"github.com/baum-ai/baum/internal/agentplugins"
 	"github.com/baum-ai/baum/internal/config"
 	"github.com/baum-ai/baum/internal/doctor"
 	"github.com/baum-ai/baum/internal/repos"
@@ -69,6 +69,9 @@ type LocalAPI struct {
 	// Inboxes serves /api/inboxes: the saved filters listed under Inbox in
 	// the app. Without it the route reports the capability unavailable.
 	Inboxes http.Handler
+	// Inbox serves /api/inbox: the queue the daemon builds, with which saved
+	// inboxes hold each pull request (internal/inboxqueue).
+	Inbox http.Handler
 	// UIState keeps inbox bookkeeping and review drafts across browser origins.
 	UIState http.Handler
 	// GitHubRepositories serves the account's repositories for picking
@@ -220,6 +223,7 @@ func (a LocalAPI) Handler() *LocalHandler {
 	mux.Handle("/api/groups", provider(a.Groups, "groups_unavailable"))
 	mux.Handle("/api/groups/", provider(a.Groups, "groups_unavailable"))
 	mux.Handle("/api/inboxes", provider(a.Inboxes, "inboxes_unavailable"))
+	mux.Handle("/api/inbox", provider(a.Inbox, "inbox_unavailable"))
 	mux.Handle("/api/ui-state/", provider(a.UIState, "ui_state_unavailable"))
 	mux.Handle("/api/clones/found", provider(a.Clones, "clones_unavailable"))
 	mux.Handle("/api/clones/found/", provider(a.Clones, "clones_unavailable"))

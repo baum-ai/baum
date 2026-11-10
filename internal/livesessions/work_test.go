@@ -2,12 +2,15 @@ package livesessions
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/baum-ai/baum/internal/appdb/appdbtest"
+	"github.com/baum-ai/baum/internal/commitattribution"
 	"github.com/baum-ai/baum/internal/hookevents"
 )
 
@@ -239,5 +242,104 @@ func TestWorkSurvivesARestart(t *testing.T) {
 	again.ResolvePending(context.Background())
 	if s := only(t, again); s.PR != 33 || s.LinkMethod != MethodPush {
 		t.Fatalf("restored from the state file: %+v", s)
+	}
+}
+
+func TestHookAttributionOutlivesLiveHistoryAndSessionExpiry(t *testing.T) {
+	c := &clock{t0}
+	store := &commitattribution.Store{Path: filepath.Join(appdbtest.TempDir(t), "app.sqlite")}
+	tr := newTracker(c, newWorkLinker())
+	tr.Attributions = store
+	tr.StateDir = t.TempDir()
+	apply(tr, prompt("s-1", t0, claude))
+	var shas []string
+	for i := range maxWork + 8 {
+		c.advance(time.Minute)
+		e := commit(workDir("trees/fix"), "fix", c.now, claude)
+		e.Git.Head = fmt.Sprintf("%040x", i+1)
+		shas = append(shas, e.Git.Head)
+		// Deliberately queue more work than the live display retains before resolving.
+		tr.Apply(context.Background(), e)
+	}
+	tr.ResolvePending(context.Background())
+	for _, sha := range shas {
+		got, err := store.Lookup(context.Background(), []string{"acme/demo"}, []string{sha})
+		if err != nil || len(got) != 1 || got[0].Kind != commitattribution.Commit || got[0].SessionID != "s-1" {
+			t.Fatalf("commit %s: %+v %v", sha, got, err)
+		}
+	}
+	tr.mu.Lock()
+	n := len(tr.sessions[key{AgentClaudeCode, "s-1"}].work)
+	tr.mu.Unlock()
+	if n != maxWork {
+		t.Fatalf("live history retained %d work items", n)
+	}
+	apply(tr, event("s-1", "session-end", c.now, workDir("main")))
+	c.advance(EndedFor + time.Minute)
+	tr.Sweep()
+	tr.persist()
+	if len(tr.Sessions()) != 0 {
+		t.Fatal("session did not expire")
+	}
+	// A new store instance still has all observations after restart and expiry.
+	got, err := (&commitattribution.Store{Path: store.Path}).Lookup(context.Background(), []string{"acme/demo"}, shas)
+	if err != nil || len(got) != len(shas) {
+		t.Fatalf("durable history: %d %v", len(got), err)
+	}
+}
+
+func TestBackfillSavedHookWorkBeforeExpiredSessionsAreDropped(t *testing.T) {
+	c := &clock{t0}
+	dir := t.TempDir()
+	old := newTracker(c, newWorkLinker())
+	old.StateDir = dir
+	apply(old, prompt("s-1", t0, claude))
+	apply(old, commit(workDir("trees/fix"), "fix", t0, claude))
+	apply(old, gitHook("pre-push", workDir("main"), t0, claude, pushOf("fix")))
+	apply(old, event("s-1", "session-end", t0, workDir("main")))
+	old.persist()
+	c.advance(EndedFor + time.Hour)
+	store := &commitattribution.Store{Path: filepath.Join(appdbtest.TempDir(t), "app.sqlite")}
+	again := newTracker(c, newWorkLinker())
+	again.StateDir = dir
+	again.Attributions = store
+	again.Rebuild(context.Background())
+	again.ResolvePending(context.Background())
+	if len(again.Sessions()) != 0 {
+		t.Fatal("expired session restored")
+	}
+	got, err := store.Lookup(context.Background(), []string{"acme/demo"}, []string{pushed})
+	if err != nil || len(got) != 2 || got[0].Kind != commitattribution.Commit || got[1].Kind != commitattribution.Push {
+		t.Fatalf("backfill: %+v %v", got, err)
+	}
+}
+
+func TestFailedAttributionWriteSurvivesExpiryAndRestart(t *testing.T) {
+	c := &clock{t0}
+	path := filepath.Join(appdbtest.TempDir(t), "blocked")
+	if err := os.Mkdir(path, 0700); err != nil {
+		t.Fatal(err)
+	}
+	store := &commitattribution.Store{Path: path}
+	tr := newTracker(c, newWorkLinker())
+	tr.Attributions = store
+	tr.StateDir = t.TempDir()
+	apply(tr, prompt("s-1", t0, claude))
+	apply(tr, commit(workDir("trees/fix"), "fix", t0, claude))
+	apply(tr, event("s-1", "session-end", t0, workDir("main")))
+	c.advance(EndedFor + time.Hour)
+	tr.Sweep()
+	tr.persist()
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	again := newTracker(c, newWorkLinker())
+	again.Attributions = store
+	again.StateDir = tr.StateDir
+	again.Rebuild(context.Background())
+	again.ResolvePending(context.Background())
+	got, err := store.Lookup(context.Background(), []string{"acme/demo"}, []string{pushed})
+	if err != nil || len(got) != 1 || got[0].SessionID != "s-1" {
+		t.Fatalf("retried: %+v %v", got, err)
 	}
 }

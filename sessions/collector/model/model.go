@@ -63,6 +63,9 @@ type Session struct {
 	RepoRoot     string    `json:"repo_root,omitempty"`
 	WorktreeRoot string    `json:"worktree_root,omitempty"`
 	ModifiedAt   time.Time `json:"modified_at"`
+	// StartedAt is when the session began, as its first records say; zero
+	// when discovery does not read it. It is not part of any upload.
+	StartedAt time.Time `json:"-"`
 	// Files names the whole tree, the root transcript first.
 	Files    []SessionFile `json:"files"`
 	Warnings []string      `json:"warnings,omitempty"`

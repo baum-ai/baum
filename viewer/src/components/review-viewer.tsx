@@ -75,7 +75,13 @@ import { ReviewNavigator, ReviewPaneFoot, type ReviewStep } from "./review-navig
 import { ReviewScoreBadge } from "./review-parts";
 import { ReviewSection } from "./review-section";
 import { ReviewSummary, type SummaryDestination } from "./review-summary";
-import { SideNavButton, SideNavDisclosure, SideNavGroup, SideNavNest } from "./side-nav";
+import {
+  RowIndicator,
+  SideNavButton,
+  SideNavDisclosure,
+  SideNavGroup,
+  SideNavNest,
+} from "./side-nav";
 import { Empty, Failed, Skeleton } from "./states";
 import { tabIds, tabPanelProps } from "./tabs";
 import { scrollerOf } from "./scroller";
@@ -118,7 +124,11 @@ export type ReviewChecks = {
 export type ReviewListState =
   | { status: "loading" }
   | { status: "failed" }
-  | { status: "ready"; items: { id: string; label: string }[] };
+  | { status: "ready"; items: ReviewListItem[] };
+
+/** One row of a rail group. `indicator` marks an item happening now, as the
+ *  group's own `indicator` marks the group. */
+export type ReviewListItem = { id: string; label: string; indicator?: "live" | "attention" };
 
 export type ReviewListSlot = {
   state: ReviewListState;
@@ -126,7 +136,11 @@ export type ReviewListSlot = {
    *  `live` for work in progress, `attention` for work waiting on the reader. */
   indicator?: "live" | "attention";
   /** The pane for the whole list (`selected` null) or for one item. */
-  renderPane: (selected: string | null, actions: ReviewViewerActions) => ReactNode;
+  renderPane: (
+    selected: string | null,
+    actions: ReviewViewerActions,
+    focusTurn?: number,
+  ) => ReactNode;
 };
 
 /** A rail row a host fills with one pane of its own, such as the decisions
@@ -502,6 +516,7 @@ function ReviewWorkspace<F extends ReviewFile>({
   // tree of paths and a list of sessions under the sections is a wall, and a
   // reader reaches for either once the review has said where to look. Changes
   // and Risks stay open.
+  const [sessionFocus, setSessionFocus] = useState<{ session: string; turn: number } | null>(null);
   const [folded, setFolded] = useState({
     changes: false,
     risks: false,
@@ -1172,10 +1187,18 @@ function ReviewWorkspace<F extends ReviewFile>({
       : undefined;
   const reviewSources: ReviewSources = {
     opens: (anchor) =>
-      anchor.type === "commit"
-        ? Boolean(listedCommit(anchor.sha))
-        : Boolean(openSource) && (anchor.type === "pr_body" || anchor.type === "pr"),
+      anchor.type === "prompt"
+        ? Boolean(sessions)
+        : anchor.type === "commit"
+          ? Boolean(listedCommit(anchor.sha))
+          : Boolean(openSource) && (anchor.type === "pr_body" || anchor.type === "pr"),
     open: (anchor, resolved) => {
+      if (anchor.type === "prompt" && sessions) {
+        setSessionFocus({ session: anchor.session, turn: anchor.index });
+        setFolded((current) => ({ ...current, sessions: false }));
+        setSelection({ kind: "session", id: anchor.session });
+        return true;
+      }
       if (anchor.type === "commit") {
         const item = listedCommit(anchor.sha);
         if (!item) return false;
@@ -1696,7 +1719,7 @@ function ReviewWorkspace<F extends ReviewFile>({
                         ) : sessionState.status === "failed" ? (
                           <RailNote>Linked sessions could not be loaded.</RailNote>
                         ) : sessionState.items.length === 0 ? (
-                          <RailNote>No linked sessions.</RailNote>
+                          <RailNote>No sessions.</RailNote>
                         ) : (
                           sessionState.items.map((item) => (
                             <SideNavButton
@@ -1706,6 +1729,11 @@ function ReviewWorkspace<F extends ReviewFile>({
                               tint="teal"
                               depth={1}
                               active={selection.kind === "session" && selection.id === item.id}
+                              aside={
+                                item.indicator ? (
+                                  <RowIndicator indicator={item.indicator} />
+                                ) : undefined
+                              }
                               controls="review-section"
                               onSelect={() => setSelection({ kind: "session", id: item.id })}
                             />
@@ -1796,6 +1824,9 @@ function ReviewWorkspace<F extends ReviewFile>({
                     {sessions.renderPane(
                       selection.kind === "session" ? selection.id : null,
                       actions,
+                      selection.kind === "session" && sessionFocus?.session === selection.id
+                        ? sessionFocus.turn
+                        : undefined,
                     )}
                   </PaneIn>
                 ) : (selection.kind === "commits" || selection.kind === "commit") && commits ? (

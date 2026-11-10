@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { sessionsSlot, commitsSlot } from "@baum/viewer/components/list-slots";
+import { commitsSlot } from "@baum/viewer/components/list-slots";
 import type { ReviewViewerProps } from "@baum/viewer/components/review-viewer";
 import {
   parseSessionsAnswer,
@@ -9,10 +9,10 @@ import {
   type SessionsLoad,
 } from "@baum/viewer/local-sessions";
 import type { ReviewDocument } from "@baum/viewer/review-document";
-import { liveFor, request, selector, type LiveSession } from "./api";
+import { listedFor, request, selector, type LiveSession } from "./api";
 import { withCommitRows } from "./commit-rows";
 import { PullRequestDecisionsPane, useGroupDecisions } from "./decisions";
-import { Transcript, routedCommitLoaders, withRunning } from "./review";
+import { Transcript, pullRequestSessions, routedCommitLoaders } from "./review";
 
 /** A stack member whose saved review the group's rail reads sessions and
  *  commits from: the PR page's own routes, with its latest version. */
@@ -77,7 +77,7 @@ export function useGroupRail({
   repository,
   members,
   numbers,
-  running,
+  listed,
   document,
   revision,
 }: {
@@ -85,10 +85,12 @@ export function useGroupRail({
   members: RailMember[];
   /** Every open member, for the decisions. */
   numbers: number[];
-  running: LiveSession[];
+  /** The sessions the daemon lists on the open members (`listedForGroup`). */
+  listed: LiveSession[];
   document: ReviewDocument | null;
   revision: string;
 }): Pick<ReviewViewerProps, "sessions" | "commits" | "decisions"> {
+  const running = listed.filter((s) => s.state !== "ended");
   // A session that ends is read from disk like any other.
   const [ended, setEnded] = useState(0);
   const liveKeys = running.map((s) => `${s.agent}:${s.session_id}`).join("\n");
@@ -154,18 +156,17 @@ export function useGroupRail({
 
   return {
     sessions:
-      lists || running.length > 0
-        ? withRunning(
-            sessionsSlot(lists ? lists.sessions : { status: "ready", sessions: [] }, {
-              renderSession: (session) => (
-                <Transcript
-                  id={session.id}
-                  query={sessionQuery?.get(session.id) ?? queries[0] ?? ""}
-                  title={session.title ?? undefined}
-                />
-              ),
-            }),
-            running,
+      lists || listed.length > 0
+        ? pullRequestSessions(
+            lists ? lists.sessions : { status: "ready", sessions: [] },
+            listed,
+            (session) => (
+              <Transcript
+                id={session.id}
+                query={sessionQuery?.get(session.id) ?? queries[0] ?? ""}
+                title={session.title ?? undefined}
+              />
+            ),
           )
         : undefined,
     commits: lists?.commits
@@ -182,11 +183,12 @@ export function useGroupRail({
   };
 }
 
-/** Sessions in progress on any of a group's open members, once each. */
-export function liveForGroup(live: LiveSession[], repository: string, numbers: number[]) {
+/** The sessions the daemon lists on any of a group's open members, ended
+ *  ones too, once each. */
+export function listedForGroup(live: LiveSession[], repository: string, numbers: number[]) {
   const seen = new Set<string>();
   return numbers
-    .flatMap((number) => liveFor(live, { repository, number }))
+    .flatMap((number) => listedFor(live, { repository, number }))
     .filter((s) => {
       const key = `${s.agent}:${s.session_id}`;
       return !seen.has(key) && seen.add(key);

@@ -5,17 +5,20 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/baum-ai/baum/internal/appdb"
 	"github.com/baum-ai/baum/internal/appdb/appdbtest"
 	"github.com/baum-ai/baum/internal/decisionlog"
 	"github.com/baum-ai/baum/internal/inboxes"
+	"github.com/baum-ai/baum/internal/jobs"
 	"github.com/baum-ai/baum/internal/privatefs"
 	"github.com/baum-ai/baum/internal/repos"
 	"github.com/baum-ai/baum/internal/reviewgroups"
@@ -58,12 +61,18 @@ func TestBaselineStoresShareOneDatabaseAndSurviveReopen(t *testing.T) {
 	if err = decisions.Skip(ctx, decisionlog.Meta{Agent: "codex", ID: "session", Repository: "owner/repo"}, "empty"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = inboxes.Open(path).Replace(0, nil); err != nil {
+	if _, err = inboxes.Open(path).Read(); err != nil {
 		t.Fatal(err)
 	}
-	if err = appdb.Write(path, "state", "jobs", []byte(`[{"id":"job","state":"queued"}]`)); err != nil {
+	// A journal from before the jobs table: the queue moves it into rows.
+	if err = appdb.Write(path, "state", "jobs", []byte(`[{"id":"job","state":"completed","updated_at":"`+time.Now().UTC().Format(time.RFC3339)+`"}]`)); err != nil {
 		t.Fatal(err)
 	}
+	queue, err := jobs.Open(path, idleExecutor{}, 1, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	queue.Close()
 	if err = appdb.Write(path, "cache", "discovery/account/repo", []byte(`{"head":"abc"}`)); err != nil {
 		t.Fatal(err)
 	}
@@ -103,9 +112,17 @@ func TestBaselineStoresShareOneDatabaseAndSurviveReopen(t *testing.T) {
 	if state, err := inboxes.Open(path).Read(); err != nil || state.Revision != 1 {
 		t.Fatalf("inboxes %v %v", state, err)
 	}
-	if raw, err := appdb.Read(path, "state", "jobs"); err != nil || !strings.Contains(string(raw), "queued") {
-		t.Fatalf("jobs %s %v", raw, err)
+	if raw, err := appdb.Read(path, "state", "jobs"); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("jobs document kept: %s %v", raw, err)
 	}
+	queue, err = jobs.Open(path, idleExecutor{}, 1, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if listed := queue.List(); len(listed) != 1 || listed[0].ID != "job" || listed[0].State != "completed" {
+		t.Fatalf("jobs %+v", listed)
+	}
+	queue.Close()
 	db, err := appdb.Open(path, true)
 	if err != nil {
 		t.Fatal(err)
@@ -121,15 +138,28 @@ func TestBaselineStoresShareOneDatabaseAndSurviveReopen(t *testing.T) {
 	}
 }
 
+// idleExecutor runs nothing: the baseline queue holds only finished jobs.
+type idleExecutor struct{}
+
+func (idleExecutor) Prepare(context.Context, jobs.Item) (jobs.Prepared, string, error) {
+	return jobs.Prepared{}, "", errors.New("not used")
+}
+func (idleExecutor) Execute(context.Context, jobs.Prepared, func(jobs.Progress)) (*float64, error) {
+	return nil, errors.New("not used")
+}
+
 func TestConcurrentDocumentUpdatesAndFailedTransaction(t *testing.T) {
 	path := filepath.Join(appdbtest.TempDir(t), "app.sqlite")
-	const writers = 8
+	// SQLite's busy wait is not fair: a writer can lose every retry for as long
+	// as the others keep the lock busy. Keep the serialized work well under the
+	// 10 s busy_timeout; 96 updates took over 12 s on a Windows runner.
+	const writers, updates = 4, 12
 	var wg sync.WaitGroup
 	for range writers {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			for range 12 {
+			for range updates {
 				err := appdb.Update(path, "state", "counter", func(raw []byte) ([]byte, error) {
 					n := 0
 					if raw != nil {
@@ -154,7 +184,7 @@ func TestConcurrentDocumentUpdatesAndFailedTransaction(t *testing.T) {
 		t.Fatalf("failure %v", err)
 	}
 	raw, err := appdb.Read(path, "state", "counter")
-	if err != nil || string(raw) != strconv.Itoa(writers*12) {
+	if err != nil || string(raw) != strconv.Itoa(writers*updates) {
 		t.Fatalf("counter %s %v", raw, err)
 	}
 	if _, err := appdb.Read(path, "cache", "counter"); !errors.Is(err, os.ErrNotExist) {
@@ -255,10 +285,17 @@ func TestDatabaseAndRollbackJournalArePrivate(t *testing.T) {
 
 func TestInboxRevisionIsAtomicAcrossStores(t *testing.T) {
 	path := filepath.Join(appdbtest.TempDir(t), "app.sqlite")
+	if _, err := inboxes.Open(path).Read(); err != nil {
+		t.Fatal(err)
+	}
 	start := make(chan struct{})
 	results := make(chan error, 2)
 	for range 2 {
-		go func() { <-start; _, err := inboxes.Open(path).Replace(0, nil); results <- err }()
+		go func() {
+			<-start
+			_, err := inboxes.Open(path).Replace(1, []inboxes.Inbox{{Name: "A", Color: "blue", What: "any", Risk: "any"}})
+			results <- err
+		}()
 	}
 	close(start)
 	successes, stale := 0, 0
@@ -278,7 +315,7 @@ func TestInboxRevisionIsAtomicAcrossStores(t *testing.T) {
 		t.Fatalf("successes %d stale %d", successes, stale)
 	}
 	state, err := inboxes.Open(path).Read()
-	if err != nil || state.Revision != 1 {
+	if err != nil || state.Revision != 2 {
 		t.Fatalf("state %v %v", state, err)
 	}
 }

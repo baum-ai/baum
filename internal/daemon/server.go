@@ -398,6 +398,9 @@ type controller struct {
 	// restartInto is the trusted executable of the newest client that asked
 	// the daemon to restart as its version, and restartVersion that version.
 	restartInto, restartVersion string
+	// restartWake wakes restartWhenIdle when a client asks for a restart, so
+	// it need not poll every restartPoll while none is pending.
+	restartWake chan struct{}
 	// executable, when set, restarts the daemon from its own path once that
 	// file is replaced.
 	executable *executableWatch
@@ -434,14 +437,22 @@ func (c *controller) undrain() {
 // restartWhenIdle starts the requested executable and stops once no job is
 // queued or running.
 func (c *controller) restartWhenIdle(ctx context.Context) {
-	ticker := time.NewTicker(restartPoll)
-	defer ticker.Stop()
+	timer := time.NewTimer(c.restartWait())
+	defer timer.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-ticker.C:
+		case <-timer.C:
+		case <-c.wake():
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
 		}
+		timer.Reset(c.restartWait())
 		c.restartIfReplaced()
 		// Drain refuses new jobs in the same step that finds none pending,
 		// so a job confirmed now gets a "restarting, retry" answer instead of
@@ -481,6 +492,32 @@ func (c *controller) restartWhenIdle(ctx context.Context) {
 // restartIfReplaced asks for a restart from the daemon's own path once its
 // executable was replaced there, unless a newer client already asked for one.
 // The replacement must pass the same trust check as a client's executable.
+// wake is the channel a restart request signals restartWhenIdle on.
+func (c *controller) wake() chan struct{} {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.restartWake == nil {
+		c.restartWake = make(chan struct{}, 1)
+	}
+	return c.restartWake
+}
+
+// restartWait is how long restartWhenIdle sleeps: restartPoll while a
+// restart waits for the jobs to finish, else until the executable is next
+// due to be checked (a request wakes it sooner).
+func (c *controller) restartWait() time.Duration {
+	c.mu.Lock()
+	pending := c.restartInto != ""
+	c.mu.Unlock()
+	if pending {
+		return restartPoll
+	}
+	if c.executable != nil {
+		return c.executable.interval
+	}
+	return replacedCheckInterval
+}
+
 func (c *controller) restartIfReplaced() {
 	if !c.executable.replaced(time.Now()) {
 		return
@@ -614,6 +651,10 @@ func (c *controller) dispatch(line []byte) (Response, bool) {
 		c.status.RestartPending = true
 		status = c.status
 		c.mu.Unlock()
+		select {
+		case c.wake() <- struct{}{}:
+		default:
+		}
 		return Response{OK: true, Status: &status}, false
 	}
 	if req.Protocol != Protocol {

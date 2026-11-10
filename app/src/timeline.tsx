@@ -682,7 +682,6 @@ function TimelineLog({
           decisions={timelineList(decisions)}
           readDecision={readDecision}
           readFeature={readFeature}
-          readPeople={readPeople}
           revision={revision}
           files={files}
           openSession={OPEN_SESSION}

@@ -3,6 +3,7 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useId,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -37,9 +38,6 @@ export type RailInboxes = {
   counts: Record<string, number>;
   /** The id of the inbox whose queue the page shows. */
   selected: string | null;
-  /** A page under Inbox that is not a queue (New inbox, Manage inboxes) is
-   *  the current one, so Inbox is only the section. */
-  elsewhere?: boolean;
   /** Deletes the inbox once confirmed, then runs `after`. */
   remove: (inbox: Inbox, after?: () => void) => void;
   /** Opens the inbox's edit page. */
@@ -49,6 +47,14 @@ export type RailInboxes = {
   manage: () => void;
 };
 
+/** What the Inbox heading says to a screen reader besides its name: the
+ *  total of what waits, as its visual badge shows it. */
+export function inboxWaitingText(count: number) {
+  return `, ${count} waiting`;
+}
+
+/** Why the last inbox cannot be deleted. */
+export const KEEP_ONE = "Keep at least one inbox";
 const FOLD_KEY = "baum.inbox.folded.v1";
 function folded() {
   try {
@@ -77,7 +83,8 @@ export function Sidebar({
   Link,
 }: {
   page: Page;
-  /** What waits on the person in the inbox, not counting snoozed. */
+  /** What waits on the person: each pull request once, snoozed left out,
+   *  whichever saved inbox holds it or none. */
   inbox: number;
   activeJobs: number;
   runningSessions: number;
@@ -121,35 +128,13 @@ export function Sidebar({
     .join("; ");
   const link = ({ page: target, label, href, icon: Icon }: (typeof PAGES)[number]) => {
     const { badge, tone } = badges[target] ?? {};
-    return (
-      <Link
-        key={target}
-        href={href()}
-        title={`${label} (${pageKeyLabel(target, modifier)})${target === "settings" && settingsNote ? ": " + settingsNote : ""}`}
-        aria-description={target === "settings" ? settingsNote || undefined : undefined}
-        aria-current={
-          page === target && !(target === "inbox" && (inboxes?.selected || inboxes?.elsewhere))
-            ? "page"
-            : undefined
-        }
-        aria-keyshortcuts={pageKeyShortcut(target, modifier)}
-        className="local-rail-link"
-        onContextMenu={
-          target === "inbox" && inboxes
-            ? (event) =>
-                inboxMenu.open(
-                  event,
-                  [
-                    { label: "New inbox…", onSelect: inboxes.create },
-                    { label: "Manage inboxes…", onSelect: inboxes.manage },
-                  ],
-                  "Inbox",
-                )
-            : undefined
-        }
-      >
+    const content = (
+      <>
         <Icon size={18} className="local-rail-glyph" />
         <span className="local-rail-label">{label}</span>
+        {target === "inbox" && inbox > 0 ? (
+          <span className="sr-only">{inboxWaitingText(inbox)}</span>
+        ) : null}
         {badge ? (
           <span aria-hidden="true" className={`local-rail-badge ${tone ?? ""}`.trim()}>
             {badge}
@@ -158,6 +143,44 @@ export function Sidebar({
         <kbd aria-hidden="true" className="key-hint local-rail-key">
           {pageKeyLabel(target, modifier)}
         </kbd>
+      </>
+    );
+    // Inbox is the section the saved inboxes sit under, not a place of its
+    // own: a heading with their count, never a link or the current page.
+    if (target === "inbox")
+      return (
+        <div
+          key={target}
+          title={`${label} (${pageKeyLabel(target, modifier)})`}
+          className="local-rail-link local-rail-heading"
+          onContextMenu={
+            inboxes
+              ? (event) =>
+                  inboxMenu.open(
+                    event,
+                    [
+                      { label: "New inbox…", onSelect: inboxes.create },
+                      { label: "Manage inboxes…", onSelect: inboxes.manage },
+                    ],
+                    "Inbox",
+                  )
+              : undefined
+          }
+        >
+          {content}
+        </div>
+      );
+    return (
+      <Link
+        key={target}
+        href={href()}
+        title={`${label} (${pageKeyLabel(target, modifier)})${target === "settings" && settingsNote ? ": " + settingsNote : ""}`}
+        aria-description={target === "settings" ? settingsNote || undefined : undefined}
+        aria-current={page === target ? "page" : undefined}
+        aria-keyshortcuts={pageKeyShortcut(target, modifier)}
+        className="local-rail-link"
+      >
+        {content}
       </Link>
     );
   };
@@ -298,6 +321,9 @@ function InboxRows({
   Link: ComponentType<ViewerLinkProps>;
 }) {
   const [open, setOpen] = useState<string | null>(null);
+  const keepId = useId();
+  // The last inbox cannot be deleted: Inbox always has somewhere to open.
+  const last = inboxes.list.length <= 1;
   const menu = useRef<HTMLDivElement>(null);
   const popup = useRef<HTMLDivElement>(null);
   // The `⋯` button of the row whose menu is open.
@@ -352,17 +378,22 @@ function InboxRows({
     };
   }, [open]);
   // A deleted row takes its button with it: focus moves to its neighbour, or
-  // to Inbox when it was the last.
+  // to nothing, as the last inbox is never deleted.
   const neighbour = () => {
     const row = menu.current;
     const inboxRow = (element: Element | null | undefined) =>
       element?.matches(".local-rail-inbox") ? (element as HTMLElement) : null;
     const next = inboxRow(row?.nextElementSibling) ?? inboxRow(row?.previousElementSibling);
-    const target = next
-      ? next.querySelector<HTMLElement>("a.local-rail-sub")
-      : row?.closest("nav")?.querySelector<HTMLElement>("a.local-rail-link");
+    const target = next ? next.querySelector<HTMLElement>("a.local-rail-sub") : null;
     return target;
   };
+  // The first row left, where the page goes once the open inbox is gone.
+  const firstLeft = () =>
+    Array.from(
+      menu.current?.parentElement?.querySelectorAll<HTMLElement>(".local-rail-inbox") ?? [],
+    )
+      .find((row) => row !== menu.current)
+      ?.querySelector<HTMLElement>("a.local-rail-sub") ?? null;
   return (
     <div className="local-rail-inboxes">
       {inboxes.list.map((inbox) => {
@@ -385,16 +416,8 @@ function InboxRows({
             >
               <span aria-hidden="true" className="inbox-dot" />
               <span className="local-rail-label">{inbox.name}</span>
-              {count > 0 ? (
-                <span
-                  className={`local-rail-sub-count${inbox.badge ? "" : " muted"}`}
-                  title={inbox.badge ? undefined : "Not counted in the Inbox badge"}
-                >
-                  {count}
-                </span>
-              ) : null}
-              {count > 0 && !inbox.badge ? (
-                <span className="sr-only"> (not counted in the Inbox badge)</span>
+              {count > 0 && inbox.badge ? (
+                <span className="local-rail-sub-count">{count}</span>
               ) : null}
             </Link>
             <button
@@ -419,14 +442,23 @@ function InboxRows({
                 </button>
                 <button
                   type="button"
+                  disabled={last}
+                  aria-describedby={last ? keepId : undefined}
+                  title={last ? KEEP_ONE : undefined}
                   onClick={() => {
-                    const next = neighbour();
+                    // The open inbox's deletion opens the first one left: focus its row.
+                    const next = inboxes.selected === inbox.id ? firstLeft() : neighbour();
                     setOpen(null);
                     inboxes.remove(inbox, () => next?.focus());
                   }}
                 >
                   Delete inbox
                 </button>
+                {last ? (
+                  <span id={keepId} className="local-rail-menu-note">
+                    {KEEP_ONE}
+                  </span>
+                ) : null}
               </div>
             ) : null}
           </div>

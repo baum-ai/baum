@@ -97,8 +97,9 @@ not a failure.
    cost from the reported usage, priced as reviews price theirs
    (`pricing.List.OutcomeCost`): when any part of it is unknown (a run cut short, a speed or 1-hour cache-write
    split not reported, or several calls
-   whose prompt sizes may straddle a long-prompt tier) the cost is unknown,
-   not estimated. It is also settled with how many replies the harness
+   whose prompt sizes may straddle a long-prompt tier) the cost is estimated
+   at the lowest rates the usage could have been billed at; it is unknown only
+   when the call reported no tokens or its model has no rates. It is also settled with how many replies the harness
    rejected against the schema (`rejections`; the last one's reason goes to
    the private log with the attempt's stage, item and id). An attempt still
    pending when the daemon starts is settled as abandoned. A reply stands
@@ -251,6 +252,11 @@ they had:
   session still running may yet link to, read from the clone without
   fetching, at the head their commits were recorded at;
 - once a day, every commit of the last 7 days.
+
+A 15-minute re-link without fresh commits reads no session when its commits,
+the session stores it reads (`sessions.Discovery`'s fingerprint) and the
+commits' observed creations are as at the repository's last links: it would
+link the same. The daily re-link and a daemon start always link again.
 
 A commit linked to a session more than one way keeps its strongest link.
 
@@ -422,8 +428,7 @@ The live placement places only work opened since the feature log was
 activated. A repository's history is placed when the user asks for it, as a
 hosted rebuild does, by a first build: a job of the job queue
 (`jobs.KindFeatureBuild`) that starts at once when the user asks for it,
-with no estimate, as every requested run does, or `baum internal features
-build`.
+with no estimate, as every requested run does.
 
 - **History.** The build first lists the repository's whole pull request
   history, once per repository (`pull_sync.history_listed_at`), with no
@@ -563,7 +568,11 @@ project (`internal/sampleapp`) as a build would have left it.
 `Timeline` serves the app's Timeline page under `/api/timeline/`, mounted in
 the local API behind its authentication, in the view models of the review
 viewer's decision log (`oss/viewer/src/decision-log.ts`). It reads the store
-and never writes it.
+and never writes it. As the review index does, the feature lists and their
+people share one snapshot of each repository's features, built once and kept
+until the store changes (a write through its connection, `total_changes`,
+or a commit by another connection or process, `data_version`), the user's
+identity is read again, or it is 30 seconds old; a search builds its own.
 
 - **`GET /repositories`**: `decisions_enabled` (the decisions switch),
   `repositories`, the picked repositories whose decisions are not turned
@@ -701,43 +710,13 @@ feature. The daemon publishes a `timeline` event on
 the app's event stream then, at most once a second, and after a settings
 change.
 
-## Testing by hand
+## Verification
 
-`baum internal decisions capture --agent <agent> --session <id> [--path
-<transcript>] [--dry-run] [--backend <b>] [--model <m>]` runs one capture
-without the gate, throttle or unchanged check and prints its report as JSON.
-`--dry-run` stops before the call and writes nothing but the `--debug-dir`
-files: it reads an existing store read-only, and uses an empty one in memory
-when there is none. The hidden `--debug-dir <dir>` creates the private
-directory (0700 on Unix, a current-user-only DACL on Windows) and writes
-the rendered transcript, and after a call the message
-sent and the raw reply, there, replacing a previous capture's files; a
-capture that stops before rendering leaves it empty.
+Decision capture and feature stages run through the desktop daemon and its
+job queue. Their package tests exercise capture, sync, linkage, placement,
+summary, consolidation and first-build behavior directly. Run them in Docker
+from the monorepo root:
 
-`baum internal features sync --repo <owner/name> [--clone <path>] [--days N]`
-runs one pull request sync without the gate (the first lists the last N
-days, default 180) and `baum internal features link --repo <owner/name>
-[--clone <path>]` links every commit of the last 7 days; each prints its
-counts as JSON. `baum internal features assign --repo <owner/name> [--clone
-<path>] [--dry-run] [--limit N] [--backend <b>] [--model <m>]` runs placement
-once, ignoring the activation, and prints each item; `--dry-run` prints each
-item's candidates and input size, makes no call and writes nothing.
-`baum internal features summarize` takes the same flags but `--dry-run` and
-writes the text of the features behind, without the debounce. `baum
-internal features consolidate` takes `--repo`, `--clone`, `--backend` and
-`--model` and makes one pass over the current features without the
-interval or fingerprint check. `baum
-internal features build --repo <owner/name> [--clone <path>] [--dry-run]
-[--backend <b>] [--model <m>] [--taxonomy auto|none|latest|<id>]` runs a
-first build without the gate, a line a batch on standard error and its
-report as JSON; `--dry-run` lists the history, saving the pull requests it
-lists, and prints the pull requests and calls a build would make, with no
-cost, writing no feature. `baum internal features
-discover --repo <owner/name> [--clone <path>] [--show latest|<id>]` lists
-the history and reads its paths as a build does, then runs discovery once
-and prints its report, or prints a stored taxonomy.
-These read the preferences and the repository's settings and fail when they
-cannot; `sync`
-and `link` read neither. The clone
-defaults to the repository's registered one. They are for testing, with the
-daemon stopped: they write the daemon's store.
+```sh
+just oss-go test ./internal/decisionlog/... ./internal/jobs/...
+```

@@ -52,20 +52,24 @@ test("a failed later read keeps the jobs shown and says so", async ({ page }) =>
 test("a review group is not called missing when the groups could not be read", async ({ page }) => {
   const heal = await refuse(page, "api/groups");
   await page.goto(await launchURL());
-  await expect(page.getByRole("heading", { name: "Up next", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Default", exact: true })).toBeVisible();
   await page.goto(new URL("?page=pulls&group=unknown", page.url()).toString());
   await expect(page.getByRole("heading", { name: "Couldn't load the review group" })).toBeVisible();
   await expect(page.getByText("does not exist any more")).toHaveCount(0);
   await heal();
-  await retry(page).click();
-  await expect(page.getByText("does not exist any more")).toBeVisible();
+  // The page also reads again on its own, and a read that lands first takes
+  // the Retry button away; either way the group is then called gone.
+  await expect(async () => {
+    if (await retry(page).isVisible()) await retry(page).click({ timeout: 1_000 });
+    await expect(page.getByText("does not exist any more")).toBeVisible({ timeout: 1_000 });
+  }).toPass();
 });
 
 test("Go to and the shortcuts sheet give the focus back, and the page keys keep working", async ({
   page,
 }) => {
   await page.goto(await launchURL());
-  await expect(page.getByRole("heading", { name: "Up next", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Default", exact: true })).toBeVisible();
   const link = page.getByRole("link", { name: "Jobs", exact: true });
   await link.focus();
 

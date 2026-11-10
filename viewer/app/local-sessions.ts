@@ -13,7 +13,7 @@ import type { ReviewDocument } from "../src/review-document";
  *  request's facts. */
 type SessionSource = { index: Pick<ReviewDocument["index"], "sessions"> };
 
-/** What `baum internal view` knows about this pull request's sessions and commits on
+/** What `the reference viewer host` knows about this pull request's sessions and commits on
  *  the user's machine: the answer of `GET /api/sessions`, checked. */
 
 export type LocalSession = {

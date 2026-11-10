@@ -200,8 +200,77 @@ func TestProgressWithholdsProviderStringsUntilRedaction(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := reports[len(reports)-1]
-	if got.Accounting == nil || got.Accounting.Usage.CacheRead != 90 || got.Accounting.Usage.Input != 6 || got.Accounting.Usage.Speed != nil || got.Accounting.Attempts[0].Model != "" || got.Accounting.Attempts[0].Usage.Speed != nil || got.CostReason != "metadata_pending_redaction" {
+	if got.Accounting == nil || got.Accounting.Usage.CacheRead != 90 || got.Accounting.Usage.Input != 6 || got.Accounting.Usage.Speed != nil || got.Accounting.Attempts[0].Model != "" || got.Accounting.Attempts[0].Usage.Speed != nil || got.CostReason != "model_or_prompt_rates_unknown" {
 		t.Fatalf("unsafe or lossy progress: %+v", got)
+	}
+}
+
+// With no configured model, a running review is priced at the model the
+// provider reported, which progress still does not name.
+func TestProgressPricesTheReportedModelBeforeRedaction(t *testing.T) {
+	var last Progress
+	b := &trackedBackend{Backend: &generatetest.Backend{RunFunc: func(context.Context, agent.Request, int) (agent.Result, error) {
+		return agent.Result{Model: "claude-haiku-5-5", ModelSource: "provider_reported", Calls: 1, Tokens: 10, Usage: agent.Usage{Input: 1000, Output: 400, Speed: new("standard")}}, nil
+	}}, prices: pricing.Embedded(), progress: func(p Progress) { last = p }}
+	if _, err := b.Run(context.Background(), agent.Request{}); err != nil {
+		t.Fatal(err)
+	}
+	if last.CostUSD == nil || *last.CostUSD <= 0 || last.Accounting.Attempts[0].Model != "" {
+		t.Fatalf("running cost = %v, %q; attempts %+v", last.CostUSD, last.CostReason, last.Accounting.Attempts)
+	}
+}
+
+// A run in progress reports its usage as its calls report it, so its cost
+// and tokens show before it finishes, as a lower bound; a staged review's
+// concurrent runs each count.
+func TestProgressReportsUsageDuringARun(t *testing.T) {
+	var reports []Progress
+	call := func(output int64) []agent.UsageAttempt {
+		return []agent.UsageAttempt{{ModelSource: "provider_reported", Model: "claude-haiku-5-5", Calls: 1, ChargedTokens: int(1000 + output),
+			Usage: agent.Usage{Input: 1000, Output: output, Speed: new("standard"), Unreported: true}}}
+	}
+	started, release := make(chan struct{}), make(chan struct{})
+	b := &trackedBackend{prices: pricing.Embedded(), progress: func(p Progress) { reports = append(reports, p) }}
+	b.Backend = &generatetest.Backend{RunFunc: func(_ context.Context, r agent.Request, n int) (agent.Result, error) {
+		r.Usage(call(100))
+		if n == 0 {
+			close(started)
+			<-release
+		}
+		return agent.Result{Model: "claude-haiku-5-5", ModelSource: "provider_reported", Calls: 1, Tokens: 1100, Usage: agent.Usage{Input: 1000, Output: 100, Speed: new("standard")}}, nil
+	}}
+	done := make(chan error)
+	go func() {
+		_, err := b.Run(context.Background(), agent.Request{})
+		done <- err
+	}()
+	<-started
+	b.mu.Lock()
+	running := reports[len(reports)-1]
+	b.mu.Unlock()
+	if running.CostUSD == nil || *running.CostUSD <= 0 || running.CostReason != "usage_incomplete" || running.Tokens != 1100 || running.Calls != 1 {
+		t.Fatalf("running progress = %+v (cost %v)", running, running.CostUSD)
+	}
+	b.mu.Lock()
+	b.liveAt = time.Time{}
+	b.mu.Unlock()
+	if _, err := b.Run(context.Background(), agent.Request{}); err != nil {
+		t.Fatal(err)
+	}
+	b.mu.Lock()
+	both := reports[len(reports)-1]
+	b.mu.Unlock()
+	if both.Tokens != 2200 || both.Accounting.Usage.Output != 200 {
+		t.Fatalf("a finished run and one in progress = %+v", both)
+	}
+	close(release)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if len(b.live) != 0 || b.tokens != 2200 {
+		t.Fatalf("finished runs left live usage: %+v, %d tokens", b.live, b.tokens)
 	}
 }
 
@@ -225,24 +294,26 @@ func TestProgressEstimatesCostFromConfiguredModel(t *testing.T) {
 		t.Fatalf("unsafe progress: %+v", got.Accounting)
 	}
 
-	// An unpriceable configured model, or a speed no rate describes, leaves
-	// the cost unknown until masking finishes.
-	for _, b := range []*trackedBackend{
-		{Backend: &generatetest.Backend{RunFunc: run}, model: "no-such-model", prices: pricing.Embedded()},
-		{Backend: &generatetest.Backend{RunFunc: func(ctx context.Context, r agent.Request, n int) (agent.Result, error) {
-			result, e := run(ctx, r, n)
-			result.Usage.Speed = new("untrusted-speed")
-			return result, e
-		}}, model: "claude-opus-5-5", prices: pricing.Embedded()},
-	} {
-		var last Progress
-		b.progress = func(p Progress) { last = p }
-		if _, err := b.Run(context.Background(), agent.Request{}); err != nil {
-			t.Fatal(err)
-		}
-		if last.CostUSD != nil || last.CostReason != "metadata_pending_redaction" {
-			t.Fatalf("model %q: cost = %v, %q", b.model, last.CostUSD, last.CostReason)
-		}
+	// An unpriceable configured model leaves the cost unknown; a speed no
+	// rate describes is priced as standard, a lower bound.
+	var last Progress
+	unpriced := &trackedBackend{Backend: &generatetest.Backend{RunFunc: run}, model: "no-such-model", prices: pricing.Embedded(), progress: func(p Progress) { last = p }}
+	if _, err := unpriced.Run(context.Background(), agent.Request{}); err != nil {
+		t.Fatal(err)
+	}
+	if last.CostUSD != nil || last.CostReason != "model_or_prompt_rates_unknown" {
+		t.Fatalf("unpriced model: cost = %v, %q", last.CostUSD, last.CostReason)
+	}
+	odd := &trackedBackend{Backend: &generatetest.Backend{RunFunc: func(ctx context.Context, r agent.Request, n int) (agent.Result, error) {
+		result, e := run(ctx, r, n)
+		result.Usage.Speed = new("untrusted-speed")
+		return result, e
+	}}, model: "claude-opus-5-5", prices: pricing.Embedded(), progress: func(p Progress) { last = p }}
+	if _, err := odd.Run(context.Background(), agent.Request{}); err != nil {
+		t.Fatal(err)
+	}
+	if last.CostUSD == nil || *last.CostUSD != *got.CostUSD || last.CostReason != "speed_not_reported" {
+		t.Fatalf("unknown speed: cost = %v, %q", last.CostUSD, last.CostReason)
 	}
 }
 
@@ -647,6 +718,9 @@ func TestBaumTokenRotationPreservesQueuedConfirmationButAccountSwitchDoesNot(t *
 	if err := store.Save(context.Background(), githubauth.Credential{AccessToken: "rotated", Login: "alice", ID: 1}); err != nil {
 		t.Fatal(err)
 	}
+	// The manager caches the token it read; a 401 for it stands in for the
+	// refresh or sign-in that would drop the cache in production.
+	config.GitHubAuth.ObserveResponse("first", http.StatusUnauthorized, http.Header{})
 	current, _, err := local.Prepare(context.Background(), prepared.Item)
 	if err != nil {
 		t.Fatal(err)
@@ -660,6 +734,7 @@ func TestBaumTokenRotationPreservesQueuedConfirmationButAccountSwitchDoesNot(t *
 	if err := store.Save(context.Background(), githubauth.Credential{AccessToken: "replacement", Login: "bob", ID: 2}); err != nil {
 		t.Fatal(err)
 	}
+	config.GitHubAuth.ObserveResponse("rotated", http.StatusUnauthorized, http.Header{})
 	if _, err := local.Execute(context.Background(), prepared, func(Progress) {}); err == nil || !strings.Contains(err.Error(), "generation inputs changed") {
 		t.Fatalf("replacement account executed old confirmation: %v", err)
 	}

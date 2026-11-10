@@ -65,10 +65,10 @@ func TestCommitSHAs(t *testing.T) {
 }
 
 // A quiet commit that fails (a rejecting hook, nothing to commit) leaves the
-// previous HEAD's line on a following `git log --oneline`; only `&&` ties the
-// log to the commit's success.
+// previous HEAD's line on a following log; explicit failure output must not
+// become creation evidence even when the sequence otherwise qualifies.
 func TestOnelineSHAIsTrustedOnlyAfterASuccessfulCommit(t *testing.T) {
-	stdout := "nothing to commit, working tree clean\na1b2c3d older subject"
+	stdout := "a1b2c3d new subject"
 	tests := []struct {
 		command string
 		want    bool
@@ -76,7 +76,19 @@ func TestOnelineSHAIsTrustedOnlyAfterASuccessfulCommit(t *testing.T) {
 		{"git commit -q -m x && git log --oneline -1", true},
 		{"git add -A && git commit -q -m x && git log --oneline -1", true},
 		{`bash -lc 'git commit -q -m x && git log --oneline -1'`, true},
-		{"git commit -q -F - <<'EOF'\nmessage\nEOF\ngit log --oneline -1", false},
+		{"git commit -q -F - <<'EOF'\nmessage\nEOF\ngit log --oneline -1", true},
+		{"git commit -q -m x\ngit log --oneline -1", true},
+		{"git commit -q -m x\ngit log --format='%h %s%n%(trailers)' -1", true},
+		{"git commit -q -m x\ngit checkout main\ngit log --oneline -1", false},
+		{"git commit -q -m x && git checkout main\ngit log --oneline -1", false},
+		{"git commit -q -m x\ngit checkout main && git log --oneline -1", false},
+		{"git add -A && git commit -q -m x\ngit log --oneline -1", true},
+
+		{"git commit -q -m x || true\ngit log --oneline -1", false},
+		{"git commit -q -m x &\ngit log --oneline -1", false},
+		{"! git commit -q -m x\ngit log --oneline -1", false},
+		{"echo 'git commit -q -m x'\ngit log --oneline -1", false},
+		{"cat <<'EOF'\ngit commit -m x\nEOF\ngit log --oneline -1", false},
 		{"git commit -q -m x; git log --oneline -1", false},
 		{"git log --oneline -1 && git commit -q -m x", false},
 		{"git commit -q -m x || true && git log --oneline -1", false},
@@ -95,5 +107,16 @@ func TestOnelineSHAIsTrustedOnlyAfterASuccessfulCommit(t *testing.T) {
 	}
 	if got := CommitSHAs("[main 3fa9b21] subject\n"+stdout, false); len(got) != 1 || got[0] != "3fa9b21" {
 		t.Errorf("CommitSHAs = %v, want only the bracketed SHA", got)
+	}
+}
+
+func TestFailedQuietCommitDoesNotAttributeTheFollowingLog(t *testing.T) {
+	for _, failure := range []string{"nothing to commit, working tree clean", "no changes added to commit", "error: hook rejected commit", "fatal: unable to create commit", "Aborting commit due to empty commit message."} {
+		for _, separator := range []string{"\n", " && "} {
+			command := "git commit -q -m x" + separator + "git log --oneline -1"
+			if got := CommitSHAs(failure+"\na1b2c3d older subject", TrustsOnelineLog(command)); len(got) != 0 {
+				t.Errorf("%s: %v", failure, got)
+			}
+		}
 	}
 }

@@ -23,6 +23,12 @@ type IndexWatch struct {
 	Snapshot func(context.Context) (any, uint64, error)
 }
 
+// IndexWatchEvery is WatchIndex's default interval. What this process changes
+// invalidates the index directly; the watch only finds what other processes
+// changed, which can wait a few seconds, so the daemon does not wake every
+// two seconds to look.
+const IndexWatchEvery = 10 * time.Second
+
 // WatchIndex publishes an index event for changes nothing in this process
 // announced: terminal generation, other processes' store and database
 // writes, and changes that come with time. Each tick reads the index again
@@ -30,7 +36,7 @@ type IndexWatch struct {
 // and publishes only when its JSON differs from the last one published.
 func (s *Server) WatchIndex(ctx context.Context, interval time.Duration, w IndexWatch) {
 	if interval <= 0 {
-		interval = 2 * time.Second
+		interval = IndexWatchEvery
 	}
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()

@@ -5,7 +5,7 @@ import { afterEach, beforeAll, describe, expect, it } from "vitest";
 
 import { reviewDocumentFor } from "../../test/review-document";
 import { AttachmentUrlProvider } from "../host";
-import type { Block, ReviewDocument } from "../review-document";
+import type { Block, IndexedAttachment, ReviewDocument } from "../review-document";
 import { viewerImageWidth } from "../review-image-layout";
 import { ReviewImages } from "./review-images";
 
@@ -64,9 +64,10 @@ function mount(
   captions: Record<string, string> = {},
   size?: [number, number],
   url?: string,
+  origins?: IndexedAttachment["origins"],
 ) {
   const review = structuredClone(reviewDocumentFor("acme/widgets", 42)) as ReviewDocument;
-  review.index.attachments = ids.map((id) => attachment(id, `Alt ${id}`, size));
+  review.index.attachments = ids.map((id) => ({ ...attachment(id, `Alt ${id}`, size), origins }));
   const block = {
     kind: "images",
     items: ids.map((id) =>
@@ -98,6 +99,33 @@ function fail(container: HTMLElement, alt: string) {
 }
 
 describe("ReviewImages", () => {
+  it("keeps human and tool provenance on a shared image and in its full-size viewer", () => {
+    const container = mount(["att_shared"], {}, undefined, undefined, [
+      { session: "session-one", turn: 2, input: "prompt", kind: "human_input", position: 1 },
+      {
+        session: "session-two",
+        turn: 3,
+        tool: "tool",
+        tool_name: "view_image",
+        kind: "tool_result",
+        child_session: "child",
+        position: 1,
+      },
+    ]);
+    expect(container.textContent).toContain("Human-supplied image");
+    expect(container.textContent).toContain("Agent tool result · view_image · Subagent");
+    expect(container.textContent).toContain("Prompt 2");
+    expect(container.textContent).toContain("Prompt 3");
+    act(() =>
+      container
+        .querySelector<HTMLButtonElement>('[aria-label="View full size: Alt att_shared"]')!
+        .click(),
+    );
+    const dialog = container.querySelector("dialog")!;
+    expect(dialog.open).toBe(true);
+    expect(dialog.textContent).toContain("Human-supplied image");
+    expect(dialog.textContent).toContain("Prompt 3");
+  });
   it("says in its place that an image failed to load, and retries it", () => {
     const container = mount(["att_aa", "att_bb"]);
     expect(container.querySelectorAll("img")).toHaveLength(2);

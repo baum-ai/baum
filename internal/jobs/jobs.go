@@ -6,7 +6,6 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -365,7 +364,17 @@ type Queue struct {
 	// unsaved marks in-memory jobs the journal lacks after a failed write;
 	// retrying marks the goroutine that rewrites them (see retrySave).
 	unsaved, retrying bool
+	// dirty names the jobs changed since the last successful write, which
+	// the next save writes. A job no longer in jobs, a rolled-back
+	// submission, has its row deleted instead.
+	dirty map[string]bool
+	// heads are the archived runs of each head (headKey), as job_heads
+	// keeps them.
+	heads map[string]headRuns
 }
+
+// mark records that the job with this id changed; mu is held.
+func (q *Queue) mark(id string) { q.dirty[id] = true }
 
 // ErrRestarting refuses a job while the daemon restarts as a newer version.
 // Start it again in a moment: the new daemon takes the job.
@@ -389,7 +398,7 @@ func Directory() (string, error) {
 	return appdb.Directory()
 }
 
-// DefaultPath is the shared application database holding the queue document.
+// DefaultPath is the shared application database holding the queue journal.
 func DefaultPath() (string, error) {
 	return appdb.Path()
 }
@@ -419,36 +428,29 @@ func Open(path string, executor Executor, concurrency int, changed func(Job)) (*
 		return nil, err
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	q := &Queue{path: path, transcripts: filepath.Join(filepath.Dir(path), "transcripts"), executor: executor, estimates: map[string]Estimate{}, drafts: map[string][]byte{}, superseded: map[string]bool{}, cancels: map[string]context.CancelFunc{}, wake: make(chan struct{}, 1), chatWake: make(chan struct{}, 1), ctx: ctx, cancel: cancel, changed: changed, lock: lock, limit: concurrency}
+	q := &Queue{path: path, transcripts: filepath.Join(filepath.Dir(path), "transcripts"), executor: executor, estimates: map[string]Estimate{}, drafts: map[string][]byte{}, superseded: map[string]bool{}, cancels: map[string]context.CancelFunc{}, dirty: map[string]bool{}, wake: make(chan struct{}, 1), chatWake: make(chan struct{}, 1), ctx: ctx, cancel: cancel, changed: changed, lock: lock, limit: concurrency}
 	opened := false
 	defer func() {
 		if !opened {
 			_ = lock.Release()
 		}
 	}()
-	raw, e := appdb.Read(path, "state", "jobs")
-	if e == nil {
-		if len(raw) > 32<<20 {
-			cancel()
-			return nil, errors.New("job history too large")
-		}
-		if e = json.Unmarshal(raw, &q.jobs); e != nil {
-			cancel()
-			return nil, e
-		}
-	} else if !os.IsNotExist(e) {
+	var e error
+	if q.jobs, q.heads, e = loadJournal(path); e != nil {
 		cancel()
 		return nil, e
 	}
 	for i := range q.jobs {
+		if q.jobs[i].State == "running" || q.jobs[i].Draft != 0 {
+			q.mark(q.jobs[i].ID)
+		}
 		if q.jobs[i].State == "running" {
+			// Its last estimate stays, as a lower bound: it left out
+			// whatever the call in flight used after its last report.
 			if q.jobs[i].Accounting != nil {
 				q.jobs[i].Accounting.Usage.Unreported = true
 				q.jobs[i].CostReason = "usage_incomplete"
 			}
-			// What the run cost before it stopped is not known: its last
-			// estimate left out the call in flight.
-			q.jobs[i].ActualCostUSD = nil
 			q.jobs[i].State = "interrupted"
 			q.jobs[i].Reason = "interrupted"
 			q.jobs[i].Phase = "finished"
@@ -461,6 +463,10 @@ func Open(path string, executor Executor, concurrency int, changed func(Job)) (*
 		cancel()
 		return nil, e
 	}
+	// A failed archive leaves the jobs in the history until the next pass.
+	_ = q.archive()
+	q.wg.Add(1)
+	go q.archiveLoop()
 	// Every worker a limit may need runs; limit decides how many take a job.
 	for range repos.MaxJobConcurrency {
 		q.wg.Add(1)
@@ -474,16 +480,48 @@ func Open(path string, executor Executor, concurrency int, changed func(Job)) (*
 	opened = true
 	return q, nil
 }
+
+// save writes the jobs marked changed (mark) in one transaction. A failed
+// write keeps them marked, so the next save or retrySave writes them again.
+// A job too large for the journal never fails the write: it is journaled
+// reduced, or stays marked and unwritten, and the others are written. mu is
+// held.
 func (q *Queue) save() error {
-	raw, e := json.Marshal(q.jobs)
-	if len(raw) > 32<<20 {
-		return errors.New("job history full")
+	var rows []journalRow
+	present := map[string]bool{}
+	for _, j := range q.jobs {
+		if !q.dirty[j.ID] {
+			continue
+		}
+		present[j.ID] = true
+		raw, reduced, err := encodeJob(j)
+		if err != nil {
+			if q.log != nil {
+				q.log.Error("job not journaled", "job", j.ID, "error", err)
+			}
+			continue
+		}
+		if reduced && q.log != nil {
+			q.log.Error("job journaled without its text and lists", "job", j.ID, "error", "record over the journal's limit")
+		}
+		rows = append(rows, journalRow{j, raw})
 	}
-	if e != nil {
-		return e
+	var gone []string
+	for id := range q.dirty {
+		if !present[id] {
+			gone = append(gone, id)
+		}
 	}
-	if e = appdb.Write(q.path, "state", "jobs", raw); e != nil {
-		return e
+	if len(rows) > 0 || len(gone) > 0 {
+		if e := writeJournal(q.path, rows, gone); e != nil {
+			return e
+		}
+	}
+	for _, row := range rows {
+		delete(q.dirty, row.job.ID)
+	}
+	for _, id := range gone {
+		delete(q.dirty, id)
 	}
 	q.unsaved = false
 	return nil
@@ -922,6 +960,7 @@ func (q *Queue) requeueGroup(ctx context.Context, j Job) (bool, error) {
 		current.State, current.Phase = "queued", "queued"
 		current.Requeued++
 		current.UpdatedAt = time.Now().UTC()
+		q.mark(current.ID)
 		if q.save() != nil {
 			q.jobs[i] = old
 			return false, nil
@@ -1040,6 +1079,7 @@ func (q *Queue) SubmitConfirmed(ctx context.Context, estimateID string, c Confir
 			j.Reason = "superseded"
 			j.Phase = "finished"
 			j.UpdatedAt = time.Now().UTC()
+			q.mark(j.ID)
 			changes = append(changes, *j)
 		}
 		if p.Kind == "" && p.Group == "" {
@@ -1049,6 +1089,7 @@ func (q *Queue) SubmitConfirmed(ctx context.Context, estimateID string, c Confir
 		now := time.Now().UTC()
 		j := Job{ID: id(), Prepared: p, State: "queued", Phase: "queued", CreatedAt: now, UpdatedAt: now}
 		q.jobs = append(q.jobs, j)
+		q.mark(j.ID)
 		changes = append(changes, j)
 		out = append(out, j)
 	}
@@ -1092,6 +1133,7 @@ func (q *Queue) Cancel(jobID string) (Job, error) {
 			j.State = "cancelled"
 			j.Phase = "finished"
 			j.UpdatedAt = time.Now().UTC()
+			q.mark(j.ID)
 			if e := q.save(); e != nil {
 				*j = old
 				return Job{}, e
@@ -1120,6 +1162,7 @@ func (q *Queue) Seen(jobID string) (Job, error) {
 		if j.State == "failed" && j.SeenAt == nil {
 			now := time.Now().UTC()
 			j.SeenAt = &now
+			q.mark(j.ID)
 			if e := q.save(); e != nil {
 				j.SeenAt = nil
 				return Job{}, e
@@ -1147,6 +1190,7 @@ func (q *Queue) supersedeDetails(repository string, pr int, head string) ([]Job,
 		switch j.State {
 		case "queued":
 			j.State, j.Reason, j.Phase, j.UpdatedAt = "cancelled", "superseded", "finished", time.Now().UTC()
+			q.mark(j.ID)
 			cancelled = append(cancelled, *j)
 		case "running":
 			running = append(running, j.ID)
@@ -1216,6 +1260,7 @@ func (q *Queue) worker(chat bool) {
 				started := q.jobs[i].UpdatedAt
 				q.jobs[i].StartedAt = &started
 			}
+			q.mark(q.jobs[i].ID)
 			if e := q.save(); e != nil {
 				q.jobs[i] = old
 				// The retry's signal restarts this job; signalling now would spin.
@@ -1235,35 +1280,43 @@ func (q *Queue) worker(chat bool) {
 			inputs.RefuseDraft = j.Automatic
 			cost, err := q.executor.Execute(ctx, inputs, func(p Progress) {
 				q.mu.Lock()
-				q.jobs[i].Phase = p.Phase
-				q.jobs[i].Calls = p.Calls
-				q.jobs[i].Tokens = p.Tokens
-				q.jobs[i].Repairs = p.Repairs
-				q.jobs[i].Accounting = p.Accounting.Clone()
-				q.jobs[i].ActualCostUSD, q.jobs[i].CostReason = p.CostUSD, p.CostReason
+				// Archiving may move the job in the history: find it again.
+				k := q.find(j.ID)
+				if k < 0 {
+					q.mu.Unlock()
+					return
+				}
+				job := &q.jobs[k]
+				job.Phase = p.Phase
+				job.Calls = p.Calls
+				job.Tokens = p.Tokens
+				job.Repairs = p.Repairs
+				job.Accounting = p.Accounting.Clone()
+				job.ActualCostUSD, job.CostReason = p.CostUSD, p.CostReason
 				if p.Commit != "" {
-					q.jobs[i].Commit, q.jobs[i].CommitURL = p.Commit, p.CommitURL
+					job.Commit, job.CommitURL = p.Commit, p.CommitURL
 				}
 				if p.Summary != "" {
-					q.jobs[i].Summary = p.Summary
+					job.Summary = truncate(p.Summary, maxSummary)
 				}
 				if p.Threads != nil {
-					q.jobs[i].ThreadOutcomes = p.Threads
+					job.ThreadOutcomes = p.Threads
 				}
 				if p.HasTranscript {
-					q.jobs[i].HasTranscript = true
+					job.HasTranscript = true
 				}
 				if p.Backend != "" {
-					q.jobs[i].Backend, q.jobs[i].Model = p.Backend, p.Model
+					job.Backend, job.Model = p.Backend, p.Model
 				}
 				if p.Draft != nil {
 					q.drafts[j.ID] = p.Draft
-					q.jobs[i].Draft++
+					job.Draft++
 				}
 				if p.Gaps {
-					q.jobs[i].FailedSections, q.jobs[i].ContextFailed = p.FailedSections, p.ContextFailed
+					job.FailedSections, job.ContextFailed = p.FailedSections, p.ContextFailed
 				}
-				q.jobs[i].UpdatedAt = time.Now().UTC()
+				job.UpdatedAt = time.Now().UTC()
+				q.mark(job.ID)
 				// Save every reported usage update before publishing it. A crash
 				// may lose in-flight provider usage, never the reports we received.
 				if e := q.save(); e != nil {
@@ -1271,7 +1324,7 @@ func (q *Queue) worker(chat bool) {
 					q.mu.Unlock()
 					return
 				}
-				current := q.jobs[i]
+				current := *job
 				current.Accounting = current.Accounting.Clone()
 				q.mu.Unlock()
 				q.notify(current)
@@ -1283,9 +1336,17 @@ func (q *Queue) worker(chat bool) {
 					q.mu.Lock()
 					cancel()
 					delete(q.cancels, j.ID)
-					result := q.jobs[i]
+					k := q.find(j.ID)
+					var result Job
+					if k >= 0 {
+						result = q.jobs[k]
+					} else if q.log != nil {
+						q.log.Error("requeued job missing from the history", "job", j.ID)
+					}
 					q.mu.Unlock()
-					q.notify(result)
+					if k >= 0 {
+						q.notify(result)
+					}
 					q.signal()
 					continue
 				}
@@ -1294,7 +1355,20 @@ func (q *Queue) worker(chat bool) {
 				}
 			}
 			q.mu.Lock()
-			current := &q.jobs[i]
+			// A running job is never archived, but archiving may move it.
+			k := q.find(j.ID)
+			if k < 0 {
+				cancel()
+				delete(q.cancels, j.ID)
+				delete(q.drafts, j.ID)
+				delete(q.superseded, j.ID)
+				if q.log != nil {
+					q.log.Error("ended job missing from the history", "job", j.ID)
+				}
+				q.mu.Unlock()
+				continue
+			}
+			current := &q.jobs[k]
 			current.ActualCostUSD = cost
 			if cost == nil && current.CostReason == "" {
 				current.CostReason = "usage_not_reported"
@@ -1388,6 +1462,7 @@ func (q *Queue) worker(chat bool) {
 					current.State = "interrupted"
 				}
 			}
+			current.Detail = truncate(current.Detail, maxDetail)
 			if q.superseded[j.ID] {
 				delete(q.superseded, j.ID)
 				if current.State != "completed" {
@@ -1396,6 +1471,7 @@ func (q *Queue) worker(chat bool) {
 			}
 			cancel()
 			delete(q.cancels, j.ID)
+			q.mark(current.ID)
 			saveErr := q.save()
 			if saveErr != nil {
 				q.saveFailed(saveErr)
@@ -1411,6 +1487,25 @@ func (q *Queue) worker(chat bool) {
 			}
 		}
 	}
+}
+
+// maxSummary and maxDetail bound a job's Summary, a fix agent's own account
+// of what it did, and Detail, so a job stays far below maxJobJSON.
+const maxSummary, maxDetail = 16 << 10, 4 << 10
+
+// truncate cuts s to at most n bytes, on a character boundary, and marks
+// the cut.
+func truncate(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return strings.ToValidUTF8(s[:n], "") + "… (truncated)"
+}
+
+// find returns the index of the job with this id in the history, or -1; mu
+// is held.
+func (q *Queue) find(id string) int {
+	return slices.IndexFunc(q.jobs, func(j Job) bool { return j.ID == id })
 }
 
 func validConcurrency(n int) bool { return n >= 1 && n <= repos.MaxJobConcurrency }

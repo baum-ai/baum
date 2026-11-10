@@ -2,6 +2,7 @@ import { SavedStateNotice } from "./ui-state";
 import { PreferencesProvider } from "./preferences";
 import { formatCount } from "@baum/viewer/components/format";
 import { UsageDetails } from "./usage";
+import { useJobHistory, useOpenJob, usePullRequestJobs } from "./job-history";
 import { JobTiming, jobOrigin, jobTarget, jobType } from "./job-info";
 import {
   useCallback,
@@ -36,17 +37,17 @@ import {
 import {
   freeName,
   unusedInboxColor,
-  fromQuery,
   withQuery,
-  inboxBadgeCount,
-  matches,
+  countOf,
+  parseHeld,
   MAX_INBOXES,
   newInboxId,
   readInboxes,
   useInboxes,
+  type Held,
   type Inbox as SavedInbox,
 } from "./inboxes";
-import { UpNextPage, useUpNext } from "./up-next";
+import { queueItems, UpNextPage, useUpNext } from "./up-next";
 import {
   FilterBar,
   FilterButton,
@@ -137,6 +138,7 @@ import {
   type AgentRequests,
   LocalRequestError,
   parseGroups,
+  backTo,
   backToOpener,
   sameRepository,
   MAX_GROUP_MEMBERS,
@@ -222,8 +224,10 @@ const VIEWS = [
   ["history", "Closed"],
 ] as const;
 const PULLS_TAB_KEY = "baum.pulls.tab.v1";
-// Longer than the daemon's own limit on a refresh, so its answer comes first.
-const REFRESH_TIMEOUT_MS = 60_000;
+// The daemon stops a refresh once GitHub stops answering it, but one that
+// GitHub keeps answering reads every open pull request, minutes for a busy
+// repository; this bounds only a daemon that never answers at all.
+const REFRESH_TIMEOUT_MS = 600_000;
 /** The Pull requests tab last shown in this window's browser, if any. */
 function lastPullsTab(): string | null {
   try {
@@ -408,8 +412,11 @@ function Workspace({ url }: { url: UrlState }) {
   // Why the groups could not be read, so a group is not called missing then.
   const [groupsError, setGroupsError] = useState("");
   const inboxes = useInboxes();
+  // Which saved inboxes hold each pull request, as the daemon matched them;
+  // null for an older daemon, whose inboxes the page matches itself.
+  const [held, setHeld] = useState<Held | null>(null);
   const [draftInboxSource, setDraftInboxSource] = useState<string | null>(null);
-  const draftSourceFilter = usePageFilter(draftInboxSource ?? "inbox");
+  const draftSourceFilter = usePageFilter(`inbox:${draftInboxSource ?? ""}`);
   // An inbox started from a template, not saved until its edit page's Save.
   const [draftInbox, setDraftInbox] = useState<SavedInbox | null>(null);
   // Deleting an inbox says so on any page, with a way back.
@@ -474,6 +481,7 @@ function Workspace({ url }: { url: UrlState }) {
             found,
             groupList,
             inboxList,
+            inboxQueue,
           ] = await Promise.all([
             get<Clone[]>("api/repos"),
             get<Snapshot>("api/index?history=1"),
@@ -495,6 +503,9 @@ function Workspace({ url }: { url: UrlState }) {
             }),
             // An older daemon (404) has no inboxes; another failure is reported.
             readInboxes(signal),
+            // An older daemon (404, or `available: false`) leaves the
+            // matching to the page, as does a failed read.
+            get<unknown>("api/inbox").then(parseHeld, () => null),
           ]);
           if (signal.aborted) return;
           setClones(repos);
@@ -514,6 +525,7 @@ function Workspace({ url }: { url: UrlState }) {
           if (!groupsFailure) setGroups(parseGroups(groupList));
           setGroupsError(groupsFailure);
           inboxes.read(inboxList);
+          setHeld(inboxQueue);
           setRates(discovery);
           setBackground(Array.isArray(sync) ? sync : []);
           setAutomatic(auto && Array.isArray(auto.repositories) ? (auto as Automatic) : null);
@@ -724,10 +736,38 @@ function Workspace({ url }: { url: UrlState }) {
   // The pages that make and change inboxes need a daemon that has them.
   const inboxPage =
     requestedPage === "inbox-new" || requestedPage === "inbox-edit" || requestedPage === "inboxes";
-  const page = inboxPage && inboxes.status === "older" ? "inbox" : requestedPage;
-  // Before the first read they wait; after a failed one they say so.
-  const inboxWaiting =
-    inboxPage && (inboxes.status === "loading" || inboxes.status === "failed") ? (
+  const knownPages = [
+    "inbox",
+    "inbox-new",
+    "inbox-edit",
+    "inboxes",
+    "pulls",
+    "jobs",
+    "repositories",
+    "sessions",
+    "analytics",
+    "timeline",
+    "settings",
+    "diagnostics",
+  ];
+  // An address naming no page is the inbox page.
+  const page =
+    (inboxPage && inboxes.status === "older") || !knownPages.includes(requestedPage)
+      ? "inbox"
+      : requestedPage;
+  // The inbox page shows a saved inbox's queue, never the whole one: it waits
+  // for the inboxes, and the root or an address naming no inbox opens the
+  // first.
+  const inboxQueuePage =
+    page === "inbox" &&
+    !groupId &&
+    !url.search.get("pr") &&
+    !url.search.get("clone") &&
+    !url.search.get("repository");
+  // Before the first read they wait; after a failed one they say so; a daemon
+  // without inboxes says it needs a newer baum.
+  const inboxStatusView =
+    inboxes.status === "loading" || inboxes.status === "failed" ? (
       <section>
         <PageBar title="Inboxes" />
         <div className="local-page-body">
@@ -735,12 +775,24 @@ function Workspace({ url }: { url: UrlState }) {
             <Alert>
               {inboxes.error} <Button onClick={() => void reload()}>Retry</Button>
             </Alert>
-          ) : loading ? (
+          ) : (
             <LoadingStatus block>Loading inboxes…</LoadingStatus>
-          ) : null}
+          )}
+        </div>
+      </section>
+    ) : inboxes.status === "older" ? (
+      <section>
+        <PageBar title="Inboxes" />
+        <div className="local-page-body local-stack">
+          <h2>Inboxes need a newer baum</h2>
+          <p>Update baum to see your pull requests in an inbox.</p>
         </div>
       </section>
     ) : null;
+  const inboxWaiting = inboxPage || inboxQueuePage ? inboxStatusView : null;
+  // The inbox page of a pull request or group link that names no inbox (or
+  // whose pull request is not read yet) is the first inbox's, address kept.
+  const detailPage = page === "inbox" && !inboxQueuePage;
   // The inbox's queue counts in the sidebar on every page. Its record of what
   // was cleared waits for the first complete read, and pauses while reads
   // fail, so an empty or failed read clears nothing.
@@ -762,10 +814,26 @@ function Workspace({ url }: { url: UrlState }) {
     railPage === "inbox"
       ? (inboxes.inboxes.find((candidate) => candidate.id === url.search.get("inbox")) ?? null)
       : null;
+  const firstInbox = inboxes.status === "ready" ? (inboxes.inboxes[0] ?? null) : null;
+  const queueInbox = page === "inbox" ? (selectedInbox ?? (detailPage ? firstInbox : null)) : null;
+  // The root, a legacy link to the whole queue, or an inbox that is gone:
+  // the current entry becomes the first inbox, so Back does not return here.
+  const missingInbox = inboxQueuePage && !selectedInbox ? firstInbox : null;
+  useEffect(() => {
+    if (!missingInbox) return;
+    url.update(
+      (current) => {
+        if (!knownPages.includes(requestedPage)) current.delete("page");
+        current.set("inbox", missingInbox.id);
+        return current;
+      },
+      { replace: true },
+    );
+  }, [missingInbox?.id, url.search]);
   useEffect(() => {
     const switchInbox = (event: KeyboardEvent) => {
       if (
-        inboxes.inboxes.length === 0 ||
+        !selectedInbox ||
         page !== "inbox" ||
         selectedEntry ||
         groupId ||
@@ -788,13 +856,12 @@ function Workspace({ url }: { url: UrlState }) {
       if (!step) return;
       event.preventDefault();
       event.stopImmediatePropagation();
-      const index = selectedInbox
-        ? inboxes.inboxes.findIndex((inbox) => inbox.id === selectedInbox.id) + 1
-        : 0;
-      const nextIndex = Math.max(0, Math.min(inboxes.inboxes.length, index + step));
+      // Only the saved inboxes, stopping at the first and the last.
+      const index = inboxes.inboxes.findIndex((inbox) => inbox.id === selectedInbox.id);
+      const nextIndex = Math.max(0, Math.min(inboxes.inboxes.length - 1, index + step));
       if (nextIndex === index) return;
-      const next = inboxes.inboxes[nextIndex - 1];
-      navigate(next ? appURL(`?inbox=${encodeURIComponent(next.id)}`) : appURL());
+      const next = inboxes.inboxes[nextIndex];
+      if (next) navigate(appURL(`?inbox=${encodeURIComponent(next.id)}`));
     };
     window.addEventListener("keydown", switchInbox, true);
     return () => window.removeEventListener("keydown", switchInbox, true);
@@ -807,15 +874,32 @@ function Workspace({ url }: { url: UrlState }) {
     inbox: SavedInbox;
     after?: () => void;
   } | null>(null);
-  const askRemoveInbox = (inbox: SavedInbox, after?: () => void) =>
-    setDeletingInbox({ inbox, after });
+  // The last inbox is never deleted: Inbox always opens one.
+  const askRemoveInbox = (inbox: SavedInbox, after?: () => void) => {
+    if (inboxes.inboxes.length > 1) setDeletingInbox({ inbox, after });
+  };
   const removeInbox = (target: SavedInbox) => {
     const before = inboxes.inboxes;
+    if (before.length <= 1) return;
     const at = before.findIndex((candidate) => candidate.id === target.id);
-    inboxes.save(before.filter((candidate) => candidate.id !== target.id));
+    const rest = before.filter((candidate) => candidate.id !== target.id);
+    inboxes.save(rest);
+    // Deleting the inbox that is open (its queue or its edit page) opens the
+    // first one left, in its place.
+    const first = rest[0];
+    if (first && url.search.get("inbox") === target.id)
+      url.update(
+        (current) => {
+          for (const key of ["page", "pr", "clone", "repository", "group", "walk"])
+            current.delete(key);
+          current.set("inbox", first.id);
+          return current;
+        },
+        { replace: true },
+      );
     setInboxToast({
       id: Date.now(),
-      text: `Deleted ${target.name}. Its pull requests stay in Inbox.`,
+      text: `Deleted ${target.name}.`,
       undo: () => {
         const now = currentInboxes.current;
         if (now.some((candidate) => candidate.id === target.id)) return;
@@ -975,7 +1059,7 @@ function Workspace({ url }: { url: UrlState }) {
         for (const { repository, clone } of targets) {
           if (signal.aborted) return;
           // A request that never answers gives up, so it cannot hold the
-          // queue and the loader; the daemon gives up on GitHub sooner.
+          // queue and the loader; the daemon gives up on a stalled GitHub sooner.
           const one = new AbortController();
           const stop = () => one.abort();
           signal.addEventListener("abort", stop, { once: true });
@@ -1065,6 +1149,10 @@ function Workspace({ url }: { url: UrlState }) {
   const openSession = url.search.get("session");
   // A job's transcript, `?page=jobs&job=<id>`.
   const openJob = page === "jobs" ? url.search.get("job") : null;
+  // The current jobs rarely hold an older job: the daemon finds it.
+  const openedJob = useOpenJob(openJob, jobs, revision);
+  // The pull request page's own jobs: its fixes and questions, all of them.
+  const pullRequestJobs = usePullRequestJobs(selectedEntry, revision);
   // The shortcuts sheet lists the keys of where it was opened first.
   const shortcutsPlace: ShortcutsPlace = onList
     ? "pulls"
@@ -1108,7 +1196,8 @@ function Workspace({ url }: { url: UrlState }) {
       .slice()
       .sort((a, b) => Number(queued.has(rowKey(b))) - Number(queued.has(rowKey(a))));
     return [
-      ...PAGES.map((item) => ({
+      // Inbox is its saved inboxes below, not a page of its own.
+      ...PAGES.filter((item) => item.page !== "inbox").map((item) => ({
         id: `page:${item.page}`,
         kind: "Page" as const,
         label: item.label,
@@ -1164,7 +1253,8 @@ function Workspace({ url }: { url: UrlState }) {
   };
   const inboxPageProps = {
     inboxes: inboxes.inboxes,
-    items: inbox.queue,
+    items: queueItems(inbox),
+    held,
     login: github?.login,
     repositories,
     entries: indexedEntries,
@@ -1176,21 +1266,19 @@ function Workspace({ url }: { url: UrlState }) {
   // The Inbox's filter as an inbox of its own.
   const saveAsInbox =
     inboxes.status === "ready" && inboxes.inboxes.length < MAX_INBOXES
-      ? (query: string, base?: SavedInbox) => {
+      ? (query: string, base: SavedInbox) => {
           // From an inbox: a copy of it, named so no other inbox has the name.
-          const made = base
-            ? withQuery(
-                {
-                  ...base,
-                  id: newInboxId(),
-                  name: freeName(base.name, inboxes.inboxes),
-                  color: unusedInboxColor(inboxes.inboxes, base.color),
-                },
-                query,
-              )
-            : fromQuery(query, inboxes.inboxes);
+          const made = withQuery(
+            {
+              ...base,
+              id: newInboxId(),
+              name: freeName(base.name, inboxes.inboxes),
+              color: unusedInboxColor(inboxes.inboxes, base.color),
+            },
+            query,
+          );
           setDraftInbox(made);
-          setDraftInboxSource(base ? `inbox:${base.id}` : "inbox");
+          setDraftInboxSource(base.id);
           navigate(editInboxHref(made.id));
         }
       : undefined;
@@ -1281,19 +1369,21 @@ function Workspace({ url }: { url: UrlState }) {
     <div className="local-shell">
       <Sidebar
         page={railPage}
-        inbox={inboxBadgeCount(inbox.queue, inboxes.inboxes)}
+        inbox={inbox.queue.length}
         inboxes={
           inboxes.available
             ? {
                 list: inboxes.inboxes,
+                // An inbox counts everything it lists but the person's own
+                // that wait, others' pull requests included; the Inbox
+                // total above counts only the queue.
                 counts: Object.fromEntries(
                   inboxes.inboxes.map((candidate) => [
                     candidate.id,
-                    inbox.queue.filter((item) => matches(candidate, item)).length,
+                    countOf(candidate, inboxPageProps.items, held),
                   ]),
                 ),
                 selected: selectedInbox?.id ?? null,
-                elsewhere: page === "inbox-new" || page === "inboxes",
                 remove: askRemoveInbox,
                 edit: (target) => navigate(editInboxHref(target.id)),
                 create: () => navigate(newInboxHref()),
@@ -1512,12 +1602,9 @@ function Workspace({ url }: { url: UrlState }) {
             </>
           ) : page === "jobs" && url.search.get("job") ? (
             <JobPage
-              job={jobs.find((j) => j.id === url.search.get("job")) ?? null}
-              title={jobPRTitle(
-                snapshot.entries,
-                jobs.find((j) => j.id === url.search.get("job")),
-              )}
-              loading={loading}
+              job={openedJob ?? null}
+              title={jobPRTitle(snapshot.entries, openedJob ?? undefined)}
+              loading={loading || openedJob === undefined}
               Link={LocalLink}
             />
           ) : page === "jobs" ? (
@@ -1528,7 +1615,13 @@ function Workspace({ url }: { url: UrlState }) {
                 actions={<RefreshButton refresh={(run) => reload({ restart: run.restart })} />}
               />
               <div className="local-page-body local-list-page">
-                <Jobs jobs={jobs} entries={snapshot.entries} loading={loading} changed={reload} />
+                <Jobs
+                  jobs={jobs}
+                  entries={snapshot.entries}
+                  loading={loading}
+                  revision={revision}
+                  changed={reload}
+                />
               </div>
             </>
           ) : inboxWaiting ? (
@@ -1615,7 +1708,7 @@ function Workspace({ url }: { url: UrlState }) {
                 {page === "pulls" ? (
                   <LocalLink href={appURL("?page=pulls")}>Pull requests</LocalLink>
                 ) : (
-                  <LocalLink href={appURL()}>Inbox</LocalLink>
+                  <LocalLink href={backTo(url.search).href}>Inbox</LocalLink>
                 )}
                 <h2>Needs a local clone</h2>
                 <p>
@@ -1664,17 +1757,28 @@ function Workspace({ url }: { url: UrlState }) {
                 }
                 fixState={fixState(selectedEntry)}
                 fixJob={fixJob(selectedEntry, jobs)}
-                fixRuns={fixJobs(selectedEntry, jobs)}
-                chats={chatJobs(selectedEntry, jobs)}
+                fixRuns={fixJobs(selectedEntry, pullRequestJobs)}
+                chats={chatJobs(selectedEntry, pullRequestJobs)}
               />
             </DecisionsRevision.Provider>
-          ) : page !== "pulls" ? (
+          ) : page === "inbox" && !queueInbox ? (
+            // The first inbox is being opened; the whole queue is never shown.
+            (inboxStatusView ?? (
+              <section>
+                <PageBar title="Inboxes" />
+                <div className="local-page-body">
+                  <LoadingStatus block>Loading inboxes…</LoadingStatus>
+                </div>
+              </section>
+            ))
+          ) : page === "inbox" && queueInbox ? (
             <UpNextPage
               inbox={inbox}
               jobs={jobs}
               inboxes={inboxes.inboxes}
-              selected={selectedInbox}
-              onEdit={selectedInbox ? () => navigate(editInboxHref(selectedInbox.id)) : undefined}
+              held={held}
+              selected={queueInbox}
+              onEdit={() => navigate(editInboxHref(queueInbox.id))}
               // Until a read succeeds there is nothing to say an empty inbox about.
               loading={revision === 0}
               hasRepositories={hasRepositories}
@@ -1689,11 +1793,11 @@ function Workspace({ url }: { url: UrlState }) {
               inboxSaves={inboxes.saves}
               repositories={repositories}
               updateInbox={
-                selectedInbox && inboxes.status === "ready"
+                inboxes.status === "ready"
                   ? (patch) =>
                       inboxes.save(
                         inboxes.inboxes.map((one) =>
-                          one.id === selectedInbox.id ? { ...one, ...patch } : one,
+                          one.id === queueInbox.id ? { ...one, ...patch } : one,
                         ),
                       )
                   : undefined
@@ -1701,7 +1805,7 @@ function Workspace({ url }: { url: UrlState }) {
               entries={indexedEntries}
               Link={LocalLink}
             />
-          ) : (
+          ) : page === "pulls" ? (
             <>
               <PageBar
                 title="Pull requests"
@@ -1929,7 +2033,7 @@ function Workspace({ url }: { url: UrlState }) {
                 />
               ) : null}
             </>
-          )}
+          ) : null}
           {generationError ? <Alert>{generationError}</Alert> : null}
           {/* The PR page and Up next show a fix's refusal beside its button. */}
           {fixError && onList ? (
@@ -1986,8 +2090,7 @@ function Workspace({ url }: { url: UrlState }) {
                 setTimeout(() => after?.());
               }}
             >
-              Only this view goes. Its pull requests, reviews and snoozes stay, and they still show
-              in Inbox.
+              Only this view goes. Its pull requests, reviews and snoozes stay.
             </ConfirmDialog>
           ) : null}
           {inboxToast ? (
@@ -2089,37 +2192,40 @@ function ForkConfirmation({
   );
 }
 /** The jobs, newest first: those running or waiting to, then those that
- *  finished. The keyboard moves through them as through any list; Enter
- *  opens the job's pull request or group and `t` its transcript. */
+ *  finished, a page at a time (`useJobHistory`). The keyboard moves through
+ *  them as through any list; Enter opens the job's pull request or group and
+ *  `t` its transcript. */
 function Jobs({
-  jobs,
+  jobs: current,
   entries,
   loading,
+  revision,
   changed,
 }: {
+  /** The current jobs: every running or waiting one, whatever its age. */
   jobs: Job[];
   /** The pull requests baum knows, for their titles; a job of one it no longer
    *  lists shows its number alone. */
   entries: Entry[];
   loading: boolean;
+  /** Changes when the app read the jobs again. */
+  revision: number;
   changed: () => Promise<void>;
 }) {
   const [error, setError] = useState("");
   const [folded, setFolded] = useState<ReadonlySet<string>>(new Set());
-  const newest = jobs.slice().reverse();
+  const history = useJobHistory(revision, true);
+  // A job's state is the current read's where it has the job: a page read a
+  // moment earlier may still show it running.
+  const currentById = new Map(current.map((job) => [job.id, job]));
+  const active = current.filter(isActiveJob).reverse();
+  const finished = history.jobs
+    .map((job) => currentById.get(job.id) ?? job)
+    .filter((job) => !isActiveJob(job));
+  const jobs = [...active, ...finished];
   const sections = [
-    {
-      id: "active",
-      title: "Running now",
-      tone: "positive" as const,
-      jobs: newest.filter(isActiveJob),
-    },
-    {
-      id: "finished",
-      title: "Finished",
-      tone: "quiet" as const,
-      jobs: newest.filter((job) => !isActiveJob(job)),
-    },
+    { id: "active", title: "Running now", tone: "positive" as const, jobs: active },
+    { id: "finished", title: "Finished", tone: "quiet" as const, jobs: finished },
   ].filter((section) => section.jobs.length > 0);
   const rows = useRowFocus<HTMLElement>(
     "jobs",
@@ -2174,13 +2280,20 @@ function Jobs({
     event.preventDefault();
     navigate(jobHref(job));
   });
-  // A link from a review opens the job that generated it.
+  // A page job read while it ran can finish and leave the current jobs
+  // unseen by either section: read the newest page again, once per read of
+  // the current jobs.
+  const restarted = useRef(-1);
   useEffect(() => {
-    if (location.hash.startsWith("#job-"))
-      document.getElementById(decodeURIComponent(location.hash.slice(1)))?.scrollIntoView({
-        block: "center",
-      });
-  }, []);
+    const running = new Set(active.map((job) => job.id));
+    if (
+      restarted.current !== revision &&
+      history.jobs.some((job) => isActiveJob(job) && !running.has(job.id))
+    ) {
+      restarted.current = revision;
+      history.restart();
+    }
+  }, [history, active, revision]);
   return (
     <section
       ref={rows.list}
@@ -2194,9 +2307,19 @@ function Jobs({
           <Alert>{error}</Alert>
         </div>
       ) : null}
-      {jobs.length === 0 && loading ? (
+      {history.error ? (
+        <div className="local-list-note">
+          <Alert>
+            {history.error}{" "}
+            <Button variant="secondary" size="compact" onClick={() => void changed()}>
+              Retry
+            </Button>
+          </Alert>
+        </div>
+      ) : null}
+      {jobs.length === 0 && (loading || (!history.read && !history.error)) ? (
         <LoadingStatus block>Loading jobs…</LoadingStatus>
-      ) : jobs.length === 0 ? (
+      ) : jobs.length === 0 && !history.more ? (
         <div className="local-empty">
           <h2>No jobs yet</h2>
           <p>Reviews and fixes you start, or that run automatically, show here.</p>
@@ -2233,6 +2356,17 @@ function Jobs({
           </ListSection>
         ))
       )}
+      {history.more ? (
+        <div className="flex justify-center py-4">
+          {history.loadingMore ? (
+            <LoadingStatus>Loading older jobs…</LoadingStatus>
+          ) : (
+            <Button variant="secondary" size="compact" onClick={history.loadMore}>
+              Load older jobs
+            </Button>
+          )}
+        </div>
+      ) : null}
     </section>
   );
 }

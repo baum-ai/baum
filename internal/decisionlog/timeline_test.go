@@ -385,6 +385,59 @@ VALUES ('claude-code','s3',?,'claude','m','full',0,'pending',0,'capture')`, repo
 	}
 }
 
+// Lists share a repository's snapshot while the store holds still: a write
+// through its connection or another one, or listMaxAge, builds it again.
+func TestTimelineListsShareASnapshot(t *testing.T) {
+	f := newTimelineFixture(t)
+	list := func() featurePage {
+		var page featurePage
+		if code := f.get("/api/timeline/features", url.Values{"repository": {repo}}, &page); code != http.StatusOK {
+			t.Fatalf("features = %d", code)
+		}
+		return page
+	}
+	// Each build opens the repository's clone.
+	built := func(want int) {
+		t.Helper()
+		if f.clones != want {
+			t.Fatalf("clones opened = %d, want %d", f.clones, want)
+		}
+	}
+	list()
+	first := f.clones
+	list()
+	f.get("/api/timeline/features/people", url.Values{"repository": {repo}}, nil)
+	built(first)
+	f.exec(`UPDATE feature SET title='Drafts' WHERE id='F2'`)
+	if title := list().Features[1].Title; title == nil || *title != "Drafts" {
+		t.Fatalf("F2 title = %v", title)
+	}
+	built(first + 1)
+	// Another process writing the file, as `baum internal features build`.
+	var path string
+	if err := f.store.db.QueryRow(`SELECT file FROM pragma_database_list WHERE name='main'`).Scan(&path); err != nil {
+		t.Fatal(err)
+	}
+	other, err := Open(path, OpenOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = other.Close() }()
+	if _, err := other.db.Exec(`UPDATE feature SET title='Notes' WHERE id='F2'`); err != nil {
+		t.Fatal(err)
+	}
+	if title := list().Features[1].Title; title == nil || *title != "Notes" {
+		t.Fatalf("F2 title = %v", title)
+	}
+	built(first + 2)
+	f.clock.now = f.clock.now.Add(listMaxAge)
+	list()
+	built(first + 3)
+	// A search reads the store itself.
+	f.get("/api/timeline/features", url.Values{"repository": {repo}, "q": {"export"}}, nil)
+	built(first + 4)
+}
+
 // Every list reads the repositories asked for, or every one served, merged
 // in one order; every row and detail names its repository.
 func TestTimelineAcrossRepositories(t *testing.T) {

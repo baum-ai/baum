@@ -30,3 +30,13 @@ func TestPreviousVersionRecordsItsHunkRanges(t *testing.T) {
 		t.Fatalf("hunk ranges = %v, want h_0123456789ab at 268 for 7 lines only", previous.HunkRanges)
 	}
 }
+
+func TestPreviousVersionRecordsTheImagesItWasOffered(t *testing.T) {
+	previous, err := PreviousVersionOf([]byte(`{"index":{"attachments":[{"id":"att_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},{"id":"att_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}]},"sections":[]}`), 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(previous.Attachments) != 2 || previous.Attachments[0] != "att_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" || previous.Attachments[1] != "att_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" {
+		t.Fatalf("attachments = %v", previous.Attachments)
+	}
+}

@@ -61,7 +61,7 @@ viewer. Without it the viewer uses baum's bundled type, declared once in
 `src/fonts/fonts.css`: Instrument Sans for text (`--font-text`, with a real
 italic) and Manrope for headings (`--font-heading`, at weight 800), variable
 weight, Latin and Latin Extended, as woff2 with their SIL Open Font Licenses
-(`src/fonts/*-OFL.txt`). The local application, `baum internal view` and the desktop's
+(`src/fonts/*-OFL.txt`). The local application, the reference viewer host and the desktop's
 own screens all use it. The host's bundler resolves the files from
 `viewer.css`, and a browser downloads them only when a page renders in them,
 so a host that sets the variable never fetches them.
@@ -349,7 +349,13 @@ branch, start, duration and files edited on one line (the rail leads back to
 the list) and its linked commits as links under it, and draws no
 card for it. `SessionCard`'s `headless` draws a session open with no header of
 its own, for such a pane. A session whose outcome is unknown shows no outcome
-badge.
+badge. A host that knows of sessions the list does not, such as ones running
+now, passes them as `hosted` (`HostSessionView`, also an option of
+`sessionsSlot`): each brings its rail label, an optional `indicator`, its card
+and its pane when opened alone. They come first, replace a listed session with
+the same id, are counted with the rest, and mark their own rail row and the
+group's. With none of either, the pane shows one empty state, whose sentence
+`empty` sets.
 
 `commitsSlot(state, { loadCommit, loadPatch })` (and `CommitList`'s
 `loaders`) gives a commit opened alone more than its list entry, read through
@@ -375,7 +381,7 @@ per commit and per file and forgetting a failed read, and
 ### Session transcripts
 
 `SessionCard` (`@baum/viewer/components/session-card`) draws one session, the
-same borderless session container in the hosted app and in `baum internal view`:
+same borderless session container in the hosted app and in the reference viewer host:
 a header with the agent,
 title, date, duration, prompt count and outcome (or linked commits), the
 session's main figures in four responsive groups: tokens with cost when the
@@ -620,7 +626,8 @@ address.
   `pending` to show it stale. The page asks `readDecision` and
   `readFeature` for details, each once until `revision` changes (an open
   detail stays shown until the newer read answers), and
-  `readPeople` for a tab's authors, keeping each tab's list. Decisions group
+  `readPeople` for a tab's authors, keeping each tab's list (a host whose
+  `filterBar` draws its own filter leaves it out). Decisions group
   by local day (`decisionSections`) and features by month and day of their
   last activity (`featureHeadings`, which skips a feature with none); on a
   screen at least 96rem
@@ -714,7 +721,7 @@ not committed. `pnpm generate:validators` writes the validators to
 `src/precompiled/review-tile-validators.js` with Ajv's standalone code
 generation, and that file is committed. They are precompiled because Ajv
 otherwise compiles with `new Function`, which a page under a strict
-Content-Security-Policy (as `baum internal view` serves) cannot run. No other script
+Content-Security-Policy (as the reference viewer host serves) cannot run. No other script
 rewrites the file, so a unit test fails when it is out of date: run
 `pnpm generate:validators` after changing either schema file, then rebuild the
 standalone app; `just viewer-build` from the module root does both.
@@ -722,7 +729,9 @@ standalone app; `just viewer-build` from the module root does both.
 ## Standalone app
 
 `app/` is a single-page app that renders one review document with
-`ReviewViewer`. It is meant to be served by `baum internal view`, and talks only to the
+`ReviewViewer`. It is a reference integration for `internal/viewserver` and
+viewer tests; the desktop uses the shared components in its local app. The
+standalone CLI launcher is no longer available. It talks only to the
 page's own origin:
 
 - `GET /api/document` returns the `baum.review/1` document.
@@ -857,11 +866,10 @@ manifest's `tile_kinds` and `tile_catalogue`.
 `e2e/` holds Playwright specs that drive the standalone app in Chromium.
 `pnpm test:e2e` builds the app from source into `e2e-dist/` (not the committed
 bundle, so a stale one cannot hide a failure) and starts `e2e/server.ts`, a
-small stand-in for `baum internal view`. It serves the built files with the same
+small stand-in for the reference viewer host. It serves the built files with the same
 security headers as `internal/viewserver` (the content security policy is kept
 equal to its `contentSecurityPolicy`), `GET /api/document` with the schema's
-synthetic example (`../schema/review-example.json`, what `baum internal view --sample`
-shows), a quiet `/api/events`, `/api/sessions` answering that no sessions are
+synthetic example (`../schema/review-example.json`), a quiet `/api/events`, `/api/sessions` answering that no sessions are
 available, and `/api/patch` answering no patch for a path the document cites (404 for any other, as `viewserver` does). Opening the page as `/?csp=off` serves it without the policy, which `untrusted.spec.ts` uses so that sanitization is tested on its own rather than masked by the policy. The suite needs no Go binary
 and no hosted API. A spec changes what one page sees with `page.route`
 (`serveDocument` and `serveSessions` in `e2e/fixtures.ts`), so specs stay
@@ -883,6 +891,15 @@ hosted app's integration with the viewer stays covered by `ui/e2e`.
 Attachment resolvers may receive the rendered document as a second argument,
 so a host whose captures are version-scoped can serve each comparison pane’s
 images from that snapshot. Existing one-argument resolvers remain supported.
+
+An indexed image may also carry native-session `origins`, with its owning
+session and prompt/turn, tool call, optional child session and timestamp.
+The image UI labels human-supplied images separately from agent tool results
+and offers the owning prompt through the host's source opener, including in
+the full-size dialog. Session-only images have no `source_url`; their image
+blocks cite an attachment ID. Old description-image records remain valid.
+Identical image bytes can retain both PR-description URLs and several session
+origins while sharing one stored image.
 
 The local multi-repository app in [`../app/`](../app/README.md) consumes the
 same public viewer components and uses the exported `local-sessions` and

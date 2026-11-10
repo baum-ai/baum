@@ -53,6 +53,11 @@ export type PR = GitHubState & {
   review_requested_from_me: boolean;
   /** The person is among its first 20 assignees; absent in data from an older daemon. */
   assigned_to_me?: boolean;
+  /** It has an assignee; absent in data from an older daemon. */
+  assigned?: boolean;
+  /** A review is requested from someone, a person or a team; absent in data
+   *  from an older daemon. */
+  review_requested?: boolean;
   author_has_write: boolean | null;
   team_membership_known: boolean;
   head_ref?: string;
@@ -69,6 +74,9 @@ export type PR = GitHubState & {
   /** GitHub says the branch is out of date with its base and not conflicting,
    *  which Update branch fixes; absent in data from an older daemon. */
   behind?: boolean;
+  /** GitHub still waits for a required approving review. False when none is
+   *  required or the one required is given; null or absent when unknown. */
+  review_required?: boolean | null;
 };
 export type Entry = GitHubState & {
   review_minutes: number | null;
@@ -679,11 +687,12 @@ export function saveAgentSettings(settings: AgentSettings) {
 /** Sessions that are not over and belong to the pull request, matched by
  * repository across clones as jobs are. */
 export function liveFor(sessions: LiveSession[], pr: Pick<PR, "repository" | "number">) {
+  return listedFor(sessions, pr).filter((s) => s.state !== "ended");
+}
+/** Every session the daemon lists on the pull request, ended ones too. */
+export function listedFor(sessions: LiveSession[], pr: Pick<PR, "repository" | "number">) {
   return sessions.filter(
-    (s) =>
-      s.state !== "ended" &&
-      s.pr === pr.number &&
-      s.repository.toLowerCase() === pr.repository.toLowerCase(),
+    (s) => s.pr === pr.number && s.repository.toLowerCase() === pr.repository.toLowerCase(),
   );
 }
 /** A decision captured from an agent session, from `api/decisions`. */
@@ -841,7 +850,17 @@ export function jobHref(job: Job) {
  *  view, when the page was opened from there, else the Inbox. `prefix` starts
  *  the query of a link that should go back to the same place. */
 export function backTo(search: URLSearchParams): { href: string; label: string; prefix: string } {
-  if (search.get("page") !== "pulls") return { href: appURL(), label: "Inbox", prefix: "" };
+  if (search.get("page") !== "pulls") {
+    // Back to the inbox it was opened from; the root opens the first one.
+    const inbox = search.get("inbox");
+    return inbox
+      ? {
+          href: appURL(`?inbox=${encodeURIComponent(inbox)}`),
+          label: "Inbox",
+          prefix: `inbox=${encodeURIComponent(inbox)}&`,
+        }
+      : { href: appURL(), label: "Inbox", prefix: "" };
+  }
   const back = new URLSearchParams({ page: "pulls" });
   const filter = search.get("filter");
   if (filter) back.set("filter", filter);
@@ -894,6 +913,45 @@ export async function request<T>(
   }
   if (response.status === 204) return undefined as T;
   return response.json();
+}
+/** The jobs a page of `api/jobs?limit=` holds, newest first, and the id to
+ *  pass as `before` for the next older page; absent when there is none. */
+export type JobPage = { jobs: Job[]; next?: string };
+export async function readJobPage(
+  before: string | undefined,
+  limit: number,
+  signal?: AbortSignal,
+): Promise<JobPage> {
+  const query = new URLSearchParams({ limit: String(limit) });
+  if (before) query.set("before", before);
+  const answer = await request<{ jobs?: Job[]; next?: string | null }>(
+    `api/jobs?${query}`,
+    undefined,
+    "GET",
+    signal,
+  );
+  return { jobs: answer.jobs ?? [], ...(answer.next ? { next: answer.next } : {}) };
+}
+/** Every loaded job of one pull request, oldest first (`api/jobs` without
+ *  the group's jobs, which belong to the group). */
+export async function readPullRequestJobs(
+  repository: string,
+  pr: number,
+  signal?: AbortSignal,
+): Promise<Job[]> {
+  const query = new URLSearchParams({ repository, pr: String(pr) });
+  const answer = await request<{ jobs?: Job[] }>(`api/jobs?${query}`, undefined, "GET", signal);
+  return answer.jobs ?? [];
+}
+/** One loaded job wherever it is in the history, or null when the daemon
+ *  does not have it (it may be archived). */
+export async function readJob(id: string, signal?: AbortSignal): Promise<Job | null> {
+  try {
+    return await request<Job>(`api/jobs/${encodeURIComponent(id)}`, undefined, "GET", signal);
+  } catch (e) {
+    if (e instanceof LocalRequestError && e.status === 404) return null;
+    throw e;
+  }
 }
 /** Queues reviews of these pull requests at once. A fork or an author
  *  without known write access needs the user's confirmation first: then

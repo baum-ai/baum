@@ -1,0 +1,103 @@
+package agenthookdefs
+
+import (
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"reflect"
+	"testing"
+)
+
+// pluginVersion is the version both plugin manifests and the Claude catalog
+// carry. A hook change ships as a new version, which agents update to; 1.1.0
+// added the record-only events (Claude Code's notifications and every tool
+// call, Codex's permission requests), and 1.2.0 Claude Code's permission
+// requests, which the desktop app answers. Version 1.2.1 fixes Codex runtime
+// discovery by using its compatibility manifest.
+const pluginVersion = "1.2.1"
+
+// Read the shipped files, not generated fixtures: the OSS subtree is the
+// marketplace root after publication and must carry everything it references.
+func TestMarketplacePluginsMatchUserWideHooks(t *testing.T) {
+	root := filepath.Join("..", "..")
+	for _, agent := range []string{"claude-code", "codex"} {
+		t.Run(agent, func(t *testing.T) {
+			settings, _ := LookupUserWide(agent)
+			plugin := filepath.Join(root, "plugins", "baum-"+agent)
+			manifestPath := filepath.Join(plugin, ".codex-plugin", "plugin.json")
+			if agent == "claude-code" {
+				manifestPath = filepath.Join(plugin, ".claude-plugin", "plugin.json")
+			}
+			var manifest map[string]any
+			readPluginJSON(t, manifestPath, &manifest)
+			if agent == "codex" {
+				// Codex 0.166 installs a portable root manifest but omits its
+				// hooks at runtime. Keep the working compatibility layout.
+				if _, err := os.Stat(filepath.Join(plugin, "plugin.json")); !os.IsNotExist(err) {
+					t.Fatal("a portable root manifest would hide the Codex hook plugin")
+				}
+			}
+			if manifest["name"] != "baum" || manifest["version"] != pluginVersion || manifest["hooks"] != nil {
+				t.Fatalf("manifest = %#v", manifest)
+			}
+			expected := map[string][]map[string]any{}
+			for _, p := range settings.Placements {
+				handler := map[string]any{"type": "command", "command": UserDispatcher(agent, p.Event)}
+				if p.Timeout != 0 {
+					handler["timeout"] = float64(p.Timeout)
+				}
+				if p.Async {
+					handler["async"] = true
+				}
+				group := map[string]any{"hooks": []any{handler}}
+				if p.Matcher != nil {
+					group["matcher"] = *p.Matcher
+				}
+				expected[p.HookEvent] = append(expected[p.HookEvent], group)
+			}
+			var hooks struct {
+				Hooks map[string][]map[string]any `json:"hooks"`
+			}
+			readPluginJSON(t, filepath.Join(plugin, "hooks", "hooks.json"), &hooks)
+			if !reflect.DeepEqual(hooks.Hooks, expected) {
+				t.Fatalf("plugin hooks differ from shared event/matcher/timeout/dispatcher contract: got %#v want %#v", hooks.Hooks, expected)
+			}
+		})
+	}
+	var claude struct {
+		Name    string
+		Owner   map[string]any
+		Plugins []struct{ Name, Source, Version string }
+	}
+	readPluginJSON(t, filepath.Join(root, ".claude-plugin", "marketplace.json"), &claude)
+	if claude.Name != "baum" || len(claude.Owner) == 0 || len(claude.Plugins) != 1 || claude.Plugins[0].Source != "./plugins/baum-claude-code" || claude.Plugins[0].Version != pluginVersion {
+		t.Fatalf("Claude catalog = %#v", claude)
+	}
+	var codex struct {
+		Name    string
+		Plugins []struct {
+			Name     string
+			Source   struct{ Source, Path string }
+			Policy   struct{ Installation, Authentication string }
+			Category string
+		}
+	}
+	readPluginJSON(t, filepath.Join(root, ".agents", "plugins", "marketplace.json"), &codex)
+	if codex.Name != "baum" || len(codex.Plugins) != 1 {
+		t.Fatalf("Codex catalog = %#v", codex)
+	}
+	p := codex.Plugins[0]
+	if p.Name != "baum" || p.Source.Source != "local" || p.Source.Path != "./plugins/baum-codex" || p.Policy.Installation != "AVAILABLE" || p.Policy.Authentication != "ON_INSTALL" || p.Category != "Productivity" {
+		t.Fatalf("Codex plugin = %#v", p)
+	}
+}
+func readPluginJSON(t *testing.T, path string, target any) {
+	t.Helper()
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(b, target); err != nil {
+		t.Fatal(err)
+	}
+}

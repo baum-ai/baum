@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -139,5 +140,35 @@ func TestSuccessfulInternalRetryKeepsAbandonedCallPartial(t *testing.T) {
 	}
 	if !got.Usage.Unreported || len(got.UsageAttempts) != 2 || !got.UsageAttempts[0].Usage.Unreported || !got.UsageAttempts[0].Failed || got.UsageAttempts[1].Usage.Unreported || got.Usage.CacheRead != 140 {
 		t.Fatalf("abandoned report treated as final: %+v", got)
+	}
+}
+
+// Usage receives the calls' usage as the stream reports it: a call still
+// streaming is Unreported with what it reported so far, and the last report
+// matches the result's attempts.
+func TestUsageIsReportedWhileCallsStream(t *testing.T) {
+	script := filepath.Join(t.TempDir(), "claude")
+	events := `{"type":"stream_event","event":{"type":"message_start","message":{"id":"m1","model":"claude-haiku-5-5","usage":{"input_tokens":10,"cache_read_input_tokens":90}}}}
+{"type":"stream_event","event":{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":7}}}
+{"type":"stream_event","event":{"type":"message_stop"}}
+{"type":"result","subtype":"success","structured_output":{},"usage":{}}`
+	if err := os.WriteFile(script, []byte("#!/bin/sh\ncat >/dev/null\ncat <<'EVENTS'\n"+events+"\nEVENTS\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	var reports [][]agent.UsageAttempt
+	got, err := (&Backend{Binary: script, Profile: Isolated, DefaultEndpoint: testEndpoint}).Run(context.Background(), agent.Request{Directory: t.TempDir(), Schema: []byte(`{}`), MaxCalls: 5, MaxTokens: 1000,
+		Usage: func(attempts []agent.UsageAttempt) { reports = append(reports, attempts) }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(reports) < 2 {
+		t.Fatalf("usage reported %d times", len(reports))
+	}
+	first := reports[0]
+	if len(first) != 1 || first[0].Model != "claude-haiku-5-5" || first[0].Usage.CacheRead != 90 || first[0].Usage.Output != 0 || !first[0].Usage.Unreported {
+		t.Fatalf("first report = %+v", first)
+	}
+	if last := reports[len(reports)-1]; !reflect.DeepEqual(last, got.UsageAttempts) {
+		t.Fatalf("last report %+v, result %+v", last, got.UsageAttempts)
 	}
 }

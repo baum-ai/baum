@@ -12,6 +12,7 @@ import (
 	"github.com/baum-ai/baum/internal/gitlocal"
 	"github.com/baum-ai/baum/internal/prlink"
 	"github.com/baum-ai/baum/internal/repos"
+	"github.com/baum-ai/baum/internal/workstats"
 )
 
 // Registry lists the registered clones; *repos.Registry is one.
@@ -54,7 +55,28 @@ type Resolver struct {
 	// is asked again only after clonesFor, not by every lookup.
 	failed   time.Time
 	unlinked map[string]time.Time
+	// worked is what git last said each directory has checked out, kept
+	// while its gitlocal.CheckoutStamp is unchanged, for at most workedFor:
+	// an active session is relinked every RelinkEvery, and reading its
+	// branch, upstream and remotes runs several git processes.
+	worked map[string]workedEntry
 }
+
+// workedEntry is one directory's checked-out work as git last read it.
+type workedEntry struct {
+	stamp      string
+	at         time.Time
+	common     string
+	repository string
+	work       prlink.Work
+}
+
+const (
+	// workedFor bounds how long a directory's work is reused without git,
+	// for what the stamp does not see (a global configuration edit).
+	workedFor = 10 * time.Minute
+	maxWorked = 256
+)
 
 func (r *Resolver) now() time.Time {
 	if r.Now != nil {
@@ -108,35 +130,69 @@ func (r *Resolver) Link(ctx context.Context, cwd string) (Link, bool) {
 }
 
 func (r *Resolver) link(ctx context.Context, cwd string) (Link, bool) {
-	repo, repository, ok := r.open(ctx, cwd)
+	stamp, _, stamped := gitlocal.CheckoutStamp(cwd)
+	if stamped {
+		if entry, ok := r.reuse(ctx, cwd, stamp); ok {
+			workstats.Inc("livesessions.relink_reused")
+			return r.resolve(ctx, entry.repository, entry.work)
+		}
+	}
+	repo, repository, common, ok := r.open(ctx, cwd)
 	if !ok {
 		return Link{}, false
 	}
 	defer func() { _ = repo.Close() }()
-	return r.resolve(ctx, repository, prlink.Local(ctx, repo, repository))
+	work := prlink.Local(ctx, repo, repository)
+	if stamped && ctx.Err() == nil {
+		r.mu.Lock()
+		if r.worked == nil || len(r.worked) >= maxWorked {
+			r.worked = map[string]workedEntry{}
+		}
+		r.worked[cwd] = workedEntry{stamp: stamp, at: r.now(), common: common, repository: repository, work: work}
+		r.mu.Unlock()
+	}
+	return r.resolve(ctx, repository, work)
+}
+
+// reuse is the work last read in dir while its stamp is unchanged, younger
+// than workedFor, and its clone still an available registered one.
+func (r *Resolver) reuse(ctx context.Context, dir, stamp string) (workedEntry, bool) {
+	r.mu.Lock()
+	entry, ok := r.worked[dir]
+	r.mu.Unlock()
+	if !ok || entry.stamp != stamp || r.now().Sub(entry.at) >= workedFor {
+		return workedEntry{}, false
+	}
+	for _, clone := range r.registered(ctx) {
+		if clone.Available && clone.CommonDir == entry.common {
+			return entry, true
+		}
+	}
+	return workedEntry{}, false
 }
 
 // open opens the working tree dir when its git directory is an available
-// registered clone's, and names the clone's repository in lower case.
-func (r *Resolver) open(ctx context.Context, dir string) (*gitlocal.Repo, string, bool) {
+// registered clone's, and names the clone's repository in lower case and its
+// common git directory.
+func (r *Resolver) open(ctx context.Context, dir string) (*gitlocal.Repo, string, string, bool) {
 	clones := r.registered(ctx)
 	if len(clones) == 0 {
-		return nil, "", false
+		return nil, "", "", false
 	}
 	repo, err := gitlocal.Open(ctx, dir, gitlocal.Options{CommandTimeout: gitTimeout})
 	if err != nil {
-		return nil, "", false
+		return nil, "", "", false
 	}
 	common, err := filepath.EvalSymlinks(repo.CommonDir())
 	if err == nil {
 		for _, clone := range clones {
 			if clone.Available && clone.CommonDir == common {
-				return repo, strings.ToLower(clone.Repository), true
+				return repo, strings.ToLower(clone.Repository), common, true
 			}
 		}
 	}
 	_ = repo.Close()
-	return nil, "", false
+	return nil, "", "", false
 }
 
 // LinkCommit implements WorkLinker: the commit head made on branch in the
@@ -146,7 +202,7 @@ func (r *Resolver) LinkCommit(ctx context.Context, dir, branch, head string) (Li
 	if !filepath.IsAbs(dir) {
 		return Link{}, false
 	}
-	repo, repository, ok := r.open(ctx, dir)
+	repo, repository, _, ok := r.open(ctx, dir)
 	if !ok {
 		return Link{}, false
 	}
@@ -162,7 +218,7 @@ func (r *Resolver) LinkPush(ctx context.Context, dir, remote, branch, head strin
 	if !filepath.IsAbs(dir) {
 		return Link{}, false
 	}
-	repo, repository, ok := r.open(ctx, dir)
+	repo, repository, _, ok := r.open(ctx, dir)
 	if !ok {
 		return Link{}, false
 	}

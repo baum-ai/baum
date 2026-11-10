@@ -2,14 +2,10 @@
 
 ## What baum sends where
 
-baum is local-first, but generating a review requires a model. When you
-run `baum internal generate`, the following is sent to the **model provider you
-configure** (the `claude`, `codex` or `cursor-agent` CLI, each of which talks
-to its own provider under your own account, Cursor to the model it routes the
-run to, or the Anthropic API, which the `anthropic` backend calls with your
-`ANTHROPIC_API_KEY`). The desktop app and its daemon use only Claude Code and
-Codex: they never run the `cursor-agent` or `anthropic` backend, and `auto`
-never falls back to the Anthropic API there:
+Generating a desktop review sends the following to the **model provider of
+your selected Claude Code or Codex CLI**, under your own account. The app and
+its daemon offer only those two harnesses, and automatic selection never
+falls back to an API-key backend:
 
 - the files of the repository at the pull request head and merge base,
   which the review agent may read as they are, unredacted;
@@ -84,10 +80,8 @@ branch into `refs/baum/default` and sends a read-only snapshot of its head
 harness's backend and provider, run as a review is; the reply, a list of
 features, is masked before it is stored.
 
-Redaction is best effort. Review `baum internal bundle` output before using
-`generate` on a repository whose sessions may contain sensitive material, and
-do not run it against repositories you are not allowed to share with your
-provider.
+Redaction is best effort. Generate reviews only for repositories and sessions
+you are allowed to share with your selected provider.
 
 Description images are downloaded from URLs GitHub signed in the pull
 request's rendered body, which your token read. The downloads carry no
@@ -97,14 +91,36 @@ credentials, and only these hosts are contacted: `github.com`
 `github-production-user-asset-*.s3.amazonaws.com`, over HTTPS. A redirect to
 any other host is refused, and an image hosted elsewhere is not downloaded.
 
-baum sends no telemetry. Unless you run `baum login`, nothing leaves the
-machine except calls to GitHub, the configured model provider and
+Local review generation also reads retained inline image payloads from linked
+Claude Code and Codex native transcripts and reachable subagent transcripts.
+Human-pasted images and tool-result images keep distinct provenance. Entire
+checkpoint images are excluded. Image discovery does not fetch transcript URLs
+or open image-file paths mentioned in session text. Native transcript reads
+are confined to the session stores and bounded by line, scan, image-count and
+decoded-byte limits. Unsupported or missing images are nonfatal diagnostics.
+Image bytes are sniffed as PNG/JPEG/GIF/WebP and session images above 40 million
+pixels are rejected. The shared capture limit is 20 images of at most 10 MiB
+each by default; description images come first and identical bytes share one
+copy while retaining their origins. Session images longer than 1568 px on a
+side and at most 24 million pixels are decoded and re-encoded at that size
+when the result is smaller; colour profiles are not carried over. Saved
+versions share one stored copy of identical image bytes.
+
+These pixels are not text-redacted. Eligible images are made available to the
+configured review model, just as PR-description images are, and stored with the
+local review version. They are served only through authenticated local image
+routes and are not published to GitHub. Treat sensitive pixels in session
+images as sensitive model input; provenance does not imply a test passed or
+that an image depicts the reviewed revision.
+
+baum sends no telemetry. Its desktop runtime contacts GitHub, the selected
+model provider and
 `static.usebaum.com`, from which it downloads the public price list used to
 show what usage would cost at API prices. That request is a plain download: it carries no token,
 repository, pull request or session data, and the list's signature is checked
 against a key built into the binary. When the list cannot be fetched or
-verified, baum uses a copy embedded at release. The hosted service commands
-are described [below](#hosted-service-commands). Tokens are read from the
+verified, baum uses a copy embedded at release. Agent hooks are described
+[below](#local-agent-hooks). GitHub tokens are read from the
 environment, `gh auth token` or the 0600 config file and are never written
 anywhere else. Local inbox discovery also reads GitHub's REST API using that
 same token and derived host, without redirects or extra scopes. Its private application database
@@ -114,121 +130,65 @@ fingerprint and repository. Tokens, PR bodies and signed image URLs are never
 put in that cache. Cached and offline results are marked stale; unreadable
 author write permissions remain unknown, rather than granting automatic work.
 
-## Hosted service commands
+## Local agent hooks
 
-`baum login`, `logout`, `whoami`, `setup`, `upload` and `hooks`
-connect this machine to a hosted baum server. They are opt-in: nothing is sent
-to a baum server until you run `baum login` (or provide a `BAUM_TOKEN`).
+`baum hooks install --user` registers the public baum marketplace and
+installs/enables its native Claude Code or Codex plugin. Update refreshes the
+marketplace and installed plugin; uninstall removes only that plugin. baum
+edits no raw hook settings and keeps no settings backups or migration markers.
+Native plugin operations can download from GitHub. Codex hook trust belongs
+to Codex and must be reviewed with `/hooks`; installation grants no trust.
 
-- `baum login` runs a device-authorization flow with the server you name
-  (`--server` or `BAUM_SERVER`, default `https://usebaum.com/api`) and stores
-  the token it issues in `~/.config/baum/credentials.json` (mode 0600, or under
-  `XDG_CONFIG_HOME`). The token is sent only to that server.
-- After that, `baum upload` and `baum setup --upload` send the coding-agent
-  sessions recorded for a repository to the server you logged in to, as an
-  archive in which goredact masked the secrets it detected, on this machine.
-  Redaction is best effort, as above, and repository and worktree paths are
-  sent as they are. `setup --sync` asks that server to synchronize the
-  repository. Each request also names this baum's version and API protocol.
-- `baum setup` without those flags contacts no baum server. It may download
-  the pinned release of the [Entire](https://docs.entire.io) CLI from GitHub,
-  checked against a SHA-256 built into the binary, and installs Entire's
-  hooks and baum's in the repository.
-- Agent and Git hooks contact no baum server. The hook commands
-  committed to repositories run baum only for a logged-in user or in a clone
-  set up with `baum setup`, and, for a baum built or installed for the hosted
-  service, also in a repository whose committed agent hook settings dispatch
-  through baum (as the hosted service's onboarding pull request and `baum
-  setup` write them). There a hook may install the pinned Entire release from
-  GitHub and the clone's Git hook dispatchers, then hands the event to Entire.
-  Everywhere else the hooks run Entire directly, and baum does nothing at all:
-  without a login, an open-source build does not install Entire or its hooks
-  in a repository just because the repository's files ask for it, unless the
-  machine still has the hosted install script's marker (below), or the baum
-  daemon has run for you. Where only the daemon lets the hooks run baum, they
-  do nothing for the hosted service: no Entire install, no Git hooks, Entire
-  called exactly as without baum (and, for the user-wide hooks, not at all),
-  and the event recorded by the daemon (below).
-  Uploading, or anything else that contacts a baum server, needs `baum login`
-  in every case.
-- Where a hook runs baum, it also reports the run to the baum daemon (below),
-  starting it if none runs, unless you stopped it with `baum daemon stop`,
-  set `BAUM_NO_DAEMON=1`, or `CI` is set: the agent and event or Git hook,
-  the working directory and exit status, and from the agent's payload only
-  its session id, transcript path, working directory, event name, start
-  source and end reason, and of a Claude Code notification its type and the
-  sentence it showed you, cut to 512 bytes (see "Authenticated local
-  application"), never prompts or tool input and output. A Git
-  `pre-push` event never keeps the remote URL, which can carry credentials,
-  and keeps the refs being pushed. When the daemon cannot take it within
-  300 ms, the event waits in a private spool (`spool/` in the daemon's state
-  directory, mode 0700, one 0600 file per event, about 1000 events and 8 MiB,
-  oldest dropped first). The daemon keeps these events on your machine; none
-  is sent to a baum server.
-- `baum hooks install --user` adds baum's hooks to your user-wide agent
-  settings: `~/.claude/settings.json` for Claude Code and
-  `~/.codex/hooks.json` for Codex. `baum setup` does the same for a hosted
-  install or a logged-in user, unless `--skip-user-hooks` or `--skip-entire`,
-  and its `--all` plan names those files first. The hooks run in every
-  directory an agent works in, so they run baum only in a Git repository
-  where no other hook the agent runs (the repository's, yours, managed
-  policy's, `/etc/codex`'s; not plugins') already hands the event to Entire,
-  and there only under the rules above. In a repository without Entire enabled
-  they run only if a baum daemon has run for you, and then only record the
-  event for it: no Entire, no Git hooks. Everywhere else they do
-  nothing. They read local files only. Nothing else in the files changes; the
-  previous version is kept in `~/.local/state/baum/backups/` (or under
-  `$XDG_STATE_HOME`), a file baum cannot parse is left alone, and root is
-  refused in another user's home. `baum hooks uninstall --user` removes
-  exactly those hooks (or delete the entries whose command contains
-  `baum hooks agent --check --user`). Codex runs them only after you trust
-  them with `/hooks`, and trusts hooks by position: when a removal moves
-  hooks of yours, the command lists them for you to trust again.
-- Once installed, Entire's own hooks record agent sessions as checkpoints and
-  push them, transcripts included, with `git push` to the checkpoint branch of
-  the repository's remote (or the checkpoint remote its settings name). That
-  is Entire's behaviour, not baum's; whoever can read that remote can read
-  them.
-- A baum counts as installed for the hosted service when its release build
-  says so, or when the hosted install script left the file `hosted-install`
-  beside the credentials (`~/.config/baum/`, or under `XDG_CONFIG_HOME`). The
-  marker outlives the binary that came with it: an open-source baum installed
-  later on the same machine also sets up onboarded repositories without a
-  login. Delete the file (`rm ~/.config/baum/hosted-install`) to stop that.
-- `baum logout` revokes and removes the stored token but leaves the markers
-  `baum setup` and the hook bootstrap write in a clone's `.git/baum`
-  directory (`setup-complete`, `bootstrap-ok`). That clone's hooks keep
-  running through baum for that local work; without a login they send
-  nothing to a baum server.
+Plugin callbacks check only that they run in a Git worktree and that baum's
+local daemon has run. They read no hosted credentials, Entire settings or
+third-party hook configuration. baum neither installs repository hooks nor
+installs, configures or invokes Entire. Independent hooks may run alongside
+baum, and independently recorded checkpoint refs remain readable. Owners can
+remove legacy baum-specific repository dispatchers themselves; preserve their
+other hooks, Entire configuration and checkpoint refs. There is no automatic
+migration or cleanup of those files.
+
+Callbacks report bounded metadata to the local daemon: agent/event or local
+`post-commit`/`pre-push`, working directory, session identifiers, transcript
+path, source/end reason and terminal location. A Claude notification can also
+carry its type and message, cut to 512 bytes. Ordinary capture is bounded to
+300 ms; permission and completed-tool input has a two-second bound. Incomplete
+permission payloads never ask the app for a decision. Git events omit remote
+URLs, which could hold credentials.
+
+Event delivery has a 300 ms budget. A daemon that cannot take the event leaves
+it in a private bounded spool (about 1000 events and 8 MiB, oldest dropped
+first). Events stay on this machine. Hooks may start a previously run daemon,
+except after an explicit stop, with `BAUM_NO_DAEMON=1` or in CI. Permission
+answers and queued messages use the daemon's local protocol; absent or
+incompatible support leaves the agent's terminal behavior unchanged. See
+[local hook contracts](internal/hookcli/README.md).
 
 ## What `baum internal doctor` runs and prints
 
-`baum internal doctor` diagnoses the machine and starts no model. It runs
-`<tool> --version` for `git` and `gh`, each with a timeout, in
-a process group that is killed whole when the timeout passes, and with the
-filtered environment of the local backends, which drops provider keys and
-GitHub, cloud and SSH-agent credentials, never the whole of baum's. The tool's
-path comes from `backend_paths`, `GH_PATH` or `PATH`;
-the same checks `baum internal generate` runs for `claude`, `codex` and `cursor-agent`,
-which include codex's read-only sandbox preflight (a sandboxed `cat` and a
-blocked write in a temporary directory it removes) and `cursor-agent --help`
-and `--version`, and for `anthropic`, which only looks at
-whether `ANTHROPIC_API_KEY` is set and sends it nowhere; and, only when no token comes from the
-environment, the config file or `gh`'s own files, `gh auth token
---secure-storage --hostname <host>`. Its one network contact is the signed price
-list described above, skipped with `--offline`; nothing else leaves the machine.
+`baum internal doctor` diagnoses the desktop runtime and starts no model. It
+runs bounded git/gh version checks and Claude Code/Codex preflight checks,
+including Codex's read-only sandbox preflight in a temporary directory. Each
+subprocess uses a filtered environment and a process-group timeout. Explicit
+`backend_paths`, `GH_PATH` and `PATH` select the tools. Automatic backend
+selection considers only Claude Code and Codex and never an API-key fallback.
+
+The report resolves the GitHub credential source, including `gh auth token
+--secure-storage --hostname <host>` when no explicit or file credential exists.
+Its only network request is the signed price list described above; `--offline`
+skips it.
 It creates no files of its own: it opens the registry read-only (SQLite
 `mode=ro`, so no journal, table or file mode changes) and only when it exists,
 and does not create a review store. It asks a running baum daemon for its
 version, process id and uptime over the daemon's socket, and never starts one. A config file that does not parse is shown
 by position, and by key for a wrong type or value, and never by its text. Asking
 gh for a token may wait up to 30 seconds for a keyring unlock prompt. `gh auth token` keeps the environment gh needs to find
-its own configuration, as `baum internal generate` does.
+its own configuration.
 
 It never prints a token or an API key, or a prefix, length or hash of one. For a
 GitHub token it prints only where it was found (an environment variable's name,
-the config file, `hosts.yml` or the keyring), and for `ANTHROPIC_API_KEY` only
-whether it is set. It does print paths, tool versions and the `PATH` entries,
+the config file, `hosts.yml` or the keyring). It does print paths, tool
+versions and the `PATH` entries,
 so look at a report before pasting it into a public issue. The desktop app's
 "Report a problem" attaches nothing, only the versions (of baum, the OS and
 each tool, without paths), or a shorter summary, as you choose with a preview
@@ -240,32 +200,20 @@ github.com are left out, and each line is clipped. It still lists tool versions
 and paths, and a machine or host name inside a tool's error text is not
 recognised, so review the form before submitting.
 
-## What `baum internal view` shows
+## Local session transcripts
 
-`baum internal view` listens only on `127.0.0.1` and never contacts a server. Besides
-the document, it shows the coding-agent sessions on your machine that it
-linked to the pull request, and, when you open one, that session's full
-transcript: your prompts, the agent's messages, and each tool call's input and
-output, which can include file contents and command output. The transcript is
-redacted with the engine `baum internal sessions --dump` uses, so secrets and e-mail
-addresses are masked as described above, and your home directory is written as
-`~` where it starts a path; paths outside it (a clone elsewhere, a Windows
-home under `/mnt/c` in WSL) are shown as recorded, as are home paths glued
-to other text (`-I/home/…/include`, a path after an escaped backslash), and
-nothing else is removed. Only sessions linked to the pull request are served.
-
-The server has no login. It refuses requests whose `Host` is not its own
-address, which stops other websites in your browser from reading it, but any
-other user or process on the same machine can request the port while it runs
-and read everything it serves, transcripts included, even without permission
-to read your `~/.claude` or other session stores. Do not run `baum internal view` on a
-shared machine. The baum daemon, which serves the local application, adds the
-separate authenticated boundary described below.
+The authenticated desktop app serves transcripts only for sessions linked to
+the requested pull request or selected live session. Transcripts can include
+prompts, agent replies, tool inputs and tool output, including file contents.
+The shared redaction engine masks secrets and e-mail addresses, and writes
+the home directory as `~` where it starts a path. Paths outside the home and
+home paths embedded inside other text may remain as recorded. Access is
+bounded by the authenticated local application boundary described below.
 
 ## Reading your clone without downloading anything
 
-`baum internal sessions` and `baum internal view` read your clone with git but never use the
-network. They run fixed git commands with no shell. Refs are read in your clone;
+Local session and checkpoint readers inspect your clone with git without
+using the network. They run fixed git commands with no shell. Refs are read in your clone;
 commits, trees and Entire checkpoints are read from a private temporary
 repository that borrows the clone's objects and has no remote, so a partial
 clone's missing objects (a `--filter` clone with a promisor remote) are skipped
@@ -445,7 +393,8 @@ container. A test fails if any code under `oss/internal` or `oss/cmd` names it.
 
 ### The cursor-agent backend
 
-This backend is reachable only from the `baum internal generate` command line.
+This backend remains an engine implementation for shared package consumers.
+The desktop CLI exposes no standalone generation command.
 The desktop app and its daemon refuse a job whose backend is `cursor-agent`.
 
 **baum cannot make the Cursor Agent CLI reliably read-only.** It uses every
@@ -525,7 +474,8 @@ What remains for `cursor-agent`:
 
 ### The anthropic backend
 
-This backend is reachable only from the `baum internal generate` command line.
+This backend remains an engine implementation for shared package consumers.
+The desktop CLI exposes no standalone generation command.
 The desktop app and its daemon refuse a job whose backend is `anthropic`, and
 `auto` there never falls back to it, so the app spends nothing on an API key.
 
@@ -630,7 +580,8 @@ What the agent can do, per backend:
 What reaches the agent: the pull request's title and branches, the conflicted
 paths, and for failing checks the failing check runs and commit statuses of
 the head (name, conclusion, output title, summary and text, each bounded) and
-the last 200 lines of the job logs of up to four failing GitHub Actions jobs.
+up to 200 lines of the job logs of up to four failing GitHub Actions jobs,
+ending with the step that failed rather than the runner's cleanup after it.
 baum reads them with your GitHub token from the API; a job log's signed
 download URL is read without the token. All of it is untrusted: it goes into
 the prompt between markers that carry a random tag it cannot know, with
@@ -786,7 +737,7 @@ or automatically: thread replies follow only a fix you started.
 
 ## Local repository registry
 
-`baum internal repos` stores clone paths, git common directories, normalized GitHub
+`internal/repos` stores clone paths, git common directories, normalized GitHub
 identities and generation preferences in a 0600 SQLite database beside the XDG
 config file. Remote URLs and their credentials are never persisted or returned.
 A repository can also be picked by its `owner/name` alone, without a local
@@ -800,7 +751,8 @@ also holds the global preferences that control this.
 
 The registry HTTP handler is mounted by the baum daemon behind its authenticated
 Host/Origin boundary: its write routes can register local paths, pick repositories, remove records
-and change settings. `baum internal view` exposes none of these routes.
+and change settings. Clone registration through `baum internal repos add`
+changes no hooks or Git configuration.
 
 ### Listing your GitHub repositories and cloning one
 
@@ -910,7 +862,7 @@ computer, plus one GitHub search per picked repository:
 - **Fix transcripts.** What a fix's agent said and ran, with its tool output,
   in `transcripts/` beside `app.sqlite` (private files, secrets masked, bounded,
   the 50 latest fixes). It stays on your machine.
-- **baum's own work.** The jobs document (`state/jobs` in `app.sqlite`) and a
+- **baum's own work.** The jobs table (`jobs` in `app.sqlite`) and a
   small ledger (`state/analytics-actions` in that database) of the merges,
   branch updates and check re-runs you made from the app (time, kind,
   repository and pull request number), kept 90 days.
@@ -1034,8 +986,7 @@ What it runs while it is up:
   reads resume after the reset. Events from directories outside
   registered clones, and pushes to other repositories, cause none;
 - generation jobs, the only thing that spends money: each runs the configured
-  backend under your account, within the configured budgets, as
-  `baum internal generate` does. Some you started in the app; the others it
+  backend under your account, within the configured budgets. Some you started in the app; the others it
   starts by itself, unattended (below). Prices only report what usage would
   cost at API prices: baum shows none before a run, and no price limits,
   refuses or decides a run. Each run's time limit bounds it: 10 minutes for
@@ -1335,7 +1286,7 @@ Origin and Host checks as every application route. How it works:
   stops. Only the Codex setting is saved, in the `state/agent-requests` document in `app.sqlite`.
 
 Document selectors must name a registered clone. Linked transcripts use the
-same redaction and linked-session allowlist as `baum internal view`; file patches are
+shared redaction engine and linked-session allowlist; file patches are
 restricted to cited paths. Settings/diagnostics omit provider and GitHub keys.
 `GET /api/diagnostics` serves the `baum internal doctor` report behind the same
 authentication, Origin and Host checks, runs the same bounded commands as
@@ -1376,8 +1327,8 @@ The server's bootstrap page exchanges the fragment token and clears it from
 history before the embedded local application loads; the application's files
 are served only under the authenticated namespace, and every application
 request resolves under it. Every application request is same-origin; the app has no hosted baum API dependency. Review content uses the
-same sanitizers and safe rendering components as the hosted PR page and `baum internal
-view`. Stored document rendering failures remain within the PR pane. The app's
+same sanitizers and safe rendering components as the hosted PR page and the
+reference viewer host. Stored document rendering failures remain within the PR pane. The app's
 only GitHub writes are the ones listed under "Writes to GitHub": a merge, a
 branch update and a re-run you confirm and a fix you start, with that fix's
 replies on the review threads it addressed, and resolving a review thread you
