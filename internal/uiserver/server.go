@@ -323,6 +323,7 @@ func (s *Server) Publish(kind string, data any) error {
 	}
 	return nil
 }
+
 // hasSubscribers reports whether an event stream is connected.
 func (s *Server) hasSubscribers() bool {
 	s.mu.Lock()

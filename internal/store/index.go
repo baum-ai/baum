@@ -10,8 +10,8 @@ import (
 	"fmt"
 	"os"
 	"slices"
-	"sync"
 	"strings"
+	"sync"
 	"time"
 )
 

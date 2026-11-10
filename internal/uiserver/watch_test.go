@@ -233,3 +233,37 @@ func TestIndexWatcherBuildsNothingWithoutSubscribersUntilOneConnects(t *testing.
 		t.Fatal("builds", builds)
 	}
 }
+
+// A store written after the last idle tick and before the first stream
+// connects must still invalidate, though nothing was published yet.
+func TestIndexWatcherInvalidatesChangeBetweenIdleTickAndFirstSubscriber(t *testing.T) {
+	s, err := New(Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	index := &fakeIndex{fingerprint: "a", fresh: true, version: 1}
+	// A long interval: only the connect wakes the watcher after the first tick.
+	ctx, stop := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		s.WatchIndex(ctx, time.Hour, index.watch())
+	}()
+	defer func() { stop(); <-done }()
+	until := func(what string, ok func() bool) {
+		t.Helper()
+		deadline := time.Now().Add(2 * time.Second)
+		for !ok() {
+			if time.Now().After(deadline) {
+				t.Fatal(what)
+			}
+			time.Sleep(time.Millisecond)
+		}
+	}
+	until("idle tick", func() bool { _, ticks, _ := index.state(); return ticks >= 1 })
+	index.set(func(f *fakeIndex) { f.fingerprint = "b" })
+	unsubscribe := s.subscribe()
+	defer unsubscribe()
+	until("invalidated on connect", func() bool { _, _, invalidated := index.state(); return invalidated == 1 })
+	until("published", func() bool { return s.published() == 1 })
+}

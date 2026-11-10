@@ -51,7 +51,7 @@ func (s *Server) WatchIndex(ctx context.Context, interval time.Duration, w Index
 	var fingerprint string
 	var version uint64
 	owed := false  // a change was seen while nobody was subscribed
-	known := false // fingerprint holds a value seen while idle
+	known := false // fingerprint holds the last value seen
 	for {
 		seen := ""
 		if w.Fingerprint != nil {
@@ -81,14 +81,14 @@ func (s *Server) WatchIndex(ctx context.Context, interval time.Duration, w Index
 		}
 		if owed || !initialized || seen != fingerprint || !fresh || current != version {
 			owed = false
-			if initialized && seen != fingerprint && w.Invalidate != nil {
+			if known && seen != fingerprint && w.Invalidate != nil {
 				w.Invalidate()
 			}
 			value, v, err := w.Snapshot(ctx)
 			if err == nil {
 				data, encodeErr := json.Marshal(value)
 				if encodeErr == nil {
-					fingerprint, version = seen, v
+					fingerprint, version, known = seen, v, true
 					digest := sha256.Sum256(data)
 					if !initialized || digest != previous {
 						_ = s.Publish("index", struct{}{})
