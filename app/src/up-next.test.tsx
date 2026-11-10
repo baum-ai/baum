@@ -578,6 +578,41 @@ it("offers to try again when the review failed", async () => {
   expect(button("Try again")).toBeTruthy();
 });
 
+it("says in the card why the daemon did not start the review, and on the PR page", async () => {
+  // The PR page's review watches its layout.
+  const observer = class {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+    takeRecords() {
+      return [];
+    }
+  };
+  vi.stubGlobal("ResizeObserver", observer);
+  vi.stubGlobal("IntersectionObserver", observer);
+  entries = [requested(7)];
+  const original = vi.mocked(fetch).getMockImplementation()!;
+  vi.mocked(fetch).mockImplementation(async (...args) =>
+    isStart(args)
+      ? Response.json({ message: "the queue is full" }, { status: 400 })
+      : original(...args),
+  );
+  await render();
+  await act(async () => button("Generate").click());
+  await settle();
+  expect(panel().querySelector('[role="alert"]')!.textContent).toContain(
+    "Couldn't start the review: the queue is full",
+  );
+  // Once, in the card: not again under the page.
+  expect(node.textContent!.split("the queue is full").length).toBe(2);
+  // The PR page opened from the inbox has no panel, so the page says it.
+  await press("Enter");
+  expect(location.search).toBe(`?inbox=${DEFAULT_INBOX.id}&clone=clone&pr=7`);
+  await settle();
+  expect(node.querySelector("article.upnext-panel")).toBeNull();
+  expect(node.textContent).toContain("the queue is full");
+});
+
 it("lists what baum will do instead of the card when it needs a clone", async () => {
   entries = [requested(7, { needs_clone: true })];
   await render();

@@ -2042,8 +2042,10 @@ function Workspace({ url }: { url: UrlState }) {
               ) : null}
             </>
           ) : null}
-          {/* Up next shows a generation's refusal on the pull request's panel. */}
-          {generationError && !(page === "inbox" && queueInbox) ? (
+          {/* Up next shows a generation's refusal on the pull request's panel;
+              a PR or group page opened from an inbox has no panel, so it
+              shows here. */}
+          {generationError && !(page === "inbox" && queueInbox && !selectedEntry && !groupId) ? (
             <Alert>{generationError}</Alert>
           ) : null}
           {/* The PR page and Up next show a fix's refusal beside its button. */}
