@@ -61,6 +61,26 @@ func TestDiagnosticsCache(t *testing.T) {
 	check(false, 6, 6) // the error was not cached
 }
 
+func TestDiagnosticsCacheKeepsNewerRunWhenOlderFinishesLate(t *testing.T) {
+	c := newDiagnosticsCache()
+	var group singleflight.Group
+	started, release := make(chan struct{}), make(chan struct{})
+	slow := c.doChan(&group, false, func() (any, error) {
+		close(started)
+		<-release
+		return "old", nil
+	})
+	<-started
+	if res := <-c.doChan(&group, true, func() (any, error) { return "new", nil }); res.Val != "new" {
+		t.Fatal(res)
+	}
+	close(release)
+	<-slow
+	if res := <-c.doChan(&group, false, func() (any, error) { return "rerun", nil }); res.Val != "new" {
+		t.Fatalf("the late older run replaced the newer report: %v", res.Val)
+	}
+}
+
 func TestDiagnosticsEndpointCachesUntilRefreshed(t *testing.T) {
 	var runs atomic.Int32
 	s := diagnosticsServer(t, LocalAPI{Diagnostics: func(context.Context) doctor.Report {

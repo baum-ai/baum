@@ -22,6 +22,11 @@ type diagnosticsCache struct {
 	report any
 	at     time.Time
 	have   bool
+	// started numbers runs in start order; stored is the number of the run
+	// whose report is cached, so an older run finishing late cannot replace a
+	// report from a run that started after it.
+	started uint64
+	stored  uint64
 }
 
 func newDiagnosticsCache() *diagnosticsCache {
@@ -42,10 +47,16 @@ func (c *diagnosticsCache) doChan(group *singleflight.Group, refresh bool, run f
 		return out
 	}
 	return group.DoChan(key, func() (any, error) {
+		c.mu.Lock()
+		c.started++
+		seq := c.started
+		c.mu.Unlock()
 		report, err := run()
 		if err == nil {
 			c.mu.Lock()
-			c.report, c.at, c.have = report, c.now(), true
+			if seq > c.stored {
+				c.report, c.at, c.have, c.stored = report, c.now(), true, seq
+			}
 			c.mu.Unlock()
 		}
 		return report, err
