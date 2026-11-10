@@ -312,7 +312,10 @@ func (s *Server) Publish(kind string, data any) error {
 	s.sequence++
 	s.events = append(s.events, event{s.sequence, kind, b})
 	if len(s.events) > 128 {
-		s.events = append([]event(nil), s.events[len(s.events)-128:]...)
+		// Events are never changed once appended, so the window is a
+		// reslice: append reallocates only when the capacity runs out, and a
+		// reader holding an older slice sees the events it had.
+		s.events = s.events[len(s.events)-128:]
 	}
 	for ch := range s.subscribers {
 		select {
@@ -350,7 +353,9 @@ func (s *Server) stream(w http.ResponseWriter, r *http.Request) {
 	defer ping.Stop()
 	for {
 		s.mu.Lock()
-		events := append([]event(nil), s.events...)
+		// The length and capacity are capped: a later Publish appends past
+		// them, into memory this loop never reads.
+		events := s.events[:len(s.events):len(s.events)]
 		latest := s.sequence
 		s.mu.Unlock()
 		if after > latest || (len(events) > 0 && after+1 < events[0].ID) {
