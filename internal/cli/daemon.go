@@ -943,27 +943,42 @@ func currentName(client *github.Client) repos.CurrentName {
 }
 
 // gitHooks builds the service that keeps baum's Git hook dispatchers in the
-// registered clones that are present, and ensures each clone the registry
-// stores from now on. Only the daemon's registry does this: the CLI's installs
-// no hooks.
+// registered clones that are present, ensures each clone the registry stores
+// from now on and gives a clone it drops its own hooks back. Only the daemon's
+// registry does this: the CLI's installs no hooks.
 func gitHooks(registry *repos.Registry, log *slog.Logger) *githooks.Service {
-	service := &githooks.Service{Log: log, Paths: func(ctx context.Context) ([]string, error) {
-		clones, err := registry.List(ctx)
-		if err != nil {
-			return nil, err
-		}
-		var paths []string
+	convert := func(clones []repos.Clone, available bool) []githooks.Clone {
+		var out []githooks.Clone
 		seen := map[string]bool{}
 		for _, c := range clones {
 			// Linked worktrees of one repository share its hooks.
-			if c.Available && !seen[c.CommonDir] {
+			if (c.Available || !available) && !(available && seen[c.CommonDir]) {
 				seen[c.CommonDir] = true
-				paths = append(paths, c.Path)
+				out = append(out, githooks.Clone{ID: c.ID, Path: c.Path, CommonDir: c.CommonDir})
 			}
 		}
-		return paths, nil
-	}}
-	registry.Registered = func(c repos.Clone) { service.Added(c.Path) }
+		return out
+	}
+	service := &githooks.Service{Log: log,
+		Clones: func(ctx context.Context) ([]githooks.Clone, error) {
+			clones, err := registry.List(ctx)
+			return convert(clones, true), err
+		},
+		Registered: func(ctx context.Context) ([]githooks.Clone, error) {
+			clones, err := registry.CloneRows(ctx)
+			return convert(clones, false), err
+		},
+	}
+	// A dispatcher falls back to this binary when baum is not on the PATH of
+	// the process Git runs.
+	if exe, err := os.Executable(); err == nil {
+		service.Options.Baum = exe
+	}
+	toClone := func(c repos.Clone) githooks.Clone {
+		return githooks.Clone{ID: c.ID, Path: c.Path, CommonDir: c.CommonDir}
+	}
+	registry.Registered = func(c repos.Clone) { service.Added(toClone(c)) }
+	registry.Removed = func(c repos.Clone) { service.Removed(toClone(c)) }
 	return service
 }
 

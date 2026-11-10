@@ -8,20 +8,35 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/baum-ai/baum/internal/hookevents"
 )
 
 func TestGitEventsNameTheSessionFromTheAgentEnvironment(t *testing.T) {
 	const id = "7f3c1a2e-0b44-4c3e-9d11-5a6b7c8d9e0f"
-	for name, tc := range map[string]struct{ value, want string }{
-		"session":  {id, id},
-		"empty":    {"", ""},
-		"unsafe":   {"abc/../def", ""},
-		"space":    {"abc def", ""},
-		"too long": {strings.Repeat("a", maxSessionID+1), ""},
+	for name, tc := range map[string]struct {
+		value, pid string
+		want       bool
+	}{
+		"session":          {id, "7", true},
+		"pid not among":    {id, "8", false},
+		"no pid":           {id, "", false},
+		"pid not a number": {id, "seven", false},
+		"pid not positive": {id, "-7", false},
+		"empty":            {"", "7", false},
+		"unsafe":           {"abc/../def", "7", false},
+		"space":            {"abc def", "7", false},
+		"too long":         {strings.Repeat("a", maxSessionID+1), "7", false},
 	} {
 		t.Run(name, func(t *testing.T) {
 			paths := useTestHookDaemon(t)
+			old := captureAncestors
+			captureAncestors = func() []hookevents.Process {
+				return []hookevents.Process{{PID: 9, Start: "1", Name: "git"}, {PID: 7, Start: "9", Name: "claude"}}
+			}
+			t.Cleanup(func() { captureAncestors = old })
 			t.Setenv("CLAUDE_CODE_SESSION_ID", tc.value)
+			t.Setenv("CLAUDE_PID", tc.pid)
 			t.Setenv("CLAUDECODE", "1")
 			if _, _, err := runCLI(t, "hooks", "git", "post-commit"); err != nil {
 				t.Fatal(err)
@@ -31,13 +46,16 @@ func TestGitEventsNameTheSessionFromTheAgentEnvironment(t *testing.T) {
 				t.Fatalf("events=%+v", events)
 			}
 			e := events[0]
-			if tc.want == "" {
+			if e.Terminal == nil || len(e.Terminal.Processes) != 2 {
+				t.Fatalf("the ancestors are still sent: %+v", e.Terminal)
+			}
+			if !tc.want {
 				if e.Agent != "" || e.Session != nil {
 					t.Fatalf("event names %q %+v", e.Agent, e.Session)
 				}
 				return
 			}
-			if e.Kind != "git" || e.Agent != "claude-code" || e.Session == nil || e.Session.ID != tc.want {
+			if e.Kind != "git" || e.Agent != "claude-code" || e.Session == nil || e.Session.ID != id || e.Session.AgentPID != 7 {
 				t.Fatalf("event=%+v session=%+v", e, e.Session)
 			}
 			if bytes.Contains(raw[0], []byte("CLAUDECODE")) {

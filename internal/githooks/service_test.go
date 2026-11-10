@@ -4,21 +4,13 @@ import (
 	"context"
 	"errors"
 	"slices"
-	"sync"
 	"testing"
 	"time"
 )
 
-type recorder struct {
-	mu    sync.Mutex
-	roots []string
-	seen  chan string
-}
+type recorder struct{ seen chan string }
 
 func (r *recorder) ensure(_ context.Context, root string) (Report, error) {
-	r.mu.Lock()
-	r.roots = append(r.roots, root)
-	r.mu.Unlock()
 	r.seen <- root
 	if root == "/fails" {
 		return Report{}, errors.New("boom")
@@ -32,17 +24,35 @@ func next(t *testing.T, r *recorder) string {
 	case root := <-r.seen:
 		return root
 	case <-time.After(5 * time.Second):
-		t.Fatal("nothing was ensured")
+		t.Fatal("nothing was handled")
 		return ""
 	}
 }
 
+func startService(t *testing.T, s *Service) {
+	t.Helper()
+	ctx, cancel := context.WithCancel(t.Context())
+	t.Cleanup(cancel)
+	go s.Run(ctx)
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		s.mu.Lock()
+		ready := s.run != nil
+		s.mu.Unlock()
+		if ready {
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatal("service did not start")
+}
+
 func TestServiceEnsuresAvailableClonesAtStartAndPeriodically(t *testing.T) {
 	r := &recorder{seen: make(chan string, 16)}
-	s := &Service{Paths: func(context.Context) ([]string, error) { return []string{"/a", "/fails", "/b"}, nil }, Ensure: r.ensure, Every: 10 * time.Millisecond}
-	ctx, cancel := context.WithCancel(t.Context())
-	defer cancel()
-	go s.Run(ctx)
+	s := &Service{Clones: func(context.Context) ([]Clone, error) {
+		return []Clone{{ID: "1", Path: "/a"}, {ID: "2", Path: "/fails"}, {ID: "3", Path: "/b"}}, nil
+	}, Ensure: r.ensure, Every: 10 * time.Millisecond}
+	startService(t, s)
 	var first []string
 	for range 3 {
 		first = append(first, next(t, r))
@@ -58,23 +68,11 @@ func TestServiceEnsuresAvailableClonesAtStartAndPeriodically(t *testing.T) {
 
 func TestServiceEnsuresARegisteredCloneWithoutBlocking(t *testing.T) {
 	r := &recorder{seen: make(chan string)}
-	s := &Service{Paths: func(context.Context) ([]string, error) { return nil, nil }, Ensure: r.ensure}
-	ctx, cancel := context.WithCancel(t.Context())
-	defer cancel()
-	go s.Run(ctx)
-	deadline := time.Now().Add(5 * time.Second)
-	for {
-		s.mu.Lock()
-		ready := s.run != nil
-		s.mu.Unlock()
-		if ready || time.Now().After(deadline) {
-			break
-		}
-		time.Sleep(time.Millisecond)
-	}
+	s := &Service{Clones: func(context.Context) ([]Clone, error) { return nil, nil }, Ensure: r.ensure}
+	startService(t, s)
 	// The unbuffered fake blocks until read: Added must return first.
 	done := make(chan struct{})
-	go func() { s.Added("/new"); close(done) }()
+	go func() { s.Added(Clone{ID: "9", Path: "/new"}); close(done) }()
 	select {
 	case <-done:
 	case <-time.After(5 * time.Second):
@@ -82,5 +80,31 @@ func TestServiceEnsuresARegisteredCloneWithoutBlocking(t *testing.T) {
 	}
 	if got := next(t, r); got != "/new" {
 		t.Fatalf("ensured %q", got)
+	}
+}
+
+func TestServiceRestoresARemovedCloneUnlessAnotherSharesItsHooks(t *testing.T) {
+	restored := make(chan string, 4)
+	registered := []Clone{{ID: "linked", Path: "/linked", CommonDir: "/shared/.git"}}
+	s := &Service{
+		Clones:     func(context.Context) ([]Clone, error) { return nil, nil },
+		Registered: func(context.Context) ([]Clone, error) { return registered, nil },
+		Restore:    func(_ context.Context, root string) (Report, error) { restored <- root; return Report{}, nil },
+	}
+	startService(t, s)
+	s.Removed(Clone{ID: "main", Path: "/main", CommonDir: "/shared/.git"})
+	s.Removed(Clone{ID: "other", Path: "/other", CommonDir: "/other/.git"})
+	select {
+	case got := <-restored:
+		if got != "/other" {
+			t.Fatalf("restored %q, which a registered clone shares", got)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("nothing was restored")
+	}
+	select {
+	case got := <-restored:
+		t.Fatalf("also restored %q", got)
+	case <-time.After(100 * time.Millisecond):
 	}
 }

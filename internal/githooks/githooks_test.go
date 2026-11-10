@@ -10,10 +10,13 @@ import (
 	"testing"
 )
 
+// isolated keeps the developer's own Git configuration out of the tests.
+var isolated = []string{"GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1"}
+
 func git(t *testing.T, dir string, args ...string) string {
 	t.Helper()
 	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
-	cmd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null",
+	cmd.Env = append(append(os.Environ(), isolated...),
 		"GIT_AUTHOR_NAME=T", "GIT_AUTHOR_EMAIL=t@example.test", "GIT_COMMITTER_NAME=T", "GIT_COMMITTER_EMAIL=t@example.test")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -58,7 +61,7 @@ func outcomes(r Report) map[string]Outcome {
 
 func ensure(t *testing.T, root string) Report {
 	t.Helper()
-	report, err := Ensure(t.Context(), root)
+	report, err := EnsureWith(t.Context(), root, Options{Env: isolated})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -200,15 +203,15 @@ func TestEnsureSkipsBareRepository(t *testing.T) {
 func TestEnsureRepairsLegacyDispatchers(t *testing.T) {
 	repo := initRepo(t)
 	hooks := filepath.Join(repo, ".git", "hooks")
-	writeExecutable(t, filepath.Join(hooks, "post-commit"), "#!/bin/sh\n"+Marker+"\n# Entire CLI hooks\nold\n")
-	writeExecutable(t, filepath.Join(hooks, "pre-push"), "#!/bin/sh\n# Entire CLI hooks\nentire hooks git pre-push \"$1\"\n")
-	writeExecutable(t, filepath.Join(hooks, "post-rewrite"), Dispatcher("post-rewrite")+"# stale\n")
+	writeExecutable(t, filepath.Join(hooks, "post-commit"), "#!/bin/sh\n"+legacyMarker+"\n# Entire CLI hooks\nold\n")
+	writeExecutable(t, filepath.Join(hooks, "pre-push"), "#!/bin/sh\n"+legacyMarker+"\n# Entire CLI hooks\nentire hooks git pre-push \"$1\"\n")
+	writeExecutable(t, filepath.Join(hooks, "post-rewrite"), Dispatcher("post-rewrite", "")+"# stale\n")
 	report := ensure(t, repo)
 	for _, hook := range Hooks {
 		if outcomes(report)[hook] != Repaired {
 			t.Errorf("%s = %v", hook, outcomes(report)[hook])
 		}
-		if read(t, filepath.Join(hooks, hook)) != Dispatcher(hook) {
+		if read(t, filepath.Join(hooks, hook)) != Dispatcher(hook, "") {
 			t.Errorf("%s not repaired", hook)
 		}
 		if _, err := os.Lstat(filepath.Join(hooks, hook+".pre-baum")); err == nil {
@@ -223,7 +226,7 @@ func TestEnsureSharesHooksWithLinkedWorktrees(t *testing.T) {
 	tree := filepath.Join(t.TempDir(), "feature")
 	git(t, repo, "worktree", "add", "-q", "-b", "feature", tree)
 	ensure(t, tree)
-	if read(t, filepath.Join(repo, ".git", "hooks", "post-commit")) != Dispatcher("post-commit") {
+	if read(t, filepath.Join(repo, ".git", "hooks", "post-commit")) != Dispatcher("post-commit", "") {
 		t.Fatal("the common hooks directory has no dispatcher")
 	}
 	if again := ensure(t, repo); again.Changed() {

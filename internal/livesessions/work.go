@@ -82,19 +82,26 @@ func matchWork(e hookevents.Event) bool {
 	default:
 		return false
 	}
-	_, named := namedSession(e)
+	_, _, named := namedSession(e)
 	return named || (e.Terminal != nil && len(e.Terminal.Processes) > 0)
 }
 
 // namedSession is the session a Git hook's environment named: an agent whose
-// sessions the daemon stores observations for, and its session id. An event
-// naming anything else is left to its ancestors.
-func namedSession(e hookevents.Event) (key, bool) {
+// sessions the daemon stores observations for, its session id, and where the
+// agent's own process is among the hook's ancestors (the index in
+// Terminal.Processes). A hook that does not show the agent among its ancestors
+// is left to them: what it names may only be inherited.
+func namedSession(e hookevents.Event) (key, int, bool) {
 	if e.Kind != hookevents.KindGit || e.Session == nil || e.Session.ID == "" || len(e.Session.ID) > maxID ||
-		e.Agent == "" || !vendors.Slug(commitattribution.Vendor(e.Agent)).Valid() {
-		return key{}, false
+		e.Agent == "" || !vendors.Slug(commitattribution.Vendor(e.Agent)).Valid() ||
+		e.Session.AgentPID <= 0 || e.Terminal == nil {
+		return key{}, 0, false
 	}
-	return key{e.Agent, e.Session.ID}, true
+	i := slices.IndexFunc(e.Terminal.Processes, func(p hookevents.Process) bool { return p.PID == e.Session.AgentPID })
+	if i < 0 {
+		return key{}, 0, false
+	}
+	return key{e.Agent, e.Session.ID}, i, true
 }
 
 func matchTracked(e hookevents.Event) bool { return matchAgent(e) || matchWork(e) }
@@ -107,8 +114,9 @@ type processKey struct {
 // ownerLocked is the open session whose agent ran the Git hook of e: the
 // nearest of the hook's ancestors that is the process a session's own hooks
 // run under (their parent), matched by id and start time. A process two open
-// sessions name is neither's.
-func (t *Tracker) ownerLocked(e hookevents.Event) (key, *entry) {
+// sessions name is neither's. It also returns the index of that process among
+// the ancestors.
+func (t *Tracker) ownerLocked(e hookevents.Event) (key, *entry, int) {
 	agents := map[processKey]key{}
 	shared := map[processKey]bool{}
 	for k, s := range t.sessions {
@@ -125,16 +133,16 @@ func (t *Tracker) ownerLocked(e hookevents.Event) (key, *entry) {
 		}
 		agents[pk] = k
 	}
-	for _, p := range e.Terminal.Processes {
+	for i, p := range e.Terminal.Processes {
 		pk := processKey{p.PID, p.Start}
 		if k, ok := agents[pk]; ok {
 			if shared[pk] {
-				return key{}, nil
+				return key{}, nil, 0
 			}
-			return k, t.sessions[k]
+			return k, t.sessions[k], i
 		}
 	}
-	return key{}, nil
+	return key{}, nil, 0
 }
 
 // applyWorkLocked records the commit or push of e for the session whose agent
@@ -147,12 +155,17 @@ func (t *Tracker) applyWorkLocked(e hookevents.Event, now time.Time) {
 	if now.Sub(at) > EndedFor {
 		return
 	}
-	k, named := namedSession(e)
+	k, agentAt, named := namedSession(e)
 	var s *entry
 	if named {
 		s = t.sessions[k]
+		// The agent's command may run under another agent it started, such as a
+		// Codex session launched from a Claude command: the nearer one ran Git.
+		if owner, entry, i := t.ownerLocked(e); entry != nil && i < agentAt {
+			k, s = owner, entry
+		}
 	} else {
-		k, s = t.ownerLocked(e)
+		k, s, _ = t.ownerLocked(e)
 		if s == nil {
 			return
 		}
@@ -231,11 +244,16 @@ func (t *Tracker) detachLocked(k key, items []workItem) {
 	if t.Attributions == nil || len(items) == 0 {
 		return
 	}
+	dropped := 0
 	for _, item := range items {
 		if len(t.detached) >= maxDetached {
-			break
+			dropped++
+			continue
 		}
 		t.detached = append(t.detached, detachedWork{k, item})
+	}
+	if dropped > 0 {
+		t.logger().Warn("commit observations of untracked sessions dropped: too many waiting", "dropped", dropped)
 	}
 	select {
 	case t.wake <- struct{}{}:

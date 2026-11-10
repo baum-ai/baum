@@ -6,6 +6,8 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -25,8 +27,8 @@ var gitHookArgumentCounts = map[string]int{
 // sessionEnv are the variables a coding agent exports to the commands it runs,
 // so a Git hook such as post-commit names the session that ran Git. An agent
 // not listed here is found through the hook's ancestor processes instead.
-var sessionEnv = []struct{ agent, name string }{
-	{"claude-code", "CLAUDE_CODE_SESSION_ID"},
+var sessionEnv = []struct{ agent, name, pid string }{
+	{"claude-code", "CLAUDE_CODE_SESSION_ID", "CLAUDE_PID"},
 }
 
 // maxSessionID bounds an environment session id, like a stored observation's.
@@ -76,8 +78,9 @@ func newGitHooksCommand() *cobra.Command {
 			event := newHookEvent(hookevents.KindGit, "", args[0], started)
 			event.Git = gitHookEvent(args, input.payload())
 			if tiesToSession(args[0]) {
-				event.Agent, event.Session = environmentSession(os.Getenv)
-				if processes := captureAncestors(); len(processes) > 0 {
+				processes := captureAncestors()
+				event.Agent, event.Session = environmentSession(os.Getenv, processes)
+				if len(processes) > 0 {
 					event.Terminal = &hookevents.Terminal{Processes: processes}
 				}
 			}
@@ -157,8 +160,11 @@ func newAgentHooksCommand(stdout io.Writer) *cobra.Command {
 }
 
 // environmentSession is the agent session whose command ran Git, named by the
-// variables its agent exports, or nothing when none is set to a plausible id.
-func environmentSession(getenv func(string) string) (string, *hookevents.Session) {
+// variables its agent exports, or nothing. Processes the agent starts inherit
+// its variables (a tmux server, an editor, another agent), so the session counts
+// only when the agent's own process id, which it exports too, is among the
+// hook's ancestors: Git then ran under that agent's command.
+func environmentSession(getenv func(string) string, processes []hookevents.Process) (string, *hookevents.Session) {
 	for _, v := range sessionEnv {
 		id := getenv(v.name)
 		if id == "" || len(id) > maxSessionID || strings.ContainsFunc(id, func(r rune) bool {
@@ -167,7 +173,11 @@ func environmentSession(getenv func(string) string) (string, *hookevents.Session
 		}) {
 			continue
 		}
-		return v.agent, &hookevents.Session{ID: id}
+		pid, err := strconv.Atoi(getenv(v.pid))
+		if err != nil || pid <= 0 || !slices.ContainsFunc(processes, func(p hookevents.Process) bool { return p.PID == pid }) {
+			continue
+		}
+		return v.agent, &hookevents.Session{ID: id, AgentPID: pid}
 	}
 	return "", nil
 }

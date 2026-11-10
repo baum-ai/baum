@@ -12,11 +12,25 @@ import (
 	"github.com/baum-ai/baum/internal/hookevents"
 )
 
-// named is e as a hook whose environment names the Claude Code session id.
-func named(e hookevents.Event, id string) hookevents.Event {
-	e.Agent, e.Session = "claude-code", &hookevents.Session{ID: id}
+// named is e as a hook whose environment names the Claude Code session id and
+// whose agent process is the process of pid.
+func named(e hookevents.Event, id string, pid int) hookevents.Event {
+	e.Agent, e.Session = "claude-code", &hookevents.Session{ID: id, AgentPID: pid}
 	return e
 }
+
+// ancestors replaces the hook's ancestors, nearest first.
+func ancestors(e hookevents.Event, processes ...hookevents.Process) hookevents.Event {
+	e.Terminal = &hookevents.Terminal{Processes: processes}
+	return e
+}
+
+var (
+	shell = hookevents.Process{PID: 9001, Start: "90", Name: "sh"}
+	// wrapper is a process the hook's agent runs under that no session's hooks
+	// ran under.
+	wrapper = hookevents.Process{PID: 4300, Start: "79", Name: "claude"}
+)
 
 func rewrite(dir string, at time.Time, lines ...string) hookevents.Event {
 	e := hookevents.New(hookevents.KindGit, "", "post-rewrite", dir, "test")
@@ -34,16 +48,17 @@ func lookup(t *testing.T, store *commitattribution.Store, shas ...string) []comm
 	return got
 }
 
-// The environment names the session even when another open session's process
-// is among the hook's ancestors and would own the commit by the process tree.
+// The environment names the session when the agent it names is among the hook's
+// ancestors, even where the process tree would name another open session
+// further out.
 func TestEnvironmentNamedCommitLinksToTheNamedSession(t *testing.T) {
 	c := &clock{t0}
 	tr := newTracker(c, newWorkLinker())
 	apply(tr, prompt("s-1", t0, claude))
 	apply(tr, prompt("s-2", t0, other))
-	e := named(commit(workDir("trees/fix"), "fix", t0.Add(time.Minute), claude), "s-2")
-	if k, owner := ownerOf(tr, e); owner == nil || k.id != "s-1" {
-		t.Fatalf("the process tree would name %v", k)
+	e := named(ancestors(commit(workDir("trees/fix"), "fix", t0.Add(time.Minute), claude), shell, wrapper, claude, tmux), "s-2", wrapper.PID)
+	if _, owner, _ := ownerOf(tr, e); owner == nil {
+		t.Fatal("the process tree would name nobody")
 	}
 	apply(tr, e)
 	for _, s := range tr.Sessions() {
@@ -56,7 +71,57 @@ func TestEnvironmentNamedCommitLinksToTheNamedSession(t *testing.T) {
 	}
 }
 
-func ownerOf(tr *Tracker, e hookevents.Event) (key, *entry) {
+// A session whose agent runs nearer the hook than the named one made the commit:
+// the environment is inherited by what the named agent starts.
+func TestNearerTrackedSessionWinsOverTheEnvironment(t *testing.T) {
+	c := &clock{t0}
+	tr := newTracker(c, newWorkLinker())
+	apply(tr, prompt("claude-session", t0, claude))
+	codex := prompt("codex-session", t0, other)
+	codex.Agent = "codex"
+	apply(tr, codex)
+	e := named(ancestors(commit(workDir("trees/fix"), "fix", t0.Add(time.Minute), claude), shell, other, claude, tmux), "claude-session", claude.PID)
+	apply(tr, e)
+	for _, s := range tr.Sessions() {
+		switch {
+		case s.ID == "codex-session" && s.PR != 12:
+			t.Errorf("nearer session: %+v", s)
+		case s.ID == "claude-session" && s.PR != 0:
+			t.Errorf("environment session took the commit: %+v", s)
+		}
+	}
+}
+
+// An environment whose agent is not among the ancestors only inherited its
+// variables: the process tree decides.
+func TestEnvironmentWithoutItsAgentAmongTheAncestorsIsIgnored(t *testing.T) {
+	c := &clock{t0}
+	store := &commitattribution.Store{Path: filepath.Join(appdbtest.TempDir(t), "app.sqlite")}
+	tr := newTracker(c, newWorkLinker())
+	tr.Attributions = store
+	apply(tr, prompt("s-1", t0, claude))
+	e := named(commit(workDir("trees/fix"), "fix", t0.Add(time.Minute), claude), "s-9", 31337)
+	if _, _, ok := namedSession(e); ok {
+		t.Fatal("a pid that is no ancestor named a session")
+	}
+	apply(tr, e)
+	if s := only(t, tr); s.ID != "s-1" || s.PR != 12 {
+		t.Fatalf("process-tree session: %+v", s)
+	}
+	for _, o := range lookup(t, store, pushed) {
+		if o.SessionID == "s-9" {
+			t.Fatalf("observation for the inherited session: %+v", o)
+		}
+	}
+	// Nor does it make a hook that has no ancestors count.
+	e = named(commit(workDir("trees/fix"), "fix", t0, claude), "s-9", claude.PID)
+	e.Terminal = nil
+	if matchWork(e) {
+		t.Fatal("an environment without ancestors matched")
+	}
+}
+
+func ownerOf(tr *Tracker, e hookevents.Event) (key, *entry, int) {
 	tr.mu.Lock()
 	defer tr.mu.Unlock()
 	return tr.ownerLocked(e)
@@ -67,8 +132,7 @@ func TestEnvironmentNamedCommitWithoutTrackedSessionIsRecorded(t *testing.T) {
 	store := &commitattribution.Store{Path: filepath.Join(appdbtest.TempDir(t), "app.sqlite")}
 	tr := newTracker(c, newWorkLinker())
 	tr.Attributions = store
-	e := named(commit(workDir("trees/fix"), "fix", t0, claude), "gone-session")
-	e.Terminal = nil
+	e := named(commit(workDir("trees/fix"), "fix", t0, claude), "gone-session", claude.PID)
 	apply(tr, e)
 	if len(tr.Sessions()) != 0 {
 		t.Fatalf("a session was invented: %+v", tr.Sessions())
@@ -84,7 +148,7 @@ func TestEnvironmentNamedPushWithoutTrackedSessionIsRecorded(t *testing.T) {
 	store := &commitattribution.Store{Path: filepath.Join(appdbtest.TempDir(t), "app.sqlite")}
 	tr := newTracker(c, newWorkLinker())
 	tr.Attributions = store
-	e := named(gitHook("pre-push", workDir("main"), t0, claude, pushOf("fix")), "gone-session")
+	e := named(gitHook("pre-push", workDir("main"), t0, claude, pushOf("fix")), "gone-session", claude.PID)
 	apply(tr, e)
 	if got := lookup(t, store, pushed); len(got) != 1 || got[0].Kind != commitattribution.Push {
 		t.Fatalf("observations: %+v", got)
@@ -96,16 +160,10 @@ func TestUnknownEnvironmentAgentFallsBackToTheProcessTree(t *testing.T) {
 	tr := newTracker(c, newWorkLinker())
 	apply(tr, prompt("s-1", t0, claude))
 	e := commit(workDir("trees/fix"), "fix", t0.Add(time.Minute), claude)
-	e.Agent, e.Session = "not an agent", &hookevents.Session{ID: "s-9"}
+	e.Agent, e.Session = "not an agent", &hookevents.Session{ID: "s-9", AgentPID: claude.PID}
 	apply(tr, e)
 	if s := only(t, tr); s.PR != 12 {
 		t.Fatalf("process-tree session: %+v", s)
-	}
-	e = commit(workDir("trees/fix"), "fix", t0.Add(time.Minute), claude)
-	e.Terminal = nil
-	e.Agent, e.Session = "not an agent", &hookevents.Session{ID: "s-9"}
-	if matchWork(e) {
-		t.Fatal("an unknown agent without ancestors matched")
 	}
 }
 
@@ -115,13 +173,16 @@ func TestPostRewriteRecordsTheNewCommits(t *testing.T) {
 	tr := newTracker(c, newWorkLinker())
 	tr.Attributions = store
 	oldSHA, one, two := strings.Repeat("1", 40), strings.Repeat("2", 40), strings.Repeat("3", 40)
+	unchanged := strings.Repeat("4", 40)
 	apply(tr, prompt("s-1", t0, claude))
 	// A post-commit already recorded the first new commit.
 	first := commit(workDir("trees/fix"), "fix", t0, claude)
 	first.Git.Head = one
 	apply(tr, first)
-	apply(tr, named(rewrite(workDir("trees/fix"), t0.Add(time.Minute),
-		oldSHA+" "+one, oldSHA+" "+two+" extra", "malformed", oldSHA+" nothex", oldSHA+" "+strings.Repeat("0", 40), oldSHA+" "+two), "s-1"))
+	apply(tr, named(ancestors(rewrite(workDir("trees/fix"), t0.Add(time.Minute),
+		oldSHA+" "+one, oldSHA+" "+two+" extra", "malformed", oldSHA+" nothex", oldSHA+" "+strings.Repeat("0", 40), oldSHA+" "+two,
+		// A rebase replays commits it did not change.
+		unchanged+" "+unchanged), claude, tmux), "s-1", claude.PID))
 	got := lookup(t, store, one, two)
 	if len(got) != 2 {
 		t.Fatalf("observations: %+v", got)
@@ -131,12 +192,14 @@ func TestPostRewriteRecordsTheNewCommits(t *testing.T) {
 			t.Errorf("observation: %+v", o)
 		}
 	}
-	// By the process tree, too.
+	if got := lookup(t, store, unchanged); len(got) != 0 {
+		t.Errorf("an unchanged commit was credited: %+v", got)
+	}
 	if matchWork(rewrite(workDir("trees/fix"), t0)) {
 		t.Error("a rewrite naming nobody matched")
 	}
-	ptree := rewrite(workDir("trees/fix"), t0.Add(2*time.Minute), oldSHA+" "+pushed)
-	ptree.Terminal = &hookevents.Terminal{Processes: []hookevents.Process{claude, tmux}}
+	// By the process tree, too.
+	ptree := ancestors(rewrite(workDir("trees/fix"), t0.Add(2*time.Minute), oldSHA+" "+pushed), claude, tmux)
 	apply(tr, ptree)
 	if got := lookup(t, store, pushed); len(got) != 1 || got[0].SessionID != "s-1" {
 		t.Fatalf("process-tree rewrite: %+v", got)
