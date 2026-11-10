@@ -556,6 +556,36 @@ const TranscriptBody = memo(function TranscriptBody({
   );
 });
 
+/** A listed session's transcript inside the PR page's Sessions pane, read
+ *  through the daemon's live record as the Sessions page reads it, and
+ *  reread while the session runs. */
+export function EmbeddedLiveTranscript({ session }: { session: LiveSession }) {
+  const poll =
+    session.state === "running" ? POLL_RUNNING : session.state === "idle" ? POLL_IDLE : null;
+  const { state, retry } = useLiveTranscript(session.agent, session.session_id, {
+    tick: 0,
+    poll,
+  });
+  switch (state.kind) {
+    case "loading":
+      return <LoadingStatus block>Reading redacted local transcript…</LoadingStatus>;
+    case "unavailable":
+      return <p className="local-transcript-note">{state.message}</p>;
+    case "failed":
+      return <ReadFailed what="the transcript" message={state.message} retry={retry} />;
+  }
+  return (
+    <TranscriptCard
+      transcript={state.transcript}
+      version={state.version}
+      summary={state.summary}
+      live={session.state !== "ended"}
+      title={session.title}
+      embedded
+    />
+  );
+}
+
 /** The transcript's loader, answering from the transcript shown. */
 function useLocalSource(transcript: LocalTranscript, version: string | undefined) {
   const latest = useRef<LocalTranscript>(transcript);

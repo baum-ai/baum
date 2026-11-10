@@ -349,7 +349,13 @@ branch, start, duration and files edited on one line (the rail leads back to
 the list) and its linked commits as links under it, and draws no
 card for it. `SessionCard`'s `headless` draws a session open with no header of
 its own, for such a pane. A session whose outcome is unknown shows no outcome
-badge.
+badge. A host that knows of sessions the list does not, such as ones running
+now, passes them as `hosted` (`HostSessionView`, also an option of
+`sessionsSlot`): each brings its rail label, an optional `indicator`, its card
+and its pane when opened alone. They come first, replace a listed session with
+the same id, are counted with the rest, and mark their own rail row and the
+group's. With none of either, the pane shows one empty state, whose sentence
+`empty` sets.
 
 `commitsSlot(state, { loadCommit, loadPatch })` (and `CommitList`'s
 `loaders`) gives a commit opened alone more than its list entry, read through

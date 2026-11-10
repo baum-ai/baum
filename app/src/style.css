@@ -2509,8 +2509,9 @@ a.local-session-pr:hover {
   padding: 0;
   list-style: none;
 }
-.local-pr-sessions li {
+.local-pr-session {
   display: grid;
+  justify-items: start;
   gap: 0.2rem;
 }
 .local-pr-session-who {

@@ -4,7 +4,12 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { sessionsSlot } from "./list-slots";
-import { SessionList, type SessionListState, type SessionView } from "./session-list";
+import {
+  type HostSessionView,
+  SessionList,
+  type SessionListState,
+  type SessionView,
+} from "./session-list";
 
 declare global {
   var IS_REACT_ACT_ENVIRONMENT: boolean;
@@ -24,6 +29,15 @@ const sessions: SessionView[] = [
   },
   { id: "s2", vendor: "codex", title: null, commits: [] },
 ];
+
+/** A host's session row with nothing to draw, for the slot's rail. */
+const row = (id: string, indicator?: "live" | "attention"): HostSessionView => ({
+  id,
+  label: `Running ${id}`,
+  indicator,
+  renderCard: () => null,
+  renderPane: () => null,
+});
 
 const transcript = (session: SessionView) => <p data-testid="extra">{session.id} transcript</p>;
 
@@ -142,12 +156,87 @@ describe("SessionList", () => {
     expect(container.querySelector('[data-testid="extra"]')?.textContent).toBe("s1 transcript");
   });
 
-  it("says nothing is linked when the list is empty", () => {
+  it("says once that there are no sessions when the list is empty", () => {
     render({ status: "ready", sessions: [] });
 
-    expect(container.textContent).toContain("No agent session is linked to this pull request.");
-    expect(container.textContent).toContain("No agent session is linked to this");
+    // The heading carries no count and no second "nothing here".
+    expect(container.textContent).not.toContain("linked to this");
+    expect(container.textContent).not.toContain("0 sessions");
+    expect(container.textContent).toContain("No agent sessions");
+    expect(container.textContent).toContain(
+      "No agent session on this machine matches a commit of this pull request.",
+    );
     expect(container.querySelector("ol")).toBeNull();
+  });
+
+  it("lists the host's sessions first, once each, and opens one in the host's pane", () => {
+    const hosted: HostSessionView[] = [
+      {
+        id: "s1",
+        label: "Running now",
+        indicator: "live",
+        renderCard: (open) => (
+          <button type="button" onClick={open}>
+            Running card
+          </button>
+        ),
+        renderPane: () => <p data-testid="hosted-pane">running transcript</p>,
+      },
+    ];
+    const mount = (state: SessionListState, selected: string | null = null) => {
+      container = document.createElement("div");
+      document.body.append(container);
+      root = createRoot(container);
+      act(() =>
+        root!.render(
+          <SessionList
+            state={state}
+            selected={selected}
+            actions={{ select, openFile: vi.fn() }}
+            hosted={hosted}
+            empty="Shown while they work."
+          />,
+        ),
+      );
+    };
+
+    // s1 is both running and linked: one row, the host's.
+    mount({ status: "ready", sessions });
+    let text = container.textContent ?? "";
+    expect(text).toContain("2 sessions");
+    expect(text).toContain("Running card");
+    expect(text).not.toContain("Wire the retry budget");
+    expect(text).toContain("Codex");
+    expect(container.querySelectorAll("li[id^='session-']")).toHaveLength(2);
+    act(() =>
+      [...container.querySelectorAll("button")]
+        .find((button) => button.textContent === "Running card")!
+        .click(),
+    );
+    expect(select).toHaveBeenLastCalledWith({ kind: "session", id: "s1" });
+    act(() => root?.unmount());
+
+    // Nothing linked: the running session alone, no empty state.
+    mount({ status: "ready", sessions: [] });
+    text = container.textContent ?? "";
+    expect(text).toContain("1 session");
+    expect(text).not.toContain("No agent sessions");
+    act(() => root?.unmount());
+
+    // Still loading the linked ones: the running session shows meanwhile.
+    mount({ status: "loading" });
+    expect(container.textContent).toContain("Running card");
+    expect(container.querySelector('[aria-label="Loading sessions"]')).not.toBeNull();
+    act(() => root?.unmount());
+
+    mount({ status: "ready", sessions }, "s1");
+    expect(container.querySelector("h2, h3")?.textContent).toBe("Running now");
+    expect(container.querySelector('[data-testid="hosted-pane"]')).not.toBeNull();
+    act(() => root?.unmount());
+
+    // A session no longer listed leaves the whole list in view.
+    mount({ status: "ready", sessions }, "gone");
+    expect(container.querySelectorAll("li[id^='session-']")).toHaveLength(2);
   });
 
   it("shows the note as plain text under the heading", () => {
@@ -184,6 +273,27 @@ describe("sessionsSlot", () => {
         { id: "s2", label: "Codex" },
       ],
     });
+  });
+
+  it("lists and counts the host's sessions first, once each, and marks the group", () => {
+    const slot = sessionsSlot({ status: "ready", sessions }, { hosted: [row("s1", "live")] });
+    expect(slot.state).toEqual({
+      status: "ready",
+      items: [
+        { id: "s1", label: "Running s1", indicator: "live" },
+        { id: "s2", label: "Codex" },
+      ],
+    });
+    expect(slot.indicator).toBe("live");
+    expect(
+      sessionsSlot(
+        { status: "ready", sessions: [] },
+        { hosted: [row("a", "live"), row("b", "attention")] },
+      ).indicator,
+    ).toBe("attention");
+    expect(sessionsSlot({ status: "ready", sessions }, { hosted: [row("x")] }).indicator).toBe(
+      undefined,
+    );
   });
 
   it("carries the loading and failed states through", () => {

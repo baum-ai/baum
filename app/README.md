@@ -1571,19 +1571,28 @@ the page.
 Agent sessions in progress (`GET api/live-sessions`, tracked by the daemon from
 hook events, see "Live sessions" in ARCHITECTURE.md) show as a compact "Agent
 running" or "Agent idle" marker on the Pull requests rows of their pull request and on
-its PR page's review rail: the Sessions row carries a pulsing dot while one
-runs (amber while one waits on the person; the list slot's `indicator`), and the
-Sessions pane lists them first, as a "Sessions in progress" panel (agent,
-working or waiting, title, branch, last activity and Open transcript) above
-the linked sessions (`withRunning` in `src/review.tsx`), updated by the `live` event, which carries no
+its PR page's review rail. A session is a session whether it runs or not: the
+Sessions row counts and lists every session the daemon lists on the pull
+request (working, waiting, or ended and still listed) together with the
+sessions linked through its commits, once each, and carries a pulsing dot
+while one runs (amber while one waits on the person; the list slot's
+`indicator`, and the same dot on that session's own row). The Sessions pane is
+one list: the listed sessions first, each as a card (agent, working, waiting
+or ended, title, branch, last activity or end, Open transcript and its
+decisions) that opens the session alone with its transcript read live, then
+the linked ones (`pullRequestSessions` in `src/review.tsx`). A listed
+session that is also linked shows as the listed one until it ends, and then
+as its linked row. "No agent sessions" shows only when there are none of
+either kind. The Summary keeps a "Sessions in progress" panel of the running
+ones above the review. The list is updated by the `live` event, which carries no
 data: the app rereads the list. Only the agent, session id, state, times, last
 event kind, why and since when it waits on the person with the one masked line
 its agent showed, repository, branch, PR number, the session's title and its
 activity (latest tool calls with masked targets, files written, latest assistant
 message; see "Live sessions" in ARCHITECTURE.md) reach the app in the list,
 never a path; a session's transcript comes only when the Sessions page opens it
-(below). When a session ends the panel goes and the page reads its sessions
-from disk again, where the full session is. A daemon without the record serves
+(below), or the PR page's Sessions pane opens it. When a session ends the page
+reads its sessions from disk again, where the full session is. A daemon without the record serves
 none.
 The PR page keeps its linked sessions and commits visible during background
 refreshes, so their rows and an open transcript do not blink back to a loader.

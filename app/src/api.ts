@@ -679,11 +679,12 @@ export function saveAgentSettings(settings: AgentSettings) {
 /** Sessions that are not over and belong to the pull request, matched by
  * repository across clones as jobs are. */
 export function liveFor(sessions: LiveSession[], pr: Pick<PR, "repository" | "number">) {
+  return listedFor(sessions, pr).filter((s) => s.state !== "ended");
+}
+/** Every session the daemon lists on the pull request, ended ones too. */
+export function listedFor(sessions: LiveSession[], pr: Pick<PR, "repository" | "number">) {
   return sessions.filter(
-    (s) =>
-      s.state !== "ended" &&
-      s.pr === pr.number &&
-      s.repository.toLowerCase() === pr.repository.toLowerCase(),
+    (s) => s.pr === pr.number && s.repository.toLowerCase() === pr.repository.toLowerCase(),
   );
 }
 /** A decision captured from an agent session, from `api/decisions`. */

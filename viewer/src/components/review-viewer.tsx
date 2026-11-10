@@ -75,7 +75,13 @@ import { ReviewNavigator, ReviewPaneFoot, type ReviewStep } from "./review-navig
 import { ReviewScoreBadge } from "./review-parts";
 import { ReviewSection } from "./review-section";
 import { ReviewSummary, type SummaryDestination } from "./review-summary";
-import { SideNavButton, SideNavDisclosure, SideNavGroup, SideNavNest } from "./side-nav";
+import {
+  RowIndicator,
+  SideNavButton,
+  SideNavDisclosure,
+  SideNavGroup,
+  SideNavNest,
+} from "./side-nav";
 import { Empty, Failed, Skeleton } from "./states";
 import { tabIds, tabPanelProps } from "./tabs";
 import { scrollerOf } from "./scroller";
@@ -118,7 +124,11 @@ export type ReviewChecks = {
 export type ReviewListState =
   | { status: "loading" }
   | { status: "failed" }
-  | { status: "ready"; items: { id: string; label: string }[] };
+  | { status: "ready"; items: ReviewListItem[] };
+
+/** One row of a rail group. `indicator` marks an item happening now, as the
+ *  group's own `indicator` marks the group. */
+export type ReviewListItem = { id: string; label: string; indicator?: "live" | "attention" };
 
 export type ReviewListSlot = {
   state: ReviewListState;
@@ -1696,7 +1706,7 @@ function ReviewWorkspace<F extends ReviewFile>({
                         ) : sessionState.status === "failed" ? (
                           <RailNote>Linked sessions could not be loaded.</RailNote>
                         ) : sessionState.items.length === 0 ? (
-                          <RailNote>No linked sessions.</RailNote>
+                          <RailNote>No sessions.</RailNote>
                         ) : (
                           sessionState.items.map((item) => (
                             <SideNavButton
@@ -1706,6 +1716,11 @@ function ReviewWorkspace<F extends ReviewFile>({
                               tint="teal"
                               depth={1}
                               active={selection.kind === "session" && selection.id === item.id}
+                              aside={
+                                item.indicator ? (
+                                  <RowIndicator indicator={item.indicator} />
+                                ) : undefined
+                              }
                               controls="review-section"
                               onSelect={() => setSelection({ kind: "session", id: item.id })}
                             />

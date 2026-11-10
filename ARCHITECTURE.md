@@ -4467,7 +4467,8 @@ replace it.
   inbox row shows "Agent running" or "Agent idle" (a count when several) for
   sessions of its pull request, matched by repository and number across
   clones; the PR page lists them in a "Sessions in progress" panel, with their
-  agent, state, branch, start and last activity, above the review. The
+  agent, state, branch, start and last activity, above the review, and in its
+  Sessions list with the sessions linked through its commits, once each. The
   Sessions page (`?page=sessions`, with a sidebar entry counting the sessions
   waiting on the user, in the caution tone, or else the running ones) lists
   first, under "Needs you", the sessions with a `waiting_reason` the app
