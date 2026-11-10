@@ -71,6 +71,9 @@ type Listed struct {
 	// Endable is whether the app may end the session (end.go): it waits on
 	// its user or went quiet, and baum can stop its agent.
 	Endable bool `json:"endable,omitempty"`
+	// EndBlocked is why a session that waits is not endable, where the app
+	// can say so: EndBlockedRunningCommand. Absent otherwise.
+	EndBlocked string `json:"end_blocked,omitempty"`
 	// Messageable is whether the app may send the session a message
 	// (message.go): it waits at its prompt, and baum can reach its agent.
 	Messageable bool `json:"messageable,omitempty"`
@@ -198,6 +201,7 @@ func (t *Transcripts) listed() []Listed {
 	sessions := t.Tracker.Sessions()
 	out := make([]Listed, 0, len(sessions))
 	keep := make(map[key]bool, len(sessions))
+	checks := t.endChecks()
 	for _, s := range sessions {
 		_, path, _ := t.Tracker.Lookup(s.Agent, s.ID)
 		k := key{s.Agent, s.ID}
@@ -210,7 +214,11 @@ func (t *Transcripts) listed() []Listed {
 			continue
 		}
 		l := Listed{Session: settle(s, activity), Title: title, Summary: excerpt, Activity: activity}
-		l.Endable, l.Messageable = t.endable(l.Session), t.messageable(l.Session)
+		refusal := t.endRefusal(l.Session, checks)
+		l.Endable, l.Messageable = refusal == nil, t.messageable(l.Session)
+		if errors.Is(refusal, ErrRunningCommand) {
+			l.EndBlocked = EndBlockedRunningCommand
+		}
 		if t.Focus != nil {
 			if terminal, _ := t.Tracker.Terminal(s.Agent, s.ID); terminal != nil {
 				l.Focus = t.Focus.Predict(s.Agent, terminal)

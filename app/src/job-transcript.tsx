@@ -10,6 +10,7 @@ import { Markdown } from "@baum/viewer/components/markdown";
 import type { ViewerLinkProps } from "@baum/viewer/navigation";
 import {
   appURL,
+  changedNothing,
   jobName,
   isActiveJob,
   jobReasonText,
@@ -307,12 +308,14 @@ function JobHeader({ job }: { job: Job }) {
         </p>
       ) : (
         <p role="status" className="local-job-phase">
-          {job.state === "completed" ? (
+          {changedNothing(job) ? null : job.state === "completed" ? (
             <CircleCheckIcon size={16} className="local-job-pushed" />
           ) : job.state === "failed" ? (
             <CircleCrossIcon size={16} className="local-tool-failed" />
           ) : null}
-          {job.state === "completed" && job.commit ? (
+          {changedNothing(job) ? (
+            `${name} changed nothing, so nothing was pushed`
+          ) : job.state === "completed" && job.commit ? (
             <>
               {name}: pushed{" "}
               <a href={job.commit_url} target="_blank" rel="noreferrer">
@@ -327,7 +330,9 @@ function JobHeader({ job }: { job: Job }) {
         </p>
       )}
       {meta.length ? <p className="local-job-head-meta">{meta.join(" · ")}</p> : null}
-      {!active && job.reason ? <p>{jobReasonText(job.reason, job.kind)}</p> : null}
+      {!active && job.reason && !changedNothing(job) ? (
+        <p>{jobReasonText(job.reason, job.kind)}</p>
+      ) : null}
       {!active && job.detail ? <pre className="local-job-detail">{job.detail}</pre> : null}
       {!active && job.summary ? (
         <Markdown html={false} className="local-job-summary">

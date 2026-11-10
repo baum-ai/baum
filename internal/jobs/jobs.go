@@ -343,6 +343,9 @@ type Queue struct {
 	cancel  context.CancelFunc
 	wg      sync.WaitGroup
 	changed func(Job)
+	// usage, when set, takes the reports changed would get that change only
+	// a job's usage; see SetUsageChanged.
+	usage func(Usage)
 	// clock, when set, stamps automatic jobs' CreatedAt; see SetClock.
 	clock func() time.Time
 	// lock keeps every other process from opening this journal.
@@ -1287,6 +1290,7 @@ func (q *Queue) worker(chat bool) {
 					return
 				}
 				job := &q.jobs[k]
+				before := *job
 				job.Phase = p.Phase
 				job.Calls = p.Calls
 				job.Tokens = p.Tokens
@@ -1326,8 +1330,16 @@ func (q *Queue) worker(chat bool) {
 				}
 				current := *job
 				current.Accounting = current.Accounting.Clone()
+				usage := q.usage
+				if !usageOnly(before, current) {
+					usage = nil
+				}
 				q.mu.Unlock()
-				q.notify(current)
+				if usage != nil {
+					usage(usageOf(current))
+				} else {
+					q.notify(current)
+				}
 			})
 			// A member's head moved: the group waits for it instead of failing.
 			if err != nil && errors.Is(err, ErrHeadChanged) && j.Group != "" && j.Kind == "" && ctx.Err() == nil {
@@ -1403,6 +1415,11 @@ func (q *Queue) worker(chat bool) {
 				current.State = "failed"
 				current.Reason = stopped.Reason
 				current.Detail = stopped.Error()
+			case err != nil && errors.As(err, &fixErr) && fixErr.Reason == fix.ReasonNoChanges:
+				// The agent found nothing it should, or could, change: an
+				// outcome the person reads in its summary, not a failure to
+				// notify about. It completes without a commit.
+				current.Reason = fixErr.Reason
 			case err != nil && errors.As(err, &fixErr):
 				current.State = "failed"
 				current.Reason = fixErr.Reason

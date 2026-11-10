@@ -617,6 +617,75 @@ it("says under the actions that the review is generating until its summary is wr
   expect(status?.previousElementSibling?.classList.contains("upnext-actions")).toBe(true);
 });
 
+it("says there is no review yet and generates one from the panel", async () => {
+  entries = [requested(7)];
+  await render();
+  const card = panel().querySelector(".upnext-noreview")!;
+  expect(card.textContent).toContain("No review yet.");
+  expect(card.previousElementSibling?.classList.contains("upnext-actions")).toBe(true);
+  // The next read has the queued job.
+  entries = [requested(7, { status: "generating" })];
+  await act(async () => button("Generate").click());
+  const starts = vi.mocked(fetch).mock.calls.filter(isStart);
+  expect(starts.map(([, init]) => JSON.parse(String(init!.body)))).toEqual([
+    { items: [{ clone: "clone", pr: 7 }], mode: "single", confirm_isolation: false },
+  ]);
+  // From the click it reads as generating, not as missing.
+  expect(panel().querySelector(".upnext-noreview")).toBeNull();
+  expect(panel().textContent).toContain("Generating the review.");
+});
+
+it("offers to try again when the review failed", async () => {
+  entries = [requested(7, { status: "failed", failure_reason: "the agent timed out" })];
+  await render();
+  const card = panel().querySelector(".upnext-noreview")!;
+  expect(card.textContent).toContain("baum's review failed: the agent timed out");
+  expect(button("Try again")).toBeTruthy();
+});
+
+it("says in the card why the daemon did not start the review, and on the PR page", async () => {
+  // The PR page's review watches its layout.
+  const observer = class {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+    takeRecords() {
+      return [];
+    }
+  };
+  vi.stubGlobal("ResizeObserver", observer);
+  vi.stubGlobal("IntersectionObserver", observer);
+  entries = [requested(7)];
+  const original = vi.mocked(fetch).getMockImplementation()!;
+  vi.mocked(fetch).mockImplementation(async (...args) =>
+    isStart(args)
+      ? Response.json({ message: "the queue is full" }, { status: 400 })
+      : original(...args),
+  );
+  await render();
+  await act(async () => button("Generate").click());
+  await settle();
+  expect(panel().querySelector('[role="alert"]')!.textContent).toContain(
+    "Couldn't start the review: the queue is full",
+  );
+  // Once, in the card: not again under the page.
+  expect(node.textContent!.split("the queue is full").length).toBe(2);
+  // The PR page opened from the inbox has no panel, so the page says it.
+  await press("Enter");
+  expect(location.search).toBe(`?inbox=${DEFAULT_INBOX.id}&clone=clone&pr=7`);
+  await settle();
+  expect(node.querySelector("article.upnext-panel")).toBeNull();
+  expect(node.textContent).toContain("the queue is full");
+});
+
+it("lists what baum will do instead of the card when it needs a clone", async () => {
+  entries = [requested(7, { needs_clone: true })];
+  await render();
+  // A clone item lists what baum will do instead of the card.
+  expect(panel().querySelector(".upnext-noreview")).toBeNull();
+  expect(panel().textContent).toContain("What baum will do");
+});
+
 it("shows the available summary in a Fix preview while its first review is being written", async () => {
   entries = [mine(7, { status: "generating", unresolved: 1 }), mine(8, { checks: "failing" })];
   jobsList = [fixJobOf({ id: "review-7", kind: undefined, pr: 7, draft: 1 })];
@@ -765,10 +834,13 @@ it("does not clear a pull request whose fix is running, and offers to watch it",
   jobsList = [fixJobOf()];
   await render();
   expect(list()).toEqual(["Change 1", "Change 3", "Change 4", "Change 2", "Change 5", "Change 6"]);
-  expect(row("Change 2").textContent).toContain("Agent fixing · The agent is fixing it");
+  // While the agent itself works, the line says so once.
+  expect(row("Change 2").textContent).toContain("Agent fixing");
+  expect(row("Change 2").textContent).not.toContain("The agent is fixing it");
   expect(await cleared()).toBeNull();
   await act(async () => row("Change 2").click());
-  expect(panel().textContent).toContain("An agent is fixing it · The agent is fixing it.");
+  expect(panel().textContent).toContain("An agent is fixing it.");
+  expect(panel().textContent).not.toContain("The agent is fixing it");
   const watch = Array.from(panel().querySelectorAll("a")).find((a) =>
     a.textContent?.startsWith("Watch the agent"),
   )!;
@@ -827,6 +899,33 @@ it("brings back a pull request whose fix failed, with what happened", async () =
   )!;
   expect(see.getAttribute("href")).toBe("/s/test-ns/?page=jobs&job=fix-1");
   expect(panel().querySelector("button.upnext-secondary")!.textContent).toMatch(/^Fix/);
+});
+
+it("says why the last fix changed nothing, without calling it a failure", async () => {
+  await render();
+  jobsList = [
+    fixJobOf({
+      state: "completed",
+      reason: "no_changes",
+      summary: "I couldn't find a cause this pull request is responsible for.\n\n- Details.",
+    }),
+  ];
+  await render();
+  // Nothing was pushed, so the pull request stays to fix.
+  expect(await cleared()).toBeNull();
+  expect(row("Change 2").textContent).toContain("Last fix changed nothing");
+  expect(row("Change 2").querySelector(".upnext-row-failed")).toBeNull();
+  await act(async () => row("Change 2").click());
+  expect(panel().querySelector(".upnext-failed")).toBeNull();
+  const notice = panel().querySelector(".upnext-unchanged")!;
+  expect(notice.textContent).toContain("The last fix changed nothing, so nothing was pushed.");
+  expect(notice.querySelector(".upnext-unchanged-why")!.textContent).toBe(
+    "I couldn't find a cause this pull request is responsible for.",
+  );
+  const read = Array.from(notice.querySelectorAll("a")).find((a) =>
+    a.textContent?.startsWith("Read what the agent said"),
+  )!;
+  expect(read.getAttribute("href")).toBe("/s/test-ns/?page=jobs&job=fix-1");
 });
 
 it("keeps a failed fix of a pull request in the queue for its panel", () => {

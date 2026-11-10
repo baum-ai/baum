@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import type { GitHubConnection } from "../api";
 import {
+  ACCESS_URL,
   DEVICE_URL,
   messages,
   terminal,
@@ -160,7 +161,12 @@ export function GitHubStep({ onConnected }: { onConnected: (connected: boolean) 
           <div className="github-problem" role="alert">
             {connection?.error
               ? (messages[connection.error] ?? "GitHub connection needs attention. Try again.")
-              : error || terminal[connection!.state]}
+              : error || terminal[connection!.state]}{" "}
+            {connection?.error === "sso_required" && (
+              <a href={ACCESS_URL} target="_blank" rel="noreferrer">
+                Authorize baum on GitHub ↗
+              </a>
+            )}
             {(error || connection?.error) && (
               <button
                 type="button"

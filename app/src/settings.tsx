@@ -51,6 +51,7 @@ import {
 import { MenuButton, useContextMenu, type MenuItem } from "./context-menu";
 import { ListSection } from "./list";
 import { GitHubConnectionSection } from "./github-connection";
+import { OrganizationAccessNotice } from "./organization-access";
 import { messages as githubMessages } from "./github-auth";
 import { CodexHookWarning, type useCodexHookTrust } from "./codex-hooks";
 import { DiagnosticsSection } from "./diagnostics";
@@ -797,15 +798,24 @@ function FixesSection({
 
 /** Whether the baum CLI or every agent's hooks are missing, for the sidebar's
  *  Settings badge and the Sessions page. Only the desktop app can tell; it
- *  rechecks on returning to the window and when Settings changes the setup. */
+ *  rechecks on returning to the window (at most every 5 minutes, as the native
+ *  check runs the agent CLIs) and at once when Settings changes the setup. */
+export const COMMAND_LINE_FOCUS_INTERVAL_MS = 5 * 60_000;
+
 export function useCommandLineCheck() {
   const desktop = hasFolderPicker();
   const [missing, setMissing] = useState(false);
   const [noHooks, setNoHooks] = useState(false);
+  const checked = useRef(0);
+  const last = useRef("");
   const recheck = useCallback(async () => {
     if (!desktop) return;
+    checked.current = Date.now();
     try {
       const view = await invoke<SetupView>("setup_state");
+      const key = JSON.stringify(view);
+      if (key === last.current) return;
+      last.current = key;
       setMissing(commandMissing(view));
       setNoHooks(hooksMissing(view));
     } catch {
@@ -815,7 +825,9 @@ export function useCommandLineCheck() {
   useEffect(() => {
     if (!desktop) return;
     void recheck();
-    const focus = () => void recheck();
+    const focus = () => {
+      if (Date.now() - checked.current >= COMMAND_LINE_FOCUS_INTERVAL_MS) void recheck();
+    };
     window.addEventListener("focus", focus);
     return () => window.removeEventListener("focus", focus);
   }, [desktop, recheck]);
@@ -2122,6 +2134,7 @@ export function RepositoriesPage({
   repositories,
   loading = false,
   automatic,
+  github,
   entries = [],
   jobs = [],
   changed,
@@ -2130,6 +2143,7 @@ export function RepositoriesPage({
   /** Whether the first read of the repositories is still running. */
   loading?: boolean;
   automatic: Automatic | null;
+  github?: GitHubConnection | null;
   /** The pull requests the app knows, for each repository's open count and
    *  latest review. */
   entries?: Entry[];
@@ -2198,9 +2212,20 @@ export function RepositoriesPage({
             <Alert>{error}</Alert>
           </div>
         ) : null}
+        {github?.organization_access ? (
+          <div className="local-list-note">
+            <OrganizationAccessNotice
+              access={github.organization_access}
+              recheck={async () => {
+                await request("api/github-auth/retry", {});
+                await changed();
+              }}
+            />
+          </div>
+        ) : null}
         {adding ? (
           <div className="local-list-note local-repo-adding">
-            <RepositoryPicker changed={changed} autoFocus />
+            <RepositoryPicker changed={changed} autoFocus showOrganizations={false} />
           </div>
         ) : null}
         {repositories.length === 0 && loading ? (

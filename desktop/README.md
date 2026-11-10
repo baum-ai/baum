@@ -522,11 +522,13 @@ Two channels, each the least that does the job:
    `GET /api/live-sessions`, read when the daemon's events stream
    (`GET /api/events`, held open by a thread of its own and reopened with a
    backoff from 1 s to 30 s) announces a `progress`, `automatic`, `live`,
-   `index` or `reset` event, or when the stream (re)connects, after a pause of
+   `index` or `reset` event (not a `job` event, a running job's usage, which
+   changes no count), or when the stream (re)connects, after a pause of
    500 ms (at most 2 s) for a burst of events to end; as a safety net also
    every 60 s while the stream is up and every 30 s while it is down, and
    never with no daemon attached,
-   `GET /api/diagnostics` every 5 minutes (it runs the doctor's checks),
+   `GET /api/diagnostics` every 30 minutes (the daemon caches the report for 30
+   minutes; only the app's Diagnostics dialog forces a fresh run),
    `GET /api/plan-usage?refresh=1` every 5 minutes (a fresh reading; the
    daemon reads again at most once a minute; no event announces either, so
    one worker sleeps until the next is due and does nothing with no daemon

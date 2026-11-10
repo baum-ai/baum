@@ -79,6 +79,15 @@ setup bundle. `pnpm test:desktop` exercises setup with mocked IPC; it needs a
 completed `pnpm build`. The proxy suite covers login, CSRF, event streaming and
 React/CSS hot reload for the daemon-served application.
 
+When the daemon reports organizations the sign-in cannot reach
+(`organization_access`, from organizations that restrict OAuth app access), the
+picker in setup step 1 and in Add repositories, and the Repositories page, show
+one collapsed line with how many. Opened, it lists each organization with a
+Request access link to baum's page in GitHub's settings (GitHub has no page per
+organization), where a member requests approval; Check again asks the daemon to
+look again. An SSO failure links to
+the same page. See [GitHub access](../docs/github-access.md).
+
 Generated reviews can show retained inline images from linked native Claude
 Code and Codex sessions, including linked subagent work, alongside images
 uploaded in the PR description. Human-pasted images show “Human-supplied image”
@@ -819,7 +828,11 @@ fix (as `fixLabel` names it), **Re-run checks** and **Update branch**; with
 none to offer it is the state alone, and while a fix starts or runs a live dot
 says so beside it. **Regenerate review** is at the end of the version menu
 (the viewer's `header.versionActions`), read "Generating review…" or "Review
-queued" while one runs. Update branch and Re-run checks (`src/unblock.tsx`)
+queued" while one runs. Earlier versions are read once per pull request or group
+(`useVersionLoader` in `src/version-cache.ts`): the viewer's version menu,
+section panes and hunk evidence share one cache, a failed read is retried on
+the next call, and the latest version is never kept because the daemon
+refreshes it in place. Update branch and Re-run checks (`src/unblock.tsx`)
 are on the PR page, not in Pull requests: a row's menu
 holds the one action its state asks for (Merge on a ready row, else Fix), and
 the page is where the rest of a pull request's state is read. `canUpdateBranch` offers the first
@@ -883,7 +896,7 @@ The list's header counts what is the person's, sums baum's reading estimates
 into minutes (only reviews have one), counts the fixes with agents and what was
 done today, and draws a bar of cleared against cleared plus remaining. A row
 shows the title, then the kind, repository and reading estimate (or the
-agent's phase, or "last fix failed"), and a red dot at risk 5. With two or more
+agent's phase, "last fix failed" or "last fix changed nothing"), and a red dot at risk 5. With two or more
 Merge items, Ready to merge offers **Merge all N**: one confirmation that reads
 each pull request's merge options, merges each with GitHub's default method for
 the person at the head commit shown, one after another, and names any GitHub
@@ -910,9 +923,19 @@ new version. While the first review is being generated, What changed shows
 the available draft summary and section titles, updating as the draft advances.
 Until a summary exists, a live line under the actions says the review is
 being generated. A saved review stays visible while a replacement is being generated.
+Without a review, or when the last one failed, a card in the same place says
+"No review yet." (or "baum's review failed: <reason>") with **Generate** (or
+**Try again**), which queues it as the PR page's Generate does; a refusal shows
+in the card. A pull request without a clone has no button; a Clone item lists
+what baum will do instead.
 A pull request back in the queue as a Fix whose latest fix job
 failed says "The last fix failed: <reason>", with **See what the agent did**
-(the transcript, else the job in the list). Agent sessions working on its
+(the transcript, else the job in the list). One whose latest fix changed
+nothing (`no_changes`, which is the agent's judgement, not a failure) says so
+in a neutral notice with the first paragraph of what the agent said, which
+says why, and **Read what the agent said**; its row says "last fix changed
+nothing". The PR page's fix notice and the job page say it the same way,
+without the failure icon. Agent sessions working on its
 branch are counted at the foot of the panel, as a link to Sessions
 (`?page=sessions&peek=<agent:id>`) that opens that session's card there, its
 peek and its reply where it takes one, as a click on it does (with several,
@@ -1334,7 +1357,12 @@ included. The one confirmation left is for a fork or an author without write
 access (`isolation_required`, then `confirm_isolation`); a batch with such an
 entry asks the same. Refusals are shown in words, never as reason codes.
 Progress and completion arrive over the authenticated SSE stream; reconnection
-rebuilds the inbox and jobs. Jobs appear newest first and can be cancelled. The app's
+rebuilds the inbox and jobs. A `progress` event (a job queued, started, ended,
+or changed in anything but its usage) reads everything again; a `job` event, a
+running job's usage every few seconds, changes only that job in the current jobs,
+and through them the PR page's own jobs, without a read. A `job` event for a job
+the current jobs lack, or whose state or phase differs from their copy, reads
+everything again; one older than their copy is ignored. Jobs appear newest first and can be cancelled. The app's
 global jobs are `GET api/jobs` without parameters, the current jobs (every running, queued and
 unseen failed job, and the latest of each kind for each pull request, group or repository), which
 is all `reviewJob`, `detailsJob`, `fixJob`, `groupJob`, `buildJobOf`, Up next and the tray need. The PR
@@ -2014,7 +2042,9 @@ fragment. Desktop setup opens the inbox instead. The dialog groups the
 checks into needs attention, working and details, and shows this user's home
 directory, which the response's `home` names, as `~`. Each warning and
 problem shows its fix. Copy puts the report on the clipboard as Markdown for a
-GitHub issue, with the same `~` paths. The app runs the diagnostics once when it opens and,
+GitHub issue, with the same `~` paths. The dialog asks for a fresh run
+(`api/diagnostics?refresh=1`) every time it opens or re-runs; the daemon
+otherwise serves a report up to 30 minutes old. The app reads the diagnostics once when it opens and,
 while they find a problem, shows a notice on every page linking to them; the dialog
 updates it when it runs the checks again. GitHub discovery shows a note only
 when a refresh failed or the request allowance is used up; a cache that is
@@ -2181,17 +2211,25 @@ distinct states. Setup may still be finished with an unfinished connection.
 
 The bottom Settings link has a caution badge and an accessible description
 while Codex session reporting needs attention. Opening Settings shows the
-reason and Check again. The app reads `GET api/agent-hooks/codex` once on load,
-on window focus, after native Settings actions and every minute while visible.
-The warning clears after a successful ready result; a failed request retains
-the previous warning. Older daemons without this endpoint show no new global
-badge. Onboarding rechecks on focus or Check again. Checking never trusts a
+reason and Check again. The app reads `GET api/agent-hooks/codex` on load and
+on window focus (at most once a minute while healthy; every focus while a
+warning shows), and every minute while visible only
+while the last answer is a warning. Check again and the reads after native
+Settings actions pass `?refresh=1`, because the daemon caches a healthy answer
+for five minutes (warnings are always read fresh). A
+re-read that returns the same answer leaves the state, and so the page,
+untouched. The warning clears after a successful ready result; a failed
+request retains the previous warning. Older daemons without this endpoint show
+no new global badge. Onboarding rechecks on focus or Check again. Checking never trusts a
 hook, restarts Codex or starts a conversation.
 
 In the desktop app the same badge and description also cover a missing baum
 CLI: one the app could install but hasn't (a CLI the app can't install on this
 system raises nothing). The app reads `setup_state` on load, on window focus
-and after native Settings actions. While the CLI is missing, every Settings
+(at most once every five minutes, since the native check runs each agent's CLI)
+and after native Settings actions, which are never throttled. Window focus
+also rereads preferences and saved UI state, which notify the app only when
+the stored data changed. While the CLI is missing, every Settings
 section opens with a banner whose Install the CLI button goes to This computer
 and scrolls to the Command line card; the section list marks This computer
 with a caution dot and "baum CLI not installed", and the card itself is

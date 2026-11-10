@@ -10,6 +10,14 @@ host, credential identity and repository. The credential's record (`<hash>.budge
 holds its REST and GraphQL budgets and its team memberships, which every
 repository shares.
 
+`Revision` stamps what `Cached` would read, without opening the database: the
+partition, the identity epoch, whether the last poll validated the cache, and
+how many times this service wrote it. Two equal revisions read the same
+snapshot, except that `Stale` turns true once `NextPoll` passes. The count
+lives in memory, so it holds only because the daemon's service is the cache's
+one writer: the daemon runs once, and nothing else writes `cache/discovery`.
+Live sessions use it to decode a cache again only after it changed.
+
 ## A poll
 
 Most polls are **incremental**. A poll reads the window of pull requests
@@ -38,6 +46,12 @@ therefore re-reads by number, in aliased queries of a page each, at most 50:
 - open pull requests on a base that a pull request in the window merged into,
   which GitHub works out again once asked;
 - pull requests whose checks are still running.
+
+A finished check does not show in the probe either, so while any open pull
+request has checks running the polls stay 30 seconds apart rather than backing
+off: the checks' result shows within about a minute. Checks that never report
+stop holding the interval once the pull requests have stayed as they are for
+`checksHold` (an hour).
 
 A **full sweep** reads every open pull request, the most recently updated
 first. It runs on the first poll, after a cache-format upgrade, every

@@ -20,11 +20,67 @@ var ErrAgentGone = errors.New("the session's agent is not running")
 // user or quiet, or of an agent baum cannot stop.
 var errNotEndable = errors.New("the session is not waiting")
 
-// endable reports whether the app may end the session: it waits on its user
-// or went quiet (settled), so stopping it cuts no work short, and its agent
-// has an Ender.
-func (t *Transcripts) endable(s Session) bool {
-	return s.State == StateIdle && s.WaitingReason != "" && t.Enders[s.Agent] != nil
+// ErrRunningCommand is a session that waits on its user while a background
+// command it started still runs (Claude Code's registry says "shell"):
+// ending it would kill the command, so it is left to finish or be stopped in
+// the session.
+var ErrRunningCommand = errors.New("a background command is still running in the session")
+
+// EndBlockedRunningCommand is a listed session's EndBlocked when it is not
+// endable because of ErrRunningCommand.
+const EndBlockedRunningCommand = "running_command"
+
+// EndCheck reports whether a session of its agent may be ended now, by the
+// session's id: nil, or why its Ender would refuse (errNotEndable,
+// ErrRunningCommand). Any other error, such as a process that is gone, is
+// left for the Ender to settle.
+type EndCheck func(id string) error
+
+// EndChecker begins one look at an agent's sessions: its EndCheck answers
+// for each session that look asks about, and may answer them all from what
+// it reads once.
+type EndChecker func() EndCheck
+
+// endChecks are one look's EndCheck of each agent, begun when a session of
+// the agent first needs one.
+type endChecks struct {
+	checkers map[string]EndChecker
+	begun    map[string]EndCheck
+}
+
+func (t *Transcripts) endChecks() *endChecks {
+	return &endChecks{checkers: t.EndChecks, begun: map[string]EndCheck{}}
+}
+
+func (c *endChecks) of(agent string) EndCheck {
+	check, ok := c.begun[agent]
+	if !ok {
+		if begin := c.checkers[agent]; begin != nil {
+			check = begin()
+		}
+		c.begun[agent] = check
+	}
+	return check
+}
+
+// endRefusal is why the app may not end the session, or nil when it may: it
+// waits on its user or went quiet (settled), so stopping it cuts no work
+// short, its agent has an Ender, and that agent's EndCheck, where it has
+// one, does not refuse it. The list then offers End only where ending would
+// go through.
+func (t *Transcripts) endRefusal(s Session, checks *endChecks) error {
+	if s.State != StateIdle || s.WaitingReason == "" || t.Enders[s.Agent] == nil {
+		return errNotEndable
+	}
+	check := checks.of(s.Agent)
+	if check == nil {
+		return nil
+	}
+	switch err := check(s.ID); {
+	case errors.Is(err, ErrRunningCommand), errors.Is(err, errNotEndable):
+		return err
+	}
+	return nil
 }
 
 // end stops a listed session's agent. A session whose agent is already gone
@@ -37,11 +93,12 @@ func (t *Transcripts) end(ctx context.Context, agent, id string) error {
 			break
 		}
 	}
-	switch {
-	case found == nil:
+	if found == nil {
 		return ErrNotTracked
-	case !found.Endable:
-		return errNotEndable
+	}
+	// Asked again rather than read from found.Endable, to say why.
+	if err := t.endRefusal(found.Session, t.endChecks()); err != nil {
+		return err
 	}
 	err := t.Enders[agent](ctx, id)
 	if errors.Is(err, ErrAgentGone) && t.Tracker.Gone(agent, id, time.Now()) {
@@ -54,7 +111,8 @@ func (t *Transcripts) end(ctx context.Context, agent, id string) error {
 // handleEnd serves POST /api/live-sessions/{agent}/{id}/end: 202 once the
 // agent was asked to stop (the list shows it ended when its end hook
 // arrives), 404 for a session not listed, 409 for one not waiting or quiet,
-// or of an agent baum cannot stop, and 500 when stopping it failed.
+// of an agent baum cannot stop, or running a background command, and 500
+// when stopping it failed.
 func (t *Transcripts) handleEnd(w http.ResponseWriter, r *http.Request) {
 	err := t.end(r.Context(), r.PathValue("agent"), r.PathValue("id"))
 	switch {
@@ -62,6 +120,8 @@ func (t *Transcripts) handleEnd(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusAccepted, map[string]bool{"ending": true})
 	case errors.Is(err, ErrNotTracked):
 		writeJSON(w, http.StatusNotFound, map[string]any{"code": "live_session_not_found", "message": "This session is no longer listed."})
+	case errors.Is(err, ErrRunningCommand):
+		writeJSON(w, http.StatusConflict, map[string]any{"code": "session_running_command", "message": "A background command is still running in this session. Stop it in the session, then end it."})
 	case errors.Is(err, errNotEndable):
 		writeJSON(w, http.StatusConflict, map[string]any{"code": "session_not_waiting", "message": "Only a session waiting on you or gone quiet can be ended."})
 	default:

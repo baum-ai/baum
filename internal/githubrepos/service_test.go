@@ -755,3 +755,37 @@ func TestCloneReportsUnsupportedURLRewrite(t *testing.T) {
 		t.Fatalf("state = %+v", state)
 	}
 }
+
+func TestListingNamesOrganizationsTheSignInCannotReach(t *testing.T) {
+	h := newHarness(t)
+	var refreshes []bool
+	hidden := []string{"locked-co"}
+	h.service.Organizations = func(_ context.Context, refresh bool) (githubauth.OrganizationAccess, error) {
+		refreshes = append(refreshes, refresh)
+		return githubauth.OrganizationAccess{Hidden: hidden, ApprovalURL: githubauth.ApprovalURL}, nil
+	}
+	rec := h.do("GET", "/api/github/repositories", "")
+	l := decode[Listing](t, rec)
+	if l.OrganizationAccess == nil || strings.Join(l.OrganizationAccess.Hidden, ",") != "locked-co" ||
+		l.OrganizationAccess.ApprovalURL != githubauth.ApprovalURL {
+		t.Fatalf("organization access = %+v", l.OrganizationAccess)
+	}
+	if len(l.Repositories) == 0 {
+		t.Error("the person's other repositories must still list")
+	}
+	h.do("GET", "/api/github/repositories?refresh=1", "")
+	if len(refreshes) != 2 || refreshes[0] || !refreshes[1] {
+		t.Errorf("refresh flags = %v", refreshes)
+	}
+
+	hidden = nil
+	if got := h.do("GET", "/api/github/repositories", "").Body.String(); strings.Contains(got, "organization_access") {
+		t.Errorf("no restricted organization, but the listing says %s", got)
+	}
+	h.service.Organizations = func(context.Context, bool) (githubauth.OrganizationAccess, error) {
+		return githubauth.OrganizationAccess{}, errors.New("GitHub could not be asked")
+	}
+	if rec := h.do("GET", "/api/github/repositories", ""); rec.Code != 200 || strings.Contains(rec.Body.String(), "organization_access") {
+		t.Errorf("a failed organization check must not fail the listing: %d %s", rec.Code, rec.Body)
+	}
+}

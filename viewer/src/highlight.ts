@@ -277,19 +277,109 @@ const GRAMMARS: Record<Lang, () => Promise<{ default: unknown }>> = {
   yaml: () => import("shiki/langs/yaml.mjs"),
 };
 
+/** Work done before tokenising yields to the event loop, so one large file
+ *  cannot hold the main thread for its whole run. */
+const YIELD_AFTER_MS = 8;
+
+/** Hands the main thread back: `scheduler.yield()` where the browser has it,
+ *  else a macrotask. */
+export function yieldToEventLoop(): Promise<void> {
+  const scheduler = (globalThis as { scheduler?: { yield?: () => Promise<void> } }).scheduler;
+  if (typeof scheduler?.yield === "function") return scheduler.yield();
+  return new Promise((resolve) => setTimeout(resolve, 0));
+}
+
+export type TokenizeOptions = {
+  /** Stops the run at its next yield; the result is then null. */
+  signal?: AbortSignal;
+  /** Replaceable so tests can count yields and control the clock. */
+  yieldFn?: () => Promise<void>;
+  now?: () => number;
+};
+
+/** Token results by language and code, least recently used first. Bounded by
+ *  entry count and by the total length of the cached code, so a long session
+ *  cannot grow it without limit. */
+export class TokenCache {
+  private readonly entries = new Map<string, { chars: number; lines: HighlightedLine[] }>();
+  private chars = 0;
+
+  private readonly maxEntries: number;
+  private readonly maxChars: number;
+
+  constructor(maxEntries: number, maxChars: number) {
+    this.maxEntries = maxEntries;
+    this.maxChars = maxChars;
+  }
+
+  get(lang: Lang, code: string): HighlightedLine[] | undefined {
+    const key = `${lang}\0${code}`;
+    const entry = this.entries.get(key);
+    if (!entry) return undefined;
+    this.entries.delete(key);
+    this.entries.set(key, entry);
+    return entry.lines;
+  }
+
+  set(lang: Lang, code: string, lines: HighlightedLine[]): void {
+    if (code.length > this.maxChars) return;
+    const key = `${lang}\0${code}`;
+    const existing = this.entries.get(key);
+    if (existing) {
+      this.chars -= existing.chars;
+      this.entries.delete(key);
+    }
+    this.entries.set(key, { chars: code.length, lines });
+    this.chars += code.length;
+    for (const [oldest, entry] of this.entries) {
+      if (this.entries.size <= this.maxEntries && this.chars <= this.maxChars) break;
+      this.entries.delete(oldest);
+      this.chars -= entry.chars;
+    }
+  }
+
+  get size(): number {
+    return this.entries.size;
+  }
+
+  clear(): void {
+    this.entries.clear();
+    this.chars = 0;
+  }
+}
+
+/** Tokens are CSS-variable coloured, so a theme change needs no invalidation. */
+const tokenCache = new TokenCache(500, 4_000_000);
+
 /** Tokenises each given source text in one language, loading shiki and the
- *  grammar on first use. Null for any failure, or when the text is over the
- *  size limits. The tokenizer is injectable so tests can fail it. */
+ *  grammar on first use. Null for any failure, when the text is over the
+ *  size limits, or when `options.signal` aborts. The texts are tokenised one
+ *  after another with a yield to the event loop whenever a run has held the
+ *  thread for a few milliseconds. The tokenizer is injectable so tests can
+ *  fail it. */
 export async function tokenize(
   codes: readonly string[],
   lang: Lang,
   tokenizer: (code: string, lang: Lang) => Promise<HighlightedLine[]> = shikiTokenize,
+  options: TokenizeOptions = {},
 ): Promise<HighlightedLine[][] | null> {
   const lines = codes.reduce((total, code) => total + code.split("\n").length, 0);
   const chars = codes.reduce((total, code) => total + code.length, 0);
   if (!withinHighlightLimits(lines, chars)) return null;
+  const { signal, yieldFn = yieldToEventLoop, now = () => performance.now() } = options;
   try {
-    return await Promise.all(codes.map((code) => tokenizer(code, lang)));
+    const result: HighlightedLine[][] = [];
+    let sliceStart = now();
+    for (const code of codes) {
+      if (signal?.aborted) return null;
+      if (now() - sliceStart >= YIELD_AFTER_MS) {
+        await yieldFn();
+        if (signal?.aborted) return null;
+        sliceStart = now();
+      }
+      result.push(await tokenizer(code, lang));
+    }
+    return result;
   } catch {
     return null;
   }
@@ -300,6 +390,8 @@ export async function tokenize(
 const grammarLoads = new Map<Lang, Promise<void>>();
 
 async function shikiTokenize(code: string, lang: Lang): Promise<HighlightedLine[]> {
+  const cached = tokenCache.get(lang, code);
+  if (cached) return cached;
   const shiki = await getHighlighter();
   let loading = grammarLoads.get(lang);
   if (!loading) {
@@ -312,11 +404,13 @@ async function shikiTokenize(code: string, lang: Lang): Promise<HighlightedLine[
     loading.catch(() => grammarLoads.delete(lang));
   }
   await loading;
-  return shiki.codeToTokensBase(code, {
+  const tokens = shiki.codeToTokensBase(code, {
     lang,
     theme: THEME,
     tokenizeMaxLineLength: MAX_LINE_LENGTH,
   });
+  tokenCache.set(lang, code, tokens);
+  return tokens;
 }
 
 /** Tokens per line for a block of code, or null when it cannot be highlighted
@@ -333,6 +427,7 @@ export async function highlightHunks(
   path: string,
   hunks: readonly CodeDiffHunk[],
   tokenizer?: (code: string, lang: Lang) => Promise<HighlightedLine[]>,
+  options?: TokenizeOptions,
 ): Promise<HighlightedLine[][] | null> {
   const lang = languageForPath(path);
   if (!lang) return null;
@@ -341,11 +436,36 @@ export async function highlightHunks(
     sides.flatMap((side) => [side.old, side.new]),
     lang,
     tokenizer,
+    options,
   );
   if (!tokens) return null;
   return hunks.map((hunk, index) =>
     mapHunkTokens(hunk.lines, tokens[index * 2] ?? [], tokens[index * 2 + 1] ?? []),
   );
+}
+
+/** The tokens of every hunk when each side is already cached, else null.
+ *  Synchronous, so a file seen before shows highlighted straight away. */
+export function cachedHighlightedHunks(
+  path: string,
+  hunks: readonly CodeDiffHunk[],
+): HighlightedLine[][] | null {
+  const lang = languageForPath(path);
+  if (!lang) return null;
+  const result: HighlightedLine[][] = [];
+  for (const hunk of hunks) {
+    const side = hunkSides(hunk.lines);
+    const old = tokenCache.get(lang, side.old);
+    const next = tokenCache.get(lang, side.new);
+    if (!old || !next) return null;
+    result.push(mapHunkTokens(hunk.lines, old, next));
+  }
+  return result;
+}
+
+/** Empties the token cache. For tests. */
+export function clearTokenCache(): void {
+  tokenCache.clear();
 }
 
 /** A string that changes only when the highlighted content does, so a caller
@@ -379,13 +499,17 @@ export function useHighlightedHunks(
 
   useEffect(() => {
     if (!key) return;
-    let current = true;
-    void highlightHunks(path, hunks).then((tokens) => {
-      if (current && tokens) setResult({ key, tokens });
+    // Seen before: set at once, without waiting for the highlighter to load.
+    const cached = cachedHighlightedHunks(path, hunks);
+    if (cached) {
+      setResult({ key, tokens: cached });
+      return;
+    }
+    const controller = new AbortController();
+    void highlightHunks(path, hunks, undefined, { signal: controller.signal }).then((tokens) => {
+      if (!controller.signal.aborted && tokens) setResult({ key, tokens });
     });
-    return () => {
-      current = false;
-    };
+    return () => controller.abort();
     // `key` stands for the content of `path` and `hunks`.
     // oxlint-disable-next-line react-hooks/exhaustive-deps
   }, [key]);

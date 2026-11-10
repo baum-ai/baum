@@ -73,6 +73,16 @@ the HTTP client refuses redirects. baum never refreshes it: refreshing would
 rotate Claude Code's credential. An expired token, or a 401 or 403, reads "Open
 Claude Code to refresh its sign-in."
 
+The endpoint limits how often it is asked, and answers 429 once that is
+passed; asking again keeps it limited. After a 429 the reader leaves it alone
+for its `Retry-After`, or without one for four minutes (just under the cache
+below, so the next reading after it asks again), doubling with each 429 in a
+row, and never more than an hour. While the endpoint is limited, down or
+out of reach, the last reading the running daemon made stands in for up to
+six hours with its own `fetched_at`, so its age shows; a window that reset
+since has `reset: true` and no figure. A sign-in failure is never covered this
+way.
+
 ## Which plans are served
 
 `GET /api/plan-usage` serves only the plans chosen in Settings, so the

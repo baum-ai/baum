@@ -563,6 +563,43 @@ func TestDeletedPullRequestLeavesAtTheNextPoll(t *testing.T) {
 	}
 }
 
+// While a pull request's checks run the polls stay at the first interval, so
+// checks that finish show within one; checks that never report stop holding
+// it after checksHold, and finished ones let the backoff go on.
+func TestRunningChecksHoldTheBackoff(t *testing.T) {
+	h := newHub()
+	h.add("acme/app", &hubPR{number: 1, updated: minutes(-30), checks: "PENDING"})
+	s, now := hubService(t, h)
+	next := func(at time.Time) time.Duration {
+		t.Helper()
+		*now = at
+		got, err := s.PollNow(context.Background(), appRepo)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return got.NextPoll.Sub(at)
+	}
+	for i := range 4 {
+		if wait := next(minutes(i)); wait != 30*time.Second {
+			t.Fatalf("poll %d with checks running: next in %v, want 30s", i, wait)
+		}
+	}
+	stuck := minutes(3).Add(checksHold)
+	if wait := next(stuck); wait != time.Minute {
+		t.Fatalf("checks running for checksHold: next in %v, want the backoff's 1m", wait)
+	}
+	if wait := next(stuck.Add(time.Minute)); wait != 2*time.Minute {
+		t.Fatalf("checks still running: next in %v, want 2m", wait)
+	}
+	h.change("acme/app", 1, func(pr *hubPR) { pr.checks = "SUCCESS" })
+	if wait := next(stuck.Add(3 * time.Minute)); wait != 30*time.Second {
+		t.Fatalf("checks finished: next in %v, want 30s", wait)
+	}
+	if wait := next(stuck.Add(4 * time.Minute)); wait != time.Minute {
+		t.Fatalf("no checks running: next in %v, want 1m", wait)
+	}
+}
+
 // What GitHub's update time does not follow is read again by number on an
 // incremental poll: running checks that finish, and the pull requests on a
 // base another merged into, whose mergeability GitHub works out again.

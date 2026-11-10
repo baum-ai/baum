@@ -126,6 +126,26 @@ as a fetch). A listing failure maps to the connection error codes above plus
 `not_connected` and `rate_limited`, using the runtime health this package keeps.
 See [`internal/githubrepos`](../githubrepos/README.md).
 
+`Manager.Organizations` finds organizations that restrict OAuth app access.
+GitHub hides such an organization from an OAuth App token until an owner
+approves the app, with no error. The method compares the person's active
+memberships (`GET /user/memberships/orgs?state=active`) with
+`GET /user/orgs`, which GitHub documents as listing, for OAuth app tokens, only
+organizations the authorization allows acting on; a membership absent from the
+second list is `hidden`. Both need only the `read:org` scope already
+requested. Results are cached for five minutes per token (reset on account
+change) and pages stop at 300 organizations. The check is best effort: a
+failed read reports nothing rather than guessing. It is not run for explicit
+environment or config tokens, since a fine-grained token lists no organizations
+and would make every membership look hidden. `ApprovalURL` is baum's page in
+the member's GitHub settings (`/settings/connections/applications/<client_id>`),
+where a member requests approval. Not verified against a real restricted
+organization yet. A `403` with `X-GitHub-SSO` on
+any request, including the first `/user` check at sign-in, is `ErrSSO`.
+The status carries it as `organization_access` (`{"hidden": [...],
+"approval_url": ""}`, absent when nothing is hidden), refreshed in the
+background and at once by `/retry`.
+
 Queued review confirmations include the credential partition inside the existing
 configuration digest. A job admitted just before switching accounts cannot start
 with the replacement account, including after daemon restart. Baum-issued

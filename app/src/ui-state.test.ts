@@ -171,3 +171,20 @@ it("serializes an edit behind an in-flight refresh so an old read cannot undo it
   expect(remote.get().value?.note).toBe("During refresh");
   expect(state.get().value.note).toBe("During refresh");
 });
+
+it("notifies subscribers on a reload only when the record changed", async () => {
+  const remote = daemon({ seen: ["a"], notes: {}, note: "" });
+  const state = new UIState(path, empty);
+  await state.load();
+  const listener = vi.fn();
+  state.subscribe(listener);
+  const snapshot = state.get();
+  await state.load();
+  expect(listener).not.toHaveBeenCalled();
+  expect(state.get()).toBe(snapshot);
+
+  remote.change((current) => ({ ...current, seen: ["a", "b"] }));
+  await state.load();
+  expect(listener).toHaveBeenCalledTimes(1);
+  expect(state.get().value.seen).toEqual(["a", "b"]);
+});

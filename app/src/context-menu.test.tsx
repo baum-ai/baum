@@ -87,6 +87,22 @@ it("draws on-or-off choices as checkboxes and sets apart what removes", async ()
   expect(choices()[0]!.querySelector("kbd")?.getAttribute("aria-hidden")).toBe("true");
 });
 
+it("shows a disabled choice with its note, which the keys pass over", async () => {
+  const blocked = vi.fn();
+  await render([
+    ITEMS[0]!,
+    { label: "End", danger: true, disabled: true, note: "Still running", onSelect: blocked },
+  ]);
+  await act(async () => button().click());
+  const end = choices()[1] as HTMLButtonElement;
+  expect(end.disabled).toBe(true);
+  expect(end.querySelector(".context-menu-note")!.textContent).toBe("Still running");
+  await key("ArrowDown");
+  expect(focused()).toBe("Peek");
+  await act(async () => end.click());
+  expect(blocked).not.toHaveBeenCalled();
+});
+
 it("moves with the arrows, Home, End and a letter, and wraps", async () => {
   await render();
   await act(async () => button().click());

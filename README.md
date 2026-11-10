@@ -92,6 +92,12 @@ installing the `baum` command. See
 The macOS app is signed and notarised. To check a download, compare it with
 `desktop-checksums.txt` from the same release.
 
+## Troubleshooting
+
+If a GitHub organization's repositories do not appear, see
+[GitHub access](docs/github-access.md): organizations that restrict OAuth app
+access or require SAML single sign-on need an approval or authorization first.
+
 ## Docs
 
 Everything else is at **[docs.usebaum.com](https://docs.usebaum.com)**. For

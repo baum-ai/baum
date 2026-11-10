@@ -13,13 +13,17 @@ import { CheckIcon, MoreIcon } from "@baum/viewer/components/icons";
 
 /** One choice of a menu; `hint` is the key that does the same, `danger`
  *  draws one that stops or removes something in the critical tone, set apart
- *  below the rest, and `checked` makes it a choice that is on or off. */
+ *  below the rest, and `checked` makes it a choice that is on or off. A
+ *  `disabled` one is shown but cannot be chosen, and the keys pass over it;
+ *  its `note` says why, on a line under its label. */
 export type MenuItem = {
   label: string;
   onSelect: () => void;
   hint?: string;
   danger?: boolean;
   checked?: boolean;
+  disabled?: boolean;
+  note?: string;
 };
 
 type Open = {
@@ -362,6 +366,7 @@ function MenuChoice({
         role={checkbox ? "menuitemcheckbox" : "menuitem"}
         aria-checked={checkbox ? item.checked : undefined}
         className={item.danger ? "danger" : undefined}
+        disabled={item.disabled}
         onClick={select}
       >
         {ticks ? (
@@ -369,7 +374,10 @@ function MenuChoice({
             {item.checked ? <CheckIcon size={14} /> : null}
           </span>
         ) : null}
-        <span className="context-menu-label">{item.label}</span>
+        <span className="context-menu-label">
+          {item.label}
+          {item.note ? <span className="context-menu-note">{item.note}</span> : null}
+        </span>
         {item.hint ? <kbd aria-hidden="true">{item.hint}</kbd> : null}
       </button>
     </>

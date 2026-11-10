@@ -389,28 +389,18 @@ func (a LocalAPI) Handler() *LocalHandler {
 		}
 		writeJSON(w, map[string]int{"job_concurrency": prefs.Concurrency()})
 	})
-	// Runs are shared only while one is in flight; a later request runs the
-	// checks again. That is deliberate: the endpoint is local, authenticated
-	// and user-triggered, so there is no cache.
-	var hookTrust singleflight.Group
+	// Each fresh read starts Codex processes, so answers are cached for a few
+	// minutes; ?refresh=1 reads again.
+	hookTrust := newHookTrustCache(a.HookTrust)
 	mux.HandleFunc("GET /api/agent-hooks/codex", func(w http.ResponseWriter, r *http.Request) {
 		if a.HookTrust == nil {
 			writeJSON(w, map[string]bool{"available": false})
 			return
 		}
-		result := hookTrust.DoChan("codex", func() (any, error) {
-			ctx, cancel := context.WithTimeout(context.Background(), 2*agentplugins.StatusTimeout)
-			defer cancel()
-			return a.HookTrust(ctx), nil
-		})
-		select {
-		case <-r.Context().Done():
-			return
-		case res := <-result:
-			writeJSON(w, res.Val)
-		}
+		writeJSON(w, hookTrust.Get(r.URL.Query().Get("refresh") == "1"))
 	})
 	var diagnostics singleflight.Group
+	diagnosticsReports := newDiagnosticsCache()
 	mux.HandleFunc("GET /api/diagnostics", func(w http.ResponseWriter, r *http.Request) {
 		body := map[string]any{"local": true, "generation_runner": a.Jobs != nil, "discovery": a.PRs != nil, "index": a.Index != nil, "report": nil}
 		// The report's paths are this user's; the app shows the home directory as ~.
@@ -424,7 +414,7 @@ func (a LocalAPI) Handler() *LocalHandler {
 			}
 			// Concurrent requests share one run, which a single client
 			// disconnecting does not cancel.
-			result := diagnostics.DoChan("report", func() (any, error) {
+			result := diagnosticsReports.doChan(&diagnostics, r.URL.Query().Get("refresh") != "", func() (any, error) {
 				ctx, cancel := context.WithTimeout(context.Background(), timeout)
 				defer cancel()
 				done := make(chan doctor.Report, 1)

@@ -2350,7 +2350,15 @@ evidence in saved documents").
 fenced by both its version number and exact previous bytes, preserving
 metadata and every replaced version. Concurrent refreshes cannot overwrite a
 document prepared against older evidence, and a refresh never replaces a newer
-version. A running generation does not block refresh: live facts refresh
+version. A refresh whose document differs from the stored one only in
+`review.evidence_refreshed_at` (`review.RefreshChanged`, which compares the
+whole documents as canonical JSON with that field blanked) writes nothing: it
+checks the same fence with a read and leaves the stored bytes, the summaries
+row and the store file as they were. The stored `evidence_refreshed_at` is
+therefore the time of the last refresh that changed the document, not of the
+last read, which the viewer shows as when the evidence was refreshed; the
+scheduler keeps its own read times (see "Free background synchronization").
+A running generation does not block refresh: live facts refresh
 independently, as in the hosted service. `Put` publishes metadata and document
 in one transaction only if the previous version the caller read is still
 latest, so concurrent runs cannot assign a different predecessor to a completed
@@ -2700,7 +2708,18 @@ providers. The server is hosted only by the daemon (see "Local daemon"),
 which builds every provider, the generation runner included, once it owns
 the per-user lock. SSE has a bounded
 in-memory event log; reconnect replays notifications or asks for an index reset.
-It does not persist a second review index.
+It does not persist a second review index. An event's data is at most 16 KiB.
+
+The generation queue's changes go out as two kinds. A `progress` event
+`{"job": <job>}` announces anything but a running job's usage: queued, started,
+a phase, a draft, a transcript, an end. A report that changes only usage (calls,
+tokens, repairs, accounting, cost; `jobs.Queue.SetUsageChanged`), which a
+running job sends every two seconds, is a `job` event
+`{"job": {id, state, phase, calls, tokens, repairs, actual_cost_usd,
+cost_reason, accounting, updated_at}}`, so listeners that read everything again
+on `progress` (the app, the desktop tray) are not woken by it. Data over the
+limit, a long run's accounting or a large job, goes out as `progress` with `{}`
+instead, so a change is never dropped.
 
 The stream also carries `notice` events for the desktop app's notifications
 (`internal/notices`), which the web app ignores: `{"kind","repository","pr",
@@ -2719,7 +2738,8 @@ or superseded) and when a discovery snapshot shows a pull request newly
 review-requested from the user (a repository's first snapshot after the
 daemon starts is only a baseline). A fix job gives `fix_pushed` with the
 pushed commit's first seven characters in `commit`, or `fix_failed` with its
-`reason`, instead of a review notice; a details retry gives nothing when it
+`reason`, instead of a review notice, and nothing when it completes without a
+commit (its agent changed nothing); a details retry gives nothing when it
 completes and `details_failed` with its `reason` when it fails. The four pull request kinds are
 transitions of the user's own pull requests between two successive snapshots
 of one repository: checks became failing, the pull request became conflicting,
@@ -3490,9 +3510,13 @@ marker, commits what was left (completing the merge), requires a new commit
 that descends from the head, and pushes it with a plain `git push` to the head
 branch. Phases are `reading checks`, `reading review comments`, `fetching`,
 `merging`, `fixing`, `committing`, `pushing` and `replying`. A finished fix
-records `commit`, `commit_url` and the agent's masked `summary`; a failed one
-a reason (`head_changed`, `threads_changed`, `no_remote`, `git`, `backend`,
-`budget`, `no_changes`, `conflicts_remain`, `history_rewritten`,
+records `commit`, `commit_url` and the agent's masked `summary`. A fix whose
+agent changed nothing completes without a commit, with reason `no_changes`
+and its `summary`, which says why: it is the agent's judgement, not a
+failure, so it sends no notice and the app shows that summary in neutral
+words (jobs saved as failed by an older daemon are shown the same way). A
+failed fix records a reason (`head_changed`, `threads_changed`, `no_remote`,
+`git`, `backend`, `budget`, `conflicts_remain`, `history_rewritten`,
 `workflow_changed`, `push_rejected`, `push_failed`, `signed_out`) and a
 bounded detail. `signed_out` is an agent failure whose provider refused its
 sign-in (`agent.SignInRejected`); review and chat jobs report the same reason
@@ -3649,7 +3673,10 @@ backing off the repository's polls; a rate-limited one stays due and goes
 first after the reset, so a small renewed budget still reaches every pull
 request. `Run` passes every 30 seconds, or sooner when a repository is due
 sooner, as a settling one is. Linked worktrees are deduplicated by common git directory. No-review PRs fetch only a header and checks;
-saved reviews use `refresh.Refresher` and `Store.RefreshCurrent`'s exact-byte CAS.
+saved reviews use `refresh.Refresher` and `Store.RefreshCurrent`'s exact-byte CAS,
+which writes nothing when only the refresh time changed. A read counts as the
+last read whether or not it wrote, so an unchanged pull request is not due
+again until its evidence is old.
 After a pass, `Service.Retain` reconciles the retained review refs of each
 due common git directory (see "Retained review commits").
 `Service.RefreshNow` refreshes named PRs of one clone the same way outside
@@ -3671,7 +3698,7 @@ Retries and repairs append reports; partial or absent reports are marked
 `Unreported`. While a run is in progress, the backend reports its calls' usage
 so far (`agent.Request.Usage`: Claude Code per stream event, Codex per turn,
 the Anthropic API per response), and the queue adds it to the accounting it
-publishes, at most every two seconds.
+publishes, at most every two seconds, as `job` events (see "Authenticated local application host").
 Queue progress is saved before SSE publication and snapshots detach mutable
 accounting. Existing version records are never backfilled. Pricing sums
 individually attributable model reports and estimates the rest at the lowest
@@ -4244,7 +4271,10 @@ replace it.
   **Replying and ending.** The list marks a session `messageable` when it
   waits at its prompt (a finished turn, or for Claude Code gone quiet) and
   `endable` when it waits or went quiet, each only where baum can reach its
-  agent (`Transcripts.Senders`, `Transcripts.Enders`). `POST
+  agent (`Transcripts.Senders`, `Transcripts.Enders`), and `endable` only
+  where its agent's end check (`Transcripts.EndChecks`, begun once per list,
+  `ClaudeProcesses.EndCheck`) says ending would go through, so End is never
+  offered to fail. `POST
   api/live-sessions/{agent}/{id}/message` with `{"text"}` (at most 10 000
   characters) puts it into the session: Claude Code's through its cross-session inbox
   (`ClaudeInbox`, one JSON line on the socket its
@@ -4258,13 +4288,28 @@ replace it.
   and the queue would run its turn unseen. `POST .../end` ends a Claude Code
   session as `/exit` does (`ClaudeExit`): SIGTERM to its process when that
   reports itself idle; it exits in under a second, fires SessionEnd and can
-  be resumed. Codex has no clean way to close a session from outside, so
+  be resumed. A process that reports `busy` is mid-turn, and one that
+  reports `shell` has finished its turn but still runs a background command
+  it started, which ending would kill: neither is offered End, and a request
+  for one is refused with 409 (`session_running_command` for the second,
+  saying so). The list marks the second `end_blocked: "running_command"`, and
+  the app's menu shows its End disabled, noting the command still runs. Codex has no clean way to close a session from outside, so
   none is offered. Both find the process by its registry entry, confirmed as
   the one that wrote it (`procStart` against `/proc/<pid>/stat` field 22 and
   `pidDomain` against this pid namespace on Linux, `ps -o lstart=` on macOS),
   since an entry a killed session left can name a reused pid; a session with
   no such process is recorded ended (`Tracker.Gone`), one baum cannot confirm
-  is left alone. The session's `last_prompt` is the latest thing the user
+  is left alone. The list's end check and the tracker's `Alive`
+  (`ClaudeProcesses`, shared by both) read the registry once per look for
+  every session they ask about, and trust a process they confirmed while
+  `kill(pid, 0)` finds it and its entry still names the same pid, start and
+  namespace, for at most `ReconfirmEvery` (30 seconds), so a listing forks no
+  `ps` per session each second; a process is gone the moment its pid is, and
+  only a killed session whose pid another process took between two looks can
+  be trusted that long. Sending and ending confirm the process themselves
+  (`FindClaude`), with no cache, just before they reach it. On Linux the
+  daemon's pid namespace and machine id are read once.
+  The session's `last_prompt` is the latest thing the user
   wrote to it: a prompt, a message the app sent (which Claude Code records as
   a peer's meta line), an answer to its question (`toolUseResult.answers`) or
   a message sent while it worked (a `queued_command` attachment, read from the
@@ -4289,8 +4334,8 @@ replace it.
   ignored. A late-delivered older event never moves `last_activity_at` back,
   but an older start can move `started_at` earlier. A session silent for
   `DropAfter` (2 hours) is dropped, unless `Tracker.Alive` confirms its agent
-  still runs (a Claude Code session's process, as `FindClaude` finds it; no
-  other agent registers one), which `Sweep` asks again each time, so one
+  still runs (a Claude Code session's process, as `ClaudeProcesses` finds it;
+  no other agent registers one), which `Sweep` asks again each time, so one
   waiting hours for its user stays and one whose agent exited without its end
   event goes within a minute. An ended one goes `EndedFor` (24 hours) after
   its end, so the Sessions page can list what ended recently. At most
@@ -4348,6 +4393,22 @@ replace it.
   reuses the branch, head, upstream and remotes git last gave, for at most
   10 minutes, and matches them against the current discovery cache, so a
   newly opened pull request still links.
+
+  The cache is decoded again only when discovery changed it. `Resolver`
+  keeps each repository's last decoded snapshot with the
+  `discovery.Revision` read before it. The revision is read from memory:
+  the credential's partition, the identity epoch, whether the last poll
+  validated the cache, and how many times the daemon's discovery service
+  wrote it. Only that service writes the cache. Every session, commit and
+  push of a repository then links against one decoded snapshot. A snapshot
+  whose next poll is due counts as stale, as `Cached` would read it. An
+  ended session, or a restored one with no directory, is relinked from its
+  recorded evidence (`Relink`) each sweep. Once a relink leaves it and its
+  commits and pushes as they were, the tracker keeps the generation of each
+  repository involved: its revision, and whether it was stale. Later sweeps
+  skip the session while those generations hold. A write of the cache, a new
+  validation or a due poll changes the generation, so the next sweep relinks
+  it, within the same 30 seconds as before.
 - **Commits and pushes.** An agent often works away from its directory: it
   commits in another worktree of the clone, or creates a branch, pushes it and
   checks its directory back out on `main`. The tracker also follows Git's

@@ -8,8 +8,9 @@
 //! safety net it also reads every 60 s while the stream is up and every 30 s
 //! while it is down, and never with no daemon attached. A separate worker
 //! computes from `/api/diagnostics` and `/api/plan-usage`
-//! (every 5 minutes: the first runs the doctor's checks, the second is
-//! cached that long by the daemon). `main` tells this module when it attaches
+//! (diagnostics every 30 minutes, without `refresh`, so the daemon answers from
+//! its cache of at most that age; plan usage every 5 minutes, cached that long
+//! by the daemon). `main` tells this module when it attaches
 //! to a daemon, loses it, or starts connecting.
 //!
 //! On macOS and Windows a left click opens `panel`, a small window drawn like
@@ -47,7 +48,7 @@ const FALLBACK_STREAM_UP: Duration = Duration::from_secs(60);
 const FALLBACK_STREAM_DOWN: Duration = Duration::from_secs(30);
 const STREAM_BACKOFF_FIRST: Duration = Duration::from_secs(1);
 const STREAM_BACKOFF_MAX: Duration = Duration::from_secs(30);
-const DIAGNOSTICS_INTERVAL: Duration = Duration::from_secs(300);
+const DIAGNOSTICS_INTERVAL: Duration = Duration::from_secs(30 * 60);
 /// The daemon caches plan usage this long, so asking sooner repeats it.
 const PLAN_USAGE_INTERVAL: Duration = Duration::from_secs(300);
 /// The prefix of a waiting session's menu id, before its `agent:id` key.
@@ -873,7 +874,8 @@ fn apply(
 
 /// Event kinds after which the tray's numbers may have changed: job state
 /// (running, queued, failures), the pause switch, sessions waiting on the
-/// user, the waiting pull request count, and a missed replay window.
+/// user, the waiting pull request count, and a missed replay window. A `job`
+/// event, a running job's usage, changes none of them.
 fn wakes_poll(kind: &str) -> bool {
     matches!(kind, "progress" | "automatic" | "live" | "index" | "reset")
 }
@@ -1113,7 +1115,7 @@ mod tests {
         for kind in ["progress", "automatic", "live", "index", "reset"] {
             assert!(wakes_poll(kind), "{kind}");
         }
-        for kind in ["chat", "timeline", "decisions", "notice", ""] {
+        for kind in ["job", "chat", "timeline", "decisions", "notice", ""] {
             assert!(!wakes_poll(kind), "{kind}");
         }
     }

@@ -289,18 +289,23 @@ func writeJSON(w http.ResponseWriter, v any) {
 	_ = json.NewEncoder(w).Encode(v)
 }
 
+// maxEvent is the most event data Publish takes.
+const maxEvent = 16 << 10
+
+var errEventTooLarge = errors.New("event too large")
+
 // Publish records a small notification, not sensitive documents. Clients that
 // miss the bounded replay window receive a reset event and rebuild their index.
 func (s *Server) Publish(kind string, data any) error {
-	if kind != "index" && kind != "progress" && kind != "automatic" && kind != "live" && kind != "notice" && kind != "chat" && kind != "timeline" && kind != "decisions" {
+	if kind != "index" && kind != "progress" && kind != "job" && kind != "automatic" && kind != "live" && kind != "notice" && kind != "chat" && kind != "timeline" && kind != "decisions" {
 		return errors.New("unknown event kind")
 	}
 	b, err := json.Marshal(data)
 	if err != nil {
 		return err
 	}
-	if len(b) > 16<<10 {
-		return errors.New("event too large")
+	if len(b) > maxEvent {
+		return errEventTooLarge
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()

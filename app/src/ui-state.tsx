@@ -70,8 +70,17 @@ export class UIState<T> {
       try {
         const response = await fetch(appURL(this.path), { cache: "no-store" });
         if (!response.ok) throw Error("Could not read your saved state.");
-        this.accept(this.record(await response.json()));
-        this.emit("");
+        const record = this.record(await response.json());
+        const unchanged =
+          this.snapshot.ready &&
+          !this.snapshot.error &&
+          !this.pending.length &&
+          record.revision === this.revision &&
+          JSON.stringify(record.value ?? this.fallback()) === JSON.stringify(this.base);
+        if (!unchanged) {
+          this.accept(record);
+          this.emit("");
+        }
       } catch (error) {
         this.emit(error instanceof Error ? error.message : "Could not read your saved state.");
       } finally {

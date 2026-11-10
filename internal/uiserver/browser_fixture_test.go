@@ -630,7 +630,7 @@ func TestLocalAppBrowserFixture(t *testing.T) {
 			return daemon.App{}, err
 		}
 		runner, err := jobs.Open(filepath.Join(home, "app.sqlite"), &jobs.Local{Registry: registry, Groups: groups, Config: cfg, Client: client, FixDirectory: filepath.Join(home, "fixes"), Features: fixtureBuilder{}, Chat: chats, Backends: generate.Backends{Claude: func(string) generate.CheckedBackend { return fixtureFixer{backend} }}}, 1, func(job jobs.Job) {
-			_ = server.Publish("progress", map[string]any{"job": job})
+			_ = server.PublishProgress(job)
 			_ = server.Publish("index", map[string]any{})
 			if event, ok := jobs.ChatEvent(job); ok {
 				_ = server.Publish("chat", event)
@@ -643,6 +643,7 @@ func TestLocalAppBrowserFixture(t *testing.T) {
 			return daemon.App{}, err
 		}
 		scheduler.Queue = runner
+		runner.SetUsageChanged(func(usage jobs.Usage) { _ = server.PublishUsage(usage) })
 		runner.SetChat(chats)
 		runner.SetAutomaticGate(scheduler.Gate)
 		auth := browserAuthentication(t, appCtx, state, cfg, func() { _ = server.Publish("index", struct{}{}) }, func() func(bool) {

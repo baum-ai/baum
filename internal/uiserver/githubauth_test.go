@@ -252,3 +252,59 @@ func TestCredentialStoreCanRecoverWithoutNewAuthorization(t *testing.T) {
 		t.Fatal(status)
 	}
 }
+
+func TestStatusNamesOrganizationsTheSignInCannotReach(t *testing.T) {
+	a, _, s, changes := connectionFixture(t, &connectionStore{credential: githubauth.Credential{AccessToken: "saved", Login: "alice", ID: 1}}, func(*http.Request) (string, error) { return connectionGrant, nil })
+	var mu sync.Mutex
+	hidden := []string{"locked-co"}
+	var refreshed []bool
+	a.Organizations = func(_ context.Context, refresh bool) (githubauth.OrganizationAccess, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		refreshed = append(refreshed, refresh)
+		return githubauth.OrganizationAccess{Hidden: hidden, ApprovalURL: githubauth.ApprovalURL}, nil
+	}
+	connectStatus(t, a, "connected")
+	deadline := time.Now().Add(5 * time.Second)
+	for a.snapshot().OrganizationAccess == nil && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	for changes.Load() == 0 && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if changes.Load() == 0 {
+		t.Error("the app was not told the background organization check found something")
+	}
+	got := a.snapshot().OrganizationAccess
+	if got == nil || got.Hidden[0] != "locked-co" || got.ApprovalURL != githubauth.ApprovalURL {
+		t.Fatalf("organization access = %+v", got)
+	}
+
+	// The owner approves baum; "Check again" re-asks GitHub at once.
+	mu.Lock()
+	hidden = nil
+	mu.Unlock()
+	w := request(t, s, "POST", "/api/github-auth/retry", "", s.Origin(), "application/json", "Bearer "+s.launch, "{}")
+	if w.Code != 200 || strings.Contains(w.Body.String(), "organization_access") {
+		t.Fatalf("retry after approval: %d %s", w.Code, w.Body)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(refreshed) < 2 || !refreshed[len(refreshed)-1] {
+		t.Errorf("refresh flags = %v, want the retry to force a read", refreshed)
+	}
+}
+
+func TestSSOErrorShowsAfterSignInAndPersistsUntilRecovered(t *testing.T) {
+	a, m, _, _ := connectionFixture(t, &connectionStore{credential: githubauth.Credential{AccessToken: "saved", Login: "alice", ID: 1}}, func(*http.Request) (string, error) { return connectionGrant, nil })
+	connectStatus(t, a, "connected")
+	token, err := m.Token(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.ObserveResponse(token, 403, http.Header{"X-Github-Sso": []string{"required; url=private"}})
+	got := a.snapshot()
+	if got.State != "connected" || got.Error != "sso_required" || !strings.Contains(got.Message, "GitHub SSO") {
+		t.Fatalf("status = %+v", got)
+	}
+}

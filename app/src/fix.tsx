@@ -10,16 +10,19 @@ import {
 import { SMALL } from "./action-classes";
 import {
   appURL,
+  changedNothing,
   fixName,
   isActiveJob,
   jobHref,
   jobReasonText,
   request,
+  summaryLead,
   threadOutcomesSummary,
   threadOutcomeText,
   type FixThread,
   type Job,
 } from "./api";
+import { Markdown } from "@baum/viewer/components/markdown";
 import { ViewerLink } from "@baum/viewer/navigation";
 
 export const phases: Record<string, string> = {
@@ -47,6 +50,12 @@ export type FixState = { starting: boolean; error: string };
 /** What a running fix is doing, in words. */
 export function phaseText(job: Job) {
   return job.state === "queued" ? "Queued" : (phases[job.phase] ?? job.phase);
+}
+
+/** A running fix's step, for a line that already says an agent is fixing
+ *  it: empty while the agent itself works, which would say that again. */
+export function fixStep(job: Job) {
+  return job.state === "running" && job.phase === "fixing" ? "" : phaseText(job);
 }
 
 /** The link to a fix's transcript: Watch while it runs. Nothing without one.
@@ -124,6 +133,7 @@ function RunOutcome({ job }: { job: Job }) {
         </a>
       </>
     );
+  if (changedNothing(job)) return <>changed nothing</>;
   if (job.state === "failed")
     return <>failed{job.reason ? `: ${jobReasonText(job.reason)}` : ""}</>;
   return <>{job.state === "completed" ? "finished without pushing" : job.state}</>;
@@ -183,16 +193,20 @@ export function FixNotice({
       </section>
     );
   const pushed = job.state === "completed" && !!job.commit;
+  // A fix that changed nothing is the agent's judgement, not an error: no
+  // red cross, and its reason is what the agent said.
+  const unchanged = changedNothing(job);
+  const why = unchanged ? summaryLead(job.summary) : "";
   const Icon = pushed
     ? CircleCheckIcon
-    : job.state === "failed"
+    : job.state === "failed" && !unchanged
       ? CircleCrossIcon
       : CircleDashedIcon;
   return (
     <section aria-label="Fix" className="local-job-outcome local-fix-notice">
       <Icon
         size={16}
-        className={`local-fix-notice-icon local-fix-notice-${pushed ? "pushed" : job.state}`}
+        className={`local-fix-notice-icon local-fix-notice-${pushed ? "pushed" : unchanged ? "unchanged" : job.state}`}
       />
       <div className="min-w-0 flex-1">
         <p role="status" className="local-fix-notice-title">
@@ -209,14 +223,22 @@ export function FixNotice({
                 </>
               ) : null}
             </>
+          ) : unchanged ? (
+            `${name} changed nothing, so nothing was pushed`
           ) : job.state === "failed" ? (
             `${name} failed`
           ) : (
             `${name} was ${job.state}`
           )}
         </p>
-        {job.reason ? <p>{jobReasonText(job.reason)}</p> : null}
-        <FixDetails job={job} />
+        {why ? (
+          <Markdown html={false} className="local-fix-notice-why">
+            {why}
+          </Markdown>
+        ) : job.reason && !unchanged ? (
+          <p>{jobReasonText(job.reason)}</p>
+        ) : null}
+        <FixDetails job={job} leadShown={Boolean(why)} />
       </div>
       <div className="local-fix-notice-actions">
         <TranscriptLink job={job} keyHint boxed />
@@ -278,10 +300,19 @@ export function ThreadOutcomes({ job }: { job: Job }) {
   );
 }
 /** What the agent said it did, what became of each review thread, and a
- *  failure's own words. */
-export function FixDetails({ job }: { job: Job }) {
+ *  failure's own words. `leadShown` says the caller already shows the first
+ *  paragraph of the agent's summary above (`summaryLead`). */
+export function FixDetails({ job, leadShown = false }: { job: Job; leadShown?: boolean }) {
   const outcomes = job.thread_outcomes ?? [];
   if (!outcomes.length && !job.summary && !job.detail) return null;
+  // A fold holding only the lead shown above again would add nothing.
+  if (
+    leadShown &&
+    !outcomes.length &&
+    !job.detail &&
+    job.summary?.trim() === summaryLead(job.summary)
+  )
+    return null;
   // One fold: what happened to the threads names it, the agent's account follows.
   return (
     <details className="local-fix-details">
@@ -289,7 +320,9 @@ export function FixDetails({ job }: { job: Job }) {
         {outcomes.length
           ? threadOutcomesSummary(outcomes)
           : job.summary
-            ? "What the agent did"
+            ? leadShown
+              ? "Everything the agent said"
+              : "What the agent did"
             : "What happened"}
       </summary>
       {outcomes.length ? <ThreadOutcomes job={job} /> : null}

@@ -49,6 +49,8 @@ import {
   jobHref,
   agentName,
   jobReasonText,
+  changedNothing,
+  summaryLead,
   joinAnd,
   liveFor,
   navigate,
@@ -63,7 +65,7 @@ import {
   type LiveSession,
   type ReviewGroup,
 } from "./api";
-import { phaseText, type FixState } from "./fix";
+import { fixStep, type FixState } from "./fix";
 import {
   COLOR_NAMES,
   foldedQuery,
@@ -129,6 +131,9 @@ export type UpNextItem = {
   working: LiveSession[];
   /** The latest fix of a pull request in the queue as a fix, when it failed. */
   failedFix?: Job;
+  /** The latest fix, when it ended without changing anything: not a failure,
+   *  so it is shown with the agent's reason instead. */
+  unchangedFix?: Job;
 };
 
 // The order of the queue, which is the order of its groups: what someone
@@ -238,9 +243,9 @@ function why(kind: UpNextKind, entry: Entry, working: number): string {
         entry.status === "generating"
           ? "baum is writing its review now."
           : entry.status === "failed"
-            ? "baum's review failed; its page can try again."
+            ? "baum's review failed."
             : entry.version_count === 0
-              ? "There is no baum review yet; generate one from its page."
+              ? "There is no baum review yet."
               : entry.status === "outdated" || entry.stale
                 ? "baum's review covers an earlier commit."
                 : `baum's review is ready${riskText(entry) ? `, risk ${riskText(entry)}` : ""}.`;
@@ -358,7 +363,11 @@ export function upNext(
       why: why(kind, entry, working.length),
       minutes: kind === "review" ? (entry.review_minutes ?? null) : null,
       working,
-      ...(last?.state === "failed" ? { failedFix: last } : {}),
+      ...(last && changedNothing(last)
+        ? { unchangedFix: last }
+        : last?.state === "failed"
+          ? { failedFix: last }
+          : {}),
     });
   }
   // A review ready to read comes before one still being written; then the
@@ -1020,6 +1029,8 @@ export function UpNextPage({
   cloneFor,
   fix,
   fixState = () => ({ starting: false, error: "" }),
+  generate,
+  generateState = () => ({ starting: false, error: "" }),
   changed,
   refresh,
   refreshing = false,
@@ -1054,6 +1065,10 @@ export function UpNextPage({
   fix: (entry: Entry, only?: FixOnly) => void;
   /** A pull request's fix that is starting or did not start. */
   fixState?: (entry: Entry) => FixState;
+  /** Starts the review of a pull request, as its page's Generate does. */
+  generate?: (entry: Entry) => void;
+  /** A pull request's review that is starting or did not start. */
+  generateState?: (entry: Entry) => FixState;
   /** Reloads the inbox after a write to GitHub. */
   changed: () => Promise<void>;
   /** Reads the pull requests from GitHub again, from the head's refresh. */
@@ -1267,6 +1282,12 @@ export function UpNextPage({
       ? () => fix(selected.entry)
       : undefined;
   const selectedFixState = selected ? fixState(selected.entry) : { starting: false, error: "" };
+  // The panel's generate button, shown while there is no review: it needs a
+  // clone to write one in.
+  const selectedGenerate =
+    selected && generate && cloneFor(selected.entry) && !selected.entry.needs_clone
+      ? () => generate(selected.entry)
+      : undefined;
   const options = snoozeOptions(now);
   const snooze = (until: SnoozeEnd) => {
     const item = selected;
@@ -1738,6 +1759,8 @@ export function UpNextPage({
               Link={Link}
               fix={selectedFix}
               fixState={selectedFixState}
+              generate={selectedGenerate}
+              generateState={generateState(selected.entry)}
               merge={() => setMerging(selected.entry)}
               review={(event) => setReviewing({ entry: selected.entry, event })}
               update={() => setUpdating(selected.entry)}
@@ -1848,11 +1871,14 @@ function ListRow({
   const sub = [
     `#${pr.number}`,
     ...(row.job
-      ? ["Agent fixing", phaseText(row.job)]
+      ? ["Agent fixing", fixStep(row.job)]
       : row.waiting
         ? [rowWaiting(row), repository]
-        : row.item?.failedFix
-          ? [inGroup ? memberLabel(row.item.kind, row.entry) : "", "Last fix failed"]
+        : row.item?.failedFix || row.item?.unchangedFix
+          ? [
+              inGroup ? memberLabel(row.item.kind, row.entry) : "",
+              row.item.failedFix ? "Last fix failed" : "Last fix changed nothing",
+            ]
           : [
               inGroup && row.item ? memberLabel(row.item.kind, row.entry) : repository,
               row.item?.minutes != null ? minutesText(row.item.minutes) : "",
@@ -2166,6 +2192,8 @@ function Panel({
   Link,
   fix,
   fixState,
+  generate,
+  generateState,
   merge,
   review,
   update,
@@ -2183,6 +2211,9 @@ function Panel({
   Link: ComponentType<ViewerLinkProps>;
   fix?: () => void;
   fixState: FixState;
+  /** Starts the review; none without a clone to write it in. */
+  generate?: () => void;
+  generateState: FixState;
   merge: () => void;
   review: (event: ReviewEvent) => void;
   update: () => void;
@@ -2310,7 +2341,7 @@ function Panel({
       {job ? (
         <div className="upnext-working" role="status">
           <NineDots size={14} />
-          <span>An agent is fixing it · {phaseText(job)}.</span>
+          <span>An agent is fixing it{fixStep(job) ? ` · ${fixStep(job)}` : ""}.</span>
           <span className="upnext-working-aside">You can move on</span>
         </div>
       ) : null}
@@ -2333,6 +2364,7 @@ function Panel({
           </Link>
         </div>
       ) : null}
+      {item?.unchangedFix ? <UnchangedFix job={item.unchangedFix} Link={Link} /> : null}
       <div className="upnext-actions">
         {actions}
         {reviewable(entry) ? (
@@ -2382,6 +2414,11 @@ function Panel({
           <NineDots size={14} />
           <span>Generating the review.</span>
         </div>
+      ) : kind !== "clone" &&
+        entry.status !== "generating" &&
+        (entry.status === "failed" || entry.version_count === 0) ? (
+        // A clone item says what baum will do instead.
+        <NoReview entry={entry} generate={generate} state={generateState} />
       ) : null}
       {score != null ? (
         <RiskCard score={score} text={riskText(entry)}>
@@ -2437,6 +2474,47 @@ function Panel({
         </p>
       ) : null}
     </article>
+  );
+}
+
+/** Where the review stands while there is none to read, or the last one
+ *  failed, with the button that writes it. */
+function NoReview({
+  entry,
+  generate,
+  state,
+}: {
+  entry: Entry;
+  generate?: () => void;
+  state: FixState;
+}) {
+  const failed = entry.status === "failed";
+  const text = failed
+    ? `baum's review failed${entry.failure_reason ? `: ${entry.failure_reason}` : "."}`
+    : entry.needs_clone
+      ? `No review yet. baum needs a local clone of ${entry.pull_request.repository} to write one; choose a folder or clone it in Repositories.`
+      : "No review yet.";
+  return (
+    <div className="upnext-noreview" role={state.error ? "alert" : undefined}>
+      <div className="upnext-noreview-copy">
+        <span>{text}</span>
+        {state.error ? (
+          <span className="upnext-noreview-sub">Couldn't start the review: {state.error}</span>
+        ) : generate && !failed ? (
+          <span className="upnext-noreview-sub">Writing one usually takes a few minutes.</span>
+        ) : null}
+      </div>
+      {generate ? (
+        <button
+          type="button"
+          className={cn("upnext-secondary", SECONDARY)}
+          disabled={state.starting}
+          onClick={generate}
+        >
+          {state.starting ? "Starting…" : failed ? "Try again" : "Generate"}
+        </button>
+      ) : null}
+    </div>
   );
 }
 
@@ -2619,15 +2697,47 @@ function RiskCard({
   );
 }
 
+/** The last fix ended without changing anything, which is the agent's
+ *  judgement, not an error: said in neutral words, with the agent's reason
+ *  (the first paragraph of what it said) and the way to the rest. */
+function UnchangedFix({ job, Link }: { job: Job; Link: ComponentType<ViewerLinkProps> }) {
+  const why = summaryLead(job.summary);
+  return (
+    <div className="upnext-unchanged" role="status">
+      <p className="upnext-unchanged-title">The last fix changed nothing, so nothing was pushed.</p>
+      {why ? (
+        <Markdown html={false} className="upnext-prose upnext-unchanged-why">
+          {why}
+        </Markdown>
+      ) : null}
+      <Link href={jobHref(job)}>
+        {why ? "Read what the agent said" : "See what the agent did"}
+        {job.has_transcript ? (
+          <kbd aria-hidden="true" className="key-hint">
+            t
+          </kbd>
+        ) : null}
+      </Link>
+    </div>
+  );
+}
+
 /** What a group's member waits on, in a few words, and the tone of its dot:
  *  an agent at work, what needs fixing, ready to merge, or waiting. */
 function memberState(row: Row): { text: string; tone: string } {
-  if (row.job) return { text: `Agent fixing · ${phaseText(row.job)}`, tone: "working" };
+  if (row.job) {
+    const step = fixStep(row.job);
+    return { text: step ? `Agent fixing · ${step}` : "Agent fixing", tone: "working" };
+  }
   if (row.waiting) return { text: rowWaiting(row), tone: "waiting" };
   if (!row.item) return { text: "", tone: "waiting" };
   const label = memberLabel(row.item.kind, row.entry);
   return {
-    text: row.item.failedFix ? `${label} · Last fix failed` : label,
+    text: row.item.failedFix
+      ? `${label} · Last fix failed`
+      : row.item.unchangedFix
+        ? `${label} · Last fix changed nothing`
+        : label,
     tone: row.item.kind,
   };
 }

@@ -528,6 +528,21 @@ var GitHubAuth = githubauth.New(githubauth.ProcessStore{})
 
 const SourceBaum = "baum credential store"
 
+// DeviceOrganizations names the organizations the saved device sign-in cannot
+// reach (githubauth.Manager.Organizations). An explicit token is not asked:
+// a fine-grained one lists no organizations at all, which would read as every
+// membership being hidden.
+func DeviceOrganizations(ctx context.Context, c Config, refresh bool) (githubauth.OrganizationAccess, error) {
+	if token, _ := c.ExplicitGitHubTokenSource(GitHubHost); token != "" {
+		return githubauth.OrganizationAccess{}, nil
+	}
+	token, err := c.ResolveGitHubToken(ctx, GitHubHost)
+	if err != nil {
+		return githubauth.OrganizationAccess{}, err
+	}
+	return GitHubAuth.Organizations(ctx, token, refresh)
+}
+
 var ErrNoGitHubToken = errors.New("no GitHub token")
 
 // ExplicitGitHubTokenSource resolves overrides without opening the keyring.

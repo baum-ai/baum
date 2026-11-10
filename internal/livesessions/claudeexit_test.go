@@ -65,12 +65,23 @@ func TestClaudeExitEndsAnIdleSessionsOwnProcessOnly(t *testing.T) {
 	if err := (ClaudeExit{Home: home}).End(context.Background(), id); !errors.Is(err, errNotEndable) {
 		t.Fatalf("a busy session: %v", err)
 	}
+	// Its turn over, a background command still running: left to finish it.
+	register(t, home, pid, id, "shell", procStartOf(t, pid), domain)
+	if err := (ClaudeExit{Home: home}).Check(id); !errors.Is(err, ErrRunningCommand) {
+		t.Fatalf("checking a session running a command: %v", err)
+	}
+	if err := (ClaudeExit{Home: home}).End(context.Background(), id); !errors.Is(err, ErrRunningCommand) {
+		t.Fatalf("a session running a command: %v", err)
+	}
 	select {
 	case <-done:
 		t.Fatal("signalled before it was its own idle process")
 	default:
 	}
 	register(t, home, pid, id, "idle", procStartOf(t, pid), domain)
+	if err := (ClaudeExit{Home: home}).Check(id); err != nil {
+		t.Fatalf("checking an idle session: %v", err)
+	}
 	if err := (ClaudeExit{Home: home}).End(context.Background(), id); err != nil {
 		t.Fatal(err)
 	}
@@ -81,6 +92,35 @@ func TestClaudeExitEndsAnIdleSessionsOwnProcessOnly(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("not ended")
+	}
+}
+
+// End confirms the process itself, whatever the list was told of it.
+func TestClaudeExitConfirmsTheProcessTheListTrusted(t *testing.T) {
+	child := exec.Command("sleep", "30")
+	if err := child.Start(); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- child.Wait() }()
+	t.Cleanup(func() { _ = child.Process.Kill() })
+	pid := child.Process.Pid
+	const id = "75673aad-0000-4000-8000-000000000002"
+	home := t.TempDir()
+	// The session's process exited and another took its pid, which the list
+	// still trusts from before.
+	register(t, home, pid, id, "idle", "1", "")
+	listing := &ClaudeProcesses{Home: home, same: func(ClaudeProcess) error { return nil }}
+	if err := listing.EndCheck()(id); err != nil {
+		t.Fatalf("the list's check: %v", err)
+	}
+	if err := (ClaudeExit{Home: home}).End(context.Background(), id); !errors.Is(err, ErrAgentGone) {
+		t.Fatalf("ended a reused pid: %v", err)
+	}
+	select {
+	case <-done:
+		t.Fatal("signalled a reused pid")
+	case <-time.After(100 * time.Millisecond):
 	}
 }
 

@@ -8,7 +8,7 @@ export const messages: Record<string, string> = {
   insufficient_scopes:
     "GitHub needs repository, organization read and workflow access. Reconnect and grant all three permissions.",
   sso_required:
-    "Authorize baum for your organization's GitHub SSO, then check the connection again.",
+    "An organization requires GitHub SSO (single sign-on) for baum. Authorize baum for it on GitHub, then check the connection again.",
   permission_denied: "Check your repository access and GitHub authorization permissions.",
   auth_request_failed: "GitHub could not be reached. Check your connection and try again.",
 };
@@ -20,6 +20,11 @@ export const terminal: Record<string, string> = {
 // Fixed rather than the daemon's verification_uri: the window only ever
 // sends people to GitHub's own device page.
 export const DEVICE_URL = "https://github.com/login/device";
+
+/** baum's page in the person's GitHub settings: where they authorize it for a
+ * SAML organization or ask an owner to approve it. */
+export const ACCESS_URL =
+  "https://github.com/settings/connections/applications/Ov23liFSMjrhof9WQlOi";
 
 export type GitHubAuthAction = "start" | "cancel" | "retry" | "disconnect";
 /** Reads the daemon's GitHub connection, or changes it with an action. */

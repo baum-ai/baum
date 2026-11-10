@@ -270,6 +270,115 @@ func TestClaudeFailuresAreWordsWithoutToken(t *testing.T) {
 	assertNoSecret(t, p)
 }
 
+func TestClaudeKeepsTheLastReadingAndBacksOffWhenRateLimited(t *testing.T) {
+	status, retryAfter, calls := 200, "", 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls++
+		if retryAfter != "" {
+			w.Header().Set("Retry-After", retryAfter)
+		}
+		w.WriteHeader(status)
+		_, _ = w.Write([]byte(`{"five_hour":{"utilization":40,"resets_at":"2026-10-26T13:00:00Z"},
+			"seven_day":{"utilization":10,"resets_at":"2026-10-30T00:00:00Z"}}`))
+	}))
+	defer srv.Close()
+	now := clock
+	c := &Claude{URL: srv.URL, Now: func() time.Time { return now },
+		Credential: func(context.Context) (Credential, error) { return Credential{Token: secret}, nil }}
+	read := func(after time.Duration) Plan {
+		now = now.Add(after)
+		return c.Read(context.Background())
+	}
+	wantCalls := func(want int) {
+		t.Helper()
+		if calls != want {
+			t.Fatalf("%d requests, want %d", calls, want)
+		}
+	}
+
+	if p := read(0); !p.Available || !p.FetchedAt.Equal(clock) {
+		t.Fatalf("%+v", p)
+	}
+	// Limited: the last reading stands in, as old as it is.
+	status, retryAfter = 429, "0"
+	if p := read(time.Minute); !p.Available || !p.FetchedAt.Equal(clock) || *p.Windows[0].UsedPercent != 40 {
+		t.Fatalf("%+v", p)
+	}
+	wantCalls(2)
+	// The endpoint is left alone for four minutes, then eight.
+	read(3 * time.Minute)
+	wantCalls(2)
+	read(time.Minute)
+	wantCalls(3)
+	read(7 * time.Minute)
+	wantCalls(3)
+	// A window that reset meanwhile loses its figure; the other keeps its own.
+	p := read(50 * time.Minute)
+	wantCalls(4)
+	if !p.Available || !p.Windows[0].Reset || p.Windows[0].UsedPercent != nil || *p.Windows[1].UsedPercent != 10 {
+		t.Fatalf("%+v", p)
+	}
+	if w := c.last.Windows[0]; w.Reset || w.UsedPercent == nil {
+		t.Fatalf("the kept reading was changed: %+v", w)
+	}
+	// A Retry-After is kept to, up to an hour.
+	retryAfter = "120"
+	read(20 * time.Minute)
+	wantCalls(5)
+	read(time.Minute)
+	wantCalls(5)
+	// A working answer replaces the kept one and ends the waiting.
+	status, retryAfter = 200, ""
+	if p = read(time.Minute); !p.Available || !p.FetchedAt.Equal(now) {
+		t.Fatalf("%+v", p)
+	}
+	wantCalls(6)
+	// Other failures stand in the same way, without waiting; after six hours
+	// the old reading says nothing any more.
+	status = 500
+	if p = read(time.Minute); !p.Available {
+		t.Fatalf("%+v", p)
+	}
+	wantCalls(7)
+	if p = read(6 * time.Hour); p.Available || !strings.Contains(p.Reason, "unavailable right now") {
+		t.Fatalf("%+v", p)
+	}
+	wantCalls(8)
+	// A refused sign-in is never papered over.
+	status = 200
+	read(time.Minute)
+	status = 401
+	if p = read(time.Minute); p.Available || !strings.Contains(p.Reason, "Open Claude Code") {
+		t.Fatalf("%+v", p)
+	}
+	status = 429
+	if p = read(time.Minute); p.Available {
+		t.Fatalf("%+v", p)
+	}
+	// Nor is a token that expires while the endpoint is left alone: it is
+	// checked without a request, and the kept reading is dropped for good.
+	status = 200
+	read(time.Hour)
+	status = 429
+	read(time.Minute)
+	before := calls
+	expires := now.Add(time.Minute)
+	c.Credential = func(context.Context) (Credential, error) {
+		return Credential{Token: secret, ExpiresAt: expires}, nil
+	}
+	if p = read(30 * time.Second); !p.Available {
+		t.Fatalf("%+v", p)
+	}
+	if p = read(time.Minute); p.Available || !strings.Contains(p.Reason, "Open Claude Code") {
+		t.Fatalf("%+v", p)
+	}
+	expires = now.Add(time.Hour)
+	if p = read(time.Second); p.Available {
+		t.Fatalf("%+v", p)
+	}
+	wantCalls(before)
+}
+
 func TestClaudeExpiredTokenIsNotSentOrRefreshed(t *testing.T) {
 	called := false
 	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { called = true }))
