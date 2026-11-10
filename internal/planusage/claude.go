@@ -66,7 +66,7 @@ type outcome int
 
 const (
 	read outcome = iota
-	// signedOut needs the person: no credential, or one Anthropic refuses.
+	// signedOut needs the person: Anthropic refuses the credential.
 	signedOut
 	// rateLimited is a 429; the duration with it is its Retry-After, if any.
 	rateLimited
@@ -94,10 +94,25 @@ func (c *Claude) unavailable(reason string) Plan {
 func (c *Claude) Read(ctx context.Context) Plan {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	// The stored credential is checked on every read, also while the endpoint
+	// is left alone: signing out must not leave the last reading standing.
+	find := c.Credential
+	if find == nil {
+		find = StoredCredential
+	}
+	cred, err := find(ctx)
+	switch {
+	case err != nil || cred.Token == "":
+		c.last = nil
+		return c.unavailable("Claude Code is not signed in on this computer.")
+	case !cred.ExpiresAt.IsZero() && !cred.ExpiresAt.After(c.now()):
+		c.last = nil
+		return c.unavailable("Open Claude Code to refresh its sign-in.")
+	}
 	if c.now().Before(c.notBefore) {
 		return c.stale(c.unavailable("Claude's usage is unavailable right now."))
 	}
-	plan, result, wait := c.fetch(ctx)
+	plan, result, wait := c.fetch(ctx, cred)
 	if result == rateLimited {
 		if wait <= 0 {
 			wait = firstRateLimitWait << min(c.limited, 8)
@@ -137,18 +152,8 @@ func (c *Claude) stale(failure Plan) Plan {
 	return plan
 }
 
-func (c *Claude) fetch(ctx context.Context) (Plan, outcome, time.Duration) {
-	find := c.Credential
-	if find == nil {
-		find = StoredCredential
-	}
-	cred, err := find(ctx)
-	switch {
-	case err != nil || cred.Token == "":
-		return c.unavailable("Claude Code is not signed in on this computer."), signedOut, 0
-	case !cred.ExpiresAt.IsZero() && !cred.ExpiresAt.After(c.now()):
-		return c.unavailable("Open Claude Code to refresh its sign-in."), signedOut, 0
-	}
+// fetch asks the endpoint with a credential Read found usable.
+func (c *Claude) fetch(ctx context.Context, cred Credential) (Plan, outcome, time.Duration) {
 	client := c.Client
 	if client == nil {
 		client = &http.Client{

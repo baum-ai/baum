@@ -355,6 +355,28 @@ func TestClaudeKeepsTheLastReadingAndBacksOffWhenRateLimited(t *testing.T) {
 	if p = read(time.Minute); p.Available {
 		t.Fatalf("%+v", p)
 	}
+	// Nor is a token that expires while the endpoint is left alone: it is
+	// checked without a request, and the kept reading is dropped for good.
+	status = 200
+	read(time.Hour)
+	status = 429
+	read(time.Minute)
+	before := calls
+	expires := now.Add(time.Minute)
+	c.Credential = func(context.Context) (Credential, error) {
+		return Credential{Token: secret, ExpiresAt: expires}, nil
+	}
+	if p = read(30 * time.Second); !p.Available {
+		t.Fatalf("%+v", p)
+	}
+	if p = read(time.Minute); p.Available || !strings.Contains(p.Reason, "Open Claude Code") {
+		t.Fatalf("%+v", p)
+	}
+	expires = now.Add(time.Hour)
+	if p = read(time.Second); p.Available {
+		t.Fatalf("%+v", p)
+	}
+	wantCalls(before)
 }
 
 func TestClaudeExpiredTokenIsNotSentOrRefreshed(t *testing.T) {
