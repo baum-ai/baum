@@ -546,6 +546,9 @@ func ruleFindings(value any, stack *documentStack, sections []authoredSection, b
 			if finding := unlistedImageFinding(block, attachments); finding != "" {
 				findings = append(findings, fmt.Sprintf("section %d (%s) %s", sectionIndex+1, section.ID, finding))
 			}
+			if finding := sessionImageSourceFinding(block, bundle); finding != "" {
+				findings = append(findings, fmt.Sprintf("section %d (%s) %s", sectionIndex+1, section.ID, finding))
+			}
 			if kind == "decisions" {
 				if decisions, ok := block["items"].([]any); ok {
 					for _, item := range decisions {
@@ -643,6 +646,27 @@ func unlistedImageFinding(block map[string]any, listed map[string]bool) string {
 	for _, item := range jsonObjects(block["items"]) {
 		if id, _ := item["attachment"].(string); !listed[id] {
 			return fmt.Sprintf("images block names attachment %q, which the attachments part does not list; use only listed attachment IDs", id)
+		}
+	}
+	return ""
+}
+
+func sessionImageSourceFinding(block map[string]any, b *bundlepkg.Bundle) string {
+	if b == nil || block["kind"] != "images" {
+		return ""
+	}
+	sources := map[string]bool{}
+	for _, anchor := range jsonObjects(block["source"]) {
+		if anchor["type"] == "attachment" {
+			id, _ := anchor["id"].(string)
+			sources[id] = true
+		}
+	}
+	for _, item := range jsonObjects(block["items"]) {
+		for _, attachment := range b.Attachments {
+			if item["attachment"] == attachment.ID && attachment.SourceURL == "" && len(attachment.Origins) > 0 && !sources[attachment.ID] {
+				return fmt.Sprintf("session image %s requires its attachment anchor in source; it is not a PR-description image", attachment.ID)
+			}
 		}
 	}
 	return ""
@@ -1133,7 +1157,7 @@ func bundleIndex(b *bundlepkg.Bundle) (documentIndex, documentStatsChecks, map[s
 	checks, checkCounts := checkIndex(b, b.PullRequest.HeadSHA)
 	index.Checks = checks
 	for _, a := range b.Attachments {
-		index.Attachments = append(index.Attachments, documentAttachment{ID: a.ID, Alt: a.Alt, Heading: a.Heading, Position: a.Position, ContentType: a.ContentType, Width: a.Width, Height: a.Height, SourceURL: a.SourceURL})
+		index.Attachments = append(index.Attachments, documentAttachment{ID: a.ID, Alt: a.Alt, Heading: a.Heading, Position: a.Position, ContentType: a.ContentType, Width: a.Width, Height: a.Height, SourceURL: a.SourceURL, SourceURLs: a.SourceURLs, Origins: a.Origins})
 	}
 	for _, c := range b.Conversation {
 		if c.CreatedAt == nil {

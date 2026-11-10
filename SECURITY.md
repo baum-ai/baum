@@ -91,6 +91,28 @@ credentials, and only these hosts are contacted: `github.com`
 `github-production-user-asset-*.s3.amazonaws.com`, over HTTPS. A redirect to
 any other host is refused, and an image hosted elsewhere is not downloaded.
 
+Local review generation also reads retained inline image payloads from linked
+Claude Code and Codex native transcripts and reachable subagent transcripts.
+Human-pasted images and tool-result images keep distinct provenance. Entire
+checkpoint images are excluded. Image discovery does not fetch transcript URLs
+or open image-file paths mentioned in session text. Native transcript reads
+are confined to the session stores and bounded by line, scan, image-count and
+decoded-byte limits. Unsupported or missing images are nonfatal diagnostics.
+Image bytes are sniffed as PNG/JPEG/GIF/WebP and session images above 40 million
+pixels are rejected. The shared capture limit is 20 images of at most 10 MiB
+each by default; description images come first and identical bytes share one
+copy while retaining their origins. Session images longer than 1568 px on a
+side and at most 24 million pixels are decoded and re-encoded at that size
+when the result is smaller; colour profiles are not carried over. Saved
+versions share one stored copy of identical image bytes.
+
+These pixels are not text-redacted. Eligible images are made available to the
+configured review model, just as PR-description images are, and stored with the
+local review version. They are served only through authenticated local image
+routes and are not published to GitHub. Treat sensitive pixels in session
+images as sensitive model input; provenance does not imply a test passed or
+that an image depicts the reviewed revision.
+
 baum sends no telemetry. Its desktop runtime contacts GitHub, the selected
 model provider and
 `static.usebaum.com`, from which it downloads the public price list used to

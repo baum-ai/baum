@@ -7,6 +7,7 @@ import example from "../../../schema/review-example.json" with { type: "json" };
 import { type SearchUpdate, UrlStateProvider } from "../navigation";
 import type { Block, LoadReviewVersion, ReviewDocument } from "../review-document";
 import { ReviewViewer } from "./review-viewer";
+import { AttachmentUrlProvider } from "../host";
 
 declare global {
   var IS_REACT_ACT_ENVIRONMENT: boolean;
@@ -106,6 +107,54 @@ function sourceChip(container: HTMLElement, text: string) {
 }
 
 describe("ReviewViewer without host slots", () => {
+  it("opens an image's source session at its owning turn, even without a compact prompt entry", async () => {
+    const snapshot = structuredClone(current);
+    const section = snapshot.sections[0]!;
+    const id = "att_0123456789abcdef0123456789abcdef";
+    snapshot.index.attachments = [
+      {
+        id,
+        position: 1,
+        content_type: "image/png",
+        width: 1,
+        height: 1,
+        origins: [
+          { session: "native", turn: 7, input: "image-only", kind: "human_input", position: 1 },
+        ],
+      },
+    ];
+    section.blocks = [
+      {
+        kind: "images",
+        items: [{ attachment: id, caption: "Native screenshot" }],
+        source: [{ type: "attachment", id }],
+      },
+    ];
+    const container = await render(
+      <Host initial={`pane=section&section=${section.id}`}>
+        <AttachmentUrlProvider resolve={(attachmentId) => `/images/${attachmentId}`}>
+          <ReviewViewer
+            document={snapshot}
+            sessions={{
+              state: { status: "ready", items: [{ id: "native", label: "Native session" }] },
+              renderPane: (selected, _actions, focusTurn) => (
+                <p>
+                  Session {selected}, turn {focusTurn}
+                </p>
+              ),
+            }}
+          />
+        </AttachmentUrlProvider>
+      </Host>,
+    );
+    const link = [...container.querySelectorAll<HTMLAnchorElement>("a")].find(
+      (item) => item.textContent === "Prompt 7",
+    )!;
+    expect(link).toBeDefined();
+    expect(link.getAttribute("href")).toBe("#");
+    await act(async () => link.click());
+    expect(container.textContent).toContain("Session native, turn 7");
+  });
   it("opens old risk links within their complete Changes section", async () => {
     const section = current.sections.find((item) => item.risks.length > 0)!;
     const risk = section.risks[0]!;

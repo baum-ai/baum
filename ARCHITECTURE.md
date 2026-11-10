@@ -2114,7 +2114,12 @@ A desktop generation job uses `internal/generate` to:
 4. reads the pull request's rendered body with the user's token, which carries
    image URLs GitHub has already signed, and downloads the description images
    from them without credentials; `bundle` caches nothing, and writes the
-   images only to the attachments archive `generate` reads;
+   images only to the attachments archive `generate` reads. After session
+   linkage and count caps, native Claude Code and Codex transcripts also supply
+   retained inline pasted and tool-result images through `sessions/sessionimages`.
+   Only readable linked roots and reachable subagents contribute; Entire
+   checkpoints and baum generation sessions supply no images. Native image
+   discovery follows no image paths or URLs from transcript text;
 5. loads the previous local version, if any, and builds the bundle, with the
    previous version's hunk anchors refitted to the diff
    (`review.FitPreviousHunkAnchors`, as the hosted builder does);
@@ -2374,8 +2379,9 @@ pull request's objects is reported, not fetched from on demand.
 `internal/assemble` follows the shared assembler's order behind small source
 interfaces (`GitHub`, `Git`, `Sessions`, `ImageFetcher`): description images,
 the pull request header, checks and conversation, diff index, commit changes,
-sessions, references, attachments, `REVIEW.md` at the base commit, checkout
-export, then caps, redaction, per-hunk line limits, byte trimming and digest.
+sessions, caps, native session images, references, attachments, `REVIEW.md` at
+the base commit, checkout export, then redaction, per-hunk line limits, byte
+trimming and digest.
 Sessions follow comparison because they need its merge base. The linker and
 `bundle.KeepKnownCommandTargets` check command targets against the pull
 request's diff paths, independent of the working tree. A failed session source
@@ -2387,6 +2393,25 @@ review; optional writers receive bounded checkout and attachment archives. The
 checkout is exported even without a writer because omitted files make their
 hunks textless. Bundle JSON has no timestamp of its own: the same inputs
 produce the same bytes and SHA-256 digest.
+
+Native images retain human-input or tool-result origins, their root prompt,
+optional child input and tool ID. The host deduplicates content across both
+image sources, retaining all origins and additional description URLs. The
+20-image/10-MiB-per-image defaults are shared; description images come first.
+Session images are content-sniffed and limited to 40 million pixels. A
+session image longer than 1568 px on either side is resized to fit
+(`assemble.MaxSessionImageEdge`; a JPEG stays a JPEG, PNG and WebP become PNG)
+when that makes it smaller; its ID, hash and size describe the resized bytes.
+GIF and APNG animations, JPEGs with EXIF data (whose orientation would be
+lost) and images above 24 million pixels are kept as captured, and an image
+past the count limit is dropped before it is decoded.
+Content is matched against description images before resizing, so a session
+copy of a description image still merges with it. Origins
+of sessions removed during fitting are pruned; an image with no remaining
+source is omitted before the archive is written. Session-only images use
+attachment-ID source anchors, never a fabricated PR-body source. Saved versions
+keep their provenance and their images through the existing store and
+authenticated attachment route.
 
 `internal/refresh` fetches current GitHub metadata with checks pinned to the
 saved head, re-links local sessions against the saved merge-base/head range
@@ -2716,11 +2741,21 @@ and no fix running, once across clones, less stacked pull requests that must
 wait to merge and snoozed ones. It does not apply saved inboxes that leave
 the badge, so with such an inbox it can be higher than the app's badge.
 
-Version image copies use an additive `attachments` table keyed by repository,
-PR, immutable version and attachment ID, committed atomically by `Store.Put`.
-`generate` returns copies from the original, hash-checked assembly archive,
-not agent-visible files. Reads expose only raster images listed in that
-version's document. Existing stores without the table remain readable.
+Version images are content-addressed. `attachment_blobs` holds one copy of
+each distinct image, keyed by the SHA-256 of its bytes, and
+`version_attachments` maps each repository, PR, immutable version and
+attachment ID to a copy; `Store.Put` commits both with the version, and
+regenerating a review with the same images stores no new bytes. Reads check
+the copy against its hash. `generate` returns copies from the original,
+hash-checked assembly archive, not agent-visible files. Reads expose only
+raster images listed in that version's document. Existing stores without the
+tables remain readable. A writable open moves an earlier store's per-version
+`attachments` rows into the shared copies in `BEGIN IMMEDIATE` batches of at
+most 32 MiB, deleting each batch's rows as it commits and dropping the table
+once it is empty. Concurrent openers wait for each batch rather than fail, a
+move that cannot finish resumes on the next writable open without failing
+this one, and reads fall back to rows not moved yet, including any an older
+binary writes afterwards.
 `internal/reviewindex` rebuilds an in-memory projection of discovery and registered
 version stores. `store.Snapshot` reads latest metadata, count and small document
 summaries in one transaction, plus separate latest-started run records. It does

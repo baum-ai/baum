@@ -206,6 +206,7 @@ export function ReviewImages({
                       {item.text}
                     </figcaption>
                   )}
+                  <ImageProvenance document={document} attachment={item.attachment} />
                 </figure>
               );
             })}
@@ -235,6 +236,7 @@ export function ReviewImages({
             >
               <figcaption className="min-w-0 pt-1 text-base text-(--text-secondary)">
                 {viewing.text}
+                <ImageProvenance document={document} attachment={viewing.attachment} />
               </figcaption>
               <div className="flex flex-none items-center gap-2">
                 <a
@@ -267,6 +269,35 @@ export function ReviewImages({
         )}
       </dialog>
     </Part>
+  );
+}
+
+function ImageProvenance({
+  document,
+  attachment,
+}: {
+  document: ReviewDocument;
+  attachment: IndexedAttachment;
+}) {
+  if (!attachment.origins?.length) return null;
+  return (
+    <div className="space-y-1 text-base text-(--text-tertiary)" aria-label="Image provenance">
+      {attachment.origins.map((origin, index) => (
+        <div key={`${origin.session}-${origin.tool || origin.input}-${origin.position}-${index}`}>
+          <span title={origin.tool}>
+            {origin.kind === "human_input" ? "Human-supplied image" : "Agent tool result"}
+            {origin.tool_name ? ` · ${origin.tool_name}` : ""}
+            {origin.child_session ? " · Subagent" : ""}
+          </span>
+          <AnchorChips
+            document={document}
+            anchors={[
+              { type: "prompt", session: origin.session, index: origin.turn, input: origin.input },
+            ]}
+          />
+        </div>
+      ))}
+    </div>
   );
 }
 

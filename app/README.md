@@ -79,6 +79,17 @@ setup bundle. `pnpm test:desktop` exercises setup with mocked IPC; it needs a
 completed `pnpm build`. The proxy suite covers login, CSRF, event streaming and
 React/CSS hot reload for the daemon-served application.
 
+Generated reviews can show retained inline images from linked native Claude
+Code and Codex sessions, including linked subagent work, alongside images
+uploaded in the PR description. Human-pasted images show “Human-supplied image”
+with their session prompt; tool images show “Agent tool result” and the tool
+name. A reference or before-state image is not evidence that the finished
+change passed a test. Images are copied into the saved review version, so
+history keeps them after a native transcript is removed. Entire checkpoint
+images and image paths or URLs merely mentioned in a transcript are excluded.
+The full review's Images part opens each copy at full size and retains its
+provenance; the walkthrough's Full review action opens that view.
+
 Setup and the app's Add repositories use the same repository picker and daemon
 search. They first fetch eight top repositories, matching the visible rows, then
 fetch up to one hundred more from `topRepositories` in the background using the
