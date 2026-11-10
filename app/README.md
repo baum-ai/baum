@@ -2179,7 +2179,8 @@ while Codex session reporting needs attention. Opening Settings shows the
 reason and Check again. The app reads `GET api/agent-hooks/codex` on load and
 on window focus (at most once a minute), and every minute while visible only
 while the last answer is a warning. Check again and the reads after native
-Settings actions pass `?refresh=1`, because the daemon caches the answer. A
+Settings actions pass `?refresh=1`, because the daemon caches a healthy answer
+for five minutes (warnings are always read fresh). A
 re-read that returns the same answer leaves the state, and so the page,
 untouched. The warning clears after a successful ready result; a failed
 request retains the previous warning. Older daemons without this endpoint show

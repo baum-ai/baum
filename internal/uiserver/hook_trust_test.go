@@ -79,55 +79,32 @@ func TestHookTrustCacheHitAndExpiry(t *testing.T) {
 	}
 }
 
-func TestHookTrustCacheInvalidateAndRefresh(t *testing.T) {
-	state, calls := "untrusted", 0
+func TestHookTrustCacheForcedRefresh(t *testing.T) {
+	state, calls := "trusted", 0
 	c, _ := newTestHookTrust(&state, &calls)
 	c.Get(false)
-	state = "trusted"
-	c.Invalidate()
-	if got := c.Get(false); got.State != "trusted" || calls != 2 {
-		t.Fatalf("after invalidate: %v calls=%d", got, calls)
-	}
-	state = "missing"
-	if got := c.Get(true); got.State != "missing" || calls != 3 {
+	state = "not_installed"
+	if got := c.Get(true); got.State != "not_installed" || calls != 2 {
 		t.Fatalf("refresh: %v calls=%d", got, calls)
 	}
-	if got := c.Get(false); got.State != "missing" || calls != 3 {
-		t.Fatalf("refresh result is cached: %v calls=%d", got, calls)
+	if got := c.Get(false); got.State != "not_installed" || calls != 2 {
+		t.Fatalf("refresh result is not cached: %v calls=%d", got, calls)
 	}
 }
 
-func TestHookTrustCacheDoesNotKeepUnknown(t *testing.T) {
-	state, calls := "unknown", 0
-	c, _ := newTestHookTrust(&state, &calls)
-	c.Get(false)
-	state = "trusted"
-	if got := c.Get(false); got.State != "trusted" || calls != 2 {
-		t.Fatalf("unknown was cached: %v calls=%d", got, calls)
-	}
-}
-
-func TestHookTrustCacheInvalidateDuringReadDropsResult(t *testing.T) {
-	started, release := make(chan struct{}), make(chan struct{})
-	calls := 0
-	c := newHookTrustCache(func(context.Context) agentplugins.HookTrust {
-		calls++
-		if calls == 1 {
-			close(started)
-			<-release
-			return agentplugins.HookTrust{State: "untrusted"}
+func TestHookTrustCacheKeepsOnlyHealthyAnswers(t *testing.T) {
+	for _, warn := range []string{"unknown", "untrusted", "hooks_disabled", "disabled", "missing"} {
+		state, calls := warn, 0
+		c, _ := newTestHookTrust(&state, &calls)
+		c.Get(false)
+		state = "trusted"
+		if got := c.Get(false); got.State != "trusted" || calls != 2 {
+			t.Fatalf("%s was cached: %v calls=%d", warn, got, calls)
 		}
-		return agentplugins.HookTrust{State: "trusted"}
-	})
-	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() { defer wg.Done(); c.Get(false) }()
-	<-started
-	c.Invalidate()
-	close(release)
-	wg.Wait()
-	if got := c.Get(false); got.State != "trusted" {
-		t.Fatalf("stale read was stored: %v", got)
+		state = "untrusted"
+		if got := c.Get(false); got.State != "trusted" || calls != 2 {
+			t.Fatalf("trusted was not cached: %v calls=%d", got, calls)
+		}
 	}
 }
 

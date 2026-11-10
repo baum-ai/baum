@@ -81,10 +81,12 @@ enabled Codex plugins, and the Claude Code state above for installed, enabled
 Claude Code plugins. Desktop onboarding preserves it and the app polls the
 local `GET /api/agent-hooks/codex` status endpoint for its Settings warning.
 Each read starts the Codex CLI and an app-server, so the daemon (`uiserver`)
-caches the answer for five minutes, shares one run between concurrent callers,
-never keeps an `unknown` answer, and reads again for `?refresh=1`. Trust changes
-made in Codex or by the desktop app's install actions happen outside the
-daemon, so they show within five minutes unless the caller asks for a refresh.
+caches a trusted or not_installed answer (the states the app shows no warning
+for) for five minutes and shares one run between concurrent callers. Warning
+and unknown answers are never kept, so a warning clears on the next read after
+the user trusts hooks in Codex, and `?refresh=1` always reads again. A healthy
+answer that changes outside the daemon shows within five minutes unless the
+caller asks for a refresh.
 
 The shipped plugin uses `.codex-plugin/plugin.json`. A portable-schema
 `plugin.json` installs successfully in Codex 0.166.0 but contributes no hooks;
