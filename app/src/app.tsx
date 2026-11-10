@@ -349,6 +349,9 @@ function Workspace({ url }: { url: UrlState }) {
   // show as generating from the click, not from the job the answer brings.
   const [starting, setStarting] = useState(new Set<string>());
   const [generationError, setGenerationError] = useState("");
+  // The pull requests the last generation was for, so Up next shows its
+  // refusal on their panel.
+  const [generationFor, setGenerationFor] = useState<string[]>([]);
   // A generation that includes a fork, waiting for the user's confirmation.
   const [fork, setFork] = useState<{ entries: Entry[]; mode: "single" | "batch" } | null>(null);
   // The pull requests whose fix is on its way to the daemon: their Fix says
@@ -958,6 +961,7 @@ function Workspace({ url }: { url: UrlState }) {
     setGrouping(chosen);
   };
   const generate = async (entries: Entry[], mode: "single" | "batch", isolation = false) => {
+    setGenerationFor(entries.map(rowKey));
     if (entries.some((entry) => isActiveJob(reviewJob(entry, jobs)))) {
       setGenerationError("A review of a selected pull request is already queued or running.");
       return;
@@ -1784,6 +1788,11 @@ function Workspace({ url }: { url: UrlState }) {
               cloneFor={cloneFor}
               fix={(entry, only) => void fix(entry, only)}
               fixState={fixState}
+              generate={(entry) => void generate([entry], "single")}
+              generateState={(entry) => ({
+                starting: starting.has(rowKey(entry)),
+                error: generationFor.includes(rowKey(entry)) ? generationError : "",
+              })}
               changed={reload}
               refresh={refresh}
               refreshing={listBusy}
@@ -2033,7 +2042,12 @@ function Workspace({ url }: { url: UrlState }) {
               ) : null}
             </>
           ) : null}
-          {generationError ? <Alert>{generationError}</Alert> : null}
+          {/* Up next shows a generation's refusal on the pull request's panel;
+              a PR or group page opened from an inbox has no panel, so it
+              shows here. */}
+          {generationError && !(page === "inbox" && queueInbox && !selectedEntry && !groupId) ? (
+            <Alert>{generationError}</Alert>
+          ) : null}
           {/* The PR page and Up next show a fix's refusal beside its button. */}
           {fixError && onList ? (
             <Alert>
