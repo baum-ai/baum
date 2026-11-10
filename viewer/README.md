@@ -886,6 +886,15 @@ Attachment resolvers may receive the rendered document as a second argument,
 so a host whose captures are version-scoped can serve each comparison pane’s
 images from that snapshot. Existing one-argument resolvers remain supported.
 
+An indexed image may also carry native-session `origins`, with its owning
+session and prompt/turn, tool call, optional child session and timestamp.
+The image UI labels human-supplied images separately from agent tool results
+and offers the owning prompt through the host's source opener, including in
+the full-size dialog. Session-only images have no `source_url`; their image
+blocks cite an attachment ID. Old description-image records remain valid.
+Identical image bytes can retain both PR-description URLs and several session
+origins while sharing one stored image.
+
 The local multi-repository app in [`../app/`](../app/README.md) consumes the
 same public viewer components and uses the exported `local-sessions` and
 `local-transcript` parsers for the local server’s redacted answers.

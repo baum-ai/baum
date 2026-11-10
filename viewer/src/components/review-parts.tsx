@@ -439,7 +439,7 @@ export function AnchorChips({
               </CodeChip>
             ) : sources?.opens(anchor) ? (
               <a
-                href={resolved.href}
+                href={resolved.href ?? "#"}
                 title={title}
                 className={cn(chipLinkClass, "cursor-pointer", FOCUS_RING)}
                 onClick={(event) => {

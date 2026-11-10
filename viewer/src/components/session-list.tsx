@@ -133,11 +133,13 @@ export function SessionList({
   selected,
   actions,
   renderSession,
+  focusTurn,
 }: {
   state: SessionListState;
   selected: string | null;
   actions: ReviewViewerActions;
-  renderSession?: (session: SessionView) => ReactNode;
+  renderSession?: (session: SessionView, focusTurn?: number) => ReactNode;
+  focusTurn?: number;
 }) {
   if (state.status !== "ready") {
     return (
@@ -199,7 +201,7 @@ export function SessionList({
             ))}
           </ul>
         ) : null}
-        <div className="min-h-0 flex-1 xl:overflow-y-auto">{renderSession(session)}</div>
+        <div className="min-h-0 flex-1 xl:overflow-y-auto">{renderSession(session, focusTurn)}</div>
       </>
     );
   }

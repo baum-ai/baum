@@ -35,11 +35,13 @@ const (
 	AttachmentFailed      = "failed"
 )
 
-// DescriptionImage is one image GitHub rendered from the description, in
-// description order. Only a Stored image has its copy's fields set.
+// DescriptionImage is one captured image. Native session copies have Origins
+// and no SourceURL. Only a Stored image has its copy's fields set.
 type DescriptionImage struct {
-	ID        string
-	SourceURL string
+	Origins    []ImageOrigin `json:"origins,omitempty"`
+	ID         string
+	SourceURL  string
+	SourceURLs []string
 	// Alt is redacted.
 	Alt string
 	// Position is the image's 1-based place among the description's images.
@@ -247,7 +249,7 @@ func DescriptionAttachments(body string, images []DescriptionImage) []Attachment
 			continue
 		}
 		attachments = append(attachments, Attachment{
-			ID: image.ID, Path: path, SourceURL: image.SourceURL, ContentType: image.ContentType,
+			ID: image.ID, Path: path, SourceURL: image.SourceURL, SourceURLs: image.SourceURLs, Origins: image.Origins, ContentType: image.ContentType,
 			Alt: image.Alt, Heading: headingAbove(body, image.SourceURL), Position: image.Position,
 			Width: image.Width, Height: image.Height, SHA256: image.SHA256,
 		})

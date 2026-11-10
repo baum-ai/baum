@@ -171,10 +171,17 @@ has at most one of each of `intent`, `behavior`, `groups`, `decisions`,
 - `diagram` (Mermaid), `code`, `table`, `repro`: only when they make the
   change clearer than prose does, each with `source` anchors. Code must be
   copied verbatim from the checkout or patch.
-- `images`: description images that show what this section changes, never
+- `images`: offered images that show what this section changes, never
   decoration. Add one wherever an image shows the section's change: each
   item's `attachment` is an `attachments[].id`, in reading order, with an
-  optional `caption`; always give the block a `pr_body` source. For a layout
+  optional `caption`. Cite description images with a `pr_body` source. For
+  each session image without a `source_url`, include a source anchor
+  `{"type":"attachment","id":"att_…"}`; never claim it came from the PR
+  description. Human-pasted images are eligible, with their human provenance:
+  distinguish references and before states from implemented results. A tool
+  capture or inspected image alone does not prove a test passed or identify
+  the reviewed revision. Use the recorded origins and surrounding evidence;
+  do not invent attribution or timing. For a layout
   or responsive change, a screenshot of sample content or placeholder image
   areas is useful when it shows the layout itself; put both states of a
   before/after or wide/narrow pair in the section even when the sample

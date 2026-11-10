@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 	"sort"
 	"strings"
 
@@ -119,7 +120,7 @@ type Result struct {
 	JSON []byte
 	// Head, Base and MergeBase are the commits the bundle describes.
 	Head, Base, MergeBase string
-	// Images are the description images in the attachments archive.
+	// Images are the captured images in the attachments archive.
 	Images []bundle.DescriptionImage
 }
 
@@ -199,22 +200,10 @@ func (a *Assembler) Assemble(ctx context.Context, req Request) (Result, error) {
 	// Description images come first, as the hosted assembler captures them
 	// before it builds the evidence. Facts download none.
 	var images []bundle.DescriptionImage
+	var contents map[string][]byte
 	altMasked := 0
 	if !req.Facts {
-		var contents map[string][]byte
 		images, contents, altMasked = a.captureImages(ctx, evidence.Images, redactor, limits)
-		attachmentsTar := io.Discard
-		if req.Attachments != nil {
-			attachmentsTar = req.Attachments
-		}
-		images, err = bundle.WriteAttachments(ctx, images, attachmentsTar, func(_ context.Context, image bundle.DescriptionImage) (io.ReadCloser, error) {
-			return io.NopCloser(bytes.NewReader(contents[image.ID])), nil
-		}, func(image bundle.DescriptionImage, err error) {
-			a.warn("description image %s left out: %v", image.ID, err)
-		})
-		if err != nil {
-			return Result{}, fmt.Errorf("writing description images: %w", err)
-		}
 	}
 
 	b := bundle.Bundle{Sources: bundle.Sources{}}
@@ -256,6 +245,25 @@ func (a *Assembler) Assemble(ctx context.Context, req Request) (Result, error) {
 		diffPaths = append(diffPaths, hunk.Path, hunk.OldPath)
 	}
 	bundle.KeepKnownCommandTargets(b.Sessions, bundle.KnownPaths(diffPaths...))
+	bundle.ApplyCaps(&b, limits.Caps)
+	if !req.Facts {
+		var candidates []SessionImage
+		if source, ok := a.Sessions.(SessionImages); ok {
+			var notes []string
+			candidates, notes, err = source.ImageEvidence(ctx, b.Sessions, limits.MaxImages, limits.MaxImageBytes)
+			if ctx.Err() != nil {
+				return Result{}, ctx.Err()
+			}
+			if err != nil {
+				a.warn("session images unavailable")
+				b.Truncated = append(b.Truncated, "session images unavailable")
+			}
+			b.Truncated = append(b.Truncated, notes...)
+		}
+		var notes []string
+		images, contents, notes = mergeImages(images, contents, candidates, limits)
+		b.Truncated = append(b.Truncated, notes...)
+	}
 
 	b.References = bundle.CollectReferences(b)
 	b.Sources["references"] = len(b.References) > 0
@@ -297,7 +305,6 @@ func (a *Assembler) Assemble(ctx context.Context, req Request) (Result, error) {
 
 	// Redaction runs before the patch line cap and trimming, so a cut cannot
 	// leave part of a secret unmasked.
-	bundle.ApplyCaps(&b, limits.Caps)
 	if err := bundle.Redact(ctx, &b, redactor); err != nil {
 		return Result{}, err
 	}
@@ -306,6 +313,23 @@ func (a *Assembler) Assemble(ctx context.Context, req Request) (Result, error) {
 	b.MaskedSpanCount += altMasked
 	if err := bundle.Fit(&b, limits.Caps); err != nil {
 		return Result{}, err
+	}
+	pruneImageOrigins(&b)
+	kept := map[string]bool{}
+	for _, attachment := range b.Attachments {
+		kept[attachment.ID] = true
+	}
+	images = slices.DeleteFunc(images, func(image bundle.DescriptionImage) bool { return !kept[image.ID] })
+	if !req.Facts {
+		archive := io.Discard
+		if req.Attachments != nil {
+			archive = req.Attachments
+		}
+		if _, err := bundle.WriteAttachments(ctx, images, archive, func(_ context.Context, image bundle.DescriptionImage) (io.ReadCloser, error) {
+			return io.NopCloser(bytes.NewReader(contents[image.ID])), nil
+		}, nil); err != nil {
+			return Result{}, fmt.Errorf("writing review images: %w", err)
+		}
 	}
 	if err := bundle.SetDigest(&b); err != nil {
 		return Result{}, err

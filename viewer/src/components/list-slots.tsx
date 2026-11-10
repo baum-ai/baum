@@ -12,7 +12,7 @@ import { SessionList, type SessionListState, type SessionView } from "./session-
  *  finding out. */
 export function sessionsSlot(
   state: SessionListState,
-  options: { renderSession?: (session: SessionView) => ReactNode } = {},
+  options: { renderSession?: (session: SessionView, focusTurn?: number) => ReactNode } = {},
 ): ReviewListSlot {
   return {
     state:
@@ -25,12 +25,13 @@ export function sessionsSlot(
             })),
           }
         : { status: state.status },
-    renderPane: (selected, actions) => (
+    renderPane: (selected, actions, focusTurn) => (
       <SessionList
         state={state}
         selected={selected}
         actions={actions}
         renderSession={options.renderSession}
+        focusTurn={focusTurn}
       />
     ),
   };

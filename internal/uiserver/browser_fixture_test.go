@@ -1,10 +1,13 @@
 package uiserver_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"image"
+	"image/png"
 	"io"
 	"net/http"
 	"os"
@@ -319,6 +322,10 @@ func TestLocalAppBrowserFixture(t *testing.T) {
 		t.Fatal(err)
 	}
 	var previous store.Version
+	var screenshot bytes.Buffer
+	if err := png.Encode(&screenshot, image.NewRGBA(image.Rect(0, 0, 320, 240))); err != nil {
+		t.Fatal(err)
+	}
 	for n := 1; n <= 2; n++ {
 		var doc map[string]any
 		if err = json.Unmarshal(raw, &doc); err != nil {
@@ -346,12 +353,20 @@ func TestLocalAppBrowserFixture(t *testing.T) {
 		doc["summary"].(map[string]any)["text"] = fmt.Sprintf("Local fixture review version %d", n)
 		doc["summary"].(map[string]any)["review_minutes"] = 12
 		id := fmt.Sprintf("att_%032d", n)
-		doc["index"].(map[string]any)["attachments"] = []any{map[string]any{"id": id, "alt": fmt.Sprintf("Captured image v%d", n), "position": 1, "source_url": "https://github.com/user-attachments/assets/fixture", "content_type": "image/png", "width": 1, "height": 1}}
+		doc["index"].(map[string]any)["attachments"] = []any{map[string]any{"id": id, "alt": fmt.Sprintf("Captured image v%d", n), "position": 1, "source_url": "https://github.com/user-attachments/assets/fixture", "content_type": "image/png", "width": 320, "height": 240}}
+		if n == 2 {
+			attachment := doc["index"].(map[string]any)["attachments"].([]any)[0].(map[string]any)
+			delete(attachment, "source_url")
+			attachment["origins"] = []any{map[string]any{"session": "native-fixture", "turn": 1, "input": "native-prompt", "kind": "human_input", "position": 1}}
+		}
 		for _, section := range doc["sections"].([]any) {
 			for _, block := range section.(map[string]any)["blocks"].([]any) {
 				b := block.(map[string]any)
 				if b["kind"] == "images" {
 					b["items"] = []any{map[string]any{"attachment": id, "caption": fmt.Sprintf("Captured image v%d", n)}}
+					if n == 2 {
+						b["source"] = []any{map[string]any{"type": "attachment", "id": id}}
+					}
 				}
 			}
 		}
@@ -370,7 +385,7 @@ func TestLocalAppBrowserFixture(t *testing.T) {
 			}
 		}
 		document, _ := json.Marshal(doc)
-		next := store.Version{Metadata: store.Metadata{Version: n, Head: repo.Head, GeneratedAt: time.Now().UTC().Format(time.RFC3339), Backend: "claude", Model: "claude-sonnet-4-5"}, Document: document, Attachments: []store.Attachment{{ID: id, ContentType: "image/png", Bytes: assembletest.PNG}}}
+		next := store.Version{Metadata: store.Metadata{Version: n, Head: repo.Head, GeneratedAt: time.Now().UTC().Format(time.RFC3339), Backend: "claude", Model: "claude-sonnet-4-5"}, Document: document, Attachments: []store.Attachment{{ID: id, ContentType: "image/png", Bytes: screenshot.Bytes()}}}
 		if err = versions.Put(context.Background(), store.Key{Repository: "acme/demo", Number: 7}, previous, next); err != nil {
 			t.Fatal(err)
 		}
