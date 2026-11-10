@@ -15,7 +15,7 @@ import {
   type Entry,
   type Job,
 } from "./api";
-import { FixNotice } from "./fix";
+import { FixDetails, FixNotice } from "./fix";
 import { Inbox } from "./inbox";
 import { forgetLastRows } from "./shortcuts";
 
@@ -280,6 +280,13 @@ it("says why a fix changed nothing, in the agent's words, not as a failure", asy
     ),
   );
   expect(node.querySelector(".local-fix-details")).toBeNull();
+  // Where nothing shows the lead above (the Jobs list), the fold keeps the
+  // whole of what the agent said, however short.
+  await act(async () => root.render(<FixDetails job={{ ...job, summary: "Nothing to fix." }} />));
+  expect(node.querySelector(".local-fix-details > summary")!.textContent).toBe(
+    "What the agent did",
+  );
+  expect(node.querySelector(".local-fix-details p")!.textContent).toBe("Nothing to fix.");
 });
 
 it("starts a fix made from a conversation, sending only its ids", async () => {

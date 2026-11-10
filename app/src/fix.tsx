@@ -238,7 +238,7 @@ export function FixNotice({
         ) : job.reason && !unchanged ? (
           <p>{jobReasonText(job.reason)}</p>
         ) : null}
-        <FixDetails job={job} />
+        <FixDetails job={job} leadShown={Boolean(why)} />
       </div>
       <div className="local-fix-notice-actions">
         <TranscriptLink job={job} keyHint boxed />
@@ -300,14 +300,14 @@ export function ThreadOutcomes({ job }: { job: Job }) {
   );
 }
 /** What the agent said it did, what became of each review thread, and a
- *  failure's own words. */
-export function FixDetails({ job }: { job: Job }) {
+ *  failure's own words. `leadShown` says the caller already shows the first
+ *  paragraph of the agent's summary above (`summaryLead`). */
+export function FixDetails({ job, leadShown = false }: { job: Job; leadShown?: boolean }) {
   const outcomes = job.thread_outcomes ?? [];
   if (!outcomes.length && !job.summary && !job.detail) return null;
-  // A fix that changed nothing shows its reason above; a fold holding only
-  // that again would add nothing.
+  // A fold holding only the lead shown above again would add nothing.
   if (
-    changedNothing(job) &&
+    leadShown &&
     !outcomes.length &&
     !job.detail &&
     job.summary?.trim() === summaryLead(job.summary)
@@ -320,7 +320,7 @@ export function FixDetails({ job }: { job: Job }) {
         {outcomes.length
           ? threadOutcomesSummary(outcomes)
           : job.summary
-            ? changedNothing(job)
+            ? leadShown
               ? "Everything the agent said"
               : "What the agent did"
             : "What happened"}
