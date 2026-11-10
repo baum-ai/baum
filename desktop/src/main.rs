@@ -41,6 +41,9 @@ pub const MAIN: &str = "main";
 /// How often the attached daemon is checked, and how many failed checks in a
 /// row count as the daemon having gone away.
 const HEALTH_INTERVAL: Duration = Duration::from_secs(5);
+/// The pause between checks while the tray's event stream is open and
+/// receiving; the stream going down ends it at once.
+const HEALTH_INTERVAL_STREAMING: Duration = Duration::from_secs(30);
 const HEALTH_TIMEOUT: Duration = Duration::from_secs(2);
 const HEALTH_FAILURES: u32 = 3;
 const LOG_LINES: usize = 40;
@@ -198,7 +201,7 @@ fn connect(app: &AppHandle, why: Attach) {
 fn watch(app: &AppHandle, state: &State, attempt: u64, launch: &daemon::Launch, mut why: Attach) {
     let mut failures = 0;
     loop {
-        thread::sleep(HEALTH_INTERVAL);
+        tray::health_pause(app, HEALTH_INTERVAL, HEALTH_INTERVAL_STREAMING);
         if state.lock().attempt != attempt {
             return;
         }

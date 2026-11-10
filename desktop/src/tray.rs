@@ -23,7 +23,7 @@
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{self, RecvTimeoutError};
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -321,6 +321,8 @@ struct Inner {
     wake: Mutex<Option<mpsc::Sender<()>>>,
     /// The daemon's event stream is open.
     stream_up: AtomicBool,
+    /// Wakes `health_pause` when the stream goes down.
+    stream_down: (Mutex<()>, Condvar),
     /// Wakes the stream thread (waiting for a daemon or to reconnect).
     stream_kick: Mutex<Option<mpsc::Sender<()>>>,
     /// Wakes the diagnostics and plan usage worker.
@@ -334,6 +336,23 @@ pub struct Shared(Arc<Inner>);
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(|p| p.into_inner())
+}
+
+/// Sleeps between two health checks of the daemon: `short` normally, and up
+/// to `long` while the tray's event stream is open and receiving (its pings
+/// show the daemon alive; a daemon that dies closes it), ending early the
+/// moment the stream goes down so a dead daemon is still noticed at once.
+pub fn health_pause(app: &AppHandle, short: Duration, long: Duration) {
+    let Some(shared) = shared(app) else {
+        return thread::sleep(short);
+    };
+    let (mutex, condvar) = &shared.0.stream_down;
+    let guard = lock(mutex);
+    if !shared.0.stream_up.load(Ordering::Relaxed) {
+        drop(guard);
+        return thread::sleep(short);
+    }
+    let _ = condvar.wait_timeout_while(guard, long, |_| shared.0.stream_up.load(Ordering::Relaxed));
 }
 
 fn shared(app: &AppHandle) -> Option<Shared> {
@@ -1026,6 +1045,11 @@ fn stream_loop(shared: &Shared, kick: &mpsc::Receiver<()>) {
                 && lock(&shared.0.launch).is_some()
         });
         if shared.0.stream_up.swap(false, Ordering::Relaxed) {
+            // Under the mutex, so a waiter between its check and its wait
+            // cannot miss it.
+            let guard = lock(&shared.0.stream_down.0);
+            shared.0.stream_down.1.notify_all();
+            drop(guard);
             // The fallback interval just shortened: look now.
             wake(shared);
         }
