@@ -16,6 +16,10 @@
 .nine-dots circle {
   fill: var(--nine-dots-rest);
 }
+.nine-dots [class^="nine-dots-step-"] {
+  fill: var(--nine-dots-active);
+  opacity: 0;
+}
 /* Delays are negative so every dot is mid-loop from the first frame. */
 .nine-dots [class^="nine-dots-step-"] {
   animation: nine-dots 1.2s linear infinite;
@@ -47,11 +51,11 @@
 @keyframes nine-dots {
   0%,
   14% {
-    fill: var(--nine-dots-active);
+    opacity: 1;
   }
   30%,
   100% {
-    fill: var(--nine-dots-rest);
+    opacity: 0;
   }
 }
 @media (prefers-reduced-motion: reduce) {
@@ -59,7 +63,7 @@
     animation: none;
   }
   .nine-dots .nine-dots-step-0 {
-    fill: var(--nine-dots-active);
+    opacity: 1;
   }
 }
 
