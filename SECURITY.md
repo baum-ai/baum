@@ -558,7 +558,8 @@ What the agent can do, per backend:
 What reaches the agent: the pull request's title and branches, the conflicted
 paths, and for failing checks the failing check runs and commit statuses of
 the head (name, conclusion, output title, summary and text, each bounded) and
-the last 200 lines of the job logs of up to four failing GitHub Actions jobs.
+up to 200 lines of the job logs of up to four failing GitHub Actions jobs,
+ending with the step that failed rather than the runner's cleanup after it.
 baum reads them with your GitHub token from the API; a job log's signed
 download URL is read without the token. All of it is untrusted: it goes into
 the prompt between markers that carry a random tag it cannot know, with
@@ -839,7 +840,7 @@ computer, plus one GitHub search per picked repository:
 - **Fix transcripts.** What a fix's agent said and ran, with its tool output,
   in `transcripts/` beside `app.sqlite` (private files, secrets masked, bounded,
   the 50 latest fixes). It stays on your machine.
-- **baum's own work.** The jobs document (`state/jobs` in `app.sqlite`) and a
+- **baum's own work.** The jobs table (`jobs` in `app.sqlite`) and a
   small ledger (`state/analytics-actions` in that database) of the merges,
   branch updates and check re-runs you made from the app (time, kind,
   repository and pull request number), kept 90 days.

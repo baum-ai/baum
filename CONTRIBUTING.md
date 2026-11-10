@@ -52,24 +52,44 @@ tests), and `pnpm test:e2e` for the browser tests of the standalone app. Its
   cannot import.
 - New dependencies must be pure Go and reviewed; prefer the standard library.
 
-## Commits and pull requests
+## Pull requests
 
-- Imperative subject lines under about 70 characters ("Add X", not "Added
-  X"), with a body explaining why when it is not self-evident.
-- Reference the issue the change fixes, for example `Fixes #12`.
-- Describe what changed, why, and which checks you ran.
-- CI must pass before merge.
-- This repository is published from the `oss/` directory of the baum
-  monorepo. Before anything else is published, a merged pull request is
-  pulled into the monorepo from its root with
+1. Fork [baum-ai/baum](https://github.com/baum-ai/baum) and create a branch
+   from `main`.
+2. Make your change and run `just check`, plus the viewer checks above if you
+   changed `viewer/`.
+3. Open a pull request against `main`. CI runs the checks on Linux, macOS and
+   Windows. On your first pull request a maintainer has to approve the run
+   before it starts.
 
-  ```sh
-  git subtree pull --prefix=oss https://github.com/baum-ai/baum.git main
-  ```
+Write commit subject lines in the imperative and keep them under about 70
+characters ("Add X", not "Added X"). Add a body explaining why when the reason
+is not obvious. In the pull request, say what changed and why, list the checks
+you ran, and reference the issue it fixes, for example `Fixes #12`. CI must
+pass before merge.
 
-  so keep its commits as they are: no force pushes to `main`.
-- The review schema in `schema/` is shared with the hosted service. Change
-  it in the monorepo, where the hosted code and its UI mirror change with it.
+For a large change, or one that changes what baum reads, redacts or sends to
+a model provider, open an issue first so the approach can be agreed before
+you write it.
+
+### How this repository relates to the monorepo
+
+baum is developed in a private monorepo, and this repository is published
+from its `oss/` directory. You do not need access to the monorepo: open your
+pull request here and it is reviewed and merged here. Afterwards a
+maintainer brings it into the monorepo with your commits and authorship
+unchanged, and later changes are published on top of it. What this means for
+you:
+
+- Most commits on `main` come from the monorepo. A pull request number in
+  their messages, such as "Merge pull request #1139 from baum-ai/…", refers
+  to the monorepo, not to a pull request in this repository.
+- `main` is never force-pushed, so you can always rebase a branch onto it.
+- A maintainer may add follow-up commits after merging your pull request.
+  They are published here like any other change.
+- The review schema in `schema/` is shared with the hosted service, which
+  has to change with it. Open an issue before changing the schema; a
+  maintainer makes the matching hosted change in the monorepo.
 
 ## Security issues
 

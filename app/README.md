@@ -1241,9 +1241,12 @@ unknown states (no score, no estimate, no GitHub review, no unresolved
 threads, nothing reported) leave the cell empty and are read only by screen
 readers. A review being generated shows the nine-dots loader under the title.
 Discovery fetches
-open pull requests with a paginated GraphQL query per repository, including
+open pull requests with paginated GraphQL queries per repository, including
 review decisions, head checks, merge state and the first 100 review threads;
-when more threads exist the unresolved count shows a lower bound (`N+`). The
+when more threads exist the unresolved count shows a lower bound (`N+`). Most
+polls read only the pull requests updated since the last one and merge them
+into the cache; every open one is read again at least every ten minutes (see
+`internal/discovery`). The
 columns follow the hosted Focus view's labels, icons and tones and fold under
 the title below 72rem. The list is drawn as the Up next design's live table,
 with the shared palette on the app's type scale. The page bar says
@@ -1292,9 +1295,10 @@ one notice covers every repository GitHub could not refresh, says whether
 GitHub is disconnected or needs attention, and links to Settings' Connections; another
 covers an exhausted GitHub allowance. Neither appears merely because the cache
 is old. Refresh asks
-GitHub through the local server, which gives up on a repository after 45 s
-and answers it as not refreshed (stale, with the error), which the app names
-in the refresh's alert; the app gives up on an answer after 60 s and names
+GitHub through the local server, which gives up on a repository once GitHub
+has not answered for 45 s and answers it as not refreshed (stale, with
+the error, and with whatever it read before), which the app names in the
+refresh's alert; the app gives up on an answer after 10 minutes and names
 the repository as one baum did not answer for in time, so a
 connection that drops mid-refresh cannot leave the loader running. While anything is selected a dark bar over
 the list counts it and offers **Merge N** for the selected pull requests that
@@ -1307,7 +1311,16 @@ included. The one confirmation left is for a fork or an author without write
 access (`isolation_required`, then `confirm_isolation`); a batch with such an
 entry asks the same. Refusals are shown in words, never as reason codes.
 Progress and completion arrive over the authenticated SSE stream; reconnection
-rebuilds the inbox and jobs. Jobs appear newest first and can be cancelled. Existing reviews stay readable
+rebuilds the inbox and jobs. Jobs appear newest first and can be cancelled. The app's
+global jobs are `GET api/jobs` without parameters, the current jobs (every running, queued and
+unseen failed job, and the latest of each kind for each pull request, group or repository), which
+is all `reviewJob`, `detailsJob`, `fixJob`, `groupJob`, `buildJobOf`, Up next and the tray need. The PR
+page reads its own pull request's jobs (`GET api/jobs?repository=&pr=`, again whenever the app
+reads its jobs) for `fixJobs` and `chatJobs`; Inbox and Up next find `t`'s fix transcript among the
+current jobs, so there it is the latest fix's. The Jobs page lists the running jobs from the current
+jobs and finished ones a page of 50 at a time (`GET api/jobs?limit=&before=`, **Load older jobs**),
+starting again from the newest page when the jobs change more than a page since; a transcript page
+for a job the current jobs lack reads it with `GET api/jobs/{id}`. Existing reviews stay readable
 while regeneration runs. A PR page uses the queue’s active job for that
 repository and PR across registered clones, showing queued/running progress
 and cancellation even before its first document exists. Duplicate generation
