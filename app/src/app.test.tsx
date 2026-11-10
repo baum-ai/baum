@@ -714,7 +714,7 @@ function stubDiagnostics(respond: () => Promise<Response>) {
   const original = vi.mocked(fetch).getMockImplementation()!;
   const calls = { count: 0 };
   vi.mocked(fetch).mockImplementation((...args) => {
-    if (String(args[0]) !== "/s/test-ns/api/diagnostics") return original(...args);
+    if (!String(args[0]).startsWith("/s/test-ns/api/diagnostics")) return original(...args);
     calls.count++;
     return respond();
   });

@@ -2027,7 +2027,9 @@ fragment. Desktop setup opens the inbox instead. The dialog groups the
 checks into needs attention, working and details, and shows this user's home
 directory, which the response's `home` names, as `~`. Each warning and
 problem shows its fix. Copy puts the report on the clipboard as Markdown for a
-GitHub issue, with the same `~` paths. The app runs the diagnostics once when it opens and,
+GitHub issue, with the same `~` paths. The dialog asks for a fresh run
+(`api/diagnostics?refresh=1`) every time it opens or re-runs; the daemon
+otherwise serves a report up to 30 minutes old. The app reads the diagnostics once when it opens and,
 while they find a problem, shows a notice on every page linking to them; the dialog
 updates it when it runs the checks again. GitHub discovery shows a note only
 when a refresh failed or the request allowance is used up; a cache that is
