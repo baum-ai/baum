@@ -540,6 +540,18 @@ it("forgets an archive once its pull request closes, so a reopened one comes bac
   expect(list()).toContain("Change 3");
 });
 
+it("forgets an archive once the read says it merged, though its repository has nothing else open", async () => {
+  entries = [ready(3)];
+  await render();
+  await press("e");
+  expect(list()).toEqual([]);
+  entries = [mine(3, { merge: "ready", checks: "passing", pull_request: { state: "MERGED" } })];
+  await render();
+  entries = [ready(3)];
+  await render();
+  expect(list()).toEqual(["Change 3"]);
+});
+
 it("keeps arrows, j/k and Control+n/p on Snooze's choices", async () => {
   await render();
   button("Snooze").focus();

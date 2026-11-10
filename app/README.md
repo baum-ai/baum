@@ -949,8 +949,8 @@ today. Like a snooze, it selects the next pull request and shows a toast with
 **Undo**. A snooze it had waits underneath and applies again once it is
 unarchived. Pull requests and Go to still list it, and its PR page says
 "Archived. This pull request doesn't show in your inboxes." with **Unarchive**
-(`useArchive`). An archive is forgotten once its pull request is gone from a
-read that lists its repository (closed or merged), so a reopened one comes
+(`useArchive`). An archive is forgotten once its pull request closed or merged: a read lists
+it merged or closed, or lists its repository without it. A reopened one comes
 back, and the record does not grow. Keys:
 `j`/`↓` and `k`/`↑` move the selection, `Enter` opens, `m` merges a Merge, `f`
 starts a Fix item's fix (where its panel offers the button), `t` opens its fix

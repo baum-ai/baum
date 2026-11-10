@@ -633,11 +633,17 @@ export function useUpNext(
     // A snooze until the next push ends once the pull request is in the
     // inbox on another head, or gone from it.
     const pushed = (key: string, head: string) => heads.get(key) !== head;
-    // An archive ends once its pull request closed or merged: its repository
-    // is read and lists it open no more. One reopened comes back.
+    // An archive ends once its pull request closed or merged: the read says
+    // so (as for the last open one of its repository), or its repository is
+    // read and lists it open no more. One reopened comes back.
     const open = new Set(entries.filter(isOpen).map((entry) => upNextKey(entry.pull_request)));
+    const ended = new Set(
+      entries
+        .filter((entry) => !["", "OPEN"].includes(entry.pull_request.state?.toUpperCase() ?? ""))
+        .map((entry) => upNextKey(entry.pull_request)),
+    );
     const closed = (key: string) =>
-      !open.has(key) && listed.has(key.slice(0, key.lastIndexOf("#")));
+      !open.has(key) && (ended.has(key) || listed.has(key.slice(0, key.lastIndexOf("#"))));
     // An archived pull request keeps no record of today, so it is never done.
     const recorded = (previous: Stored) =>
       items.filter((item) => !(item.key in (previous.archived ?? {})));
