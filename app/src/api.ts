@@ -891,6 +891,14 @@ export function backTo(search: URLSearchParams): { href: string; label: string; 
   if (filter) back.set("filter", filter);
   return { href: appURL(`?${back}`), label: "Pull requests", prefix: "page=pulls&" };
 }
+/** The daemon answers these with an ETag and 304 for an unchanged snapshot.
+ *  `no-cache` lets the webview store the answer and revalidate it on every
+ *  request; `no-store` would resend the whole body each time. */
+function revalidated(path: string): boolean {
+  const [pathname] = path.split("?");
+  return pathname === "api/index" || pathname === "api/prs";
+}
+
 /** Requests `path`, relative to the namespace, as `api/repos`. */
 export async function request<T>(
   path: string,
@@ -901,7 +909,7 @@ export async function request<T>(
   const response = await fetch(appURL(path), {
     method,
     signal,
-    cache: "no-store",
+    cache: method === "GET" && revalidated(path) ? "no-cache" : "no-store",
     ...(body === undefined
       ? {}
       : { headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }),

@@ -2819,6 +2819,14 @@ expired leases are read as interrupted without mutating stores during indexing.
 Once `Store.Put` commits a version, generation succeeds: failing to record the
 run's outcome afterwards is only a warning, and the lease later expires.
 
+`GET /api/index` and `GET /api/prs` revalidate: the JSON of a cached snapshot is
+encoded once per cache version and `history` flag (`/api/prs`: once per
+discovery `Revision` of the picked repositories, until a snapshot reaches its
+next poll), answered with a strong `ETag` (digest of the bytes), `Cache-Control:
+no-cache` and 304 for a matching `If-None-Match`. The app fetches them with
+`cache: "no-cache"` so the webview sends the validator; every other endpoint
+stays `no-store`.
+
 `Service.Build` is uncached: each call probes every clone with git, reads the
 discovery cache and opens every store. The daemon reads it through one
 `reviewindex.Cache`, shared by `GET /api/index` (all views; the `history`
