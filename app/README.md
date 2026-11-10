@@ -2186,7 +2186,10 @@ hook, restarts Codex or starts a conversation.
 In the desktop app the same badge and description also cover a missing baum
 CLI: one the app could install but hasn't (a CLI the app can't install on this
 system raises nothing). The app reads `setup_state` on load, on window focus
-and after native Settings actions. While the CLI is missing, every Settings
+(at most once every five minutes, since the native check runs each agent's CLI)
+and after native Settings actions, which are never throttled. Window focus
+also rereads preferences and saved UI state, which notify the app only when
+the stored data changed. While the CLI is missing, every Settings
 section opens with a banner whose Install the CLI button goes to This computer
 and scrolls to the Command line card; the section list marks This computer
 with a caution dot and "baum CLI not installed", and the card itself is

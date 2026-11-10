@@ -797,15 +797,24 @@ function FixesSection({
 
 /** Whether the baum CLI or every agent's hooks are missing, for the sidebar's
  *  Settings badge and the Sessions page. Only the desktop app can tell; it
- *  rechecks on returning to the window and when Settings changes the setup. */
+ *  rechecks on returning to the window (at most every 5 minutes, as the native
+ *  check runs the agent CLIs) and at once when Settings changes the setup. */
+export const COMMAND_LINE_FOCUS_INTERVAL_MS = 5 * 60_000;
+
 export function useCommandLineCheck() {
   const desktop = hasFolderPicker();
   const [missing, setMissing] = useState(false);
   const [noHooks, setNoHooks] = useState(false);
+  const checked = useRef(0);
+  const last = useRef("");
   const recheck = useCallback(async () => {
     if (!desktop) return;
+    checked.current = Date.now();
     try {
       const view = await invoke<SetupView>("setup_state");
+      const key = JSON.stringify(view);
+      if (key === last.current) return;
+      last.current = key;
       setMissing(commandMissing(view));
       setNoHooks(hooksMissing(view));
     } catch {
@@ -815,7 +824,9 @@ export function useCommandLineCheck() {
   useEffect(() => {
     if (!desktop) return;
     void recheck();
-    const focus = () => void recheck();
+    const focus = () => {
+      if (Date.now() - checked.current >= COMMAND_LINE_FOCUS_INTERVAL_MS) void recheck();
+    };
     window.addEventListener("focus", focus);
     return () => window.removeEventListener("focus", focus);
   }, [desktop, recheck]);
