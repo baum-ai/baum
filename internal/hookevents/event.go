@@ -16,6 +16,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"slices"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -207,6 +208,20 @@ func Pushes(lines []string) []Push {
 		pushes = append(pushes, p)
 	}
 	return pushes
+}
+
+// Rewritten reads a post-rewrite hook's lines, "<old oid> <new oid>[ <extra>]",
+// and returns the new commits, each once. A malformed line is skipped.
+func Rewritten(lines []string) []string {
+	var out []string
+	for _, line := range lines {
+		fields := strings.Fields(line)
+		if len(fields) < 2 || len(fields) > 3 || !validOID(fields[0]) || !validOID(fields[1]) || zeroOID(fields[1]) || slices.Contains(out, fields[1]) {
+			continue
+		}
+		out = append(out, fields[1])
+	}
+	return out
 }
 
 // RemoteName reports whether a pre-push hook's first argument can be a

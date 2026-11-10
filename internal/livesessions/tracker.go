@@ -243,7 +243,9 @@ type Tracker struct {
 	// live-session expiry. Nil disables durable attribution.
 	Attributions        *commitattribution.Store
 	pendingAttributions []commitattribution.Observation
-	attributionMu       sync.Mutex
+	// detached is the work of sessions without an entry, awaiting its lookup.
+	detached      []detachedWork
+	attributionMu sync.Mutex
 	// Alive, when set, reports whether a session's agent still runs: true
 	// only for a process it confirms is the session's. A session silent for
 	// DropAfter stays listed while it does, as one waiting for its user may be
