@@ -202,6 +202,7 @@ func TestEnsureSkipsBareRepository(t *testing.T) {
 
 func TestEnsureRepairsLegacyDispatchers(t *testing.T) {
 	repo := initRepo(t)
+	git(t, repo, "commit", "-q", "--allow-empty", "-m", "init")
 	hooks := filepath.Join(repo, ".git", "hooks")
 	writeExecutable(t, filepath.Join(hooks, "post-commit"), "#!/bin/sh\n"+legacyMarker+"\n# Entire CLI hooks\nold\n")
 	writeExecutable(t, filepath.Join(hooks, "pre-push"), "#!/bin/sh\n"+legacyMarker+"\n# Entire CLI hooks\nentire hooks git pre-push \"$1\"\n")

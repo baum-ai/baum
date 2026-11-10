@@ -76,6 +76,7 @@ func TestEntireSettingsOfTheMainWorktreeCoverLinkedOnes(t *testing.T) {
 func TestLegacyDispatchersAreRepairedAndRetiredWithoutEntire(t *testing.T) {
 	repo, hooks := legacyClone(t)
 	original := "#!/bin/sh\necho mine\n"
+	git(t, repo, "commit", "-q", "--allow-empty", "-m", "init")
 	writeExecutable(t, filepath.Join(hooks, "commit-msg.pre-entire"), original)
 	report := ensure(t, repo)
 	got := map[string]Outcome{}

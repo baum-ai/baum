@@ -51,7 +51,8 @@ dispatcher the daemon could not take out. The older `hooks git --check HOOK` alw
 dispatchers of earlier versions keep running their own fallback, until the
 daemon repairs those it recognises as baum's (the repaired dispatcher no longer
 falls back to `entire`). A hook Entire manages is left as it is. In a repository
-that uses Entire (its `.entire/settings.json` is in the default branch's tree or
+that uses Entire (its `.entire/settings.json` is in the default branch's tree (origin's, `main`, `master`, `init.defaultBranch`)
+or in a checked-out branch's, or
 checked out in a working tree, or git cannot say) legacy dispatchers that run
 Entire's hooks are all left in place. Elsewhere the daemon also retires the
 legacy `commit-msg` and `prepare-commit-msg` dispatchers, restoring the hook

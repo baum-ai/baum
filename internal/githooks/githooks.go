@@ -174,7 +174,7 @@ func EnsureWith(ctx context.Context, root string, opts Options) (Report, error) 
 	if out, err := gitOutput(ctx, root, opts, "config", "--bool", "--get", "baum.hooks"); err == nil && out == "false" {
 		optedOut = true
 	}
-	entire := entireEnabled(ctx, root, opts)
+	entire := entireEnabled(ctx, root, dir, opts)
 	var report Report
 	var errs []error
 	if !optedOut {
@@ -211,7 +211,7 @@ func Restore(ctx context.Context, root string, opts Options) (Report, error) {
 	if err != nil || skipped != "" {
 		return Report{Skipped: skipped}, err
 	}
-	entire := entireEnabled(ctx, root, opts)
+	entire := entireEnabled(ctx, root, dir, opts)
 	var report Report
 	var errs []error
 	for _, hook := range Hooks {
@@ -388,12 +388,14 @@ func runsEntire(contents, hook string) bool {
 const entireWait = 5 * time.Second
 
 // entireEnabled reports whether the repository uses Entire: its settings file
-// is in the tree of the default branch (origin's, else main, else master), or
-// checked out in any working tree of the common directory. The settings are a
-// tracked file, so one worktree on an older branch is not evidence that Entire
-// is off. When git fails or is slow the answer is yes, so nothing is changed
-// on a guess.
-func entireEnabled(ctx context.Context, root string, opts Options) bool {
+// is in the tree of the default branch (origin's, else main, master or the
+// configured init.defaultBranch) or of a branch checked out in a working tree,
+// or checked out in any working tree of the common directory. The settings are
+// a tracked file, so one worktree on an older branch is not evidence that
+// Entire is off. When git fails or is slow the answer is yes, so nothing is
+// changed on a guess; so it is when no default branch can be found and a
+// dispatcher in the hooks directory dir still runs Entire's hooks.
+func entireEnabled(ctx context.Context, root, dir string, opts Options) bool {
 	ctx, cancel := context.WithTimeout(ctx, entireWait)
 	defer cancel()
 	const settings = ".entire/settings.json"
@@ -401,22 +403,50 @@ func entireEnabled(ctx context.Context, root string, opts Options) bool {
 	if err != nil {
 		return true
 	}
+	var checkedOut []string
 	for _, line := range strings.Split(trees, "\n") {
 		if path, ok := strings.CutPrefix(line, "worktree "); ok {
 			if info, err := os.Stat(filepath.Join(path, ".entire", "settings.json")); err == nil && info.Mode().IsRegular() {
 				return true
 			}
+		} else if ref, ok := strings.CutPrefix(line, "branch "); ok {
+			checkedOut = append(checkedOut, ref)
 		}
 	}
-	for _, ref := range []string{"refs/remotes/origin/HEAD", "refs/heads/main", "refs/heads/master"} {
+	defaults := []string{"refs/remotes/origin/HEAD", "refs/heads/main", "refs/heads/master"}
+	if name, err := gitOutput(ctx, root, opts, "config", "--get", "init.defaultBranch"); err == nil && name != "" {
+		defaults = append(defaults, "refs/heads/"+name)
+	}
+	foundDefault := false
+	for i, ref := range append(defaults, checkedOut...) {
 		if _, err := gitOutput(ctx, root, opts, "rev-parse", "--verify", "--quiet", ref); err != nil {
 			if ctx.Err() != nil {
 				return true
 			}
 			continue
 		}
+		foundDefault = foundDefault || i < len(defaults)
 		found, err := gitOutput(ctx, root, opts, "ls-tree", "--name-only", ref, "--", settings)
-		return err != nil || found != ""
+		if err != nil || found != "" {
+			return true
+		}
+	}
+	if foundDefault {
+		return false
+	}
+	// No default branch to look at: where a dispatcher still runs Entire, leave
+	// the hooks to it.
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return false
+	}
+	for _, entry := range entries {
+		if !entry.Type().IsRegular() {
+			continue
+		}
+		if contents, err := readHook(filepath.Join(dir, entry.Name())); err == nil && ours(contents) && strings.Contains(contents, "entire hooks git ") {
+			return true
+		}
 	}
 	return false
 }
@@ -556,7 +586,8 @@ func writeAtomic(path, script, backup string, mode os.FileMode) error {
 
 func gitOutput(ctx context.Context, root string, opts Options, args ...string) (string, error) {
 	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", root}, args...)...)
-	cmd.Env = append(os.Environ(), opts.Env...)
+	// These calls only read: a partial clone must not fetch for them.
+	cmd.Env = append(append(os.Environ(), "GIT_NO_LAZY_FETCH=1"), opts.Env...)
 	var out bytes.Buffer
 	cmd.Stdout = &out
 	if err := cmd.Run(); err != nil {
