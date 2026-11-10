@@ -699,7 +699,10 @@ the page (above); letters are read by their place on a layout without Latin
 ones. Back and forward
 are `⌘[` and `⌘]` on a Mac and `Alt+←` and `Alt+→` elsewhere. These work in
 text fields too, but not under a dialog other than the sheet or Go to, which
-they close. Go to searches the pages, the pull requests (by title, repository,
+they close. `Shift+G` (`useGitHubKey`, GitHub Desktop's View on GitHub key)
+opens the pull request in hand on GitHub: the one a pull request's page shows,
+Up next's selected one or the focused row on Pull requests; a group's row has
+none. The rows' **Open on GitHub** menu items show it. Go to searches the pages, the pull requests (by title, repository,
 number, author or branch; what waits in an inbox first), the review groups and
 the agent sessions, and, with a daemon that has inboxes, each saved inbox by its
 name (opening its queue) with **New inbox** and **Manage inboxes**. There is no
