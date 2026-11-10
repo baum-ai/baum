@@ -709,6 +709,15 @@ tables with their cells at the top and a header on a fill. Code everywhere
 sits on `--code-fill`, a faint tint of the text that reads the same on any
 surface and in the dark theme.
 
+Inside the review workspace, `Markdown` reads the shown review's hunks
+(`ReviewHunksProvider`, pooling the current and any historical version). A
+known hunk ID in the prose, bare or as a whole code span, becomes a chip
+naming its file and first line (`ui-state.tsx:42`, the full path in its
+tooltip) that opens the file view there, or the diff on GitHub when the file
+view cannot. Unknown IDs, link text and code blocks stay as written, and
+outside the workspace nothing changes. The pass runs after sanitising, so a
+comment's own markup cannot create these links.
+
 ## Schema and tile types
 
 The document types in `src/review-document.ts` mirror

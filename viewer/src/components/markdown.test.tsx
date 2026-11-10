@@ -4,7 +4,9 @@ import { createRoot, type Root } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
+import { ReviewFilesProvider } from "./code-file-link";
 import { InlineMarkdown, Markdown } from "./markdown";
+import { ReviewHunksContext, type ReviewHunk } from "./review-contexts";
 
 // `remark-breaks` is attached each time React Markdown builds its processor,
 // so its call count is the number of times the pipeline was set up.
@@ -261,5 +263,80 @@ describe("memoisation", () => {
     // Only the block whose text changed ran again.
     expect(attached.count).toBe(3);
     expect(host.textContent).toContain("changing 1");
+  });
+});
+
+const HUNKS = new Map<string, ReviewHunk>([
+  [
+    "h_c4094314a17c",
+    {
+      path: "oss/app/src/ui-state.tsx",
+      line: 42,
+      href: "https://github.com/o/r/pull/1/files#diff-abc",
+      title: "Modified source hunk in oss/app/src/ui-state.tsx, +3 −1",
+    },
+  ],
+]);
+
+const withHunks = (text: string, html = true) =>
+  renderToStaticMarkup(
+    <ReviewHunksContext.Provider value={HUNKS}>
+      <Markdown html={html}>{text}</Markdown>
+    </ReviewHunksContext.Provider>,
+  );
+
+describe("hunk IDs in review prose", () => {
+  it("shows a known hunk as its file and line, and leaves an unknown one", () => {
+    const html = withHunks("Shared by every view (h_c4094314a17c); not h_000000000000.");
+    expect(html).toContain(">ui-state.tsx:42<");
+    expect(html).toContain('title="Modified source hunk in oss/app/src/ui-state.tsx, +3 −1"');
+    expect(html).toContain('href="https://github.com/o/r/pull/1/files#diff-abc"');
+    expect(html).not.toContain("h_c4094314a17c");
+    expect(html).toContain("h_000000000000");
+  });
+
+  it("links a code span holding only the ID, not link text or code blocks", () => {
+    const html = withHunks(
+      "See `h_c4094314a17c` and [h_c4094314a17c](https://e.com).\n\n```\nh_c4094314a17c\n```",
+    );
+    expect(html.match(/ui-state\.tsx:42/g)).toHaveLength(1);
+    expect(html.match(/h_c4094314a17c/g)).toHaveLength(2);
+  });
+
+  it("links without HTML parsing too", () => {
+    expect(withHunks("cites h_c4094314a17c", false)).toContain(">ui-state.tsx:42<");
+  });
+
+  it("leaves the ID as written outside a review", () => {
+    expect(renderToStaticMarkup(<Markdown>{"cites h_c4094314a17c"}</Markdown>)).toContain(
+      "cites h_c4094314a17c",
+    );
+  });
+
+  it("does not let a comment's markup make a hunk link", () => {
+    const html = withHunks('<a data-hunk-ref="h_c4094314a17c" href="https://evil.example">x</a>');
+    expect(html).not.toContain("ui-state.tsx");
+    expect(html).toContain("https://evil.example");
+  });
+
+  it("opens the file view at the hunk's line", () => {
+    const open = vi.fn(() => true);
+    const host = document.createElement("div");
+    document.body.append(host);
+    const root = createRoot(host);
+    roots.push(root);
+    act(() =>
+      root.render(
+        <ReviewFilesProvider files={{ has: () => true, open }}>
+          <ReviewHunksContext.Provider value={HUNKS}>
+            <Markdown>{"cites h_c4094314a17c"}</Markdown>
+          </ReviewHunksContext.Provider>
+        </ReviewFilesProvider>,
+      ),
+    );
+    const chip = host.querySelector("button")!;
+    expect(chip.textContent).toBe("ui-state.tsx:42");
+    act(() => chip.click());
+    expect(open).toHaveBeenCalledWith("oss/app/src/ui-state.tsx", 42);
   });
 });
