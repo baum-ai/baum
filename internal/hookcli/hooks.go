@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -16,9 +17,20 @@ import (
 )
 
 var gitHookArgumentCounts = map[string]int{
-	"post-commit": 0,
-	"pre-push":    1,
+	"post-commit":  0,
+	"post-rewrite": 1,
+	"pre-push":     1,
 }
+
+// sessionEnv are the variables a coding agent exports to the commands it runs,
+// so a Git hook such as post-commit names the session that ran Git. An agent
+// not listed here is found through the hook's ancestor processes instead.
+var sessionEnv = []struct{ agent, name string }{
+	{"claude-code", "CLAUDE_CODE_SESSION_ID"},
+}
+
+// maxSessionID bounds an environment session id, like a stored observation's.
+const maxSessionID = 128
 
 func newHooksCommand(stdout, stderr io.Writer) *cobra.Command {
 	cmd := &cobra.Command{Use: "hooks", Short: "Manage baum's local coding-agent plugins", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error { return cmd.Help() }}
@@ -32,7 +44,9 @@ func newGitHooksCommand() *cobra.Command {
 	return &cobra.Command{Use: "git HOOK [args...]", Short: "Record a local Git event", Hidden: true,
 		Args: cobra.MinimumNArgs(1), DisableFlagParsing: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if args[0] == "--check" {
+			switch args[0] {
+			case "--check":
+				// Dispatchers of earlier versions fall back to their own hooks.
 				if len(args) != 2 {
 					return errors.New("usage: baum hooks git --check HOOK")
 				}
@@ -40,19 +54,29 @@ func newGitHooksCommand() *cobra.Command {
 					return fmt.Errorf("unsupported Git hook %q", args[1])
 				}
 				return errors.New("repository Git hook dispatchers are no longer supported")
+			case "--check-dispatcher":
+				// The check of the dispatchers the daemon installs.
+				if len(args) != 2 {
+					return errors.New("usage: baum hooks git --check-dispatcher HOOK")
+				}
+				if _, ok := gitHookArgumentCounts[args[1]]; !ok {
+					return fmt.Errorf("unsupported Git hook %q", args[1])
+				}
+				return hooksEnabled()
 			}
 			if _, ok := gitHookArgumentCounts[args[0]]; !ok {
 				return fmt.Errorf("unsupported Git hook %q", args[0])
 			}
 			started := time.Now()
 			var input *hookInput
-			if args[0] == "pre-push" {
+			if args[0] == "pre-push" || args[0] == "post-rewrite" {
 				input = newHookInput(cmd.InOrStdin())
 				input.read()
 			}
 			event := newHookEvent(hookevents.KindGit, "", args[0], started)
 			event.Git = gitHookEvent(args, input.payload())
 			if tiesToSession(args[0]) {
+				event.Agent, event.Session = environmentSession(os.Getenv)
 				if processes := captureAncestors(); len(processes) > 0 {
 					event.Terminal = &hookevents.Terminal{Processes: processes}
 				}
@@ -130,6 +154,21 @@ func newAgentHooksCommand(stdout io.Writer) *cobra.Command {
 			return nil
 		},
 	}
+}
+
+// environmentSession is the agent session whose command ran Git, named by the
+// variables its agent exports, or nothing when none is set to a plausible id.
+func environmentSession(getenv func(string) string) (string, *hookevents.Session) {
+	for _, v := range sessionEnv {
+		id := getenv(v.name)
+		if id == "" || len(id) > maxSessionID || strings.ContainsFunc(id, func(r rune) bool {
+			return !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '-' || r == '_' || r == '.' || r == ':')
+		}) {
+			continue
+		}
+		return v.agent, &hookevents.Session{ID: id}
+	}
+	return "", nil
 }
 
 // Checks are local and never inspect credentials or third-party hook settings.

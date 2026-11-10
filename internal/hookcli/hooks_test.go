@@ -108,7 +108,7 @@ func TestLegacyRepositoryChecksDeclineAfterDesktopHasRun(t *testing.T) {
 			})
 		}
 	}
-	for _, event := range []string{"post-commit", "pre-push"} {
+	for _, event := range []string{"post-commit", "post-rewrite", "pre-push"} {
 		t.Run("git/"+event, func(t *testing.T) {
 			if _, _, err := runCLI(t, "hooks", "git", "--check", event); err == nil {
 				t.Fatal("legacy Git dispatcher would intercept the independent hook")
