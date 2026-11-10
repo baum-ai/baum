@@ -314,7 +314,12 @@ type Clone struct {
 	Available  bool     `json:"available"`
 }
 type Registry struct {
-	db *sql.DB
+	// Registered, when set, is called with each clone a registration stored
+	// (Add, AddFor, AddForwarded and AttachFound), after it is stored. It
+	// must not block: the daemon uses it to start work on the new clone. A
+	// registry the CLI opens has none.
+	Registered func(Clone)
+	db         *sql.DB
 	// noSchema marks a read-only registry whose file has no tables yet.
 	noSchema bool
 	noPicked bool
@@ -712,7 +717,13 @@ func (r *Registry) addPatch(ctx context.Context, path, repository string, guard 
 	if _, e = tx.ExecContext(ctx, "INSERT INTO picked VALUES (?) ON CONFLICT DO NOTHING", c.Repository); e != nil {
 		return Clone{}, e
 	}
-	return c, tx.Commit()
+	if e = tx.Commit(); e != nil {
+		return Clone{}, e
+	}
+	if r.Registered != nil {
+		r.Registered(c)
+	}
+	return c, nil
 }
 
 // Remove accepts an ID or path, including a path that no longer exists.

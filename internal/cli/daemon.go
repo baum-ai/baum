@@ -41,6 +41,7 @@ import (
 	"github.com/baum-ai/baum/internal/facts"
 	"github.com/baum-ai/baum/internal/focus"
 	"github.com/baum-ai/baum/internal/generate"
+	"github.com/baum-ai/baum/internal/githooks"
 	"github.com/baum-ai/baum/internal/github"
 	"github.com/baum-ai/baum/internal/githubauth"
 	"github.com/baum-ai/baum/internal/githubrepos"
@@ -397,6 +398,7 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 			events.Close()
 			return daemon.App{}, err
 		}
+		hooks := gitHooks(registry, log)
 		discover := discovery.New(github.NewFromConfig(cfg, github.Options{}), "")
 		// Every reader shares one cached index. Discovery's writes only
 		// invalidate it: the index watcher publishes if the index moved.
@@ -763,6 +765,7 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 				}
 				wg.Go(func() { sessionIndex.Run(ctx) })
 				wg.Go(func() { maintainReviewRuns(ctx, log) })
+				wg.Go(func() { hooks.Run(ctx) })
 				wg.Go(func() { planHistory.Run(ctx) })
 				wg.Go(func() { delivery.Run(ctx) })
 				if endedSessions != nil {
@@ -937,6 +940,31 @@ func currentName(client *github.Client) repos.CurrentName {
 		}
 		return client.CurrentName(ctx, repo)
 	}
+}
+
+// gitHooks builds the service that keeps baum's Git hook dispatchers in the
+// registered clones that are present, and ensures each clone the registry
+// stores from now on. Only the daemon's registry does this: the CLI's installs
+// no hooks.
+func gitHooks(registry *repos.Registry, log *slog.Logger) *githooks.Service {
+	service := &githooks.Service{Log: log, Paths: func(ctx context.Context) ([]string, error) {
+		clones, err := registry.List(ctx)
+		if err != nil {
+			return nil, err
+		}
+		var paths []string
+		seen := map[string]bool{}
+		for _, c := range clones {
+			// Linked worktrees of one repository share its hooks.
+			if c.Available && !seen[c.CommonDir] {
+				seen[c.CommonDir] = true
+				paths = append(paths, c.Path)
+			}
+		}
+		return paths, nil
+	}}
+	registry.Registered = func(c repos.Clone) { service.Added(c.Path) }
+	return service
 }
 
 // maintainReviewRuns expires the run directories of reviews that kept their
