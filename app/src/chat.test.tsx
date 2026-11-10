@@ -335,6 +335,20 @@ it("sends with Enter, keeps Shift+Enter for a new line and clears the focus it a
   expect(cleared).toHaveBeenCalled();
 });
 
+it("does not re-render the answers while typing a question", async () => {
+  conversations = [
+    conversation({ turns: [answered(), answered({ seq: 2, question: "And jitter?" })] }),
+  ];
+  const renders = vi.fn(() => null);
+  await panel({ answerActions: renders });
+  const before = renders.mock.calls.length;
+  expect(before).toBeGreaterThanOrEqual(2);
+  await type("What about");
+  await type("What about jitter?");
+  expect(node.querySelector("textarea")!.value).toBe("What about jitter?");
+  expect(renders.mock.calls.length).toBe(before);
+});
+
 it("shows the daemon's words when the conversation is busy", async () => {
   conversations = [conversation({ turns: [answered()] })];
   postAnswer = () =>

@@ -1,4 +1,13 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+  type RefObject,
+} from "react";
 import { HunkEvidence, HunkPatchProvider } from "@baum/viewer/components/hunk-evidence";
 import type { HunkPatchSource } from "@baum/viewer/components/hunk-evidence";
 import { Markdown } from "@baum/viewer/components/markdown";
@@ -292,7 +301,7 @@ export type AnswerActions = (context: {
   answer: ChatAnswer;
 }) => ReactNode;
 
-function TurnView({
+const TurnView = memo(function TurnView({
   conversation,
   turn,
   document,
@@ -333,7 +342,7 @@ function TurnView({
       {turn.note ? <p className="ask-note">{turn.note}</p> : null}
     </article>
   );
-}
+});
 
 type Load =
   | { state: "loading" }
@@ -341,10 +350,110 @@ type Load =
   | { state: "unavailable" }
   | { state: "failed" };
 
+/** The conversations just read, reusing the previous objects of those that did
+ *  not change, so the poll does not re-render turns that are the same. */
+function shareUnchanged(
+  previous: ChatConversation[],
+  next: ChatConversation[],
+): ChatConversation[] {
+  const before = new Map(previous.map((c) => [c.id, c]));
+  return next.map((c) => {
+    const old = before.get(c.id);
+    if (!old) return c;
+    const turns = c.turns.map((t) => {
+      const oldTurn = old.turns.find((o) => o.seq === t.seq);
+      return oldTurn && JSON.stringify(oldTurn) === JSON.stringify(t) ? oldTurn : t;
+    });
+    const same =
+      turns.length === old.turns.length &&
+      turns.every((t, i) => t === old.turns[i]) &&
+      JSON.stringify({ ...old, turns: [] }) === JSON.stringify({ ...c, turns: [] });
+    return same ? old : { ...c, turns };
+  });
+}
+
 /** A conversation's name in the list: its first question. */
 function conversationName(conversation: ChatConversation) {
   const question = conversation.turns[0]?.question ?? "Conversation";
   return question.length > 60 ? `${question.slice(0, 57)}…` : question;
+}
+
+/** The box for the next question. It owns the draft text, so a keystroke
+ *  re-renders only this and not the conversation above it. */
+function Composer({
+  input,
+  draft,
+  focus,
+  clearFocus,
+  error,
+  busy,
+  sending,
+  send,
+}: {
+  input: RefObject<HTMLTextAreaElement | null>;
+  draft: RefObject<string>;
+  focus: ChatFocus | null;
+  clearFocus: () => void;
+  error: string;
+  busy: boolean;
+  sending: boolean;
+  send: (question: string) => Promise<boolean>;
+}) {
+  const [question, setQuestion] = useState(draft.current);
+  const submit = async () => {
+    if (await send(question)) setQuestion("");
+  };
+  return (
+    <form
+      className="ask-composer"
+      onSubmit={(event) => {
+        event.preventDefault();
+        void submit();
+      }}
+    >
+      {focus ? (
+        <p className="ask-focus">
+          <span>
+            About <strong>{focus.title || "the pull request"}</strong>
+          </span>
+          <Button variant="secondary" size="compact" onClick={clearFocus}>
+            Remove
+          </Button>
+        </p>
+      ) : null}
+      <label htmlFor="ask-question" className="sr-only">
+        Your question
+      </label>
+      <textarea
+        id="ask-question"
+        ref={input}
+        className="ask-input"
+        rows={3}
+        maxLength={MAX_QUESTION}
+        value={question}
+        placeholder="Ask about this review's code or reasoning"
+        onChange={(event) => {
+          draft.current = event.target.value;
+          setQuestion(event.target.value);
+        }}
+        onKeyDown={(event) => {
+          if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
+            event.preventDefault();
+            void submit();
+          }
+        }}
+      />
+      {error ? <Alert>{error}</Alert> : null}
+      <div className="ask-composer-row">
+        <span className="ask-hint">
+          {busy ? "Waiting for the answer" : "Enter sends, Shift+Enter adds a line"}
+        </span>
+        <Button type="submit" size="compact" disabled={!question.trim() || busy || sending}>
+          {sending ? "Sending…" : "Send"}
+        </Button>
+      </div>
+    </form>
+  );
 }
 
 /** Questions to the agent that wrote the review, docked beside it: the
@@ -387,9 +496,11 @@ export function AskPanel({
   const refresh = useCallback(() => setTick((n) => n + 1), []);
   // The conversation read, "new" for a blank one, null until one is picked.
   const [choice, setChoice] = useState<string | null>(null);
-  const [question, setQuestion] = useState("");
   const [sending, setSending] = useState(false);
   const [error, setError] = useState("");
+  // The draft lives in the composer, so typing does not re-render the thread;
+  // this keeps it while the composer is swapped for the read-only note.
+  const draft = useRef("");
   const input = useRef<HTMLTextAreaElement>(null);
   const thread = useRef<HTMLDivElement>(null);
 
@@ -398,7 +509,17 @@ export function AskPanel({
     listChats(clone, pr, abort.signal)
       .then((conversations) => {
         if (!abort.signal.aborted)
-          setLoad(conversations ? { state: "ready", conversations } : { state: "unavailable" });
+          setLoad((current) =>
+            conversations
+              ? {
+                  state: "ready",
+                  conversations:
+                    current.state === "ready"
+                      ? shareUnchanged(current.conversations, conversations)
+                      : conversations,
+                }
+              : { state: "unavailable" },
+          );
       })
       .catch(() => {
         if (abort.signal.aborted) return;
@@ -453,9 +574,10 @@ export function AskPanel({
     end?.scrollIntoView?.({ block: "nearest" });
   }, [turnCount, lastState, activeId]);
 
-  const send = async () => {
+  /** Asks the question; true once it was sent. */
+  const send = async (question: string) => {
     const text = question.trim();
-    if (!text || busy || sending || readOnly) return;
+    if (!text || busy || sending || readOnly) return false;
     setSending(true);
     setError("");
     try {
@@ -467,13 +589,15 @@ export function AskPanel({
         question: text,
         focus: focus ?? undefined,
       });
-      setQuestion("");
+      draft.current = "";
       setChoice(asked.conversation_id);
       clearFocus();
       refresh();
+      return true;
     } catch (e) {
       setError(e instanceof Error ? e.message : "The question could not be sent.");
       refresh();
+      return false;
     } finally {
       setSending(false);
     }
@@ -596,52 +720,16 @@ export function AskPanel({
           </div>
         </div>
       ) : (
-        <form
-          className="ask-composer"
-          onSubmit={(event) => {
-            event.preventDefault();
-            void send();
-          }}
-        >
-          {focus ? (
-            <p className="ask-focus">
-              <span>
-                About <strong>{focus.title || "the pull request"}</strong>
-              </span>
-              <Button variant="secondary" size="compact" onClick={clearFocus}>
-                Remove
-              </Button>
-            </p>
-          ) : null}
-          <label htmlFor="ask-question" className="sr-only">
-            Your question
-          </label>
-          <textarea
-            id="ask-question"
-            ref={input}
-            className="ask-input"
-            rows={3}
-            maxLength={MAX_QUESTION}
-            value={question}
-            placeholder="Ask about this review's code or reasoning"
-            onChange={(event) => setQuestion(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
-                event.preventDefault();
-                void send();
-              }
-            }}
-          />
-          {error ? <Alert>{error}</Alert> : null}
-          <div className="ask-composer-row">
-            <span className="ask-hint">
-              {busy ? "Waiting for the answer" : "Enter sends, Shift+Enter adds a line"}
-            </span>
-            <Button type="submit" size="compact" disabled={!question.trim() || busy || sending}>
-              {sending ? "Sending…" : "Send"}
-            </Button>
-          </div>
-        </form>
+        <Composer
+          input={input}
+          draft={draft}
+          focus={focus}
+          clearFocus={clearFocus}
+          error={error}
+          busy={busy}
+          sending={sending}
+          send={send}
+        />
       )}
     </aside>
   );
