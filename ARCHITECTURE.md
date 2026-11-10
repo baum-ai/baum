@@ -332,6 +332,10 @@ copy:
   lifecycle fields, evidence, blocks and tiles. A mitigated risk is left
   out, so completion keeps it mitigated. The generator validates what it
   reuses like model output and sends a section it rejects to the model.
+  Nothing is reused when the bundle offers an image the previous version
+  was not offered (`NewImages`, against `PreviousVersion.Attachments` from
+  its `index.attachments`): only the details stage opens and places images,
+  and images often arrive after the code, as a session is linked later.
 - **Reading time.** `ReviewMinutes` replaces the model's estimate in a
   staged review: the words of the overview (text, attention, review
   exchange, release note, breaking change), the context, and each section's
@@ -984,7 +988,8 @@ when no section has its details. A host that wraps a backend must forward
    error).
 2. **Section details**, once the outline is accepted. A section whose hunks
    are unchanged since a previous version with complete details keeps those
-   (`review.ReusableSectionDetails`) and is not sent. The model writes the
+   (`review.ReusableSectionDetails`) and is not sent, unless the bundle
+   offers an image that version was not offered. The model writes the
    rest in one call; each section is validated on its own
    (`review.PrepareSectionDetails`), and a repair sends only the sections
    still failing, each with its rejected details and its findings, and

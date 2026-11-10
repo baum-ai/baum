@@ -21,12 +21,18 @@ func PreviousVersionOf(document []byte, version int) (*bundle.PreviousVersion, e
 				ID       string `json:"id"`
 				NewRange []int  `json:"new_range"`
 			} `json:"hunks"`
+			Attachments []struct {
+				ID string `json:"id"`
+			} `json:"attachments"`
 		} `json:"index"`
 	}
 	if err := json.Unmarshal(document, &stored); err != nil {
 		return nil, err
 	}
 	previous := &bundle.PreviousVersion{Version: version, HunkRanges: map[string][2]int{}}
+	for _, attachment := range stored.Index.Attachments {
+		previous.Attachments = append(previous.Attachments, attachment.ID)
+	}
 	for _, hunk := range stored.Index.Hunks {
 		if len(hunk.NewRange) == 2 {
 			previous.HunkRanges[hunk.ID] = [2]int{hunk.NewRange[0], hunk.NewRange[1]}

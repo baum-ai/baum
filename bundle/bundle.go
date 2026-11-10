@@ -415,6 +415,11 @@ type PreviousVersion struct {
 	// sections' hunk anchors to where the same hunk sits now. It is never
 	// part of the bundle.
 	HunkRanges map[string][2]int `json:"-"`
+	// Attachments are the IDs of the images the previous version was offered
+	// (its index.attachments). When the bundle offers an image missing here,
+	// no section's details are reused: only the details stage places images.
+	// It is never part of the bundle.
+	Attachments []string `json:"-"`
 }
 
 type PreviousSection struct {
