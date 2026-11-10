@@ -6,6 +6,7 @@ import { githubToast } from "./github-toast";
 import { LoadingStatus } from "./nine-dots";
 import { useToast } from "./toast";
 import { SMALL } from "./action-classes";
+import { visibleTimeout } from "./visible-interval";
 import { cn } from "@baum/viewer/components/classnames";
 import { Part } from "@baum/viewer/components/review-parts";
 import type { ReviewDetailsChecks } from "@baum/viewer/components/review-viewer";
@@ -148,8 +149,7 @@ export function useChecks(
   // scheduled after each while a check runs.
   useEffect(() => {
     if (!enabled || !running) return;
-    const timer = setTimeout(() => setReads((n) => n + 1), RUNNING_REFRESH_MS);
-    return () => clearTimeout(timer);
+    return visibleTimeout(() => setReads((n) => n + 1), RUNNING_REFRESH_MS);
   }, [enabled, running, read]);
   return read;
 }

@@ -8,6 +8,7 @@ import { PAGES } from "./pages";
 import { SAMPLE_PULL_REQUEST } from "./sample";
 import { COMMAND } from "./shortcuts";
 import { uiState, useUIState } from "./ui-state";
+import { visibleInterval } from "./visible-interval";
 import "./tour.css";
 
 /** Whether the tour is open: once on this computer's first launch, kept by
@@ -222,8 +223,7 @@ export function Tour({ close }: { close: () => void }) {
       );
     };
     measure();
-    const timer = setInterval(measure, 150);
-    return () => clearInterval(timer);
+    return visibleInterval(measure, 150);
   }, [stop]);
 
   const [position, setPosition] = useState({ left: 0, top: 0 });

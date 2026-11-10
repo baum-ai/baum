@@ -1,7 +1,12 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { trackHidden, useVisibleInterval } from "./visible-interval";
+import {
+  trackHidden,
+  useVisibleInterval,
+  visibleInterval,
+  visibleTimeout,
+} from "./visible-interval";
 
 let node: HTMLDivElement;
 let root: Root;
@@ -71,4 +76,51 @@ it("marks the document while hidden", () => {
   expect(document.documentElement.dataset.hidden).toBe("");
   setHidden(false);
   expect(document.documentElement.dataset.hidden).toBeUndefined();
+});
+
+it("visibleInterval pauses while hidden, ticks once on return and stops", () => {
+  const stop = visibleInterval(calls, 100);
+  vi.advanceTimersByTime(250);
+  expect(calls).toHaveBeenCalledTimes(2);
+  setHidden(true);
+  vi.advanceTimersByTime(1000);
+  expect(calls).toHaveBeenCalledTimes(2);
+  setHidden(false);
+  expect(calls).toHaveBeenCalledTimes(3);
+  stop();
+  vi.advanceTimersByTime(1000);
+  setHidden(true);
+  setHidden(false);
+  expect(calls).toHaveBeenCalledTimes(3);
+});
+
+it("visibleTimeout fires once when visible", () => {
+  visibleTimeout(calls, 100);
+  vi.advanceTimersByTime(500);
+  expect(calls).toHaveBeenCalledTimes(1);
+  setHidden(true);
+  setHidden(false);
+  expect(calls).toHaveBeenCalledTimes(1);
+});
+
+it("visibleTimeout waits for the page to be visible when due while hidden", () => {
+  visibleTimeout(calls, 100);
+  setHidden(true);
+  vi.advanceTimersByTime(500);
+  expect(calls).not.toHaveBeenCalled();
+  setHidden(false);
+  expect(calls).toHaveBeenCalledTimes(1);
+  setHidden(true);
+  setHidden(false);
+  expect(calls).toHaveBeenCalledTimes(1);
+});
+
+it("visibleTimeout cancel stops it", () => {
+  const cancel = visibleTimeout(calls, 100);
+  setHidden(true);
+  vi.advanceTimersByTime(500);
+  cancel();
+  setHidden(false);
+  vi.advanceTimersByTime(500);
+  expect(calls).not.toHaveBeenCalled();
 });

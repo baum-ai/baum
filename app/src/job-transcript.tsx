@@ -26,6 +26,7 @@ import { LoadingStatus } from "./nine-dots";
 import { ReadFailed } from "./page-state";
 import { PageBar, pageScroll } from "./shell";
 import { useFollowScroll } from "./session-transcript";
+import { visibleTimeout } from "./visible-interval";
 
 /** One line of a fix agent's transcript, from `api/jobs/{id}/transcript`.
  *  Entries are append-only; a tool's later entry with the same `id` updates
@@ -75,7 +76,7 @@ export function useJobTranscript(id: string, attempt = 0): TranscriptState {
   const [state, setState] = useState<TranscriptState>({ kind: "loading" });
   useEffect(() => {
     let stopped = false;
-    let timer: ReturnType<typeof setTimeout> | undefined;
+    let cancelNext: (() => void) | undefined;
     const controller = new AbortController();
     let entries: TranscriptEntry[] = [];
     let after = 0;
@@ -108,13 +109,13 @@ export function useJobTranscript(id: string, attempt = 0): TranscriptState {
         });
         wait = RETRY_MS;
       }
-      timer = setTimeout(() => void read(), wait);
+      cancelNext = visibleTimeout(() => void read(), wait);
     };
     void read();
     return () => {
       stopped = true;
       controller.abort();
-      clearTimeout(timer);
+      cancelNext?.();
     };
   }, [id, attempt]);
   return state;
