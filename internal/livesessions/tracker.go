@@ -27,6 +27,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -313,6 +314,10 @@ type entry struct {
 	ended     bool
 	endedAt   time.Time
 	linkedAt  time.Time
+	// generations are what the last Relink of the session and of its work
+	// linked against, by repository (GenerationLinker), when it changed
+	// nothing; nil otherwise, or when they could not be told.
+	generations map[string]Generation
 	// aliveAt is when Alive last saw the agent of a session silent for
 	// DropAfter still running.
 	aliveAt time.Time
@@ -858,12 +863,13 @@ func (t *Tracker) ResolvePending(ctx context.Context) bool {
 		ended    bool
 		snapshot Session
 		work     []workItem
+		linked   map[string]Generation
 	}
 	t.mu.Lock()
 	var todo []request
 	for k := range t.pending {
 		if s := t.sessions[k]; s != nil {
-			todo = append(todo, request{k: k, s: s, cwd: s.cwd, ended: s.ended, snapshot: s.Session, work: slices.Clone(s.work)})
+			todo = append(todo, request{k: k, s: s, cwd: s.cwd, ended: s.ended, snapshot: s.Session, work: slices.Clone(s.work), linked: s.generations})
 		} else {
 			delete(t.pending, k)
 		}
@@ -871,11 +877,28 @@ func (t *Tracker) ResolvePending(ctx context.Context) bool {
 	t.mu.Unlock()
 	changed := false
 	var announcements []Session
+	pass := map[string]*Generation{}
 	for _, r := range todo {
 		var link Link
 		var ok bool
+		var generations map[string]Generation
 		if (r.ended || r.cwd == "") && r.snapshot.Repository != "" {
 			if resolver, supported := t.Linker.(RecordedLinker); supported {
+				generations = t.generations(ctx, r.snapshot.Repository, r.work, pass)
+				if generations != nil && maps.Equal(generations, r.linked) && !slices.ContainsFunc(r.work, toRead) {
+					// Discovery wrote nothing that would link it otherwise.
+					t.mu.Lock()
+					delete(t.pending, r.k)
+					if t.sessions[r.k] == r.s {
+						if r.s.cwd != r.cwd || r.s.ended != r.ended || slices.ContainsFunc(r.s.work, toRead) {
+							t.queue(r.k)
+						} else {
+							r.s.linkedAt, r.s.stale = t.now(), false
+						}
+					}
+					t.mu.Unlock()
+					continue
+				}
 				link, ok = resolver.Relink(ctx, r.snapshot)
 			} else {
 				link, ok = Link{Repository: r.snapshot.Repository, Branch: r.snapshot.Branch, PR: r.snapshot.PR, PRState: r.snapshot.PRState}, true
@@ -902,6 +925,7 @@ func (t *Tracker) ResolvePending(ctx context.Context) bool {
 			}
 			before, existed := t.view(r.k, now)
 			unread := r.s.storeWork(read)
+			r.s.generations = nil
 			switch {
 			case ok:
 				r.s.setLink(withWork(link, r.s.work), now)
@@ -919,6 +943,11 @@ func (t *Tracker) ResolvePending(ctx context.Context) bool {
 			after, exists := t.view(r.k, now)
 			if significant(before, after, existed, exists) {
 				changed = true
+			}
+			if ok && existed && exists && before == after && slices.EqualFunc(r.work, r.s.work, sameLink) {
+				// Relinked as it was, so it would be again until discovery
+				// writes: later passes skip it while the generations hold.
+				r.s.generations = generations
 			}
 			if unread && t.sessions[r.k] == r.s {
 				// A commit or push recorded during the lookup.

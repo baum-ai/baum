@@ -249,6 +249,46 @@ func TestConditionalBackoffAndRateLimit(t *testing.T) {
 	}
 }
 
+// A revision changes with each write of the cache, its validation and the
+// identity, and reading the cache leaves it as it is.
+func TestRevisionChangesWithWhatCachedReads(t *testing.T) {
+	f := recordedFixture()
+	s, now := service(t, f)
+	ctx := context.Background()
+	empty, err := s.Revision(ctx, testRepo)
+	if err != nil || empty.Validated {
+		t.Fatalf("before a poll %+v %v", empty, err)
+	}
+	if _, err := s.Poll(ctx, testRepo); err != nil {
+		t.Fatal(err)
+	}
+	polled, err := s.Revision(ctx, testRepo)
+	if err != nil || polled.Writes == empty.Writes || !polled.Validated || polled.Partition != empty.Partition {
+		t.Fatalf("after a poll %+v, before %+v, %v", polled, empty, err)
+	}
+	if _, err := s.Cached(ctx, testRepo); err != nil {
+		t.Fatal(err)
+	}
+	if again, _ := s.Revision(ctx, testRepo); again != polled {
+		t.Fatalf("reading the cache moved its revision: %+v, was %+v", again, polled)
+	}
+	if err := s.Observe(ctx, testRepo, Observation{Number: 9, HeadSHA: "moved", State: "MERGED", FetchedAt: *now}); err != nil {
+		t.Fatal(err)
+	}
+	observed, _ := s.Revision(ctx, testRepo)
+	if observed.Writes == polled.Writes {
+		t.Fatalf("an observation kept the revision %+v", observed)
+	}
+	s.ResetIdentity()
+	if reset, _ := s.Revision(ctx, testRepo); reset.Epoch == observed.Epoch || reset.Validated {
+		t.Fatalf("an identity reset kept the revision %+v", reset)
+	}
+	other := New(github.New(func(context.Context, string) (string, error) { return "other-account-token", nil }, github.Options{Transport: roundTrip(f.roundTrip)}), s.directory)
+	if theirs, _ := other.Revision(ctx, testRepo); theirs.Partition == observed.Partition {
+		t.Fatal("another account shares the revision's partition")
+	}
+}
+
 func TestMissingTeamScopeDoesNotHideDirectRequest(t *testing.T) {
 	f := recordedFixture()
 	f.status["/user/teams"] = 403

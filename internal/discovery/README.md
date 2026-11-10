@@ -10,6 +10,14 @@ host, credential identity and repository. The credential's record (`<hash>.budge
 holds its REST and GraphQL budgets and its team memberships, which every
 repository shares.
 
+`Revision` stamps what `Cached` would read, without opening the database: the
+partition, the identity epoch, whether the last poll validated the cache, and
+how many times this service wrote it. Two equal revisions read the same
+snapshot, except that `Stale` turns true once `NextPoll` passes. The count
+lives in memory, so it holds only because the daemon's service is the cache's
+one writer: the daemon runs once, and nothing else writes `cache/discovery`.
+Live sessions use it to decode a cache again only after it changed.
+
 ## A poll
 
 Most polls are **incremental**. A poll reads the window of pull requests
