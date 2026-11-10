@@ -22,7 +22,7 @@ func TestDocumentCacheSharesLinkageAndInvalidatesRevision(t *testing.T) {
 	}
 	clone := repos.Clone{ID: "one", Repository: "owner/repo"}
 	doc := []byte(`{"review":{"repository":"owner/repo","head":"aaaaaaaa","base":"bbbbbbbb"}}`)
-	server, release, err := cache.get(clone, doc)
+	server, release, err := cache.get(context.Background(), clone, doc, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -34,7 +34,7 @@ func TestDocumentCacheSharesLinkageAndInvalidatesRevision(t *testing.T) {
 		}
 	}
 	release()
-	same, release, err := cache.get(clone, doc)
+	same, release, err := cache.get(context.Background(), clone, doc, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -42,7 +42,7 @@ func TestDocumentCacheSharesLinkageAndInvalidatesRevision(t *testing.T) {
 	if same != server || calls.Load() != 1 {
 		t.Fatal("linkage not reused", calls.Load())
 	}
-	changed, release, err := cache.get(clone, append(doc[:len(doc)-1], []byte(`,"summary":{}}`)...))
+	changed, release, err := cache.get(context.Background(), clone, append(doc[:len(doc)-1], []byte(`,"summary":{}}`)...), "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -51,7 +51,7 @@ func TestDocumentCacheSharesLinkageAndInvalidatesRevision(t *testing.T) {
 		t.Fatal("changed document reused old evidence")
 	}
 	clone.ID = "two"
-	other, release, err := cache.get(clone, doc)
+	other, release, err := cache.get(context.Background(), clone, doc, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -61,7 +61,7 @@ func TestDocumentCacheSharesLinkageAndInvalidatesRevision(t *testing.T) {
 	}
 	for i := range maxCachedDocuments + 2 {
 		clone.ID = fmt.Sprint(i)
-		_, release, err := cache.get(clone, doc)
+		_, release, err := cache.get(context.Background(), clone, doc, "")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -99,7 +99,7 @@ func TestDocumentCacheBoundsConcurrentLocalReadsAcrossDocuments(t *testing.T) {
 	}
 	var workers sync.WaitGroup
 	for i := range 12 {
-		server, release, err := cache.get(repos.Clone{ID: fmt.Sprint(i)}, []byte(`{"review":{"repository":"owner/repo","head":"aaaaaaaa","base":"bbbbbbbb"}}`))
+		server, release, err := cache.get(context.Background(), repos.Clone{ID: fmt.Sprint(i)}, []byte(`{"review":{"repository":"owner/repo","head":"aaaaaaaa","base":"bbbbbbbb"}}`), "")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -129,7 +129,7 @@ func TestDocumentEvidenceInvalidatesWithoutChangingDocument(t *testing.T) {
 		calls.Add(1)
 		return locallink.Result{Available: true}, nil
 	}
-	server, release, err := cache.get(repos.Clone{ID: "one", Repository: "owner/repo"}, []byte(`{"review":{"repository":"owner/repo","head":"aaaaaaaa","base":"bbbbbbbb"}}`))
+	server, release, err := cache.get(context.Background(), repos.Clone{ID: "one", Repository: "owner/repo"}, []byte(`{"review":{"repository":"owner/repo","head":"aaaaaaaa","base":"bbbbbbbb"}}`), "")
 	if err != nil {
 		t.Fatal(err)
 	}

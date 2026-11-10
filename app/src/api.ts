@@ -891,17 +891,20 @@ export function backTo(search: URLSearchParams): { href: string; label: string; 
   if (filter) back.set("filter", filter);
   return { href: appURL(`?${back}`), label: "Pull requests", prefix: "page=pulls&" };
 }
-/** Requests `path`, relative to the namespace, as `api/repos`. */
+/** Requests `path`, relative to the namespace, as `api/repos`. `cache` is
+ *  "no-cache" only for an answer the daemon tags with an ETag, which the
+ *  browser then revalidates instead of downloading again. */
 export async function request<T>(
   path: string,
   body?: unknown,
   method = body === undefined ? "GET" : "POST",
   signal?: AbortSignal,
+  cache: RequestCache = "no-store",
 ): Promise<T> {
   const response = await fetch(appURL(path), {
     method,
     signal,
-    cache: "no-store",
+    cache,
     ...(body === undefined
       ? {}
       : { headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }),
@@ -1062,6 +1065,7 @@ export function documentRequest(clone: string, pr: number, version?: number, sig
     undefined,
     "GET",
     signal,
+    "no-cache",
   ).then(validDocument);
 }
 export function groupDocumentRequest(id: string, version?: number, signal?: AbortSignal) {

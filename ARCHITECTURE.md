@@ -1255,7 +1255,7 @@ The server has ten API routes and an asset fallback:
 
 | Route | Serves |
 | --- | --- |
-| `GET /api/document` | the document's bytes exactly as read, except that a hunk without a `github_url` gets the derived one (see "Hunk evidence in saved documents"), `no-store` |
+| `GET /api/document` | the document's bytes exactly as read, except that a hunk without a `github_url` gets the derived one (see "Hunk evidence in saved documents"), with a strong `ETag` of those bytes and `no-cache`: a request whose `If-None-Match` names the current one is a 304 without a body |
 | `GET /api/events` | a Server-Sent Events stream, always valid, so the app stays connected; pings keep it open and, with `--watch`, a `document` event follows each change |
 | `GET /api/health` | `{"status":"ok"}` |
 | `GET /api/sessions` | the sessions on this machine linked to the document's pull request, as below; `no-store` |
@@ -1360,6 +1360,18 @@ documents"). The app fills them in from `GET /api/patch?path=<path>`, answered b
   file, the sample) is asked for, is 404; one the store fails to read is 500.
   The daemon's app resolves `version` to the stored document itself and
   hands the request on without it.
+- The daemon's app keeps one viewer per clone and stored document
+  (`internal/uiserver/documents.go`) for `/api/document` and the routes
+  above. A request finds it by the document's store revision
+  (`store.Revision`, see "Running locally") without reading the document; only
+  a revision it has not seen, or a store that cannot vouch for one, reads and
+  hashes the document. A viewer is built once, outside the cache's lock:
+  concurrent requests for it wait for that build, and other documents do not.
+  A viewer unused for 10 minutes is closed, as are the least recently used
+  ones beyond 16 viewers or 256 MiB of served documents and kept answers
+  (`viewserver.Server.CachedBytes`); the one asked for last stays whatever
+  its size. A viewer evicted while requests hold it answers them and closes
+  when the last one ends.
 - Only a `path` that is the `path` of a hunk in `index.hunks` of that version
   is answered; anything else, including a missing, empty or
   over-long (4096 bytes) `path`, is 404 and runs nothing. A repeated `path`
@@ -2813,7 +2825,20 @@ uses a row only while its version is the latest and its length equals
 or a missing table (an old store, or a read-only open before any write-open
 by this version), falls back per row to extracting from the document. A
 read-only open never writes. When every row is current, Snapshot parses no
-document body. Generation publishes
+document body.
+Document revisions name each version's stored bytes without reading them, so
+a reader can tell a document it has already parsed from one rewritten since:
+`RefreshCurrent` and `CompleteCurrent` rewrite the latest version in place,
+often to the same length within one file-time tick. The `document_revisions`
+table holds a random 64-bit revision per version, which triggers on
+`versions` (any insert or update, and delete) renew in the writer's
+transaction, an older binary's included. Trigger names carry a hash of their
+SQL; a write-open that does not find exactly the current ones replaces them
+and renews every revision in one transaction. `Latest` and `Get` return the
+revision read with the document (`Version.Revision`), and `Revision` the
+version and revision alone. Without the table or exactly the current
+triggers (a store no write-open of this version has seen, read without
+writing) the revision is 0, which names nothing. Generation publishes
 lease-based run status independently of immutable successful version history;
 expired leases are read as interrupted without mutating stores during indexing.
 Once `Store.Put` commits a version, generation succeeds: failing to record the
