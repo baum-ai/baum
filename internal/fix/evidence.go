@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -16,7 +17,7 @@ import (
 // Reader is the GitHub REST access a fix needs; *github.RESTReader is one.
 type Reader interface {
 	Read(ctx context.Context, path, etag string) (int, http.Header, []byte, error)
-	Tail(ctx context.Context, path string, limit int) (int, []byte, error)
+	Download(ctx context.Context, path string, w io.Writer) (int, error)
 }
 
 // PullRequest is what GitHub reports of a pull request a fix is for.
@@ -119,7 +120,8 @@ type Check struct {
 	Title   string `json:"title,omitempty"`
 	Summary string `json:"summary,omitempty"`
 	Text    string `json:"text,omitempty"`
-	// Log is the end of a GitHub Actions job's log, read by Logs.
+	// Log is the part of a GitHub Actions job's log that shows the failure,
+	// read by Logs.
 	Log string `json:"log,omitempty"`
 	// JobID is the GitHub Actions job behind a check run, 0 for another app.
 	JobID int64 `json:"-"`
@@ -310,9 +312,9 @@ func AllChecks(ctx context.Context, r Reader, repository github.Repository, sha 
 	return checks[:min(len(checks), MaxAllChecks)], nil
 }
 
-// Logs reads the end of the job log of the first four failing GitHub
-// Actions checks: their last 200 lines, at most 32 KiB each. A log that
-// cannot be read is left out.
+// Logs reads the job log of the first four failing GitHub Actions checks
+// and keeps, of each, the last 200 lines up to the end of the step that
+// failed (jobLog), at most 32 KiB. A log that cannot be read is left out.
 func Logs(ctx context.Context, r Reader, repository github.Repository, checks []Check) []Check {
 	out := append([]Check(nil), checks...)
 	read := 0
@@ -321,22 +323,14 @@ func Logs(ctx context.Context, r Reader, repository github.Repository, checks []
 			continue
 		}
 		read++
-		status, body, err := r.Tail(ctx, fmt.Sprintf("%s/actions/jobs/%d/logs", repositoryPath(repository), out[i].JobID), maxLogBytes)
+		var log jobLog
+		status, err := r.Download(ctx, fmt.Sprintf("%s/actions/jobs/%d/logs", repositoryPath(repository), out[i].JobID), &log)
 		if err != nil || status != http.StatusOK {
 			continue
 		}
-		out[i].Log = lastLines(string(body), MaxLogLines)
+		out[i].Log = log.String()
 	}
 	return out
-}
-
-func lastLines(text string, n int) string {
-	text = strings.ToValidUTF8(strings.TrimRight(text, "\n"), "")
-	lines := strings.Split(text, "\n")
-	if len(lines) > n {
-		lines = lines[len(lines)-n:]
-	}
-	return strings.Join(lines, "\n")
 }
 
 func bounded(text string, limit int) string {

@@ -1,7 +1,8 @@
 ## Failing checks
 
 The pull request's checks fail on its head commit. The failing checks, with
-their summaries and the last lines of their logs, are in the data below.
+their summaries and the part of their logs that ends with the failed step,
+are in the data below.
 
 - Find the cause in the code and fix it. Fix the code rather than weaken,
   skip or delete a test, lint rule or check.
