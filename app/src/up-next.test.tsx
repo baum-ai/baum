@@ -700,10 +700,13 @@ it("does not clear a pull request whose fix is running, and offers to watch it",
   jobsList = [fixJobOf()];
   await render();
   expect(list()).toEqual(["Change 1", "Change 3", "Change 4", "Change 2", "Change 5", "Change 6"]);
-  expect(row("Change 2").textContent).toContain("Agent fixing · The agent is fixing it");
+  // While the agent itself works, the line says so once.
+  expect(row("Change 2").textContent).toContain("Agent fixing");
+  expect(row("Change 2").textContent).not.toContain("The agent is fixing it");
   expect(await cleared()).toBeNull();
   await act(async () => row("Change 2").click());
-  expect(panel().textContent).toContain("An agent is fixing it · The agent is fixing it.");
+  expect(panel().textContent).toContain("An agent is fixing it.");
+  expect(panel().textContent).not.toContain("The agent is fixing it");
   const watch = Array.from(panel().querySelectorAll("a")).find((a) =>
     a.textContent?.startsWith("Watch the agent"),
   )!;
@@ -762,6 +765,33 @@ it("brings back a pull request whose fix failed, with what happened", async () =
   )!;
   expect(see.getAttribute("href")).toBe("/s/test-ns/?page=jobs&job=fix-1");
   expect(panel().querySelector("button.upnext-secondary")!.textContent).toMatch(/^Fix/);
+});
+
+it("says why the last fix changed nothing, without calling it a failure", async () => {
+  await render();
+  jobsList = [
+    fixJobOf({
+      state: "completed",
+      reason: "no_changes",
+      summary: "I couldn't find a cause this pull request is responsible for.\n\n- Details.",
+    }),
+  ];
+  await render();
+  // Nothing was pushed, so the pull request stays to fix.
+  expect(await cleared()).toBeNull();
+  expect(row("Change 2").textContent).toContain("Last fix changed nothing");
+  expect(row("Change 2").querySelector(".upnext-row-failed")).toBeNull();
+  await act(async () => row("Change 2").click());
+  expect(panel().querySelector(".upnext-failed")).toBeNull();
+  const notice = panel().querySelector(".upnext-unchanged")!;
+  expect(notice.textContent).toContain("The last fix changed nothing, so nothing was pushed.");
+  expect(notice.querySelector(".upnext-unchanged-why")!.textContent).toBe(
+    "I couldn't find a cause this pull request is responsible for.",
+  );
+  const read = Array.from(notice.querySelectorAll("a")).find((a) =>
+    a.textContent?.startsWith("Read what the agent said"),
+  )!;
+  expect(read.getAttribute("href")).toBe("/s/test-ns/?page=jobs&job=fix-1");
 });
 
 it("keeps a failed fix of a pull request in the queue for its panel", () => {

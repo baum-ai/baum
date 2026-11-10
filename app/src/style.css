@@ -4695,6 +4695,17 @@ dialog form {
 .local-fix-notice-failed {
   color: var(--status-critical);
 }
+.local-fix-notice-why {
+  margin-top: 0.125rem;
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+.local-fix-notice-why > :first-child {
+  margin-top: 0;
+}
+.local-fix-notice-why > :last-child {
+  margin-bottom: 0;
+}
 .local-fix-notice-actions {
   display: flex;
   flex: none;
@@ -5354,6 +5365,35 @@ a.upnext-done-text:hover {
   border: 1px solid var(--border-subtle);
   background: var(--status-critical-bg);
   color: var(--text-primary);
+}
+/* The last fix changed nothing: the agent's judgement, not an error, so it
+   is neutral, with the agent's reason under the line that says so. */
+.upnext-unchanged {
+  display: grid;
+  gap: 4px;
+  padding: 12px 14px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  background: var(--surface-wash);
+  color: var(--text-secondary);
+  font-size: var(--text-base);
+  animation: upnext-drop 0.15s ease-out;
+}
+.upnext-unchanged-title {
+  margin: 0;
+  color: var(--text-primary);
+}
+.upnext-unchanged-why {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
+}
+.upnext-unchanged-why > :first-child {
+  margin-top: 0;
+}
+.upnext-unchanged-why > :last-child {
+  margin-bottom: 0;
 }
 .upnext-actions {
   display: flex;
@@ -6057,6 +6097,7 @@ a.upnext-done-text:hover {
   .upnext-zero,
   .upnext-working,
   .upnext-failed,
+  .upnext-unchanged,
   .upnext-menu,
   .upnext-toast {
     animation: none;

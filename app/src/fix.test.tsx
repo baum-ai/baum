@@ -15,7 +15,7 @@ import {
   type Entry,
   type Job,
 } from "./api";
-import { FixNotice } from "./fix";
+import { FixDetails, FixNotice } from "./fix";
 import { Inbox } from "./inbox";
 import { forgetLastRows } from "./shortcuts";
 
@@ -246,6 +246,47 @@ it("shows what became of each review thread after the push", async () => {
   expect(text).toContain("Replied and resolved 1 of 2 threads");
   expect(text).toContain("src/a.go:12 Replied and resolved: Renamed it.");
   expect(text).toContain("src/b.go Left open: A question for the author.");
+});
+
+it("says why a fix changed nothing, in the agent's words, not as a failure", async () => {
+  const job = {
+    id: "f",
+    kind: "fix",
+    repository: "acme/demo",
+    pr: 8,
+    state: "completed",
+    reason: "no_changes",
+    phase: "finished",
+    fix: { checks: true },
+    summary:
+      "I didn't change any files: the failing test looks flaky.\n\n- **Decisions test:** the dropdown is redrawn.",
+  } as Job;
+  await act(async () => root.render(<FixNotice job={job} changed={async () => {}} />));
+  const text = node.textContent ?? "";
+  expect(text).toContain("Fix CI changed nothing, so nothing was pushed");
+  expect(text).not.toContain("failed:");
+  expect(node.querySelector(".local-fix-notice-why")!.textContent).toBe(
+    "I didn't change any files: the failing test looks flaky.",
+  );
+  expect(node.querySelector(".local-fix-notice-failed")).toBeNull();
+  // The rest of what the agent said stays one click away.
+  expect(node.querySelector(".local-fix-details > summary")!.textContent).toBe(
+    "Everything the agent said",
+  );
+  // A summary of one paragraph is all said above: no fold repeats it.
+  await act(async () =>
+    root.render(
+      <FixNotice job={{ ...job, summary: "Nothing to fix." }} changed={async () => {}} />,
+    ),
+  );
+  expect(node.querySelector(".local-fix-details")).toBeNull();
+  // Where nothing shows the lead above (the Jobs list), the fold keeps the
+  // whole of what the agent said, however short.
+  await act(async () => root.render(<FixDetails job={{ ...job, summary: "Nothing to fix." }} />));
+  expect(node.querySelector(".local-fix-details > summary")!.textContent).toBe(
+    "What the agent did",
+  );
+  expect(node.querySelector(".local-fix-details p")!.textContent).toBe("Nothing to fix.");
 });
 
 it("starts a fix made from a conversation, sending only its ids", async () => {

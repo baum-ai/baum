@@ -1403,6 +1403,11 @@ func (q *Queue) worker(chat bool) {
 				current.State = "failed"
 				current.Reason = stopped.Reason
 				current.Detail = stopped.Error()
+			case err != nil && errors.As(err, &fixErr) && fixErr.Reason == fix.ReasonNoChanges:
+				// The agent found nothing it should, or could, change: an
+				// outcome the person reads in its summary, not a failure to
+				// notify about. It completes without a commit.
+				current.Reason = fixErr.Reason
 			case err != nil && errors.As(err, &fixErr):
 				current.State = "failed"
 				current.Reason = fixErr.Reason

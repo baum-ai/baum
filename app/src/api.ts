@@ -323,6 +323,26 @@ const jobReasons: Record<string, string> = {
     "GitHub refused the push, usually because the branch moved on. Nothing was force-pushed.",
   push_failed: "The push failed. Check that git can push to this repository from your clone.",
 };
+/** A fix that ended without changing anything: the agent found nothing it
+ *  should change, or nothing it could. It is an outcome to read, not an
+ *  error, so it is shown in neutral words with what the agent said. The
+ *  daemon completes it without a commit; one saved by an older daemon
+ *  failed. */
+export function changedNothing(job: Job): boolean {
+  return (
+    job.kind === "fix" &&
+    job.reason === "no_changes" &&
+    (job.state === "completed" || job.state === "failed")
+  );
+}
+/** The first paragraph of what a fix's agent said, which says why when it
+ *  changed nothing; empty without a summary. */
+export function summaryLead(summary: string | undefined): string {
+  return (summary ?? "")
+    .trim()
+    .split(/\n\s*\n/, 1)[0]!
+    .trim();
+}
 /** A job's reason in words: a feature build's in its own, others' as
  *  reviews and fixes say them. */
 export function jobReasonText(reason: string, kind?: Job["kind"]): string {
