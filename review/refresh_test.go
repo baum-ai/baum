@@ -1,6 +1,7 @@
 package review
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"reflect"
@@ -106,6 +107,83 @@ func TestRefreshUpdatesChecksSessionsAndDerivedSummaries(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// A refresh of unchanged evidence differs from the stored document only in
+// its time, which RefreshChanged ignores; any other value, changed or
+// removed, is a change.
+func TestRefreshChangedIgnoresOnlyTheRefreshTime(t *testing.T) {
+	validator, bundle, published := refreshFixture(t)
+	at := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
+	stored, err := validator.Refresh(published, bundle, at)
+	checkNoError(t, err)
+	again, err := validator.Refresh(stored, bundle, at.Add(15*time.Minute))
+	checkNoError(t, err)
+	if bytes.Equal(stored, again) || RefreshChanged(stored, again) {
+		t.Fatalf("a refresh of unchanged evidence changed more than its time:\n%s\n%s", stored, again)
+	}
+	bundle.Checks[0].Conclusion = "success"
+	checked, err := validator.Refresh(stored, bundle, at.Add(30*time.Minute))
+	checkNoError(t, err)
+	if !RefreshChanged(stored, checked) {
+		t.Fatal("a finished check was not a change")
+	}
+
+	var paths [][]any
+	var walk func(path []any, value any)
+	walk = func(path []any, value any) {
+		paths = append(paths, slices.Clone(path))
+		switch value := value.(type) {
+		case map[string]any:
+			for key, child := range value {
+				walk(append(path, key), child)
+			}
+		case []any:
+			for i, child := range value {
+				walk(append(path, i), child)
+			}
+		}
+	}
+	walk(nil, mustDecode(t, again))
+	if len(paths) < 50 {
+		t.Fatalf("only %d values to change", len(paths))
+	}
+	for _, path := range paths[1:] {
+		for _, remove := range []bool{false, true} {
+			if _, index := path[len(path)-1].(int); index && remove {
+				continue
+			}
+			doc := mustDecode(t, again)
+			var parent any = doc
+			for _, step := range path[:len(path)-1] {
+				if key, ok := step.(string); ok {
+					parent = parent.(map[string]any)[key]
+				} else {
+					parent = parent.([]any)[step.(int)]
+				}
+			}
+			replacement := map[string]any{"changed": true}
+			switch last := path[len(path)-1].(type) {
+			case string:
+				if remove {
+					delete(parent.(map[string]any), last)
+				} else {
+					parent.(map[string]any)[last] = replacement
+				}
+			case int:
+				parent.([]any)[last] = replacement
+			}
+			refreshTime := fmt.Sprint(path) == "[review evidence_refreshed_at]"
+			if changed := RefreshChanged(stored, encodeJSON(t, doc)); changed == (refreshTime && !remove) {
+				t.Errorf("%v (removed %v): changed=%v", path, remove, changed)
+			}
+		}
+	}
+	for _, invalid := range [][]byte{nil, []byte(`{}`), []byte(`{"review":{}}`), append(slices.Clone(stored), '{', '}'), []byte("{\"review\":{\"evidence_refreshed_at\":\"\xff\"}}")} {
+		if !RefreshChanged(stored, invalid) || !RefreshChanged(invalid, stored) {
+			t.Errorf("%q compared unchanged", invalid)
+		}
 	}
 }
 

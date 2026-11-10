@@ -2350,7 +2350,15 @@ evidence in saved documents").
 fenced by both its version number and exact previous bytes, preserving
 metadata and every replaced version. Concurrent refreshes cannot overwrite a
 document prepared against older evidence, and a refresh never replaces a newer
-version. A running generation does not block refresh: live facts refresh
+version. A refresh whose document differs from the stored one only in
+`review.evidence_refreshed_at` (`review.RefreshChanged`, which compares the
+whole documents as canonical JSON with that field blanked) writes nothing: it
+checks the same fence with a read and leaves the stored bytes, the summaries
+row and the store file as they were. The stored `evidence_refreshed_at` is
+therefore the time of the last refresh that changed the document, not of the
+last read, which the viewer shows as when the evidence was refreshed; the
+scheduler keeps its own read times (see "Free background synchronization").
+A running generation does not block refresh: live facts refresh
 independently, as in the hosted service. `Put` publishes metadata and document
 in one transaction only if the previous version the caller read is still
 latest, so concurrent runs cannot assign a different predecessor to a completed
@@ -3647,7 +3655,10 @@ backing off the repository's polls; a rate-limited one stays due and goes
 first after the reset, so a small renewed budget still reaches every pull
 request. `Run` passes every 30 seconds, or sooner when a repository is due
 sooner, as a settling one is. Linked worktrees are deduplicated by common git directory. No-review PRs fetch only a header and checks;
-saved reviews use `refresh.Refresher` and `Store.RefreshCurrent`'s exact-byte CAS.
+saved reviews use `refresh.Refresher` and `Store.RefreshCurrent`'s exact-byte CAS,
+which writes nothing when only the refresh time changed. A read counts as the
+last read whether or not it wrote, so an unchanged pull request is not due
+again until its evidence is old.
 After a pass, `Service.Retain` reconciles the retained review refs of each
 due common git directory (see "Retained review commits").
 `Service.RefreshNow` refreshes named PRs of one clone the same way outside
