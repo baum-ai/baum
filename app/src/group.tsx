@@ -9,7 +9,6 @@ import {
   contextRefUrl,
   type ReviewContextRef,
   type ReviewDocument,
-  type ReviewVersionState,
 } from "@baum/viewer/review-document";
 import { RepositoryFileDialog } from "./repository-file";
 import {
@@ -35,6 +34,7 @@ import { CloneActions } from "./repositories";
 import { CancelJob, GenerationOutcome, ReviewJob } from "./review";
 import { useModal } from "./modal";
 import { Notice, PageBar, RefreshButton, type RefreshRun, usePageRefreshAction } from "./shell";
+import { useVersionLoader } from "./version-cache";
 import { openActiveBlock, reviewKeyStep, toggleActiveBlock, useShortcuts } from "./shortcuts";
 import { LoadingStatus, NineDots } from "./nine-dots";
 import { listedForGroup, useGroupRail, type RailMember } from "./group-rail";
@@ -272,15 +272,10 @@ export function GroupPage({
   const [retry, setRetry] = useState(0);
   const [provenance, setProvenance] = useState<Provenance[]>([]);
   const [historyFailed, setHistoryFailed] = useState(false);
-  const loadVersion = useCallback(
-    async (version: number): Promise<ReviewVersionState> => {
-      try {
-        return { status: "ready", document: await groupDocumentRequest(group.id, version) };
-      } catch {
-        return { status: "failed" };
-      }
-    },
-    [group.id],
+  const loadVersion = useVersionLoader(
+    group.id,
+    (version) => groupDocumentRequest(group.id, version),
+    doc?.review.version,
   );
   const history = useHistoryView(doc?.review.version, loadVersion);
   // The document on screen: an earlier version read alone, else the latest.

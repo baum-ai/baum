@@ -501,6 +501,9 @@ The loader and the version list are read by value: a host may pass a new
 `loadVersion` function or `versions` array on each render without anything
 being loaded again. A host whose loader starts answering for a different
 pull request should remount the viewer, for example with a `key`.
+Section history reads the earlier versions again only when the review, its
+version or the set of versions it needs changes, not when the host passes a
+new document object of the same version.
 
 The head's compact bar is `REVIEW_BAR_PX` (48px) tall and sticks to the top
 of the window from `lg` (1024px). Below `xl` the navigator bar, 48px too,

@@ -35,7 +35,6 @@ import {
   sectionDetails,
   type ReviewContextRef,
   type ReviewDocument,
-  type ReviewVersionState,
 } from "@baum/viewer/review-document";
 import {
   createCommitLoaders,
@@ -70,6 +69,7 @@ import { FixNotice, FixRuns, type FixState, type FixChat, useDismissedFixes } fr
 import { CloneActions } from "./repositories";
 import { useModal } from "./modal";
 import { Notice, RefreshButton, type RefreshRun, usePageRefreshAction } from "./shell";
+import { useVersionLoader } from "./version-cache";
 import { LiveSessionCard, LiveSessions, liveSessionLabel } from "./sessions";
 import { EmbeddedLiveTranscript, TranscriptCard } from "./session-transcript";
 import { withCommitRows } from "./commit-rows";
@@ -484,15 +484,10 @@ export function LocalReview({
       button.click();
     }
   });
-  const loadVersion = useCallback(
-    async (version: number): Promise<ReviewVersionState> => {
-      try {
-        return { status: "ready", document: await documentRequest(clone, pr.number, version) };
-      } catch {
-        return { status: "failed" };
-      }
-    },
-    [clone, pr.number],
+  const loadVersion = useVersionLoader(
+    `${clone}:${pr.number}`,
+    (version) => documentRequest(clone, pr.number, version),
+    doc?.review.version,
   );
   const history = useHistoryView(doc?.review.version, loadVersion);
   const viewedVersion =

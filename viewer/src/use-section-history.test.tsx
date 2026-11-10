@@ -69,7 +69,43 @@ function current(): ReviewDocument {
   return review;
 }
 
+function rerender(
+  review: ReviewDocument,
+  versions: number[],
+  load: LoadReviewVersion,
+  shown: ReviewDocument | null = null,
+) {
+  return act(async () => {
+    root!.render(
+      <Probe document={review} versions={versions} load={load} shown={shown} onResult={() => {}} />,
+    );
+  });
+}
+
 describe("section history", () => {
+  it("reads nothing again for a new document object of the same version", async () => {
+    const review = current();
+    const risk = review.sections.flatMap((section) => section.risks)[0]!;
+    risk.state = "mitigated";
+    risk.mitigated_version = 3;
+    const { load } = await mount(review, [4, 3, 2, 1]);
+    expect(load).toHaveBeenCalledTimes(2);
+    await rerender(structuredClone(review), [4, 3, 2, 1], load);
+    expect(load).toHaveBeenCalledTimes(2);
+  });
+
+  it("reads again when a new version is published", async () => {
+    const review = current();
+    const risk = review.sections.flatMap((section) => section.risks)[0]!;
+    risk.state = "mitigated";
+    risk.mitigated_version = 3;
+    const { load } = await mount(review, [4, 3, 2, 1]);
+    const next = structuredClone(review);
+    next.review.version = 5;
+    await rerender(next, [5, 4, 3, 2, 1], load);
+    expect(load.mock.calls.length).toBeGreaterThan(2);
+  });
+
   it("loads nothing while no stale section or resolved risk needs an earlier version", async () => {
     const { load, result } = await mount(current(), [3, 2, 1]);
     expect(load).not.toHaveBeenCalled();

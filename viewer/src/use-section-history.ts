@@ -36,11 +36,19 @@ export function useSectionHistory(
   // again.
   const bound = document ? earliestEvidenceBound(shown ? [document, shown] : [document]) : 0;
   const list = versions.filter((version) => version < bound).join(",");
-  const key = document ? `${document.review.version}:${shown?.review.version ?? ""}:${list}` : "";
+  // The document and the version on screen are read when the effect runs, not
+  // depended on: a refetch that yields the same version reads nothing again.
+  // The key names the review too, as another one can share a version number.
+  const key = document
+    ? `${document.review.repository}#${document.review.pull_request}@${document.review.generated_at}:${document.review.version}:${shown?.review.version ?? ""}:${list}`
+    : "";
+  const latest = useRef({ document, shown });
+  latest.current = { document, shown };
   const loader = useRef(load);
   loader.current = load;
   useEffect(() => {
-    if (!document || !list) return;
+    const { document: current, shown: onScreen } = latest.current;
+    if (!current || !list) return;
     let cancelled = false;
     const wanted = list.split(",").map(Number);
     void Promise.all(wanted.map((version) => loader.current(version))).then((states) => {
@@ -48,8 +56,9 @@ export function useSectionHistory(
       const previous = states.flatMap((state) =>
         state.status === "ready" ? [state.document] : [],
       );
-      const known = shown && shown.review.version !== document.review.version ? [shown] : [];
-      const documents = [...previous, ...known, document].filter(
+      const known =
+        onScreen && onScreen.review.version !== current.review.version ? [onScreen] : [];
+      const documents = [...previous, ...known, current].filter(
         (candidate, position, all) =>
           all.findIndex((other) => other.review.version === candidate.review.version) === position,
       );
@@ -58,6 +67,6 @@ export function useSectionHistory(
     return () => {
       cancelled = true;
     };
-  }, [document, shown, list, key]);
+  }, [list, key]);
   return loaded?.key === key ? { active: loaded.active } : null;
 }

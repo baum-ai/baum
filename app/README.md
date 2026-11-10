@@ -816,7 +816,11 @@ fix (as `fixLabel` names it), **Re-run checks** and **Update branch**; with
 none to offer it is the state alone, and while a fix starts or runs a live dot
 says so beside it. **Regenerate review** is at the end of the version menu
 (the viewer's `header.versionActions`), read "Generating review…" or "Review
-queued" while one runs. Update branch and Re-run checks (`src/unblock.tsx`)
+queued" while one runs. Earlier versions are read once per pull request or group
+(`useVersionLoader` in `src/version-cache.ts`): the viewer's version menu,
+section panes and hunk evidence share one cache, a failed read is retried on
+the next call, and the latest version is never kept because the daemon
+refreshes it in place. Update branch and Re-run checks (`src/unblock.tsx`)
 are on the PR page, not in Pull requests: a row's menu
 holds the one action its state asks for (Merge on a ready row, else Fix), and
 the page is where the rest of a pull request's state is read. `canUpdateBranch` offers the first
