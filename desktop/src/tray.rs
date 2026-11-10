@@ -941,6 +941,16 @@ fn fallback_interval(attached: bool, stream_up: bool) -> Option<Duration> {
     }
 }
 
+/// Adds a full read to `dirty` once `interval` has passed since the last one,
+/// so events that keep arriving never push the safety net back indefinitely
+/// (a failed fetch would otherwise stay stale).
+fn with_safety_net(dirty: Dirty, since_full: Duration, interval: Option<Duration>) -> Dirty {
+    match interval {
+        Some(interval) if since_full >= interval => Dirty::ALL,
+        _ => dirty,
+    }
+}
+
 /// Time left until a periodic read is due: none is due yet for a daemon
 /// not read from, or one replaced since.
 fn until_due(
@@ -984,16 +994,20 @@ fn spawn_polls(app: &AppHandle, shared: &Shared) {
     *lock(&shared.0.wake) = Some(sender);
     let (poll_app, poll_shared) = (app.clone(), shared.clone());
     thread::spawn(move || {
+        let mut last_full = Instant::now();
         loop {
             let attached = lock(&poll_shared.0.launch).is_some();
             let stream_up = poll_shared.0.stream_up.load(Ordering::Relaxed);
+            let interval = fallback_interval(attached, stream_up);
             // The safety net reads everything; an event only what it names.
-            let dirty = match fallback_interval(attached, stream_up) {
-                Some(interval) => match receiver.recv_timeout(interval) {
-                    Ok(dirty) => Some(dirty),
-                    Err(RecvTimeoutError::Timeout) => None,
-                    Err(RecvTimeoutError::Disconnected) => return,
-                },
+            let dirty = match interval {
+                Some(interval) => {
+                    match receiver.recv_timeout(interval.saturating_sub(last_full.elapsed())) {
+                        Ok(dirty) => Some(dirty),
+                        Err(RecvTimeoutError::Timeout) => None,
+                        Err(RecvTimeoutError::Disconnected) => return,
+                    }
+                }
                 None => match receiver.recv() {
                     Ok(dirty) => Some(dirty),
                     Err(_) => return,
@@ -1006,6 +1020,11 @@ fn spawn_polls(app: &AppHandle, shared: &Shared) {
                 },
                 None => Dirty::ALL,
             };
+            // Partial reads must not postpone the safety net for good.
+            let dirty = with_safety_net(dirty, last_full.elapsed(), interval);
+            if dirty == Dirty::ALL {
+                last_full = Instant::now();
+            }
             poll_once(&poll_app, &poll_shared, dirty);
         }
     });
@@ -1244,6 +1263,17 @@ mod tests {
         assert!(receiver.try_recv().is_err(), "the burst was drained");
         drop(sender);
         assert_eq!(settle(&receiver, Dirty::LIVE), None);
+    }
+
+    #[test]
+    fn steady_events_do_not_postpone_the_full_read() {
+        let interval = Some(Duration::from_secs(60));
+        let before = Duration::from_secs(59);
+        let after = Duration::from_secs(60);
+        assert_eq!(with_safety_net(Dirty::LIVE, before, interval), Dirty::LIVE);
+        assert_eq!(with_safety_net(Dirty::LIVE, after, interval), Dirty::ALL);
+        assert_eq!(with_safety_net(Dirty::NONE, after, interval), Dirty::ALL);
+        assert_eq!(with_safety_net(Dirty::LIVE, after, None), Dirty::LIVE);
     }
 
     #[test]
