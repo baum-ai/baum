@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useState, type ReactNode } from "react";
+import { Fragment, memo, useEffect, useState, type ReactNode } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import rehypeRaw from "rehype-raw";
 import rehypeSanitize from "rehype-sanitize";
@@ -14,6 +14,13 @@ import {
 import { cn } from "./classnames";
 import { HighlightedText } from "./highlighted-text";
 
+const REMARK_PLUGINS = [remarkGfm, remarkBreaks];
+const INLINE_REMARK_PLUGINS = [remarkGfm];
+const SANITIZE_ONLY = [rehypeSanitize];
+/** Without a `<` there is no raw HTML node, so `rehype-raw` has nothing to
+ *  parse. A `|` stands for a GFM table, whose whitespace between rows
+ *  `rehype-raw` rewrites, so those keep it and render exactly as before. */
+const NEEDS_RAW = /[<|]/;
 const REHYPE_PLUGINS = [
   // GitHub comments routinely mix raw HTML into the markdown — bold tags,
   // `<details>` disclosures, automation markers hidden in HTML comments. Left
@@ -250,7 +257,7 @@ function pathBreaks(children: ReactNode): ReactNode {
   ));
 }
 
-export function Markdown({
+export const Markdown = memo(function Markdown({
   children,
   className,
   title,
@@ -267,6 +274,11 @@ export function Markdown({
   /** Long text read on its own (READING_COMPONENTS). */
   reading?: boolean;
 }) {
+  const rehypePlugins = html
+    ? NEEDS_RAW.test(children)
+      ? REHYPE_PLUGINS
+      : SANITIZE_ONLY
+    : undefined;
   return (
     <div className={cn(reading ? "space-y-3" : "space-y-2", className)} title={title}>
       {/* GitHub renders every line break in a comment body, not only ones
@@ -274,15 +286,15 @@ export function Markdown({
        *  CommonMark does. Without `remark-breaks`, an ordinarily-typed
        *  multi-line comment collapses into a single run-on paragraph. */}
       <ReactMarkdown
-        remarkPlugins={[remarkGfm, remarkBreaks]}
-        rehypePlugins={html ? REHYPE_PLUGINS : undefined}
+        remarkPlugins={REMARK_PLUGINS}
+        rehypePlugins={rehypePlugins}
         components={reading ? READING_COMPONENTS : COMPONENTS}
       >
         {children}
       </ReactMarkdown>
     </div>
   );
-}
+});
 
 const INLINE_ELEMENTS = ["p", "strong", "em", "del", "code", "a", "br"];
 
@@ -303,11 +315,17 @@ const INLINE_COMPONENTS: Components = {
  *  emphasis, strikethrough and code spans render, links read as their text,
  *  and anything block-level (lists, headings, quotes, fences) is unwrapped
  *  into its text. Raw HTML stays text. */
-export function InlineMarkdown({ children, className }: { children: string; className?: string }) {
+export const InlineMarkdown = memo(function InlineMarkdown({
+  children,
+  className,
+}: {
+  children: string;
+  className?: string;
+}) {
   return (
     <span className={className}>
       <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
+        remarkPlugins={INLINE_REMARK_PLUGINS}
         allowedElements={INLINE_ELEMENTS}
         unwrapDisallowed
         components={INLINE_COMPONENTS}
@@ -316,4 +334,4 @@ export function InlineMarkdown({ children, className }: { children: string; clas
       </ReactMarkdown>
     </span>
   );
-}
+});
