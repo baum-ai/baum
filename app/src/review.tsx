@@ -82,7 +82,13 @@ import { LoadingStatus } from "./nine-dots";
 import { DescriptionDialog } from "./description";
 import { RepositoryFileDialog } from "./repository-file";
 import { canMerge, MergeDialog } from "./merge";
-import { openActiveBlock, reviewKeyStep, toggleActiveBlock, useShortcuts } from "./shortcuts";
+import {
+  openActiveBlock,
+  reviewKeyStep,
+  toggleActiveBlock,
+  useGitHubKey,
+  useShortcuts,
+} from "./shortcuts";
 import { PullRequestState, pullRequestStates } from "./inbox";
 import { canRerunChecks, canUpdateBranch, RerunChecksDialog, UpdateBranchDialog } from "./unblock";
 import { Walkthrough, type WalkMode } from "./walkthrough";
@@ -413,6 +419,7 @@ export function LocalReview({
   // The page's keys: j and k step through the review as the navigator does,
   // and the header's actions have the list's keys.
   const steps = useRef<ReviewSteps>(null);
+  useGitHubKey(pr.url || undefined);
   useShortcuts((event) => {
     // a opens the Ask panel, or puts the cursor in its box when open; it
     // works in the walkthrough too.
