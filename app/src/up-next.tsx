@@ -29,6 +29,7 @@ import {
   MergeIcon,
   StackIcon,
 } from "@baum/viewer/components/icons";
+import { ReviewHunksProvider } from "@baum/viewer/components/code-file-link";
 import { InlineMarkdown, Markdown } from "@baum/viewer/components/markdown";
 import { Lines } from "@baum/viewer/components/review-parts";
 import { Alert, Badge, Button, CloseButton, LiveDot } from "@baum/viewer/components/ui";
@@ -1762,41 +1763,47 @@ export function UpNextPage({
               <LoadingStatus block>Loading your inbox…</LoadingStatus>
             </div>
           ) : selected ? (
-            <Panel
-              key={selected.key}
-              row={selected}
-              doc={doc}
-              tags={alsoIn(selected)}
-              href={prHref(selected.entry, cloneFor, scope)}
-              Link={Link}
-              fix={selectedFix}
-              fixState={selectedFixState}
-              generate={selectedGenerate}
-              generateState={generateState(selected.entry)}
-              merge={() => setMerging(selected.entry)}
-              review={(event) => setReviewing({ entry: selected.entry, event })}
-              update={() => setUpdating(selected.entry)}
-              menu={menu}
-              setMenu={setMenu}
-              options={options}
-              snooze={snooze}
-              now={now}
-            />
+            // A hunk ID the review writes into its prose reads as a chip for
+            // its file and line, which opens the hunk on GitHub from here.
+            <ReviewHunksProvider document={doc} historical={null}>
+              <Panel
+                key={selected.key}
+                row={selected}
+                doc={doc}
+                tags={alsoIn(selected)}
+                href={prHref(selected.entry, cloneFor, scope)}
+                Link={Link}
+                fix={selectedFix}
+                fixState={selectedFixState}
+                generate={selectedGenerate}
+                generateState={generateState(selected.entry)}
+                merge={() => setMerging(selected.entry)}
+                review={(event) => setReviewing({ entry: selected.entry, event })}
+                update={() => setUpdating(selected.entry)}
+                menu={menu}
+                setMenu={setMenu}
+                options={options}
+                snooze={snooze}
+                now={now}
+              />
+            </ReviewHunksProvider>
           ) : selectedGroup ? (
-            <GroupPanel
-              key={selectedGroup.key}
-              line={selectedGroup}
-              doc={groupDoc}
-              entries={entries}
-              href={appURL(
-                `?inbox=${encodeURIComponent(scope.id)}&group=${encodeURIComponent(selectedGroup.group.id)}`,
-              )}
-              pick={(key) => {
-                toggleGroup(selectedGroup, true);
-                select(key);
-              }}
-              Link={Link}
-            />
+            <ReviewHunksProvider document={groupDoc} historical={null}>
+              <GroupPanel
+                key={selectedGroup.key}
+                line={selectedGroup}
+                doc={groupDoc}
+                entries={entries}
+                href={appURL(
+                  `?inbox=${encodeURIComponent(scope.id)}&group=${encodeURIComponent(selectedGroup.group.id)}`,
+                )}
+                pick={(key) => {
+                  toggleGroup(selectedGroup, true);
+                  select(key);
+                }}
+                Link={Link}
+              />
+            </ReviewHunksProvider>
           ) : filtering &&
             hidden > 0 &&
             // Waiting rows are never selected, so the lists say what is left.
