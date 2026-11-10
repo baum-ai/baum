@@ -389,6 +389,7 @@ function Composer({
   busy,
   sending,
   send,
+  sentCount,
 }: {
   input: RefObject<HTMLTextAreaElement | null>;
   draft: RefObject<string>;
@@ -398,11 +399,18 @@ function Composer({
   busy: boolean;
   sending: boolean;
   send: (question: string) => Promise<boolean>;
+  /** Changes when a question was sent, which empties the box. It comes from
+   *  the panel because the composer that sent it may have been unmounted
+   *  (and a new one started from the pending text) before the send finished. */
+  sentCount: number;
 }) {
   const [question, setQuestion] = useState(draft.current);
-  const submit = async () => {
-    if (await send(question)) setQuestion("");
-  };
+  const [seenSent, setSeenSent] = useState(sentCount);
+  if (seenSent !== sentCount) {
+    setSeenSent(sentCount);
+    setQuestion("");
+  }
+  const submit = () => send(question);
   return (
     <form
       className="ask-composer"
@@ -501,6 +509,7 @@ export function AskPanel({
   // The draft lives in the composer, so typing does not re-render the thread;
   // this keeps it while the composer is swapped for the read-only note.
   const draft = useRef("");
+  const [sentCount, setSentCount] = useState(0);
   const input = useRef<HTMLTextAreaElement>(null);
   const thread = useRef<HTMLDivElement>(null);
 
@@ -590,6 +599,7 @@ export function AskPanel({
         focus: focus ?? undefined,
       });
       draft.current = "";
+      setSentCount((n) => n + 1);
       setChoice(asked.conversation_id);
       clearFocus();
       refresh();
@@ -729,6 +739,7 @@ export function AskPanel({
           busy={busy}
           sending={sending}
           send={send}
+          sentCount={sentCount}
         />
       )}
     </aside>

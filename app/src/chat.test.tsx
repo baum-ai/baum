@@ -296,6 +296,29 @@ it("keeps older reviews' conversations read-only and starts new ones on the curr
   ]);
 });
 
+it("empties the box when a question sent from an earlier composer is accepted", async () => {
+  conversations = [
+    conversation({ id: "current", turns: [answered({ question: "Current question" })] }),
+    conversation({ id: "old", version: 1, turns: [answered({ question: "Old question" })] }),
+  ];
+  let accept: () => void = () => {};
+  postAnswer = () =>
+    new Promise<Response>((resolve) => {
+      accept = () =>
+        resolve(Response.json({ conversation_id: "current", turn: 2, job: {} }, { status: 202 }));
+    }) as unknown as Response;
+  await panel();
+  await type("Pending question");
+  await act(async () => button("Send")!.click());
+  // Away to a read-only conversation and back while the question is on its way.
+  await act(async () => button("Old question")!.click());
+  await act(async () => button("Current question")!.click());
+  expect(node.querySelector("textarea")!.value).toBe("Pending question");
+  await act(async () => accept());
+  await settle();
+  expect(node.querySelector("textarea")!.value).toBe("");
+});
+
 it("notes that a seeded conversation started without the review's context", async () => {
   conversations = [
     conversation({ seeded: true, turns: [answered({ note: "Seeded from disk." })] }),
