@@ -1117,7 +1117,8 @@ function jobsOf(entry: Pick<Entry, "pull_request">, jobs: Job[]): Job[] {
     }
     jobIndexes.set(jobs, index);
   }
-  return index.get(`${entry.pull_request.repository.toLowerCase()}#${entry.pull_request.number}`) ?? [];
+  const { repository, number } = entry.pull_request;
+  return index.get(`${repository.toLowerCase()}#${number}`) ?? [];
 }
 /** What a fix or chat job is called: the Jobs list and transcript page title. */
 export function jobName(job: Job): string {
@@ -1149,9 +1150,7 @@ function ofPR(entry: Entry, job: Job) {
 function prJob(entry: Entry, jobs: Job[], kind: (job: Job) => boolean): Job | undefined {
   const matches = (job: Job) => kind(job) && ofPR(entry, job);
   const ofThePR = jobsOf(entry, jobs);
-  return (
-    ofThePR.findLast((job) => matches(job) && isActiveJob(job)) ?? ofThePR.findLast(matches)
-  );
+  return ofThePR.findLast((job) => matches(job) && isActiveJob(job)) ?? ofThePR.findLast(matches);
 }
 /** The group's latest active job, else its latest job. */
 export function groupJob(group: Pick<ReviewGroup, "id">, jobs: Job[]): Job | undefined {
