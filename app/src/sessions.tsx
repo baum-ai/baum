@@ -2,8 +2,11 @@ import type { Brand } from "@baum/viewer/brands";
 import { BrandMark } from "@baum/viewer/components/brand-logo";
 import {
   createContext,
+  memo,
+  useCallback,
   useEffect,
   useId,
+  useMemo,
   useRef,
   useState,
   type ComponentType,
@@ -55,7 +58,19 @@ import { SMALL } from "./action-classes";
 import { cn } from "@baum/viewer/components/classnames";
 
 /** What marks a list row for the row focus (`useRowFocus`). */
-type RowProps = (s: LiveSession) => { "data-row-id": string; "data-focused"?: true };
+const rowProps = (id: string, focused: boolean) => ({
+  "data-row-id": id,
+  "data-focused": focused || undefined,
+});
+
+/** A function that keeps its identity across renders but calls the latest
+ *  one, so a memoised card does not re-render for a callback that closes over
+ *  the page's state. */
+function useStable<Args extends unknown[], Result>(fn: (...args: Args) => Result) {
+  const latest = useRef(fn);
+  latest.current = fn;
+  return useCallback((...args: Args) => latest.current(...args), []);
+}
 
 const agentLogos: Partial<Record<string, Brand>> = {
   "claude-code": "claude",
@@ -80,7 +95,20 @@ export function waited(seconds: number): string {
 }
 
 /** The tooltip of a relative time: when it was, in the viewer's locale. */
-export const absolute = (iso: string) => new Date(iso).toLocaleString();
+export const absolute = (iso: string) => {
+  const at = new Date(iso);
+  return Number.isNaN(at.getTime()) ? String(at) : absoluteFormat.format(at);
+};
+// The options `toLocaleString()` defaults to, built once: a formatter per
+// call is slow.
+const absoluteFormat = new Intl.DateTimeFormat(undefined, {
+  year: "numeric",
+  month: "numeric",
+  day: "numeric",
+  hour: "numeric",
+  minute: "numeric",
+  second: "numeric",
+});
 
 /** Why a session waits on its user, in words. */
 export const waitingReasons: Record<WaitingReason, string> = {
@@ -433,6 +461,25 @@ function clock(seconds: number): string {
   return `${Math.floor(minutes / 60)}h ${String(minutes % 60).padStart(2, "0")}m`;
 }
 
+/** Seconds since `since`, ticking each second, in its own component so the
+ *  card around it does not re-render with the clock. */
+function Elapsed({
+  since,
+  format = clock,
+}: {
+  since: string;
+  format?: (seconds: number) => string;
+}) {
+  const now = useNow(1000);
+  return <>{format((now - new Date(since).getTime()) / 1000)}</>;
+}
+
+/** A relative time ("5 minutes ago") that keeps itself current, in its own
+ *  component for the same reason as `Elapsed`. */
+function Relative({ iso, interval }: { iso: string; interval?: number }) {
+  return <>{formatRelative(iso, useNow(interval))}</>;
+}
+
 /** How long an ended session lasted, as the compact row shows it: "40 s",
  *  "25 min", "2.4 h". */
 function span(seconds: number): string {
@@ -672,13 +719,15 @@ const opening = (message: string) => message.trim().split(/\n\s*\n/)[0]!;
 function RequestHead({
   request,
   session,
-  now,
   open,
+  prLink,
+  Link,
 }: {
   request: AgentRequest;
   session?: LiveSession;
-  now: number;
   open: (s: LiveSession, children: ReactNode) => ReactNode;
+  prLink: string | null;
+  Link: ComponentType<ViewerLinkProps>;
 }) {
   return (
     <>
@@ -692,11 +741,9 @@ function RequestHead({
             {session.branch}
           </code>
         ) : null}
-        {session ? (
-          <SessionPullRequest.Consumer>{(pr) => pr(session)}</SessionPullRequest.Consumer>
-        ) : null}
+        {session ? <SessionPR session={session} prHref={() => prLink} Link={Link} /> : null}
         <span className="local-feed-time local-feed-status waiting">
-          waiting {clock((now - new Date(request.created_at).getTime()) / 1000)}
+          waiting <Elapsed since={request.created_at} />
         </span>
         {session ? <SessionMenu.Consumer>{(more) => more(session)}</SessionMenu.Consumer> : null}
       </div>
@@ -705,20 +752,25 @@ function RequestHead({
   );
 }
 
-function PermissionCard({
+const PermissionCard = memo(function PermissionCard({
   request,
   session,
-  now,
   onDone,
-  row,
+  rowId,
+  focused,
   open,
+  prLink,
+  Link,
 }: {
   request: AgentRequest;
   session?: LiveSession;
-  now: number;
   onDone: (notice: Notice) => void;
-  row: { "data-row-id": string; "data-focused"?: true };
+  rowId: string;
+  focused: boolean;
   open: (s: LiveSession, children: ReactNode) => ReactNode;
+  /** Where its session's pull request opens in the app, if it is known. */
+  prLink: string | null;
+  Link: ComponentType<ViewerLinkProps>;
 }) {
   const { phase, answer, busy } = useAnswer(request, onDone);
   const what = subject(request);
@@ -731,8 +783,8 @@ function PermissionCard({
     session: name,
   });
   return (
-    <li className="list-row local-feed-card local-feed-ask" {...row}>
-      <RequestHead request={request} session={session} now={now} open={open} />
+    <li className="list-row local-feed-card local-feed-ask" {...rowProps(rowId, focused)}>
+      <RequestHead request={request} session={session} open={open} prLink={prLink} Link={Link} />
       <p className="local-feed-ask-text">{permissionAsk(request)}</p>
       {request.input.length > 0 ? (
         <div className="local-feed-inputs">
@@ -794,22 +846,27 @@ function PermissionCard({
       <PhaseNote phase={phase} />
     </li>
   );
-}
+});
 
-function QuestionCard({
+const QuestionCard = memo(function QuestionCard({
   request,
   session,
-  now,
   onDone,
-  row,
+  rowId,
+  focused,
   open,
+  prLink,
+  Link,
 }: {
   request: AgentRequest;
   session?: LiveSession;
-  now: number;
   onDone: (notice: Notice) => void;
-  row: { "data-row-id": string; "data-focused"?: true };
+  rowId: string;
+  focused: boolean;
   open: (s: LiveSession, children: ReactNode) => ReactNode;
+  /** Where its session's pull request opens in the app, if it is known. */
+  prLink: string | null;
+  Link: ComponentType<ViewerLinkProps>;
 }) {
   const { phase, answer, busy } = useAnswer(request, onDone);
   const [picked, setPicked] = useState<Record<string, string[]>>({});
@@ -873,8 +930,8 @@ function QuestionCard({
   const q = questions[Math.min(step, last)]!;
   const mark = q.multi_select ? "check" : "radio";
   return (
-    <li className="list-row local-feed-card local-feed-ask" {...row}>
-      <RequestHead request={request} session={session} now={now} open={open} />
+    <li className="list-row local-feed-card local-feed-ask" {...rowProps(rowId, focused)}>
+      <RequestHead request={request} session={session} open={open} prLink={prLink} Link={Link} />
       {questions.length > 1 ? (
         <div className="local-feed-steps" role="tablist" aria-label="Questions">
           {questions.map((other, i) => (
@@ -1004,7 +1061,7 @@ function QuestionCard({
       <PhaseNote phase={phase} />
     </li>
   );
-}
+});
 
 /** A composer's send: a paper plane in a small green square, faded until there is
  *  something to send, named for assistive technology. */
@@ -1205,23 +1262,23 @@ const waitNotes: Partial<Record<WaitingReason, string>> = {
 
 /** A session waiting without a request the app can answer: it finished its
  *  turn, asks for something only its terminal can answer, or went quiet. */
-function WaitingCard({
+const WaitingCard = memo(function WaitingCard({
   session: s,
   since,
-  now,
   open,
   Link,
-  row,
+  prLink,
+  focused,
   onDone,
   replying,
   closeReply,
 }: {
   session: LiveSession;
   since: string;
-  now: number;
   open: (s: LiveSession, children: ReactNode) => ReactNode;
   Link: ComponentType<ViewerLinkProps>;
-  row: RowProps;
+  prLink: string | null;
+  focused: boolean;
   /** Whether its reply is open (Reply). */
   replying: boolean;
   closeReply: () => void;
@@ -1230,7 +1287,7 @@ function WaitingCard({
   const reason = s.waiting_reason!;
   const message = s.activity?.last_message;
   return (
-    <li className="list-row local-feed-card quiet" {...row(s)}>
+    <li className="list-row local-feed-card quiet" {...rowProps(sessionKey(s), focused)}>
       {/* The agent by its mark, then the session by its title and branch:
        *  why it waits shows in what it said, or in the note below. */}
       <div className="local-feed-head">
@@ -1241,13 +1298,12 @@ function WaitingCard({
             {s.branch}
           </code>
         ) : null}
-        <SessionPullRequest.Consumer>{(pr) => pr(s)}</SessionPullRequest.Consumer>
+        <SessionPR session={s} prHref={() => prLink} Link={Link} />
         <span
           className={`local-feed-time local-feed-status ${reason === "quiet" ? "quiet" : "waiting"}`}
           title={absolute(since)}
         >
-          {reason === "quiet" ? "quiet" : "waiting"}{" "}
-          {clock((now - new Date(since).getTime()) / 1000)}
+          {reason === "quiet" ? "quiet" : "waiting"} <Elapsed since={since} />
         </span>
         <SessionMenu.Consumer>{(more) => more(s)}</SessionMenu.Consumer>
       </div>
@@ -1275,7 +1331,7 @@ function WaitingCard({
       ) : null}
     </li>
   );
-}
+});
 
 /** The message queued for a running session, or the box to write one: it is
  *  delivered when the session's turn ends. */
@@ -1408,26 +1464,24 @@ function SendWhenFinished({
   );
 }
 
-function RunningCard({
+const RunningCard = memo(function RunningCard({
   session: s,
-  now,
   queued,
-  prHref,
+  prLink,
   Link,
   open,
   onDone,
-  row,
+  focused,
   replying,
   closeReply,
 }: {
   session: LiveSession;
-  now: number;
   queued?: AgentMessage;
-  prHref: (session: LiveSession) => string | null;
+  prLink: string | null;
   Link: ComponentType<ViewerLinkProps>;
   open: (s: LiveSession, children: ReactNode) => ReactNode;
   onDone: (notice: Notice) => void;
-  row: RowProps;
+  focused: boolean;
   replying: boolean;
   closeReply: () => void;
 }) {
@@ -1439,7 +1493,7 @@ function RunningCard({
   // tool call (often a shell or a script); the call shows until it speaks.
   const said = s.activity?.last_message;
   return (
-    <li className="list-row local-feed-card" {...row(s)}>
+    <li className="list-row local-feed-card" {...rowProps(sessionKey(s), focused)}>
       <div className="local-feed-head">
         {open(s, <AgentMark agent={s.agent} />)}
         {s.title ? (
@@ -1447,12 +1501,16 @@ function RunningCard({
             {s.title}
           </span>
         ) : null}
-        <SessionWhere session={s} prHref={prHref} Link={Link} />
+        <SessionWhere session={s} prHref={() => prLink} Link={Link} />
         <span className="local-feed-time" title={absolute(s.started_at)}>
           {files ? <span className="local-feed-files">{filesTouched(files)} · </span> : null}
-          {running
-            ? clock((now - new Date(s.started_at).getTime()) / 1000)
-            : `Quiet for ${lasted((now - new Date(s.last_activity_at).getTime()) / 1000)}`}
+          {running ? (
+            <Elapsed since={s.started_at} />
+          ) : (
+            <>
+              Quiet for <Elapsed since={s.last_activity_at} format={lasted} />
+            </>
+          )}
         </span>
         <SessionMenu.Consumer>{(more) => more(s)}</SessionMenu.Consumer>
       </div>
@@ -1468,7 +1526,7 @@ function RunningCard({
         </div>
       ) : (
         <p className="local-feed-note" title={absolute(s.last_activity_at)}>
-          Active {formatRelative(s.last_activity_at, now)}
+          Active <Relative iso={s.last_activity_at} interval={1000} />
         </p>
       )}
       {running ? (
@@ -1483,7 +1541,7 @@ function RunningCard({
       ) : null}
     </li>
   );
-}
+});
 
 /** One thing that waits on the person: a request to answer, or a session
  *  that finished or asks in its terminal. */
@@ -1500,9 +1558,43 @@ type Section = "needs" | "waiting" | "running" | "ended";
  *  card draws it at the end of its head. */
 const SessionMenu = createContext<(s: LiveSession) => ReactNode>(() => null);
 
-/** A waiting session's pull request (SessionPR), which its card draws after
- *  its branch: the page knows where it opens, the card does not. */
-const SessionPullRequest = createContext<(s: LiveSession) => ReactNode>(() => null);
+const endedAtOf = (s: LiveSession) => s.ended_at ?? s.last_activity_at;
+
+/** The compact row of a session that ended. */
+const EndedRow = memo(function EndedRow({
+  session: s,
+  open,
+  focused,
+}: {
+  session: LiveSession;
+  open: (s: LiveSession, children: ReactNode) => ReactNode;
+  focused: boolean;
+}) {
+  const endedAt = endedAtOf(s);
+  const seconds = Math.max(
+    0,
+    (new Date(endedAt).getTime() - new Date(s.started_at).getTime()) / 1000,
+  );
+  const files = s.activity?.files_touched;
+  return (
+    <li className="list-row local-feed-card compact" {...rowProps(sessionKey(s), focused)}>
+      {open(s, <AgentMark agent={s.agent} />)}
+      {s.title ? (
+        <span className="local-feed-title" title={s.title}>
+          {s.title}
+        </span>
+      ) : null}
+      <span className="local-feed-sub">
+        {span(seconds)}
+        {files ? ` · ${filesTouched(files)}` : ""}
+      </span>
+      <span className="local-feed-sub" title={absolute(endedAt)}>
+        Ended <Relative iso={endedAt} />
+      </span>
+      <SessionMenu.Consumer>{(more) => more(s)}</SessionMenu.Consumer>
+    </li>
+  );
+});
 
 /** Which sections are folded, for as long as the app runs: Ended recently
  *  starts folded, since it is looked back at, not watched. */
@@ -1561,14 +1653,17 @@ function SectionHead({
  *  and its agent's mark. */
 function useSessionNotice() {
   const toast = useToast();
-  return ({ agent, session, ...n }: Notice) => {
-    const logo = agent ? agentLogos[agent] : undefined;
-    toast({
-      ...n,
-      context: session,
-      icon: logo ? { brand: logo, alt: agentName(agent!) } : undefined,
-    });
-  };
+  return useCallback(
+    ({ agent, session, ...n }: Notice) => {
+      const logo = agent ? agentLogos[agent] : undefined;
+      toast({
+        ...n,
+        context: session,
+        icon: logo ? { brand: logo, alt: agentName(agent!) } : undefined,
+      });
+    },
+    [toast],
+  );
 }
 
 /** The foot of a session's transcript: a reply to a session waiting at its
@@ -1634,48 +1729,49 @@ export function SessionsPage({
   /** Goes to a page of the app, as its links do. */
   navigate?: (href: string) => void;
 }) {
-  const now = useNow(1000);
   const notify = useSessionNotice();
   const menu = useContextMenu();
-  const live = sessions.filter((s) => s.state !== "ended");
-  const find = (agent: string, id: string) =>
-    live.find((s) => s.agent === agent && s.session_id === id);
-  // A request is answered where it is; its session shows no second card.
-  const asked = new Set<string>();
-  const waiting: Waiting[] = [];
-  for (const r of requests.requests) {
-    const session = find(r.agent, r.session_id);
-    if (!session && sessions.some((s) => s.agent === r.agent && s.session_id === r.session_id))
-      continue;
-    asked.add(`${r.agent}:${r.session_id}`);
-    waiting.push({ key: `request:${r.id}`, since: r.created_at, session, request: r });
-  }
-  for (const s of needsYou(sessions))
-    if (!asked.has(sessionKey(s)))
-      waiting.push({ key: sessionKey(s), since: waitingSince(s), session: s });
-  // What the app can answer leads, then the longest wait.
-  waiting.sort(
-    (a, b) =>
-      Number(!a.request) - Number(!b.request) ||
-      new Date(a.since).getTime() - new Date(b.since).getTime() ||
-      a.key.localeCompare(b.key),
-  );
-  // What asks something of the person leads (Needs you); what only waits for
-  // their next word follows (Waiting for you).
-  const asking = waiting.filter((w) => w.request || asks(w.session?.waiting_reason));
-  const idle = waiting.filter((w) => !asking.includes(w));
-  const waitingKeys = new Set(waiting.flatMap((w) => (w.session ? [sessionKey(w.session)] : [])));
-  // A session in Needs you is not listed again under Running now, which
-  // lists the sessions by the user's latest prompt, newest first, so a busy
-  // agent's every step does not move it.
-  const promptedAt = (s: LiveSession) => s.last_prompt_at ?? s.started_at;
-  const active = live
-    .filter((s) => !waitingKeys.has(sessionKey(s)))
-    .sort((a, b) => promptedAt(b).localeCompare(promptedAt(a)));
-  const endedAtOf = (s: LiveSession) => s.ended_at ?? s.last_activity_at;
-  const ended = sessions
-    .filter((s) => s.state === "ended")
-    .sort((a, b) => endedAtOf(b).localeCompare(endedAtOf(a)));
+  const { waiting, asking, idle, active, ended } = useMemo(() => {
+    const live = sessions.filter((s) => s.state !== "ended");
+    const find = (agent: string, id: string) =>
+      live.find((s) => s.agent === agent && s.session_id === id);
+    // A request is answered where it is; its session shows no second card.
+    const asked = new Set<string>();
+    const waiting: Waiting[] = [];
+    for (const r of requests.requests) {
+      const session = find(r.agent, r.session_id);
+      if (!session && sessions.some((s) => s.agent === r.agent && s.session_id === r.session_id))
+        continue;
+      asked.add(`${r.agent}:${r.session_id}`);
+      waiting.push({ key: `request:${r.id}`, since: r.created_at, session, request: r });
+    }
+    for (const s of needsYou(sessions))
+      if (!asked.has(sessionKey(s)))
+        waiting.push({ key: sessionKey(s), since: waitingSince(s), session: s });
+    // What the app can answer leads, then the longest wait.
+    waiting.sort(
+      (a, b) =>
+        Number(!a.request) - Number(!b.request) ||
+        new Date(a.since).getTime() - new Date(b.since).getTime() ||
+        a.key.localeCompare(b.key),
+    );
+    // What asks something of the person leads (Needs you); what only waits for
+    // their next word follows (Waiting for you).
+    const asking = waiting.filter((w) => w.request || asks(w.session?.waiting_reason));
+    const idle = waiting.filter((w) => !asking.includes(w));
+    const waitingKeys = new Set(waiting.flatMap((w) => (w.session ? [sessionKey(w.session)] : [])));
+    // A session in Needs you is not listed again under Running now, which
+    // lists the sessions by the user's latest prompt, newest first, so a busy
+    // agent's every step does not move it.
+    const promptedAt = (s: LiveSession) => s.last_prompt_at ?? s.started_at;
+    const active = live
+      .filter((s) => !waitingKeys.has(sessionKey(s)))
+      .sort((a, b) => promptedAt(b).localeCompare(promptedAt(a)));
+    const ended = sessions
+      .filter((s) => s.state === "ended")
+      .sort((a, b) => endedAtOf(b).localeCompare(endedAtOf(a)));
+    return { waiting, asking, idle, active, ended };
+  }, [sessions, requests]);
   const queuedFor = (s: LiveSession) =>
     requests.messages.find((m) => m.agent === s.agent && m.session_id === s.session_id);
   const [collapsed, setCollapsed] = useState(collapsedSections);
@@ -1691,10 +1787,6 @@ export function SessionsPage({
     ...(collapsed.running ? [] : active.map(sessionKey)),
     ...(collapsed.ended ? [] : ended.map(sessionKey)),
   ]);
-  const row: RowProps = (s) => ({
-    "data-row-id": sessionKey(s),
-    "data-focused": rows.focused === sessionKey(s) || undefined,
-  });
   // The session peeked at under its row (Space or a click), by its key, at
   // most one.
   const [peeking, setPeeking] = useState<string | null>(null);
@@ -1709,10 +1801,10 @@ export function SessionsPage({
   // The reply open on a card, by its session's key, at most one.
   const [replying, setReplying] = useState<string | null>(null);
   // Closing a reply puts the keys back on its card.
-  const closeReply = () => {
+  const closeReply = useStable(() => {
     if (replying) rows.rowLink(replying)?.focus();
     setReplying(null);
-  };
+  });
   // A waiting session takes a reply now; a working one, when it finishes,
   // unless a message for then is queued already.
   const working = (s: LiveSession) => s.state === "running" && active.includes(s);
@@ -1825,27 +1917,30 @@ export function SessionsPage({
   // A session's card opens its transcript by its link, which the keys focus
   // and follow (Enter). A click on it peeks, as anywhere on the card does:
   // the transcript opens from the peek or the reply beside it.
-  const open = (s: LiveSession, children: ReactNode) => (
-    <Link
-      href={transcriptHref(s)}
-      data-row-link=""
-      className="local-feed-open"
-      aria-label={labelFor("Open transcript", s)}
-      onClick={(event) => {
-        // A pointer's click, not one the keys made (detail 0), nor one asking
-        // for another window.
-        if (
-          event.detail > 0 &&
-          event.button === 0 &&
-          !event.metaKey &&
-          !event.ctrlKey &&
-          !event.shiftKey
-        )
-          event.preventDefault();
-      }}
-    >
-      {children}
-    </Link>
+  const open = useCallback(
+    (s: LiveSession, children: ReactNode) => (
+      <Link
+        href={transcriptHref(s)}
+        data-row-link=""
+        className="local-feed-open"
+        aria-label={labelFor("Open transcript", s)}
+        onClick={(event) => {
+          // A pointer's click, not one the keys made (detail 0), nor one asking
+          // for another window.
+          if (
+            event.detail > 0 &&
+            event.button === 0 &&
+            !event.metaKey &&
+            !event.ctrlKey &&
+            !event.shiftKey
+          )
+            event.preventDefault();
+        }}
+      >
+        {children}
+      </Link>
+    ),
+    [Link],
   );
   // A running session the daemon can bring forward is, from its menu or
   // its key; what could not be done is told as a notice.
@@ -1956,10 +2051,19 @@ export function SessionsPage({
     const s = id ? sessions.find((x) => sessionKey(x) === id) : undefined;
     if (s) menu.open(event, actionsFor(s), sessionName(s));
   };
-  const more = (s: LiveSession) => (
-    <MenuButton label={sessionName(s)} items={() => actionsFor(s)} menu={menu} />
+  const actions = useStable(actionsFor);
+  // The button reads the menu's anchor to show itself open; the rest of the
+  // menu's value is the same from render to render.
+  const menuRef = useRef(menu);
+  if (menuRef.current.anchor !== menu.anchor) menuRef.current = menu;
+  const menuNow = menuRef.current;
+  const more = useCallback(
+    (s: LiveSession) => (
+      <MenuButton label={sessionName(s)} items={() => actions(s)} menu={menuNow} />
+    ),
+    [actions, menuNow],
   );
-  const pullRequest = (s: LiveSession) => <SessionPR session={s} prHref={prHref} Link={Link} />;
+
   // What waits on the person, drawn the same in both of its sections.
   const waitingRows = (list: Waiting[]) =>
     list.flatMap((w) => [
@@ -1968,30 +2072,34 @@ export function SessionsPage({
           key={w.key}
           request={w.request}
           session={w.session}
-          now={now}
           onDone={notify}
-          row={w.session ? row(w.session) : { "data-row-id": w.key }}
+          rowId={waitingKey(w)}
+          focused={rows.focused === waitingKey(w)}
           open={open}
+          prLink={w.session ? prHref(w.session) : null}
+          Link={Link}
         />
       ) : w.request ? (
         <QuestionCard
           key={w.key}
           request={w.request}
           session={w.session}
-          now={now}
           onDone={notify}
-          row={w.session ? row(w.session) : { "data-row-id": w.key }}
+          rowId={waitingKey(w)}
+          focused={rows.focused === waitingKey(w)}
           open={open}
+          prLink={w.session ? prHref(w.session) : null}
+          Link={Link}
         />
       ) : (
         <WaitingCard
           key={w.key}
           session={w.session!}
           since={w.since}
-          now={now}
           open={open}
           Link={Link}
-          row={row}
+          prLink={prHref(w.session!)}
+          focused={rows.focused === sessionKey(w.session!)}
           onDone={notify}
           replying={replying === sessionKey(w.session!)}
           closeReply={closeReply}
@@ -2002,122 +2110,93 @@ export function SessionsPage({
   return (
     <div ref={rows.list} className="local-feed" onClick={openCard} onContextMenu={cardMenu}>
       <SessionMenu.Provider value={more}>
-        <SessionPullRequest.Provider value={pullRequest}>
-          {menu.menu}
-          {asking.length > 0 ? (
-            <section aria-label="Needs you" className="local-feed-section needs">
-              <SectionHead
-                section="needs"
-                title="Needs you"
-                count={asking.length}
-                collapsed={collapsed.needs}
-                toggle={toggle}
-              />
-              <ul id="sessions-needs" className="list local-feed-cards" hidden={collapsed.needs}>
-                {waitingRows(asking)}
-              </ul>
-            </section>
-          ) : null}
-          {idle.length > 0 ? (
-            <section aria-label="Waiting for you" className="local-feed-section waiting">
-              <SectionHead
-                section="waiting"
-                title="Waiting for you"
-                count={idle.length}
-                collapsed={collapsed.waiting}
-                toggle={toggle}
-              />
-              <ul
-                id="sessions-waiting"
-                className="list local-feed-cards"
-                hidden={collapsed.waiting}
-              >
-                {waitingRows(idle)}
-              </ul>
-            </section>
-          ) : null}
-          <section aria-label="Running now" className="local-feed-section running">
+        {menu.menu}
+        {asking.length > 0 ? (
+          <section aria-label="Needs you" className="local-feed-section needs">
             <SectionHead
-              section="running"
-              title="Running now"
-              count={active.length}
-              collapsed={collapsed.running}
+              section="needs"
+              title="Needs you"
+              count={asking.length}
+              collapsed={collapsed.needs}
               toggle={toggle}
             />
-            {collapsed.running ? null : active.length === 0 ? (
-              <p className="local-sessions-empty">
-                {waiting.length > 0
-                  ? "No other agent sessions are running."
-                  : "No agent sessions are running. Sessions of connected agents in your repositories show here while they work."}
-              </p>
-            ) : (
-              <ul id="sessions-running" className="list local-feed-cards">
-                {active.flatMap((s) => [
-                  <RunningCard
-                    key={sessionKey(s)}
-                    session={s}
-                    now={now}
-                    queued={queuedFor(s)}
-                    prHref={prHref}
-                    Link={Link}
-                    open={open}
-                    onDone={notify}
-                    row={row}
-                    replying={replying === sessionKey(s)}
-                    closeReply={closeReply}
-                  />,
-                  peekRow(s),
-                ])}
-              </ul>
-            )}
+            <ul id="sessions-needs" className="list local-feed-cards" hidden={collapsed.needs}>
+              {waitingRows(asking)}
+            </ul>
           </section>
-          <section aria-label="Ended recently" className="local-feed-section ended">
+        ) : null}
+        {idle.length > 0 ? (
+          <section aria-label="Waiting for you" className="local-feed-section waiting">
             <SectionHead
-              section="ended"
-              title="Ended recently"
-              count={ended.length}
-              collapsed={collapsed.ended}
+              section="waiting"
+              title="Waiting for you"
+              count={idle.length}
+              collapsed={collapsed.waiting}
               toggle={toggle}
             />
-            {collapsed.ended ? null : ended.length === 0 ? (
-              <p className="local-sessions-empty">No sessions ended in the last day.</p>
-            ) : (
-              <ul id="sessions-ended" className="list local-feed-cards">
-                {ended.flatMap((s) => {
-                  const endedAt = endedAtOf(s);
-                  const seconds = Math.max(
-                    0,
-                    (new Date(endedAt).getTime() - new Date(s.started_at).getTime()) / 1000,
-                  );
-                  const files = s.activity?.files_touched;
-                  return [
-                    <li
-                      key={sessionKey(s)}
-                      className="list-row local-feed-card compact"
-                      {...row(s)}
-                    >
-                      {open(s, <AgentMark agent={s.agent} />)}
-                      {s.title ? (
-                        <span className="local-feed-title" title={s.title}>
-                          {s.title}
-                        </span>
-                      ) : null}
-                      <span className="local-feed-sub">
-                        {span(seconds)}
-                        {files ? ` · ${filesTouched(files)}` : ""}
-                      </span>
-                      <span className="local-feed-sub" title={absolute(endedAt)}>
-                        Ended {formatRelative(endedAt, now)}
-                      </span>
-                      {more(s)}
-                    </li>,
-                    peekRow(s),
-                  ];
-                })}
-              </ul>
-            )}
+            <ul id="sessions-waiting" className="list local-feed-cards" hidden={collapsed.waiting}>
+              {waitingRows(idle)}
+            </ul>
           </section>
-        </SessionPullRequest.Provider>
+        ) : null}
+        <section aria-label="Running now" className="local-feed-section running">
+          <SectionHead
+            section="running"
+            title="Running now"
+            count={active.length}
+            collapsed={collapsed.running}
+            toggle={toggle}
+          />
+          {collapsed.running ? null : active.length === 0 ? (
+            <p className="local-sessions-empty">
+              {waiting.length > 0
+                ? "No other agent sessions are running."
+                : "No agent sessions are running. Sessions of connected agents in your repositories show here while they work."}
+            </p>
+          ) : (
+            <ul id="sessions-running" className="list local-feed-cards">
+              {active.flatMap((s) => [
+                <RunningCard
+                  key={sessionKey(s)}
+                  session={s}
+                  queued={queuedFor(s)}
+                  prLink={prHref(s)}
+                  Link={Link}
+                  open={open}
+                  onDone={notify}
+                  focused={rows.focused === sessionKey(s)}
+                  replying={replying === sessionKey(s)}
+                  closeReply={closeReply}
+                />,
+                peekRow(s),
+              ])}
+            </ul>
+          )}
+        </section>
+        <section aria-label="Ended recently" className="local-feed-section ended">
+          <SectionHead
+            section="ended"
+            title="Ended recently"
+            count={ended.length}
+            collapsed={collapsed.ended}
+            toggle={toggle}
+          />
+          {collapsed.ended ? null : ended.length === 0 ? (
+            <p className="local-sessions-empty">No sessions ended in the last day.</p>
+          ) : (
+            <ul id="sessions-ended" className="list local-feed-cards">
+              {ended.flatMap((s) => [
+                <EndedRow
+                  key={sessionKey(s)}
+                  session={s}
+                  open={open}
+                  focused={rows.focused === sessionKey(s)}
+                />,
+                peekRow(s),
+              ])}
+            </ul>
+          )}
+        </section>
       </SessionMenu.Provider>
     </div>
   );
