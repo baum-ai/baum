@@ -38,7 +38,7 @@ export function codexHookWarning(status?: CodexHookTrust | null): string | null 
 
 const POLL_MS = 60_000;
 
-/** Reads on load, on window focus (at most once a minute) and, only while the
+/** Reads on load, on window focus (at most once a minute while healthy) and, only while the
  * last answer is a warning, once a minute while visible. `recheck` asks the
  * daemon for a fresh read: it caches answers, and callers use it after acting
  * on the warning. Failed or older endpoints never turn a known warning into a
@@ -50,6 +50,7 @@ export function useCodexHookTrust() {
   const pending = useRef(false);
   const lastRead = useRef(0);
   const last = useRef("");
+  const warned = useRef(false);
   const read = useCallback(async (fresh = false) => {
     if (pending.current) return;
     pending.current = true;
@@ -78,7 +79,8 @@ export function useCodexHookTrust() {
     alive.current = true;
     void read();
     const focus = () => {
-      if (Date.now() - lastRead.current >= POLL_MS) void read();
+      // A warning is rechecked on every focus: the user may just have fixed it.
+      if (warned.current || Date.now() - lastRead.current >= POLL_MS) void read();
     };
     window.addEventListener("focus", focus);
     return () => {
@@ -87,6 +89,7 @@ export function useCodexHookTrust() {
     };
   }, [read]);
   const warning = codexHookWarning(status);
+  warned.current = warning !== null;
   useVisibleInterval(() => void read(), warning ? POLL_MS : null);
   return { status, warning, checking, recheck };
 }

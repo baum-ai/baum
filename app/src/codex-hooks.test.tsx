@@ -77,7 +77,16 @@ it("keeps the same status and does not render again for an unchanged answer", as
   expect(renders).toBeGreaterThan(before);
 });
 
-it("throttles focus reads to once a minute", async () => {
+it("reads on every focus while a warning shows", async () => {
+  answer = { state: "untrusted" };
+  await mount();
+  answer = { state: "trusted" };
+  await act(async () => window.dispatchEvent(new Event("focus")));
+  expect(fetched).toHaveBeenCalledTimes(2);
+  expect(hook.warning).toBeNull();
+});
+
+it("throttles focus reads to once a minute while healthy", async () => {
   await mount();
   await act(async () => window.dispatchEvent(new Event("focus")));
   expect(fetched).toHaveBeenCalledTimes(1);

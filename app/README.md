@@ -2177,7 +2177,8 @@ distinct states. Setup may still be finished with an unfinished connection.
 The bottom Settings link has a caution badge and an accessible description
 while Codex session reporting needs attention. Opening Settings shows the
 reason and Check again. The app reads `GET api/agent-hooks/codex` on load and
-on window focus (at most once a minute), and every minute while visible only
+on window focus (at most once a minute while healthy; every focus while a
+warning shows), and every minute while visible only
 while the last answer is a warning. Check again and the reads after native
 Settings actions pass `?refresh=1`, because the daemon caches a healthy answer
 for five minutes (warnings are always read fresh). A
