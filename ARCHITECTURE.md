@@ -3860,7 +3860,9 @@ shell: there `shellenv.Resolve` returns the inherited environment with the
 `PATH` a new logon of the user gets, the system `Path` and then the user's
 from the registry (`CreateEnvironmentBlock`), so `gh` and agent CLIs
 installed after the starting process are found. The log records the shell, the
-outcome and the kept variable names, never values. `backend_paths` remains the
+outcome, how long the shell took and the kept variable names, never values;
+the `daemon ready` line records how long the daemon took from holding its
+lock to serving, shell included, since it listens only afterwards. `backend_paths` remains the
 way to name a backend executable explicitly.
 
 Some shells set an agent up only for interactive use (fnm or nvm in
