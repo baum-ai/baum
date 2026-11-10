@@ -39,6 +39,12 @@ therefore re-reads by number, in aliased queries of a page each, at most 50:
   which GitHub works out again once asked;
 - pull requests whose checks are still running.
 
+A finished check does not show in the probe either, so while any open pull
+request has checks running the polls stay 30 seconds apart rather than backing
+off: the checks' result shows within about a minute. Checks that never report
+stop holding the interval once the pull requests have stayed as they are for
+`checksHold` (an hour).
+
 A **full sweep** reads every open pull request, the most recently updated
 first. It runs on the first poll, after a cache-format upgrade, every
 `sweepInterval` (10 minutes) and when the window's count disagrees.

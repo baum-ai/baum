@@ -150,6 +150,9 @@ type diskCache struct {
 	Fingerprint fingerprint
 	// Settling counts the quick polls since one found a new head (settle).
 	Settling int `json:",omitempty"`
+	// ChecksSince is when the polls began to find checks running, or the last
+	// one that found the pull requests changed meanwhile (checksHold).
+	ChecksSince time.Time `json:",omitzero"`
 	// Carried are the pull requests whose merge state the last poll kept from
 	// an earlier one while GitHub worked it out again (carryMerge).
 	Carried map[int]bool `json:",omitempty"`
@@ -203,6 +206,15 @@ const (
 	settleInterval = 15 * time.Second
 	maxSettles     = 3
 )
+
+// A check that finishes leaves the pull request's update time as it was, so
+// neither the probe nor the backoff's "unchanged" sees it coming. While an
+// open pull request has checks running the polls therefore stay at the first
+// interval rather than backing off. Checks that never report (a required one
+// nothing runs, say) would hold it for ever: the hold ends once the pull
+// requests have stayed as they are for checksHold, and the usual backoff goes
+// on until they change.
+const checksHold = time.Hour
 
 // How a poll reads the open pull requests. Most polls are incremental: they
 // read the pull requests updated since the cursor, newest first and of any
@@ -715,7 +727,15 @@ func (s *Service) poll(ctx context.Context, repository github.Repository, force 
 		snapshot.NextPoll = maxTime(now.Add(time.Minute), p.ResetIfExhausted())
 	} else {
 		interval := 30 * time.Second
-		if unchanged(cache.Snapshot.PullRequests, snapshot.PullRequests) {
+		same := unchanged(cache.Snapshot.PullRequests, snapshot.PullRequests)
+		switch {
+		case !slices.ContainsFunc(slices.Collect(maps.Values(p.rows)), checksRunning):
+			p.cache.ChecksSince = time.Time{}
+		case !same || p.cache.ChecksSince.IsZero():
+			p.cache.ChecksSince = now
+		}
+		held := !p.cache.ChecksSince.IsZero() && now.Sub(p.cache.ChecksSince) < checksHold
+		if same && !held {
 			interval = min(max(cache.Interval, 30*time.Second)*2, 15*time.Minute)
 		}
 		interval = max(interval, p.minimum)
