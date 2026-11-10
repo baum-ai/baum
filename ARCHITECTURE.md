@@ -4237,7 +4237,9 @@ replace it.
   **Replying and ending.** The list marks a session `messageable` when it
   waits at its prompt (a finished turn, or for Claude Code gone quiet) and
   `endable` when it waits or went quiet, each only where baum can reach its
-  agent (`Transcripts.Senders`, `Transcripts.Enders`). `POST
+  agent (`Transcripts.Senders`, `Transcripts.Enders`), and `endable` only
+  where its agent's end check (`Transcripts.EndChecks`, `ClaudeExit.Check`)
+  says ending would go through, so End is never offered to fail. `POST
   api/live-sessions/{agent}/{id}/message` with `{"text"}` (at most 10 000
   characters) puts it into the session: Claude Code's through its cross-session inbox
   (`ClaudeInbox`, one JSON line on the socket its
@@ -4251,7 +4253,11 @@ replace it.
   and the queue would run its turn unseen. `POST .../end` ends a Claude Code
   session as `/exit` does (`ClaudeExit`): SIGTERM to its process when that
   reports itself idle; it exits in under a second, fires SessionEnd and can
-  be resumed. Codex has no clean way to close a session from outside, so
+  be resumed. A process that reports `busy` is mid-turn, and one that
+  reports `shell` has finished its turn but still runs a background command
+  it started, which ending would kill: neither is offered End, and a request
+  for one is refused with 409 (`session_running_command` for the second,
+  saying so). Codex has no clean way to close a session from outside, so
   none is offered. Both find the process by its registry entry, confirmed as
   the one that wrote it (`procStart` against `/proc/<pid>/stat` field 22 and
   `pidDomain` against this pid namespace on Linux, `ps -o lstart=` on macOS),

@@ -529,7 +529,7 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 			// A session that starts waiting for a permission or an answer is
 			// a notice; reading the registry for it must not hold the tracker.
 			live.Waiting = func(session livesessions.Session) { go notify.SessionWaiting(ctx, session) }
-			transcripts = &livesessions.Transcripts{Tracker: live, Render: renderer.Render, Log: log, Senders: liveSenders(), Enders: liveEnders(), Focus: &focus.Focuser{}}
+			transcripts = &livesessions.Transcripts{Tracker: live, Render: renderer.Render, Log: log, Senders: liveSenders(), Enders: liveEnders(), EndChecks: liveEndChecks(), Focus: &focus.Focuser{}}
 			liveAPI = transcripts.Handler()
 			// What agents wait on the app to answer, and the messages queued
 			// for running sessions, stay in memory, masked as the sessions
@@ -883,6 +883,16 @@ func liveEnders() map[string]livesessions.Ender {
 		return nil
 	}
 	return map[string]livesessions.Ender{livesessions.AgentClaudeCode: livesessions.ClaudeExit{}.End}
+}
+
+// liveEndChecks tell the list whether liveEnders would end a session now,
+// so it offers End only where ending would go through: a Claude Code
+// session still running a background command is not offered it.
+func liveEndChecks() map[string]livesessions.EndCheck {
+	if runtime.GOOS == "windows" {
+		return nil
+	}
+	return map[string]livesessions.EndCheck{livesessions.AgentClaudeCode: livesessions.ClaudeExit{}.Check}
 }
 
 // Run drains the spool until ctx ends.

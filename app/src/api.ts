@@ -462,7 +462,8 @@ export type LiveSession = {
    *  use Bash", masked by the daemon. */
   waiting_message?: string;
   /** Whether the app may end it (`endSession`): it waits on its user or went
-   *  quiet, and the daemon can stop its agent. */
+   *  quiet, and the daemon can stop its agent now (not while a Claude Code
+   *  session still runs a background command). */
   endable?: boolean;
   /** Whether the app may send it a message (`messageSession`): it waits at
    *  its prompt, and the daemon can reach its agent. */
