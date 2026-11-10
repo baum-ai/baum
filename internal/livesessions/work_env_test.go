@@ -205,3 +205,26 @@ func TestPostRewriteRecordsTheNewCommits(t *testing.T) {
 		t.Fatalf("process-tree rewrite: %+v", got)
 	}
 }
+
+// A rewrite of several commits no post-commit recorded records each of them,
+// though they share the event and its empty branch.
+func TestPostRewriteRecordsEveryUnseenCommit(t *testing.T) {
+	c := &clock{t0}
+	store := &commitattribution.Store{Path: filepath.Join(appdbtest.TempDir(t), "app.sqlite")}
+	tr := newTracker(c, newWorkLinker())
+	tr.Attributions = store
+	oldOne, oldTwo := strings.Repeat("5", 40), strings.Repeat("6", 40)
+	one, two := strings.Repeat("7", 40), strings.Repeat("8", 40)
+	apply(tr, prompt("s-1", t0, claude))
+	apply(tr, named(ancestors(rewrite(workDir("trees/fix"), t0.Add(time.Minute),
+		oldOne+" "+one, oldTwo+" "+two), claude, tmux), "s-1", claude.PID))
+	got := lookup(t, store, one, two)
+	if len(got) != 2 {
+		t.Fatalf("observations: %+v", got)
+	}
+	for _, o := range got {
+		if o.SessionID != "s-1" || o.Kind != commitattribution.Commit {
+			t.Errorf("observation: %+v", o)
+		}
+	}
+}

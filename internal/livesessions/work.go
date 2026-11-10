@@ -30,7 +30,7 @@ const (
 
 // workItem is a commit or a push a session's agent made.
 type workItem struct {
-	// id is the hook event's; with branch it names the item.
+	// id is the hook event's; with branch and head it names the item.
 	id string
 	at time.Time
 	// dir is where Git ran the hook; empty for an item restored from
@@ -49,7 +49,7 @@ type workItem struct {
 }
 
 func (w workItem) same(o workItem) bool {
-	return w.id != "" && w.id == o.id && w.branch == o.branch
+	return w.id != "" && w.id == o.id && w.branch == o.branch && w.head == o.head
 }
 
 // WorkLinker links the commits and pushes of a session's agent; *Resolver is
@@ -406,8 +406,8 @@ func restoredWork(saved []savedWork) []workItem {
 		if w.Repository == "" {
 			continue
 		}
-		// An item is named by its event and branch, so the replayed event does
-		// not add it again.
+		// An item is named by its event, branch and commit, so the replayed
+		// event does not add it again.
 		out = append(out, workItem{id: w.ID, at: w.At, pushed: w.Push, branch: w.Branch, head: w.HeadSHA, read: true, link: Link{Repository: w.Repository, Branch: w.Branch, HeadSHA: w.HeadSHA, Upstream: w.Upstream, PR: w.PR, HeadRepository: w.HeadRepository, UpstreamRepository: w.UpstreamRepository}})
 	}
 	if len(out) > maxWork {
