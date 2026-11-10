@@ -7,6 +7,7 @@ import (
 
 	"github.com/baum-ai/baum/sessions"
 	"github.com/baum-ai/baum/sessions/session"
+	"github.com/baum-ai/baum/sessions/traceprocessing"
 )
 
 func TestReflogIgnoresFailedAndRejectedCalls(t *testing.T) {
@@ -65,7 +66,7 @@ func TestCreatorsOfUsesOnlyTheEarliestCreation(t *testing.T) {
 
 func codeModeCall(source, start, end string) call {
 	input, _ := json.Marshal(source)
-	return call{tool: "exec", input: string(input), start: at(start), end: at(end)}
+	return call{tool: "exec", input: string(traceprocessing.NormalizeCodexExecInput("exec", input)), start: at(start), end: at(end)}
 }
 
 func TestReflogCodeModeCommandsKeepTheirOwnWorkdir(t *testing.T) {

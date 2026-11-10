@@ -393,23 +393,112 @@ func within(root, p string) (string, bool) {
 	return rel, true
 }
 
+// callOutcome is what a tool call's result says.
+type callOutcome struct {
+	at     time.Time
+	status session.ToolStatus
+	text   string
+}
+
+// processID finds the id a shell tool reports for a command that is still
+// running: `"session_id":N` in a structured result, `session ID N` in the text
+// of a native one.
+var processID = regexp.MustCompile(`"session_id"\s*:\s*(\d+)|session ID (\d+)`)
+
+// polledProcess finds the id a poll names in its input: native JSON, or the
+// `write_stdin({session_id:N` call of a code-mode program.
+var polledProcess = regexp.MustCompile(`write_stdin\s*\(\s*\{[^}]*?\bsession_id["']?\s*:\s*(\d+)`)
+
+func processIDs(text string) []string {
+	var ids []string
+	for _, m := range processID.FindAllStringSubmatch(text, -1) {
+		id := m[1] + m[2]
+		if !slices.Contains(ids, id) {
+			ids = append(ids, id)
+		}
+	}
+	return ids
+}
+
+// poll is a successful call that looked at commands still running.
+type poll struct {
+	ids        []string
+	start, end time.Time
+	output     string
+}
+
+// pollsOf lists the polls of a graph by start time: native write_stdin and
+// wait calls and code-mode programs that call write_stdin.
+func pollsOf(g *session.Graph, results map[string]callOutcome) []poll {
+	var polls []poll
+	for _, use := range g.ToolUses {
+		result, ok := results[use.ID]
+		if use.Verb != session.VerbExecute || use.Timestamp == nil || !ok || result.status != session.StatusOK {
+			continue
+		}
+		var ids []string
+		switch strings.ToLower(use.Name) {
+		case "write_stdin", "wait":
+			var shape struct {
+				SessionID json.Number `json:"session_id"`
+			}
+			if json.Unmarshal(use.Input, &shape) == nil && shape.SessionID != "" {
+				ids = []string{shape.SessionID.String()}
+			}
+		case traceprocessing.CodexExecName:
+			if source, ok := codeModeSource(use.Input); ok {
+				for _, m := range polledProcess.FindAllStringSubmatch(source, -1) {
+					ids = append(ids, m[1])
+				}
+			}
+		}
+		if len(ids) > 0 {
+			polls = append(polls, poll{ids: ids, start: *use.Timestamp, end: result.at, output: result.text})
+		}
+	}
+	slices.SortFunc(polls, func(a, b poll) int { return a.start.Compare(b.start) })
+	return polls
+}
+
+// windowEnd is when the call's command was last known to be running. A command
+// that yielded while it ran (a commit waiting on slow hooks) ends in a later
+// poll of the same process, so the window reaches to the last poll that still
+// found it running, or the one that found it finished.
+func windowEnd(start, end time.Time, text string, polls []poll) time.Time {
+	active := processIDs(text)
+	for _, p := range polls {
+		if len(active) == 0 {
+			break
+		}
+		if p.start.Before(start) || !slices.ContainsFunc(p.ids, func(id string) bool { return slices.Contains(active, id) }) {
+			continue
+		}
+		if p.end.After(end) {
+			end = p.end
+		}
+		still := processIDs(p.output)
+		active = slices.DeleteFunc(active, func(id string) bool { return slices.Contains(p.ids, id) && !slices.Contains(still, id) })
+	}
+	return end
+}
+
 // callWindows lists the shell calls of one session, every nested session
 // included, that succeeded and write to Git. A call that failed, was rejected
 // or denied, whose command does not write Git, or a poll of a running command
-// establishes nothing and has no window.
+// establishes nothing and has no window of its own.
 func callWindows(s sessions.Session, locate func(string) string) []callWindow {
 	g := s.Graph
 	if g == nil {
 		return nil
 	}
-	type outcome struct {
-		at     time.Time
-		status session.ToolStatus
-	}
-	results := make(map[string]outcome, len(g.ToolResults))
+	results := make(map[string]callOutcome, len(g.ToolResults))
 	for _, r := range g.ToolResults {
 		if r.Timestamp != nil {
-			results[r.ToolUseID] = outcome{at: *r.Timestamp, status: r.Status}
+			outcome := callOutcome{at: *r.Timestamp, status: r.Status}
+			if r.OutputText != nil {
+				outcome.text = *r.OutputText
+			}
+			results[r.ToolUseID] = outcome
 		}
 	}
 	workingDirs := map[string]string{}
@@ -422,6 +511,7 @@ func callWindows(s sessions.Session, locate func(string) string) []callWindow {
 	if root := s.Root(); root != nil {
 		top = root.ID
 	}
+	var polls []poll
 	var windows []callWindow
 	for _, use := range g.ToolUses {
 		result, ok := results[use.ID]
@@ -446,15 +536,39 @@ func callWindows(s sessions.Session, locate func(string) string) []callWindow {
 		seen := map[string]bool{}
 		for _, c := range shellCalls(use.Name, use.Input, base) {
 			for _, dir := range writeDirs(c.command, c.dir) {
-				if seen[dir] {
+				root := locate(dir)
+				if seen[dir] || nestedRepository(dir, root) {
 					continue
 				}
 				seen[dir] = true
-				windows = append(windows, callWindow{session: s.ID, start: *use.Timestamp, end: result.at, root: locate(dir), branch: branch})
+				if polls == nil {
+					polls = pollsOf(g, results)
+				}
+				end := windowEnd(*use.Timestamp, result.at, result.text, polls)
+				windows = append(windows, callWindow{session: s.ID, start: *use.Timestamp, end: end, root: root, branch: branch})
 			}
 		}
 	}
 	return windows
+}
+
+// nestedRepository reports whether dir lies in a repository of its own, such
+// as a submodule or a clone inside the working tree: a directory between dir
+// and root (the root excluded) that has a .git entry. The commit it makes is
+// not in the working tree's reflog.
+func nestedRepository(dir, root string) bool {
+	if root == "" {
+		return false
+	}
+	for d := filepath.Clean(dir); d != root; d = filepath.Dir(d) {
+		if _, err := os.Lstat(filepath.Join(d, ".git")); err == nil {
+			return true
+		}
+		if parent := filepath.Dir(d); parent == d {
+			break
+		}
+	}
+	return false
 }
 
 // shellCall is one command a tool call ran, and the directory it started in
@@ -499,18 +613,19 @@ func shellCalls(name string, input json.RawMessage, base string) []shellCall {
 }
 
 // codeModeSource is the JavaScript program of a Codex code-mode input: a JSON
-// string, or an object holding it as "input" and no command of its own.
+// string, or an object holding it as "input". The stored form is the object
+// {"input": <program>, "command": <command lines>}, whose command is derived
+// from the program, so only a "cmd" marks an input that is not code-mode.
 func codeModeSource(input json.RawMessage) (string, bool) {
 	var source string
 	if json.Unmarshal(input, &source) == nil {
 		return source, true
 	}
 	var object struct {
-		Input   string          `json:"input"`
-		Cmd     json.RawMessage `json:"cmd"`
-		Command json.RawMessage `json:"command"`
+		Input string          `json:"input"`
+		Cmd   json.RawMessage `json:"cmd"`
 	}
-	if json.Unmarshal(input, &object) == nil && object.Input != "" && object.Cmd == nil && object.Command == nil {
+	if json.Unmarshal(input, &object) == nil && object.Input != "" && object.Cmd == nil {
 		return object.Input, true
 	}
 	return "", false
@@ -522,6 +637,9 @@ type shellScope struct {
 	dir string
 	// gitEnv is set once GIT_DIR or GIT_WORK_TREE was set.
 	gitEnv bool
+	// moves counts the cd, pushd and popd commands seen, shared by every
+	// scope of a script, so a compound command can tell that one ran inside.
+	moves *int
 }
 
 // writeDirs are the directories in which the command runs a git subcommand
@@ -534,7 +652,7 @@ type shellScope struct {
 // an absolute directory.
 func writeDirs(command, dir string) []string {
 	var dirs []string
-	scanScript(command, shellScope{dir: dir}, &dirs, 0)
+	scanScript(command, shellScope{dir: dir, moves: new(int)}, &dirs, 0)
 	return dirs
 }
 
@@ -582,11 +700,12 @@ func scanStmt(stmt *syntax.Stmt, scope *shellScope, out *[]string, depth int) {
 	case *syntax.IfClause, *syntax.WhileClause, *syntax.ForClause, *syntax.CaseClause, *syntax.TimeClause:
 		// Which branches run is unknown, so each starts from the current
 		// directory and a directory change inside leaves it unknown after.
+		before := *scope.moves
 		for _, list := range clauseStmts(cmd) {
 			inner := *scope
 			scanStmts(list, &inner, out, depth)
 		}
-		if changesDirectory(stmt) {
+		if *scope.moves != before {
 			scope.dir = ""
 		}
 	}
@@ -619,20 +738,6 @@ func clauseStmts(cmd syntax.Command) [][]*syntax.Stmt {
 	return nil
 }
 
-func changesDirectory(node syntax.Node) bool {
-	changes := false
-	syntax.Walk(node, func(n syntax.Node) bool {
-		if call, ok := n.(*syntax.CallExpr); ok && len(call.Args) > 0 {
-			switch call.Args[0].Lit() {
-			case "cd", "pushd", "popd":
-				changes = true
-			}
-		}
-		return !changes
-	})
-	return changes
-}
-
 func scanCall(call *syntax.CallExpr, scope *shellScope, out *[]string, depth int) {
 	envGit := false
 	for _, assign := range call.Assigns {
@@ -656,10 +761,13 @@ func scanCall(call *syntax.CallExpr, scope *shellScope, out *[]string, depth int
 	}
 	switch path.Base(words[0]) {
 	case "cd":
+		*scope.moves++
 		scope.dir = changeDir(scope.dir, words[1:], static[1:], true)
 	case "pushd":
+		*scope.moves++
 		scope.dir = changeDir(scope.dir, words[1:], static[1:], false)
 	case "popd":
+		*scope.moves++
 		scope.dir = ""
 	case "git":
 		if dir, ok := gitWriteDir(words[1:], static[1:], *scope, envGit); ok {

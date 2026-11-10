@@ -15,6 +15,7 @@ import (
 	"github.com/baum-ai/baum/sessions"
 	"github.com/baum-ai/baum/sessions/collector/claudecode"
 	"github.com/baum-ai/baum/sessions/session"
+	"github.com/baum-ai/baum/sessions/traceprocessing"
 )
 
 func TestReflogBranchLogsDoNotLeakAcrossWorktrees(t *testing.T) {
@@ -133,8 +134,11 @@ await tools.exec_command({cmd:"git commit -q -m z", workdir:dir});`
 	if !slices.Equal(dirs, []string{"/a", "/base"}) {
 		t.Fatalf("write dirs = %v", dirs)
 	}
-	object, _ := json.Marshal(map[string]string{"input": source})
-	if got := shellCalls("exec", object, "/base"); !slices.Equal(got, want) {
+	stored := traceprocessing.NormalizeCodexExecInput("exec", input)
+	if !strings.Contains(string(stored), `"command"`) {
+		t.Fatalf("the stored input has no command: %s", stored)
+	}
+	if got := shellCalls("exec", stored, "/base"); !slices.Equal(got, want) {
 		t.Fatalf("object input: %v", got)
 	}
 	plain := shellCalls("exec_command", json.RawMessage(`{"cmd":"git commit -q","workdir":"sub"}`), "/base")
@@ -151,8 +155,7 @@ func TestReflogLinksCodexCodeModeRebaseByQuotedWorkdir(t *testing.T) {
 	r.git(wt, "10:50:00", "rebase", "-q", "main")
 	rebased := r.git(wt, "10:50:00", "rev-parse", "HEAD")
 	source := `text(await tools.exec_command({cmd:"git rebase main; git status --short --branch","workdir":"` + wt + `","sandbox_permissions":"require_escalated"}))`
-	input, _ := json.Marshal(source)
-	s := reflogSession("session-codex", "codex", r.main, call{tool: "exec", input: string(input), start: at("10:49:58"), end: at("10:50:02")})
+	s := reflogSession("session-codex", "codex", r.main, codeModeCall(source, "10:49:58", "10:50:02"))
 	_, links := resolveReflog(t, r, []sessions.Session{s}, r.commits(rebased))
 	assertLinks(t, links, rebased, "session-codex")
 }

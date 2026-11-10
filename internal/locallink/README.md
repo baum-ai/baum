@@ -56,26 +56,44 @@ covers plain commits, amends, cherry-picks and reverts of a removed worktree,
 not its rebase picks (a branch log records only the end of a rebase) and not
 once the branch is deleted. Reflogs expire with Git's gc (90 days by default).
 
-A call is placed by its `workdir` (each command of a Codex code-mode program by
-its own, with no `cd` carried between them; one built at run time is left out),
-else by the nested session's `cwd` attribute and working directory, then the
-top-level session's. The command is parsed as shell: only commands count, never
-quoted text, heredoc bodies or substitutions, and a script that does not parse
-gives no evidence. A `cd` or `pushd` to a literal path moves the directory
-within its scope (a subshell has its own), and `bash -c` scripts are followed.
-A dynamic path, `~` or `cd -` leaves the directory unknown, and so does a
-`cd` inside a conditional or loop. Git redirected by `GIT_DIR`, `--git-dir` or
-`--work-tree` is unplaced unless `-C` names an absolute directory. Directories
-map to the deepest existing linked worktree, else a removed worktree kept in an
-agent's conventional folder inside the main working tree, else the main one.
+A call is placed by its `workdir`, else by the nested session's `cwd` attribute
+and working directory, then the top-level session's. A Codex code-mode program
+is stored as its JavaScript plus the command lines it runs; the resolver reads
+the program itself, so each `exec_command({...})` call is a command with its
+own `workdir` and no `cd` carried between them (string escapes such as `\n` are
+decoded). Only an object passed directly to `exec_command(` counts. A command or
+workdir the program builds at run time (a template, a variable, a shorthand
+`{workdir}`, a spread or computed key) gives no evidence. The command is parsed
+as shell: only commands count, never quoted text, heredoc bodies or
+substitutions, and a script that does not parse gives no evidence. A `cd` or
+`pushd` to a literal path moves the directory within its scope (a subshell has
+its own), and `bash -c` scripts are followed. A dynamic path, `~` or `cd -`
+leaves the directory unknown, and so does a `cd` inside a conditional or loop.
+Git redirected by `GIT_DIR`, `--git-dir` or `--work-tree` is unplaced unless
+`-C` names an absolute directory. A directory inside a nested repository (a
+submodule, or a clone within the working tree: a `.git` entry below the working
+tree's root) is not placed, since its commits are not in this reflog.
+Directories map to the deepest existing linked worktree, else a removed
+worktree kept in an agent's conventional folder inside the main working tree,
+else the main one.
+
+A command that yielded while it ran (Codex `exec_command` with a short
+`yield_time_ms`, whose result reports a process id as `"session_id":N` or
+`session ID N`) can finish during later polls. Its window then extends to the
+last successful `write_stdin` or `wait` call on the same process, following
+polls that still find it running until one finds it finished. Where the result
+does not report the process id (a program that does not print it), the window
+is the call's own.
+
 When several sessions fit, or none, the commit stays unresolved. Merges are
 never reflog evidence. A reflog match outranks a hook observation of the same
 commit, which guesses the session from the process tree; hook observations
 still decide when the reflog has no single Git-writing creator. A background
-command that commits after its tool call returned lies outside every window.
-Entries are read from the newest 8 MiB of each reflog. `ReflogFingerprint`
-hashes the creation entries of the pull request's commits so the evidence and
-feature caches notice a new one and ignore other reflog activity.
+command that commits after its tool call returned, and that no poll covers, lies
+outside every window. Entries are read from the newest 8 MiB of each reflog.
+`ReflogFingerprint` hashes the creation entries of the pull request's commits
+so the evidence and feature caches notice a new one and ignore other reflog
+activity.
 
 Quiet commits followed immediately by `git log` on a new line also supply
 creation evidence when the tool succeeded and its output has no explicit

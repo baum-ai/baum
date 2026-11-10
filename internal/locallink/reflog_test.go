@@ -103,6 +103,8 @@ type call struct {
 	start, end  time.Time
 	// status is the outcome; the zero value is a success.
 	status session.ToolStatus
+	// output is the text of the result.
+	output string
 }
 
 func bash(command, start, end string) call {
@@ -126,7 +128,12 @@ func reflogSession(id, vendor, cwd string, calls ...call) sessions.Session {
 			status = session.StatusOK
 		}
 		g.ToolUses = append(g.ToolUses, session.ToolUse{ID: use, SessionID: id, Name: c.tool, Verb: session.VerbExecute, Input: json.RawMessage(c.input), Status: status, Timestamp: &start})
-		g.ToolResults = append(g.ToolResults, session.ToolResult{ID: use + "-result", ToolUseID: use, SessionID: id, Status: status, Timestamp: &end})
+		result := session.ToolResult{ID: use + "-result", ToolUseID: use, SessionID: id, Status: status, Timestamp: &end}
+		if c.output != "" {
+			output := c.output
+			result.OutputText = &output
+		}
+		g.ToolResults = append(g.ToolResults, result)
 	}
 	return sessions.Session{ID: id, Vendor: vendor, Source: "claude_code", Graph: g}
 }
