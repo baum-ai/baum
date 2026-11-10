@@ -14,6 +14,9 @@ const assert = require('node:assert/strict');
   let fail = false;
   const disconnected = { state: 'disconnected', host: 'github.com', saved: false, override: false };
   let github = disconnected;
+  const accessPage = 'https://github.com/settings/connections/applications/Ov23liFSMjrhof9WQlOi';
+  // An organization that restricts OAuth app access is missing from the token's list.
+  let organizationAccess = { hidden: ['locked-co'], approval_url: accessPage };
   const picked = new Set();
   const localClones = new Map([["acme/found", "/workspace/sample/found"]]);
   let cloning = false;
@@ -33,7 +36,7 @@ const assert = require('node:assert/strict');
       const repo = args.repository;
       switch(args.action) {
         case 'list':
-        case 'retry-list': return {searching:Boolean(args.query), repositories: (args.query ? ['acme/found','acme/clone','acme/folder','new-org/never-contributed'].filter(repository=>args.query.toLowerCase().split(/\s+/).every(term=>repository.includes(term))) : ['acme/found','acme/clone','acme/folder']).map(repository=>({repository,description:'',picked:picked.has(repository),clone:localClones.get(repository)||''}))};
+        case 'retry-list': return {...(organizationAccess ? {organization_access: organizationAccess} : {}), searching:Boolean(args.query), repositories: (args.query ? ['acme/found','acme/clone','acme/folder','new-org/never-contributed'].filter(repository=>args.query.toLowerCase().split(/\s+/).every(term=>repository.includes(term))) : ['acme/found','acme/clone','acme/folder']).map(repository=>({repository,description:'',picked:picked.has(repository),clone:localClones.get(repository)||''}))};
         case 'picked': return [...picked].map(repository=>({repository,settings:{},clones:[]}));
         case 'found': return {running:false,scanned_at:'2026-10-23',repositories:{},attached:[]};
         case 'pick': picked.add(repo); return {};
@@ -124,6 +127,22 @@ const assert = require('node:assert/strict');
   assert.equal(await page.locator('#continue').textContent(), 'Continue →');
   await expect(page.locator('#continue')).toBeDisabled();
   // Repositories share the first step; a found clone is shown, not picked.
+  const restricted = page.locator('.organization-access');
+  await expect(restricted).toHaveText('baum cannot see repositories in 1 of your organizations.');
+  await page.screenshot({ path: `${screenshots}/onboarding-organization-access.png`, fullPage: true });
+  await restricted.getByRole('button', { name: /cannot see repositories/ }).click();
+  await expect(restricted.getByRole('link', { name: 'Request access to locked-co on GitHub' })).toHaveAttribute('href', accessPage);
+  await page.waitForTimeout(300);
+  await page.screenshot({ path: `${screenshots}/onboarding-organization-access-open.png`, fullPage: true });
+  await page.emulateMedia({ colorScheme: 'dark' });
+  // Let the theme's colour transitions finish before the picture.
+  await page.waitForTimeout(300);
+  await page.screenshot({ path: `${screenshots}/onboarding-organization-access-dark.png`, fullPage: true });
+  await page.emulateMedia({ colorScheme: 'light' });
+  organizationAccess = null;
+  await restricted.getByRole('button', { name: 'Check again' }).click();
+  await expect(restricted).toHaveCount(0);
+  assert(calls.some(([c,a])=>c==='repositories'&&a.action==='retry-list'), 'Check again asks the daemon to look again');
   const foundBox = page.getByRole('checkbox',{name:'Pick acme/found',exact:true});
   await expect(foundBox).toBeVisible();
   await expect(foundBox).not.toBeChecked();
@@ -347,6 +366,11 @@ const assert = require('node:assert/strict');
   await expect(page.locator(`${fixHarness} input[value=claude]`)).toBeDisabled();
   await expect(page.locator('#review-model')).toHaveValue('gpt-6-luna');
   await expect(page.locator('#continue')).toBeEnabled();
+  github = { ...disconnected, saved: true, login: 'octocat', error: 'sso_required' };
+  await page.reload();
+  await expect(page.locator('.github-problem')).toContainText('requires GitHub SSO');
+  await expect(page.locator('.github-problem').getByRole('link', { name: /Authorize baum/ })).toHaveAttribute('href', accessPage);
+  await page.screenshot({ path: `${screenshots}/onboarding-github-sso.png` });
   github=disconnected;
   await page.reload();
   await page.waitForSelector('#github-sign-in');

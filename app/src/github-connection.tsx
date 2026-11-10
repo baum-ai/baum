@@ -10,6 +10,7 @@ import {
 import { ExternalLinkIcon, GitHubIcon } from "@baum/viewer/components/icons";
 import type { GitHubConnection } from "./api";
 import {
+  ACCESS_URL,
   DEVICE_URL,
   daemonGitHubAuth,
   messages,
@@ -127,6 +128,14 @@ export function GitHubConnectionSection({ onChanged }: { onChanged?: () => void 
           {connection?.error ? (
             <Alert>
               {messages[connection.error] ?? "GitHub connection needs attention. Try again."}
+              {connection.error === "sso_required" ? (
+                <>
+                  {" "}
+                  <a href={ACCESS_URL} target="_blank" rel="noreferrer" className="underline">
+                    Authorize baum on GitHub ↗
+                  </a>
+                </>
+              ) : null}
             </Alert>
           ) : null}
           {connection && terminal[connection.state] ? (

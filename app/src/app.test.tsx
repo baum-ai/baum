@@ -2650,3 +2650,49 @@ it("warns beside Settings until Codex hooks are trusted and rechecks on focus", 
     "codex features enable hooks",
   );
 });
+it("explains organizations that restrict OAuth app access on Repositories and rechecks after approval", async () => {
+  history.replaceState(null, "", "/s/test-ns/?page=repositories");
+  let hidden = true;
+  const posts: string[] = [];
+  const original = vi.mocked(fetch).getMockImplementation()!;
+  vi.mocked(fetch).mockImplementation((...args) => {
+    const path = String(args[0]);
+    if (path === "/s/test-ns/api/github-auth/retry") {
+      posts.push(path);
+      hidden = false;
+    }
+    return path === "/s/test-ns/api/github-auth" || path === "/s/test-ns/api/github-auth/retry"
+      ? Promise.resolve(
+          Response.json({
+            state: "connected",
+            host: "github.com",
+            saved: true,
+            login: "octocat",
+            override: false,
+            ...(hidden
+              ? {
+                  organization_access: {
+                    hidden: ["locked-co"],
+                    approval_url: "https://github.com/settings/connections/applications/abc",
+                  },
+                }
+              : {}),
+          }),
+        )
+      : original(...args);
+  });
+  await act(async () => root.render(<App />));
+  const note = () => node.querySelector(".organization-access");
+  expect(note()!.textContent).toBe("baum cannot see repositories in 1 of your organizations.");
+  await act(async () =>
+    note()!.querySelector<HTMLButtonElement>(".organization-access-toggle")!.click(),
+  );
+  expect(note()!.querySelector(".organization-access-list a")!.getAttribute("href")).toBe(
+    "https://github.com/settings/connections/applications/abc",
+  );
+  await act(async () =>
+    [...note()!.querySelectorAll("button")].find((b) => b.textContent === "Check again")!.click(),
+  );
+  expect(posts).toHaveLength(1);
+  expect(note()).toBeNull();
+});

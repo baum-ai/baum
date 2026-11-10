@@ -1264,7 +1264,12 @@ export type GitHubConnection = {
   };
   error?: string;
   message?: string;
+  organization_access?: OrganizationAccess;
 };
+
+/** Organizations the person belongs to that the GitHub sign-in cannot reach,
+ *  usually because they restrict OAuth app access until an owner approves baum. */
+export type OrganizationAccess = { hidden: string[]; approval_url: string };
 
 /** What a question is about: a section of the review, a stop of the
  *  walkthrough, or the pull request as a whole. */

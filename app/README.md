@@ -79,6 +79,15 @@ setup bundle. `pnpm test:desktop` exercises setup with mocked IPC; it needs a
 completed `pnpm build`. The proxy suite covers login, CSRF, event streaming and
 React/CSS hot reload for the daemon-served application.
 
+When the daemon reports organizations the sign-in cannot reach
+(`organization_access`, from organizations that restrict OAuth app access), the
+picker in setup step 1 and in Add repositories, and the Repositories page, show
+one collapsed line with how many. Opened, it lists each organization with a
+Request access link to baum's page in GitHub's settings (GitHub has no page per
+organization), where a member requests approval; Check again asks the daemon to
+look again. An SSO failure links to
+the same page. See [GitHub access](../docs/github-access.md).
+
 Generated reviews can show retained inline images from linked native Claude
 Code and Codex sessions, including linked subagent work, alongside images
 uploaded in the PR description. Human-pasted images show “Human-supplied image”

@@ -341,3 +341,78 @@
   font-size: var(--text-xs);
   overflow-wrap: anywhere;
 }
+
+.organization-access {
+  display: grid;
+  gap: 0.5rem;
+  padding: 0.45rem 0.75rem;
+  border-radius: var(--radius-md);
+  background: var(--status-info-bg);
+  color: var(--status-info);
+  font-size: var(--text-base);
+  overflow-wrap: anywhere;
+}
+.organization-access p {
+  margin: 0;
+}
+.organization-access a {
+  color: inherit;
+  text-decoration: underline;
+}
+/* The headline is the disclosure: plain text with a chevron, not a boxed action. */
+.organization-access-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  font-weight: 500;
+  text-align: left;
+  cursor: pointer;
+}
+.organization-access-toggle:hover > span {
+  text-decoration: underline;
+}
+.organization-access-chevron {
+  flex: none;
+  transition: transform 0.15s ease-out;
+}
+.organization-access-toggle[aria-expanded="true"] > .organization-access-chevron {
+  transform: rotate(90deg);
+}
+@media (prefers-reduced-motion: reduce) {
+  .organization-access-chevron {
+    transition: none;
+  }
+}
+.organization-access-body {
+  display: grid;
+  justify-items: start;
+  gap: 0.5rem;
+  padding: 0 0 0.3rem calc(12px + 0.4rem);
+}
+.organization-access-list {
+  display: grid;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.organization-access-list li {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 0.25rem 1rem;
+  padding: 0.3rem 0;
+  border-top: 1px solid color-mix(in srgb, currentColor 18%, transparent);
+}
+.organization-access-list li:last-child {
+  border-bottom: 1px solid color-mix(in srgb, currentColor 18%, transparent);
+}
+.organization-access-name {
+  min-width: 0;
+  font-weight: 500;
+}

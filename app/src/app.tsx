@@ -1480,6 +1480,7 @@ function Workspace({ url }: { url: UrlState }) {
               repositories={picked}
               loading={loading}
               automatic={automatic}
+              github={github}
               entries={snapshot.entries}
               jobs={jobs}
               changed={reload}

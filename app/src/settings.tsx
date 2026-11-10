@@ -51,6 +51,7 @@ import {
 import { MenuButton, useContextMenu, type MenuItem } from "./context-menu";
 import { ListSection } from "./list";
 import { GitHubConnectionSection } from "./github-connection";
+import { OrganizationAccessNotice } from "./organization-access";
 import { messages as githubMessages } from "./github-auth";
 import { CodexHookWarning, type useCodexHookTrust } from "./codex-hooks";
 import { DiagnosticsSection } from "./diagnostics";
@@ -2122,6 +2123,7 @@ export function RepositoriesPage({
   repositories,
   loading = false,
   automatic,
+  github,
   entries = [],
   jobs = [],
   changed,
@@ -2130,6 +2132,7 @@ export function RepositoriesPage({
   /** Whether the first read of the repositories is still running. */
   loading?: boolean;
   automatic: Automatic | null;
+  github?: GitHubConnection | null;
   /** The pull requests the app knows, for each repository's open count and
    *  latest review. */
   entries?: Entry[];
@@ -2198,9 +2201,20 @@ export function RepositoriesPage({
             <Alert>{error}</Alert>
           </div>
         ) : null}
+        {github?.organization_access ? (
+          <div className="local-list-note">
+            <OrganizationAccessNotice
+              access={github.organization_access}
+              recheck={async () => {
+                await request("api/github-auth/retry", {});
+                await changed();
+              }}
+            />
+          </div>
+        ) : null}
         {adding ? (
           <div className="local-list-note local-repo-adding">
-            <RepositoryPicker changed={changed} autoFocus />
+            <RepositoryPicker changed={changed} autoFocus showOrganizations={false} />
           </div>
         ) : null}
         {repositories.length === 0 && loading ? (
