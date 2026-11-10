@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { CircleDashedIcon } from "@baum/viewer/components/icons";
 import { LiveDot } from "@baum/viewer/components/ui";
 import type { LiveSession } from "./api";
@@ -10,6 +10,35 @@ export function useNow(interval = 30_000) {
   const [now, setNow] = useState(() => Date.now());
   useVisibleInterval(() => setNow(Date.now()), interval);
   return now;
+}
+
+const MAX_TIMEOUT = 2 ** 31 - 1;
+
+/** The time, advanced only when one of `deadlines` (epoch ms) passes, so a
+ *  component holding it renders when something is due rather than on a
+ *  steady tick; `atMidnight` adds each local midnight. Nothing runs while no deadline is ahead. */
+export function useDeadlineNow(deadlines: number[], atMidnight = false) {
+  const [now, setNow] = useState(() => Date.now());
+  const ahead = [...deadlines, ...(atMidnight ? [nextMidnight(now)] : [])].filter(
+    (time) => time > now,
+  );
+  const next = ahead.length ? Math.min(...ahead) : null;
+  useEffect(() => {
+    if (next === null) return;
+    const timer = setTimeout(
+      () => setNow(Math.max(Date.now(), next)),
+      Math.min(Math.max(next - Date.now(), 0), MAX_TIMEOUT),
+    );
+    return () => clearTimeout(timer);
+  }, [next]);
+  return now;
+}
+
+/** The next local midnight after `time`. */
+export function nextMidnight(time: number) {
+  const date = new Date(time);
+  date.setHours(24, 0, 0, 0);
+  return date.getTime();
 }
 
 /** A compact inbox marker for a pull request with agent sessions in progress. */

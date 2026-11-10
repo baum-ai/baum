@@ -241,6 +241,21 @@ function useMedia(query: string) {
   return matches;
 }
 /** The hosted PR page's shared viewer, with local sources for its slots. */
+
+type SessionsState = { query: string; version: number; load: SessionsLoad } | null;
+
+/** `next`, unless it holds what `previous` already does: the daemon answers
+ *  the 30-second poll with the same content, and a fresh object would render
+ *  the whole review again. */
+export function sameSessions(previous: SessionsState, next: NonNullable<SessionsState>) {
+  return previous &&
+    previous.query === next.query &&
+    previous.version === next.version &&
+    JSON.stringify(previous.load) === JSON.stringify(next.load)
+    ? previous
+    : next;
+}
+
 export function LocalReview({
   entry,
   clone,
@@ -411,11 +426,7 @@ export function LocalReview({
   const [provenance, setProvenance] = useState<Provenance[]>([]);
   const [versions, setVersions] = useState<number[]>([]);
   const [historyFailed, setHistoryFailed] = useState(false);
-  const [sessions, setSessions] = useState<{
-    query: string;
-    version: number;
-    load: SessionsLoad;
-  } | null>(null);
+  const [sessions, setSessions] = useState<SessionsState>(null);
   // The page's keys: j and k step through the review as the navigator does,
   // and the header's actions have the list's keys.
   const steps = useRef<ReviewSteps>(null);
@@ -706,11 +717,11 @@ export function LocalReview({
               current.answer.available
             )
               return previous;
-            return {
+            return sameSessions(previous, {
               query,
               version: sessionsVersion,
               load: answer ? { state: "answered", answer } : { state: "request-failed" },
-            };
+            });
           });
       } catch {
         if (!abort.signal.aborted)
