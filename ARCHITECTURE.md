@@ -1369,8 +1369,9 @@ documents"). The app fills them in from `GET /api/patch?path=<path>`, answered b
   concurrent requests for it wait for that build, and other documents do not.
   A viewer unused for 10 minutes is closed, as are the least recently used
   ones beyond 16 viewers or 256 MiB of served documents and kept answers
-  (`viewserver.Server.CachedBytes`); the one asked for last stays whatever
-  its size. A viewer evicted while requests hold it answers them and closes
+  (`viewserver.Server.CachedBytes`), checked when a viewer is added and
+  whenever a request releases one, since its answers may have grown; the one
+  asked for last stays whatever its size. A viewer evicted while requests hold it answers them and closes
   when the last one ends.
 - Only a `path` that is the `path` of a hunk in `index.hunks` of that version
   is answered; anything else, including a missing, empty or

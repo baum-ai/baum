@@ -192,6 +192,51 @@ func TestDocumentCacheBoundsBytes(t *testing.T) {
 	release()
 }
 
+// Answers a kept viewer adds count once its request ends: when they take the
+// cache over the byte bound, the least recently used viewer goes, after the
+// request holding it, and the one asked for last stays.
+func TestDocumentCacheBoundsBytesAsAnswersGrow(t *testing.T) {
+	cache, closed := testCache(t)
+	clone := repos.Clone{ID: "one"}
+	first, release, err := cache.get(context.Background(), clone, citing(1), "rev-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	release()
+	second, release, err := cache.get(context.Background(), clone, citing(2), "rev-2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	release()
+	cache.mu.Lock()
+	cache.maxBytes = first.CachedBytes() + second.CachedBytes() + 10
+	cache.mu.Unlock()
+	// A request holds the first viewer; then the second is asked for, by its
+	// revision as a request after the first one is, and answers a patch.
+	_, releaseFirst, ok, err := cache.cached(context.Background(), "rev-1")
+	if !ok || err != nil {
+		t.Fatal(ok, err)
+	}
+	_, releaseSecond, ok, err := cache.cached(context.Background(), "rev-2")
+	if !ok || err != nil {
+		t.Fatal(ok, err)
+	}
+	if !answers(t, second) {
+		t.Fatal("viewer does not answer")
+	}
+	releaseSecond()
+	if entries, revisions := cache.kept(); entries != 1 || revisions != 1 || closed.has(second) {
+		t.Fatal("byte bound after answers grew", entries, revisions)
+	}
+	if closed.has(first) || !answers(t, first) {
+		t.Fatal("evicted viewer closed under its request")
+	}
+	releaseFirst()
+	if !closed.has(first) || closed.has(second) {
+		t.Fatal("evicted viewer not closed once released")
+	}
+}
+
 // A request that gives up waiting for a build lets go of the viewer.
 func TestDocumentCacheWaitHonoursContext(t *testing.T) {
 	cache, _ := testCache(t)

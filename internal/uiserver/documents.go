@@ -198,10 +198,23 @@ func (c *documentCache) release(entry *cachedDocument) {
 	if entry.evicted {
 		shut = c.shutdown(entry, shut)
 	} else {
-		c.schedule()
+		// The request may have added answers to the viewer, so the bounds
+		// are checked again, sparing the viewer asked for last.
+		shut = c.evict(c.recent())
 	}
 	c.mu.Unlock()
 	c.closeAll(shut)
+}
+
+// recent is the kept viewer asked for last; the caller holds c.mu.
+func (c *documentCache) recent() *cachedDocument {
+	var last *cachedDocument
+	for _, entry := range c.entries {
+		if last == nil || entry.used > last.used {
+			last = entry
+		}
+	}
+	return last
 }
 
 // evict drops idle viewers, then the least recently used ones over the count
