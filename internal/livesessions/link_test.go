@@ -24,12 +24,63 @@ func (r registry) List(context.Context) ([]repos.Clone, error) { return r.clones
 type cache struct {
 	prs          []discovery.PullRequest
 	observations []discovery.Observation
-	calls        int
+	// next is the snapshot's NextPoll.
+	next  time.Time
+	calls int
 }
 
 func (c *cache) Cached(_ context.Context, repo github.Repository) (discovery.Snapshot, error) {
 	c.calls++
-	return discovery.Snapshot{Repository: repo.String(), PullRequests: c.prs, Observations: c.observations}, nil
+	return discovery.Snapshot{Repository: repo.String(), PullRequests: c.prs, Observations: c.observations, NextPoll: c.next}, nil
+}
+
+// revisedCache is a cache that stamps its writes, as discovery does.
+type revisedCache struct {
+	cache
+	writes    uint64
+	revisions int
+}
+
+func (c *revisedCache) Revision(context.Context, github.Repository) (discovery.Revision, error) {
+	c.revisions++
+	return discovery.Revision{Writes: c.writes}, nil
+}
+
+// write changes the cached pull requests as a poll does.
+func (c *revisedCache) write(prs ...discovery.PullRequest) {
+	c.prs = prs
+	c.writes++
+}
+
+// The resolver reads a cache again only once discovery wrote it, and calls it
+// stale, as Cached would, once its next poll is due though nothing wrote it.
+func TestResolverReadsTheCacheOnlyAfterAWrite(t *testing.T) {
+	c := &clock{t0}
+	cached := &revisedCache{cache: cache{prs: []discovery.PullRequest{{Number: 7, HeadRef: "feature"}}, next: t0.Add(time.Minute)}}
+	r := &Resolver{Discovery: cached, Now: c.Now}
+	ctx := context.Background()
+	work := prlink.Work{Repository: "acme/demo", Branch: "feature"}
+	first, ok := r.Generation(ctx, "acme/demo")
+	for range 3 {
+		if link, _ := r.resolve(ctx, "acme/demo", work); link.PR != 7 || link.Status != "resolved" {
+			t.Fatalf("link %+v", link)
+		}
+	}
+	if again, _ := r.Generation(ctx, "acme/demo"); !ok || again != first || cached.calls != 1 {
+		t.Fatalf("generation %+v then %+v, %d reads", first, again, cached.calls)
+	}
+	cached.write(discovery.PullRequest{Number: 8, HeadRef: "feature"})
+	if link, _ := r.resolve(ctx, "acme/demo", work); link.PR != 8 || cached.calls != 2 {
+		t.Fatalf("after a write: %+v, %d reads", link, cached.calls)
+	}
+	written, _ := r.Generation(ctx, "acme/demo")
+	c.advance(time.Minute)
+	if link, _ := r.resolve(ctx, "acme/demo", work); link.PR != 8 || link.Status != "stale" || cached.calls != 2 {
+		t.Fatalf("once the poll is due: %+v, %d reads", link, cached.calls)
+	}
+	if due, _ := r.Generation(ctx, "acme/demo"); due == written {
+		t.Fatal("a due poll kept the generation")
+	}
 }
 
 func git(t *testing.T, dir string, args ...string) {
