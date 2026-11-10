@@ -108,6 +108,33 @@ func TestHookTrustCacheKeepsOnlyHealthyAnswers(t *testing.T) {
 	}
 }
 
+func TestHookTrustCacheFailedRefreshDropsHealthyEntry(t *testing.T) {
+	for _, bad := range []string{"unknown", "untrusted"} {
+		state, calls := "trusted", 0
+		c, _ := newTestHookTrust(&state, &calls)
+		c.Get(false)
+		state = bad
+		if got := c.Get(true); got.State != bad || calls != 2 {
+			t.Fatalf("%s refresh: %v calls=%d", bad, got, calls)
+		}
+		if got := c.Get(false); got.State != bad || calls != 3 {
+			t.Fatalf("%s: old healthy answer served: %v calls=%d", bad, got, calls)
+		}
+	}
+}
+
+func TestHookTrustCacheOlderReadCannotOverwriteNewer(t *testing.T) {
+	state, calls := "untrusted", 0
+	c, _ := newTestHookTrust(&state, &calls)
+	older, newer := c.begin(), c.begin()
+	c.finish(newer, agentplugins.HookTrust{State: "untrusted"})
+	c.finish(older, agentplugins.HookTrust{State: "trusted"})
+	state = "untrusted"
+	if got := c.Get(false); got.State != "untrusted" || calls != 1 {
+		t.Fatalf("older healthy read was stored: %v calls=%d", got, calls)
+	}
+}
+
 func TestHookTrustCacheSharesConcurrentReads(t *testing.T) {
 	started, release := make(chan struct{}), make(chan struct{})
 	var mu sync.Mutex
