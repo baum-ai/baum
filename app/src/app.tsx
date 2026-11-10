@@ -38,11 +38,13 @@ import {
   freeName,
   unusedInboxColor,
   withQuery,
-  matches,
+  countOf,
+  parseHeld,
   MAX_INBOXES,
   newInboxId,
   readInboxes,
   useInboxes,
+  type Held,
   type Inbox as SavedInbox,
 } from "./inboxes";
 import { queueItems, UpNextPage, useUpNext } from "./up-next";
@@ -410,6 +412,9 @@ function Workspace({ url }: { url: UrlState }) {
   // Why the groups could not be read, so a group is not called missing then.
   const [groupsError, setGroupsError] = useState("");
   const inboxes = useInboxes();
+  // Which saved inboxes hold each pull request, as the daemon matched them;
+  // null for an older daemon, whose inboxes the page matches itself.
+  const [held, setHeld] = useState<Held | null>(null);
   const [draftInboxSource, setDraftInboxSource] = useState<string | null>(null);
   const draftSourceFilter = usePageFilter(`inbox:${draftInboxSource ?? ""}`);
   // An inbox started from a template, not saved until its edit page's Save.
@@ -476,6 +481,7 @@ function Workspace({ url }: { url: UrlState }) {
             found,
             groupList,
             inboxList,
+            inboxQueue,
           ] = await Promise.all([
             get<Clone[]>("api/repos"),
             get<Snapshot>("api/index?history=1"),
@@ -497,6 +503,9 @@ function Workspace({ url }: { url: UrlState }) {
             }),
             // An older daemon (404) has no inboxes; another failure is reported.
             readInboxes(signal),
+            // An older daemon (404, or `available: false`) leaves the
+            // matching to the page, as does a failed read.
+            get<unknown>("api/inbox").then(parseHeld, () => null),
           ]);
           if (signal.aborted) return;
           setClones(repos);
@@ -516,6 +525,7 @@ function Workspace({ url }: { url: UrlState }) {
           if (!groupsFailure) setGroups(parseGroups(groupList));
           setGroupsError(groupsFailure);
           inboxes.read(inboxList);
+          setHeld(inboxQueue);
           setRates(discovery);
           setBackground(Array.isArray(sync) ? sync : []);
           setAutomatic(auto && Array.isArray(auto.repositories) ? (auto as Automatic) : null);
@@ -1244,6 +1254,7 @@ function Workspace({ url }: { url: UrlState }) {
   const inboxPageProps = {
     inboxes: inboxes.inboxes,
     items: queueItems(inbox),
+    held,
     login: github?.login,
     repositories,
     entries: indexedEntries,
@@ -1369,7 +1380,7 @@ function Workspace({ url }: { url: UrlState }) {
                 counts: Object.fromEntries(
                   inboxes.inboxes.map((candidate) => [
                     candidate.id,
-                    inboxPageProps.items.filter((item) => matches(candidate, item)).length,
+                    countOf(candidate, inboxPageProps.items, held),
                   ]),
                 ),
                 selected: selectedInbox?.id ?? null,
@@ -1764,6 +1775,7 @@ function Workspace({ url }: { url: UrlState }) {
               inbox={inbox}
               jobs={jobs}
               inboxes={inboxes.inboxes}
+              held={held}
               selected={queueInbox}
               onEdit={() => navigate(editInboxHref(queueInbox.id))}
               // Until a read succeeds there is nothing to say an empty inbox about.

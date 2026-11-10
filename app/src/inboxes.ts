@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { LocalRequestError, request, type Entry } from "./api";
 import type { QueueKind } from "./up-next";
 import { andQuery, matchesQuery, parseQuery, queryProblem, quote } from "./pr-filter";
@@ -22,7 +22,7 @@ export const COLOR_NAMES: Record<InboxColor, string> = {
 export type InboxWhat = "any" | "review" | "merge" | "agent" | "mine";
 
 /** A saved filter over the queue, as the daemon stores it (see its
- *  `internal/inboxes` README). Matching lives here, not in the daemon. */
+ *  `internal/inboxes` README). The daemon also matches it (`Held`). */
 export type Inbox = {
   id: string;
   name: string;
@@ -160,13 +160,117 @@ export function withQuery(inbox: Inbox, query: string): Inbox {
   };
 }
 
-export function matches(inbox: Inbox, { kind, entry }: Matchable): boolean {
-  return matchesQuery(foldedQuery(inbox), entry, kind);
+/** What the daemon answered about which pull requests queries hold
+ *  (`GET api/inbox`, see its `internal/inboxqueue` README): each pull
+ *  request's kind as it matched it, by key, and the keys each query holds.
+ *  The daemon matches, so the page does not run every inbox's query over
+ *  every pull request. */
+export type Held = {
+  kinds: ReadonlyMap<string, string>;
+  byQuery: ReadonlyMap<string, ReadonlySet<string>>;
+};
+
+/** The daemon's queue as `GET api/inbox` answers it: null for an older
+ *  daemon or an answer that does not read, and no queries when it could not
+ *  read the saved inboxes. */
+export function parseHeld(body: unknown): Held | null {
+  const value = body as { items?: unknown; inboxes?: unknown } | null;
+  if (!value || typeof value !== "object" || !Array.isArray(value.items)) return null;
+  const kinds = new Map<string, string>();
+  const ids = new Map<string, Set<string>>();
+  for (const raw of value.items) {
+    const item = raw as { key?: unknown; kind?: unknown; inboxes?: unknown } | null;
+    if (!item || !isString(item.key) || !isString(item.kind)) continue;
+    kinds.set(item.key, item.kind);
+    for (const id of strings(item.inboxes)) {
+      let keys = ids.get(id);
+      if (!keys) ids.set(id, (keys = new Set()));
+      keys.add(item.key);
+    }
+  }
+  const byQuery = new Map<string, Set<string>>();
+  for (const raw of Array.isArray(value.inboxes) ? value.inboxes : []) {
+    const inbox = raw as { id?: unknown; query?: unknown } | null;
+    if (inbox && isString(inbox.id) && isString(inbox.query))
+      byQuery.set(inbox.query, ids.get(inbox.id) ?? new Set());
+  }
+  return { kinds, byQuery };
+}
+
+/** Whether `query` holds the item. The daemon's answer decides when it has
+ *  one for the query and matched the pull request as the same kind; else
+ *  (an older daemon, a query not saved or not asked yet, a read in between)
+ *  the page matches it itself. */
+export function holds(held: Held | null | undefined, query: string, item: Matchable): boolean {
+  const keys = held?.byQuery.get(query);
+  const pr = item.entry.pull_request;
+  // As `upNextKey` and the daemon name it.
+  const key = `${pr.repository.toLowerCase()}#${pr.number}`;
+  if (keys && held!.kinds.get(key) === (item.kind ?? "")) return keys.has(key);
+  return matchesQuery(query, item.entry, item.kind);
+}
+
+/** `held` with the daemon's answers for queries not saved, as `useHeld`
+ *  read them. */
+function withAnswers(held: Held, answers: ReadonlyMap<string, ReadonlySet<string>>): Held {
+  if (answers.size === 0) return held;
+  return { kinds: held.kinds, byQuery: new Map([...answers, ...held.byQuery]) };
+}
+
+/** `held`, with the daemon also asked which pull requests each of `queries`
+ *  holds, for those it has no answer for: a filter being typed, or an inbox
+ *  not saved yet. Each is asked a moment after it last changed, and again
+ *  whenever `held` is read again; until it answers the page matches. */
+export function useHeld(held: Held | null, queries: readonly string[]): Held | null {
+  const [answers, setAnswers] = useState<{
+    from: Held | null;
+    byQuery: Map<string, ReadonlySet<string>>;
+  }>({ from: null, byQuery: new Map() });
+  const wanted = [...new Set(queries)].filter((query) => held && !held.byQuery.has(query));
+  const signature = wanted.join("\n");
+  useEffect(() => {
+    if (!held || wanted.length === 0) return;
+    const abort = new AbortController();
+    const timer = setTimeout(() => {
+      void Promise.all(
+        wanted.map((query) =>
+          request<unknown>(
+            `api/inbox?query=${encodeURIComponent(query)}`,
+            undefined,
+            "GET",
+            abort.signal,
+          )
+            .then((body) => {
+              const matches = (body as { matches?: unknown } | null)?.matches;
+              return Array.isArray(matches) ? ([query, new Set(strings(matches))] as const) : null;
+            })
+            .catch(() => null),
+        ),
+      ).then((read) => {
+        if (abort.signal.aborted) return;
+        setAnswers({
+          from: held,
+          byQuery: new Map(read.flatMap((one) => (one ? [one] : []))),
+        });
+      });
+    }, 150);
+    return () => {
+      abort.abort();
+      clearTimeout(timer);
+    };
+  }, [held, signature]);
+  if (!held) return null;
+  // Answers about an older read of the queue no longer hold.
+  return answers.from === held ? withAnswers(held, answers.byQuery) : held;
+}
+
+export function matches(inbox: Inbox, item: Matchable, held?: Held | null): boolean {
+  return holds(held, foldedQuery(inbox), item);
 }
 
 /** Every inbox the item is in, in the sidebar's order. */
-export function inboxesOf(item: Matchable, inboxes: Inbox[]): Inbox[] {
-  return inboxes.filter((inbox) => matches(inbox, item));
+export function inboxesOf(item: Matchable, inboxes: Inbox[], held?: Held | null): Inbox[] {
+  return inboxes.filter((inbox) => matches(inbox, item, held));
 }
 
 const WHAT_WORDS: Record<InboxWhat, string> = {
@@ -339,8 +443,8 @@ export function fromTemplate(template: Template, inboxes: Inbox[], id = newInbox
 }
 
 /** How many of `items` the inbox holds. */
-export function countOf(inbox: Inbox, items: Matchable[]): number {
-  return items.filter((item) => matches(inbox, item)).length;
+export function countOf(inbox: Inbox, items: Matchable[], held?: Held | null): number {
+  return items.filter((item) => matches(inbox, item, held)).length;
 }
 
 type SaverIO = {

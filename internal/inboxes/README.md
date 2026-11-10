@@ -2,9 +2,10 @@
 
 An inbox is a saved filter over the desktop app's Up next queue. People define
 inboxes and the app lists them under Inbox in the sidebar, each showing the
-queue entries that match. **Matching lives in the app**; this package only
-stores the definitions in the daemon and serves them at `/api/inboxes`, so
-they follow the person across app restarts. Per-inbox notifications are a
+queue entries that match. This package only stores the definitions in the
+daemon and serves them at `/api/inboxes`, so they follow the person across
+app restarts; [`internal/inboxqueue`](../inboxqueue/README.md) matches them
+against the queue for the app (`/api/inbox`). Per-inbox notifications are a
 later step.
 
 ## An inbox
