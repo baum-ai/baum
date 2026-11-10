@@ -4,13 +4,13 @@ import {
   type CSSProperties,
   type ReactNode,
   type RefObject,
-  useCallback,
   useEffect,
   useMemo,
   useRef,
   useState,
 } from "react";
 
+import { firstByPath } from "../hunk-index";
 import { useUrlState } from "../navigation";
 import {
   checkStatus,
@@ -1158,11 +1158,7 @@ function ReviewWorkspace<F extends ReviewFile>({
   const sectionIndex = viewedId
     ? visibleSections.findIndex((section) => section.id === viewedId)
     : -1;
-  const findFile = useCallback(
-    (path: string) =>
-      fileList?.find((candidate) => candidate.path === path || candidate.old_path === path),
-    [fileList],
-  );
+  const findFile = useMemo(() => (fileList ? firstByPath(fileList) : () => undefined), [fileList]);
   const revealLine = (path: string, side: "LEFT" | "RIGHT", line: number) => {
     const file = findFile(path);
     if (!file) return;
