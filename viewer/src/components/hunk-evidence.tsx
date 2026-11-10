@@ -180,8 +180,9 @@ export function HunkEvidence({
     });
   }
   const disclosureKey = `${documentKey}:${historicalVersion ?? "current"}:${[...seen].join(",")}`;
+  const opened = openKey === disclosureKey;
   const wanted = new Map(
-    openKey === disclosureKey
+    opened
       ? selected.flatMap((item) =>
           item.patch && !item.patch.state ? [[item.patch.key, item.patch] as const] : [],
         )
@@ -335,12 +336,10 @@ export function HunkEvidence({
           Historical evidence from review v{historicalVersion}
         </p>
       ) : null}
-      <CodeDiff
-        files={files}
-        bare
-        highlight={openKey === disclosureKey}
-        className={diffClassName}
-      />
+      {/* Drawn from the first opening on, and kept after the reader closes
+       *  it, so a long section does not hold a hidden table for every
+       *  excerpt. Any way of opening the disclosure fires toggle. */}
+      {opened ? <CodeDiff files={files} bare highlight className={diffClassName} /> : null}
       {unavailable.length > 0 ? (
         <ul className="mt-3 space-y-1.5 text-base text-(--text-tertiary)">
           {unavailable.map(({ anchor, hunk, patch }) => (

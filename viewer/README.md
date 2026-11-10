@@ -766,6 +766,10 @@ page's own origin:
   again retries. The summary shows excerpt and file counts immediately; line
   additions/deletions appear only when every cited excerpt is available, so
   missing patch data never appears as zero changes.
+  The excerpts' diff is drawn from the first time the evidence is opened and
+  stays mounted after it is closed, so a section citing many hunks holds no
+  hidden code rows until a reader opens one; browser find does not match code
+  in evidence that was never opened.
 
 The app follows the system colour scheme, keeps the reader's place in the
 URL's search parameters, and has no file picker, no upload and no requests to
