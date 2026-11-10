@@ -17,11 +17,12 @@ import (
 	"sync"
 	"time"
 
+	"golang.org/x/sync/singleflight"
+
 	"github.com/baum-ai/baum/internal/appdb"
 	"github.com/baum-ai/baum/internal/config"
 	"github.com/baum-ai/baum/internal/github"
 	"github.com/baum-ai/baum/internal/gitlocal"
-	"golang.org/x/sync/singleflight"
 )
 
 // ErrNotFound reports a clone or picked repository the registry does not hold.
