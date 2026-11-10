@@ -3,6 +3,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import type { ComponentType } from "react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import type * as Markdown from "@baum/viewer/components/markdown";
 import type { ViewerLinkProps } from "@baum/viewer/navigation";
 import { App } from "./app";
 import {
@@ -20,6 +21,20 @@ import { SettingsPage } from "./settings";
 import { forgetLastRows } from "./shortcuts";
 
 vi.mock("@baum/viewer/components/review-viewer", () => ({ ReviewViewer: () => null }));
+
+// Counts how often a card renders its agent's words, which it does each time
+// the card body renders.
+const markdownRenders = vi.hoisted(() => ({ count: 0 }));
+vi.mock("@baum/viewer/components/markdown", async (importOriginal) => {
+  const actual = await importOriginal<typeof Markdown>();
+  return {
+    ...actual,
+    InlineMarkdown: (props: Parameters<typeof actual.InlineMarkdown>[0]) => {
+      markdownRenders.count++;
+      return actual.InlineMarkdown(props);
+    },
+  };
+});
 
 const Link: ComponentType<ViewerLinkProps> = ({ href, children, ...rest }) => (
   <a href={href} {...rest}>
@@ -1367,3 +1382,51 @@ for (const [state, label] of [
     expect(pill.querySelector(".rounded-full")).not.toBeNull();
   });
 }
+
+it("ticks a card's elapsed time each second without rendering the card again", async () => {
+  vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "Date"] });
+  try {
+    const running = session({
+      started_at: ago(7),
+      activity: { steps: [], last_message: "Running the **session** tests." },
+    });
+    await render([running]);
+    const card = node.querySelector('[aria-label="Running now"] li')!;
+    const time = card.querySelector(".local-feed-time")!;
+    expect(time.textContent).toBe("7s");
+    const renders = markdownRenders.count;
+    expect(renders).toBeGreaterThan(0);
+
+    await act(async () => {
+      vi.advanceTimersByTime(3000);
+    });
+    expect(time.textContent).toBe("10s");
+    expect(node.querySelector('[aria-label="Running now"] li')).toBe(card);
+    expect(markdownRenders.count).toBe(renders);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("keeps counting a waiting card's wait without rendering the card again", async () => {
+  vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "Date"] });
+  try {
+    const waiting = session({
+      state: "idle",
+      waiting_reason: "turn_finished",
+      waiting_since: ago(30),
+      activity: { steps: [], last_message: "All done." },
+    });
+    await render([waiting]);
+    const status = node.querySelector(".local-feed-status")!;
+    expect(status.textContent).toBe("waiting 30s");
+    const renders = markdownRenders.count;
+    await act(async () => {
+      vi.advanceTimersByTime(35_000);
+    });
+    expect(status.textContent).toBe("waiting 1m 05s");
+    expect(markdownRenders.count).toBe(renders);
+  } finally {
+    vi.useRealTimers();
+  }
+});
