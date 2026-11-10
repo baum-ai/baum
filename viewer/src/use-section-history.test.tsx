@@ -94,6 +94,51 @@ describe("section history", () => {
     expect(load).toHaveBeenCalledTimes(2);
   });
 
+  it("retries only the failed versions on the next refetch of the same version", async () => {
+    const review = current();
+    const risk = review.sections.flatMap((section) => section.risks)[0]!;
+    risk.state = "mitigated";
+    risk.mitigated_version = 3;
+    let offline = true;
+    const load = vi.fn<LoadReviewVersion>(async (version) =>
+      version === 1 && offline
+        ? { status: "failed" }
+        : {
+            status: "ready",
+            document: { ...structuredClone(review), review: { ...review.review, version } },
+          },
+    );
+    let result: ReturnType<typeof useSectionHistory> = null;
+    root = createRoot(globalThis.document.createElement("div"));
+    const show = (document: ReviewDocument) =>
+      act(async () => {
+        root!.render(
+          <Probe
+            document={document}
+            versions={[4, 3, 2, 1]}
+            load={load}
+            shown={null}
+            onResult={(value) => {
+              result = value;
+            }}
+          />,
+        );
+      });
+    await show(review);
+    expect(load.mock.calls.map(([version]) => version).toSorted()).toEqual([1, 2]);
+    // Without a refetch nothing is asked again.
+    await show(review);
+    expect(load).toHaveBeenCalledTimes(2);
+    const incomplete = result as { active: Map<string, number[]> } | null;
+    offline = false;
+    await show(structuredClone(review));
+    expect(load.mock.calls.map(([version]) => version).toSorted()).toEqual([1, 1, 2]);
+    const complete = result as { active: Map<string, number[]> } | null;
+    expect(complete).not.toBe(incomplete);
+    await show(structuredClone(review));
+    expect(load).toHaveBeenCalledTimes(3);
+  });
+
   it("reads again when a new version is published", async () => {
     const review = current();
     const risk = review.sections.flatMap((section) => section.risks)[0]!;
