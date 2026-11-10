@@ -89,7 +89,7 @@ type PullRequest struct {
 	// unknown, as in snapshots cached before it existed.
 	ReviewRequired   *bool `json:"review_required"`
 	Unresolved       *int  `json:"unresolved"`
-	UnresolvedCapped bool `json:"unresolved_capped"`
+	UnresolvedCapped bool  `json:"unresolved_capped"`
 	// UpdatedAt is GitHub's last update of the pull request: a push, an edit,
 	// a review or a comment. The background refresh re-reads a saved review's
 	// evidence when it is newer than the last read.
