@@ -35,6 +35,41 @@ var (
 	shortcutReferenceLink = regexp.MustCompile(`\[([^\]]+)\]`)
 	markdownPattern       = regexp.MustCompile(`[*_~]+`)
 	spacePattern          = regexp.MustCompile(`\s+`)
+
+	cursorAutomationID     = regexp.MustCompile(`\bcursorautomationid\b`)
+	devinReviewComment     = regexp.MustCompile(`\bdevin-?review-?comment\b`)
+	codexReviewSummary     = regexp.MustCompile(`\bcodex-?pull-?request-?review-?summary\b`)
+	genericGeneratedBy     = regexp.MustCompile(`(?i)\bgenerated\s+by\s+[[:alnum:]]\S*`)
+	genericAutomatedReview = regexp.MustCompile(`(?i)\bautomated\s+review\s+run\s+by\s+[[:alnum:]]\S*`)
+
+	// disclosureProviders are the named providers, in the order they are
+	// tried, each with its disclosure phrases.
+	disclosureProviders = func() []struct {
+		name        string
+		disclosures []*regexp.Regexp
+	} {
+		var out []struct {
+			name        string
+			disclosures []*regexp.Regexp
+		}
+		for _, provider := range []struct{ name, pattern string }{
+			{"Claude", `claude(?:\s+code)?`},
+			{"Codex", `codex`},
+			{"Copilot", `(?:github\s+)?copilot(?:\s+coding\s+agent)?`},
+			{"Cursor", `cursor(?:\s+bugbot)?`},
+			{"Devin", `devin`},
+		} {
+			out = append(out, struct {
+				name        string
+				disclosures []*regexp.Regexp
+			}{provider.name, []*regexp.Regexp{
+				regexp.MustCompile(`(?i)\bgenerated\s+(?:by|with)\s+` + provider.pattern + `\b`),
+				regexp.MustCompile(`(?i)\b(?:authored|written|reviewed)\s+by\s+` + provider.pattern + `\b`),
+				regexp.MustCompile(`(?i)\bautomated\s+review\s+run\s+by\s+` + provider.pattern + `\s+on\s+.+?\s+behalf\b`),
+			}})
+		}
+		return out
+	}()
 )
 
 // ExplicitAutomationProvider reports the disclosed automation provider named
@@ -45,36 +80,21 @@ func ExplicitAutomationProvider(body string) (provider string, ok bool) {
 	text := searchableReviewText(body)
 	lower := strings.ToLower(text)
 	switch {
-	case regexp.MustCompile(`\bcursorautomationid\b`).MatchString(lower):
+	case cursorAutomationID.MatchString(lower):
 		return "Cursor", true
-	case regexp.MustCompile(`\bdevin-?review-?comment\b`).MatchString(lower):
+	case devinReviewComment.MatchString(lower):
 		return "Devin", true
-	case regexp.MustCompile(`\bcodex-?pull-?request-?review-?summary\b`).MatchString(lower):
+	case codexReviewSummary.MatchString(lower):
 		return "Codex", true
 	}
-	for _, provider := range []struct {
-		name    string
-		pattern string
-	}{
-		{"Claude", `claude(?:\s+code)?`},
-		{"Codex", `codex`},
-		{"Copilot", `(?:github\s+)?copilot(?:\s+coding\s+agent)?`},
-		{"Cursor", `cursor(?:\s+bugbot)?`},
-		{"Devin", `devin`},
-	} {
-		disclosures := []*regexp.Regexp{
-			regexp.MustCompile(`(?i)\bgenerated\s+(?:by|with)\s+` + provider.pattern + `\b`),
-			regexp.MustCompile(`(?i)\b(?:authored|written|reviewed)\s+by\s+` + provider.pattern + `\b`),
-			regexp.MustCompile(`(?i)\bautomated\s+review\s+run\s+by\s+` + provider.pattern + `\s+on\s+.+?\s+behalf\b`),
-		}
-		for _, disclosure := range disclosures {
+	for _, provider := range disclosureProviders {
+		for _, disclosure := range provider.disclosures {
 			if disclosure.MatchString(text) {
 				return provider.name, true
 			}
 		}
 	}
-	if regexp.MustCompile(`(?i)\bgenerated\s+by\s+[[:alnum:]]\S*`).MatchString(text) ||
-		regexp.MustCompile(`(?i)\bautomated\s+review\s+run\s+by\s+[[:alnum:]]\S*`).MatchString(text) {
+	if genericGeneratedBy.MatchString(text) || genericAutomatedReview.MatchString(text) {
 		return "", true
 	}
 	return "", false
