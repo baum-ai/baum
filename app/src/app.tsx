@@ -2,7 +2,7 @@ import { SavedStateNotice } from "./ui-state";
 import { PreferencesProvider } from "./preferences";
 import { formatCount } from "@baum/viewer/components/format";
 import { UsageDetails } from "./usage";
-import { useJobHistory, useOpenJob, usePullRequestJobs } from "./job-history";
+import { applyJobUsage, useJobHistory, useOpenJob, usePullRequestJobs } from "./job-history";
 import { JobTiming, jobOrigin, jobTarget, jobType } from "./job-info";
 import {
   useCallback,
@@ -328,6 +328,8 @@ function Workspace({ url }: { url: UrlState }) {
   const seenAttachments = useRef<Set<string> | null>(null);
   const [snapshot, setSnapshot] = useState<Snapshot>({ entries: [], problems: [] });
   const [jobs, setJobs] = useState<Job[]>([]);
+  // The jobs last set, which a `job` event's usage applies to.
+  const jobsNow = useRef<Job[]>([]);
   const [background, setBackground] = useState<
     { repository: string; error?: string; next_refresh: string }[]
   >([]);
@@ -523,7 +525,8 @@ function Workspace({ url }: { url: UrlState }) {
             seenAttachments.current = new Set(keys);
           }
           setSnapshot(index);
-          setJobs(jobList.jobs ?? []);
+          jobsNow.current = jobList.jobs ?? [];
+          setJobs(jobsNow.current);
           // A failed read keeps the groups shown.
           if (!groupsFailure) setGroups(parseGroups(groupList));
           setGroupsError(groupsFailure);
@@ -574,6 +577,16 @@ function Workspace({ url }: { url: UrlState }) {
     source.addEventListener("reset", refreshLive);
     source.addEventListener("index", refresh);
     source.addEventListener("progress", refresh);
+    // A running job's usage changes that job alone, unless it shows a change
+    // missed meanwhile.
+    source.addEventListener("job", (event) => {
+      const next = applyJobUsage(jobsNow.current, (event as MessageEvent).data);
+      if (next === null) void reload();
+      else if (next !== jobsNow.current) {
+        jobsNow.current = next;
+        setJobs(next);
+      }
+    });
     source.addEventListener("automatic", refresh);
     source.addEventListener("reset", refresh);
     const refreshTimeline = () => setTimelineTick((n) => n + 1);
@@ -1156,7 +1169,7 @@ function Workspace({ url }: { url: UrlState }) {
   // The current jobs rarely hold an older job: the daemon finds it.
   const openedJob = useOpenJob(openJob, jobs, revision);
   // The pull request page's own jobs: its fixes and questions, all of them.
-  const pullRequestJobs = usePullRequestJobs(selectedEntry, revision);
+  const pullRequestJobs = usePullRequestJobs(selectedEntry, revision, jobs);
   // The shortcuts sheet lists the keys of where it was opened first.
   const shortcutsPlace: ShortcutsPlace = onList
     ? "pulls"

@@ -873,7 +873,8 @@ fn apply(
 
 /// Event kinds after which the tray's numbers may have changed: job state
 /// (running, queued, failures), the pause switch, sessions waiting on the
-/// user, the waiting pull request count, and a missed replay window.
+/// user, the waiting pull request count, and a missed replay window. A `job`
+/// event, a running job's usage, changes none of them.
 fn wakes_poll(kind: &str) -> bool {
     matches!(kind, "progress" | "automatic" | "live" | "index" | "reset")
 }
@@ -1113,7 +1114,7 @@ mod tests {
         for kind in ["progress", "automatic", "live", "index", "reset"] {
             assert!(wakes_poll(kind), "{kind}");
         }
-        for kind in ["chat", "timeline", "decisions", "notice", ""] {
+        for kind in ["job", "chat", "timeline", "decisions", "notice", ""] {
             assert!(!wakes_poll(kind), "{kind}");
         }
     }

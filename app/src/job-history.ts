@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   LocalRequestError,
   readJob,
@@ -123,13 +123,58 @@ export function useJobHistory(revision: number, enabled: boolean): JobHistory {
   };
 }
 
+/** Whether job `a` was changed before `b`, as far as their times tell. */
+const older = (a: { updated_at?: string }, b: { updated_at?: string }) =>
+  Date.parse(a.updated_at ?? "") < Date.parse(b.updated_at ?? "");
+
+/**
+ * The current jobs with the usage a `job` event carries (`{"job": {id, state,
+ * phase, calls, tokens, repairs, actual_cost_usd, cost_reason, accounting,
+ * updated_at}}`) applied to its job. Null when the event cannot be applied
+ * and everything has to be read again: it names no job, one the list lacks,
+ * or one whose state or phase differs from the list's, which a missed change
+ * explains. Usage older than the list's copy leaves the list as it is.
+ */
+export function applyJobUsage(jobs: Job[], data: unknown): Job[] | null {
+  let usage: Partial<Job> | undefined;
+  try {
+    usage = (JSON.parse(String(data)) as { job?: Partial<Job> } | null)?.job;
+  } catch {
+    return null;
+  }
+  const id = usage?.id;
+  if (!usage || typeof id !== "string") return null;
+  const i = jobs.findIndex((job) => job.id === id);
+  const job = jobs[i];
+  if (!job) return null;
+  if (older(usage, job)) return jobs;
+  if (usage.state !== job.state || usage.phase !== job.phase) return null;
+  const next = jobs.slice();
+  next[i] = {
+    ...job,
+    calls: usage.calls ?? job.calls,
+    tokens: usage.tokens ?? job.tokens,
+    repairs: usage.repairs ?? job.repairs,
+    actual_cost_usd: usage.actual_cost_usd ?? null,
+    cost_reason: usage.cost_reason || undefined,
+    accounting: usage.accounting ?? undefined,
+    updated_at: usage.updated_at ?? job.updated_at,
+  };
+  return next;
+}
+
 /**
  * Every loaded job of the pull request, oldest first, read again whenever
  * `revision` changes (the app's reads of the current jobs). The jobs of the
  * pull request shown before are dropped when another opens; a failed read keeps
- * what was read.
+ * what was read. A job `current` (the app's current jobs) holds a copy of that
+ * is no older is shown as that copy, so its usage moves with theirs.
  */
-export function usePullRequestJobs(entry: Entry | undefined, revision: number): Job[] {
+export function usePullRequestJobs(
+  entry: Entry | undefined,
+  revision: number,
+  current: Job[] = [],
+): Job[] {
   const repository = entry?.pull_request.repository;
   const number = entry?.pull_request.number;
   const key = repository === undefined ? "" : `${repository}#${number}`;
@@ -144,8 +189,16 @@ export function usePullRequestJobs(entry: Entry | undefined, revision: number): 
       .catch(() => {});
     return () => abort.abort();
   }, [repository, number, key, revision]);
-  return read.key === key ? read.jobs : [];
+  const jobs = read.key === key ? read.jobs : noJobs;
+  return useMemo(() => {
+    const byId = new Map(current.map((job) => [job.id, job]));
+    return jobs.map((job) => {
+      const copy = byId.get(job.id);
+      return copy && !older(copy, job) ? copy : job;
+    });
+  }, [jobs, current]);
 }
+const noJobs: Job[] = [];
 
 /**
  * The job a transcript page opens: the current jobs' copy when they have it,

@@ -1332,7 +1332,12 @@ included. The one confirmation left is for a fork or an author without write
 access (`isolation_required`, then `confirm_isolation`); a batch with such an
 entry asks the same. Refusals are shown in words, never as reason codes.
 Progress and completion arrive over the authenticated SSE stream; reconnection
-rebuilds the inbox and jobs. Jobs appear newest first and can be cancelled. The app's
+rebuilds the inbox and jobs. A `progress` event (a job queued, started, ended,
+or changed in anything but its usage) reads everything again; a `job` event, a
+running job's usage every few seconds, changes only that job in the current jobs,
+and through them the PR page's own jobs, without a read. A `job` event for a job
+the current jobs lack, or whose state or phase differs from their copy, reads
+everything again; one older than their copy is ignored. Jobs appear newest first and can be cancelled. The app's
 global jobs are `GET api/jobs` without parameters, the current jobs (every running, queued and
 unseen failed job, and the latest of each kind for each pull request, group or repository), which
 is all `reviewJob`, `detailsJob`, `fixJob`, `groupJob`, `buildJobOf`, Up next and the tray need. The PR

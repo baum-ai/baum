@@ -459,7 +459,7 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 		builds := &featureBuilder{}
 		prefs, _ := registry.Preferences(ctx)
 		queue, err := jobs.Open(database, &jobs.Local{Registry: registry, Groups: groups, Config: cfg, Client: github.NewFromConfig(cfg, github.Options{}), Features: builds, Chat: chats, Log: log}, prefs.Concurrency(), func(job jobs.Job) {
-			_ = server.Publish("progress", map[string]any{"job": job})
+			_ = server.PublishProgress(job)
 			if event, ok := jobs.ChatEvent(job); ok {
 				_ = server.Publish("chat", event)
 			}
@@ -483,6 +483,9 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 			return daemon.App{}, err
 		}
 		queue.SetLogger(log)
+		// A running job's usage, reported every few seconds, wakes no full
+		// read in the app or the tray.
+		queue.SetUsageChanged(func(usage jobs.Usage) { _ = server.PublishUsage(usage) })
 		scheduler.Queue = queue
 		queue.SetAutomaticGate(scheduler.Gate)
 		queue.SetChat(chats)
