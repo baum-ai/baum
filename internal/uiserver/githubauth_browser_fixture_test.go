@@ -61,11 +61,17 @@ func browserAuthentication(t *testing.T, ctx context.Context, state string, cfg 
 	mode := func() string { b, _ := os.ReadFile(marker); return strings.TrimSpace(string(b)) }
 	store := &browserCredentialStore{mode: mode, credential: githubauth.Credential{AccessToken: "fixture-access-initial", RefreshToken: "fixture-refresh", Login: "initial", ID: 3, ExpiresAt: time.Now().Add(time.Hour).Unix(), RefreshExpiresAt: time.Now().Add(2 * time.Hour).Unix()}}
 	var attempt atomic.Int64
+	// GitHub grants what the latest device sign-in asked for.
+	var workflow atomic.Bool
 	manager := githubauth.NewWithOptions(store, githubauth.Options{Transport: browserTransport(func(r *http.Request) (*http.Response, error) {
 		body := ""
 		headers := http.Header{}
 		switch r.URL.Path {
 		case "/login/device/code":
+			if err := r.ParseForm(); err != nil {
+				return nil, err
+			}
+			workflow.Store(strings.HasSuffix(r.Form.Get("scope"), " workflow"))
 			body = fmt.Sprintf(`{"device_code":"fixture-device-%d","user_code":"ABCD-EFGH","verification_uri":"https://github.com/login/device","expires_in":900,"interval":1}`, attempt.Add(1))
 		case "/login/oauth/access_token":
 			switch mode() {
@@ -81,9 +87,12 @@ func browserAuthentication(t *testing.T, ctx context.Context, state string, cfg 
 				body = `{"error":"authorization_pending"}`
 			}
 		case "/user":
-			headers.Set("X-OAuth-Scopes", "repo, read:org, workflow")
+			headers.Set("X-OAuth-Scopes", "repo, read:org")
+			if workflow.Load() {
+				headers.Set("X-OAuth-Scopes", "repo, read:org, workflow")
+			}
 			if mode() == "scopes" {
-				headers.Set("X-OAuth-Scopes", "repo, read:org")
+				headers.Set("X-OAuth-Scopes", "read:org")
 			}
 			if strings.Contains(r.Header.Get("Authorization"), "bob") {
 				body = `{"id":2,"login":"bob"}`

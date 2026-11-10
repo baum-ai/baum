@@ -91,7 +91,7 @@ export function GitHubStep({ onConnected }: { onConnected: (connected: boolean) 
                 type="button"
                 disabled={busy || connection.state === "loading"}
                 className={`${connected ? "secondary" : ""}${working === "start" ? " loading" : ""}`}
-                onClick={signIn}
+                onClick={() => signIn()}
               >
                 {working === "start" && <NineDots size={14} tone="text" />}
                 {working === "start"
@@ -153,7 +153,7 @@ export function GitHubStep({ onConnected }: { onConnected: (connected: boolean) 
                 hour: "2-digit",
                 minute: "2-digit",
               })}
-              . Grant repository, organization read and workflow access.
+              . Grant repository and organization read access.
             </p>
           </div>
         )}

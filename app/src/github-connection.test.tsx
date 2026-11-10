@@ -139,10 +139,76 @@ it("keeps the effective override distinct from the saved account on disconnect",
   expect(node.textContent).not.toContain("saved-cat");
   expect(calls.at(-1)!.path).toBe("/s/auth-test/api/github-auth/disconnect");
 });
+it("asks for workflow access only from the Reconnect menu, and says when it is missing", async () => {
+  const saved: GitHubConnection = {
+    ...disconnected,
+    state: "connected",
+    saved: true,
+    login: "octocat",
+  };
+  status = saved;
+  await render();
+  expect(node.textContent).toContain("does not have workflow access");
+  // Reconnect keeps the connection's access: no workflow scope.
+  status = { ...pending, pending: { ...pending.pending!, workflow: false } };
+  await click("Reconnect");
+  expect(calls.at(-1)).toMatchObject({
+    path: "/s/auth-test/api/github-auth/start",
+    options: { method: "POST", body: "{}" },
+  });
+  expect(node.textContent).toContain("Grant repository and organization read access.");
+  expect(node.textContent).not.toContain("does not have workflow access");
+  status = saved;
+  await click("Cancel sign-in");
+  // The menu's second choice asks GitHub for workflow access too.
+  const more = node.querySelector<HTMLButtonElement>('[aria-label="More reconnect options"]')!;
+  expect(more.getAttribute("aria-haspopup")).toBe("menu");
+  await act(async () => more.click());
+  const choices = [...document.querySelectorAll<HTMLElement>("[role^=menuitem]")];
+  expect(choices.map((c) => c.textContent)).toEqual([
+    "Reconnect",
+    "Reconnect with workflow access",
+  ]);
+  status = { ...pending, pending: { ...pending.pending!, workflow: true } };
+  await act(async () => choices[1]!.click());
+  expect(calls.at(-1)).toMatchObject({
+    path: "/s/auth-test/api/github-auth/start",
+    options: { method: "POST", body: '{"workflow":true}' },
+  });
+  expect(node.textContent).toContain("Grant repository, organization read and workflow access.");
+  // With workflow access the warning goes, Reconnect keeps it, and the menu
+  // offers to drop it.
+  status = { ...saved, workflow: true };
+  await click("Cancel sign-in");
+  expect(node.textContent).not.toContain("workflow access");
+  status = { ...pending, pending: { ...pending.pending!, workflow: true } };
+  await click("Reconnect");
+  expect(calls.at(-1)!.options?.body).toBe('{"workflow":true}');
+  status = { ...saved, workflow: true };
+  await click("Cancel sign-in");
+  await act(async () =>
+    node.querySelector<HTMLButtonElement>('[aria-label="More reconnect options"]')!.click(),
+  );
+  expect(
+    [...document.querySelectorAll<HTMLElement>("[role^=menuitem]")].map((c) => c.textContent),
+  ).toEqual(["Reconnect", "Reconnect without workflow access"]);
+});
+it("does not claim an explicit credential lacks workflow access", async () => {
+  status = {
+    ...disconnected,
+    state: "connected",
+    override: true,
+    source: "environment",
+    saved: true,
+    login: "saved-cat",
+  };
+  await render();
+  expect(node.textContent).not.toContain("workflow access");
+});
 it.each([
   ["credential_store_unavailable", "Unlock your operating system"],
   ["reconnect_required", "expired or was revoked"],
-  ["insufficient_scopes", "repository, organization read and workflow access"],
+  ["insufficient_scopes", "repository and organization read access"],
   ["sso_required", "GitHub SSO"],
   ["permission_denied", "repository access"],
   ["auth_request_failed", "Check your connection"],

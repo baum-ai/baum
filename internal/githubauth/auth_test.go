@@ -49,8 +49,8 @@ func fixture(t *testing.T) (*Manager, *memoryStore, *time.Time, *string, *int) {
 				t.Error(err)
 				return
 			}
-			if r.Form.Get("scope") != "repo read:org workflow" {
-				t.Error("missing scopes")
+			if scope := r.Form.Get("scope"); scope != "repo read:org" && scope != "repo read:org workflow" {
+				t.Errorf("scope %q", scope)
 			}
 			if _, err := fmt.Fprint(w, `{"device_code":"secret-device","user_code":"ABCD-EFGH","verification_uri":"https://github.com/login/device","expires_in":900,"interval":5}`); err != nil {
 				t.Error(err)
@@ -71,7 +71,7 @@ func fixture(t *testing.T) (*Manager, *memoryStore, *time.Time, *string, *int) {
 			if r.Header.Get("Authorization") == "" {
 				t.Error("missing token")
 			}
-			w.Header().Set("X-OAuth-Scopes", "read:org, repo, workflow")
+			w.Header().Set("X-OAuth-Scopes", "read:org, repo")
 			if _, err := fmt.Fprint(w, `{"login":"octocat","id":1}`); err != nil {
 				t.Error(err)
 			}
@@ -90,7 +90,7 @@ func fixture(t *testing.T) (*Manager, *memoryStore, *time.Time, *string, *int) {
 func TestDeviceLifecycle(t *testing.T) {
 	m, s, now, reply, calls := fixture(t)
 	ctx := context.Background()
-	d, err := m.Start(ctx)
+	d, err := m.Start(ctx, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -138,7 +138,7 @@ func TestTerminalDeviceStates(t *testing.T) {
 	for _, state := range []string{"denied", "expired", "cancelled"} {
 		t.Run(state, func(t *testing.T) {
 			m, _, now, reply, _ := fixture(t)
-			d, _ := m.Start(context.Background())
+			d, _ := m.Start(context.Background(), false)
 			*now = now.Add(5 * time.Second)
 			switch state {
 			case "denied":
@@ -221,7 +221,7 @@ func TestRequestDoesNotFollowRedirect(t *testing.T) {
 	redirect := httptest.NewServer(http.RedirectHandler(target.URL, http.StatusFound))
 	defer redirect.Close()
 	m.oauth = redirect.URL
-	if _, err := m.Start(context.Background()); !errors.Is(err, ErrRequest) {
+	if _, err := m.Start(context.Background(), false); !errors.Is(err, ErrRequest) {
 		t.Fatal(err)
 	}
 }
@@ -258,15 +258,16 @@ func TestMalformedTokenRejected(t *testing.T) {
 
 func TestRequiredScopesBeforeSavingGrant(t *testing.T) {
 	for _, c := range []struct {
-		scopes string
-		valid  bool
+		scopes   string
+		valid    bool
+		workflow bool
 	}{
-		{"repo, read:org, workflow", true},
-		{"repo, write:org, workflow", true},
-		{"repo, admin:org, workflow", true},
-		{"repo, read:org", false},
-		{"repo, workflow", false},
-		{"read:org, workflow", false},
+		{"repo, read:org", true, false},
+		{"repo, read:org, workflow", true, true},
+		{"repo, write:org", true, false},
+		{"repo, admin:org, workflow", true, true},
+		{"repo, workflow", false, false},
+		{"read:org, workflow", false, false},
 	} {
 		t.Run(c.scopes, func(t *testing.T) {
 			m, store, now, reply, _ := fixture(t)
@@ -278,7 +279,7 @@ func TestRequiredScopesBeforeSavingGrant(t *testing.T) {
 			}))
 			defer srv.Close()
 			m.api = srv.URL
-			device, err := m.Start(context.Background())
+			device, err := m.Start(context.Background(), false)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -286,7 +287,7 @@ func TestRequiredScopesBeforeSavingGrant(t *testing.T) {
 			*reply = `{"access_token":"secret-access","token_type":"bearer"}`
 			status, err := m.Poll(context.Background(), device.ID)
 			if c.valid {
-				if err != nil || status.State != "connected" || store.saves != 1 {
+				if err != nil || status.State != "connected" || store.saves != 1 || status.Workflow != c.workflow || store.c.Workflow != c.workflow {
 					t.Fatalf("status=%+v err=%v saves=%d", status, err, store.saves)
 				}
 			} else if !errors.Is(err, ErrScopes) || store.saves != 0 {
@@ -305,7 +306,7 @@ func TestSafeUpstreamErrors(t *testing.T) {
 	}))
 	defer srv.Close()
 	m.oauth = srv.URL
-	if _, err := m.Start(context.Background()); err == nil || strings.Contains(err.Error(), "secret") {
+	if _, err := m.Start(context.Background(), false); err == nil || strings.Contains(err.Error(), "secret") {
 		t.Fatal(err)
 	}
 }
@@ -332,17 +333,17 @@ func TestCancelledLockAcquisition(t *testing.T) {
 	m.gate <- struct{}{}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if _, err := m.Start(ctx); !errors.Is(err, context.Canceled) {
+	if _, err := m.Start(ctx, false); !errors.Is(err, context.Canceled) {
 		t.Fatal(err)
 	}
 	<-m.gate
-	if _, err := m.Start(ctx); !errors.Is(err, context.Canceled) {
+	if _, err := m.Start(ctx, false); !errors.Is(err, context.Canceled) {
 		t.Fatal(err)
 	}
 }
 func TestPendingGrantRetriesPersistence(t *testing.T) {
 	m, s, now, reply, calls := fixture(t)
-	d, _ := m.Start(context.Background())
+	d, _ := m.Start(context.Background(), false)
 	*now = now.Add(5 * time.Second)
 	*reply = `{"access_token":"new","token_type":"bearer","expires_in":3600,"refresh_token":"rotated","refresh_token_expires_in":7200}`
 	m.store = writeFailure{s}
@@ -478,5 +479,34 @@ func TestIssuedAccountIdentitySurvivesRotationButNeverMovesOldTokens(t *testing.
 	}
 	if id := m.AccountForToken("rotated"); id != 0 {
 		t.Fatal("old token inherited new account", id)
+	}
+}
+
+func TestWorkflowScopeIsOptIn(t *testing.T) {
+	for _, workflow := range []bool{false, true} {
+		var requested string
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if err := r.ParseForm(); err != nil {
+				t.Error(err)
+			}
+			requested = r.Form.Get("scope")
+			if _, err := fmt.Fprint(w, `{"device_code":"secret-device","user_code":"ABCD-EFGH","verification_uri":"https://github.com/login/device","expires_in":900,"interval":5}`); err != nil {
+				t.Error(err)
+			}
+		}))
+		m := New(&memoryStore{err: ErrNotConnected})
+		m.oauth = srv.URL
+		d, err := m.Start(context.Background(), workflow)
+		srv.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := "repo read:org"
+		if workflow {
+			want += " workflow"
+		}
+		if requested != want || d.Workflow != workflow {
+			t.Fatalf("workflow=%v: requested %q, device %+v", workflow, requested, d)
+		}
 	}
 }

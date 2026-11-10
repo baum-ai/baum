@@ -7,11 +7,13 @@ values exclude tokens and the device secret. `Credential` and `Token` are only
 for trusted daemon code, never API responses, logs or model environments.
 
 The public OAuth client ID is `Ov23liFSMjrhof9WQlOi`. Device flow requests `repo`
-for private repositories, `read:org` for team review requests and `workflow`
-for merging pull requests that change GitHub Actions workflows. New and rotated
-grants must include all three scopes (`write:org` and `admin:org` also satisfy
-organization read access). Existing saved connections need to reconnect to grant
-workflow access; updating the app does not expand an existing token's scopes.
+for private repositories and `read:org` for team review requests; new and
+rotated grants must include both (`write:org` and `admin:org` also satisfy
+organization read access). `Start(ctx, true)` also requests `workflow`, which
+merging pull requests that change GitHub Actions workflows needs. It is opt-in
+because it lets the token change workflows. Validation records whether GitHub
+reported the scope (`Credential.Workflow`, `Status.Workflow`), so the UI can say
+when it is missing; a credential saved before that field reads as without it.
 The browser uses GitHub's fixed device verification page. HTTP exchanges have
 a 15-second limit, a 64 KiB response limit, no redirects, and no upstream error
 text. Poll performs one exchange, enforces the server interval, and adds five seconds on

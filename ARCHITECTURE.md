@@ -2966,7 +2966,8 @@ errors to `{code, message}`: `head_moved` and `conflict` and `not_open` are
 `method_not_allowed` are `422`, `forbidden` is `403`, anything else `502`.
 Permission refusals retain GitHub's explanation and direct the user to the
 connection's permissions and scopes. A missing workflow scope explains that
-workflow changes need workflow access, with merging on GitHub as an alternative.
+workflow changes need workflow access, which is opt-in, and offers merging on
+GitHub or Settings' Reconnect with workflow access.
 After a merge GitHub accepted, the daemon records it (`discovery.Service.Merged`:
 the pull request leaves the cached open ones and is observed `MERGED` at the
 merged head, with no read) and publishes an index change, so the inbox shows

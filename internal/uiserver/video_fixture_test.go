@@ -861,7 +861,7 @@ func TestLocalAppVideoFixture(t *testing.T) {
 		Login: videoLogin, ID: 7, ExpiresAt: time.Now().Add(24 * time.Hour).Unix(), RefreshExpiresAt: time.Now().Add(48 * time.Hour).Unix()}}
 	manager := githubauth.NewWithOptions(credentials, githubauth.Options{Transport: browserTransport(func(r *http.Request) (*http.Response, error) {
 		if r.URL.Path == "/user" {
-			return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"X-Oauth-Scopes": []string{"repo, read:org, workflow"}}, Body: io.NopCloser(strings.NewReader(`{"id":7,"login":"` + videoLogin + `"}`)), Request: r}, nil
+			return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"X-Oauth-Scopes": []string{"repo, read:org"}}, Body: io.NopCloser(strings.NewReader(`{"id":7,"login":"` + videoLogin + `"}`)), Request: r}, nil
 		}
 		return nil, fmt.Errorf("unexpected GitHub auth request: %s", r.URL.Path)
 	})})

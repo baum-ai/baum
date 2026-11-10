@@ -1255,12 +1255,17 @@ export type GitHubConnection = {
   source?: string;
   override: boolean;
   saved: boolean;
+  /** The saved connection was granted workflow access, which merging a pull
+   *  request that changes GitHub Actions workflows needs. Opt-in. */
+  workflow?: boolean;
   pending?: {
     id: string;
     user_code: string;
     verification_uri: string;
     expires_at: string;
     interval: number;
+    /** This sign-in asks GitHub for workflow access too. */
+    workflow?: boolean;
   };
   error?: string;
   message?: string;

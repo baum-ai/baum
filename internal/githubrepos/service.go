@@ -601,7 +601,7 @@ func classifyKnown(err error) (apiFailure, bool) {
 	}{
 		{githubauth.ErrStore, http.StatusServiceUnavailable, "credential_store_unavailable", "Unlock your operating system credential store and try again."},
 		{githubauth.ErrReconnect, http.StatusConflict, "reconnect_required", "Reconnect GitHub; authorization expired or was revoked."},
-		{githubauth.ErrScopes, http.StatusConflict, "insufficient_scopes", "GitHub authorization requires repository, organization read and workflow access. Reconnect and grant all three permissions."},
+		{githubauth.ErrScopes, http.StatusConflict, "insufficient_scopes", "GitHub authorization requires repository and organization read access."},
 		{githubauth.ErrSSO, http.StatusConflict, "sso_required", "Authorize baum for your organization's GitHub SSO and try again."},
 		{githubauth.ErrPermissions, http.StatusConflict, "permission_denied", "Check repository access and GitHub authorization permissions."},
 	} {

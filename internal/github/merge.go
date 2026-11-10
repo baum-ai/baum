@@ -168,7 +168,7 @@ func mergeError(kind, message string) error {
 	lower := strings.ToLower(message)
 	switch {
 	case strings.Contains(lower, "without `workflow` scope") || strings.Contains(lower, "without 'workflow' scope"):
-		return &MergeError{MergeForbidden, "This pull request changes GitHub Actions workflows, but the current GitHub connection is missing the workflow scope. Grant workflow access to this connection or merge on GitHub. GitHub says: " + message}
+		return &MergeError{MergeForbidden, "This pull request changes GitHub Actions workflows, which needs workflow access that baum's GitHub connection does not have. Merge it on GitHub, or choose Reconnect with workflow access in Settings. GitHub says: " + message}
 	case strings.Contains(lower, "head branch was modified") || strings.Contains(lower, "expected head"):
 		return &MergeError{MergeHeadMoved, "The pull request changed since you opened it. Review the new commits and try again."}
 	case strings.Contains(lower, "conflict") || strings.Contains(lower, "not mergeable"):

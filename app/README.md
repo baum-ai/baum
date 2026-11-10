@@ -2009,9 +2009,14 @@ when a running session's turn ends, the queued message in its place once
 there is one. `r` focuses it.
 
 GitHub connection is available in Settings' Connections section and the
-desktop setup's first step. Device sign-in requests repository, organization
-read and workflow access.
-Reconnect an existing connection to grant workflow access after updating baum.
+desktop setup's first step. Device sign-in requests repository and organization
+read access. Workflow access is opt-in and offered only in Settings: Reconnect
+is a split button whose menu adds **Reconnect with workflow access** (or
+**Reconnect without workflow access** once granted), and Reconnect itself keeps
+the access the connection has. A saved connection without workflow access shows
+a caution note that merges of pull requests changing GitHub Actions workflows
+need it. `POST api/github-auth/start` takes `{"workflow": true}` for that
+choice; an empty object is a plain sign-in.
 The desktop setup's GitHub step and Settings share
 `src/github-auth.ts`. Sign in with GitHub starts device authorization through
 the daemon and, in the same click, opens the fixed

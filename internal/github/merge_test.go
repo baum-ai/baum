@@ -92,19 +92,19 @@ func TestMergePullRequestExplainsPermissionRefusals(t *testing.T) {
 			name:        "missing workflow scope",
 			kind:        "FORBIDDEN",
 			message:     workflowRefusal,
-			explanation: "This pull request changes GitHub Actions workflows, but the current GitHub connection is missing the workflow scope. Grant workflow access to this connection or merge on GitHub. GitHub says: " + workflowRefusal,
+			explanation: "This pull request changes GitHub Actions workflows, which needs workflow access that baum's GitHub connection does not have. Merge it on GitHub, or choose Reconnect with workflow access in Settings. GitHub says: " + workflowRefusal,
 		},
 		{
 			name:        "workflow scope with another error type",
 			kind:        "UNAUTHORIZED-WRITE",
 			message:     "Failed to merge: " + workflowRefusal,
-			explanation: "This pull request changes GitHub Actions workflows, but the current GitHub connection is missing the workflow scope. Grant workflow access to this connection or merge on GitHub. GitHub says: Failed to merge: " + workflowRefusal,
+			explanation: "This pull request changes GitHub Actions workflows, which needs workflow access that baum's GitHub connection does not have. Merge it on GitHub, or choose Reconnect with workflow access in Settings. GitHub says: Failed to merge: " + workflowRefusal,
 		},
 		{
 			name:        "single quoted workflow scope",
 			kind:        "FORBIDDEN",
 			message:     strings.ReplaceAll(workflowRefusal, "`workflow`", "'workflow'"),
-			explanation: "This pull request changes GitHub Actions workflows, but the current GitHub connection is missing the workflow scope. Grant workflow access to this connection or merge on GitHub. GitHub says: " + strings.ReplaceAll(workflowRefusal, "`workflow`", "'workflow'"),
+			explanation: "This pull request changes GitHub Actions workflows, which needs workflow access that baum's GitHub connection does not have. Merge it on GitHub, or choose Reconnect with workflow access in Settings. GitHub says: " + strings.ReplaceAll(workflowRefusal, "`workflow`", "'workflow'"),
 		},
 		{
 			name:        "token permission",
