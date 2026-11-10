@@ -25,6 +25,25 @@ session, hook event and observation time. A missing transcript keeps the link
 and metadata-only review context; it does not invent conversation or usage.
 Push observations are retained separately and never establish creation.
 
+Git reflogs supply creation evidence too, for commits, amends, rebase picks,
+cherry-picks and reverts. The resolver reads the clone's HEAD logs (the main
+working tree's and each linked worktree's) and its branch logs, which outlive a
+removed worktree. An entry made while one session's shell tool call ran, in the
+same working tree, establishes that session as the creator; subagent calls
+count for their top-level session. Calls are placed by their `workdir`, else
+the session's `cwd` attribute, else its working directory, and map to a working
+tree by path (a removed worktree kept in an agent's conventional folder inside
+the main working tree still maps). Branch-log entries know no working tree, so a session matched
+through a HEAD-log entry outranks one matched only through them. When several
+sessions match, those whose command writes Git (`commit`, `rebase`,
+`cherry-pick`, `revert`, `am`) are kept; if that does not leave exactly one the
+commit stays unresolved. Merges are never reflog evidence. A reflog match
+outranks a hook observation of the same commit, which guesses the session from
+the process tree. Limits: a background command that commits after its tool call
+returned lies outside every window, and reflogs expire with Git's gc (90 days by
+default). `ReflogFingerprint` lets the evidence and feature caches notice a new
+entry.
+
 Quiet commits followed immediately by `git log` on a new line also supply
 creation evidence when the tool succeeded and its output has no explicit
 commit-failure diagnostic. The command parser excludes quoted commands,
