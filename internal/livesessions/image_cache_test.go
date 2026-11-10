@@ -2,6 +2,22 @@ package livesessions
 
 import "testing"
 
+func TestImageCacheReleasesEvictedBuffers(t *testing.T) {
+	// A backing array with room to spare, so the puts never move the
+	// entries and its first slots stay visible after eviction.
+	backing := make([]recentImage, 0, 2*recentImageCount)
+	c := imageCache{entries: backing}
+	for n := 0; n <= recentImageCount; n++ {
+		c.put(imageKey{path: "/t.jsonl", ref: "r", n: n}, "image/png", []byte("x"))
+	}
+	if len(c.entries) != recentImageCount {
+		t.Fatalf("%d entries kept, want %d", len(c.entries), recentImageCount)
+	}
+	if evicted := backing[:1][0]; evicted.data != nil || evicted.key != (imageKey{}) {
+		t.Fatalf("the evicted entry is still held by the cache's backing array: %+v", evicted)
+	}
+}
+
 func TestImageCacheKeepsAFewImagesAndDropsStaleOnes(t *testing.T) {
 	var c imageCache
 	key := func(n int, size int64) imageKey { return imageKey{path: "/t.jsonl", ref: "r", n: n, size: size} }

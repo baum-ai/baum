@@ -363,6 +363,9 @@ func (c *imageCache) put(key imageKey, mediaType string, data []byte) {
 	}
 	for len(c.entries) > recentImageCount || (total > recentImageBytes && len(c.entries) > 1) {
 		total -= len(c.entries[0].data)
+		// The backing array keeps the slice's skipped prefix alive: let go
+		// of the evicted buffer.
+		c.entries[0] = recentImage{}
 		c.entries = c.entries[1:]
 	}
 }
