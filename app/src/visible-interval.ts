@@ -47,7 +47,7 @@ export function subscribeVisibleInterval(fn: () => void, ms: number): () => void
     const listeners = new Set<() => void>();
     let timer: ReturnType<typeof setInterval> | undefined;
     const tick = () => {
-      for (const listener of [...listeners]) listener();
+      for (const listener of listeners) listener();
     };
     const stop = () => {
       clearInterval(timer);
