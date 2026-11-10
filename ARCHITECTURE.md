@@ -4030,10 +4030,13 @@ report to the daemon; the hook side is in `internal/hookcli` (see its
   time on macOS) and `name`, at most 24 (see "Focus" under "Live sessions").
   Git's `post-commit`, `post-rewrite` and `pre-push` run from dispatchers the
   daemon installs in registered clones (`internal/githooks`: they chain a
-  hook the clone had, saved as `<hook>.pre-baum`, and are skipped in a clone
-  with `core.hooksPath`). They carry the session their agent names in its
-  environment (`CLAUDE_CODE_SESSION_ID` becomes `agent` `claude-code` and
-  `session.id`; no other variable is kept) and `terminal` with `processes`
+  hook the clone had, saved as `<hook>.pre-baum`, are skipped in a clone
+  with `core.hooksPath` and are taken out again for a clone that sets `git
+  config baum.hooks false` or leaves the registry). They carry the session
+  their agent names in its environment (`CLAUDE_CODE_SESSION_ID` becomes
+  `agent` `claude-code` and `session.id`, with `session.agent_pid` from
+  `CLAUDE_PID`, only when that process is among the ancestors; no other
+  variable is kept) and `terminal` with `processes`
   alone (`focus.Ancestors`), so live sessions can tell which agent committed or
   pushed when no session is named. A `post-commit` carries `git.head` and
   `git.branch` (empty when detached), the commit and the branch it was made
@@ -4375,8 +4378,9 @@ replace it.
   checks its directory back out on `main`. The tracker also follows Git's
   `post-commit`, `post-rewrite` and `pre-push` (one that let the push go)
   events. A hook whose environment names a session of a known agent
-  (`agent` and `session.id`) made the work of that session, whatever its
-  ancestors are; if the tracker holds no entry for it (it ended and was
+  (`agent`, `session.id` and an `agent_pid` among its ancestors) made the
+  work of that session, unless a tracked session's agent is nearer the hook
+  than `agent_pid` (an agent the named one started), which made it; if the tracker holds no entry for it (it ended and was
   dropped, or was not seen), the work is still looked up (`LinkCommit`,
   `LinkPush`) and recorded as an observation, without a session to show.
   Otherwise `terminal.processes` are the hook's ancestors: the session whose
@@ -4384,7 +4388,8 @@ replace it.
   recorded, matched by `pid` and `start`) made the commit or push; a process
   two open sessions name is neither's, and Git run by no session's agent
   belongs to none. A `post-rewrite` records each new commit of its `old new`
-  lines (a malformed line is skipped), unless the session already recorded
+  lines (a malformed line, and one whose old and new commits are equal, a
+  commit a rebase replayed unchanged, is skipped), unless the session already recorded
   that commit from the `post-commit` of the same amend or pick. A commit (`LinkCommit`) is the commit and branch its hook recorded,
   with the clone's remotes and the branch's upstream (`prlink.At`), never what
   the worktree has checked out by the time the daemon looks, so a branch

@@ -149,3 +149,7 @@ a cloned repository) calls `Registry.Registered`, which the daemon sets to
 ensure baum's Git hook dispatchers in the clone in the background
 ([githooks](../githooks)). It never fails or waits for the registration. A
 registry opened elsewhere, such as the CLI's, has no such hook.
+`git config baum.hooks false` in a clone opts it out: the daemon takes the
+dispatchers out and restores the hooks they replaced. `Remove` and `Unpick` call
+`Registry.Removed` for each clone they delete, and the daemon then does the same,
+unless another registered clone shares the clone's common Git directory.
