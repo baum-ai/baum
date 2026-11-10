@@ -595,11 +595,17 @@ it("names organizations GitHub hides from baum, links to approval and rechecks",
   };
   await act(async () => root.render(<RepositoryPicker call={call} />));
   const note = () => node.querySelector(".organization-access");
-  expect(note()!.textContent).toContain("baum can't see repositories in locked-co and acme.");
+  expect(note()!.textContent).toBe("baum cannot see repositories in 2 of your organizations.");
+  await act(async () =>
+    note()!.querySelector<HTMLButtonElement>(".organization-access-toggle")!.click(),
+  );
   expect(note()!.textContent).toContain("These organizations restrict OAuth app access");
-  const link = note()!.querySelector<HTMLAnchorElement>("a")!;
-  expect(link.href).toBe(approval);
-  expect(link.textContent).toContain("Request approval on GitHub");
+  const links = [...note()!.querySelectorAll<HTMLAnchorElement>(".organization-access-list a")];
+  expect(links.map((link) => link.getAttribute("aria-label"))).toEqual([
+    "Request access to locked-co on GitHub",
+    "Request access to acme on GitHub",
+  ]);
+  expect(links.every((link) => link.href === approval)).toBe(true);
   // The personal repositories still list beside the explanation.
   expect(node.textContent).toContain("me/personal");
   hidden = [];

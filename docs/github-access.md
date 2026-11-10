@@ -13,8 +13,9 @@ where they have not.
 
 **What you see.** You are signed in, but an organization's repositories are
 missing from setup step 1, from Add repositories and from the Repositories
-page. A banner says "baum can't see repositories in *name*" and links to
-GitHub.
+page. A banner says "baum cannot see repositories in *N* of your
+organizations". Open it to see each organization, with a **Request access**
+link to GitHub.
 
 **Why.** An organization that restricts OAuth app access hides its repositories
 from any OAuth App an owner has not approved. Signing in does not change that.
@@ -22,7 +23,8 @@ New organizations restrict access by default.
 
 **Fix.**
 
-1. Open the link in the banner (baum's page in your GitHub settings).
+1. Open the banner and choose **Request access** (baum's page in your GitHub
+   settings).
 2. Next to the organization, choose **Request**. An owner gets the request.
    If you own the organization, approve baum under its **Settings → Third-party
    access** instead.

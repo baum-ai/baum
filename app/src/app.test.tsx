@@ -2683,8 +2683,11 @@ it("explains organizations that restrict OAuth app access on Repositories and re
   });
   await act(async () => root.render(<App />));
   const note = () => node.querySelector(".organization-access");
-  expect(note()!.textContent).toContain("baum can't see repositories in locked-co.");
-  expect(note()!.querySelector("a")!.getAttribute("href")).toBe(
+  expect(note()!.textContent).toBe("baum cannot see repositories in 1 of your organizations.");
+  await act(async () =>
+    note()!.querySelector<HTMLButtonElement>(".organization-access-toggle")!.click(),
+  );
+  expect(note()!.querySelector(".organization-access-list a")!.getAttribute("href")).toBe(
     "https://github.com/settings/connections/applications/abc",
   );
   await act(async () =>

@@ -128,10 +128,15 @@ const assert = require('node:assert/strict');
   await expect(page.locator('#continue')).toBeDisabled();
   // Repositories share the first step; a found clone is shown, not picked.
   const restricted = page.locator('.organization-access');
-  await expect(restricted).toContainText("baum can't see repositories in locked-co.");
-  await expect(restricted.getByRole('link')).toHaveAttribute('href', accessPage);
+  await expect(restricted).toHaveText('baum cannot see repositories in 1 of your organizations.');
   await page.screenshot({ path: `${screenshots}/onboarding-organization-access.png`, fullPage: true });
+  await restricted.getByRole('button', { name: /cannot see repositories/ }).click();
+  await expect(restricted.getByRole('link', { name: 'Request access to locked-co on GitHub' })).toHaveAttribute('href', accessPage);
+  await page.waitForTimeout(300);
+  await page.screenshot({ path: `${screenshots}/onboarding-organization-access-open.png`, fullPage: true });
   await page.emulateMedia({ colorScheme: 'dark' });
+  // Let the theme's colour transitions finish before the picture.
+  await page.waitForTimeout(300);
   await page.screenshot({ path: `${screenshots}/onboarding-organization-access-dark.png`, fullPage: true });
   await page.emulateMedia({ colorScheme: 'light' });
   organizationAccess = null;

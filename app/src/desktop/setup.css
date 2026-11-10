@@ -623,6 +623,26 @@ button:disabled.loading {
   color: inherit;
   text-decoration: underline;
 }
+/* The restricted-organization headline is a disclosure, not a step action. */
+button.organization-access-toggle,
+button.organization-access-toggle:hover:not(:disabled):not(.step-link),
+button.organization-access-toggle:active:not(:disabled):not(.step-link) {
+  justify-content: flex-start;
+  height: auto;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  color: inherit;
+  background: none;
+  box-shadow: none;
+  transform: none;
+}
+button.organization-access-toggle:focus-visible {
+  box-shadow: var(--focus-ring);
+}
+.setup-card .organization-access p {
+  margin-bottom: 0;
+}
 #hooks-error {
   overflow-wrap: anywhere;
 }
