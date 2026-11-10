@@ -2189,11 +2189,16 @@ distinct states. Setup may still be finished with an unfinished connection.
 
 The bottom Settings link has a caution badge and an accessible description
 while Codex session reporting needs attention. Opening Settings shows the
-reason and Check again. The app reads `GET api/agent-hooks/codex` once on load,
-on window focus, after native Settings actions and every minute while visible.
-The warning clears after a successful ready result; a failed request retains
-the previous warning. Older daemons without this endpoint show no new global
-badge. Onboarding rechecks on focus or Check again. Checking never trusts a
+reason and Check again. The app reads `GET api/agent-hooks/codex` on load and
+on window focus (at most once a minute while healthy; every focus while a
+warning shows), and every minute while visible only
+while the last answer is a warning. Check again and the reads after native
+Settings actions pass `?refresh=1`, because the daemon caches a healthy answer
+for five minutes (warnings are always read fresh). A
+re-read that returns the same answer leaves the state, and so the page,
+untouched. The warning clears after a successful ready result; a failed
+request retains the previous warning. Older daemons without this endpoint show
+no new global badge. Onboarding rechecks on focus or Check again. Checking never trusts a
 hook, restarts Codex or starts a conversation.
 
 In the desktop app the same badge and description also cover a missing baum

@@ -2620,6 +2620,14 @@ it("warns beside Settings until Codex hooks are trusted and rechecks on focus", 
     ),
   );
   await act(async () => root.render(<App />));
+  // Focus reads are throttled to once a minute.
+  const realNow = Date.now.bind(Date);
+  let offset = 0;
+  const clock = vi.spyOn(Date, "now").mockImplementation(() => realNow() + offset);
+  const focus = async () => {
+    offset += 61_000;
+    await act(async () => window.dispatchEvent(new Event("focus")));
+  };
   const settings = () =>
     node.querySelector<HTMLAnchorElement>('.local-rail a[href*="page=settings"]')!;
   expect(settings().querySelector(".local-rail-badge")?.textContent).toBe("!");
@@ -2629,26 +2637,27 @@ it("warns beside Settings until Codex hooks are trusted and rechecks on focus", 
   // Outside the desktop app there is no agent hooks panel to open.
   expect(node.querySelector(".settings-content")?.textContent).not.toContain("Open agent hooks");
   unavailable = true;
-  await act(async () => window.dispatchEvent(new Event("focus")));
+  await focus();
   expect(settings().querySelector(".local-rail-badge")).not.toBeNull();
   unavailable = false;
   state = "trusted";
-  await act(async () => window.dispatchEvent(new Event("focus")));
+  await focus();
   expect(settings().querySelector(".local-rail-badge")).toBeNull();
   expect(node.querySelector(".settings-content")?.textContent).not.toContain(
     "Codex hooks need approval",
   );
   state = "unknown";
-  await act(async () => window.dispatchEvent(new Event("focus")));
+  await focus();
   expect(settings().querySelector(".local-rail-badge")).not.toBeNull();
   expect(node.querySelector(".settings-content")?.textContent).toContain(
     "Could not verify Codex hook approval",
   );
   state = "hooks_disabled";
-  await act(async () => window.dispatchEvent(new Event("focus")));
+  await focus();
   expect(node.querySelector(".settings-content")?.textContent).toContain(
     "codex features enable hooks",
   );
+  clock.mockRestore();
 });
 it("explains organizations that restrict OAuth app access on Repositories and rechecks after approval", async () => {
   history.replaceState(null, "", "/s/test-ns/?page=repositories");
