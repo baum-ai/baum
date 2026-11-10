@@ -49,6 +49,7 @@ type Server struct {
 	sequence                           uint64
 	events                             []event
 	subscribers                        map[chan struct{}]struct{}
+	joined                             chan struct{} // poked when a subscriber connects
 	done                               chan struct{}
 }
 type event struct {
@@ -77,7 +78,7 @@ func New(opts Options) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Server{opts: opts, launch: launch, session: session, namespace: namespace, subscribers: map[chan struct{}]struct{}{}, done: make(chan struct{})}, nil
+	return &Server{opts: opts, launch: launch, session: session, namespace: namespace, subscribers: map[chan struct{}]struct{}{}, joined: make(chan struct{}, 1), done: make(chan struct{})}, nil
 }
 func (s *Server) Listen(port int) (string, error) {
 	if port < 0 || port > 65535 {
@@ -322,6 +323,13 @@ func (s *Server) Publish(kind string, data any) error {
 	}
 	return nil
 }
+// hasSubscribers reports whether an event stream is connected.
+func (s *Server) hasSubscribers() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.subscribers) > 0
+}
+
 func (s *Server) stream(w http.ResponseWriter, r *http.Request) {
 	f, ok := w.(http.Flusher)
 	if !ok {
@@ -341,6 +349,10 @@ func (s *Server) stream(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	s.subscribers[ch] = struct{}{}
 	s.mu.Unlock()
+	select {
+	case s.joined <- struct{}{}:
+	default:
+	}
 	defer func() { s.mu.Lock(); delete(s.subscribers, ch); s.mu.Unlock() }()
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("X-Accel-Buffering", "no")

@@ -34,6 +34,12 @@ const IndexWatchEvery = 10 * time.Second
 // writes, and changes that come with time. Each tick reads the index again
 // only when the fingerprint moved, the cached index expired or was replaced,
 // and publishes only when its JSON differs from the last one published.
+//
+// With no event stream connected nobody is told anything, so the watcher
+// builds nothing: a moved fingerprint still invalidates the cache (the next
+// reader must not get a stale index), and the read is owed until a stream
+// connects, which wakes the watcher at once. Readers of /api/index build on
+// their own.
 func (s *Server) WatchIndex(ctx context.Context, interval time.Duration, w IndexWatch) {
 	if interval <= 0 {
 		interval = IndexWatchEvery
@@ -44,6 +50,8 @@ func (s *Server) WatchIndex(ctx context.Context, interval time.Duration, w Index
 	initialized := false
 	var fingerprint string
 	var version uint64
+	owed := false  // a change was seen while nobody was subscribed
+	known := false // fingerprint holds a value seen while idle
 	for {
 		seen := ""
 		if w.Fingerprint != nil {
@@ -53,7 +61,26 @@ func (s *Server) WatchIndex(ctx context.Context, interval time.Duration, w Index
 		if w.Fresh != nil {
 			current, fresh = w.Fresh()
 		}
-		if !initialized || seen != fingerprint || !fresh || current != version {
+		if !s.hasSubscribers() {
+			if !known {
+				fingerprint, known = seen, true
+			} else if seen != fingerprint {
+				if w.Invalidate != nil {
+					w.Invalidate()
+				}
+				fingerprint = seen
+				owed = true
+			}
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+			case <-s.joined:
+			}
+			continue
+		}
+		if owed || !initialized || seen != fingerprint || !fresh || current != version {
+			owed = false
 			if initialized && seen != fingerprint && w.Invalidate != nil {
 				w.Invalidate()
 			}
@@ -75,6 +102,7 @@ func (s *Server) WatchIndex(ctx context.Context, interval time.Duration, w Index
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+		case <-s.joined:
 		}
 	}
 }
