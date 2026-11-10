@@ -318,7 +318,7 @@ func TestReusableSectionDetails(t *testing.T) {
 		{ID: "sec_tests", HunkContentHashes: []string{stagedTestHunk}, Content: encodeJSON(t, failed)},
 	}}
 	outline := preparedOutline(t, v, b)
-	reusable := ReusableSectionDetails(b.Previous, outline)
+	reusable := ReusableSectionDetails(b.Previous, outline, nil)
 	if len(reusable) != 1 || reusable["sec_parser"] == nil {
 		t.Fatalf("reusable: %v", reusable)
 	}
@@ -331,11 +331,27 @@ func TestReusableSectionDetails(t *testing.T) {
 		t.Fatalf("reused details rejected: %s", findings)
 	}
 
+	// An image the previous version was not offered, such as one from a
+	// session linked since, sends every section back to the details stage.
+	seen := []bundlepkg.Attachment{{ID: "att_" + strings.Repeat("a", 32)}}
+	fresh := append(seen, bundlepkg.Attachment{ID: "att_" + strings.Repeat("b", 32)})
+	if reusable := ReusableSectionDetails(b.Previous, outline, seen); len(reusable) != 0 {
+		t.Fatalf("reused details with a new image offered: %v", reusable)
+	}
+	b.Previous.Attachments = []string{seen[0].ID}
+	if reusable := ReusableSectionDetails(b.Previous, outline, seen); len(reusable) != 1 {
+		t.Fatalf("an image the previous version was offered stopped reuse: %v", reusable)
+	}
+	if NewImages(b.Previous, seen) || !NewImages(b.Previous, fresh) || NewImages(nil, fresh) {
+		t.Fatal("NewImages")
+	}
+	b.Previous.Attachments = nil
+
 	b.Previous.Sections[0].HunkContentHashes = []string{testHunk, stagedTestHunk}
-	if reusable := ReusableSectionDetails(b.Previous, outline); len(reusable) != 0 {
+	if reusable := ReusableSectionDetails(b.Previous, outline, nil); len(reusable) != 0 {
 		t.Fatalf("a section whose hunks changed was reused: %v", reusable)
 	}
-	if ReusableSectionDetails(nil, outline) != nil {
+	if ReusableSectionDetails(nil, outline, nil) != nil {
 		t.Fatal("reuse without a previous version")
 	}
 }

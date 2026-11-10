@@ -479,7 +479,12 @@ func (s *stagedReview) reuse() []string {
 	if from == nil {
 		from = s.run.Bundle.Previous
 	}
-	reusable := review.ReusableSectionDetails(from, s.parts.Outline)
+	reusable := review.ReusableSectionDetails(from, s.parts.Outline, s.run.Bundle.Attachments)
+	if review.NewImages(from, s.run.Bundle.Attachments) {
+		if logger := s.g.Logger; logger != nil {
+			logger.Info("previous section details not reused: new images offered")
+		}
+	}
 	var outline struct {
 		Sections []struct {
 			ID string `json:"id"`
