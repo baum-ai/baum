@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -37,9 +38,13 @@ var sessionEnv = []struct {
 }{
 	{"claude-code", "CLAUDE_CODE_SESSION_ID", "CLAUDE_PID", func(name string) bool {
 		name = strings.ToLower(name)
-		return strings.HasPrefix(name, "claude") || name == "node" || name == "bun"
+		// A native install can be named by its version, the target of the link.
+		return strings.HasPrefix(name, "claude") || name == "node" || name == "bun" || versionName.MatchString(name)
 	}},
 }
+
+// versionName is a process named by a version, such as 2.1.34.
+var versionName = regexp.MustCompile(`^\d+\.\d+\.\d+`)
 
 // maxSessionID bounds an environment session id, like a stored observation's.
 const maxSessionID = 128

@@ -34,7 +34,8 @@ most 128 characters) sets the event's `agent` to `claude-code` and
 positive integer among the hook's ancestor processes. Processes an agent starts
 (a tmux server, an editor, another agent) inherit its variables, and their Git
 commands are not the agent's. The process must also be named like the agent
-(`claude`, or `node` or `bun` running it), so a pid reused after the agent
+(`claude`, a version such as `2.1.34`, which a native install can show, or
+`node` or `bun` running it), so a pid reused after the agent
 exited is not taken for it. The id is sent as `session.agent_pid`; nothing
 else of the environment is kept. The ancestors are always sent: the daemon
 prefers a tracked agent nearer the hook than `agent_pid`, and falls back to them
@@ -49,9 +50,13 @@ false there (one `git config` call, bounded to a second), which silences a
 dispatcher the daemon could not take out. The older `hooks git --check HOOK` always declines, so
 dispatchers of earlier versions keep running their own fallback, until the
 daemon repairs those it recognises as baum's (the repaired dispatcher no longer
-falls back to `entire`). A hook Entire manages is left as it is. Other legacy
-repository dispatchers can be removed by their owner; preserve independent
-hooks and checkpoint refs.
+falls back to `entire`). A hook Entire manages is left as it is. In a repository
+that uses Entire (its `.entire/settings.json` is in the default branch's tree or
+checked out in a working tree, or git cannot say) legacy dispatchers that run
+Entire's hooks are all left in place. Elsewhere the daemon also retires the
+legacy `commit-msg` and `prepare-commit-msg` dispatchers, restoring the hook
+they replaced or removing them. Dispatchers it does not recognise can be removed
+by their owner; preserve independent hooks and checkpoint refs.
 
 The dispatchers guard against loops: one that finds its own hook already running
 (`BAUM_GIT_HOOK_ACTIVE`) does nothing, and none runs a backup that is itself a

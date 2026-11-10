@@ -46,7 +46,7 @@ func TestDispatcherCheckDeclinesWhenTheRepositoryOptedOut(t *testing.T) {
 // A pid the agent exported counts only for a process that can be the agent.
 func TestEnvironmentSessionNeedsAnAgentProcess(t *testing.T) {
 	env := map[string]string{"CLAUDE_CODE_SESSION_ID": "abc", "CLAUDE_PID": "7"}
-	for name, want := range map[string]bool{"claude": true, "Claude": true, "node": true, "bun": true, "bash": false, "tmux: server": false, "": false} {
+	for name, want := range map[string]bool{"claude": true, "Claude": true, "node": true, "bun": true, "bash": false, "tmux: server": false, "": false, "2.1.34": true, "2.1": false, "v2.1.34": false} {
 		processes := []hookevents.Process{{PID: 9, Name: "git"}, {PID: 7, Start: "1", Name: name}}
 		agent, session := environmentSession(func(k string) string { return env[k] }, processes)
 		if (session != nil) != want || (want && agent != "claude-code") {

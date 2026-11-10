@@ -18,6 +18,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 )
 
 // Hooks are the Git hooks baum installs a dispatcher for.
@@ -318,20 +319,23 @@ func ensureHook(dir, hook string, opts Options, entire bool) (HookResult, error)
 func restoreHook(dir, hook string, entire bool) (HookResult, error) {
 	path := filepath.Join(dir, hook)
 	result := HookResult{Hook: hook, Outcome: Absent}
-	if info, err := os.Lstat(path); err != nil || !info.Mode().IsRegular() {
+	// A dispatcher another tool moved aside still runs baum, unless the
+	// repository declines it.
+	absent := func() (HookResult, error) {
+		if name := siblingDispatcher(dir, hook); name != "" {
+			result.Outcome, result.Reason = Unclaimed, "a dispatcher of baum's is still in "+name
+		}
 		return result, nil
+	}
+	if info, err := os.Lstat(path); err != nil || !info.Mode().IsRegular() {
+		return absent()
 	}
 	contents, err := readHook(path)
 	if err != nil {
 		return result, fmt.Errorf("read Git hook %s: %w", hook, err)
 	}
 	if !ours(contents) {
-		// A dispatcher another tool moved aside still runs baum, unless the
-		// repository declines it.
-		if name := siblingDispatcher(dir, hook); name != "" {
-			result.Outcome, result.Reason = Unclaimed, "a dispatcher of baum's is still in "+name
-		}
-		return result, nil
+		return absent()
 	}
 	if entire && runsEntire(contents, hook) {
 		result.Outcome, result.Reason = Unclaimed, entireEnabledReason
@@ -380,17 +384,39 @@ func runsEntire(contents, hook string) bool {
 	return strings.Contains(contents, "entire hooks git "+hook)
 }
 
-// entireEnabled reports whether the repository has Entire's settings, in the
-// working tree at root or the main one of its common directory.
+// entireWait bounds the git calls that look for Entire's settings.
+const entireWait = 5 * time.Second
+
+// entireEnabled reports whether the repository uses Entire: its settings file
+// is in the tree of the default branch (origin's, else main, else master), or
+// checked out in any working tree of the common directory. The settings are a
+// tracked file, so one worktree on an older branch is not evidence that Entire
+// is off. When git fails or is slow the answer is yes, so nothing is changed
+// on a guess.
 func entireEnabled(ctx context.Context, root string, opts Options) bool {
-	roots := []string{root}
-	if common, err := gitOutput(ctx, root, opts, "rev-parse", "--path-format=absolute", "--git-common-dir"); err == nil && filepath.Base(common) == ".git" {
-		roots = append(roots, filepath.Dir(common))
+	ctx, cancel := context.WithTimeout(ctx, entireWait)
+	defer cancel()
+	const settings = ".entire/settings.json"
+	trees, err := gitOutput(ctx, root, opts, "worktree", "list", "--porcelain")
+	if err != nil {
+		return true
 	}
-	for _, r := range roots {
-		if info, err := os.Stat(filepath.Join(r, ".entire", "settings.json")); err == nil && info.Mode().IsRegular() {
-			return true
+	for _, line := range strings.Split(trees, "\n") {
+		if path, ok := strings.CutPrefix(line, "worktree "); ok {
+			if info, err := os.Stat(filepath.Join(path, ".entire", "settings.json")); err == nil && info.Mode().IsRegular() {
+				return true
+			}
 		}
+	}
+	for _, ref := range []string{"refs/remotes/origin/HEAD", "refs/heads/main", "refs/heads/master"} {
+		if _, err := gitOutput(ctx, root, opts, "rev-parse", "--verify", "--quiet", ref); err != nil {
+			if ctx.Err() != nil {
+				return true
+			}
+			continue
+		}
+		found, err := gitOutput(ctx, root, opts, "ls-tree", "--name-only", ref, "--", settings)
+		return err != nil || found != ""
 	}
 	return false
 }

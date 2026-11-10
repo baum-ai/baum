@@ -4033,8 +4033,9 @@ report to the daemon; the hook side is in `internal/hookcli` (see its
   hook the clone had, saved as `<hook>.pre-baum`, are skipped in a clone
   with `core.hooksPath` and are taken out again for a clone that sets `git
   config baum.hooks false`, which also makes `--check-dispatcher` decline, or
-  leaves the registry; where `.entire/settings.json` exists, legacy dispatchers
-  that run Entire's hooks are left, elsewhere the legacy `commit-msg` and
+  leaves the registry; where the repository uses Entire (`.entire/settings.json` in
+  the default branch's tree, or checked out in any worktree, or git cannot
+  say), legacy dispatchers that run Entire's hooks are left, elsewhere the legacy `commit-msg` and
   `prepare-commit-msg` ones are retired). They carry the session
   their agent names in its environment (`CLAUDE_CODE_SESSION_ID` becomes
   `agent` `claude-code` and `session.id`, with `session.agent_pid` from
