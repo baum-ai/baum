@@ -697,10 +697,13 @@ title is not interpreted.
   (`~/.config/com.usebaum.desktop/` on Linux). Those saved settings are the
   only copy of the state: a click on either menu flips them, then both menus
   are rebuilt or updated from them. Native menus need no page capability.
-- **Authentication.** The daemon accepts one bearer credential, the launch
-  capability the app already holds for `/api/health`; it has no events-only or
-  read-only scope. The app sends it only in an `Authorization` header, only to
-  `GET /api/events` and the exchange, and never in a URL or log. The stream
+- **Authentication.** The daemon accepts one bearer credential for the app,
+  the launch capability it already holds for `/api/health`; it has no
+  events-only or read-only scope. The app sends the capability only in an
+  `Authorization` header, only to `GET /api/events` and the exchange, and
+  never in a URL or log. The only other bearer credential is an agent's MCP
+  token, which opens nothing but `POST /api/mcp` (see "MCP server for
+  agents" in ARCHITECTURE.md). The stream
   starts with `Last-Event-ID` beyond the latest event, so the daemon sends only
   new events and history is never shown as news; after a reconnect the app
   resumes after the last event it saw. A review requested or finished while the

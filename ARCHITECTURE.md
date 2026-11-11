@@ -5068,62 +5068,86 @@ that do not match the tool's JSON Schema.
 The route takes only an MCP token as `Authorization: Bearer`. The app
 server checks the exact Host, asks the MCP server whether the token is live,
 refuses a foreign Origin and needs none; the MCP server takes only `POST`
-(405 otherwise), `application/json` (415) and at most 1 MiB. The launch token
-and the cookie are refused there, and `/s/<namespace>/api/mcp` is not served.
-An MCP token is not the launch token, so it opens no other route.
+(405 otherwise), `application/json` (415), at most 1 MiB (413) and an
+`MCP-Protocol-Version` header that is absent or `2025-06-18` (400 otherwise).
+The launch token and the cookie are refused there, and
+`/s/<namespace>/api/mcp` is not served. An MCP token is not the launch
+token, so it opens no other route.
 
 `Registry` mints tokens in memory: `Mint(Consumer)` returns a token of 32
-random bytes, an opaque consumer id and a revoke function. Nothing about them
-is persisted or logged. A consumer is a `chat`, which may read any page and
-propose changes to the page it has open, or an `action`, bound to a
-repository and pull request, which only reads. `SetPage(id, PageContext)`
-records a chat's page: its name (`inbox`, `pulls`, `timeline`, `sessions`,
-`analytics`, `jobs`, `repositories`, `settings`, or a detail page:
-`pull_request`, `group`, `session`, `job`, `feature`), the repository, pull
-request, group, session, job or feature it shows, its filters and the focus
-the user picked. An action's page is its pull request and does not change.
-Callers hold the id, not the token, to set the page.
+random bytes, an opaque consumer id and a revoke function, and refuses any
+consumer but a `chat` (bound to nothing) or an `action` with an `owner/name`
+repository and a pull request number. Nothing about tokens is persisted or
+logged. A chat may read any page and propose changes to the page it has
+open; an action only reads. `SetPage(id, PageContext)` records a chat's
+page: its name (`inbox`, `pulls`, `timeline`, `sessions`, `analytics`,
+`jobs`, `repositories`, `settings`, or a detail page: `pull_request`,
+`group`, `session`, `job`, `feature`), the repository, pull request, group,
+session, job or feature it shows, its filters and the focus the user picked.
+An action's page is its pull request and does not change. Callers hold the
+id, not the token, to set the page.
 
-Tools are registered with a name, description, JSON Schema and a call that
-gets a `CallContext`: the consumer, its page, the reader and the proposals.
-`CallContext.Target` resolves the repository and pull request a tool reads:
-the ones asked for, else the action's, else the open page's; an action is
-refused any other repository. `RegisterPage` lists the tools that read a page
-and the proposer that takes its changes. Two tools are built in:
-`current_page`, which returns the page context and that page's tools, and
-`read_more`.
+Tools are registered with a name, description, JSON Schema, a scope, the
+route prefixes they read (`Reads`) and a call that gets a `CallContext`:
+the consumer, its page, a reader and the proposals. A `ScopeGlobal` tool,
+the zero value, reads across repositories or the app's own state; actions
+neither list nor call it (a call is an unknown tool). A `ScopeRepository`
+tool reads one repository, which it takes only from
+`CallContext.Target`: the repository and pull request asked for, else the
+action's, else the open page's; an action is refused any other repository.
+`RegisterPage` lists the tools that read a page and the proposer that takes
+its changes. Two repository-scoped tools are built in: `current_page`,
+which returns the page context and the tools of that page the consumer may
+call, and `read_more`.
 
 Tools read through `Reader`, which serves an in-process `GET` against the
 `LocalAPI` handler, below the app server's authentication and with no
-credentials. `Get` is its only method, so nothing but `GET` can be sent; it
-takes only clean `/api/` paths (not `/api/mcp`) and fails a body over 8 MiB.
+credentials. `Get` is its only method, so nothing but `GET` can be sent. A
+tool's reader takes only clean paths under the prefixes it declared, a
+whole segment at a time, and never the unreadable ones (`/api/settings`,
+`/api/debug`, `/api/github` and `/api/github-auth`, `/api/diagnostics`,
+`/api/plan-usage`, `/api/events`, `/api/mcp`), which no tool may declare.
+An action's reader also takes only requests that name its repository, by a
+`repository=` or `repo=` parameter, a `clone=` parameter of one of its
+clones (resolved through `Options.Clone`) or an
+`/api/repositories/{owner}/{name}` path, and none that name another. It
+fails a body over 8 MiB.
 
 Every result goes through one envelope. It masks the text with
 `bundle.NewRedactor`, cuts it at most 64 KiB in at a UTF-8 boundary, and
 places the part between `BEGIN UNTRUSTED DATA <tag>` and
 `END UNTRUSTED DATA <tag>` lines with a fresh random tag removed from the data
-first (`internal/untrusted`, which the chat and fix prompts use too). The
-rest is kept masked in memory under a random cursor, and the result ends
-with a line naming it; `read_more` with the cursor returns the next part,
-with a new cursor while more remains. A cursor gives its part once, only to
-its consumer, for 15 minutes; a consumer keeps at most eight, the oldest
-dropped first. Revoking a token drops its cursors and proposals.
+first (`internal/untrusted`, which the chat and fix prompts use too; tests
+pin their bytes). The rest is kept masked in memory under a random cursor,
+and the result ends with a line naming it; `read_more` with the cursor
+returns the next part, with a new cursor while more remains. A cursor gives
+its part once, only to its consumer, for 15 minutes; a consumer keeps at
+most eight, the oldest (by the order they were kept) dropped first.
+Revoking a token drops its cursors and proposals, and a call still running
+then keeps neither: both are stored only after checking, under their lock,
+that the consumer is live.
 
 `Proposals` hold changes a chat proposes: page, target, the value before and
-after, and the target's revision when it was read. `Propose` refuses an
-action, a page other than the open one and a page with no proposer, then
-runs the proposer's `Validate`, and records the proposal; nothing changes.
-`Save` has the proposer read the target's revision again, refuses with
-`ErrStale` and changes nothing when it moved, and otherwise calls `Apply`,
-the same change the page's own save makes. `Dismiss` drops a proposal.
-Saves run one at a time. No page has a proposer yet, and the app reaches
-proposals only through the Go API.
+after, the target's revision and the page context it was made on. A
+`Proposer` reads a target (`Current`), validates a change (`Validate`) and
+saves it (`Apply`), each given that page context so it refuses a target the
+page does not show. `Propose` refuses an action, a page other than the open
+one and a page with no proposer; it reads the target's value and revision
+itself, ignoring the agent's revision, refuses a `Before` the agent sent
+that no longer matches, and records the proposal; nothing changes. `Save`
+reads the target again, which refuses one that left the page and a changed
+revision, then calls `Apply` with the recorded revision; the proposer
+compares and writes in one transaction, as `appdb.Update` does, and returns
+`ErrStale` without writing when the target moved meanwhile. `Dismiss` drops
+a proposal. No page has a proposer yet, and the app reaches proposals only
+through the Go API.
 
 ### Transports and control protocol
 
 The app transport is `internal/uiserver` on `127.0.0.1` (a free port unless
 `--port`), unchanged: launch-token exchange, the cookie scoped to the secret
-`/s/<namespace>/` path, exact Host and Origin checks. Its token is written to
+`/s/<namespace>/` path, exact Host and Origin checks; `POST /api/mcp` takes
+only an MCP token and no Origin (see "MCP server for agents"). Its token is written to
 the credential file instead of being printed by a foreground process.
 
 The control transport is a Unix domain socket, mode 0600 in a 0700 directory:
