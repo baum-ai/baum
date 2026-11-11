@@ -2587,33 +2587,18 @@ dialog.local-dialog-wide {
   background: var(--status-critical-bg);
   color: var(--text-primary);
 }
-.repository-prompts {
-  display: grid;
-  gap: 0.75rem;
-  margin-bottom: 1.25rem;
+/* A repository's page reads as a Settings section: one column at its width. */
+.repository-page {
+  display: block;
+  padding: 1.875rem 2.5rem 5rem;
 }
-.repository-prompts > summary {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  list-style: none;
-  cursor: pointer;
-  font-weight: 600;
+.repository-page > * {
+  max-width: 780px;
 }
-.repository-prompts > summary::-webkit-details-marker {
-  display: none;
-}
-.repository-prompts > summary .prompt-chevron {
-  color: var(--text-secondary);
-}
-.repository-prompts[open] > summary .prompt-chevron {
-  transform: rotate(90deg);
-}
-.repository-prompts > .settings-footnote {
-  margin-bottom: 0.5rem;
+.repository-page > .settings-section + .settings-section {
+  margin-top: 2.5rem;
 }
 .repository-prompts-count {
-  font-weight: 400;
   color: var(--text-tertiary);
 }
 @media (max-width: 760px) {
@@ -2632,6 +2617,9 @@ dialog.local-dialog-wide {
   }
   .prompt-editor {
     padding-left: 1.25rem;
+  }
+  .repository-page {
+    padding: 1.25rem 1rem 3rem;
   }
   .settings-nav-item {
     flex: none;

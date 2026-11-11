@@ -131,6 +131,14 @@ folder and polls the daemon's background clone, including after reopening.
 Repositories come from GitHub only: without sign-in there is nothing to pick.
 
 Repository settings apply once per repository, including one with no clone.
+A repository's name in the list opens its page
+(`?page=repositories&repository=<owner/name>`, `RepositoryPage` in
+`src/settings.tsx`), with a back link and Esc or `u` back to the list. The page
+has three sections: **Reviews** (automatic reviews for this repository and
+decision capture, saved together by **Save repository settings**, which then says
+"Saved" and stays on the page), **Prompts** (below) and **Registration**, whose
+**Remove registration** returns to the list. A repository not registered, or no
+longer, shows "This repository is not registered" with a link to the list.
 **Change local clone** lists registrations and lets the person remove one or
 choose another folder; files and saved review stores are left on disk. Keep the
 clone baum should use registered. An explicitly chosen fork clone may be filed
@@ -1851,16 +1859,15 @@ its message and keeps the text. `Esc` in the field gives it up first, without
 closing a dialog around it. The textarea has neither `value` nor `defaultValue`:
 React writes either into its text node after every keystroke, which ends the
 browser's undo step, so the text is written only when it changes from outside.
-The repository dialog has a **Prompts** part (folded) listing the same entries
-with their source: a **Custom** pill for the repository's own, a **Global** pill
-for one inherited from Settings, and none for the default. Its editor is seeded
-with `inherited_text`, its **Changes** compares with that text, **Save for this
+A repository's page has a **Prompts** section listing the same entries with
+their source: a **Custom** pill for the repository's own, a **Global** pill for
+one inherited from Settings, and none for the default. Its editor is seeded with
+`inherited_text`, its **Changes** compares with that text, **Save for this
 repository** saves it, and **Use inherited** sends `null`. These save at once
 through their own `PUT`s and are not part of **Save repository settings**, which
-the part says. Typed text not yet saved is kept per prompt while the list is open
-(a row shows "Unsaved changes"), so opening another prompt or folding the part does
-not drop it; closing the dialog or leaving the section discards it, and the dialog
-says so. On a review, the "Generated
+the section says. Typed text not yet saved is kept per prompt while the page is
+open (a row shows "Unsaved changes"), so opening another prompt does not drop it;
+leaving the page or the Settings section discards it, which the repository page says. On a review, the "Generated
 with" line adds "Custom prompt (global)" or "Custom prompt (this repository)"
 when the saved version's `prompt_source` (from `api/versions`) says so.
 Analytics counts the decisions captured under baum's work.
@@ -1895,7 +1902,7 @@ it now, each choice with its key where it has one. Choices that open more
 (a path form for a clone, a job's usage, a pull request's peek) open it under
 the row. Pull requests: Peek, Merge… or the fix, the fix's transcript,
 Generate review, Select, Open on GitHub. Jobs: Open pull request, Watch or
-Transcript, Show usage, Cancel job. Repositories: Settings…, Change local
+Transcript, Show usage, Cancel job. Repositories: Settings, Change local
 clone… or, without a clone, Choose folder… and Clone it…. Manage inboxes:
 Edit…, Move up, Move down, Show count in the sidebar. Snoozed: Bring back, Archive.
 Sessions: the session menu below.

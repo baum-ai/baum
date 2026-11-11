@@ -91,6 +91,7 @@ it("groups repositories by owner and shows what each has going on", async () => 
   await act(async () =>
     root.render(
       <RepositoriesPage
+        Link={(props) => <a {...props} />}
         repositories={[
           repository("acme/api"),
           repository("solo/tool", false),

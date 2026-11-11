@@ -1345,6 +1345,11 @@ it("sets automatic reviews per repository, with no daily cap", async () => {
     path: "/s/test-ns/api/repositories/acme/demo/settings",
     body: { automatic: false, decisions: null },
   });
+  // The page stays, and says so.
+  expect(location.search).toBe("?page=repositories&repository=acme%2Fdemo");
+  expect(
+    node.querySelector('[aria-label="Repository acme/demo"] .settings-saved')!.textContent,
+  ).toBe("Saved");
 });
 it("turns decision capture off for one repository", async () => {
   history.replaceState(null, "", "/s/test-ns/?page=repositories");
@@ -1582,10 +1587,10 @@ it("types a custom data extraction model", async () => {
     body: { enabled: true, backend: "", model: "gpt-6-custom", effort: "" },
   });
 });
-/** Opens a repository's settings dialog and returns it. */
+/** Opens a repository's page from its row and returns it. */
 async function openRepository(name = "acme/demo") {
   await act(async () =>
-    node.querySelector<HTMLButtonElement>(`button[aria-label="Settings for ${name}"]`)!.click(),
+    node.querySelector<HTMLAnchorElement>(`a[aria-label="Settings for ${name}"]`)!.click(),
   );
   return node.querySelector(`[aria-label="Repository ${name}"]`)!;
 }

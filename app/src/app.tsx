@@ -90,6 +90,7 @@ import { pendingUpdate, useAppUpdates, useUpdateToast } from "./desktop/updates"
 import { useDiagnosticProblems } from "./diagnostics";
 import {
   RepositoriesPage,
+  RepositoryPage,
   SettingsPage,
   settingsSection,
   useCommandLineCheck,
@@ -1169,6 +1170,8 @@ function Workspace({ url }: { url: UrlState }) {
   const openSession = url.search.get("session");
   // A job's transcript, `?page=jobs&job=<id>`.
   const openJob = page === "jobs" ? url.search.get("job") : null;
+  // A repository's page, `?page=repositories&repository=<owner/name>`.
+  const openRepository = page === "repositories" ? url.search.get("repository") : null;
   // The current jobs rarely hold an older job: the daemon finds it.
   const openedJob = useOpenJob(openJob, jobs, revision);
   // The pull request page's own jobs: its fixes and questions, all of them.
@@ -1180,7 +1183,7 @@ function Workspace({ url }: { url: UrlState }) {
       ? "walkthrough"
       : (page === "inbox" || page === "pulls") && (groupId || selectedEntry)
         ? "review"
-        : (page === "sessions" && openSession) || openJob
+        : (page === "sessions" && openSession) || openJob || openRepository
           ? "page"
           : page === "inbox" ||
               page === "sessions" ||
@@ -1346,6 +1349,16 @@ function Workspace({ url }: { url: UrlState }) {
           current.set("filter", next);
           return current;
         });
+      } else if (
+        openRepository &&
+        (event.key === "u" || (event.key === "Escape" && onBody(event)))
+      ) {
+        // From a repository's page back to the list.
+        event.preventDefault();
+        url.update((current) => {
+          current.delete("repository");
+          return current;
+        });
       } else if (openJob && (event.key === "u" || (event.key === "Escape" && onBody(event)))) {
         // From a job's transcript back to where it was opened from, else the list.
         event.preventDefault();
@@ -1491,6 +1504,15 @@ function Workspace({ url }: { url: UrlState }) {
                 <ReadFailed what={readPageWhat(page, groupId)} message={error} retry={reload} />
               </div>
             </section>
+          ) : page === "repositories" && openRepository ? (
+            <RepositoryPage
+              name={openRepository}
+              repositories={picked}
+              loading={loading && revision === 0}
+              automatic={automatic}
+              changed={reload}
+              Link={LocalLink}
+            />
           ) : page === "repositories" ? (
             <RepositoriesPage
               repositories={picked}
@@ -1500,6 +1522,7 @@ function Workspace({ url }: { url: UrlState }) {
               entries={snapshot.entries}
               jobs={jobs}
               changed={reload}
+              Link={LocalLink}
             />
           ) : page === "settings" || page === "diagnostics" ? (
             <SettingsPage

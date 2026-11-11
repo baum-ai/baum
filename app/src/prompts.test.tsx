@@ -250,7 +250,7 @@ it("shows each prompt's source in a repository and customises from the inherited
   expect(text("review")).not.toMatch(/Custom|Global/);
   expect(text("details")).toContain("Global");
   expect(text("fix")).toContain("Custom");
-  expect(host.textContent).toContain("apart from the settings below");
+  expect(host.textContent).toContain("replaces the global one for this repository only");
   act(() => toggle("details").click());
   expect(area().value).toBe("Inherited details");
   act(() => toggle("details").click());

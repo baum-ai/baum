@@ -43,26 +43,22 @@ test("replaces a global prompt, overrides it for a repository and resets both", 
 
     // A repository can override it, and falls back to the global one.
     await page.getByRole("link", { name: "Repositories", exact: true }).click();
-    await page.getByRole("button", { name: "Settings for acme/demo" }).click();
-    const dialog = page.getByRole("dialog", { name: "Repository acme/demo", exact: true });
-    await dialog.getByText(/^Prompts/).click();
+    await page.getByRole("link", { name: "Settings for acme/demo" }).click();
+    const repository = page.getByRole("region", { name: "Repository acme/demo", exact: true });
     await expect(row(page, id)).toContainText("Global");
     await toggle(page, id).click();
-    const own = dialog.getByRole("textbox", { name: `${title} prompt` });
+    const own = repository.getByRole("textbox", { name: `${title} prompt` });
     expect(await own.inputValue()).toContain("Always answer in the language");
     await own.fill("A prompt only for acme/demo.");
     await row(page, id).getByRole("button", { name: "Save for this repository" }).click();
     await expect(row(page, id)).toContainText("Custom");
-    await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
 
+    // The page is in the address, so a reload stays on it.
     await page.reload();
-    await page.getByRole("button", { name: "Settings for acme/demo" }).click();
-    await dialog.getByText(/^Prompts/).click();
     await expect(row(page, id)).toContainText("Custom");
     await toggle(page, id).click();
     await row(page, id).getByRole("button", { name: "Use inherited" }).click();
     await expect(row(page, id)).toContainText("Global");
-    await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
     await page.goto(await launchURL());
     await page.getByRole("link", { name: "Settings" }).click();
     await page.getByRole("button", { name: /^Prompts/ }).click();

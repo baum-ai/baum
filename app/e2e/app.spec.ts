@@ -187,7 +187,7 @@ test("Add repositories searches beyond suggestions and picks the result", async 
       picker.getByText("Searching your GitHub repositories…", { exact: true }),
     ).toBeVisible();
     await expect(
-      page.getByRole("button", { name: "Settings for acme/top-extra", exact: true }),
+      page.getByRole("link", { name: "Settings for acme/top-extra", exact: true }),
     ).toBeVisible();
     await writeFile(release, "");
     await expect(result).toBeVisible();
@@ -208,7 +208,7 @@ test("Add repositories searches beyond suggestions and picks the result", async 
     await result.click();
     await expect(result).toHaveCount(0);
     await expect(
-      page.getByRole("button", { name: "Settings for acme/search-only", exact: true }),
+      page.getByRole("link", { name: "Settings for acme/search-only", exact: true }),
     ).toHaveCount(0);
   } finally {
     await writeFile(release, "");
@@ -333,12 +333,14 @@ test("automatic review of a new head, shown as started automatically", async ({ 
   await expect(automatic).toBeVisible({ timeout: 15000 });
   await expect(toggle).not.toBeChecked();
   await page.getByRole("link", { name: "Repositories", exact: true }).click();
-  await page.getByRole("button", { name: "Settings for acme/demo" }).click();
-  const repository = page.getByRole("dialog", { name: "Repository acme/demo", exact: true });
+  await page.getByRole("link", { name: "Settings for acme/demo" }).click();
+  const repository = page.getByRole("region", { name: "Repository acme/demo", exact: true });
   await expect(
     repository.getByText(/Automatic reviews are paused by the global switch/),
   ).toBeVisible();
-  await repository.getByRole("button", { name: "Cancel", exact: true }).click();
+  // Esc goes back to the list.
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("link", { name: "Settings for acme/demo" })).toBeVisible();
   await openSettings(page, "Reviews");
   await toggle.click();
   await expect(automatic.getByRole("status")).toHaveText("Saved");
