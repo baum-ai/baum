@@ -13,11 +13,19 @@
 package sqlitepool
 
 import (
+	"crypto/rand"
 	"database/sql"
+	"encoding/hex"
+	"fmt"
+	"net/url"
 	"os"
+	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	_ "modernc.org/sqlite"
 )
 
 // idleTimeout is how long an unused handle stays open; sweepEvery is how
@@ -67,8 +75,9 @@ func Disable() {
 // none is kept, and the function that releases it. The handle is shared:
 // callers must not close it, change its pool settings or leave a
 // transaction open past release. A path that does not exist (yet) is opened
-// and closed again on release, never kept.
-func Acquire(path string, readOnly bool, open func() (*sql.DB, error)) (*sql.DB, func(), error) {
+// and closed again on release, never kept; so is a handle open reports not
+// to keep (keep false).
+func Acquire(path string, readOnly bool, open func() (db *sql.DB, keep bool, err error)) (*sql.DB, func(), error) {
 	if !enabled.Load() {
 		return direct(open)
 	}
@@ -92,19 +101,10 @@ func Acquire(path string, readOnly bool, open func() (*sql.DB, error)) (*sql.DB,
 		handles[k] = h
 		mu.Unlock()
 		closeAll(closing)
-		db, err := open()
-		mu.Lock()
-		h.db, h.err = db, err
-		close(h.ready)
+		db, err := h.open(k, open)
 		if err != nil {
-			h.refs--
-			if handles[k] == h {
-				delete(handles, k)
-			}
-			mu.Unlock()
 			return nil, nil, err
 		}
-		mu.Unlock()
 		return db, h.release, nil
 	}
 	h.refs++
@@ -120,12 +120,55 @@ func Acquire(path string, readOnly bool, open func() (*sql.DB, error)) (*sql.DB,
 	return h.db, h.release, nil
 }
 
-func direct(open func() (*sql.DB, error)) (*sql.DB, func(), error) {
-	db, err := open()
+// open opens h's database; it settles h even when open panics, so callers
+// waiting for it never wait forever.
+func (h *handle) open(k key, open func() (*sql.DB, bool, error)) (db *sql.DB, err error) {
+	keep := false
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("opening %s: %v", k.path, r)
+			defer panic(r)
+		}
+		mu.Lock()
+		h.db, h.err = db, err
+		close(h.ready)
+		if err != nil {
+			h.refs--
+		}
+		if err != nil || !keep {
+			if handles[k] == h {
+				delete(handles, k)
+			}
+			h.retired = true
+		}
+		mu.Unlock()
+	}()
+	db, keep, err = open()
+	return db, err
+}
+
+func direct(open func() (*sql.DB, bool, error)) (*sql.DB, func(), error) {
+	db, _, err := open()
 	if err != nil {
 		return nil, nil, err
 	}
 	return db, func() { _ = db.Close() }, nil
+}
+
+// CloseUnder closes the kept handles of files under dir: now those not in
+// use, the others at their last release. A caller removing dir calls it
+// first, since an open file cannot be removed on Windows.
+func CloseUnder(dir string) {
+	prefix := filepath.Clean(dir) + string(filepath.Separator)
+	mu.Lock()
+	var closing []*sql.DB
+	for k, h := range handles {
+		if strings.HasPrefix(k.path, prefix) {
+			closing = append(closing, retire(h)...)
+		}
+	}
+	mu.Unlock()
+	closeAll(closing)
 }
 
 func (h *handle) release() {
@@ -191,6 +234,63 @@ func CloseIdle(after time.Duration) {
 	}
 	mu.Unlock()
 	closeAll(closing)
+}
+
+var walDirs sync.Map
+
+// WALSupported reports whether SQLite's write-ahead log works in dir: a
+// scratch database there is switched to WAL, written and read back, then
+// removed. The log's -shm index is memory-mapped, which some file systems
+// (FUSE mounts, some network and VM shares) refuse; a database switched to
+// WAL there could not be opened again, by this binary or an older one. The
+// answer is kept per directory for the life of the process.
+func WALSupported(dir string) bool {
+	dir = filepath.Clean(dir)
+	if ok, found := walDirs.Load(dir); found {
+		return ok.(bool)
+	}
+	ok := probeWAL(dir)
+	walDirs.Store(dir, ok)
+	return ok
+}
+
+func probeWAL(dir string) bool {
+	var name [8]byte
+	if _, err := rand.Read(name[:]); err != nil {
+		return false
+	}
+	path := filepath.Join(dir, ".baum-wal-probe-"+hex.EncodeToString(name[:])+".sqlite")
+	// Created private, as the databases beside it are; SQLite gives its -wal
+	// and -shm the same mode.
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_RDWR, 0o600)
+	if err != nil {
+		return false
+	}
+	_ = f.Close()
+	defer func() {
+		for _, suffix := range []string{"-wal", "-shm", ""} {
+			_ = os.Remove(path + suffix)
+		}
+	}()
+	uriPath := filepath.ToSlash(path)
+	if !strings.HasPrefix(uriPath, "/") {
+		uriPath = "/" + uriPath
+	}
+	db, err := sql.Open("sqlite", (&url.URL{Scheme: "file", Path: uriPath}).String())
+	if err != nil {
+		return false
+	}
+	defer func() { _ = db.Close() }()
+	db.SetMaxOpenConns(1)
+	var mode string
+	var value int
+	if err := db.QueryRow("PRAGMA journal_mode=WAL").Scan(&mode); err != nil || mode != "wal" {
+		return false
+	}
+	if _, err := db.Exec("CREATE TABLE probe(v); INSERT INTO probe VALUES(1)"); err != nil {
+		return false
+	}
+	return db.QueryRow("SELECT v FROM probe").Scan(&value) == nil && value == 1
 }
 
 func closeAll(dbs []*sql.DB) {

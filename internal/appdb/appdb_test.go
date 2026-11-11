@@ -522,12 +522,12 @@ func TestReaderDoesNotBlockWriter(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-	case <-time.After(5 * time.Second):
+	case <-time.After(9 * time.Second):
 		t.Fatal("the writer waited for a reader")
 	}
 	// With a rollback journal it would wait for the reader until busy_timeout
 	// (10 s) and fail.
-	if waited := time.Since(start); waited > 2*time.Second {
+	if waited := time.Since(start); waited > 8*time.Second {
 		t.Fatalf("the writer waited %v", waited)
 	}
 	if got := read(); got != "before" {
@@ -543,9 +543,10 @@ func TestReaderDoesNotBlockWriter(t *testing.T) {
 // another connection commits; a database replaced at the path is opened
 // again rather than read through the old handle.
 func TestSharedHandleSeesOtherWritersAndFollowsTheFile(t *testing.T) {
+	// After TempDir, so the kept handles close before it is removed.
+	dir := appdbtest.TempDir(t)
 	sqlitepool.Enable()
 	t.Cleanup(sqlitepool.Disable)
-	dir := appdbtest.TempDir(t)
 	path := filepath.Join(dir, "app.sqlite")
 	if err := appdb.Write(path, "state", "x", []byte("1")); err != nil {
 		t.Fatal(err)

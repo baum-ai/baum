@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"database/sql"
+	"database/sql/driver"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -241,12 +242,25 @@ func immediate(ctx context.Context, db *sql.DB, fn func(*sql.Conn) error) error 
 	if _, err = conn.ExecContext(ctx, `BEGIN IMMEDIATE`); err != nil {
 		return err
 	}
+	// The connection goes back to a shared handle: roll back on any way out
+	// but a commit, a panic included, and drop it if that fails.
+	committed := false
+	defer func() {
+		if committed {
+			return
+		}
+		if _, err := conn.ExecContext(context.Background(), `ROLLBACK`); err != nil {
+			_ = conn.Raw(func(any) error { return driver.ErrBadConn })
+		}
+	}()
 	if err = fn(conn); err != nil {
-		_, _ = conn.ExecContext(context.Background(), `ROLLBACK`)
 		return err
 	}
-	_, err = conn.ExecContext(ctx, `COMMIT`)
-	return err
+	if _, err = conn.ExecContext(ctx, `COMMIT`); err != nil {
+		return err
+	}
+	committed = true
+	return nil
 }
 
 func summaryTriggerNames(ctx context.Context, q querier) ([]string, error) {

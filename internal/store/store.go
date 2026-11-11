@@ -21,7 +21,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io/fs"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -191,10 +190,7 @@ func openRoot(root string, write bool) (*Store, error) {
 	} else if errors.Is(err, os.ErrExist) {
 		// SQLite would open a file it cannot write read-only, without an
 		// error: refuse it here, as opening it for writing did.
-		var info os.FileInfo
-		if info, err = os.Stat(s.path()); err == nil && info.Mode().Perm()&0o200 == 0 {
-			err = &fs.PathError{Op: "open", Path: s.path(), Err: fs.ErrPermission}
-		}
+		err = writable(s.path())
 	}
 	if err != nil {
 		return nil, err
@@ -225,11 +221,18 @@ func openRoot(root string, write bool) (*Store, error) {
 }
 func (s *Store) path() string { return filepath.Join(s.root, "versions.sqlite") }
 func (s *Store) database(write bool) (*sql.DB, error) {
+	db, _, err := s.open(write)
+	return db, err
+}
+
+// open opens a new handle on the store's database; immutable reports a
+// read-only one that reads the file as it is, without locks (see below).
+func (s *Store) open(write bool) (db *sql.DB, immutable bool, err error) {
 	if _, err := os.Stat(s.path()); err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return nil, ErrNotFound
+			return nil, false, ErrNotFound
 		}
-		return nil, err
+		return nil, false, err
 	}
 	// URI filename escaping keeps a path containing '?' or '#' literal.
 	mode := "ro"
@@ -244,40 +247,46 @@ func (s *Store) database(write bool) (*sql.DB, error) {
 	if write {
 		uri += "&_pragma=journal_size_limit(" + strconv.Itoa(journalSizeLimit) + ")"
 	}
-	db, err := sql.Open("sqlite", uri)
-	if err != nil {
-		return nil, err
+	if db, err = sql.Open("sqlite", uri); err != nil {
+		return nil, false, err
 	}
 	db.SetMaxOpenConns(1)
 	if write {
 		// Best effort, as appdb does: a store another connection holds
-		// switches at a later write-open. The mode is kept in the file, so
-		// older binaries and read-only opens use the log too.
-		_, _ = db.Exec("PRAGMA journal_mode=WAL")
-		return db, nil
+		// switches at a later write-open, and one in a directory where the
+		// log does not work (sqlitepool.WALSupported) is never switched. The
+		// mode is kept in the file, so older binaries and read-only opens use
+		// the log too.
+		var current string
+		if db.QueryRow("PRAGMA journal_mode").Scan(&current) == nil && current != "wal" && sqlitepool.WALSupported(s.root) {
+			_, _ = db.Exec("PRAGMA journal_mode=WAL")
+		}
+		return db, false, nil
 	}
 	// Reading a store in WAL mode needs its -shm file, which SQLite creates
-	// beside it. In a directory this user cannot write, with no -shm left
-	// there, it cannot. With no log either, the last writer checkpointed all
-	// of it and closed, so the database file is whole: it is then read as it
-	// is (immutable), which no writer can change without creating the log.
-	// Never with a log, or for a rollback journal SQLite cannot roll back:
-	// the file alone may then be half written.
+	// beside it. In a directory this user cannot write, with no -shm there, it
+	// cannot (SQLITE_READONLY_DIRECTORY). With no log either, the last
+	// writer checkpointed all of it and closed, so the database file is
+	// whole: it is then read as it is (immutable), which no writer can change
+	// without creating the log. Never with a log, or a rollback journal
+	// SQLite cannot roll back: the file alone may then be half written. Such
+	// a handle is not kept (acquire): it would miss later writes.
 	var version int
 	err = db.QueryRow("PRAGMA schema_version").Scan(&version)
-	if code, ok := sqliteCode(err); ok && (code == sqliteReadOnlyDirectory || code&0xff == sqliteCantOpen) && !exists(s.path()+"-wal") && !exists(s.path()+"-journal") {
+	if code, ok := sqliteCode(err); ok && code == sqliteReadOnlyDirectory && !exists(s.path()+"-wal") && !exists(s.path()+"-journal") {
 		_ = db.Close()
 		if db, err = sql.Open("sqlite", uri+"&immutable=1"); err != nil {
-			return nil, err
+			return nil, false, err
 		}
 		db.SetMaxOpenConns(1)
+		return db, true, nil
 	}
-	return db, nil
+	return db, false, nil
 }
 
-// SQLite's result codes for a database whose directory cannot be written
-// (SQLITE_READONLY_DIRECTORY) and, primary, for a file it cannot open.
-const sqliteReadOnlyDirectory, sqliteCantOpen = 1544, 14
+// sqliteReadOnlyDirectory is SQLite's result code for a database whose
+// directory cannot be written (SQLITE_READONLY_DIRECTORY).
+const sqliteReadOnlyDirectory = 1544
 
 // exists reports whether path may exist: any error but "does not exist"
 // counts as existing.
@@ -311,13 +320,16 @@ func (s *Store) acquire(write bool) (*sql.DB, func(), error) {
 		}
 		return nil, nil, err
 	}
-	return sqlitepool.Acquire(s.path(), !write, func() (*sql.DB, error) {
-		db, err := s.database(write)
+	return sqlitepool.Acquire(s.path(), !write, func() (*sql.DB, bool, error) {
+		db, immutable, err := s.open(write)
 		if err == nil {
 			db.SetMaxOpenConns(sharedConnections)
-			db.SetMaxIdleConns(2)
+			// Every store's handle stays open while the index reads it, so
+			// it keeps no idle connection (descriptors) for long.
+			db.SetMaxIdleConns(1)
+			db.SetConnMaxIdleTime(time.Minute)
 		}
-		return db, err
+		return db, !immutable, err
 	})
 }
 

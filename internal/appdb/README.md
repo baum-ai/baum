@@ -33,15 +33,21 @@ failures roll back.
 
 ## Write-ahead log and shared handles
 
-The database uses SQLite's write-ahead log (WAL). Every write-open switches it
+The database uses SQLite's write-ahead log (WAL). A write-open switches it
 (`PRAGMA journal_mode=WAL`, best effort: a database another connection holds
 switches at a later write-open), and the mode is kept in the file, so every
 later connection uses it, older baum binaries and read-only opens included.
+It switches only where the log works: the first switch in a directory is
+preceded, once per process, by a scratch database there that is switched,
+written, read back and removed (`sqlitepool.WALSupported`). File systems that
+cannot memory-map the log's `-shm` index (some FUSE, network and VM shares)
+keep the rollback journal.
 Readers never wait for the writer, and the writer never waits for readers;
 writers still wait up to ten seconds for each other. A commit appends to
 `app.sqlite-wal`; checkpoints copy it into `app.sqlite`, automatically every
 1000 pages and when the last connection closes, and cut the log back to
-`JournalSizeLimit` (16 MiB). Synchronous mode stays SQLite's default (`FULL`):
+`JournalSizeLimit` (16 MiB). A shared handle closes connections idle for a
+minute, so the last one closing in a quiet process checkpoints too. Synchronous mode stays SQLite's default (`FULL`):
 a commit is on disk before it returns. A writer killed mid-commit leaves no
 hot journal: readers ignore a log's uncommitted end, so read-only connections
 never need to roll anything back. A read-only connection needs `app.sqlite-shm`
@@ -52,10 +58,15 @@ attribution) share one handle per database and mode for the life of a
 process once [`sqlitepool`](../sqlitepool) is enabled, which the `baum`
 command does at startup: the schema checks and connection setup run once, not
 once per call. A shared handle is reused only while the path still names the
-file it opened, and is closed after five idle minutes. Tests and other
-programs leave the pool off and open a handle per call, as before. `Open`
-always returns a handle of its own, which relational stores keep for their
-lifetime.
+file it opened, with the same mode, and is closed after five idle minutes;
+`sqlitepool.CloseUnder` closes those under a directory about to be removed.
+Tests and other programs leave the pool off and open a handle per call, as
+before. `Open` always returns a handle of its own, which relational stores
+keep for their lifetime. A transaction on a shared handle is rolled back on
+every way out but its commit, a panic included (`Transact`, `Abandon`); a
+connection whose rollback fails is closed, not returned, so it cannot keep
+the write lock. The schema checks run when a handle opens: a schema upgrade
+after the first baseline must make running processes reopen theirs.
 Inboxes use it to compare their revision across independent store instances.
 The queue retains its own lifetime lock (`<database path>.jobs.lock.sqlite`) beside the
 database so only one process executes jobs; the main database is never locked

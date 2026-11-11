@@ -1,6 +1,7 @@
 package jobs
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -38,11 +39,9 @@ func loadJournal(path string) (jobs []Job, heads map[string]headRuns, err error)
 	if err != nil {
 		return nil, nil, err
 	}
-	defer func() {
-		if err != nil {
-			_ = tx.Rollback()
-		}
-	}()
+	// Unconditional, so a panic too gives the connection back without the
+	// transaction; after a commit it does nothing.
+	defer func() { _ = tx.Rollback() }()
 	if _, err = tx.Exec(journalSchema); err != nil {
 		return nil, nil, err
 	}
@@ -117,10 +116,15 @@ func loadJournal(path string) (jobs []Job, heads map[string]headRuns, err error)
 }
 
 // writeJob inserts a job, encoded as raw, at the end of the journal, or
-// replaces its row in place.
-func writeJob(tx *sql.Tx, j Job, raw []byte) error {
-	_, err := tx.Exec(upsertJob, j.ID, j.CreatedAt.UnixMilli(), j.UpdatedAt.UnixMilli(), j.State, raw)
+// replaces its row in place, within the transaction of tx.
+func writeJob(tx execer, j Job, raw []byte) error {
+	_, err := tx.ExecContext(context.Background(), upsertJob, j.ID, j.CreatedAt.UnixMilli(), j.UpdatedAt.UnixMilli(), j.State, raw)
 	return err
+}
+
+// execer is a transaction (*sql.Tx) or a connection in one (*sql.Conn).
+type execer interface {
+	ExecContext(context.Context, string, ...any) (sql.Result, error)
 }
 
 // errJobTooLarge is a job whose record, even reduced, is over maxJobJSON.
@@ -158,66 +162,54 @@ type journalRow struct {
 // writeJournal writes the given rows and deletes the rows of gone, which are
 // jobs dropped from memory before any write kept them (a rolled-back
 // submission), in one transaction.
-func writeJournal(path string, rows []journalRow, gone []string) (err error) {
+func writeJournal(path string, rows []journalRow, gone []string) error {
 	db, release, err := appdb.Acquire(path, false)
 	if err != nil {
 		return err
 	}
 	defer release()
-	tx, err := db.Begin()
-	if err != nil {
-		return err
-	}
-	defer func() {
-		if err != nil {
-			_ = tx.Rollback()
+	ctx := context.Background()
+	return appdb.Transact(ctx, db, func(conn *sql.Conn) error {
+		for _, row := range rows {
+			if err := writeJob(conn, row.job, row.raw); err != nil {
+				return err
+			}
 		}
-	}()
-	for _, row := range rows {
-		if err = writeJob(tx, row.job, row.raw); err != nil {
-			return err
+		for _, id := range gone {
+			if _, err := conn.ExecContext(ctx, `DELETE FROM jobs WHERE id=?`, id); err != nil {
+				return err
+			}
 		}
-	}
-	for _, id := range gone {
-		if _, err = tx.Exec(`DELETE FROM jobs WHERE id=?`, id); err != nil {
-			return err
-		}
-	}
-	return tx.Commit()
+		return nil
+	})
 }
 
 // archiveJournal, in one transaction, writes rows (archived jobs changed
 // since their last write), marks the jobs ids archived and adds heads to the
 // archived runs of each head.
-func archiveJournal(path string, rows []journalRow, ids []string, heads map[string]headRuns) (err error) {
+func archiveJournal(path string, rows []journalRow, ids []string, heads map[string]headRuns) error {
 	db, release, err := appdb.Acquire(path, false)
 	if err != nil {
 		return err
 	}
 	defer release()
-	tx, err := db.Begin()
-	if err != nil {
-		return err
-	}
-	defer func() {
-		if err != nil {
-			_ = tx.Rollback()
+	ctx := context.Background()
+	return appdb.Transact(ctx, db, func(conn *sql.Conn) error {
+		for _, row := range rows {
+			if err := writeJob(conn, row.job, row.raw); err != nil {
+				return err
+			}
 		}
-	}()
-	for _, row := range rows {
-		if err = writeJob(tx, row.job, row.raw); err != nil {
-			return err
+		for _, id := range ids {
+			if _, err := conn.ExecContext(ctx, `UPDATE jobs SET archived=1 WHERE id=?`, id); err != nil {
+				return err
+			}
 		}
-	}
-	for _, id := range ids {
-		if _, err = tx.Exec(`UPDATE jobs SET archived=1 WHERE id=?`, id); err != nil {
-			return err
+		for head, h := range heads {
+			if _, err := conn.ExecContext(ctx, `INSERT INTO job_heads(head, runs, others) VALUES(?, ?, ?) ON CONFLICT(head) DO UPDATE SET runs=runs+excluded.runs, others=others+excluded.others`, head, h.runs, h.others); err != nil {
+				return err
+			}
 		}
-	}
-	for head, h := range heads {
-		if _, err = tx.Exec(`INSERT INTO job_heads(head, runs, others) VALUES(?, ?, ?) ON CONFLICT(head) DO UPDATE SET runs=runs+excluded.runs, others=others+excluded.others`, head, h.runs, h.others); err != nil {
-			return err
-		}
-	}
-	return tx.Commit()
+		return nil
+	})
 }

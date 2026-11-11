@@ -43,7 +43,8 @@ func TestWriteOpenSwitchesToTheWriteAheadLog(t *testing.T) {
 }
 
 // A store in a directory this user cannot write is still read, once its last
-// writer has closed (no log, no -shm left beside it).
+// writer has closed it (no log, no -shm left beside it). With a log and -shm
+// left, SQLite reads through them as usual.
 func TestReadOnlyDirectoryStoreIsRead(t *testing.T) {
 	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
 		t.Skip("needs a directory the test cannot write")
@@ -76,10 +77,11 @@ func TestReadOnlyDirectoryStoreIsRead(t *testing.T) {
 // With shared handles on, the daemon's reader keeps its handle and sees a
 // version another process publishes.
 func TestSharedReaderSeesAnotherWriter(t *testing.T) {
+	ctx := context.Background()
+	// Opened first: the kept handles then close before its directory goes.
+	s := opened(t)
 	sqlitepool.Enable()
 	t.Cleanup(sqlitepool.Disable)
-	ctx := context.Background()
-	s := opened(t)
 	k := Key{"acme/widgets", 1}
 	first := putDoc(t, s, k, Version{}, docFor(k, 1, `,"pr_state":"open"`, `"title":"one"`))
 	if v, err := s.Latest(ctx, k); err != nil || v.Metadata.Version != 1 {
