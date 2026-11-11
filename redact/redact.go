@@ -16,6 +16,7 @@ import (
 	"regexp"
 	"runtime"
 	"strings"
+	"sync"
 	"unicode"
 	"unicode/utf8"
 
@@ -278,9 +279,15 @@ func (s *Summary) Add(other Summary) {
 	}
 }
 
-// Engine redacts with Config. It is immutable and safe for concurrent use.
+// Engine redacts with Config as it was when the engine was made. It is
+// immutable and safe for concurrent use, so one engine serves the whole
+// process (Shared).
 type Engine struct {
 	inner *goredact.Engine
+	// config is Config as New found it, which the finders compile too; rules
+	// identifies it (rulesOf), so a Memo tells engines of other rules apart.
+	config goredact.Config
+	rules  string
 	// finders holds idle engines that report findings for RedactContext and
 	// FindContext. Compiling one is expensive, so at most cap(finders) exist:
 	// slots counts them, and a call waits for an idle one once all are made.
@@ -373,14 +380,48 @@ type Span struct {
 	Email      bool
 }
 
-// New compiles the redaction rules.
+// New compiles the redaction rules. Most callers want Shared, which compiles
+// them once for the process.
 func New() (*Engine, error) {
-	inner, err := goredact.New(Config)
+	config := Config
+	inner, err := goredact.New(config)
 	if err != nil {
 		return nil, fmt.Errorf("redact: constructing engine: %w", err)
 	}
 	n := max(runtime.GOMAXPROCS(0), 1)
-	return &Engine{inner: inner, finders: make(chan *finder, n), slots: make(chan struct{}, n)}, nil
+	return &Engine{inner: inner, config: config, rules: rulesOf(config), finders: make(chan *finder, n), slots: make(chan struct{}, n)}, nil
+}
+
+// shared is the engine Shared returns.
+var shared struct {
+	mu     sync.Mutex
+	engine *Engine
+}
+
+// Shared returns the process-wide engine, compiling it on first use and
+// again only once Config has changed: an engine compiles up to one finder
+// per CPU, far more work than masking most texts.
+func Shared() (*Engine, error) {
+	rules := rulesOf(Config)
+	shared.mu.Lock()
+	defer shared.mu.Unlock()
+	if shared.engine != nil && shared.engine.rules == rules {
+		return shared.engine, nil
+	}
+	engine, err := New()
+	if err != nil {
+		return nil, err
+	}
+	shared.engine = engine
+	return engine, nil
+}
+
+// rulesOf identifies config: every field in Go syntax, so a custom rule's
+// validator counts by its function. OnFinding is left out; finders set their
+// own.
+func rulesOf(config goredact.Config) string {
+	config.OnFinding = nil
+	return fmt.Sprintf("%#v", config)
 }
 
 // borrow returns an idle finder, compiles one while fewer than cap(finders)
@@ -393,7 +434,7 @@ func (e *Engine) borrow(ctx context.Context) (*finder, error) {
 	}
 	select {
 	case e.slots <- struct{}{}:
-		f, err := newFinder()
+		f, err := newFinder(e.config)
 		if err != nil {
 			<-e.slots
 			return nil, err
@@ -409,9 +450,8 @@ func (e *Engine) borrow(ctx context.Context) (*finder, error) {
 	}
 }
 
-func newFinder() (*finder, error) {
+func newFinder(config goredact.Config) (*finder, error) {
 	f := &finder{}
-	config := Config
 	config.RecordAligned = false
 	config.OnFinding = func(found goredact.Finding) {
 		f.found = append(f.found, foundSpan{rule: found.RuleID, start: int(found.Start), end: int(found.End)})
@@ -455,7 +495,7 @@ func (e *Engine) FindContext(ctx context.Context, text string) ([]Span, error) {
 
 // Profile describes the configuration for a document's generator notes.
 func (e *Engine) Profile() string {
-	return fmt.Sprintf("goredact %s %s (%s)", Config.Profile, Config.MaskStrategy, e.inner.RuleSetVersion())
+	return fmt.Sprintf("goredact %s %s (%s)", e.config.Profile, e.config.MaskStrategy, e.inner.RuleSetVersion())
 }
 
 // RedactReader streams src to dst with every secret and e-mail address

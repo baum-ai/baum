@@ -416,7 +416,24 @@ func TestFingerprintFollowsStoreCommitsAndClones(t *testing.T) {
 	if again, err := os.Stat(filepath.Join(common, "baum", "reviews", "versions.sqlite")); err != nil || again.Size() != info.Size() {
 		t.Fatal("the lease renewal was expected to keep the store's size", err)
 	}
-	check.moved("same-size lease renewal")
+	check.still("lease renewal")
+	// A real write before or after a renewal is not hidden by it.
+	other := store.Key{Repository: "acme/a", Number: 2}
+	if _, err := s.BeginRun(ctx, other, time.Now().Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.HeartbeatRun(ctx, id, time.Now().Add(2*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	check.moved("write followed by a lease renewal")
+	if err := s.HeartbeatRun(ctx, id, time.Now().Add(2*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	check.still("second lease renewal")
+	if _, err := s.BeginRun(ctx, store.Key{Repository: "acme/a", Number: 3}, time.Now().Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	check.moved("write after a lease renewal")
 	backdate()
 	if err := s.FinishRun(ctx, id, ""); err != nil {
 		t.Fatal(err)

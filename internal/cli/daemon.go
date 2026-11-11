@@ -349,26 +349,29 @@ func sshAgent() *shellenv.Agent {
 
 // applyLoginEnvironment replaces this process's environment with the
 // variables the daemon keeps, taken from the login shell when it answers (see
-// shellenv.Merge). Only variable names are logged.
+// shellenv.Merge). Only variable names are logged, and how long the shell
+// took: the daemon listens only after this returns.
 func applyLoginEnvironment(ctx context.Context, log *slog.Logger) {
 	inherited := os.Environ()
+	began := time.Now()
 	result, err := resolveShell(ctx, shellenv.Options{Environ: inherited})
+	took := time.Since(began).Round(time.Millisecond)
 	var resolved map[string]string
 	switch {
 	case errors.Is(err, shellenv.ErrUnsupported):
-		log.Info("using the inherited environment", "reason", err.Error())
+		log.Info("using the inherited environment", "reason", err.Error(), "duration", took)
 	case err != nil:
-		log.Warn("login shell environment not read; using the inherited environment", "shell", result.Shell, "reason", err.Error())
+		log.Warn("login shell environment not read; using the inherited environment", "shell", result.Shell, "reason", err.Error(), "duration", took)
 	case result.Shell == "":
 		// Windows: the inherited environment with the registry's PATH.
 		resolved = result.Env
-		log.Info("read PATH from the registry")
+		log.Info("read PATH from the registry", "duration", took)
 	case result.Fallback != "":
 		resolved = result.Env
-		log.Warn("read the environment of a login shell that is not interactive", "shell", result.Shell, "reason", result.Fallback)
+		log.Warn("read the environment of a login shell that is not interactive", "shell", result.Shell, "reason", result.Fallback, "duration", took)
 	default:
 		resolved = result.Env
-		log.Info("read the login shell environment", "shell", result.Shell)
+		log.Info("read the login shell environment", "shell", result.Shell, "duration", took)
 	}
 	env := shellenv.Merge(inherited, resolved)
 	os.Clearenv()

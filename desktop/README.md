@@ -454,8 +454,8 @@ The daemon outlives the app, so the app's presence is a tray icon.
   not: its dot means only that something runs or needs the user. Zero, an
   unknown count and a daemon that is not
   running clear all of them. The daemon counts what the app's Inbox heading
-  totals, by the same definition: each unsnoozed pull request waiting on the
-  user once, whichever saved inboxes hold it or none, and whatever their badge
+  totals, by the same definition: each pull request waiting on the user, neither
+  snoozed nor archived, once, whichever saved inboxes hold it or none, and whatever their badge
   switches say (see [`internal/inboxqueue`](../internal/inboxqueue/README.md)):
   `GET /api/index?view=waiting`, read with the other tray requests.
 - **Quit** ends the app only. Background refresh and automatic generation
@@ -521,10 +521,13 @@ Two channels, each the least that does the job:
    `GET /api/automatic`, `GET /api/index?view=waiting` and
    `GET /api/live-sessions`, read when the daemon's events stream
    (`GET /api/events`, held open by a thread of its own and reopened with a
-   backoff from 1 s to 30 s) announces a `progress`, `automatic`, `live`,
-   `index` or `reset` event (not a `job` event, a running job's usage, which
-   changes no count), or when the stream (re)connects, after a pause of
-   500 ms (at most 2 s) for a burst of events to end; as a safety net also
+   backoff from 1 s to 30 s) announces a change, and then only the requests that event can affect:
+   `progress` reads jobs, `automatic` the pause switch, `index` the waiting
+   count, `live` the live sessions (`reset` and a kind this app does not know
+   read all four; a `job` event, a running job's usage, changes no count and
+   reads none). Everything is read when the stream (re)connects. The read
+   follows a pause of 500 ms (at most 2 s) for a burst of events to end, and
+   reads each request once for the whole burst; as a safety net also
    every 60 s while the stream is up and every 30 s while it is down, and
    never with no daemon attached,
    `GET /api/diagnostics` every 30 minutes (the daemon caches the report for 30

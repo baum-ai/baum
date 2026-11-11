@@ -533,6 +533,8 @@ func (s *Service) Sync(ctx context.Context) {
 		}
 		return a.number < b.number
 	})
+	// A pass is not latency-sensitive: its loads decode few sessions at once.
+	ctx = sessions.WithBackground(ctx)
 	started := s.now()
 	// The pull requests of one clone read mostly the same sessions: decode
 	// each once in this pass.

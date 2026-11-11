@@ -172,7 +172,8 @@ func Fingerprint(rows func(context.Context) ([]repos.Repository, error), identit
 			case err != nil:
 				_, _ = fmt.Fprintf(h, "%q -\n", path)
 			case times:
-				_, _ = fmt.Fprintf(h, "%q %d %d %v\n", path, info.Size(), info.ModTime().UnixNano(), info.Mode())
+				stamp := store.SeenThroughHeartbeats(path, store.FileStamp{Size: info.Size(), ModTime: info.ModTime().UnixNano()})
+				_, _ = fmt.Fprintf(h, "%q %d %d %v\n", path, stamp.Size, stamp.ModTime, info.Mode())
 			default:
 				_, _ = fmt.Fprintf(h, "%q %v\n", path, info.Mode().Type())
 			}

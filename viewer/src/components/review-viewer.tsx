@@ -402,6 +402,7 @@ function useVisibleHeight<T extends HTMLElement>() {
     const scroller = scrollerOf(element);
     const page = scroller === (document.scrollingElement ?? document.documentElement);
     let frame = 0;
+    let written = "";
     const measure = () => {
       frame = 0;
       const area = page ? { top: 0, bottom: window.innerHeight } : scroller.getBoundingClientRect();
@@ -410,7 +411,11 @@ function useVisibleHeight<T extends HTMLElement>() {
         element.getBoundingClientRect().top + element.clientTop,
         area.top + REVIEW_BAR_PX,
       );
-      element.style.setProperty("--review-visible", `${area.bottom - top}px`);
+      // An unchanged value is not written: a write restyles everything below.
+      const value = `${area.bottom - top}px`;
+      if (value === written) return;
+      written = value;
+      element.style.setProperty("--review-visible", value);
     };
     const schedule = () => {
       if (!frame) frame = requestAnimationFrame(measure);
