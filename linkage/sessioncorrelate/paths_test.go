@@ -234,6 +234,56 @@ func TestPathResolverOfNilGraph(t *testing.T) {
 	}
 }
 
+// Replaying the placements a resolver reported tells whether other clone
+// roots would change its answers.
+func TestCloneLookupsReplay(t *testing.T) {
+	tree := newTree("/home/user/src/repo", "")
+	for _, path := range []string{"/home/user/src/repo/main.go", "/home/user/src/repo-feature/b.go", "src/rel.go"} {
+		tree.touch("s-root", path, session.TouchEdit)
+	}
+	graph := tree.build()
+	roots := []string{"/home/user/src/repo"}
+	placed := map[string]string{}
+	resolver := NewPathResolver(graph, "claude_code", WithCloneRoots(roots...), WithCloneLookups(func(path, relative string, ok bool) {
+		if !ok {
+			relative = "-"
+		}
+		placed[path] = relative
+	}))
+	for _, touch := range graph.FileTouches {
+		resolver.Touch(touch)
+	}
+	want := map[string]string{
+		"/home/user/src/repo/main.go":      "main.go",
+		"/home/user/src/repo-feature/b.go": "-",
+		"/home/user/src/repo/src/rel.go":   "src/rel.go",
+	}
+	if !reflect.DeepEqual(placed, want) {
+		t.Errorf("placed = %v, want %v", placed, want)
+	}
+	replay := func(roots CloneRoots) bool {
+		for path, relative := range placed {
+			got, ok := roots.Place(path)
+			if !ok {
+				got = "-"
+			}
+			if got != relative {
+				return false
+			}
+		}
+		return true
+	}
+	if !replay(ParseCloneRoots(roots...)) || !replay(ParseCloneRoots(append(roots, "/elsewhere")...)) {
+		t.Error("roots that place every path alike replay differently")
+	}
+	if replay(ParseCloneRoots(append(roots, "/home/user/src/repo-feature")...)) {
+		t.Error("a root that places another path replays alike")
+	}
+	if len(ParseCloneRoots("relative/root", "")) != 0 {
+		t.Error("a relative root was kept")
+	}
+}
+
 // The relativization cases local session evidence depends on, with and
 // without the clone's roots.
 func TestPathResolverCases(t *testing.T) {

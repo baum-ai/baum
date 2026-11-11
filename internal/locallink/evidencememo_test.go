@@ -92,13 +92,14 @@ func TestBuildSessionEvidenceReusesAnUnchangedAnswer(t *testing.T) {
 		t.Errorf("after a checkout: %d loads, want 1", got)
 	}
 
-	// Other caps are another answer.
+	// Other caps are another answer: the linked session's evidence is built
+	// again, which loads a second time to map it.
 	other := req
 	other.MaxPromptsPerSession = 1
 	loads = counter("sessions.load.calls")
 	buildEvidence(t, other)
-	if got := counter("sessions.load.calls") - loads; got != 1 {
-		t.Errorf("other caps: %d loads, want 1", got)
+	if got := counter("sessions.load.calls") - loads; got != 2 {
+		t.Errorf("other caps: %d loads, want 2", got)
 	}
 }
 

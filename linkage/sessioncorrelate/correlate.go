@@ -97,6 +97,7 @@ type options struct {
 	primaryRepository  string
 	repositoryRoots    []RepositoryRoots
 	cloneRoots         []string
+	cloneLookups       func(path, relative string, ok bool)
 }
 
 // WithEditedFiles adds repository-relative paths the source reported as

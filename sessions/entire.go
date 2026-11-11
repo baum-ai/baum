@@ -141,7 +141,11 @@ type pick struct {
 // mapped, or that carries no transcript (Entire sometimes writes only the
 // metadata and the prompt), gives way to the next newest; a checkpoint whose
 // metadata cannot be read is read whole.
-func loadEntire(ctx context.Context, root string, opts Options, native map[string]bool) ([]Session, string, []Failure, error) {
+//
+// A checkpoint read before in the process is not read again to choose the
+// snapshot (see snapshotPlan.load), and a chosen snapshot whose Key reuse
+// accepts is returned unmapped.
+func loadEntire(ctx context.Context, root string, opts Options, native map[string]bool, reuse Reuse) ([]Session, string, []Failure, error) {
 	store, ok, err := openCheckpoints(ctx, root)
 	if err != nil || !ok {
 		return nil, "", nil, err
@@ -206,85 +210,16 @@ func loadEntire(ctx context.Context, root string, opts Options, native map[strin
 	slices.Sort(sessionIDs)
 	slices.Sort(first)
 	first = slices.Compact(first)
-	outcomes, err := store.readAll(ctx, first)
-	if err != nil {
-		return nil, commit, nil, err
+	trees := make(map[string]string, len(checkpoints))
+	for _, checkpoint := range checkpoints {
+		trees[checkpoint.ID] = checkpoint.TreeOID
 	}
-
-	var failures []Failure
-	reported := map[string]bool{}
-	fail := func(path string, err error) {
-		if !reported[path] {
-			reported[path] = true
-			failures = append(failures, Failure{Source: Entire, Path: path, Err: err})
-		}
+	plan := snapshotPlan{
+		root: root, opts: opts, native: native, trees: trees,
+		whole: whole, first: first, sessionIDs: sessionIDs, picks: picks,
 	}
-	best := map[string]Session{}
-	offer := func(checkpoint string, result entiresession.Result) {
-		next := Session{
-			Source: Entire, Vendor: result.Vendor, ID: result.SessionID, Path: checkpoint,
-			RepoRoot: root, ModifiedAt: result.CreatedAt, Graph: result.Graph, Notes: result.Warnings,
-		}
-		if current, ok := best[result.SessionID]; ok && !Fuller(next, current) {
-			return
-		}
-		best[result.SessionID] = next
-	}
-	for _, id := range whole {
-		outcome := outcomes[id]
-		if outcome.err != nil {
-			fail(id, outcome.err)
-			continue
-		}
-		for _, result := range outcome.results {
-			switch {
-			case result.Err != nil:
-				fail(id+"/"+result.SessionID, result.Err)
-			case result.Graph == nil || native[result.SessionID]:
-			case !opts.Since.IsZero() && result.CreatedAt.Before(opts.Since):
-			default:
-				offer(id, result)
-			}
-		}
-	}
-	// The newest snapshot with a transcript wins. One without (Entire wrote
-	// only metadata and a prompt) is kept only while nothing older has one.
-	for _, sessionID := range sessionIDs {
-		for _, p := range picks[sessionID] {
-			outcome, read := outcomes[p.checkpoint]
-			if !read {
-				if err := ctx.Err(); err != nil {
-					return nil, commit, failures, err
-				}
-				outcome = store.read(ctx, p.checkpoint)
-				outcomes[p.checkpoint] = outcome
-			}
-			if outcome.err != nil {
-				fail(p.checkpoint, outcome.err)
-				continue
-			}
-			i := slices.IndexFunc(outcome.results, func(r entiresession.Result) bool { return r.SessionID == sessionID })
-			if i < 0 {
-				continue
-			}
-			if result := outcome.results[i]; result.Err != nil {
-				fail(p.checkpoint+"/"+sessionID, result.Err)
-				continue
-			} else if result.Graph != nil {
-				offer(p.checkpoint, result)
-				if HasTranscript(result.Graph) {
-					break
-				}
-			}
-		}
-	}
-
-	sessions := make([]Session, 0, len(best))
-	for _, s := range best {
-		sessions = append(sessions, s)
-	}
-	slices.SortFunc(sessions, func(a, b Session) int { return strings.Compare(a.ID, b.ID) })
-	return sessions, commit, failures, nil
+	sessions, failures, err := plan.load(ctx, store, reuse)
+	return sessions, commit, failures, err
 }
 
 // Checkpoints is the checkpoints of a clone, opened once for several lookups.

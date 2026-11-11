@@ -95,45 +95,79 @@ func BuildSessionEvidence(ctx context.Context, req EvidenceRequest) ([]bundle.Se
 			return cached, nil
 		}
 	}
-	// The pull request's repository is not known here, so a missing
-	// checkpoint's fetch hint names a placeholder remote.
-	found, _, complete, err := loadDiscovered(ctx, d, dir, req.Commits, "", req.Warn)
-	if err != nil {
-		return nil, err
-	}
-	ids, latest, edges, err := linkSessions(ctx, found, req.Commits)
-	if err != nil {
-		return nil, err
-	}
 	clone, err := collector.RepoRoot(dir)
 	if err != nil {
 		return nil, err
 	}
-	roots := cloneRoots(ctx, dir, clone, req.Sessions.PreviousPaths, req.Warn)
+	// Warnings are held until the build is done: a build that has to map
+	// sessions it hoped to reuse loads again, and only the last load's
+	// warnings are printed, followed by the checkouts' as before.
+	loadWarnings, rootWarnings := heldWarnings(req.Warn), heldWarnings(req.Warn)
+	roots := cloneRoots(ctx, dir, clone, req.Sessions.PreviousPaths, rootWarnings.writer())
 	home, _ := os.UserHomeDir()
 	var changed []string
 	for _, c := range req.Commits {
 		changed = append(changed, c.Files...)
 	}
 	inPullRequest, inCheckout := bundle.KnownPaths(changed...), existsInClone(clone)
-	confidence := linkConfidence(edges)
-	for _, id := range ids {
-		linked, ok := confidence[id]
-		if !ok {
-			continue
+	known := func(path string) bool { return inPullRequest(path) || inCheckout(path) }
+
+	// A session whose files did not change since the process last mapped
+	// them is not mapped again: its digest supplies what linking reads, and
+	// a linked one's evidence is reused while what it depends on is
+	// unchanged (see digestBook). A linked session whose evidence cannot be
+	// reused is mapped by loading again, refusing its digest; if linking
+	// then picks yet another one, everything is mapped.
+	book := newDigestBook(sessionDigests)
+	var complete bool
+	for attempt := 0; ; attempt++ {
+		loadWarnings.reset()
+		// The pull request's repository is not known here, so a missing
+		// checkpoint's fetch hint names a placeholder remote.
+		var found []sessions.Session
+		found, _, complete, err = loadDiscovered(ctx, d, dir, req.Commits, "", loadWarnings.writer(), book)
+		if err != nil {
+			return nil, err
 		}
-		s := latest[id].session
-		sessionRoots := slices.Clone(roots)
-		for _, root := range []string{s.RepoRoot, s.WorktreeRoot} {
-			if root != "" && trustedRoot(root, home) {
-				sessionRoots = append(sessionRoots, root)
+		ids, latest, edges, err := linkSessions(ctx, found, req.Commits, book)
+		if err != nil {
+			return nil, err
+		}
+		evidence = []bundle.Session{}
+		var unmapped []string
+		confidence := linkConfidence(edges)
+		for _, id := range ids {
+			linked, ok := confidence[id]
+			if !ok {
+				continue
+			}
+			s := latest[id].session
+			sessionRoots := slices.Clone(roots)
+			for _, root := range []string{s.RepoRoot, s.WorktreeRoot} {
+				if root != "" && trustedRoot(root, home) {
+					sessionRoots = append(sessionRoots, root)
+				}
+			}
+			item, ok, needsGraph := book.evidence(s, linked, sessionRoots, known, req.MaxPromptsPerSession, req.MaxCommandEventsPerSession)
+			switch {
+			case needsGraph:
+				unmapped = append(unmapped, s.Key)
+			case ok:
+				evidence = append(evidence, item)
 			}
 		}
-		known := func(path string) bool { return inPullRequest(path) || inCheckout(path) }
-		if item, ok := sessionEvidence(s, linked, sessionRoots, known, req.MaxPromptsPerSession, req.MaxCommandEventsPerSession); ok {
-			evidence = append(evidence, item)
+		if len(unmapped) == 0 {
+			break
+		}
+		workstats.Inc("locallink.session_evidence_remapped")
+		if attempt == 0 {
+			book.refuse(unmapped...)
+		} else {
+			book.refuseAll()
 		}
 	}
+	loadWarnings.flush()
+	rootWarnings.flush()
 	sortSessionEvidence(evidence)
 	if cacheable {
 		evidenceMemo.store(key, evidence, complete)
@@ -248,11 +282,12 @@ func existsInClone(root string) func(string) bool {
 // withoutGenerationRuns drops baum's own generation runs before matching, so
 // they can neither be linked nor take a link from another session, and from
 // the checkpoints' candidate associations. A session any reading of which is marked is
-// dropped whole.
-func withoutGenerationRuns(found []sessions.Session, associations map[string][]string) ([]sessions.Session, map[string][]string) {
+// dropped whole. The book, when there is one, supplies the facts of sessions
+// it holds.
+func withoutGenerationRuns(found []sessions.Session, associations map[string][]string, book *digestBook) ([]sessions.Session, map[string][]string) {
 	marked := map[string]bool{}
 	for _, s := range found {
-		if sessions.IsGenerationRun(s.Graph) {
+		if book.generationRun(s) {
 			marked[s.ID] = true
 		}
 	}
@@ -278,6 +313,20 @@ func withoutGenerationRuns(found []sessions.Session, associations map[string][]s
 // inside roots, the clone's checkouts. ok is false for a graph without a
 // top-level session.
 func sessionEvidence(s sessions.Session, confidence float64, roots []string, knownPath func(string) bool, maxPrompts, maxCommandEvents int) (bundle.Session, bool) {
+	return sessionEvidenceWith(s, confidence, roots, knownPath, maxPrompts, maxCommandEvents, evidenceHooks{})
+}
+
+// evidenceHooks let a caller see what sessionEvidence reads besides the
+// graph.
+type evidenceHooks struct {
+	// resolver are options for the path resolver.
+	resolver []sessioncorrelate.Option
+	// threadName replaces codextranscript.ThreadName.
+	threadName func(index, id string) (string, error)
+}
+
+// sessionEvidenceWith is sessionEvidence with hooks.
+func sessionEvidenceWith(s sessions.Session, confidence float64, roots []string, knownPath func(string) bool, maxPrompts, maxCommandEvents int, hooks evidenceHooks) (bundle.Session, bool) {
 	root := s.Root()
 	if root == nil {
 		if len(s.CreatedCommits) > 0 {
@@ -306,9 +355,13 @@ func sessionEvidence(s sessions.Session, confidence float64, roots []string, kno
 	}
 	item.Prompts = prompts(graph, root.ID, maxPrompts)
 	if item.Title == "" {
-		item.Title = untitled(s, root.ID, item.Prompts)
+		threadName := hooks.threadName
+		if threadName == nil {
+			threadName = codextranscript.ThreadName
+		}
+		item.Title = untitled(s, root.ID, item.Prompts, threadName)
 	}
-	resolver := sessioncorrelate.NewPathResolver(graph, s.Vendor, sessioncorrelate.WithCloneRoots(roots...))
+	resolver := sessioncorrelate.NewPathResolver(graph, s.Vendor, append([]sessioncorrelate.Option{sessioncorrelate.WithCloneRoots(roots...)}, hooks.resolver...)...)
 	attachTouchedPaths(graph, resolver, item.Prompts)
 	touched := bundle.KnownPaths(touchedPaths(graph, resolver)...)
 	item.CommandEvents = commandEvents(graph, maxCommandEvents, func(path string) bool {
@@ -322,15 +375,16 @@ const maxUntitled = 120
 
 // untitled names a session its agent gave no title, as the app's live
 // sessions name it: Codex's thread name, from the index beside its rollouts,
-// else the first line of its first prompt.
-func untitled(s sessions.Session, rootID string, prompts []bundle.Prompt) string {
+// else the first line of its first prompt. threadName reads the index
+// (codextranscript.ThreadName).
+func untitled(s sessions.Session, rootID string, prompts []bundle.Prompt, threadName func(index, id string) (string, error)) string {
 	if s.Vendor == string(vendors.Codex) && s.Graph != nil {
 		if index := codextranscript.IndexPath(s.Path); index != "" {
 			for _, id := range s.Graph.VendorIDs {
 				if id.OurID != rootID || id.VendorIDKind != "thread_id" {
 					continue
 				}
-				if name, err := codextranscript.ThreadName(index, id.VendorID); err == nil && strings.TrimSpace(name) != "" {
+				if name, err := threadName(index, id.VendorID); err == nil && strings.TrimSpace(name) != "" {
 					return strings.TrimSpace(name)
 				}
 			}

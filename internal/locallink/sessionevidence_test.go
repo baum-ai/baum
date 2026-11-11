@@ -275,6 +275,7 @@ func TestWithoutGenerationRuns(t *testing.T) {
 	kept, truth := withoutGenerationRuns(
 		[]sessions.Session{ordinary, marked, {ID: "generation", Graph: &session.Graph{}}},
 		map[string][]string{"c1": {"vendor-session", "generation"}, "c2": {"generation"}},
+		nil,
 	)
 	if len(kept) != 1 || kept[0].ID != "vendor-session" {
 		t.Errorf("kept = %v", kept)

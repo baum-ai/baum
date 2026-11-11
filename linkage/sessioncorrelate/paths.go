@@ -24,7 +24,8 @@ type PathResolver struct {
 	dirs       workingDirs
 	anchors    []string
 	moved      map[string]bool
-	cloneRoots []string
+	cloneRoots CloneRoots
+	lookups    func(path, relative string, ok bool)
 }
 
 // NewPathResolver prepares relativization for graph. vendor and opts mean
@@ -46,11 +47,8 @@ func NewPathResolver(graph *session.Graph, vendor string, opts ...Option) *PathR
 	}
 	classifier := newRepositoryClassifier(settings.repositoryRootsSet, settings.primaryRepository, settings.repositoryRoots)
 	_, r.moved, _, _, _ = classifier.classify(graph, r.dirs, keys)
-	for _, root := range settings.cloneRoots {
-		if parsed := sourcepath.Parse(cleanPath(root)); parsed.Valid() && parsed.IsAbsolute() {
-			r.cloneRoots = append(r.cloneRoots, parsed.String())
-		}
-	}
+	r.cloneRoots = ParseCloneRoots(settings.cloneRoots...)
+	r.lookups = settings.cloneLookups
 	return r
 }
 
@@ -59,6 +57,41 @@ func NewPathResolver(graph *session.Graph, vendor string, opts ...Option) *PathR
 // to live at). Correlate ignores it.
 func WithCloneRoots(roots ...string) Option {
 	return func(o *options) { o.cloneRoots = append(o.cloneRoots, roots...) }
+}
+
+// WithCloneLookups has PathResolver call observe with every absolute path it
+// places against its clone roots and where it placed it. The clone roots
+// change a resolver's answers only through these placements, so a caller
+// that kept what a resolver produced can tell whether other roots would
+// change it by replaying them with CloneRoots.Place. Correlate ignores it.
+func WithCloneLookups(observe func(path, relative string, ok bool)) Option {
+	return func(o *options) { o.cloneLookups = observe }
+}
+
+// CloneRoots are clone roots as PathResolver uses them: the absolute ones,
+// cleaned. The resolver places paths only when there is at least one.
+type CloneRoots []string
+
+// ParseCloneRoots keeps the roots WithCloneRoots would use.
+func ParseCloneRoots(roots ...string) CloneRoots {
+	var parsed CloneRoots
+	for _, root := range roots {
+		if p := sourcepath.Parse(cleanPath(root)); p.Valid() && p.IsAbsolute() {
+			parsed = append(parsed, p.String())
+		}
+	}
+	return parsed
+}
+
+// Place cuts an absolute path at the longest root holding it and removes a
+// leading agent worktree, or reports false outside every root, as
+// PathResolver places a path.
+func (roots CloneRoots) Place(path string) (string, bool) {
+	relative, ok := stripLongestDir(path, roots)
+	if !ok {
+		return "", false
+	}
+	return withoutAgentWorktree(relative)
 }
 
 // Touch returns the repo-relative path of touch, or false when nothing
@@ -102,14 +135,13 @@ func (r *PathResolver) Touch(touch session.FileTouch) (string, bool) {
 	return resolved, true
 }
 
-// inClone cuts an absolute path at the longest clone root holding it and
-// removes a leading agent worktree, or reports false outside every root.
+// inClone places an absolute path against the clone roots (CloneRoots.Place).
 func (r *PathResolver) inClone(path string) (string, bool) {
-	relative, ok := stripLongestDir(path, r.cloneRoots)
-	if !ok {
-		return "", false
+	relative, ok := r.cloneRoots.Place(path)
+	if r.lookups != nil {
+		r.lookups(path, relative, ok)
 	}
-	return withoutAgentWorktree(relative)
+	return relative, ok
 }
 
 // Dirs returns every working directory and recorded root in the tree.
