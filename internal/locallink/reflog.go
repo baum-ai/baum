@@ -94,7 +94,7 @@ func reflogFiles(common string) []reflogFile {
 			if !filepath.IsAbs(gitdir) {
 				gitdir = filepath.Join(admin, gitdir)
 			}
-			add(reflogFile{path: filepath.Join(admin, "logs", "HEAD"), head: true, worktree: filepath.Dir(filepath.Clean(gitdir))})
+			add(reflogFile{path: filepath.Join(admin, "logs", "HEAD"), head: true, worktree: realPath(filepath.Dir(filepath.Clean(gitdir)))})
 		}
 	}
 	heads := filepath.Join(common, "logs", "refs", "heads")
@@ -141,6 +141,7 @@ func readReflog(ctx context.Context, repo *gitlocal.Repo, dir string, wanted map
 			return reflog{}
 		}
 	}
+	common = realPath(common)
 	files := reflogFiles(common)
 	log := reflog{mainRoot: mainRootOf(common)}
 	for _, f := range files {
@@ -506,11 +507,13 @@ type gitWrite struct {
 }
 
 // callWindows places the Git-writing calls of one session in the clone's
-// working trees. A directory inside a nested repository is left out.
+// working trees. A directory inside a nested repository is left out. Each
+// directory is compared in its real form, as the reflog's working trees are.
 func callWindows(session string, writes []gitWrite, locate func(string) string) []callWindow {
 	var windows []callWindow
 	for _, w := range writes {
 		for _, dir := range w.dirs {
+			dir = realPath(dir)
 			root := locate(dir)
 			if nestedRepository(dir, root) {
 				continue
@@ -605,6 +608,30 @@ func gitWrites(ctx context.Context, s sessions.Session) []gitWrite {
 		writes = append(writes, gitWrite{start: *use.Timestamp, end: end, dirs: slices.Compact(dirs), branch: branch})
 	}
 	return writes
+}
+
+// realPath is p with its symbolic links resolved (and, on Windows, its short
+// names expanded), the form git records a working tree in: a session's
+// directory may name the same place another way, such as macOS's /var for
+// /private/var. A path that no longer exists, such as a removed worktree,
+// resolves its deepest existing ancestor and keeps the rest; "" stays "".
+func realPath(p string) string {
+	if p == "" {
+		return ""
+	}
+	p = filepath.Clean(p)
+	rest := ""
+	for d := p; ; {
+		if resolved, err := filepath.EvalSymlinks(d); err == nil {
+			return filepath.Join(resolved, rest)
+		}
+		parent := filepath.Dir(d)
+		if parent == d {
+			return p
+		}
+		rest = filepath.Join(filepath.Base(d), rest)
+		d = parent
+	}
 }
 
 // nestedRepository reports whether dir lies in a repository of its own, such

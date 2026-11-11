@@ -66,6 +66,9 @@ func TestCreatorsOfIgnoresHeadLogsOfUnknownWorktree(t *testing.T) {
 }
 
 func TestWriteDirs(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the cases are POSIX paths, which are not absolute on Windows; TestHostDir covers Windows paths")
+	}
 	for _, tc := range []struct {
 		command string
 		want    []string
@@ -184,6 +187,9 @@ func TestHostDir(t *testing.T) {
 }
 
 func TestGitWriteDirsReadEachToolsDirectory(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the cases are POSIX paths, which are not absolute on Windows; TestHostDir covers Windows paths")
+	}
 	source := `await tools.exec_command({cmd:"git commit -q -m x", workdir:"/a"});
 await tools.exec_command({cmd:"cd /b && ls", workdir:"/a"});
 await tools.exec_command({cmd:"git commit -q -m y"});
@@ -452,4 +458,20 @@ func TestResolveAndLinkCommitsUseTheReflogForAQuietCommit(t *testing.T) {
 	if err != nil || len(links) != 1 || links[0].Commit != f.Commits[0] {
 		t.Fatalf("LinkCommits: %+v %v", links, err)
 	}
+}
+
+// A session's directory may reach a worktree through a symbolic link, as
+// macOS's /var does /private/var, while git records the worktree's real path.
+func TestReflogPlacesACallThroughASymbolicLink(t *testing.T) {
+	r := newReflogRepo(t)
+	wt := r.worktree(filepath.Join(t.TempDir(), "real"), "feature")
+	alias := filepath.Join(t.TempDir(), "alias")
+	if err := os.Symlink(wt, alias); err != nil {
+		t.Skipf("symbolic links are unavailable: %v", err)
+	}
+	sha := r.commit(wt, "b.txt", "Through the link", "10:30:00")
+	linked := reflogSession("session-linked", "claude-code", alias, bash("git commit -q -m Linked", "10:29:58", "10:30:02"))
+	other := reflogSession("session-other", "claude-code", r.main, bash("git commit -q -m Other", "10:29:58", "10:30:02"))
+	_, links := resolveReflog(t, r, []sessions.Session{linked, other}, r.commits(sha))
+	assertLinks(t, links, sha, "session-linked")
 }

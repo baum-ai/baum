@@ -79,7 +79,13 @@ func build(t *testing.T, trailer string, files []string) Fixture {
 	t.Setenv("GIT_COMMITTER_NAME", "Grace Hopper")
 	t.Setenv("GIT_COMMITTER_EMAIL", "grace@example.com")
 
-	base := t.TempDir()
+	// The real form of the directory, as an agent's getcwd reports it and git
+	// lists worktrees: macOS's temporary directory is under the /var link,
+	// Windows' may use 8.3 short names.
+	base, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
 	repo := filepath.Join(base, "widgets")
 	if err := os.MkdirAll(repo, 0o755); err != nil {
 		t.Fatal(err)
