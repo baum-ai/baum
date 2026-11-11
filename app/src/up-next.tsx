@@ -83,7 +83,7 @@ import {
 import { useDisclosure } from "@baum/viewer/components/use-disclosure";
 import { MenuButton, useContextMenu, useMenuFocus, type MenuItem } from "./context-menu";
 import { ListSection, type ListTone } from "./list";
-import { useNow } from "./live";
+import { useDeadlineNow } from "./live";
 import { peekHref } from "./sessions";
 import {
   canMerge,
@@ -557,9 +557,10 @@ export function useUpNext(
   ready: boolean,
   groups: ReviewGroup[] = [],
 ) {
-  const now = useNow(30_000);
   const persistence = useUIState(inboxRecord());
   const stored = persistence.value;
+  // Renders when a snooze ends or the day rolls over, not on a steady tick.
+  const now = useDeadlineNow(Object.values(stored.snoozed), true);
   const day = dayOf(now);
   const state = stored.day === day ? stored : fresh(day, stored, now);
   const archived = state.archived ?? {};
@@ -1354,7 +1355,8 @@ export function UpNextPage({
     selected && generate && cloneFor(selected.entry) && !selected.entry.needs_clone
       ? () => generate(selected.entry)
       : undefined;
-  const options = snoozeOptions(now);
+  // Read when rendered: `now` only moves when a snooze ends or the day rolls over.
+  const options = snoozeOptions(Date.now());
   const snooze = (until: SnoozeEnd) => {
     const item = selected;
     if (!item) return;
