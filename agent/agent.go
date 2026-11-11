@@ -126,6 +126,38 @@ type Request struct {
 	// the original untouched; Result.SessionID is then the new one. Without
 	// ResumeSession it is an error.
 	ForkSession bool
+	// MCP, when set, gives the run exactly one MCP server: baum's own, started
+	// as a stdio child of the agent CLI. Nil leaves the run with none, as
+	// every run has been. Only a local (User or Local profile) run supports it.
+	MCP *MCPServer
+}
+
+// MCPTokenEnv names the environment variable that carries an MCPServer's
+// token to the agent CLI and from it to the server's process. The token is
+// never an argument.
+const MCPTokenEnv = "BAUM_MCP_TOKEN"
+
+// MCPServer is the stdio MCP server a run may start (Request.MCP): Command
+// with Args is what the agent CLI executes, normally the absolute path of the
+// running baum executable with ["mcp"]. Token authenticates the server to the
+// local daemon and reaches it through MCPTokenEnv only.
+type MCPServer struct {
+	Command string
+	Args    []string
+	Token   string
+}
+
+// Validate rejects a server the CLI could not start or could not authenticate.
+func (m *MCPServer) Validate() error {
+	switch {
+	case m.Command == "":
+		return errors.New("the MCP server needs a command")
+	case m.Token == "":
+		return errors.New("the MCP server needs a token")
+	case strings.ContainsAny(m.Token, "\r\n\x00"):
+		return errors.New("the MCP token is not a single line")
+	}
+	return nil
 }
 
 // WantsSession reports whether the request uses any session option.

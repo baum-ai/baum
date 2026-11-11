@@ -139,6 +139,14 @@ func (c *Backend) run(ctx context.Context, request agent.Request, fix bool, extr
 	if request.WantsSession() && (c.Profile != Local || fix) {
 		return result, errors.New("codex: only a Local profile review or task can keep, resume or fork a session")
 	}
+	if request.MCP != nil {
+		if c.Profile != Local {
+			return result, errors.New("codex: only the Local profile can start an MCP server")
+		}
+		if err := request.MCP.Validate(); err != nil {
+			return result, fmt.Errorf("codex: %w", err)
+		}
+	}
 	if request.MaxCalls < 0 {
 		return result, errors.New(agent.GenerationBudgetExceededReason("model calls"))
 	}
@@ -219,6 +227,15 @@ func (c *Backend) run(ctx context.Context, request agent.Request, fix bool, extr
 	args = append(args, "-c", `approval_policy="never"`, "-c", `web_search="disabled"`,
 		"--skip-git-repo-check")
 	args = append(args, fixConfig...)
+	if request.MCP != nil {
+		mcp, err := mcpConfig(request.MCP)
+		if err != nil {
+			return result, err
+		}
+		args = append(args, mcp...)
+		// Set last, so neither agent_env nor anything above replaces the token.
+		env = agent.WithMCPToken(env, request.MCP)
+	}
 	args = append(args, extra...)
 	if c.Effort != "" {
 		args = append(args, "-c", "model_reasoning_effort="+strconv.Quote(c.Effort))
@@ -587,4 +604,26 @@ func (b *limitedBuffer) Write(p []byte) (int, error) {
 		_, _ = b.Buffer.Write(p[:min(len(p), 65536-b.Len())])
 	}
 	return n, nil
+}
+
+// mcpConfig configures baum's own MCP server, the only one a run has:
+// --ignore-user-config already keeps the user's servers out. The token is not
+// in it. env_vars makes Codex forward the variable named agent.MCPTokenEnv
+// from its own environment to the server's process, so the value never
+// appears in an argument.
+func mcpConfig(server *agent.MCPServer) ([]string, error) {
+	command, err := json.Marshal(server.Command)
+	if err != nil {
+		return nil, err
+	}
+	args, err := json.Marshal(append([]string{}, server.Args...))
+	if err != nil {
+		return nil, err
+	}
+	names, err := json.Marshal([]string{agent.MCPTokenEnv})
+	if err != nil {
+		return nil, err
+	}
+	return []string{"-c", "mcp_servers.baum.command=" + string(command), "-c", "mcp_servers.baum.args=" + string(args),
+		"-c", "mcp_servers.baum.env_vars=" + string(names)}, nil
 }

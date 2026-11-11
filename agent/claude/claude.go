@@ -106,6 +106,14 @@ func (c *Backend) run(ctx context.Context, request agent.Request, args, env []st
 	if request.WantsSession() && (c.Profile != User || fix) {
 		return result, errors.New("claude: only a User profile review or task can keep, resume or fork a session")
 	}
+	if request.MCP != nil {
+		if c.Profile != User {
+			return result, errors.New("claude: only the User profile can start an MCP server")
+		}
+		if err := request.MCP.Validate(); err != nil {
+			return result, fmt.Errorf("claude: %w", err)
+		}
+	}
 	if request.MaxCalls < 0 {
 		return result, errors.New(agent.GenerationBudgetExceededReason("model calls"))
 	}
@@ -155,6 +163,9 @@ func (c *Backend) run(ctx context.Context, request agent.Request, args, env []st
 	cmd.Dir = request.Directory
 	// A later entry of the same variable wins (exec.Cmd.Env).
 	cmd.Env = append(c.environment(request.Directory, endpoint), env...)
+	// The MCP token goes last and replaces any entry of the name, so the
+	// user's agent_env cannot override or remove it.
+	cmd.Env = agent.WithMCPToken(cmd.Env, request.MCP)
 	cmd.Stdin = strings.NewReader(request.Prompt)
 	// Kill the process group so cancellation also stops harness subprocesses.
 	proc.Configure(cmd)
