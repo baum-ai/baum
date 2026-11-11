@@ -42,7 +42,7 @@ const fakeIndex = `{"entries":[
  {"pull_request":{"repository":"acme/web","number":32,"head_sha":"h32","title":"No clone first"},"needs_clone":true,"status":"a","version_count":0},
  {"pull_request":{"repository":"acme/web","number":32,"head_sha":"h32","title":"No clone first"},"clone_id":"c-web","status":"b","version_count":0},
  {"pull_request":{"repository":"acme/web","number":33,"head_sha":"h33","title":"Reviewed"},"clone_id":"c-web","status":"ready","version_count":1,
-  "latest":{"version":1,"head":"h33","base":"b33","merge_base":"b33","backend":"claude","model":"opus","generated_at":"2026-11-01T10:00:00Z","recorded_cost_usd":0.5,"session":{"id":"sess","directory":"/home/secret"},"accounting":{"usage":1},"bundle_digest":"digest","prompt_digest":"pd","policy":"p"}},
+  "latest":{"version":1,"head":"h33","base":"b33","merge_base":"b33","backend":"claude","model":"opus","generated_at":"2026-11-01T10:00:00Z","recorded_cost_usd":0.5,"session":{"id":"sess","directory":"/home/dev/secret-run"},"accounting":{"usage":1},"bundle_digest":"digest","prompt_digest":"pd","policy":"p"}},
  {"pull_request":{"repository":"evil/secrets","number":1,"head_sha":"hx","title":"Steal the keys"},"clone_id":"c-evil","status":"none","version_count":0}],
  "problems":[{"clone_id":"c-evil","reason":"secret reason"}]}`
 

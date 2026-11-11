@@ -25,7 +25,7 @@ func TestPullRequestShowsLatestReviewAndGroups(t *testing.T) {
 				t.Errorf("latest lacks %s: %s", want, text)
 			}
 		}
-		for _, hidden := range []string{"session", "accounting", "digest", "policy", "/home/secret"} {
+		for _, hidden := range []string{"session", "accounting", "digest", "policy", "/home/dev/secret-run"} {
 			if strings.Contains(text, hidden) {
 				t.Errorf("pull_request shows %s: %s", hidden, text)
 			}

@@ -60,7 +60,7 @@ func newPullFixture(t *testing.T) *pullFixture {
 		t.Fatal(err)
 	}
 	reviewed := store.Metadata{Version: 1, Head: reviewedHead, Base: "bbbbbbbb", MergeBase: "bbbbbbbb", Backend: "claude", Model: "opus", GeneratedAt: "2026-11-01T10:00:00Z", RecordedCostUSD: ptr(0.5),
-		Session: &store.ReviewSession{Backend: "claude", ID: "secret-session", Directory: "/home/secret"}}
+		Session: &store.ReviewSession{Backend: "claude", ID: "secret-session", Directory: "/home/dev/secret-run"}}
 	reviewDocument := []byte(`{"review":{"repository":"owner/repo","pull_request":8,"version":1,"head":"` + reviewedHead + `","base":"bbbbbbbb","merge_base":"bbbbbbbb"},"summary":{"text":"Overview8","context":{"text":"Context8"},"change_kind":"feature","review_exchange":{},"implements":[],"authorship":{}},"sections":[{"id":"sec_1","title":"Search box","kind":"logic","hunks":["h_1"],"assessment":"Sound","summary":{"text":"DETAILS-SEC-1"},"risks":[],"derived":{"state":"fresh"}},{"id":"sec_2","title":"Docs","kind":"docs","hunks":["h_2"],"assessment":"Fine","details":"failed","summary":null,"risks":[]}],"relations":[],"index":{"hunks":[{"id":"h_1","path":"main.go","change":"modified","additions":2,"deletions":1},{"id":"h_2","path":"docs.md","change":"added","additions":9,"deletions":0}]}}`)
 	if err := versions.Put(ctx, store.Key{Repository: "owner/repo", Number: 8}, store.Version{}, store.Version{Metadata: reviewed, Document: reviewDocument}); err != nil {
 		t.Fatal(err)
@@ -448,7 +448,7 @@ func TestPullRequestToolsReturnWhatTheAppRoutesReturn(t *testing.T) {
 			// The page's latest review, without the session that wrote it.
 			text, _ = f.callTool(t, token, "pull_request", map[string]any{"pr": 8})
 			if !strings.Contains(text, `"backend":"claude"`) || !strings.Contains(text, `"recorded_cost_usd":0.5`) || !strings.Contains(text, `"version_count":1`) ||
-				strings.Contains(text, "secret-session") || strings.Contains(text, "/home/secret") || strings.Contains(text, `"session"`) {
+				strings.Contains(text, "secret-session") || strings.Contains(text, "/home/dev/secret-run") || strings.Contains(text, `"session"`) {
 				t.Errorf("latest review: %s", text)
 			}
 			// The groups the pull request is in, and an action's default group.
