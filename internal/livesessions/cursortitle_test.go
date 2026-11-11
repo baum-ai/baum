@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	_ "modernc.org/sqlite"
 
@@ -101,6 +102,52 @@ func TestEndedSessionIsNotDescribedAgain(t *testing.T) {
 	f.clock.advance(CursorTitleRecheckEvery)
 	if got := titles(t, f)["cursor/root"]; got != "Second end" {
 		t.Fatalf("a session ended again kept its old title: %q", got)
+	}
+}
+
+func TestSettledSessionThatResumesAndEndsAgainBetweenLooksIsDescribedAgain(t *testing.T) {
+	f, store := cursorFixture(t)
+	titles(t, f)
+	f.clock.advance(CursorTitleRecheckEvery)
+	cursorEvent(t, f, "session-end")
+	for range endedSettled + 1 {
+		f.clock.advance(CursorTitleRecheckEvery)
+		titles(t, f)
+	}
+	updateCursor(t, store, "root", "name", "Frozen out")
+	f.clock.advance(CursorTitleRecheckEvery)
+	if got := titles(t, f)["cursor/root"]; got == "Frozen out" {
+		t.Fatal("the settled session was read again")
+	}
+	// It resumes and ends again, with no look at the list in between.
+	f.clock.advance(time.Minute)
+	cursorEvent(t, f, "before-submit-prompt")
+	f.clock.advance(time.Minute)
+	cursorEvent(t, f, "session-end")
+	f.clock.advance(CursorTitleRecheckEvery)
+	if got := titles(t, f)["cursor/root"]; got != "Frozen out" {
+		t.Fatalf("a session that ended again kept its old description: %q", got)
+	}
+}
+
+func TestCursorVersionMovesWithTheComposerHeaderRow(t *testing.T) {
+	_, store := cursorFixture(t)
+	before, err := Location{ID: "root", store: store}.Version()
+	if err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("sqlite", store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = db.Exec(`UPDATE composerHeaders SET value = json_set(value, '$.workspaceIdentifier.uri.fsPath', '/elsewhere') WHERE composerId = 'root'`)
+	_ = db.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	after, err := Location{ID: "root", store: store}.Version()
+	if err != nil || after == before {
+		t.Fatalf("a header row change left the version: %q %q %v", before, after, err)
 	}
 }
 

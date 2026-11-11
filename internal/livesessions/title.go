@@ -97,9 +97,23 @@ type described struct {
 	// session was ended. After endedSettled of them it is not read again: the
 	// second one sees what the agent wrote just after the session ended.
 	endedReads int
+	// endedAt is the end those reads belong to; zero while not ended.
+	endedAt time.Time
 	// found is the file a lookup by id found, so the store is searched once.
 	found string
 	scan  scanState
+}
+
+// endedAt is when the session ended, zero while it has not.
+func endedAt(s Session) time.Time {
+	if s.State != StateEnded {
+		return time.Time{}
+	}
+	if s.EndedAt.IsZero() {
+		// Ended with no time recorded: one end that never changes.
+		return time.Unix(1, 0)
+	}
+	return s.EndedAt
 }
 
 // endedSettled is how many reads of an ended session, each after its recheck
@@ -226,7 +240,7 @@ func (t *Transcripts) listed() []Listed {
 		// A session neither ended nor waiting on its user is working, or went
 		// silent and may be (settle).
 		working := s.State != StateEnded && s.WaitingReason == ""
-		title, excerpt, _, activity := t.describe(k, path, working, s.State == StateEnded)
+		title, excerpt, _, activity := t.describe(k, path, working, endedAt(s))
 		if empty(s.Agent, title, activity) {
 			continue
 		}
@@ -258,7 +272,7 @@ func (t *Transcripts) listed() []Listed {
 // at long enough ago. A failed read keeps what was read before and is tried
 // again by the next request, since a transcript can be named before it is
 // written.
-func (t *Transcripts) describe(k key, path string, working, ended bool) (title, excerpt, summary string, activity *Activity) {
+func (t *Transcripts) describe(k key, path string, working bool, endedAt time.Time) (title, excerpt, summary string, activity *Activity) {
 	t.mu.Lock()
 	if t.described == nil {
 		t.described = map[key]*described{}
@@ -272,9 +286,12 @@ func (t *Transcripts) describe(k key, path string, working, ended bool) (title, 
 
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	if !ended {
-		e.endedReads = 0
+	// A session that came back and ended again has a new end: it is settled
+	// afresh, whether or not describe saw it running meanwhile.
+	if !endedAt.Equal(e.endedAt) {
+		e.endedAt, e.endedReads = endedAt, 0
 	}
+	ended := !endedAt.IsZero()
 	if ended && e.endedReads >= endedSettled {
 		// The session ended and was read to its end twice afterwards: nothing
 		// writes to it any more, so it is not looked at again for as long as

@@ -123,6 +123,22 @@ func (s *Store) Revision(composerID string) (string, error) {
 		}
 		_, _ = fmt.Fprintf(hash, "composer\x00%s\x00%d\x00", id, len(raw))
 		hash.Write(raw)
+		// The index row names the workspace the conversation is placed by.
+		if err := s.db.ScanPrefix(headerTable, "composerId", id, func(row sqliteread.Row) error {
+			if headerID, _ := row.Text("composerId"); headerID != id {
+				return nil
+			}
+			_, _ = fmt.Fprintf(hash, "header\x00%s", id)
+			for i, column := range row.Columns {
+				if i < len(row.Values) {
+					_, _ = fmt.Fprintf(hash, "\x00%s=%v", column, row.Values[i])
+				}
+			}
+			_, _ = fmt.Fprintln(hash)
+			return nil
+		}); err != nil {
+			return err
+		}
 		for _, prefix := range []string{bubbleKeyPrefix + id + ":", diffKeyPrefix + id + ":"} {
 			if err := s.db.ScanPrefix(cursorTable, "key", prefix, func(row sqliteread.Row) error {
 				key, _ := row.Text("key")
