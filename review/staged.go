@@ -329,9 +329,20 @@ func previousSectionsFirst(document []byte, previous *bundlepkg.PreviousVersion)
 // each section's outline fields only. A document that cannot be read is
 // returned as it is.
 func OutlineOf(document []byte) []byte {
-	root, err := decodeObject(document, "outline")
+	outline, err := ReadOutline(document)
 	if err != nil {
 		return document
+	}
+	return outline
+}
+
+// ReadOutline is OutlineOf for a caller that must never be handed the
+// document itself: it returns the outline, or an error when the document
+// cannot be read.
+func ReadOutline(document []byte) ([]byte, error) {
+	root, err := decodeObject(document, "outline")
+	if err != nil {
+		return nil, err
 	}
 	keepKeys(root, outlineFields...)
 	if summary, ok := root["summary"].(map[string]any); ok {
@@ -340,11 +351,7 @@ func OutlineOf(document []byte) []byte {
 	for _, section := range jsonObjects(root["sections"]) {
 		keepKeys(section, outlineSectionFields...)
 	}
-	encoded, err := json.Marshal(root)
-	if err != nil {
-		return document
-	}
-	return encoded
+	return json.Marshal(root)
 }
 
 // DetailsOf returns a section's details in the shape the details stage
