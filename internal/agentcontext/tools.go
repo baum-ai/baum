@@ -34,6 +34,10 @@ type Tool struct {
 	// whole path segment at a time. The routes listed in unreadable can never
 	// be declared.
 	Reads []string
+	// Proposes marks a tool that records a proposal for the user to review. The
+	// default, false, is a read-only tool; tools/list reports it in the tool's
+	// annotations so a client can approve read-only tools unasked.
+	Proposes bool
 	// Call runs the tool. Its text, or its error's message, goes back to the
 	// agent through the envelope: masked, cut and fenced.
 	Call func(ctx context.Context, c CallContext, args json.RawMessage) (string, error)

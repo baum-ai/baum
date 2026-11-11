@@ -258,12 +258,13 @@ func (s *Server) handle(ctx context.Context, consumer Consumer, method string, p
 			Name        string          `json:"name"`
 			Description string          `json:"description"`
 			InputSchema json.RawMessage `json:"inputSchema"`
+			Annotations annotations     `json:"annotations"`
 		}
 		s.mu.RLock()
 		tools := make([]listed, 0, len(s.tools))
 		for _, t := range s.tools {
 			if t.visible(consumer) {
-				tools = append(tools, listed{t.Name, t.Description, t.InputSchema})
+				tools = append(tools, listed{t.Name, t.Description, t.InputSchema, t.annotations()})
 			}
 		}
 		s.mu.RUnlock()
@@ -290,6 +291,24 @@ func (s *Server) handle(ctx context.Context, consumer Consumer, method string, p
 		return toolResult{Content: []content{{Type: "text", Text: text}}, IsError: failed}, nil
 	}
 	return nil, &rpcError{codeMethodNotFound, "method not found: " + method}
+}
+
+// annotations are a tool's MCP behaviour hints. No tool reaches beyond the
+// local daemon, so none is open-world. A reading tool is read-only; a proposing
+// tool records state, so it is not, but it destroys nothing: the user decides
+// what a proposal changes.
+type annotations struct {
+	ReadOnly    bool  `json:"readOnlyHint"`
+	Destructive *bool `json:"destructiveHint,omitempty"`
+	OpenWorld   bool  `json:"openWorldHint"`
+}
+
+func (t Tool) annotations() annotations {
+	if !t.Proposes {
+		return annotations{ReadOnly: true}
+	}
+	no := false
+	return annotations{Destructive: &no}
 }
 
 type content struct {
