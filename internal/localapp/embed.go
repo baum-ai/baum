@@ -52,6 +52,11 @@ func handler(assets fs.FS) http.Handler {
 			http.NotFound(w, r)
 			return
 		}
+		// Vite names everything under assets/ by content hash, and a daemon
+		// serves one build, so those files never change at a given URL.
+		if strings.HasPrefix(name, "assets/") {
+			w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+		}
 		http.ServeFileFS(w, r, assets, name)
 	})
 }

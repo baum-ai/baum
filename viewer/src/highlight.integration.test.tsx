@@ -5,7 +5,12 @@ import { renderToString } from "react-dom/server";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { CodeDiff, type CodeDiffFile } from "./components/review-tiles/code-diff";
-import { highlightCode, highlightHunks } from "./highlight";
+import {
+  cachedHighlightedHunks,
+  clearTokenCache,
+  highlightCode,
+  highlightHunks,
+} from "./highlight";
 
 declare global {
   var IS_REACT_ACT_ENVIRONMENT: boolean;
@@ -69,6 +74,7 @@ describe("syntax highlighting with shiki", () => {
   });
 
   it("renders plain text first and coloured spans after the effect", async () => {
+    clearTokenCache();
     expect(renderToString(<CodeDiff files={[file("a.ts")]} />)).not.toContain("style=");
 
     const container = document.body.appendChild(document.createElement("div"));
@@ -89,6 +95,18 @@ describe("syntax highlighting with shiki", () => {
       "   new text",
       "   more text",
     ]);
+  });
+
+  it("serves a second request for the same code from the cache", async () => {
+    clearTokenCache();
+    const code = "const cached = 1;";
+    const first = await highlightCode(code, "typescript");
+    expect(await highlightCode(code, "typescript")).toBe(first);
+
+    const hunks = file("a.ts").hunks;
+    expect(cachedHighlightedHunks("a.ts", hunks)).toBeNull();
+    const tokens = await highlightHunks("a.ts", hunks);
+    expect(cachedHighlightedHunks("a.ts", hunks)).toEqual(tokens);
   });
 
   it("leaves an unknown language plain", async () => {

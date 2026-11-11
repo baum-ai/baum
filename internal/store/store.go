@@ -2,9 +2,11 @@
 // A SQLite transaction publishes the document and metadata together, comparing
 // the previous version under the same write lock so concurrent generations
 // cannot fork history. A refresh replaces the latest document only while its
-// exact bytes are unchanged, so concurrent refreshes cannot lose each other.
+// exact bytes are unchanged, so concurrent refreshes cannot lose each other,
+// and only when it changes more than the refresh time.
 // Triggers keep the index projection of each latest document in the summaries
-// table current in the writer's own transaction; see Snapshot.
+// table current in the writer's own transaction; see Snapshot. Others renew
+// each version's document revision with every write; see Revision.
 //
 // A stored document holds no hunk evidence: Put removes every indexed hunk's
 // patch text and GitHub fragment (review.StripHunkEvidence), which the clone
@@ -29,6 +31,7 @@ import (
 	_ "modernc.org/sqlite"
 
 	"github.com/baum-ai/baum/agent"
+	"github.com/baum-ai/baum/internal/workstats"
 	"github.com/baum-ai/baum/review"
 )
 
@@ -95,6 +98,10 @@ type Version struct {
 	Attachments []Attachment    `json:"-"`
 	Metadata    Metadata        `json:"metadata"`
 	Document    json.RawMessage `json:"document"`
+	// Revision names Document's stored bytes (see Store.Revision), read with
+	// them: a nonzero revision equal to one read before means the same bytes.
+	// 0 when the store cannot vouch for one, and on versions not yet stored.
+	Revision int64 `json:"-"`
 }
 type Store struct{ root string }
 
@@ -186,6 +193,9 @@ func openRoot(root string, write bool) (*Store, error) {
 		err = setupSummaries(context.Background(), db)
 	}
 	if err == nil {
+		err = setupRevisions(context.Background(), db)
+	}
+	if err == nil {
 		_, err = db.Exec(chatSchema)
 	}
 	if err == nil {
@@ -237,22 +247,34 @@ func (s *Store) load(ctx context.Context, k Key, n int) (Version, error) {
 		return Version{}, err
 	}
 	defer db.Close()
-	query := `SELECT metadata,document FROM versions WHERE repository=? AND pr=?`
+	// One read transaction, so the revision is the one of the bytes read.
+	tx, err := db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return Version{}, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	current, err := currentRevisions(ctx, tx)
+	if err != nil {
+		return Version{}, err
+	}
+	column, join := revisionSelect(current)
+	query := `SELECT v.metadata,v.document,` + column + ` FROM versions v` + join + ` WHERE v.repository=? AND v.pr=?`
 	args := []any{k.repository(), k.Number}
 	if n > 0 {
-		query += ` AND version=?`
+		query += ` AND v.version=?`
 		args = append(args, n)
 	}
-	query += ` ORDER BY version DESC LIMIT 1`
+	query += ` ORDER BY v.version DESC LIMIT 1`
 	var m, doc []byte
-	err = db.QueryRowContext(ctx, query, args...).Scan(&m, &doc)
+	var revision int64
+	err = tx.QueryRowContext(ctx, query, args...).Scan(&m, &doc, &revision)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Version{}, ErrNotFound
 	}
 	if err != nil {
 		return Version{}, err
 	}
-	v := Version{Document: doc}
+	v := Version{Document: doc, Revision: revision}
 	err = json.Unmarshal(m, &v.Metadata)
 	return v, err
 }
@@ -399,9 +421,13 @@ func (s *Store) Put(ctx context.Context, k Key, previous Version, v Version) err
 // A document stored without hunk evidence is replaced without it; one stored
 // with it, before Put removed it, is replaced as given, so no write takes the
 // evidence away from a version saved with it.
+// A document that differs from the previous one only in
+// review.evidence_refreshed_at (review.RefreshChanged) is not written, so
+// the stored time is that of the last refresh that changed something.
 // Both the version and exact previous bytes fence concurrent generation and
-// refresh. A running generation does not block it: live facts refresh
-// independently, and the generated version still publishes over it.
+// refresh, a refresh that writes nothing included. A running generation does
+// not block it: live facts refresh independently, and the generated version
+// still publishes over it.
 func (s *Store) RefreshCurrent(ctx context.Context, k Key, previous Version, document []byte) error {
 	return s.replaceCurrent(ctx, k, previous, document, "refresh", "refresh")
 }
@@ -412,7 +438,7 @@ func (s *Store) RefreshCurrent(ctx context.Context, k Key, previous Version, doc
 // request, version, head, base, merge base and generation time) must not
 // change, and the version and exact previous bytes must still be the
 // latest's, so a refresh or a new version in the meantime makes it a
-// conflict.
+// conflict. Like a refresh, a completion that changes nothing is not written.
 func (s *Store) CompleteCurrent(ctx context.Context, k Key, previous Version, document []byte) error {
 	return s.replaceCurrent(ctx, k, previous, document, "completion", "complete it")
 }
@@ -448,6 +474,9 @@ func (s *Store) replaceCurrent(ctx context.Context, k Key, previous Version, doc
 			return err
 		}
 	}
+	if !review.RefreshChanged(previous.Document, document) {
+		return s.unchanged(ctx, k, previous, again)
+	}
 	db, err := s.database(true)
 	if err != nil {
 		return err
@@ -470,4 +499,22 @@ func (s *Store) replaceCurrent(ctx context.Context, k Key, previous Version, doc
 		return fmt.Errorf("%w; %s again using the latest document", ErrConflict, again)
 	}
 	return tx.Commit()
+}
+
+// unchanged fences a replacement that would change nothing but the refresh
+// time as replaceCurrent fences a write, reading only: the previous version
+// and its exact bytes must still be the latest.
+func (s *Store) unchanged(ctx context.Context, k Key, previous Version, again string) error {
+	workstats.Inc("store.unchanged_replacements")
+	db, err := s.database(false)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	var latest int
+	err = db.QueryRowContext(ctx, `SELECT 1 FROM versions WHERE repository=? AND pr=? AND version=? AND document=? AND version=(SELECT MAX(version) FROM versions WHERE repository=? AND pr=?)`, k.repository(), k.Number, previous.Metadata.Version, []byte(previous.Document), k.repository(), k.Number).Scan(&latest)
+	if errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("%w; %s again using the latest document", ErrConflict, again)
+	}
+	return err
 }

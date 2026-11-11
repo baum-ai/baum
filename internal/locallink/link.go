@@ -226,7 +226,7 @@ func Resolve(ctx context.Context, req Request) (Result, error) {
 	case err != nil:
 		return Result{}, fmt.Errorf("reading the pull request's commits: %w", err)
 	}
-	engine, err := redact.New()
+	engine, err := redact.Shared()
 	if err != nil {
 		return Result{}, err
 	}
@@ -234,7 +234,7 @@ func Resolve(ctx context.Context, req Request) (Result, error) {
 		return Result{Available: true, Sessions: []Session{}, Commits: []Commit{}}, nil
 	}
 
-	found, associations, err := loadSessions(ctx, dir, req.Sessions, commits, remoteFor(remotes, req.Repository), req.Warn)
+	found, associations, err := loadSessions(ctx, dir, repo, req.Sessions, commits, remoteFor(remotes, req.Repository), req.Warn)
 	if err != nil {
 		return Result{}, err
 	}
@@ -245,12 +245,13 @@ func Resolve(ctx context.Context, req Request) (Result, error) {
 // by the commits' checkpoints. Missing local transcripts are recovered from
 // checkpoints where possible. Generation runs are excluded from both. remote
 // names the remote in a missing-checkpoint fetch hint; nothing is fetched here.
-func loadSessions(ctx context.Context, dir string, opts sessions.Options, commits []gitlocal.Commit, remote string, warn io.Writer) ([]sessions.Session, map[string][]string, error) {
+// Checkpoints are read in repo's private repository.
+func loadSessions(ctx context.Context, dir string, repo *gitlocal.Repo, opts sessions.Options, commits []gitlocal.Commit, remote string, warn io.Writer) ([]sessions.Session, map[string][]string, error) {
 	d, err := discoverSessions(ctx, dir, opts, commits)
 	if err != nil {
 		return nil, nil, err
 	}
-	found, associations, _, err := loadDiscovered(ctx, d, dir, commits, remote, warn)
+	found, associations, _, err := loadDiscovered(ctx, d, dir, repo, commits, remote, warn)
 	return found, associations, err
 }
 
@@ -272,8 +273,19 @@ func discoverSessions(ctx context.Context, dir string, opts sessions.Options, co
 
 // loadDiscovered is loadSessions over sessions already discovered. complete
 // is false when a session store file was skipped or a session did not map.
-func loadDiscovered(ctx context.Context, d *sessions.Discovery, dir string, commits []gitlocal.Commit, remote string, warn io.Writer) ([]sessions.Session, map[string][]string, bool, error) {
+// Every read of the clone, Entire checkpoints included, goes through repo, or
+// through one clone opened here when repo is nil.
+func loadDiscovered(ctx context.Context, d *sessions.Discovery, dir string, repo *gitlocal.Repo, commits []gitlocal.Commit, remote string, warn io.Writer) ([]sessions.Session, map[string][]string, bool, error) {
 	workstats.Inc("locallink.load_sessions")
+	if repo == nil {
+		opened, err := gitlocal.Open(ctx, dir, gitlocal.Options{})
+		if err != nil {
+			return nil, nil, false, fmt.Errorf("opening the clone: %w", err)
+		}
+		defer func() { _ = opened.Close() }()
+		repo = opened
+	}
+	d.ShareRepo(repo)
 	found, report, err := d.Load(ctx)
 	if err != nil {
 		return nil, nil, false, fmt.Errorf("reading sessions: %w", err)
@@ -287,9 +299,9 @@ func loadDiscovered(ctx context.Context, d *sessions.Discovery, dir string, comm
 			_, _ = fmt.Fprintf(warn, "warning: %s session %s: %v\n", failure.Source, failure.Path, failure.Err)
 		}
 	}
-	associations, extra := checkpointLinks(ctx, dir, commits, found, remote, warn)
+	associations, extra := checkpointLinks(ctx, d, commits, found, remote, warn)
 	found = append(found, extra...)
-	found, err = addObservedCommits(ctx, dir, found, commits)
+	found, err = addObservedCommits(ctx, repo, found, commits)
 	if err != nil {
 		return nil, nil, false, fmt.Errorf("reading observed commit creation: %w", err)
 	}

@@ -150,6 +150,9 @@ type diskCache struct {
 	Fingerprint fingerprint
 	// Settling counts the quick polls since one found a new head (settle).
 	Settling int `json:",omitempty"`
+	// ChecksSince is when the polls began to find checks running, or the last
+	// one that found the pull requests changed meanwhile (checksHold).
+	ChecksSince time.Time `json:",omitzero"`
 	// Carried are the pull requests whose merge state the last poll kept from
 	// an earlier one while GitHub worked it out again (carryMerge).
 	Carried map[int]bool `json:",omitempty"`
@@ -204,6 +207,15 @@ const (
 	maxSettles     = 3
 )
 
+// A check that finishes leaves the pull request's update time as it was, so
+// neither the probe nor the backoff's "unchanged" sees it coming. While an
+// open pull request has checks running the polls therefore stay at the first
+// interval rather than backing off. Checks that never report (a required one
+// nothing runs, say) would hold it for ever: the hold ends once the pull
+// requests have stayed as they are for checksHold, and the usual backoff goes
+// on until they change.
+const checksHold = time.Hour
+
 // How a poll reads the open pull requests. Most polls are incremental: they
 // read the pull requests updated since the cursor, newest first and of any
 // state, so one that closed or merged is seen and leaves the cache. A full
@@ -246,7 +258,15 @@ type Service struct {
 	locks  map[string]*sync.Mutex
 	liveMu sync.Mutex
 	// writeMu serializes this service's cache writes to app.sqlite.
-	writeMu   sync.Mutex
+	writeMu sync.Mutex
+	// docsMu guards docs, the cache documents as this service last saw them
+	// (store.go).
+	docsMu sync.Mutex
+	docs   map[string]*document
+	// writesMu guards writes, how many times this service wrote each cache
+	// key (Revision).
+	writesMu  sync.Mutex
+	writes    map[string]uint64
 	now       func() time.Time
 	validated map[string]bool
 	epoch     uint64
@@ -341,44 +361,35 @@ func (s *Service) databasePath() (string, error) {
 	return filepath.Join(s.directory, "app.sqlite"), nil
 }
 
-func (s *Service) load(key string) (diskCache, error) {
-	path, err := s.databasePath()
-	if err != nil {
-		return diskCache{}, err
-	}
-	raw, err := appdb.Read(path, "cache", "discovery/"+key)
-	if err != nil {
-		return diskCache{}, err
-	}
-	if len(raw) > 32<<20 {
-		return diskCache{}, errors.New("discovery cache too large")
-	}
-	var cache diskCache
-	if json.Unmarshal(raw, &cache) != nil {
-		return diskCache{}, errors.New("invalid discovery cache")
-	}
-	return cache, nil
+// Revision stamps what Cached reads of a repository without opening the
+// cache: Cached reads the same snapshot at two equal revisions, except that
+// its Stale turns true once NextPoll passes. It changes when the identity
+// resets or the credential changes, when this service changes the
+// repository's cache (store, including times it keeps unsaved), and when a
+// poll validates it or fails. Only this service writes the cache, and only
+// the daemon, which runs once, makes one on app.sqlite.
+type Revision struct {
+	Epoch     uint64
+	Partition string
+	Writes    uint64
+	Validated bool
 }
 
-func (s *Service) save(key string, cache diskCache) error {
-	s.writeMu.Lock()
-	defer s.writeMu.Unlock()
-	raw, err := json.Marshal(cache)
+// Revision never makes a request and reads nothing from disk.
+func (s *Service) Revision(ctx context.Context, repository github.Repository) (Revision, error) {
+	epoch := s.Epoch()
+	reader, err := s.client.REST(ctx, repository)
 	if err != nil {
-		return err
+		return Revision{}, err
 	}
-	if len(raw) > 32<<20 {
-		return errors.New("discovery cache too large")
-	}
-	path, err := s.databasePath()
+	path, err := s.path(reader.CacheIdentity(), repository.String())
 	if err != nil {
-		return err
+		return Revision{}, err
 	}
-	if err = appdb.Write(path, "cache", "discovery/"+key, raw); err != nil {
-		return err
-	}
-	s.updated()
-	return nil
+	s.writesMu.Lock()
+	writes := s.writes[path]
+	s.writesMu.Unlock()
+	return Revision{Epoch: epoch, Partition: path, Writes: writes, Validated: s.isValidated(path)}, nil
 }
 
 // Cached never makes a network request. Resolving the configured local token
@@ -394,16 +405,21 @@ func (s *Service) Cached(ctx context.Context, repository github.Repository) (Sna
 	if err != nil {
 		return Snapshot{}, err
 	}
-	cache, err := s.load(path)
+	cache, err := s.view(path)
 	if err != nil {
 		return Snapshot{}, err
 	}
-	cache.Snapshot.Stale = cache.Snapshot.Stale || !s.isValidated(path) || !s.now().Before(cache.Snapshot.NextPoll)
+	// The view is shared, so the caller gets its own slices. Their elements'
+	// pointers are still shared and must not be written through.
+	snapshot := cache.Snapshot
+	snapshot.PullRequests = slices.Clone(snapshot.PullRequests)
+	snapshot.Observations = slices.Clone(snapshot.Observations)
+	snapshot.Stale = snapshot.Stale || !s.isValidated(path) || !s.now().Before(snapshot.NextPoll)
 	if epoch != s.Epoch() {
 		return Snapshot{}, github.ErrIdentityChanged
 	}
-	cache.Snapshot.Epoch = epoch
-	return cache.Snapshot, nil
+	snapshot.Epoch = epoch
+	return snapshot, nil
 }
 
 type poll struct {
@@ -715,7 +731,15 @@ func (s *Service) poll(ctx context.Context, repository github.Repository, force 
 		snapshot.NextPoll = maxTime(now.Add(time.Minute), p.ResetIfExhausted())
 	} else {
 		interval := 30 * time.Second
-		if unchanged(cache.Snapshot.PullRequests, snapshot.PullRequests) {
+		same := unchanged(cache.Snapshot.PullRequests, snapshot.PullRequests)
+		switch {
+		case !slices.ContainsFunc(slices.Collect(maps.Values(p.rows)), checksRunning):
+			p.cache.ChecksSince = time.Time{}
+		case !same || p.cache.ChecksSince.IsZero():
+			p.cache.ChecksSince = now
+		}
+		held := !p.cache.ChecksSince.IsZero() && now.Sub(p.cache.ChecksSince) < checksHold
+		if same && !held {
 			interval = min(max(cache.Interval, 30*time.Second)*2, 15*time.Minute)
 		}
 		interval = max(interval, p.minimum)
@@ -768,7 +792,7 @@ func (s *Service) poll(ctx context.Context, repository github.Repository, force 
 	if saveErr := s.save(budgetPath, budget.record()); saveErr != nil {
 		return snapshot, fmt.Errorf("save discovery rate budget: %w", saveErr)
 	}
-	if saveErr := s.save(path, p.cache); saveErr != nil {
+	if saveErr := s.store(path, p.cache, true); saveErr != nil {
 		return snapshot, fmt.Errorf("save discovery cache: %w", saveErr)
 	}
 	return snapshot, err

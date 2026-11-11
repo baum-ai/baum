@@ -1,7 +1,13 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { trackHidden, useVisibleInterval } from "./visible-interval";
+import {
+  subscribeVisibleInterval,
+  trackHidden,
+  useVisibleInterval,
+  visibleInterval,
+  visibleTimeout,
+} from "./visible-interval";
 
 let node: HTMLDivElement;
 let root: Root;
@@ -64,6 +70,28 @@ it("does not start while hidden at mount, and stops with null", async () => {
   expect(calls).toHaveBeenCalledTimes(1);
 });
 
+it("shares one timer and one listener per period among subscribers", () => {
+  const timers = vi.spyOn(globalThis, "setInterval");
+  const listening = vi.spyOn(document, "addEventListener");
+  const first = vi.fn();
+  const second = vi.fn();
+  const stopFirst = subscribeVisibleInterval(first, 1000);
+  const stopSecond = subscribeVisibleInterval(second, 1000);
+  expect(timers).toHaveBeenCalledTimes(1);
+  expect(listening.mock.calls.filter(([type]) => type === "visibilitychange")).toHaveLength(1);
+  vi.advanceTimersByTime(2000);
+  expect(first).toHaveBeenCalledTimes(2);
+  expect(second).toHaveBeenCalledTimes(2);
+  stopFirst();
+  vi.advanceTimersByTime(1000);
+  expect(first).toHaveBeenCalledTimes(2);
+  expect(second).toHaveBeenCalledTimes(3);
+  stopSecond();
+  expect(vi.getTimerCount()).toBe(0);
+  timers.mockRestore();
+  listening.mockRestore();
+});
+
 it("marks the document while hidden", () => {
   trackHidden();
   expect(document.documentElement.dataset.hidden).toBeUndefined();
@@ -71,4 +99,51 @@ it("marks the document while hidden", () => {
   expect(document.documentElement.dataset.hidden).toBe("");
   setHidden(false);
   expect(document.documentElement.dataset.hidden).toBeUndefined();
+});
+
+it("visibleInterval pauses while hidden, ticks once on return and stops", () => {
+  const stop = visibleInterval(calls, 100);
+  vi.advanceTimersByTime(250);
+  expect(calls).toHaveBeenCalledTimes(2);
+  setHidden(true);
+  vi.advanceTimersByTime(1000);
+  expect(calls).toHaveBeenCalledTimes(2);
+  setHidden(false);
+  expect(calls).toHaveBeenCalledTimes(3);
+  stop();
+  vi.advanceTimersByTime(1000);
+  setHidden(true);
+  setHidden(false);
+  expect(calls).toHaveBeenCalledTimes(3);
+});
+
+it("visibleTimeout fires once when visible", () => {
+  visibleTimeout(calls, 100);
+  vi.advanceTimersByTime(500);
+  expect(calls).toHaveBeenCalledTimes(1);
+  setHidden(true);
+  setHidden(false);
+  expect(calls).toHaveBeenCalledTimes(1);
+});
+
+it("visibleTimeout waits for the page to be visible when due while hidden", () => {
+  visibleTimeout(calls, 100);
+  setHidden(true);
+  vi.advanceTimersByTime(500);
+  expect(calls).not.toHaveBeenCalled();
+  setHidden(false);
+  expect(calls).toHaveBeenCalledTimes(1);
+  setHidden(true);
+  setHidden(false);
+  expect(calls).toHaveBeenCalledTimes(1);
+});
+
+it("visibleTimeout cancel stops it", () => {
+  const cancel = visibleTimeout(calls, 100);
+  setHidden(true);
+  vi.advanceTimersByTime(500);
+  cancel();
+  setHidden(false);
+  vi.advanceTimersByTime(500);
+  expect(calls).not.toHaveBeenCalled();
 });

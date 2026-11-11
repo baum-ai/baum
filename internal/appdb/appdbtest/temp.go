@@ -8,7 +8,7 @@ import (
 	"github.com/baum-ai/baum/internal/privatefs"
 )
 
-func TempDir(t *testing.T) string {
+func TempDir(t testing.TB) string {
 	t.Helper()
 	dir := filepath.Join(t.TempDir(), "private")
 	if err := privatefs.MkdirAll(dir); err != nil {

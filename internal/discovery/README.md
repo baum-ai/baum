@@ -10,6 +10,37 @@ host, credential identity and repository. The credential's record (`<hash>.budge
 holds its REST and GraphQL budgets and its team memberships, which every
 repository shares.
 
+**Decoded once per change.** A service keeps each cache document it read or
+wrote, and decodes the fields readers use (the snapshot, the probe's
+fingerprint, the budgets) once, on first use. `Cached`, `Probe` and the budget
+share that decoded copy until the document changes; `Cached` gives each caller
+its own pull request and observation slices, and nothing may write through
+their pointers. Polls, `Observe`, `Merged` and `Unresolved` decode a copy of
+their own to change. The kept copy is trusted while `app.sqlite` (and a WAL
+beside it) keep the identity, size and modification time they had when it was
+read. When they changed, or were modified within the last three seconds
+(`racyWindow`), the document is read again and decoded only if its bytes
+differ, so another process or service writing the cache is seen at the next
+read. The database is only stat'ed, never opened as an ordinary file.
+
+**Unchanged polls are not written.** A successful or failed poll that changed
+nothing but its times (fetched, next poll, rate, backoff interval and last
+sweep) keeps them in memory instead of rewriting the document, as long as the
+disk copy is less than `unsavedLimit` (an hour) old. `Cached`, `Revision` and
+the next poll see the new times; any other change (a pull request, an
+observation, a permission answer) writes the whole document with them, in one
+transaction as before. A restart, or another process, reads the older times on
+disk, which only brings a poll or sweep forward. A save whose bytes equal the
+disk copy's is skipped too.
+
+`Revision` stamps what `Cached` would read, without opening the database: the
+partition, the identity epoch, whether the last poll validated the cache, and
+how many times this service changed it. Two equal revisions read the same
+snapshot, except that `Stale` turns true once `NextPoll` passes. The count
+lives in memory, so it holds only because the daemon's service is the cache's
+one writer: the daemon runs once, and nothing else writes `cache/discovery`.
+Live sessions use it to decode a cache again only after it changed.
+
 ## A poll
 
 Most polls are **incremental**. A poll reads the window of pull requests
@@ -38,6 +69,12 @@ therefore re-reads by number, in aliased queries of a page each, at most 50:
 - open pull requests on a base that a pull request in the window merged into,
   which GitHub works out again once asked;
 - pull requests whose checks are still running.
+
+A finished check does not show in the probe either, so while any open pull
+request has checks running the polls stay 30 seconds apart rather than backing
+off: the checks' result shows within about a minute. Checks that never report
+stop holding the interval once the pull requests have stayed as they are for
+`checksHold` (an hour).
 
 A **full sweep** reads every open pull request, the most recently updated
 first. It runs on the first poll, after a cache-format upgrade, every

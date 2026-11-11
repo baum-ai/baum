@@ -3,7 +3,7 @@ package entire
 import (
 	"context"
 	"fmt"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -22,79 +22,72 @@ import (
 // checkpoint look new. Refs that do not point at a commit are not dated. It
 // is known without reading the checkpoint, so a caller that only wants recent
 // checkpoints uses it to skip reading the rest. repoRoot may be a private
-// repository that borrows the clone's objects.
+// repository that borrows the clone's objects. A Listing answers the same and
+// remembers it.
 func Touched(ctx context.Context, repoRoot string, store Store) (map[string]time.Time, error) {
-	touched := map[string]time.Time{}
-	if store.Branch != "" {
-		if err := touchedBranch(ctx, repoRoot, store.Branch, touched); err != nil {
-			return nil, err
-		}
-	}
-	var ids []string
-	for id, commit := range store.Refs {
-		if _, dated := touched[id]; !dated && commitPattern.MatchString(commit) {
-			ids = append(ids, id)
-		}
-	}
-	if len(ids) == 0 {
-		return touched, nil
-	}
-	sort.Strings(ids)
+	return new(Listing).Touched(ctx, repoRoot, store)
+}
+
+// dateObjects finds what each of objects is and dates the commits among them
+// by their commit time. An object git does not report, such as one a partial
+// clone lacks, is left out.
+func dateObjects(ctx context.Context, repoRoot string, objects []string) (map[string]objectDate, error) {
+	objects = slices.Clone(objects)
+	slices.Sort(objects)
+	objects = slices.Compact(objects)
 	env := gitlocal.ReadEnv(repoRoot)
 	// Only commits can be dated: keep what cat-file says is one.
 	var input strings.Builder
-	for _, id := range ids {
-		input.WriteString(store.Refs[id] + "\n")
+	for _, object := range objects {
+		input.WriteString(object + "\n")
 	}
 	kinds, err := runGit(ctx, env, repoRoot, strings.NewReader(input.String()), "cat-file", "--batch-check=%(objecttype)")
 	if err != nil {
 		return nil, fmt.Errorf("dating Entire checkpoints: %w", err)
 	}
+	found := map[string]objectDate{}
 	types := strings.Split(strings.TrimSpace(string(kinds)), "\n")
-	if len(types) != len(ids) {
-		return touched, nil
+	if len(types) != len(objects) {
+		return found, nil
 	}
 	input.Reset()
-	commits := map[string]bool{}
-	for i, id := range ids {
-		if strings.TrimSpace(types[i]) == "commit" {
-			commits[store.Refs[id]] = true
+	var commits int
+	for i, object := range objects {
+		switch kind := strings.TrimSpace(types[i]); kind {
+		case "commit":
+			commits++
+			input.WriteString(object + "\n")
+		case "tree", "blob", "tag":
+			found[object] = objectDate{}
 		}
 	}
-	if len(commits) == 0 {
-		return touched, nil
-	}
-	for commit := range commits {
-		input.WriteString(commit + "\n")
+	if commits == 0 {
+		return found, nil
 	}
 	out, err := runGit(ctx, env, repoRoot, strings.NewReader(input.String()),
 		"log", "--no-walk", "--no-color", "--no-show-signature", "--stdin", "--format=%H %ct")
 	if err != nil {
 		return nil, fmt.Errorf("dating Entire checkpoints: %w", err)
 	}
-	dates := map[string]time.Time{}
 	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
-		commit, seconds, found := strings.Cut(line, " ")
-		if !found {
+		commit, seconds, ok := strings.Cut(line, " ")
+		if !ok {
 			continue
 		}
 		unix, err := strconv.ParseInt(strings.TrimSpace(seconds), 10, 64)
 		if err != nil {
 			return nil, fmt.Errorf("dating Entire checkpoints: bad commit time %q", seconds)
 		}
-		dates[commit] = time.Unix(unix, 0).UTC()
+		found[commit] = objectDate{at: time.Unix(unix, 0).UTC(), commit: true}
 	}
-	for _, id := range ids {
-		if at, ok := dates[store.Refs[id]]; ok {
-			touched[id] = at
-		}
-	}
-	return touched, nil
+	return found, nil
 }
 
-func touchedBranch(ctx context.Context, repoRoot, commit string, touched map[string]time.Time) error {
+// touchedBranch dates the checkpoints the commits in revisions (a commit, or
+// a range old..new) changed, each by the newest commit that changed it.
+func touchedBranch(ctx context.Context, repoRoot, revisions string, touched map[string]time.Time) error {
 	out, err := privateGit(ctx, repoRoot, "-c", "core.quotepath=false", "log", "--no-renames", "--no-color", "--no-show-signature",
-		"--name-only", "--format=%x01%ct", commit)
+		"--name-only", "--format=%x01%ct", revisions)
 	if err != nil {
 		return fmt.Errorf("dating Entire checkpoints: %w", err)
 	}

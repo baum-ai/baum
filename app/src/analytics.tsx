@@ -27,6 +27,7 @@ import { LoadingStatus } from "./nine-dots";
 import { PageRead, readState } from "./page-state";
 import { lasted } from "./sessions";
 import { Notice, PageBar, RefreshButton, useReread } from "./shell";
+import { visibleTimeout } from "./visible-interval";
 import "./analytics.css";
 
 export type BaumWeek = {
@@ -1205,7 +1206,7 @@ export function AnalyticsPage({ Link }: { Link: ComponentType<ViewerLinkProps> }
   useEffect(() => {
     const abort = new AbortController();
     const count = reread.count;
-    let timer: ReturnType<typeof setTimeout> | undefined;
+    let cancelNext: (() => void) | undefined;
     const read = async () => {
       setLoading(true);
       try {
@@ -1220,7 +1221,7 @@ export function AnalyticsPage({ Link }: { Link: ComponentType<ViewerLinkProps> }
         setData(report);
         setError("");
         shown.current = query;
-        timer = setTimeout(() => void read(), nextRead(report));
+        cancelNext = visibleTimeout(() => void read(), nextRead(report));
       } catch (e) {
         if (abort.signal.aborted) return;
         setError(e instanceof Error ? e.message : "Local request failed.");
@@ -1234,7 +1235,7 @@ export function AnalyticsPage({ Link }: { Link: ComponentType<ViewerLinkProps> }
     void read();
     return () => {
       abort.abort();
-      clearTimeout(timer);
+      cancelNext?.();
     };
   }, [query, attempt, reread.count]);
   const set = (key: string, value: string) =>

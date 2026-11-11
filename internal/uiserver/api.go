@@ -389,28 +389,18 @@ func (a LocalAPI) Handler() *LocalHandler {
 		}
 		writeJSON(w, map[string]int{"job_concurrency": prefs.Concurrency()})
 	})
-	// Runs are shared only while one is in flight; a later request runs the
-	// checks again. That is deliberate: the endpoint is local, authenticated
-	// and user-triggered, so there is no cache.
-	var hookTrust singleflight.Group
+	// Each fresh read starts Codex processes, so answers are cached for a few
+	// minutes; ?refresh=1 reads again.
+	hookTrust := newHookTrustCache(a.HookTrust)
 	mux.HandleFunc("GET /api/agent-hooks/codex", func(w http.ResponseWriter, r *http.Request) {
 		if a.HookTrust == nil {
 			writeJSON(w, map[string]bool{"available": false})
 			return
 		}
-		result := hookTrust.DoChan("codex", func() (any, error) {
-			ctx, cancel := context.WithTimeout(context.Background(), 2*agentplugins.StatusTimeout)
-			defer cancel()
-			return a.HookTrust(ctx), nil
-		})
-		select {
-		case <-r.Context().Done():
-			return
-		case res := <-result:
-			writeJSON(w, res.Val)
-		}
+		writeJSON(w, hookTrust.Get(r.URL.Query().Get("refresh") == "1"))
 	})
 	var diagnostics singleflight.Group
+	diagnosticsReports := newDiagnosticsCache()
 	mux.HandleFunc("GET /api/diagnostics", func(w http.ResponseWriter, r *http.Request) {
 		body := map[string]any{"local": true, "generation_runner": a.Jobs != nil, "discovery": a.PRs != nil, "index": a.Index != nil, "report": nil}
 		// The report's paths are this user's; the app shows the home directory as ~.
@@ -424,7 +414,7 @@ func (a LocalAPI) Handler() *LocalHandler {
 			}
 			// Concurrent requests share one run, which a single client
 			// disconnecting does not cancel.
-			result := diagnostics.DoChan("report", func() (any, error) {
+			result := diagnosticsReports.doChan(&diagnostics, r.URL.Query().Get("refresh") != "", func() (any, error) {
 				ctx, cancel := context.WithTimeout(context.Background(), timeout)
 				defer cancel()
 				done := make(chan doctor.Report, 1)
@@ -495,28 +485,35 @@ func (a LocalAPI) Handler() *LocalHandler {
 			apiError(w, err)
 			return
 		}
-		var version store.Version
-		if n == 0 {
-			version, err = s.Latest(r.Context(), key)
-		} else {
-			version, err = s.Get(r.Context(), key, n)
-		}
+		// The store revision names the document without reading it, so a
+		// kept viewer answers without the document being read or hashed.
+		number, revision, err := s.Revision(r.Context(), key, n)
 		if err != nil {
 			apiError(w, err)
 			return
 		}
-		if len(version.Document) > viewserver.MaxDocumentBytes {
-			http.Error(w, "stored document too large", http.StatusRequestEntityTooLarge)
-			return
+		viewer, release, found, err := cache.cached(r.Context(), revisionKey(c, s, key, number, revision))
+		if !found && err == nil {
+			var version store.Version
+			if n == 0 {
+				version, err = s.Latest(r.Context(), key)
+			} else {
+				version, err = s.Get(r.Context(), key, n)
+			}
+			if err != nil {
+				apiError(w, err)
+				return
+			}
+			if len(version.Document) > viewserver.MaxDocumentBytes {
+				http.Error(w, "stored document too large", http.StatusRequestEntityTooLarge)
+				return
+			}
+			viewer, release, err = cache.get(r.Context(), c, version.Document, revisionKey(c, s, key, version.Metadata.Version, version.Revision))
 		}
-		if r.URL.Path == "/api/document" {
-			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write(viewserver.WithHunkURLs(version.Document))
-			return
-		}
-		viewer, release, err := cache.get(c, version.Document)
 		if err != nil {
-			apiError(w, err)
+			if r.Context().Err() == nil {
+				apiError(w, err)
+			}
 			return
 		}
 		defer release()

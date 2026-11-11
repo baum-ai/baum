@@ -7,7 +7,7 @@ import { App } from "./app";
 import type { Entry, Job, LiveSession, ReviewGroup } from "./api";
 import { FOR_ME } from "./inboxes";
 import { othersState, queueItems, snoozeOptions, snoozeText, upNext, waitingOn } from "./up-next";
-import { forgetLastRows } from "./shortcuts";
+import { forgetLastRows, MAC } from "./shortcuts";
 
 type Overrides = Partial<Omit<Entry, "pull_request">> & {
   pull_request?: Partial<Entry["pull_request"]>;
@@ -382,6 +382,31 @@ it("groups what waits on the person and opens on the first", async () => {
   );
 });
 
+const githubKey = () =>
+  new KeyboardEvent("keydown", {
+    key: "G",
+    code: "KeyG",
+    shiftKey: true,
+    ...(MAC ? { metaKey: true } : { ctrlKey: true }),
+    bubbles: true,
+    cancelable: true,
+  });
+
+it("opens the selected pull request on GitHub with the command key, Shift and G", async () => {
+  const opened: string[] = [];
+  vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (
+    this: HTMLAnchorElement,
+  ) {
+    if (this.target === "_blank") opened.push(this.href);
+  });
+  await render();
+  await press("j");
+  expect(shown()).toBe("Change 3");
+  await act(async () => document.body.dispatchEvent(githubKey()));
+  expect(opened).toEqual(["https://github.com/acme/demo/pull/3"]);
+  vi.restoreAllMocks();
+});
+
 it("moves with j and k, opens with Enter and merges with m", async () => {
   await render();
   await press("m");
@@ -474,10 +499,82 @@ it("snoozes, undoes and brings back, and remembers it", async () => {
     node.querySelector<HTMLButtonElement>('button[aria-label="Actions for acme/demo #3"]')!.click(),
   );
   const choices = Array.from(node.querySelectorAll<HTMLElement>('[role="menu"] [role^=menuitem]'));
-  expect(choices.map((item) => item.textContent)).toEqual(["Bring back"]);
+  expect(choices.map((item) => item.textContent)).toEqual(["Bring back", "Archive"]);
   await act(async () => choices[0]!.click());
   expect(list()).toContain("Change 3");
   expect(shown()).toBe("Change 3");
+});
+
+it("archives with e, undoes with u, and never shows it again, not even as done", async () => {
+  await render();
+  await act(async () => row("Change 3").click());
+  await press("e");
+  expect(node.querySelector('[role="status"]')!.textContent).toMatch(/^Archived #3/);
+  // The pull request that takes its place is selected.
+  expect(shown()).toBe("Change 4");
+  expect(list()).toEqual(["Change 1", "Change 4", "Change 2", "Change 5", "Change 6"]);
+  await press("u");
+  expect(shown()).toBe("Change 3");
+  expect(list()).toContain("Change 3");
+  // The panel's button archives too.
+  await act(async () => button("Archive").click());
+  expect(list()).not.toContain("Change 3");
+  // There is no Archived group, it is not done today, and a reload keeps it.
+  await render();
+  expect(list()).toEqual(["Change 1", "Change 4", "Change 2", "Change 5", "Change 6"]);
+  expect(groups().join()).not.toMatch(/Archived|Snoozed/);
+  expect(await cleared()).toBeNull();
+  expect(node.textContent).not.toContain("Change 3");
+});
+
+it("archives from a row's menu, a snoozed one too, and a snooze waits for the unarchive", async () => {
+  await render();
+  await rightClick("Change 4");
+  await choose("Archive");
+  expect(list()).not.toContain("Change 4");
+  await act(async () => row("Change 3").click());
+  await press("s");
+  await act(async () => snoozeFor("Until it changes").click());
+  await act(async () => button("Snoozed").click());
+  await act(async () =>
+    node.querySelector<HTMLButtonElement>('button[aria-label="Actions for acme/demo #3"]')!.click(),
+  );
+  await act(async () =>
+    Array.from(node.querySelectorAll<HTMLElement>('[role="menu"] [role^=menuitem]'))
+      .find((item) => item.textContent === "Archive")!
+      .click(),
+  );
+  expect(groups().join()).not.toContain("Snoozed");
+  expect(node.textContent).not.toContain("Change 3");
+  // Undone, it is snoozed again.
+  await press("u");
+  expect(groups()).toContain("Snoozed · 1");
+  expect(list()).not.toContain("Change 3");
+});
+
+it("forgets an archive once its pull request closes, so a reopened one comes back", async () => {
+  await render();
+  await act(async () => row("Change 3").click());
+  await press("e");
+  const all = entries;
+  entries = all.filter((e) => e.pull_request.number !== 3);
+  await render();
+  expect(list()).not.toContain("Change 3");
+  entries = all;
+  await render();
+  expect(list()).toContain("Change 3");
+});
+
+it("forgets an archive once the read says it merged, though its repository has nothing else open", async () => {
+  entries = [ready(3)];
+  await render();
+  await press("e");
+  expect(list()).toEqual([]);
+  entries = [mine(3, { merge: "ready", checks: "passing", pull_request: { state: "MERGED" } })];
+  await render();
+  entries = [ready(3)];
+  await render();
+  expect(list()).toEqual(["Change 3"]);
 });
 
 it("keeps arrows, j/k and Control+n/p on Snooze's choices", async () => {
@@ -550,6 +647,75 @@ it("says under the actions that the review is generating until its summary is wr
   expect(status?.textContent).toBe("Generating the review.");
   // Straight after the actions, so it reads under Open, Comment and Snooze.
   expect(status?.previousElementSibling?.classList.contains("upnext-actions")).toBe(true);
+});
+
+it("says there is no review yet and generates one from the panel", async () => {
+  entries = [requested(7)];
+  await render();
+  const card = panel().querySelector(".upnext-noreview")!;
+  expect(card.textContent).toContain("No review yet.");
+  expect(card.previousElementSibling?.classList.contains("upnext-actions")).toBe(true);
+  // The next read has the queued job.
+  entries = [requested(7, { status: "generating" })];
+  await act(async () => button("Generate").click());
+  const starts = vi.mocked(fetch).mock.calls.filter(isStart);
+  expect(starts.map(([, init]) => JSON.parse(String(init!.body)))).toEqual([
+    { items: [{ clone: "clone", pr: 7 }], mode: "single", confirm_isolation: false },
+  ]);
+  // From the click it reads as generating, not as missing.
+  expect(panel().querySelector(".upnext-noreview")).toBeNull();
+  expect(panel().textContent).toContain("Generating the review.");
+});
+
+it("offers to try again when the review failed", async () => {
+  entries = [requested(7, { status: "failed", failure_reason: "the agent timed out" })];
+  await render();
+  const card = panel().querySelector(".upnext-noreview")!;
+  expect(card.textContent).toContain("baum's review failed: the agent timed out");
+  expect(button("Try again")).toBeTruthy();
+});
+
+it("says in the card why the daemon did not start the review, and on the PR page", async () => {
+  // The PR page's review watches its layout.
+  const observer = class {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+    takeRecords() {
+      return [];
+    }
+  };
+  vi.stubGlobal("ResizeObserver", observer);
+  vi.stubGlobal("IntersectionObserver", observer);
+  entries = [requested(7)];
+  const original = vi.mocked(fetch).getMockImplementation()!;
+  vi.mocked(fetch).mockImplementation(async (...args) =>
+    isStart(args)
+      ? Response.json({ message: "the queue is full" }, { status: 400 })
+      : original(...args),
+  );
+  await render();
+  await act(async () => button("Generate").click());
+  await settle();
+  expect(panel().querySelector('[role="alert"]')!.textContent).toContain(
+    "Couldn't start the review: the queue is full",
+  );
+  // Once, in the card: not again under the page.
+  expect(node.textContent!.split("the queue is full").length).toBe(2);
+  // The PR page opened from the inbox has no panel, so the page says it.
+  await press("Enter");
+  expect(location.search).toBe(`?inbox=${DEFAULT_INBOX.id}&clone=clone&pr=7`);
+  await settle();
+  expect(node.querySelector("article.upnext-panel")).toBeNull();
+  expect(node.textContent).toContain("the queue is full");
+});
+
+it("lists what baum will do instead of the card when it needs a clone", async () => {
+  entries = [requested(7, { needs_clone: true })];
+  await render();
+  // A clone item lists what baum will do instead of the card.
+  expect(panel().querySelector(".upnext-noreview")).toBeNull();
+  expect(panel().textContent).toContain("What baum will do");
 });
 
 it("shows the available summary in a Fix preview while its first review is being written", async () => {
@@ -700,10 +866,13 @@ it("does not clear a pull request whose fix is running, and offers to watch it",
   jobsList = [fixJobOf()];
   await render();
   expect(list()).toEqual(["Change 1", "Change 3", "Change 4", "Change 2", "Change 5", "Change 6"]);
-  expect(row("Change 2").textContent).toContain("Agent fixing · The agent is fixing it");
+  // While the agent itself works, the line says so once.
+  expect(row("Change 2").textContent).toContain("Agent fixing");
+  expect(row("Change 2").textContent).not.toContain("The agent is fixing it");
   expect(await cleared()).toBeNull();
   await act(async () => row("Change 2").click());
-  expect(panel().textContent).toContain("An agent is fixing it · The agent is fixing it.");
+  expect(panel().textContent).toContain("An agent is fixing it.");
+  expect(panel().textContent).not.toContain("The agent is fixing it");
   const watch = Array.from(panel().querySelectorAll("a")).find((a) =>
     a.textContent?.startsWith("Watch the agent"),
   )!;
@@ -762,6 +931,33 @@ it("brings back a pull request whose fix failed, with what happened", async () =
   )!;
   expect(see.getAttribute("href")).toBe("/s/test-ns/?page=jobs&job=fix-1");
   expect(panel().querySelector("button.upnext-secondary")!.textContent).toMatch(/^Fix/);
+});
+
+it("says why the last fix changed nothing, without calling it a failure", async () => {
+  await render();
+  jobsList = [
+    fixJobOf({
+      state: "completed",
+      reason: "no_changes",
+      summary: "I couldn't find a cause this pull request is responsible for.\n\n- Details.",
+    }),
+  ];
+  await render();
+  // Nothing was pushed, so the pull request stays to fix.
+  expect(await cleared()).toBeNull();
+  expect(row("Change 2").textContent).toContain("Last fix changed nothing");
+  expect(row("Change 2").querySelector(".upnext-row-failed")).toBeNull();
+  await act(async () => row("Change 2").click());
+  expect(panel().querySelector(".upnext-failed")).toBeNull();
+  const notice = panel().querySelector(".upnext-unchanged")!;
+  expect(notice.textContent).toContain("The last fix changed nothing, so nothing was pushed.");
+  expect(notice.querySelector(".upnext-unchanged-why")!.textContent).toBe(
+    "I couldn't find a cause this pull request is responsible for.",
+  );
+  const read = Array.from(notice.querySelectorAll("a")).find((a) =>
+    a.textContent?.startsWith("Read what the agent said"),
+  )!;
+  expect(read.getAttribute("href")).toBe("/s/test-ns/?page=jobs&job=fix-1");
 });
 
 it("keeps a failed fix of a pull request in the queue for its panel", () => {
@@ -1109,6 +1305,33 @@ it("formats Markdown in the review summary, risk explanation and section titles"
   expect(panel().querySelector(".upnext-risk .upnext-prose code")!.textContent).toBe("20");
   expect(panel().querySelector(".upnext-risk em")!.textContent).toBe("search");
   expect(panel().querySelector(".upnext-block-text code")!.textContent).toBe("repository");
+});
+
+it("shows a hunk ID in the review's prose as a chip for its file and line", async () => {
+  const doc = structuredClone(example);
+  const hunk = doc.index.hunks[0]!;
+  const reason = doc.summary.risk_score.reasons[0]!;
+  reason.text = `Skips events already handled (${hunk.id}).`;
+  doc.summary.text = `See \`${hunk.id}\` and h_000000000000.`;
+  entries = [fixture()[2]!];
+  const original = vi.mocked(fetch).getMockImplementation()!;
+  vi.mocked(fetch).mockImplementation(async (...args) =>
+    String(args[0]).includes("api/document") ? Response.json(doc) : original(...args),
+  );
+  await render();
+  const name = hunk.path.slice(hunk.path.lastIndexOf("/") + 1);
+  // Up next has no file view, so the chip opens the hunk on GitHub.
+  for (const prose of [
+    panel().querySelector(".upnext-risk .upnext-prose")!,
+    panel().querySelector(".upnext-lead")!,
+  ]) {
+    expect(prose.textContent).not.toContain(hunk.id);
+    const chip = prose.querySelector("a")!;
+    expect(chip.textContent).toMatch(new RegExp(`^${name}`));
+    expect(chip.getAttribute("href")).toContain("https://github.com/");
+  }
+  // An ID the review does not have stays as written.
+  expect(panel().querySelector(".upnext-lead")!.textContent).toContain("h_000000000000");
 });
 
 it("lists the files that conflict with the base", async () => {

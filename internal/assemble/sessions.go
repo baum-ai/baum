@@ -20,6 +20,9 @@ type LocalSessions struct {
 	Stores sessions.Options
 	// Warn receives a line for each store file that could not be read.
 	Warn io.Writer
+	// Repo, when set, is the clone containing Dir, already open; reads of it
+	// share its private repository instead of opening their own.
+	Repo *gitlocal.Repo
 }
 
 // FrozenSessions is a Sessions that can answer for a pull request that is
@@ -44,6 +47,6 @@ func (l LocalSessions) request(commits []gitlocal.Commit, maxPrompts, maxCommand
 	return locallink.EvidenceRequest{
 		Dir: l.Dir, Commits: commits, Sessions: l.Stores,
 		MaxPromptsPerSession: maxPrompts, MaxCommandEventsPerSession: maxCommandEvents, Warn: l.Warn,
-		Frozen: frozen,
+		Frozen: frozen, Repo: l.Repo,
 	}
 }

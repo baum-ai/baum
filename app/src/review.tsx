@@ -35,7 +35,6 @@ import {
   sectionDetails,
   type ReviewContextRef,
   type ReviewDocument,
-  type ReviewVersionState,
 } from "@baum/viewer/review-document";
 import {
   createCommitLoaders,
@@ -67,9 +66,11 @@ import {
   type Provenance,
 } from "./api";
 import { FixNotice, FixRuns, type FixState, type FixChat, useDismissedFixes } from "./fix";
+import { useArchive } from "./up-next";
 import { CloneActions } from "./repositories";
 import { useModal } from "./modal";
 import { Notice, RefreshButton, type RefreshRun, usePageRefreshAction } from "./shell";
+import { useVersionLoader } from "./version-cache";
 import { LiveSessionCard, LiveSessions, liveSessionLabel } from "./sessions";
 import { EmbeddedLiveTranscript, TranscriptCard } from "./session-transcript";
 import { withCommitRows } from "./commit-rows";
@@ -82,7 +83,13 @@ import { LoadingStatus } from "./nine-dots";
 import { DescriptionDialog } from "./description";
 import { RepositoryFileDialog } from "./repository-file";
 import { canMerge, MergeDialog } from "./merge";
-import { openActiveBlock, reviewKeyStep, toggleActiveBlock, useShortcuts } from "./shortcuts";
+import {
+  openActiveBlock,
+  reviewKeyStep,
+  toggleActiveBlock,
+  useGitHubKey,
+  useShortcuts,
+} from "./shortcuts";
 import { PullRequestState, pullRequestStates } from "./inbox";
 import { canRerunChecks, canUpdateBranch, RerunChecksDialog, UpdateBranchDialog } from "./unblock";
 import { Walkthrough, type WalkMode } from "./walkthrough";
@@ -235,6 +242,21 @@ function useMedia(query: string) {
   return matches;
 }
 /** The hosted PR page's shared viewer, with local sources for its slots. */
+
+type SessionsState = { query: string; version: number; load: SessionsLoad } | null;
+
+/** `next`, unless it holds what `previous` already does: the daemon answers
+ *  the 30-second poll with the same content, and a fresh object would render
+ *  the whole review again. */
+export function sameSessions(previous: SessionsState, next: NonNullable<SessionsState>) {
+  return previous &&
+    previous.query === next.query &&
+    previous.version === next.version &&
+    JSON.stringify(previous.load) === JSON.stringify(next.load)
+    ? previous
+    : next;
+}
+
 export function LocalReview({
   entry,
   clone,
@@ -356,6 +378,19 @@ export function LocalReview({
   const watchable = [fixJob, ...fixRuns].find((run) => run?.has_transcript);
   const running = liveFor(live, pr);
   const listed = listedFor(live, pr);
+  // An archived pull request shows in no inbox; its page is the way back.
+  const archive = useArchive(pr);
+  const archivedNotice = archive.archived ? (
+    <Notice
+      action={
+        <Button variant="secondary" size="compact" onClick={archive.unarchive}>
+          Unarchive
+        </Button>
+      }
+    >
+      Archived. This pull request doesn't show in your inboxes.
+    </Notice>
+  ) : null;
   // A session that ends is read from disk like any other: reload the list
   // when one leaves the live section.
   const [ended, setEnded] = useState(0);
@@ -405,14 +440,11 @@ export function LocalReview({
   const [provenance, setProvenance] = useState<Provenance[]>([]);
   const [versions, setVersions] = useState<number[]>([]);
   const [historyFailed, setHistoryFailed] = useState(false);
-  const [sessions, setSessions] = useState<{
-    query: string;
-    version: number;
-    load: SessionsLoad;
-  } | null>(null);
+  const [sessions, setSessions] = useState<SessionsState>(null);
   // The page's keys: j and k step through the review as the navigator does,
   // and the header's actions have the list's keys.
   const steps = useRef<ReviewSteps>(null);
+  useGitHubKey(pr.url || undefined);
   useShortcuts((event) => {
     // a opens the Ask panel, or puts the cursor in its box when open; it
     // works in the walkthrough too.
@@ -484,15 +516,10 @@ export function LocalReview({
       button.click();
     }
   });
-  const loadVersion = useCallback(
-    async (version: number): Promise<ReviewVersionState> => {
-      try {
-        return { status: "ready", document: await documentRequest(clone, pr.number, version) };
-      } catch {
-        return { status: "failed" };
-      }
-    },
-    [clone, pr.number],
+  const loadVersion = useVersionLoader(
+    `${clone}:${pr.number}`,
+    (version) => documentRequest(clone, pr.number, version),
+    doc?.review.version,
   );
   const history = useHistoryView(doc?.review.version, loadVersion);
   const viewedVersion =
@@ -704,11 +731,11 @@ export function LocalReview({
               current.answer.available
             )
               return previous;
-            return {
+            return sameSessions(previous, {
               query,
               version: sessionsVersion,
               load: answer ? { state: "answered", answer } : { state: "request-failed" },
-            };
+            });
           });
       } catch {
         if (!abort.signal.aborted)
@@ -907,6 +934,7 @@ export function LocalReview({
                 }
                 notices={
                   <>
+                    {archivedNotice}
                     {fixState.error ? (
                       <Alert>Couldn't start the fix: {fixState.error}</Alert>
                     ) : null}
@@ -1184,6 +1212,7 @@ export function LocalReview({
                 )}
                 notices={
                   <>
+                    {archivedNotice}
                     {fixState.error ? (
                       <Alert>Couldn't start the fix: {fixState.error}</Alert>
                     ) : null}

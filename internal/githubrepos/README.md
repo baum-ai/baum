@@ -49,6 +49,13 @@ loads its first page first, since the scope comes from it.
    "picked": true, "clone": "/work/code/name"}]}
 ```
 
+The response also carries `organization_access`
+(`{"hidden": ["acme"], "approval_url": "https://github.com/settings/connections/applications/<client_id>"}`)
+when the person belongs to organizations the sign-in cannot reach, usually ones
+that restrict OAuth app access until an owner approves baum
+(`githubauth.Manager.Organizations`). It is absent when none is hidden or the
+check failed, and `refresh=1` forces it to read again.
+
 A non-empty query returns matching cached top rows immediately while its GitHub
 search runs in the background. The response also includes `top_repositories`,
 the full cached top list, so the picker can filter it on each keystroke before

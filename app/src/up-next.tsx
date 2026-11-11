@@ -29,6 +29,7 @@ import {
   MergeIcon,
   StackIcon,
 } from "@baum/viewer/components/icons";
+import { ReviewHunksProvider } from "@baum/viewer/components/code-file-link";
 import { InlineMarkdown, Markdown } from "@baum/viewer/components/markdown";
 import { Lines } from "@baum/viewer/components/review-parts";
 import { Alert, Badge, Button, CloseButton, LiveDot } from "@baum/viewer/components/ui";
@@ -49,6 +50,8 @@ import {
   jobHref,
   agentName,
   jobReasonText,
+  changedNothing,
+  summaryLead,
   joinAnd,
   liveFor,
   navigate,
@@ -63,7 +66,7 @@ import {
   type LiveSession,
   type ReviewGroup,
 } from "./api";
-import { phaseText, type FixState } from "./fix";
+import { fixStep, type FixState } from "./fix";
 import {
   COLOR_NAMES,
   foldedQuery,
@@ -80,7 +83,7 @@ import {
 import { useDisclosure } from "@baum/viewer/components/use-disclosure";
 import { MenuButton, useContextMenu, useMenuFocus, type MenuItem } from "./context-menu";
 import { ListSection, type ListTone } from "./list";
-import { useNow } from "./live";
+import { useDeadlineNow } from "./live";
 import { peekHref } from "./sessions";
 import {
   canMerge,
@@ -92,7 +95,14 @@ import {
 } from "./merge";
 import { useModal } from "./modal";
 import { LoadingStatus, NineDots } from "./nine-dots";
-import { KeyBar, onBody, useLastRow, useShortcuts } from "./shortcuts";
+import {
+  GITHUB_KEY_LABEL,
+  KeyBar,
+  onBody,
+  useGitHubKey,
+  useLastRow,
+  useShortcuts,
+} from "./shortcuts";
 import { PullRequestChecks, checksCount, checksSummary, useChecks } from "./checks";
 import { ConflictingFiles } from "./conflicts";
 import { RefreshButton, type RefreshRun } from "./shell";
@@ -129,6 +139,9 @@ export type UpNextItem = {
   working: LiveSession[];
   /** The latest fix of a pull request in the queue as a fix, when it failed. */
   failedFix?: Job;
+  /** The latest fix, when it ended without changing anything: not a failure,
+   *  so it is shown with the agent's reason instead. */
+  unchangedFix?: Job;
 };
 
 // The order of the queue, which is the order of its groups: what someone
@@ -238,9 +251,9 @@ function why(kind: UpNextKind, entry: Entry, working: number): string {
         entry.status === "generating"
           ? "baum is writing its review now."
           : entry.status === "failed"
-            ? "baum's review failed; its page can try again."
+            ? "baum's review failed."
             : entry.version_count === 0
-              ? "There is no baum review yet; generate one from its page."
+              ? "There is no baum review yet."
               : entry.status === "outdated" || entry.stale
                 ? "baum's review covers an earlier commit."
                 : `baum's review is ready${riskText(entry) ? `, risk ${riskText(entry)}` : ""}.`;
@@ -358,7 +371,11 @@ export function upNext(
       why: why(kind, entry, working.length),
       minutes: kind === "review" ? (entry.review_minutes ?? null) : null,
       working,
-      ...(last?.state === "failed" ? { failedFix: last } : {}),
+      ...(last && changedNothing(last)
+        ? { unchangedFix: last }
+        : last?.state === "failed"
+          ? { failedFix: last }
+          : {}),
     });
   }
   // A review ready to read comes before one still being written; then the
@@ -433,7 +450,7 @@ function snapshot(entry: Entry): Snapshot {
   };
 }
 /** What the inbox remembers on this computer: today's pull requests and
- *  which it cleared, and the person's snoozes. */
+ *  which it cleared, and the person's snoozes and archives. */
 type Stored = {
   day: string;
   seen: Record<string, Seen>;
@@ -441,6 +458,9 @@ type Stored = {
   snoozed: Record<string, number>;
   /** Snoozes until the pull request changes: the head it had then. */
   held: Record<string, string>;
+  /** Archived pull requests, which never show in an inbox again, and when
+   *  each was archived. Absent from a record saved before archiving. */
+  archived?: Record<string, number>;
 };
 
 /** A snooze's end: a time, or the pull request's next push. */
@@ -451,13 +471,39 @@ function dayOf(time: number) {
   return `${date.getFullYear()}-${date.getMonth() + 1}-${date.getDate()}`;
 }
 
-/** A new day starts empty, keeping only the snoozes that still run. */
-function fresh(
-  day: string,
-  snoozed: Record<string, number> = {},
-  held: Record<string, string> = {},
-): Stored {
-  return { day, seen: {}, snoozed, held };
+/** A new day starts empty, keeping only the snoozes that still run and the
+ *  archives. */
+function fresh(day: string, previous?: Stored, now = Date.now()): Stored {
+  return {
+    day,
+    seen: {},
+    snoozed: previous ? stillSnoozed(previous.snoozed, now) : {},
+    held: previous?.held ?? {},
+    archived: previous?.archived ?? {},
+  };
+}
+
+/** The inbox's record, as stored by the daemon: one per window, shared by
+ *  the inbox and the pull request page. */
+function inboxRecord() {
+  return uiState<Stored>("api/ui-state/inbox", () => fresh(dayOf(Date.now())));
+}
+
+/** Whether the person archived a pull request, and the way back: archived
+ *  ones never show in an inbox, but their page offers Unarchive. */
+export function useArchive(pr: Pick<Entry["pull_request"], "repository" | "number">) {
+  const persistence = useUIState(inboxRecord());
+  const key = upNextKey(pr);
+  return {
+    archived: persistence.ready && key in (persistence.value.archived ?? {}),
+    unarchive: () => persistence.update((s) => withoutArchive(s, key)),
+  };
+}
+
+function withoutArchive(s: Stored, key: string): Stored {
+  if (!s.archived || !(key in s.archived)) return s;
+  const { [key]: _at, ...archived } = s.archived;
+  return { ...s, archived };
 }
 
 function stillSnoozed(snoozed: Record<string, number>, now: number) {
@@ -511,19 +557,24 @@ export function useUpNext(
   ready: boolean,
   groups: ReviewGroup[] = [],
 ) {
-  const now = useNow(30_000);
-  const persistence = useUIState(
-    uiState<Stored>("api/ui-state/inbox", () => fresh(dayOf(Date.now()))),
-  );
+  const persistence = useUIState(inboxRecord());
   const stored = persistence.value;
+  // Renders when a snooze ends or the day rolls over, not on a steady tick.
+  const now = useDeadlineNow(Object.values(stored.snoozed), true);
   const day = dayOf(now);
-  const state =
-    stored.day === day ? stored : fresh(day, stillSnoozed(stored.snoozed, now), stored.held);
+  const state = stored.day === day ? stored : fresh(day, stored, now);
+  const archived = state.archived ?? {};
   const { items, waiting, others, fixing, stackedOn } = upNext(entries, live, jobs, groups);
+  const isArchived = (entry: Entry) => upNextKey(entry.pull_request) in archived;
+  // An archived pull request is not snoozed as well: it never comes back.
   const snoozedNow = (entry: Entry) => {
     const key = upNextKey(entry.pull_request);
-    return (state.snoozed[key] ?? 0) > now || state.held[key] === entry.pull_request.head_sha;
+    return (
+      !(key in archived) &&
+      ((state.snoozed[key] ?? 0) > now || state.held[key] === entry.pull_request.head_sha)
+    );
   };
+  const hidden = (entry: Entry) => isArchived(entry) || snoozedNow(entry);
   const snoozed: { key: string; entry: Entry; kind?: QueueKind }[] = [
     ...items.filter((item) => snoozedNow(item.entry)),
     ...waiting.filter(snoozedNow).map((entry) => ({
@@ -536,14 +587,11 @@ export function useUpNext(
       kind: "other" as const,
     })),
   ];
-  const queue = items.filter((item) => !snoozedNow(item.entry));
+  const queue = items.filter((item) => !hidden(item.entry));
   const update = (change: (state: Stored) => Stored) =>
     persistence.update((previous) => {
       const time = Date.now();
-      const base =
-        previous.day === dayOf(time)
-          ? previous
-          : fresh(dayOf(time), stillSnoozed(previous.snoozed, time), previous.held);
+      const base = previous.day === dayOf(time) ? previous : fresh(dayOf(time), previous, time);
       const next = change(base);
       return next;
     });
@@ -568,6 +616,8 @@ export function useUpNext(
     ...others.map(
       (entry) => `other:${upNextKey(entry.pull_request)}:${entry.pull_request.head_sha}`,
     ),
+    // One unarchived is recorded again.
+    ...Object.keys(archived).map((key) => `archived:${key}`),
   ].join("\n");
   useEffect(() => {
     if (!ready || !persistence.ready) return;
@@ -592,9 +642,23 @@ export function useUpNext(
     // A snooze until the next push ends once the pull request is in the
     // inbox on another head, or gone from it.
     const pushed = (key: string, head: string) => heads.get(key) !== head;
+    // An archive ends once its pull request closed or merged: the read says
+    // so (as for the last open one of its repository), or its repository is
+    // read and lists it open no more. One reopened comes back.
+    const open = new Set(entries.filter(isOpen).map((entry) => upNextKey(entry.pull_request)));
+    const ended = new Set(
+      entries
+        .filter((entry) => !["", "OPEN"].includes(entry.pull_request.state?.toUpperCase() ?? ""))
+        .map((entry) => upNextKey(entry.pull_request)),
+    );
+    const closed = (key: string) =>
+      !open.has(key) && (ended.has(key) || listed.has(key.slice(0, key.lastIndexOf("#"))));
+    // An archived pull request keeps no record of today, so it is never done.
+    const recorded = (previous: Stored) =>
+      items.filter((item) => !(item.key in (previous.archived ?? {})));
     const changed =
       stored.day !== day ||
-      items.some((item) => {
+      recorded(stored).some((item) => {
         const seen = stored.seen[item.key];
         return (
           !seen ||
@@ -606,13 +670,14 @@ export function useUpNext(
         );
       }) ||
       Object.entries(stored.seen).some(([key, record]) => clears(key, record)) ||
-      Object.entries(stored.held).some(([key, head]) => pushed(key, head));
+      Object.entries(stored.held).some(([key, head]) => pushed(key, head)) ||
+      Object.keys(stored.archived ?? {}).some(closed);
     if (!changed) return;
     update((previous) => {
       const seen: Record<string, Seen> = {};
       for (const [key, record] of Object.entries(previous.seen))
         seen[key] = clears(key, record) ? { ...record, cleared: Date.now() } : record;
-      for (const item of items) {
+      for (const item of recorded(previous)) {
         const pr = item.entry.pull_request;
         seen[item.key] = {
           kind: item.kind,
@@ -627,13 +692,16 @@ export function useUpNext(
       const held = Object.fromEntries(
         Object.entries(previous.held).filter(([key, head]) => !pushed(key, head)),
       );
-      return { ...previous, seen, held };
+      const archived = Object.fromEntries(
+        Object.entries(previous.archived ?? {}).filter(([key]) => !closed(key)),
+      );
+      return { ...previous, seen, held, archived };
     });
     // `signature` stands for `items`.
   }, [ready, signature, day, persistence.ready]);
   const snoozedKeys = new Set(snoozed.map((item) => item.key));
   const cleared = Object.entries(state.seen)
-    .filter(([key, seen]) => seen.cleared != null && !snoozedKeys.has(key))
+    .filter(([key, seen]) => seen.cleared != null && !snoozedKeys.has(key) && !(key in archived))
     .sort(([, a], [, b]) => (b.cleared ?? 0) - (a.cleared ?? 0))
     // Its row in the latest read, which a merged pull request keeps while a
     // saved review holds it, so its page can open.
@@ -647,11 +715,11 @@ export function useUpNext(
     now,
     queue,
     snoozed,
-    waiting: waiting.filter((entry) => !snoozedNow(entry)),
+    waiting: waiting.filter((entry) => !hidden(entry)),
     /** Everyone else's open pull requests that wait on nothing from the
-     *  person, unsnoozed. */
-    others: others.filter((entry) => !snoozedNow(entry)),
-    fixing: fixing.filter(({ entry }) => !snoozedNow(entry)),
+     *  person, neither snoozed nor archived. */
+    others: others.filter((entry) => !hidden(entry)),
+    fixing: fixing.filter(({ entry }) => !hidden(entry)),
     cleared,
     /** The open pull request each stacked one waits on to merge first. */
     stackedOn,
@@ -671,6 +739,14 @@ export function useUpNext(
         const { [key]: _head, ...held } = s.held;
         return { ...s, snoozed, held };
       }),
+    /** Hides a pull request from every inbox for good. Its record of today
+     *  goes, so it is never done; a snooze it had waits, for an unarchive. */
+    archive: (key: string) =>
+      update((s) => {
+        const { [key]: _seen, ...seen } = s.seen;
+        return { ...s, seen, archived: { ...s.archived, [key]: Date.now() } };
+      }),
+    unarchive: (key: string) => update((s) => withoutArchive(s, key)),
   };
 }
 
@@ -1019,6 +1095,8 @@ export function UpNextPage({
   cloneFor,
   fix,
   fixState = () => ({ starting: false, error: "" }),
+  generate,
+  generateState = () => ({ starting: false, error: "" }),
   changed,
   refresh,
   refreshing = false,
@@ -1053,6 +1131,10 @@ export function UpNextPage({
   fix: (entry: Entry, only?: FixOnly) => void;
   /** A pull request's fix that is starting or did not start. */
   fixState?: (entry: Entry) => FixState;
+  /** Starts the review of a pull request, as its page's Generate does. */
+  generate?: (entry: Entry) => void;
+  /** A pull request's review that is starting or did not start. */
+  generateState?: (entry: Entry) => FixState;
   /** Reloads the inbox after a write to GitHub. */
   changed: () => Promise<void>;
   /** Reads the pull requests from GitHub again, from the head's refresh. */
@@ -1211,6 +1293,7 @@ export function UpNextPage({
   const line = index >= 0 ? rows[index] : undefined;
   const selected = isGroup(line) ? undefined : line;
   const selectedGroup = isGroup(line) ? line : undefined;
+  useGitHubKey(selected?.entry.pull_request.url || undefined);
   useEffect(() => {
     if (index >= 0) last.current = index;
   });
@@ -1266,7 +1349,14 @@ export function UpNextPage({
       ? () => fix(selected.entry)
       : undefined;
   const selectedFixState = selected ? fixState(selected.entry) : { starting: false, error: "" };
-  const options = snoozeOptions(now);
+  // The panel's generate button, shown while there is no review: it needs a
+  // clone to write one in.
+  const selectedGenerate =
+    selected && generate && cloneFor(selected.entry) && !selected.entry.needs_clone
+      ? () => generate(selected.entry)
+      : undefined;
+  // Read when rendered: `now` only moves when a snooze ends or the day rolls over.
+  const options = snoozeOptions(Date.now());
   const snooze = (until: SnoozeEnd) => {
     const item = selected;
     if (!item) return;
@@ -1278,6 +1368,21 @@ export function UpNextPage({
       undo: () => {
         inbox.wake(item.key);
         setChosen(item.key);
+      },
+    });
+  };
+  // Archiving hides the pull request from every inbox for good; as a snooze,
+  // the next one takes the selection and the toast offers Undo.
+  const archive = (row: Pick<Row, "key" | "entry"> | undefined = selected) => {
+    if (!row) return;
+    inbox.archive(row.key);
+    setMenu(false);
+    setToast({
+      id: Date.now(),
+      text: `Archived #${row.entry.pull_request.number}`,
+      undo: () => {
+        inbox.unarchive(row.key);
+        setChosen(row.key);
       },
     });
   };
@@ -1343,6 +1448,10 @@ export function UpNextPage({
       if (!selected) return;
       event.preventDefault();
       setMenu((open) => !open);
+    } else if (key === "e") {
+      if (!selected) return;
+      event.preventDefault();
+      archive();
     } else if (key === "v") {
       // As a click on the panel's review button: its menu of verdicts.
       const button = detail.current?.querySelector<HTMLElement>("[data-review-button]");
@@ -1437,7 +1546,13 @@ export function UpNextPage({
         setMenu(true);
       },
     });
-    if (pr.url) items.push({ label: "Open on GitHub", onSelect: () => openExternal(pr.url) });
+    items.push({ label: "Archive", hint: "e", onSelect: () => archive(row) });
+    if (pr.url)
+      items.push({
+        label: "Open on GitHub",
+        hint: GITHUB_KEY_LABEL,
+        onSelect: () => openExternal(pr.url),
+      });
     return items;
   };
   const groupActions = (line: GroupRow): MenuItem[] => [
@@ -1470,6 +1585,7 @@ export function UpNextPage({
         select(item.key);
       },
     },
+    { label: "Archive", onSelect: () => archive(item) },
   ];
   const alsoIn = (row: Row) =>
     rowInboxes(row, inboxes, view).filter((other) => other.id !== scope.id);
@@ -1728,39 +1844,48 @@ export function UpNextPage({
               <LoadingStatus block>Loading your inbox…</LoadingStatus>
             </div>
           ) : selected ? (
-            <Panel
-              key={selected.key}
-              row={selected}
-              doc={doc}
-              tags={alsoIn(selected)}
-              href={prHref(selected.entry, cloneFor, scope)}
-              Link={Link}
-              fix={selectedFix}
-              fixState={selectedFixState}
-              merge={() => setMerging(selected.entry)}
-              review={(event) => setReviewing({ entry: selected.entry, event })}
-              update={() => setUpdating(selected.entry)}
-              menu={menu}
-              setMenu={setMenu}
-              options={options}
-              snooze={snooze}
-              now={now}
-            />
+            // A hunk ID the review writes into its prose reads as a chip for
+            // its file and line, which opens the hunk on GitHub from here.
+            <ReviewHunksProvider document={doc} historical={null}>
+              <Panel
+                key={selected.key}
+                row={selected}
+                doc={doc}
+                tags={alsoIn(selected)}
+                href={prHref(selected.entry, cloneFor, scope)}
+                Link={Link}
+                fix={selectedFix}
+                fixState={selectedFixState}
+                generate={selectedGenerate}
+                generateState={generateState(selected.entry)}
+                merge={() => setMerging(selected.entry)}
+                review={(event) => setReviewing({ entry: selected.entry, event })}
+                update={() => setUpdating(selected.entry)}
+                menu={menu}
+                setMenu={setMenu}
+                options={options}
+                snooze={snooze}
+                archive={() => archive(selected)}
+                now={now}
+              />
+            </ReviewHunksProvider>
           ) : selectedGroup ? (
-            <GroupPanel
-              key={selectedGroup.key}
-              line={selectedGroup}
-              doc={groupDoc}
-              entries={entries}
-              href={appURL(
-                `?inbox=${encodeURIComponent(scope.id)}&group=${encodeURIComponent(selectedGroup.group.id)}`,
-              )}
-              pick={(key) => {
-                toggleGroup(selectedGroup, true);
-                select(key);
-              }}
-              Link={Link}
-            />
+            <ReviewHunksProvider document={groupDoc} historical={null}>
+              <GroupPanel
+                key={selectedGroup.key}
+                line={selectedGroup}
+                doc={groupDoc}
+                entries={entries}
+                href={appURL(
+                  `?inbox=${encodeURIComponent(scope.id)}&group=${encodeURIComponent(selectedGroup.group.id)}`,
+                )}
+                pick={(key) => {
+                  toggleGroup(selectedGroup, true);
+                  select(key);
+                }}
+                Link={Link}
+              />
+            </ReviewHunksProvider>
           ) : filtering &&
             hidden > 0 &&
             // Waiting rows are never selected, so the lists say what is left.
@@ -1847,11 +1972,14 @@ function ListRow({
   const sub = [
     `#${pr.number}`,
     ...(row.job
-      ? ["Agent fixing", phaseText(row.job)]
+      ? ["Agent fixing", fixStep(row.job)]
       : row.waiting
         ? [rowWaiting(row), repository]
-        : row.item?.failedFix
-          ? [inGroup ? memberLabel(row.item.kind, row.entry) : "", "Last fix failed"]
+        : row.item?.failedFix || row.item?.unchangedFix
+          ? [
+              inGroup ? memberLabel(row.item.kind, row.entry) : "",
+              row.item.failedFix ? "Last fix failed" : "Last fix changed nothing",
+            ]
           : [
               inGroup && row.item ? memberLabel(row.item.kind, row.entry) : repository,
               row.item?.minutes != null ? minutesText(row.item.minutes) : "",
@@ -2149,6 +2277,8 @@ function Panel({
   Link,
   fix,
   fixState,
+  generate,
+  generateState,
   merge,
   review,
   update,
@@ -2156,6 +2286,7 @@ function Panel({
   setMenu,
   options,
   snooze,
+  archive,
   now,
 }: {
   row: Row;
@@ -2166,6 +2297,9 @@ function Panel({
   Link: ComponentType<ViewerLinkProps>;
   fix?: () => void;
   fixState: FixState;
+  /** Starts the review; none without a clone to write it in. */
+  generate?: () => void;
+  generateState: FixState;
   merge: () => void;
   review: (event: ReviewEvent) => void;
   update: () => void;
@@ -2173,6 +2307,8 @@ function Panel({
   setMenu: (open: boolean | ((open: boolean) => boolean)) => void;
   options: { label: string; until: SnoozeEnd }[];
   snooze: (until: SnoozeEnd) => void;
+  /** Hides the pull request from every inbox for good. */
+  archive: () => void;
   now: number;
 }) {
   const { entry, item, job, waiting } = row;
@@ -2282,7 +2418,7 @@ function Panel({
       {job ? (
         <div className="upnext-working" role="status">
           <NineDots size={14} />
-          <span>An agent is fixing it · {phaseText(job)}.</span>
+          <span>An agent is fixing it{fixStep(job) ? ` · ${fixStep(job)}` : ""}.</span>
           <span className="upnext-working-aside">You can move on</span>
         </div>
       ) : null}
@@ -2305,6 +2441,7 @@ function Panel({
           </Link>
         </div>
       ) : null}
+      {item?.unchangedFix ? <UnchangedFix job={item.unchangedFix} Link={Link} /> : null}
       <div className="upnext-actions">
         {actions}
         {reviewable(entry) ? (
@@ -2346,6 +2483,12 @@ function Panel({
             </div>
           ) : null}
         </div>
+        <button type="button" className={cn("upnext-secondary", SECONDARY)} onClick={archive}>
+          Archive
+          <kbd aria-hidden="true" className="key-hint">
+            e
+          </kbd>
+        </button>
       </div>
       {/* Until the review's summary is written there is nothing under the
           actions to read, so say it is on its way. */}
@@ -2354,6 +2497,11 @@ function Panel({
           <NineDots size={14} />
           <span>Generating the review.</span>
         </div>
+      ) : kind !== "clone" &&
+        entry.status !== "generating" &&
+        (entry.status === "failed" || entry.version_count === 0) ? (
+        // A clone item says what baum will do instead.
+        <NoReview entry={entry} generate={generate} state={generateState} />
       ) : null}
       {score != null ? (
         <RiskCard score={score} text={riskText(entry)}>
@@ -2409,6 +2557,47 @@ function Panel({
         </p>
       ) : null}
     </article>
+  );
+}
+
+/** Where the review stands while there is none to read, or the last one
+ *  failed, with the button that writes it. */
+function NoReview({
+  entry,
+  generate,
+  state,
+}: {
+  entry: Entry;
+  generate?: () => void;
+  state: FixState;
+}) {
+  const failed = entry.status === "failed";
+  const text = failed
+    ? `baum's review failed${entry.failure_reason ? `: ${entry.failure_reason}` : "."}`
+    : entry.needs_clone
+      ? `No review yet. baum needs a local clone of ${entry.pull_request.repository} to write one; choose a folder or clone it in Repositories.`
+      : "No review yet.";
+  return (
+    <div className="upnext-noreview" role={state.error ? "alert" : undefined}>
+      <div className="upnext-noreview-copy">
+        <span>{text}</span>
+        {state.error ? (
+          <span className="upnext-noreview-sub">Couldn't start the review: {state.error}</span>
+        ) : generate && !failed ? (
+          <span className="upnext-noreview-sub">Writing one usually takes a few minutes.</span>
+        ) : null}
+      </div>
+      {generate ? (
+        <button
+          type="button"
+          className={cn("upnext-secondary", SECONDARY)}
+          disabled={state.starting}
+          onClick={generate}
+        >
+          {state.starting ? "Starting…" : failed ? "Try again" : "Generate"}
+        </button>
+      ) : null}
+    </div>
   );
 }
 
@@ -2591,15 +2780,47 @@ function RiskCard({
   );
 }
 
+/** The last fix ended without changing anything, which is the agent's
+ *  judgement, not an error: said in neutral words, with the agent's reason
+ *  (the first paragraph of what it said) and the way to the rest. */
+function UnchangedFix({ job, Link }: { job: Job; Link: ComponentType<ViewerLinkProps> }) {
+  const why = summaryLead(job.summary);
+  return (
+    <div className="upnext-unchanged" role="status">
+      <p className="upnext-unchanged-title">The last fix changed nothing, so nothing was pushed.</p>
+      {why ? (
+        <Markdown html={false} className="upnext-prose upnext-unchanged-why">
+          {why}
+        </Markdown>
+      ) : null}
+      <Link href={jobHref(job)}>
+        {why ? "Read what the agent said" : "See what the agent did"}
+        {job.has_transcript ? (
+          <kbd aria-hidden="true" className="key-hint">
+            t
+          </kbd>
+        ) : null}
+      </Link>
+    </div>
+  );
+}
+
 /** What a group's member waits on, in a few words, and the tone of its dot:
  *  an agent at work, what needs fixing, ready to merge, or waiting. */
 function memberState(row: Row): { text: string; tone: string } {
-  if (row.job) return { text: `Agent fixing · ${phaseText(row.job)}`, tone: "working" };
+  if (row.job) {
+    const step = fixStep(row.job);
+    return { text: step ? `Agent fixing · ${step}` : "Agent fixing", tone: "working" };
+  }
   if (row.waiting) return { text: rowWaiting(row), tone: "waiting" };
   if (!row.item) return { text: "", tone: "waiting" };
   const label = memberLabel(row.item.kind, row.entry);
   return {
-    text: row.item.failedFix ? `${label} · Last fix failed` : label,
+    text: row.item.failedFix
+      ? `${label} · Last fix failed`
+      : row.item.unchangedFix
+        ? `${label} · Last fix changed nothing`
+        : label,
     tone: row.item.kind,
   };
 }

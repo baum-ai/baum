@@ -1,5 +1,6 @@
 import { createContext, type ReactNode, useContext, useEffect, useRef, useState } from "react";
 
+import { hunkIndex } from "../hunk-index";
 import { indexedHunkFromFilePatch } from "../patch";
 import type {
   Anchor,
@@ -128,10 +129,8 @@ export function HunkEvidence({
       ? historical.state.document
       : null;
   const historicalReady = historicalDocument !== null;
-  const indexed = new Map(document.index.hunks.map((hunk) => [hunk.id, hunk]));
-  const historicalIndexed = new Map(
-    historicalDocument?.index.hunks.map((hunk) => [hunk.id, hunk]) ?? [],
-  );
+  const indexed = hunkIndex(document).byId;
+  const historicalIndexed = historicalDocument ? hunkIndex(historicalDocument).byId : null;
   const patchSource = useContext(HunkPatchContext);
   const [patches, setPatches] = useState<Record<string, LoadedPatch>>({});
   const [openKey, setOpenKey] = useState<string | null>(null);
@@ -149,7 +148,7 @@ export function HunkEvidence({
     if (seen.has(key)) continue;
     seen.add(key);
     const currentHunk = indexed.get(anchor.id);
-    const historicalHunk = currentHunk ? undefined : historicalIndexed.get(anchor.id);
+    const historicalHunk = currentHunk ? undefined : historicalIndexed?.get(anchor.id);
     const hunk = currentHunk ?? historicalHunk;
     // Without a stored excerpt, the hunk is read from the file's patch at the
     // version the review compared, once the reader opens the evidence.
@@ -180,8 +179,9 @@ export function HunkEvidence({
     });
   }
   const disclosureKey = `${documentKey}:${historicalVersion ?? "current"}:${[...seen].join(",")}`;
+  const opened = openKey === disclosureKey;
   const wanted = new Map(
-    openKey === disclosureKey
+    opened
       ? selected.flatMap((item) =>
           item.patch && !item.patch.state ? [[item.patch.key, item.patch] as const] : [],
         )
@@ -335,12 +335,10 @@ export function HunkEvidence({
           Historical evidence from review v{historicalVersion}
         </p>
       ) : null}
-      <CodeDiff
-        files={files}
-        bare
-        highlight={openKey === disclosureKey}
-        className={diffClassName}
-      />
+      {/* Drawn from the first opening on, and kept after the reader closes
+       *  it, so a long section does not hold a hidden table for every
+       *  excerpt. Any way of opening the disclosure fires toggle. */}
+      {opened ? <CodeDiff files={files} bare highlight className={diffClassName} /> : null}
       {unavailable.length > 0 ? (
         <ul className="mt-3 space-y-1.5 text-base text-(--text-tertiary)">
           {unavailable.map(({ anchor, hunk, patch }) => (

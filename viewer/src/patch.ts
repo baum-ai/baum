@@ -3,7 +3,21 @@ import type { CodeDiffHunk, CodeDiffLine } from "./components/review-tiles/code-
 
 const hunkHeader = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/;
 
+const parsedPatches = new Map<string, CodeDiffHunk[]>();
+
+/** Parsed once per patch text, since every evidence block of a file reads it.
+ *  The result is shared: callers must not modify it. */
 export function parseFilePatch(patch: string): CodeDiffHunk[] {
+  let parsed = parsedPatches.get(patch);
+  if (!parsed) {
+    if (parsedPatches.size >= 32) parsedPatches.clear();
+    parsed = parseFilePatchUncached(patch);
+    parsedPatches.set(patch, parsed);
+  }
+  return parsed;
+}
+
+function parseFilePatchUncached(patch: string): CodeDiffHunk[] {
   const hunks: CodeDiffHunk[] = [];
   let current: { header: string; lines: CodeDiffLine[] } | null = null;
   let oldLine = 0;

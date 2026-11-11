@@ -205,6 +205,50 @@ func TestLocalRefreshLeavesDocumentWhenCurrentHeadFetchFails(t *testing.T) {
 	}
 }
 
+// A read that finds nothing new on GitHub leaves the saved document as it
+// was, refresh time included, and still counts as a read: the pull request
+// is not due again until its evidence is old. A read that finds a change
+// writes it.
+func TestLocalRefreshOfUnchangedEvidenceWritesNothing(t *testing.T) {
+	ctx := context.Background()
+	f := savedReview(t)
+	remote := &source{evidence: github.Evidence{Repository: f.key.Repository, PullRequest: bundle.PullRequest{Number: 212, State: "closed", HeadSHA: f.head, BaseSHA: f.head}, Checks: []bundle.Check{{ID: "chk_9001", Kind: "check_run", Name: "Tests", Status: "completed", Conclusion: "failure"}}, Sources: bundle.Sources{"checks": true, "review_threads": true}}}
+	now := time.Now().UTC()
+	d := &fakeDiscovery{closed: true}
+	s := &Service{Registry: registry{{Repository: f.key.Repository, CommonDir: f.clone.CommonDir, Path: f.clone.Path, Available: true}}, Discovery: d, Now: func() time.Time { return now }, Saved: Saved, Refresh: Local{Client: remote}.Refresh}
+	reads := func() int { return len(d.observations) }
+
+	s.Sync(ctx)
+	first, err := f.versions.Latest(ctx, f.key)
+	if err != nil || reads() != 1 || bytes.Equal(first.Document, f.saved.Document) {
+		t.Fatalf("the first read did not refresh the document: reads=%d %v", reads(), err)
+	}
+
+	// The observation is as of the read's real time, a little after now.
+	now = now.Add(closedReadAge + time.Minute)
+	s.Sync(ctx)
+	unchanged, err := f.versions.Latest(ctx, f.key)
+	if err != nil || reads() != 2 || !bytes.Equal(unchanged.Document, first.Document) {
+		t.Fatalf("a read of unchanged evidence rewrote the document: reads=%d %v\n%s\n%s", reads(), err, first.Document, unchanged.Document)
+	}
+	if state := s.state(f.key.Repository); state.Error != "" || len(state.Problems) != 0 {
+		t.Fatalf("an unwritten refresh was a failure: %+v", state)
+	}
+	now = now.Add(time.Minute)
+	s.Sync(ctx)
+	if reads() != 2 {
+		t.Fatalf("reads=%d, want none until the evidence is old again", reads())
+	}
+
+	remote.evidence.Checks[0].Conclusion = "success"
+	now = now.Add(closedReadAge)
+	s.Sync(ctx)
+	changed, err := f.versions.Latest(ctx, f.key)
+	if err != nil || reads() != 3 || bytes.Equal(changed.Document, first.Document) || !bytes.Contains(changed.Document, []byte(`"conclusion":"success"`)) {
+		t.Fatalf("a finished check was not written: reads=%d %v", reads(), err)
+	}
+}
+
 func TestLocalNoReviewMetadataNeverCreatesStore(t *testing.T) {
 	common := t.TempDir()
 	remote := &source{evidence: github.Evidence{PullRequest: bundle.PullRequest{Number: 7, State: "open", HeadSHA: "new"}}}

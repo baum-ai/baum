@@ -587,6 +587,17 @@ func (p *poll) window(ctx context.Context, repository github.Repository, base ti
 	}
 }
 
+// checksRunning is whether a pull request's head still has checks running. It
+// reads the raw rollup, not the shown state: one already failing may still
+// have checks running, and a retry can turn it passing.
+func checksRunning(row gqlPR) bool {
+	if row.Commits == nil || len(row.Commits.Nodes) == 0 {
+		return false
+	}
+	rollup := row.Commits.Nodes[0].Commit.StatusCheckRollup
+	return rollup != nil && (rollup.State == "PENDING" || rollup.State == "EXPECTED")
+}
+
 // errLongWindow is a window longer than windowPageLimit pages: the cursor is
 // too old (after days asleep, say), and a sweep, which resumes when cut short,
 // replaces it.
@@ -606,14 +617,7 @@ func (p *poll) watch() []int {
 		if p.read[number] {
 			continue
 		}
-		// The raw rollup, not the shown state: one already failing may still
-		// have checks running, and a retry can turn it passing.
-		running := false
-		if row.Commits != nil && len(row.Commits.Nodes) > 0 {
-			if rollup := row.Commits.Nodes[0].Commit.StatusCheckRollup; rollup != nil {
-				running = rollup.State == "PENDING" || rollup.State == "EXPECTED"
-			}
-		}
+		running := checksRunning(row)
 		unknown := !row.IsDraft && (row.Mergeable == "UNKNOWN" || row.MergeStateStatus == "UNKNOWN")
 		switch {
 		case unknown && p.cache.Settling > 0, !row.IsDraft && p.merged[row.BaseRefName]:

@@ -225,8 +225,44 @@ func TestServesDocumentBytesUnchanged(t *testing.T) {
 	if got := resp.Header.Get("Content-Type"); got != "application/json" {
 		t.Errorf("Content-Type = %q", got)
 	}
-	if got := resp.Header.Get("Cache-Control"); got != "no-store" {
+	if got := resp.Header.Get("Cache-Control"); got != "no-cache" {
 		t.Errorf("Cache-Control = %q", got)
+	}
+}
+
+// The document carries an ETag of the served bytes: a request naming it is a
+// 304 without a body until the document changes.
+func TestDocumentRevalidatesByETag(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "review.json")
+	writeFile(t, path, `{"title":"one"}`)
+	server, base := start(t, Options{Path: path})
+	conditional := func(etag string) (*http.Response, string) {
+		t.Helper()
+		req, _ := http.NewRequest(http.MethodGet, base+"/api/document", nil)
+		req.Header.Set("If-None-Match", etag)
+		resp, err := noRedirects.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = resp.Body.Close() }()
+		body, _ := io.ReadAll(resp.Body)
+		return resp, string(body)
+	}
+	resp, _ := get(t, base+"/api/document")
+	etag := resp.Header.Get("ETag")
+	if !strings.HasPrefix(etag, `"`) || len(etag) != 66 {
+		t.Fatalf("ETag = %q", etag)
+	}
+	if resp, body := conditional(etag); resp.StatusCode != http.StatusNotModified || body != "" {
+		t.Fatalf("unchanged: %d %q", resp.StatusCode, body)
+	}
+	if resp, body := conditional(`"other"`); resp.StatusCode != http.StatusOK || body != `{"title":"one"}` {
+		t.Fatalf("other tag: %d %q", resp.StatusCode, body)
+	}
+	server.setDocument([]byte(`{"title":"two"}`))
+	resp, body := conditional(etag)
+	if resp.StatusCode != http.StatusOK || body != `{"title":"two"}` || resp.Header.Get("ETag") == etag {
+		t.Fatalf("changed: %d %q %q", resp.StatusCode, resp.Header.Get("ETag"), body)
 	}
 }
 
@@ -277,6 +313,9 @@ func TestDeepLinkFallsBackToIndexAndAssetsKeepTheirType(t *testing.T) {
 	if resp.StatusCode != http.StatusOK || body != string(index) {
 		t.Errorf("deep link: status %d, served index = %v", resp.StatusCode, body == string(index))
 	}
+	if got := resp.Header.Get("Cache-Control"); got != "no-cache" {
+		t.Errorf("deep link Cache-Control = %q", got)
+	}
 
 	refs := regexp.MustCompile(`(?:src|href)="(/assets/[^"]+)"`).FindAllStringSubmatch(string(index), -1)
 	if len(refs) < 2 {
@@ -297,6 +336,9 @@ func TestDeepLinkFallsBackToIndexAndAssetsKeepTheirType(t *testing.T) {
 		}
 		if got := resp.Header.Get("Content-Type"); got != wantType {
 			t.Errorf("%s Content-Type = %q, want %q", ref[1], got, wantType)
+		}
+		if got := resp.Header.Get("Cache-Control"); got != "public, max-age=31536000, immutable" {
+			t.Errorf("%s Cache-Control = %q", ref[1], got)
 		}
 	}
 

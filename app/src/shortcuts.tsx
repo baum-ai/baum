@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState, type RefObject } from "react"
 import type { ReviewSteps } from "@baum/viewer/components/review-viewer";
 import { CloseButton } from "@baum/viewer/components/ui";
 import { PAGES, type Page } from "./pages";
+import { openExternal } from "./api";
 
 export type InboxAction =
   | "next"
@@ -58,7 +59,12 @@ const UP_NEXT_SHORTCUTS: Shortcut[] = [
     short: "review",
   },
   { keys: ["s"], label: "Snooze, then 1–4 to choose until when", short: "snooze" },
-  { keys: ["u"], label: "Undo a snooze", short: "undo" },
+  {
+    keys: ["e"],
+    label: "Archive: never show it in an inbox again (its page unarchives it)",
+    short: "archive",
+  },
+  { keys: ["u"], label: "Undo a snooze or an archive", short: "undo" },
 ];
 /** The walkthrough's keys, which `Walkthrough` handles itself. */
 const WALKTHROUGH_SHORTCUTS: Shortcut[] = [
@@ -201,6 +207,45 @@ function onlyModifier(
  *  Ctrl+R elsewhere. */
 export const REFRESH_KEY_LABEL = `${COMMAND}R`;
 export const REFRESH_KEY_SHORTCUT = `${MAC ? "Meta" : "Control"}+R`;
+
+/** The open-on-GitHub key as drawn and for `aria-keyshortcuts`: ⇧⌘G on a
+ *  Mac, Ctrl+Shift+G elsewhere, as GitHub Desktop's View on GitHub. */
+export const GITHUB_KEY_LABEL = MAC ? "⇧⌘G" : "Ctrl+Shift+G";
+export const GITHUB_KEY_SHORTCUT = `${MAC ? "Meta" : "Control"}+Shift+G`;
+
+/** Whether a keydown is ⇧⌘G (Ctrl+Shift+G elsewhere), by its letter or, on a
+ *  layout without Latin ones, its place. */
+export function isGitHubKey(
+  event: Pick<KeyboardEvent, "key" | "code" | "ctrlKey" | "metaKey" | "altKey" | "shiftKey">,
+  mac = MAC,
+) {
+  if (!event.shiftKey || event.altKey) return false;
+  if (event.metaKey !== mac || event.ctrlKey === mac) return false;
+  const typed = event.key ?? "";
+  return /^[a-z]$/i.test(typed) ? typed.toLowerCase() === "g" : event.code === "KeyG";
+}
+
+/** Opens `url`, the pull request in hand (the one a page shows, or a list's
+ *  selected row), on GitHub on ⇧⌘G (Ctrl+Shift+G elsewhere), in text fields
+ *  too, as the app-wide keys, but not under a dialog. Without a `url` the key
+ *  is left alone. */
+export function useGitHubKey(url: string | undefined) {
+  const latest = useRef(url);
+  useEffect(() => {
+    latest.current = url;
+  });
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.defaultPrevented || event.isComposing || !isGitHubKey(event)) return;
+      const target = latest.current;
+      if (!target || document.querySelector("dialog[open]")) return;
+      event.preventDefault();
+      openExternal(target);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
+}
 
 /** Ctrl+N and Ctrl+P (the readline keys, Control on a Mac too) as ↓ and ↑,
  *  everywhere the arrows move: they are turned into those keys on the same
@@ -815,6 +860,7 @@ function shortcutGroups(
       title: "Inbox",
       rows: [
         ...UP_NEXT_SHORTCUTS,
+        { keys: [GITHUB_KEY_LABEL], label: "Open the pull request on GitHub" },
         { keys: ["/"], label: "Open the filter" },
         {
           keys: MAC ? ["⇧J", "⇧K", "⌃↓", "⌃↑"] : ["Shift+J", "Shift+K", "Ctrl+↓", "Ctrl+↑"],
@@ -827,6 +873,7 @@ function shortcutGroups(
       title: "Pull requests",
       rows: [
         ...INBOX_SHORTCUTS,
+        { keys: [GITHUB_KEY_LABEL], label: "Open the focused pull request on GitHub" },
         { keys: ["/"], label: "Open the filter" },
         { keys: ["Escape"], label: "Clear the row focus" },
         { keys: VIEW_KEYS.previous, label: "Previous view", short: "views" },
@@ -858,6 +905,7 @@ function shortcutGroups(
         { keys: ["m"], label: "Merge, where offered", short: "merge" },
         { keys: ["f"], label: "Fix, where offered", short: "fix" },
         { keys: ["t"], label: TRANSCRIPT_LABEL },
+        { keys: [GITHUB_KEY_LABEL], label: "Open the pull request on GitHub" },
         {
           keys: ["c"],
           label: `Comment on the section, risk or file being read; ${COMMAND}↵ saves it`,

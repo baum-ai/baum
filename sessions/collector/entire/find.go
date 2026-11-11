@@ -268,40 +268,38 @@ func Located(ctx context.Context, repoRoot string, store Store, ids []string) (m
 // List returns every checkpoint in the store, in id order; a checkpoint in
 // both the branch and the refs is listed once, as its ref. repoRoot is a
 // private repository that borrows the clone's objects, such as gitlocal's.
+// A Listing answers the same and remembers it.
 func List(ctx context.Context, repoRoot string, store Store) ([]Checkpoint, error) {
-	byID := map[string]Checkpoint{}
-	if store.Branch != "" {
-		branch, err := listBranch(ctx, repoRoot, store.Branch)
-		if err != nil {
-			return nil, err
-		}
-		for _, checkpoint := range branch {
-			byID[checkpoint.ID] = checkpoint
-		}
+	return new(Listing).List(ctx, repoRoot, store)
+}
+
+// merged is the checkpoints of the branch and the refs, in id order, a
+// checkpoint in both being its ref, with the tree trees gives it.
+func merged(branch []Checkpoint, refs, trees map[string]string) []Checkpoint {
+	byID := make(map[string]Checkpoint, len(branch)+len(refs))
+	for _, checkpoint := range branch {
+		byID[checkpoint.ID] = checkpoint
 	}
-	if len(store.Refs) > 0 {
-		trees, err := refTrees(ctx, repoRoot, store.Refs)
-		if err != nil {
-			return nil, err
-		}
-		for id := range store.Refs {
-			byID[id] = Checkpoint{ID: id, TreeOID: trees[id]}
-		}
+	for id := range refs {
+		byID[id] = Checkpoint{ID: id, TreeOID: trees[id]}
 	}
 	checkpoints := make([]Checkpoint, 0, len(byID))
 	for _, checkpoint := range byID {
 		checkpoints = append(checkpoints, checkpoint)
 	}
 	sort.Slice(checkpoints, func(i, j int) bool { return checkpoints[i].ID < checkpoints[j].ID })
-	return checkpoints, nil
+	return checkpoints
 }
 
-func listBranch(ctx context.Context, repoRoot, commit string) ([]Checkpoint, error) {
+// listBranch lists the checkpoints in the branch at commit, and whether each
+// has a directory spelled exactly Path(id).
+func listBranch(ctx context.Context, repoRoot, commit string) ([]Checkpoint, map[string]bool, error) {
 	out, err := privateGit(ctx, repoRoot, "ls-tree", "-r", "-d", "--full-tree", "-z", commit)
 	if err != nil {
-		return nil, fmt.Errorf("listing Entire checkpoint store: %w", err)
+		return nil, nil, fmt.Errorf("listing Entire checkpoint store: %w", err)
 	}
 	var checkpoints []Checkpoint
+	exact := map[string]bool{}
 	for _, entry := range bytes.Split(out, []byte{0}) {
 		// <mode> SP <type> SP <oid> TAB <path>
 		meta, path, found := strings.Cut(string(entry), "\t")
@@ -314,9 +312,10 @@ func listBranch(ctx context.Context, repoRoot, commit string) ([]Checkpoint, err
 		}
 		if id, ok := entirecheckpoint.CanonicalID(strings.ReplaceAll(path, "/", "")); ok {
 			checkpoints = append(checkpoints, Checkpoint{ID: id, TreeOID: fields[2]})
+			exact[id] = exact[id] || path == Path(id)
 		}
 	}
-	return checkpoints, nil
+	return checkpoints, exact, nil
 }
 
 // refTrees returns the root tree of each ref's commit, by id, with one git

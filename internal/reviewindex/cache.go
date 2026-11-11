@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/baum-ai/baum/internal/etagjson"
 	"github.com/baum-ai/baum/internal/repos"
 	"github.com/baum-ai/baum/internal/store"
 	"github.com/baum-ai/baum/internal/workstats"
@@ -39,6 +40,7 @@ type Cache struct {
 	current    *cached
 	flight     *flight
 	builds     uint64
+	bodies     map[bool]encodedBody
 }
 
 type cached struct {
@@ -151,7 +153,44 @@ func (c *Cache) recovered(ctx context.Context, started time.Time) (snapshot Snap
 }
 
 // Handler serves GET /api/index as Service.Handler does, from the cache.
-func (c *Cache) Handler() http.Handler { return handler(c.Snapshot) }
+func (c *Cache) Handler() http.Handler { return handler(c.encoded) }
+
+// encodedBody is a version's JSON for one history flag.
+type encodedBody struct {
+	version uint64
+	body    etagjson.Body
+}
+
+// encoded is the JSON of the current snapshot, encoded once per cached
+// version and history flag. A snapshot an invalidation kept out of the cache
+// (version 0) has no identity to key on, so it is encoded each time.
+func (c *Cache) encoded(ctx context.Context, history bool) (etagjson.Body, error) {
+	snapshot, version, err := c.Current(ctx)
+	if err != nil {
+		return etagjson.Body{}, err
+	}
+	if version != 0 {
+		c.mu.Lock()
+		e, ok := c.bodies[history]
+		c.mu.Unlock()
+		if ok && e.version == version {
+			return e.body, nil
+		}
+	}
+	body, err := etagjson.Encode(withHistory(snapshot, history))
+	if err != nil || version == 0 {
+		return body, err
+	}
+	c.mu.Lock()
+	if e, ok := c.bodies[history]; !ok || e.version < version {
+		if c.bodies == nil {
+			c.bodies = map[bool]encodedBody{}
+		}
+		c.bodies[history] = encodedBody{version: version, body: body}
+	}
+	c.mu.Unlock()
+	return body, nil
+}
 
 // Fingerprint digests what a build reads that may change with no
 // invalidation, without running git or touching a store's files beyond stat:
@@ -172,7 +211,8 @@ func Fingerprint(rows func(context.Context) ([]repos.Repository, error), identit
 			case err != nil:
 				_, _ = fmt.Fprintf(h, "%q -\n", path)
 			case times:
-				_, _ = fmt.Fprintf(h, "%q %d %d %v\n", path, info.Size(), info.ModTime().UnixNano(), info.Mode())
+				stamp := store.SeenThroughHeartbeats(path, store.FileStamp{Size: info.Size(), ModTime: info.ModTime().UnixNano()})
+				_, _ = fmt.Fprintf(h, "%q %d %d %v\n", path, stamp.Size, stamp.ModTime, info.Mode())
 			default:
 				_, _ = fmt.Fprintf(h, "%q %v\n", path, info.Mode().Type())
 			}

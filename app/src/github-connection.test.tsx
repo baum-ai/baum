@@ -155,6 +155,23 @@ it.each([
   expect(calls.at(-1)!.path).toBe("/s/auth-test/api/github-auth/retry");
   expect(node.textContent).toContain("recovered");
 });
+it("links a SAML single sign-on failure to baum's page on GitHub", async () => {
+  status = {
+    ...disconnected,
+    state: "connected",
+    saved: true,
+    login: "octocat",
+    error: "sso_required",
+  };
+  await render();
+  expect(node.textContent).toContain("requires GitHub SSO");
+  const link = [...node.querySelectorAll("a")].find((a) =>
+    a.textContent?.includes("Authorize baum"),
+  )!;
+  expect(link.href).toBe(
+    "https://github.com/settings/connections/applications/Ov23liFSMjrhof9WQlOi",
+  );
+});
 it.each([
   ["denied", "was denied"],
   ["expired", "code expired"],

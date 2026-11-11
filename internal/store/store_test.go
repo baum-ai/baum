@@ -322,6 +322,70 @@ func TestCompleteCurrentIsFencedLikeARefresh(t *testing.T) {
 	}
 }
 
+// A refresh that changes nothing but the refresh time writes nothing, yet is
+// fenced as one that writes is; any other change is written.
+func TestRefreshOfOnlyTheRefreshTimeWritesNothing(t *testing.T) {
+	ctx := context.Background()
+	s := opened(t)
+	key := Key{"owner/repo", 7}
+	doc := func(refreshed, checks string) []byte {
+		return fmt.Appendf(nil, `{"review":{"repository":"owner/repo","pull_request":7,"version":1,"evidence_refreshed_at":%q},"checks":%q}`, refreshed, checks)
+	}
+	saved := version(key, 1)
+	saved.Document = doc("2026-11-10T10:00:00Z", "pending")
+	if err := s.Put(ctx, key, Version{}, saved); err != nil {
+		t.Fatal(err)
+	}
+	db, err := s.database(true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := db.Exec(`CREATE TABLE writes(n INTEGER); INSERT INTO writes VALUES (0); CREATE TRIGGER count_writes AFTER UPDATE ON versions BEGIN UPDATE writes SET n=n+1; END`); err != nil {
+		t.Fatal(err)
+	}
+	writes := func() (n int) {
+		t.Helper()
+		if err := db.QueryRow(`SELECT n FROM writes`).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+
+	// Key order and spacing aside, only the refresh time moved.
+	same := []byte(`{"checks": "pending", "review": {"version": 1, "pull_request": 7, "repository": "owner/repo", "evidence_refreshed_at": "2026-11-10T10:15:00Z"}}`)
+	if err := s.RefreshCurrent(ctx, key, saved, same); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := s.Latest(ctx, key); err != nil || string(got.Document) != string(saved.Document) || writes() != 0 {
+		t.Fatalf("an unchanged refresh was written: %s %d %v", got.Document, writes(), err)
+	}
+
+	changed := doc("2026-11-10T10:30:00Z", "failure")
+	if err := s.RefreshCurrent(ctx, key, saved, changed); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := s.Latest(ctx, key); err != nil || string(got.Document) != string(changed) || writes() != 1 {
+		t.Fatalf("a changed refresh was not written: %s %d %v", got.Document, writes(), err)
+	}
+
+	// The saved bytes are no longer the latest: a refresh prepared from
+	// them conflicts even when it would write nothing.
+	if err := s.RefreshCurrent(ctx, key, saved, doc("2026-11-10T10:45:00Z", "pending")); !errors.Is(err, ErrConflict) {
+		t.Fatalf("stale unchanged refresh: %v", err)
+	}
+	latest, _ := s.Latest(ctx, key)
+	if err := s.Put(ctx, key, latest, version(key, 2)); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RefreshCurrent(ctx, key, latest, doc("2026-11-10T11:00:00Z", "failure")); !errors.Is(err, ErrConflict) {
+		t.Fatalf("unchanged refresh of an older version: %v", err)
+	}
+	if writes() != 1 {
+		t.Fatalf("writes=%d, want 1", writes())
+	}
+}
+
 func TestConcurrentRefreshesCompareExactPreviousDocument(t *testing.T) {
 	s := opened(t)
 	ctx := context.Background()

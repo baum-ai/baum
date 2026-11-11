@@ -257,6 +257,11 @@ func TestApplyLoginEnvironment(t *testing.T) {
 			if !strings.Contains(logged.String(), "PATH") {
 				t.Errorf("names not logged: %s", logged.String())
 			}
+			// Startup waits for the shell, so how long it took is logged
+			// whatever the outcome.
+			if !strings.Contains(logged.String(), "duration=") {
+				t.Errorf("duration not logged: %s", logged.String())
+			}
 			if token, ok := tc.want["GITHUB_TOKEN"]; ok {
 				if !strings.Contains(logged.String(), "GITHUB_TOKEN") {
 					t.Errorf("GITHUB_TOKEN not named: %s", logged.String())

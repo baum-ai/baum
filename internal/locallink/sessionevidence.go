@@ -49,6 +49,10 @@ type EvidenceRequest struct {
 	// commits belong to a pull request that is closed or merged. Only the
 	// first frozen request in a process reads the stores.
 	Frozen bool
+	// Repo, when set, is the clone opened by the caller, which every read of
+	// it (Entire checkpoints included) goes through instead of opening its
+	// own. It must be the clone containing Dir.
+	Repo *gitlocal.Repo
 }
 
 // BuildSessionEvidence returns the bundle sessions for the pull request
@@ -97,7 +101,7 @@ func BuildSessionEvidence(ctx context.Context, req EvidenceRequest) ([]bundle.Se
 	}
 	// The pull request's repository is not known here, so a missing
 	// checkpoint's fetch hint names a placeholder remote.
-	found, _, complete, err := loadDiscovered(ctx, d, dir, req.Commits, "", req.Warn)
+	found, _, complete, err := loadDiscovered(ctx, d, dir, req.Repo, req.Commits, "", req.Warn)
 	if err != nil {
 		return nil, err
 	}

@@ -10,6 +10,7 @@ import { Markdown } from "@baum/viewer/components/markdown";
 import type { ViewerLinkProps } from "@baum/viewer/navigation";
 import {
   appURL,
+  changedNothing,
   jobName,
   isActiveJob,
   jobReasonText,
@@ -25,6 +26,7 @@ import { LoadingStatus } from "./nine-dots";
 import { ReadFailed } from "./page-state";
 import { PageBar, pageScroll } from "./shell";
 import { useFollowScroll } from "./session-transcript";
+import { visibleTimeout } from "./visible-interval";
 
 /** One line of a fix agent's transcript, from `api/jobs/{id}/transcript`.
  *  Entries are append-only; a tool's later entry with the same `id` updates
@@ -74,7 +76,7 @@ export function useJobTranscript(id: string, attempt = 0): TranscriptState {
   const [state, setState] = useState<TranscriptState>({ kind: "loading" });
   useEffect(() => {
     let stopped = false;
-    let timer: ReturnType<typeof setTimeout> | undefined;
+    let cancelNext: (() => void) | undefined;
     const controller = new AbortController();
     let entries: TranscriptEntry[] = [];
     let after = 0;
@@ -107,13 +109,13 @@ export function useJobTranscript(id: string, attempt = 0): TranscriptState {
         });
         wait = RETRY_MS;
       }
-      timer = setTimeout(() => void read(), wait);
+      cancelNext = visibleTimeout(() => void read(), wait);
     };
     void read();
     return () => {
       stopped = true;
       controller.abort();
-      clearTimeout(timer);
+      cancelNext?.();
     };
   }, [id, attempt]);
   return state;
@@ -307,12 +309,14 @@ function JobHeader({ job }: { job: Job }) {
         </p>
       ) : (
         <p role="status" className="local-job-phase">
-          {job.state === "completed" ? (
+          {changedNothing(job) ? null : job.state === "completed" ? (
             <CircleCheckIcon size={16} className="local-job-pushed" />
           ) : job.state === "failed" ? (
             <CircleCrossIcon size={16} className="local-tool-failed" />
           ) : null}
-          {job.state === "completed" && job.commit ? (
+          {changedNothing(job) ? (
+            `${name} changed nothing, so nothing was pushed`
+          ) : job.state === "completed" && job.commit ? (
             <>
               {name}: pushed{" "}
               <a href={job.commit_url} target="_blank" rel="noreferrer">
@@ -327,7 +331,9 @@ function JobHeader({ job }: { job: Job }) {
         </p>
       )}
       {meta.length ? <p className="local-job-head-meta">{meta.join(" · ")}</p> : null}
-      {!active && job.reason ? <p>{jobReasonText(job.reason, job.kind)}</p> : null}
+      {!active && job.reason && !changedNothing(job) ? (
+        <p>{jobReasonText(job.reason, job.kind)}</p>
+      ) : null}
       {!active && job.detail ? <pre className="local-job-detail">{job.detail}</pre> : null}
       {!active && job.summary ? (
         <Markdown html={false} className="local-job-summary">

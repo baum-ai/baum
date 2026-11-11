@@ -164,6 +164,15 @@ type Discovery struct {
 	// entire describes the checkpoint store, whether or not Entire is read;
 	// empty when the clone has none.
 	entire string
+	// stores is the checkpoint stores entire describes, held is whether
+	// there are any, and storesErr why they could not be listed. Load and
+	// Checkpoints read these rather than listing the refs again.
+	stores    entire.Store
+	held      bool
+	storesErr error
+	// repo, when set, is the clone whose private repository checkpoints are
+	// read in (ShareRepo).
+	repo *gitlocal.Repo
 }
 
 // Discover finds what Load would read for the repository containing dir.
@@ -197,16 +206,46 @@ func Discover(ctx context.Context, dir string, opts Options) (*Discovery, error)
 	// The store is described even when Entire is not read: commit checkpoint
 	// fallback reads the checkpoints commits name whatever the sources.
 	if root, err := collector.RepoRoot(dir); err == nil {
-		d.entire = entireState(ctx, root)
+		d.stores, d.held, d.storesErr = entire.Resolve(ctx, root)
+		d.entire = entireState(d.stores, d.held, d.storesErr)
 	}
 	return d, nil
+}
+
+// ShareRepo has Load and Checkpoints read Entire checkpoints in repo's private
+// repository instead of opening one of their own. repo must be a clone of the
+// same repository, and stay open until they are done.
+func (d *Discovery) ShareRepo(repo *gitlocal.Repo) { d.repo = repo }
+
+// Checkpoints opens the checkpoints of the clone as Discover found them, for
+// several lookups. It returns nil and no error when the clone has neither
+// checkpoint refs nor a checkpoint branch. The caller closes it.
+func (d *Discovery) Checkpoints(ctx context.Context) (*Checkpoints, error) {
+	root, err := collector.RepoRoot(d.dir)
+	if err != nil {
+		return nil, err
+	}
+	store, ok, err := d.checkpointStore(ctx, root)
+	if err != nil || !ok {
+		return nil, err
+	}
+	return &Checkpoints{store: store}, nil
+}
+
+// checkpointStore opens the checkpoint stores Discover found in the clone at
+// root; ok is false when it has none. The caller closes a store it got.
+func (d *Discovery) checkpointStore(ctx context.Context, root string) (*checkpointStore, bool, error) {
+	if d.storesErr != nil || !d.held {
+		return nil, false, d.storesErr
+	}
+	store, err := newCheckpointStore(ctx, root, d.stores, d.repo)
+	return store, err == nil, err
 }
 
 // entireState describes the clone's Entire checkpoint stores: the branch
 // commit and every checkpoint ref, or why they could not be listed, so a
 // different listing gives a different description.
-func entireState(ctx context.Context, root string) string {
-	store, ok, err := entire.Resolve(ctx, root)
+func entireState(store entire.Store, ok bool, err error) string {
 	switch {
 	case err != nil:
 		return "error: " + err.Error()
@@ -286,7 +325,7 @@ func (d *Discovery) Load(ctx context.Context) ([]Session, Report, error) {
 		}
 		// A clone git cannot read still has its home-directory sessions, so a
 		// checkpoint branch that cannot be listed is reported, not fatal.
-		fromEntire, commit, failures, err := loadEntire(ctx, root, opts, native)
+		fromEntire, commit, failures, err := loadEntire(ctx, root, d, opts, native)
 		if err != nil {
 			failures = append(failures, Failure{Source: Entire, Path: root, Err: err})
 		}
@@ -319,12 +358,26 @@ var ErrUnbalanced = errors.New("mapper did not account for every record")
 // is shared with every other caller that mapped the same files, so callers
 // must not change it.
 func Map(s collector.Session) (*session.Graph, []string, error) {
+	return mapCtx(context.Background(), s)
+}
+
+// mapCtx is Map, waiting for decode budget only while ctx lives. A cancelled
+// wait returns ctx's error, which is never cached.
+func mapCtx(ctx context.Context, s collector.Session) (*session.Graph, []string, error) {
 	workstats.Inc("sessions.map.calls")
 	key, cost, cacheable := mapKey(s)
 	if cacheable {
 		if entry, ok := cache.get(key); ok {
 			return entry.graph, mapNotes(s, entry), entry.err
 		}
+	}
+	release, err := decodeBudget.acquire(ctx, cost)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer release()
+	if decodeObserver != nil {
+		defer decodeObserver(cost)()
 	}
 	workstats.Inc("sessions.map.decodes." + string(s.Source))
 	workstats.Add("sessions.map.decoded_bytes", cost)
