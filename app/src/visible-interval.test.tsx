@@ -1,7 +1,7 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { trackHidden, useVisibleInterval } from "./visible-interval";
+import { subscribeVisibleInterval, trackHidden, useVisibleInterval } from "./visible-interval";
 
 let node: HTMLDivElement;
 let root: Root;
@@ -62,6 +62,28 @@ it("does not start while hidden at mount, and stops with null", async () => {
   await act(async () => root.render(<Probe ms={null} />));
   vi.advanceTimersByTime(5000);
   expect(calls).toHaveBeenCalledTimes(1);
+});
+
+it("shares one timer and one listener per period among subscribers", () => {
+  const timers = vi.spyOn(globalThis, "setInterval");
+  const listening = vi.spyOn(document, "addEventListener");
+  const first = vi.fn();
+  const second = vi.fn();
+  const stopFirst = subscribeVisibleInterval(first, 1000);
+  const stopSecond = subscribeVisibleInterval(second, 1000);
+  expect(timers).toHaveBeenCalledTimes(1);
+  expect(listening.mock.calls.filter(([type]) => type === "visibilitychange")).toHaveLength(1);
+  vi.advanceTimersByTime(2000);
+  expect(first).toHaveBeenCalledTimes(2);
+  expect(second).toHaveBeenCalledTimes(2);
+  stopFirst();
+  vi.advanceTimersByTime(1000);
+  expect(first).toHaveBeenCalledTimes(2);
+  expect(second).toHaveBeenCalledTimes(3);
+  stopSecond();
+  expect(vi.getTimerCount()).toBe(0);
+  timers.mockRestore();
+  listening.mockRestore();
 });
 
 it("marks the document while hidden", () => {
