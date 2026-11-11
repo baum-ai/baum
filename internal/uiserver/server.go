@@ -36,7 +36,23 @@ type Options struct {
 	// the tour shows when there is no local data yet; the app's files are the
 	// same. Nil leaves those paths unserved.
 	Sample http.Handler
+	// MCP serves POST /api/mcp, the MCP server agents reach through the
+	// `baum mcp` bridge (internal/agentcontext). It is the one /api/ route the
+	// launch token and the cookie do not open: it takes only a token MCP
+	// authenticates, and that token opens no other route. Nil leaves it
+	// unserved.
+	MCP MCP
 }
+
+// MCP is the agent-facing MCP server.
+type MCP interface {
+	http.Handler
+	// Authenticate reports whether token is a live MCP token.
+	Authenticate(token string) bool
+}
+
+// mcpPath is the MCP route. It is served only outside the namespace.
+const mcpPath = "/api/mcp"
 
 type Server struct {
 	opts     Options
@@ -170,6 +186,10 @@ func (s *Server) Handler() http.Handler {
 			http.Error(w, "forbidden host", http.StatusForbidden)
 			return
 		}
+		if r.URL.Path == mcpPath {
+			s.serveMCP(w, r)
+			return
+		}
 		if r.Method != "GET" && r.Method != "HEAD" {
 			kind, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
 			if r.Header.Get("Origin") != s.origin || err != nil || kind != "application/json" {
@@ -232,6 +252,11 @@ func (s *Server) Handler() http.Handler {
 			}
 			path, api = "/"+rest, s.opts.Sample
 		}
+		if path == mcpPath {
+			// The cookie must not become a way into the MCP server.
+			http.NotFound(w, r)
+			return
+		}
 		r = r.Clone(r.Context())
 		// Providers never see the namespace, so they cannot echo or log it.
 		r.URL.Path, r.URL.RawPath = path, ""
@@ -266,6 +291,27 @@ func (s *Server) Handler() http.Handler {
 		}
 		s.defaultApp(w, r)
 	})
+}
+
+// serveMCP admits a request to the MCP server on its own token alone. The
+// caller is the `baum mcp` bridge, not a browser, so no Origin is needed; a
+// request that carries a foreign one is refused all the same. The MCP server
+// checks the method and content type.
+func (s *Server) serveMCP(w http.ResponseWriter, r *http.Request) {
+	if s.opts.MCP == nil {
+		http.NotFound(w, r)
+		return
+	}
+	token, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
+	if !ok || !s.opts.MCP.Authenticate(token) {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	if origin := r.Header.Get("Origin"); origin != "" && origin != s.origin {
+		http.Error(w, "cross-origin request refused", http.StatusForbidden)
+		return
+	}
+	s.opts.MCP.ServeHTTP(w, r)
 }
 
 // defaultApp is the status page served when no application is installed.

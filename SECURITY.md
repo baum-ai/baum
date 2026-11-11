@@ -1348,6 +1348,42 @@ branch update and a re-run you confirm and a fix you start, with that fix's
 replies on the review threads it addressed, and resolving a review thread you
 chose; it supplies no approvals or other discussion controls.
 
+### MCP server for agents
+
+The application server also serves `POST /api/mcp`, an MCP server that lets
+an agent read what the app shows. It takes only an MCP token, sent as
+`Authorization: Bearer`. The launch capability and the session cookie are
+refused there, and `/s/<namespace>/api/mcp` is not served, so the cookie a
+browser holds cannot reach it. An MCP token opens no other route: every
+other `/api/` route still requires the launch capability or the cookie. The
+route keeps the exact Host check and the security headers, takes only
+`POST` with a JSON content type and a body of at most 1 MiB, and needs no
+Origin, because its client is a command-line bridge rather than a browser;
+a request that carries a foreign Origin is refused.
+
+Each token is 32 random bytes, minted by the daemon for one agent: the app's
+chat or an action working on one pull request. Tokens live only in the
+daemon's memory. They are never written to `app.sqlite`, `config.toml`,
+`credential.json` or any other file, never logged, and die with the daemon
+or when revoked; a revoked token is refused. Lookups compare a hash of the
+token in constant time.
+
+An MCP token can only read, through the same routes the app calls, and only
+with `GET`: the tools' reader has no way to send another method and refuses
+paths outside `/api/`. Responses are bounded to 8 MiB. An action's token is
+bound to its repository and pull request, and tools refuse any other
+repository. A chat's token may also propose a change to the page the user
+has open; a proposal changes nothing until the user saves it in the app, and
+a save is refused when the target changed since the proposal was made. An
+action never proposes.
+
+Every tool result is masked with the same redaction as prompts, cut to at
+most 64 KiB, and placed between `BEGIN UNTRUSTED DATA` and
+`END UNTRUSTED DATA` lines that carry a fresh random tag, which is removed
+from the data first. The rest of a long result is kept masked in memory, for
+at most 15 minutes and eight results per agent, under a random cursor that
+gives it once and only to the agent it was cut for.
+
 ## Desktop app
 
 The desktop app (`desktop/`) is a window onto your `baum daemon` and adds no

@@ -2808,6 +2808,8 @@ which builds every provider, the generation runner included, once it owns
 the per-user lock. SSE has a bounded
 in-memory event log; reconnect replays notifications or asks for an index reset.
 It does not persist a second review index. An event's data is at most 16 KiB.
+`POST /api/mcp` is the exception to this middleware: it takes only an MCP
+token, never the launch token or the cookie (see "MCP server for agents").
 
 The generation queue's changes go out as two kinds. A `progress` event
 `{"job": <job>}` announces anything but a running job's usage: queued, started,
@@ -5048,6 +5050,74 @@ are in `featureconfig.go` and the feature version a stage uses is chosen in
 one place (`featureVersion`: the live stages' current one, a build's
 building one). See
 [its README](internal/decisionlog/README.md#feature-log).
+
+### MCP server for agents
+
+`internal/agentcontext` is an MCP server agents use to read what the app
+shows: the app's chat, and actions working on one pull request. The app
+server routes `POST /api/mcp` to it (`uiserver.Options.MCP`, set through
+`daemon.App.MCP`). It speaks JSON-RPC 2.0 by hand, MCP revision
+`2025-06-18`: `initialize`, `ping`, `tools/list` and `tools/call`, one JSON
+response per request, no batches and no event stream. A notification gets
+202 with no body. Malformed JSON is -32700, an invalid request (a batch
+included) -32600, an unknown method -32601, and missing or invalid params,
+or an unknown tool, -32602. A tool that fails returns a result with
+`isError: true` and its explanation, not a protocol error; so do arguments
+that do not match the tool's JSON Schema.
+
+The route takes only an MCP token as `Authorization: Bearer`. The app
+server checks the exact Host, asks the MCP server whether the token is live,
+refuses a foreign Origin and needs none; the MCP server takes only `POST`
+(405 otherwise), `application/json` (415) and at most 1 MiB. The launch token
+and the cookie are refused there, and `/s/<namespace>/api/mcp` is not served.
+An MCP token is not the launch token, so it opens no other route.
+
+`Registry` mints tokens in memory: `Mint(Consumer)` returns a token of 32
+random bytes, an opaque consumer id and a revoke function. Nothing about them
+is persisted or logged. A consumer is a `chat`, which may read any page and
+propose changes to the page it has open, or an `action`, bound to a
+repository and pull request, which only reads. `SetPage(id, PageContext)`
+records a chat's page: its name (`inbox`, `pulls`, `timeline`, `sessions`,
+`analytics`, `jobs`, `repositories`, `settings`, or a detail page:
+`pull_request`, `group`, `session`, `job`, `feature`), the repository, pull
+request, group, session, job or feature it shows, its filters and the focus
+the user picked. An action's page is its pull request and does not change.
+Callers hold the id, not the token, to set the page.
+
+Tools are registered with a name, description, JSON Schema and a call that
+gets a `CallContext`: the consumer, its page, the reader and the proposals.
+`CallContext.Target` resolves the repository and pull request a tool reads:
+the ones asked for, else the action's, else the open page's; an action is
+refused any other repository. `RegisterPage` lists the tools that read a page
+and the proposer that takes its changes. Two tools are built in:
+`current_page`, which returns the page context and that page's tools, and
+`read_more`.
+
+Tools read through `Reader`, which serves an in-process `GET` against the
+`LocalAPI` handler, below the app server's authentication and with no
+credentials. `Get` is its only method, so nothing but `GET` can be sent; it
+takes only clean `/api/` paths (not `/api/mcp`) and fails a body over 8 MiB.
+
+Every result goes through one envelope. It masks the text with
+`bundle.NewRedactor`, cuts it at most 64 KiB in at a UTF-8 boundary, and
+places the part between `BEGIN UNTRUSTED DATA <tag>` and
+`END UNTRUSTED DATA <tag>` lines with a fresh random tag removed from the data
+first (`internal/untrusted`, which the chat and fix prompts use too). The
+rest is kept masked in memory under a random cursor, and the result ends
+with a line naming it; `read_more` with the cursor returns the next part,
+with a new cursor while more remains. A cursor gives its part once, only to
+its consumer, for 15 minutes; a consumer keeps at most eight, the oldest
+dropped first. Revoking a token drops its cursors and proposals.
+
+`Proposals` hold changes a chat proposes: page, target, the value before and
+after, and the target's revision when it was read. `Propose` refuses an
+action, a page other than the open one and a page with no proposer, then
+runs the proposer's `Validate`, and records the proposal; nothing changes.
+`Save` has the proposer read the target's revision again, refuses with
+`ErrStale` and changes nothing when it moved, and otherwise calls `Apply`,
+the same change the page's own save makes. `Dismiss` drops a proposal.
+Saves run one at a time. No page has a proposer yet, and the app reaches
+proposals only through the Go API.
 
 ### Transports and control protocol
 

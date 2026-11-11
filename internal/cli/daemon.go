@@ -24,6 +24,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/baum-ai/baum/internal/agentcli"
+	"github.com/baum-ai/baum/internal/agentcontext"
 	"github.com/baum-ai/baum/internal/agentplugins"
 	"github.com/baum-ai/baum/internal/agentrequests"
 	"github.com/baum-ai/baum/internal/analytics"
@@ -742,6 +743,7 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 			API:     api,
 			Assets:  localapp.Handler(),
 			Sample:  sample,
+			MCP:     agentcontext.New(agentcontext.Options{API: api, Version: version()}),
 			Methods: methods,
 			Waits:   waits,
 			Run: func(ctx context.Context) {
