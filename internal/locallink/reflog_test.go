@@ -156,8 +156,8 @@ func withCwdAttribute(s sessions.Session, cwd string) sessions.Session {
 func resolveReflog(t *testing.T, r *reflogRepo, found []sessions.Session, commits []gitlocal.Commit) ([]sessions.Session, map[string][]string) {
 	t.Helper()
 	ctx := context.Background()
-	found = addReflogCommits(ctx, nil, r.main, found, commits)
-	_, _, edges, err := linkSessions(ctx, found, commits)
+	found = addReflogCommits(ctx, nil, r.main, found, commits, nil)
+	_, _, edges, err := linkSessions(ctx, found, commits, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -91,7 +91,7 @@ export function GitHubStep({ onConnected }: { onConnected: (connected: boolean) 
                 type="button"
                 disabled={busy || connection.state === "loading"}
                 className={`${connected ? "secondary" : ""}${working === "start" ? " loading" : ""}`}
-                onClick={signIn}
+                onClick={() => signIn()}
               >
                 {working === "start" && <NineDots size={14} tone="text" />}
                 {working === "start"

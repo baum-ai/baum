@@ -64,11 +64,17 @@ func connectionFixture(t *testing.T, store *connectionStore, token func(*http.Re
 	t.Setenv("GH_TOKEN", "")
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
+	// GitHub grants what the latest device sign-in asked for.
+	var workflow atomic.Bool
 	m := githubauth.NewWithOptions(store, githubauth.Options{Transport: connectionTransport(func(r *http.Request) (*http.Response, error) {
 		body := ""
 		header := http.Header{}
 		switch r.URL.Path {
 		case "/login/device/code":
+			if err := r.ParseForm(); err != nil {
+				return nil, err
+			}
+			workflow.Store(r.Form.Get("scope") == "repo read:org workflow")
 			body = `{"device_code":"SECRET_DEVICE","user_code":"ABCD-EFGH","verification_uri":"https://github.com/login/device","expires_in":900,"interval":1}`
 		case "/login/oauth/access_token":
 			var err error
@@ -79,6 +85,9 @@ func connectionFixture(t *testing.T, store *connectionStore, token func(*http.Re
 		case "/user":
 			body = `{"login":"alice","id":1}`
 			header.Set("X-OAuth-Scopes", "repo, read:org")
+			if workflow.Load() {
+				header.Set("X-OAuth-Scopes", "repo, read:org, workflow")
+			}
 		default:
 			t.Errorf("unexpected path %s", r.URL.Path)
 		}
@@ -306,5 +315,37 @@ func TestSSOErrorShowsAfterSignInAndPersistsUntilRecovered(t *testing.T) {
 	got := a.snapshot()
 	if got.State != "connected" || got.Error != "sso_required" || !strings.Contains(got.Message, "GitHub SSO") {
 		t.Fatalf("status = %+v", got)
+	}
+}
+
+func TestWorkflowAccessIsRequestedOnlyWhenAsked(t *testing.T) {
+	for _, c := range []struct {
+		body     string
+		workflow bool
+	}{{"", false}, {"{}", false}, {`{"workflow":false}`, false}, {`{"workflow":true}`, true}} {
+		t.Run(c.body, func(t *testing.T) {
+			store := &connectionStore{}
+			a, _, s, _ := connectionFixture(t, store, func(*http.Request) (string, error) { return connectionGrant, nil })
+			connectStatus(t, a, "disconnected")
+			w := request(t, s, "POST", "/api/github-auth/start", "", s.Origin(), "application/json", "Bearer "+s.launch, c.body)
+			var started GitHubConnection
+			if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &started) != nil || started.Pending == nil || started.Pending.Workflow != c.workflow {
+				t.Fatalf("start: %d %s", w.Code, w.Body)
+			}
+			got := connectStatus(t, a, "connected")
+			store.mu.Lock()
+			saved := store.credential.Workflow
+			store.mu.Unlock()
+			if got.Workflow != c.workflow || saved != c.workflow {
+				t.Fatalf("connection workflow=%v saved=%v, want %v", got.Workflow, saved, c.workflow)
+			}
+		})
+	}
+	a, _, s, _ := connectionFixture(t, &connectionStore{}, func(*http.Request) (string, error) { return connectionGrant, nil })
+	connectStatus(t, a, "disconnected")
+	for _, body := range []string{`{"scope":"admin:org"}`, `{"workflow":"yes"}`, `{} {}`} {
+		if w := request(t, s, "POST", "/api/github-auth/start", "", s.Origin(), "application/json", "Bearer "+s.launch, body); w.Code != 400 {
+			t.Fatalf("%s: %d", body, w.Code)
+		}
 	}
 }

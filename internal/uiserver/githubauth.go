@@ -2,7 +2,9 @@ package uiserver
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"slices"
 	"sync"
@@ -15,12 +17,15 @@ import (
 // GitHubConnection is the public view of the daemon's own connection. Override
 // identifies an explicit credential that remains effective after disconnect.
 type GitHubConnection struct {
-	State    string             `json:"state"`
-	Host     string             `json:"host"`
-	Login    string             `json:"login,omitempty"`
-	Source   string             `json:"source,omitempty"`
-	Override bool               `json:"override"`
-	Saved    bool               `json:"saved"`
+	State    string `json:"state"`
+	Host     string `json:"host"`
+	Login    string `json:"login,omitempty"`
+	Source   string `json:"source,omitempty"`
+	Override bool   `json:"override"`
+	Saved    bool   `json:"saved"`
+	// Workflow is whether the saved connection was granted workflow access,
+	// which merging pull requests that change GitHub Actions workflows needs.
+	Workflow bool               `json:"workflow"`
 	Pending  *githubauth.Device `json:"pending,omitempty"`
 	Error    string             `json:"error,omitempty"`
 	Message  string             `json:"message,omitempty"`
@@ -66,10 +71,16 @@ func NewGitHubAuthentication(ctx context.Context, manager *githubauth.Manager, c
 		status, err := manager.Status(ctx)
 		a.mu.Lock()
 		defer a.mu.Unlock()
-		a.status.State, a.status.Login, a.status.Saved = status.State, status.Login, status.State == "connected"
+		a.observe(status)
 		a.setError(err)
 	}()
 	return a
+}
+
+// observe records the saved connection the manager reports. Called with mu held.
+func (a *GitHubAuthentication) observe(status githubauth.Status) {
+	a.status.State, a.status.Login, a.status.Saved = status.State, status.Login, status.State == "connected"
+	a.status.Workflow = a.status.Saved && status.Workflow
 }
 
 // Login is the connected GitHub account's login, "" without one.
@@ -219,7 +230,7 @@ func (a *GitHubAuthentication) Handler() http.Handler {
 			a.mu.Lock()
 			defer a.mu.Unlock()
 			if a.status.Pending == nil {
-				a.status.State, a.status.Login, a.status.Saved = status.State, status.Login, status.State == "connected"
+				a.observe(status)
 				a.setError(err)
 			}
 			return a.status.Saved
@@ -242,6 +253,18 @@ func (a *GitHubAuthentication) Handler() http.Handler {
 		writeJSON(w, a.snapshot())
 	})
 	mux.HandleFunc("POST /api/github-auth/start", func(w http.ResponseWriter, r *http.Request) {
+		// Workflow access is opt-in: only Settings' "Reconnect with workflow
+		// access" asks for it. An empty body is a plain sign-in.
+		r.Body = http.MaxBytesReader(w, r.Body, 1024)
+		var body struct {
+			Workflow bool `json:"workflow"`
+		}
+		d := json.NewDecoder(r.Body)
+		d.DisallowUnknownFields()
+		if err := d.Decode(&body); (err != nil && err != io.EOF) || d.Decode(new(any)) != io.EOF {
+			http.Error(w, "the body may only say whether to request workflow access", http.StatusBadRequest)
+			return
+		}
 		a.stop()
 		if !a.lock(r.Context()) {
 			return
@@ -264,7 +287,7 @@ func (a *GitHubAuthentication) Handler() http.Handler {
 		if a.begin != nil {
 			a.finish = a.begin()
 		}
-		device, err := a.manager.Start(ctx)
+		device, err := a.manager.Start(ctx, body.Workflow)
 		a.mu.Lock()
 		a.setError(err)
 		if err == nil {
@@ -309,6 +332,7 @@ func (a *GitHubAuthentication) Handler() http.Handler {
 		if statusErr == nil {
 			a.status.Saved = status.State == "connected"
 			a.status.Login = status.Login
+			a.status.Workflow = a.status.Saved && status.Workflow
 		}
 		if a.status.Saved {
 			a.status.State = "connected"
@@ -410,6 +434,7 @@ func (a *GitHubAuthentication) poll(ctx context.Context, id string) {
 			if status.State == "connected" {
 				a.status.Saved = true
 				a.status.Login = status.Login
+				a.status.Workflow = status.Workflow
 				a.status.OrganizationAccess, a.orgsAt = nil, time.Time{}
 			}
 		}

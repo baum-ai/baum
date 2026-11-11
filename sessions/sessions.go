@@ -94,6 +94,26 @@ type Session struct {
 	// CreatedCommits is independent, durable Git-hook evidence supplied by
 	// the local resolver. It never changes the mapped transcript graph.
 	CreatedCommits []string
+	// Key identifies what the graph is mapped from: the session's files as
+	// they stood (see mapKey), or the content of the Entire checkpoint it was
+	// read from and the session's id there. Two sessions with the same Key
+	// map to the same graph. It is empty when that cannot be described.
+	Key string
+	// Unmapped is set on a session LoadReusing did not map because its
+	// caller already holds what it needs from the graph Key names. Graph is
+	// then nil, and Transcript says whether that graph has a transcript.
+	Unmapped   bool
+	Transcript bool
+}
+
+// HasTranscript reports whether the session's graph records anything the
+// agent did, as HasTranscript does; for an unmapped session, whether the
+// graph its Key names does.
+func (s Session) HasTranscript() bool {
+	if s.Unmapped {
+		return s.Transcript
+	}
+	return HasTranscript(s.Graph)
 }
 
 // Root is the session's top-level session row, or nil for an empty graph.
@@ -296,12 +316,56 @@ func (d *Discovery) Fingerprint() (string, bool) {
 // Load maps the discovered sessions and reads the Entire checkpoints, as
 // Load does.
 func (d *Discovery) Load(ctx context.Context) ([]Session, Report, error) {
+	return d.LoadReusing(ctx, nil)
+}
+
+// Reuse tells LoadReusing which sessions it need not map. Given a session's
+// Key, ok says the caller already holds everything it needs from the graph
+// that Key names, and transcript whether that graph has a transcript
+// (HasTranscript). It is called from one goroutine at a time.
+type Reuse func(key string) (transcript, ok bool)
+
+// LoadReusing is Load, except that a session whose Key reuse accepts is not
+// mapped: it is returned Unmapped, without its graph or mapper notes (its
+// discovery warnings are kept), and an Entire checkpoint is not read when
+// what Load needs from it is already known. Which sessions are returned,
+// their order and every other field are what Load returns. A nil reuse maps
+// everything.
+func (d *Discovery) LoadReusing(ctx context.Context, reuse Reuse) ([]Session, Report, error) {
 	workstats.Inc("sessions.load.calls")
 	opts, wanted := d.opts, d.wanted
 	report := Report{Skipped: d.skipped}
-	mapped, err := mapAll(ctx, wanted)
+	keys := make([]string, len(wanted))
+	reused := make([]bool, len(wanted))
+	transcript := make([]bool, len(wanted))
+	var toMap []collector.Session
+	for i, s := range wanted {
+		keys[i] = sessionKey(s)
+		if reuse != nil && keys[i] != "" {
+			transcript[i], reused[i] = reuse(keys[i])
+		}
+		if reused[i] {
+			workstats.Inc("sessions.load.reused")
+			continue
+		}
+		toMap = append(toMap, s)
+	}
+	mappedOnly, err := mapAll(ctx, toMap)
 	if err != nil {
 		return nil, report, err
+	}
+	mapped := make([]mapped, len(wanted))
+	for i, next := 0, 0; i < len(wanted); i++ {
+		if reused[i] {
+			continue
+		}
+		mapped[i] = mappedOnly[next]
+		next++
+		// A file that changed while it was mapped gave a graph the key
+		// computed before does not describe.
+		if keys[i] != "" && sessionKey(wanted[i]) != keys[i] {
+			keys[i] = ""
+		}
 	}
 	var sessions []Session
 	native := map[string]bool{}
@@ -311,11 +375,15 @@ func (d *Discovery) Load(ctx context.Context) ([]Session, Report, error) {
 			continue
 		}
 		native[s.SessionID] = true
-		sessions = append(sessions, Session{
+		next := Session{
 			Source: s.Source, Vendor: s.Source.String(), ID: s.SessionID, Path: s.Path,
 			RepoRoot: s.RepoRoot, WorktreeRoot: s.WorktreeRoot, ModifiedAt: s.ModifiedAt,
-			Graph: mapped[i].graph, Notes: mapped[i].notes,
-		})
+			Graph: mapped[i].graph, Notes: mapped[i].notes, Key: keys[i],
+		}
+		if reused[i] {
+			next.Notes, next.Unmapped, next.Transcript = slices.Clone(s.Warnings), true, transcript[i]
+		}
+		sessions = append(sessions, next)
 	}
 
 	if opts.wants(Entire) {
@@ -325,7 +393,7 @@ func (d *Discovery) Load(ctx context.Context) ([]Session, Report, error) {
 		}
 		// A clone git cannot read still has its home-directory sessions, so a
 		// checkpoint branch that cannot be listed is reported, not fatal.
-		fromEntire, commit, failures, err := loadEntire(ctx, root, d, opts, native)
+		fromEntire, commit, failures, err := loadEntire(ctx, root, d, opts, native, reuse)
 		if err != nil {
 			failures = append(failures, Failure{Source: Entire, Path: root, Err: err})
 		}
@@ -371,7 +439,8 @@ func mapCtx(ctx context.Context, s collector.Session) (*session.Graph, []string,
 			return entry.graph, mapNotes(s, entry), entry.err
 		}
 	}
-	release, err := decodeBudget.acquire(ctx, cost)
+	// A transcript that grew is decoded from where its kept lines end.
+	release, err := decodeBudget.acquire(ctx, tails.pending(s, cost))
 	if err != nil {
 		return nil, nil, err
 	}
@@ -380,9 +449,12 @@ func mapCtx(ctx context.Context, s collector.Session) (*session.Graph, []string,
 		defer decodeObserver(cost)()
 	}
 	workstats.Inc("sessions.map.decodes." + string(s.Source))
-	workstats.Add("sessions.map.decoded_bytes", cost)
+	if s.Source == vendors.Cursor {
+		// Transcript files count the bytes they read (tailCache).
+		workstats.Add("sessions.map.decoded_bytes", cost)
+	}
 	graph, notes, err := mapSession(s)
-	entry := &mapEntry{key: key, graph: graph, notes: notes, err: err, cost: cost}
+	entry := &mapEntry{key: key, session: mapIdentity(s), graph: graph, notes: notes, err: err, cost: graphBytes(graph) + int64(len(key)), transcript: cost}
 	// A file that could not be opened or read may read next time (too many
 	// open files, a permission fixed); only what its content caused is kept.
 	var pathErr *fs.PathError
@@ -390,6 +462,35 @@ func mapCtx(ctx context.Context, s collector.Session) (*session.Graph, []string,
 		cache.put(entry)
 	}
 	return graph, mapNotes(s, entry), err
+}
+
+// racyWindow is how recently a session file may have been modified and its
+// session still get a Key. A file rewritten at the same size within its
+// modification time's resolution looks unchanged, so, as git does with its
+// index, a file modified this recently, or in the future, is not trusted to
+// describe its content: the session is mapped, and not reused, until it is
+// older.
+const racyWindow = 2 * time.Second
+
+// sessionKey is the Key of a session mapped from s: a digest of mapKey, or
+// "" when a file cannot be described or was modified within racyWindow.
+func sessionKey(s collector.Session) string {
+	now := time.Now()
+	for _, f := range s.Files {
+		if f.Data != nil {
+			continue
+		}
+		info, err := os.Stat(f.Path)
+		if err != nil || info.ModTime().After(now.Add(-racyWindow)) {
+			return ""
+		}
+	}
+	key, _, ok := mapKey(s)
+	if !ok {
+		return ""
+	}
+	sum := sha256.Sum256([]byte(key))
+	return "map:" + hex.EncodeToString(sum[:])
 }
 
 // mapNotes are the discovery warnings followed by the mapper's notes, or none
@@ -404,9 +505,21 @@ func mapNotes(s collector.Session, entry *mapEntry) []string {
 // mapSession reads and maps the session's files; its notes are the mapper's
 // alone.
 func mapSession(s collector.Session) (*session.Graph, []string, error) {
+	return mapSessionWith(s, tails)
+}
+
+// mapSessionWith is mapSession reading transcripts through t, or decoding
+// each whole, with every line kept as read, when t is nil.
+func mapSessionWith(s collector.Session, t *tailCache) (*session.Graph, []string, error) {
 	switch s.Source {
 	case vendors.ClaudeCode:
-		tree, err := claudetranscript.DecodeLocalFiles(model.Files(s.Files))
+		var tree *claudetranscript.Tree
+		var err error
+		if t != nil {
+			tree, err = claudetranscript.DecodeLocalFilesWith(model.Files(s.Files), t.claude)
+		} else {
+			tree, err = claudetranscript.DecodeLocalFiles(model.Files(s.Files))
+		}
 		if err != nil {
 			return nil, nil, fmt.Errorf("reading Claude Code transcripts: %w", err)
 		}
@@ -421,7 +534,13 @@ func mapSession(s collector.Session) (*session.Graph, []string, error) {
 		}
 		return graph, report.Notes, nil
 	case vendors.Codex:
-		tree, err := codextranscript.DecodeLocalFiles(model.Files(s.Files))
+		var tree *codextranscript.Tree
+		var err error
+		if t != nil {
+			tree, err = codextranscript.DecodeFilesWith(model.Files(s.Files), t.codex)
+		} else {
+			tree, err = codextranscript.DecodeLocalFiles(model.Files(s.Files))
+		}
 		if err != nil {
 			return nil, nil, fmt.Errorf("reading Codex rollouts: %w", err)
 		}
@@ -468,7 +587,7 @@ func HasTranscript(graph *session.Graph) bool {
 // Fuller reports whether a is a better reading of a session than b: one with
 // a transcript over one without, and otherwise the one written later.
 func Fuller(a, b Session) bool {
-	if ha, hb := HasTranscript(a.Graph), HasTranscript(b.Graph); ha != hb {
+	if ha, hb := a.HasTranscript(), b.HasTranscript(); ha != hb {
 		return ha
 	}
 	return a.ModifiedAt.After(b.ModifiedAt)

@@ -272,8 +272,11 @@ be read show beneath them. **Start the review** opens the tour, `?…&walk=tour`
 clears `walk`; the retired `walk=full` also opens the full review.
 
 Up next's list shows a review group or stack (`api/groups`) with a shown member
-as one row, in the section and at the place of its first member in the list
-(`withGroups` in `src/up-next.tsx`); its members leave their own rows and nest
+as one row (`withGroups` in `src/up-next.tsx`). A stack takes the section and
+position of its first shown open member in base-to-tip order, so a later
+member needing a fix does not move a stack whose first member is waiting.
+Other review groups take the section and position of their first member in
+the action list. The members leave their own rows and nest
 under it when it is opened (its chevron, or `Space`, which opens or closes it
 from the group and closes it from a member, back on the group). Each member says what it waits on, since it may belong to another
 section: what needs fixing ("Checks failing · Conflicts", "2 unresolved
@@ -875,8 +878,8 @@ on, each with the loader and the fix's phase). Within Review a saved review
 ready to read comes before one being written, then the riskier first;
 otherwise the lower number first. Each pull request appears once, whatever
 clones hold it. After the groups, their own pull requests with nothing to do
-(drafts, and those waiting on reviewers or checks) are listed under **Waiting
-on checks or reviews**, and every other open pull request (`others`: someone
+(drafts, and those waiting on reviewers, checks or another GitHub blocker) are
+listed under **Waiting**, and every other open pull request (`others`: someone
 else's that neither asks for their review nor is assigned to them), oldest
 first, under **Not waiting on you**. Rows of both say where the pull request
 stands instead of a kind: the person's own what it waits on, others' "Draft",
@@ -884,6 +887,15 @@ stands instead of a kind: the person's own what it waits on, others' "Draft",
 "Changes requested", "Review requested" or "Assigned" (`othersState`). Both are
 waiting rows: the selection does not open on them, they have no kind's action,
 and the Inbox total leaves them out.
+The chip says **Waiting on review** only when GitHub explicitly requires one;
+the absence of an approval is not a review requirement. A blocked merge with no
+check reported and no review required says **No checks reported**. With no
+known checks, review or stack to wait on, a blocked merge says **Blocked on
+GitHub** without guessing the cause. Older snapshots without the review
+requirement keep that neutral explanation. An otherwise unexplained GitHub
+merge blocker adds **Merge blocked by GitHub** under **On GitHub**, saying when
+GitHub has not supplied the reason. Known blockers keep their existing rows and
+chips. **Open on GitHub** is offered beside Open for waiting pull requests.
 
 The list's header counts what is the person's, sums baum's reading estimates
 into minutes (only reviews have one), counts the fixes with agents and what was
@@ -2014,7 +2026,15 @@ when a running session's turn ends, the queued message in its place once
 there is one. `r` focuses it.
 
 GitHub connection is available in Settings' Connections section and the
-desktop setup's first step, which share
+desktop setup's first step. Device sign-in requests repository and organization
+read access. Workflow access is opt-in and offered only in Settings: Reconnect
+is a split button whose menu adds **Reconnect with workflow access** (or
+**Reconnect without workflow access** once granted), and Reconnect itself keeps
+the access the connection has. A saved connection without workflow access shows
+a caution note that merges of pull requests changing GitHub Actions workflows
+need it. `POST api/github-auth/start` takes `{"workflow": true}` for that
+choice; an empty object is a plain sign-in.
+The desktop setup's GitHub step and Settings share
 `src/github-auth.ts`. Sign in with GitHub starts device authorization through
 the daemon and, in the same click, opens the fixed
 `https://github.com/login/device` page in the browser and copies the code once

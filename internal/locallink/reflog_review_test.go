@@ -1,9 +1,11 @@
 package locallink
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -64,6 +66,40 @@ func TestCreatorsOfUsesOnlyTheEarliestCreation(t *testing.T) {
 	if got := creatorsOf(log, windows); got[sha] != "author" || len(got) != 1 {
 		t.Fatalf("creators = %v", got)
 	}
+}
+
+// unmapped is s as LoadReusing returns a session whose digest the book
+// holds: without its graph.
+func unmapped(book *digestBook, s sessions.Session) sessions.Session {
+	s.Key = "key-" + s.ID
+	book.digest(s)
+	s.Graph, s.Unmapped, s.Transcript = nil, true, true
+	return s
+}
+
+func TestReflogUsesTheCallsOfAReusedSession(t *testing.T) {
+	r := newReflogRepo(t)
+	wt := r.worktree("reused", "feature")
+	sha := r.commit(wt, "b.txt", "Mine", "10:30:00")
+	creator := reflogSession("session-creator", "claude-code", wt, bash("git commit -q -m Mine", "10:29:58", "10:30:02"))
+	other := reflogSession("session-other", "claude-code", wt, bash("git commit -q -m Theirs", "10:29:59", "10:30:01"))
+	other.Key = "key-session-other"
+	ctx := context.Background()
+
+	t.Run("alone, it keeps its link", func(t *testing.T) {
+		book := newDigestBook(newDigestCache(DefaultDigestBytes))
+		found := addReflogCommits(ctx, nil, r.main, []sessions.Session{unmapped(book, creator)}, r.commits(sha), book)
+		if !slices.Contains(created(found, "session-creator"), sha) {
+			t.Fatalf("the reused creator lost its reflog link: %v", created(found, "session-creator"))
+		}
+	})
+	t.Run("beside a mapped session, both still fit", func(t *testing.T) {
+		book := newDigestBook(newDigestCache(DefaultDigestBytes))
+		found := addReflogCommits(ctx, nil, r.main, []sessions.Session{unmapped(book, creator), other}, r.commits(sha), book)
+		if got := created(found, "session-other"); slices.Contains(got, sha) {
+			t.Fatalf("the mapped session took a commit the reused one may have made: %v", got)
+		}
+	})
 }
 
 // codeModeCall is a code-mode program whose commands all printed a

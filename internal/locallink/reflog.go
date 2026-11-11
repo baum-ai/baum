@@ -256,8 +256,9 @@ type callWindow struct {
 // a commit made while one session's successful Git-writing shell call ran in
 // the same working tree was made by that session. It outranks hook
 // observations, which guess the session from the process tree. Unreadable
-// reflogs give no evidence.
-func addReflogCommits(ctx context.Context, repo *gitlocal.Repo, dir string, found []sessions.Session, commits []gitlocal.Commit) []sessions.Session {
+// reflogs give no evidence. A session the load left unmapped takes its calls
+// from its digest in book; with a nil book every session must be mapped.
+func addReflogCommits(ctx context.Context, repo *gitlocal.Repo, dir string, found []sessions.Session, commits []gitlocal.Commit, book *digestBook) []sessions.Session {
 	wanted := make(map[string]bool, len(commits))
 	for _, c := range commits {
 		wanted[c.OID] = true
@@ -269,7 +270,7 @@ func addReflogCommits(ctx context.Context, repo *gitlocal.Repo, dir string, foun
 	locate := rootLocator(log.mainRoot, log.roots)
 	var windows []callWindow
 	for _, s := range found {
-		windows = append(windows, callWindows(ctx, s, locate)...)
+		windows = append(windows, callWindows(s.ID, book.gitWrites(ctx, s), locate)...)
 	}
 	for sha, creator := range creatorsOf(log, windows) {
 		applied := false
@@ -493,11 +494,37 @@ func windowEnd(start, end time.Time, text string, polls []poll) (time.Time, bool
 	return end, false
 }
 
-// callWindows lists the shell calls of one session, every nested session
+// gitWrite is a successful shell call of a session that runs a git command
+// that can create a commit: when it ran (through its last poll), the
+// directories of those commands, and the branch it ran on ("" when unknown).
+// It depends on the session's graph alone, so a session digest keeps it.
+type gitWrite struct {
+	start, end time.Time
+	dirs       []string
+	branch     string
+}
+
+// callWindows places the Git-writing calls of one session in the clone's
+// working trees. A directory inside a nested repository is left out.
+func callWindows(session string, writes []gitWrite, locate func(string) string) []callWindow {
+	var windows []callWindow
+	for _, w := range writes {
+		for _, dir := range w.dirs {
+			root := locate(dir)
+			if nestedRepository(dir, root) {
+				continue
+			}
+			windows = append(windows, callWindow{session: session, start: w.start, end: w.end, root: root, branch: w.branch})
+		}
+	}
+	return windows
+}
+
+// gitWrites lists the shell calls of one session, every nested session
 // included, that succeeded and write to Git. A call that failed, was rejected
 // or denied, whose command does not write Git, or a poll of a running command
 // establishes nothing and has no window of its own.
-func callWindows(ctx context.Context, s sessions.Session, locate func(string) string) []callWindow {
+func gitWrites(ctx context.Context, s sessions.Session) []gitWrite {
 	g := s.Graph
 	if g == nil {
 		return nil
@@ -523,7 +550,7 @@ func callWindows(ctx context.Context, s sessions.Session, locate func(string) st
 		top = root.ID
 	}
 	var polls []poll
-	var windows []callWindow
+	var writes []gitWrite
 	for _, use := range g.ToolUses {
 		result, ok := results[use.ID]
 		if use.Verb != session.VerbExecute || use.Timestamp == nil || !ok ||
@@ -573,17 +600,10 @@ func callWindows(ctx context.Context, s sessions.Session, locate func(string) st
 		if failed {
 			continue
 		}
-		seen := map[string]bool{}
-		for _, dir := range dirs {
-			root := locate(dir)
-			if seen[dir] || nestedRepository(dir, root) {
-				continue
-			}
-			seen[dir] = true
-			windows = append(windows, callWindow{session: s.ID, start: *use.Timestamp, end: end, root: root, branch: branch})
-		}
+		slices.Sort(dirs)
+		writes = append(writes, gitWrite{start: *use.Timestamp, end: end, dirs: slices.Compact(dirs), branch: branch})
 	}
-	return windows
+	return writes
 }
 
 // nestedRepository reports whether dir lies in a repository of its own, such

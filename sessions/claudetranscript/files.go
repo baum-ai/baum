@@ -97,6 +97,18 @@ func DecodeLocalFiles[T FileSources](files T) (*Tree, error) {
 	return decodeFiles(traceprocessing.LocalFiles{}, files)
 }
 
+// ReadTranscript reads the local transcript at path, called name, as the
+// subagent agentID or the main thread when agentID is empty. Reading.File
+// returns what it must.
+type ReadTranscript func(path, name, agentID string) (*File, error)
+
+// DecodeLocalFilesWith is DecodeLocalFiles with each transcript read by read,
+// which can continue an earlier Reading of it. Sidecars are read as
+// DecodeLocalFiles reads them.
+func DecodeLocalFilesWith[T FileSources](files T, read ReadTranscript) (*Tree, error) {
+	return decodeFilesWith(traceprocessing.LocalFiles{}, files, read)
+}
+
 // sessionSources is the classified view of an explicitly listed session tree.
 type sessionSources struct {
 	main        sourceFile
@@ -106,16 +118,22 @@ type sessionSources struct {
 }
 
 func decodeFiles[T FileSources](fsys fs.FS, files T) (*Tree, error) {
+	return decodeFilesWith(fsys, files, func(path, name, agentID string) (*File, error) {
+		return readFile(fsys, path, name, path, agentID)
+	})
+}
+
+func decodeFilesWith[T FileSources](fsys fs.FS, files T, read ReadTranscript) (*Tree, error) {
 	sources, err := classifyFileSources(files)
 	if err != nil {
 		return nil, err
 	}
-	main, err := readFile(fsys, sources.main.Path, sources.main.Name, sources.main.Path, "")
+	main, err := read(sources.main.Path, sources.main.Name, "")
 	if err != nil {
 		return nil, err
 	}
 	tree := &Tree{Main: main, byToolUse: map[string]*File{}}
-	if err := attachSubagents(fsys, tree, sources); err != nil {
+	if err := attachSubagents(fsys, tree, sources, read); err != nil {
 		return nil, err
 	}
 	return tree, nil
@@ -173,10 +191,10 @@ func classifyFileSources[T FileSources](files T) (sessionSources, error) {
 }
 
 // attachSubagents reads each subagent transcript (and optional sidecar) into tree.
-func attachSubagents(fsys fs.FS, tree *Tree, sources sessionSources) error {
+func attachSubagents(fsys fs.FS, tree *Tree, sources sessionSources, read ReadTranscript) error {
 	for _, agentID := range sources.agentIDs {
 		source := sources.subagents[agentID]
-		file, err := readFile(fsys, source.Path, source.Name, source.Path, agentID)
+		file, err := read(source.Path, source.Name, agentID)
 		if err != nil {
 			return err
 		}
@@ -262,7 +280,11 @@ func decodeFile(r io.Reader, name, label, agentID string) (*File, error) {
 	if err != nil {
 		return nil, fmt.Errorf("reading transcript %s: %w", label, err)
 	}
+	return newFile(lines, torn, name, label, agentID)
+}
 
+// newFile checks decoded lines as one transcript and finds its session id.
+func newFile(lines []Line, torn bool, name, label, agentID string) (*File, error) {
 	file := &File{Path: label, AgentID: agentID, Lines: lines, TornFinalLine: torn}
 	if agentID == "" {
 		if stem := strings.TrimSuffix(name, ".jsonl"); isUUID(stem) {

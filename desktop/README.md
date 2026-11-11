@@ -532,8 +532,10 @@ Two channels, each the least that does the job:
    never with no daemon attached,
    `GET /api/diagnostics` every 30 minutes (the daemon caches the report for 30
    minutes; only the app's Diagnostics dialog forces a fresh run),
-   `GET /api/plan-usage?refresh=1` every 5 minutes (a fresh reading; the
-   daemon reads again at most once a minute; no event announces either, so
+   `GET /api/plan-usage` every 15 minutes (the daemon's cached reading, which it
+   renews when older than 5 minutes), and `?refresh=1` when the tray icon is
+   clicked (a fresh reading; the daemon reads again at most once a minute; no
+   event announces either, so
    one worker sleeps until the next is due and does nothing with no daemon
    attached), and
    `PUT /api/automatic`, and once, when first-run setup finishes,

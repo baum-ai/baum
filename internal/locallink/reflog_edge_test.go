@@ -308,12 +308,12 @@ func TestReflogGenerationRunIsDroppedNotReassigned(t *testing.T) {
 	run.Graph.UserInputs = append(run.Graph.UserInputs, session.UserInput{ID: "input", SessionID: "session-run", Text: sessions.GenerationRunMarker + " review"})
 	bystander := reflogSession("session-bystander", "claude-code", wt, bash("go test ./...", "10:29:58", "10:30:02"))
 	commits := r.commits(sha)
-	found := addReflogCommits(context.Background(), nil, r.main, []sessions.Session{run, bystander}, commits)
+	found := addReflogCommits(context.Background(), nil, r.main, []sessions.Session{run, bystander}, commits, nil)
 	if !slices.Contains(created(found, "session-run"), sha) {
 		t.Fatalf("the run was not the reflog creator: %v", created(found, "session-run"))
 	}
-	found, _ = withoutGenerationRuns(found, nil)
-	_, _, edges, err := linkSessions(context.Background(), found, commits)
+	found, _ = withoutGenerationRuns(found, nil, nil)
+	_, _, edges, err := linkSessions(context.Background(), found, commits, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

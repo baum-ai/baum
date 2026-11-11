@@ -27,13 +27,21 @@ export const ACCESS_URL =
   "https://github.com/settings/connections/applications/Ov23liFSMjrhof9WQlOi";
 
 export type GitHubAuthAction = "start" | "cancel" | "retry" | "disconnect";
+/** A sign-in asks for workflow access only when the person chose it. */
+export type SignInOptions = { workflow?: boolean };
 /** Reads the daemon's GitHub connection, or changes it with an action. */
-export type GitHubAuthCall = (action?: GitHubAuthAction) => Promise<GitHubConnection>;
+export type GitHubAuthCall = (
+  action?: GitHubAuthAction,
+  options?: SignInOptions,
+) => Promise<GitHubConnection>;
 
 /** The daemon's own API, as the app pages reach it. */
-export const daemonGitHubAuth: GitHubAuthCall = (action) =>
+export const daemonGitHubAuth: GitHubAuthCall = (action, options) =>
   action
-    ? request<GitHubConnection>(`api/github-auth/${action}`, {})
+    ? request<GitHubConnection>(
+        `api/github-auth/${action}`,
+        action === "start" && options?.workflow ? { workflow: true } : {},
+      )
     : request<GitHubConnection>("api/github-auth");
 
 /** The daemon performs OAuth polling even while no page shows it. This hook
@@ -122,7 +130,7 @@ export function useGitHubConnection(
     }, browserDelay);
     return () => clearTimeout(timer);
   }, [browserAttempt, connection?.pending?.id, browserDelay]);
-  const action = async (name: GitHubAuthAction) => {
+  const action = async (name: GitHubAuthAction, options?: SignInOptions) => {
     mutating.current = true;
     actionSequence.current++;
     const mine = ++sequence.current;
@@ -131,7 +139,7 @@ export function useGitHubConnection(
     setCopied("");
     setBrowserAttempt(undefined);
     try {
-      const body = await transport.current(name);
+      const body = await transport.current(name, options);
       if (alive.current && mine === sequence.current) {
         setConnection(body);
         setError("");
@@ -152,9 +160,9 @@ export function useGitHubConnection(
   // Start the clipboard write inside the click, using a promise for the code.
   // Desktop setup delays opening GitHub so the code and copy result stay visible;
   // browser pages open inside the click to avoid popup blocking.
-  const signIn = () => {
+  const signIn = (options?: SignInOptions) => {
     if (!browserDelay) open(DEVICE_URL, "_blank", "noreferrer");
-    const started = action("start");
+    const started = action("start", options);
     const mine = actionSequence.current;
     if (browserDelay)
       void started.then((body) => {

@@ -67,7 +67,7 @@ func LinkCommits(ctx context.Context, dir string, commits []gitlocal.Commit, opt
 	if err != nil {
 		return nil, err
 	}
-	_, latest, edges, err := linkSessions(ctx, found, commits)
+	_, latest, edges, err := linkSessions(ctx, found, commits, nil)
 	if err != nil {
 		return nil, err
 	}

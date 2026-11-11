@@ -1,6 +1,7 @@
 package locallink
 
 import (
+	"slices"
 	"strings"
 
 	"github.com/baum-ai/baum/internal/gitlocal"
@@ -24,18 +25,20 @@ import (
 //     time the hosted service uses to bound a session that recorded no end.
 //   - UserEmail is left empty: a session on this machine records no author
 //     address, and an empty one never rules a commit out.
-func candidateOf(s sessions.Session, correlated sessioncorrelate.Result) linkage.RunCandidate {
+func candidateOf(s sessions.Session, facts sessionFacts) linkage.RunCandidate {
+	correlated := facts.correlated
 	candidate := linkage.RunCandidate{
-		RunID: s.ID, Agent: s.Vendor, Source: s.Source.String(), Branches: correlated.Branches,
+		// The facts may be shared with other builds: the matcher gets a copy.
+		RunID: s.ID, Agent: s.Vendor, Source: s.Source.String(), Branches: slices.Clone(correlated.Branches),
 	}
 	if !s.ModifiedAt.IsZero() {
 		modified := s.ModifiedAt
 		candidate.IngestedAt = &modified
 	}
-	if root := s.Root(); root != nil {
-		candidate.StartedAt, candidate.EndedAt = root.StartedAt, root.EndedAt
-		if root.GitBranch != nil && *root.GitBranch != "" && !containsString(candidate.Branches, *root.GitBranch) {
-			candidate.Branches = append(append([]string(nil), candidate.Branches...), *root.GitBranch)
+	if facts.root {
+		candidate.StartedAt, candidate.EndedAt = facts.startedAt, facts.endedAt
+		if facts.gitBranch != nil && *facts.gitBranch != "" && !containsString(candidate.Branches, *facts.gitBranch) {
+			candidate.Branches = append(append([]string(nil), candidate.Branches...), *facts.gitBranch)
 		}
 	}
 	for _, ref := range correlated.CommitRefs {

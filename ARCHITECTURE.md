@@ -1945,15 +1945,62 @@ a process reuses what it built:
     time, the worktrees, the Codex thread index and the Entire refs;
   * what each checkout has checked out: `HEAD` and the branch's commit. Index
     rewrites from `git status` are ignored.
+* **Unchanged sessions.** When any of that changed, which in a busy clone is
+  nearly always, because some agent is writing a session in the window, only
+  the sessions that changed are mapped. The process keeps a digest of each
+  session it mapped (`locallink.sessionDigests`, up to
+  `locallink.DefaultDigestBytes`, 64 MiB), keyed by `sessions.Session.Key`:
+  each file's path, size and modification time, or for an Entire session the
+  clone and the tree of its checkpoint, which names its content. A session
+  with a file modified in the last 2 seconds, or in the future, gets no key:
+  a same-size rewrite within one modification-time tick would look
+  unchanged. Such a session is mapped and not reused until it is older.
+  `Discovery.LoadReusing` skips a session whose digest is held. The digest holds what linking reads
+  from the graph: whether it is a generation run, whether it has a
+  transcript, the top-level session's start, end and branch, the
+  `sessioncorrelate` evidence, and the session's Git-writing shell calls
+  (when each ran, the directories of its commit-creating git commands and its
+  branch), which the reflog matcher places in the clone's working trees, so a
+  reused session still competes for the commits its calls may have made. For
+  each linked session it also holds the
+  evidence that was built for it, with what that evidence depended on
+  besides the transcript:
+  * the caps;
+  * the session's id, path and vendor, and for Codex the thread names it
+    looked up in the thread index;
+  * where each absolute path it touched lands among the clone's checkouts.
+    These are replayed against the current checkouts, so an unrelated new
+    worktree changes nothing;
+  * the answers about which paths its commands name exist in the checkout or
+    the pull request.
+
+  Each of these is checked again, so the evidence is the same as a full
+  rebuild. A linked session whose evidence no longer fits is mapped by
+  loading again, refusing its digest. The other sessions are still reused.
+  If an unmapped session's digest is gone by the time linking reads it, the
+  build loads once more and maps everything. Choosing each Entire session's
+  snapshot uses small per-checkpoint facts that `sessions` remembers by
+  clone and tree. A checkpoint is read whole again, through the checkpoint
+  cache below, only when a session chosen from it has to be mapped.
 * **Closed and merged pull requests.** A refresh of a pull request that is
   closed or merged sets `EvidenceRequest.Frozen`. Its sessions are read once in
   the process, then kept for the same commits without looking at the stores
   again.
 * **One background pass.** A pass that refreshes several pull requests holds
   `sessions.HoldMappings`, so the mapping cache keeps up to
-  `sessions.HeldMapCacheBytes` (256 MiB) of transcripts while the pass runs and
-  each session is decoded once in it. When the pass ends, the cache shrinks
-  back to its 64 MiB limit.
+  `sessions.HeldMapCacheBytes` (256 MiB) of mapped graphs while the pass runs
+  and each session is decoded once in it. When the pass ends, the cache
+  shrinks back to its 64 MiB limit. Both limits count the graphs' estimated
+  memory, about a sixth of their transcripts' size.
+* **Growing transcripts.** A session an agent is still running changes on
+  every append, so none of the above applies to it. For each Claude Code
+  transcript and Codex rollout changed in the last hour, `sessions.Map` keeps
+  the decoded lines and the byte offset they end at, and decodes only what was
+  appended since; the mapper still runs over every line. A file that shrank,
+  was replaced or had its earlier bytes rewritten is decoded whole. The lines
+  kept leave out the raw record copies the mapper does not read, and are
+  bounded by `sessions.DefaultTailCacheBytes` (64 MiB of estimated memory). The
+  [sessions README](sessions/README.md#incremental-decoding) has the details.
 * **Entire checkpoints.** A refresh reads the clone through one `gitlocal`
   repository: the caller's (`EvidenceRequest.Repo`, which the daemon's
   refresh and review jobs set), or one it opens, shared by session loading,
@@ -2522,14 +2569,21 @@ the counters that moved in that window, largest first.
 `internal/workstats` keeps those counters. Each is an atomic add, so they are
 always on. They count:
 
-* calls to `sessions.Map`, its decodes by source and the bytes decoded, and
-  hits on its cache;
+* calls to `sessions.Map`, its decodes by source, the bytes and lines
+  actually decoded (only the appended part of a transcript that grew), hits on
+  its cache, transcript reads continued from an offset or from the start, and
+  why a kept transcript was read from its start again;
 * git processes in total and by subcommand;
 * background passes and pull request refreshes;
 * session loads by entry point;
 * analytics refreshes, review index builds and live transcript builds.
 
-Gauges report state such as the size of the session cache.
+Gauges report state such as the size of the session caches: the estimated
+memory of the mapped graphs kept (`sessions.map_cache.bytes`) and of the
+decoded transcript lines kept (`sessions.tail_cache.bytes`), each beside the
+transcript bytes behind it (`.transcript_bytes`). Compare them with the heap
+profile, where kept lines are allocated in the
+transcript decoders and graphs in the session mappers.
 
 The daemon serves the counters at `GET /api/debug/stats` and Go's runtime
 profiles at `GET /api/debug/pprof/` (`profile?seconds=N`, `trace?seconds=N`,
@@ -2949,6 +3003,10 @@ whether the app offers a fix.
 Missing state is unknown; unresolved counts are nullable and marked as lower
 bounds when threads exceed the cap. Comment-only reviews use the latest 100
 reviews as a fallback to GitHub's review decision and opinionated reviews.
+`review_required` preserves whether GitHub's `reviewDecision` is
+`REVIEW_REQUIRED`, independently of recorded reviews. The Inbox uses that flag
+to name a required review; an otherwise unexplained blocked merge says
+"Blocked on GitHub". A missing approval alone is not a review requirement.
 The user's teams and per-author repository permissions still use conditional
 REST requests. Truncated review requests fail the refresh rather than concealing
 an automatic-generation trigger. All requests refuse redirects.
@@ -3022,8 +3080,12 @@ refuses a pull request whose head moved. Both accept only picked repositories
 (unpicked is `404`), send each document once with no retry, and map GitHub's
 errors to `{code, message}`: `head_moved` and `conflict` and `not_open` are
 `409`, `blocked` (required checks, reviews, branch protection) and
-`method_not_allowed` are `422`, `forbidden` is `403`, anything else `502`. After
-a merge GitHub accepted, the daemon records it (`discovery.Service.Merged`:
+`method_not_allowed` are `422`, `forbidden` is `403`, anything else `502`.
+Permission refusals retain GitHub's explanation and direct the user to the
+connection's permissions and scopes. A missing workflow scope explains that
+workflow changes need workflow access, which is opt-in, and offers merging on
+GitHub or Settings' Reconnect with workflow access.
+After a merge GitHub accepted, the daemon records it (`discovery.Service.Merged`:
 the pull request leaves the cached open ones and is observed `MERGED` at the
 merged head, with no read) and publishes an index change, so the inbox shows
 it merged at once rather than when the background refresh next reads it. It

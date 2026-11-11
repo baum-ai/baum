@@ -116,7 +116,10 @@ command that commits after its tool call returned, and that no poll covers, lies
 outside every window. Entries are read from the newest 8 MiB of each reflog.
 `ReflogFingerprint` hashes the creation entries of the pull request's commits
 so the evidence and feature caches notice a new one and ignore other reflog
-activity.
+activity. A session's Git-writing calls depend on its graph alone, so its
+session digest keeps them: a session `BuildSessionEvidence` reuses without
+mapping still has its windows, and another session never wins a commit just
+because the reused one was not mapped.
 
 Quiet commits followed immediately by `git log` on a new line also supply
 creation evidence when the tool succeeded and its output has no explicit
@@ -127,6 +130,15 @@ Local matching still uses path overlap rather than content equivalence. A
 matched path set does not establish that every contributor was discovered.
 Checkpoint IDs provide the narrower pool for later evidence inspection or
 adjudication without asserting those candidates as contributors.
+
+`BuildSessionEvidence` maps only the sessions that changed since the process
+last read them. It keeps a digest per session: what linking reads from the
+graph and, for a linked session, the evidence built for it with what that
+evidence depended on besides the transcript. The digest is reused only when
+all of it is unchanged, so the evidence is the same as a full rebuild.
+[Local session evidence](../../ARCHITECTURE.md#local-session-evidence)
+describes the keys. `Resolve` and
+`LinkCommits` map every session.
 
 Run `just oss-go test ./internal/locallink/...` from the monorepo root. The
 tests cover concurrent readers/editors, stale sessions, matching-parent false
