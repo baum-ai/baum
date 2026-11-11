@@ -367,3 +367,31 @@ func TestMapReplacesTheMappingOfAGrownSession(t *testing.T) {
 		t.Errorf("cache holds %d mappings, %d sessions, %d transcript bytes; want the latest mapping alone", c.order.Len(), len(c.sessions), c.transcripts)
 	}
 }
+
+// Every Codex lifecycle fixture maps through the kept lines as a whole read
+// does, read at once and then grown by its last line. The fixtures include
+// web_search_call items, which are their own tool completion.
+func TestMapMatchesAWholeReadForCodexLifecycleFixtures(t *testing.T) {
+	useTails(t, DefaultTailCacheBytes)
+	fixtures, err := filepath.Glob(filepath.Join("codexsession", "testdata", "lifecycle", "*.jsonl"))
+	if err != nil || len(fixtures) == 0 {
+		t.Fatalf("fixtures %v: %v", fixtures, err)
+	}
+	for _, fixture := range fixtures {
+		t.Run(filepath.Base(fixture), func(t *testing.T) {
+			data, err := os.ReadFile(fixture)
+			if err != nil {
+				t.Fatal(err)
+			}
+			all := lines(data)
+			path := filepath.Join(t.TempDir(), "rollout-2026-06-20T08-00-00-019e9999-1111-7000-8000-aaaabbbbcccc.jsonl")
+			s := collector.Session{Source: vendors.Codex, Files: []model.SessionFile{{Path: path, Name: filepath.Base(path), Kind: model.KindTranscript}}}
+			write(t, path, string(bytes.Join(all[:len(all)-1], nil)))
+			mapsAsWhole(t, s, "first read")
+			appendTo(t, path, all[len(all)-1])
+			mapsAsWhole(t, s, "grown")
+			write(t, path, string(data))
+			mapsAsWhole(t, s, "whole")
+		})
+	}
+}

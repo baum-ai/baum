@@ -169,11 +169,12 @@ func (r *Reading) File(rest []byte) (*File, error) {
 }
 
 // slim drops the copies of the record a Reading does not keep. Payload stays
-// on event_msg lines, whose tool completions codexsession stores as tool
-// output; every other record is read through its typed fields.
+// on the lines codexsession stores as tool completions: event_msg lines, and
+// web_search_call response items, which are their own completion. Every other
+// record is read through its typed fields.
 func slim(line Line) Line {
 	line.Raw = nil
-	if line.Class != ClassEventMsg {
+	if line.Class != ClassEventMsg && (line.ResponseItem == nil || line.ResponseItem.WebSearchCall == nil) {
 		line.Payload = nil
 	}
 	if line.ResponseItem != nil {

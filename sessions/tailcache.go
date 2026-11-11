@@ -252,7 +252,7 @@ func (e *tailEntry) changed(f *os.File, info os.FileInfo) string {
 // readAt reads n bytes at off, or returns nil when it cannot read them all.
 func readAt(f *os.File, off, n int64) []byte {
 	buf := make([]byte, n)
-	if _, err := f.ReadAt(buf, off); err != nil && !(err == io.EOF && n == 0) {
+	if _, err := f.ReadAt(buf, off); err != nil && (err != io.EOF || n != 0) {
 		return nil
 	}
 	return buf
