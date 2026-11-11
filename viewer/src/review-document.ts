@@ -1,5 +1,6 @@
 import pluralize from "pluralize";
 
+import { hunkIndex } from "./hunk-index.ts";
 import { sha256Hex } from "./sha256.ts";
 
 /** The generated review of one pull request, as it is stored.
@@ -1741,6 +1742,27 @@ const GITHUB_DIFF_ANCHOR = /^#diff-[0-9a-f]{64}(?:[LR]\d+(?:-[LR]\d+)?)?$/;
  *  rebuilt the way GitHub names it, `#diff-<sha256(path)>R<first line>`, so
  *  the link lands on the change rather than at the top of the page. */
 export function hunkUrl(document: ReviewDocument, hunk: IndexedHunk): string {
+  const urls = hunkIndex(document).urls;
+  const known = urls.get(hunk);
+  if (known !== undefined) return known;
+  const built = buildHunkUrl(document, hunk);
+  urls.set(hunk, built);
+  return built;
+}
+
+const pathHashes = new Map<string, string>();
+
+function pathHash(path: string): string {
+  let hash = pathHashes.get(path);
+  if (hash === undefined) {
+    if (pathHashes.size >= 10_000) pathHashes.clear();
+    hash = sha256Hex(path);
+    pathHashes.set(path, hash);
+  }
+  return hash;
+}
+
+function buildHunkUrl(document: ReviewDocument, hunk: IndexedHunk): string {
   const files = `${pullRequestUrl(document)}/files`;
   const supplied = repositoryLink(document, hunk.github_url);
   if (supplied) {
@@ -1754,7 +1776,7 @@ export function hunkUrl(document: ReviewDocument, hunk: IndexedHunk): string {
     }
   }
   const line = hunk.change !== "removed" && hunk.new_range[0] > 0 ? `R${hunk.new_range[0]}` : "";
-  return `${files}#diff-${sha256Hex(hunk.path)}${line}`;
+  return `${files}#diff-${pathHash(hunk.path)}${line}`;
 }
 
 /** The line a hunk opens at in the file view: its first new line, or none for
@@ -1780,18 +1802,10 @@ function encodeSegments(value: string): string {
  *  directory too; it then keeps its GitHub link, which still works. */
 export function isContextDirectory(document: ReviewDocument, path: string): boolean {
   if (path.endsWith("/")) return true;
-  const cited = new Set<string>();
-  for (const hunk of document.index.hunks) {
-    cited.add(hunk.path);
-    if (hunk.old_path) cited.add(hunk.old_path);
-  }
-  for (const part of Object.values(document.summary.context ?? {})) {
-    for (const ref of part?.refs ?? []) cited.add(ref.path);
-  }
-  const prefix = `${path}/`;
-  for (const candidate of cited) if (candidate.startsWith(prefix)) return true;
+  const { citedDirectories, paths } = hunkIndex(document);
+  if (citedDirectories.has(path)) return true;
   const name = path.slice(path.lastIndexOf("/") + 1);
-  return !name.includes(".") && !document.index.hunks.some((hunk) => hunk.path === path);
+  return !name.includes(".") && !paths.has(path);
 }
 
 /** Where a context reference reads on GitHub: at head, or at the merge base
@@ -1845,7 +1859,7 @@ export function anchorFile(
 ): { path: string; line?: number } | null {
   if (anchor.type === "file") return { path: anchor.path };
   if (anchor.type !== "hunk") return null;
-  const hunk = document.index.hunks.find((candidate) => candidate.id === anchor.id);
+  const hunk = hunkIndex(document).byId.get(anchor.id);
   if (!hunk) return null;
   return { path: hunk.path, line: anchor.lines?.[0] ?? hunkLine(hunk) };
 }
@@ -1859,7 +1873,7 @@ export function resolveAnchor(document: ReviewDocument, anchor: Anchor): Resolve
   const repository = `https://github.com/${document.review.repository}`;
   switch (anchor.type) {
     case "hunk": {
-      const hunk = index.hunks.find((candidate) => candidate.id === anchor.id);
+      const hunk = hunkIndex(document).byId.get(anchor.id);
       if (!hunk) return { label: `Hunk ${anchor.id}`, kind: "Unresolved hunk" };
       const lines = anchor.lines ? ` · lines ${anchor.lines[0]}–${anchor.lines[1]}` : "";
       return {

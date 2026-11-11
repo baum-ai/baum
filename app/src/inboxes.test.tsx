@@ -858,7 +858,7 @@ it("shows Snoozed with Bring back in an inbox whose queue is empty", async () =>
   expect(snoozed.querySelectorAll("button.row-menu-button")).toHaveLength(2);
   await click(snoozed.querySelector("button.row-menu-button"));
   const choices = Array.from(node.querySelectorAll<HTMLElement>('[role="menu"] [role^=menuitem]'));
-  expect(choices.map((item) => item.textContent)).toEqual(["Bring back"]);
+  expect(choices.map((item) => item.textContent)).toEqual(["Bring back", "Archive"]);
   await click(choices[0]);
   expect(titles()).toHaveLength(1);
 });

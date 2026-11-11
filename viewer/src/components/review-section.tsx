@@ -50,7 +50,7 @@ import {
   TierBadge,
 } from "./review-parts";
 import { ReviewImages } from "./review-images";
-import { ReviewTiles } from "./review-tiles/review-tiles";
+import { ReviewTiles } from "./review-tiles/lazy-review-tiles";
 import { type Column, Table } from "./table";
 import { Badge, Button, CardHeader, Spinner } from "./ui";
 

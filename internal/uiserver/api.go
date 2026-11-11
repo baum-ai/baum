@@ -485,28 +485,35 @@ func (a LocalAPI) Handler() *LocalHandler {
 			apiError(w, err)
 			return
 		}
-		var version store.Version
-		if n == 0 {
-			version, err = s.Latest(r.Context(), key)
-		} else {
-			version, err = s.Get(r.Context(), key, n)
-		}
+		// The store revision names the document without reading it, so a
+		// kept viewer answers without the document being read or hashed.
+		number, revision, err := s.Revision(r.Context(), key, n)
 		if err != nil {
 			apiError(w, err)
 			return
 		}
-		if len(version.Document) > viewserver.MaxDocumentBytes {
-			http.Error(w, "stored document too large", http.StatusRequestEntityTooLarge)
-			return
+		viewer, release, found, err := cache.cached(r.Context(), revisionKey(c, s, key, number, revision))
+		if !found && err == nil {
+			var version store.Version
+			if n == 0 {
+				version, err = s.Latest(r.Context(), key)
+			} else {
+				version, err = s.Get(r.Context(), key, n)
+			}
+			if err != nil {
+				apiError(w, err)
+				return
+			}
+			if len(version.Document) > viewserver.MaxDocumentBytes {
+				http.Error(w, "stored document too large", http.StatusRequestEntityTooLarge)
+				return
+			}
+			viewer, release, err = cache.get(r.Context(), c, version.Document, revisionKey(c, s, key, version.Metadata.Version, version.Revision))
 		}
-		if r.URL.Path == "/api/document" {
-			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write(viewserver.WithHunkURLs(version.Document))
-			return
-		}
-		viewer, release, err := cache.get(c, version.Document)
 		if err != nil {
-			apiError(w, err)
+			if r.Context().Err() == nil {
+				apiError(w, err)
+			}
 			return
 		}
 		defer release()

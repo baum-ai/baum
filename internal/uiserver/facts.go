@@ -76,9 +76,11 @@ func (a LocalAPI) factsRoutes(mux *http.ServeMux, cache *documentCache) {
 			http.NotFound(w, r)
 			return
 		}
-		viewer, release, err := cache.get(c, document)
+		viewer, release, err := cache.get(r.Context(), c, document, "")
 		if err != nil {
-			apiError(w, err)
+			if r.Context().Err() == nil {
+				apiError(w, err)
+			}
 			return
 		}
 		defer release()

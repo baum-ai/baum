@@ -2,13 +2,13 @@ import { useEffect, useState } from "react";
 import { CircleDashedIcon } from "@baum/viewer/components/icons";
 import { LiveDot } from "@baum/viewer/components/ui";
 import type { LiveSession } from "./api";
-import { useVisibleInterval } from "./visible-interval";
+import { subscribeVisibleInterval } from "./visible-interval";
 
 /** Re-renders now and then so relative times do not freeze, while the page is
  *  visible. */
 export function useNow(interval = 30_000) {
   const [now, setNow] = useState(() => Date.now());
-  useVisibleInterval(() => setNow(Date.now()), interval);
+  useEffect(() => subscribeVisibleInterval(() => setNow(Date.now()), interval), [interval]);
   return now;
 }
 

@@ -296,6 +296,29 @@ it("keeps older reviews' conversations read-only and starts new ones on the curr
   ]);
 });
 
+it("empties the box when a question sent from an earlier composer is accepted", async () => {
+  conversations = [
+    conversation({ id: "current", turns: [answered({ question: "Current question" })] }),
+    conversation({ id: "old", version: 1, turns: [answered({ question: "Old question" })] }),
+  ];
+  let accept: () => void = () => {};
+  postAnswer = () =>
+    new Promise<Response>((resolve) => {
+      accept = () =>
+        resolve(Response.json({ conversation_id: "current", turn: 2, job: {} }, { status: 202 }));
+    }) as unknown as Response;
+  await panel();
+  await type("Pending question");
+  await act(async () => button("Send")!.click());
+  // Away to a read-only conversation and back while the question is on its way.
+  await act(async () => button("Old question")!.click());
+  await act(async () => button("Current question")!.click());
+  expect(node.querySelector("textarea")!.value).toBe("Pending question");
+  await act(async () => accept());
+  await settle();
+  expect(node.querySelector("textarea")!.value).toBe("");
+});
+
 it("notes that a seeded conversation started without the review's context", async () => {
   conversations = [
     conversation({ seeded: true, turns: [answered({ note: "Seeded from disk." })] }),
@@ -333,6 +356,20 @@ it("sends with Enter, keeps Shift+Enter for a new line and clears the focus it a
     },
   ]);
   expect(cleared).toHaveBeenCalled();
+});
+
+it("does not re-render the answers while typing a question", async () => {
+  conversations = [
+    conversation({ turns: [answered(), answered({ seq: 2, question: "And jitter?" })] }),
+  ];
+  const renders = vi.fn(() => null);
+  await panel({ answerActions: renders });
+  const before = renders.mock.calls.length;
+  expect(before).toBeGreaterThanOrEqual(2);
+  await type("What about");
+  await type("What about jitter?");
+  expect(node.querySelector("textarea")!.value).toBe("What about jitter?");
+  expect(renders.mock.calls.length).toBe(before);
 });
 
 it("shows the daemon's words when the conversation is busy", async () => {

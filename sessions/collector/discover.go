@@ -43,6 +43,9 @@ type FindOptions struct {
 	// to the repository, whichever of them dir is in. Empty means only the
 	// checkout containing dir, and the worktrees git remembers inside it.
 	Worktrees []string
+	// ClaudeHeads, when set, remembers each Claude Code transcript's head
+	// between calls, so an unchanged transcript is not opened again.
+	ClaudeHeads *claudecode.HeadCache
 	// Since skips Claude Code transcripts last modified before it without
 	// opening them. Zero keeps every transcript.
 	Since time.Time
@@ -98,7 +101,7 @@ func FindSessions(dir string, opts FindOptions) ([]Session, ScanReport, error) {
 		}
 	}
 
-	sessions, claudeReport, err := claudecode.FindSessionsSince(claudeDir, roots, opts.Since)
+	sessions, claudeReport, err := claudecode.FindSessionsCached(claudeDir, roots, opts.Since, opts.ClaudeHeads)
 	if err != nil {
 		return nil, report, err
 	}
