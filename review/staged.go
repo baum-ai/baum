@@ -214,6 +214,10 @@ func dropUnreferencedDefinitions(root map[string]any) {
 	}
 }
 
+// OutlineSectionFields are the fields of a section the outline keeps, as
+// ReadOutline and OutlineOf project it.
+func OutlineSectionFields() []string { return slices.Clone(outlineSectionFields) }
+
 // keepKeys removes every key of an object but the named ones.
 func keepKeys(object map[string]any, keep ...string) {
 	for key := range object {
