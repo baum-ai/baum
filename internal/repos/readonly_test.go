@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/baum-ai/baum/internal/appdb/appdbtest"
@@ -22,6 +23,11 @@ func directoryNames(t *testing.T, dir string) []string {
 	}
 	var names []string
 	for _, entry := range entries {
+		// SQLite's coordination files for a database in WAL mode, which
+		// any connection to it creates when missing.
+		if strings.HasSuffix(entry.Name(), "-shm") || strings.HasSuffix(entry.Name(), "-wal") {
+			continue
+		}
 		names = append(names, entry.Name())
 	}
 	return names

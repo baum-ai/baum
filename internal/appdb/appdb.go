@@ -12,11 +12,13 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	_ "modernc.org/sqlite"
 
 	"github.com/baum-ai/baum/internal/privatefs"
+	"github.com/baum-ai/baum/internal/sqlitepool"
 )
 
 // Version is the first public application database baseline.
@@ -45,8 +47,18 @@ func Path() (string, error) {
 	return filepath.Join(dir, "app.sqlite"), nil
 }
 
-// Open opens the common database policy. Read-only opens never create a file,
-// change permissions, or initialize a schema. A newer schema is always refused.
+// JournalSizeLimit is the size, in bytes, a write-ahead log is cut back to
+// once a checkpoint has copied it into the database.
+const JournalSizeLimit = 16 << 20
+
+// sharedConnections is how many connections a shared handle (Acquire) opens
+// at most: readers do not wait for each other or for the writer.
+const sharedConnections = 8
+
+// Open opens the common database policy. Read-only opens never create the
+// database, change permissions, or initialize a schema; on a database in WAL
+// mode SQLite creates its -shm (and an empty -wal) beside it, private like the
+// database, as any connection to it does. A newer schema is always refused.
 func Open(path string, readOnly bool) (*sql.DB, error) {
 	if path == "" {
 		var err error
@@ -102,7 +114,7 @@ func Open(path string, readOnly bool) (*sql.DB, error) {
 	// Read-then-write transactions must reserve the writer before reading;
 	// upgrading a deferred read lock can fail immediately despite busy_timeout.
 	if !readOnly {
-		uri += "&_txlock=immediate"
+		uri += "&_txlock=immediate&_pragma=journal_size_limit(" + strconv.Itoa(JournalSizeLimit) + ")"
 	}
 	db, err := sql.Open("sqlite", uri)
 	if err != nil {
@@ -116,6 +128,30 @@ func Open(path string, readOnly bool) (*sql.DB, error) {
 	return db, nil
 }
 
+// Acquire returns a handle opened as Open opens one, shared with the rest of
+// the process once sqlitepool is enabled, and the function that releases it.
+// Callers must not close it or leave a transaction open past release.
+func Acquire(path string, readOnly bool) (*sql.DB, func(), error) {
+	if path == "" {
+		var err error
+		if path, err = Path(); err != nil {
+			return nil, nil, err
+		}
+	}
+	absolute, err := filepath.Abs(path)
+	if err != nil {
+		return nil, nil, err
+	}
+	return sqlitepool.Acquire(absolute, readOnly, func() (*sql.DB, error) {
+		db, err := Open(absolute, readOnly)
+		if err == nil {
+			db.SetMaxOpenConns(sharedConnections)
+			db.SetMaxIdleConns(2)
+		}
+		return db, err
+	})
+}
+
 func initialize(db *sql.DB, readOnly bool) (err error) {
 	ctx := context.Background()
 	conn, err := db.Conn(ctx)
@@ -124,6 +160,9 @@ func initialize(db *sql.DB, readOnly bool) (err error) {
 	}
 	defer func() { _ = conn.Close() }()
 	if !readOnly {
+		// Best effort: a database another connection holds stays in its
+		// journal mode until a later write-open switches it.
+		_, _ = conn.ExecContext(ctx, "PRAGMA journal_mode=WAL")
 		if _, err = conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
 			return err
 		}
@@ -186,11 +225,11 @@ func initialize(db *sql.DB, readOnly bool) (err error) {
 
 // Read returns fs.ErrNotExist for a missing database or document.
 func Read(path, bucket, key string) ([]byte, error) {
-	db, err := Open(path, true)
+	db, release, err := Acquire(path, true)
 	if err != nil {
 		return nil, err
 	}
-	defer func() { _ = db.Close() }()
+	defer release()
 	var raw []byte
 	err = db.QueryRow(`SELECT value FROM app_documents WHERE bucket=? AND key=?`, bucket, key).Scan(&raw)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -207,11 +246,11 @@ func Write(path, bucket, key string, raw []byte) error {
 // Update serializes read-modify-write across processes. Missing rows pass nil
 // to change; a failed callback or commit leaves the prior value untouched.
 func Update(path, bucket, key string, change func([]byte) ([]byte, error)) (err error) {
-	db, err := Open(path, false)
+	db, release, err := Acquire(path, false)
 	if err != nil {
 		return err
 	}
-	defer func() { _ = db.Close() }()
+	defer release()
 	ctx := context.Background()
 	conn, err := db.Conn(ctx)
 	if err != nil {

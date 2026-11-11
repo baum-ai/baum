@@ -16,8 +16,10 @@ import (
 // read. It keeps the document as it is on disk, with the fields readers use
 // (view) decoded on first use and shared by every reader until it changes.
 //
-// The service trusts what it kept while app.sqlite, and a WAL beside it, keep
-// the identity, size and modification time they had when it was read. When
+// The service trusts what it kept while app.sqlite, and the write-ahead log
+// beside it, keep the identity, size and modification time they had when it
+// was read. A commit appends to the log; app.sqlite itself moves only when a
+// checkpoint copies the log into it. When
 // they changed, or were modified within racyWindow of being looked at (a
 // later write could keep the same time on a coarse clock), it reads the
 // document again and decodes it only if its bytes differ. So a write by

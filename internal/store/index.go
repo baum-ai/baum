@@ -40,11 +40,11 @@ func (s *Store) BeginRun(ctx context.Context, k Key, deadline time.Time) (int64,
 	if !k.valid() || !deadline.After(time.Now()) {
 		return 0, errors.New("invalid run identity or deadline")
 	}
-	db, err := s.database(true)
+	db, release, err := s.acquire(true)
 	if err != nil {
 		return 0, err
 	}
-	defer db.Close()
+	defer release()
 	result, err := db.ExecContext(ctx, `INSERT INTO runs(repository,pr,state,reason,started,expires,finished) VALUES (?,?,'generating','',?,?,0)`, k.repository(), k.Number, time.Now().UnixNano(), deadline.UnixNano())
 	if err != nil {
 		return 0, err
@@ -57,16 +57,18 @@ func (s *Store) HeartbeatRun(ctx context.Context, id int64, deadline time.Time) 
 	if id <= 0 || !deadline.After(time.Now()) {
 		return errors.New("invalid run lease")
 	}
-	before, statErr := os.Stat(s.path())
-	db, err := s.database(true)
+	before, statErr := StampOf(s.path())
+	db, release, err := s.acquire(true)
 	if err != nil {
 		return err
 	}
-	defer db.Close()
 	result, err := db.ExecContext(ctx, `UPDATE runs SET expires=? WHERE id=? AND state='generating'`, deadline.UnixNano(), id)
+	// Released before the stamp is taken: closing the last connection
+	// checkpoints the log into the database file.
+	release()
 	if err == nil && statErr == nil {
-		if after, e := os.Stat(s.path()); e == nil {
-			h := heartbeat{before: stampOf(before), after: stampOf(after)}
+		if after, e := StampOf(s.path()); e == nil {
+			h := heartbeat{before: before, after: after}
 			// Renewals in a row chain: the file is still as the last one
 			// left it, so what a watcher saw before that one still stands.
 			if v, ok := heartbeats.Load(s.path()); ok && v.(heartbeat).after == h.before {
@@ -85,11 +87,30 @@ func (s *Store) HeartbeatRun(ctx context.Context, id int64, deadline time.Time) 
 	return err
 }
 
-// FileStamp is the size and modification time (nanoseconds) of a file.
-type FileStamp struct{ Size, ModTime int64 }
+// FileStamp is the size and modification time (nanoseconds) of a store's
+// database file and of its write-ahead log beside it. A commit appends to the
+// log, which a checkpoint later copies into the database file, so the
+// database file alone does not move with every write. WALSize is -1 when
+// there is no log.
+type FileStamp struct{ Size, ModTime, WALSize, WALModTime int64 }
 
-func stampOf(info os.FileInfo) FileStamp {
-	return FileStamp{info.Size(), info.ModTime().UnixNano()}
+// StampOf stats the database file at path and its write-ahead log, without
+// opening either: closing a descriptor to a SQLite file would drop the locks
+// this process's connections hold on it.
+func StampOf(path string) (FileStamp, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return FileStamp{}, err
+	}
+	stamp := FileStamp{Size: info.Size(), ModTime: info.ModTime().UnixNano(), WALSize: -1}
+	wal, err := os.Stat(path + "-wal")
+	switch {
+	case err == nil:
+		stamp.WALSize, stamp.WALModTime = wal.Size(), wal.ModTime().UnixNano()
+	case !errors.Is(err, os.ErrNotExist):
+		return FileStamp{}, err
+	}
+	return stamp, nil
 }
 
 type heartbeat struct{ before, after FileStamp }
@@ -125,11 +146,11 @@ func (s *Store) FinishRun(ctx context.Context, id int64, reason string) error {
 	if reason != "" {
 		state = "failed"
 	}
-	db, err := s.database(true)
+	db, release, err := s.acquire(true)
 	if err != nil {
 		return err
 	}
-	defer db.Close()
+	defer release()
 	result, err := db.ExecContext(ctx, `UPDATE runs SET state=?,reason=?,finished=? WHERE id=? AND state='generating'`, state, reason, time.Now().UnixNano(), id)
 	if err != nil {
 		return err
@@ -320,14 +341,14 @@ func backfill(ctx context.Context, db *sql.DB) error {
 }
 
 func (s *Store) Snapshot(ctx context.Context) ([]Summary, error) {
-	db, err := s.database(false)
+	db, release, err := s.acquire(false)
 	if errors.Is(err, ErrNotFound) {
 		return []Summary{}, nil
 	}
 	if err != nil {
 		return nil, err
 	}
-	defer db.Close()
+	defer release()
 	tx, err := db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
 		return nil, err

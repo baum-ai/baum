@@ -29,11 +29,11 @@ ON CONFLICT(id) DO UPDATE SET created=excluded.created, updated=excluded.updated
 // document's removal are one transaction: a failure leaves the document as
 // it was.
 func loadJournal(path string) (jobs []Job, heads map[string]headRuns, err error) {
-	db, err := appdb.Open(path, false)
+	db, release, err := appdb.Acquire(path, false)
 	if err != nil {
 		return nil, nil, err
 	}
-	defer func() { _ = db.Close() }()
+	defer release()
 	tx, err := db.Begin()
 	if err != nil {
 		return nil, nil, err
@@ -159,11 +159,11 @@ type journalRow struct {
 // jobs dropped from memory before any write kept them (a rolled-back
 // submission), in one transaction.
 func writeJournal(path string, rows []journalRow, gone []string) (err error) {
-	db, err := appdb.Open(path, false)
+	db, release, err := appdb.Acquire(path, false)
 	if err != nil {
 		return err
 	}
-	defer func() { _ = db.Close() }()
+	defer release()
 	tx, err := db.Begin()
 	if err != nil {
 		return err
@@ -190,11 +190,11 @@ func writeJournal(path string, rows []journalRow, gone []string) (err error) {
 // since their last write), marks the jobs ids archived and adds heads to the
 // archived runs of each head.
 func archiveJournal(path string, rows []journalRow, ids []string, heads map[string]headRuns) (err error) {
-	db, err := appdb.Open(path, false)
+	db, release, err := appdb.Acquire(path, false)
 	if err != nil {
 		return err
 	}
-	defer func() { _ = db.Close() }()
+	defer release()
 	tx, err := db.Begin()
 	if err != nil {
 		return err

@@ -16,9 +16,11 @@ fingerprint, the budgets) once, on first use. `Cached`, `Probe` and the budget
 share that decoded copy until the document changes; `Cached` gives each caller
 its own pull request and observation slices, and nothing may write through
 their pointers. Polls, `Observe`, `Merged` and `Unresolved` decode a copy of
-their own to change. The kept copy is trusted while `app.sqlite` (and a WAL
-beside it) keep the identity, size and modification time they had when it was
-read. When they changed, or were modified within the last three seconds
+their own to change. The kept copy is trusted while `app.sqlite` and its
+write-ahead log (`app.sqlite-wal`) keep the identity, size and modification
+time they had when it was read. A commit appends to the log and leaves
+`app.sqlite` as it was until a checkpoint copies the log into it, so the log's
+stat is what moves with each write. When they changed, or were modified within the last three seconds
 (`racyWindow`), the document is read again and decoded only if its bytes
 differ, so another process or service writing the cache is seen at the next
 read. The database is only stat'ed, never opened as an ordinary file.

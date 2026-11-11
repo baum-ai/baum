@@ -21,9 +21,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -31,6 +33,7 @@ import (
 	_ "modernc.org/sqlite"
 
 	"github.com/baum-ai/baum/agent"
+	"github.com/baum-ai/baum/internal/sqlitepool"
 	"github.com/baum-ai/baum/internal/workstats"
 	"github.com/baum-ai/baum/review"
 )
@@ -179,19 +182,28 @@ func openRoot(root string, write bool) (*Store, error) {
 	if err := os.MkdirAll(root, 0o700); err != nil {
 		return nil, err
 	}
-	// SQLite must not create a world-readable file, even under a permissive umask.
-	f, err := os.OpenFile(s.path(), os.O_CREATE|os.O_RDWR, 0o600)
+	// SQLite must not create a world-readable file, even under a permissive
+	// umask. Only a new file is opened here: closing a descriptor to an
+	// existing one would drop the SQLite locks this process holds on it.
+	f, err := os.OpenFile(s.path(), os.O_CREATE|os.O_EXCL|os.O_RDWR, 0o600)
+	if err == nil {
+		err = f.Close()
+	} else if errors.Is(err, os.ErrExist) {
+		// SQLite would open a file it cannot write read-only, without an
+		// error: refuse it here, as opening it for writing did.
+		var info os.FileInfo
+		if info, err = os.Stat(s.path()); err == nil && info.Mode().Perm()&0o200 == 0 {
+			err = &fs.PathError{Op: "open", Path: s.path(), Err: fs.ErrPermission}
+		}
+	}
 	if err != nil {
 		return nil, err
 	}
-	if err := f.Close(); err != nil {
-		return nil, err
-	}
-	db, err := s.database(true)
+	db, release, err := s.acquire(true)
 	if err != nil {
 		return nil, err
 	}
-	defer db.Close()
+	defer release()
 	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS versions (repository TEXT NOT NULL, pr INTEGER NOT NULL, version INTEGER NOT NULL, metadata BLOB NOT NULL, document BLOB NOT NULL, PRIMARY KEY(repository,pr,version)); CREATE TABLE IF NOT EXISTS runs (id INTEGER PRIMARY KEY AUTOINCREMENT, repository TEXT NOT NULL, pr INTEGER NOT NULL, state TEXT NOT NULL, reason TEXT NOT NULL, started INTEGER NOT NULL, expires INTEGER NOT NULL, finished INTEGER NOT NULL); CREATE INDEX IF NOT EXISTS runs_by_pr ON runs(repository,pr,id);`)
 	if err == nil {
 		err = setupSummaries(context.Background(), db)
@@ -228,11 +240,85 @@ func (s *Store) database(write bool) (*sql.DB, error) {
 	if filepath.VolumeName(s.path()) != "" && !strings.HasPrefix(uriPath, "/") {
 		uriPath = "/" + uriPath
 	}
-	db, err := sql.Open("sqlite", (&url.URL{Scheme: "file", Path: uriPath}).String()+"?mode="+mode+"&_pragma=busy_timeout(10000)")
-	if err == nil {
+	uri := (&url.URL{Scheme: "file", Path: uriPath}).String() + "?mode=" + mode + "&_pragma=busy_timeout(10000)"
+	if write {
+		uri += "&_pragma=journal_size_limit(" + strconv.Itoa(journalSizeLimit) + ")"
+	}
+	db, err := sql.Open("sqlite", uri)
+	if err != nil {
+		return nil, err
+	}
+	db.SetMaxOpenConns(1)
+	if write {
+		// Best effort, as appdb does: a store another connection holds
+		// switches at a later write-open. The mode is kept in the file, so
+		// older binaries and read-only opens use the log too.
+		_, _ = db.Exec("PRAGMA journal_mode=WAL")
+		return db, nil
+	}
+	// Reading a store in WAL mode needs its -shm file, which SQLite creates
+	// beside it. In a directory this user cannot write, with no -shm left
+	// there, it cannot. With no log either, the last writer checkpointed all
+	// of it and closed, so the database file is whole: it is then read as it
+	// is (immutable), which no writer can change without creating the log.
+	// Never with a log, or for a rollback journal SQLite cannot roll back:
+	// the file alone may then be half written.
+	var version int
+	err = db.QueryRow("PRAGMA schema_version").Scan(&version)
+	if code, ok := sqliteCode(err); ok && (code == sqliteReadOnlyDirectory || code&0xff == sqliteCantOpen) && !exists(s.path()+"-wal") && !exists(s.path()+"-journal") {
+		_ = db.Close()
+		if db, err = sql.Open("sqlite", uri+"&immutable=1"); err != nil {
+			return nil, err
+		}
 		db.SetMaxOpenConns(1)
 	}
-	return db, err
+	return db, nil
+}
+
+// SQLite's result codes for a database whose directory cannot be written
+// (SQLITE_READONLY_DIRECTORY) and, primary, for a file it cannot open.
+const sqliteReadOnlyDirectory, sqliteCantOpen = 1544, 14
+
+// exists reports whether path may exist: any error but "does not exist"
+// counts as existing.
+func exists(path string) bool {
+	_, err := os.Stat(path)
+	return !errors.Is(err, os.ErrNotExist)
+}
+
+func sqliteCode(err error) (int, bool) {
+	var coded interface{ Code() int }
+	if errors.As(err, &coded) {
+		return coded.Code(), true
+	}
+	return 0, false
+}
+
+// journalSizeLimit is the size, in bytes, a store's write-ahead log is cut
+// back to once a checkpoint has copied it into the database.
+const journalSizeLimit = 16 << 20
+
+// sharedConnections is how many connections a shared handle opens at most.
+const sharedConnections = 4
+
+// acquire returns a handle on the store's database, shared with the rest of
+// the process once sqlitepool is enabled, and the function that releases it.
+// ErrNotFound when there is no database.
+func (s *Store) acquire(write bool) (*sql.DB, func(), error) {
+	if _, err := os.Stat(s.path()); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, nil, ErrNotFound
+		}
+		return nil, nil, err
+	}
+	return sqlitepool.Acquire(s.path(), !write, func() (*sql.DB, error) {
+		db, err := s.database(write)
+		if err == nil {
+			db.SetMaxOpenConns(sharedConnections)
+			db.SetMaxIdleConns(2)
+		}
+		return db, err
+	})
 }
 
 func (s *Store) Latest(ctx context.Context, k Key) (Version, error) { return s.load(ctx, k, 0) }
@@ -246,11 +332,11 @@ func (s *Store) load(ctx context.Context, k Key, n int) (Version, error) {
 	if !k.valid() {
 		return Version{}, fmt.Errorf("invalid repository or pull request")
 	}
-	db, err := s.database(false)
+	db, release, err := s.acquire(false)
 	if err != nil {
 		return Version{}, err
 	}
-	defer db.Close()
+	defer release()
 	// One read transaction, so the revision is the one of the bytes read.
 	tx, err := db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
@@ -288,11 +374,11 @@ func (s *Store) Versions(ctx context.Context, k Key) ([]Metadata, error) {
 	if !k.valid() {
 		return nil, fmt.Errorf("invalid repository or pull request")
 	}
-	db, err := s.database(false)
+	db, release, err := s.acquire(false)
 	if err != nil {
 		return nil, err
 	}
-	defer db.Close()
+	defer release()
 	rows, err := db.QueryContext(ctx, `SELECT metadata FROM versions WHERE repository=? AND pr=? ORDER BY version DESC`, k.repository(), k.Number)
 	if err != nil {
 		return nil, err
@@ -325,11 +411,11 @@ type Commits struct {
 // Commits lists the recorded commits of every stored version of every pull
 // request, without reading documents. A root with no database is ErrNotFound.
 func (s *Store) Commits(ctx context.Context) ([]Commits, error) {
-	db, err := s.database(false)
+	db, release, err := s.acquire(false)
 	if err != nil {
 		return nil, err
 	}
-	defer db.Close()
+	defer release()
 	rows, err := db.QueryContext(ctx, `SELECT repository,pr,version,metadata FROM versions ORDER BY repository,pr,version`)
 	if err != nil {
 		return nil, err
@@ -392,11 +478,11 @@ func (s *Store) Put(ctx context.Context, k Key, previous Version, v Version) err
 	if err != nil {
 		return err
 	}
-	db, err := s.database(true)
+	db, release, err := s.acquire(true)
 	if err != nil {
 		return err
 	}
-	defer db.Close()
+	defer release()
 	// The first statement acquires SQLite's writer lock and checks history in
 	// that same statement; there is no deferred read-to-write upgrade race.
 	tx, err := db.BeginTx(ctx, nil)
@@ -481,11 +567,11 @@ func (s *Store) replaceCurrent(ctx context.Context, k Key, previous Version, doc
 	if !review.RefreshChanged(previous.Document, document) {
 		return s.unchanged(ctx, k, previous, again)
 	}
-	db, err := s.database(true)
+	db, release, err := s.acquire(true)
 	if err != nil {
 		return err
 	}
-	defer db.Close()
+	defer release()
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -510,11 +596,11 @@ func (s *Store) replaceCurrent(ctx context.Context, k Key, previous Version, doc
 // and its exact bytes must still be the latest.
 func (s *Store) unchanged(ctx context.Context, k Key, previous Version, again string) error {
 	workstats.Inc("store.unchanged_replacements")
-	db, err := s.database(false)
+	db, release, err := s.acquire(false)
 	if err != nil {
 		return err
 	}
-	defer db.Close()
+	defer release()
 	var latest int
 	err = db.QueryRowContext(ctx, `SELECT 1 FROM versions WHERE repository=? AND pr=? AND version=? AND document=? AND version=(SELECT MAX(version) FROM versions WHERE repository=? AND pr=?)`, k.repository(), k.Number, previous.Metadata.Version, []byte(previous.Document), k.repository(), k.Number).Scan(&latest)
 	if errors.Is(err, sql.ErrNoRows) {

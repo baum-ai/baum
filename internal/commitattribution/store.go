@@ -108,14 +108,14 @@ func (s *Store) Lookup(ctx context.Context, repositories, commits []string) ([]O
 	if len(repositories) == 0 || len(commits) == 0 {
 		return nil, nil
 	}
-	db, err := appdb.Open(s.Path, true)
+	db, release, err := appdb.Acquire(s.Path, true)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, err
 	}
-	defer func() { _ = db.Close() }()
+	defer release()
 	var out []Observation
 	for _, repository := range repositories {
 		for _, sha := range commits {
