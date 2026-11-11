@@ -2999,6 +2999,10 @@ whether the app offers a fix.
 Missing state is unknown; unresolved counts are nullable and marked as lower
 bounds when threads exceed the cap. Comment-only reviews use the latest 100
 reviews as a fallback to GitHub's review decision and opinionated reviews.
+`review_required` preserves whether GitHub's `reviewDecision` is
+`REVIEW_REQUIRED`, independently of recorded reviews. The Inbox uses that flag
+to name a required review; an otherwise unexplained blocked merge says
+"Blocked on GitHub". A missing approval alone is not a review requirement.
 The user's teams and per-author repository permissions still use conditional
 REST requests. Truncated review requests fail the refresh rather than concealing
 an automatic-generation trigger. All requests refuse redirects.
@@ -3072,8 +3076,12 @@ refuses a pull request whose head moved. Both accept only picked repositories
 (unpicked is `404`), send each document once with no retry, and map GitHub's
 errors to `{code, message}`: `head_moved` and `conflict` and `not_open` are
 `409`, `blocked` (required checks, reviews, branch protection) and
-`method_not_allowed` are `422`, `forbidden` is `403`, anything else `502`. After
-a merge GitHub accepted, the daemon records it (`discovery.Service.Merged`:
+`method_not_allowed` are `422`, `forbidden` is `403`, anything else `502`.
+Permission refusals retain GitHub's explanation and direct the user to the
+connection's permissions and scopes. A missing workflow scope explains that
+workflow changes need workflow access, which is opt-in, and offers merging on
+GitHub or Settings' Reconnect with workflow access.
+After a merge GitHub accepted, the daemon records it (`discovery.Service.Merged`:
 the pull request leaves the cached open ones and is observed `MERGED` at the
 merged head, with no read) and publishes an index change, so the inbox shows
 it merged at once rather than when the background refresh next reads it. It

@@ -2982,6 +2982,9 @@ a.local-session-pr:hover {
   display: flex;
   flex-direction: column;
   gap: 2px;
+  /* Its own width wherever it starts, so the width measured before it is
+     placed under its button is the width it keeps once it is there. */
+  width: max-content;
   min-width: 200px;
   max-width: 320px;
   padding: 6px;

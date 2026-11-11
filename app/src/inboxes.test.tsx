@@ -350,7 +350,7 @@ it("lists an inbox's own pull requests done today and waiting on others", async 
     "1 of 3",
   );
   expect(node.querySelector(".upnext-list-summary")!.textContent).toContain("1 done");
-  expect(headings()).toContain("Waiting on checks or reviews 1");
+  expect(headings()).toContain("Waiting 1");
   expect(titles()).toContain("Change 5");
   expect(titles()).not.toContain("Change 6");
   // A merge inbox matches the merges done, and no pull request waiting on others.

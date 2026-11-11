@@ -145,7 +145,7 @@ func TestFirstSignInInSSOEnforcingAccountReportsSSO(t *testing.T) {
 	m.oauth, m.api = srv.URL, srv.URL
 	now := time.Unix(10000, 0)
 	m.now = func() time.Time { return now }
-	d, err := m.Start(context.Background())
+	d, err := m.Start(context.Background(), false)
 	if err != nil {
 		t.Fatal(err)
 	}

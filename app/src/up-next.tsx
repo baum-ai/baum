@@ -760,9 +760,10 @@ export function waitingOn(entry: Entry, base?: number) {
   if (base != null) return `Waiting on #${base}`;
   if (entry.checks === "running") return "Checks running";
   if (entry.review === "changes_requested") return "Changes requested";
+  if (entry.pull_request.review_required) return "Waiting on review";
   const unchecked = entry.merge === "blocked" && entry.checks === "none";
   if (unchecked && entry.pull_request.review_required === false) return "No checks reported";
-  if (entry.review !== "approved") return "Waiting on review";
+  if (entry.merge === "blocked") return "Blocked on GitHub";
   return "Waiting on GitHub";
 }
 
@@ -835,9 +836,9 @@ const isGroup = (line: Line | undefined): line is GroupRow => !!line && "group" 
 
 export const groupKey = (group: ReviewGroup) => `group:${group.id}`;
 
-/** The list's sections with every review group that has a shown member as
- *  one row, in the section and at the place of its first member in the list:
- *  its members leave their own rows and nest under it. */
+/** A stack follows its first shown open member in base-to-tip order. Other
+ *  groups follow their first member in the action list. Each appears once,
+ *  with its members nested under it and retaining their own states. */
 export function withGroups<S extends { rows: Row[] }>(
   sections: S[],
   groups: ReviewGroup[],
@@ -867,7 +868,7 @@ export function withGroups<S extends { rows: Row[] }>(
     for (const row of rows) {
       const group = owner.get(row);
       if (!group) lines.push(row);
-      else if (!placed.has(group)) {
+      else if (!placed.has(group) && (!group.group.stack || group.members[0] === row)) {
         placed.add(group);
         lines.push(group);
       }
@@ -1247,7 +1248,7 @@ export function UpNextPage({
     })),
     {
       id: "waiting" as const,
-      title: "Waiting on checks or reviews",
+      title: "Waiting",
       rows: ownWaiting.map(
         (entry): Row => ({
           key: upNextKey(entry.pull_request),
@@ -2115,12 +2116,29 @@ type PanelRow = {
 };
 type PanelBlock = { title: string; lead?: string; rows: PanelRow[]; more?: string };
 
-/** Where the pull request stands on GitHub, each row opening to its detail:
- *  its checks, its conflicting files and its unresolved review threads. A
- *  fix lists what blocks it under What needs fixing instead. */
+/** Known checks, conflicts and threads open to their details. An unexplained
+ *  GitHub merge block is shown directly. A fix lists its known blockers under
+ *  What needs fixing instead. */
 function onGitHub(entry: Entry, fixing: boolean): PanelBlock[] {
   const unresolved = entry.unresolved ?? 0;
+  const unexplained =
+    entry.merge === "blocked" &&
+    !entry.pull_request.draft &&
+    !entry.pull_request.behind &&
+    entry.checks !== "running" &&
+    entry.checks !== "failing" &&
+    !entry.pull_request.review_required &&
+    entry.review !== "changes_requested" &&
+    unresolved === 0;
   const rows: PanelRow[] = [
+    ...(unexplained
+      ? [
+          {
+            main: "Merge blocked by GitHub",
+            sub: "GitHub has not supplied the reason. Check this connection's permissions and the pull request's rules on GitHub.",
+          },
+        ]
+      : []),
     ...(CHECK_WORDS[entry.checks] &&
     entry.checks !== "none" &&
     !(fixing && entry.checks === "failing")
@@ -2198,8 +2216,7 @@ function blocks(row: Row, doc: ReviewDocument | null): PanelBlock[] {
   const changes = whatChanged(doc);
   const github = onGitHub(entry, row.item?.kind === "fix" && !row.job);
   if (row.job) return [...changes, ...github];
-  // What a waiting pull request waits on is its panel's chip; On GitHub
-  // says the rest.
+  // Waiting pull requests keep their GitHub state ahead of the saved review.
   if (row.waiting) return [...github, ...changes];
   switch (row.item?.kind) {
     case "review":
@@ -2352,7 +2369,18 @@ function Panel({
             </kbd>
           ) : null}
         </Link>
-      ) : waiting ? null : kind === "merge" ? (
+      ) : waiting ? (
+        pr.url ? (
+          <a
+            href={pr.url}
+            target="_blank"
+            rel="noreferrer"
+            className={cn("upnext-secondary", SECONDARY)}
+          >
+            Open on GitHub
+          </a>
+        ) : null
+      ) : kind === "merge" ? (
         <button type="button" className={cn("upnext-secondary", SECONDARY)} onClick={merge}>
           Merge
           <kbd aria-hidden="true" className="key-hint">
