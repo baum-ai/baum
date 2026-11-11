@@ -1124,6 +1124,45 @@ it("opens on General and marks sections needing attention", async () => {
   expect(node.querySelector("#fix-agent")).not.toBeNull();
   expect(nav.querySelector('[aria-current="page"]')!.textContent).toContain("Fixes");
 });
+it("summarises the prompts in the section list and marks outdated ones", async () => {
+  history.replaceState(null, "", "/s/test-ns/?page=settings&section=prompts");
+  stubDiagnostics(async () => Response.json({ local: true, report: diagnosticsReport }));
+  stubAutomatic();
+  const stubbed = vi.mocked(fetch).getMockImplementation()!;
+  const prompt = (id: string, over: object = {}) => ({
+    id,
+    title: `Prompt ${id}`,
+    group: "reviews",
+    used_by: "Reviews",
+    default_text: "default",
+    default_version: "v2",
+    custom_text: null,
+    based_on: null,
+    outdated: false,
+    safety_rules: [],
+    missing_safety_rules: [],
+    ...over,
+  });
+  vi.mocked(fetch).mockImplementation((...args) =>
+    String(args[0]).endsWith("api/settings/prompts")
+      ? Promise.resolve(
+          Response.json({
+            prompts: [
+              prompt("a", { custom_text: "mine", based_on: "v1", outdated: true }),
+              prompt("b"),
+            ],
+          }),
+        )
+      : stubbed(...args),
+  );
+  await act(async () => root.render(<App />));
+  const item = node.querySelector('nav[aria-label="Settings sections"] [data-section="prompts"]')!;
+  expect(item.textContent).toContain("1 custom");
+  expect(item.querySelector('[aria-label="Needs attention"]')).not.toBeNull();
+  expect(node.querySelector('[aria-labelledby="settings-prompts-heading"]')!.textContent).toContain(
+    "Written for v1; the default is now v2.",
+  );
+});
 it("moves through Settings' sections and their controls from the keyboard", async () => {
   history.replaceState(null, "", "/s/test-ns/?page=settings");
   stubDiagnostics(async () => Response.json({ local: true, report: diagnosticsReport }));
@@ -1293,19 +1332,20 @@ it("sets automatic reviews per repository, with no daily cap", async () => {
   const mode = region.querySelector<HTMLSelectElement>("select")!;
   expect(mode.value).toBe("default");
   expect(mode.options[0]!.textContent).toBe("Global setting (on)");
+  // It saves as it changes, as Settings does.
   await act(async () => {
     mode.value = "off";
     mode.dispatchEvent(new Event("change", { bubbles: true }));
   });
-  await act(async () =>
-    Array.from(region.querySelectorAll("button"))
-      .find((b) => b.textContent === "Save repository settings")!
-      .click(),
-  );
   expect(puts).toContainEqual({
     path: "/s/test-ns/api/repositories/acme/demo/settings",
     body: { automatic: false, decisions: null },
   });
+  // The page stays, and says so.
+  expect(location.search).toBe("?page=repositories&repository=acme%2Fdemo");
+  expect(
+    node.querySelector('[aria-label="Repository acme/demo"] .settings-saved')!.textContent,
+  ).toBe("Saved");
 });
 it("turns decision capture off for one repository", async () => {
   history.replaceState(null, "", "/s/test-ns/?page=repositories");
@@ -1317,11 +1357,6 @@ it("turns decision capture off for one repository", async () => {
   // On by default.
   expect(toggle.checked).toBe(true);
   await act(async () => toggle.click());
-  await act(async () =>
-    Array.from(region.querySelectorAll("button"))
-      .find((b) => b.textContent === "Save repository settings")!
-      .click(),
-  );
   expect(puts.at(-1)!.body).toMatchObject({ decisions: false });
 });
 it("shows a repository's decision capture turned off", async () => {
@@ -1543,10 +1578,10 @@ it("types a custom data extraction model", async () => {
     body: { enabled: true, backend: "", model: "gpt-6-custom", effort: "" },
   });
 });
-/** Opens a repository's settings dialog and returns it. */
+/** Opens a repository's page from its row and returns it. */
 async function openRepository(name = "acme/demo") {
   await act(async () =>
-    node.querySelector<HTMLButtonElement>(`button[aria-label="Settings for ${name}"]`)!.click(),
+    node.querySelector<HTMLAnchorElement>(`a[aria-label="Settings for ${name}"]`)!.click(),
   );
   return node.querySelector(`[aria-label="Repository ${name}"]`)!;
 }
@@ -1585,14 +1620,11 @@ it("saves a repository's automatic choice as explicit null when automatic settin
   );
   await act(async () => root.render(<App />));
   const region = await openRepository();
-  await act(async () =>
-    Array.from(region.querySelectorAll("button"))
-      .find((b) => b.textContent === "Save repository settings")!
-      .click(),
-  );
+  expect(region.querySelector("select")).toBeNull();
+  await act(async () => region.querySelector<HTMLInputElement>('input[role="switch"]')!.click());
   expect(puts).toContainEqual({
     path: "/s/test-ns/api/repositories/acme/demo/settings",
-    body: { automatic: null, decisions: null },
+    body: { automatic: null, decisions: false },
   });
 });
 it("shows a repository set to On as paused while the global switch is off", async () => {
@@ -1615,11 +1647,9 @@ it("shows a repository set to On as paused while the global switch is off", asyn
   const region = await openRepository();
   const mode = region.querySelector<HTMLSelectElement>("select")!;
   expect(mode.value).toBe("on");
-  expect(mode.selectedOptions[0]!.textContent).toBe(
-    "On for this repository (paused by the global switch)",
-  );
+  expect(mode.selectedOptions[0]!.textContent).toBe("On (paused by the global switch)");
   expect(region.textContent).toContain(
-    "Automatic reviews are paused by the global switch, although this repository is set to On.",
+    "Paused by the global switch, although this repository is set to On.",
   );
 });
 it("shows a job's pull request title, when it started and how long it took", async () => {

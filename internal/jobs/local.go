@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/baum-ai/baum/agent"
+	"github.com/baum-ai/baum/agent/prompt"
 	"github.com/baum-ai/baum/internal/assemble"
 	"github.com/baum-ai/baum/internal/chat"
 	"github.com/baum-ai/baum/internal/config"
@@ -437,6 +438,9 @@ func (l *Local) Execute(ctx context.Context, p Prepared, progress func(Progress)
 	// run; a group's combined review in one pass.
 	options := generate.Options{Group: group, Staged: group == nil, PriceList: list, Assembler: guarded, Request: assemble.Request{Repository: repository, Number: key.Number, Limits: assemble.LimitsFrom(caps)}, Backend: backend, BackendVersion: selected.Version, Model: selected.Model, Budgets: agent.Budgets{WallClock: time.Duration(cfg.Budgets.ReviewTimeout), MaxCalls: cfg.Budgets.MaxCalls, MaxTokens: cfg.Budgets.MaxTokens, MaxProviderAttempts: 3, MaxRepairAttempts: 2},
 		OnRepairs: backend.repaired, PassTimeout: max(time.Duration(cfg.Budgets.PassTimeout), time.Duration(cfg.Budgets.ReviewTimeout))}
+	if e := l.applyPrompts(ctx, p.Repository, &options); e != nil {
+		return nil, e
+	}
 	if group == nil {
 		options.OnDraft = backend.draft
 		options.Stored = func(ctx context.Context, key store.Key, m store.Metadata) error {
@@ -846,4 +850,41 @@ func (l *Local) pruneReviewRuns(ctx context.Context, versions *store.Store, key 
 	if all, e := versions.Versions(ctx, key); e == nil {
 		_ = reviewruns.PruneVersions(root, all)
 	}
+}
+
+// promptSourceOf is store.Metadata's PromptSource for a run that used ids:
+// "repository" when a custom one came from the repository, "global" when
+// custom ones came only from the global settings, "" when none was custom.
+func promptSourceOf(ids []prompt.ID, overrides prompt.Overrides, sources map[prompt.ID]repos.PromptSource) string {
+	source := ""
+	for _, id := range ids {
+		if overrides[id] == "" {
+			continue
+		}
+		switch sources[id] {
+		case repos.PromptSourceRepository:
+			return string(repos.PromptSourceRepository)
+		case repos.PromptSourceGlobal:
+			source = string(repos.PromptSourceGlobal)
+		}
+	}
+	return source
+}
+
+// applyPrompts sets the review's prompts to those resolved for the
+// repository (repository, then global, then built in) and records where the
+// custom ones came from. They are read once, at the start of the job: a change
+// made while it runs applies to the next one. A failed read fails the job
+// rather than reviewing with prompts the user did not choose.
+func (l *Local) applyPrompts(ctx context.Context, repository string, o *generate.Options) error {
+	overrides, sources, e := l.Registry.ResolvePrompts(ctx, repository)
+	if e != nil {
+		return fmt.Errorf("resolving the prompts: %w", e)
+	}
+	o.StagedPrompts = prompt.StagedPrompts{Overrides: overrides}
+	if o.Group != nil {
+		o.Prompts = prompt.GroupPrompts{Overrides: overrides}
+	}
+	o.PromptSource = promptSourceOf(prompt.ReviewIDs(o.Group != nil, o.Staged && o.Group == nil), overrides, sources)
+	return nil
 }

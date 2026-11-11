@@ -31,18 +31,35 @@ var fixThreads string
 // change from a conversation. The
 // caller appends the data the sections refer to, delimited as untrusted.
 func Fix(conflicts, checks, threads, chat bool) string {
-	parts := []string{strings.TrimRight(fixPublic, "\n")}
+	text, _ := FixWith(nil, conflicts, checks, threads, chat)
+	return text
+}
+
+// FixWith is Fix with Overrides: the fix, fix-conflicts, fix-checks,
+// fix-threads and fix-chat entries replace the built-in text of the shared
+// rules and of the sections included. The version is FixVersion, with
+// CustomSuffix when an included part was overridden; an override of a section
+// that is not included does not count. Callers must Validate override text
+// first; FixWith does not.
+func FixWith(o Overrides, conflicts, checks, threads, chat bool) (text, version string) {
+	custom := false
+	part := func(id ID, builtin string) string {
+		body, overridden := o.text(id, builtin)
+		custom = custom || overridden
+		return strings.TrimRight(body, "\n")
+	}
+	parts := []string{part(IDFix, fixPublic)}
 	if conflicts {
-		parts = append(parts, strings.TrimRight(fixConflicts, "\n"))
+		parts = append(parts, part(IDFixConflicts, fixConflicts))
 	}
 	if checks {
-		parts = append(parts, strings.TrimRight(fixChecks, "\n"))
+		parts = append(parts, part(IDFixChecks, fixChecks))
 	}
 	if threads {
-		parts = append(parts, strings.TrimRight(fixThreads, "\n"))
+		parts = append(parts, part(IDFixThreads, fixThreads))
 	}
 	if chat {
-		parts = append(parts, strings.TrimRight(fixChat, "\n"))
+		parts = append(parts, part(IDFixChat, fixChat))
 	}
-	return strings.Join(parts, "\n\n") + "\n"
+	return strings.Join(parts, "\n\n") + "\n", withCustom(FixVersion, custom)
 }

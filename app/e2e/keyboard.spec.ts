@@ -114,7 +114,7 @@ test("Tab on Settings reaches its controls past the sidebar", async ({ page }) =
   const sections = page.getByRole("navigation", { name: "Settings sections" });
   await expect(sections).toBeVisible();
   const seen: Awaited<ReturnType<typeof focused>>[] = [];
-  for (let i = 0; i < 8; i++) {
+  for (let i = 0; i < 10; i++) {
     await page.keyboard.press("Tab");
     seen.push(await focused(page));
   }

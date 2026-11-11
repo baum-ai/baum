@@ -162,7 +162,34 @@ export function parseGroups(body: unknown): ReviewGroup[] {
 export function sameRepository(a: string, b: string) {
   return a.toLowerCase() === b.toLowerCase();
 }
+/** One prompt baum uses, as `api/settings/prompts` lists it. */
+export type PromptEntry = {
+  id: string;
+  title: string;
+  group: "reviews" | "fixes" | "extraction";
+  used_by: string;
+  default_text: string;
+  default_version: string;
+  /** The person's replacement at this level; null when there is none. */
+  custom_text: string | null;
+  based_on: string | null;
+  outdated: boolean;
+  safety_rules: { id: string; label: string; text: string }[];
+  missing_safety_rules: string[];
+  /** A stored custom text that no longer passes validation: jobs skip it. */
+  invalid?: boolean;
+  invalid_reason?: string | null;
+};
+/** A prompt as `api/repositories/{owner}/{name}/prompts` lists it: `custom_text`
+ *  is the repository's own, `inherited_text` what it falls back to. */
+export type RepositoryPromptEntry = PromptEntry & {
+  source: "repository" | "global" | "default";
+  inherited_text: string;
+};
 export type Provenance = {
+  /** Where the custom prompts the version used came from; absent when all
+   *  were built in. */
+  prompt_source?: "" | "global" | "repository";
   tokens?: number;
   version: number;
   model: string;

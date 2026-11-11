@@ -1,0 +1,358 @@
+package prompt_test
+
+import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"fmt"
+	"reflect"
+	"slices"
+	"strings"
+	"testing"
+
+	"github.com/baum-ai/baum/agent"
+	"github.com/baum-ai/baum/agent/prompt"
+	"github.com/baum-ai/baum/decisions"
+)
+
+var backends = []string{agent.BackendClaude, agent.BackendAnthropic, agent.BackendCodex, agent.BackendCursorAgent}
+
+// digests captured from the code before overrides existed.
+var baseline = map[string]string{
+	"claude review":       "ec2a09922981dc4b1e4df337c7d102eaee0deadfd3376370d1c42d798aa3e111",
+	"claude group":        "2223a1768e7d376e07d9532919ecbd97b76bed1a3400d6872078ace60ffd264f",
+	"claude staged":       "45d56a1f43e410ce3c088de15c71adeacaf132a3d07e1e4547dfe725b657f1e1",
+	"anthropic review":    "ec2a09922981dc4b1e4df337c7d102eaee0deadfd3376370d1c42d798aa3e111",
+	"anthropic group":     "2223a1768e7d376e07d9532919ecbd97b76bed1a3400d6872078ace60ffd264f",
+	"anthropic staged":    "45d56a1f43e410ce3c088de15c71adeacaf132a3d07e1e4547dfe725b657f1e1",
+	"codex review":        "3b34612b55551568b77006fc5615e95012c53345670270c6670184f9bdd5f79d",
+	"codex group":         "5beacba3c5cd18dec186fea10a1ba5d32e2833886c39f3b7553a401fcd021485",
+	"codex staged":        "ebd06c34a7d614cdc6883b2c5679d53bfb8184d7f644f5ef6b15274282cc8c44",
+	"cursor-agent review": "f2fb1940ac321a4a5e46ebbb807ecad2832ccc72519a7cdf27b9b824310f9c76",
+	"cursor-agent group":  "117b6e8d260439b09ebd477a2940993d9737802efb5cfe52ddf28b6300addc71",
+	"cursor-agent staged": "8f46365dab08f2407992c39cca4bd8e81806520afd2bbacbd170b4d730e826a8",
+	"fix 0":               "5ff07cb79658980528df0d7dc38c2e8f2bd3c211422f66c769a21408237e4971",
+	"fix 1":               "a01d046cb31bb35be38e4304c9957a47a87a8dfdd682def427ab00251a9848aa",
+	"fix 2":               "e7f530cb2f66b78c599930498089aaa8d060c968d5fda760c7a75a7dada877bf",
+	"fix 3":               "1c89f7afe44e7185189ad34b6860c8972fc56da3e9c67ada6cc8092baef1d0d9",
+	"fix 4":               "8e02ce5a96bc1903eccf6724d5083133c405faf41ffa33005168f6aa447b84b4",
+	"fix 5":               "e6d92e17a48ee22166dfc0b0ffdfc5f2f98c8cc0ec1e53b3e7859977dc9862dc",
+	"fix 6":               "b53355f2d107721a9ecbd9bbc1406c00d7d1e07a724c6f1408e95464ddfb3319",
+	"fix 7":               "d0594de5f7d903a824013544c234902ab9e357e8559df28ae064e819ff316462",
+	"fix 8":               "3767be0d9d0e81ea6173e9b2bb2763184d29defdebcba8015770e41ca53aecec",
+	"fix 9":               "16016895652a6f3fdc94430be7675d782e445fe5299e376ad19b21b6d01eef86",
+	"fix 10":              "56091500cf46af68dcdd47f4812c0367555de42e4f2f51adf99c1811abd27827",
+	"fix 11":              "16698369e9727e1550e43c7c688421838261220ae0fd02ac7ba1558895c4a8e5",
+	"fix 12":              "1839eb22fbf2c3296b69984e52e616a5dff8fa3ab6a32b43aa6516cafcc96684",
+	"fix 13":              "dd115a648650fa176de95287b3997141ea7fc68c798cf78519d2b30b6c06ce84",
+	"fix 14":              "741d2786e9150947a1ef445a7f5b7a6c28984adc0584bfc338f95fc03ac9ecc2",
+	"fix 15":              "2b4db4dd265428b3a70d920ebc12441f681457c9afa20559799f21d662d729a1",
+}
+
+func sha(s string) string {
+	sum := sha256.Sum256([]byte(s))
+	return hex.EncodeToString(sum[:])
+}
+
+func TestZeroValueMatchesPreviousOutput(t *testing.T) {
+	ctx := context.Background()
+	for _, b := range backends {
+		p, err := prompt.Prompts{}.Instructions(ctx, b)
+		if err != nil || p.Version != prompt.Version || p.Digest != baseline[b+" review"] || sha(p.Body) != p.Digest {
+			t.Errorf("%s review: %v %q %s", b, err, p.Version, p.Digest)
+		}
+		for _, o := range []prompt.Overrides{nil, {}, {prompt.IDReviewGroup: "", prompt.IDFix: ""}} {
+			g, err := prompt.GroupPrompts{Overrides: o}.Instructions(ctx, b)
+			if err != nil || g.Version != prompt.GroupVersion || g.Digest != baseline[b+" group"] {
+				t.Errorf("%s group: %v %q %s", b, err, g.Version, g.Digest)
+			}
+			s, err := prompt.StagedPrompts{Overrides: o}.StagedInstructions(ctx, b)
+			if err != nil || s.Version != prompt.StagedVersion || s.Digest != baseline[b+" staged"] {
+				t.Errorf("%s staged: %v %q %s", b, err, s.Version, s.Digest)
+			}
+		}
+	}
+	for m := 0; m < 16; m++ {
+		c, k, th, ch := m&1 != 0, m&2 != 0, m&4 != 0, m&8 != 0
+		want := baseline[fmt.Sprintf("fix %d", m)]
+		if got := sha(prompt.Fix(c, k, th, ch)); got != want {
+			t.Errorf("Fix %d: %s", m, got)
+		}
+		text, version := prompt.FixWith(nil, c, k, th, ch)
+		if sha(text) != want || version != prompt.FixVersion {
+			t.Errorf("FixWith %d: %s %q", m, sha(text), version)
+		}
+	}
+}
+
+func TestOverridesAreUsed(t *testing.T) {
+	ctx := context.Background()
+	for _, b := range backends {
+		submit := readFile(t, map[string]string{"claude": "submit-claude.md", "anthropic": "submit-claude.md", "codex": "submit-codex.md", "cursor-agent": "submit-cursor.md"}[b])
+		stageSubmit := readFile(t, map[string]string{"claude": "submit-stage-claude.md", "anthropic": "submit-stage-claude.md", "codex": "submit-stage-codex.md", "cursor-agent": "submit-stage-cursor.md"}[b])
+
+		// group: one text before the Submitting heading, with and without a
+		// trailing newline
+		for _, text := range []string{"MY GROUP\n", "MY GROUP"} {
+			g, _ := prompt.GroupPrompts{Overrides: prompt.Overrides{prompt.IDReviewGroup: text}}.Instructions(ctx, b)
+			if g.Body != "MY GROUP\n## 10. Submitting\n\n"+submit || g.Version != prompt.GroupVersion+"+custom" || g.Digest != sha(g.Body) {
+				t.Errorf("%s group override: %q %q", b, g.Version, g.Body)
+			}
+		}
+		// a fix or staged override does not touch the group
+		g, _ := prompt.GroupPrompts{Overrides: prompt.Overrides{prompt.IDFix: "x", prompt.IDReviewStagedShared: "x"}}.Instructions(ctx, b)
+		if g.Digest != baseline[b+" group"] || g.Version != prompt.GroupVersion {
+			t.Errorf("%s: unrelated overrides changed the group", b)
+		}
+
+		// staged: each of the four parts
+		def, _ := prompt.StagedPrompts{}.StagedInstructions(ctx, b)
+		for _, id := range []prompt.ID{prompt.IDReviewStagedShared, prompt.IDReviewStagedOutline, prompt.IDReviewStagedDetails, prompt.IDReviewStagedContext} {
+			s, err := prompt.StagedPrompts{Overrides: prompt.Overrides{id: "CUSTOM"}}.StagedInstructions(ctx, b)
+			if err != nil || s.Version != prompt.StagedVersion+"+custom" {
+				t.Fatalf("%s %s: %v %q", b, id, err, s.Version)
+			}
+			got := map[prompt.ID]*[2]string{
+				prompt.IDReviewStagedShared:  {def.Shared, s.Shared},
+				prompt.IDReviewStagedOutline: {def.Outline, s.Outline},
+				prompt.IDReviewStagedDetails: {def.Details, s.Details},
+				prompt.IDReviewStagedContext: {def.Context, s.Context},
+			}
+			for other, pair := range got {
+				if other == id && pair[0] == pair[1] {
+					t.Errorf("%s %s not applied", b, id)
+				}
+				if other != id && pair[0] != pair[1] {
+					t.Errorf("%s %s changed %s", b, id, other)
+				}
+			}
+			var changed string
+			switch id {
+			case prompt.IDReviewStagedShared:
+				changed = s.Shared
+				if changed != "CUSTOM\n" {
+					t.Errorf("shared %q", changed)
+				}
+			case prompt.IDReviewStagedOutline:
+				changed = s.Outline
+			case prompt.IDReviewStagedDetails:
+				changed = s.Details
+			case prompt.IDReviewStagedContext:
+				changed = s.Context
+			}
+			if id != prompt.IDReviewStagedShared {
+				part := map[prompt.ID]string{prompt.IDReviewStagedOutline: "the outline", prompt.IDReviewStagedDetails: "the section details", prompt.IDReviewStagedContext: "the context"}[id]
+				if want := "CUSTOM\n## Submitting\n\n" + strings.ReplaceAll(stageSubmit, "{part}", part); changed != want {
+					t.Errorf("%s %s: %q", b, id, changed)
+				}
+			}
+			h := sha256.New()
+			for _, x := range []string{s.Shared, s.Outline, s.Details, s.Context} {
+				h.Write([]byte(x + "\x00"))
+			}
+			if s.Digest != hex.EncodeToString(h.Sum(nil)) || s.Digest == def.Digest {
+				t.Errorf("%s %s digest", b, id)
+			}
+		}
+		if s, _ := (prompt.StagedPrompts{Overrides: prompt.Overrides{prompt.IDReviewGroup: "x"}}).StagedInstructions(ctx, b); s.Digest != def.Digest || s.Version != prompt.StagedVersion {
+			t.Errorf("%s: the group override changed the staged review", b)
+		}
+	}
+}
+
+func TestFixWithOverrides(t *testing.T) {
+	o := prompt.Overrides{prompt.IDFix: "RULES\n\n\n", prompt.IDFixChecks: "CHECKS", prompt.IDFixChat: "CHAT"}
+	text, version := prompt.FixWith(o, true, true, false, false)
+	if want := "RULES\n\n" + strings.TrimRight(readFile(t, "fix-conflicts.md"), "\n") + "\n\nCHECKS\n"; text != want || version != "fix-public-v1+custom" {
+		t.Errorf("%q %q", version, text)
+	}
+	// only an included section counts
+	text, version = prompt.FixWith(prompt.Overrides{prompt.IDFixChat: "CHAT"}, true, false, false, false)
+	if version != prompt.FixVersion || text != prompt.Fix(true, false, false, false) {
+		t.Errorf("an excluded section's override counted: %q", version)
+	}
+	if text, version = prompt.FixWith(prompt.Overrides{prompt.IDFixChat: "CHAT"}, false, false, false, true); version != "fix-public-v1+custom" || !strings.HasSuffix(text, "\n\nCHAT\n") {
+		t.Errorf("%q %q", version, text)
+	}
+}
+
+func TestCatalogue(t *testing.T) {
+	var ids []prompt.ID
+	for _, e := range prompt.Catalogue() {
+		ids = append(ids, e.ID)
+		if got, ok := prompt.Lookup(e.ID); !ok || !reflect.DeepEqual(got, e) {
+			t.Errorf("Lookup(%s)", e.ID)
+		}
+		if e.Title == "" || e.UsedBy == "" || e.Default == "" || e.DefaultVersion == "" {
+			t.Errorf("%s: incomplete entry", e.ID)
+		}
+		if !slices.Contains([]string{prompt.GroupReviews, prompt.GroupFixes, prompt.GroupExtraction}, e.Group) {
+			t.Errorf("%s: group %q", e.ID, e.Group)
+		}
+		if strings.HasPrefix(string(e.ID), "review") && (strings.Contains(e.Default, "Submitting\n") || prompt.Validate(e.ID, e.Default) != nil) {
+			t.Errorf("%s: the default must be valid and without the Submitting heading", e.ID)
+		}
+		if err := prompt.Validate(e.ID, e.Default); err != nil {
+			t.Errorf("%s: its own default is invalid: %v", e.ID, err)
+		}
+		if len(prompt.MissingSafetyRules(e.ID, e.Default)) != 0 {
+			t.Errorf("%s: default misses its own rules", e.ID)
+		}
+		seen := map[string]bool{}
+		for _, r := range e.SafetyRules {
+			if r.ID == "" || r.Label == "" || seen[r.ID] || !strings.HasPrefix(r.ID, string(e.ID)+".") {
+				t.Errorf("%s: rule %q", e.ID, r.ID)
+			}
+			seen[r.ID] = true
+			if n := strings.Count(e.Default, r.Text); n != 1 {
+				t.Errorf("%s: rule text occurs %d times in the default", r.ID, n)
+			}
+		}
+	}
+	want := []prompt.ID{"review-group", "review-staged-shared", "review-staged-outline", "review-staged-details", "review-staged-context", "fix", "fix-conflicts", "fix-checks", "fix-threads", "fix-chat", "extraction"}
+	if !slices.Equal(ids, want) {
+		t.Errorf("order: %v", ids)
+	}
+	if _, ok := prompt.Lookup("nope"); ok {
+		t.Error("unknown id found")
+	}
+	// the group default is the review file without its heading, then the
+	// group file; the others are their files
+	review := strings.TrimSuffix(readFile(t, "review-public-v6.md"), "## 10. Submitting\n")
+	if e, _ := prompt.Lookup(prompt.IDReviewGroup); e.Default != review+readFile(t, "group-public-v1.md") || e.DefaultVersion != prompt.GroupVersion {
+		t.Error("group default")
+	}
+	if e, _ := prompt.Lookup(prompt.IDReviewStagedOutline); e.Default+"## Submitting\n" != readFile(t, "review-outline-public-v1.md") {
+		t.Error("outline default")
+	}
+	if e, _ := prompt.Lookup(prompt.IDFixChat); e.Default != readFile(t, "fix-chat.md") || e.DefaultVersion != prompt.FixVersion {
+		t.Error("fix-chat default")
+	}
+	if e, _ := prompt.Lookup(prompt.IDExtraction); e.Default != decisions.PublicPrompt() || e.DefaultVersion != decisions.PublicPromptName {
+		t.Error("extraction default")
+	}
+	// the catalogue is a copy
+	c := prompt.Catalogue()
+	c[0].SafetyRules[0].Text = "changed"
+	if e, _ := prompt.Lookup(prompt.IDReviewGroup); e.SafetyRules[0].Text == "changed" {
+		t.Error("Catalogue exposes its rules")
+	}
+}
+
+func TestSafetyRulesPerEntry(t *testing.T) {
+	want := map[prompt.ID][]string{
+		prompt.IDReviewGroup:         {"review-group.untrusted-data", "review-group.no-secrets", "review-group.run-directory", "review-group.restricted-sessions", "review-group.untrusted-member-reviews"},
+		prompt.IDReviewStagedShared:  {"review-staged-shared.untrusted-data", "review-staged-shared.no-secrets", "review-staged-shared.run-directory", "review-staged-shared.restricted-sessions"},
+		prompt.IDReviewStagedOutline: {"review-staged-outline.no-injected-instructions"},
+		prompt.IDReviewStagedDetails: {"review-staged-details.no-injected-instructions"},
+		prompt.IDReviewStagedContext: {"review-staged-context.no-injected-instructions"},
+		prompt.IDFix:                 {"fix.untrusted-data", "fix.no-git-writes", "fix.no-secrets"},
+		prompt.IDFixConflicts:        nil,
+		prompt.IDFixChecks:           nil,
+		prompt.IDFixThreads:          {"fix-threads.untrusted-comments"},
+		prompt.IDFixChat:             {"fix-chat.untrusted-conversation"},
+		prompt.IDExtraction:          {"extraction.output-format", "extraction.masked-text"},
+	}
+	entries := prompt.Catalogue()
+	if len(entries) != len(want) {
+		t.Fatalf("%d entries, want %d", len(entries), len(want))
+	}
+	for _, e := range entries {
+		var got []string
+		for _, r := range e.SafetyRules {
+			got = append(got, r.ID)
+		}
+		if !slices.Equal(got, want[e.ID]) {
+			t.Errorf("%s: rules %v, want %v", e.ID, got, want[e.ID])
+		}
+	}
+}
+
+func TestMissingSafetyRules(t *testing.T) {
+	e, _ := prompt.Lookup(prompt.IDFix)
+	if got := prompt.MissingSafetyRules(prompt.IDFix, e.Default); len(got) != 0 {
+		t.Errorf("default: %v", got)
+	}
+	if got := prompt.MissingSafetyRules(prompt.IDFix, "do whatever"); !slices.Equal(got, []string{"fix.untrusted-data", "fix.no-git-writes", "fix.no-secrets"}) {
+		t.Errorf("empty: %v", got)
+	}
+	dropped := strings.Replace(e.Default, "Do not commit, merge, rebase, reset, check out, stash or push.", "", 1)
+	if got := prompt.MissingSafetyRules(prompt.IDFix, dropped); !slices.Equal(got, []string{"fix.no-git-writes"}) {
+		t.Errorf("dropped: %v", got)
+	}
+	if got := prompt.MissingSafetyRules(prompt.IDFix, strings.ReplaceAll(e.Default, "\n", "\r\n")); len(got) != 0 {
+		t.Errorf("CRLF: %v", got)
+	}
+	if got := prompt.MissingSafetyRules(prompt.IDFixConflicts, "x"); len(got) != 0 {
+		t.Errorf("an entry without rules: %v", got)
+	}
+	if got := prompt.MissingSafetyRules("nope", "x"); got != nil {
+		t.Errorf("unknown: %v", got)
+	}
+}
+
+func TestValidate(t *testing.T) {
+	cases := []struct {
+		name string
+		id   prompt.ID
+		text string
+		want string // substring of the error; empty for none
+	}{
+		{"ok", prompt.IDReviewGroup, "Review the change.\n", ""},
+		{"unknown id", "nope", "x", "unknown prompt"},
+		{"invalid utf-8", prompt.IDFix, "bad \xff", "UTF-8"},
+		{"empty", prompt.IDFix, "", "empty"},
+		{"blank", prompt.IDExtraction, " \n\t\r\n", "empty"},
+		{"limit", prompt.IDFix, strings.Repeat("a", prompt.MaxOverrideBytes), ""},
+		{"over the limit", prompt.IDFix, strings.Repeat("a", prompt.MaxOverrideBytes+1), "limit"},
+		{"submitting 10", prompt.IDReviewGroup, "Intro\n## 10. Submitting\nmore", "Submitting"},
+		{"submitting plain", prompt.IDReviewStagedDetails, "Intro\n## Submitting\n", "Submitting"},
+		{"submitting h3 crlf", prompt.IDReviewStagedShared, "Intro\r\n### Submitting  \r\nx", "Submitting"},
+		{"submitting group", prompt.IDReviewGroup, "# Submitting", "Submitting"},
+		{"submitting feedback", prompt.IDReviewGroup, "## Submitting feedback\n", "Submitting"},
+		{"submitting colon", prompt.IDReviewGroup, "### Submitting:\n", "Submitting"},
+		{"submitting upper closed", prompt.IDReviewStagedOutline, "## SUBMITTING ##\n", "Submitting"},
+		{"submitting indented", prompt.IDReviewGroup, " ## Submitting\n", "Submitting"},
+		{"submitting numbered", prompt.IDReviewGroup, "## 3.2 Submitting\n", "Submitting"},
+		{"heading ending in the word", prompt.IDReviewGroup, "## Results Submitting\n", ""},
+		{"code-indented heading", prompt.IDReviewGroup, "    ## Submitting\n", ""},
+		{"open backtick fence", prompt.IDFix, "Run:\n```sh\nmake\n", "fenced"},
+		{"open tilde fence", prompt.IDExtraction, "~~~\ncode", "fenced"},
+		{"closed fence", prompt.IDFix, "```sh\nmake\n```\n", ""},
+		{"closed longer fence", prompt.IDFix, "````\n```\n````\n", ""},
+		{"fence closed by wrong char", prompt.IDFix, "```\ncode\n~~~\n", "fenced"},
+		{"submitting in prose", prompt.IDReviewGroup, "Say how Submitting works.\n", ""},
+		{"submitting allowed in fix", prompt.IDFix, "## Submitting\n", ""},
+		{"submitting allowed in extraction", prompt.IDExtraction, "## Submitting\n", ""},
+	}
+	for _, c := range cases {
+		err := prompt.Validate(c.id, c.text)
+		switch {
+		case c.want == "" && err != nil:
+			t.Errorf("%s: %v", c.name, err)
+		case c.want != "" && (err == nil || !strings.Contains(err.Error(), c.want)):
+			t.Errorf("%s: error %v, want %q", c.name, err, c.want)
+		}
+	}
+}
+
+func TestNewExtractorWith(t *testing.T) {
+	public := decisions.NewPublicExtractor()
+	same := decisions.NewExtractorWith(decisions.PublicPrompt())
+	if same.PromptVersion() != public.PromptVersion() || same.SystemPrompt() != public.SystemPrompt() {
+		t.Error("the public text must give the public extractor")
+	}
+	if empty := decisions.NewExtractorWith(""); empty.PromptVersion() != public.PromptVersion() || empty.SystemPrompt() != public.SystemPrompt() {
+		t.Error("an empty prompt must give the public extractor")
+	}
+	custom := decisions.NewExtractorWith("Extract decisions my way.")
+	if !strings.HasPrefix(custom.PromptVersion(), "decisions-public-v1+custom-") || custom.PromptVersion() == public.PromptVersion() || custom.SystemPrompt() != "Extract decisions my way." {
+		t.Errorf("custom version %q", custom.PromptVersion())
+	}
+	if want := decisions.NewExtractor("Extract decisions my way.").PromptVersion(); !strings.HasSuffix(custom.PromptVersion(), "-"+want) {
+		t.Errorf("hash differs from NewExtractor's: %q vs %q", custom.PromptVersion(), want)
+	}
+	if other := decisions.NewExtractorWith("Another."); other.PromptVersion() == custom.PromptVersion() {
+		t.Error("different texts, same version")
+	}
+}

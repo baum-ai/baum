@@ -115,6 +115,9 @@ type Options struct {
 	PassTimeout time.Duration
 	// TileKinds is the tile allow-list; empty offers no tiles.
 	TileKinds []string
+	// PromptSource is recorded in the stored metadata as store.Metadata's
+	// PromptSource; the host that chose the prompts sets it.
+	PromptSource string
 	// Prompts defaults to this module's public prompt.
 	Prompts agent.Prompts
 	// Staged writes a single pull request's review in stages
@@ -270,6 +273,18 @@ func Run(ctx context.Context, o Options) (result Result, err error) {
 			return result, fail(CategoryBackend, err)
 		}
 		promptVersion, promptDigest = instructions.Version, instructions.Digest
+		// The sections a continuation writes must come from the prompts the
+		// version was written with: its metadata keeps theirs. A version
+		// saved without a digest only continues under built-in prompts.
+		if saved := o.Continue; saved != nil {
+			changed := saved.Metadata.PromptDigest != promptDigest
+			if saved.Metadata.PromptDigest == "" {
+				changed = strings.HasSuffix(promptVersion, prompt.CustomSuffix)
+			}
+			if changed {
+				return result, fail(CategoryInput, errors.New("the review prompts changed since this review was written; regenerate the review to use them"))
+			}
+		}
 	} else {
 		instructions, err := prompts.Instructions(ctx, o.Backend.Name())
 		if err != nil {
@@ -512,7 +527,7 @@ func Run(ctx context.Context, o Options) (result Result, err error) {
 	}
 	result.Metadata = store.Metadata{Accounting: outcome.Accounting, Version: stored.Review.Version, Head: assembled.Head, Base: assembled.Base, MergeBase: assembled.MergeBase, BundleDigest: b.Digest,
 		Backend: o.Backend.Name(), BackendVersion: o.BackendVersion, Model: stored.Review.Generator.Model, Schema: stored.Schema,
-		SchemaRevision: stored.Review.Generator.SchemaRevision, PromptVersion: stored.Review.Generator.PromptVersion, PromptDigest: promptDigest,
+		SchemaRevision: stored.Review.Generator.SchemaRevision, PromptVersion: stored.Review.Generator.PromptVersion, PromptDigest: promptDigest, PromptSource: o.PromptSource,
 		Policy: stored.Review.Generator.ReviewMD, GeneratedAt: stored.Review.GeneratedAt, Elapsed: time.Since(started), Calls: outcome.Calls, Tokens: outcome.Tokens}
 	if o.Continue != nil {
 		// The version keeps the provenance of the run that wrote it.

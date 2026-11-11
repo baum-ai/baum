@@ -2372,6 +2372,221 @@ dialog.local-dialog-wide {
   font-size: var(--text-xs);
   color: var(--text-tertiary);
 }
+/* Prompts: the editor is a textarea over a transparent mirror of its text,
+   so safety rules' text can be marked without a second copy on screen. */
+.prompt-group {
+  display: grid;
+  gap: 0.5rem;
+}
+.prompt-item + .prompt-item {
+  border-top: 1px solid var(--border-subtle);
+}
+.prompt-item[data-open] {
+  background: var(--surface-wash);
+}
+/* A row is one button: the chevron, the title and what uses the prompt, and
+   on the right only the labels a prompt that is not the default needs. */
+.prompt-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  width: 100%;
+  padding: 0.875rem 1.25rem;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.prompt-row:hover {
+  background: var(--surface-hover);
+}
+.prompt-row:focus-visible {
+  outline: none;
+  box-shadow: inset var(--focus-ring);
+}
+.prompt-chevron {
+  flex: none;
+  color: var(--text-tertiary);
+  transition: transform 150ms ease;
+}
+.prompt-row[aria-expanded="true"] .prompt-chevron {
+  transform: rotate(90deg);
+}
+.prompt-row-text {
+  display: grid;
+  gap: 0.125rem;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.prompt-row-state {
+  display: flex;
+  flex: none;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 0.375rem;
+}
+.prompt-unsaved {
+  font-size: var(--text-xs);
+  color: var(--status-caution);
+}
+.prompt-editor {
+  display: grid;
+  gap: 0.75rem;
+  padding: 0.25rem 1.25rem 1.25rem 3rem;
+}
+.prompt-note {
+  display: flex;
+  gap: 0.375rem;
+  font-size: var(--text-xs);
+  color: var(--status-caution);
+}
+.prompt-note svg {
+  flex: none;
+  margin-top: 0.125rem;
+}
+.prompt-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem 1rem;
+}
+.prompt-legend {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+}
+.prompt-swatch {
+  display: inline-block;
+  width: 0.75rem;
+  height: 0.75rem;
+  border-radius: 2px;
+  background: var(--status-info-bg);
+}
+.prompt-field {
+  position: relative;
+  overflow: hidden;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  background: var(--surface-card);
+}
+.prompt-field:focus-within {
+  box-shadow: var(--focus-ring);
+}
+.prompt-text {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  height: 24rem;
+  margin: 0;
+  padding: 0.5rem 0.65rem;
+  border: 0;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  tab-size: 2;
+}
+.prompt-mirror {
+  position: absolute;
+  inset: 0;
+  height: auto;
+  overflow: hidden;
+  color: transparent;
+  pointer-events: none;
+}
+.prompt-mirror mark {
+  border-radius: 2px;
+  background: var(--status-info-bg);
+  color: transparent;
+}
+.prompt-input {
+  position: relative;
+  resize: vertical;
+  background: transparent;
+  color: var(--text-primary);
+}
+.prompt-field .prompt-input:focus,
+.prompt-field .prompt-input:focus-visible {
+  outline: none;
+  box-shadow: none;
+}
+.prompt-rules-block {
+  display: grid;
+  gap: 0.375rem;
+}
+.prompt-label {
+  margin: 0;
+  font-size: var(--text-xs);
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+.prompt-rules {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 1rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+}
+.prompt-rules li {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+.prompt-rules li svg {
+  flex: none;
+  color: var(--status-positive);
+}
+.prompt-rules li[data-missing] {
+  color: var(--status-caution);
+}
+.prompt-rules li[data-missing] svg {
+  color: var(--status-caution);
+}
+.prompt-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+.prompt-actions .prompt-reset {
+  margin-left: auto;
+}
+.prompt-view {
+  height: 24rem;
+  margin: 0;
+  padding: 0.5rem 0.65rem;
+  overflow: auto;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--surface-card);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+}
+.prompt-diff span {
+  display: block;
+  color: var(--text-tertiary);
+}
+.prompt-diff span[data-kind="add"] {
+  background: var(--status-positive-bg);
+  color: var(--text-primary);
+}
+.prompt-diff span[data-kind="del"] {
+  background: var(--status-critical-bg);
+  color: var(--text-primary);
+}
 @media (max-width: 760px) {
   .settings-layout {
     grid-template-columns: minmax(0, 1fr);
@@ -2385,6 +2600,9 @@ dialog.local-dialog-wide {
   }
   .settings-content {
     padding: 20px 16px 48px;
+  }
+  .prompt-editor {
+    padding-left: 1.25rem;
   }
   .settings-nav-item {
     flex: none;

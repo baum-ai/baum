@@ -785,6 +785,23 @@ type Prompt struct {
 }
 ```
 
+A prompt the user replaced (globally or for a repository) adds `+custom` to
+the version, and the stored metadata's `prompt_source` says where the custom
+prompts used came from: `repository` when any did, `global` when only global
+ones did, absent when every prompt was built in. The daemon's jobs and
+`baum decisions` use the prompts resolved for the repository (repository, then
+global, then built in); `baum internal generate` opens no registry and uses the
+built-in prompts. The replaceable review prompts are the four of a staged
+review and a review group's (`review-group`), which is the whole text before
+the Submitting heading, the review instructions included; the one-pass review
+prompt (`prompt.Prompts`) is not replaceable, as no job writes one pull
+request's review in one pass. A retry of a staged review's details refuses to run when the
+prompts' digest differs from the saved version's `prompt_digest`. The local app
+edits the overrides through `api/settings/prompts` and
+`api/repositories/{owner}/{name}/prompts` (see the app README, Settings ›
+Prompts) and shows `prompt_source` beside a review version.
+
+
 The module ships and maintains its own public prompt in `agent/prompt`:
 `review-public-v6.md`, shared by every backend and ending with a "Submitting"
 heading, plus a submit block per backend (`submit-claude.md`, used for claude

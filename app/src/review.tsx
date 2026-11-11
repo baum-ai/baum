@@ -1533,6 +1533,12 @@ export function GeneratedBy({
     <p className="local-generated-by">
       Generated with {latest && entry.latest ? `${entry.latest.backend} · ` : ""}
       {saved.model}
+      {saved.prompt_source ? (
+        <>
+          {" · "}
+          Custom prompt ({saved.prompt_source === "repository" ? "this repository" : "global"})
+        </>
+      ) : null}
       {made ? (
         <>
           {" · "}

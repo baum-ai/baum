@@ -52,6 +52,32 @@ its HTTP handler uses.
   `run_timeout` in `Preferences.Resolve`; a value out of range keeps the
   file's and does not block saving other preferences.
 
+- `prompt_overrides(repository, prompt_id, text, based_on, updated_at)`:
+  custom review, fix and extraction prompts (ids from `agent/prompt`). They
+  are stored only here and never read from repository content.
+  - `repository` is `''` (`GlobalPrompts`) for the global scope, else the
+    repository's current lowercase identity. Callers pass that name; earlier
+    alias names are not followed, as with `RepositorySettings`.
+  - `SetPromptOverride` runs `prompt.Validate`; a rejection wraps
+    `ErrInvalidPrompt`. It stores the prompt's built-in version in `based_on`.
+  - `SetPromptOverride` and `DeletePromptOverride` require a picked
+    repository (`ErrNotPicked`, checked in the transaction); the global scope
+    needs none. `DeletePromptOverride` fails with `ErrInvalidPrompt` for an
+    unknown id; deleting a missing row is no error.
+  - `ResolvePrompts` picks per prompt id the repository's text, else the
+    global one, else the built-in (absent from the returned
+    `prompt.Overrides`), and reports a `PromptSource` for every id. A
+    repository that is not picked gets only the global texts. A stored text
+    that no longer passes `prompt.Validate` is skipped.
+  - `Unpick` keeps the rows, so a re-pick sees them.
+  - `AddForwarded` copies the earlier name's rows to the current name when the
+    earlier name is still picked and the current name has no overrides
+    (deliberately unlike settings, which copy only while they are the
+    default). It then deletes the earlier name's rows in any case, because it
+    is unpicked and another repository may later take the name.
+  - A read-only registry reads no overrides while the table is missing, and
+    sees them once a writer has created it.
+
 A repository is picked exactly when it has a `picked` row. Adding a clone also
 picks its repository, and removing the clone keeps it picked with zero clones.
 A repository with no clone is still registered: `RepositorySettings` and
@@ -81,6 +107,8 @@ authenticated host and origin checks. JSON is decoded strictly.
 | `POST /api/repositories` `{"repository","settings"}` | pick (400 on a bad name or settings) |
 | `DELETE /api/repositories/{owner}/{name}` | unpick (204, 404) |
 | `PUT /api/repositories/{owner}/{name}/settings` | replace settings (404 unless picked) |
+| `GET /api/repositories/{owner}/{name}/prompts` | `{"prompts":[...]}`, one entry per catalogue prompt with the repository's own `custom_text`/`based_on`/`outdated`/`invalid`/`invalid_reason`, `source` (what a run uses, as `ResolvePrompts`) and `inherited_text` (the valid global text, else the built-in; 404 unless picked) |
+| `PUT /api/repositories/{owner}/{name}/prompts/{id}` `{"text": string\|null}` | set the repository's override; null or `""` resets to inherit; answers the entry (400 `{"message"}` invalid text or body, 404 unknown id or not picked, 413 too large) |
 
 Only `POST` validates the name. `DELETE` and `PUT` only lowercase it and look
 it up, so a malformed `owner/name` answers 404, and an Enterprise identity

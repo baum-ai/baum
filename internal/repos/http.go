@@ -218,6 +218,12 @@ func (r *Registry) HandlerWith(current CurrentName) http.Handler {
 		}
 		write(w, s)
 	})
+	mux.HandleFunc("GET /api/repositories/{owner}/{name}/prompts", func(w http.ResponseWriter, req *http.Request) {
+		r.ServePrompts(w, req, req.PathValue("owner")+"/"+req.PathValue("name"))
+	})
+	mux.HandleFunc("PUT /api/repositories/{owner}/{name}/prompts/{id}", func(w http.ResponseWriter, req *http.Request) {
+		r.ServePromptPut(w, req, req.PathValue("owner")+"/"+req.PathValue("name"), req.PathValue("id"))
+	})
 	return mux
 }
 

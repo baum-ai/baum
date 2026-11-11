@@ -131,6 +131,19 @@ folder and polls the daemon's background clone, including after reopening.
 Repositories come from GitHub only: without sign-in there is nothing to pick.
 
 Repository settings apply once per repository, including one with no clone.
+A repository's name in the list opens its page
+(`?page=repositories&repository=<owner/name>&section=`, `RepositoryPage` in
+`src/settings.tsx`), drawn as Settings is: its sections in a sand list down the
+left, each with a line under its name, and the chosen one on the warm panel, with
+the same keys (`useSettingsKeys`: j/k, 1 to 3, Enter into a section, Esc back to
+the list). Esc on the list, `u`, or the back link return to Repositories. The
+sections are **Reviews** (automatic reviews for this repository and decision
+capture, setting rows saved as they change with "Saved" by the heading, as
+Settings' sections are), **Prompts** (below; its line counts the custom ones and
+shows an attention dot as Settings › Prompts does) and **Registration** (the local
+clone, and **Remove registration**, which returns to the list). A repository not
+registered, or no longer, shows "This repository is not registered" with a link
+to the list.
 **Change local clone** lists registrations and lets the person remove one or
 choose another folder; files and saved review stores are left on disk. Keep the
 clone baum should use registered. An explicitly chosen fork clone may be filed
@@ -781,7 +794,7 @@ picker and `/` searches it (the search takes the focus when the picker opens,
 and `Esc` in an empty search leaves it); on the Timeline `Enter` or `o` opens or
 closes the feature or decision, an open feature's side panel follows the
 focus, and `/` focuses the search box (its hint shows inside the box). Settings' section list is its
-selection, as Up next's list is: `j`/`↓` and `k`/`↑` move it, `1` to `5` jump
+selection, as Up next's list is: `j`/`↓` and `k`/`↑` move it, `1` to `6` jump
 to a section, and `Enter`, `l` or `→` go into the shown section, where `j` and
 `k` step through its controls, `Space` or `Enter` changes the focused one and
 `Esc`, `h` or `←` go back to the list (`Esc` in a text field or select gives
@@ -1804,6 +1817,65 @@ the default is saved as none, so it follows the harness, and a saved model
 the daemon reports ignored (`baum internal reviews show`, with the harness it
 resolved) is shown the same way while that harness is chosen, and kept unless
 changed.
+
+Custom prompts (the review, fix and extraction prompts) are read with `GET
+api/settings/prompts` and, for a picked repository, `GET
+api/repositories/{owner}/{name}/prompts`: `{"prompts": [...]}`, one entry per
+catalogue prompt in catalogue order (`id`, `title`, `group`, `used_by`,
+`default_text`, `default_version`, `custom_text` and `based_on` (null unless
+this scope has its own text), `outdated`, `invalid` and `invalid_reason` (a stored text that no longer validates is shown but runs skip it), `safety_rules`, `missing_safety_rules`
+for the text in force in that scope). A repository entry adds `source`
+(`repository`, `global` or `default`) and `inherited_text`. `PUT
+api/settings/prompts/{id}` and `PUT api/repositories/{owner}/{name}/prompts/{id}`
+take `{"text": string|null}` (null or `""` resets, to the built-in or the global
+text) and answer the updated entry. Errors are `{"message"}`: 400 for a text
+that fails validation or a malformed body, 404 for an unknown id or a
+repository that is not picked, 413 for a body over about twice the 64 KiB text
+limit. An entry may also carry `invalid` and `invalid_reason`: a stored text that
+no longer passes validation after an upgrade, which jobs skip.
+
+**Settings › Prompts** (`PromptsSection`, `src/prompt-editor.tsx`) lists every
+prompt, staged review ones included, under Reviews, Fixes and Data extraction.
+Each row is one button, with no buttons of its own: a chevron, its title and what
+uses it, and on the right only what sets it apart from the default, a **Custom**
+pill and "Unsaved changes". A problem is spelled out on the row in the caution
+colour: "Written for <based_on>; the default is now <default_version>", a custom
+text that no longer contains a safety rule, or one not in use (`invalid`: "This
+custom prompt is not in use: <reason>. Edit and save it, or reset it."; such a
+prompt counts as not custom). The section list reads "N custom" and shows an
+attention dot when any prompt is outdated, invalid or a custom one lacks a safety
+rule. Pressing a row opens its editor beneath it (and closes any other), seeded
+with the effective text (the built-in one globally); pressing it again closes it.
+A segmented **Edit**, **Changes** and **Default** switch above the field shows
+the text, a line diff (longest common subsequence) of it against the effective
+text, or the built-in text read only; the field stays mounted while hidden, so it
+keeps its undo history. Nothing is saved until **Save** (`PUT
+api/settings/prompts/{id}`), which is offered only while the text differs from
+the stored one, or from the starting text when none is stored, and one save or
+reset runs at a time; **Discard
+changes**, shown while there is a draft, goes back to the stored text, and **Reset
+to default**, on the right, sends `null`. The editor is a monospace textarea over a
+transparent mirror of its text, so the text of each safety rule is marked where it
+stands (the switch's row has a key); the mirror is hidden from assistive
+technology. Below the field the safety rules are a list, each with a tick or a
+warning sign (and "present" or "missing" for screen readers), computed as the text
+is typed, CRLF read as LF, with a warning, "This prompt no longer contains: …".
+Saving stays possible and nothing is added back; the editor says baum adds the
+output format and the delimiting of pull request data itself. A failed save shows
+its message and keeps the text. `Esc` in the field gives it up first, without
+closing a dialog around it. Undo is the app's (below); the textarea has neither
+`value` nor `defaultValue`, as React writes either into its text node after every
+keystroke, so the text is written only when it changes from outside.
+A repository's page has a **Prompts** section listing the same entries with
+their source: a **Custom** pill for the repository's own, a **Global** pill for
+one inherited from Settings, and none for the default. Its editor is seeded with
+`inherited_text`, its **Changes** compares with that text, **Save for this
+repository** saves it, and **Use inherited** sends `null`. These save at once
+through their own `PUT`s, which the section says. Typed text not yet saved is kept per prompt while the page is
+open (a row shows "Unsaved changes"), so opening another prompt does not drop it;
+leaving the page or the Settings section discards it, which the repository page says. On a review, the "Generated
+with" line adds "Custom prompt (global)" or "Custom prompt (this repository)"
+when the saved version's `prompt_source` (from `api/versions`) says so.
 Analytics counts the decisions captured under baum's work.
 
 Every list page draws its list one way: Pull requests, the Inbox's queue, Sessions,
@@ -1836,7 +1908,7 @@ it now, each choice with its key where it has one. Choices that open more
 (a path form for a clone, a job's usage, a pull request's peek) open it under
 the row. Pull requests: Peek, Merge… or the fix, the fix's transcript,
 Generate review, Select, Open on GitHub. Jobs: Open pull request, Watch or
-Transcript, Show usage, Cancel job. Repositories: Settings…, Change local
+Transcript, Show usage, Cancel job. Repositories: Settings, Change local
 clone… or, without a clone, Choose folder… and Clone it…. Manage inboxes:
 Edit…, Move up, Move down, Show count in the sidebar. Snoozed: Bring back, Archive.
 Sessions: the session menu below.
@@ -1876,6 +1948,17 @@ back to the row that opened it. In a field, or over selected text, the browser's
 stays; everywhere else that offers no menu of its own, a right click does nothing
 (`blockBrowserMenu` in `src/native-menu.ts`, installed by every window: the app, setup,
 the tray and the connecting screen).
+
+Undo and redo in text fields are the app's own (`installTextHistory` in
+`src/text-history.ts`, installed by the app and setup windows): the desktop
+app's WebKitGTK web view never undoes on Ctrl+Z, so every text `input` and
+`textarea` keeps a history the app answers ⌘Z / Ctrl+Z, ⇧⌘Z / Ctrl+Shift+Z
+and Ctrl+Y (not on a Mac) from, in a browser too. Typing is one step until a
+pause of a second, a caret move or a switch between typing and deleting; a
+paste, a cut or a line break is a step of its own. A step restores the text and
+selection and sends an `input` event, so a React field's `onChange` follows; a
+field whose text the page changed (a reset, a sent message) starts its history
+again.
 
 - "Needs you" (`SessionsPage` in `src/sessions.tsx`) shows only while something asks
   the person for a permission or an answer (`asks`), and "Waiting for you", after it,

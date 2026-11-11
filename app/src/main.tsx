@@ -3,6 +3,8 @@ import { App } from "./app";
 import "./style.css";
 import { blockBrowserMenu } from "./native-menu";
 import { trackHidden } from "./visible-interval";
+import { installTextHistory } from "./text-history";
 blockBrowserMenu();
 trackHidden();
+installTextHistory();
 createRoot(document.getElementById("root")!).render(<App />);

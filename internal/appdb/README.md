@@ -10,7 +10,7 @@ configuration is still read from `config.toml`.
 
 | Tables / document bucket and key | Owner and contents |
 | --- | --- |
-| `repositories`, `clones`, `picked`, `aliases`, `preferences` | `repos`: picked repositories, clones, settings and global preferences |
+| `repositories`, `clones`, `picked`, `aliases`, `preferences`, `prompt_overrides` | `repos`: picked repositories, clones, settings and global preferences |
 | `groups`, `versions` | `reviewgroups`: group definitions and combined review versions |
 | `capture_session`, `decision`, `decision_file`, `capture_attempt`, feature/PR/link/search tables | `decisionlog`: decisions, coverage, call ledger and feature history |
 | `jobs`, `job_heads` | `jobs`: queue/history, progress, accounting and fix outcomes, one row per job, kept when archived 120 days after the job ended; and the archived runs of each pull request or group head, which keep automatic generation from running it again. `jobs` replaces the `state/jobs` document, which the queue moves into it on first open |

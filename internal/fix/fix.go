@@ -27,6 +27,7 @@ import (
 	"time"
 
 	"github.com/baum-ai/baum/agent"
+	"github.com/baum-ai/baum/agent/prompt"
 	"github.com/baum-ai/baum/internal/github"
 	"github.com/baum-ai/baum/internal/gitlocal"
 	"github.com/baum-ai/baum/internal/privatefs"
@@ -121,6 +122,9 @@ type Options struct {
 	// Env are the user's agent variables for the git commands of the fix
 	// (gitlocal.FixOptions.Env).
 	Env []string
+	// Prompts replace the built-in fix prompts (prompt.FixWith); nil keeps
+	// them. The texts must already be validated.
+	Prompts prompt.Overrides
 	// Transcript, when set, receives the agent's steps (agent.Request.Transcript).
 	Transcript func(agent.TranscriptEntry)
 }
@@ -240,7 +244,7 @@ func Run(ctx context.Context, o Options) (out Outcome, err error) {
 		if err := os.Mkdir(scratch, 0o700); err != nil {
 			return out, fail(ReasonGit, err)
 		}
-		text, tag, err := buildPrompt(ctx, task{Repository: o.Repository.String(), Number: o.Number, Title: o.Title, HeadRef: o.HeadRef, BaseRef: o.BaseRef, Conflicts: conflicts, Merged: o.Conflicts && len(conflicts) == 0, Checks: o.Evidence, Threads: o.Threads, Chat: o.Chat}, o.Conflicts, o.Checks)
+		text, tag, err := buildPrompt(ctx, task{Repository: o.Repository.String(), Number: o.Number, Title: o.Title, HeadRef: o.HeadRef, BaseRef: o.BaseRef, Conflicts: conflicts, Merged: o.Conflicts && len(conflicts) == 0, Checks: o.Evidence, Threads: o.Threads, Chat: o.Chat, Prompts: o.Prompts}, o.Conflicts, o.Checks)
 		if err != nil {
 			return out, fail(ReasonBackend, err)
 		}
