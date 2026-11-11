@@ -9,7 +9,6 @@ import (
 	"os/user"
 	"path/filepath"
 	"strings"
-	"sync"
 
 	"github.com/baum-ai/baum/redact"
 	"github.com/baum-ai/baum/sessions/session"
@@ -21,11 +20,17 @@ import (
 // differ in what they mask. It is safe for concurrent use.
 type Renderer struct {
 	homes []homeForm
-	// engine redacts transcripts; it is compiled on the first one rendered.
-	once      sync.Once
-	engine    *redact.Engine
-	engineErr error
+	// masks remembers what Mask's lines masked to: the live sessions ask
+	// for the same titles, messages and steps every second.
+	masks *redact.Memo
 }
+
+// The bounds of what Mask remembers: well over the lines of the sessions
+// that run at once, and a pasted prompt or two.
+const (
+	maskMemoEntries = 4096
+	maskMemoBytes   = 16 << 20
+)
 
 // NewRenderer returns a renderer that writes home as ~; an empty home is
 // UserHome's.
@@ -33,7 +38,7 @@ func NewRenderer(home string) *Renderer {
 	if home == "" {
 		home = UserHome()
 	}
-	return &Renderer{homes: homeForms(home)}
+	return &Renderer{homes: homeForms(home), masks: redact.NewMemo(maskMemoEntries, maskMemoBytes)}
 }
 
 // Render shapes and bounds the graph first (DefaultLimits), so nothing past
@@ -42,11 +47,10 @@ func NewRenderer(home string) *Renderer {
 // every string and key of it, with the engine "locallink.RedactGraph"
 // uses. The home directory is written as ~ last.
 func (r *Renderer) Render(ctx context.Context, graph *session.Graph, meta Meta) ([]byte, error) {
-	r.once.Do(func() { r.engine, r.engineErr = redact.New() })
-	if r.engineErr != nil {
-		return nil, r.engineErr
+	engine, err := redact.Shared()
+	if err != nil {
+		return nil, err
 	}
-	engine := r.engine
 	shaped, err := Build(graph, meta, DefaultLimits, func(text string) (string, error) {
 		masked, _, err := engine.RedactContext(ctx, text)
 		return masked, err
@@ -67,13 +71,13 @@ func (r *Renderer) Render(ctx context.Context, graph *session.Graph, meta Meta) 
 
 // Mask masks one line of text as Render masks a transcript's: secrets and
 // e-mail addresses, with the same engine, and the home directory as ~. A line
-// the engine cannot read is none.
+// the engine cannot read is none. A line masked before is not scanned again.
 func (r *Renderer) Mask(ctx context.Context, text string) string {
-	r.once.Do(func() { r.engine, r.engineErr = redact.New() })
-	if r.engineErr != nil {
+	engine, err := redact.Shared()
+	if err != nil {
 		return ""
 	}
-	masked, _, err := r.engine.RedactContext(ctx, text)
+	masked, err := r.masks.Redact(ctx, engine, text)
 	if err != nil {
 		return ""
 	}
