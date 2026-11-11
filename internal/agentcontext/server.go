@@ -61,13 +61,36 @@ func New(opts Options) *Server {
 		return spec.Proposer
 	})
 	registry.onRevoke(s.envelope.forget)
-	for _, t := range s.builtinTools() {
+	pull, group := s.pullTools(), s.groupTools()
+	for _, t := range slices.Concat(s.builtinTools(), pull, group) {
 		if err := t.compile(); err != nil {
 			panic(err)
 		}
 		s.tools = append(s.tools, t)
 	}
+	names := func(tools []Tool) []string {
+		var out []string
+		for _, t := range tools {
+			out = append(out, t.Name)
+		}
+		return out
+	}
+	// "focus" is the page's own; the rest read the pull request or group.
+	s.pages[PagePullRequest] = PageSpec{Name: PagePullRequest, Tools: names(pull)}
+	s.pages[PageGroup] = PageSpec{Name: PageGroup, Tools: append(names(group), "focus")}
 	return s
+}
+
+// ToolReads are the route prefixes each registered tool may read, by tool
+// name, so a test can check that none reaches a route that writes.
+func (s *Server) ToolReads() map[string][]string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	out := map[string][]string{}
+	for _, t := range s.tools {
+		out[t.Name] = slices.Clone(t.Reads)
+	}
+	return out
 }
 
 // RegisterTool adds a tool. Names are unique.
