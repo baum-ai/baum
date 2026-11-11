@@ -278,7 +278,12 @@ as far as the tool allows:
 - `--setting-sources ""` skips the user, project and local settings files, so
   only the inline `--settings` baum passes is applied; administrator-managed
   policy settings may still apply. No MCP server is loaded
-  (`--strict-mcp-config` with an empty list), and no session is written
+  (`--strict-mcp-config` with an empty list) for reviews, fixes and Ask. A
+  run the chat or a quick action starts may get exactly one: baum's own,
+  named by `--mcp-config` under `--strict-mcp-config` (so the user's, a
+  project's and plugins' stay out) and allowed as `mcp__baum`, with the token
+  in the environment only, never in the configuration or the arguments (see
+  [MCP server for agents](#mcp-server-for-agents)). No session is written
   (`--no-session-persistence`), unless the caller asks the local run to keep,
   resume (`--resume`) or fork (`--fork-session`) a session; the hosted profile
   never does. `--restricted` and the tool allowlist apply on every launch,
@@ -1353,6 +1358,19 @@ replies on the review threads it addressed, and resolving a review thread you
 chose; it supplies no approvals or other discussion controls.
 
 ### MCP server for agents
+
+An agent reaches the server through `baum mcp`, a stdio program the agent CLI
+starts. It reads JSON-RPC lines from stdin, forwards each to the daemon's
+`/api/mcp` and prints the response. It takes its token only from the
+`BAUM_MCP_TOKEN` environment variable (never an argument, so the process list
+does not show it), never logs it, and reads the daemon's address, not its
+launch token, from `credential.json`. Claude Code gets the variable through
+its environment and Codex through `mcp_servers.baum.env_vars`. baum sets it
+after the user's `agent_env`, so that cannot replace or remove it. Only the
+local profiles run an MCP server; the hosted and container profiles refuse a
+request that asks for one. Claude Code runs with `--strict-mcp-config` and
+Codex with `--ignore-user-config`, so baum's server is the only one, and only
+runs the chat or a quick action starts have it.
 
 The application server also serves `POST /api/mcp`, an MCP server that lets
 an agent read what the app shows. It takes only an MCP token, sent as

@@ -547,6 +547,11 @@ type Backend interface {
 }
 ```
 
+Every run has no MCP server: Claude Code gets `--strict-mcp-config` with an empty
+`--mcp-config`, Codex `--ignore-user-config`. A local run may set
+`Request.MCP` to give the agent exactly one, baum's own (`baum mcp`); see
+"MCP server for agents" for the flags and the token's path.
+
 A backend may also implement `agent.Completer`: one structured completion
 with a system prompt, a user message and a schema, no working files, used by
 decision capture. It is normally one model call. The anthropic backend makes one Messages call offering only
@@ -5064,6 +5069,29 @@ included) -32600, an unknown method -32601, and missing or invalid params,
 or an unknown tool, -32602. A tool that fails returns a result with
 `isError: true` and its explanation, not a protocol error; so do arguments
 that do not match the tool's JSON Schema.
+
+Agents reach the route through `baum mcp` (`internal/cli/mcp.go`), a stdio
+bridge: the agent CLI starts it, it reads one JSON-RPC message per line from
+stdin (at most 1 MiB) and POSTs each to `<daemon origin>/api/mcp` with the
+token from `BAUM_MCP_TOKEN`, then prints each response as one line on stdout.
+A notification (202, no body) prints nothing. It takes the origin, never the
+token, from `credential.json` and reads that file again after a connection
+failure, so a daemon restarted on a new port is found. When the daemon is
+unreachable or refuses the token (revoked), each request gets a JSON-RPC
+error (-32000) with its id and a notification gets nothing; the bridge keeps
+running until stdin closes (exit 0) or SIGTERM. Only protocol lines go to
+stdout; diagnostics go to stderr, once per kind, never with the token.
+
+`agent.Request.MCP` (`agent.MCPServer{Command, Args, Token}`) starts it for a
+run: Command is the absolute path of the running baum with `mcp`. Claude
+keeps `--strict-mcp-config` and names only `baum` in `--mcp-config` (a stdio
+server, no token), and adds `--allowedTools mcp__baum`, since `--tools` only
+selects built-in tools and a `--print` run cannot ask permission. Codex adds
+`-c mcp_servers.baum.command`, `.args` and `.env_vars=["BAUM_MCP_TOKEN"]`
+under `--ignore-user-config`. Both put `BAUM_MCP_TOKEN` last in the child's
+environment, after `agent_env`. Only the Claude `User` and Codex `Local`
+profiles accept it; the others return an error. With no `MCP` the arguments
+are what they always were. No job sets it yet.
 
 The route takes only an MCP token as `Authorization: Bearer`. The app
 server checks the exact Host, asks the MCP server whether the token is live,
