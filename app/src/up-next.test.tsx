@@ -499,10 +499,82 @@ it("snoozes, undoes and brings back, and remembers it", async () => {
     node.querySelector<HTMLButtonElement>('button[aria-label="Actions for acme/demo #3"]')!.click(),
   );
   const choices = Array.from(node.querySelectorAll<HTMLElement>('[role="menu"] [role^=menuitem]'));
-  expect(choices.map((item) => item.textContent)).toEqual(["Bring back"]);
+  expect(choices.map((item) => item.textContent)).toEqual(["Bring back", "Archive"]);
   await act(async () => choices[0]!.click());
   expect(list()).toContain("Change 3");
   expect(shown()).toBe("Change 3");
+});
+
+it("archives with e, undoes with u, and never shows it again, not even as done", async () => {
+  await render();
+  await act(async () => row("Change 3").click());
+  await press("e");
+  expect(node.querySelector('[role="status"]')!.textContent).toMatch(/^Archived #3/);
+  // The pull request that takes its place is selected.
+  expect(shown()).toBe("Change 4");
+  expect(list()).toEqual(["Change 1", "Change 4", "Change 2", "Change 5", "Change 6"]);
+  await press("u");
+  expect(shown()).toBe("Change 3");
+  expect(list()).toContain("Change 3");
+  // The panel's button archives too.
+  await act(async () => button("Archive").click());
+  expect(list()).not.toContain("Change 3");
+  // There is no Archived group, it is not done today, and a reload keeps it.
+  await render();
+  expect(list()).toEqual(["Change 1", "Change 4", "Change 2", "Change 5", "Change 6"]);
+  expect(groups().join()).not.toMatch(/Archived|Snoozed/);
+  expect(await cleared()).toBeNull();
+  expect(node.textContent).not.toContain("Change 3");
+});
+
+it("archives from a row's menu, a snoozed one too, and a snooze waits for the unarchive", async () => {
+  await render();
+  await rightClick("Change 4");
+  await choose("Archive");
+  expect(list()).not.toContain("Change 4");
+  await act(async () => row("Change 3").click());
+  await press("s");
+  await act(async () => snoozeFor("Until it changes").click());
+  await act(async () => button("Snoozed").click());
+  await act(async () =>
+    node.querySelector<HTMLButtonElement>('button[aria-label="Actions for acme/demo #3"]')!.click(),
+  );
+  await act(async () =>
+    Array.from(node.querySelectorAll<HTMLElement>('[role="menu"] [role^=menuitem]'))
+      .find((item) => item.textContent === "Archive")!
+      .click(),
+  );
+  expect(groups().join()).not.toContain("Snoozed");
+  expect(node.textContent).not.toContain("Change 3");
+  // Undone, it is snoozed again.
+  await press("u");
+  expect(groups()).toContain("Snoozed · 1");
+  expect(list()).not.toContain("Change 3");
+});
+
+it("forgets an archive once its pull request closes, so a reopened one comes back", async () => {
+  await render();
+  await act(async () => row("Change 3").click());
+  await press("e");
+  const all = entries;
+  entries = all.filter((e) => e.pull_request.number !== 3);
+  await render();
+  expect(list()).not.toContain("Change 3");
+  entries = all;
+  await render();
+  expect(list()).toContain("Change 3");
+});
+
+it("forgets an archive once the read says it merged, though its repository has nothing else open", async () => {
+  entries = [ready(3)];
+  await render();
+  await press("e");
+  expect(list()).toEqual([]);
+  entries = [mine(3, { merge: "ready", checks: "passing", pull_request: { state: "MERGED" } })];
+  await render();
+  entries = [ready(3)];
+  await render();
+  expect(list()).toEqual(["Change 3"]);
 });
 
 it("keeps arrows, j/k and Control+n/p on Snooze's choices", async () => {
@@ -1233,6 +1305,33 @@ it("formats Markdown in the review summary, risk explanation and section titles"
   expect(panel().querySelector(".upnext-risk .upnext-prose code")!.textContent).toBe("20");
   expect(panel().querySelector(".upnext-risk em")!.textContent).toBe("search");
   expect(panel().querySelector(".upnext-block-text code")!.textContent).toBe("repository");
+});
+
+it("shows a hunk ID in the review's prose as a chip for its file and line", async () => {
+  const doc = structuredClone(example);
+  const hunk = doc.index.hunks[0]!;
+  const reason = doc.summary.risk_score.reasons[0]!;
+  reason.text = `Skips events already handled (${hunk.id}).`;
+  doc.summary.text = `See \`${hunk.id}\` and h_000000000000.`;
+  entries = [fixture()[2]!];
+  const original = vi.mocked(fetch).getMockImplementation()!;
+  vi.mocked(fetch).mockImplementation(async (...args) =>
+    String(args[0]).includes("api/document") ? Response.json(doc) : original(...args),
+  );
+  await render();
+  const name = hunk.path.slice(hunk.path.lastIndexOf("/") + 1);
+  // Up next has no file view, so the chip opens the hunk on GitHub.
+  for (const prose of [
+    panel().querySelector(".upnext-risk .upnext-prose")!,
+    panel().querySelector(".upnext-lead")!,
+  ]) {
+    expect(prose.textContent).not.toContain(hunk.id);
+    const chip = prose.querySelector("a")!;
+    expect(chip.textContent).toMatch(new RegExp(`^${name}`));
+    expect(chip.getAttribute("href")).toContain("https://github.com/");
+  }
+  // An ID the review does not have stays as written.
+  expect(panel().querySelector(".upnext-lead")!.textContent).toContain("h_000000000000");
 });
 
 it("lists the files that conflict with the base", async () => {

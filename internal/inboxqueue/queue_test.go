@@ -194,6 +194,31 @@ func TestSnoozedPullRequestsDoNotCount(t *testing.T) {
 	if got := count(Snoozes{Held: map[string]string{"acme/a#2": "older"}}); got != 2 {
 		t.Fatal("held on another head", got)
 	}
+	if got := count(Snoozes{Archived: map[string]int64{"acme/a#1": 1, "acme/a#2": 1}}); got != 0 {
+		t.Fatal("archived", got)
+	}
+}
+
+func TestArchivedPullRequestsLeaveEveryInbox(t *testing.T) {
+	entries := []reviewindex.Entry{
+		entry(1, func(e *reviewindex.Entry) { e.PullRequest.ReviewRequestedFromMe = true }),
+		// Someone else's that waits on nothing from the person.
+		entry(2, func(*reviewindex.Entry) {}),
+	}
+	saved := []inboxes.Inbox{{ID: "all"}}
+	archived := Snoozes{Archived: map[string]int64{"acme/a#1": 1, "acme/a#2": 1}}
+	got := Build(entries, nil, nil, archived, saved, now)
+	if got.Count != 0 || got.Inboxes[0].Count != 0 {
+		t.Fatal("archived still counted", got.Count, got.Inboxes)
+	}
+	for _, item := range got.Items {
+		if !item.Archived || item.Snoozed || len(item.Inboxes) != 1 {
+			t.Fatal("archived item", item)
+		}
+	}
+	if got := Build(entries, nil, nil, Snoozes{}, saved, now); got.Count != 1 || got.Inboxes[0].Count != 2 {
+		t.Fatal("unarchived", got.Count, got.Inboxes)
+	}
 }
 
 func TestParseSnoozes(t *testing.T) {
@@ -202,8 +227,8 @@ func TestParseSnoozes(t *testing.T) {
 			t.Fatal(raw, s, err)
 		}
 	}
-	s, err := ParseSnoozes(json.RawMessage(`{"day":"2026-11-2","seen":{},"snoozed":{"a/b#1":5},"held":{"a/b#2":"h"}}`))
-	if err != nil || s.Snoozed["a/b#1"] != 5 || s.Held["a/b#2"] != "h" {
+	s, err := ParseSnoozes(json.RawMessage(`{"day":"2026-11-2","seen":{},"snoozed":{"a/b#1":5},"held":{"a/b#2":"h"},"archived":{"a/b#3":7}}`))
+	if err != nil || s.Snoozed["a/b#1"] != 5 || s.Held["a/b#2"] != "h" || s.Archived["a/b#3"] != 7 {
 		t.Fatal(s, err)
 	}
 	if _, err := ParseSnoozes(json.RawMessage(`[]`)); err == nil {

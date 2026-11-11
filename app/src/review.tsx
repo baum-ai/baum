@@ -66,6 +66,7 @@ import {
   type Provenance,
 } from "./api";
 import { FixNotice, FixRuns, type FixState, type FixChat, useDismissedFixes } from "./fix";
+import { useArchive } from "./up-next";
 import { CloneActions } from "./repositories";
 import { useModal } from "./modal";
 import { Notice, RefreshButton, type RefreshRun, usePageRefreshAction } from "./shell";
@@ -362,6 +363,19 @@ export function LocalReview({
   const watchable = [fixJob, ...fixRuns].find((run) => run?.has_transcript);
   const running = liveFor(live, pr);
   const listed = listedFor(live, pr);
+  // An archived pull request shows in no inbox; its page is the way back.
+  const archive = useArchive(pr);
+  const archivedNotice = archive.archived ? (
+    <Notice
+      action={
+        <Button variant="secondary" size="compact" onClick={archive.unarchive}>
+          Unarchive
+        </Button>
+      }
+    >
+      Archived. This pull request doesn't show in your inboxes.
+    </Notice>
+  ) : null;
   // A session that ends is read from disk like any other: reload the list
   // when one leaves the live section.
   const [ended, setEnded] = useState(0);
@@ -909,6 +923,7 @@ export function LocalReview({
                 }
                 notices={
                   <>
+                    {archivedNotice}
                     {fixState.error ? (
                       <Alert>Couldn't start the fix: {fixState.error}</Alert>
                     ) : null}
@@ -1186,6 +1201,7 @@ export function LocalReview({
                 )}
                 notices={
                   <>
+                    {archivedNotice}
                     {fixState.error ? (
                       <Alert>Couldn't start the fix: {fixState.error}</Alert>
                     ) : null}

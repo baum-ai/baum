@@ -237,6 +237,18 @@ func TestRetryAcknowledgementSurvivesMoreThan128InterveningWrites(t *testing.T) 
 	}
 }
 
+func TestInboxArchivesAreOptionalAndKept(t *testing.T) {
+	s := store(t)
+	// A record from before archiving has none; one with archives keeps them.
+	save(t, s, "inbox", "", 0, "first-client-uuid:1", inbox)
+	archived := `{"day":"2026-10-30","seen":{},"snoozed":{},"held":{},"archived":{"acme/demo#7":1793450000000}}`
+	save(t, s, "inbox", "", 1, "first-client-uuid:2", archived)
+	got, err := s.Read("inbox", "")
+	if err != nil || string(got.Value) != archived {
+		t.Fatalf("archives not kept: %s %v", got.Value, err)
+	}
+}
+
 func TestRequiredFieldsAndNullValuesAreRefusedWithoutOverwriting(t *testing.T) {
 	invalid := map[string][]string{
 		"walkthrough": {
@@ -254,6 +266,9 @@ func TestRequiredFieldsAndNullValuesAreRefusedWithoutOverwriting(t *testing.T) {
 			`{"day":"2026-10-30","seen":{"pr":{"kind":"review","title":null,"repository":"acme/demo","number":7}},"snoozed":{},"held":{}}`,
 			`{"day":"2026-10-30","seen":{"pr":{"kind":"review","repository":"acme/demo","number":7}},"snoozed":{},"held":{}}`,
 			`{"seen":{},"snoozed":{},"held":{}}`,
+			`{"day":"2026-10-30","seen":{},"snoozed":{},"held":{},"archived":{"pr":null}}`,
+			`{"day":"2026-10-30","seen":{},"snoozed":{},"held":{},"archived":{"pr":-1}}`,
+			`{"day":"2026-10-30","seen":{},"snoozed":{},"held":{},"archived":[]}`,
 		},
 	}
 	for kind, values := range invalid {

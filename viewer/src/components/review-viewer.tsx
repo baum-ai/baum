@@ -4,13 +4,13 @@ import {
   type CSSProperties,
   type ReactNode,
   type RefObject,
-  useCallback,
   useEffect,
   useMemo,
   useRef,
   useState,
 } from "react";
 
+import { firstByPath } from "../hunk-index";
 import { useUrlState } from "../navigation";
 import {
   checkStatus,
@@ -402,6 +402,7 @@ function useVisibleHeight<T extends HTMLElement>() {
     const scroller = scrollerOf(element);
     const page = scroller === (document.scrollingElement ?? document.documentElement);
     let frame = 0;
+    let written = "";
     const measure = () => {
       frame = 0;
       const area = page ? { top: 0, bottom: window.innerHeight } : scroller.getBoundingClientRect();
@@ -410,7 +411,11 @@ function useVisibleHeight<T extends HTMLElement>() {
         element.getBoundingClientRect().top + element.clientTop,
         area.top + REVIEW_BAR_PX,
       );
-      element.style.setProperty("--review-visible", `${area.bottom - top}px`);
+      // An unchanged value is not written: a write restyles everything below.
+      const value = `${area.bottom - top}px`;
+      if (value === written) return;
+      written = value;
+      element.style.setProperty("--review-visible", value);
     };
     const schedule = () => {
       if (!frame) frame = requestAnimationFrame(measure);
@@ -1158,11 +1163,7 @@ function ReviewWorkspace<F extends ReviewFile>({
   const sectionIndex = viewedId
     ? visibleSections.findIndex((section) => section.id === viewedId)
     : -1;
-  const findFile = useCallback(
-    (path: string) =>
-      fileList?.find((candidate) => candidate.path === path || candidate.old_path === path),
-    [fileList],
-  );
+  const findFile = useMemo(() => (fileList ? firstByPath(fileList) : () => undefined), [fileList]);
   const revealLine = (path: string, side: "LEFT" | "RIGHT", line: number) => {
     const file = findFile(path);
     if (!file) return;

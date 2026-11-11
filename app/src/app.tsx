@@ -23,7 +23,7 @@ import {
   type ViewerLinkProps,
 } from "@baum/viewer/navigation";
 import { CloneActions, type FoundClones } from "./repositories";
-import { ConfirmDialog, GroupMissing, GroupPage, NameDialog } from "./group";
+import { ConfirmDialog, GroupMissing, NameDialog } from "./group-dialogs";
 import { Inbox, UpdatedAgo } from "./inbox";
 import { ListSection } from "./list";
 import {
@@ -84,7 +84,6 @@ import {
 import { GoTo, type GoToItem } from "./go-to";
 import { Tour, TOUR_HREF, useTour } from "./tour";
 import { PAGES, type Page } from "./pages";
-import { LocalReview } from "./review";
 import { DecisionsRevision } from "./decisions";
 import { useCodexHookTrust } from "./codex-hooks";
 import { pendingUpdate, useAppUpdates, useUpdateToast } from "./desktop/updates";
@@ -100,9 +99,6 @@ import { asksYou, SessionsPage, transcriptHref } from "./sessions";
 import { SampleGuard } from "./sample";
 import { ToastProvider } from "./toast";
 import { MenuButton, useActionsKey, useContextMenu, type MenuItem } from "./context-menu";
-import { SessionTranscriptPage } from "./session-transcript";
-import { AnalyticsPage } from "./analytics";
-import { TimelinePage } from "./timeline";
 import {
   Notice,
   PageBar,
@@ -157,8 +153,15 @@ import { useModal } from "./modal";
 import { PageRead, ReadFailed, readState } from "./page-state";
 import { LoadingStatus } from "./nine-dots";
 import { FixDetails, type FixChat } from "./fix";
-import { JobPage } from "./job-transcript";
 import { useLocation } from "./location";
+import {
+  AnalyticsPage,
+  GroupPage,
+  JobPage,
+  LocalReview,
+  SessionTranscriptPage,
+  TimelinePage,
+} from "./lazy-pages";
 import { SMALL } from "./action-classes";
 
 /** A saved tab's name as the daemon keeps it: trimmed as it trims, control

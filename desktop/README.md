@@ -454,8 +454,8 @@ The daemon outlives the app, so the app's presence is a tray icon.
   not: its dot means only that something runs or needs the user. Zero, an
   unknown count and a daemon that is not
   running clear all of them. The daemon counts what the app's Inbox heading
-  totals, by the same definition: each unsnoozed pull request waiting on the
-  user once, whichever saved inboxes hold it or none, and whatever their badge
+  totals, by the same definition: each pull request waiting on the user, neither
+  snoozed nor archived, once, whichever saved inboxes hold it or none, and whatever their badge
   switches say (see [`internal/inboxqueue`](../internal/inboxqueue/README.md)):
   `GET /api/index?view=waiting`, read with the other tray requests.
 - **Quit** ends the app only. Background refresh and automatic generation
