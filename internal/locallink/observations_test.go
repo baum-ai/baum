@@ -132,6 +132,10 @@ func TestHookCreationOutranksTranscriptCreationGuesses(t *testing.T) {
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("remote: %s %v", out, err)
 	}
+	// The reflog would name the transcript's session, which outranks the hook.
+	if err := os.RemoveAll(filepath.Join(f.Repo, ".git", "logs")); err != nil {
+		t.Fatal(err)
+	}
 	o := commitattribution.Observation{Repository: linktest.Repository, CommitSHA: f.Commits[0], Agent: "claude-code", SessionID: "observed-creator", Kind: commitattribution.Commit, EventID: "post-commit", At: time.Now()}
 	if err := (&commitattribution.Store{}).Record([]commitattribution.Observation{o}); err != nil {
 		t.Fatal(err)

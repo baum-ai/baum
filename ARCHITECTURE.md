@@ -1957,8 +1957,12 @@ a process reuses what it built:
   unchanged. Such a session is mapped and not reused until it is older.
   `Discovery.LoadReusing` skips a session whose digest is held. The digest holds what linking reads
   from the graph: whether it is a generation run, whether it has a
-  transcript, the top-level session's start, end and branch, and the
-  `sessioncorrelate` evidence. For each linked session it also holds the
+  transcript, the top-level session's start, end and branch, the
+  `sessioncorrelate` evidence, and the session's Git-writing shell calls
+  (when each ran, the directories of its commit-creating git commands and its
+  branch), which the reflog matcher places in the clone's working trees, so a
+  reused session still competes for the commits its calls may have made. For
+  each linked session it also holds the
   evidence that was built for it, with what that evidence depended on
   besides the transcript:
   * the caps;

@@ -91,7 +91,7 @@ func BuildSessionEvidence(ctx context.Context, req EvidenceRequest) ([]bundle.Se
 	if err != nil {
 		return nil, err
 	}
-	key, cacheable := evidenceKey(req, dir, d)
+	key, cacheable := evidenceKey(ctx, req, dir, d)
 	if cacheable {
 		if cached, complete, ok := evidenceMemo.lookup(key); ok {
 			workstats.Inc("locallink.session_evidence_reused")
