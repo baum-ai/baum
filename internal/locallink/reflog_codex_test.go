@@ -101,7 +101,7 @@ func assertCodexUnlinked(t *testing.T, result Result) {
 // skipWindowsWorkdir skips a test that needs a Codex workdir to place a
 // commit. agentcmd treats only a path that starts with "/" as absolute, so a
 // Windows drive path is joined onto the base, hostDir rejects it as unknown
-// and the call gives no evidence. ENG-1917 adds Windows support.
+// and the call gives no evidence.
 func skipWindowsWorkdir(t *testing.T) {
 	t.Helper()
 	if runtime.GOOS == "windows" {
