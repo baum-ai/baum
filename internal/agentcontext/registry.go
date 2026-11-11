@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"regexp"
 	"strings"
 	"sync"
 )
@@ -140,10 +141,42 @@ func random() string {
 	return base64.RawURLEncoding.EncodeToString(b[:])
 }
 
+var (
+	ownerPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9-]{0,38}$`)
+	namePattern  = regexp.MustCompile(`^[A-Za-z0-9._-]{1,100}$`)
+)
+
+// validRepository reports whether repository is "owner/name" as GitHub
+// spells them.
+func validRepository(repository string) bool {
+	owner, name, ok := strings.Cut(repository, "/")
+	return ok && ownerPattern.MatchString(owner) && namePattern.MatchString(name) && name != "." && name != ".."
+}
+
+func (c Consumer) validate() error {
+	switch c.Kind {
+	case Chat:
+		if c.Repository != "" || c.PullRequest != 0 {
+			return errors.New("a chat is bound to no repository or pull request")
+		}
+	case Action:
+		if !validRepository(c.Repository) || c.PullRequest <= 0 {
+			return errors.New("an action needs an owner/name repository and a pull request number")
+		}
+	default:
+		return fmt.Errorf("unknown consumer kind %q", c.Kind)
+	}
+	return nil
+}
+
 // Mint returns a new token for c, the consumer's id, and the function that
-// revokes the token. An action starts on its pull request's page and stays
+// revokes the token. c must be a chat, or an action bound to a repository
+// and pull request. An action starts on its pull request's page and stays
 // there.
-func (r *Registry) Mint(c Consumer) (token, id string, revoke func()) {
+func (r *Registry) Mint(c Consumer) (token, id string, revoke func(), err error) {
+	if err := c.validate(); err != nil {
+		return "", "", nil, err
+	}
 	token, id = random(), random()
 	c.ID = id
 	h := &holder{hash: sha256.Sum256([]byte(token)), consumer: c}
@@ -154,7 +187,7 @@ func (r *Registry) Mint(c Consumer) (token, id string, revoke func()) {
 	r.byHash[h.hash] = h
 	r.byID[id] = h
 	r.mu.Unlock()
-	return token, id, func() { r.revoke(id) }
+	return token, id, func() { r.revoke(id) }, nil
 }
 
 func (r *Registry) revoke(id string) {
@@ -193,6 +226,12 @@ func (r *Registry) Authenticate(token string) (Consumer, bool) {
 		return Consumer{}, false
 	}
 	return h.consumer, true
+}
+
+// live reports whether the consumer with this id is live.
+func (r *Registry) live(id string) bool {
+	_, ok := r.Consumer(id)
+	return ok
 }
 
 // Consumer returns the live consumer with this id.

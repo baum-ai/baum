@@ -10,12 +10,30 @@ import (
 	"github.com/google/jsonschema-go/jsonschema"
 )
 
+// Scope is what a tool reads, which decides who may call it.
+type Scope int
+
+const (
+	// ScopeGlobal tools read across repositories or the app's own state.
+	// Actions never see or call them. It is the zero value, so a tool that
+	// names no scope is kept from actions.
+	ScopeGlobal Scope = iota
+	// ScopeRepository tools read one repository, the one CallContext.Target
+	// returns. Actions may call them.
+	ScopeRepository
+)
+
 // Tool is one MCP tool.
 type Tool struct {
 	Name        string
 	Description string
 	// InputSchema is the JSON Schema of the tool's arguments, an object.
 	InputSchema json.RawMessage
+	Scope       Scope
+	// Reads are the local API route prefixes the tool's Reader may read, a
+	// whole path segment at a time. The routes listed in unreadable can never
+	// be declared.
+	Reads []string
 	// Call runs the tool. Its text, or its error's message, goes back to the
 	// agent through the envelope: masked, cut and fenced.
 	Call func(ctx context.Context, c CallContext, args json.RawMessage) (string, error)
@@ -34,18 +52,22 @@ type PageSpec struct {
 }
 
 // CallContext is what a tool call runs with.
+//
+// A tool takes the repository and pull request it reads only from Target's
+// return value, never from its arguments or the page directly: Target is
+// what keeps an action to its own repository. As a backstop, an action's
+// Reader refuses any request that does not name its repository.
 type CallContext struct {
 	Consumer Consumer
 	// Page is the consumer's page; HasPage is false until one is set.
 	Page    PageContext
 	HasPage bool
-	// Reader reads the local API.
+	// Reader reads the routes the tool declared (Tool.Reads); an action's
+	// reads only its repository.
 	Reader *Reader
 	// Proposals records changes a chat proposes (Propose).
 	Proposals *Proposals
 }
-
-var errOtherRepository = errors.New("this agent may read only its own pull request's repository")
 
 // Target resolves the repository and pull request a tool reads: the ones
 // asked for, else the action's own, else those of the page the user has open.
@@ -81,6 +103,12 @@ func (c CallContext) Propose(ctx context.Context, p Proposal) (Proposal, error) 
 func (t *Tool) compile() error {
 	if t.Name == "" || t.Call == nil {
 		return errors.New("a tool needs a name and a call")
+	}
+	if t.Scope != ScopeGlobal && t.Scope != ScopeRepository {
+		return fmt.Errorf("tool %s: unknown scope", t.Name)
+	}
+	if err := checkReads(t.Reads); err != nil {
+		return fmt.Errorf("tool %s: %w", t.Name, err)
 	}
 	schema := t.InputSchema
 	if len(schema) == 0 {
@@ -120,11 +148,18 @@ func (t *Tool) arguments(args json.RawMessage) (json.RawMessage, error) {
 	return args, nil
 }
 
+// visible reports whether consumer may list and call t.
+func (t Tool) visible(consumer Consumer) bool {
+	return consumer.Kind != Action || t.Scope == ScopeRepository
+}
+
 // builtinTools are the tools every consumer has, whatever its page.
 func (s *Server) builtinTools() []Tool {
 	return []Tool{{
 		Name:        "current_page",
 		Description: "The page the user has open in the baum app, the pull request, group, session, job or feature it shows, its filters and focus, and the tools that read it.",
+		// An action's page is its own pull request.
+		Scope: ScopeRepository,
 		Call: func(_ context.Context, c CallContext, _ json.RawMessage) (string, error) {
 			if !c.HasPage {
 				return "No page is set: the user has not opened a page in the baum app for this conversation.", nil
@@ -134,7 +169,13 @@ func (s *Server) builtinTools() []Tool {
 				Tools []string `json:"tools,omitempty"`
 			}{PageContext: c.Page}
 			if spec, ok := s.page(c.Page.Page); ok {
-				out.Tools = spec.Tools
+				s.mu.RLock()
+				for _, name := range spec.Tools {
+					if t, ok := s.tool(name); ok && t.visible(c.Consumer) {
+						out.Tools = append(out.Tools, name)
+					}
+				}
+				s.mu.RUnlock()
 			}
 			b, err := json.MarshalIndent(out, "", "  ")
 			return string(b), err
@@ -143,6 +184,8 @@ func (s *Server) builtinTools() []Tool {
 		Name:        "read_more",
 		Description: "The next part of a tool result that was cut, given the cursor the result ended with. Each cursor gives its part once.",
 		InputSchema: json.RawMessage(`{"type":"object","properties":{"cursor":{"type":"string","description":"The cursor the cut result named."}},"required":["cursor"],"additionalProperties":false}`),
+		// A cursor gives only what its own consumer was given.
+		Scope: ScopeRepository,
 		Call: func(_ context.Context, c CallContext, args json.RawMessage) (string, error) {
 			var a struct {
 				Cursor string `json:"cursor"`

@@ -38,7 +38,10 @@ func mcpServer(t *testing.T) (*Server, *agentcontext.Server) {
 
 func TestMCPRouteTakesOnlyMCPTokens(t *testing.T) {
 	s, mcp := mcpServer(t)
-	token, _, revoke := mcp.Registry.Mint(agentcontext.Consumer{Kind: agentcontext.Chat})
+	token, _, revoke, err := mcp.Registry.Mint(agentcontext.Consumer{Kind: agentcontext.Chat})
+	if err != nil {
+		t.Fatal(err)
+	}
 	ping := `{"jsonrpc":"2.0","id":1,"method":"ping"}`
 	exchange := request(t, s, "POST", "/api/auth/exchange", "", s.origin, "application/json", "", fmt.Sprintf(`{"token":%q}`, s.launch))
 	cookie := exchange.Result().Cookies()[0]
@@ -117,13 +120,16 @@ func TestMCPRouteUnservedWithoutServer(t *testing.T) {
 
 func TestMCPToolsReadTheAPI(t *testing.T) {
 	s, mcp := mcpServer(t)
-	if err := mcp.RegisterTool(agentcontext.Tool{Name: "repos", Description: "Lists repositories.", Call: func(ctx context.Context, c agentcontext.CallContext, _ json.RawMessage) (string, error) {
+	if err := mcp.RegisterTool(agentcontext.Tool{Name: "repos", Description: "Lists repositories.", Reads: []string{"/api/repos"}, Call: func(ctx context.Context, c agentcontext.CallContext, _ json.RawMessage) (string, error) {
 		response, err := c.Reader.Get(ctx, "/api/repos")
 		return string(response.Body), err
 	}}); err != nil {
 		t.Fatal(err)
 	}
-	token, _, revoke := mcp.Registry.Mint(agentcontext.Consumer{Kind: agentcontext.Chat})
+	token, _, revoke, err := mcp.Registry.Mint(agentcontext.Consumer{Kind: agentcontext.Chat})
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer revoke()
 	w := request(t, s, "POST", "/api/mcp", "", "", "application/json", "Bearer "+token, `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"repos"}}`)
 	if w.Code != 200 || !strings.Contains(w.Body.String(), `{\"path\":\"/api/repos\"}`) {

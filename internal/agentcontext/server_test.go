@@ -25,9 +25,18 @@ func newServer(t *testing.T) *Server {
 
 func chat(t *testing.T, s *Server) (token, id string) {
 	t.Helper()
-	token, id, revoke := s.Registry.Mint(Consumer{Kind: Chat})
+	token, id, revoke := mint(t, s, Consumer{Kind: Chat})
 	t.Cleanup(revoke)
 	return token, id
+}
+
+func mint(t *testing.T, s *Server, c Consumer) (token, id string, revoke func()) {
+	t.Helper()
+	token, id, revoke, err := s.Registry.Mint(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return token, id, revoke
 }
 
 func post(s *Server, token, body string) *httptest.ResponseRecorder {
@@ -189,7 +198,7 @@ func TestMalformedRequests(t *testing.T) {
 
 func TestHTTPChecks(t *testing.T) {
 	s := newServer(t)
-	token, _, revoke := s.Registry.Mint(Consumer{Kind: Chat})
+	token, _, revoke := mint(t, s, Consumer{Kind: Chat})
 	ping := `{"jsonrpc":"2.0","id":1,"method":"ping"}`
 	if w := post(s, "", ping); w.Code != 401 {
 		t.Fatal("no token", w.Code)
@@ -217,6 +226,17 @@ func TestHTTPChecks(t *testing.T) {
 	}
 	if w := post(s, token, ping); w.Code != 200 {
 		t.Fatal("live token", w.Code)
+	}
+	for version, status := range map[string]int{ProtocolVersion: 200, "2025-03-26": 400, "garbage": 400} {
+		r := httptest.NewRequest("POST", "/api/mcp", strings.NewReader(ping))
+		r.Header.Set("Authorization", "Bearer "+token)
+		r.Header.Set("Content-Type", "application/json")
+		r.Header.Set("MCP-Protocol-Version", version)
+		w := httptest.NewRecorder()
+		s.ServeHTTP(w, r)
+		if w.Code != status {
+			t.Fatalf("MCP-Protocol-Version %s: %d", version, w.Code)
+		}
 	}
 	revoke()
 	if w := post(s, token, ping); w.Code != 401 {
@@ -362,7 +382,10 @@ func TestLongResultsContinueByCursor(t *testing.T) {
 }
 
 func TestContinuationsAreBounded(t *testing.T) {
-	e := newEnvelope()
+	e := newEnvelope(func(string) bool { return true })
+	// The bound follows the order continuations were kept in, not the
+	// clock, which may stand still or step back.
+	e.now = func() time.Time { return time.Unix(1, 0) }
 	long := strings.Repeat("x", MaxChunk+1)
 	cursor := regexp.MustCompile(`cursor "([^"]+)"`)
 	var cursors []string
@@ -373,11 +396,10 @@ func TestContinuationsAreBounded(t *testing.T) {
 		}
 		cursors = append(cursors, cursor.FindStringSubmatch(text)[1])
 	}
-	if _, err := e.more("c1", cursors[0]); err == nil {
-		t.Fatal("the oldest continuation was kept past the bound")
-	}
-	if _, err := e.more("c1", cursors[len(cursors)-1]); err != nil {
-		t.Fatal(err)
+	for i, c := range cursors {
+		if _, err := e.more("c1", c); (err == nil) != (i >= 2) {
+			t.Fatalf("cursor %d: %v", i, err)
+		}
 	}
 	text, _ := e.wrap(context.Background(), "c1", long)
 	now := e.now

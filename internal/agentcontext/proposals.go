@@ -1,6 +1,7 @@
 package agentcontext
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -16,22 +17,34 @@ type Proposal struct {
 	// (a page's own name for it, such as a prompt's key).
 	Page   string `json:"page"`
 	Target string `json:"target"`
-	// Before and After are the target's value as the agent read it and as
-	// it proposes it, in the page's own encoding.
+	// Before is the target's value when the proposal was recorded, and After
+	// the value proposed, in the page's own encoding. An agent may send the
+	// Before it read; Propose refuses it when the target has changed since,
+	// and records the value the proposer read instead.
 	Before json.RawMessage `json:"before,omitempty"`
 	After  json.RawMessage `json:"after"`
-	// Revision is the target's revision Before was read at.
+	// Revision is the target's revision Before was read at. Propose sets it
+	// from the proposer; whatever the agent sent is ignored.
 	Revision string `json:"revision"`
+	// Context is the page the consumer had open when it proposed, which the
+	// target must still belong to when the user saves.
+	Context PageContext `json:"context"`
 }
 
-// Proposer is how one page takes proposals.
+// Proposer is how one page takes proposals. Every method gets the page
+// context the proposal was made on, so it can refuse a target that does not
+// belong to what that page shows (another pull request's item on a pull
+// request's page).
 type Proposer interface {
+	// Current reads the target's value and revision.
+	Current(ctx context.Context, page PageContext, target string) (value json.RawMessage, revision string, err error)
 	// Validate refuses a proposal the page would not save.
-	Validate(ctx context.Context, p Proposal) error
-	// Revision reads the target's current revision.
-	Revision(ctx context.Context, target string) (string, error)
-	// Apply saves the proposal: the same change the page's own save makes.
-	Apply(ctx context.Context, p Proposal) error
+	Validate(ctx context.Context, page PageContext, p Proposal) error
+	// Apply saves p.After when the target is still at revision, comparing
+	// and writing in one transaction (as appdb.Update does with its
+	// revision); otherwise it changes nothing and returns ErrStale. It is the
+	// same change the page's own save makes.
+	Apply(ctx context.Context, page PageContext, p Proposal, revision string) error
 }
 
 // A consumer holds at most maxProposals proposals; a new one past that is
@@ -39,11 +52,12 @@ type Proposer interface {
 const maxProposals = 32
 
 var (
-	ErrReadOnly         = errors.New("this agent only reads: it cannot propose changes")
-	ErrNotCurrentPage   = errors.New("a proposal must be for the page the user has open")
-	ErrNoProposer       = errors.New("this page takes no proposals")
-	ErrUnknownProposal  = errors.New("unknown proposal")
-	ErrStale            = errors.New("the target changed since the proposal was made; nothing was saved")
+	ErrReadOnly        = errors.New("this agent only reads: it cannot propose changes")
+	ErrNotCurrentPage  = errors.New("a proposal must be for the page the user has open")
+	ErrNoProposer      = errors.New("this page takes no proposals")
+	ErrUnknownProposal = errors.New("unknown proposal")
+	// ErrStale is a target that changed since it was read.
+	ErrStale            = errors.New("the target changed since it was read; nothing was saved")
 	errTooManyProposals = fmt.Errorf("at most %d open proposals", maxProposals)
 )
 
@@ -54,9 +68,6 @@ type Proposals struct {
 	proposers func(page string) Proposer
 	mu        sync.Mutex
 	open      map[string][]Proposal
-	// saving serializes saves, so a target is read and written by one at a
-	// time.
-	saving sync.Mutex
 }
 
 func newProposals(registry *Registry, proposers func(string) Proposer) *Proposals {
@@ -69,8 +80,10 @@ func newProposals(registry *Registry, proposers func(string) Proposer) *Proposal
 	return p
 }
 
-// Propose records p for the consumer with this id, after its page's proposer
-// validated it. Only a chat may propose, and only for the page it has open.
+// Propose records a proposal for the consumer with this id. Only a chat may
+// propose, and only for the page it has open. The target's current value and
+// revision are read from the proposer, not taken from the agent: a Before the
+// agent sent must match the current value.
 func (p *Proposals) Propose(ctx context.Context, consumer string, proposal Proposal) (Proposal, error) {
 	c, ok := p.registry.Consumer(consumer)
 	if !ok {
@@ -90,17 +103,35 @@ func (p *Proposals) Propose(ctx context.Context, consumer string, proposal Propo
 	if !json.Valid(proposal.After) || (len(proposal.Before) > 0 && !json.Valid(proposal.Before)) {
 		return Proposal{}, errors.New("before and after must be JSON")
 	}
-	if err := proposer.Validate(ctx, proposal); err != nil {
+	value, revision, err := proposer.Current(ctx, page, proposal.Target)
+	if err != nil {
+		return Proposal{}, err
+	}
+	if len(proposal.Before) > 0 && !sameJSON(proposal.Before, value) {
+		return Proposal{}, fmt.Errorf("%w: read it again", ErrStale)
+	}
+	proposal.Before, proposal.Revision, proposal.Context = value, revision, page
+	if err := proposer.Validate(ctx, page, proposal); err != nil {
 		return Proposal{}, err
 	}
 	proposal.ID = random()
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	// Checked under the lock: a revoke that ran already left nothing to find,
+	// and one that runs later drops this too.
+	if !p.registry.live(consumer) {
+		return Proposal{}, ErrUnknownConsumer
+	}
 	if len(p.open[consumer]) >= maxProposals {
 		return Proposal{}, errTooManyProposals
 	}
 	p.open[consumer] = append(p.open[consumer], proposal)
 	return proposal, nil
+}
+
+func sameJSON(a, b json.RawMessage) bool {
+	var x, y bytes.Buffer
+	return json.Compact(&x, a) == nil && json.Compact(&y, b) == nil && bytes.Equal(x.Bytes(), y.Bytes())
 }
 
 // List returns the consumer's open proposals, oldest first.
@@ -121,12 +152,11 @@ func (p *Proposals) find(consumer, id string) (Proposal, bool) {
 	return Proposal{}, false
 }
 
-// Save applies a proposal when its target is still at the revision it was
-// read at. A changed target is refused with ErrStale, and the proposal stays
-// open; a saved one is closed.
+// Save applies a proposal when its target still belongs to the page it was
+// made on and is still at the revision it was read at. The proposer compares
+// and writes in one step, so an edit that lands meanwhile makes the save fail
+// with ErrStale. A refused proposal stays open; a saved one is closed.
 func (p *Proposals) Save(ctx context.Context, consumer, id string) error {
-	p.saving.Lock()
-	defer p.saving.Unlock()
 	proposal, ok := p.find(consumer, id)
 	if !ok {
 		return ErrUnknownProposal
@@ -135,14 +165,13 @@ func (p *Proposals) Save(ctx context.Context, consumer, id string) error {
 	if proposer == nil {
 		return ErrNoProposer
 	}
-	current, err := proposer.Revision(ctx, proposal.Target)
-	if err != nil {
+	// Current refuses a target that no longer belongs to the page.
+	if _, revision, err := proposer.Current(ctx, proposal.Context, proposal.Target); err != nil {
 		return err
-	}
-	if current != proposal.Revision {
+	} else if revision != proposal.Revision {
 		return ErrStale
 	}
-	if err := proposer.Apply(ctx, proposal); err != nil {
+	if err := proposer.Apply(ctx, proposal.Context, proposal, proposal.Revision); err != nil {
 		return err
 	}
 	p.remove(consumer, id)

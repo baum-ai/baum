@@ -34,6 +34,9 @@ const instructions = "baum's tools read what the user sees in the baum app: its 
 type Options struct {
 	// API is the daemon's LocalAPI handler, which tools read through Reader.
 	API http.Handler
+	// Clone resolves a registered clone's id to its repository, so an
+	// action's reader can check a clone= parameter. Nil refuses those.
+	Clone func(ctx context.Context, id string) (string, error)
 	// Version is baum's version, reported to clients.
 	Version string
 }
@@ -52,7 +55,7 @@ type Server struct {
 
 func New(opts Options) *Server {
 	registry := NewRegistry()
-	s := &Server{Registry: registry, reader: NewReader(opts.API), envelope: newEnvelope(), version: opts.Version, pages: map[string]PageSpec{}}
+	s := &Server{Registry: registry, reader: NewReader(opts.API, opts.Clone), envelope: newEnvelope(registry.live), version: opts.Version, pages: map[string]PageSpec{}}
 	s.Proposals = newProposals(registry, func(page string) Proposer {
 		spec, _ := s.page(page)
 		return spec.Proposer
@@ -167,6 +170,12 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "JSON request required", http.StatusUnsupportedMediaType)
 		return
 	}
+	// A client names the revision it negotiated; one the server does not
+	// speak is refused.
+	if v := r.Header.Get("MCP-Protocol-Version"); v != "" && v != ProtocolVersion {
+		http.Error(w, "unsupported MCP-Protocol-Version", http.StatusBadRequest)
+		return
+	}
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxRequest))
 	if err != nil {
 		reply(w, http.StatusRequestEntityTooLarge, response{ID: json.RawMessage("null"), Error: &rpcError{codeInvalidRequest, "request too large"}})
@@ -253,7 +262,9 @@ func (s *Server) handle(ctx context.Context, consumer Consumer, method string, p
 		s.mu.RLock()
 		tools := make([]listed, 0, len(s.tools))
 		for _, t := range s.tools {
-			tools = append(tools, listed{t.Name, t.Description, t.InputSchema})
+			if t.visible(consumer) {
+				tools = append(tools, listed{t.Name, t.Description, t.InputSchema})
+			}
 		}
 		s.mu.RUnlock()
 		return map[string]any{"tools": tools}, nil
@@ -268,7 +279,8 @@ func (s *Server) handle(ctx context.Context, consumer Consumer, method string, p
 		s.mu.RLock()
 		t, ok := s.tool(p.Name)
 		s.mu.RUnlock()
-		if !ok {
+		// A tool an action may not call does not exist for it.
+		if !ok || !t.visible(consumer) {
 			return nil, &rpcError{codeInvalidParams, "unknown tool: " + p.Name}
 		}
 		text, failed, err := s.call(ctx, consumer, t, p.Arguments)
@@ -306,7 +318,14 @@ func (s *Server) call(ctx context.Context, consumer Consumer, t Tool, args json.
 		text, err = s.envelope.wrap(ctx, consumer.ID, argErr.Error())
 		return text, true, err
 	}
-	c := CallContext{Consumer: consumer, Reader: s.reader, Proposals: s.Proposals}
+	if !t.visible(consumer) {
+		return "", false, errors.New("tool not available")
+	}
+	bound := ""
+	if consumer.Kind == Action {
+		bound = consumer.Repository
+	}
+	c := CallContext{Consumer: consumer, Reader: s.reader.within(t.Reads, bound), Proposals: s.Proposals}
 	c.Page, c.HasPage = s.Registry.Page(consumer.ID)
 	out, callErr := t.Call(ctx, c, args)
 	if callErr != nil {
