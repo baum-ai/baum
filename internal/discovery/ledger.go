@@ -47,8 +47,11 @@ func (s *Service) ledger(key string) (*ledger, error) {
 	}
 	value, _ := ledgers.LoadOrStore(database+"\x00"+key, &ledger{})
 	l := value.(*ledger)
-	saved, err := s.load(key)
-	if err != nil && !errors.Is(err, os.ErrNotExist) {
+	saved, err := s.view(key)
+	switch {
+	case errors.Is(err, os.ErrNotExist):
+		saved = &view{}
+	case err != nil:
 		return nil, err
 	}
 	l.mu.Lock()
