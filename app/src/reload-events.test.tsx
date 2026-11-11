@@ -27,6 +27,16 @@ const read = () => {
   paths = [];
   return [...new Set(seen)].sort();
 };
+/** The same, with every request counted. */
+const counts = () => {
+  const seen = new Map<string, number>();
+  for (const p of paths) {
+    const key = p.replace("/s/test-ns/", "").split("?")[0]!;
+    seen.set(key, (seen.get(key) ?? 0) + 1);
+  }
+  paths = [];
+  return seen;
+};
 const settle = () => act(async () => {});
 
 beforeEach(async () => {
@@ -168,12 +178,12 @@ it("reads nothing while hidden, then once for everything that arrived", async ()
   expect(read()).toEqual([]);
   visibility(false);
   await settle();
-  const got = read();
   // One read of the union, one read of the live sessions.
-  expect(got).toEqual(
-    expect.arrayContaining(["api/index", "api/jobs", "api/automatic", "api/live-sessions"]),
-  );
-  expect(paths).toEqual([]);
+  const got = counts();
+  for (const path of ["api/index", "api/automatic", "api/live-sessions"])
+    expect(got.get(path)).toBe(1);
+  // Twice: the current jobs, and the Jobs page's own history page.
+  expect(got.get("api/jobs")).toBe(2);
   await settle();
   expect(read()).toEqual([]);
 });
@@ -208,4 +218,24 @@ it("finds a job that ended", () => {
   expect(jobsEnded([job("a", "completed")], [job("a", "completed")])).toBe(false);
   expect(jobsEnded([job("a", "running")], [job("a", "running")])).toBe(false);
   expect(jobsEnded([], [job("a", "failed")])).toBe(true);
+});
+
+it("reads a part whose read failed again with the next read", async () => {
+  const ok = vi.mocked(fetch).getMockImplementation()!;
+  let failIndex = true;
+  vi.stubGlobal(
+    "fetch",
+    vi.fn((path: string, init?: RequestInit) =>
+      failIndex && path.includes("api/index")
+        ? Promise.resolve(new Response("boom", { status: 500 }))
+        : ok(path, init),
+    ),
+  );
+  await act(async () => emit("index"));
+  await settle();
+  failIndex = false;
+  paths = [];
+  await act(async () => emit("progress"));
+  await settle();
+  expect(read()).toContain("api/index");
 });

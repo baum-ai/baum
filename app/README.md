@@ -1396,16 +1396,18 @@ jobs read shows a job that ended, the index, the pull requests and the groups
 too; an `index` event reads the index, jobs, pull requests, clones, groups and
 inboxes; an `automatic` event reads the automatic state, settings, clones and
 pull requests; `reset` and a reconnect read everything. The first connection
-reads nothing: the page's first read covers it. The pull request and group
-pages refetch their documents when the index or the groups were read, not for a
-job's progress alone; the jobs of the pull request and the Jobs page follow
+reads nothing: the page's first read covers it (an event published between that
+read and the stream opening is not replayed). A read that fails is repeated
+with the next one. The pull request and group
+pages refetch their documents when the index was read (a group page also when
+its group's version or update time changes), not for a job's progress alone; the jobs of the pull request and the Jobs page follow
 every read of the jobs. While the window is hidden, an event only marks what
 is stale (and `live`, `decisions` and `timeline` events mark theirs); one read
 of what was marked runs when the window shows again. A `job` event, a
 running job's usage every few seconds, changes only that job in the current jobs,
 and through them the PR page's own jobs, without a read. A `job` event for a job
 the current jobs lack, or whose state or phase differs from their copy, reads
-the jobs again; one older than their copy is ignored. Jobs appear newest first and can be cancelled. The app's
+the jobs and groups again; one older than their copy is ignored. Jobs appear newest first and can be cancelled. The app's
 global jobs are `GET api/jobs` without parameters, the current jobs (every running, queued and
 unseen failed job, and the latest of each kind for each pull request, group or repository), which
 is all `reviewJob`, `detailsJob`, `fixJob`, `groupJob`, `buildJobOf`, Up next and the tray need. The PR

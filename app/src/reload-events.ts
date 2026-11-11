@@ -76,15 +76,18 @@ export function createEventGate(): EventGate {
   const held = new Map<string, () => void>();
   const shown = () => {
     if (document.hidden) return;
+    document.removeEventListener("visibilitychange", shown);
     const due = [...held.values()];
     held.clear();
     for (const fn of due) fn();
   };
-  document.addEventListener("visibilitychange", shown);
   return {
     run(key, fn) {
-      if (document.hidden) held.set(key, fn);
-      else fn();
+      if (!document.hidden) return fn();
+      // The listener lives only while something is held, so a gate has no
+      // side effects until then and disposing it is safe to repeat.
+      if (held.size === 0) document.addEventListener("visibilitychange", shown);
+      held.set(key, fn);
     },
     dispose() {
       document.removeEventListener("visibilitychange", shown);

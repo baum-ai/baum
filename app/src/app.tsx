@@ -477,6 +477,8 @@ function Workspace({ url }: { url: UrlState }) {
   const reloadInFlight = useRef<Promise<void> | null>(null);
   const reloadAbort = useRef<AbortController | null>(null);
   const jobsLoaded = useRef(false);
+  // Parts whose read failed, read again by the next read.
+  const failedParts = useRef(new Set<ReloadPart>());
   // `parts` names what to read (everything when omitted): each kind of event
   // reads only what it can change. Reads asked for while one runs join the
   // next. `restart` drops the read under way, which may never answer, for a
@@ -490,6 +492,8 @@ function Workspace({ url }: { url: UrlState }) {
       parts?: readonly ReloadPart[];
     } = {}) => {
       for (const part of parts) reloadPending.current.add(part);
+      for (const part of failedParts.current) reloadPending.current.add(part);
+      failedParts.current.clear();
       if (reloadInFlight.current && !restart) return reloadInFlight.current;
       reloadAbort.current?.abort();
       const abort = new AbortController();
@@ -595,13 +599,16 @@ function Workspace({ url }: { url: UrlState }) {
               setGitHub(connection ?? null);
             }
             setError("");
-            setUpdatedAt(Date.now());
+            if (want.has("index") || want.has("discovery")) setUpdatedAt(Date.now());
             // The pull request and group pages read their documents again only
             // when the index was read, not for a job's progress alone (a group
             // page also keys on its group's own version and update time).
             if (want.has("index")) setRevision((n) => n + 1);
           } catch (e) {
-            if (!signal.aborted) setError(errorText(e));
+            if (!signal.aborted) {
+              setError(errorText(e));
+              for (const part of want) failedParts.current.add(part);
+            }
           } finally {
             if (!signal.aborted) setLoading(false);
           }
