@@ -1418,14 +1418,18 @@ a fixed table, each bound to the repository the way its handler finds what
 it serves: by the `repository` or `clone` parameter that handler reads, by
 an `owner/name` path, or, for a route that finds a record by id, by checking
 the record's repository and returning nothing on a mismatch. A route that
-names no repository (a job's transcript, a group's versions) is read only
+names no repository (a job's transcript or draft, a group's document or
+versions) is read only
 after the record its id names has been checked the same way, and a route that
 answers for every repository (the review index, the inbox) is filtered to the
 action's repository inside the reader, which also drops other clones'
 problems, the user's saved inbox queries and each inbox item's saved-inbox
 ids, and recounts the inbox total over what is kept. Any other route, and any query
 parameter its entry does not list, is refused. An
-action never proposes changes.
+action never proposes changes. An action reads a review only in parts, one per
+tool call, and through the same bindings: its pull request's saved review, a
+running draft of a job of its repository, conversations of its clones, and a
+group of its repository.
 
 A chat's token may also propose a change to the page the user has open, and
 only to something that page shows (on a pull request's page, only that pull

@@ -5171,17 +5171,16 @@ refused. The table holds:
   `/api/prs/failing-checks` (`head_sha`), `/api/prs/review-threads`
   (`unresolved`), `/api/prs/conflicts`, `/api/prs/merge-options`,
   `/api/prs/update-branch-options` and `/api/prs/rerun-checks-options`;
-- by `clone` (parameter `pr`, and as listed; `GET /api/versions` and the
-  `version` parameters are added ahead of the review tools of the next step
-  and read by no tool yet): `GET /api/versions`,
-  `/api/document` and `/api/commits` (`version`), `/api/patch` (`version`,
+- by `clone` (parameter `pr`, and as listed): `GET /api/versions`,
+  `/api/prs/chat`, `/api/document` and `/api/commits` (`version`), `/api/patch` (`version`,
   `path`), `/api/sessions` and `/api/sessions/{id}` (`version`), `/api/facts`,
   `/api/facts/commits`, `/api/facts/sessions` and `/api/facts/sessions/{id}`
   (`head`), and `/api/facts/patch` (`head`, `path`);
 - by response: `GET /api/jobs/{id}` and `/api/groups/{id}`, checked by the
   record's `repository`;
-- by lookup: `GET /api/jobs/{id}/transcript` (`after`), after `/api/jobs/{id}`,
-  and `/api/groups/{id}/versions`, after `/api/groups/{id}`;
+- by lookup: `GET /api/jobs/{id}/transcript` (`after`) and
+  `/api/jobs/{id}/draft`, after `/api/jobs/{id}`, and `/api/groups/{id}/document`
+  (`version`) and `/api/groups/{id}/versions`, after `/api/groups/{id}`;
 - by filter: `GET /api/index` (`history`), which keeps the entries of the
   action's repository and drops the problems; `GET /api/groups`, which keeps
   the groups of its repository; and `GET /api/inbox`, which keeps the items of
@@ -5217,8 +5216,27 @@ action its pull request, and only through `CallContext.Target`:
 | `group`, `group_versions` | `/api/groups/{id}` and `/api/groups/{id}/versions`; a group of another repository is refused. The group defaults to the open group page's; for an action, to the one group its pull request is in (`/api/groups`), and none or several must be named |
 
 Labels, reviewer lists, check log tails and the inbox's Up next sentence are
-not returned, as the app shows none of them. The facts and review document
-parts (outline, sections, context, draft, conversations) are not tools yet.
+not returned, as the app shows none of them.
+
+The review tools read a review in parts, one per call, so the document is
+never sent whole; none marshals the document it read, and a document that
+cannot be read is an error that quotes none of it. Each takes `repository` and
+`pr` as above, and `version` (a saved version, the latest by default) and
+`group` (a group id, `this` for the open group page's or, for an action, the
+one group its pull request is in, or none: the pull request's own review; a
+chat on a group page defaults to its group). A group's tools read its combined
+review through `/api/groups/{id}/document` and `/api/groups/{id}/versions`,
+after `/api/groups/{id}` has shown the group is the repository's.
+
+| Tool | Reads |
+| --- | --- |
+| `facts` | `/api/facts` at the head the index shows (the facts, which exist before any review) |
+| `review_outline` | `/api/document` (or the group's): the overview and each section's id, title, kind, hunks, files, assessment and `details` state (`pending`, `failed` or absent), by `review.ReadOutline`, the projection the staged outline stage writes (`review.OutlineOf` without its fallback to the document), never a section's details |
+| `review_section` | one section by `id`: all it holds (summary, risks, evidence, citations), or for a `failed` or `pending` section its outline and that state in words |
+| `review_context` | `summary.context`, or that it is absent, or failed (from the job's `context_failed`) |
+| `review_draft` | `/api/jobs` to find the review running now, then `/api/jobs/{id}/draft` (drafts are never stored): `part` `outline` (default), `section` (with `id`) or `context`, projected as the stored tools; "No running review of this pull request." otherwise |
+| `review_versions` | `/api/versions` or the group's versions: version, heads, `generated_at`, backend, model and recorded cost, never the session, accounting, digests or policy |
+| `review_conversations` | `/api/prs/chat`: a list (id, version, times, turn count, the first question cut at 200 characters), or with an `id` that conversation's turns (question, focus, answer, citations, state, reason, note), never cost or job ids |
 
 Every result goes through one envelope. It masks the text with
 `bundle.NewRedactor`, cuts it at most 64 KiB in at a UTF-8 boundary, and
