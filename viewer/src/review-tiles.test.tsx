@@ -1,8 +1,9 @@
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import { ReviewTiles } from "./components/review-tiles/review-tiles";
 import { ReviewSection } from "./components/review-section";
 import { ReviewRisk } from "./components/review-risk";
+import { ReviewTiles as LazyReviewTiles } from "./components/review-tiles/lazy-review-tiles";
 import { AccessModelTile } from "./components/review-tiles/access-model";
 import {
   DataMigrationTile,
@@ -44,6 +45,14 @@ function schemaTile(tableName: string, id = "tile_test") {
   tile.data.tables = [{ name: tableName, columns: [{ name: "column", type: "text" }] }];
   return tile;
 }
+
+// ReviewSection and ReviewRisk load the tiles on demand. Server rendering shows
+// the fallback until that load settles, so settle it before the tests render.
+beforeAll(async () => {
+  renderToStaticMarkup(<LazyReviewTiles document={document()} tiles={[]} />);
+  await import("./components/review-tiles/review-tiles");
+  await new Promise((resolve) => setTimeout(resolve, 0));
+});
 
 describe("JSON review tiles", () => {
   it.each(tileKinds)("validates and renders %s beside the behaviour steps", (kind) => {

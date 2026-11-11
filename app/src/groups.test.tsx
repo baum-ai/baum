@@ -1,7 +1,7 @@
 import { mockStateFetch } from "./ui-state-test-helper";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, expect, it, vi } from "vitest";
 import type { ReviewViewerProps } from "@baum/viewer/components/review-viewer";
 import example from "../../schema/review-example.json" with { type: "json" };
 import { App } from "./app";
@@ -16,6 +16,10 @@ import {
 } from "./api";
 import { inboxGroups } from "./inbox";
 import { forgetLastRows } from "./shortcuts";
+
+// The group page loads on demand; have its module ready so a render inside
+// act() finds it resolved.
+beforeAll(() => import("./group"));
 
 const rail = vi.hoisted(() => ({ commit: null as string | null, file: null as string | null }));
 vi.mock("@baum/viewer/components/review-viewer", () => ({

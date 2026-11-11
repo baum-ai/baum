@@ -13,7 +13,7 @@ import {
 import { HunkEvidence } from "./hunk-evidence";
 import { Markdown } from "./markdown";
 import { Facts, JumpLink, Part, PROSE, TierBadge } from "./review-parts";
-import { ReviewTiles } from "./review-tiles/review-tiles";
+import { ReviewTiles } from "./review-tiles/lazy-review-tiles";
 import { Badge, CardHeader } from "./ui";
 
 /** One risk on its own, for a reader working down the rail's Risks list rather
