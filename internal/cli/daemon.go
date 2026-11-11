@@ -408,7 +408,7 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 		index := reviewindex.NewCache(ctx, &reviewindex.Service{Registry: registry, Discovery: discover})
 		discover.Updated = index.Invalidate
 		changed := indexChanged(index, server.Publish)
-		worker := &background.Service{Registry: registry, Discovery: discover, Saved: background.Saved, Refresh: background.Local{Client: github.NewFromConfig(cfg, github.Options{}), Config: cfg}.Refresh, Retain: background.Retention{Log: log}.Retain, Changed: changed}
+		worker := &background.Service{Registry: registry, Discovery: discover, Saved: background.Saved, Budget: discover.GraphQLBudget, Refresh: background.Local{Client: github.NewFromConfig(cfg, github.Options{}), Config: cfg}.Refresh, Retain: background.Retention{Log: log}.Retain, Changed: changed}
 		database, err := appdb.Path()
 		if err != nil {
 			_ = registry.Close()
@@ -707,7 +707,7 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 			state, err := savedInboxes.Read()
 			return state.Inboxes, err
 		}}
-		api := uiserver.LocalAPI{GitHubAuth: githubConnection.Handler(), Registry: registry, Config: cfg, PRs: uiserver.DiscoveryHandler(registry, discover, changed), Index: inboxQueue.CountHandler(index.Handler()), Inbox: inboxQueue.Handler(), Jobs: queue.Handler(), Chat: uiserver.ChatHandler(registry, queue), Background: worker.Handler(), Automatic: scheduler.Handler(), Live: liveAPI, AgentRequests: requestsAPI, Clones: clones.Handler(), GitHubRepositories: pickList.Handler(), CurrentName: currentName(githubClient), PlanUsage: plans.Handler(), Analytics: insights.Handler(), Timeline: timeline, Merge: uiserver.MergeHandler(registry, actions.RecordMerges(githubClient), mergedPullRequest, changed), Review: uiserver.ReviewHandler(registry, githubClient, changed), Update: uiserver.UpdateHandler(registry, actions.RecordUpdates(prupdate.Service{Client: githubClient, Cache: panelCache, Counted: countedThreads, Clone: availableClone}), refreshRepository, changed), Changed: settingsChanged,
+		api := uiserver.LocalAPI{GitHubAuth: githubConnection.Handler(), Registry: registry, Config: cfg, PRs: uiserver.DiscoveryHandler(registry, askedRefresh{discover, worker.Retry}, changed), Index: inboxQueue.CountHandler(index.Handler()), Inbox: inboxQueue.Handler(), Jobs: queue.Handler(), Chat: uiserver.ChatHandler(registry, queue), Background: worker.Handler(), Automatic: scheduler.Handler(), Live: liveAPI, AgentRequests: requestsAPI, Clones: clones.Handler(), GitHubRepositories: pickList.Handler(), CurrentName: currentName(githubClient), PlanUsage: plans.Handler(), Analytics: insights.Handler(), Timeline: timeline, Merge: uiserver.MergeHandler(registry, actions.RecordMerges(githubClient), mergedPullRequest, changed), Review: uiserver.ReviewHandler(registry, githubClient, changed), Update: uiserver.UpdateHandler(registry, actions.RecordUpdates(prupdate.Service{Client: githubClient, Cache: panelCache, Counted: countedThreads, Clone: availableClone}), refreshRepository, changed), Changed: settingsChanged,
 			UIState:   uiState.Handler(),
 			Inboxes:   (&inboxes.API{Store: savedInboxes, Changed: changed}).Handler(),
 			Groups:    groupsAPI.Handler(),
@@ -831,6 +831,20 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 // hookEvents is the daemon's record of hook events, or nothing when it cannot
 // be opened: a broken record must not keep the daemon from starting, or every
 // hook would start another. Hooks then get unknown_method and spool.
+// askedRefresh is discovery as the app's refresh button reaches it: a
+// refresh the person asks for also has the background refresh read again
+// the repository's saved reviews whose reads failed, including those it
+// stopped reading until their pull request changes.
+type askedRefresh struct {
+	*discovery.Service
+	retry func(repository string)
+}
+
+func (a askedRefresh) PollNow(ctx context.Context, repo github.Repository) (discovery.Snapshot, error) {
+	a.retry(repo.String())
+	return a.Service.PollNow(ctx, repo)
+}
+
 type hookEvents struct{ service *hookevents.Service }
 
 func openHookEvents(paths daemon.Paths, log *slog.Logger) hookEvents {

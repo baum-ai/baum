@@ -119,7 +119,10 @@ the user's time zone and preview media types and
 rewrites control characters in every response, which would make a local
 bundle's text, and so its digest, differ from the hosted service's. baum
 also keeps what it fetches, the pagination, head pinning, rate-limit
-backoff, `sources` and the mapping onto the bundle.
+backoff, `sources` and the mapping onto the bundle. After a pull request's
+header, `Fetch` reads its parts three at a time; a caller may bound each
+request (`WithRequestTimeout`) rather than the whole read, and count the
+requests a read made (`CountRequests`).
 
 - **Hosts.** github.com, GitHub Enterprise Cloud with data residency
   (`*.ghe.com`) and GitHub Enterprise Server are all supported. A host is
@@ -3797,26 +3800,38 @@ only `owner/name`. A repository without an available clone gets no per-PR
 refresh (that reads a store and the clone's saved reviews), and polling it
 still feeds `Service.Discovered`. A pass polls every due repository first and
 publishes an index change, so no repository's pull requests wait behind
-another's reads. It then reads, within `refreshBudget` (30 s), the pull
-requests that are due: never read, updated on GitHub since the last read
-(discovery's `updated_at`), at a head other than the last read's, or last
-observed open and no longer among the open ones (to learn that it merged or
-closed). Those go first; then any open one unread for `openReadAge` (15 min)
-or closed one unread for `closedReadAge` (1 h), the longest unread first. A
-failed read is retried after the interval, doubling to 15 minutes, without
-backing off the repository's polls; a rate-limited one stays due and goes
-first after the reset, so a small renewed budget still reaches every pull
-request. `Run` passes every 30 seconds, or sooner when a repository is due
-sooner, as a settling one is. Linked worktrees are deduplicated by common git directory. No-review PRs fetch only a header and checks;
-saved reviews use `refresh.Refresher` and `Store.RefreshCurrent`'s exact-byte CAS,
-which writes nothing when only the refresh time changed. A read counts as the
-last read whether or not it wrote, so an unchanged pull request is not due
-again until its evidence is old.
+another's reads. It then reads, within `refreshBudget` (30 s), the saved
+reviews that are due; open pull requests without one are left to discovery.
+An open one is due when discovery shows a newer `updated_at`, another head or
+another check rollup than at the last read, and otherwise once unread for
+`openReadAge` (2 h). A saved review whose pull request left the open ones gets
+one final read while its document still says open or draft; once the document
+records `merged` or `closed` it is retired and never read in the background
+again, until discovery lists it open again. Changes go first; then the longest
+unread. A failed read is retried after the interval, doubling, without backing
+off the repository's polls; after `maxReadFailures` (3) in a row it waits for
+the pull request's `updated_at` or head to move (an open one also after a day),
+for a refresh the person asks for (`Service.Retry`), for GitHub answering again
+after it did not, or for the next process. A rate-limited one stays due and
+goes first after the reset, so a small renewed budget still reaches every pull
+request. Reads are kept in memory; in a new process those due by age, and
+final reads, are spread over `restartSpread` (30 min) by a hash of the pull
+request. The reads make at most `refreshRequestsPerHour` (1,000) GraphQL
+requests an hour (`github.CountRequests`), and wait while discovery's ledger
+shows fewer than `refreshReserve` (1,000) GraphQL points left
+(`discovery.Service.GraphQLBudget`). Each GitHub request of a read may take
+30 s (`github.WithRequestTimeout`) and the read 2 minutes, and `Fetch` reads a
+pull request's parts three at a time. `Run` passes every 30 seconds, or sooner
+when a repository is due sooner, as a settling one is. Linked worktrees are
+deduplicated by common git directory. Saved reviews use `refresh.Refresher`
+and `Store.RefreshCurrent`'s exact-byte CAS, which writes nothing when only the
+refresh time changed. A read counts as the last read whether or not it wrote,
+so an unchanged pull request is not due again until its evidence is old.
 After a pass, `Service.Retain` reconciles the retained review refs of each
 due common git directory (see "Retained review commits").
 `Service.RefreshNow` refreshes named PRs of one clone the same way outside
-that schedule (see "Refresh on hook events"), and its reads count as the
-last read; it shares the per-host rate pause with `Sync` in both directions,
+that schedule (see "Refresh on hook events"), retired, stopped or past the
+hour's budget, and its reads count as the last read; it shares the per-host rate pause with `Sync` in both directions,
 as the PR page's facts do (`Service.Paused` and `Service.Limited`).
 
 Discovery's live freshness map uses its own short mutex; cached readers never

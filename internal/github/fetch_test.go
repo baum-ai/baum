@@ -444,8 +444,9 @@ func TestFetchFailsOnARateLimitItWillNotWaitFor(t *testing.T) {
 	if !errors.As(err, &limited) || time.Until(limited.ResumeAt) < 59*time.Minute {
 		t.Fatalf("err = %v, want a rate limit resuming in an hour", err)
 	}
-	if len(waits) != 0 || fake.callCount("PullRequestComments") != 1 || fake.callCount("HeadChecks") != 0 {
-		t.Errorf("waits = %v, comment calls = %d, check calls = %d", waits, fake.callCount("PullRequestComments"), fake.callCount("HeadChecks"))
+	// Parts read at the same time may have started; none waits or retries.
+	if len(waits) != 0 || fake.callCount("PullRequestComments") != 1 {
+		t.Errorf("waits = %v, comment calls = %d", waits, fake.callCount("PullRequestComments"))
 	}
 }
 

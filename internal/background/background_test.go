@@ -1,6 +1,7 @@
 package background
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -55,6 +56,8 @@ type fakeDiscovery struct {
 	settling bool
 	// closed leaves pull request 1 out of the open ones.
 	closed bool
+	// head and checks are pull request 1's; head defaults to "new".
+	head, checks string
 }
 
 // Poll lists pull request 1 as open, with the latest observation of each
@@ -74,7 +77,7 @@ func (f *fakeDiscovery) poll(repo github.Repository) (discovery.Snapshot, error)
 	for _, o := range latest {
 		observations = append(observations, o)
 	}
-	open := []discovery.PullRequest{{Number: 1, HeadSHA: "new", UpdatedAt: f.updated}}
+	open := []discovery.PullRequest{{Number: 1, HeadSHA: cmp.Or(f.head, "new"), UpdatedAt: f.updated, Checks: f.checks}}
 	if f.closed {
 		open = nil
 	}
@@ -99,19 +102,70 @@ func (f *fakeDiscovery) Observe(_ context.Context, _ github.Repository, o discov
 	f.observations = append(f.observations, o)
 	return nil
 }
+
+// saved lists saved reviews of open pull requests.
+func saved(numbers ...int) func(context.Context, repos.Clone) ([]SavedReview, error) {
+	return func(context.Context, repos.Clone) ([]SavedReview, error) {
+		var out []SavedReview
+		for _, n := range numbers {
+			out = append(out, SavedReview{Number: n, State: "open"})
+		}
+		return out, nil
+	}
+}
+
+// documents are saved reviews whose recorded state a read updates, as
+// Local.Refresh records the pull request's state in the saved document.
+type documents struct {
+	mu     sync.Mutex
+	states map[int]string
+}
+
+func newDocuments(states map[int]string) *documents { return &documents{states: states} }
+
+func (d *documents) saved(context.Context, repos.Clone) ([]SavedReview, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	var out []SavedReview
+	for n, state := range d.states {
+		out = append(out, SavedReview{Number: n, State: state})
+	}
+	slices.SortFunc(out, func(a, b SavedReview) int { return a.Number - b.Number })
+	return out, nil
+}
+
+// record stores what a read observed in the document.
+func (d *documents) record(o discovery.Observation) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if _, ok := d.states[o.Number]; ok && o.State != "" {
+		d.states[o.Number] = strings.ToLower(o.State)
+	}
+}
+
+// settled is a service whose process started long enough ago that the
+// restart spread is over.
+func settled(s *Service, now time.Time) *Service {
+	s.started = now.Add(-restartSpread)
+	return s
+}
+
 func TestPeriodicDiscoverySavedHistoryAndDedup(t *testing.T) {
 	now := time.Now()
 	d := &fakeDiscovery{}
 	calls := []int{}
+	docs := newDocuments(map[int]string{1: "open", 9: "open"})
 	clones := registry{{Repository: "acme/app", CommonDir: "one", Available: true}, {Repository: "acme/app", CommonDir: "one", Available: true}, {Repository: "acme/app", CommonDir: "missing"}}
-	s := &Service{Registry: clones, Discovery: d, Now: func() time.Time { return now }, Saved: func(context.Context, repos.Clone) ([]int, error) { return []int{1, 9}, nil }, Refresh: func(_ context.Context, _ repos.Clone, n int) (discovery.Observation, error) {
+	s := settled(&Service{Registry: clones, Discovery: d, Now: func() time.Time { return now }, Saved: docs.saved, Refresh: func(_ context.Context, _ repos.Clone, n int) (discovery.Observation, error) {
 		calls = append(calls, n)
 		state := "OPEN"
 		if n == 9 {
 			state = "MERGED"
 		}
-		return discovery.Observation{Number: n, State: state, HeadSHA: "new", Checks: "success", FetchedAt: now}, nil
-	}}
+		o := discovery.Observation{Number: n, State: state, HeadSHA: "new", Checks: "success", FetchedAt: now}
+		docs.record(o)
+		return o, nil
+	}}, now)
 	s.Sync(context.Background())
 	if d.polls != 1 || len(calls) != 2 || len(d.observations) != 2 || d.observations[1].State != "MERGED" {
 		t.Fatalf("polls=%d calls=%v observations=%v", d.polls, calls, d.observations)
@@ -132,11 +186,12 @@ func TestPeriodicDiscoverySavedHistoryAndDedup(t *testing.T) {
 	if len(calls) != 3 || calls[2] != 1 {
 		t.Fatalf("calls=%v, want the updated pull request read", calls)
 	}
-	// Unchanged ones are read again once their evidence is old.
-	now = now.Add(closedReadAge)
+	// An unchanged open one is read again once its evidence is old; the
+	// merged one, whose document records it, never is.
+	now = now.Add(openReadAge)
 	s.Sync(context.Background())
-	if len(calls) != 5 {
-		t.Fatalf("calls=%v, want both read again after %v", calls, closedReadAge)
+	if len(calls) != 4 || calls[3] != 1 {
+		t.Fatalf("calls=%v, want the open one read again after %v", calls, openReadAge)
 	}
 	// There is deliberately no job queue or backend capability in Service.
 	response := httptest.NewRecorder()
@@ -148,9 +203,9 @@ func TestPeriodicDiscoverySavedHistoryAndDedup(t *testing.T) {
 func TestRefreshConflictIsRetriedWithoutFailure(t *testing.T) {
 	now := time.Now()
 	d := &fakeDiscovery{}
-	s := &Service{Registry: registry{{Repository: "acme/app", Available: true}}, Discovery: d, Now: func() time.Time { return now }, Saved: func(context.Context, repos.Clone) ([]int, error) { return []int{1}, nil }, Refresh: func(_ context.Context, _ repos.Clone, n int) (discovery.Observation, error) {
+	s := settled(&Service{Registry: registry{{Repository: "acme/app", Available: true}}, Discovery: d, Now: func() time.Time { return now }, Saved: saved(1), Refresh: func(_ context.Context, _ repos.Clone, n int) (discovery.Observation, error) {
 		return discovery.Observation{Number: n, HeadSHA: "new"}, fmt.Errorf("%w; refresh again using the latest document", store.ErrConflict)
-	}}
+	}}, now)
 	s.Sync(context.Background())
 	state := s.state("acme/app")
 	if state.Error != "" || len(state.Problems) != 0 || state.Failures != 0 || state.NextRefresh != now.Add(time.Minute) || len(d.observations) != 1 {
@@ -164,7 +219,7 @@ func TestDiscoveredReceivesOnlySuccessfulSnapshots(t *testing.T) {
 	now := time.Now()
 	d := &fakeDiscovery{err: errors.New("offline")}
 	var seen []discovery.Snapshot
-	s := &Service{Registry: registry{{Repository: "acme/app", Available: true}}, Discovery: d, Now: func() time.Time { return now }, Saved: func(context.Context, repos.Clone) ([]int, error) { return nil, nil }, Refresh: func(context.Context, repos.Clone, int) (discovery.Observation, error) {
+	s := &Service{Registry: registry{{Repository: "acme/app", Available: true}}, Discovery: d, Now: func() time.Time { return now }, Saved: saved(), Refresh: func(context.Context, repos.Clone, int) (discovery.Observation, error) {
 		return discovery.Observation{}, nil
 	}, Discovered: func(_ context.Context, snapshot discovery.Snapshot) { seen = append(seen, snapshot) }}
 	s.Sync(context.Background())
@@ -182,10 +237,10 @@ func TestOfflineBackoffAndRecovery(t *testing.T) {
 	now := time.Now()
 	d := &fakeDiscovery{err: errors.New("offline")}
 	calls := 0
-	s := &Service{Registry: registry{{Repository: "acme/app", Available: true}}, Discovery: d, Now: func() time.Time { return now }, Saved: func(context.Context, repos.Clone) ([]int, error) { return nil, nil }, Refresh: func(context.Context, repos.Clone, int) (discovery.Observation, error) {
+	s := settled(&Service{Registry: registry{{Repository: "acme/app", Available: true}}, Discovery: d, Now: func() time.Time { return now }, Saved: saved(1), Refresh: func(context.Context, repos.Clone, int) (discovery.Observation, error) {
 		calls++
 		return discovery.Observation{}, nil
-	}}
+	}}, now)
 	s.Sync(context.Background())
 	if s.state("acme/app").Error != "discovery_unavailable" || calls != 0 {
 		t.Fatal("offline failure hidden")
@@ -212,10 +267,10 @@ func TestMetadataRateLimitStopsOtherPRsAndRepositories(t *testing.T) {
 	d := &fakeDiscovery{}
 	calls := 0
 	reset := now.Add(time.Hour)
-	s := &Service{Registry: registry{{Repository: "acme/a", CommonDir: "a", Available: true}, {Repository: "acme/b", CommonDir: "b", Available: true}}, Discovery: d, Now: func() time.Time { return now }, Saved: func(context.Context, repos.Clone) ([]int, error) { return []int{2}, nil }, Refresh: func(context.Context, repos.Clone, int) (discovery.Observation, error) {
+	s := settled(&Service{Registry: registry{{Repository: "acme/a", CommonDir: "a", Available: true}, {Repository: "acme/b", CommonDir: "b", Available: true}}, Discovery: d, Now: func() time.Time { return now }, Saved: saved(2), Refresh: func(context.Context, repos.Clone, int) (discovery.Observation, error) {
 		calls++
 		return discovery.Observation{}, &github.RateLimitedError{ResumeAt: reset, Err: errors.New("limited")}
-	}}
+	}}, now)
 	s.Sync(context.Background())
 	if calls != 1 || s.state("acme/b").NextRefresh.Before(reset) {
 		t.Fatalf("metadata continued calls=%d state=%+v", calls, s.state("acme/b"))
@@ -226,11 +281,11 @@ func TestRunCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	d := &fakeDiscovery{}
-	s := &Service{Registry: registry{{Repository: "acme/a", Available: true}}, Discovery: d, Saved: func(context.Context, repos.Clone) ([]int, error) { return nil, nil }, Refresh: func(ctx context.Context, _ repos.Clone, _ int) (discovery.Observation, error) {
+	s := settled(&Service{Registry: registry{{Repository: "acme/a", Available: true}}, Discovery: d, Saved: saved(1), Refresh: func(ctx context.Context, _ repos.Clone, _ int) (discovery.Observation, error) {
 		close(started)
 		<-ctx.Done()
 		return discovery.Observation{}, ctx.Err()
-	}}
+	}}, time.Now())
 	done := make(chan struct{})
 	go func() { defer close(done); s.Run(ctx) }()
 	<-started
@@ -249,20 +304,18 @@ func TestRateBudgetEventuallyReachesEveryPRAndRepository(t *testing.T) {
 			d := &fakeDiscovery{}
 			calls := 0
 			seen := map[string]bool{}
-			s := &Service{Registry: registry{{Repository: "acme/a", CommonDir: "a", Available: true}, {Repository: "acme/b", CommonDir: "b", Available: true}}, Discovery: d, Now: func() time.Time { return now }, Saved: func(context.Context, repos.Clone) ([]int, error) {
-				var saved []int
-				for n := 2; n <= count; n++ {
-					saved = append(saved, n)
-				}
-				return saved, nil
-			}, Refresh: func(_ context.Context, clone repos.Clone, n int) (discovery.Observation, error) {
+			var numbers []int
+			for n := 1; n <= count; n++ {
+				numbers = append(numbers, n)
+			}
+			s := settled(&Service{Registry: registry{{Repository: "acme/a", CommonDir: "a", Available: true}, {Repository: "acme/b", CommonDir: "b", Available: true}}, Discovery: d, Now: func() time.Time { return now }, Saved: saved(numbers...), Refresh: func(_ context.Context, clone repos.Clone, n int) (discovery.Observation, error) {
 				calls++
 				if calls%2 == 0 {
 					return discovery.Observation{}, &github.RateLimitedError{ResumeAt: now.Add(time.Minute), Err: errors.New("limited")}
 				}
 				seen[clone.Repository+string(rune('0'+n))] = true
 				return discovery.Observation{Number: n, HeadSHA: "head"}, nil
-			}}
+			}}, now)
 			for i := 0; i < 14; i++ {
 				s.Sync(context.Background())
 				now = now.Add(time.Minute)
@@ -287,7 +340,7 @@ func TestRefreshNowSharesTheRatePause(t *testing.T) {
 	reset := now.Add(time.Hour)
 	changed := 0
 	clone := repos.Clone{Repository: "acme/app", CommonDir: "one", Available: true}
-	s := &Service{Registry: registry{clone}, Discovery: d, Now: func() time.Time { return now }, Saved: func(context.Context, repos.Clone) ([]int, error) { return nil, nil }, Changed: func() { changed++ }, Refresh: func(_ context.Context, _ repos.Clone, n int) (discovery.Observation, error) {
+	s := &Service{Registry: registry{clone}, Discovery: d, Now: func() time.Time { return now }, Saved: saved(), Changed: func() { changed++ }, Refresh: func(_ context.Context, _ repos.Clone, n int) (discovery.Observation, error) {
 		calls = append(calls, n)
 		if limited {
 			return discovery.Observation{}, &github.RateLimitedError{ResumeAt: reset, Err: errors.New("limited")}
@@ -332,13 +385,13 @@ func TestPickedRepositoryWithoutCloneIsPolledNotRefreshed(t *testing.T) {
 	d := &fakeDiscovery{}
 	var discovered []string
 	refreshed := 0
-	s := &Service{Registry: registry{{Repository: "acme/bare"}, {Repository: "acme/app", CommonDir: "a", Available: true}}, Discovery: d, Now: func() time.Time { return now },
+	s := settled(&Service{Registry: registry{{Repository: "acme/bare"}, {Repository: "acme/app", CommonDir: "a", Available: true}}, Discovery: d, Now: func() time.Time { return now },
 		Discovered: func(_ context.Context, snap discovery.Snapshot) { discovered = append(discovered, snap.Repository) },
-		Saved:      func(context.Context, repos.Clone) ([]int, error) { return nil, nil },
+		Saved:      saved(1),
 		Refresh: func(context.Context, repos.Clone, int) (discovery.Observation, error) {
 			refreshed++
 			return discovery.Observation{}, nil
-		}}
+		}}, now)
 	s.Sync(context.Background())
 	if d.polls != 2 || len(discovered) != 2 {
 		t.Fatalf("polls=%d discovered=%v, want both repositories polled", d.polls, discovered)
@@ -354,7 +407,7 @@ func TestPickedRepositoryWithoutCloneIsPolledNotRefreshed(t *testing.T) {
 func TestProbedChangePollsBeforeItsSchedule(t *testing.T) {
 	now := time.Now()
 	d := &fakeDiscovery{}
-	s := &Service{Registry: registry{{Repository: "acme/a", Available: true}, {Repository: "acme/b", Available: true}}, Discovery: d, Now: func() time.Time { return now }, Interval: time.Minute, Saved: func(context.Context, repos.Clone) ([]int, error) { return nil, nil }, Refresh: func(_ context.Context, _ repos.Clone, n int) (discovery.Observation, error) {
+	s := &Service{Registry: registry{{Repository: "acme/a", Available: true}, {Repository: "acme/b", Available: true}}, Discovery: d, Now: func() time.Time { return now }, Interval: time.Minute, Saved: saved(), Refresh: func(_ context.Context, _ repos.Clone, n int) (discovery.Observation, error) {
 		return discovery.Observation{Number: n}, nil
 	}}
 	s.Sync(context.Background())
@@ -386,7 +439,7 @@ func TestReconnectPollsFailedRepositoriesAtOnce(t *testing.T) {
 	now := time.Now()
 	offline := errors.New("dial tcp: lookup api.github.com: no such host")
 	d := &fakeDiscovery{err: offline, probeErr: offline}
-	s := &Service{Registry: registry{{Repository: "acme/a"}, {Repository: "acme/b"}}, Discovery: d, Now: func() time.Time { return now }, Interval: time.Minute, Saved: func(context.Context, repos.Clone) ([]int, error) { return nil, nil }, Refresh: func(_ context.Context, _ repos.Clone, n int) (discovery.Observation, error) {
+	s := &Service{Registry: registry{{Repository: "acme/a"}, {Repository: "acme/b"}}, Discovery: d, Now: func() time.Time { return now }, Interval: time.Minute, Saved: saved(), Refresh: func(_ context.Context, _ repos.Clone, n int) (discovery.Observation, error) {
 		return discovery.Observation{Number: n}, nil
 	}}
 	for range 5 {
@@ -424,17 +477,22 @@ func TestPullRequestThatLeftTheOpenOnesIsReadOnce(t *testing.T) {
 	now := time.Now()
 	d := &fakeDiscovery{observations: []discovery.Observation{{Number: 5, HeadSHA: "h", State: "OPEN", FetchedAt: now.Add(-time.Minute)}}}
 	var calls []int
-	s := &Service{Registry: registry{{Repository: "acme/app", CommonDir: "a", Available: true}}, Discovery: d, Now: func() time.Time { return now }, Saved: func(context.Context, repos.Clone) ([]int, error) { return []int{5}, nil }, Refresh: func(_ context.Context, _ repos.Clone, n int) (discovery.Observation, error) {
+	docs := newDocuments(map[int]string{5: "open"})
+	s := settled(&Service{Registry: registry{{Repository: "acme/app", CommonDir: "a", Available: true}}, Discovery: d, Now: func() time.Time { return now }, Saved: docs.saved, Refresh: func(_ context.Context, _ repos.Clone, n int) (discovery.Observation, error) {
 		calls = append(calls, n)
-		return discovery.Observation{Number: n, HeadSHA: "h", State: "MERGED", FetchedAt: now}, nil
-	}}
+		o := discovery.Observation{Number: n, HeadSHA: "h", State: "MERGED", FetchedAt: now}
+		docs.record(o)
+		return o, nil
+	}}, now)
 	s.Sync(context.Background())
-	if len(calls) != 2 || !slices.Contains(calls, 5) {
-		t.Fatalf("calls=%v, want the pull request that left the open ones read", calls)
+	if !slices.Equal(calls, []int{5}) {
+		t.Fatalf("calls=%v, want only the saved pull request that left the open ones read", calls)
 	}
-	now = now.Add(time.Minute)
-	s.Sync(context.Background())
-	if len(calls) != 2 {
+	for range 3 {
+		now = now.Add(24 * time.Hour)
+		s.Sync(context.Background())
+	}
+	if len(calls) != 1 {
 		t.Fatalf("calls=%v, want no read of a merged pull request", calls)
 	}
 }
@@ -445,12 +503,12 @@ func TestRepositoriesArePolledBeforeReads(t *testing.T) {
 	now := time.Now()
 	d := &fakeDiscovery{}
 	var pollsAtFirstRead int
-	s := &Service{Registry: registry{{Repository: "acme/a", CommonDir: "a", Available: true}, {Repository: "acme/b", CommonDir: "b", Available: true}}, Discovery: d, Now: func() time.Time { return now }, Saved: func(context.Context, repos.Clone) ([]int, error) { return nil, nil }, Refresh: func(context.Context, repos.Clone, int) (discovery.Observation, error) {
+	s := settled(&Service{Registry: registry{{Repository: "acme/a", CommonDir: "a", Available: true}, {Repository: "acme/b", CommonDir: "b", Available: true}}, Discovery: d, Now: func() time.Time { return now }, Saved: saved(1), Refresh: func(context.Context, repos.Clone, int) (discovery.Observation, error) {
 		if pollsAtFirstRead == 0 {
 			pollsAtFirstRead = d.polls
 		}
 		return discovery.Observation{}, nil
-	}}
+	}}, now)
 	s.Sync(context.Background())
 	if pollsAtFirstRead != 2 {
 		t.Fatalf("first read after %d polls, want 2", pollsAtFirstRead)
@@ -462,11 +520,11 @@ func TestReadsStopAtTheBudget(t *testing.T) {
 	now := time.Now()
 	d := &fakeDiscovery{}
 	var calls []int
-	s := &Service{Registry: registry{{Repository: "acme/app", CommonDir: "a", Available: true}}, Discovery: d, Now: func() time.Time { return now }, Saved: func(context.Context, repos.Clone) ([]int, error) { return []int{2, 3}, nil }, Refresh: func(_ context.Context, _ repos.Clone, n int) (discovery.Observation, error) {
+	s := settled(&Service{Registry: registry{{Repository: "acme/app", CommonDir: "a", Available: true}}, Discovery: d, Now: func() time.Time { return now }, Saved: saved(1, 2, 3), Refresh: func(_ context.Context, _ repos.Clone, n int) (discovery.Observation, error) {
 		calls = append(calls, n)
 		now = now.Add(refreshBudget / 2)
 		return discovery.Observation{}, nil
-	}}
+	}}, now)
 	s.Sync(context.Background())
 	if len(calls) != 2 {
 		t.Fatalf("calls=%v, want two reads within the budget", calls)
@@ -478,22 +536,46 @@ func TestReadsStopAtTheBudget(t *testing.T) {
 	}
 }
 
-// A failed read is retried with a growing backoff, not every pass.
-func TestFailedReadBacksOff(t *testing.T) {
+// A failed read is retried with a growing backoff, not every pass, and
+// after maxReadFailures in a row only once the pull request changes: its
+// updated time, its head, a day later, or a retry asked for.
+func TestFailedReadBacksOffThenWaitsForAChange(t *testing.T) {
 	now := time.Now()
 	d := &fakeDiscovery{}
 	calls := 0
-	s := &Service{Registry: registry{{Repository: "acme/app", CommonDir: "a", Available: true}}, Discovery: d, Now: func() time.Time { return now }, Interval: time.Minute, Saved: func(context.Context, repos.Clone) ([]int, error) { return nil, nil }, Refresh: func(context.Context, repos.Clone, int) (discovery.Observation, error) {
+	s := settled(&Service{Registry: registry{{Repository: "acme/app", CommonDir: "a", Available: true}}, Discovery: d, Now: func() time.Time { return now }, Interval: time.Minute, Saved: saved(1), Refresh: func(context.Context, repos.Clone, int) (discovery.Observation, error) {
 		calls++
-		return discovery.Observation{}, errors.New("git objects missing")
-	}}
-	for i, want := range []int{1, 2, 2, 3, 3, 3, 3, 4} {
+		return discovery.Observation{}, errors.New("timed out")
+	}}, now)
+	pass := func(step time.Duration, want int) {
+		t.Helper()
+		now = now.Add(step)
 		s.Sync(context.Background())
 		if calls != want {
-			t.Fatalf("pass %d: calls=%d, want %d", i, calls, want)
+			t.Fatalf("calls=%d, want %d", calls, want)
 		}
-		now = now.Add(time.Minute)
 	}
+	for _, want := range []int{1, 2, 2, 3, 3, 3, 3} {
+		pass(time.Minute, want)
+	}
+	// Stopped: hours pass without a read.
+	pass(openReadAge*3, 3)
+	// GitHub reports an update: one read, which fails and stops again.
+	d.updated = now
+	pass(time.Minute, 4)
+	pass(time.Minute, 4)
+	pass(time.Hour, 4)
+	// A new head: one read.
+	d.head = "newer"
+	pass(time.Minute, 5)
+	pass(time.Hour, 5)
+	// The person refreshes the repository: one read.
+	s.Retry("acme/app")
+	pass(time.Minute, 6)
+	pass(time.Hour, 6)
+	// Unchanged for a day: one more read.
+	pass(stoppedRetry, 7)
+	pass(time.Minute, 7)
 }
 
 // A poll that found a new head is due again at discovery's sooner deadline,
@@ -501,7 +583,7 @@ func TestFailedReadBacksOff(t *testing.T) {
 func TestSettlingPollIsDueSooner(t *testing.T) {
 	now := time.Now()
 	d := &fakeDiscovery{next: now.Add(15 * time.Second), settling: true}
-	s := &Service{Registry: registry{{Repository: "acme/app"}}, Discovery: d, Now: func() time.Time { return now }, Interval: time.Minute, Saved: func(context.Context, repos.Clone) ([]int, error) { return nil, nil }}
+	s := &Service{Registry: registry{{Repository: "acme/app"}}, Discovery: d, Now: func() time.Time { return now }, Interval: time.Minute, Saved: saved()}
 	s.Sync(context.Background())
 	if next := s.state("acme/app").NextRefresh; !next.Equal(d.next) {
 		t.Fatalf("next refresh in %v, want 15s", next.Sub(now))
@@ -528,10 +610,13 @@ func TestPullRequestReadOpenIsReadAgainWhenItLeaves(t *testing.T) {
 	d := &fakeDiscovery{}
 	state := "OPEN"
 	calls := 0
-	s := &Service{Registry: registry{{Repository: "acme/app", CommonDir: "a", Available: true}}, Discovery: d, Now: func() time.Time { return now }, Saved: func(context.Context, repos.Clone) ([]int, error) { return []int{1}, nil }, Refresh: func(_ context.Context, _ repos.Clone, n int) (discovery.Observation, error) {
+	docs := newDocuments(map[int]string{1: "open"})
+	s := settled(&Service{Registry: registry{{Repository: "acme/app", CommonDir: "a", Available: true}}, Discovery: d, Now: func() time.Time { return now }, Saved: docs.saved, Refresh: func(_ context.Context, _ repos.Clone, n int) (discovery.Observation, error) {
 		calls++
-		return discovery.Observation{Number: n, HeadSHA: "new", State: state, FetchedAt: now}, nil
-	}}
+		o := discovery.Observation{Number: n, HeadSHA: "new", State: state, FetchedAt: now}
+		docs.record(o)
+		return o, nil
+	}}, now)
 	s.Sync(context.Background())
 	now = now.Add(time.Minute)
 	d.closed, state = true, "MERGED"
@@ -540,6 +625,8 @@ func TestPullRequestReadOpenIsReadAgainWhenItLeaves(t *testing.T) {
 		t.Fatalf("calls=%d, want a read after it left the open ones", calls)
 	}
 	now = now.Add(time.Minute)
+	s.Sync(context.Background())
+	now = now.Add(24 * time.Hour)
 	s.Sync(context.Background())
 	if calls != 2 {
 		t.Fatalf("calls=%d, want no read of a merged pull request", calls)
@@ -581,7 +668,7 @@ func TestRepositoriesPollConcurrently(t *testing.T) {
 	now := time.Now()
 	d := &blockingDiscovery{full: make(chan struct{})}
 	var seen []string
-	s := &Service{Registry: registry{{Repository: "acme/a"}, {Repository: "acme/b"}, {Repository: "acme/c"}, {Repository: "acme/d"}}, Discovery: d, Now: func() time.Time { return now }, Saved: func(context.Context, repos.Clone) ([]int, error) { return nil, nil }, Refresh: func(context.Context, repos.Clone, int) (discovery.Observation, error) {
+	s := &Service{Registry: registry{{Repository: "acme/a"}, {Repository: "acme/b"}, {Repository: "acme/c"}, {Repository: "acme/d"}}, Discovery: d, Now: func() time.Time { return now }, Saved: saved(), Refresh: func(context.Context, repos.Clone, int) (discovery.Observation, error) {
 		return discovery.Observation{}, nil
 	}, Discovered: func(_ context.Context, snapshot discovery.Snapshot) { seen = append(seen, snapshot.Repository) }}
 	s.Sync(context.Background())
@@ -604,7 +691,7 @@ func TestRepositoriesPollConcurrently(t *testing.T) {
 func TestPollTimeoutIsReportedAsATimeout(t *testing.T) {
 	now := time.Now()
 	d := &fakeDiscovery{err: fmt.Errorf("poll: %w", discovery.ErrTimeout)}
-	s := &Service{Registry: registry{{Repository: "acme/app"}}, Discovery: d, Now: func() time.Time { return now }, Saved: func(context.Context, repos.Clone) ([]int, error) { return nil, nil }, Refresh: func(context.Context, repos.Clone, int) (discovery.Observation, error) {
+	s := &Service{Registry: registry{{Repository: "acme/app"}}, Discovery: d, Now: func() time.Time { return now }, Saved: saved(), Refresh: func(context.Context, repos.Clone, int) (discovery.Observation, error) {
 		return discovery.Observation{}, nil
 	}}
 	s.Sync(context.Background())
