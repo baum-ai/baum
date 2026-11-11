@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { CodeDiff, type CodeDiffFile } from "@baum/viewer/components/review-tiles/code-diff";
 import type {
   FileOpenRequest,
@@ -210,7 +210,13 @@ function FactsFilesPane({
           }}
         >
           {opened.has(file.id) ? (
-            <FilePatch file={file} patches={patches} href={href} />
+            <FilePatch
+              path={file.path}
+              additions={file.additions}
+              deletions={file.deletions}
+              patches={patches}
+              href={href}
+            />
           ) : (
             <button
               type="button"
@@ -232,13 +238,19 @@ function FactsFilesPane({
   );
 }
 
-/** One opened file: its patch from the clone, drawn as the review's code is. */
-function FilePatch({
-  file,
+/** One opened file: its patch from the clone, drawn as the review's code is.
+ *  Memoised on primitives, so the host's unrelated renders (which rebuild the
+ *  file objects) neither re-render nor re-parse an opened file. */
+export const FilePatch = memo(function FilePatch({
+  path,
+  additions,
+  deletions,
   patches,
   href,
 }: {
-  file: FactsFile;
+  path: string;
+  additions: number;
+  deletions: number;
   patches: FilePatchSource;
   href: string;
 }) {
@@ -246,37 +258,30 @@ function FilePatch({
   useEffect(() => {
     let current = true;
     setPatch(undefined);
-    void patches(file.path).then((text) => {
+    void patches(path).then((text) => {
       if (current) setPatch(text);
     });
     return () => {
       current = false;
     };
-  }, [file.path, patches]);
+  }, [path, patches]);
   const diff = useMemo<CodeDiffFile | null>(
     () =>
       patch
-        ? {
-            sourceIndex: 0,
-            path: file.path,
-            href,
-            additions: file.additions,
-            deletions: file.deletions,
-            hunks: parseFilePatch(patch),
-          }
+        ? { sourceIndex: 0, path, href, additions, deletions, hunks: parseFilePatch(patch) }
         : null,
-    [patch, file, href],
+    [patch, path, href, additions, deletions],
   );
   if (patch === undefined)
-    return <LoadingStatus block>Reading {file.path} from the local clone…</LoadingStatus>;
+    return <LoadingStatus block>Reading {path} from the local clone…</LoadingStatus>;
   if (!diff || diff.hunks.length === 0)
     return (
       <p className="rounded-(--radius-sm) border border-(--border-default) px-3 py-2 text-base text-(--text-secondary)">
-        <span className="font-mono text-xs">{file.path}</span>: no text diff to show here.{" "}
+        <span className="font-mono text-xs">{path}</span>: no text diff to show here.{" "}
         <a href={href} target="_blank" rel="noreferrer">
           View on GitHub
         </a>
       </p>
     );
   return <CodeDiff bare files={[diff]} className="mt-0" />;
-}
+});
