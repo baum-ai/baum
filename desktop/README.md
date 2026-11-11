@@ -1087,7 +1087,7 @@ A macOS bundle that is not signed with a Developer ID is named
 warns about those. `latest.json` lists `darwin-aarch64` and `darwin-x86_64`
 (both the universal app), `linux-x86_64` and, when built, `linux-aarch64`,
 each at
-`https://github.com/baum-ai/baum/releases/download/vVERSION/<its file>`.
+`https://downloads.usebaum.com/update/vVERSION/<its file>`.
 
 ### Signing
 

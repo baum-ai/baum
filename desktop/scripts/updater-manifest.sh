@@ -13,8 +13,11 @@
 # verify checks every platform of DIR/latest.json the way the app does before
 # it installs anything, and more:
 #   - the platform is one the release ships, and the URL is exactly
-#     https://github.com/baum-ai/baum/releases/download/vVERSION/ followed by
-#     that platform's bundle name (no other host, tag or file);
+#     https://downloads.usebaum.com/update/vVERSION/ followed by that
+#     platform's bundle name (no other host, tag or file). That Worker
+#     (tools/desktop-downloads in the monorepo) counts the download and
+#     redirects to the same file on the GitHub release
+#     (https://github.com/baum-ai/baum/releases/download/vVERSION/...);
 #   - that bundle is in DIR, and its signature was made by the release key in
 #     tauri.conf.json (minisign);
 #   - the signature's trusted comment names the version the manifest
@@ -54,7 +57,9 @@ work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 printf '%s' "$pubkey" | base64 --decode >"$work/key.pub"
 
-releases=https://github.com/baum-ai/baum/releases/download
+# Update downloads go through downloads.usebaum.com so they are counted; it
+# redirects /update/vVERSION/FILE to that file on the GitHub release.
+releases=https://downloads.usebaum.com/update
 
 # The bundle name an updater platform may point at (an extended regular
 # expression), or nothing for a platform the release does not ship.
