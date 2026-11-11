@@ -38,13 +38,17 @@ type mapped struct {
 func mapAll(ctx context.Context, found []collector.Session) ([]mapped, error) {
 	out := make([]mapped, len(found))
 	group, groupCtx := errgroup.WithContext(ctx)
-	group.SetLimit(maxParallel())
+	group.SetLimit(parallelFor(ctx))
 	for i, s := range found {
 		group.Go(func() error {
 			if err := groupCtx.Err(); err != nil {
 				return err
 			}
-			out[i].graph, out[i].notes, out[i].err = Map(s)
+			graph, notes, err := mapCtx(groupCtx, s)
+			if ctxErr := groupCtx.Err(); ctxErr != nil {
+				return ctxErr
+			}
+			out[i].graph, out[i].notes, out[i].err = graph, notes, err
 			return nil
 		})
 	}
@@ -158,6 +162,11 @@ func (s *checkpointStore) read(ctx context.Context, id string) readOutcome {
 		}
 	}
 	workstats.Inc("sessions.entire.reads")
+	release, err := decodeBudget.acquire(ctx, checkpointReadBytes)
+	if err != nil {
+		return readOutcome{err: err}
+	}
+	defer release()
 	fsys, err := entire.Read(ctx, s.objects, s.store, id)
 	if err != nil {
 		return readOutcome{err: err}
@@ -184,7 +193,7 @@ func parseCheckpoint(fsys fs.FS) (readOutcome, int64) {
 func (s *checkpointStore) readAll(ctx context.Context, ids []string) (map[string]readOutcome, error) {
 	outcomes := make([]readOutcome, len(ids))
 	group, groupCtx := errgroup.WithContext(ctx)
-	group.SetLimit(maxParallel())
+	group.SetLimit(parallelFor(ctx))
 	for i, id := range ids {
 		group.Go(func() error {
 			if err := groupCtx.Err(); err != nil {

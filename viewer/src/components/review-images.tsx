@@ -189,6 +189,7 @@ export function ReviewImages({
                         width={item.attachment.width}
                         height={item.attachment.height}
                         loading="lazy"
+                        decoding="async"
                         onError={() => {
                           if (
                             globalThis.document.activeElement === triggers.current.get(item.key)
@@ -260,6 +261,7 @@ export function ReviewImages({
               alt={viewing.attachment.alt || viewing.text || ""}
               width={viewing.attachment.width}
               height={viewing.attachment.height}
+              decoding="async"
               style={{
                 width: viewerImageWidth(viewing.attachment, space.viewport, headerHeight),
               }}

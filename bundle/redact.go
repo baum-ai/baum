@@ -256,9 +256,10 @@ type Redactor struct {
 	engine *redact.Engine
 }
 
-// NewRedactor compiles the redaction rules.
+// NewRedactor returns a redactor with the process-wide engine
+// (redact.Shared), compiling the redaction rules on first use.
 func NewRedactor() (*Redactor, error) {
-	engine, err := redact.New()
+	engine, err := redact.Shared()
 	if err != nil {
 		return nil, err
 	}

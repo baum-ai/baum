@@ -270,7 +270,8 @@ func Run(ctx context.Context, opts Options) error {
 	go func() { defer close(controlDone); control.serve(listener) }()
 	// It served: a client that started it may start the next one at once.
 	_ = os.Remove(paths.startedFile())
-	log.Info("daemon ready", "app", status.App, "socket", paths.Socket)
+	// How long it took from holding the lock to serving, Prepare included.
+	log.Info("daemon ready", "app", status.App, "socket", paths.Socket, "startup", time.Since(status.StartedAt).Round(time.Millisecond))
 	running.Go(func() { control.restartWhenIdle(runCtx) })
 	socketCheck := opts.socketCheck
 	if socketCheck <= 0 {

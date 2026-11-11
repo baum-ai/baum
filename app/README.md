@@ -942,13 +942,25 @@ waiting classification, so the same inbox filters apply before and after
 snoozing. Snoozes still apply when a pull
 request moves between needing an action and waiting; a stack disappears
 from the active queue when all its pull requests are snoozed. A snoozed pull
-request stays under Snoozed when its Fix clears, rather than Done today. Keys:
+request stays under Snoozed when its Fix clears, rather than Done today.
+
+**Archive**, beside Snooze in the panel and in a row's menu (a snoozed row's
+too), hides the pull request from every inbox for good (`useUpNext`'s
+`archive`): it is in no group, has no Archived fold, leaves the Inbox total
+and every inbox's count, and its record of today goes, so it is never Done
+today. Like a snooze, it selects the next pull request and shows a toast with
+**Undo**. A snooze it had waits underneath and applies again once it is
+unarchived. Pull requests and Go to still list it, and its PR page says
+"Archived. This pull request doesn't show in your inboxes." with **Unarchive**
+(`useArchive`). An archive is forgotten once its pull request closed or merged: a read lists
+it merged or closed, or lists its repository without it. A reopened one comes
+back, and the record does not grow. Keys:
 `j`/`↓` and `k`/`↑` move the selection, `Enter` opens, `m` merges a Merge, `f`
 starts a Fix item's fix (where its panel offers the button), `t` opens its fix
 transcript (Watch the agent, See what the agent did, or the last run's), `v` opens
 Approve's menu, `s` opens Snooze
-and `1`–`4` choose from it, `u` undoes a snooze. A review sent from Up next
-shows a toast with **Open it** (the review on GitHub).
+and `1`–`4` choose from it, `e` archives, `u` undoes a snooze or an archive. A
+review sent from Up next shows a toast with **Open it** (the review on GitHub).
 
 "Done today" lists the pull requests that left the queue since first seen
 today because the person's part is done: it merged or closed, the review
@@ -959,12 +971,12 @@ reviewers, or their branch update did. Their own pull request that only stopped
 being mergeable (a push, checks running) waits uncleared, and nothing is
 cleared for a repository the latest read lists no open pull request of, since
 GitHub may only be unreachable; one that comes back is no longer cleared.
-Snoozes and today's record are kept in the daemon's `app.sqlite`,
+Snoozes, archives and today's record are kept in the daemon's `app.sqlite`,
 independently of the browser origin, and start again each local day, snoozes
-excepted. Initial bookkeeping waits until saved state has loaded. Failed reads
+and archives excepted. Initial bookkeeping waits until saved state has loaded. Failed reads
 or saves show a retry action and preserve unsaved changes in the window. The
-sidebar's Inbox heading shows the total of the queue without snoozed pull
-requests: each pull request once, whether it is in several saved inboxes or in
+sidebar's Inbox heading shows the total of the queue without snoozed or
+archived pull requests: each pull request once, whether it is in several saved inboxes or in
 none, and whatever the inboxes' badge switches say. The daemon counts the same
 total for the desktop tray and dock badge (`internal/inboxqueue`), so a change
 to these rules belongs there too.
@@ -1185,7 +1197,7 @@ inboxes…**; a right click on an inbox's row, like its ⋯, offers **Edit inbox
 and **Delete inbox**, and on its queue head **Edit…**. A right click on a pull request in
 an inbox's queue (or ⌘. on it) offers what its panel and keys do: **Open**, the
 agent's transcript, **Merge…**, **Update the branch…** or the fix, the review
-verdicts, **Snooze…** (which picks the row and opens its snooze choices) and
+verdicts, **Snooze…** (which picks the row and opens its snooze choices), **Archive** and
 **Open on GitHub**; on a group's row, **Open** and Show or Hide its pull requests; on a
 row under Done today, **Open** and **Open on GitHub**. Deleting an inbox, from
 there or its edit page, first asks, saying only the view goes and its pull
@@ -1812,7 +1824,7 @@ the row. Pull requests: Peek, Merge… or the fix, the fix's transcript,
 Generate review, Select, Open on GitHub. Jobs: Open pull request, Watch or
 Transcript, Show usage, Cancel job. Repositories: Settings…, Change local
 clone… or, without a clone, Choose folder… and Clone it…. Manage inboxes:
-Edit…, Move up, Move down, Show count in the sidebar. Snoozed: Bring back.
+Edit…, Move up, Move down, Show count in the sidebar. Snoozed: Bring back, Archive.
 Sessions: the session menu below.
 
 The Sessions page (`?page=sessions`) is a live feed of the same sessions, in three

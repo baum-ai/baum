@@ -33,14 +33,17 @@ export function NineDots({
     >
       {Array.from({ length: 9 }, (_, cell) => {
         const step = orbit.indexOf(cell);
+        const cx = 32 + 48 * (cell % 3);
+        const cy = 32 + 48 * Math.floor(cell / 3);
         return (
-          <circle
-            key={cell}
-            cx={32 + 48 * (cell % 3)}
-            cy={32 + 48 * Math.floor(cell / 3)}
-            r={19}
-            className={step < 0 ? undefined : `nine-dots-step-${step}`}
-          />
+          <g key={cell}>
+            <circle cx={cx} cy={cy} r={19} />
+            {/* The passing colour is a second circle whose opacity animates,
+                which the compositor can do; animating fill repaints. */}
+            {step < 0 ? null : (
+              <circle cx={cx} cy={cy} r={19} className={`nine-dots-step-${step}`} />
+            )}
+          </g>
         );
       })}
     </svg>
