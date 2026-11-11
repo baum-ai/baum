@@ -2,6 +2,8 @@ import { expect, test, type Page } from "@playwright/test";
 import { launchURL } from "./inbox-helpers";
 
 const row = (page: Page, id: string) => page.locator(`[data-prompt="${id}"]`);
+// The row's own button, which opens and closes its editor.
+const toggle = (page: Page, id: string) => row(page, id).locator("button.prompt-row");
 
 // The fixture is a real daemon with a real registry, so the prompt overrides
 // are stored and read back as they are on a person's computer.
@@ -25,12 +27,10 @@ test("replaces a global prompt, overrides it for a repository and resets both", 
       /\s+(Default|Custom)$/,
       "",
     );
-    await expect(row(page, id)).toContainText("Default");
+    await expect(row(page, id)).not.toContainText("Custom");
 
     // A global replacement starts from the default text.
-    await row(page, id)
-      .getByRole("button", { name: /^Customise/ })
-      .click();
+    await toggle(page, id).click();
     const editor = page.getByRole("textbox", { name: `${title} prompt` });
     const seeded = await editor.inputValue();
     expect(seeded.length).toBeGreaterThan(20);
@@ -46,31 +46,29 @@ test("replaces a global prompt, overrides it for a repository and resets both", 
     await page.getByRole("button", { name: "Settings for acme/demo" }).click();
     const dialog = page.getByRole("dialog", { name: "Repository acme/demo", exact: true });
     await dialog.getByText(/^Prompts/).click();
-    await expect(row(page, id)).toContainText("Uses global");
-    await row(page, id)
-      .getByRole("button", { name: /^Customise for this repository/ })
-      .click();
+    await expect(row(page, id)).toContainText("Global");
+    await toggle(page, id).click();
     const own = dialog.getByRole("textbox", { name: `${title} prompt` });
     expect(await own.inputValue()).toContain("Always answer in the language");
     await own.fill("A prompt only for acme/demo.");
     await row(page, id).getByRole("button", { name: "Save for this repository" }).click();
-    await expect(row(page, id)).toContainText("Custom for this repository");
+    await expect(row(page, id)).toContainText("Custom");
     await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
 
     await page.reload();
     await page.getByRole("button", { name: "Settings for acme/demo" }).click();
     await dialog.getByText(/^Prompts/).click();
-    await expect(row(page, id)).toContainText("Custom for this repository");
-    await row(page, id).getByRole("button", { name: /^Edit/ }).click();
+    await expect(row(page, id)).toContainText("Custom");
+    await toggle(page, id).click();
     await row(page, id).getByRole("button", { name: "Use inherited" }).click();
-    await expect(row(page, id)).toContainText("Uses global");
+    await expect(row(page, id)).toContainText("Global");
     await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
     await page.goto(await launchURL());
     await page.getByRole("link", { name: "Settings" }).click();
     await page.getByRole("button", { name: /^Prompts/ }).click();
-    await row(page, id).getByRole("button", { name: /^Edit/ }).click();
+    await toggle(page, id).click();
     await row(page, id).getByRole("button", { name: "Reset to default" }).click();
-    await expect(row(page, id)).toContainText("Default");
+    await expect(row(page, id)).not.toContainText("Custom");
   } finally {
     // Leave the fixture as it was, whatever failed above.
     if (id) {
@@ -101,7 +99,7 @@ test("undoes typing in the prompt editor in one step", async ({ page }) => {
     .getByRole("region", { name: "Prompts", exact: true })
     .locator("[data-prompt]")
     .first();
-  await first.getByRole("button", { name: /^Customise/ }).click();
+  await first.locator("button.prompt-row").click();
   const editor = first.getByRole("textbox");
   const seeded = await editor.inputValue();
   await editor.click();

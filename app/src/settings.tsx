@@ -69,6 +69,7 @@ import {
   SearchIcon,
   CloseIcon,
   PlusIcon,
+  ChevronRightIcon,
 } from "@baum/viewer/components/icons";
 import { DecisionsDisclosure, harnesses, harnessName, signIn } from "./desktop/reviews";
 import { effortLabels } from "./model-effort";
@@ -439,7 +440,7 @@ export function PromptsSection({ prompts }: { prompts: ReturnType<typeof useProm
       <SectionHead
         id="settings-prompts-heading"
         title="Prompts"
-        detail="The instructions baum gives its agents. A custom prompt replaces the built-in one for every repository, unless a repository has its own (set in the repository's settings). Custom prompts stay on this computer."
+        detail="The instructions baum gives its agents. A custom prompt replaces the built-in one in every repository without a prompt of its own, set in its repository settings. Custom prompts stay on this computer."
       />
       {prompts.error ? (
         <Alert>
@@ -478,11 +479,15 @@ export function RepositoryPrompts({ repository }: { repository: string }) {
   return (
     <details className="repository-prompts">
       <summary>
-        Prompts{entries ? (custom ? ` · ${custom} custom for this repository` : "") : ""}
+        <ChevronRightIcon className="prompt-chevron" />
+        Prompts
+        {entries && custom ? (
+          <span className="repository-prompts-count">{custom} custom</span>
+        ) : null}
       </summary>
       <p className="settings-footnote">
-        Prompt changes save at once. They are not part of Save repository settings, and Cancel does
-        not undo them. Unsaved prompt text is discarded when you close this dialog.
+        A prompt saves on its own, apart from the settings below. Unsaved prompt text is lost when
+        this dialog closes.
       </p>
       {error ? (
         <Alert>

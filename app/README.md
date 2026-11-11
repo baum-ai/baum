@@ -1823,30 +1823,44 @@ no longer passes validation after an upgrade, which jobs skip.
 
 **Settings › Prompts** (`PromptsSection`, `src/prompt-editor.tsx`) lists every
 prompt, staged review ones included, under Reviews, Fixes and Data extraction.
-Each row has its title, what uses it, **Default** or **Custom**, and a note when
-the custom text was "Written for <based_on>; the default is now
-<default_version>", when it no longer contains a safety rule, or when it is not in
-use (`invalid`: "This custom prompt is not in use: <reason>. Edit and save it, or
-reset it."; such a prompt counts as not custom). The section list reads "N custom"
-and shows an attention dot when any prompt is outdated, invalid or a custom one
-lacks a safety rule. **Customise** opens the editor in the row, seeded with the
-effective text (the built-in one globally); nothing is saved until **Save**
-(`PUT api/settings/prompts/{id}`), and one save or reset runs at a time. **Reset
-to default** sends `null`, **Show default** shows the built-in text read only and
-**Show changes** a line diff (longest common subsequence) of the editor's text
-against it. The editor is a monospace textarea over a transparent mirror of its
-text, so the text of each safety rule is marked where it stands; the mirror is
-hidden from assistive technology, which gets the rules as a list ("Present" or
-"Missing", computed as the text is typed, CRLF read as LF) and a warning, "This
-prompt no longer contains: …", beside the field. Saving stays possible and
-nothing is added back; the editor says baum adds the output format and the
-delimiting of pull request data itself. A failed save shows its message and keeps
-the text. `Esc` in the field gives it up first, without closing a dialog around it.
+Each row is one button, with no buttons of its own: a chevron, its title and what
+uses it, and on the right only what sets it apart from the default, a **Custom**
+pill and "Unsaved changes". A problem is spelled out on the row in the caution
+colour: "Written for <based_on>; the default is now <default_version>", a custom
+text that no longer contains a safety rule, or one not in use (`invalid`: "This
+custom prompt is not in use: <reason>. Edit and save it, or reset it."; such a
+prompt counts as not custom). The section list reads "N custom" and shows an
+attention dot when any prompt is outdated, invalid or a custom one lacks a safety
+rule. Pressing a row opens its editor beneath it (and closes any other), seeded
+with the effective text (the built-in one globally); pressing it again closes it.
+A segmented **Edit**, **Changes** and **Default** switch above the field shows
+the text, a line diff (longest common subsequence) of it against the effective
+text, or the built-in text read only; the field stays mounted while hidden, so it
+keeps its undo history. Nothing is saved until **Save** (`PUT
+api/settings/prompts/{id}`), and one save or reset runs at a time; **Discard
+changes**, shown while there is a draft, goes back to the stored text, and **Reset
+to default**, on the right, sends `null`. The editor is a monospace textarea over a
+transparent mirror of its text, so the text of each safety rule is marked where it
+stands (the switch's row has a key); the mirror is hidden from assistive
+technology. Below the field the safety rules are a list, each with a tick or a
+warning sign (and "present" or "missing" for screen readers), computed as the text
+is typed, CRLF read as LF, with a warning, "This prompt no longer contains: …".
+Saving stays possible and nothing is added back; the editor says baum adds the
+output format and the delimiting of pull request data itself. A failed save shows
+its message and keeps the text. `Esc` in the field gives it up first, without
+closing a dialog around it. The textarea has neither `value` nor `defaultValue`:
+React writes either into its text node after every keystroke, which ends the
+browser's undo step, so the text is written only when it changes from outside.
 The repository dialog has a **Prompts** part (folded) listing the same entries
-with their source, "Uses default", "Uses global" or "Custom for this repository":
-**Customise for this repository** seeds the editor with `inherited_text`, and
-**Use inherited** sends `null`. These save at once through their own `PUT`s and
-are not part of **Save repository settings**, which the part says. Typed text not yet saved is kept per prompt while the list is open (a row shows "Unsaved changes"), so opening another prompt or folding the part does not drop it; closing the dialog or leaving the section discards it, and the dialog says so. On a review, the "Generated
+with their source: a **Custom** pill for the repository's own, a **Global** pill
+for one inherited from Settings, and none for the default. Its editor is seeded
+with `inherited_text`, its **Changes** compares with that text, **Save for this
+repository** saves it, and **Use inherited** sends `null`. These save at once
+through their own `PUT`s and are not part of **Save repository settings**, which
+the part says. Typed text not yet saved is kept per prompt while the list is open
+(a row shows "Unsaved changes"), so opening another prompt or folding the part does
+not drop it; closing the dialog or leaving the section discards it, and the dialog
+says so. On a review, the "Generated
 with" line adds "Custom prompt (global)" or "Custom prompt (this repository)"
 when the saved version's `prompt_source` (from `api/versions`) says so.
 Analytics counts the decisions captured under baum's work.

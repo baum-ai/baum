@@ -1,4 +1,5 @@
-import { Alert, Badge, Button } from "@baum/viewer/components/ui";
+import { CheckIcon, ChevronRightIcon, WarningIcon } from "@baum/viewer/components/icons";
+import { Alert, Badge, Button, SegmentedControl } from "@baum/viewer/components/ui";
 import { Fragment, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { request, type PromptEntry, type RepositoryPromptEntry } from "./api";
 
@@ -200,10 +201,31 @@ function Diff({ before, after }: { before: string; after: string }) {
   );
 }
 
+/** The problems with a stored prompt, as sentences. */
+function problems(entry: PromptEntry) {
+  const out: string[] = [];
+  if (entry.invalid)
+    out.push(
+      `This custom prompt is not in use: ${entry.invalid_reason ?? "it is no longer valid"}. Edit and save it, or reset it.`,
+    );
+  if (entry.outdated)
+    out.push(`Written for ${entry.based_on}; the default is now ${entry.default_version}.`);
+  if (!entry.invalid && entry.custom_text !== null && entry.missing_safety_rules.length > 0)
+    out.push(
+      `No longer contains a safety rule: ${entry.missing_safety_rules
+        .map((id) => entry.safety_rules.find((r) => r.id === id)?.label ?? id)
+        .join(", ")}.`,
+    );
+  return out;
+}
+
+type View = "edit" | "changes" | "default";
+
 /** Edits one prompt. Nothing is saved until Save; one save or reset runs at a
  *  time, so an older text never lands after a newer one. A failed save keeps
  *  the text. */
 export function PromptEditor({
+  id,
   entry,
   path,
   baseline,
@@ -215,6 +237,7 @@ export function PromptEditor({
   saved,
   close,
 }: {
+  id: string;
   entry: PromptEntry;
   /** The PUT route for this prompt. */
   path: string;
@@ -239,7 +262,7 @@ export function PromptEditor({
   // the old one is still an edit and stays a draft.
   const setText = (next: string) =>
     setDraft(() => (!working.current && next === (stored ?? baseline) ? undefined : next));
-  const [view, setView] = useState<"" | "default" | "changes">("");
+  const [view, setView] = useState<View>("edit");
   const [busy, setBusy] = useState<"" | "save" | "reset">("");
   const [error, setError] = useState("");
   // What the last save stored; "Saved" shows only while the text is still it.
@@ -274,34 +297,56 @@ export function PromptEditor({
   };
   const empty = text.trim() === "";
   return (
-    <div className="prompt-editor">
-      {entry.invalid ? (
-        <p role="status" className="settings-caution">
-          This custom prompt is not in use: {entry.invalid_reason ?? "it is no longer valid"}. Edit
-          and save it, or reset it.
-        </p>
+    <div id={id} className="prompt-editor">
+      <div className="prompt-toolbar">
+        <SegmentedControl
+          label="Show"
+          value={view}
+          onChange={setView}
+          items={[
+            { value: "edit", label: "Edit" },
+            { value: "changes", label: "Changes" },
+            { value: "default", label: "Default" },
+          ]}
+        />
+        {view === "edit" && entry.safety_rules.length > 0 ? (
+          <span className="prompt-legend" aria-hidden="true">
+            <span className="prompt-swatch" /> Safety rule text
+          </span>
+        ) : null}
+        {view === "changes" ? (
+          <span className="prompt-legend">Compared with {baselineName}</span>
+        ) : null}
+      </div>
+      {/* Hidden rather than unmounted, so the field keeps its undo history. */}
+      <div hidden={view !== "edit"}>
+        <HighlightedTextarea
+          id={`prompt-${entry.id}`}
+          label={`${entry.title} prompt`}
+          value={text}
+          rules={entry.safety_rules}
+          describedBy={rulesId}
+          onChange={setText}
+        />
+      </div>
+      {view === "changes" ? <Diff before={baseline} after={text} /> : null}
+      {view === "default" ? (
+        <pre className="prompt-view" role="region" aria-label="The default prompt">
+          {entry.default_text}
+        </pre>
       ) : null}
-      <HighlightedTextarea
-        id={`prompt-${entry.id}`}
-        label={`${entry.title} prompt`}
-        value={text}
-        rules={entry.safety_rules}
-        describedBy={rulesId}
-        onChange={setText}
-      />
-      <div id={rulesId}>
+      <div id={rulesId} className="prompt-rules-block">
         {entry.safety_rules.length > 0 ? (
           <>
-            <h4 className="prompt-subhead">Safety rules</h4>
+            <h4 className="prompt-label">Safety rules</h4>
             <ul className="prompt-rules">
               {entry.safety_rules.map((rule) => {
                 const gone = missing.some((m) => m.id === rule.id);
                 return (
-                  <li key={rule.id}>
-                    <Badge tone={gone ? "caution" : "positive"} size="compact">
-                      {gone ? "Missing" : "Present"}
-                    </Badge>{" "}
+                  <li key={rule.id} data-missing={gone || undefined}>
+                    {gone ? <WarningIcon size={14} /> : <CheckIcon size={14} />}
                     {rule.label}
+                    <span className="sr-only">{gone ? ": missing" : ": present"}</span>
                   </li>
                 );
               })}
@@ -314,11 +359,14 @@ export function PromptEditor({
           </p>
         ) : null}
         <p className="settings-footnote">
-          baum adds the output format and the delimiting of pull request data itself. Safety rules
-          in this text are not added back if you remove them.
+          baum adds the output format and the delimiting of pull request data itself. It does not
+          add back a safety rule you remove.
         </p>
       </div>
       {error ? <Alert>{error}</Alert> : null}
+      {empty ? (
+        <p className="settings-footnote">An empty prompt cannot be saved. Reset it instead.</p>
+      ) : null}
       <div className="prompt-actions">
         <Button
           size="compact"
@@ -327,53 +375,31 @@ export function PromptEditor({
         >
           {busy === "save" ? "Saving…" : saveLabel}
         </Button>
+        {draft !== undefined ? (
+          <Button
+            size="compact"
+            variant="secondary"
+            disabled={busy !== ""}
+            onClick={() => setDraft(() => undefined)}
+          >
+            Discard changes
+          </Button>
+        ) : null}
+        <p role="status" className="settings-saved">
+          {savedText === text ? "Saved" : ""}
+        </p>
         {stored !== null ? (
           <Button
             size="compact"
             variant="secondary"
+            className="prompt-reset"
             disabled={busy !== ""}
             onClick={() => void send(null, "reset")}
           >
             {busy === "reset" ? "Resetting…" : resetLabel}
           </Button>
         ) : null}
-        <Button
-          size="compact"
-          variant="ghost"
-          aria-expanded={view === "default"}
-          onClick={() => setView(view === "default" ? "" : "default")}
-        >
-          {view === "default" ? "Hide default" : "Show default"}
-        </Button>
-        <Button
-          size="compact"
-          variant="ghost"
-          aria-expanded={view === "changes"}
-          onClick={() => setView(view === "changes" ? "" : "changes")}
-        >
-          {view === "changes" ? "Hide changes" : "Show changes"}
-        </Button>
-        <Button size="compact" variant="ghost" disabled={busy !== ""} onClick={close}>
-          Close
-        </Button>
-        <p role="status" className="settings-saved">
-          {savedText === text ? "Saved" : ""}
-        </p>
       </div>
-      {empty ? (
-        <p className="settings-footnote">An empty prompt cannot be saved. Reset it instead.</p>
-      ) : null}
-      {view === "default" ? (
-        <pre className="prompt-view" role="region" aria-label="The default prompt">
-          {entry.default_text}
-        </pre>
-      ) : null}
-      {view === "changes" ? (
-        <>
-          <p className="settings-footnote">Changes from {baselineName}.</p>
-          <Diff before={baseline} after={text} />
-        </>
-      ) : null}
     </div>
   );
 }
@@ -384,8 +410,9 @@ const groups: { id: PromptEntry["group"]; title: string }[] = [
   { id: "extraction", title: "Data extraction" },
 ];
 
-/** Every prompt, grouped, each with its state and an editor opened in place. A
- *  `repository` makes the entries that repository's own, with their source. */
+/** Every prompt, grouped. A row opens its editor in place; only a prompt that
+ *  is not the default carries a label, and a problem is spelled out on it. A `repository` makes the entries that
+ *  repository's own, with their source. */
 export function PromptList({
   entries,
   repository,
@@ -397,7 +424,6 @@ export function PromptList({
 }) {
   const [open, setOpen] = useState("");
   const [drafts, setDrafts] = useState<Record<string, string>>({});
-  const Heading = "h3";
   return (
     <>
       {groups.map((group) => {
@@ -405,83 +431,58 @@ export function PromptList({
         if (rows.length === 0) return null;
         return (
           <section key={group.id} aria-label={group.title} className="prompt-group">
-            <Heading className="settings-subhead">{group.title}</Heading>
+            <h3 className="settings-subhead">{group.title}</h3>
             <div className="local-panel settings-list">
               {rows.map((entry) => {
                 const custom = isCustom(entry);
                 const inherited = "source" in entry ? entry : null;
                 const baseline = inherited ? inherited.inherited_text : entry.default_text;
-                const status = repository
-                  ? custom
-                    ? "Custom for this repository"
-                    : inherited?.source === "global"
-                      ? "Uses global"
-                      : "Uses default"
-                  : custom
-                    ? "Custom"
-                    : "Default";
-                const action =
-                  entry.custom_text !== null
-                    ? "Edit"
-                    : repository
-                      ? "Customise for this repository"
-                      : "Customise";
                 const editing = open === entry.id;
+                const editor = `prompt-editor-${entry.id}`;
+                const notes = problems(entry);
                 return (
-                  <div key={entry.id} className="prompt-item" data-prompt={entry.id}>
-                    <div className="settings-row">
-                      <div className="settings-row-text">
-                        <span className="settings-row-label">
-                          {entry.title}{" "}
-                          <Badge tone={custom ? "info" : "neutral"} size="compact">
-                            {status}
-                          </Badge>
-                        </span>
-                        <div className="settings-row-detail">{entry.used_by}</div>
+                  <div
+                    key={entry.id}
+                    className="prompt-item"
+                    data-prompt={entry.id}
+                    data-open={editing || undefined}
+                  >
+                    <button
+                      type="button"
+                      className="prompt-row"
+                      aria-expanded={editing}
+                      aria-controls={editing ? editor : undefined}
+                      onClick={() => setOpen(editing ? "" : entry.id)}
+                    >
+                      <ChevronRightIcon className="prompt-chevron" />
+                      <span className="prompt-row-text">
+                        <span className="settings-row-label">{entry.title}</span>
+                        <span className="settings-row-detail">{entry.used_by}</span>
+                        {notes.map((note) => (
+                          <span key={note} className="prompt-note">
+                            <WarningIcon size={14} />
+                            {note}
+                          </span>
+                        ))}
+                      </span>
+                      <span className="prompt-row-state">
                         {drafts[entry.id] !== undefined ? (
-                          <div className="settings-row-detail settings-caution">
-                            Unsaved changes
-                          </div>
+                          <span className="prompt-unsaved">Unsaved changes</span>
                         ) : null}
-                        {entry.outdated ? (
-                          <div className="settings-row-detail settings-caution">
-                            Written for {entry.based_on}; the default is now {entry.default_version}
-                            .
-                          </div>
+                        {custom ? (
+                          <Badge tone="info" size="compact">
+                            Custom
+                          </Badge>
+                        ) : inherited?.source === "global" ? (
+                          <Badge tone="neutral" size="compact">
+                            Global
+                          </Badge>
                         ) : null}
-                        {entry.invalid ? (
-                          <div className="settings-row-detail settings-caution">
-                            This custom prompt is not in use:{" "}
-                            {entry.invalid_reason ?? "it is no longer valid"}. Edit and save it, or
-                            reset it.
-                          </div>
-                        ) : null}
-                        {!entry.invalid &&
-                        entry.custom_text !== null &&
-                        entry.missing_safety_rules.length > 0 ? (
-                          <div className="settings-row-detail settings-caution">
-                            No longer contains a safety rule:{" "}
-                            {entry.missing_safety_rules
-                              .map((id) => entry.safety_rules.find((r) => r.id === id)?.label ?? id)
-                              .join(", ")}
-                            .
-                          </div>
-                        ) : null}
-                      </div>
-                      <div className="settings-row-control">
-                        <Button
-                          size="compact"
-                          variant="secondary"
-                          aria-expanded={editing}
-                          aria-label={`${action}: ${entry.title}`}
-                          onClick={() => setOpen(editing ? "" : entry.id)}
-                        >
-                          {action}
-                        </Button>
-                      </div>
-                    </div>
+                      </span>
+                    </button>
                     {editing ? (
                       <PromptEditor
+                        id={editor}
                         entry={entry}
                         path={
                           repository

@@ -2381,13 +2381,92 @@ dialog.local-dialog-wide {
 .prompt-item + .prompt-item {
   border-top: 1px solid var(--border-subtle);
 }
-.prompt-item > .settings-row + .settings-row {
-  border-top: 0;
+.prompt-item[data-open] {
+  background: var(--surface-wash);
+}
+/* A row is one button: the chevron, the title and what uses the prompt, and
+   on the right only the labels a prompt that is not the default needs. */
+.prompt-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  width: 100%;
+  padding: 0.875rem 1.25rem;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.prompt-row:hover {
+  background: var(--surface-hover);
+}
+.prompt-row:focus-visible {
+  outline: none;
+  box-shadow: inset var(--focus-ring);
+}
+.prompt-chevron {
+  flex: none;
+  color: var(--text-tertiary);
+  transition: transform 150ms ease;
+}
+.prompt-row[aria-expanded="true"] .prompt-chevron {
+  transform: rotate(90deg);
+}
+.prompt-row-text {
+  display: grid;
+  gap: 0.125rem;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.prompt-row-state {
+  display: flex;
+  flex: none;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 0.375rem;
+}
+.prompt-unsaved {
+  font-size: var(--text-xs);
+  color: var(--status-caution);
 }
 .prompt-editor {
   display: grid;
   gap: 0.75rem;
-  padding: 0 1.25rem 1.25rem;
+  padding: 0.25rem 1.25rem 1.25rem 3rem;
+}
+.prompt-note {
+  display: flex;
+  gap: 0.375rem;
+  font-size: var(--text-xs);
+  color: var(--status-caution);
+}
+.prompt-note svg {
+  flex: none;
+  margin-top: 0.125rem;
+}
+.prompt-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem 1rem;
+}
+.prompt-legend {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+}
+.prompt-swatch {
+  display: inline-block;
+  width: 0.75rem;
+  height: 0.75rem;
+  border-radius: 2px;
+  background: var(--status-info-bg);
 }
 .prompt-field {
   position: relative;
@@ -2438,18 +2517,40 @@ dialog.local-dialog-wide {
   outline: none;
   box-shadow: none;
 }
-.prompt-subhead {
-  margin: 0 0 0.25rem;
-  font-size: var(--text-base);
-  font-weight: 600;
+.prompt-rules-block {
+  display: grid;
+  gap: 0.375rem;
+}
+.prompt-label {
+  margin: 0;
+  font-size: var(--text-xs);
+  font-weight: 500;
+  color: var(--text-secondary);
 }
 .prompt-rules {
-  display: grid;
-  gap: 0.25rem;
-  margin: 0 0 0.5rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 1rem;
+  margin: 0;
   padding: 0;
   list-style: none;
   font-size: var(--text-xs);
+  color: var(--text-secondary);
+}
+.prompt-rules li {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+.prompt-rules li svg {
+  flex: none;
+  color: var(--status-positive);
+}
+.prompt-rules li[data-missing] {
+  color: var(--status-caution);
+}
+.prompt-rules li[data-missing] svg {
+  color: var(--status-caution);
 }
 .prompt-actions {
   display: flex;
@@ -2457,14 +2558,17 @@ dialog.local-dialog-wide {
   align-items: center;
   gap: 0.5rem;
 }
+.prompt-actions .prompt-reset {
+  margin-left: auto;
+}
 .prompt-view {
-  max-height: 24rem;
+  height: 24rem;
   margin: 0;
   padding: 0.5rem 0.65rem;
   overflow: auto;
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-md);
-  background: var(--surface-wash);
+  background: var(--surface-card);
   font-family: var(--font-mono);
   font-size: var(--text-xs);
   line-height: 1.5;
@@ -2486,11 +2590,31 @@ dialog.local-dialog-wide {
 .repository-prompts {
   display: grid;
   gap: 0.75rem;
-  margin-bottom: 1rem;
+  margin-bottom: 1.25rem;
 }
 .repository-prompts > summary {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  list-style: none;
   cursor: pointer;
   font-weight: 600;
+}
+.repository-prompts > summary::-webkit-details-marker {
+  display: none;
+}
+.repository-prompts > summary .prompt-chevron {
+  color: var(--text-secondary);
+}
+.repository-prompts[open] > summary .prompt-chevron {
+  transform: rotate(90deg);
+}
+.repository-prompts > .settings-footnote {
+  margin-bottom: 0.5rem;
+}
+.repository-prompts-count {
+  font-weight: 400;
+  color: var(--text-tertiary);
 }
 @media (max-width: 760px) {
   .settings-layout {
@@ -2505,6 +2629,9 @@ dialog.local-dialog-wide {
   }
   .settings-content {
     padding: 20px 16px 48px;
+  }
+  .prompt-editor {
+    padding-left: 1.25rem;
   }
   .settings-nav-item {
     flex: none;

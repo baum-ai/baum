@@ -65,8 +65,9 @@ function stub(get: () => unknown, put: (path: string, body: { text: string | nul
 const flush = () => act(async () => void (await new Promise((r) => setTimeout(r, 0))));
 const button = (name: string) =>
   [...host.querySelectorAll("button")].find((b) => b.textContent === name) as HTMLButtonElement;
-const byLabel = (label: string) =>
-  host.querySelector(`button[aria-label="${label}"]`) as HTMLButtonElement;
+/** The row that opens and closes a prompt's editor. */
+const toggle = (id: string) =>
+  host.querySelector(`[data-prompt="${id}"] .prompt-row`) as HTMLButtonElement;
 const area = () => host.querySelector("textarea") as HTMLTextAreaElement;
 async function type(text: string) {
   await act(async () => {
@@ -104,10 +105,13 @@ it("lists every prompt grouped, staged ones included, with its state", async () 
   expect(review.textContent).toContain("Custom");
   expect(review.textContent).toContain("Written for v1; the default is now v2.");
   expect(review.textContent).toContain("Used by review");
-  expect(host.querySelector('[data-prompt="details"]')!.textContent).toContain("Default");
+  // A default prompt carries no label.
+  expect(host.querySelector('[data-prompt="details"]')!.textContent).toBe(
+    "Staged detailsUsed by details",
+  );
 });
 
-it("seeds Customise from the default, saves the text and resets with null", async () => {
+it("seeds a new custom prompt from the default, saves the text and resets with null", async () => {
   let current = entry("review", "reviews");
   const calls = stub(
     () => ({ prompts: [current] }),
@@ -118,7 +122,7 @@ it("seeds Customise from the default, saves the text and resets with null", asyn
   );
   act(() => root.render(<Section />));
   await flush();
-  act(() => byLabel("Customise: Title review").click());
+  act(() => toggle("review").click());
   expect(area().value).toBe(current.default_text);
   await type(`Edited\n${RULE}`);
   act(() => button("Save").click());
@@ -130,7 +134,7 @@ it("seeds Customise from the default, saves the text and resets with null", asyn
   act(() => button("Reset to default").click());
   await flush();
   expect(calls.filter((c) => c.method === "PUT").at(-1)!.body).toEqual({ text: null });
-  expect(host.querySelector('[data-prompt="review"]')!.textContent).toContain("Default");
+  expect(host.querySelector('[data-prompt="review"]')!.textContent).not.toContain("Custom");
 });
 
 it("warns when a safety rule is removed, still saves, and keeps the text on failure", async () => {
@@ -147,12 +151,12 @@ it("warns when a safety rule is removed, still saves, and keeps the text on fail
   );
   act(() => root.render(<Section />));
   await flush();
-  act(() => byLabel("Customise: Title review").click());
+  act(() => toggle("review").click());
   expect(host.textContent).not.toContain("This prompt no longer contains");
   expect(host.querySelector("mark")!.textContent).toBe(RULE);
   await type("Without the rule");
   expect(host.textContent).toContain("This prompt no longer contains: No commands.");
-  expect(host.textContent).toContain("Missing");
+  expect(host.querySelector("li[data-missing]")!.textContent).toBe("No commands: missing");
   expect(button("Save").disabled).toBe(false);
   act(() => button("Save").click());
   await flush();
@@ -183,7 +187,7 @@ it("shows a stored text that jobs skip as not custom", async () => {
   act(() => root.render(<Section />));
   await flush();
   const row = host.querySelector('[data-prompt="review"]')!;
-  expect(row.textContent).toContain("Default");
+  expect(row.textContent).not.toContain("Custom");
   expect(row.textContent).toContain("This custom prompt is not in use: it is too long.");
 });
 
@@ -243,20 +247,21 @@ it("shows each prompt's source in a repository and customises from the inherited
   await flush();
   expect(calls[0]!.path).toMatch(/api\/repositories\/acme\/demo\/prompts$/);
   const text = (id: string) => host.querySelector(`[data-prompt="${id}"]`)!.textContent;
-  expect(text("review")).toContain("Uses default");
-  expect(text("details")).toContain("Uses global");
-  expect(text("fix")).toContain("Custom for this repository");
-  expect(host.textContent).toContain("not part of Save repository settings");
-  act(() => byLabel("Customise for this repository: Title details").click());
+  expect(text("review")).not.toMatch(/Custom|Global/);
+  expect(text("details")).toContain("Global");
+  expect(text("fix")).toContain("Custom");
+  expect(host.textContent).toContain("apart from the settings below");
+  act(() => toggle("details").click());
   expect(area().value).toBe("Inherited details");
-  act(() => button("Close").click());
-  act(() => byLabel("Edit: Title fix").click());
+  act(() => toggle("details").click());
+  expect(area()).toBeNull();
+  act(() => toggle("fix").click());
   act(() => button("Use inherited").click());
   await flush();
   const put = calls.find((c) => c.method === "PUT")!;
   expect(put.path).toMatch(/acme\/demo\/prompts\/fix$/);
   expect(put.body).toEqual({ text: null });
-  expect(text("fix")).toContain("Uses global");
+  expect(text("fix")).toContain("Global");
 });
 
 it("marks a review version made with custom prompts", () => {
@@ -286,19 +291,37 @@ it("keeps a draft when another prompt is opened, and marks the row unsaved", asy
   );
   act(() => root.render(<Section />));
   await flush();
-  act(() => byLabel("Customise: Title review").click());
+  act(() => toggle("review").click());
   await type("A draft I have not saved");
-  act(() => byLabel("Customise: Title fix").click());
+  act(() => toggle("fix").click());
   expect(area().value).toBe(all()[2]!.default_text);
   expect(host.querySelector('[data-prompt="review"]')!.textContent).toContain("Unsaved changes");
   expect(host.querySelector('[data-prompt="fix"]')!.textContent).not.toContain("Unsaved changes");
-  act(() => byLabel("Customise: Title review").click());
+  act(() => toggle("review").click());
   expect(area().value).toBe("A draft I have not saved");
   // Typing the seeded text back is no change.
   await type(all()[0]!.default_text);
   expect(host.querySelector('[data-prompt="review"]')!.textContent).not.toContain(
     "Unsaved changes",
   );
+});
+
+it("discards a draft back to the stored text", async () => {
+  stub(
+    () => ({ prompts: all() }),
+    () => ({}),
+  );
+  act(() => root.render(<Section />));
+  await flush();
+  act(() => toggle("review").click());
+  expect(button("Discard changes")).toBeUndefined();
+  await type("A draft I do not want");
+  act(() => button("Discard changes").click());
+  expect(area().value).toBe(all()[0]!.default_text);
+  expect(host.querySelector('[data-prompt="review"]')!.textContent).not.toContain(
+    "Unsaved changes",
+  );
+  expect(button("Discard changes")).toBeUndefined();
 });
 
 it("sends one save at a time and shows Saved only while the text is the saved one", async () => {
@@ -316,7 +339,7 @@ it("sends one save at a time and shows Saved only while the text is the saved on
   });
   act(() => root.render(<Section />));
   await flush();
-  act(() => byLabel("Customise: Title review").click());
+  act(() => toggle("review").click());
   await type("one");
   const save = button("Save");
   act(() => {
@@ -346,7 +369,7 @@ it("keeps an edit back to the old text made while a save runs", async () => {
   });
   act(() => root.render(<Section />));
   await flush();
-  act(() => byLabel("Edit: Title review").click());
+  act(() => toggle("review").click());
   await type("B");
   act(() => button("Save").click());
   await type("A");
@@ -364,7 +387,7 @@ it("lets Esc leave the field without closing a dialog around it", async () => {
   );
   act(() => root.render(<Section />));
   await flush();
-  act(() => byLabel("Customise: Title review").click());
+  act(() => toggle("review").click());
   area().focus();
   const event = new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true });
   act(() => void area().dispatchEvent(event));
@@ -383,11 +406,11 @@ it("seeds a repository prompt from the inherited text again after Use inherited"
   );
   act(() => root.render(<RepositoryPrompts repository="acme/demo" />));
   await flush();
-  act(() => byLabel("Edit: Title review").click());
+  act(() => toggle("review").click());
   expect(area().value).toBe("Own");
   act(() => button("Use inherited").click());
   await flush();
-  act(() => byLabel("Customise for this repository: Title review").click());
+  act(() => toggle("review").click());
   expect(area().value).toBe("Global now");
 });
 
