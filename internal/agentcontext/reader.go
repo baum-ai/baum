@@ -40,6 +40,15 @@ const (
 	// from the response (actionRoute.check) and nothing is returned on a
 	// mismatch.
 	byResponse
+	// byLookup: the route finds its data by id but its response names no
+	// repository, so the reader first reads the record the id names
+	// (actionRoute.lookup), checks its repository (actionRoute.check) and
+	// reads nothing on a mismatch.
+	byLookup
+	// byFilter: the route answers for every repository; the reader keeps
+	// only the bound repository's records (actionRoute.filter) and the agent
+	// never sees the rest.
+	byFilter
 )
 
 // actionRoute is a route an action may read and how it is bound to the
@@ -51,8 +60,12 @@ type actionRoute struct {
 	// params are the query parameters allowed besides the binding one; any
 	// other is refused.
 	params []string
-	// check reads the repository from a byResponse route's body.
+	// check reads the repository from a byResponse or byLookup record.
 	check func(body []byte) (string, error)
+	// lookup is the path of the record a byLookup route's id names.
+	lookup func(vars map[string]string) string
+	// filter keeps only repository's records of a byFilter route's body.
+	filter func(body []byte, repository string) ([]byte, error)
 }
 
 // actionRoutes are the only routes an action reads; any other is refused to
@@ -60,8 +73,96 @@ type actionRoute struct {
 var actionRoutes = []actionRoute{
 	// The jobs of one pull request: the handler reads repository and pr.
 	{pattern: "/api/jobs", bind: byRepository, params: []string{"pr"}},
-	// One job, by id.
+	// One job, by id, and its transcript, which names no repository: the job
+	// it belongs to is read first.
 	{pattern: "/api/jobs/{id}", bind: byResponse, check: repositoryField},
+	{pattern: "/api/jobs/{id}/transcript", bind: byLookup, params: []string{"after"}, check: repositoryField, lookup: func(v map[string]string) string { return "/api/jobs/" + v["id"] }},
+
+	// The pull request page's reads of GitHub, by repository and number.
+	{pattern: "/api/prs/description", bind: byRepository, params: []string{"pr"}},
+	{pattern: "/api/prs/checks", bind: byRepository, params: []string{"pr", "head_sha"}},
+	{pattern: "/api/prs/failing-checks", bind: byRepository, params: []string{"pr", "head_sha"}},
+	{pattern: "/api/prs/review-threads", bind: byRepository, params: []string{"pr", "unresolved"}},
+	{pattern: "/api/prs/merge-options", bind: byRepository, params: []string{"pr"}},
+	{pattern: "/api/prs/update-branch-options", bind: byRepository, params: []string{"pr"}},
+	{pattern: "/api/prs/rerun-checks-options", bind: byRepository, params: []string{"pr"}},
+
+	// The review index and the inbox answer for every repository: the
+	// reader keeps the action's repository's records.
+	{pattern: "/api/index", bind: byFilter, params: []string{"history"}, filter: filterIndex},
+	{pattern: "/api/inbox", bind: byFilter, filter: filterInbox},
+
+	// A pull request's saved review and what the app reads of it, by the
+	// registered clone the handler resolves.
+	{pattern: "/api/versions", bind: byClone, params: []string{"pr"}},
+	{pattern: "/api/document", bind: byClone, params: []string{"pr", "version"}},
+	{pattern: "/api/patch", bind: byClone, params: []string{"pr", "version", "path"}},
+	{pattern: "/api/commits", bind: byClone, params: []string{"pr", "version"}},
+	{pattern: "/api/sessions", bind: byClone, params: []string{"pr", "version"}},
+	{pattern: "/api/sessions/{id}", bind: byClone, params: []string{"pr", "version"}},
+
+	// Its facts, before a review exists.
+	{pattern: "/api/facts", bind: byClone, params: []string{"pr", "head"}},
+	{pattern: "/api/facts/patch", bind: byClone, params: []string{"pr", "head", "path"}},
+	{pattern: "/api/facts/commits", bind: byClone, params: []string{"pr", "head"}},
+	{pattern: "/api/facts/sessions", bind: byClone, params: []string{"pr", "head"}},
+	{pattern: "/api/facts/sessions/{id}", bind: byClone, params: []string{"pr", "head"}},
+
+	// A review group, by id; its versions name no repository, so the group
+	// is read first.
+	{pattern: "/api/groups/{id}", bind: byResponse, check: repositoryField},
+	{pattern: "/api/groups/{id}/versions", bind: byLookup, check: repositoryField, lookup: func(v map[string]string) string { return "/api/groups/" + v["id"] }},
+}
+
+// filterIndex keeps the entries of repository in an /api/index body; the
+// problems, which name other clones, are dropped.
+func filterIndex(body []byte, repository string) ([]byte, error) {
+	var v struct {
+		Entries []json.RawMessage `json:"entries"`
+	}
+	if err := json.Unmarshal(body, &v); err != nil {
+		return nil, err
+	}
+	kept := []json.RawMessage{}
+	for _, raw := range v.Entries {
+		var e struct {
+			PullRequest struct {
+				Repository string `json:"repository"`
+			} `json:"pull_request"`
+		}
+		if err := json.Unmarshal(raw, &e); err != nil {
+			return nil, err
+		}
+		if strings.EqualFold(e.PullRequest.Repository, repository) {
+			kept = append(kept, raw)
+		}
+	}
+	return json.Marshal(map[string]any{"entries": kept, "problems": []string{}})
+}
+
+// filterInbox keeps the items of repository in an /api/inbox body, by their
+// "owner/name#number" keys; the saved inboxes, which hold the user's own
+// queries, are dropped.
+func filterInbox(body []byte, repository string) ([]byte, error) {
+	var v struct {
+		Items []json.RawMessage `json:"items"`
+	}
+	if err := json.Unmarshal(body, &v); err != nil {
+		return nil, err
+	}
+	kept := []json.RawMessage{}
+	for _, raw := range v.Items {
+		var item struct {
+			Key string `json:"key"`
+		}
+		if err := json.Unmarshal(raw, &item); err != nil {
+			return nil, err
+		}
+		if i := strings.LastIndex(item.Key, "#"); i >= 0 && strings.EqualFold(item.Key[:i], repository) {
+			kept = append(kept, raw)
+		}
+	}
+	return json.Marshal(map[string]any{"count": len(kept), "items": kept, "inboxes": []string{}})
 }
 
 // repositoryField reads a JSON object's top-level "repository".
@@ -141,12 +242,54 @@ func (r *Reader) Get(ctx context.Context, target string) (Response, error) {
 		return Response{}, fmt.Errorf("read %s: %w", u.Path, errNotReadable)
 	}
 	var route *actionRoute
+	var vars map[string]string
 	if r.repository != "" {
-		if route, err = r.bind(ctx, u.Path, query); err != nil {
+		if route, vars, err = r.bind(ctx, u.Path, query); err != nil {
 			return Response{}, fmt.Errorf("read %s: %w", u.Path, err)
 		}
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, (&url.URL{Path: u.Path, RawQuery: u.RawQuery}).String(), nil)
+	if route != nil && route.bind == byLookup {
+		// The record the id names must be the action's repository's before
+		// anything it owns is read; a miss and another repository's record
+		// look the same.
+		record, err := r.fetch(ctx, route.lookup(vars), "")
+		if err != nil {
+			return Response{}, fmt.Errorf("read %s: %w", u.Path, err)
+		}
+		repository, err := route.check(record.Body)
+		if record.Status != http.StatusOK || err != nil || !strings.EqualFold(repository, r.repository) {
+			return Response{}, fmt.Errorf("read %s: %w", u.Path, errOtherRepository)
+		}
+	}
+	response, err := r.fetch(ctx, u.Path, u.RawQuery)
+	if err != nil {
+		return Response{}, fmt.Errorf("read %s: %w", u.Path, err)
+	}
+	if route != nil {
+		switch route.bind {
+		case byResponse:
+			// A miss and another repository's record look the same.
+			repository, err := route.check(response.Body)
+			if response.Status != http.StatusOK || err != nil || !strings.EqualFold(repository, r.repository) {
+				return Response{}, fmt.Errorf("read %s: %w", u.Path, errOtherRepository)
+			}
+		case byFilter:
+			if response.Status != http.StatusOK {
+				return Response{}, fmt.Errorf("read %s: %w", u.Path, errOtherRepository)
+			}
+			kept, err := route.filter(response.Body, r.repository)
+			if err != nil {
+				return Response{}, fmt.Errorf("read %s: %w", u.Path, errOtherRepository)
+			}
+			response.Body = kept
+		}
+	}
+	return response, nil
+}
+
+// fetch serves one GET through the API.
+func (r *Reader) fetch(ctx context.Context, p, rawQuery string) (Response, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, (&url.URL{Path: p, RawQuery: rawQuery}).String(), nil)
 	if err != nil {
 		return Response{}, err
 	}
@@ -154,17 +297,10 @@ func (r *Reader) Get(ctx context.Context, target string) (Response, error) {
 	w := &recorder{header: http.Header{}}
 	r.api.ServeHTTP(w, req)
 	if w.overflow {
-		return Response{}, fmt.Errorf("read %s: %w (over %d bytes)", u.Path, errReadTooLarge, maxRead)
+		return Response{}, fmt.Errorf("%w (over %d bytes)", errReadTooLarge, maxRead)
 	}
 	if w.status == 0 {
 		w.status = http.StatusOK
-	}
-	if route != nil && route.bind == byResponse {
-		// A miss and another repository's record look the same.
-		repository, err := route.check(w.body.Bytes())
-		if w.status != http.StatusOK || err != nil || !strings.EqualFold(repository, r.repository) {
-			return Response{}, fmt.Errorf("read %s: %w", u.Path, errOtherRepository)
-		}
 	}
 	return Response{Status: w.status, ContentType: w.header.Get("Content-Type"), Body: w.body.Bytes()}, nil
 }
@@ -223,7 +359,7 @@ func match(pattern, p string) (map[string]string, bool) {
 // bind finds an action's route for p and checks that its request names the
 // action's repository and carries no parameter the route does not list. A
 // byResponse route is checked again once it has answered.
-func (r *Reader) bind(ctx context.Context, p string, query url.Values) (*actionRoute, error) {
+func (r *Reader) bind(ctx context.Context, p string, query url.Values) (*actionRoute, map[string]string, error) {
 	for i := range actionRoutes {
 		route := &actionRoutes[i]
 		vars, ok := match(route.pattern, p)
@@ -239,35 +375,35 @@ func (r *Reader) bind(ctx context.Context, p string, query url.Values) (*actionR
 		case byRepository:
 			allowed["repository"] = true
 			if len(query["repository"]) != 1 {
-				return nil, errOtherRepository
+				return nil, nil, errOtherRepository
 			}
 			named = query.Get("repository")
 		case byClone:
 			allowed["clone"] = true
 			if len(query["clone"]) != 1 || r.clone == nil {
-				return nil, errOtherRepository
+				return nil, nil, errOtherRepository
 			}
 			repository, err := r.clone(ctx, query.Get("clone"))
 			if err != nil {
-				return nil, errOtherRepository
+				return nil, nil, errOtherRepository
 			}
 			named = repository
 		case byPath:
 			named = vars["owner"] + "/" + vars["name"]
-		case byResponse:
+		case byResponse, byLookup, byFilter:
 			named = r.repository
 		}
 		for name := range query {
 			if !allowed[name] {
-				return nil, fmt.Errorf("%w: parameter %s", errNotActionRoute, name)
+				return nil, nil, fmt.Errorf("%w: parameter %s", errNotActionRoute, name)
 			}
 		}
 		if !strings.EqualFold(named, r.repository) {
-			return nil, errOtherRepository
+			return nil, nil, errOtherRepository
 		}
-		return route, nil
+		return route, vars, nil
 	}
-	return nil, errNotActionRoute
+	return nil, nil, errNotActionRoute
 }
 
 // recorder is the ResponseWriter a read hands the API: it keeps at most
