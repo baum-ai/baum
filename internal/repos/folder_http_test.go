@@ -208,6 +208,55 @@ func TestFolderHTTPRefusesAnotherRepository(t *testing.T) {
 	}
 }
 
+// An earlier name is listed only while a registered clone's remote still uses
+// it, read from the remote on each listing; the alias keeps resolving.
+func TestEarlierNamesFollowTheClonesRemotes(t *testing.T) {
+	ctx := context.Background()
+	old, current := uniqueName("stale-old"), uniqueName("stale-new")
+	r := registry(t)
+	first := clone(t, "git@github.com:"+old+".git")
+	second := clone(t, "https://github.com/"+strings.ToUpper(old))
+	lookup := func(context.Context, string) (string, error) { return current, nil }
+	for _, path := range []string{first, second} {
+		if status, answer := postFolder(t, r.HandlerWith(lookup), path, current); status != 200 {
+			t.Fatalf("%d %v", status, answer)
+		}
+	}
+	earlier := func() string {
+		t.Helper()
+		list, err := r.Repositories(ctx)
+		if err != nil || len(list) != 1 || len(list[0].Clones) != 2 {
+			t.Fatalf("%+v %v", list, err)
+		}
+		return strings.Join(list[0].EarlierNames, ",")
+	}
+	if got := earlier(); got != old {
+		t.Fatalf("earlier names = %q, want %q", got, old)
+	}
+	// Updating one remote keeps the name while the other clone uses it.
+	git(t, first, "remote", "set-url", "origin", "git@github.com:"+current+".git")
+	if got := earlier(); got != old {
+		t.Fatalf("earlier names after one update = %q, want %q", got, old)
+	}
+	git(t, second, "config", "remote.origin.url", "https://github.com/"+current)
+	if got := earlier(); got != "" {
+		t.Fatalf("earlier names after both updates = %q", got)
+	}
+	// The alias still resolves, so old remotes keep matching.
+	if got := gitlocal.RenamedTo(old); got != current {
+		t.Fatalf("RenamedTo = %q, want %q", got, current)
+	}
+	rows, err := r.RepositoryRows(ctx)
+	if err != nil || len(rows) != 1 || len(rows[0].EarlierNames) != 0 {
+		t.Fatalf("%+v %v", rows, err)
+	}
+	// Pointing a remote at the old name again brings it back.
+	git(t, first, "remote", "set-url", "origin", "https://github.com/"+old)
+	if got := earlier(); got != old {
+		t.Fatalf("earlier names after pointing back = %q, want %q", got, old)
+	}
+}
+
 // uniqueName is an owner/name no other test or run uses.
 func uniqueName(owner string) string {
 	return fmt.Sprintf("%s-%d/repo", owner, time.Now().UnixNano())

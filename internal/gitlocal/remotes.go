@@ -44,6 +44,22 @@ func (r *Repo) RemoteURLs(ctx context.Context) ([]Remote, error) {
 // and may be an SSH alias rather than a real host name. On github.com, an
 // earlier name GitHub forwards reads as the current one (RenamedTo).
 func RemoteRepository(remote string) (host, repository string, ok bool) {
+	host, repository, ok = rawRemoteRepository(remote)
+	if ok && renamable(host) {
+		repository = RenamedTo(repository)
+	}
+	return host, repository, ok
+}
+
+// renamable reports whether earlier names apply to the host: github.com's, an
+// SSH alias having no dot, or one extending github.com (github.com-work).
+func renamable(host string) bool {
+	return strings.HasPrefix(host, "github.com") || host == "ssh.github.com" || !strings.Contains(host, ".")
+}
+
+// rawRemoteRepository is RemoteRepository without mapping an earlier name to
+// the current one.
+func rawRemoteRepository(remote string) (host, repository string, ok bool) {
 	remote = strings.TrimSpace(remote)
 	var path string
 	if scheme, _, found := strings.Cut(remote, "://"); found {
@@ -76,11 +92,6 @@ func RemoteRepository(remote string) (host, repository string, ok bool) {
 		return "", "", false
 	}
 	host, repository = strings.ToLower(host), strings.ToLower(parts[0]+"/"+parts[1])
-	// Earlier names are github.com's; an SSH alias has no dot or extends
-	// github.com (github.com-work).
-	if strings.HasPrefix(host, "github.com") || host == "ssh.github.com" || !strings.Contains(host, ".") {
-		repository = RenamedTo(repository)
-	}
 	return host, repository, true
 }
 
