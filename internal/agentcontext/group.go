@@ -43,11 +43,17 @@ func groupOf(ctx context.Context, c CallContext, args json.RawMessage) (id strin
 	if err := json.Unmarshal(args, &a); err != nil {
 		return "", nil, err
 	}
-	repository, _, err := c.Target(a.Repository, 0)
+	return groupFor(ctx, c, a.Repository, a.ID)
+}
+
+// groupFor resolves a group by id, an empty id meaning the open group page's
+// or, for an action, the one group its pull request is in, and checks that
+// the group belongs to the call's repository.
+func groupFor(ctx context.Context, c CallContext, repository, id string) (string, json.RawMessage, error) {
+	repository, _, err := c.Target(repository, 0)
 	if err != nil {
 		return "", nil, err
 	}
-	id = a.ID
 	if id == "" && c.Consumer.Kind != Action && c.HasPage {
 		id = c.Page.Group
 	}

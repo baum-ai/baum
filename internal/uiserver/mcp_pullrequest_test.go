@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -12,9 +13,11 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/baum-ai/baum/internal/agentcontext"
 	"github.com/baum-ai/baum/internal/appdb/appdbtest"
+	"github.com/baum-ai/baum/internal/chat"
 	"github.com/baum-ai/baum/internal/config"
 	"github.com/baum-ai/baum/internal/discovery"
 	"github.com/baum-ai/baum/internal/inboxqueue"
@@ -58,7 +61,7 @@ func newPullFixture(t *testing.T) *pullFixture {
 	}
 	reviewed := store.Metadata{Version: 1, Head: reviewedHead, Base: "bbbbbbbb", MergeBase: "bbbbbbbb", Backend: "claude", Model: "opus", GeneratedAt: "2026-11-01T10:00:00Z", RecordedCostUSD: ptr(0.5),
 		Session: &store.ReviewSession{Backend: "claude", ID: "secret-session", Directory: "/home/secret"}}
-	reviewDocument := []byte(`{"review":{"repository":"owner/repo","pull_request":8,"version":1,"head":"` + reviewedHead + `","base":"bbbbbbbb","merge_base":"bbbbbbbb"},"index":{"hunks":[{"id":"h_1","path":"main.go","change":"modified","additions":2,"deletions":1},{"id":"h_2","path":"docs.md","change":"added","additions":9,"deletions":0}]}}`)
+	reviewDocument := []byte(`{"review":{"repository":"owner/repo","pull_request":8,"version":1,"head":"` + reviewedHead + `","base":"bbbbbbbb","merge_base":"bbbbbbbb"},"summary":{"text":"Overview8","context":{"text":"Context8"},"change_kind":"feature","review_exchange":{},"implements":[],"authorship":{}},"sections":[{"id":"sec_1","title":"Search box","kind":"logic","hunks":["h_1"],"assessment":"Sound","summary":{"text":"DETAILS-SEC-1"},"risks":[],"derived":{"state":"fresh"}},{"id":"sec_2","title":"Docs","kind":"docs","hunks":["h_2"],"assessment":"Fine","details":"failed","summary":null,"risks":[]}],"relations":[],"index":{"hunks":[{"id":"h_1","path":"main.go","change":"modified","additions":2,"deletions":1},{"id":"h_2","path":"docs.md","change":"added","additions":9,"deletions":0}]}}`)
 	if err := versions.Put(ctx, store.Key{Repository: "owner/repo", Number: 8}, store.Version{}, store.Version{Metadata: reviewed, Document: reviewDocument}); err != nil {
 		t.Fatal(err)
 	}
@@ -80,6 +83,10 @@ func newPullFixture(t *testing.T) *pullFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
+	groupReview := []byte(`{"review":{"repository":"owner/repo","version":1,"head":"gh","base":"gb"},"stack":{"title":"Search","members":[{"number":7,"head_sha":"aaaaaaaa","review_version":1}]},"summary":{"text":"GroupOverview","context":{"text":"GroupContext"},"change_kind":"feature","review_exchange":{},"implements":[],"authorship":{}},"sections":[{"id":"gsec_1","title":"Group section","kind":"logic","hunks":[],"assessment":"ok","summary":{"text":"GROUP-DETAILS"},"risks":[]}],"relations":[],"index":{"hunks":[]}}`)
+	if err := groups.Put(ctx, own.ID, 0, store.Version{Metadata: store.Metadata{Version: 1, Head: "gh", Base: "gb", Backend: "claude", Model: "opus", GeneratedAt: "2026-11-01T10:00:00Z"}, Document: groupReview}); err != nil {
+		t.Fatal(err)
+	}
 	foreign, err := groups.Create(ctx, "other/repo", "Private", []int{1, 2})
 	if err != nil {
 		t.Fatal(err)
@@ -96,6 +103,7 @@ func newPullFixture(t *testing.T) *pullFixture {
 		Index:  jsonHandler(index),
 		Inbox:  inbox.Handler(),
 		Jobs:   fakeJobs(clone.ID),
+		Chat:   ChatHandler(registry, fakeChatQueue{}),
 		Groups: groupsHandler,
 	}.Handler()
 	t.Cleanup(api.Close)
@@ -144,13 +152,19 @@ func fakeJobs(cloneID string) http.Handler {
 		Prepared: jobs.Prepared{Repository: "owner/repo", HeadSHA: pullHead, Item: jobs.Item{Clone: cloneID, PR: 7}}}
 	foreign := jobs.Job{ID: "j-foreign", State: "done", HasTranscript: true,
 		Prepared: jobs.Prepared{Repository: "other/repo", HeadSHA: "cccccccc", Item: jobs.Item{Clone: "elsewhere", PR: 7, Kind: jobs.KindFix}}}
-	byID := map[string]jobs.Job{fix.ID: fix, review.ID: review, foreign.ID: foreign}
+	// A review of pull request 8 being written, with a draft, and another
+	// repository's.
+	running := jobs.Job{ID: "j-running", State: "running", Draft: 2,
+		Prepared: jobs.Prepared{Repository: "owner/repo", HeadSHA: reviewedHead, Item: jobs.Item{Clone: cloneID, PR: 8}}}
+	foreignRunning := jobs.Job{ID: "j-foreign-running", State: "running", Draft: 1,
+		Prepared: jobs.Prepared{Repository: "other/repo", HeadSHA: "cccccccc", Item: jobs.Item{Clone: "elsewhere", PR: 8}}}
+	byID := map[string]jobs.Job{fix.ID: fix, review.ID: review, foreign.ID: foreign, running.ID: running, foreignRunning.ID: foreignRunning}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/jobs", func(w http.ResponseWriter, r *http.Request) {
 		q := r.URL.Query()
 		var list []jobs.Job
-		for _, job := range []jobs.Job{fix, review, foreign} {
-			if job.Repository == q.Get("repository") && q.Get("pr") == "7" {
+		for _, job := range []jobs.Job{fix, review, foreign, running, foreignRunning} {
+			if job.Repository == q.Get("repository") && q.Get("pr") == fmt.Sprint(job.PR) {
 				list = append(list, job)
 			}
 		}
@@ -171,6 +185,14 @@ func fakeJobs(cloneID string) http.Handler {
 			return
 		}
 		writeJSON(w, map[string]any{"entries": []map[string]any{{"seq": 1, "kind": "text", "text": "I renamed the helper in " + job.ID}}, "next": 1, "more": false, "done": true})
+	})
+	mux.HandleFunc("GET /api/jobs/{id}/draft", func(w http.ResponseWriter, r *http.Request) {
+		job, ok := byID[r.PathValue("id")]
+		if !ok || job.Draft == 0 {
+			http.NotFound(w, r)
+			return
+		}
+		writeJSON(w, map[string]any{"draft": job.Draft, "document": json.RawMessage(`{"review":{"version":2,"head":"` + job.HeadSHA + `"},"summary":{"text":"DraftOverview of ` + job.ID + `"},"sections":[{"id":"d1","title":"Draft one","kind":"logic","hunks":[],"assessment":"a","details":"pending","summary":null,"risks":[]}],"relations":[]}`)})
 	})
 	mux.HandleFunc("POST /api/jobs/{id}/cancel", func(http.ResponseWriter, *http.Request) { panic("cancelled by a read") })
 	return mux
@@ -537,4 +559,21 @@ func TestNoToolReadsAWriteRoute(t *testing.T) {
 			t.Errorf("a GET called %s", call)
 		}
 	}
+}
+
+// fakeChatQueue is the conversations' store behind the real chat handler.
+type fakeChatQueue struct{}
+
+func (fakeChatQueue) Ask(context.Context, chat.Ask) (jobs.ChatQueued, error) {
+	panic("asked by a read")
+}
+
+func (fakeChatQueue) Conversations(_ context.Context, _ string, pr int) ([]store.Conversation, error) {
+	if pr != 8 {
+		return nil, nil
+	}
+	cost := 0.2
+	return []store.Conversation{{ID: "conv-1", Version: 1, Backend: "claude", Model: "opus", Created: time.Unix(1, 0).UTC(), Updated: time.Unix(2, 0).UTC(),
+		Turns: []store.Turn{{Seq: 1, Question: "Is the search box safe?", Focus: json.RawMessage(`{"section":"sec_1"}`), JobID: "job-secret", State: "done", CostUSD: &cost,
+			Answer: json.RawMessage(`{"answer_markdown":"Yes.","citations":[{"path":"main.go","start_line":1,"end_line":2}],"suggests_fix":null}`), Created: time.Unix(1, 0).UTC()}}}}, nil
 }

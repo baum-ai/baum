@@ -17,13 +17,13 @@ const maxRead = 8 << 20
 
 // maxDocumentRead bounds the body of a read of a review document or of the
 // facts, which the daemon serves up to viewserver.MaxDocumentBytes (a test
-// keeps the two equal). Only those two routes may be that large; a tool
+// keeps the two equal). Only those routes may be that large; a tool
 // projects what it needs, so the result's own bounds are unchanged.
 const maxDocumentRead = 32 << 20
 
 // readLimit is the body bound of a read of path.
 func readLimit(path string) int {
-	if path == "/api/document" || path == "/api/facts" {
+	if path == "/api/document" || path == "/api/facts" || (strings.HasPrefix(path, "/api/groups/") && strings.HasSuffix(path, "/document")) {
 		return maxDocumentRead
 	}
 	return maxRead
@@ -90,9 +90,12 @@ var actionRoutes = []actionRoute{
 	// One job, by id, and its transcript, which names no repository: the job
 	// it belongs to is read first.
 	{pattern: "/api/jobs/{id}", bind: byResponse, check: repositoryField},
+	{pattern: "/api/jobs/{id}/draft", bind: byLookup, check: repositoryField, lookup: func(v map[string]string) string { return "/api/jobs/" + v["id"] }},
 	{pattern: "/api/jobs/{id}/transcript", bind: byLookup, params: []string{"after"}, check: repositoryField, lookup: func(v map[string]string) string { return "/api/jobs/" + v["id"] }},
 
 	// The pull request page's reads of GitHub, by repository and number.
+	// A pull request's conversations with its review's agent, by clone.
+	{pattern: "/api/prs/chat", bind: byClone, params: []string{"pr"}},
 	{pattern: "/api/prs/description", bind: byRepository, params: []string{"pr"}},
 	{pattern: "/api/prs/checks", bind: byRepository, params: []string{"pr", "head_sha"}},
 	{pattern: "/api/prs/failing-checks", bind: byRepository, params: []string{"pr", "head_sha"}},
@@ -108,9 +111,7 @@ var actionRoutes = []actionRoute{
 	{pattern: "/api/inbox", bind: byFilter, filter: filterInbox},
 
 	// A pull request's saved review and what the app reads of it, by the
-	// registered clone the handler resolves. /api/versions and the version
-	// parameters are added ahead of the review tools (the next step), which
-	// read a saved version; no tool of this step reads /api/versions.
+	// registered clone the handler resolves.
 	{pattern: "/api/versions", bind: byClone, params: []string{"pr"}},
 	{pattern: "/api/document", bind: byClone, params: []string{"pr", "version"}},
 	{pattern: "/api/patch", bind: byClone, params: []string{"pr", "version", "path"}},
@@ -129,6 +130,7 @@ var actionRoutes = []actionRoute{
 	// is read first.
 	{pattern: "/api/groups", bind: byFilter, filter: filterGroups},
 	{pattern: "/api/groups/{id}", bind: byResponse, check: repositoryField},
+	{pattern: "/api/groups/{id}/document", bind: byLookup, params: []string{"version"}, check: repositoryField, lookup: func(v map[string]string) string { return "/api/groups/" + v["id"] }},
 	{pattern: "/api/groups/{id}/versions", bind: byLookup, check: repositoryField, lookup: func(v map[string]string) string { return "/api/groups/" + v["id"] }},
 }
 

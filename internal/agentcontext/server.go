@@ -61,8 +61,8 @@ func New(opts Options) *Server {
 		return spec.Proposer
 	})
 	registry.onRevoke(s.envelope.forget)
-	pull, group := s.pullTools(), s.groupTools()
-	for _, t := range slices.Concat(s.builtinTools(), pull, group) {
+	pull, group, reviews := s.pullTools(), s.groupTools(), s.reviewTools()
+	for _, t := range slices.Concat(s.builtinTools(), pull, group, reviews) {
 		if err := t.compile(); err != nil {
 			panic(err)
 		}
@@ -76,8 +76,8 @@ func New(opts Options) *Server {
 		return out
 	}
 	// "focus" is the page's own; the rest read the pull request or group.
-	s.pages[PagePullRequest] = PageSpec{Name: PagePullRequest, Tools: names(pull)}
-	s.pages[PageGroup] = PageSpec{Name: PageGroup, Tools: append(names(group), "focus")}
+	s.pages[PagePullRequest] = PageSpec{Name: PagePullRequest, Tools: append(names(pull), names(reviews)...)}
+	s.pages[PageGroup] = PageSpec{Name: PageGroup, Tools: append(append(names(group), names(reviews)[1:]...), "focus")}
 	return s
 }
 
