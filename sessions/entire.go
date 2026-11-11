@@ -171,22 +171,21 @@ func (s *checkpointStore) read(ctx context.Context, id string) readOutcome {
 	if err != nil {
 		return readOutcome{err: err}
 	}
-	outcome, cost := parseCheckpoint(fsys)
+	outcome := parseCheckpoint(fsys)
 	if tree != "" {
-		checkpointReads.put(key, outcome, cost)
+		checkpointReads.put(key, outcome, outcomeCost(outcome))
 	}
 	return outcome
 }
 
-// parseCheckpoint parses and maps an exported checkpoint, and says what
-// keeping the outcome costs.
-func parseCheckpoint(fsys fs.FS) (readOutcome, int64) {
+// parseCheckpoint parses and maps an exported checkpoint.
+func parseCheckpoint(fsys fs.FS) readOutcome {
 	parsed, err := entirecheckpoint.ParseCheckpoint(fsys)
 	if err != nil {
-		return readOutcome{err: err}, checkpointErrorCost
+		return readOutcome{err: err}
 	}
 	results, _, err := entiresession.Build(parsed)
-	return readOutcome{results: results, err: err}, max(checkpointBytes(fsys), checkpointErrorCost)
+	return readOutcome{results: results, err: err}
 }
 
 // readAll reads the checkpoints ids names, several at once.

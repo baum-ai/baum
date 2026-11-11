@@ -48,8 +48,8 @@ one only once until it changes.
   estimated graph memory (256 MiB while `HoldMappings` holds it) plus 64 MiB
   of estimated kept transcript lines (`DefaultTailCacheBytes`, see
   "Incremental decoding"): 128 MiB, or 320 MiB during a background pass.
-  The Entire checkpoint cache adds graphs of at most 64 MiB of checkpoint
-  files, about a sixth of that in memory (see "Entire checkpoint reuse").
+  The Entire checkpoint cache adds at most another 64 MiB of estimated graph
+  memory (see "Entire checkpoint reuse").
   Decoding in progress is bounded separately (see "Decode bound").
 * **Sharing:** cached graphs are shared between callers, so callers must not
   change a graph `Map` or `Load` returns.
@@ -165,11 +165,12 @@ reads each one once:
   mapping) is kept in a process-wide cache keyed by the clone and the
   checkpoint's tree, as the sessions it maps to, or the error parsing or
   mapping it gave. The checkpoint's files themselves, the transcripts, are not
-  kept. An entry costs the size of the checkpoint's files, which bounds its
-  graphs' memory from above (a graph takes about a sixth of its transcript's
-  size; see "Mapping cache"); least recently used entries
-  go first once `DefaultCheckpointCacheBytes` (64 MiB) is held, and a
-  checkpoint larger than that is not kept. `SetCheckpointCacheLimit` changes
+  kept. An entry costs the estimated memory of the graphs it keeps (the same
+  `graphBytes` estimate as the mapping cache, plus 1 KiB, which is also the
+  cost of an error); least recently used entries
+  go first once `DefaultCheckpointCacheBytes` (64 MiB) is held, and an
+  outcome larger than that is not kept. The `sessions.checkpoint_cache.bytes`
+  gauge is that estimate. `SetCheckpointCacheLimit` changes
   the limit; zero or less turns the cache off. A checkpoint whose export
   failed, such as one with objects a partial clone never downloaded, is not
   kept, so it is reported again on the next read. Cached graphs are shared

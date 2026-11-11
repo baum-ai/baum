@@ -2,7 +2,6 @@ package sessions
 
 import (
 	"container/list"
-	"io/fs"
 	"slices"
 	"sync"
 
@@ -39,15 +38,27 @@ func listingFor(root string) *entire.Listing {
 	return listing
 }
 
-// DefaultCheckpointCacheBytes bounds the checkpoint bytes whose mapped
-// sessions the checkpoint cache keeps. As for the mapping cache, a graph takes
-// memory of the same order as the transcript it was mapped from, or less, so
-// this is roughly the cache's resident cost.
+// DefaultCheckpointCacheBytes bounds the estimated memory (graphBytes) of the
+// mapped sessions the checkpoint cache keeps, the same measure and size as
+// DefaultMapCacheBytes. The estimate is closer to a lower bound than to the
+// heap, so the cache's resident cost is somewhat above this.
 const DefaultCheckpointCacheBytes = 64 << 20
 
-// checkpointErrorCost is what a checkpoint that could not be parsed or
-// mapped counts for: its outcome keeps only the error.
+// checkpointErrorCost is the least an entry counts for, and what a checkpoint
+// that could not be parsed or mapped counts for: its outcome keeps only the
+// error.
 const checkpointErrorCost = 1 << 10
+
+// outcomeCost is the estimated memory keeping an outcome alive costs: the
+// graphs of its results, with the floor checkpointErrorCost. The checkpoint's
+// files are not kept, so their size does not count.
+func outcomeCost(outcome readOutcome) int64 {
+	cost := int64(checkpointErrorCost)
+	for _, result := range outcome.results {
+		cost += graphBytes(result.Graph)
+	}
+	return cost
+}
 
 // checkpointCache keeps what reading a checkpoint whole gave: the sessions
 // it maps to, or why it could not be parsed. A checkpoint is named by its
@@ -55,9 +66,9 @@ const checkpointErrorCost = 1 << 10
 // the clone, so one clone's reads never answer for another's. Only a
 // checkpoint git exported in full is kept: one whose objects are missing, as
 // in a partial clone, is read again, and reported again, next time. The cost
-// of an entry is the size of the checkpoint's files, its transcripts above
-// all; least recently used entries go first once the bytes held pass the
-// limit, and a checkpoint larger than the limit is not kept. The mapped
+// of an entry is the estimated memory of its graphs (outcomeCost); least
+// recently used entries go first once the bytes held pass the
+// limit, and an outcome larger than the limit is not kept. The mapped
 // graphs are shared with every caller, which must not change them, as for
 // Map.
 type checkpointCache struct {
@@ -93,8 +104,8 @@ func newCheckpointCache(limit int64) *checkpointCache {
 	return &checkpointCache{limit: limit, order: list.New(), entries: map[string]*list.Element{}}
 }
 
-// SetCheckpointCacheLimit changes how many checkpoint bytes the checkpoint
-// cache keeps mapped sessions for; zero or less turns it off and empties it.
+// SetCheckpointCacheLimit changes how many estimated bytes of mapped sessions
+// the checkpoint cache keeps; zero or less turns it off and empties it.
 func SetCheckpointCacheLimit(limit int64) {
 	checkpointReads.mu.Lock()
 	defer checkpointReads.mu.Unlock()
@@ -156,19 +167,4 @@ func (c *checkpointCache) evict() {
 		delete(c.entries, entry.key)
 		c.held -= entry.cost
 	}
-}
-
-// checkpointBytes is the size of the files of an exported checkpoint.
-func checkpointBytes(fsys fs.FS) int64 {
-	var total int64
-	_ = fs.WalkDir(fsys, ".", func(_ string, d fs.DirEntry, err error) error {
-		if err != nil || d.IsDir() {
-			return nil
-		}
-		if info, err := d.Info(); err == nil {
-			total += info.Size()
-		}
-		return nil
-	})
-	return total
 }
