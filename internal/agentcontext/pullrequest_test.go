@@ -36,11 +36,20 @@ func (d *fakeDaemon) reset() {
 const fakeIndex = `{"entries":[
  {"pull_request":{"repository":"acme/web","number":12,"head_sha":"h12","title":"Add search","unresolved":2},"clone_id":"c-web","status":"none","version_count":0},
  {"pull_request":{"repository":"acme/web","number":13,"head_sha":"h13","title":"Fix search"},"clone_id":"c-web","status":"ready","version_count":2},
+ {"pull_request":{"repository":"acme/web","number":15,"head_sha":"h15","title":"Old daemon"},"clone_id":"c-web","version_count":0},
+ {"pull_request":{"repository":"acme/web","number":31,"head_sha":"h31","title":"Two clones"},"clone_id":"c-web","status":"first","version_count":0},
+ {"pull_request":{"repository":"acme/web","number":31,"head_sha":"h31","title":"Two clones"},"clone_id":"c-web","status":"second","version_count":2},
+ {"pull_request":{"repository":"acme/web","number":32,"head_sha":"h32","title":"No clone first"},"needs_clone":true,"status":"a","version_count":0},
+ {"pull_request":{"repository":"acme/web","number":32,"head_sha":"h32","title":"No clone first"},"clone_id":"c-web","status":"b","version_count":0},
+ {"pull_request":{"repository":"acme/web","number":33,"head_sha":"h33","title":"Reviewed"},"clone_id":"c-web","status":"ready","version_count":1,
+  "latest":{"version":1,"head":"h33","base":"b33","merge_base":"b33","backend":"claude","model":"opus","generated_at":"2026-11-01T10:00:00Z","recorded_cost_usd":0.5,"session":{"id":"sess","directory":"/home/secret"},"accounting":{"usage":1},"bundle_digest":"digest","prompt_digest":"pd","policy":"p"}},
  {"pull_request":{"repository":"evil/secrets","number":1,"head_sha":"hx","title":"Steal the keys"},"clone_id":"c-evil","status":"none","version_count":0}],
  "problems":[{"clone_id":"c-evil","reason":"secret reason"}]}`
 
-const fakeInbox = `{"count":2,"items":[
+const fakeInbox = `{"count":4,"items":[
  {"key":"acme/web#12","kind":"fix","fixing":true,"inboxes":["mine"]},
+ {"key":"acme/web#13","kind":"review","inboxes":["mine"]},
+ {"key":"acme/web#14","kind":"review","snoozed":true,"inboxes":["mine"]},
  {"key":"evil/secrets#1","kind":"review","inboxes":["mine"]}],
  "inboxes":[{"id":"mine","query":"secret query","count":2}]}`
 
@@ -63,11 +72,14 @@ func (d *fakeDaemon) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		reply("%s", fakeIndex)
 	case p == "/api/inbox":
 		reply("%s", fakeInbox)
+	case p == "/api/prs/checks" && q.Get("pr") == "15":
+		// A daemon older than the all-checks route.
+		http.NotFound(w, r)
 	case strings.HasPrefix(p, "/api/prs/"):
 		// What each GitHub-reading route answers names its request, so a test
 		// sees which repository and pull request were read.
-		reply(`{"route":%q,"repository":%q,"pr":%q,"head_sha":%q,"unresolved":%q,"checks":[{"name":"test","status":"completed","conclusion":"failure"}],"threads":[]}`,
-			p, q.Get("repository"), q.Get("pr"), q.Get("head_sha"), q.Get("unresolved"))
+		reply(`{"route":%q,"repository":%q,"pr":%q,"head_sha":%q,"unresolved":%q,"conflict":%t,"files":["conflict.go"],"checks":[{"name":"test","status":"completed","conclusion":"failure"},{"name":"lint","status":"in_progress","conclusion":""}],"threads":[]}`,
+			p, q.Get("repository"), q.Get("pr"), q.Get("head_sha"), q.Get("unresolved"), q.Get("pr") == "13")
 	case p == "/api/facts" || p == "/api/document":
 		clone, pr := clonePR()
 		head := map[string]string{"12": "h12", "13": "h13"}[pr]
@@ -118,11 +130,18 @@ func (d *fakeDaemon) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		default:
 			http.NotFound(w, r)
 		}
+	case p == "/api/groups":
+		reply(`{"available":true,"groups":[
+		 {"id":"g-web","repository":"acme/web","name":"Search","members":[12,13],"stack":false},
+		 {"id":"g-stack","repository":"acme/web","name":"Stack","members":[12,20],"stack":true},
+		 {"id":"g-solo","repository":"acme/web","name":"Solo","members":[13],"stack":false},
+		 {"id":"g-evil","repository":"evil/secrets","name":"Loot","members":[12],"stack":false}]}`)
 	case strings.HasPrefix(p, "/api/groups/"):
 		id, rest, _ := strings.Cut(strings.TrimPrefix(p, "/api/groups/"), "/")
 		groups := map[string]string{
-			"g-web":  `{"id":"g-web","repository":"acme/web","name":"Search","members":[12,13],"stack":false,"landed":[],"outdated":true}`,
-			"g-evil": `{"id":"g-evil","repository":"evil/secrets","name":"Loot","members":[1,2],"landed":[],"outdated":false}`,
+			"g-web":   `{"id":"g-web","repository":"acme/web","name":"Search","members":[12,13],"stack":false,"landed":[],"outdated":true}`,
+			"g-stack": `{"id":"g-stack","repository":"acme/web","name":"Stack","members":[12,20],"stack":true,"landed":[],"outdated":false}`,
+			"g-evil":  `{"id":"g-evil","repository":"evil/secrets","name":"Loot","members":[1,2],"landed":[],"outdated":false}`,
 		}
 		group, ok := groups[id]
 		switch {
@@ -175,7 +194,7 @@ func TestPullRequestToolsReadThePageRoutes(t *testing.T) {
 	}{
 		// The header from the review index, the description and the inbox.
 		{"pull_request", nil, []string{`"title":"Add search"`, `"number":12`, `"route":"/api/prs/description"`, `"kind":"fix"`, `"fixing":true`, `"version_count":0`}, []string{"c-web", "Steal the keys", "secret query"}},
-		{"pull_request", map[string]any{"pr": 13}, []string{`"title":"Fix search"`, `"version_count":2`, `"inbox":null`}, []string{`"kind":"fix"`}},
+		{"pull_request", map[string]any{"pr": 13}, []string{`"title":"Fix search"`, `"version_count":2`, `"kind":"review"`, `"id":"g-solo"`}, []string{`"kind":"fix"`}},
 		// Without a review: the facts' files, and each file's patch from the facts.
 		{"diff", nil, []string{`"source":"facts"`, `"head":"h12"`, `"path":"a.go"`, `"additions":5`, `"deletions":1`, `"hunks":2`, `"old_path":"old.go"`, `"@@ /api/facts/patch c-web 12 a.go"`, `"@@ /api/facts/patch c-web 12 b.go"`}, nil},
 		{"diff", map[string]any{"path": "b.go"}, []string{`"path":"b.go"`, `"@@ /api/facts/patch c-web 12 b.go"`}, []string{`"path":"a.go"`}},
@@ -412,7 +431,7 @@ func TestActionReaderFiltersAllRepositoryRoutes(t *testing.T) {
 		}
 		Problems []any
 	}
-	if err := json.Unmarshal(response.Body, &index); err != nil || len(index.Entries) != 2 || len(index.Problems) != 0 {
+	if err := json.Unmarshal(response.Body, &index); err != nil || len(index.Entries) < 2 || len(index.Problems) != 0 {
 		t.Fatalf("index %s: %v", response.Body, err)
 	}
 	for _, e := range index.Entries {
@@ -421,7 +440,7 @@ func TestActionReaderFiltersAllRepositoryRoutes(t *testing.T) {
 		}
 	}
 	response, err = reader.Get(context.Background(), "/api/inbox")
-	if err != nil || strings.Contains(string(response.Body), "evil") || strings.Contains(string(response.Body), "secret query") || !strings.Contains(string(response.Body), `"count":1`) {
+	if err != nil || strings.Contains(string(response.Body), "evil") || strings.Contains(string(response.Body), "secret query") || !strings.Contains(string(response.Body), `"count":1`) || strings.Contains(string(response.Body), `"mine"`) {
 		t.Fatalf("inbox %s: %v", response.Body, err)
 	}
 	// A route that answers an error, or not JSON this reader can filter,

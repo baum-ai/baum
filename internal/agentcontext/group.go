@@ -15,7 +15,7 @@ import (
 func (s *Server) groupTools() []Tool {
 	schema := json.RawMessage(`{"type":"object","properties":{` +
 		`"repository":{"type":"string","description":"The group's repository as owner/name. Defaults to the page's, or for an action its own."},` +
-		`"id":{"type":"string","description":"The group's id. Defaults to the open group page's."}},"additionalProperties":false}`)
+		`"id":{"type":"string","description":"The group's id. Defaults to the open group page's, or for an action the one group its pull request is in."}},"additionalProperties":false}`)
 	return []Tool{{
 		Name:        "group",
 		Description: "A review group as the app's group page shows it: its name, the pull requests that are its members, whether baum made it for a stack, the members that landed, and whether its review is outdated.",
@@ -50,6 +50,26 @@ func groupOf(ctx context.Context, c CallContext, args json.RawMessage) (id strin
 	id = a.ID
 	if id == "" && c.Consumer.Kind != Action && c.HasPage {
 		id = c.Page.Group
+	}
+	if id == "" && c.Consumer.Kind == Action {
+		// An action's group is the one its pull request is in, when it is in
+		// exactly one.
+		groups, err := c.groupsOf(ctx, repository, c.Consumer.PullRequest)
+		if err != nil {
+			return "", nil, err
+		}
+		switch len(groups) {
+		case 1:
+			id = groups[0].ID
+		case 0:
+			return "", nil, errors.New("name a group: the pull request is in none")
+		default:
+			ids := make([]string, len(groups))
+			for i, g := range groups {
+				ids[i] = g.ID
+			}
+			return "", nil, fmt.Errorf("name a group: the pull request is in several (%s)", strings.Join(ids, ", "))
+		}
 	}
 	if id == "" {
 		return "", nil, errors.New("name a group: no group page is open")

@@ -76,7 +76,7 @@ func (c CallContext) get(ctx context.Context, path string, query url.Values) (js
 		if len(message) > 300 {
 			message = message[:300]
 		}
-		return nil, false, fmt.Errorf("%s answered %d: %s", path, response.Status, message)
+		return nil, false, fmt.Errorf("%s answered %d: %s: %w", path, response.Status, message, errStatus)
 	}
 	body := bytes.TrimSpace(response.Body)
 	if !json.Valid(body) {
@@ -108,19 +108,33 @@ type reviewEntry struct {
 	VersionCount int
 }
 
+// errStatus marks a route that answered something but 200.
+var errStatus = errors.New("unexpected status")
+
+// errIndexUnavailable says the daemon's review index cannot be read now, which
+// is not the same as the pull request being absent from it.
+var errIndexUnavailable = errors.New("the review index is unavailable: the daemon cannot list pull requests now")
+
 // entry finds the pull request in the review index, as the app does with
-// history on. Of the entries one pull request has in several clones, the
-// first with a clone speaks for it.
+// history on. Of the entries one pull request has in several clones, the one
+// with a saved review speaks for it, else one with a clone, else the first.
 func (c CallContext) entry(ctx context.Context, repository string, number int) (reviewEntry, error) {
 	body, _, err := c.get(ctx, "/api/index", url.Values{"history": {"1"}})
 	if err != nil {
+		if errors.Is(err, errUnavailable) || errors.Is(err, errStatus) {
+			return reviewEntry{}, fmt.Errorf("%w: %v", errIndexUnavailable, err)
+		}
 		return reviewEntry{}, err
 	}
 	var index struct {
-		Entries []map[string]json.RawMessage `json:"entries"`
+		Available *bool                        `json:"available"`
+		Entries   []map[string]json.RawMessage `json:"entries"`
 	}
 	if err := json.Unmarshal(body, &index); err != nil {
 		return reviewEntry{}, errors.New("the review index is not readable")
+	}
+	if index.Available != nil && !*index.Available {
+		return reviewEntry{}, errIndexUnavailable
 	}
 	var found *reviewEntry
 	for _, raw := range index.Entries {
@@ -137,7 +151,7 @@ func (c CallContext) entry(ctx context.Context, repository string, number int) (
 		_ = json.Unmarshal(raw["clone_id"], &e.CloneID)
 		_ = json.Unmarshal(raw["needs_clone"], &e.NeedsClone)
 		_ = json.Unmarshal(raw["version_count"], &e.VersionCount)
-		if found == nil || (found.CloneID == "" && e.CloneID != "") {
+		if found == nil || e.rank() > found.rank() {
 			found = &e
 		}
 	}
@@ -145,6 +159,19 @@ func (c CallContext) entry(ctx context.Context, repository string, number int) (
 		return reviewEntry{}, fmt.Errorf("%s#%d is not in the review index: it is not open in a repository baum watches", repository, number)
 	}
 	return *found, nil
+}
+
+// rank orders the entries of one pull request: a saved review first, then a
+// clone.
+func (e reviewEntry) rank() int {
+	n := 0
+	if e.VersionCount > 0 {
+		n += 2
+	}
+	if e.CloneID != "" && !e.NeedsClone {
+		n++
+	}
+	return n
 }
 
 // selector is what the app's clone-bound routes take for a pull request.
@@ -168,6 +195,9 @@ type pullSource struct {
 	Head string
 	// Hunks are the changed hunks the source lists.
 	Hunks []sourceHunk
+	// unbuilt marks facts not asked for yet: their routes may answer not found
+	// until the daemon has built them.
+	unbuilt bool
 }
 
 type sourceHunk struct {
@@ -192,9 +222,12 @@ func (c CallContext) sourceOf(ctx context.Context, e reviewEntry, files bool) (p
 	} else if e.HeadSHA != "" {
 		query.Set("head", e.HeadSHA)
 	}
-	if name == "review" && !files {
-		// Its commits and sessions need nothing from the document.
-		return pullSource{Name: name, Prefix: prefix, Query: query}, nil
+	if !files {
+		// Commits and sessions need no files: a saved review's need nothing
+		// from the document, and the facts are read at the head the index shows
+		// without building them here (readSource builds them when the daemon
+		// has none), so a large payload is not read for a head already known.
+		return pullSource{Name: name, Prefix: prefix, Query: query, Head: e.HeadSHA, unbuilt: name == "facts"}, nil
 	}
 	body, missing, err := c.get(ctx, path, query)
 	if err != nil {

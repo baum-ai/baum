@@ -184,7 +184,7 @@ func TestActionReaderIsBoundToItsRepository(t *testing.T) {
 	saved := actionRoutes
 	t.Cleanup(func() { actionRoutes = saved })
 	actionRoutes = append(append([]actionRoute(nil), saved...),
-		actionRoute{pattern: "/api/groups", bind: byClone},
+		actionRoute{pattern: "/api/clonecheck", bind: byClone},
 		actionRoute{pattern: "/api/repositories/{owner}/{name}/clone-target", bind: byPath},
 	)
 	var seen []string
@@ -216,7 +216,7 @@ func TestActionReaderIsBoundToItsRepository(t *testing.T) {
 	}})
 	if err := s.RegisterTool(Tool{
 		Name: "raw_read", Description: "Reads a path as given.", Scope: ScopeRepository,
-		Reads:       []string{"/api/prs", "/api/jobs", "/api/groups", "/api/repositories", "/api/timeline"},
+		Reads:       []string{"/api/prs", "/api/jobs", "/api/clonecheck", "/api/repositories", "/api/timeline"},
 		InputSchema: json.RawMessage(`{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}`),
 		Call: func(ctx context.Context, c CallContext, args json.RawMessage) (string, error) {
 			var a struct{ Path string }
@@ -238,7 +238,7 @@ func TestActionReaderIsBoundToItsRepository(t *testing.T) {
 		{"/api/jobs?repository=ACME/web&pr=12", true, true},
 		{"/api/jobs/j-web", true, true},
 		{"/api/jobs/j-web/transcript?after=3", true, true},
-		{"/api/groups?clone=c-web", true, true},
+		{"/api/clonecheck?clone=c-web", true, true},
 		{"/api/repositories/acme/web/clone-target", true, true},
 		// No handler reads repo=, and /api/prs is not an action's route.
 		{"/api/prs?repo=acme/web", false, false},
@@ -249,8 +249,8 @@ func TestActionReaderIsBoundToItsRepository(t *testing.T) {
 		{"/api/jobs?repository=acme/web&repository=evil/x&pr=1", false, false},
 		{"/api/jobs?repository=acme/web&pr=12&limit=5", false, false},
 		{"/api/jobs?repository=acme/web&pr=12&refresh=1", false, false},
-		{"/api/groups?clone=c-other", false, false},
-		{"/api/groups?clone=unknown", false, false},
+		{"/api/clonecheck?clone=c-other", false, false},
+		{"/api/clonecheck?clone=unknown", false, false},
 		{"/api/repositories/evil/secrets/clone-target", false, false},
 		{"/api/timeline/decisions", false, false},
 		// Found by id: the job answered, but it is another repository's, so

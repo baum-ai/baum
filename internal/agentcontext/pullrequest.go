@@ -6,23 +6,28 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 )
 
-// maxPatchFiles bounds the files whose patches one diff call reads; the
-// result says how many it left out.
-const maxPatchFiles = 100
+// maxPatchFiles and patchBudget bound the patches one diff call returns: at
+// most this many files and about this many bytes of patch text in all. The
+// result lists the files left out by path.
+const (
+	maxPatchFiles = 100
+	patchBudget   = 1 << 20
+)
 
 // pullTools are the tools of the pull request page.
 func (s *Server) pullTools() []Tool {
 	index := "/api/index"
 	return []Tool{{
 		Name:        "pull_request",
-		Description: "The pull request as the app's page shows it: title, author, state, draft, branches, head commit, merge state, checks and review decision, size and URL; its saved review's status; the description; and where it stands in the user's inbox (what it waits for, being fixed, snoozed or archived).",
+		Description: "The pull request as the app's page shows it: title, author, state, draft, branches, head commit, merge state, checks and review decision, size and URL; its saved review's status; the description; where it stands in the user's inbox (what it waits for, being fixed, snoozed or archived), and the review groups and stacks it belongs to.",
 		InputSchema: targetSchema(""),
 		Scope:       ScopeRepository,
-		Reads:       []string{index, "/api/prs/description", "/api/inbox"},
+		Reads:       []string{index, "/api/prs/description", "/api/inbox", "/api/groups"},
 		Call:        callPullRequest,
 	}, {
 		Name:        "diff",
@@ -54,10 +59,10 @@ func (s *Server) pullTools() []Tool {
 		Call:        callReviewThreads,
 	}, {
 		Name:        "merge_state",
-		Description: "What the app offers to do about the pull request's state: the merge methods and whether it can merge, whether the branch is behind or conflicting and can be updated, and the failed workflow runs that can be re-run. Nothing is changed.",
+		Description: "What the app offers to do about the pull request's state: the merge methods and whether it can merge, whether the branch is behind or conflicting and can be updated, the files a conflict is in, and the failed workflow runs that can be re-run. Nothing is changed.",
 		InputSchema: targetSchema(""),
 		Scope:       ScopeRepository,
-		Reads:       []string{"/api/prs/merge-options", "/api/prs/update-branch-options", "/api/prs/rerun-checks-options"},
+		Reads:       []string{"/api/prs/merge-options", "/api/prs/update-branch-options", "/api/prs/rerun-checks-options", "/api/prs/conflicts"},
 		Call:        callMergeState,
 	}, {
 		Name:        "jobs",
@@ -114,12 +119,15 @@ func callPullRequest(ctx context.Context, c CallContext, args json.RawMessage) (
 	}
 	out := map[string]any{"repository": repository, "number": number}
 	out["pull_request"] = e.raw["pull_request"]
-	review := map[string]json.RawMessage{}
+	review := map[string]any{}
 	for key, value := range e.raw {
 		// The clone is the daemon's own handle, not something the page shows.
-		if key != "pull_request" && key != "clone_id" {
+		if key != "pull_request" && key != "clone_id" && key != "latest" {
 			review[key] = value
 		}
+	}
+	if latest := projectLatest(e.raw["latest"]); latest != nil {
+		review["latest"] = latest
 	}
 	out["review"] = review
 	body, _, err := c.get(ctx, "/api/prs/description", pullQuery(repository, number))
@@ -129,7 +137,69 @@ func callPullRequest(ctx context.Context, c CallContext, args json.RawMessage) (
 		out["description"] = body
 	}
 	out["inbox"] = c.inboxState(ctx, repository, number)
+	groups, err := c.groupsOf(ctx, repository, number)
+	if err != nil {
+		out["groups_error"] = err.Error()
+	} else {
+		out["groups"] = groups
+	}
 	return compactJSON(out)
+}
+
+// latestFields are what the page shows of a pull request's latest saved
+// review: its version and heads, who generated it and when, and what it cost.
+// Never the session that wrote it, the accounting, digests or policy.
+var latestFields = []string{"version", "head", "base", "merge_base", "backend", "model", "generated_at", "recorded_cost_usd"}
+
+func projectLatest(raw json.RawMessage) map[string]json.RawMessage {
+	var all map[string]json.RawMessage
+	if json.Unmarshal(raw, &all) != nil || all == nil {
+		return nil
+	}
+	out := map[string]json.RawMessage{}
+	for _, field := range latestFields {
+		if v, ok := all[field]; ok {
+			out[field] = v
+		}
+	}
+	return out
+}
+
+// groupRef is a review group or stack a pull request belongs to.
+type groupRef struct {
+	ID    string `json:"id"`
+	Name  string `json:"name"`
+	Stack bool   `json:"stack"`
+}
+
+// groupsOf lists the repository's groups that have the pull request as a
+// member, as the page's group rail does.
+func (c CallContext) groupsOf(ctx context.Context, repository string, number int) ([]groupRef, error) {
+	body, _, err := c.get(ctx, "/api/groups", nil)
+	if err != nil {
+		return nil, err
+	}
+	var list struct {
+		Available *bool `json:"available"`
+		Groups    []struct {
+			groupRef
+			Repository string `json:"repository"`
+			Members    []int  `json:"members"`
+		} `json:"groups"`
+	}
+	if err := json.Unmarshal(body, &list); err != nil {
+		return nil, errors.New("the groups are not readable")
+	}
+	if list.Available != nil && !*list.Available {
+		return nil, errors.New("review groups are unavailable")
+	}
+	out := []groupRef{}
+	for _, g := range list.Groups {
+		if strings.EqualFold(g.Repository, repository) && slices.Contains(g.Members, number) {
+			out = append(out, g.groupRef)
+		}
+	}
+	return out, nil
 }
 
 // inboxState is what the daemon's inbox says of the pull request: what it
@@ -220,11 +290,12 @@ func callDiff(ctx context.Context, c CallContext, args json.RawMessage) (string,
 			return "", fmt.Errorf("%s is not a changed file of the pull request", a.Path)
 		}
 	}
-	omitted := 0
+	var omitted []string
+	total := 0
 	for i := range want {
-		if i >= maxPatchFiles {
-			omitted = len(want) - i
-			break
+		if i >= maxPatchFiles || total >= patchBudget {
+			omitted = append(omitted, want[i].Path)
+			continue
 		}
 		route, query := source.route("patch")
 		query.Set("path", want[i].Path)
@@ -240,11 +311,15 @@ func callDiff(ctx context.Context, c CallContext, args json.RawMessage) (string,
 		}
 		if json.Unmarshal(body, &patch) == nil && string(patch.Patch) != "null" {
 			want[i].Patch = patch.Patch
+			total += len(patch.Patch)
 		}
 	}
 	out := map[string]any{"repository": repository, "number": number, "source": source.Name, "head": source.Head, "files": want}
-	if omitted > 0 {
-		out["patches_omitted"] = fmt.Sprintf("%d files beyond the first %d have no patch here: ask for them by path", omitted, maxPatchFiles)
+	if len(omitted) > 0 {
+		out["patches_omitted"] = map[string]any{
+			"reason": fmt.Sprintf("the patches stop at %d files or %d bytes: ask for these by path", maxPatchFiles, patchBudget),
+			"files":  omitted,
+		}
 	}
 	return compactJSON(out)
 }
@@ -268,6 +343,17 @@ func readSource(ctx context.Context, c CallContext, args json.RawMessage, name s
 	body, missing, err := c.get(ctx, route, query)
 	if err != nil {
 		return nil, err
+	}
+	if missing && source.unbuilt {
+		// The daemon has no facts at this head yet: ask for them, which builds
+		// them, and read again at the head they describe.
+		if source, err = c.sourceOf(ctx, e, true); err != nil {
+			return nil, err
+		}
+		route, query = source.route(name)
+		if body, missing, err = c.get(ctx, route, query); err != nil {
+			return nil, err
+		}
 	}
 	if missing {
 		return nil, fmt.Errorf("the pull request's %s are not available from its %s", name, source.Name)
@@ -320,21 +406,41 @@ func callChecks(ctx context.Context, c CallContext, args json.RawMessage) (strin
 	query := pullQuery(repository, number)
 	query.Set("head_sha", e.HeadSHA)
 	out := map[string]any{"repository": repository, "number": number, "head_sha": e.HeadSHA}
-	for key, path := range map[string]string{"checks": "/api/prs/checks", "failing": "/api/prs/failing-checks"} {
-		body, _, err := c.get(ctx, path, query)
-		if err != nil {
-			out[key+"_error"] = err.Error()
-			continue
+	// As the page does: every check, and the failing ones alone only from a
+	// daemon that has no all-checks route (not found).
+	body, missing, err := c.get(ctx, "/api/prs/checks", query)
+	if err != nil {
+		return "", err
+	}
+	if missing {
+		if body, missing, err = c.get(ctx, "/api/prs/failing-checks", query); err != nil || missing {
+			return "", errors.New("the pull request's checks are not available")
 		}
-		var list struct {
-			Checks json.RawMessage `json:"checks"`
+		out["only_failing"] = true
+	}
+	var list struct {
+		Checks []json.RawMessage `json:"checks"`
+	}
+	if err := json.Unmarshal(body, &list); err != nil {
+		return "", errors.New("the checks are not readable")
+	}
+	out["checks"] = list.Checks
+	failing := []json.RawMessage{}
+	for _, raw := range list.Checks {
+		var check struct {
+			Status     string `json:"status"`
+			Conclusion string `json:"conclusion"`
 		}
-		if json.Unmarshal(body, &list) == nil {
-			out[key] = list.Checks
+		if json.Unmarshal(raw, &check) == nil && (check.Status == "" || check.Status == "completed") && failingConclusions[check.Conclusion] {
+			failing = append(failing, raw)
 		}
 	}
+	out["failing"] = failing
 	return compactJSON(out)
 }
+
+// failingConclusions are the conclusions the page counts as failing.
+var failingConclusions = map[string]bool{"failure": true, "timed_out": true, "startup_failure": true, "action_required": true, "error": true}
 
 func callReviewThreads(ctx context.Context, c CallContext, args json.RawMessage) (string, error) {
 	repository, number, err := c.pullTarget(args)
@@ -357,17 +463,35 @@ func callMergeState(ctx context.Context, c CallContext, args json.RawMessage) (s
 		return "", err
 	}
 	out := map[string]any{"repository": repository, "number": number}
-	for key, path := range map[string]string{
-		"merge":        "/api/prs/merge-options",
-		"update":       "/api/prs/update-branch-options",
-		"rerun_checks": "/api/prs/rerun-checks-options",
+	var conflict bool
+	for _, part := range []struct{ key, path string }{
+		{"merge", "/api/prs/merge-options"},
+		{"update", "/api/prs/update-branch-options"},
+		{"rerun_checks", "/api/prs/rerun-checks-options"},
 	} {
-		body, _, err := c.get(ctx, path, pullQuery(repository, number))
+		body, _, err := c.get(ctx, part.path, pullQuery(repository, number))
 		if err != nil {
-			out[key+"_error"] = err.Error()
+			out[part.key+"_error"] = err.Error()
 			continue
 		}
-		out[key] = body
+		out[part.key] = body
+		if part.key == "update" {
+			var options struct {
+				Conflict bool `json:"conflict"`
+			}
+			_ = json.Unmarshal(body, &options)
+			conflict = options.Conflict
+		}
+	}
+	// As the page does, the files of a conflict are read only for a pull
+	// request that conflicts.
+	if conflict {
+		body, _, err := c.get(ctx, "/api/prs/conflicts", pullQuery(repository, number))
+		if err != nil {
+			out["conflicts_error"] = err.Error()
+		} else {
+			out["conflicts"] = body
+		}
 	}
 	return compactJSON(out)
 }

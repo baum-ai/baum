@@ -15,6 +15,20 @@ import (
 // maxRead bounds the body of one read.
 const maxRead = 8 << 20
 
+// maxDocumentRead bounds the body of a read of a review document or of the
+// facts, which the daemon serves up to viewserver.MaxDocumentBytes (a test
+// keeps the two equal). Only those two routes may be that large; a tool
+// projects what it needs, so the result's own bounds are unchanged.
+const maxDocumentRead = 32 << 20
+
+// readLimit is the body bound of a read of path.
+func readLimit(path string) int {
+	if path == "/api/document" || path == "/api/facts" {
+		return maxDocumentRead
+	}
+	return maxRead
+}
+
 // unreadable are the routes no tool may read, whatever it declares: settings,
 // credentials and connections, diagnostics, plan usage, the event stream and
 // the MCP route itself. Each is a plain string prefix, so /api/github covers
@@ -83,6 +97,7 @@ var actionRoutes = []actionRoute{
 	{pattern: "/api/prs/checks", bind: byRepository, params: []string{"pr", "head_sha"}},
 	{pattern: "/api/prs/failing-checks", bind: byRepository, params: []string{"pr", "head_sha"}},
 	{pattern: "/api/prs/review-threads", bind: byRepository, params: []string{"pr", "unresolved"}},
+	{pattern: "/api/prs/conflicts", bind: byRepository, params: []string{"pr"}},
 	{pattern: "/api/prs/merge-options", bind: byRepository, params: []string{"pr"}},
 	{pattern: "/api/prs/update-branch-options", bind: byRepository, params: []string{"pr"}},
 	{pattern: "/api/prs/rerun-checks-options", bind: byRepository, params: []string{"pr"}},
@@ -93,7 +108,9 @@ var actionRoutes = []actionRoute{
 	{pattern: "/api/inbox", bind: byFilter, filter: filterInbox},
 
 	// A pull request's saved review and what the app reads of it, by the
-	// registered clone the handler resolves.
+	// registered clone the handler resolves. /api/versions and the version
+	// parameters are added ahead of the review tools (the next step), which
+	// read a saved version; no tool of this step reads /api/versions.
 	{pattern: "/api/versions", bind: byClone, params: []string{"pr"}},
 	{pattern: "/api/document", bind: byClone, params: []string{"pr", "version"}},
 	{pattern: "/api/patch", bind: byClone, params: []string{"pr", "version", "path"}},
@@ -110,6 +127,7 @@ var actionRoutes = []actionRoute{
 
 	// A review group, by id; its versions name no repository, so the group
 	// is read first.
+	{pattern: "/api/groups", bind: byFilter, filter: filterGroups},
 	{pattern: "/api/groups/{id}", bind: byResponse, check: repositoryField},
 	{pattern: "/api/groups/{id}/versions", bind: byLookup, check: repositoryField, lookup: func(v map[string]string) string { return "/api/groups/" + v["id"] }},
 }
@@ -118,10 +136,14 @@ var actionRoutes = []actionRoute{
 // problems, which name other clones, are dropped.
 func filterIndex(body []byte, repository string) ([]byte, error) {
 	var v struct {
-		Entries []json.RawMessage `json:"entries"`
+		Available *bool             `json:"available"`
+		Entries   []json.RawMessage `json:"entries"`
 	}
 	if err := json.Unmarshal(body, &v); err != nil {
 		return nil, err
+	}
+	if v.Available != nil && !*v.Available {
+		return nil, errUnavailable
 	}
 	kept := []json.RawMessage{}
 	for _, raw := range v.Entries {
@@ -141,28 +163,72 @@ func filterIndex(body []byte, repository string) ([]byte, error) {
 }
 
 // filterInbox keeps the items of repository in an /api/inbox body, by their
-// "owner/name#number" keys; the saved inboxes, which hold the user's own
-// queries, are dropped.
+// "owner/name#number" keys. The saved inboxes, which hold the user's own
+// queries, and each item's saved-inbox ids are dropped, and the count is the
+// daemon's own rule over what is kept: the items queued for the user, not
+// being fixed, snoozed or archived (inboxqueue.Item.Queued and Hidden).
 func filterInbox(body []byte, repository string) ([]byte, error) {
 	var v struct {
-		Items []json.RawMessage `json:"items"`
+		Available *bool             `json:"available"`
+		Items     []json.RawMessage `json:"items"`
 	}
 	if err := json.Unmarshal(body, &v); err != nil {
 		return nil, err
 	}
-	kept := []json.RawMessage{}
+	if v.Available != nil && !*v.Available {
+		return nil, errUnavailable
+	}
+	kept := []map[string]json.RawMessage{}
+	count := 0
 	for _, raw := range v.Items {
 		var item struct {
-			Key string `json:"key"`
+			Key      string `json:"key"`
+			Kind     string `json:"kind"`
+			Fixing   bool   `json:"fixing"`
+			Snoozed  bool   `json:"snoozed"`
+			Archived bool   `json:"archived"`
 		}
 		if err := json.Unmarshal(raw, &item); err != nil {
 			return nil, err
 		}
-		if i := strings.LastIndex(item.Key, "#"); i >= 0 && strings.EqualFold(item.Key[:i], repository) {
+		i := strings.LastIndex(item.Key, "#")
+		if i < 0 || !strings.EqualFold(item.Key[:i], repository) {
+			continue
+		}
+		var fields map[string]json.RawMessage
+		if err := json.Unmarshal(raw, &fields); err != nil {
+			return nil, err
+		}
+		delete(fields, "inboxes")
+		kept = append(kept, fields)
+		if item.Kind != "" && item.Kind != "other" && !item.Fixing && !item.Snoozed && !item.Archived {
+			count++
+		}
+	}
+	return json.Marshal(map[string]any{"count": count, "items": kept, "inboxes": []string{}})
+}
+
+// filterGroups keeps the review groups of repository in an /api/groups body.
+func filterGroups(body []byte, repository string) ([]byte, error) {
+	var v struct {
+		Available *bool             `json:"available"`
+		Groups    []json.RawMessage `json:"groups"`
+	}
+	if err := json.Unmarshal(body, &v); err != nil {
+		return nil, err
+	}
+	if v.Available != nil && !*v.Available {
+		return nil, errUnavailable
+	}
+	kept := []json.RawMessage{}
+	for _, raw := range v.Groups {
+		if name, err := repositoryField(raw); err != nil {
+			return nil, err
+		} else if strings.EqualFold(name, repository) {
 			kept = append(kept, raw)
 		}
 	}
-	return json.Marshal(map[string]any{"count": len(kept), "items": kept, "inboxes": []string{}})
+	return json.Marshal(map[string]any{"available": true, "groups": kept})
 }
 
 // repositoryField reads a JSON object's top-level "repository".
@@ -215,7 +281,11 @@ type Response struct {
 }
 
 var (
-	errReadTooLarge    = errors.New("response too large")
+	errReadTooLarge = errors.New("response too large")
+	// errUnavailable is a route that answered, but not with what it holds:
+	// the daemon has no such data now (a non-200 answer, or the capability's
+	// {"available":false}).
+	errUnavailable     = errors.New("unavailable")
 	errNotReadable     = errors.New("not a route this tool reads")
 	errRefreshFlag     = errors.New("reads never ask for a refresh")
 	errNotActionRoute  = errors.New("not a route this agent reads")
@@ -275,11 +345,11 @@ func (r *Reader) Get(ctx context.Context, target string) (Response, error) {
 			}
 		case byFilter:
 			if response.Status != http.StatusOK {
-				return Response{}, fmt.Errorf("read %s: %w", u.Path, errOtherRepository)
+				return Response{}, fmt.Errorf("read %s: %w (status %d)", u.Path, errUnavailable, response.Status)
 			}
 			kept, err := route.filter(response.Body, r.repository)
 			if err != nil {
-				return Response{}, fmt.Errorf("read %s: %w", u.Path, errOtherRepository)
+				return Response{}, fmt.Errorf("read %s: %w", u.Path, err)
 			}
 			response.Body = kept
 		}
@@ -294,10 +364,11 @@ func (r *Reader) fetch(ctx context.Context, p, rawQuery string) (Response, error
 		return Response{}, err
 	}
 	req.Header.Set("Accept", "application/json")
-	w := &recorder{header: http.Header{}}
+	limit := readLimit(p)
+	w := &recorder{header: http.Header{}, limit: limit}
 	r.api.ServeHTTP(w, req)
 	if w.overflow {
-		return Response{}, fmt.Errorf("%w (over %d bytes)", errReadTooLarge, maxRead)
+		return Response{}, fmt.Errorf("%w (over %d bytes)", errReadTooLarge, limit)
 	}
 	if w.status == 0 {
 		w.status = http.StatusOK
@@ -407,8 +478,9 @@ func (r *Reader) bind(ctx context.Context, p string, query url.Values) (*actionR
 }
 
 // recorder is the ResponseWriter a read hands the API: it keeps at most
-// maxRead bytes and fails the read beyond that.
+// limit bytes and fails the read beyond that.
 type recorder struct {
+	limit    int
 	header   http.Header
 	status   int
 	body     bytes.Buffer
@@ -423,7 +495,7 @@ func (w *recorder) WriteHeader(status int) {
 }
 func (w *recorder) Write(b []byte) (int, error) {
 	w.WriteHeader(http.StatusOK)
-	if w.overflow || w.body.Len()+len(b) > maxRead {
+	if w.overflow || w.body.Len()+len(b) > w.limit {
 		w.overflow = true
 		return 0, errReadTooLarge
 	}
