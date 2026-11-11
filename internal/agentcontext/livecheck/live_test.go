@@ -152,4 +152,3 @@ func baumBinary(t *testing.T) string {
 	}
 	return out
 }
-
