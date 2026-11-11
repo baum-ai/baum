@@ -92,16 +92,70 @@ func (s *Store) Name(composerID string) (string, error) {
 	return data.Name, nil
 }
 
-// Revision fingerprints the composer's own record: its update time, status and
-// the list of bubbles it holds. It changes when the conversation does and not
-// when Cursor writes some other conversation to the same database file.
-func (s *Store) Revision(composerID string) (string, error) {
+// RecordRevision fingerprints the composer's own record: its update time,
+// status, name and the list of bubbles it holds.
+func (s *Store) RecordRevision(composerID string) (string, error) {
 	raw, err := s.rawComposer(composerID)
 	if err != nil {
 		return "", err
 	}
 	sum := sha256.Sum256(raw)
 	return hex.EncodeToString(sum[:12]), nil
+}
+
+// Revision fingerprints what Tree(composerID) reads: the record of the
+// composer and of every composer listed beneath it, and each of their bubble
+// and code block diff rows. It changes when the conversation does, however
+// Cursor edits it, and not when Cursor writes some other conversation to the
+// same database file. Unlike Tree it decodes nothing and indexes nothing.
+func (s *Store) Revision(composerID string) (string, error) {
+	hash := sha256.New()
+	seen := map[string]bool{}
+	var walk func(id string) error
+	walk = func(id string) error {
+		if seen[id] {
+			return nil
+		}
+		seen[id] = true
+		raw, err := s.rawComposer(id)
+		if err != nil {
+			return err
+		}
+		_, _ = fmt.Fprintf(hash, "composer\x00%s\x00%d\x00", id, len(raw))
+		hash.Write(raw)
+		for _, prefix := range []string{bubbleKeyPrefix + id + ":", diffKeyPrefix + id + ":"} {
+			if err := s.db.ScanPrefix(cursorTable, "key", prefix, func(row sqliteread.Row) error {
+				key, _ := row.Text("key")
+				value, _ := rowBytes(row, "value")
+				sum := sha256.Sum256(value)
+				_, _ = fmt.Fprintf(hash, "row\x00%s\x00%x\n", key, sum)
+				return nil
+			}); err != nil {
+				return err
+			}
+		}
+		data, err := DecodeComposerData(raw)
+		if err != nil {
+			return nil
+		}
+		for _, child := range data.SubagentComposerIDs {
+			if child == "" {
+				continue
+			}
+			// A child with no record of its own is a dangling reference, as in Tree.
+			if _, err := s.rawComposer(child); err != nil {
+				continue
+			}
+			if err := walk(child); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	if err := walk(composerID); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(hash.Sum(nil)[:12]), nil
 }
 
 // Close releases the read-only database handle.

@@ -75,6 +75,12 @@ func TestFindSessionsSinceSkipsOldConversationsBeforeReadingTheirTrees(t *testin
 		t.Fatalf("bounded sessions %v, want %v", have, want)
 	}
 
+	// A conversation updated exactly at the bound is kept.
+	exact, _, err := FindSessionsSince([]string{store}, roots, all[len(all)-1].ModifiedAt)
+	if err != nil || len(exact) == 0 || exact[len(exact)-1].Path != all[len(all)-1].Path {
+		t.Fatalf("bound at the newest conversation = %+v, %v", exact, err)
+	}
+
 	// A bound after every conversation leaves none.
 	none, _, err := FindSessionsSince([]string{store}, roots, time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC))
 	if err != nil || len(none) != 0 {

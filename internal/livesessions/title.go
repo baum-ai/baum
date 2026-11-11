@@ -93,12 +93,26 @@ type described struct {
 	// title, excerpt and summary are as served: masked and cut.
 	title, excerpt, summary string
 	activity                *Activity
-	// readEnded is set when the last full read happened with the session
-	// ended and its files caught up: an ended session is not read again.
-	readEnded bool
+	// endedReads counts the reads that caught up with the files while the
+	// session was ended. After endedSettled of them it is not read again: the
+	// second one sees what the agent wrote just after the session ended.
+	endedReads int
 	// found is the file a lookup by id found, so the store is searched once.
 	found string
 	scan  scanState
+}
+
+// endedSettled is how many reads of an ended session, each after its recheck
+// interval, describe makes before it stops looking.
+const endedSettled = 2
+
+// noteEndedRead counts a read that caught up with the files of an ended session.
+func (e *described) noteEndedRead(ended bool) {
+	if ended {
+		e.endedReads++
+	} else {
+		e.endedReads = 0
+	}
 }
 
 // scanState is how far a transcript has been read, and what was found.
@@ -258,8 +272,11 @@ func (t *Transcripts) describe(k key, path string, working, ended bool) (title, 
 
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	if ended && e.readEnded {
-		// The session ended and was read to its end afterwards: nothing
+	if !ended {
+		e.endedReads = 0
+	}
+	if ended && e.endedReads >= endedSettled {
+		// The session ended and was read to its end twice afterwards: nothing
 		// writes to it any more, so it is not looked at again for as long as
 		// it stays listed. A session that comes back is not ended, and is
 		// described as before.
@@ -280,13 +297,13 @@ func (t *Transcripts) describe(k key, path string, working, ended bool) (title, 
 	if err != nil {
 		return e.title, e.excerpt, e.summary, e.activity
 	}
-	version, err := Location{ID: k.id, files: src.files(), store: src.store}.Version()
+	version, err := Location{ID: k.id, files: src.files(), store: src.store, recordOnly: true}.Version()
 	if err != nil {
 		return e.title, e.excerpt, e.summary, e.activity
 	}
 	if version == e.version {
 		// e.version is only held once a read caught up with the files.
-		e.readEnded = ended
+		e.noteEndedRead(ended)
 		e.checked = now
 		return e.title, e.excerpt, e.summary, e.activity
 	}
@@ -311,7 +328,7 @@ func (t *Transcripts) describe(k key, path string, working, ended bool) (title, 
 	if caught {
 		e.version = version
 	}
-	e.readEnded = caught && ended
+	e.noteEndedRead(caught && ended)
 	e.checked = now
 	return e.title, e.excerpt, e.summary, e.activity
 }

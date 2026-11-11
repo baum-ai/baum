@@ -23,6 +23,10 @@ func TestNameAndRevisionReadOnlyTheComposerRecord(t *testing.T) {
 	if a == "" || a != again || a == b {
 		t.Fatalf("revisions %q %q %q", a, again, b)
 	}
+	ra, err := store.RecordRevision("root")
+	if err != nil || ra == "" || ra == a {
+		t.Fatalf("record revision %q, %v", ra, err)
+	}
 	for _, id := range []string{"data-less", "nope"} {
 		if _, err := store.Name(id); err == nil {
 			t.Fatalf("Name(%s) found a record", id)

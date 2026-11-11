@@ -317,6 +317,9 @@ type Location struct {
 	main string
 	// store is Cursor's database.
 	store string
+	// recordOnly has a Cursor Version follow only the conversation's own
+	// record, which is all its name needs.
+	recordOnly bool
 }
 
 // Path is the session's main transcript file, empty for a Cursor
@@ -343,8 +346,8 @@ func (s Location) Size() (int64, error) {
 func (s Location) Version() (string, error) {
 	if s.store != "" && s.ID != "" {
 		// Cursor writes its database all the time, for every conversation. The
-		// conversation's own record changes only with it.
-		if revision, err := cursorRevision(s.store, s.ID); err == nil {
+		// conversation's own records change only with it.
+		if revision, err := cursorRevision(s.store, s.ID, s.recordOnly); err == nil {
 			return revision, nil
 		}
 	}
@@ -568,11 +571,14 @@ func (s Location) Graph() (*session.Graph, error) {
 }
 
 // cursorRevision fingerprints one conversation's record in Cursor's database.
-func cursorRevision(store, id string) (string, error) {
+func cursorRevision(store, id string, recordOnly bool) (string, error) {
 	db, err := cursortranscript.Open(store)
 	if err != nil {
 		return "", err
 	}
 	defer func() { _ = db.Close() }()
+	if recordOnly {
+		return db.RecordRevision(id)
+	}
 	return db.Revision(id)
 }

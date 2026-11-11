@@ -78,18 +78,29 @@ func TestEndedSessionIsNotDescribedAgain(t *testing.T) {
 	if got := titles(t, f)["cursor/root"]; got != "Final name" {
 		t.Fatalf("the read after the end missed the name: %q", got)
 	}
-	// Ended and read: whatever the store holds now is not looked at.
+	// A second read follows, for what the agent wrote just after the end.
+	updateCursor(t, store, "root", "name", "Settled name")
+	f.clock.advance(CursorTitleRecheckEvery)
+	if got := titles(t, f)["cursor/root"]; got != "Settled name" {
+		t.Fatalf("the settling read missed the name: %q", got)
+	}
+	// Ended and read twice: whatever the store holds now is not looked at.
 	updateCursor(t, store, "root", "name", "Too late")
 	f.clock.advance(10 * CursorTitleRecheckEvery)
-	if got := titles(t, f)["cursor/root"]; got != "Final name" {
+	if got := titles(t, f)["cursor/root"]; got != "Settled name" {
 		t.Fatalf("an ended session was described again: %q", got)
 	}
-	// A session that comes back is described as before.
-	f.clock.advance(CursorTitleRecheckEvery)
+	// A session that comes back is described as before, and when it ends
+	// again it is read again, not held at the title it had.
 	cursorEvent(t, f, "before-submit-prompt")
-	f.clock.advance(CursorTitleRecheckEvery)
 	if got := titles(t, f)["cursor/root"]; got != "Too late" {
 		t.Fatalf("a resumed session kept its old title: %q", got)
+	}
+	updateCursor(t, store, "root", "name", "Second end")
+	cursorEvent(t, f, "session-end")
+	f.clock.advance(CursorTitleRecheckEvery)
+	if got := titles(t, f)["cursor/root"]; got != "Second end" {
+		t.Fatalf("a session ended again kept its old title: %q", got)
 	}
 }
 
@@ -104,13 +115,42 @@ func TestCursorVersionFollowsTheConversationNotTheDatabase(t *testing.T) {
 		return v
 	}
 	root := version("root")
-	updateCursor(t, store, "child", "name", "Elsewhere")
+	updateCursor(t, store, "headerless", "name", "Elsewhere")
 	if got := version("root"); got != root {
 		t.Fatal("another conversation's write changed this one's version")
 	}
 	updateCursor(t, store, "root", "lastUpdatedAt", "1")
 	if got := version("root"); got == root {
 		t.Fatal("the conversation's own write left its version")
+	}
+	// A bubble edited in place moves the conversation's version, but not the
+	// version of its record, which is all the title reads.
+	record := func() string {
+		t.Helper()
+		v, err := Location{ID: "root", store: store, recordOnly: true}.Version()
+		if err != nil {
+			t.Fatal(err)
+		}
+		return v
+	}
+	before, recBefore := version("root"), record()
+	db, err := sql.Open("sqlite", store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := db.Exec(`UPDATE cursorDiskKV SET value = json_set(value, '$.text', 'edited in place') WHERE key LIKE 'bubbleId:root:%'`)
+	_ = db.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		t.Fatal("no bubble rows to edit")
+	}
+	if version("root") == before {
+		t.Fatal("a bubble edited in place left the conversation's version")
+	}
+	if record() != recBefore {
+		t.Fatal("a bubble edit moved the record's version")
 	}
 	// Without a record the database's own size and times stand in.
 	if _, err := (Location{ID: "no-such", store: store}).Version(); err != nil {
