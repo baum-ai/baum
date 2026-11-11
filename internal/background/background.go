@@ -121,7 +121,8 @@ func (r SavedReview) final() bool {
 }
 
 // closedDraft says the saved document is of a draft that a read after its
-// generation observed closed: a document records a closed draft as a draft.
+// generation observed closed: a document records a closed draft as a draft,
+// so its state never says the final read was published.
 func (r SavedReview) closedDraft(observation discovery.Observation) bool {
 	return strings.EqualFold(r.State, "draft") && (observation.State == "CLOSED" || observation.State == "MERGED") && observation.FetchedAt.After(r.Generated)
 }
@@ -454,7 +455,14 @@ func (s *Service) dueReason(key string, r read, saved SavedReview, observation d
 	spread := r.at.IsZero() && now.Before(s.started.Add(spreadOffset(key)))
 	if !open {
 		switch {
-		case saved.final(), saved.closedDraft(observation):
+		case saved.final():
+			// Only a published document records the final state.
+			return false, false, "retired"
+		case saved.closedDraft(observation) && !r.at.IsZero() && !r.open && r.failures == 0:
+			// A closed draft's document keeps saying draft: a final read that
+			// this process published (or found published) retires it here. A
+			// read that failed after GitHub answered left an observation of
+			// the close too, but no published document, so it is retried.
 			return false, false, "retired"
 		case r.failures >= maxReadFailures && !r.again:
 			// Not open, it moves no more: a failing final read stops until

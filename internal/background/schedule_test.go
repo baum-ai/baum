@@ -152,8 +152,8 @@ func TestReconnectRetriesOnlyReadsThatFailedOffline(t *testing.T) {
 	}
 }
 
-// A closed draft's document still records a draft: once a read after its
-// generation observed it closed, it is retired too.
+// A closed draft's document still records a draft, so only a final read
+// this process published retires it: a new process reads it once more.
 func TestClosedDraftIsRetired(t *testing.T) {
 	now := time.Now()
 	d := &fakeDiscovery{closed: true}
@@ -174,11 +174,60 @@ func TestClosedDraftIsRetired(t *testing.T) {
 	if calls != 1 {
 		t.Fatalf("calls=%d, want one final read", calls)
 	}
-	// A new process retires it without reading it.
 	fresh := settled(&Service{Registry: s.Registry, Discovery: d, Now: s.Now, Saved: s.Saved, Refresh: s.Refresh}, now)
-	fresh.Sync(context.Background())
-	if calls != 1 {
-		t.Fatalf("calls=%d, want none in a new process", calls)
+	for range 10 {
+		fresh.Sync(context.Background())
+		now = now.Add(6 * time.Hour)
+	}
+	if calls != 2 {
+		t.Fatalf("calls=%d, want one final read in a new process", calls)
+	}
+}
+
+// A closed draft's final read that fails after GitHub answered leaves an
+// observation of the close but no published document: it is not retired,
+// and is retried, after its backoff and on a refresh asked for.
+func TestFailedFinalReadOfAClosedDraftIsRetried(t *testing.T) {
+	now := time.Now()
+	d := &fakeDiscovery{closed: true}
+	calls := 0
+	fail := true
+	generated := now.Add(-time.Hour)
+	s := settled(&Service{Registry: registry{{Repository: "acme/app", CommonDir: "a", Available: true}}, Discovery: d, Now: func() time.Time { return now }, Interval: time.Minute,
+		Saved: func(context.Context, repos.Clone) ([]SavedReview, error) {
+			return []SavedReview{{Number: 2, State: "draft", Generated: generated}}, nil
+		},
+		Refresh: func(_ context.Context, _ repos.Clone, n int) (discovery.Observation, error) {
+			calls++
+			o := discovery.Observation{Number: n, State: "CLOSED", HeadSHA: "h", FetchedAt: now}
+			if fail {
+				return o, errors.New("reviewed commit missing")
+			}
+			return o, nil
+		}}, now)
+	s.Sync(context.Background())
+	now = now.Add(time.Minute)
+	s.Sync(context.Background())
+	if calls != 2 {
+		t.Fatalf("calls=%d, want the failed final read retried", calls)
+	}
+	for range 5 {
+		now = now.Add(time.Hour)
+		s.Sync(context.Background())
+	}
+	if calls != maxReadFailures {
+		t.Fatalf("calls=%d, want it stopped after %d failures", calls, maxReadFailures)
+	}
+	// Fixed locally; the person refreshes the repository.
+	fail = false
+	s.Asked("acme/app")
+	s.Sync(context.Background())
+	for range 5 {
+		now = now.Add(6 * time.Hour)
+		s.Sync(context.Background())
+	}
+	if calls != maxReadFailures+1 {
+		t.Fatalf("calls=%d, want one published final read, then retirement", calls)
 	}
 }
 

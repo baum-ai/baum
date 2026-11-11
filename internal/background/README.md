@@ -49,9 +49,11 @@ Discovery already carries the list fields of the other open ones.
   read once more, to record its final state, while its saved document still
   says `open` or `draft`. Once the document records `merged` or `closed`, it
   is retired: the background refresh never reads it again. A document keeps
-  a closed draft as `draft`, so a draft is retired once a read after its
-  generation observed it closed. If it is reopened, discovery lists it open
-  again and the rules above apply.
+  a closed draft as `draft`, so its state cannot show that the final read was
+  published: a closed draft is retired once a final read in this process
+  succeeded, and each new process reads it once more. A read that failed after
+  GitHub answered does not retire it. If it is reopened, discovery lists it
+  open again and the rules above apply.
 - **Failures.** A failed read is tried again after the interval, doubling. After
   `maxReadFailures` (3) failures in a row, it waits for a change: an open pull
   request is read again when its `updatedAt` or head moves, or after

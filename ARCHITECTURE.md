@@ -3807,9 +3807,10 @@ GitHub's own time when the last read was due), another head, another check
 rollup or another unresolved thread count than at the last read, and otherwise
 once unread for `openReadAge` (2 h). A saved review whose pull request left the
 open ones gets one final read while its document still says open or draft;
-once the document records `merged` or `closed` (or a draft was observed closed
-after its generation) it is retired and never read in the background again,
-until discovery lists it open again. Changes go first; then the longest
+once the published document records `merged` or `closed` it is retired and
+never read in the background again, until discovery lists it open again. A
+closed draft's document keeps `draft`, so it retires once a final read in this
+process succeeded, and each new process reads it once more. Changes go first; then the longest
 unread. A failed read is retried after the interval, doubling, without backing
 off the repository's polls; after `maxReadFailures` (3) in a row it waits for
 the pull request's `updated_at` or head to move (an open one also after a day),
