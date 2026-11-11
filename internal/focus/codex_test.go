@@ -46,6 +46,26 @@ func TestSharedCodexFindsItsTmuxPane(t *testing.T) {
 	}
 }
 
+// The TUI that started the shared server is its parent: every thread's hooks
+// record that TUI's terminal and pane, which may be another project's.
+func TestSharedCodexStartedByAnotherTUI(t *testing.T) {
+	m := tmuxInKitty()
+	m.procs[100] = proc{"codex", "a", 102}
+	m.procs[102] = proc{"codex", "h", 101}
+	terminal := tmuxTerminal(m)
+	terminal.Env["TMUX_PANE"] = "%2"
+	terminal.TTY = "/dev/pts/2"
+	m.answers["tmux -S /tmp/tmux-1000/default list-panes"] = answer{out: "%2\t/dev/pts/2\tcodex\tOther | repo | 019f0000-aaaa-7bbb-8ccc-ddddd...\n%7\t/dev/pts/12\tcodex\tWorking | repo | " + codexThread[:29] + "...\n"}
+	f := m.focuser("linux", hyprEnv)
+	if f.Predict("codex", terminal) != Session {
+		t.Fatal("missing focus action")
+	}
+	result := f.Focus(context.Background(), "codex", codexThread, terminal)
+	if result != (Result{Precision: Session}) || !slices.Contains(m.calls, "tmux -S /tmp/tmux-1000/default select-pane -t %7") || slices.Contains(m.calls, "tmux -S /tmp/tmux-1000/default select-pane -t %2") {
+		t.Fatalf("result %+v, calls %v", result, m.calls)
+	}
+}
+
 func TestSharedCodexRejectsAmbiguousTmuxPanes(t *testing.T) {
 	m, terminal := sharedCodexMachine()
 	m.answers["tmux -S /tmp/tmux-1000/default list-panes"] = answer{out: "%7\t/dev/pts/12\tcodex\t" + codexThread + "\n%8\t/dev/pts/13\tcodex\t" + codexThread + "\n"}

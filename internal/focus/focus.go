@@ -284,8 +284,20 @@ func cmpOr(s, fallback string) string {
 
 // Shared Codex app servers run hooks separately from the TUI clients. Their
 // inherited terminal variables locate the server's launcher, not the thread.
+// The server runs detached, or as the child of the TUI that started it, whose
+// terminal, tmux pane and project every thread it serves then records.
 func sharedCodex(agent string, t *hookevents.Terminal) bool {
-	return agent == "codex" && t.TTY == "" && len(t.Processes) > 0 &&
+	if agent != "codex" {
+		return false
+	}
+	i := slices.IndexFunc(t.Processes, func(p hookevents.Process) bool { return p.Name == "codex" })
+	if i < 0 {
+		return false
+	}
+	if i+1 < len(t.Processes) && t.Processes[i+1].Name == "codex" {
+		return true
+	}
+	return t.TTY == "" &&
 		!slices.ContainsFunc(t.Processes, func(p hookevents.Process) bool {
 			return p.Name != "codex" && p.Name != "systemd" && p.Name != "launchd"
 		})
