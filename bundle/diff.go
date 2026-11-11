@@ -89,7 +89,7 @@ func BuildDiffIndexWithin(comparison Comparison, fetch PatchFetcher, roleFor fun
 		path := effectivePatchPath(file)
 		change := diffChangeKind(file)
 		if unread[i] {
-			hunks = append(hunks, unreadFileHunk(file, path, change, roleFor(path)))
+			hunks = append(hunks, unreadFileHunk(comparison, file, path, change, roleFor(path)))
 			continue
 		}
 		patch, err := fetch(ChangePaths(file)...)
@@ -177,9 +177,9 @@ func unreadFiles(files []FileChange, roleFor func(path string) string, maxFiles 
 
 // unreadFileHunk is the one entry of a file whose patch is not read:
 // textless, with the file's line counts when the comparison has them.
-func unreadFileHunk(file FileChange, path, change, role string) Hunk {
+func unreadFileHunk(comparison Comparison, file FileChange, path, change, role string) Hunk {
 	hunk := Hunk{
-		ID: fileHunkID(path), Path: path, Change: change, Role: role,
+		ID: unreadFileID(comparison, file, path), Path: path, Change: change, Role: role,
 		DiffURL: HunkDiffURL(path, 0), Textless: true, TextlessReason: FileLimitReason,
 	}
 	if file.OldPath != "" && file.OldPath != path {
@@ -192,6 +192,25 @@ func unreadFileHunk(file FileChange, path, change, role string) Hunk {
 		hunk.Deletions = int(*file.Deletions)
 	}
 	return hunk
+}
+
+// unreadFileID hashes the path and the file's blob IDs and modes on both
+// sides, so the entry's ID changes whenever the file's content does, as a
+// hunk ID would: a later version reuses a section's details only when the
+// file is unchanged (review.ReusableSectionDetails compares hunk IDs). A
+// comparison without blob IDs hashes its base and head commits instead, so
+// the entry changes with every new head rather than hide a change.
+func unreadFileID(comparison Comparison, file FileChange, path string) string {
+	digest := newHunkIDDigest(path)
+	digest.Write([]byte("unread\x00"))
+	identity := []string{file.OldOID, file.NewOID, file.OldMode, file.NewMode}
+	if file.OldOID == "" && file.NewOID == "" {
+		identity = append(identity, comparison.BaseOID, comparison.HeadOID)
+	}
+	for _, part := range identity {
+		digest.Write([]byte(part + "\x00"))
+	}
+	return hunkIDFromDigest(digest)
 }
 
 func effectivePatchPath(file FileChange) string {
@@ -459,8 +478,7 @@ func hunkIDFromDigest(digest hash.Hash) string {
 	return "h_" + hex.EncodeToString(digest.Sum(nil)[:6])
 }
 
-// fileHunkID is the ID of an entry that stands for a whole file: a textless
-// file's, a file whose patch was not read, or a file Fit collapsed.
+// fileHunkID is the ID of a textless file's one entry.
 func fileHunkID(path string) string {
 	return hunkIDFromDigest(newHunkIDDigest(path))
 }

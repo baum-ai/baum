@@ -424,11 +424,11 @@ func TestFilesPastTheFileLimitAreNotRead(t *testing.T) {
 		t.Fatalf("paths %q: the comparison's order must be kept", paths)
 	}
 	lib, c := hunks[1], hunks[3]
-	want := Hunk{ID: fileHunkID("vendor/lib.go"), Path: "vendor/lib.go", Change: "modified", Role: RoleVendored, Additions: 7, Deletions: 3, DiffURL: HunkDiffURL("vendor/lib.go", 0), Textless: true, TextlessReason: FileLimitReason}
+	want := Hunk{ID: unreadFileID(comparison, comparison.Files[1], "vendor/lib.go"), Path: "vendor/lib.go", Change: "modified", Role: RoleVendored, Additions: 7, Deletions: 3, DiffURL: HunkDiffURL("vendor/lib.go", 0), Textless: true, TextlessReason: FileLimitReason}
 	if !reflect.DeepEqual(lib, want) {
 		t.Fatalf("unread vendored file:\n got %+v\nwant %+v", lib, want)
 	}
-	if c.ID != fileHunkID("c.go") || !c.Textless || c.TextlessReason != FileLimitReason || c.Patch != "" || c.Additions != 0 {
+	if c.ID != unreadFileID(comparison, comparison.Files[3], "c.go") || !c.Textless || c.TextlessReason != FileLimitReason || c.Patch != "" || c.Additions != 0 {
 		t.Fatalf("unread code file: %+v", c)
 	}
 	if hunks[2].Textless || hunks[2].OldPath != "old.go" {
@@ -436,6 +436,19 @@ func TestFilesPastTheFileLimitAreNotRead(t *testing.T) {
 	}
 	if want := "patch text not read for 2 file(s) over the 2-file limit, generated and vendored files first; each is one diff index entry"; !slices.Contains(notes, want) {
 		t.Fatalf("notes %q, want %q", notes, want)
+	}
+	// The unread entry's ID follows the file's content, as a hunk ID does:
+	// its blob IDs, or the compared commits when the comparison has none.
+	changed := comparison
+	changed.Files = slices.Clone(comparison.Files)
+	changed.Files[1].NewOID = "b2"
+	again, _, err := BuildDiffIndexWithin(changed, fetch, RoleForPath, DiffLimits{MaxFiles: 2})
+	if err != nil || again[1].ID == lib.ID || again[3].ID != c.ID {
+		t.Fatalf("a changed blob must change only its own entry's ID: %v %q %q", err, again[1].ID, again[3].ID)
+	}
+	changed.HeadOID = "new-head"
+	if again, _, err := BuildDiffIndexWithin(changed, fetch, RoleForPath, DiffLimits{MaxFiles: 2}); err != nil || again[3].ID == c.ID || again[1].ID == lib.ID {
+		t.Fatalf("a file without blob IDs must change ID with the head: %v %+v", err, again)
 	}
 	fetched = nil
 	if _, notes, err := BuildDiffIndexWithin(comparison, fetch, RoleForPath, DiffLimits{MaxFiles: 4}); err != nil || len(fetched) != 4 || len(notes) != 0 {

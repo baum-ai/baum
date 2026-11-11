@@ -2,8 +2,6 @@ package assemble_test
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
 	"slices"
 	"testing"
@@ -52,20 +50,32 @@ func TestMergeGroupKeepsTheMembersOfACollapsedFile(t *testing.T) {
 	}
 
 	// A member's own fit already collapsed the file, the checkout omitted it,
-	// and the other member's hunks collapse into the same entry: it keeps
-	// the file's ID and the omission, and still names both members.
-	sum := sha256.Sum256([]byte("yarn.lock\x00"))
-	fileID := "h_" + hex.EncodeToString(sum[:6])
-	first := member(7, 0, 0)
-	first.Result.Bundle.Diff = append(first.Result.Bundle.Diff, bundle.Hunk{
-		ID: fileID, Path: "yarn.lock", Change: "modified", Role: bundle.RoleGenerated, StartLine: 10, LineCount: 400,
-		Textless: true, TextlessReason: bundle.OmittedSizeReason,
-	})
-	merged, err = assemble.MergeGroup(context.Background(), "Group", []assemble.GroupMember{first, member(9, 20, 40)}, nil, bundle.Caps{MaxBytes: 1 << 20, MaxDiffIndexBytes: 2048}, nil)
-	if err != nil {
-		t.Fatal(err)
+	// and the other member's hunks collapse with it into one entry: it keeps
+	// the omission, names both members, and its ID follows the content of
+	// every hunk it stands for.
+	group := func(to int) (assemble.GroupResult, bundle.Hunk) {
+		first := member(7, 0, 0)
+		first.Result.Bundle.Diff = append(first.Result.Bundle.Diff, bundle.Hunk{
+			ID: "h_00000000aaaa", Path: "yarn.lock", Change: "modified", Role: bundle.RoleGenerated, StartLine: 10, LineCount: 400,
+			Textless: true, TextlessReason: bundle.OmittedSizeReason,
+		})
+		merged, err := assemble.MergeGroup(context.Background(), "Group", []assemble.GroupMember{first, member(9, 20, to)}, nil, bundle.Caps{MaxBytes: 1 << 20, MaxDiffIndexBytes: 2048}, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, hunk := range merged.Bundle.Diff {
+			if hunk.Path == "yarn.lock" {
+				return merged, hunk
+			}
+		}
+		t.Fatalf("no yarn.lock entry: %+v", merged.Bundle.Diff)
+		return merged, bundle.Hunk{}
 	}
-	if got := merged.HunkMembers[fileID]; !slices.Equal(got, []int{7, 9}) {
-		t.Fatalf("members of the collapsed, omitted file %v, want [7 9]; diff %+v", got, merged.Bundle.Diff)
+	merged, lockEntry := group(40)
+	if lockEntry.TextlessReason != bundle.OmittedSizeReason || lockEntry.ID == "h_00000000aaaa" || !slices.Equal(merged.HunkMembers[lockEntry.ID], []int{7, 9}) {
+		t.Fatalf("collapsed, omitted file %+v with members %v, want [7 9]", lockEntry, merged.HunkMembers[lockEntry.ID])
+	}
+	if _, changed := group(41); changed.ID == lockEntry.ID {
+		t.Fatal("a group-collapsed file kept its ID although a member's hunks changed")
 	}
 }

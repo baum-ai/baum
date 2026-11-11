@@ -32,8 +32,9 @@ type indexFile struct {
 //  3. whole files are left out, one at a time, in dropTier order, each tier
 //     from the end of the diff.
 //
-// A collapsed entry has the file's ID (as a textless file has), path,
-// change and role, its hunks' summed line counts and the new-side span from
+// A collapsed entry has an ID hashed from the path and its hunks' IDs
+// (collapsedHunkID), the file's path, change and role, its hunks' summed
+// line counts and the new-side span from
 // the first to the last of them, and no patch: CollapsedReason, or the
 // checkout's omitted_ reason when any of its hunks had one, which the risk
 // score reads. The order of entries is kept, a collapsed one at its first
@@ -169,7 +170,7 @@ func dropTier(role string) int {
 func collapseHunks(hunks []Hunk) Hunk {
 	first := hunks[0]
 	collapsed := Hunk{
-		ID: fileHunkID(first.Path), Path: first.Path, OldPath: first.OldPath, Change: first.Change, Role: first.Role,
+		ID: collapsedHunkID(first.Path, hunks), Path: first.Path, OldPath: first.OldPath, Change: first.Change, Role: first.Role,
 		Textless: true, TextlessReason: CollapsedReason,
 	}
 	start, end := 0, 0
@@ -193,6 +194,20 @@ func collapseHunks(hunks []Hunk) Hunk {
 	}
 	collapsed.DiffURL = HunkDiffURL(collapsed.Path, collapsed.StartLine)
 	return collapsed
+}
+
+// collapsedHunkID hashes the path and the IDs of the hunks a collapsed entry
+// stands for, in order. Those IDs address the hunks' content, so the entry's
+// ID changes whenever the file's change does: a later version whose section
+// holds the same collapsed entry reuses its details only when the code is
+// unchanged (review.ReusableSectionDetails compares hunk IDs).
+func collapsedHunkID(path string, hunks []Hunk) string {
+	digest := newHunkIDDigest(path)
+	digest.Write([]byte("collapsed\x00"))
+	for _, hunk := range hunks {
+		digest.Write([]byte(hunk.ID + "\x00"))
+	}
+	return hunkIDFromDigest(digest)
 }
 
 // indexEntry is a hunk as the diff index counts it: without its patch text,

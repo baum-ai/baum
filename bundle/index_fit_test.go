@@ -54,7 +54,7 @@ func TestFitCollapsesGeneratedAndVendoredFilesFirst(t *testing.T) {
 	}
 	lock := bundle.Diff[3]
 	want := Hunk{
-		ID: fileHunkID("pnpm-lock.yaml"), Path: "pnpm-lock.yaml", Change: "modified", Role: RoleGenerated,
+		ID: collapsedHunkID("pnpm-lock.yaml", diff[3:43]), Path: "pnpm-lock.yaml", Change: "modified", Role: RoleGenerated,
 		StartLine: 10, LineCount: 10*39 + 3, Additions: 80, Deletions: 40, DiffURL: HunkDiffURL("pnpm-lock.yaml", 10),
 		Textless: true, TextlessReason: CollapsedReason,
 	}
@@ -131,7 +131,7 @@ func TestFitKeepsTheCheckoutOmissionOfACollapsedFile(t *testing.T) {
 	if err := Fit(bundle, Caps{MaxDiffIndexBytes: diffIndexBytes(bundle) / 2}); err != nil {
 		t.Fatal(err)
 	}
-	if len(bundle.Diff) != 2 || bundle.Diff[1].TextlessReason != OmittedSizeReason || bundle.Diff[1].ID != fileHunkID("big.go") {
+	if len(bundle.Diff) != 2 || bundle.Diff[1].TextlessReason != OmittedSizeReason || bundle.Diff[1].ID != collapsedHunkID("big.go", diff[1:]) {
 		t.Fatalf("diff %+v", bundle.Diff)
 	}
 }
