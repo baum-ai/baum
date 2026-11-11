@@ -57,7 +57,41 @@ over 150 MB, so decoding is bounded two ways.
   (256 MiB) is acquired with a session's transcript size before it is decoded,
   and with a fixed estimate for each checkpoint read. A session larger than
   the budget is clamped to it, so it runs alone rather than waiting forever.
-  Waiting ends when the context is cancelled. Cache hits take no budget.
+  Waiting ends when the context is cancelled. Cache hits, of mapped sessions
+  and of checkpoint reads, take no budget.
+
+## Entire checkpoint reuse
+
+Entire checkpoints are named by git objects, which never change, so a process
+reads each one once:
+
+* **Listings.** `entire.Listing` remembers, per clone, what `List`,
+  `Touched`, `Sessions` and `Located` learned: the branch's checkpoints by
+  the branch commit, the branch's dates by the branch commit and the clone's
+  shallow boundary, each ref's tree and date by the ref's commit, and each
+  checkpoint's metadata by its tree. When neither the branch nor any ref moved,
+  they run no git. When the branch only moved forward, `Touched` reads only
+  `<old>..<new>` (after `git merge-base --is-ancestor`) and merges it into the
+  dates it had; a rewritten branch is read whole. A ref that is added or moved
+  is asked about alone, and what a removed ref named is dropped. Only answers
+  git gave in full are kept: an object a partial clone lacks is asked for again
+  next time, and never fetched. `sessions` keeps one listing per clone root,
+  for up to 32 clones; a listing costs about 100 bytes per checkpoint.
+* **Whole reads.** A checkpoint read whole (`git archive`, then parsing and
+  mapping) is kept in a process-wide cache keyed by the clone and the
+  checkpoint's tree, as the sessions it maps to, or the error parsing or
+  mapping it gave. The checkpoint's files themselves, the transcripts, are not
+  kept. An entry costs the size of the checkpoint's files, which bounds its
+  graphs' memory as the mapping cache's cost does; least recently used entries
+  go first once `DefaultCheckpointCacheBytes` (64 MiB) is held, and a
+  checkpoint larger than that is not kept. `SetCheckpointCacheLimit` changes
+  the limit; zero or less turns the cache off. A checkpoint whose export
+  failed, such as one with objects a partial clone never downloaded, is not
+  kept, so it is reported again on the next read. Cached graphs are shared
+  between callers, as `Map`'s are.
+* **One private repository.** `Discovery.Load` and `Discovery.Checkpoints`
+  read the stores `Discover` resolved, in the private repository of the clone
+  `Discovery.ShareRepo` gives them, or of one they open themselves.
 
 `Load` is `Discover` followed by `Discovery.Load`. `Discover` reads
 directories, file metadata and the Entire refs, and never a transcript.
