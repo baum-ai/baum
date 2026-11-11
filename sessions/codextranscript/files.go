@@ -55,10 +55,21 @@ func DecodeLocalFiles[T FileSources](files T) (*Tree, error) {
 }
 
 func DecodeFiles[T FileSources](fsys fs.FS, files T) (*Tree, error) {
+	return DecodeFilesWith(files, func(path string) (*File, error) {
+		return readFile(fsys, path, path)
+	})
+}
+
+// ReadRollout reads the rollout at path. Reading.File returns what it must.
+type ReadRollout func(path string) (*File, error)
+
+// DecodeFilesWith is DecodeFiles with each rollout read by read, which can
+// continue an earlier Reading of it.
+func DecodeFilesWith[T FileSources](files T, read ReadRollout) (*Tree, error) {
 	tree := &Tree{byThread: map[string]*File{}}
 	for i := range files.Len() {
 		name, path, kind := files.At(i)
-		file, err := readFile(fsys, path, path)
+		file, err := read(path)
 		if err != nil {
 			return nil, err
 		}

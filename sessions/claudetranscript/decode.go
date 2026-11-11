@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"time"
+	"unsafe"
 
 	"github.com/baum-ai/baum/sessions/traceprocessing"
 )
@@ -48,6 +49,123 @@ func trackIDs(line Line, ordinal int, seenUUID, seenToolUse map[string]int) erro
 		seenToolUse[block.ID] = ordinal
 	}
 	return nil
+}
+
+// untrackIDs forgets the ids trackIDs recorded for the line at ordinal, so a
+// line decoded only to look at it leaves the record as it was.
+func untrackIDs(line Line, ordinal int, seenUUID, seenToolUse map[string]int) {
+	if at, ok := seenUUID[line.UUID]; ok && at == ordinal {
+		delete(seenUUID, line.UUID)
+	}
+	if line.Class != ClassAssistant {
+		return
+	}
+	for _, block := range line.Message.Blocks() {
+		if at, ok := seenToolUse[block.ID]; ok && at == ordinal {
+			delete(seenToolUse, block.ID)
+		}
+	}
+}
+
+// Reading is one transcript decoded up to a byte offset, kept so that a
+// transcript that grew is read from where the last read stopped rather than
+// from its start. Continue decodes what was appended; File returns the
+// transcript as a whole read of the same bytes would. The id checks Decode
+// makes run over the whole transcript, earlier reads included.
+//
+// A Reading leaves out Line.Raw, which only Survey reads, so the lines it
+// keeps take about half the memory. A Reading is not safe for concurrent use.
+type Reading struct {
+	name, label, agentID string
+	lines                []Line
+	next                 int
+	seenUUID             map[string]int
+	seenToolUse          map[string]int
+	size                 int64
+}
+
+// NewReading starts reading the transcript called name (its base name, which
+// can carry the session id), reported as label, of the subagent agentID or of
+// the main thread when agentID is empty.
+func NewReading(name, label, agentID string) *Reading {
+	return &Reading{name: name, label: label, agentID: agentID, next: 1, seenUUID: map[string]int{}, seenToolUse: map[string]int{}}
+}
+
+// Continue decodes the lines r holds that end in a newline. r continues the
+// transcript where the previous call's consumed bytes ended. A final line
+// without a newline is not consumed: it is returned as rest, for File, and
+// the next call reads it again from its first byte. After an error the
+// Reading must be dropped.
+func (r *Reading) Continue(src io.Reader) (consumed int64, rest []byte, err error) {
+	consumed, next, rest, err := traceprocessing.ScanWholeJSONL(src, r.next, func(raw []byte, ordinal int) error {
+		line, err := decodeLine(raw, ordinal)
+		if err != nil {
+			return err
+		}
+		if err := trackIDs(line, ordinal, r.seenUUID, r.seenToolUse); err != nil {
+			return err
+		}
+		line.Raw = nil
+		r.lines = append(r.lines, line)
+		r.size += lineBytes(&line)
+		return nil
+	})
+	if err != nil {
+		return 0, nil, fmt.Errorf("reading transcript %s: %w", r.label, err)
+	}
+	r.next = next
+	return consumed, rest, nil
+}
+
+// Lines is the number of lines read so far.
+func (r *Reading) Lines() int { return len(r.lines) }
+
+// Bytes estimates the memory the lines read so far take.
+func (r *Reading) Bytes() int64 { return r.size }
+
+// lineBytes estimates the memory a decoded line without Raw takes, and the
+// two id records' entries for it.
+func lineBytes(l *Line) int64 {
+	n := unsafe.Sizeof(*l) + uintptr(len(l.Type)+len(l.UUID)+len(l.ParentUUID)+len(l.SessionID)+
+		len(l.AgentID)+len(l.PromptID)+len(l.RequestID)+len(l.CWD)+len(l.GitBranch)+len(l.Version)+
+		len(l.Subtype)+len(l.PromptSource)+len(l.Origin)+len(l.ToolDenialKind)+len(l.ToolUseResult)+
+		len(l.Control.Content)+len(l.Control.Value)+len(l.Control.LastPrompt)+len(l.Control.AITitle)+
+		len(l.Attachment.Prompt)+len(l.Attachment.Origin))
+	if l.UUID != "" {
+		n += 64
+	}
+	if m := l.Message; m != nil {
+		n += unsafe.Sizeof(*m) + uintptr(len(m.ID)+len(m.Role)+len(m.Model)+len(m.Content))
+		if m.Usage != nil {
+			n += unsafe.Sizeof(*m.Usage)
+		}
+	}
+	return int64(n)
+}
+
+// File is the transcript read so far, followed by rest, the final line the
+// last Continue left unread, decoded as Decode decodes a final line. The
+// Reading is unchanged, and the File shares its lines, so neither may be
+// changed.
+func (r *Reading) File(rest []byte) (*File, error) {
+	lines := r.lines[:len(r.lines):len(r.lines)]
+	line, ok, torn, err := traceprocessing.DecodeFinalJSONL(rest, r.next, func(raw []byte, ordinal int) (Line, error) {
+		line, err := decodeLine(raw, ordinal)
+		if err != nil {
+			return Line{}, err
+		}
+		err = trackIDs(line, ordinal, r.seenUUID, r.seenToolUse)
+		untrackIDs(line, ordinal, r.seenUUID, r.seenToolUse)
+		return line, err
+	})
+	if err != nil {
+		return nil, fmt.Errorf("reading transcript %s: %w", r.label, err)
+	}
+	if ok {
+		line.Raw = nil
+		lines = append(lines, line)
+	}
+	return newFile(lines, torn, r.name, r.label, r.agentID)
 }
 
 // rawLine is the envelope as it appears on disk.

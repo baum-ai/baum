@@ -1948,9 +1948,19 @@ a process reuses what it built:
   again.
 * **One background pass.** A pass that refreshes several pull requests holds
   `sessions.HoldMappings`, so the mapping cache keeps up to
-  `sessions.HeldMapCacheBytes` (256 MiB) of transcripts while the pass runs and
-  each session is decoded once in it. When the pass ends, the cache shrinks
-  back to its 64 MiB limit.
+  `sessions.HeldMapCacheBytes` (256 MiB) of mapped graphs while the pass runs
+  and each session is decoded once in it. When the pass ends, the cache
+  shrinks back to its 64 MiB limit. Both limits count the graphs' estimated
+  memory, about a sixth of their transcripts' size.
+* **Growing transcripts.** A session an agent is still running changes on
+  every append, so none of the above applies to it. For each Claude Code
+  transcript and Codex rollout changed in the last hour, `sessions.Map` keeps
+  the decoded lines and the byte offset they end at, and decodes only what was
+  appended since; the mapper still runs over every line. A file that shrank,
+  was replaced or had its earlier bytes rewritten is decoded whole. The lines
+  kept leave out the raw record copies the mapper does not read, and are
+  bounded by `sessions.DefaultTailCacheBytes` (64 MiB of estimated memory). The
+  [sessions README](sessions/README.md#incremental-decoding) has the details.
 
 Callers get deep copies of reused evidence, because they cap and redact it in
 place. A reused answer prints no warnings.
@@ -2507,14 +2517,21 @@ the counters that moved in that window, largest first.
 `internal/workstats` keeps those counters. Each is an atomic add, so they are
 always on. They count:
 
-* calls to `sessions.Map`, its decodes by source and the bytes decoded, and
-  hits on its cache;
+* calls to `sessions.Map`, its decodes by source, the bytes and lines
+  actually decoded (only the appended part of a transcript that grew), hits on
+  its cache, transcript reads continued from an offset or from the start, and
+  why a kept transcript was read from its start again;
 * git processes in total and by subcommand;
 * background passes and pull request refreshes;
 * session loads by entry point;
 * analytics refreshes, review index builds and live transcript builds.
 
-Gauges report state such as the size of the session cache.
+Gauges report state such as the size of the session caches: the estimated
+memory of the mapped graphs kept (`sessions.map_cache.bytes`) and of the
+decoded transcript lines kept (`sessions.tail_cache.bytes`), each beside the
+transcript bytes behind it (`.transcript_bytes`). Compare them with the heap
+profile, where kept lines are allocated in the
+transcript decoders and graphs in the session mappers.
 
 The daemon serves the counters at `GET /api/debug/stats` and Go's runtime
 profiles at `GET /api/debug/pprof/` (`profile?seconds=N`, `trace?seconds=N`,

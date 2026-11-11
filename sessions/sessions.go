@@ -327,9 +327,12 @@ func Map(s collector.Session) (*session.Graph, []string, error) {
 		}
 	}
 	workstats.Inc("sessions.map.decodes." + string(s.Source))
-	workstats.Add("sessions.map.decoded_bytes", cost)
+	if s.Source == vendors.Cursor {
+		// Transcript files count the bytes they read (tailCache).
+		workstats.Add("sessions.map.decoded_bytes", cost)
+	}
 	graph, notes, err := mapSession(s)
-	entry := &mapEntry{key: key, graph: graph, notes: notes, err: err, cost: cost}
+	entry := &mapEntry{key: key, session: mapIdentity(s), graph: graph, notes: notes, err: err, cost: graphBytes(graph) + int64(len(key)), transcript: cost}
 	// A file that could not be opened or read may read next time (too many
 	// open files, a permission fixed); only what its content caused is kept.
 	var pathErr *fs.PathError
@@ -351,9 +354,21 @@ func mapNotes(s collector.Session, entry *mapEntry) []string {
 // mapSession reads and maps the session's files; its notes are the mapper's
 // alone.
 func mapSession(s collector.Session) (*session.Graph, []string, error) {
+	return mapSessionWith(s, tails)
+}
+
+// mapSessionWith is mapSession reading transcripts through t, or decoding
+// each whole, with every line kept as read, when t is nil.
+func mapSessionWith(s collector.Session, t *tailCache) (*session.Graph, []string, error) {
 	switch s.Source {
 	case vendors.ClaudeCode:
-		tree, err := claudetranscript.DecodeLocalFiles(model.Files(s.Files))
+		var tree *claudetranscript.Tree
+		var err error
+		if t != nil {
+			tree, err = claudetranscript.DecodeLocalFilesWith(model.Files(s.Files), t.claude)
+		} else {
+			tree, err = claudetranscript.DecodeLocalFiles(model.Files(s.Files))
+		}
 		if err != nil {
 			return nil, nil, fmt.Errorf("reading Claude Code transcripts: %w", err)
 		}
@@ -368,7 +383,13 @@ func mapSession(s collector.Session) (*session.Graph, []string, error) {
 		}
 		return graph, report.Notes, nil
 	case vendors.Codex:
-		tree, err := codextranscript.DecodeLocalFiles(model.Files(s.Files))
+		var tree *codextranscript.Tree
+		var err error
+		if t != nil {
+			tree, err = codextranscript.DecodeFilesWith(model.Files(s.Files), t.codex)
+		} else {
+			tree, err = codextranscript.DecodeLocalFiles(model.Files(s.Files))
+		}
 		if err != nil {
 			return nil, nil, fmt.Errorf("reading Codex rollouts: %w", err)
 		}

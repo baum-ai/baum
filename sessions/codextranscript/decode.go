@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+	"unsafe"
 
 	"github.com/baum-ai/baum/sessions/traceprocessing"
 )
@@ -70,22 +71,127 @@ func DecodeFirst(r io.Reader) (Line, error) {
 
 // Decode reads a JSONL rollout.
 func Decode(r io.Reader) (lines []Line, torn bool, err error) {
-	paginated := false
-	first := true
-	return traceprocessing.ScanJSONL(r, func(raw []byte, ordinal int) (Line, error) {
-		line, outerOrdinal, err := decodeLine(raw, ordinal)
+	var order ordering
+	return traceprocessing.ScanJSONL(r, order.decode)
+}
+
+// ordering is what checking a line's envelope ordinal needs from the lines
+// before it: whether one has been read, and whether the first was the
+// session_meta of a paginated rollout.
+type ordering struct {
+	started, paginated bool
+}
+
+// decode decodes one line and checks its envelope ordinal.
+func (o *ordering) decode(raw []byte, ordinal int) (Line, error) {
+	line, outerOrdinal, err := decodeLine(raw, ordinal)
+	if err != nil {
+		return Line{}, err
+	}
+	if !o.started && line.SessionMeta != nil {
+		o.paginated = line.SessionMeta.HistoryMode == "paginated"
+	}
+	if err := validateOuterOrdinal(line, outerOrdinal, o.paginated); err != nil {
+		return Line{}, err
+	}
+	o.started = true
+	return line, nil
+}
+
+// Reading is one rollout decoded up to a byte offset, kept so that a rollout
+// that grew is read from where the last read stopped rather than from its
+// start. Continue decodes what was appended; File returns the rollout as a
+// whole read of the same bytes would. The envelope ordinal check keeps what
+// the first line said about pagination across reads.
+//
+// A Reading leaves out the copies of each record that the mapper never reads
+// (Line.Raw, Line.Payload but on event_msg lines, and the Raw of response
+// items, events and turn contexts), so the lines it keeps take a fraction of
+// the memory. A Reading is not safe for concurrent use.
+type Reading struct {
+	label string
+	lines []Line
+	next  int
+	order ordering
+	size  int64
+}
+
+// NewReading starts reading a rollout, reported as label.
+func NewReading(label string) *Reading {
+	return &Reading{label: label, next: 1}
+}
+
+// Continue decodes the lines src holds that end in a newline. src continues
+// the rollout where the previous call's consumed bytes ended. A final line
+// without a newline is not consumed: it is returned as rest, for File, and
+// the next call reads it again from its first byte. After an error the
+// Reading must be dropped.
+func (r *Reading) Continue(src io.Reader) (consumed int64, rest []byte, err error) {
+	consumed, next, rest, err := traceprocessing.ScanWholeJSONL(src, r.next, func(raw []byte, ordinal int) error {
+		line, err := r.order.decode(raw, ordinal)
 		if err != nil {
-			return Line{}, err
+			return err
 		}
-		if first && line.SessionMeta != nil {
-			paginated = line.SessionMeta.HistoryMode == "paginated"
-		}
-		if err := validateOuterOrdinal(line, outerOrdinal, paginated); err != nil {
-			return Line{}, err
-		}
-		first = false
-		return line, nil
+		line = slim(line)
+		r.lines = append(r.lines, line)
+		// The typed payload takes about as much as the record it was decoded
+		// from.
+		r.size += int64(unsafe.Sizeof(line)) + int64(len(raw)) + int64(len(line.Payload))
+		return nil
 	})
+	if err != nil {
+		return 0, nil, fmt.Errorf("reading rollout %s: %w", r.label, err)
+	}
+	r.next = next
+	return consumed, rest, nil
+}
+
+// Lines is the number of lines read so far.
+func (r *Reading) Lines() int { return len(r.lines) }
+
+// Bytes estimates the memory the lines read so far take.
+func (r *Reading) Bytes() int64 { return r.size }
+
+// File is the rollout read so far, followed by rest, the final line the last
+// Continue left unread, decoded as Decode decodes a final line. The Reading
+// is unchanged, and the File shares its lines, so neither may be changed.
+func (r *Reading) File(rest []byte) (*File, error) {
+	lines := r.lines[:len(r.lines):len(r.lines)]
+	order := r.order
+	line, ok, torn, err := traceprocessing.DecodeFinalJSONL(rest, r.next, order.decode)
+	if err != nil {
+		return nil, fmt.Errorf("reading rollout %s: %w", r.label, err)
+	}
+	if ok {
+		lines = append(lines, slim(line))
+	}
+	return newFile(lines, torn, r.label)
+}
+
+// slim drops the copies of the record a Reading does not keep. Payload stays
+// on event_msg lines, whose tool completions codexsession stores as tool
+// output; every other record is read through its typed fields.
+func slim(line Line) Line {
+	line.Raw = nil
+	if line.Class != ClassEventMsg {
+		line.Payload = nil
+	}
+	if line.ResponseItem != nil {
+		item := *line.ResponseItem
+		item.Raw = nil
+		line.ResponseItem = &item
+	}
+	if line.EventMsg != nil {
+		event := *line.EventMsg
+		event.Raw = nil
+		line.EventMsg = &event
+	}
+	if line.TurnContext != nil {
+		context := *line.TurnContext
+		context.Raw = nil
+		line.TurnContext = &context
+	}
+	return line
 }
 
 func decodeLine(raw []byte, ordinal int) (Line, *int, error) {
@@ -375,6 +481,11 @@ func Read(reader io.Reader, label string) (*File, error) {
 	if err != nil {
 		return nil, fmt.Errorf("reading rollout %s: %w", label, err)
 	}
+	return newFile(lines, torn, label)
+}
+
+// newFile checks decoded lines as one rollout.
+func newFile(lines []Line, torn bool, label string) (*File, error) {
 	if len(lines) == 0 {
 		return nil, fmt.Errorf("rollout %s is empty", label)
 	}
