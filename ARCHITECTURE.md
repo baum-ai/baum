@@ -5152,12 +5152,61 @@ An action's reader also reads only the routes in `actionRoutes`
 (`reader.go`). Each entry is a path pattern, the query parameters it allows
 and how the route is bound to the action's repository: by the `repository`
 parameter its handler reads, by a `clone` parameter resolved through
-`Options.Clone`, by `{owner}/{name}` in the path, or, for a route that finds
-a record by id, by a check that reads the repository from the response and
-returns nothing on a mismatch. Any other route, and any parameter its entry
-does not list, is refused. The table holds `GET /api/jobs?repository=&pr=`
-and `GET /api/jobs/{id}` (checked by the job's `repository`); routes are
-added beside the tools that need them.
+`Options.Clone`, by `{owner}/{name}` in the path, and for a route that finds
+a record by id in one of three ways: by a check that reads the repository
+from the response and returns nothing on a mismatch (`byResponse`); for a
+route whose response names no repository, by reading the record the id names
+first and checking its repository before the route is read (`byLookup`); and
+for a route that answers for every repository, by filtering the response to
+the action's repository inside the reader, so the rest never reaches the agent
+(`byFilter`). Any other route, and any parameter its entry does not list, is
+refused. The table holds:
+
+- by `repository` (parameters `pr`, and as listed): `GET /api/jobs`,
+  `/api/prs/description`, `/api/prs/checks` (`head_sha`),
+  `/api/prs/failing-checks` (`head_sha`), `/api/prs/review-threads`
+  (`unresolved`), `/api/prs/merge-options`, `/api/prs/update-branch-options`
+  and `/api/prs/rerun-checks-options`;
+- by `clone` (parameter `pr`, and as listed): `GET /api/versions`,
+  `/api/document` and `/api/commits` (`version`), `/api/patch` (`version`,
+  `path`), `/api/sessions` and `/api/sessions/{id}` (`version`), `/api/facts`,
+  `/api/facts/commits`, `/api/facts/sessions` and `/api/facts/sessions/{id}`
+  (`head`), and `/api/facts/patch` (`head`, `path`);
+- by response: `GET /api/jobs/{id}` and `/api/groups/{id}`, checked by the
+  record's `repository`;
+- by lookup: `GET /api/jobs/{id}/transcript` (`after`), after `/api/jobs/{id}`,
+  and `/api/groups/{id}/versions`, after `/api/groups/{id}`;
+- by filter: `GET /api/index` (`history`), which keeps the entries of the
+  action's repository and drops the problems, and `GET /api/inbox`, which keeps
+  the items of its repository by their `owner/name#number` keys and drops the
+  saved inboxes, whose queries are the user's own.
+
+Routes are added beside the tools that need them.
+
+The pull request and group tools are all repository-scoped and read the routes
+the app calls (the pull request page's own: the review index with its
+`clone_id` and `version_count`, the facts before a review exists and the saved
+review after), compacting the answer. Each takes `repository` and `pr` (a
+group tool `repository` and `id`) defaulting to the consumer's page, for an
+action its pull request, and only through `CallContext.Target`:
+
+| Tool | Reads |
+| --- | --- |
+| `pull_request` | the header and review status from `/api/index`, `/api/prs/description`, and its inbox state (`kind`, `fixing`, `snoozed`, `archived`) from `/api/inbox` |
+| `diff` | the changed files from `/api/document` (a saved review) or `/api/facts` (none), and each file's patch from `/api/patch` or `/api/facts/patch`, one file by `path` or the first 100 |
+| `commits` | `/api/commits`, or `/api/facts/commits` after `/api/facts` has built the facts |
+| `checks` | `/api/prs/checks` and `/api/prs/failing-checks` at the head the index shows |
+| `review_threads` | `/api/prs/review-threads`, with the unresolved count discovery has |
+| `merge_state` | the three `-options` routes, nothing is changed |
+| `jobs` | `/api/jobs` of the pull request, less each job's accounting |
+| `job_transcript` | `/api/jobs/{id}` to check that the job is the repository's and pull request's, then its transcript; a job with none says only fix jobs keep one |
+| `sessions`, `session_transcript` | `/api/sessions` or `/api/facts/sessions`, and one session's transcript, which the viewer serves only for a session the pull request's commits link |
+| `focus` | no route: the focus of the consumer's page, or `none` |
+| `group`, `group_versions` | `/api/groups/{id}` and `/api/groups/{id}/versions`; a group of another repository is refused |
+
+Labels, reviewer lists, check log tails and the inbox's Up next sentence are
+not returned, as the app shows none of them. The facts and review document
+parts (outline, sections, context, draft, conversations) are not tools yet.
 
 Every result goes through one envelope. It masks the text with
 `bundle.NewRedactor`, cuts it at most 64 KiB in at a UTF-8 boundary, and

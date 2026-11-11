@@ -1417,8 +1417,13 @@ always its own. As a backstop, an action's reader reads only the routes in
 a fixed table, each bound to the repository the way its handler finds what
 it serves: by the `repository` or `clone` parameter that handler reads, by
 an `owner/name` path, or, for a route that finds a record by id, by checking
-the record's repository and returning nothing on a mismatch. Any other
-route, and any query parameter its entry does not list, is refused. An
+the record's repository and returning nothing on a mismatch. A route that
+names no repository (a job's transcript, a group's versions) is read only
+after the record its id names has been checked the same way, and a route that
+answers for every repository (the review index, the inbox) is filtered to the
+action's repository inside the reader, which also drops other clones'
+problems and the user's saved inbox queries. Any other route, and any query
+parameter its entry does not list, is refused. An
 action never proposes changes.
 
 A chat's token may also propose a change to the page the user has open, and
