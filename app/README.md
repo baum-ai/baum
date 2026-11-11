@@ -1861,9 +1861,9 @@ is typed, CRLF read as LF, with a warning, "This prompt no longer contains: …"
 Saving stays possible and nothing is added back; the editor says baum adds the
 output format and the delimiting of pull request data itself. A failed save shows
 its message and keeps the text. `Esc` in the field gives it up first, without
-closing a dialog around it. The textarea has neither `value` nor `defaultValue`:
-React writes either into its text node after every keystroke, which ends the
-browser's undo step, so the text is written only when it changes from outside.
+closing a dialog around it. Undo is the app's (below); the textarea has neither
+`value` nor `defaultValue`, as React writes either into its text node after every
+keystroke, so the text is written only when it changes from outside.
 A repository's page has a **Prompts** section listing the same entries with
 their source: a **Custom** pill for the repository's own, a **Global** pill for
 one inherited from Settings, and none for the default. Its editor is seeded with
@@ -1946,6 +1946,17 @@ back to the row that opened it. In a field, or over selected text, the browser's
 stays; everywhere else that offers no menu of its own, a right click does nothing
 (`blockBrowserMenu` in `src/native-menu.ts`, installed by every window: the app, setup,
 the tray and the connecting screen).
+
+Undo and redo in text fields are the app's own (`installTextHistory` in
+`src/text-history.ts`, installed by the app and setup windows): the desktop
+app's WebKitGTK web view never undoes on Ctrl+Z, so every text `input` and
+`textarea` keeps a history the app answers ⌘Z / Ctrl+Z, ⇧⌘Z / Ctrl+Shift+Z
+and Ctrl+Y (not on a Mac) from, in a browser too. Typing is one step until a
+pause of a second, a caret move or a switch between typing and deleting; a
+paste, a cut or a line break is a step of its own. A step restores the text and
+selection and sends an `input` event, so a React field's `onChange` follows; a
+field whose text the page changed (a reset, a sent message) starts its history
+again.
 
 - "Needs you" (`SessionsPage` in `src/sessions.tsx`) shows only while something asks
   the person for a permission or an answer (`asks`), and "Waiting for you", after it,
