@@ -208,10 +208,16 @@ pub fn automatic(launch: &Launch) -> Result<Vec<u8>, String> {
     get(launch, "/api/automatic", POLL_TIMEOUT)
 }
 
-/// What remains of the agents' plans, read afresh: the daemon serves a
-/// reading up to a minute old and otherwise reads again.
-pub fn plan_usage(launch: &Launch) -> Result<Vec<u8>, String> {
-    get(launch, "/api/plan-usage?refresh=1", PLAN_USAGE_TIMEOUT)
+/// What remains of the agents' plans. Unforced, the daemon serves its cached
+/// reading (up to five minutes old); `refresh` asks for a newer one, which it
+/// reads at most once a minute.
+pub fn plan_usage(launch: &Launch, refresh: bool) -> Result<Vec<u8>, String> {
+    let path = if refresh {
+        "/api/plan-usage?refresh=1"
+    } else {
+        "/api/plan-usage"
+    };
+    get(launch, path, PLAN_USAGE_TIMEOUT)
 }
 
 /// The agent sessions in progress, for those waiting on the user.
