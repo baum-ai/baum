@@ -3321,9 +3321,11 @@ first (a waiting one that took a newer head keeps its place, see
 job holds (`Queue.SubmitConfirmed` with the same inputs) makes that job
 theirs: it keeps its id, loses `automatic` and `trigger`, and goes ahead with
 the person's jobs; a person's group review does the same for the waiting
-automatic reviews of its members at their current heads, and queues its own
-review of a member whose waiting automatic review is of another head, which
-supersedes that one. A promoted job settles as a person's: an interrupted
+automatic reviews of its members at their current heads, and cancels a
+member's waiting automatic review of another head as `superseded` in the
+same write, before queuing its own review of that member, so the stale one
+cannot start meanwhile. A running automatic member review is not stopped;
+the group waits for it. A promoted job settles as a person's: an interrupted
 run is not retried automatically, and a missing clone fails it. The
 `job_concurrency` preference lowers the
 limit (`PUT api/settings/job-concurrency`, 1–4), and `Queue.SetConcurrency`

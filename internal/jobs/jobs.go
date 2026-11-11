@@ -859,32 +859,38 @@ func (q *Queue) Generate(ctx context.Context, items []Item, mode string, isolati
 
 // reviewMembers queues the reviews a group job awaits, except those of
 // members already queued or running. An automatic group's are automatic
-// reviews of the members' new heads. A person's group makes the queued
-// automatic review of a member's current head theirs (promote), and queues
-// its own review of a member whose waiting automatic review is of another
-// head (SubmitConfirmed supersedes that one), so their group never waits
-// behind automatic work.
+// reviews of the members' new heads. A person's group does not wait behind
+// queued automatic work: it makes the queued automatic review of a member's
+// current head theirs (promote), and cancels one of another head as
+// superseded, in the same write, before queuing its own review of that
+// member. A running automatic review is not stopped; the group waits for it.
 func (q *Queue) reviewMembers(ctx context.Context, group Prepared, automatic, isolation bool) error {
 	members, _ := groupMembers(group.Members)
 	q.mu.Lock()
 	items := []Item{}
-	var before, promoted []Job
+	var before, changed []Job
 	for _, number := range group.Awaiting {
 		if !automatic {
-			if i := q.automaticReview(group.Clone, number, members); i >= 0 {
+			if i, current := q.automaticReview(group.Clone, number, members); i >= 0 {
 				if before == nil {
 					before = append([]Job(nil), q.jobs...)
 				}
-				q.promote(&q.jobs[i])
-				promoted = append(promoted, q.jobs[i])
-				continue
+				j := &q.jobs[i]
+				if current {
+					q.promote(j)
+					changed = append(changed, *j)
+					continue
+				}
+				j.State, j.Reason, j.Phase, j.UpdatedAt = "cancelled", "superseded", "finished", time.Now().UTC()
+				q.mark(j.ID)
+				changed = append(changed, *j)
 			}
 		}
-		if !q.reviewPending(group.Clone, number, !automatic) {
+		if !q.reviewPending(group.Clone, number) {
 			items = append(items, Item{Clone: group.Clone, PR: number})
 		}
 	}
-	if len(promoted) > 0 {
+	if len(changed) > 0 {
 		if err := q.save(); err != nil {
 			q.jobs = before
 			q.mu.Unlock()
@@ -893,7 +899,7 @@ func (q *Queue) reviewMembers(ctx context.Context, group Prepared, automatic, is
 		q.signal()
 	}
 	q.mu.Unlock()
-	for _, j := range promoted {
+	for _, j := range changed {
 		q.notify(j)
 	}
 	if len(items) == 0 {
@@ -1035,14 +1041,9 @@ var groupRequeueWait = 10 * time.Second
 
 // reviewPending reports whether a pull request's own review is queued or
 // running in a clone. Only one in the group's clone counts: each clone has
-// its own review store, which the group's review reads. For a person's
-// group (manual) a queued automatic review does not count: the person's
-// start supersedes it. mu is held.
-func (q *Queue) reviewPending(clone string, number int, manual bool) bool {
+// its own review store, which the group's review reads. mu is held.
+func (q *Queue) reviewPending(clone string, number int) bool {
 	for _, j := range q.jobs {
-		if manual && j.Automatic && j.State == "queued" {
-			continue
-		}
 		if j.Kind == "" && j.Group == "" && j.PR == number && j.Clone == clone && (j.State == "queued" || j.State == "running") {
 			return true
 		}
@@ -1060,9 +1061,9 @@ func (q *Queue) promote(j *Job) {
 }
 
 // automaticReview is the index of the queued automatic review of a group
-// member, in the group's clone and at the member's head in members, or -1.
-// mu is held.
-func (q *Queue) automaticReview(clone string, number int, members []generate.GroupMember) int {
+// member in the group's clone, or -1, and whether it is of the member's
+// head in members. mu is held.
+func (q *Queue) automaticReview(clone string, number int, members []generate.GroupMember) (int, bool) {
 	head := ""
 	for _, m := range members {
 		if m.Number == number {
@@ -1070,11 +1071,11 @@ func (q *Queue) automaticReview(clone string, number int, members []generate.Gro
 		}
 	}
 	for i, j := range q.jobs {
-		if j.Automatic && j.State == "queued" && j.Kind == "" && j.Group == "" && j.PR == number && j.Clone == clone && head != "" && j.HeadSHA == head {
-			return i
+		if j.Automatic && j.State == "queued" && j.Kind == "" && j.Group == "" && j.PR == number && j.Clone == clone {
+			return i, head != "" && j.HeadSHA == head
 		}
 	}
-	return -1
+	return -1, false
 }
 
 // forget drops an estimate nothing will submit.

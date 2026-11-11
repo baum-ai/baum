@@ -132,8 +132,8 @@ func (q *Queue) SubmitAutomatic(ctx context.Context, r AutomaticRequest) (Job, e
 	if replace >= 0 {
 		// The waiting job takes the new head: same id, same place in line,
 		// and created_at still when it first queued, which the gate compares
-		// with an account change. A job queued before one never gets here:
-		// each scheduler pass cancels such jobs before it submits.
+		// with an account change: the gate below refuses a job queued before
+		// one, and each scheduler pass cancels such jobs before it submits.
 		j.ID, j.CreatedAt = q.jobs[replace].ID, q.jobs[replace].CreatedAt
 	}
 	// Settings are read again here, under the mutex the worker and
