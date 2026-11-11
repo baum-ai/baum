@@ -46,24 +46,44 @@ type sessionsEntry struct {
 	transcripts   map[string]*transcriptJob
 }
 
-// parseReview reads the pull request a document names. A document that does
-// not parse, or lacks the fields, yields the zero Review.
-func parseReview(document []byte) Review {
+// parseDocument reads, in one pass over the document, the pull request it
+// names and the paths its cited hunks are in (index.hunks[].path). A document
+// that does not parse, or lacks the fields, yields the zero Review and no
+// paths; each part that does not parse yields its own zero value.
+func parseDocument(document []byte) (Review, map[string]struct{}) {
 	var parsed struct {
-		Review struct {
-			Repository  string `json:"repository"`
-			PullRequest int    `json:"pull_request"`
-			Head        string `json:"head"`
-			Base        string `json:"base"`
-			MergeBase   string `json:"merge_base"`
-			Version     int    `json:"version"`
-		} `json:"review"`
+		Review json.RawMessage `json:"review"`
+		Index  json.RawMessage `json:"index"`
 	}
+	paths := map[string]struct{}{}
 	if json.Unmarshal(document, &parsed) != nil {
-		return Review{}
+		return Review{}, paths
 	}
-	r := parsed.Review
-	return Review{Repository: r.Repository, PullRequest: r.PullRequest, Head: r.Head, Base: r.Base, MergeBase: r.MergeBase, Version: r.Version}
+	var review struct {
+		Repository  string `json:"repository"`
+		PullRequest int    `json:"pull_request"`
+		Head        string `json:"head"`
+		Base        string `json:"base"`
+		MergeBase   string `json:"merge_base"`
+		Version     int    `json:"version"`
+	}
+	var r Review
+	if json.Unmarshal(parsed.Review, &review) == nil {
+		r = Review{Repository: review.Repository, PullRequest: review.PullRequest, Head: review.Head, Base: review.Base, MergeBase: review.MergeBase, Version: review.Version}
+	}
+	var index struct {
+		Hunks []struct {
+			Path string `json:"path"`
+		} `json:"hunks"`
+	}
+	if json.Unmarshal(parsed.Index, &index) == nil {
+		for _, hunk := range index.Hunks {
+			if hunk.Path != "" {
+				paths[hunk.Path] = struct{}{}
+			}
+		}
+	}
+	return r, paths
 }
 
 func (s *Server) currentReview() Review {

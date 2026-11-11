@@ -184,10 +184,12 @@ func immediate(ctx context.Context, db *sql.DB, fn func(*sql.Conn) error) error 
 	return err
 }
 
-func summaryTriggerNames(ctx context.Context, q interface {
-	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
-}) ([]string, error) {
-	rows, err := q.QueryContext(ctx, `SELECT name FROM sqlite_master WHERE type='trigger' AND substr(name,1,10)='summaries_' ORDER BY name`)
+func summaryTriggerNames(ctx context.Context, q querier) ([]string, error) {
+	return triggerNames(ctx, q, "summaries_")
+}
+
+func triggerNames(ctx context.Context, q querier, prefix string) ([]string, error) {
+	rows, err := q.QueryContext(ctx, `SELECT name FROM sqlite_master WHERE type='trigger' AND substr(name,1,?)=? ORDER BY name`, len(prefix), prefix)
 	if err != nil {
 		return nil, err
 	}
