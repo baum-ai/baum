@@ -3,7 +3,9 @@ package locallink
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -11,6 +13,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/baum-ai/baum/bundle"
 	"github.com/baum-ai/baum/internal/locallink/linktest"
@@ -33,10 +36,36 @@ func useSessionDigests(t *testing.T) {
 
 func decodes() int64 { return counter("sessions.map.decodes.claude_code") }
 
+// settledAt is when settle dates session files: after the fixture's
+// commits, and long enough ago that no session is too recent to have a key.
+var settledAt = time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC)
+
+// settle dates every file in the request's session stores settledAt, as a
+// store nothing wrote to in the last few seconds is. A file that grew still
+// differs by its size.
+func settle(t *testing.T, req EvidenceRequest) {
+	t.Helper()
+	for _, dir := range []string{req.Sessions.ClaudeProjectsDir, req.Sessions.CodexSessionsDir} {
+		if dir == "" {
+			continue
+		}
+		err := filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
+			if err != nil || d.IsDir() {
+				return err
+			}
+			return os.Chtimes(path, settledAt, settledAt)
+		})
+		if err != nil && !errors.Is(err, fs.ErrNotExist) {
+			t.Fatal(err)
+		}
+	}
+}
+
 // rebuild builds evidence past the whole-answer memo, so it goes through
-// the per-session digests.
+// the per-session digests, with the session stores settled.
 func rebuild(t *testing.T, req EvidenceRequest) []bundle.Session {
 	t.Helper()
+	settle(t, req)
 	evidenceMemo = newEvidenceCache(EvidenceMaxAge)
 	return buildEvidence(t, req)
 }
@@ -279,6 +308,72 @@ func TestEvidenceBuildsShareDigestsConcurrently(t *testing.T) {
 		other := req
 		other.MaxCommandEventsPerSession = i + 1
 		sameEvidence(t, fmt.Sprintf("caps %d", i+1), got, fullBuild(t, other))
+	}
+}
+
+// A projection added to a digest another build replaced under the same key
+// does not count toward what the cache holds.
+func TestDigestCacheCountsOnlyTheDigestItKeeps(t *testing.T) {
+	c := newDigestCache(1 << 20)
+	d1 := &sessionDigest{key: "k", cost: 100}
+	d2 := &sessionDigest{key: "k", cost: 100}
+	c.put(d1)
+	c.put(d2)
+	held := c.held
+	c.addProjection(d1, &projection{item: bundle.Session{Title: strings.Repeat("x", 1000)}})
+	if c.held != held {
+		t.Errorf("held = %d after a projection on a replaced digest, want %d", c.held, held)
+	}
+	c.limit = 0
+	c.evict()
+	if c.held != 0 || c.order.Len() != 0 {
+		t.Errorf("an emptied cache holds %d bytes in %d entries, want 0", c.held, c.order.Len())
+	}
+}
+
+// forget drops key's digest from c, as an eviction would.
+func forget(c *digestCache, key string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if element, ok := c.entries[key]; ok {
+		c.held -= element.Value.(*sessionDigest).cost
+		c.order.Remove(element)
+		delete(c.entries, key)
+	}
+}
+
+// A session LoadReusing skipped whose digest is gone by the time linking
+// reads it does not fail the build: everything is mapped instead.
+func TestEvidenceRecoversFromADigestThatWentMissing(t *testing.T) {
+	useEvidenceMemo(t)
+	useSessionDigests(t)
+	f := linktest.New(t)
+	f.AddEditor(t, "bbbbbbbb-0000-4000-8000-000000000001", "08", "unrelated.txt")
+	req := evidenceRequest(t, f)
+	want := rebuild(t, req)
+	previous := newBuildBook
+	t.Cleanup(func() { newBuildBook = previous })
+	newBuildBook = func(cache *digestCache) *digestBook {
+		b := newDigestBook(cache)
+		b.afterReuse = func(key string) {
+			delete(b.held, key)
+			forget(cache, key)
+		}
+		return b
+	}
+	remapped, decoded := counter("locallink.session_evidence_remapped"), decodes()
+	got := rebuild(t, req)
+	if counter("locallink.session_evidence_remapped") == remapped {
+		t.Error("the build did not load again")
+	}
+	if n := decodes() - decoded; n != 2 {
+		t.Errorf("%d transcripts decoded, want both", n)
+	}
+	sameEvidence(t, "a digest went missing", got, want)
+
+	b := newDigestBook(newDigestCache(DefaultDigestBytes))
+	if _, ok, needsGraph := b.evidence(sessions.Session{ID: "s", Key: "gone", Unmapped: true}, 1, nil, nil, 1, 1); ok || needsGraph || !b.missing {
+		t.Errorf("ok %v, needsGraph %v, missing %v; want not ok and missing", ok, needsGraph, b.missing)
 	}
 }
 

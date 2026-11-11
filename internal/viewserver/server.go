@@ -463,6 +463,9 @@ func (s *Server) handleAsset(w http.ResponseWriter, r *http.Request) {
 	h.Set("Content-Type", contentType(name))
 	if name == "index.html" {
 		h.Set("Cache-Control", "no-cache")
+	} else if strings.HasPrefix(name, "assets/") {
+		// Vite names everything under assets/ by content hash.
+		h.Set("Cache-Control", "public, max-age=31536000, immutable")
 	}
 	h.Set("Content-Length", strconv.Itoa(len(content)))
 	if r.Method == http.MethodHead {

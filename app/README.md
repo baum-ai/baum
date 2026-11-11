@@ -11,7 +11,9 @@ Every timer that refreshes data or relative times (`useNow`, the plan usage,
 review, repository, updater, chat, transcript and GitHub connection polls and
 the tray panel's refresh) runs through `useVisibleInterval` in
 `src/visible-interval.ts`: it pauses while `document.hidden` and runs once when
-the page becomes visible again. The entry points call `trackHidden`, which sets
+the page becomes visible again. The polls that schedule each read after the last
+(analytics, job transcript, checks) use `visibleTimeout`, and the tour's layout
+measure uses `visibleInterval`, from the same file. The entry points call `trackHidden`, which sets
 `data-hidden` on `<html>` while hidden; the viewer stylesheet pauses every
 animation then.
 

@@ -57,7 +57,7 @@ func (s *Service) Probe(ctx context.Context, repositories []github.Repository) (
 		if err != nil {
 			return nil, err
 		}
-		cache, err := s.load(path)
+		cache, err := s.view(path)
 		if err != nil {
 			continue
 		}

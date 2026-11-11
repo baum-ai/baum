@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/baum-ai/baum/internal/discovery"
+	"github.com/baum-ai/baum/internal/etagjson"
 	"github.com/baum-ai/baum/internal/github"
 	"github.com/baum-ai/baum/internal/repos"
 	"github.com/baum-ai/baum/internal/store"
@@ -300,11 +301,35 @@ func (s *Service) assemble(ctx context.Context, changeAt func(time.Time)) (Snaps
 
 // Handler serves GET /api/index. The host must apply its launch authentication
 // and Host/Origin checks before routing here. history=1 includes saved-only rows.
-func (s *Service) Handler() http.Handler { return handler(s.Build) }
+func (s *Service) Handler() http.Handler {
+	return handler(func(ctx context.Context, history bool) (etagjson.Body, error) {
+		snapshot, err := s.Build(ctx)
+		if err != nil {
+			return etagjson.Body{}, err
+		}
+		return etagjson.Encode(withHistory(snapshot, history))
+	})
+}
 
-// handler serves the snapshots read returns, which it must not mutate: a
-// cache shares them between requests.
-func handler(read func(context.Context) (Snapshot, error)) http.Handler {
+// withHistory drops saved-only rows unless history is set. It copies the
+// entries it keeps, as a cached snapshot is shared.
+func withHistory(snapshot Snapshot, history bool) Snapshot {
+	if history {
+		return snapshot
+	}
+	filtered := []Entry{}
+	for _, entry := range snapshot.Entries {
+		if !entry.Historical {
+			filtered = append(filtered, entry)
+		}
+	}
+	snapshot.Entries = filtered
+	return snapshot
+}
+
+// handler serves the bodies body returns. The response revalidates: an
+// unchanged snapshot answers 304 to its ETag.
+func handler(body func(ctx context.Context, history bool) (etagjson.Body, error)) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/index" {
 			http.NotFound(w, r)
@@ -315,24 +340,13 @@ func handler(read func(context.Context) (Snapshot, error)) http.Handler {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
-		snapshot, err := read(r.Context())
+		b, err := body(r.Context(), r.URL.Query().Get("history") == "1")
 		if err != nil {
 			if !errors.Is(err, context.Canceled) {
 				http.Error(w, "index unavailable", http.StatusInternalServerError)
 			}
 			return
 		}
-		if r.URL.Query().Get("history") != "1" {
-			filtered := []Entry{}
-			for _, entry := range snapshot.Entries {
-				if !entry.Historical {
-					filtered = append(filtered, entry)
-				}
-			}
-			snapshot.Entries = filtered
-		}
-		w.Header().Set("Content-Type", "application/json")
-		w.Header().Set("Cache-Control", "no-store")
-		_ = json.NewEncoder(w).Encode(snapshot)
+		etagjson.Serve(w, r, b)
 	})
 }

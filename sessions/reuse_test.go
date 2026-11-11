@@ -2,11 +2,16 @@ package sessions
 
 import (
 	"context"
+	"io/fs"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/baum-ai/baum/internal/workstats"
+	"github.com/baum-ai/baum/sessions/collector"
 	"github.com/baum-ai/baum/sessions/collector/entire"
 	"github.com/baum-ai/baum/sessions/vendors"
 )
@@ -23,6 +28,35 @@ func readWork() int64 {
 		}
 	}
 	return n + s["git.archive"]
+}
+
+// withoutCaches turns the mapping and checkpoint caches off for the test, so
+// that every transcript mapped is decoded and every checkpoint read is read.
+func withoutCaches(t *testing.T) {
+	t.Helper()
+	SetMapCacheLimit(0)
+	SetCheckpointCacheLimit(0)
+	t.Cleanup(func() {
+		SetMapCacheLimit(DefaultMapCacheBytes)
+		SetCheckpointCacheLimit(DefaultCheckpointCacheBytes)
+	})
+}
+
+// settle dates every session file of the fixture an hour back, past
+// racyWindow, as a store nothing has written to lately is.
+func settle(t *testing.T, fx fixture) {
+	t.Helper()
+	at := time.Now().Add(-time.Hour)
+	for _, dir := range []string{fx.claudeDir, fx.codexDir} {
+		if err := filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
+			if err != nil || d.IsDir() {
+				return err
+			}
+			return os.Chtimes(path, at, at)
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
 }
 
 // withoutGraph is s as LoadReusing returns it unmapped.
@@ -43,10 +77,10 @@ func discover(t *testing.T, fx fixture) *Discovery {
 // A session whose Key the caller accepts is neither decoded nor read, and
 // comes back as Load returns it, less its graph.
 func TestLoadReusingSkipsAcceptedSessions(t *testing.T) {
-	SetMapCacheLimit(0)
-	t.Cleanup(func() { SetMapCacheLimit(DefaultMapCacheBytes) })
+	withoutCaches(t)
 	fx := newFixture(t)
 	addCheckpoint(t, fx, "111111111111", nil)
+	settle(t, fx)
 	ctx := context.Background()
 	full, report, err := discover(t, fx).Load(ctx)
 	if err != nil || len(report.Failures) != 0 {
@@ -64,9 +98,7 @@ func TestLoadReusingSkipsAcceptedSessions(t *testing.T) {
 	}
 
 	before := readWork()
-	var asked []string
 	reused, report, err := discover(t, fx).LoadReusing(ctx, func(key string) (bool, bool) {
-		asked = append(asked, key)
 		transcript, ok := transcripts[key]
 		return transcript, ok
 	})
@@ -121,9 +153,52 @@ func sameSession(a, b Session) bool {
 		a.Unmapped == b.Unmapped && a.Transcript == b.Transcript
 }
 
+// A session file written within racyWindow could be rewritten at the same
+// size and time unnoticed, so its session has no Key until it is older.
+func TestRecentlyWrittenSessionsHaveNoKey(t *testing.T) {
+	fx := newFixture(t)
+	opts := fx.options()
+	opts.Sources = []vendors.Slug{vendors.ClaudeCode, vendors.Codex}
+	load := func() []Session {
+		t.Helper()
+		found, _, err := Load(context.Background(), fx.repo, opts)
+		if err != nil || len(found) == 0 {
+			t.Fatalf("Load: %v, %d sessions", err, len(found))
+		}
+		return found
+	}
+	for _, s := range load() {
+		if s.Key != "" {
+			t.Errorf("%s %s, written just now, has key %q", s.Source, s.ID, s.Key)
+		}
+	}
+	settle(t, fx)
+	for _, s := range load() {
+		if s.Key == "" {
+			t.Errorf("%s %s, written an hour ago, has no key", s.Source, s.ID)
+		}
+	}
+	// A modification time in the future is no older.
+	at := time.Now().Add(time.Hour)
+	if err := filepath.WalkDir(fx.codexDir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
+		}
+		return os.Chtimes(path, at, at)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for _, s := range load() {
+		if s.Source == vendors.Codex && s.Key != "" {
+			t.Errorf("%s %s, dated in the future, has key %q", s.Source, s.ID, s.Key)
+		}
+	}
+}
+
 // Remembered checkpoint facts choose the same snapshot a read would: the
 // older snapshot with a transcript over a newer one without, read once.
 func TestRememberedCheckpointsChooseAlike(t *testing.T) {
+	withoutCaches(t)
 	fx := newFixture(t)
 	addCheckpoint(t, fx, "222222222222", func(rel, text string) (string, bool) {
 		switch rel {
@@ -157,46 +232,96 @@ func TestRememberedCheckpointsChooseAlike(t *testing.T) {
 	}
 }
 
-// A checkpoint that can no longer be read is chosen around, as a load that
-// remembered nothing would.
-func TestRememberedCheckpointThatNoLongerReads(t *testing.T) {
-	fx := newFixture(t)
-	opts := fx.options()
-	opts.Sources = []vendors.Slug{Entire}
-	d, err := Discover(context.Background(), fx.repo, opts)
+// listCheckpoints lists the fixture's checkpoints and names its clone root.
+func listCheckpoints(t *testing.T, fx fixture) (string, []entire.Checkpoint) {
+	t.Helper()
+	root, err := collector.RepoRoot(fx.repo)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := d.Load(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	// Facts remembered for the checkpoint's tree, then a store that cannot
-	// read it: the chosen snapshot must be read, fails, and is reported.
-	store, ok, err := openCheckpoints(context.Background(), fx.repo)
+	store, ok, err := openCheckpoints(context.Background(), root)
 	if err != nil || !ok {
 		t.Fatalf("openCheckpoints: %v %v", ok, err)
 	}
 	defer store.Close()
-	checkpoints, err := entire.List(context.Background(), store.objects, store.store)
-	if err != nil || len(checkpoints) != 1 {
+	checkpoints, err := store.list(context.Background())
+	if err != nil || len(checkpoints) == 0 {
 		t.Fatalf("checkpoints = %+v, %v", checkpoints, err)
 	}
-	if _, remembered := snapshotFactsCache.get(checkpoints[0].TreeOID); !remembered {
+	return root, checkpoints
+}
+
+// A checkpoint that can no longer be read is chosen around, as a load that
+// remembered nothing would.
+func TestRememberedCheckpointThatNoLongerReads(t *testing.T) {
+	withoutCaches(t)
+	fx := newFixture(t)
+	if _, report := loadEntireOnly(t, fx); len(report.Failures) != 0 {
+		t.Fatalf("failures = %+v", report.Failures)
+	}
+	root, checkpoints := listCheckpoints(t, fx)
+	tree := checkpoints[0].TreeOID
+	if _, remembered := snapshotFactsCache.get(root, tree); !remembered {
 		t.Fatal("the checkpoint's facts were not remembered")
 	}
-	broken := *store
-	broken.store = entire.Store{Branch: strings.Repeat("0", 40)}
+	// The facts are remembered; the store now cannot read the checkpoint:
+	// the chosen snapshot must be read, fails, and is reported.
+	broken, err := newCheckpointStore(context.Background(), root, entire.Store{Branch: strings.Repeat("0", 40)}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer broken.Close()
+	opts := fx.options()
+	opts.Sources = []vendors.Slug{Entire}
 	plan := snapshotPlan{
-		root: fx.repo, opts: opts, native: map[string]bool{},
-		trees: map[string]string{"0004a7a444a0": checkpoints[0].TreeOID},
+		root: root, opts: opts, native: map[string]bool{},
+		trees: map[string]string{"0004a7a444a0": tree},
 		first: []string{"0004a7a444a0"}, sessionIDs: []string{firstSession},
 		picks: map[string][]pick{firstSession: {{checkpoint: "0004a7a444a0"}}},
 	}
-	got, failures, err := plan.load(context.Background(), &broken, nil)
+	got, failures, err := plan.load(context.Background(), broken, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(got) != 0 || len(failures) != 1 || failures[0].Path != "0004a7a444a0" {
 		t.Errorf("sessions = %+v, failures = %+v; want none and the checkpoint reported", got, failures)
+	}
+}
+
+// Two clones holding the same checkpoint share neither its facts nor its
+// sessions' keys: one clone's reads never answer for another's.
+func TestCheckpointFactsBelongToTheirClone(t *testing.T) {
+	withoutCaches(t)
+	one, other := newFixture(t), newFixture(t)
+	rootOne, listedOne := listCheckpoints(t, one)
+	rootOther, listedOther := listCheckpoints(t, other)
+	if listedOne[0].TreeOID != listedOther[0].TreeOID {
+		t.Fatalf("the fixtures' checkpoints differ: %s, %s", listedOne[0].TreeOID, listedOther[0].TreeOID)
+	}
+	fromOne, _ := loadEntireOnly(t, one)
+	if _, remembered := snapshotFactsCache.get(rootOther, listedOther[0].TreeOID); remembered {
+		t.Error("one clone's read answered for another")
+	}
+	keys := map[string]bool{}
+	for _, s := range fromOne {
+		keys[s.Key] = true
+	}
+	archives := counter("git.archive")
+	fromOther, _, err := discover(t, other).LoadReusing(context.Background(), func(key string) (bool, bool) {
+		return true, keys[key]
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if counter("git.archive") == archives {
+		t.Error("the other clone's checkpoint was not read")
+	}
+	for _, s := range fromOther {
+		if s.Source == Entire && (s.Unmapped || keys[s.Key]) {
+			t.Errorf("%s from the other clone was reused from the first: key %q", s.ID, s.Key)
+		}
+	}
+	if rootOne == rootOther {
+		t.Fatal("the fixtures share a clone")
 	}
 }

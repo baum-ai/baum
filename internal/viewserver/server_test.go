@@ -313,6 +313,9 @@ func TestDeepLinkFallsBackToIndexAndAssetsKeepTheirType(t *testing.T) {
 	if resp.StatusCode != http.StatusOK || body != string(index) {
 		t.Errorf("deep link: status %d, served index = %v", resp.StatusCode, body == string(index))
 	}
+	if got := resp.Header.Get("Cache-Control"); got != "no-cache" {
+		t.Errorf("deep link Cache-Control = %q", got)
+	}
 
 	refs := regexp.MustCompile(`(?:src|href)="(/assets/[^"]+)"`).FindAllStringSubmatch(string(index), -1)
 	if len(refs) < 2 {
@@ -333,6 +336,9 @@ func TestDeepLinkFallsBackToIndexAndAssetsKeepTheirType(t *testing.T) {
 		}
 		if got := resp.Header.Get("Content-Type"); got != wantType {
 			t.Errorf("%s Content-Type = %q, want %q", ref[1], got, wantType)
+		}
+		if got := resp.Header.Get("Cache-Control"); got != "public, max-age=31536000, immutable" {
+			t.Errorf("%s Cache-Control = %q", ref[1], got)
 		}
 	}
 

@@ -259,6 +259,10 @@ type Service struct {
 	liveMu sync.Mutex
 	// writeMu serializes this service's cache writes to app.sqlite.
 	writeMu sync.Mutex
+	// docsMu guards docs, the cache documents as this service last saw them
+	// (store.go).
+	docsMu sync.Mutex
+	docs   map[string]*document
 	// writesMu guards writes, how many times this service wrote each cache
 	// key (Revision).
 	writesMu  sync.Mutex
@@ -357,61 +361,13 @@ func (s *Service) databasePath() (string, error) {
 	return filepath.Join(s.directory, "app.sqlite"), nil
 }
 
-func (s *Service) load(key string) (diskCache, error) {
-	path, err := s.databasePath()
-	if err != nil {
-		return diskCache{}, err
-	}
-	raw, err := appdb.Read(path, "cache", "discovery/"+key)
-	if err != nil {
-		return diskCache{}, err
-	}
-	if len(raw) > 32<<20 {
-		return diskCache{}, errors.New("discovery cache too large")
-	}
-	var cache diskCache
-	if json.Unmarshal(raw, &cache) != nil {
-		return diskCache{}, errors.New("invalid discovery cache")
-	}
-	return cache, nil
-}
-
-func (s *Service) save(key string, cache diskCache) error {
-	s.writeMu.Lock()
-	defer s.writeMu.Unlock()
-	raw, err := json.Marshal(cache)
-	if err != nil {
-		return err
-	}
-	if len(raw) > 32<<20 {
-		return errors.New("discovery cache too large")
-	}
-	path, err := s.databasePath()
-	if err != nil {
-		return err
-	}
-	err = appdb.Write(path, "cache", "discovery/"+key, raw)
-	// Counted after the write, failed or not, so a Revision read before it
-	// never vouches for what it wrote.
-	s.writesMu.Lock()
-	if s.writes == nil {
-		s.writes = map[string]uint64{}
-	}
-	s.writes[key]++
-	s.writesMu.Unlock()
-	if err != nil {
-		return err
-	}
-	s.updated()
-	return nil
-}
-
 // Revision stamps what Cached reads of a repository without opening the
 // cache: Cached reads the same snapshot at two equal revisions, except that
 // its Stale turns true once NextPoll passes. It changes when the identity
-// resets or the credential changes, when this service writes the repository's
-// cache, and when a poll validates it or fails. Only this service writes the
-// cache, and only the daemon, which runs once, makes one on app.sqlite.
+// resets or the credential changes, when this service changes the
+// repository's cache (store, including times it keeps unsaved), and when a
+// poll validates it or fails. Only this service writes the cache, and only
+// the daemon, which runs once, makes one on app.sqlite.
 type Revision struct {
 	Epoch     uint64
 	Partition string
@@ -449,16 +405,21 @@ func (s *Service) Cached(ctx context.Context, repository github.Repository) (Sna
 	if err != nil {
 		return Snapshot{}, err
 	}
-	cache, err := s.load(path)
+	cache, err := s.view(path)
 	if err != nil {
 		return Snapshot{}, err
 	}
-	cache.Snapshot.Stale = cache.Snapshot.Stale || !s.isValidated(path) || !s.now().Before(cache.Snapshot.NextPoll)
+	// The view is shared, so the caller gets its own slices. Their elements'
+	// pointers are still shared and must not be written through.
+	snapshot := cache.Snapshot
+	snapshot.PullRequests = slices.Clone(snapshot.PullRequests)
+	snapshot.Observations = slices.Clone(snapshot.Observations)
+	snapshot.Stale = snapshot.Stale || !s.isValidated(path) || !s.now().Before(snapshot.NextPoll)
 	if epoch != s.Epoch() {
 		return Snapshot{}, github.ErrIdentityChanged
 	}
-	cache.Snapshot.Epoch = epoch
-	return cache.Snapshot, nil
+	snapshot.Epoch = epoch
+	return snapshot, nil
 }
 
 type poll struct {
@@ -831,7 +792,7 @@ func (s *Service) poll(ctx context.Context, repository github.Repository, force 
 	if saveErr := s.save(budgetPath, budget.record()); saveErr != nil {
 		return snapshot, fmt.Errorf("save discovery rate budget: %w", saveErr)
 	}
-	if saveErr := s.save(path, p.cache); saveErr != nil {
+	if saveErr := s.store(path, p.cache, true); saveErr != nil {
 		return snapshot, fmt.Errorf("save discovery cache: %w", saveErr)
 	}
 	return snapshot, err

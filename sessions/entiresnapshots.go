@@ -82,13 +82,15 @@ func sameFacts(a, b checkpointFacts) bool {
 }
 
 // entireKey is the Key of the session sessionID read from the checkpoint
-// whose tree is tree: a tree names its content, so the same tree always
-// maps to the same graphs.
-func entireKey(tree, sessionID string) string {
+// whose tree is tree in the clone at root: a tree names its content, so the
+// same tree always maps to the same graphs. The clone is part of it, as of
+// the checkpoint cache's key, so one clone's reads never answer for
+// another's: a partial clone missing the objects still reports them.
+func entireKey(root, tree, sessionID string) string {
 	if tree == "" {
 		return ""
 	}
-	return "entire:" + tree + ":" + sessionID
+	return "entire:" + checkpointKey(root, tree) + "\x00" + sessionID
 }
 
 // snapshotLoad is one loadEntire's reads: the checkpoints read whole in it,
@@ -119,7 +121,7 @@ func (p snapshotPlan) load(ctx context.Context, store *checkpointStore, reuse Re
 	l := &snapshotLoad{plan: p, store: store, read: map[string]readOutcome{}, facts: map[string]checkpointFacts{}}
 	var unknown []string
 	for _, id := range p.first {
-		if cached, ok := snapshotFactsCache.get(p.trees[id]); ok {
+		if cached, ok := snapshotFactsCache.get(p.root, p.trees[id]); ok {
 			l.facts[id] = cached
 			continue
 		}
@@ -138,7 +140,7 @@ func (p snapshotPlan) load(ctx context.Context, store *checkpointStore, reuse Re
 			if _, read := l.read[c.checkpoint]; read {
 				continue
 			}
-			if key := entireKey(p.trees[c.checkpoint], c.facts.sessionID); reuse != nil && key != "" {
+			if key := entireKey(p.root, p.trees[c.checkpoint], c.facts.sessionID); reuse != nil && key != "" {
 				if _, ok := reuse(key); ok {
 					continue
 				}
@@ -184,7 +186,7 @@ func (l *snapshotLoad) remember(id string, outcome readOutcome) {
 	l.facts[id] = factsOf(outcome)
 	// A checkpoint that could not be read may read next time.
 	if outcome.err == nil {
-		snapshotFactsCache.put(l.plan.trees[id], l.facts[id])
+		snapshotFactsCache.put(l.plan.root, l.plan.trees[id], l.facts[id])
 	}
 }
 
@@ -193,7 +195,7 @@ func (l *snapshotLoad) factsFor(ctx context.Context, id string) (checkpointFacts
 	if facts, ok := l.facts[id]; ok {
 		return facts, nil
 	}
-	if cached, ok := snapshotFactsCache.get(l.plan.trees[id]); ok {
+	if cached, ok := snapshotFactsCache.get(l.plan.root, l.plan.trees[id]); ok {
 		l.facts[id] = cached
 		return cached, nil
 	}
@@ -289,7 +291,7 @@ func (l *snapshotLoad) sessions(chosen []choice) []Session {
 		s := Session{
 			Source: Entire, Vendor: c.facts.vendor, ID: c.facts.sessionID, Path: c.checkpoint,
 			RepoRoot: l.plan.root, ModifiedAt: c.facts.createdAt, Notes: slices.Clone(c.facts.warnings),
-			Key: entireKey(l.plan.trees[c.checkpoint], c.facts.sessionID),
+			Key: entireKey(l.plan.root, l.plan.trees[c.checkpoint], c.facts.sessionID),
 		}
 		if outcome, read := l.read[c.checkpoint]; read {
 			s.Graph = outcome.results[c.index].Graph
@@ -306,8 +308,9 @@ func (l *snapshotLoad) sessions(chosen []choice) []Session {
 // remembers. Each is the ids, dates and warnings of a few sessions.
 const maxSnapshotFacts = 8192
 
-// snapshotFactsCache remembers each checkpoint's facts by its tree, so
-// choosing a snapshot reads a checkpoint whole only once per process.
+// snapshotFactsCache remembers each checkpoint's facts by its clone and
+// tree (checkpointKey), so choosing a snapshot reads a checkpoint whole only
+// once per process.
 var snapshotFactsCache = newFactsCache(maxSnapshotFacts)
 
 type factsCache struct {
@@ -318,7 +321,7 @@ type factsCache struct {
 }
 
 type factsEntry struct {
-	tree  string
+	key   string
 	facts checkpointFacts
 }
 
@@ -326,13 +329,15 @@ func newFactsCache(limit int) *factsCache {
 	return &factsCache{limit: limit, order: list.New(), entries: map[string]*list.Element{}}
 }
 
-func (c *factsCache) get(tree string) (checkpointFacts, bool) {
+// get returns the facts of the checkpoint whose tree is tree in the clone at
+// root; an unknown tree has none.
+func (c *factsCache) get(root, tree string) (checkpointFacts, bool) {
 	if tree == "" {
 		return checkpointFacts{}, false
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	element, ok := c.entries[tree]
+	element, ok := c.entries[checkpointKey(root, tree)]
 	if !ok {
 		return checkpointFacts{}, false
 	}
@@ -341,19 +346,20 @@ func (c *factsCache) get(tree string) (checkpointFacts, bool) {
 	return element.Value.(*factsEntry).facts, true
 }
 
-func (c *factsCache) put(tree string, facts checkpointFacts) {
+func (c *factsCache) put(root, tree string, facts checkpointFacts) {
 	if tree == "" {
 		return
 	}
+	key := checkpointKey(root, tree)
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if old, ok := c.entries[tree]; ok {
+	if old, ok := c.entries[key]; ok {
 		c.order.Remove(old)
 	}
-	c.entries[tree] = c.order.PushFront(&factsEntry{tree: tree, facts: facts})
+	c.entries[key] = c.order.PushFront(&factsEntry{key: key, facts: facts})
 	for c.order.Len() > c.limit {
 		last := c.order.Back()
 		c.order.Remove(last)
-		delete(c.entries, last.Value.(*factsEntry).tree)
+		delete(c.entries, last.Value.(*factsEntry).key)
 	}
 }

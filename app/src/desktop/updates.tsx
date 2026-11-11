@@ -37,6 +37,18 @@ export type AppUpdates = {
 
 const BUSY = new Set<AppUpdate["phase"]>(["checking", "downloading", "waiting", "installing"]);
 
+/** `next`, unless it says what `previous` already does: the same object keeps
+ *  the app from rendering again for a poll that found nothing new. */
+export function sameUpdate(previous: AppUpdate | null, next: AppUpdate | null) {
+  if (previous === next) return previous;
+  if (!previous || !next) return next;
+  const keys = Object.keys(next) as (keyof AppUpdate)[];
+  return keys.length === Object.keys(previous).length &&
+    keys.every((key) => previous[key] === next[key])
+    ? previous
+    : next;
+}
+
 /** The newer version the sidebar counts on Settings: one the person can
  *  install now, or download when this copy cannot update itself. */
 export function pendingUpdate(view: AppUpdate | null): string | null {
@@ -59,12 +71,12 @@ export function useAppUpdates(): AppUpdates {
     const missing = () => {
       // Not the desktop app, or an app without the updater.
       gone.current = true;
-      if (!stop) setView(null);
+      if (!stop) setView((previous) => sameUpdate(previous, null));
     };
     const read = () =>
       invoke<AppUpdate>("update_state").then((next) => {
         if (typeof next?.version !== "string") missing();
-        else if (!stop) setView(next);
+        else if (!stop) setView((previous) => sameUpdate(previous, next));
       }, missing);
     void read();
     readUpdate.current = () => void read();
@@ -78,7 +90,7 @@ export function useAppUpdates(): AppUpdates {
     setError("");
     invoke<AppUpdate>(command, args).then(
       (next) => {
-        if (typeof next?.version === "string") setView(next);
+        if (typeof next?.version === "string") setView((previous) => sameUpdate(previous, next));
       },
       (cause) => setError(String(cause)),
     );

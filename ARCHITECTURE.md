@@ -1690,7 +1690,8 @@ inside the clone and the session store overrides, and does this:
    ignores case on Windows. The answer is the same from the main checkout and
    from any worktree. Each Entire session is mapped once, from the newest
    checkpoint holding it: one `git cat-file --batch` reads the metadata of every
-   checkpoint in the window and another the metadata of their sessions, and
+   checkpoint in the window not read before (metadata is remembered by the
+   checkpoint's tree) and another the metadata of their sessions, and
    only the checkpoints holding the newest snapshot of a session no
    home-directory store has are read whole. A newest snapshot that cannot be
    mapped, or that carries no transcript (Entire sometimes writes a checkpoint
@@ -1950,8 +1951,11 @@ a process reuses what it built:
   session it mapped (`locallink.sessionDigests`, up to
   `locallink.DefaultDigestBytes`, 64 MiB), keyed by `sessions.Session.Key`:
   each file's path, size and modification time, or for an Entire session the
-  tree of its checkpoint, which names its content. `Discovery.LoadReusing`
-  skips a session whose digest is held. The digest holds what linking reads
+  clone and the tree of its checkpoint, which names its content. A session
+  with a file modified in the last 2 seconds, or in the future, gets no key:
+  a same-size rewrite within one modification-time tick would look
+  unchanged. Such a session is mapped and not reused until it is older.
+  `Discovery.LoadReusing` skips a session whose digest is held. The digest holds what linking reads
   from the graph: whether it is a generation run, whether it has a
   transcript, the top-level session's start, end and branch, and the
   `sessioncorrelate` evidence. For each linked session it also holds the
@@ -1969,9 +1973,11 @@ a process reuses what it built:
   Each of these is checked again, so the evidence is the same as a full
   rebuild. A linked session whose evidence no longer fits is mapped by
   loading again, refusing its digest. The other sessions are still reused.
-  Entire checkpoints are read whole only once per process to choose each
-  session's snapshot (`sessions` remembers each checkpoint's sessions by
-  tree), and only again when a chosen snapshot has to be mapped.
+  If an unmapped session's digest is gone by the time linking reads it, the
+  build loads once more and maps everything. Choosing each Entire session's
+  snapshot uses small per-checkpoint facts that `sessions` remembers by
+  clone and tree. A checkpoint is read whole again, through the checkpoint
+  cache below, only when a session chosen from it has to be mapped.
 * **Closed and merged pull requests.** A refresh of a pull request that is
   closed or merged sets `EvidenceRequest.Frozen`. Its sessions are read once in
   the process, then kept for the same commits without looking at the stores
@@ -1981,6 +1987,18 @@ a process reuses what it built:
   `sessions.HeldMapCacheBytes` (256 MiB) of transcripts while the pass runs and
   each session is decoded once in it. When the pass ends, the cache shrinks
   back to its 64 MiB limit.
+* **Entire checkpoints.** A refresh reads the clone through one `gitlocal`
+  repository: the caller's (`EvidenceRequest.Repo`, which the daemon's
+  refresh and review jobs set), or one it opens, shared by session loading,
+  the checkpoint trailers' lookups and the observed-commit lookup. The Entire
+  refs are resolved once, by `sessions.Discover`. Checkpoint listings, dates
+  and metadata are remembered per clone by the commits and trees that name
+  them (`entire.Listing`), so a refresh whose checkpoint branch and refs did
+  not move runs no git for them, and a branch that moved forward is dated
+  from its new commits alone. Checkpoints read whole are kept, as the
+  sessions they map to, in a cache keyed by their tree and bounded at 64 MiB
+  of checkpoint bytes (`sessions.DefaultCheckpointCacheBytes`). See the
+  [sessions README](sessions/README.md#entire-checkpoint-reuse).
 
 Callers get deep copies of reused evidence, because they cap and redact it in
 place. A reused answer prints no warnings.
@@ -2874,6 +2892,14 @@ lease-based run status independently of immutable successful version history;
 expired leases are read as interrupted without mutating stores during indexing.
 Once `Store.Put` commits a version, generation succeeds: failing to record the
 run's outcome afterwards is only a warning, and the lease later expires.
+
+`GET /api/index` and `GET /api/prs` revalidate: the JSON of a cached snapshot is
+encoded once per cache version and `history` flag (`/api/prs`: once per
+discovery `Revision` of the picked repositories, until a snapshot reaches its
+next poll), answered with a strong `ETag` (digest of the bytes), `Cache-Control:
+no-cache` and 304 for a matching `If-None-Match`. The app fetches them with
+`cache: "no-cache"` so the webview sends the validator; every other endpoint
+stays `no-store`.
 
 `Service.Build` is uncached: each call probes every clone with git, reads the
 discovery cache and opens every store. The daemon reads it through one

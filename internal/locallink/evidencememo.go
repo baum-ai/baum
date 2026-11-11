@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"reflect"
+	"strings"
 	"sync"
 	"time"
 
@@ -154,18 +155,33 @@ func frozenEvidenceKey(req EvidenceRequest, dir string) string {
 func deepCopy[T any](v T) T {
 	in := reflect.ValueOf(&v).Elem()
 	out := reflect.New(in.Type()).Elem()
-	copyValue(out, in)
+	copyValue(out, in, false)
 	return out.Interface().(T)
 }
 
-func copyValue(dst, src reflect.Value) {
+// detach is deepCopy that also copies every string, so a value kept for the
+// life of the process keeps nothing of the graph it was read from alive.
+func detach[T any](v T) T {
+	in := reflect.ValueOf(&v).Elem()
+	out := reflect.New(in.Type()).Elem()
+	copyValue(out, in, true)
+	return out.Interface().(T)
+}
+
+func copyValue(dst, src reflect.Value, cloneStrings bool) {
 	switch src.Kind() {
+	case reflect.String:
+		if cloneStrings {
+			dst.SetString(strings.Clone(src.String()))
+			return
+		}
+		dst.Set(src)
 	case reflect.Pointer:
 		if src.IsNil() {
 			return
 		}
 		p := reflect.New(src.Elem().Type())
-		copyValue(p.Elem(), src.Elem())
+		copyValue(p.Elem(), src.Elem(), cloneStrings)
 		dst.Set(p)
 	case reflect.Slice:
 		if src.IsNil() {
@@ -173,7 +189,7 @@ func copyValue(dst, src reflect.Value) {
 		}
 		s := reflect.MakeSlice(src.Type(), src.Len(), src.Len())
 		for i := range src.Len() {
-			copyValue(s.Index(i), src.Index(i))
+			copyValue(s.Index(i), src.Index(i), cloneStrings)
 		}
 		dst.Set(s)
 	case reflect.Map:
@@ -184,7 +200,7 @@ func copyValue(dst, src reflect.Value) {
 		iter := src.MapRange()
 		for iter.Next() {
 			value := reflect.New(iter.Value().Type()).Elem()
-			copyValue(value, iter.Value())
+			copyValue(value, iter.Value(), cloneStrings)
 			m.SetMapIndex(iter.Key(), value)
 		}
 		dst.Set(m)
@@ -197,14 +213,14 @@ func copyValue(dst, src reflect.Value) {
 			}
 		}
 		for i := range src.NumField() {
-			copyValue(dst.Field(i), src.Field(i))
+			copyValue(dst.Field(i), src.Field(i), cloneStrings)
 		}
 	case reflect.Interface:
 		if src.IsNil() {
 			return
 		}
 		value := reflect.New(src.Elem().Type()).Elem()
-		copyValue(value, src.Elem())
+		copyValue(value, src.Elem(), cloneStrings)
 		dst.Set(value)
 	default:
 		dst.Set(src)

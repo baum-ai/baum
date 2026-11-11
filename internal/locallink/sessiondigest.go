@@ -5,6 +5,7 @@ import (
 	"container/list"
 	"io"
 	"reflect"
+	"strings"
 	"sync"
 	"time"
 
@@ -19,6 +20,10 @@ import (
 // estimated. A digest is a few kilobytes for most sessions, against the
 // megabytes of the transcript it was read from.
 const DefaultDigestBytes = 64 << 20
+
+// digestOverhead is what a digest costs beyond its facts and projections:
+// the entry, its key and its list element.
+const digestOverhead = 256
 
 // maxProjections bounds the evidence kept per session: one for each pull
 // request it is linked to whose evidence of it differs (a path one names
@@ -86,10 +91,10 @@ func (f sessionFacts) detached() sessionFacts {
 	out := f
 	out.startedAt, out.endedAt = copyTime(f.startedAt), copyTime(f.endedAt)
 	if f.gitBranch != nil {
-		branch := *f.gitBranch
+		branch := strings.Clone(*f.gitBranch)
 		out.gitBranch = &branch
 	}
-	out.correlated = deepCopy(f.correlated)
+	out.correlated = detach(f.correlated)
 	return out
 }
 
@@ -174,7 +179,15 @@ type digestBook struct {
 	// refused are keys whose sessions must be mapped; refusingAll maps all.
 	refused     map[string]bool
 	refusingAll bool
+	// missing is set when an unmapped session's digest could not be found,
+	// which leaves its facts unknown: the build maps everything instead.
+	missing bool
+	// afterReuse, when set, runs after reuse holds a digest; tests use it.
+	afterReuse func(key string)
 }
+
+// newBuildBook makes the book BuildSessionEvidence uses; tests replace it.
+var newBuildBook = newDigestBook
 
 func newDigestBook(cache *digestCache) *digestBook {
 	return &digestBook{cache: cache, held: map[string]*sessionDigest{}, refused: map[string]bool{}}
@@ -192,6 +205,9 @@ func (b *digestBook) reuse(key string) (transcript, ok bool) {
 		}
 		b.held[key] = d
 	}
+	if b.afterReuse != nil {
+		b.afterReuse(key)
+	}
 	workstats.Inc("locallink.session_digests.reused")
 	return d.facts.transcript, true
 }
@@ -206,8 +222,10 @@ func (b *digestBook) refuse(keys ...string) {
 // refuseAll has the next load map every session.
 func (b *digestBook) refuseAll() { b.refusingAll = true }
 
-// digest is the digest of s, made from its graph and kept when the book
-// has none; nil for a session without a Key, or with a nil book.
+// digest is the digest of s: the one the book holds or the cache keeps, else
+// one made from its graph and kept. It is nil for a session without a Key,
+// with a nil book, and for an unmapped session whose digest is gone, which
+// sets missing.
 func (b *digestBook) digest(s sessions.Session) *sessionDigest {
 	if b == nil || s.Key == "" {
 		return nil
@@ -215,12 +233,19 @@ func (b *digestBook) digest(s sessions.Session) *sessionDigest {
 	if d, ok := b.held[s.Key]; ok {
 		return d
 	}
+	// Another build may have made it meanwhile: its projections are kept.
+	if d, ok := b.cache.get(s.Key); ok {
+		b.held[s.Key] = d
+		return d
+	}
 	if s.Unmapped {
-		// LoadReusing returns a session unmapped only when reuse held it.
-		panic("locallink: unmapped session " + s.ID + " has no digest")
+		// LoadReusing returns a session unmapped only when reuse held its
+		// digest, so this is not expected; the build recovers by mapping.
+		b.missing = true
+		return nil
 	}
 	d := &sessionDigest{key: s.Key, facts: graphFacts(s).detached()}
-	d.cost = estimateCost(reflect.ValueOf(d.facts))
+	d.cost = digestOverhead + estimateCost(reflect.ValueOf(d.facts))
 	b.cache.put(d)
 	b.held[s.Key] = d
 	workstats.Inc("locallink.session_digests.built")
@@ -249,6 +274,9 @@ func (b *digestBook) generationRun(s sessions.Session) bool {
 func (b *digestBook) evidence(s sessions.Session, confidence float64, roots []string, knownPath func(string) bool, maxPrompts, maxCommandEvents int) (item bundle.Session, ok, needsGraph bool) {
 	d := b.digest(s)
 	if d == nil {
+		if s.Unmapped {
+			return bundle.Session{}, false, false
+		}
 		item, ok = sessionEvidence(s, confidence, roots, knownPath, maxPrompts, maxCommandEvents)
 		return item, ok, false
 	}
@@ -275,12 +303,12 @@ func (b *digestBook) evidence(s sessions.Session, confidence float64, roots []st
 	}
 	recordKnown := func(path string) bool {
 		answer := knownPath(path)
-		p.known[path] = answer
+		p.known[strings.Clone(path)] = answer
 		return answer
 	}
 	hooks := evidenceHooks{
 		resolver: []sessioncorrelate.Option{sessioncorrelate.WithCloneLookups(func(path, relative string, ok bool) {
-			p.placed[path] = placement{relative: relative, ok: ok}
+			p.placed[strings.Clone(path)] = placement{relative: strings.Clone(relative), ok: ok}
 		})},
 		threadName: func(index, id string) (string, error) {
 			name, err := codextranscript.ThreadName(index, id)
@@ -289,7 +317,7 @@ func (b *digestBook) evidence(s sessions.Session, confidence float64, roots []st
 		},
 	}
 	item, ok = sessionEvidenceWith(s, confidence, roots, recordKnown, maxPrompts, maxCommandEvents, hooks)
-	p.item, p.ok = deepCopy(item), ok
+	p.item, p.ok = detach(item), ok
 	p.item.Confidence = 0
 	b.cache.addProjection(d, p)
 	workstats.Inc("locallink.session_projections.built")
@@ -367,7 +395,9 @@ func (c *digestCache) addProjection(d *sessionDigest, p *projection) {
 	}
 	d.cost += delta
 	d.mu.Unlock()
-	if _, kept := c.entries[d.key]; kept {
+	// Only d itself counts toward held: another digest under its key (one a
+	// concurrent build put) is not d.
+	if element, kept := c.entries[d.key]; kept && element.Value.(*sessionDigest) == d {
 		c.held += delta
 		c.evict()
 	}
@@ -399,6 +429,12 @@ func estimateCost(v reflect.Value) int64 {
 		return 8 + estimateCost(v.Elem())
 	case reflect.Slice:
 		cost := int64(24)
+		for i := range v.Len() {
+			cost += estimateCost(v.Index(i))
+		}
+		return cost
+	case reflect.Array:
+		var cost int64
 		for i := range v.Len() {
 			cost += estimateCost(v.Index(i))
 		}

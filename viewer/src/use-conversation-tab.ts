@@ -1,4 +1,6 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback } from "react";
+
+import { useStoredSetting } from "./use-stored-setting";
 
 export const CONVERSATION_TABS = ["chat", "details", "activity", "comments"] as const;
 export type ConversationTab = (typeof CONVERSATION_TABS)[number];
@@ -10,26 +12,10 @@ function isTab(value: unknown): value is ConversationTab {
 }
 
 /** Which of the conversation pane's tabs the reader last chose, remembered
- *  across visits. Read after mount for the same reason as the fold: the
- *  server has no storage, and a pane that differed between the two would
- *  hydrate into a mismatch. */
+ *  across visits. The chat is the answer on the server and without storage. */
 export function useConversationTab() {
-  const [tab, setTab] = useState<ConversationTab>("chat");
-  useEffect(() => {
-    try {
-      const stored = localStorage.getItem(STORAGE_KEY);
-      if (isTab(stored)) setTab(stored);
-    } catch {
-      // Storage is unavailable; the chat is a fine answer.
-    }
-  }, []);
-  const choose = useCallback((next: ConversationTab) => {
-    setTab(next);
-    try {
-      localStorage.setItem(STORAGE_KEY, next);
-    } catch {
-      // Not remembering the choice is better than refusing to make it.
-    }
-  }, []);
+  const [stored, store] = useStoredSetting(STORAGE_KEY);
+  const tab: ConversationTab = isTab(stored) ? stored : "chat";
+  const choose = useCallback((next: ConversationTab) => store(next), [store]);
   return [tab, choose] as const;
 }

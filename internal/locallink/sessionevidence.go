@@ -3,6 +3,8 @@ package locallink
 import (
 	"cmp"
 	"context"
+	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path"
@@ -49,6 +51,10 @@ type EvidenceRequest struct {
 	// commits belong to a pull request that is closed or merged. Only the
 	// first frozen request in a process reads the stores.
 	Frozen bool
+	// Repo, when set, is the clone opened by the caller, which every read of
+	// it (Entire checkpoints included) goes through instead of opening its
+	// own. It must be the clone containing Dir.
+	Repo *gitlocal.Repo
 }
 
 // BuildSessionEvidence returns the bundle sessions for the pull request
@@ -103,6 +109,10 @@ func BuildSessionEvidence(ctx context.Context, req EvidenceRequest) ([]bundle.Se
 	// sessions it hoped to reuse loads again, and only the last load's
 	// warnings are printed, followed by the checkouts' as before.
 	loadWarnings, rootWarnings := heldWarnings(req.Warn), heldWarnings(req.Warn)
+	defer func() {
+		loadWarnings.flush()
+		rootWarnings.flush()
+	}()
 	roots := cloneRoots(ctx, dir, clone, req.Sessions.PreviousPaths, rootWarnings.writer())
 	home, _ := os.UserHomeDir()
 	var changed []string
@@ -111,27 +121,49 @@ func BuildSessionEvidence(ctx context.Context, req EvidenceRequest) ([]bundle.Se
 	}
 	inPullRequest, inCheckout := bundle.KnownPaths(changed...), existsInClone(clone)
 	known := func(path string) bool { return inPullRequest(path) || inCheckout(path) }
+	// The clone is opened once for every load below.
+	repo := req.Repo
+	if repo == nil {
+		opened, err := gitlocal.Open(ctx, dir, gitlocal.Options{})
+		if err != nil {
+			return nil, fmt.Errorf("opening the clone: %w", err)
+		}
+		defer func() { _ = opened.Close() }()
+		repo = opened
+	}
 
 	// A session whose files did not change since the process last mapped
 	// them is not mapped again: its digest supplies what linking reads, and
 	// a linked one's evidence is reused while what it depends on is
 	// unchanged (see digestBook). A linked session whose evidence cannot be
 	// reused is mapped by loading again, refusing its digest; if linking
-	// then picks yet another one, everything is mapped.
-	book := newDigestBook(sessionDigests)
+	// then picks yet another one, or a digest went missing, everything is
+	// mapped.
+	book := newBuildBook(sessionDigests)
 	var complete bool
 	for attempt := 0; ; attempt++ {
 		loadWarnings.reset()
 		// The pull request's repository is not known here, so a missing
 		// checkpoint's fetch hint names a placeholder remote.
 		var found []sessions.Session
-		found, _, complete, err = loadDiscovered(ctx, d, dir, req.Commits, "", loadWarnings.writer(), book)
+		found, _, complete, err = loadDiscovered(ctx, d, dir, repo, req.Commits, "", loadWarnings.writer(), book)
 		if err != nil {
 			return nil, err
 		}
 		ids, latest, edges, err := linkSessions(ctx, found, req.Commits, book)
 		if err != nil {
 			return nil, err
+		}
+		if book.missing {
+			// A session came back unmapped whose digest is gone: what was
+			// linked is not to be trusted. Map everything.
+			if book.refusingAll {
+				return nil, errors.New("building session evidence: a session was not mapped though every one was refused")
+			}
+			workstats.Inc("locallink.session_evidence_remapped")
+			book.missing = false
+			book.refuseAll()
+			continue
 		}
 		evidence = []bundle.Session{}
 		var unmapped []string
@@ -166,8 +198,6 @@ func BuildSessionEvidence(ctx context.Context, req EvidenceRequest) ([]bundle.Se
 			book.refuseAll()
 		}
 	}
-	loadWarnings.flush()
-	rootWarnings.flush()
 	sortSessionEvidence(evidence)
 	if cacheable {
 		evidenceMemo.store(key, evidence, complete)

@@ -15,13 +15,8 @@ import (
 
 // addObservedCommits supplies creation evidence independently of transcript
 // completeness. Missing transcripts retain a metadata-only session and link.
-func addObservedCommits(ctx context.Context, dir string, found []sessions.Session, commits []gitlocal.Commit) ([]sessions.Session, error) {
-	repo, err := gitlocal.Open(ctx, dir, gitlocal.Options{})
-	if err != nil {
-		return nil, err
-	}
+func addObservedCommits(ctx context.Context, repo *gitlocal.Repo, found []sessions.Session, commits []gitlocal.Commit) ([]sessions.Session, error) {
 	remotes, err := repo.RemoteURLs(ctx)
-	_ = repo.Close()
 	if err != nil {
 		return nil, err
 	}
