@@ -662,14 +662,13 @@ export function GroupPage({
             {group.outdated && group.version_count > 0 ? (
               <Notice
                 action={
-                  <Button
-                    variant="secondary"
-                    size="compact"
+                  <button
+                    type="button"
                     disabled={generating || busy || !clone}
                     onClick={() => void generate()}
                   >
                     {busy ? "Starting…" : "Regenerate"}
-                  </Button>
+                  </button>
                 }
               >
                 Members changed since this group review was generated.

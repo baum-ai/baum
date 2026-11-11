@@ -383,9 +383,9 @@ export function LocalReview({
   const archivedNotice = archive.archived ? (
     <Notice
       action={
-        <Button variant="secondary" size="compact" onClick={archive.unarchive}>
+        <button type="button" onClick={archive.unarchive}>
           Unarchive
-        </Button>
+        </button>
       }
     >
       Archived. This pull request doesn't show in your inboxes.
