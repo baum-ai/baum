@@ -3311,8 +3311,18 @@ changes none of its figures.
 until its workers stop, so two processes never run one queue; it waits up to
 10 s for a predecessor whose shutdown timed out and that is exiting.
 Reviews, fixes and feature builds share one lane, which runs up to
-`repos.MaxJobConcurrency` (4) jobs at once, oldest first; questions have their
-own lane (see the chat section). The `job_concurrency` preference lowers the
+`repos.MaxJobConcurrency` (4) jobs at once; questions have their
+own lane (see the chat section). A free slot takes the oldest job a person
+started (everything but an automatic job) before any automatic one, so an
+automatic backlog never holds up a person's review, fix or feature build;
+it never stops a running automatic job for one. Automatic jobs follow, oldest
+first (a waiting one that took a newer head keeps its place, see
+`Queue.SubmitAutomatic`). A person's start of the very run a queued automatic
+job holds (`Queue.SubmitConfirmed` with the same inputs) makes that job
+theirs: it keeps its id, loses `automatic` and `trigger`, and goes ahead with
+the person's jobs; a person's group review does the same for the waiting
+automatic reviews of its members at their current heads. The
+`job_concurrency` preference lowers the
 limit (`PUT api/settings/job-concurrency`, 1–4), and `Queue.SetConcurrency`
 applies it to the running queue: lowering it stops no running job, it only
 holds new ones until fewer run. A job waits while another job of one of its
@@ -3472,7 +3482,8 @@ a person would have to confirm: a fork or an author without known write
 access, and a draft. A model without a price, cursor-agent included, runs
 automatically like any other. Under the queue mutex
 it refuses with `ErrRestarting` while draining, `ErrBusy` while the PR (or the
-group) has a queued or running job (it never joins or supersedes one),
+group) has a running job or a queued one other than its own automatic review
+of another head (it never joins one),
 `ErrDuplicate` when any job, manual or automatic, already exists for that head
 (a group's: its member heads) (except a single
 automatic job a daemon stop or restart interrupted, which `Interrupted` lists
@@ -3488,6 +3499,15 @@ pull request GitHub now reports as a draft (the queue marks its inputs
 `draft`. Such a job does not count as its head's job: `ErrDuplicate` and
 `Interrupted` ignore it, and `Refused` lists it while it is the latest job for
 its head.
+A new head of a pull request whose automatic review is still queued (not
+started) replaces that review in place: the waiting job is prepared for the
+new head and keeps its id, `created_at` and place in line, with the new
+trigger, so the pull request is reviewed at its newest head however often
+it is pushed, and no job of the older head is left behind. A group's
+queued job is never taken over (it waits for its members, and its recheck
+follows their moves). A running review of the old head is not stopped; the
+new head waits for it (`ErrBusy`). `Queue.QueuedAutomatic` lists the
+automatic jobs waiting to start, for the scheduler's bound.
 
 `pricing` owns the shared pricing implementation and compiled baseline used by
 the local product and hosted platform. Signature, tier and normalization tests
@@ -4115,8 +4135,9 @@ it and `Queue.SubmitAutomatic` decides each job.
   automatically.
 - **State.** The `state/automatic` document in the application database holds each
   enabled repository's PRs (recorded head, request and draft flags,
-  eligibility, pending head and trigger, last head handled, retried head,
-  last stopped job put back), its stack groups (member heads handled,
+  eligibility, pending head and trigger, when the PR started waiting for it
+  (`waiting`, kept when a newer head replaces a pending one), last head handled,
+  retried head, last stopped job put back), its stack groups (member heads handled,
   attempts, retried heads, last stopped job put back, trigger) and its notice. A `paused_until` and
   `paused_cap` an older baum saved for its daily cap are ignored on load, and
   its `daily_cap` notice is dropped. It is rewritten
@@ -4134,8 +4155,15 @@ it and `Queue.SubmitAutomatic` decides each job.
   `Queue.Refused` lists it, and the head is pending again, so the first pass with an available clone submits it once.
 - **Passes** run at start, every 30 s, when a snapshot leaves pending work,
   when settings change and when a job finishes. A pass submits due pending
-  heads in order unless the daemon is stopping or has a restart pending
-  (`daemon.Self`), so the queue can drain. A head whose latest saved review
+  heads, the PRs that have waited longest first across repositories (then by
+  repository and number), unless the daemon is stopping or has a restart
+  pending (`daemon.Self`), so the queue can drain. It leaves at most two
+  automatic jobs waiting in the queue for each job the queue runs at once
+  (`job_concurrency`, so 8 by default); further heads stay pending for a
+  later pass, where a newer push simply replaces the pending head. A head
+  that its PR's waiting automatic review takes over is submitted whatever
+  the bound, since it adds no job. Stack group reviews and the member reviews a
+  group queues are not bounded. A head whose latest saved review
   already has it is skipped. Outcomes: queued, or `ErrDuplicate`, marks the
   head handled; `ErrBusy` waits for the PR's job; `ErrRestarting` ends the
   pass and is retried; `ErrHeadChanged` drops it (discovery brings the new

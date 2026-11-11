@@ -84,6 +84,57 @@ func TestGroupGenerationReviewsMembersFirst(t *testing.T) {
 	waitState(t, q, jobs[0].ID, "completed")
 }
 
+// A person's group review makes the waiting automatic reviews of its
+// members' current heads theirs, so neither the members nor the group wait
+// behind automatic work queued earlier.
+func TestPersonsGroupPromotesItsMembersWaitingAutomaticReviews(t *testing.T) {
+	f := &fakeExecutor{head: "first", started: make(chan Prepared, 10), release: make(chan struct{}), awaiting: []int{1, 2}}
+	q, err := Open(filepath.Join(privateDir(t), "jobs.json"), f, 1, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(q.Close)
+	q.SetAutomaticGate(func(Job) Admission { return Admission{} })
+	ctx := context.Background()
+	automatic := func(pr int) Job {
+		t.Helper()
+		j, err := q.SubmitAutomatic(ctx, AutomaticRequest{Item: Item{Clone: "clone", PR: pr}, Repository: "org/repo", Head: "first", Trigger: TriggerNewHead})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return j
+	}
+	automatic(3)
+	if p := <-f.started; p.PR != 3 {
+		t.Fatalf("started %+v", p.Item)
+	}
+	earlier := automatic(5)
+	members := []Job{automatic(1), automatic(2)}
+	jobs, err := q.Generate(ctx, []Item{{Clone: "clone", Group: "g1"}}, "single", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, m := range members {
+		if j := loaded(t, q, m.ID); j.Automatic || j.State != "queued" {
+			t.Fatalf("member review %+v, want it the person's", j)
+		}
+	}
+	for _, want := range []string{"pr 1", "pr 2", "group", "pr 5"} {
+		f.release <- struct{}{}
+		p := <-f.started
+		got := "group"
+		if p.Group == "" {
+			got = "pr " + string(rune('0'+p.PR))
+		}
+		if got != want {
+			t.Fatalf("started %s, want %s", got, want)
+		}
+	}
+	f.release <- struct{}{}
+	waitState(t, q, earlier.ID, "completed")
+	waitState(t, q, jobs[0].ID, "completed")
+}
+
 // A group job that finds a member's head moved, as after a fix's push,
 // waits again at the new heads for that member's review instead of failing.
 func TestGroupJobWaitsForAMovedMember(t *testing.T) {
