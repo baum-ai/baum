@@ -108,7 +108,12 @@ export function markRules(text: string, rules: Rules) {
 /** A textarea with the safety rules' text marked behind it: a transparent
  *  mirror of the text whose marks show through the transparent textarea. The
  *  mirror is hidden from assistive technology; the rules' state is also listed
- *  in words beside the field. */
+ *  in words beside the field.
+ *
+ *  The textarea has neither `value` nor `defaultValue`: React writes either one
+ *  into the field's text node after every keystroke, and that write ends the
+ *  browser's undo step, so undo went back one letter at a time. The browser
+ *  keeps the text; it is written here only when it changes from outside. */
 function HighlightedTextarea({
   id,
   label,
@@ -127,11 +132,14 @@ function HighlightedTextarea({
   const field = useRef<HTMLTextAreaElement>(null);
   const mirror = useRef<HTMLDivElement>(null);
   const [gutter, setGutter] = useState(0);
-  // A scrollbar narrows the textarea's lines; the mirror must wrap the same.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: measured after each change of text
   useLayoutEffect(() => {
     const ta = field.current;
-    if (ta) setGutter(ta.offsetWidth - ta.clientWidth);
+    if (!ta) return;
+    // Only the first text, or one changed from outside, differs from what
+    // was typed; writing it replaces the field's undo history.
+    if (ta.value !== value) ta.value = value;
+    // A scrollbar narrows the textarea's lines; the mirror must wrap the same.
+    setGutter(ta.offsetWidth - ta.clientWidth);
   }, [value]);
   return (
     <div className="prompt-field">
@@ -157,7 +165,6 @@ function HighlightedTextarea({
         aria-describedby={describedBy}
         className="prompt-text prompt-input"
         spellCheck={false}
-        value={value}
         onChange={(event) => onChange(event.target.value)}
         onScroll={(event) => {
           if (mirror.current) mirror.current.scrollTop = event.currentTarget.scrollTop;

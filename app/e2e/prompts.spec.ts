@@ -90,3 +90,28 @@ test("replaces a global prompt, overrides it for a repository and resets both", 
     }
   }
 });
+
+// Undo is the browser's own, which React's controlled textarea broke: it
+// rewrote the field's text on each keystroke, so Ctrl+Z went back one letter.
+test("undoes typing in the prompt editor in one step", async ({ page }) => {
+  await page.goto(await launchURL());
+  await page.getByRole("link", { name: "Settings" }).click();
+  await page.getByRole("button", { name: /^Prompts/ }).click();
+  const first = page
+    .getByRole("region", { name: "Prompts", exact: true })
+    .locator("[data-prompt]")
+    .first();
+  await first.getByRole("button", { name: /^Customise/ }).click();
+  const editor = first.getByRole("textbox");
+  const seeded = await editor.inputValue();
+  await editor.click();
+  await page.keyboard.press("Control+End");
+  await page.keyboard.type(" Keep it short.");
+  await expect(editor).toHaveValue(`${seeded} Keep it short.`);
+  await expect(first).toContainText("Unsaved changes");
+  await page.keyboard.press("Control+z");
+  await expect(editor).toHaveValue(seeded);
+  await expect(first).not.toContainText("Unsaved changes");
+  await page.keyboard.press("Control+Shift+z");
+  await expect(editor).toHaveValue(`${seeded} Keep it short.`);
+});
