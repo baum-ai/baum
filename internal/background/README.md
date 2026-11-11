@@ -25,7 +25,11 @@ due sooner, as one settling after a new head is. A pass (`Sync`):
    each poll makes due.
 3. **Reads** the due saved pull requests within `refreshBudget`: those GitHub
    reported changed first, then the oldest. A rate-limited read pauses reads
-   on that host (`Paused`, `Limited`), which the PR page's facts share.
+   on that host (`Paused`, `Limited`), which the PR page's facts share. A read
+   that finds nothing new leaves the saved document unwritten, its
+   `evidence_refreshed_at` included (`store.Store.RefreshCurrent`), and still
+   counts as the pull request's last read, in memory: an open one is read
+   again after 15 minutes, a closed one after an hour.
 4. Reconciles retained review refs (`Retain`) once a day per common git
    directory.
 

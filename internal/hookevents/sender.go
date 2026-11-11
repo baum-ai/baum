@@ -191,11 +191,18 @@ func (s *Sender) start(ctx context.Context, client *daemon.Client, log *slog.Log
 
 // daemonEnvironment is the environment a hook starts the daemon with: its
 // own, without TMPDIR, which agent sandboxes point at a directory that lasts
-// one session. The daemon then uses the system's.
+// one session. The daemon then uses the system's. It also drops the variables
+// that name an agent session or process, which the daemon's own children
+// (Git hooks of the commits it makes, other agents) would inherit and be
+// mistaken for that session.
 func daemonEnvironment() []string {
 	var env []string
 	for _, entry := range os.Environ() {
-		if !strings.HasPrefix(entry, "TMPDIR=") {
+		name, _, _ := strings.Cut(entry, "=")
+		switch {
+		case name == "TMPDIR", name == "CLAUDECODE", name == "CLAUDE_PID", name == "BAUM_GIT_HOOK_ACTIVE",
+			strings.HasPrefix(name, "CLAUDE_CODE_SESSION"):
+		default:
 			env = append(env, entry)
 		}
 	}

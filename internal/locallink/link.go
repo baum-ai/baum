@@ -30,7 +30,6 @@ import (
 	"github.com/baum-ai/baum/internal/gitlocal"
 	"github.com/baum-ai/baum/internal/workstats"
 	"github.com/baum-ai/baum/linkage"
-	"github.com/baum-ai/baum/linkage/sessioncorrelate"
 	"github.com/baum-ai/baum/redact"
 	"github.com/baum-ai/baum/sessions"
 	"github.com/baum-ai/baum/sessions/session"
@@ -226,7 +225,7 @@ func Resolve(ctx context.Context, req Request) (Result, error) {
 	case err != nil:
 		return Result{}, fmt.Errorf("reading the pull request's commits: %w", err)
 	}
-	engine, err := redact.New()
+	engine, err := redact.Shared()
 	if err != nil {
 		return Result{}, err
 	}
@@ -234,7 +233,7 @@ func Resolve(ctx context.Context, req Request) (Result, error) {
 		return Result{Available: true, Sessions: []Session{}, Commits: []Commit{}}, nil
 	}
 
-	found, associations, err := loadSessions(ctx, dir, req.Sessions, commits, remoteFor(remotes, req.Repository), req.Warn)
+	found, associations, err := loadSessions(ctx, dir, repo, req.Sessions, commits, remoteFor(remotes, req.Repository), req.Warn)
 	if err != nil {
 		return Result{}, err
 	}
@@ -245,12 +244,13 @@ func Resolve(ctx context.Context, req Request) (Result, error) {
 // by the commits' checkpoints. Missing local transcripts are recovered from
 // checkpoints where possible. Generation runs are excluded from both. remote
 // names the remote in a missing-checkpoint fetch hint; nothing is fetched here.
-func loadSessions(ctx context.Context, dir string, opts sessions.Options, commits []gitlocal.Commit, remote string, warn io.Writer) ([]sessions.Session, map[string][]string, error) {
+// Checkpoints are read in repo's private repository.
+func loadSessions(ctx context.Context, dir string, repo *gitlocal.Repo, opts sessions.Options, commits []gitlocal.Commit, remote string, warn io.Writer) ([]sessions.Session, map[string][]string, error) {
 	d, err := discoverSessions(ctx, dir, opts, commits)
 	if err != nil {
 		return nil, nil, err
 	}
-	found, associations, _, err := loadDiscovered(ctx, d, dir, commits, remote, warn)
+	found, associations, _, err := loadDiscovered(ctx, d, dir, repo, commits, remote, warn, nil)
 	return found, associations, err
 }
 
@@ -272,9 +272,26 @@ func discoverSessions(ctx context.Context, dir string, opts sessions.Options, co
 
 // loadDiscovered is loadSessions over sessions already discovered. complete
 // is false when a session store file was skipped or a session did not map.
-func loadDiscovered(ctx context.Context, d *sessions.Discovery, dir string, commits []gitlocal.Commit, remote string, warn io.Writer) ([]sessions.Session, map[string][]string, bool, error) {
+// Every read of the clone, Entire checkpoints included, goes through repo, or
+// through one clone opened here when repo is nil. With a book, a session
+// whose digest it holds is not mapped (see digestBook); nil maps every
+// session.
+func loadDiscovered(ctx context.Context, d *sessions.Discovery, dir string, repo *gitlocal.Repo, commits []gitlocal.Commit, remote string, warn io.Writer, book *digestBook) ([]sessions.Session, map[string][]string, bool, error) {
 	workstats.Inc("locallink.load_sessions")
-	found, report, err := d.Load(ctx)
+	if repo == nil {
+		opened, err := gitlocal.Open(ctx, dir, gitlocal.Options{})
+		if err != nil {
+			return nil, nil, false, fmt.Errorf("opening the clone: %w", err)
+		}
+		defer func() { _ = opened.Close() }()
+		repo = opened
+	}
+	d.ShareRepo(repo)
+	var reuse sessions.Reuse
+	if book != nil {
+		reuse = book.reuse
+	}
+	found, report, err := d.LoadReusing(ctx, reuse)
 	if err != nil {
 		return nil, nil, false, fmt.Errorf("reading sessions: %w", err)
 	}
@@ -287,27 +304,27 @@ func loadDiscovered(ctx context.Context, d *sessions.Discovery, dir string, comm
 			_, _ = fmt.Fprintf(warn, "warning: %s session %s: %v\n", failure.Source, failure.Path, failure.Err)
 		}
 	}
-	associations, extra := checkpointLinks(ctx, dir, commits, found, remote, warn)
+	associations, extra := checkpointLinks(ctx, d, commits, found, remote, warn)
 	found = append(found, extra...)
-	found, err = addObservedCommits(ctx, dir, found, commits)
+	found, err = addObservedCommits(ctx, repo, found, commits)
 	if err != nil {
 		return nil, nil, false, fmt.Errorf("reading observed commit creation: %w", err)
 	}
-	found, associations = withoutGenerationRuns(found, associations)
+	found, associations = withoutGenerationRuns(found, associations, book)
 	return found, associations, complete, nil
 }
 
 // match builds the redacted result, keeping checkpoint candidates separate
 // from independently supported commit links.
 func match(ctx context.Context, engine *redact.Engine, found []sessions.Session, commits []gitlocal.Commit, associations map[string][]string) (Result, error) {
-	ids, latest, edges, err := linkSessions(ctx, found, commits)
+	ids, latest, edges, err := linkSessions(ctx, found, commits, nil)
 	if err != nil {
 		return Result{}, err
 	}
 	rows := make(map[string]Row, len(latest))
 	for _, id := range ids {
 		snap := latest[id]
-		row, err := rowOf(engine, snap.session, snap.correlated)
+		row, err := rowOf(engine, snap.session, snap.facts.correlated)
 		if err != nil {
 			return Result{}, err
 		}
@@ -364,8 +381,9 @@ func match(ctx context.Context, engine *redact.Engine, found []sessions.Session,
 
 // linkSessions matches found to commits. ids are the distinct session ids in
 // the order found lists them, latest the best reading of each, and edges the
-// matched edges that name a session.
-func linkSessions(ctx context.Context, found []sessions.Session, commits []gitlocal.Commit) ([]string, map[string]snapshot, []linkage.Edge, error) {
+// matched edges that name a session. The book, when there is one, supplies
+// the facts of sessions it holds; nil reads every session's graph.
+func linkSessions(ctx context.Context, found []sessions.Session, commits []gitlocal.Commit, book *digestBook) ([]string, map[string]snapshot, []linkage.Edge, error) {
 	// A session can arrive more than once under one id, and the matcher
 	// identifies a run by its id, so only the best reading of each id is
 	// matched: one with a transcript, then the newest.
@@ -375,7 +393,7 @@ func linkSessions(ctx context.Context, found []sessions.Session, commits []gitlo
 		if err := ctx.Err(); err != nil {
 			return nil, nil, nil, err
 		}
-		next := snapshot{session: s, correlated: sessioncorrelate.Correlate(s.Graph, s.Vendor)}
+		next := snapshot{session: s, facts: book.facts(s)}
 		current, seen := latest[s.ID]
 		if !seen {
 			ids = append(ids, s.ID)
@@ -387,7 +405,7 @@ func linkSessions(ctx context.Context, found []sessions.Session, commits []gitlo
 	candidates := make([]linkage.RunCandidate, 0, len(latest))
 	for _, id := range ids {
 		snap := latest[id]
-		candidates = append(candidates, candidateOf(snap.session, snap.correlated))
+		candidates = append(candidates, candidateOf(snap.session, snap.facts))
 	}
 
 	var edges []linkage.Edge
@@ -432,8 +450,8 @@ func truncate(s string, limit int) string {
 
 // snapshot is one reading of a session, with its matcher evidence.
 type snapshot struct {
-	session    sessions.Session
-	correlated sessioncorrelate.Result
+	session sessions.Session
+	facts   sessionFacts
 }
 
 // newerThan reports whether s is the better reading of the same session: one
@@ -447,5 +465,5 @@ func (s snapshot) newerThan(other snapshot) bool {
 	if sessions.Fuller(other.session, s.session) {
 		return false
 	}
-	return len(s.correlated.CommitRefs) > len(other.correlated.CommitRefs)
+	return len(s.facts.correlated.CommitRefs) > len(other.facts.correlated.CommitRefs)
 }

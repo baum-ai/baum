@@ -2,6 +2,8 @@ package livesessions
 
 import (
 	"context"
+	"errors"
+	"io/fs"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -24,6 +26,30 @@ type Registry interface {
 // request to GitHub; *discovery.Service is one.
 type Discovery interface {
 	Cached(context.Context, github.Repository) (discovery.Snapshot, error)
+}
+
+// Revisions is a Discovery that stamps its caches (discovery.Revision);
+// *discovery.Service is one. The Resolver then reads a repository's cache
+// again only once its revision changed.
+type Revisions interface {
+	Revision(context.Context, github.Repository) (discovery.Revision, error)
+}
+
+// Generation is what a repository's recorded work was linked against: the
+// cache's revision and whether it was stale then. Relink links the same
+// evidence the same way while its repository's generation is unchanged.
+type Generation struct {
+	revision discovery.Revision
+	stale    bool
+}
+
+// GenerationLinker is a RecordedLinker that tells the generation of a
+// repository's links; *Resolver is one, with a Discovery that has Revisions.
+type GenerationLinker interface {
+	RecordedLinker
+	// Generation is false when it cannot be told: the repository is then
+	// relinked whatever it was linked against.
+	Generation(ctx context.Context, repository string) (Generation, bool)
 }
 
 // Lookup bounds. Directories outside every registered clone are common (any
@@ -60,7 +86,20 @@ type Resolver struct {
 	// an active session is relinked every RelinkEvery, and reading its
 	// branch, upstream and remotes runs several git processes.
 	worked map[string]workedEntry
+	// snapshots are the discovery caches last read, by repository, at the
+	// revision read before them: every session and commit of a repository
+	// links against one decoded cache until discovery writes it again.
+	snapshots map[string]readSnapshot
 }
+
+type readSnapshot struct {
+	revision discovery.Revision
+	snapshot discovery.Snapshot
+	err      error
+}
+
+// maxSnapshots bounds the caches kept, one per repository sessions work in.
+const maxSnapshots = 64
 
 // workedEntry is one directory's checked-out work as git last read it.
 type workedEntry struct {
@@ -242,6 +281,61 @@ func (r *Resolver) Relink(ctx context.Context, s Session) (Link, bool) {
 	return r.resolve(ctx, s.Repository, prlink.Work{Branch: s.Branch, Upstream: s.Upstream, Head: s.HeadSHA, Repository: s.HeadRepository, UpstreamRepository: s.UpstreamRepository})
 }
 
+// Generation implements GenerationLinker. It reads the repository's cache
+// when its revision changed, so the links that follow in the same pass reuse
+// it.
+func (r *Resolver) Generation(ctx context.Context, repository string) (Generation, bool) {
+	if r.Discovery == nil {
+		return Generation{}, true
+	}
+	parsed, err := github.ParseRepository(repository)
+	if err != nil {
+		return Generation{}, false
+	}
+	_, generation, ok, _ := r.cached(ctx, parsed)
+	return generation, ok
+}
+
+// cached is the repository's discovery cache as Cached reads it, read again
+// only when its revision changed, with the generation it is; false when the
+// revision cannot be told, and the cache is read every time.
+func (r *Resolver) cached(ctx context.Context, repository github.Repository) (discovery.Snapshot, Generation, bool, error) {
+	revisions, ok := r.Discovery.(Revisions)
+	if !ok {
+		snapshot, err := r.Discovery.Cached(ctx, repository)
+		return snapshot, Generation{}, false, err
+	}
+	revision, err := revisions.Revision(ctx, repository)
+	if err != nil {
+		snapshot, err := r.Discovery.Cached(ctx, repository)
+		return snapshot, Generation{}, false, err
+	}
+	name := strings.ToLower(repository.String())
+	r.mu.Lock()
+	read, hit := r.snapshots[name]
+	r.mu.Unlock()
+	if !hit || read.revision != revision {
+		snapshot, err := r.Discovery.Cached(ctx, repository)
+		// A repository not polled yet stays so until discovery writes its
+		// cache; any other failure may pass, and is read again.
+		if ctx.Err() != nil || (err != nil && !errors.Is(err, fs.ErrNotExist)) {
+			return snapshot, Generation{}, false, err
+		}
+		read = readSnapshot{revision: revision, snapshot: snapshot, err: err}
+		r.mu.Lock()
+		if _, kept := r.snapshots[name]; !kept && (r.snapshots == nil || len(r.snapshots) >= maxSnapshots) {
+			r.snapshots = map[string]readSnapshot{}
+		}
+		r.snapshots[name] = read
+		r.mu.Unlock()
+	}
+	snapshot := read.snapshot
+	// A cache whose next poll is due is stale, as Cached would read it now,
+	// though nothing wrote it.
+	snapshot.Stale = snapshot.Stale || !r.now().Before(snapshot.NextPoll)
+	return snapshot, Generation{revision: revision, stale: snapshot.Stale}, true, read.err
+}
+
 func (r *Resolver) resolve(ctx context.Context, repository string, work prlink.Work) (Link, bool) {
 	link := Link{Repository: repository, Branch: work.Branch, HeadSHA: work.Head, Upstream: work.Upstream, Status: "unavailable", HeadRepository: work.Repository, UpstreamRepository: work.UpstreamRepository}
 	if r.Discovery == nil {
@@ -251,7 +345,7 @@ func (r *Resolver) resolve(ctx context.Context, repository string, work prlink.W
 	if err != nil {
 		return Link{}, false
 	}
-	snapshot, err := r.Discovery.Cached(ctx, parsed)
+	snapshot, _, _, err := r.cached(ctx, parsed)
 	if err != nil {
 		return link, true
 	}

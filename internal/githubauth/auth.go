@@ -4,6 +4,7 @@ package githubauth
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -17,7 +18,11 @@ import (
 )
 
 const ClientID = "Ov23liFSMjrhof9WQlOi"
+
+// Scopes is what every sign-in requests. WorkflowScope is added only when the
+// person asks for it, since it lets the token change GitHub Actions workflows.
 const Scopes = "repo read:org"
+const WorkflowScope = "workflow"
 
 var ErrNotConnected = errors.New("GitHub is not connected")
 var ErrStore = errors.New("GitHub credential store unavailable; unlock your operating system credential store and try again")
@@ -36,6 +41,8 @@ type Credential struct {
 	RefreshExpiresAt int64  `json:"refresh_expires_at,omitempty"`
 	Login            string `json:"login"`
 	ID               int64  `json:"id"`
+	// Workflow records that GitHub reported the workflow scope for this token.
+	Workflow bool `json:"workflow,omitempty"`
 }
 
 // String and GoString keep routine diagnostics from disclosing credentials.
@@ -53,11 +60,16 @@ type Device struct {
 	VerificationURI string    `json:"verification_uri"`
 	ExpiresAt       time.Time `json:"expires_at"`
 	Interval        int       `json:"interval"`
+	// Workflow is whether this sign-in requests workflow access.
+	Workflow bool `json:"workflow,omitempty"`
 }
 type Status struct {
 	State     string `json:"state"`
 	Login     string `json:"login,omitempty"`
 	AccountID int64  `json:"account_id,omitempty"`
+	// Workflow is whether the saved connection can merge pull requests that
+	// change GitHub Actions workflows.
+	Workflow bool `json:"workflow,omitempty"`
 }
 type pending struct {
 	public   Device
@@ -85,6 +97,10 @@ type Manager struct {
 	pending         *pending
 	rotated         *tokenResponse
 	rotatedID       int64
+	orgsMu          sync.Mutex
+	orgs            OrganizationAccess
+	orgsKey         [sha256.Size]byte
+	orgsAt          time.Time
 	cacheMu         sync.RWMutex
 	cached          *cachedToken
 	cacheGen        uint64
@@ -229,6 +245,9 @@ func (m *Manager) changedIdentity() {
 	m.issuedAccountID = 0
 	m.health = nil
 	m.healthMu.Unlock()
+	m.orgsMu.Lock()
+	m.orgsAt = time.Time{}
+	m.orgsMu.Unlock()
 	m.identityCancel()
 	m.identity, m.identityCancel = context.WithCancel(context.Background())
 }
@@ -275,6 +294,10 @@ func (m *Manager) Health() error {
 	return m.health
 }
 func (m *Manager) request(ctx context.Context, endpoint string, form url.Values, token string, out any) (http.Header, error) {
+	return m.requestLimit(ctx, endpoint, form, token, out, 64*1024)
+}
+
+func (m *Manager) requestLimit(ctx context.Context, endpoint string, form url.Values, token string, out any, limit int64) (http.Header, error) {
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 	method := http.MethodGet
@@ -303,11 +326,14 @@ func (m *Manager) request(ctx context.Context, endpoint string, form url.Values,
 	if resp.StatusCode == 401 {
 		return nil, ErrReconnect
 	}
+	if resp.StatusCode == 403 && resp.Header.Get("X-GitHub-SSO") != "" {
+		return nil, ErrSSO
+	}
 	if resp.StatusCode != 200 {
 		return nil, ErrRequest
 	}
-	b, err := io.ReadAll(io.LimitReader(resp.Body, 64*1024+1))
-	if err != nil || len(b) > 64*1024 {
+	b, err := io.ReadAll(io.LimitReader(resp.Body, limit+1))
+	if err != nil || int64(len(b)) > limit {
 		return nil, ErrRequest
 	}
 	if json.Unmarshal(b, out) != nil {
@@ -315,11 +341,18 @@ func (m *Manager) request(ctx context.Context, endpoint string, form url.Values,
 	}
 	return resp.Header, nil
 }
-func (m *Manager) Start(ctx context.Context) (Device, error) {
+
+// Start begins a device sign-in. workflow adds the workflow scope, which only
+// merges of pull requests that change GitHub Actions workflows need.
+func (m *Manager) Start(ctx context.Context, workflow bool) (Device, error) {
 	if err := m.lock(ctx); err != nil {
 		return Device{}, err
 	}
 	defer m.unlock()
+	scopes := Scopes
+	if workflow {
+		scopes += " " + WorkflowScope
+	}
 	var r struct {
 		DeviceCode string `json:"device_code"`
 		UserCode   string `json:"user_code"`
@@ -327,7 +360,7 @@ func (m *Manager) Start(ctx context.Context) (Device, error) {
 		Expires    int    `json:"expires_in"`
 		Interval   int    `json:"interval"`
 	}
-	_, err := m.request(ctx, m.oauth+"/login/device/code", url.Values{"client_id": {ClientID}, "scope": {Scopes}}, "", &r)
+	_, err := m.request(ctx, m.oauth+"/login/device/code", url.Values{"client_id": {ClientID}, "scope": {scopes}}, "", &r)
 	if err != nil {
 		return Device{}, err
 	}
@@ -338,7 +371,7 @@ func (m *Manager) Start(ctx context.Context) (Device, error) {
 	if _, err = rand.Read(id); err != nil {
 		return Device{}, ErrRequest
 	}
-	d := Device{hex.EncodeToString(id), r.UserCode, r.URI, m.now().Add(time.Duration(r.Expires) * time.Second), r.Interval}
+	d := Device{hex.EncodeToString(id), r.UserCode, r.URI, m.now().Add(time.Duration(r.Expires) * time.Second), r.Interval, workflow}
 	m.pending = &pending{public: d, code: r.DeviceCode, next: m.now().Add(time.Duration(r.Interval) * time.Second)}
 	return d, nil
 }
@@ -387,7 +420,7 @@ func (m *Manager) validate(ctx context.Context, r tokenResponse) (Credential, er
 	if expiring && m.now().Unix()+60 >= received.Unix()+r.Expires {
 		return Credential{}, ErrReconnect
 	}
-	c := Credential{AccessToken: r.Access, RefreshToken: r.Refresh, Login: user.Login, ID: user.ID}
+	c := Credential{AccessToken: r.Access, RefreshToken: r.Refresh, Login: user.Login, ID: user.ID, Workflow: scopes[WorkflowScope]}
 	if expiring {
 		c.ExpiresAt = received.Unix() + r.Expires
 	}
@@ -475,7 +508,7 @@ func (m *Manager) Poll(ctx context.Context, id string) (Status, error) {
 	return connected(c), nil
 }
 func connected(c Credential) Status {
-	return Status{State: "connected", Login: c.Login, AccountID: c.ID}
+	return Status{State: "connected", Login: c.Login, AccountID: c.ID, Workflow: c.Workflow}
 }
 func (m *Manager) Cancel(ctx context.Context, id string) error {
 	if err := m.lock(ctx); err != nil {

@@ -46,26 +46,28 @@ func LinkCommits(ctx context.Context, dir string, commits []gitlocal.Commit, opt
 	// clone is opened for it only when warnings are read and a commit names
 	// a checkpoint.
 	remote := ""
+	var repo *gitlocal.Repo
 	if opts.Repository != "" && opts.Warn != nil && slices.ContainsFunc(commits, func(c gitlocal.Commit) bool {
 		valid, _ := entirecheckpoint.ParseMessage(c.Message)
 		return len(valid) > 0
 	}) {
-		repo, err := gitlocal.Open(ctx, dir, gitlocal.Options{})
+		opened, err := gitlocal.Open(ctx, dir, gitlocal.Options{})
 		if err != nil {
 			return nil, fmt.Errorf("opening the clone: %w", err)
 		}
+		defer func() { _ = opened.Close() }()
+		repo = opened
 		remotes, err := repo.RemoteURLs(ctx)
-		_ = repo.Close()
 		if err != nil {
 			return nil, fmt.Errorf("reading the clone's remotes: %w", err)
 		}
 		remote = remoteFor(remotes, opts.Repository)
 	}
-	found, _, err := loadSessions(ctx, dir, opts.Sessions, commits, remote, opts.Warn)
+	found, _, err := loadSessions(ctx, dir, repo, opts.Sessions, commits, remote, opts.Warn)
 	if err != nil {
 		return nil, err
 	}
-	_, latest, edges, err := linkSessions(ctx, found, commits)
+	_, latest, edges, err := linkSessions(ctx, found, commits, nil)
 	if err != nil {
 		return nil, err
 	}

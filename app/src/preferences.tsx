@@ -1,4 +1,13 @@
-import { createContext, useContext, useEffect, useState, useRef, type ReactNode } from "react";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+  useRef,
+  type ReactNode,
+} from "react";
 import { request } from "./api";
 
 /** The key held with 1 to 8 for the sidebar's pages; "" is the platform's
@@ -32,6 +41,10 @@ function normalize(saved: Partial<Preferences>): Preferences {
   };
 }
 
+function samePreferences(a: Preferences, b: Preferences) {
+  return a.theme === b.theme && a.key_hints === b.key_hints && a.page_modifier === b.page_modifier;
+}
+
 export function PreferencesProvider({ children }: { children: ReactNode }) {
   const revision = useRef(0);
   const busy = useRef(false);
@@ -41,21 +54,22 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
   const [ready, setReady] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
-  const refresh = async (signal?: AbortSignal) => {
+  const refresh = useCallback(async (signal?: AbortSignal) => {
     if (busy.current) return;
     const current = ++revision.current;
     try {
       const saved = await request<Preferences>("api/settings/appearance", undefined, "GET", signal);
       if (signal?.aborted || current !== revision.current) return;
-      confirmed.current = normalize(saved);
-      setPreferences(confirmed.current);
+      const next = normalize(saved);
+      confirmed.current = next;
+      setPreferences((now) => (samePreferences(now, next) ? now : next));
       setReady(true);
       setError("");
     } catch (cause) {
       if (!signal?.aborted && current === revision.current)
         setError(cause instanceof Error ? cause.message : "Local request failed.");
     }
-  };
+  }, []);
   useEffect(() => {
     const controller = new AbortController();
     void refresh(controller.signal);
@@ -65,7 +79,7 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
       controller.abort();
       window.removeEventListener("focus", focus);
     };
-  }, []);
+  }, [refresh]);
   useEffect(() => {
     const dark = window.matchMedia?.("(prefers-color-scheme: dark)");
     const apply = () => {
@@ -76,46 +90,48 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
     dark?.addEventListener("change", apply);
     return () => dark?.removeEventListener("change", apply);
   }, [preferences.theme]);
-  const update = async (patch: Partial<Preferences>) => {
-    if (!ready) return;
-    setPreferences((current) => ({ ...current, ...patch }));
-    ++revision.current;
-    if (busy.current) {
-      // A save is in flight: coalesce this change and send it once that save finishes.
-      queued.current = { ...queued.current, ...patch };
-      return;
-    }
-    busy.current = true;
-    setSaving(true);
-    setError("");
-    // Changes made while a save is in flight land in `queued`; read it through a function.
-    const pending = (): Partial<Preferences> | null => queued.current;
-    let next: Partial<Preferences> | null = patch;
-    try {
-      while (next) {
-        queued.current = null;
-        try {
-          const saved = await request<Preferences>("api/settings/appearance", next, "PUT");
-          confirmed.current = normalize(saved);
-          setPreferences({ ...confirmed.current, ...pending() });
-        } catch (cause) {
-          setPreferences({ ...confirmed.current, ...pending() });
-          setError(cause instanceof Error ? cause.message : "Local request failed.");
-        }
-        next = pending();
+  const update = useCallback(
+    async (patch: Partial<Preferences>) => {
+      if (!ready) return;
+      setPreferences((current) => ({ ...current, ...patch }));
+      ++revision.current;
+      if (busy.current) {
+        // A save is in flight: coalesce this change and send it once that save finishes.
+        queued.current = { ...queued.current, ...patch };
+        return;
       }
-    } finally {
-      busy.current = false;
-      setSaving(false);
-    }
-  };
-  return (
-    <PreferencesContext.Provider
-      value={{ preferences, ready, saving, error, update, refresh: () => void refresh() }}
-    >
-      {children}
-    </PreferencesContext.Provider>
+      busy.current = true;
+      setSaving(true);
+      setError("");
+      // Changes made while a save is in flight land in `queued`; read it through a function.
+      const pending = (): Partial<Preferences> | null => queued.current;
+      let next: Partial<Preferences> | null = patch;
+      try {
+        while (next) {
+          queued.current = null;
+          try {
+            const saved = await request<Preferences>("api/settings/appearance", next, "PUT");
+            confirmed.current = normalize(saved);
+            setPreferences({ ...confirmed.current, ...pending() });
+          } catch (cause) {
+            setPreferences({ ...confirmed.current, ...pending() });
+            setError(cause instanceof Error ? cause.message : "Local request failed.");
+          }
+          next = pending();
+        }
+      } finally {
+        busy.current = false;
+        setSaving(false);
+      }
+    },
+    [ready],
   );
+  const reload = useCallback(() => void refresh(), [refresh]);
+  const value = useMemo(
+    () => ({ preferences, ready, saving, error, update, refresh: reload }),
+    [preferences, ready, saving, error, update, reload],
+  );
+  return <PreferencesContext.Provider value={value}>{children}</PreferencesContext.Provider>;
 }
 
 export function usePreferences() {

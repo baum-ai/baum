@@ -68,7 +68,7 @@ bundle types to resolve anchors and carry history; `bundle` never imports
 | `decisions` | the decisions an agent session made: the decision schema, the cleaned transcript a model reads, the strict reply schema and parser, the citation validator, and the published extraction prompt |
 | `features` | grouping work into features: the assigner, summarizer and consolidation model calls with their published prompt versions, decision attribution, status and the large-update rule; [rules](features/README.md) |
 | `validation/commitlabel` | deterministic validation-run commit labels from supplied session events and verified Git objects; [rule and limits](validation/commitlabel/README.md) |
-| `redact` | the one redaction engine used for input, output and logs |
+| `redact` | the one redaction engine used for input, output and logs; `redact.Shared` compiles it once per process (again only if `redact.Config` changes), and `redact.Memo` remembers masked text by a salted hash of its input, for text masked again unchanged, such as the live sessions' lines (`transcript.Renderer.Mask`) every second |
 | `githubapi` | GitHub API plumbing every host shares: the GraphQL transport that turns primary and secondary rate limits into a typed error with the reset time, and GitHub's `BigInt` and `GitObjectID` scalars |
 | `hosted/...` | the hosted service's client: the `baumcli` commands, the `apiclient` HTTP client and its protocol handshake, the `traceupload` archive builder, and the committed agent-hook vocabulary in `agenthooks`, which the hosted onboarding pull request writes too, and `agentplugins`, which installs user-scoped marketplace plugins through native agent CLIs |
 
@@ -1268,7 +1268,7 @@ The server has ten API routes and an asset fallback:
 
 | Route | Serves |
 | --- | --- |
-| `GET /api/document` | the document's bytes exactly as read, except that a hunk without a `github_url` gets the derived one (see "Hunk evidence in saved documents"), `no-store` |
+| `GET /api/document` | the document's bytes exactly as read, except that a hunk without a `github_url` gets the derived one (see "Hunk evidence in saved documents"), with a strong `ETag` of those bytes and `no-cache`: a request whose `If-None-Match` names the current one is a 304 without a body |
 | `GET /api/events` | a Server-Sent Events stream, always valid, so the app stays connected; pings keep it open and, with `--watch`, a `document` event follows each change |
 | `GET /api/health` | `{"status":"ok"}` |
 | `GET /api/sessions` | the sessions on this machine linked to the document's pull request, as below; `no-store` |
@@ -1373,6 +1373,19 @@ documents"). The app fills them in from `GET /api/patch?path=<path>`, answered b
   file, the sample) is asked for, is 404; one the store fails to read is 500.
   The daemon's app resolves `version` to the stored document itself and
   hands the request on without it.
+- The daemon's app keeps one viewer per clone and stored document
+  (`internal/uiserver/documents.go`) for `/api/document` and the routes
+  above. A request finds it by the document's store revision
+  (`store.Revision`, see "Running locally") without reading the document; only
+  a revision it has not seen, or a store that cannot vouch for one, reads and
+  hashes the document. A viewer is built once, outside the cache's lock:
+  concurrent requests for it wait for that build, and other documents do not.
+  A viewer unused for 10 minutes is closed, as are the least recently used
+  ones beyond 16 viewers or 256 MiB of served documents and kept answers
+  (`viewserver.Server.CachedBytes`), checked when a viewer is added and
+  whenever a request releases one, since its answers may have grown; the one
+  asked for last stays whatever its size. A viewer evicted while requests hold it answers them and closes
+  when the last one ends.
 - Only a `path` that is the `path` of a hunk in `index.hunks` of that version
   is answered; anything else, including a missing, empty or
   over-long (4096 bytes) `path`, is 404 and runs nothing. A repeated `path`
@@ -1690,13 +1703,16 @@ inside the clone and the session store overrides, and does this:
    ignores case on Windows. The answer is the same from the main checkout and
    from any worktree. Each Entire session is mapped once, from the newest
    checkpoint holding it: one `git cat-file --batch` reads the metadata of every
-   checkpoint in the window and another the metadata of their sessions, and
+   checkpoint in the window not read before (metadata is remembered by the
+   checkpoint's tree) and another the metadata of their sessions, and
    only the checkpoints holding the newest snapshot of a session no
    home-directory store has are read whole. A newest snapshot that cannot be
    mapped, or that carries no transcript (Entire sometimes writes a checkpoint
    with only metadata and the prompt), gives way to the next newest; a
    snapshot is not necessarily fuller than the one before it. Sessions and those checkpoints are mapped up to eight at
-   a time. It then
+   a time (two in a background pass, `sessions.WithBackground`), and the
+   transcript bytes decoded at once are bounded by a 256 MiB budget
+   (`sessions.DefaultDecodeBudgetBytes`; a larger session runs alone). It then
    projects each into a
    `linkage.RunCandidate` as the hosted resolver does: `RunID` the session id,
    `Agent` the vendor that ran, `Source` the store it came from, branches, files
@@ -1942,15 +1958,70 @@ a process reuses what it built:
     time, the worktrees, the Codex thread index and the Entire refs;
   * what each checkout has checked out: `HEAD` and the branch's commit. Index
     rewrites from `git status` are ignored.
+* **Unchanged sessions.** When any of that changed, which in a busy clone is
+  nearly always, because some agent is writing a session in the window, only
+  the sessions that changed are mapped. The process keeps a digest of each
+  session it mapped (`locallink.sessionDigests`, up to
+  `locallink.DefaultDigestBytes`, 64 MiB), keyed by `sessions.Session.Key`:
+  each file's path, size and modification time, or for an Entire session the
+  clone and the tree of its checkpoint, which names its content. A session
+  with a file modified in the last 2 seconds, or in the future, gets no key:
+  a same-size rewrite within one modification-time tick would look
+  unchanged. Such a session is mapped and not reused until it is older.
+  `Discovery.LoadReusing` skips a session whose digest is held. The digest holds what linking reads
+  from the graph: whether it is a generation run, whether it has a
+  transcript, the top-level session's start, end and branch, and the
+  `sessioncorrelate` evidence. For each linked session it also holds the
+  evidence that was built for it, with what that evidence depended on
+  besides the transcript:
+  * the caps;
+  * the session's id, path and vendor, and for Codex the thread names it
+    looked up in the thread index;
+  * where each absolute path it touched lands among the clone's checkouts.
+    These are replayed against the current checkouts, so an unrelated new
+    worktree changes nothing;
+  * the answers about which paths its commands name exist in the checkout or
+    the pull request.
+
+  Each of these is checked again, so the evidence is the same as a full
+  rebuild. A linked session whose evidence no longer fits is mapped by
+  loading again, refusing its digest. The other sessions are still reused.
+  If an unmapped session's digest is gone by the time linking reads it, the
+  build loads once more and maps everything. Choosing each Entire session's
+  snapshot uses small per-checkpoint facts that `sessions` remembers by
+  clone and tree. A checkpoint is read whole again, through the checkpoint
+  cache below, only when a session chosen from it has to be mapped.
 * **Closed and merged pull requests.** A refresh of a pull request that is
   closed or merged sets `EvidenceRequest.Frozen`. Its sessions are read once in
   the process, then kept for the same commits without looking at the stores
   again.
 * **One background pass.** A pass that refreshes several pull requests holds
   `sessions.HoldMappings`, so the mapping cache keeps up to
-  `sessions.HeldMapCacheBytes` (256 MiB) of transcripts while the pass runs and
-  each session is decoded once in it. When the pass ends, the cache shrinks
-  back to its 64 MiB limit.
+  `sessions.HeldMapCacheBytes` (256 MiB) of mapped graphs while the pass runs
+  and each session is decoded once in it. When the pass ends, the cache
+  shrinks back to its 64 MiB limit. Both limits count the graphs' estimated
+  memory, about a sixth of their transcripts' size.
+* **Growing transcripts.** A session an agent is still running changes on
+  every append, so none of the above applies to it. For each Claude Code
+  transcript and Codex rollout changed in the last hour, `sessions.Map` keeps
+  the decoded lines and the byte offset they end at, and decodes only what was
+  appended since; the mapper still runs over every line. A file that shrank,
+  was replaced or had its earlier bytes rewritten is decoded whole. The lines
+  kept leave out the raw record copies the mapper does not read, and are
+  bounded by `sessions.DefaultTailCacheBytes` (64 MiB of estimated memory). The
+  [sessions README](sessions/README.md#incremental-decoding) has the details.
+* **Entire checkpoints.** A refresh reads the clone through one `gitlocal`
+  repository: the caller's (`EvidenceRequest.Repo`, which the daemon's
+  refresh and review jobs set), or one it opens, shared by session loading,
+  the checkpoint trailers' lookups and the observed-commit lookup. The Entire
+  refs are resolved once, by `sessions.Discover`. Checkpoint listings, dates
+  and metadata are remembered per clone by the commits and trees that name
+  them (`entire.Listing`), so a refresh whose checkpoint branch and refs did
+  not move runs no git for them, and a branch that moved forward is dated
+  from its new commits alone. Checkpoints read whole are kept, as the
+  sessions they map to, in a cache keyed by their tree and bounded at 64 MiB
+  of checkpoint bytes (`sessions.DefaultCheckpointCacheBytes`). See the
+  [sessions README](sessions/README.md#entire-checkpoint-reuse).
 
 Callers get deep copies of reused evidence, because they cap and redact it in
 place. A reused answer prints no warnings.
@@ -2363,7 +2434,15 @@ evidence in saved documents").
 fenced by both its version number and exact previous bytes, preserving
 metadata and every replaced version. Concurrent refreshes cannot overwrite a
 document prepared against older evidence, and a refresh never replaces a newer
-version. A running generation does not block refresh: live facts refresh
+version. A refresh whose document differs from the stored one only in
+`review.evidence_refreshed_at` (`review.RefreshChanged`, which compares the
+whole documents as canonical JSON with that field blanked) writes nothing: it
+checks the same fence with a read and leaves the stored bytes, the summaries
+row and the store file as they were. The stored `evidence_refreshed_at` is
+therefore the time of the last refresh that changed the document, not of the
+last read, which the viewer shows as when the evidence was refreshed; the
+scheduler keeps its own read times (see "Free background synchronization").
+A running generation does not block refresh: live facts refresh
 independently, as in the hosted service. `Put` publishes metadata and document
 in one transaction only if the previous version the caller read is still
 latest, so concurrent runs cannot assign a different predecessor to a completed
@@ -2499,14 +2578,21 @@ the counters that moved in that window, largest first.
 `internal/workstats` keeps those counters. Each is an atomic add, so they are
 always on. They count:
 
-* calls to `sessions.Map`, its decodes by source and the bytes decoded, and
-  hits on its cache;
+* calls to `sessions.Map`, its decodes by source, the bytes and lines
+  actually decoded (only the appended part of a transcript that grew), hits on
+  its cache, transcript reads continued from an offset or from the start, and
+  why a kept transcript was read from its start again;
 * git processes in total and by subcommand;
 * background passes and pull request refreshes;
 * session loads by entry point;
 * analytics refreshes, review index builds and live transcript builds.
 
-Gauges report state such as the size of the session cache.
+Gauges report state such as the size of the session caches: the estimated
+memory of the mapped graphs kept (`sessions.map_cache.bytes`) and of the
+decoded transcript lines kept (`sessions.tail_cache.bytes`), each beside the
+transcript bytes behind it (`.transcript_bytes`). Compare them with the heap
+profile, where kept lines are allocated in the
+transcript decoders and graphs in the session mappers.
 
 The daemon serves the counters at `GET /api/debug/stats` and Go's runtime
 profiles at `GET /api/debug/pprof/` (`profile?seconds=N`, `trace?seconds=N`,
@@ -2678,7 +2764,7 @@ See its [README](internal/analytics/README.md).
 
 ## Durable desktop reading state
 
-`internal/uistate` stores the Inbox's seen/cleared record and snoozes, and the
+`internal/uistate` stores the Inbox's seen/cleared record, snoozes and archives, and the
 walkthrough's seen stops and draft comments, in `app.sqlite`'s `ui` document
 bucket. The records survive changing loopback origins and fresh webviews;
 localStorage is used only for presentation choices. Walkthrough keys include
@@ -2713,7 +2799,18 @@ providers. The server is hosted only by the daemon (see "Local daemon"),
 which builds every provider, the generation runner included, once it owns
 the per-user lock. SSE has a bounded
 in-memory event log; reconnect replays notifications or asks for an index reset.
-It does not persist a second review index.
+It does not persist a second review index. An event's data is at most 16 KiB.
+
+The generation queue's changes go out as two kinds. A `progress` event
+`{"job": <job>}` announces anything but a running job's usage: queued, started,
+a phase, a draft, a transcript, an end. A report that changes only usage (calls,
+tokens, repairs, accounting, cost; `jobs.Queue.SetUsageChanged`), which a
+running job sends every two seconds, is a `job` event
+`{"job": {id, state, phase, calls, tokens, repairs, actual_cost_usd,
+cost_reason, accounting, updated_at}}`, so listeners that read everything again
+on `progress` (the app, the desktop tray) are not woken by it. Data over the
+limit, a long run's accounting or a large job, goes out as `progress` with `{}`
+instead, so a change is never dropped.
 
 The stream also carries `notice` events for the desktop app's notifications
 (`internal/notices`), which the web app ignores: `{"kind","repository","pr",
@@ -2757,11 +2854,11 @@ from the cached index, the job queue, the stack groups and the saved `inbox`
 ui-state, with the app's queue rules: each open pull request asking for the
 user's review, and each of their own with something to fix, merge or update
 and no fix running, once across clones, less stacked pull requests that must
-wait to merge and snoozed ones. Saved inboxes and their badge switches play
+wait to merge and snoozed or archived ones. Saved inboxes and their badge switches play
 no part, as in the app's Inbox total.
 
 `GET /api/inbox` answers the same queue with which saved inboxes hold each
-open pull request (`{count, items: [{key, kind, fixing, snoozed, inboxes}],
+open pull request (`{count, items: [{key, kind, fixing, snoozed, archived, inboxes}],
 inboxes: [{id, query, count}]}`), matched with `internal/prfilter`, the Go
 twin of the app's filter language; `?query=Q` answers which pull requests a
 query not saved yet holds (`{query, problem, matches}`). The app reads it with
@@ -2807,11 +2904,32 @@ uses a row only while its version is the latest and its length equals
 or a missing table (an old store, or a read-only open before any write-open
 by this version), falls back per row to extracting from the document. A
 read-only open never writes. When every row is current, Snapshot parses no
-document body. Generation publishes
+document body.
+Document revisions name each version's stored bytes without reading them, so
+a reader can tell a document it has already parsed from one rewritten since:
+`RefreshCurrent` and `CompleteCurrent` rewrite the latest version in place,
+often to the same length within one file-time tick. The `document_revisions`
+table holds a random 64-bit revision per version, which triggers on
+`versions` (any insert or update, and delete) renew in the writer's
+transaction, an older binary's included. Trigger names carry a hash of their
+SQL; a write-open that does not find exactly the current ones replaces them
+and renews every revision in one transaction. `Latest` and `Get` return the
+revision read with the document (`Version.Revision`), and `Revision` the
+version and revision alone. Without the table or exactly the current
+triggers (a store no write-open of this version has seen, read without
+writing) the revision is 0, which names nothing. Generation publishes
 lease-based run status independently of immutable successful version history;
 expired leases are read as interrupted without mutating stores during indexing.
 Once `Store.Put` commits a version, generation succeeds: failing to record the
 run's outcome afterwards is only a warning, and the lease later expires.
+
+`GET /api/index` and `GET /api/prs` revalidate: the JSON of a cached snapshot is
+encoded once per cache version and `history` flag (`/api/prs`: once per
+discovery `Revision` of the picked repositories, until a snapshot reaches its
+next poll), answered with a strong `ETag` (digest of the bytes), `Cache-Control:
+no-cache` and 304 for a matching `If-None-Match`. The app fetches them with
+`cache: "no-cache"` so the webview sends the validator; every other endpoint
+stays `no-store`.
 
 `Service.Build` is uncached: each call probes every clone with git, reads the
 discovery cache and opens every store. The daemon reads it through one
@@ -2850,6 +2968,20 @@ or another reader replaced it does the watcher read the index, and it publishes
 `index` only when the snapshot's JSON hash differs from the last one it
 published. The first read publishes.
 
+With no event stream connected the watcher builds nothing, since nobody would
+be told: a moved fingerprint still invalidates the cache, so a reader of
+`/api/index` never gets a stale snapshot, and the read it owes happens when a
+stream connects (which wakes the watcher). The desktop shell's tray keeps its
+own `/api/events` stream open (with reconnect), so while the desktop app runs
+there is always a subscriber and this idle skip rarely applies; it covers a
+daemon running without the shell. What helps while the app runs is the next
+point. A run's 30-second lease
+renewal (`store.HeartbeatRun`) rewrites `versions.sqlite` but changes nothing
+the index shows, so the fingerprint looks through the latest renewal made by
+this process (`store.SeenThroughHeartbeats`: the file stamp the renewal left
+maps back to the one before it, and any other write still moves it). A
+renewal by another process, such as the CLI, still moves the fingerprint.
+
 The fingerprint reads registry rows rather than `app.sqlite`'s file times or
 `PRAGMA data_version`: most daemon stores (jobs, chat, UI state, analytics,
 automatic generation, decisions) open their own connections, and
@@ -2880,6 +3012,10 @@ whether the app offers a fix.
 Missing state is unknown; unresolved counts are nullable and marked as lower
 bounds when threads exceed the cap. Comment-only reviews use the latest 100
 reviews as a fallback to GitHub's review decision and opinionated reviews.
+`review_required` preserves whether GitHub's `reviewDecision` is
+`REVIEW_REQUIRED`, independently of recorded reviews. The Inbox uses that flag
+to name a required review; an otherwise unexplained blocked merge says
+"Blocked on GitHub". A missing approval alone is not a review requirement.
 The user's teams and per-author repository permissions still use conditional
 REST requests. Truncated review requests fail the refresh rather than concealing
 an automatic-generation trigger. All requests refuse redirects.
@@ -2953,8 +3089,12 @@ refuses a pull request whose head moved. Both accept only picked repositories
 (unpicked is `404`), send each document once with no retry, and map GitHub's
 errors to `{code, message}`: `head_moved` and `conflict` and `not_open` are
 `409`, `blocked` (required checks, reviews, branch protection) and
-`method_not_allowed` are `422`, `forbidden` is `403`, anything else `502`. After
-a merge GitHub accepted, the daemon records it (`discovery.Service.Merged`:
+`method_not_allowed` are `422`, `forbidden` is `403`, anything else `502`.
+Permission refusals retain GitHub's explanation and direct the user to the
+connection's permissions and scopes. A missing workflow scope explains that
+workflow changes need workflow access, which is opt-in, and offers merging on
+GitHub or Settings' Reconnect with workflow access.
+After a merge GitHub accepted, the daemon records it (`discovery.Service.Merged`:
 the pull request leaves the cached open ones and is observed `MERGED` at the
 merged head, with no read) and publishes an index change, so the inbox shows
 it merged at once rather than when the background refresh next reads it. It
@@ -3660,7 +3800,10 @@ backing off the repository's polls; a rate-limited one stays due and goes
 first after the reset, so a small renewed budget still reaches every pull
 request. `Run` passes every 30 seconds, or sooner when a repository is due
 sooner, as a settling one is. Linked worktrees are deduplicated by common git directory. No-review PRs fetch only a header and checks;
-saved reviews use `refresh.Refresher` and `Store.RefreshCurrent`'s exact-byte CAS.
+saved reviews use `refresh.Refresher` and `Store.RefreshCurrent`'s exact-byte CAS,
+which writes nothing when only the refresh time changed. A read counts as the
+last read whether or not it wrote, so an unchanged pull request is not due
+again until its evidence is old.
 After a pass, `Service.Retain` reconciles the retained review refs of each
 due common git directory (see "Retained review commits").
 `Service.RefreshNow` refreshes named PRs of one clone the same way outside
@@ -3682,7 +3825,7 @@ Retries and repairs append reports; partial or absent reports are marked
 `Unreported`. While a run is in progress, the backend reports its calls' usage
 so far (`agent.Request.Usage`: Claude Code per stream event, Codex per turn,
 the Anthropic API per response), and the queue adds it to the accounting it
-publishes, at most every two seconds.
+publishes, at most every two seconds, as `job` events (see "Authenticated local application host").
 Queue progress is saved before SSE publication and snapshots detach mutable
 accounting. Existing version records are never backfilled. Pricing sums
 individually attributable model reports and estimates the rest at the lowest
@@ -3851,7 +3994,9 @@ shell: there `shellenv.Resolve` returns the inherited environment with the
 `PATH` a new logon of the user gets, the system `Path` and then the user's
 from the registry (`CreateEnvironmentBlock`), so `gh` and agent CLIs
 installed after the starting process are found. The log records the shell, the
-outcome and the kept variable names, never values. `backend_paths` remains the
+outcome, how long the shell took and the kept variable names, never values;
+the `daemon ready` line records how long the daemon took from holding its
+lock to serving, shell included, since it listens only afterwards. `backend_paths` remains the
 way to name a backend executable explicitly.
 
 Some shells set an agent up only for interactive use (fnm or nvm in
@@ -4030,12 +4175,26 @@ report to the daemon; the hook side is in `internal/hookcli` (see its
   start hooks without one), and `processes`, the hook's ancestors, parent
   first, as `pid`, `start` (`/proc` starttime on Linux, `kern.proc.pid` start
   time on macOS) and `name`, at most 24 (see "Focus" under "Live sessions").
-  Git's `post-commit` and `pre-push` carry `terminal` with `processes` alone
-  (`focus.Ancestors`), so live sessions can tell which agent committed or
-  pushed, and a `post-commit` carries `git.head` and `git.branch` (empty when
-  detached), the commit and the branch it was made on, read with one `git
-  rev-parse` as the hook ran (see "Commits and pushes" under "Live
-  sessions").
+  Git's `post-commit`, `post-rewrite` and `pre-push` run from dispatchers the
+  daemon installs in registered clones (`internal/githooks`: they chain a
+  hook the clone had, saved as `<hook>.pre-baum`, are skipped in a clone
+  with `core.hooksPath` and are taken out again for a clone that sets `git
+  config baum.hooks false`, which also makes `--check-dispatcher` decline, or
+  leaves the registry; where the repository uses Entire (`.entire/settings.json` in
+  the default branch's tree, or checked out in any worktree, or git cannot
+  say), legacy dispatchers that run Entire's hooks are left, elsewhere the legacy `commit-msg` and
+  `prepare-commit-msg` ones are retired). They carry the session
+  their agent names in its environment (`CLAUDE_CODE_SESSION_ID` becomes
+  `agent` `claude-code` and `session.id`, with `session.agent_pid` from
+  `CLAUDE_PID`, only when that process is among the ancestors and is named like
+  the agent; no other
+  variable is kept) and `terminal` with `processes`
+  alone (`focus.Ancestors`), so live sessions can tell which agent committed or
+  pushed when no session is named. A `post-commit` carries `git.head` and
+  `git.branch` (empty when detached), the commit and the branch it was made
+  on, read with one `git rev-parse` as the hook ran, and a `post-rewrite` its
+  `amend` or `rebase` argument and the `old new` pairs in `git.lines` (see
+  "Commits and pushes" under "Live sessions").
   `Event.Bound` cuts fields at character boundaries and keeps only
   `TerminalEnv`, then trims Git lines, drops `terminal` and halves the longest
   fields until the escaped encoding fits one control line. The daemon ignores fields it does not know and records
@@ -4256,8 +4415,9 @@ replace it.
   waits at its prompt (a finished turn, or for Claude Code gone quiet) and
   `endable` when it waits or went quiet, each only where baum can reach its
   agent (`Transcripts.Senders`, `Transcripts.Enders`), and `endable` only
-  where its agent's end check (`Transcripts.EndChecks`, `ClaudeExit.Check`)
-  says ending would go through, so End is never offered to fail. `POST
+  where its agent's end check (`Transcripts.EndChecks`, begun once per list,
+  `ClaudeProcesses.EndCheck`) says ending would go through, so End is never
+  offered to fail. `POST
   api/live-sessions/{agent}/{id}/message` with `{"text"}` (at most 10 000
   characters) puts it into the session: Claude Code's through its cross-session inbox
   (`ClaudeInbox`, one JSON line on the socket its
@@ -4282,7 +4442,17 @@ replace it.
   `pidDomain` against this pid namespace on Linux, `ps -o lstart=` on macOS),
   since an entry a killed session left can name a reused pid; a session with
   no such process is recorded ended (`Tracker.Gone`), one baum cannot confirm
-  is left alone. The session's `last_prompt` is the latest thing the user
+  is left alone. The list's end check and the tracker's `Alive`
+  (`ClaudeProcesses`, shared by both) read the registry once per look for
+  every session they ask about, and trust a process they confirmed while
+  `kill(pid, 0)` finds it and its entry still names the same pid, start and
+  namespace, for at most `ReconfirmEvery` (30 seconds), so a listing forks no
+  `ps` per session each second; a process is gone the moment its pid is, and
+  only a killed session whose pid another process took between two looks can
+  be trusted that long. Sending and ending confirm the process themselves
+  (`FindClaude`), with no cache, just before they reach it. On Linux the
+  daemon's pid namespace and machine id are read once.
+  The session's `last_prompt` is the latest thing the user
   wrote to it: a prompt, a message the app sent (which Claude Code records as
   a peer's meta line), an answer to its question (`toolUseResult.answers`) or
   a message sent while it worked (a `queued_command` attachment, read from the
@@ -4307,8 +4477,8 @@ replace it.
   ignored. A late-delivered older event never moves `last_activity_at` back,
   but an older start can move `started_at` earlier. A session silent for
   `DropAfter` (2 hours) is dropped, unless `Tracker.Alive` confirms its agent
-  still runs (a Claude Code session's process, as `FindClaude` finds it; no
-  other agent registers one), which `Sweep` asks again each time, so one
+  still runs (a Claude Code session's process, as `ClaudeProcesses` finds it;
+  no other agent registers one), which `Sweep` asks again each time, so one
   waiting hours for its user stays and one whose agent exited without its end
   event goes within a minute. An ended one goes `EndedFor` (24 hours) after
   its end, so the Sessions page can list what ended recently. At most
@@ -4366,15 +4536,40 @@ replace it.
   reuses the branch, head, upstream and remotes git last gave, for at most
   10 minutes, and matches them against the current discovery cache, so a
   newly opened pull request still links.
+
+  The cache is decoded again only when discovery changed it. `Resolver`
+  keeps each repository's last decoded snapshot with the
+  `discovery.Revision` read before it. The revision is read from memory:
+  the credential's partition, the identity epoch, whether the last poll
+  validated the cache, and how many times the daemon's discovery service
+  wrote it. Only that service writes the cache. Every session, commit and
+  push of a repository then links against one decoded snapshot. A snapshot
+  whose next poll is due counts as stale, as `Cached` would read it. An
+  ended session, or a restored one with no directory, is relinked from its
+  recorded evidence (`Relink`) each sweep. Once a relink leaves it and its
+  commits and pushes as they were, the tracker keeps the generation of each
+  repository involved: its revision, and whether it was stale. Later sweeps
+  skip the session while those generations hold. A write of the cache, a new
+  validation or a due poll changes the generation, so the next sweep relinks
+  it, within the same 30 seconds as before.
 - **Commits and pushes.** An agent often works away from its directory: it
   commits in another worktree of the clone, or creates a branch, pushes it and
   checks its directory back out on `main`. The tracker also follows Git's
-  `post-commit` and `pre-push` (one that let the push go) events, whose
-  `terminal.processes` are the hook's ancestors: the session whose agent is
-  the nearest of them (the parent its own start and prompt events recorded,
-  matched by `pid` and `start`) made the commit or push; a process two open
-  sessions name is neither's, and Git run by no session's agent belongs to
-  none. A commit (`LinkCommit`) is the commit and branch its hook recorded,
+  `post-commit`, `post-rewrite` and `pre-push` (one that let the push go)
+  events. A hook whose environment names a session of a known agent
+  (`agent`, `session.id` and an `agent_pid` among its ancestors) made the
+  work of that session, unless a tracked session's agent is nearer the hook
+  than `agent_pid` (an agent the named one started), which made it; if the tracker holds no entry for it (it ended and was
+  dropped, or was not seen), the work is still looked up (`LinkCommit`,
+  `LinkPush`) and recorded as an observation, without a session to show.
+  Otherwise `terminal.processes` are the hook's ancestors: the session whose
+  agent is the nearest of them (the parent its own start and prompt events
+  recorded, matched by `pid` and `start`) made the commit or push; a process
+  two open sessions name is neither's, and Git run by no session's agent
+  belongs to none. A `post-rewrite` records each new commit of its `old new`
+  lines (a malformed line, and one whose old and new commits are equal, a
+  commit a rebase replayed unchanged, is skipped), unless the session already recorded
+  that commit from the `post-commit` of the same amend or pick. A commit (`LinkCommit`) is the commit and branch its hook recorded,
   with the clone's remotes and the branch's upstream (`prlink.At`), never what
   the worktree has checked out by the time the daemon looks, so a branch
   switched or a worktree reused right after does not move it; a commit without
@@ -4393,7 +4588,7 @@ replace it.
   state file keeps those looked up (repository, branch, commit, pull request
   and event id, no directory), so a restart after the record rotated keeps
   them. Independently, `commitattribution` retains all resolved session-owned
-  post-commit and pre-push observations in the application database, with the
+  post-commit, post-rewrite and pre-push observations in the application database, with the
   repository, exact SHA, agent, session, kind, event id and observation time.
   They have no live-session TTL. Pending writes are retried and retained in
   the recovery file, including after the live session expires; unsaved work

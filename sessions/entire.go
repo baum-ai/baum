@@ -3,14 +3,17 @@ package sessions
 import (
 	"context"
 	"fmt"
+	"io/fs"
 	"runtime"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"golang.org/x/sync/errgroup"
 
 	"github.com/baum-ai/baum/internal/gitlocal"
+	"github.com/baum-ai/baum/internal/workstats"
 	"github.com/baum-ai/baum/sessions/collector"
 	"github.com/baum-ai/baum/sessions/collector/entire"
 	"github.com/baum-ai/baum/sessions/entirecheckpoint"
@@ -35,13 +38,17 @@ type mapped struct {
 func mapAll(ctx context.Context, found []collector.Session) ([]mapped, error) {
 	out := make([]mapped, len(found))
 	group, groupCtx := errgroup.WithContext(ctx)
-	group.SetLimit(maxParallel())
+	group.SetLimit(parallelFor(ctx))
 	for i, s := range found {
 		group.Go(func() error {
 			if err := groupCtx.Err(); err != nil {
 				return err
 			}
-			out[i].graph, out[i].notes, out[i].err = Map(s)
+			graph, notes, err := mapCtx(groupCtx, s)
+			if ctxErr := groupCtx.Err(); ctxErr != nil {
+				return ctxErr
+			}
+			out[i].graph, out[i].notes, out[i].err = graph, notes, err
 			return nil
 		})
 	}
@@ -53,11 +60,21 @@ func mapAll(ctx context.Context, found []collector.Session) ([]mapped, error) {
 
 // checkpointStore is the clone's checkpoints, in the per-checkpoint refs and
 // the checkpoint branch, read in a private repository with no remote, so a
-// partial clone's missing objects are reported, never downloaded.
+// partial clone's missing objects are reported, never downloaded. Listings,
+// dates and metadata come through the clone's entire.Listing, and whole
+// reads through the checkpoint cache, so what did not move is not read again.
 type checkpointStore struct {
-	repo    *gitlocal.Repo
+	repo *gitlocal.Repo
+	// owned is whether Close closes repo: a shared one is its owner's.
+	owned   bool
+	root    string
 	objects string
 	store   entire.Store
+	listing *entire.Listing
+
+	// trees is each checkpoint's tree, by id, once listed; nil until then.
+	treesMu sync.Mutex
+	trees   map[string]string
 }
 
 // openCheckpoints opens the checkpoints of the clone at root; ok is false when
@@ -67,14 +84,64 @@ func openCheckpoints(ctx context.Context, root string) (store *checkpointStore, 
 	if err != nil || !ok {
 		return nil, false, err
 	}
-	repo, err := gitlocal.Open(ctx, root, gitlocal.Options{})
-	if err != nil {
-		return nil, false, fmt.Errorf("opening the clone to read Entire checkpoints: %w", err)
-	}
-	return &checkpointStore{repo: repo, objects: repo.PrivateDir(), store: resolved}, true, nil
+	store, err = newCheckpointStore(ctx, root, resolved, nil)
+	return store, err == nil, err
 }
 
-func (s *checkpointStore) Close() { _ = s.repo.Close() }
+// newCheckpointStore reads resolved, the stores of the clone at root, in
+// shared's private repository, or in one of its own when shared is nil.
+func newCheckpointStore(ctx context.Context, root string, resolved entire.Store, shared *gitlocal.Repo) (*checkpointStore, error) {
+	repo, owned := shared, false
+	if repo == nil {
+		opened, err := gitlocal.Open(ctx, root, gitlocal.Options{})
+		if err != nil {
+			return nil, fmt.Errorf("opening the clone to read Entire checkpoints: %w", err)
+		}
+		repo, owned = opened, true
+	}
+	return &checkpointStore{
+		repo: repo, owned: owned, root: root, objects: repo.PrivateDir(), store: resolved, listing: listingFor(root),
+	}, nil
+}
+
+func (s *checkpointStore) Close() {
+	if s.owned {
+		_ = s.repo.Close()
+	}
+}
+
+// list lists the store's checkpoints and remembers each one's tree.
+func (s *checkpointStore) list(ctx context.Context) ([]entire.Checkpoint, error) {
+	listed, err := s.listing.List(ctx, s.objects, s.store)
+	if err != nil {
+		return nil, err
+	}
+	trees := make(map[string]string, len(listed))
+	for _, checkpoint := range listed {
+		trees[checkpoint.ID] = checkpoint.TreeOID
+	}
+	s.treesMu.Lock()
+	s.trees = trees
+	s.treesMu.Unlock()
+	return listed, nil
+}
+
+// tree is the tree of the checkpoint with the canonical id, "" when it is
+// not known.
+func (s *checkpointStore) tree(ctx context.Context, id string) string {
+	s.treesMu.Lock()
+	trees := s.trees
+	s.treesMu.Unlock()
+	if trees == nil {
+		if _, err := s.list(ctx); err != nil {
+			return ""
+		}
+		s.treesMu.Lock()
+		trees = s.trees
+		s.treesMu.Unlock()
+	}
+	return trees[id]
+}
 
 // readOutcome is one checkpoint read whole and mapped.
 type readOutcome struct {
@@ -82,25 +149,51 @@ type readOutcome struct {
 	err     error
 }
 
-// read reads one checkpoint whole and maps every session it records.
+// read reads one checkpoint, named by its canonical id, whole and maps every
+// session it records. An unchanged checkpoint read before comes from the
+// checkpoint cache.
 func (s *checkpointStore) read(ctx context.Context, id string) readOutcome {
+	tree := s.tree(ctx, id)
+	key := checkpointKey(s.root, tree)
+	if tree != "" {
+		if outcome, ok := checkpointReads.get(key); ok {
+			workstats.Inc("sessions.entire.reads_cached")
+			return outcome
+		}
+	}
+	workstats.Inc("sessions.entire.reads")
+	release, err := decodeBudget.acquire(ctx, checkpointReadBytes)
+	if err != nil {
+		return readOutcome{err: err}
+	}
+	defer release()
 	fsys, err := entire.Read(ctx, s.objects, s.store, id)
 	if err != nil {
 		return readOutcome{err: err}
 	}
+	outcome, cost := parseCheckpoint(fsys)
+	if tree != "" {
+		checkpointReads.put(key, outcome, cost)
+	}
+	return outcome
+}
+
+// parseCheckpoint parses and maps an exported checkpoint, and says what
+// keeping the outcome costs.
+func parseCheckpoint(fsys fs.FS) (readOutcome, int64) {
 	parsed, err := entirecheckpoint.ParseCheckpoint(fsys)
 	if err != nil {
-		return readOutcome{err: err}
+		return readOutcome{err: err}, checkpointErrorCost
 	}
 	results, _, err := entiresession.Build(parsed)
-	return readOutcome{results: results, err: err}
+	return readOutcome{results: results, err: err}, max(checkpointBytes(fsys), checkpointErrorCost)
 }
 
 // readAll reads the checkpoints ids names, several at once.
 func (s *checkpointStore) readAll(ctx context.Context, ids []string) (map[string]readOutcome, error) {
 	outcomes := make([]readOutcome, len(ids))
 	group, groupCtx := errgroup.WithContext(ctx)
-	group.SetLimit(maxParallel())
+	group.SetLimit(parallelFor(ctx))
 	for i, id := range ids {
 		group.Go(func() error {
 			if err := groupCtx.Err(); err != nil {
@@ -141,14 +234,18 @@ type pick struct {
 // mapped, or that carries no transcript (Entire sometimes writes only the
 // metadata and the prompt), gives way to the next newest; a checkpoint whose
 // metadata cannot be read is read whole.
-func loadEntire(ctx context.Context, root string, opts Options, native map[string]bool) ([]Session, string, []Failure, error) {
-	store, ok, err := openCheckpoints(ctx, root)
+//
+// A checkpoint read before in the process is not read again to choose the
+// snapshot (see snapshotPlan.load), and a chosen snapshot whose Key reuse
+// accepts is returned unmapped.
+func loadEntire(ctx context.Context, root string, d *Discovery, opts Options, native map[string]bool, reuse Reuse) ([]Session, string, []Failure, error) {
+	store, ok, err := d.checkpointStore(ctx, root)
 	if err != nil || !ok {
 		return nil, "", nil, err
 	}
 	defer store.Close()
 	commit := store.store.Branch
-	checkpoints, err := entire.List(ctx, store.objects, store.store)
+	checkpoints, err := store.list(ctx)
 	if err != nil {
 		return nil, commit, nil, err
 	}
@@ -157,7 +254,7 @@ func loadEntire(ctx context.Context, root string, opts Options, native map[strin
 	// cannot be dated, all are considered.
 	var written map[string]time.Time
 	if !opts.Since.IsZero() {
-		if written, err = entire.Touched(ctx, store.objects, store.store); err != nil {
+		if written, err = store.listing.Touched(ctx, store.objects, store.store); err != nil {
 			written = nil
 		}
 	}
@@ -168,7 +265,7 @@ func loadEntire(ctx context.Context, root string, opts Options, native map[strin
 		}
 		ids = append(ids, checkpoint.ID)
 	}
-	known, err := entire.Sessions(ctx, store.objects, store.store, ids)
+	known, err := store.listing.Sessions(ctx, store.objects, store.store, ids)
 	if err != nil {
 		if ctx.Err() != nil {
 			return nil, commit, nil, ctx.Err()
@@ -206,85 +303,16 @@ func loadEntire(ctx context.Context, root string, opts Options, native map[strin
 	slices.Sort(sessionIDs)
 	slices.Sort(first)
 	first = slices.Compact(first)
-	outcomes, err := store.readAll(ctx, first)
-	if err != nil {
-		return nil, commit, nil, err
+	trees := make(map[string]string, len(checkpoints))
+	for _, checkpoint := range checkpoints {
+		trees[checkpoint.ID] = checkpoint.TreeOID
 	}
-
-	var failures []Failure
-	reported := map[string]bool{}
-	fail := func(path string, err error) {
-		if !reported[path] {
-			reported[path] = true
-			failures = append(failures, Failure{Source: Entire, Path: path, Err: err})
-		}
+	plan := snapshotPlan{
+		root: root, opts: opts, native: native, trees: trees,
+		whole: whole, first: first, sessionIDs: sessionIDs, picks: picks,
 	}
-	best := map[string]Session{}
-	offer := func(checkpoint string, result entiresession.Result) {
-		next := Session{
-			Source: Entire, Vendor: result.Vendor, ID: result.SessionID, Path: checkpoint,
-			RepoRoot: root, ModifiedAt: result.CreatedAt, Graph: result.Graph, Notes: result.Warnings,
-		}
-		if current, ok := best[result.SessionID]; ok && !Fuller(next, current) {
-			return
-		}
-		best[result.SessionID] = next
-	}
-	for _, id := range whole {
-		outcome := outcomes[id]
-		if outcome.err != nil {
-			fail(id, outcome.err)
-			continue
-		}
-		for _, result := range outcome.results {
-			switch {
-			case result.Err != nil:
-				fail(id+"/"+result.SessionID, result.Err)
-			case result.Graph == nil || native[result.SessionID]:
-			case !opts.Since.IsZero() && result.CreatedAt.Before(opts.Since):
-			default:
-				offer(id, result)
-			}
-		}
-	}
-	// The newest snapshot with a transcript wins. One without (Entire wrote
-	// only metadata and a prompt) is kept only while nothing older has one.
-	for _, sessionID := range sessionIDs {
-		for _, p := range picks[sessionID] {
-			outcome, read := outcomes[p.checkpoint]
-			if !read {
-				if err := ctx.Err(); err != nil {
-					return nil, commit, failures, err
-				}
-				outcome = store.read(ctx, p.checkpoint)
-				outcomes[p.checkpoint] = outcome
-			}
-			if outcome.err != nil {
-				fail(p.checkpoint, outcome.err)
-				continue
-			}
-			i := slices.IndexFunc(outcome.results, func(r entiresession.Result) bool { return r.SessionID == sessionID })
-			if i < 0 {
-				continue
-			}
-			if result := outcome.results[i]; result.Err != nil {
-				fail(p.checkpoint+"/"+sessionID, result.Err)
-				continue
-			} else if result.Graph != nil {
-				offer(p.checkpoint, result)
-				if HasTranscript(result.Graph) {
-					break
-				}
-			}
-		}
-	}
-
-	sessions := make([]Session, 0, len(best))
-	for _, s := range best {
-		sessions = append(sessions, s)
-	}
-	slices.SortFunc(sessions, func(a, b Session) int { return strings.Compare(a.ID, b.ID) })
-	return sessions, commit, failures, nil
+	sessions, failures, err := plan.load(ctx, store, reuse)
+	return sessions, commit, failures, err
 }
 
 // Checkpoints is the checkpoints of a clone, opened once for several lookups.
@@ -311,7 +339,8 @@ func OpenCheckpoints(ctx context.Context, dir string) (*Checkpoints, error) {
 	return &Checkpoints{store: store}, nil
 }
 
-// Close releases the private repository.
+// Close releases the private repository, unless it was shared
+// (Discovery.ShareRepo).
 func (c *Checkpoints) Close() { c.store.Close() }
 
 // Sessions returns, for each of ids that is a checkpoint in the clone, keyed
@@ -320,7 +349,7 @@ func (c *Checkpoints) Close() { c.store.Close() }
 // metadata only. A checkpoint the clone does not hold, or whose metadata
 // cannot be read, is absent from the result.
 func (c *Checkpoints) Sessions(ctx context.Context, ids []string) (map[string][]string, error) {
-	known, err := entire.Sessions(ctx, c.store.objects, c.store.store, ids)
+	known, err := c.store.listing.Sessions(ctx, c.store.objects, c.store.store, ids)
 	if err != nil {
 		return nil, err
 	}
@@ -343,7 +372,7 @@ func (c *Checkpoints) Sessions(ctx context.Context, ids []string) (map[string][]
 // not its metadata can be read: a checkpoint Sessions leaves out that Located
 // reports is unreadable, and one it does not report is not in the clone.
 func (c *Checkpoints) Located(ctx context.Context, ids []string) (map[string]bool, error) {
-	return entire.Located(ctx, c.store.objects, c.store.store, ids)
+	return c.store.listing.Located(ctx, c.store.objects, c.store.store, ids)
 }
 
 // Load maps the sessions one checkpoint in the clone records, as Load maps

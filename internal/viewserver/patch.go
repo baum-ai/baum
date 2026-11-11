@@ -69,26 +69,19 @@ type patchVersion struct {
 	paths  map[string]struct{}
 }
 
-// hunkPaths reads the paths the document's cited hunks are in
-// (index.hunks[].path). A document that does not parse has none.
-func hunkPaths(document []byte) map[string]struct{} {
-	var parsed struct {
-		Index struct {
-			Hunks []struct {
-				Path string `json:"path"`
-			} `json:"hunks"`
-		} `json:"index"`
-	}
-	paths := map[string]struct{}{}
-	if json.Unmarshal(document, &parsed) != nil {
-		return paths
-	}
-	for _, hunk := range parsed.Index.Hunks {
-		if hunk.Path != "" {
-			paths[hunk.Path] = struct{}{}
+// bytes is what the finished answers in the cache hold.
+func (c *patchCache) bytes() int64 {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	var n int64
+	for _, job := range c.jobs {
+		select {
+		case <-job.done:
+			n += int64(len(job.body))
+		default:
 		}
 	}
-	return paths
+	return n
 }
 
 // handlePatch serves GET /api/patch?path=<repository-relative path>&version=N:
@@ -212,12 +205,15 @@ func (s *Server) loadVersion(ctx context.Context, current Review, n int) (*patch
 	if err != nil {
 		return nil, err
 	}
-	review := parseReview(document)
-	if len(document) > MaxDocumentBytes || review.Version != n || review.PullRequest != current.PullRequest ||
+	if len(document) > MaxDocumentBytes {
+		return nil, errNotCited
+	}
+	review, paths := parseDocument(document)
+	if review.Version != n || review.PullRequest != current.PullRequest ||
 		review.Repository == "" || !strings.EqualFold(review.Repository, current.Repository) {
 		return nil, errNotCited
 	}
-	return &patchVersion{review: review, paths: hunkPaths(document)}, nil
+	return &patchVersion{review: review, paths: paths}, nil
 }
 
 // patchKey names a file's patch by the commits it is read between, which

@@ -7,10 +7,16 @@ values exclude tokens and the device secret. `Credential` and `Token` are only
 for trusted daemon code, never API responses, logs or model environments.
 
 The public OAuth client ID is `Ov23liFSMjrhof9WQlOi`. Device flow requests `repo`
-for private repositories and `read:org` for team review requests. The browser
-uses GitHub's fixed device verification page. HTTP exchanges have a 15-second
-limit, a 64 KiB response limit, no redirects, and no upstream error text. Poll
-performs one exchange, enforces the server interval, and adds five seconds on
+for private repositories and `read:org` for team review requests; new and
+rotated grants must include both (`write:org` and `admin:org` also satisfy
+organization read access). `Start(ctx, true)` also requests `workflow`, which
+merging pull requests that change GitHub Actions workflows needs. It is opt-in
+because it lets the token change workflows. Validation records whether GitHub
+reported the scope (`Credential.Workflow`, `Status.Workflow`), so the UI can say
+when it is missing; a credential saved before that field reads as without it.
+The browser uses GitHub's fixed device verification page. HTTP exchanges have
+a 15-second limit, a 64 KiB response limit, no redirects, and no upstream error
+text. Poll performs one exchange, enforces the server interval, and adds five seconds on
 `slow_down`. Callers should poll with a request context and stop at terminal
 states. Starting again replaces the previous pending authorization.
 
@@ -114,12 +120,33 @@ fetches retain the user's working configuration. Native credential-store and
 live GitHub OAuth smoke tests still require each supported OS and a real account.
 
 The same token also lists the account's repositories for picking
-(`github.Client.ViewerRepositories`, GraphQL to the host's API endpoint, needing
-only the `repo read:org` sign-in) and clones a picked repository
+(`github.Client.ViewerRepositories`, GraphQL to the host's API endpoint, using
+the repository and organization access from that sign-in) and clones a picked
+repository
 (`gitlocal.Clone`, HTTPS to github.com with the same private-environment header
 as a fetch). A listing failure maps to the connection error codes above plus
 `not_connected` and `rate_limited`, using the runtime health this package keeps.
 See [`internal/githubrepos`](../githubrepos/README.md).
+
+`Manager.Organizations` finds organizations that restrict OAuth app access.
+GitHub hides such an organization from an OAuth App token until an owner
+approves the app, with no error. The method compares the person's active
+memberships (`GET /user/memberships/orgs?state=active`) with
+`GET /user/orgs`, which GitHub documents as listing, for OAuth app tokens, only
+organizations the authorization allows acting on; a membership absent from the
+second list is `hidden`. Both need only the `read:org` scope already
+requested. Results are cached for five minutes per token (reset on account
+change) and pages stop at 300 organizations. The check is best effort: a
+failed read reports nothing rather than guessing. It is not run for explicit
+environment or config tokens, since a fine-grained token lists no organizations
+and would make every membership look hidden. `ApprovalURL` is baum's page in
+the member's GitHub settings (`/settings/connections/applications/<client_id>`),
+where a member requests approval. Not verified against a real restricted
+organization yet. A `403` with `X-GitHub-SSO` on
+any request, including the first `/user` check at sign-in, is `ErrSSO`.
+The status carries it as `organization_access` (`{"hidden": [...],
+"approval_url": ""}`, absent when nothing is hidden), refreshed in the
+background and at once by `/retry`.
 
 Queued review confirmations include the credential partition inside the existing
 configuration digest. A job admitted just before switching accounts cannot start

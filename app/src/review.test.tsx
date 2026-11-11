@@ -1,4 +1,4 @@
-import { mockStateFetch } from "./ui-state-test-helper";
+import { mockStateFetch, seedUIState } from "./ui-state-test-helper";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
@@ -10,7 +10,7 @@ import { App } from "./app";
 import { LocalReview } from "./review";
 import { reviewJob, type Entry, type Job } from "./api";
 import type { FixState } from "./fix";
-import { forgetLastRows, useCommandKeys } from "./shortcuts";
+import { forgetLastRows, MAC, useCommandKeys } from "./shortcuts";
 import { PageRefreshProvider, usePageRefresh } from "./shell";
 vi.mock("@baum/viewer/components/review-viewer", () => ({
   ReviewViewer: ({
@@ -169,6 +169,47 @@ async function render(current: Job, revision = 0, currentEntry = entry) {
     ),
   );
 }
+const githubKey = () =>
+  new KeyboardEvent("keydown", {
+    key: "G",
+    code: "KeyG",
+    shiftKey: true,
+    ...(MAC ? { metaKey: true } : { ctrlKey: true }),
+    bubbles: true,
+    cancelable: true,
+  });
+
+it("opens the pull request on GitHub with the command key, Shift and G", async () => {
+  const opened: string[] = [];
+  vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (
+    this: HTMLAnchorElement,
+  ) {
+    if (this.target === "_blank") opened.push(this.href);
+  });
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(() => new Promise(() => {})),
+  );
+  await act(async () =>
+    root.render(
+      <UrlStateProvider value={{ search: new URLSearchParams(), update: () => {} }}>
+        <LocalReview
+          entry={entry}
+          clone="selected-clone"
+          revision={0}
+          changed={changed}
+          generate={generate}
+        />
+      </UrlStateProvider>,
+    ),
+  );
+  const event = githubKey();
+  await act(async () => document.body.dispatchEvent(event));
+  expect(event.defaultPrevented).toBe(true);
+  expect(opened).toEqual(["https://github.com/acme/demo/pull/7"]);
+  vi.restoreAllMocks();
+});
+
 it("takes the refresh key while its button is not drawn, as while the review loads", async () => {
   const refresh = vi.fn(() => Promise.resolve());
   function Page() {
@@ -214,6 +255,23 @@ it("matches active PR jobs across clones while isolating GitHub hosts and PRs", 
     ]),
   ).toBeUndefined();
   expect(reviewJob(entry, [job("failed"), terminal])).toBe(terminal);
+});
+it("says an archived pull request is archived, and unarchives it", async () => {
+  const archived = () =>
+    Array.from(node.querySelectorAll(".local-notice")).find((notice) =>
+      notice.textContent?.startsWith("Archived."),
+    );
+  seedUIState("api/ui-state/inbox", {
+    day: "2026-11-10",
+    seen: {},
+    snoozed: {},
+    held: {},
+    archived: { "acme/demo#7": 1 },
+  });
+  await render(job("queued"));
+  expect(archived()!.textContent).toContain("doesn't show in your inboxes");
+  await act(async () => archived()!.querySelector("button")!.click());
+  expect(archived()).toBeUndefined();
 });
 it("shows queued initial generation and progress instead of an empty review", async () => {
   await render(job("queued"));

@@ -14,37 +14,48 @@ import (
 	"github.com/baum-ai/baum/sessions/session"
 )
 
-// DefaultMapCacheBytes bounds the transcript bytes whose mapped graphs Map
-// keeps. A graph takes memory of the same order as its transcript, so this is
-// roughly the cache's resident cost.
+// DefaultMapCacheBytes bounds the estimated memory of the mapped graphs Map
+// keeps (graphBytes). A graph takes about a sixth of its transcript's size,
+// so this holds the graphs of several hundred MB of transcripts.
 const DefaultMapCacheBytes = 64 << 20
 
 // mapCache keeps the mapped graphs of recently read sessions, so a daemon
 // that reads the same transcripts on every refresh decodes each only once
 // until it changes. An entry is keyed on everything the mapping reads: the
 // source and, for each file, its name, kind, path, size and modification
-// time, or the hash of generated content. A file that changed gets a new key;
-// the old entry ages out. Least recently used entries go first once the
-// transcript bytes held pass the limit.
+// time, or the hash of generated content. A file that changed gets a new key,
+// and keeping the new mapping drops the one of the same session's files as
+// they were. Least recently used entries go first once the estimated memory
+// of the graphs held passes the limit.
 type mapCache struct {
 	mu    sync.Mutex
 	limit int64
 	// holds counts HoldMappings calls not yet released; while there is one,
 	// the cache keeps up to HeldMapCacheBytes.
-	holds   int
-	held    int64
-	order   *list.List
-	entries map[string]*list.Element
+	holds int
+	// held is the estimated memory of the entries held; transcripts is the
+	// transcript bytes they were mapped from.
+	held        int64
+	transcripts int64
+	order       *list.List
+	entries     map[string]*list.Element
+	// sessions finds the entry of a session and file list (mapIdentity),
+	// whatever their sizes, so a newer mapping replaces it.
+	sessions map[string]*list.Element
 	// misses counts mappings run; tests read it.
 	misses int
 }
 
 type mapEntry struct {
-	key   string
-	graph *session.Graph
-	notes []string
-	err   error
-	cost  int64
+	key string
+	// session is the entry's mapIdentity; empty when it has none.
+	session string
+	graph   *session.Graph
+	notes   []string
+	err     error
+	// cost is the entry's estimated memory; transcript the bytes of its files.
+	cost       int64
+	transcript int64
 }
 
 var cache = newMapCache(DefaultMapCacheBytes)
@@ -62,10 +73,16 @@ func init() {
 		defer c.mu.Unlock()
 		return int64(c.order.Len())
 	})
+	workstats.Gauge("sessions.map_cache.transcript_bytes", func() int64 {
+		c := cache
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		return c.transcripts
+	})
 }
 
 func newMapCache(limit int64) *mapCache {
-	return &mapCache{limit: limit, order: list.New(), entries: map[string]*list.Element{}}
+	return &mapCache{limit: limit, order: list.New(), entries: map[string]*list.Element{}, sessions: map[string]*list.Element{}}
 }
 
 // HeldMapCacheBytes is the cache's limit while HoldMappings holds it.
@@ -99,8 +116,8 @@ func (c *mapCache) effectiveLimit() int64 {
 	return c.limit
 }
 
-// SetMapCacheLimit changes how many transcript bytes Map keeps mapped
-// graphs for; zero or less turns the cache off and empties it.
+// SetMapCacheLimit changes the estimated memory of the mapped graphs Map
+// keeps; zero or less turns the cache off and empties it.
 func SetMapCacheLimit(limit int64) {
 	cache.mu.Lock()
 	defer cache.mu.Unlock()
@@ -132,6 +149,21 @@ func mapKey(s collector.Session) (key string, cost int64, ok bool) {
 	return b.String(), cost, true
 }
 
+// mapIdentity names the session and its files without their content, so two
+// mappings of one session's files at different sizes share it. A session
+// with generated content has none.
+func mapIdentity(s collector.Session) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "%s\x00%s", s.Source, s.SessionID)
+	for _, f := range s.Files {
+		if f.Data != nil {
+			return ""
+		}
+		fmt.Fprintf(&b, "\x00%s\x00%s\x00%s", f.Name, f.Kind, f.Path)
+	}
+	return b.String()
+}
+
 // get returns the cached mapping for key.
 func (c *mapCache) get(key string) (*mapEntry, bool) {
 	c.mu.Lock()
@@ -154,12 +186,32 @@ func (c *mapCache) put(entry *mapEntry) {
 		return
 	}
 	if old, ok := c.entries[entry.key]; ok {
-		c.held -= old.Value.(*mapEntry).cost
-		c.order.Remove(old)
+		c.remove(old)
 	}
-	c.entries[entry.key] = c.order.PushFront(entry)
+	// The same session's files read at other sizes: they changed since, and
+	// that entry will not be asked for again.
+	if old, ok := c.sessions[entry.session]; ok && entry.session != "" {
+		c.remove(old)
+	}
+	element := c.order.PushFront(entry)
+	c.entries[entry.key] = element
+	if entry.session != "" {
+		c.sessions[entry.session] = element
+	}
 	c.held += entry.cost
+	c.transcripts += entry.transcript
 	c.evict()
+}
+
+func (c *mapCache) remove(element *list.Element) {
+	entry := element.Value.(*mapEntry)
+	c.order.Remove(element)
+	delete(c.entries, entry.key)
+	if c.sessions[entry.session] == element {
+		delete(c.sessions, entry.session)
+	}
+	c.held -= entry.cost
+	c.transcripts -= entry.transcript
 }
 
 func (c *mapCache) evict() {
@@ -169,9 +221,6 @@ func (c *mapCache) evict() {
 		if last == nil {
 			return
 		}
-		entry := last.Value.(*mapEntry)
-		c.order.Remove(last)
-		delete(c.entries, entry.key)
-		c.held -= entry.cost
+		c.remove(last)
 	}
 }

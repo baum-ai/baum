@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/baum-ai/baum/redact"
 )
 
 func TestReplaceHome(t *testing.T) {
@@ -40,6 +42,39 @@ func TestMaskMasksALineAsATranscript(t *testing.T) {
 	got := NewRenderer(home).Mask(context.Background(), "Mail ada.lovelace@example.com the diff in "+home+"/src")
 	if strings.Contains(got, "ada.lovelace@example.com") || !strings.HasSuffix(got, " the diff in ~/src") {
 		t.Errorf("Mask = %q", got)
+	}
+}
+
+// Mask remembers its lines, and a line asked again masks as it did the first
+// time and as an engine of its own would.
+func TestMaskRemembersWhatItMasked(t *testing.T) {
+	const home = "/home/user"
+	r := NewRenderer(home)
+	engine, err := redact.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	lines := []string{
+		"use postgres://app:Tr0ub4dor-3xkq@db.internal:5432/app in " + home + "/src",
+		"export AWS_ACCESS_KEY_ID=AKIA" + "Z3MQ5TNV2XWB7KDL",
+		"Mail ada.lovelace@example.com",
+		"Edit main.go",
+	}
+	for round := range 2 {
+		for _, line := range lines {
+			masked, _, err := engine.RedactContext(ctx, line)
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := string(replaceHome([]byte(masked), r.homes))
+			if got := r.Mask(ctx, line); got != want {
+				t.Fatalf("round %d: Mask = %q, want %q", round, got, want)
+			}
+		}
+	}
+	if got := r.masks.Len(); got != len(lines) {
+		t.Fatalf("remembered %d lines, want %d", got, len(lines))
 	}
 }
 

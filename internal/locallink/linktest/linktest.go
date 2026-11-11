@@ -127,6 +127,23 @@ func (f Fixture) AddSession(t *testing.T, id, cwd, prompt string) {
 	write(t, filepath.Join(f.Store.ClaudeProjectsDir, claudecode.EncodeProjectDir(cwd), id+".jsonl"), transcript(id, cwd, prompt, f.Commits[0]))
 }
 
+// AddSessionRunning is AddSession for a session that, after its commit, ran
+// command in a shell, which succeeded.
+func (f Fixture) AddSessionRunning(t *testing.T, id, cwd, prompt, command string) {
+	t.Helper()
+	const usage = `{"input_tokens":10,"output_tokens":5,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"service_tier":"standard"}`
+	common := func(kind, uuid, parent, at string) string {
+		return fmt.Sprintf(`"cwd":%q,"gitBranch":"feature","isSidechain":false,"sessionId":%q,"type":%q,"uuid":%q,"parentUuid":%s,"timestamp":%q`,
+			cwd, id, kind, uuid, parent, at)
+	}
+	lines := strings.TrimSuffix(transcript(id, cwd, prompt, f.Commits[0]), "\n") + "\n" + strings.Join([]string{
+		`{` + common("assistant", "a-2", `"u-2"`, "2026-07-01T10:31:00.000Z") + `,"requestId":"req_2","message":{"id":"msg_2","role":"assistant","model":"claude-opus-5","stop_reason":"tool_use","usage":` + usage +
+			fmt.Sprintf(`,"content":[{"type":"tool_use","id":"toolu_run","name":"Bash","input":{"command":%q}}]}}`, command),
+		`{` + common("user", "u-3", `"a-2"`, "2026-07-01T10:32:00.000Z") + `,"promptId":"p-1","message":{"role":"user","content":[{"tool_use_id":"toolu_run","type":"tool_result","content":"done"}]},"toolUseResult":{"stdout":"done","stderr":"","interrupted":false,"isImage":false,"noOutputExpected":false}}`,
+	}, "\n") + "\n"
+	write(t, filepath.Join(f.Store.ClaudeProjectsDir, claudecode.EncodeProjectDir(cwd), id+".jsonl"), lines)
+}
+
 // AddSessionWithSubagent is AddSession for a session that, after its commit,
 // spawned a subagent which read b.txt and ran a shell command, both by
 // absolute paths under cwd. The command also sets a token in its

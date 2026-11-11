@@ -151,9 +151,14 @@ and run no git, unlike `List` and `Repositories`, which probe every clone.
 A probe runs git in the clone only when something its answer is read from
 changed. The process keeps each clone's last availability with a stamp of:
 
-* its directory;
-* its `.git` entry (a directory, or a linked worktree's file);
-* its common directory's `config`, where the remotes live.
+* that its directory exists;
+* its `.git` entry's kind, and for a linked worktree's file its contents;
+* its common directory's `config` size and modification time, where the
+  remotes live.
+
+The modification times of the directory and its `.git` directory are not part
+of the stamp: they move on every index write and new file without changing the
+answer. Concurrent misses for one clone share a single probe.
 
 While the stamp is unchanged the answer is reused, for at most `ProbeMaxAge`
 (5 minutes). A rewrite that only global git configuration makes, such as
@@ -169,5 +174,18 @@ spending limits.
 
 `baum internal repos add <path>` registers an existing clone for desktop
 onboarding. Repository selection, removal and settings are managed through
-the desktop app and the authenticated HTTP routes above. Registration changes
+the desktop app and the authenticated HTTP routes above. The command changes
 no Git configuration or hooks and starts no daemon.
+
+A registration the daemon stores (`POST /api/repos`, `AddFor`, `AttachFound`,
+a cloned repository) calls `Registry.Registered`, which the daemon sets to
+ensure baum's Git hook dispatchers in the clone in the background
+([githooks](../githooks)). It never fails or waits for the registration. A
+registry opened elsewhere, such as the CLI's, has no such hook.
+`git config baum.hooks false` in a clone opts it out: the daemon takes the
+dispatchers out and restores the hooks they replaced. `Remove` and `Unpick` call
+`Registry.Removed` for each clone they delete, and the daemon then does the same,
+unless a registered clone, the same one registered again included, shares the
+clone's path or common Git directory; the daemon reads the registry again
+before it installs or restores, so a sweep cannot reinstall hooks of a clone
+removed meanwhile. A removal before the service starts is restored when it does.

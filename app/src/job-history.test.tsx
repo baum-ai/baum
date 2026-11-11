@@ -1,7 +1,7 @@
 import { mockStateFetch } from "./ui-state-test-helper";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ReviewViewerProps } from "@baum/viewer/components/review-viewer";
 import { App } from "./app";
 import { forgetLastRows } from "./shortcuts";
@@ -41,7 +41,7 @@ let root: Root;
 let node: HTMLDivElement;
 let requests: string[];
 let answers: Record<string, unknown>;
-let listeners: Map<string, () => void>;
+let listeners: Map<string, (event?: MessageEvent) => void>;
 beforeEach(() => {
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
   history.replaceState(null, "", "/s/test-ns/?page=jobs");
@@ -55,7 +55,7 @@ beforeEach(() => {
   vi.stubGlobal(
     "EventSource",
     class {
-      addEventListener(name: string, listener: () => void) {
+      addEventListener(name: string, listener: (event?: MessageEvent) => void) {
         listeners.set(name, listener);
       }
       close() {}
@@ -325,4 +325,98 @@ it("reads the newest page again when a job it showed running left the current jo
   const row = node.querySelector("#job-r")!;
   expect(row.textContent).toContain("Completed");
   expect(node.textContent).toContain("Finished");
+});
+
+describe("a running job's usage event", () => {
+  const at = (second: number) => `2026-11-10T10:00:${String(second).padStart(2, "0")}Z`;
+  const usage = (patch: Partial<Job> = {}) =>
+    new MessageEvent("job", {
+      data: JSON.stringify({
+        job: {
+          id: "live",
+          state: "running",
+          phase: "running",
+          calls: 3,
+          tokens: 4321,
+          repairs: 0,
+          actual_cost_usd: 0.25,
+          cost_reason: "",
+          accounting: null,
+          updated_at: at(20),
+          ...patch,
+        },
+      }),
+    });
+  const send = async (event: MessageEvent) => {
+    await act(async () => listeners.get("job")!(event));
+    await act(async () => {});
+  };
+  const currentReads = () => requests.filter((path) => path === "/s/test-ns/api/jobs").length;
+  beforeEach(async () => {
+    const running = job("live", "running", { tokens: 10, updated_at: at(10) });
+    answers["api/jobs"] = { available: true, jobs: [running] };
+    answers["api/jobs?limit=50"] = { available: true, jobs: [running] };
+    await act(async () => root.render(<App />));
+    await act(async () => {});
+    expect(node.querySelector("#job-live")!.textContent).toContain("10 tokens");
+  });
+
+  it("updates the job shown without reading anything", async () => {
+    const before = requests.length;
+    await send(usage());
+    expect(requests.slice(before)).toEqual([]);
+    expect(node.querySelector("#job-live")!.textContent).toContain("4,321 tokens");
+  });
+
+  it("is ignored when it is older than the job shown", async () => {
+    const before = requests.length;
+    await send(usage({ updated_at: at(5) }));
+    expect(requests.slice(before)).toEqual([]);
+    expect(node.querySelector("#job-live")!.textContent).toContain("10 tokens");
+  });
+
+  it("reads everything again when it shows a missed change of state", async () => {
+    const before = currentReads();
+    await send(usage({ state: "completed", phase: "finished" }));
+    expect(currentReads()).toBe(before + 1);
+    expect(requests).toContain("/s/test-ns/api/index?history=1");
+  });
+
+  it("reads everything again for a job the app does not have", async () => {
+    const before = currentReads();
+    await send(usage({ id: "other" }));
+    expect(currentReads()).toBe(before + 1);
+  });
+
+  it("reads everything again when it names no job", async () => {
+    const before = currentReads();
+    await send(new MessageEvent("job", { data: "{}" }));
+    expect(currentReads()).toBe(before + 1);
+  });
+});
+
+it("shows a pull request's job as the current jobs' copy when that is newer", async () => {
+  history.replaceState(null, "", "/s/test-ns/");
+  answers["api/jobs?repository=acme%2Fdemo&pr=1"] = {
+    jobs: [job("a", "running", { tokens: 10, updated_at: "2026-11-10T10:00:10Z" })],
+  };
+  const entry = { pull_request: { repository: "acme/demo", number: 1 } } as unknown as Entry;
+  function Probe({ current }: { current: Job[] }) {
+    return (
+      <p>
+        {usePullRequestJobs(entry, 1, current)
+          .map((j) => j.tokens)
+          .join()}
+      </p>
+    );
+  }
+  await act(async () => root.render(<Probe current={[]} />));
+  expect(node.textContent).toBe("10");
+  const copy = (tokens: number, second: string) =>
+    job("a", "running", { tokens, updated_at: `2026-11-10T10:00:${second}Z` });
+  await act(async () => root.render(<Probe current={[copy(500, "20")]} />));
+  expect(node.textContent).toBe("500");
+  // An older copy does not replace the page's own read.
+  await act(async () => root.render(<Probe current={[copy(5, "01")]} />));
+  expect(node.textContent).toBe("10");
 });

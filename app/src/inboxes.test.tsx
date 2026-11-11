@@ -350,7 +350,7 @@ it("lists an inbox's own pull requests done today and waiting on others", async 
     "1 of 3",
   );
   expect(node.querySelector(".upnext-list-summary")!.textContent).toContain("1 done");
-  expect(headings()).toContain("Waiting on checks or reviews 1");
+  expect(headings()).toContain("Waiting 1");
   expect(titles()).toContain("Change 5");
   expect(titles()).not.toContain("Change 6");
   // A merge inbox matches the merges done, and no pull request waiting on others.
@@ -858,7 +858,7 @@ it("shows Snoozed with Bring back in an inbox whose queue is empty", async () =>
   expect(snoozed.querySelectorAll("button.row-menu-button")).toHaveLength(2);
   await click(snoozed.querySelector("button.row-menu-button"));
   const choices = Array.from(node.querySelectorAll<HTMLElement>('[role="menu"] [role^=menuitem]'));
-  expect(choices.map((item) => item.textContent)).toEqual(["Bring back"]);
+  expect(choices.map((item) => item.textContent)).toEqual(["Bring back", "Archive"]);
   await click(choices[0]);
   expect(titles()).toHaveLength(1);
 });

@@ -714,7 +714,7 @@ function stubDiagnostics(respond: () => Promise<Response>) {
   const original = vi.mocked(fetch).getMockImplementation()!;
   const calls = { count: 0 };
   vi.mocked(fetch).mockImplementation((...args) => {
-    if (String(args[0]) !== "/s/test-ns/api/diagnostics") return original(...args);
+    if (!String(args[0]).startsWith("/s/test-ns/api/diagnostics")) return original(...args);
     calls.count++;
     return respond();
   });
@@ -2659,6 +2659,14 @@ it("warns beside Settings until Codex hooks are trusted and rechecks on focus", 
     ),
   );
   await act(async () => root.render(<App />));
+  // Focus reads are throttled to once a minute.
+  const realNow = Date.now.bind(Date);
+  let offset = 0;
+  const clock = vi.spyOn(Date, "now").mockImplementation(() => realNow() + offset);
+  const focus = async () => {
+    offset += 61_000;
+    await act(async () => window.dispatchEvent(new Event("focus")));
+  };
   const settings = () =>
     node.querySelector<HTMLAnchorElement>('.local-rail a[href*="page=settings"]')!;
   expect(settings().querySelector(".local-rail-badge")?.textContent).toBe("!");
@@ -2668,24 +2676,71 @@ it("warns beside Settings until Codex hooks are trusted and rechecks on focus", 
   // Outside the desktop app there is no agent hooks panel to open.
   expect(node.querySelector(".settings-content")?.textContent).not.toContain("Open agent hooks");
   unavailable = true;
-  await act(async () => window.dispatchEvent(new Event("focus")));
+  await focus();
   expect(settings().querySelector(".local-rail-badge")).not.toBeNull();
   unavailable = false;
   state = "trusted";
-  await act(async () => window.dispatchEvent(new Event("focus")));
+  await focus();
   expect(settings().querySelector(".local-rail-badge")).toBeNull();
   expect(node.querySelector(".settings-content")?.textContent).not.toContain(
     "Codex hooks need approval",
   );
   state = "unknown";
-  await act(async () => window.dispatchEvent(new Event("focus")));
+  await focus();
   expect(settings().querySelector(".local-rail-badge")).not.toBeNull();
   expect(node.querySelector(".settings-content")?.textContent).toContain(
     "Could not verify Codex hook approval",
   );
   state = "hooks_disabled";
-  await act(async () => window.dispatchEvent(new Event("focus")));
+  await focus();
   expect(node.querySelector(".settings-content")?.textContent).toContain(
     "codex features enable hooks",
   );
+  clock.mockRestore();
+});
+it("explains organizations that restrict OAuth app access on Repositories and rechecks after approval", async () => {
+  history.replaceState(null, "", "/s/test-ns/?page=repositories");
+  let hidden = true;
+  const posts: string[] = [];
+  const original = vi.mocked(fetch).getMockImplementation()!;
+  vi.mocked(fetch).mockImplementation((...args) => {
+    const path = String(args[0]);
+    if (path === "/s/test-ns/api/github-auth/retry") {
+      posts.push(path);
+      hidden = false;
+    }
+    return path === "/s/test-ns/api/github-auth" || path === "/s/test-ns/api/github-auth/retry"
+      ? Promise.resolve(
+          Response.json({
+            state: "connected",
+            host: "github.com",
+            saved: true,
+            login: "octocat",
+            override: false,
+            ...(hidden
+              ? {
+                  organization_access: {
+                    hidden: ["locked-co"],
+                    approval_url: "https://github.com/settings/connections/applications/abc",
+                  },
+                }
+              : {}),
+          }),
+        )
+      : original(...args);
+  });
+  await act(async () => root.render(<App />));
+  const note = () => node.querySelector(".organization-access");
+  expect(note()!.textContent).toBe("baum cannot see repositories in 1 of your organizations.");
+  await act(async () =>
+    note()!.querySelector<HTMLButtonElement>(".organization-access-toggle")!.click(),
+  );
+  expect(note()!.querySelector(".organization-access-list a")!.getAttribute("href")).toBe(
+    "https://github.com/settings/connections/applications/abc",
+  );
+  await act(async () =>
+    [...note()!.querySelectorAll("button")].find((b) => b.textContent === "Check again")!.click(),
+  );
+  expect(posts).toHaveLength(1);
+  expect(note()).toBeNull();
 });

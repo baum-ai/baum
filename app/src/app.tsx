@@ -2,7 +2,7 @@ import { SavedStateNotice } from "./ui-state";
 import { PreferencesProvider } from "./preferences";
 import { formatCount } from "@baum/viewer/components/format";
 import { UsageDetails } from "./usage";
-import { useJobHistory, useOpenJob, usePullRequestJobs } from "./job-history";
+import { applyJobUsage, useJobHistory, useOpenJob, usePullRequestJobs } from "./job-history";
 import { JobTiming, jobOrigin, jobTarget, jobType } from "./job-info";
 import {
   useCallback,
@@ -23,7 +23,7 @@ import {
   type ViewerLinkProps,
 } from "@baum/viewer/navigation";
 import { CloneActions, type FoundClones } from "./repositories";
-import { ConfirmDialog, GroupMissing, GroupPage, NameDialog } from "./group";
+import { ConfirmDialog, GroupMissing, NameDialog } from "./group-dialogs";
 import { Inbox, UpdatedAgo } from "./inbox";
 import { ListSection } from "./list";
 import {
@@ -84,7 +84,6 @@ import {
 import { GoTo, type GoToItem } from "./go-to";
 import { Tour, TOUR_HREF, useTour } from "./tour";
 import { PAGES, type Page } from "./pages";
-import { LocalReview } from "./review";
 import { DecisionsRevision } from "./decisions";
 import { useCodexHookTrust } from "./codex-hooks";
 import { pendingUpdate, useAppUpdates, useUpdateToast } from "./desktop/updates";
@@ -100,9 +99,6 @@ import { asksYou, SessionsPage, transcriptHref } from "./sessions";
 import { SampleGuard } from "./sample";
 import { ToastProvider } from "./toast";
 import { MenuButton, useActionsKey, useContextMenu, type MenuItem } from "./context-menu";
-import { SessionTranscriptPage } from "./session-transcript";
-import { AnalyticsPage } from "./analytics";
-import { TimelinePage } from "./timeline";
 import {
   Notice,
   PageBar,
@@ -157,8 +153,15 @@ import { useModal } from "./modal";
 import { PageRead, ReadFailed, readState } from "./page-state";
 import { LoadingStatus } from "./nine-dots";
 import { FixDetails, type FixChat } from "./fix";
-import { JobPage } from "./job-transcript";
 import { useLocation } from "./location";
+import {
+  AnalyticsPage,
+  GroupPage,
+  JobPage,
+  LocalReview,
+  SessionTranscriptPage,
+  TimelinePage,
+} from "./lazy-pages";
 import { SMALL } from "./action-classes";
 
 /** A saved tab's name as the daemon keeps it: trimmed as it trims, control
@@ -328,6 +331,8 @@ function Workspace({ url }: { url: UrlState }) {
   const seenAttachments = useRef<Set<string> | null>(null);
   const [snapshot, setSnapshot] = useState<Snapshot>({ entries: [], problems: [] });
   const [jobs, setJobs] = useState<Job[]>([]);
+  // The jobs last set, which a `job` event's usage applies to.
+  const jobsNow = useRef<Job[]>([]);
   const [background, setBackground] = useState<
     { repository: string; error?: string; next_refresh: string }[]
   >([]);
@@ -349,6 +354,9 @@ function Workspace({ url }: { url: UrlState }) {
   // show as generating from the click, not from the job the answer brings.
   const [starting, setStarting] = useState(new Set<string>());
   const [generationError, setGenerationError] = useState("");
+  // The pull requests the last generation was for, so Up next shows its
+  // refusal on their panel.
+  const [generationFor, setGenerationFor] = useState<string[]>([]);
   // A generation that includes a fork, waiting for the user's confirmation.
   const [fork, setFork] = useState<{ entries: Entry[]; mode: "single" | "batch" } | null>(null);
   // The pull requests whose fix is on its way to the daemon: their Fix says
@@ -520,7 +528,8 @@ function Workspace({ url }: { url: UrlState }) {
             seenAttachments.current = new Set(keys);
           }
           setSnapshot(index);
-          setJobs(jobList.jobs ?? []);
+          jobsNow.current = jobList.jobs ?? [];
+          setJobs(jobsNow.current);
           // A failed read keeps the groups shown.
           if (!groupsFailure) setGroups(parseGroups(groupList));
           setGroupsError(groupsFailure);
@@ -571,6 +580,16 @@ function Workspace({ url }: { url: UrlState }) {
     source.addEventListener("reset", refreshLive);
     source.addEventListener("index", refresh);
     source.addEventListener("progress", refresh);
+    // A running job's usage changes that job alone, unless it shows a change
+    // missed meanwhile.
+    source.addEventListener("job", (event) => {
+      const next = applyJobUsage(jobsNow.current, (event as MessageEvent).data);
+      if (next === null) void reload();
+      else if (next !== jobsNow.current) {
+        jobsNow.current = next;
+        setJobs(next);
+      }
+    });
     source.addEventListener("automatic", refresh);
     source.addEventListener("reset", refresh);
     const refreshTimeline = () => setTimelineTick((n) => n + 1);
@@ -958,6 +977,7 @@ function Workspace({ url }: { url: UrlState }) {
     setGrouping(chosen);
   };
   const generate = async (entries: Entry[], mode: "single" | "batch", isolation = false) => {
+    setGenerationFor(entries.map(rowKey));
     if (entries.some((entry) => isActiveJob(reviewJob(entry, jobs)))) {
       setGenerationError("A review of a selected pull request is already queued or running.");
       return;
@@ -1152,7 +1172,7 @@ function Workspace({ url }: { url: UrlState }) {
   // The current jobs rarely hold an older job: the daemon finds it.
   const openedJob = useOpenJob(openJob, jobs, revision);
   // The pull request page's own jobs: its fixes and questions, all of them.
-  const pullRequestJobs = usePullRequestJobs(selectedEntry, revision);
+  const pullRequestJobs = usePullRequestJobs(selectedEntry, revision, jobs);
   // The shortcuts sheet lists the keys of where it was opened first.
   const shortcutsPlace: ShortcutsPlace = onList
     ? "pulls"
@@ -1476,6 +1496,7 @@ function Workspace({ url }: { url: UrlState }) {
               repositories={picked}
               loading={loading}
               automatic={automatic}
+              github={github}
               entries={snapshot.entries}
               jobs={jobs}
               changed={reload}
@@ -1784,6 +1805,11 @@ function Workspace({ url }: { url: UrlState }) {
               cloneFor={cloneFor}
               fix={(entry, only) => void fix(entry, only)}
               fixState={fixState}
+              generate={(entry) => void generate([entry], "single")}
+              generateState={(entry) => ({
+                starting: starting.has(rowKey(entry)),
+                error: generationFor.includes(rowKey(entry)) ? generationError : "",
+              })}
               changed={reload}
               refresh={refresh}
               refreshing={listBusy}
@@ -2033,7 +2059,12 @@ function Workspace({ url }: { url: UrlState }) {
               ) : null}
             </>
           ) : null}
-          {generationError ? <Alert>{generationError}</Alert> : null}
+          {/* Up next shows a generation's refusal on the pull request's panel;
+              a PR or group page opened from an inbox has no panel, so it
+              shows here. */}
+          {generationError && !(page === "inbox" && queueInbox && !selectedEntry && !groupId) ? (
+            <Alert>{generationError}</Alert>
+          ) : null}
           {/* The PR page and Up next show a fix's refusal beside its button. */}
           {fixError && onList ? (
             <Alert>

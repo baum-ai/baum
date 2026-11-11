@@ -17,6 +17,8 @@ import (
 	"sync"
 	"time"
 
+	"golang.org/x/sync/singleflight"
+
 	"github.com/baum-ai/baum/internal/appdb"
 	"github.com/baum-ai/baum/internal/config"
 	"github.com/baum-ai/baum/internal/github"
@@ -314,7 +316,15 @@ type Clone struct {
 	Available  bool     `json:"available"`
 }
 type Registry struct {
-	db *sql.DB
+	// Registered, when set, is called with each clone a registration stored
+	// (Add, AddFor, AddForwarded and AttachFound), after it is stored. It
+	// must not block: the daemon uses it to start work on the new clone. A
+	// registry the CLI opens has none.
+	Registered func(Clone)
+	// Removed, when set, is called with each clone Remove or Unpick deleted,
+	// after it is deleted, and must not block.
+	Removed func(Clone)
+	db      *sql.DB
 	// noSchema marks a read-only registry whose file has no tables yet.
 	noSchema bool
 	noPicked bool
@@ -717,7 +727,13 @@ func (r *Registry) addPatch(ctx context.Context, path, repository string, guard 
 	if _, e = tx.ExecContext(ctx, "INSERT INTO picked VALUES (?) ON CONFLICT DO NOTHING", c.Repository); e != nil {
 		return Clone{}, e
 	}
-	return c, tx.Commit()
+	if e = tx.Commit(); e != nil {
+		return Clone{}, e
+	}
+	if r.Registered != nil {
+		r.Registered(c)
+	}
+	return c, nil
 }
 
 // Remove accepts an ID or path, including a path that no longer exists.
@@ -729,6 +745,16 @@ func (r *Registry) Remove(ctx context.Context, idOrPath string) error {
 	if resolved, e := filepath.EvalSymlinks(p); e == nil {
 		p = resolved
 	}
+	var removed []Clone
+	if r.Removed != nil {
+		if all, e := r.cloneRows(ctx, ""); e == nil {
+			for _, c := range all {
+				if c.ID == idOrPath || c.Path == p {
+					removed = append(removed, c)
+				}
+			}
+		}
+	}
 	// The repository stays picked: its picked row is not touched.
 	result, e := r.db.ExecContext(ctx, "DELETE FROM clones WHERE id=? OR path=?", idOrPath, p)
 	if e != nil {
@@ -738,7 +764,19 @@ func (r *Registry) Remove(ctx context.Context, idOrPath string) error {
 	if e == nil && n == 0 {
 		return ErrNotFound
 	}
+	if e == nil {
+		r.removed(removed)
+	}
 	return e
+}
+
+func (r *Registry) removed(clones []Clone) {
+	if r.Removed == nil {
+		return
+	}
+	for _, c := range clones {
+		r.Removed(c)
+	}
 }
 func (r *Registry) List(ctx context.Context) ([]Clone, error) { return r.clones(ctx, "") }
 
@@ -828,12 +866,12 @@ const ProbeMaxAge = 5 * time.Minute
 // probeCache remembers whether each registered clone was available, so the
 // many registry reads of the daemon (the app, its tray, the schedulers and
 // the background refresh) do not each run git in every clone. An answer is
-// reused while the clone's directory, its .git entry and its common
-// directory's config, where its remotes live, are as they were, for at most
-// ProbeMaxAge.
+// reused while what it is read from is as it was (see cloneStamp), for at
+// most ProbeMaxAge. Concurrent misses for one clone share a single probe.
 type probeCache struct {
 	mu      sync.Mutex
 	entries map[string]probeEntry
+	flight  singleflight.Group
 }
 
 type probeEntry struct {
@@ -851,35 +889,69 @@ func (p *probeCache) available(ctx context.Context, clone Clone) bool {
 		return false
 	}
 	key := clone.Path + "\x00" + clone.CommonDir + "\x00" + clone.Repository
-	now := time.Now()
 	p.mu.Lock()
 	entry, cached := p.entries[key]
 	p.mu.Unlock()
-	if cached && entry.stamp == stamp && now.Sub(entry.at) < ProbeMaxAge {
+	if cached && entry.stamp == stamp && time.Since(entry.at) < ProbeMaxAge {
 		return entry.available
 	}
-	// Any remote may name the clone's repository, as AddFor allows.
-	current, err := inspectFor(ctx, clone.Path, clone.Repository)
-	available := err == nil && current.Path == clone.Path && current.CommonDir == clone.CommonDir && current.Repository == clone.Repository
-	if ctx.Err() == nil {
-		p.mu.Lock()
-		p.entries[key] = probeEntry{stamp: stamp, at: now, available: available}
-		p.mu.Unlock()
+	// The stamp is part of the flight key so a probe that began before a
+	// change is never handed to a caller that saw the change. The probe runs
+	// independently of the request that started it, so one cancelled request
+	// cannot fail the others sharing it.
+	ch := p.flight.DoChan(key+"\x00"+stamp, func() (any, error) {
+		probeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), probeTimeout)
+		defer cancel()
+		// Any remote may name the clone's repository, as AddFor allows.
+		current, err := inspectFor(probeCtx, clone.Path, clone.Repository)
+		available := err == nil && current.Path == clone.Path && current.CommonDir == clone.CommonDir && current.Repository == clone.Repository
+		if probeCtx.Err() == nil {
+			p.mu.Lock()
+			p.entries[key] = probeEntry{stamp: stamp, at: time.Now(), available: available}
+			p.mu.Unlock()
+		}
+		return available, nil
+	})
+	select {
+	case res := <-ch:
+		return res.Val.(bool)
+	case <-ctx.Done():
+		return false
 	}
-	return available
 }
 
-// cloneStamp describes what a clone's availability is read from: its
-// directory, its .git entry (a directory, or a linked worktree's file) and
-// its common directory's config. ok is false when one is missing.
+// probeTimeout bounds a shared probe.
+const probeTimeout = time.Minute
+
+// cloneStamp describes what a clone's availability is read from: that its
+// directory and .git entry exist and are of the same kind, which git
+// directory a linked worktree's .git file points at, and its common
+// directory's config, where its remotes live. The directories' own
+// modification times are left out: they move on every index write and every
+// new top-level file without changing the answer. ok is false when one is
+// missing.
 func cloneStamp(clone Clone) (string, bool) {
 	var b strings.Builder
-	for _, path := range []string{clone.Path, filepath.Join(clone.Path, ".git"), filepath.Join(clone.CommonDir, "config")} {
+	dotGit := filepath.Join(clone.Path, ".git")
+	for _, path := range []string{clone.Path, dotGit, filepath.Join(clone.CommonDir, "config")} {
 		info, err := os.Stat(path)
 		if err != nil {
 			return "", false
 		}
-		fmt.Fprintf(&b, "%s\x00%d\x00%d\x00%o\x00", path, info.Size(), info.ModTime().UnixNano(), info.Mode())
+		fmt.Fprintf(&b, "%s\x00%o\x00", path, info.Mode())
+		switch {
+		case info.IsDir():
+		case path == dotGit:
+			// A linked worktree's .git file names its git directory.
+			data, err := os.ReadFile(path)
+			if err != nil {
+				return "", false
+			}
+			b.Write(data)
+			b.WriteByte(0)
+		default:
+			fmt.Fprintf(&b, "%d\x00%d\x00", info.Size(), info.ModTime().UnixNano())
+		}
 	}
 	return b.String(), true
 }
@@ -1035,6 +1107,10 @@ func (r *Registry) Pick(ctx context.Context, repository string, settings *Settin
 // repositories row stays, as in Remove, so its settings survive a later pick.
 func (r *Registry) Unpick(ctx context.Context, repository string) error {
 	identity := strings.ToLower(repository)
+	var removed []Clone
+	if r.Removed != nil {
+		removed, _ = r.cloneRows(ctx, identity)
+	}
 	tx, e := r.db.BeginTx(ctx, nil)
 	if e != nil {
 		return e
@@ -1054,7 +1130,11 @@ func (r *Registry) Unpick(ctx context.Context, repository string) error {
 	if rows == 0 {
 		return ErrNotFound
 	}
-	return tx.Commit()
+	if e = tx.Commit(); e != nil {
+		return e
+	}
+	r.removed(removed)
+	return nil
 }
 
 // Repositories lists every picked repository by identity, with its clones

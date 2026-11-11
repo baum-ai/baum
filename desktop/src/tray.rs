@@ -4,12 +4,13 @@
 //! attached daemon's `/api/jobs`, `/api/automatic`, `/api/index?view=waiting`
 //! and `/api/live-sessions`. It reads when the daemon's event stream
 //! (`/api/events`, kept open by its own thread, reconnecting with backoff)
-//! announces a change, after a 500 ms pause for a burst of events to end; as a
-//! safety net it also reads every 60 s while the stream is up and every 30 s
+//! announces a change, only the requests that kind of event can affect, after a
+//! 500 ms pause for a burst of events to end; as a safety net it also reads every 60 s while the stream is up and every 30 s
 //! while it is down, and never with no daemon attached. A separate worker
 //! computes from `/api/diagnostics` and `/api/plan-usage`
-//! (every 5 minutes: the first runs the doctor's checks, the second is
-//! cached that long by the daemon). `main` tells this module when it attaches
+//! (diagnostics every 30 minutes, without `refresh`, so the daemon answers from
+//! its cache of at most that age; plan usage every 5 minutes, cached that long
+//! by the daemon). `main` tells this module when it attaches
 //! to a daemon, loses it, or starts connecting.
 //!
 //! On macOS and Windows a left click opens `panel`, a small window drawn like
@@ -22,7 +23,7 @@
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{self, RecvTimeoutError};
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -47,9 +48,9 @@ const FALLBACK_STREAM_UP: Duration = Duration::from_secs(60);
 const FALLBACK_STREAM_DOWN: Duration = Duration::from_secs(30);
 const STREAM_BACKOFF_FIRST: Duration = Duration::from_secs(1);
 const STREAM_BACKOFF_MAX: Duration = Duration::from_secs(30);
-const DIAGNOSTICS_INTERVAL: Duration = Duration::from_secs(300);
+const DIAGNOSTICS_INTERVAL: Duration = Duration::from_secs(30 * 60);
 /// The daemon caches plan usage this long, so asking sooner repeats it.
-const PLAN_USAGE_INTERVAL: Duration = Duration::from_secs(300);
+const PLAN_USAGE_INTERVAL: Duration = Duration::from_secs(15 * 60);
 /// The prefix of a waiting session's menu id, before its `agent:id` key.
 pub const SESSION_PREFIX: &str = "session:";
 
@@ -317,13 +318,17 @@ struct Inner {
     /// clock as well as the view.
     rendered: Mutex<Option<(View, Vec<String>)>>,
     ui: Mutex<Option<Ui>>,
-    wake: Mutex<Option<mpsc::Sender<()>>>,
+    wake: Mutex<Option<mpsc::Sender<Dirty>>>,
     /// The daemon's event stream is open.
     stream_up: AtomicBool,
+    /// Wakes `health_pause` when the stream goes down.
+    stream_down: (Mutex<()>, Condvar),
     /// Wakes the stream thread (waiting for a daemon or to reconnect).
     stream_kick: Mutex<Option<mpsc::Sender<()>>>,
     /// Wakes the diagnostics and plan usage worker.
     periodic_kick: Mutex<Option<mpsc::Sender<()>>>,
+    /// The person opened the panel or menu: the next plan usage read is forced.
+    plan_refresh: AtomicBool,
 }
 
 #[derive(Clone, Default)]
@@ -331,6 +336,23 @@ pub struct Shared(Arc<Inner>);
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(|p| p.into_inner())
+}
+
+/// Sleeps between two health checks of the daemon: `short` normally, and up
+/// to `long` while the tray's event stream is open and receiving (its pings
+/// show the daemon alive; a daemon that dies closes it), ending early the
+/// moment the stream goes down so a dead daemon is still noticed at once.
+pub fn health_pause(app: &AppHandle, short: Duration, long: Duration) {
+    let Some(shared) = shared(app) else {
+        return thread::sleep(short);
+    };
+    let (mutex, condvar) = &shared.0.stream_down;
+    let guard = lock(mutex);
+    if !shared.0.stream_up.load(Ordering::Relaxed) {
+        drop(guard);
+        return thread::sleep(short);
+    }
+    let _ = condvar.wait_timeout_while(guard, long, |_| shared.0.stream_up.load(Ordering::Relaxed));
 }
 
 fn shared(app: &AppHandle) -> Option<Shared> {
@@ -486,6 +508,13 @@ fn build_tray(app: &AppHandle, login: bool) -> Result<TrayIcon, String> {
         .show_menu_on_left_click(false)
         .on_tray_icon_event(|tray, event| {
             if let tauri::tray::TrayIconEvent::Click {
+                button_state: tauri::tray::MouseButtonState::Down,
+                ..
+            } = event
+            {
+                request_plan_refresh(tray.app_handle());
+            }
+            if let tauri::tray::TrayIconEvent::Click {
                 button: tauri::tray::MouseButton::Left,
                 button_state: tauri::tray::MouseButtonState::Up,
                 rect,
@@ -497,6 +526,19 @@ fn build_tray(app: &AppHandle, login: bool) -> Result<TrayIcon, String> {
         })
         .build(app)
         .map_err(e)
+}
+
+/// A click on the tray icon opens the panel or the menu: read the plan usage
+/// afresh so it is current when shown. The daemon still reads at most once a
+/// minute. Hosts that report no clicks (Linux) keep the periodic reading.
+fn request_plan_refresh(app: &AppHandle) {
+    let Some(shared) = shared(app) else {
+        return;
+    };
+    shared.0.plan_refresh.store(true, Ordering::Relaxed);
+    if let Some(sender) = lock(&shared.0.periodic_kick).as_ref() {
+        let _ = sender.send(());
+    }
 }
 
 fn icon(state: Icon) -> Result<Image<'static>, String> {
@@ -795,9 +837,15 @@ pub fn job_counts(app: &AppHandle) -> Option<(usize, usize)> {
     Some((jobs.running, jobs.queued))
 }
 
+/// Asks the poll thread to read everything: for a (re)connection, a changed
+/// daemon or the safety net, when nothing says what changed.
 fn wake(shared: &Shared) {
+    wake_for(shared, Dirty::ALL);
+}
+
+fn wake_for(shared: &Shared, dirty: Dirty) {
     if let Some(sender) = lock(&shared.0.wake).as_ref() {
-        let _ = sender.send(());
+        let _ = sender.send(dirty);
     }
 }
 
@@ -871,11 +919,50 @@ fn apply(
     }
 }
 
-/// Event kinds after which the tray's numbers may have changed: job state
-/// (running, queued, failures), the pause switch, sessions waiting on the
-/// user, the waiting pull request count, and a missed replay window.
-fn wakes_poll(kind: &str) -> bool {
-    matches!(kind, "progress" | "automatic" | "live" | "index" | "reset")
+/// The tray's requests, as a set: what a poll has to read again.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Dirty(u8);
+
+impl Dirty {
+    const NONE: Dirty = Dirty(0);
+    const JOBS: Dirty = Dirty(1);
+    const AUTOMATIC: Dirty = Dirty(2);
+    const WAITING: Dirty = Dirty(4);
+    const LIVE: Dirty = Dirty(8);
+    const ALL: Dirty = Dirty(15);
+
+    fn contains(self, other: Dirty) -> bool {
+        self.0 & other.0 == other.0
+    }
+
+    fn is_empty(self) -> bool {
+        self.0 == 0
+    }
+}
+
+impl std::ops::BitOr for Dirty {
+    type Output = Dirty;
+    fn bitor(self, other: Dirty) -> Dirty {
+        Dirty(self.0 | other.0)
+    }
+}
+
+/// What an event kind can change among the tray's numbers: job state
+/// (`progress`: running, queued, failures), the pause switch (`automatic`),
+/// sessions waiting on the user (`live`) and the waiting pull request count
+/// (`index`). A missed replay window (`reset`) and a kind this code does not
+/// know could change anything, so they read everything. A `job` event, a
+/// running job's usage, and the kinds that concern only the window change
+/// none of them.
+fn dirty_by(kind: &str) -> Dirty {
+    match kind {
+        "progress" => Dirty::JOBS,
+        "automatic" => Dirty::AUTOMATIC,
+        "index" => Dirty::WAITING,
+        "live" => Dirty::LIVE,
+        "job" | "chat" | "timeline" | "decisions" | "notice" | "" => Dirty::NONE,
+        _ => Dirty::ALL,
+    }
 }
 
 /// The wait before reconnecting after the `attempt`th failure in a row.
@@ -892,6 +979,16 @@ fn fallback_interval(attached: bool, stream_up: bool) -> Option<Duration> {
         (false, _) => None,
         (true, true) => Some(FALLBACK_STREAM_UP),
         (true, false) => Some(FALLBACK_STREAM_DOWN),
+    }
+}
+
+/// Adds a full read to `dirty` once `interval` has passed since the last one,
+/// so events that keep arriving never push the safety net back indefinitely
+/// (a failed fetch would otherwise stay stale).
+fn with_safety_net(dirty: Dirty, since_full: Duration, interval: Option<Duration>) -> Dirty {
+    match interval {
+        Some(interval) if since_full >= interval => Dirty::ALL,
+        _ => dirty,
     }
 }
 
@@ -912,19 +1009,21 @@ fn until_due(
 }
 
 /// After a wake, waits for the burst of events around it to end (a quiet
-/// `DEBOUNCE`, or `DEBOUNCE_MAX` in all). False when the poll thread should
-/// stop.
-fn settle(receiver: &mpsc::Receiver<()>) -> bool {
+/// `DEBOUNCE`, or `DEBOUNCE_MAX` in all), and returns everything the burst
+/// made dirty, so each request is read once however many events asked for it.
+/// `None` when the poll thread should stop.
+fn settle(receiver: &mpsc::Receiver<Dirty>, first: Dirty) -> Option<Dirty> {
     let start = Instant::now();
+    let mut dirty = first;
     loop {
         let left = DEBOUNCE_MAX.saturating_sub(start.elapsed());
         if left.is_zero() {
-            return true;
+            return Some(dirty);
         }
         match receiver.recv_timeout(left.min(DEBOUNCE)) {
-            Ok(()) => {}
-            Err(RecvTimeoutError::Timeout) => return true,
-            Err(RecvTimeoutError::Disconnected) => return false,
+            Ok(more) => dirty = dirty | more,
+            Err(RecvTimeoutError::Timeout) => return Some(dirty),
+            Err(RecvTimeoutError::Disconnected) => return None,
         }
     }
 }
@@ -932,28 +1031,42 @@ fn settle(receiver: &mpsc::Receiver<()>) -> bool {
 fn spawn_polls(app: &AppHandle, shared: &Shared) {
     let (sender, receiver) = mpsc::channel();
     // The first pass reads whatever is attached already.
-    let _ = sender.send(());
+    let _ = sender.send(Dirty::ALL);
     *lock(&shared.0.wake) = Some(sender);
     let (poll_app, poll_shared) = (app.clone(), shared.clone());
     thread::spawn(move || {
+        let mut last_full = Instant::now();
         loop {
             let attached = lock(&poll_shared.0.launch).is_some();
             let stream_up = poll_shared.0.stream_up.load(Ordering::Relaxed);
-            let woke = match fallback_interval(attached, stream_up) {
-                Some(interval) => match receiver.recv_timeout(interval) {
-                    Ok(()) => true,
-                    Err(RecvTimeoutError::Timeout) => false,
-                    Err(RecvTimeoutError::Disconnected) => return,
-                },
+            let interval = fallback_interval(attached, stream_up);
+            // The safety net reads everything; an event only what it names.
+            let dirty = match interval {
+                Some(interval) => {
+                    match receiver.recv_timeout(interval.saturating_sub(last_full.elapsed())) {
+                        Ok(dirty) => Some(dirty),
+                        Err(RecvTimeoutError::Timeout) => None,
+                        Err(RecvTimeoutError::Disconnected) => return,
+                    }
+                }
                 None => match receiver.recv() {
-                    Ok(()) => true,
+                    Ok(dirty) => Some(dirty),
                     Err(_) => return,
                 },
             };
-            if woke && !settle(&receiver) {
-                return;
+            let dirty = match dirty {
+                Some(first) => match settle(&receiver, first) {
+                    Some(dirty) => dirty,
+                    None => return,
+                },
+                None => Dirty::ALL,
+            };
+            // Partial reads must not postpone the safety net for good.
+            let dirty = with_safety_net(dirty, last_full.elapsed(), interval);
+            if dirty == Dirty::ALL {
+                last_full = Instant::now();
             }
-            poll_once(&poll_app, &poll_shared);
+            poll_once(&poll_app, &poll_shared, dirty);
         }
     });
 
@@ -991,8 +1104,9 @@ fn stream_loop(shared: &Shared, kick: &mpsc::Receiver<()>) {
                     wake(shared);
                 }
                 client::StreamItem::Event(kind) => {
-                    if wakes_poll(&kind) {
-                        wake(shared);
+                    let dirty = dirty_by(&kind);
+                    if !dirty.is_empty() {
+                        wake_for(shared, dirty);
                     }
                 }
                 client::StreamItem::Ping => {}
@@ -1002,6 +1116,11 @@ fn stream_loop(shared: &Shared, kick: &mpsc::Receiver<()>) {
                 && lock(&shared.0.launch).is_some()
         });
         if shared.0.stream_up.swap(false, Ordering::Relaxed) {
+            // Under the mutex, so a waiter between its check and its wait
+            // cannot miss it.
+            let guard = lock(&shared.0.stream_down.0);
+            shared.0.stream_down.1.notify_all();
+            drop(guard);
             // The fallback interval just shortened: look now.
             wake(shared);
         }
@@ -1022,8 +1141,9 @@ fn stream_loop(shared: &Shared, kick: &mpsc::Receiver<()>) {
     }
 }
 
-/// Reads what no event announces: diagnostics and plan usage, each every
-/// five minutes and again for a new daemon. Sleeps until the next is due,
+/// Reads what no event announces: diagnostics every 30 minutes and plan usage
+/// every 15 (from the daemon's cache, forced when the tray is clicked), each
+/// again for a new daemon. Sleeps until the next is due,
 /// and with no daemon until one is attached.
 fn periodic_loop(app: &AppHandle, shared: &Shared, kick: &mpsc::Receiver<()>) {
     let mut diagnostics: Option<(u64, Instant)> = None;
@@ -1038,7 +1158,12 @@ fn periodic_loop(app: &AppHandle, shared: &Shared, kick: &mpsc::Receiver<()>) {
             continue;
         };
         let now = Instant::now();
-        let plan_wait = until_due(plans, generation, PLAN_USAGE_INTERVAL, now);
+        let forced = shared.0.plan_refresh.swap(false, Ordering::Relaxed);
+        let plan_wait = if forced {
+            Duration::ZERO
+        } else {
+            until_due(plans, generation, PLAN_USAGE_INTERVAL, now)
+        };
         let diagnostics_wait = until_due(diagnostics, generation, DIAGNOSTICS_INTERVAL, now);
         let wait = plan_wait.min(diagnostics_wait);
         if !wait.is_zero() {
@@ -1052,7 +1177,7 @@ fn periodic_loop(app: &AppHandle, shared: &Shared, kick: &mpsc::Receiver<()>) {
             // The figures are a convenience: a failed reading keeps the last
             // one, and a daemon without the route has none to show.
             if let Ok(found) =
-                client::plan_usage(&launch).and_then(|b| status::parse_plan_usage(&b))
+                client::plan_usage(&launch, forced).and_then(|b| status::parse_plan_usage(&b))
             {
                 lock(&shared.0.observed).plans = Some(found);
                 render(app, shared, false);
@@ -1074,21 +1199,38 @@ fn periodic_loop(app: &AppHandle, shared: &Shared, kick: &mpsc::Receiver<()>) {
 /// One look at the daemon. A failed request forgets that answer, so the menu
 /// does not show counts it cannot vouch for; the connection watch in `main`
 /// decides when the daemon has gone.
-fn poll_once(app: &AppHandle, shared: &Shared) {
+fn poll_once(app: &AppHandle, shared: &Shared, dirty: Dirty) {
     let launch = lock(&shared.0.launch).clone();
     let Some(launch) = launch else {
         return;
     };
-    let jobs = client::jobs(&launch).and_then(|b| status::parse_jobs(&b));
-    let automatic = client::automatic(&launch).and_then(|b| status::parse_automatic(&b));
-    let waiting = client::waiting(&launch).and_then(|b| status::parse_waiting(&b));
-    let needs = client::live_sessions(&launch).and_then(|b| status::parse_live(&b));
+    // Only what the events named is read; the rest keeps its last answer.
+    let jobs = dirty
+        .contains(Dirty::JOBS)
+        .then(|| client::jobs(&launch).and_then(|b| status::parse_jobs(&b)));
+    let automatic = dirty
+        .contains(Dirty::AUTOMATIC)
+        .then(|| client::automatic(&launch).and_then(|b| status::parse_automatic(&b)));
+    let waiting = dirty
+        .contains(Dirty::WAITING)
+        .then(|| client::waiting(&launch).and_then(|b| status::parse_waiting(&b)));
+    let needs = dirty
+        .contains(Dirty::LIVE)
+        .then(|| client::live_sessions(&launch).and_then(|b| status::parse_live(&b)));
     {
         let mut observed = lock(&shared.0.observed);
-        observed.jobs = jobs.ok();
-        observed.automatic = automatic.ok().flatten();
-        observed.waiting = waiting.ok();
-        observed.needs = needs.ok();
+        if let Some(jobs) = jobs {
+            observed.jobs = jobs.ok();
+        }
+        if let Some(automatic) = automatic {
+            observed.automatic = automatic.ok().flatten();
+        }
+        if let Some(waiting) = waiting {
+            observed.waiting = waiting.ok();
+        }
+        if let Some(needs) = needs {
+            observed.needs = needs.ok();
+        }
     }
     render(app, shared, false);
     // A failed job seen here but still unseen in the daemon: recording it
@@ -1109,13 +1251,19 @@ mod tests {
     use crate::status::{Automatic, Jobs};
 
     #[test]
-    fn only_state_events_wake_the_poll() {
-        for kind in ["progress", "automatic", "live", "index", "reset"] {
-            assert!(wakes_poll(kind), "{kind}");
+    fn each_event_reads_only_what_it_can_change() {
+        assert_eq!(dirty_by("progress"), Dirty::JOBS);
+        assert_eq!(dirty_by("automatic"), Dirty::AUTOMATIC);
+        assert_eq!(dirty_by("index"), Dirty::WAITING);
+        assert_eq!(dirty_by("live"), Dirty::LIVE);
+        for kind in ["reset", "something-new"] {
+            assert_eq!(dirty_by(kind), Dirty::ALL, "{kind}");
         }
-        for kind in ["chat", "timeline", "decisions", "notice", ""] {
-            assert!(!wakes_poll(kind), "{kind}");
+        for kind in ["job", "chat", "timeline", "decisions", "notice", ""] {
+            assert!(dirty_by(kind).is_empty(), "{kind}");
         }
+        assert!(Dirty::ALL.contains(Dirty::JOBS | Dirty::LIVE));
+        assert!(!Dirty::LIVE.contains(Dirty::JOBS));
     }
 
     #[test]
@@ -1152,17 +1300,40 @@ mod tests {
     }
 
     #[test]
-    fn a_burst_of_wakes_settles_into_one_read() {
+    fn a_burst_of_wakes_settles_into_one_read_of_their_union() {
         let (sender, receiver) = mpsc::channel();
         for _ in 0..5 {
-            sender.send(()).unwrap();
+            sender.send(Dirty::LIVE).unwrap();
         }
+        sender.send(Dirty::WAITING).unwrap();
         let start = Instant::now();
-        assert!(settle(&receiver));
+        assert_eq!(
+            settle(&receiver, Dirty::JOBS),
+            Some(Dirty::JOBS | Dirty::LIVE | Dirty::WAITING)
+        );
         assert!(start.elapsed() < DEBOUNCE_MAX);
         assert!(receiver.try_recv().is_err(), "the burst was drained");
         drop(sender);
-        assert!(!settle(&receiver));
+        assert_eq!(settle(&receiver, Dirty::LIVE), None);
+    }
+
+    #[test]
+    fn steady_events_do_not_postpone_the_full_read() {
+        let interval = Some(Duration::from_secs(60));
+        let before = Duration::from_secs(59);
+        let after = Duration::from_secs(60);
+        assert_eq!(with_safety_net(Dirty::LIVE, before, interval), Dirty::LIVE);
+        assert_eq!(with_safety_net(Dirty::LIVE, after, interval), Dirty::ALL);
+        assert_eq!(with_safety_net(Dirty::NONE, after, interval), Dirty::ALL);
+        assert_eq!(with_safety_net(Dirty::LIVE, after, None), Dirty::LIVE);
+    }
+
+    #[test]
+    fn an_event_after_the_window_is_kept_for_the_next_read() {
+        let (sender, receiver) = mpsc::channel();
+        assert_eq!(settle(&receiver, Dirty::LIVE), Some(Dirty::LIVE));
+        sender.send(Dirty::JOBS).unwrap();
+        assert_eq!(receiver.try_recv(), Ok(Dirty::JOBS));
     }
 
     fn view(observed: Observed) -> View {

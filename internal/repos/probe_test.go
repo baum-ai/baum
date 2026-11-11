@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -91,5 +92,81 @@ func TestProbeCacheExpires(t *testing.T) {
 	}
 	if gitProcesses() == before {
 		t.Error("an expired answer was reused without running git")
+	}
+}
+
+func TestProbeIgnoresDirectoryMtimes(t *testing.T) {
+	ctx := context.Background()
+	p := clone(t, "https://github.com/owner/mtimes")
+	c, err := inspect(ctx, p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cache := &probeCache{entries: map[string]probeEntry{}}
+	if !cache.available(ctx, c) {
+		t.Fatal("not available")
+	}
+	before := gitProcesses()
+	for i := range 3 {
+		future := time.Now().Add(time.Duration(i+1) * time.Hour)
+		for _, dir := range []string{p, filepath.Join(p, ".git")} {
+			if err := os.Chtimes(dir, future, future); err != nil {
+				t.Fatal(err)
+			}
+		}
+		lock := filepath.Join(p, ".git", "index.lock")
+		if err := os.WriteFile(lock, nil, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Remove(lock); err != nil {
+			t.Fatal(err)
+		}
+		if !cache.available(ctx, c) {
+			t.Fatal("not available after churn")
+		}
+	}
+	if ran := gitProcesses() - before; ran != 0 {
+		t.Errorf("directory mtime churn ran git %d times, want 0", ran)
+	}
+	git(t, p, "remote", "set-url", "origin", "https://github.com/owner/elsewhere")
+	if cache.available(ctx, c) {
+		t.Error("a changed remote was not re-probed")
+	}
+}
+
+func TestProbeSharesConcurrentMisses(t *testing.T) {
+	ctx := context.Background()
+	p := clone(t, "https://github.com/owner/shared")
+	c, err := inspect(ctx, p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cache := &probeCache{entries: map[string]probeEntry{}}
+	before := gitProcesses()
+	if !cache.available(ctx, c) {
+		t.Fatal("not available")
+	}
+	single := gitProcesses() - before
+	cache.mu.Lock()
+	cache.entries = map[string]probeEntry{}
+	cache.mu.Unlock()
+
+	before = gitProcesses()
+	var wg sync.WaitGroup
+	start := make(chan struct{})
+	for range 16 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			if !cache.available(ctx, c) {
+				t.Error("not available")
+			}
+		}()
+	}
+	close(start)
+	wg.Wait()
+	if ran := gitProcesses() - before; ran > single {
+		t.Errorf("16 concurrent misses ran git %d times, one probe runs it %d", ran, single)
 	}
 }

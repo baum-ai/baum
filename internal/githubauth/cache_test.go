@@ -211,7 +211,7 @@ func TestSignInAsAnotherAccountReplacesTheCachedToken(t *testing.T) {
 	store := &countingStore{c: Credential{AccessToken: "alice-token", Login: "alice", ID: 7}}
 	m.store = store
 	mustToken(t, m, "alice-token")
-	d, err := m.Start(context.Background())
+	d, err := m.Start(context.Background(), false)
 	if err != nil {
 		t.Fatal(err)
 	}

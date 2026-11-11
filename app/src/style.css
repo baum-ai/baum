@@ -3102,6 +3102,9 @@ a.local-session-pr:hover {
   display: flex;
   flex-direction: column;
   gap: 2px;
+  /* Its own width wherever it starts, so the width measured before it is
+     placed under its button is the width it keeps once it is there. */
+  width: max-content;
   min-width: 200px;
   max-width: 320px;
   padding: 6px;
@@ -5477,6 +5480,27 @@ a.upnext-done-text:hover {
   flex: 1;
 }
 .upnext-working-aside {
+  color: var(--text-tertiary);
+  font-size: var(--text-xs);
+}
+.upnext-noreview {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  font-size: var(--text-base);
+  animation: upnext-drop 0.15s ease-out;
+}
+.upnext-noreview-copy {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.upnext-noreview-sub {
   color: var(--text-tertiary);
   font-size: var(--text-xs);
 }

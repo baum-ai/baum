@@ -8,8 +8,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -55,12 +57,24 @@ func (s *Store) HeartbeatRun(ctx context.Context, id int64, deadline time.Time) 
 	if id <= 0 || !deadline.After(time.Now()) {
 		return errors.New("invalid run lease")
 	}
+	before, statErr := os.Stat(s.path())
 	db, err := s.database(true)
 	if err != nil {
 		return err
 	}
 	defer db.Close()
 	result, err := db.ExecContext(ctx, `UPDATE runs SET expires=? WHERE id=? AND state='generating'`, deadline.UnixNano(), id)
+	if err == nil && statErr == nil {
+		if after, e := os.Stat(s.path()); e == nil {
+			h := heartbeat{before: stampOf(before), after: stampOf(after)}
+			// Renewals in a row chain: the file is still as the last one
+			// left it, so what a watcher saw before that one still stands.
+			if v, ok := heartbeats.Load(s.path()); ok && v.(heartbeat).after == h.before {
+				h.before = v.(heartbeat).before
+			}
+			heartbeats.Store(s.path(), h)
+		}
+	}
 	if err != nil {
 		return err
 	}
@@ -69,6 +83,36 @@ func (s *Store) HeartbeatRun(ctx context.Context, id int64, deadline time.Time) 
 		return ErrConflict
 	}
 	return err
+}
+
+// FileStamp is the size and modification time (nanoseconds) of a file.
+type FileStamp struct{ Size, ModTime int64 }
+
+func stampOf(info os.FileInfo) FileStamp {
+	return FileStamp{info.Size(), info.ModTime().UnixNano()}
+}
+
+type heartbeat struct{ before, after FileStamp }
+
+// heartbeats holds, per store file, the stamps around this process's latest
+// HeartbeatRun write.
+var heartbeats sync.Map
+
+// SeenThroughHeartbeats maps the stamp of the store file at path to what it
+// was before this process's latest lease heartbeat wrote it, when the file
+// is exactly as that heartbeat left it. A lease renewal changes nothing a
+// reader of the store sees, so a watcher that compares stamps can look
+// through it; any other write, before or after the heartbeat, leaves a
+// different stamp and is not hidden. A write by another process landing
+// between the heartbeat's two stats would be folded in; the review index's
+// MaxAge bounds that.
+func SeenThroughHeartbeats(path string, stamp FileStamp) FileStamp {
+	if v, ok := heartbeats.Load(path); ok {
+		if h := v.(heartbeat); h.after == stamp {
+			return h.before
+		}
+	}
+	return stamp
 }
 
 // FinishRun completes exactly one matching unfinished attempt. Empty reason
@@ -184,10 +228,12 @@ func immediate(ctx context.Context, db *sql.DB, fn func(*sql.Conn) error) error 
 	return err
 }
 
-func summaryTriggerNames(ctx context.Context, q interface {
-	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
-}) ([]string, error) {
-	rows, err := q.QueryContext(ctx, `SELECT name FROM sqlite_master WHERE type='trigger' AND substr(name,1,10)='summaries_' ORDER BY name`)
+func summaryTriggerNames(ctx context.Context, q querier) ([]string, error) {
+	return triggerNames(ctx, q, "summaries_")
+}
+
+func triggerNames(ctx context.Context, q querier, prefix string) ([]string, error) {
+	rows, err := q.QueryContext(ctx, `SELECT name FROM sqlite_master WHERE type='trigger' AND substr(name,1,?)=? ORDER BY name`, len(prefix), prefix)
 	if err != nil {
 		return nil, err
 	}

@@ -36,19 +36,34 @@ export function codexHookWarning(status?: CodexHookTrust | null): string | null 
   }
 }
 
-/** Rechecks on returning from Codex, after Settings actions, and once a minute.
- * Failed or older endpoints never turn a known warning into a ready state. */
+const POLL_MS = 60_000;
+
+/** Reads on load, on window focus (at most once a minute while healthy) and, only while the
+ * last answer is a warning, once a minute while visible. `recheck` asks the
+ * daemon for a fresh read: it caches answers, and callers use it after acting
+ * on the warning. Failed or older endpoints never turn a known warning into a
+ * ready state. */
 export function useCodexHookTrust() {
   const [status, setStatus] = useState<CodexHookTrust>();
   const [checking, setChecking] = useState(false);
   const alive = useRef(false);
   const pending = useRef(false);
-  const read = useCallback(async () => {
+  const lastRead = useRef(0);
+  const last = useRef("");
+  const warned = useRef(false);
+  const read = useCallback(async (fresh = false) => {
     if (pending.current) return;
     pending.current = true;
+    lastRead.current = Date.now();
     try {
-      const body = await request<Partial<CodexHookTrust>>("api/agent-hooks/codex");
-      if (alive.current && body.state) setStatus(body as CodexHookTrust);
+      const body = await request<Partial<CodexHookTrust>>(
+        fresh ? "api/agent-hooks/codex?refresh=1" : "api/agent-hooks/codex",
+      );
+      const key = JSON.stringify(body);
+      if (alive.current && body.state && key !== last.current) {
+        last.current = key;
+        setStatus(body as CodexHookTrust);
+      }
     } catch {
       // Preserve any warning until a successful check replaces it.
     } finally {
@@ -57,21 +72,26 @@ export function useCodexHookTrust() {
   }, []);
   const recheck = useCallback(async () => {
     setChecking(true);
-    await read();
+    await read(true);
     if (alive.current) setChecking(false);
   }, [read]);
   useEffect(() => {
     alive.current = true;
     void read();
-    const focus = () => void read();
+    const focus = () => {
+      // A warning is rechecked on every focus: the user may just have fixed it.
+      if (warned.current || Date.now() - lastRead.current >= POLL_MS) void read();
+    };
     window.addEventListener("focus", focus);
     return () => {
       alive.current = false;
       window.removeEventListener("focus", focus);
     };
   }, [read]);
-  useVisibleInterval(() => void read(), 60_000);
-  return { status, warning: codexHookWarning(status), checking, recheck };
+  const warning = codexHookWarning(status);
+  warned.current = warning !== null;
+  useVisibleInterval(() => void read(), warning ? POLL_MS : null);
+  return { status, warning, checking, recheck };
 }
 
 /** `open` shows the setting that fixes the warning, when the page has it. */

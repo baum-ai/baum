@@ -501,6 +501,10 @@ The loader and the version list are read by value: a host may pass a new
 `loadVersion` function or `versions` array on each render without anything
 being loaded again. A host whose loader starts answering for a different
 pull request should remount the viewer, for example with a `key`.
+Section history reads the earlier versions again only when the review, its
+version or the set of versions it needs changes, not when the host passes a
+new document object of the same version. A read that failed is tried again
+on the next refetch of the document, and only for the versions that failed.
 
 The head's compact bar is `REVIEW_BAR_PX` (48px) tall and sticks to the top
 of the window from `lg` (1024px). Below `xl` the navigator bar, 48px too,
@@ -705,6 +709,17 @@ tables with their cells at the top and a header on a fill. Code everywhere
 sits on `--code-fill`, a faint tint of the text that reads the same on any
 surface and in the dark theme.
 
+Inside the review workspace, `Markdown` reads the shown review's hunks
+(`ReviewHunksProvider`, pooling the current and any historical version). A
+known hunk ID in the prose, bare or as a whole code span, becomes a chip
+naming its file and first line (`ui-state.tsx:42`, the full path in its
+tooltip) that opens the file view there, or the diff on GitHub when the file
+view cannot. The app's Up next panel sets the same provider for the review
+it previews, where every chip opens the diff on GitHub. Unknown IDs, link
+text and code blocks stay as written, and without the provider nothing
+changes. The pass runs after sanitising, so a
+comment's own markup cannot create these links.
+
 ## Schema and tile types
 
 The document types in `src/review-document.ts` mirror
@@ -762,6 +777,10 @@ page's own origin:
   again retries. The summary shows excerpt and file counts immediately; line
   additions/deletions appear only when every cited excerpt is available, so
   missing patch data never appears as zero changes.
+  The excerpts' diff is drawn from the first time the evidence is opened and
+  stays mounted after it is closed, so a section citing many hunks holds no
+  hidden code rows until a reader opens one; browser find does not match code
+  in evidence that was never opened.
 
 The app follows the system colour scheme, keeps the reader's place in the
 URL's search parameters, and has no file picker, no upload and no requests to

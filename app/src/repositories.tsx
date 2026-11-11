@@ -7,7 +7,8 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { request, type Repository } from "./api";
+import { request, type OrganizationAccess, type Repository } from "./api";
+import { OrganizationAccessNotice } from "./organization-access";
 import { invoke } from "./desktop/native";
 import { displayPath, repositoryPath } from "./desktop/setup-model";
 import { LoadingStatus } from "./nine-dots";
@@ -369,6 +370,7 @@ export function RepositoryPicker({
   changed,
   connected = true,
   autoFocus = false,
+  showOrganizations = true,
 }: {
   call?: RepositoryCall;
   home?: string;
@@ -377,7 +379,11 @@ export function RepositoryPicker({
   connected?: boolean;
   /** Whether the search takes the focus when it shows. */
   autoFocus?: boolean;
+  /** Whether the picker says which organizations baum cannot see; a page that
+   *  already says so turns it off. */
+  showOrganizations?: boolean;
 }) {
+  const [organizations, setOrganizations] = useState<OrganizationAccess>();
   const [list, setList] = useState<RepositoryItem[]>([]);
   const [topList, setTopList] = useState<RepositoryItem[]>([]);
   const [totalCount, setTotalCount] = useState<number>();
@@ -428,6 +434,7 @@ export function RepositoryPicker({
                 search_error?: string;
                 top_repositories?: RepositoryItem[];
                 has_more?: boolean;
+                organization_access?: OrganizationAccess;
               }>(mode, {
                 query: search,
               })
@@ -457,6 +464,9 @@ export function RepositoryPicker({
           }
         }
         setList(items);
+        setOrganizations(
+          "organization_access" in listing ? listing.organization_access : undefined,
+        );
         if ("top_repositories" in listing && Array.isArray(listing.top_repositories)) {
           setTopList(
             listing.top_repositories.map((r) => ({ ...r, picked: picked.has(r.repository) })),
@@ -612,6 +622,9 @@ export function RepositoryPicker({
       ) : (
         <p>Connect GitHub to list your repositories.</p>
       )}
+      {showOrganizations && connected ? (
+        <OrganizationAccessNotice access={organizations} recheck={() => reload("retry-list")} />
+      ) : null}
       {error ? (
         <div role="alert">
           <p>{error}</p>

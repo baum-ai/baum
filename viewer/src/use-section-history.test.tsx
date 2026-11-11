@@ -69,7 +69,88 @@ function current(): ReviewDocument {
   return review;
 }
 
+function rerender(
+  review: ReviewDocument,
+  versions: number[],
+  load: LoadReviewVersion,
+  shown: ReviewDocument | null = null,
+) {
+  return act(async () => {
+    root!.render(
+      <Probe document={review} versions={versions} load={load} shown={shown} onResult={() => {}} />,
+    );
+  });
+}
+
 describe("section history", () => {
+  it("reads nothing again for a new document object of the same version", async () => {
+    const review = current();
+    const risk = review.sections.flatMap((section) => section.risks)[0]!;
+    risk.state = "mitigated";
+    risk.mitigated_version = 3;
+    const { load } = await mount(review, [4, 3, 2, 1]);
+    expect(load).toHaveBeenCalledTimes(2);
+    await rerender(structuredClone(review), [4, 3, 2, 1], load);
+    expect(load).toHaveBeenCalledTimes(2);
+  });
+
+  it("retries only the failed versions on the next refetch of the same version", async () => {
+    const review = current();
+    const risk = review.sections.flatMap((section) => section.risks)[0]!;
+    risk.state = "mitigated";
+    risk.mitigated_version = 3;
+    let offline = true;
+    const load = vi.fn<LoadReviewVersion>(async (version) =>
+      version === 1 && offline
+        ? { status: "failed" }
+        : {
+            status: "ready",
+            document: { ...structuredClone(review), review: { ...review.review, version } },
+          },
+    );
+    let result: ReturnType<typeof useSectionHistory> = null;
+    root = createRoot(globalThis.document.createElement("div"));
+    const show = (document: ReviewDocument) =>
+      act(async () => {
+        root!.render(
+          <Probe
+            document={document}
+            versions={[4, 3, 2, 1]}
+            load={load}
+            shown={null}
+            onResult={(value) => {
+              result = value;
+            }}
+          />,
+        );
+      });
+    await show(review);
+    expect(load.mock.calls.map(([version]) => version).toSorted()).toEqual([1, 2]);
+    // Without a refetch nothing is asked again.
+    await show(review);
+    expect(load).toHaveBeenCalledTimes(2);
+    const incomplete = result as { active: Map<string, number[]> } | null;
+    offline = false;
+    await show(structuredClone(review));
+    expect(load.mock.calls.map(([version]) => version).toSorted()).toEqual([1, 1, 2]);
+    const complete = result as { active: Map<string, number[]> } | null;
+    expect(complete).not.toBe(incomplete);
+    await show(structuredClone(review));
+    expect(load).toHaveBeenCalledTimes(3);
+  });
+
+  it("reads again when a new version is published", async () => {
+    const review = current();
+    const risk = review.sections.flatMap((section) => section.risks)[0]!;
+    risk.state = "mitigated";
+    risk.mitigated_version = 3;
+    const { load } = await mount(review, [4, 3, 2, 1]);
+    const next = structuredClone(review);
+    next.review.version = 5;
+    await rerender(next, [5, 4, 3, 2, 1], load);
+    expect(load.mock.calls.length).toBeGreaterThan(2);
+  });
+
   it("loads nothing while no stale section or resolved risk needs an earlier version", async () => {
     const { load, result } = await mount(current(), [3, 2, 1]);
     expect(load).not.toHaveBeenCalled();

@@ -49,6 +49,7 @@ type Server struct {
 	sequence                           uint64
 	events                             []event
 	subscribers                        map[chan struct{}]struct{}
+	joined                             chan struct{} // poked when a subscriber connects
 	done                               chan struct{}
 }
 type event struct {
@@ -77,7 +78,7 @@ func New(opts Options) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Server{opts: opts, launch: launch, session: session, namespace: namespace, subscribers: map[chan struct{}]struct{}{}, done: make(chan struct{})}, nil
+	return &Server{opts: opts, launch: launch, session: session, namespace: namespace, subscribers: map[chan struct{}]struct{}{}, joined: make(chan struct{}, 1), done: make(chan struct{})}, nil
 }
 func (s *Server) Listen(port int) (string, error) {
 	if port < 0 || port > 65535 {
@@ -289,25 +290,33 @@ func writeJSON(w http.ResponseWriter, v any) {
 	_ = json.NewEncoder(w).Encode(v)
 }
 
+// maxEvent is the most event data Publish takes.
+const maxEvent = 16 << 10
+
+var errEventTooLarge = errors.New("event too large")
+
 // Publish records a small notification, not sensitive documents. Clients that
 // miss the bounded replay window receive a reset event and rebuild their index.
 func (s *Server) Publish(kind string, data any) error {
-	if kind != "index" && kind != "progress" && kind != "automatic" && kind != "live" && kind != "notice" && kind != "chat" && kind != "timeline" && kind != "decisions" {
+	if kind != "index" && kind != "progress" && kind != "job" && kind != "automatic" && kind != "live" && kind != "notice" && kind != "chat" && kind != "timeline" && kind != "decisions" {
 		return errors.New("unknown event kind")
 	}
 	b, err := json.Marshal(data)
 	if err != nil {
 		return err
 	}
-	if len(b) > 16<<10 {
-		return errors.New("event too large")
+	if len(b) > maxEvent {
+		return errEventTooLarge
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.sequence++
 	s.events = append(s.events, event{s.sequence, kind, b})
 	if len(s.events) > 128 {
-		s.events = append([]event(nil), s.events[len(s.events)-128:]...)
+		// Events are never changed once appended, so the window is a
+		// reslice: append reallocates only when the capacity runs out, and a
+		// reader holding an older slice sees the events it had.
+		s.events = s.events[len(s.events)-128:]
 	}
 	for ch := range s.subscribers {
 		select {
@@ -317,6 +326,14 @@ func (s *Server) Publish(kind string, data any) error {
 	}
 	return nil
 }
+
+// hasSubscribers reports whether an event stream is connected.
+func (s *Server) hasSubscribers() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.subscribers) > 0
+}
+
 func (s *Server) stream(w http.ResponseWriter, r *http.Request) {
 	f, ok := w.(http.Flusher)
 	if !ok {
@@ -336,6 +353,10 @@ func (s *Server) stream(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	s.subscribers[ch] = struct{}{}
 	s.mu.Unlock()
+	select {
+	case s.joined <- struct{}{}:
+	default:
+	}
 	defer func() { s.mu.Lock(); delete(s.subscribers, ch); s.mu.Unlock() }()
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("X-Accel-Buffering", "no")
@@ -345,7 +366,9 @@ func (s *Server) stream(w http.ResponseWriter, r *http.Request) {
 	defer ping.Stop()
 	for {
 		s.mu.Lock()
-		events := append([]event(nil), s.events...)
+		// The length and capacity are capped: a later Publish appends past
+		// them, into memory this loop never reads.
+		events := s.events[:len(s.events):len(s.events)]
 		latest := s.sequence
 		s.mu.Unlock()
 		if after > latest || (len(events) > 0 && after+1 < events[0].ID) {

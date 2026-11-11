@@ -38,3 +38,14 @@ export const ReviewSourcesContext = createContext<ReviewSources | null>(null);
 export function useReviewSources(): ReviewSources | null {
   return useContext(ReviewSourcesContext);
 }
+
+/** A diff hunk a review's prose can name by its ID, resolved for a link: the
+ *  file and line it opens in the file view, and the GitHub diff otherwise. */
+export type ReviewHunk = { path: string; line?: number; href: string; title: string };
+
+export const ReviewHunksContext = createContext<ReadonlyMap<string, ReviewHunk> | null>(null);
+
+/** The shown review's hunks by ID, or null outside a review. */
+export function useReviewHunks(): ReadonlyMap<string, ReviewHunk> | null {
+  return useContext(ReviewHunksContext);
+}

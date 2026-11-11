@@ -236,8 +236,10 @@ func validate(kind string, raw []byte) error {
 			} `json:"seen"`
 			Snoozed *map[string]*int64  `json:"snoozed"`
 			Held    *map[string]*string `json:"held"`
+			// Archived is absent from records saved before archiving existed.
+			Archived map[string]*int64 `json:"archived"`
 		}
-		if json.Unmarshal(raw, &value) != nil || value.Day == nil || !dayKey.MatchString(*value.Day) || value.Seen == nil || value.Snoozed == nil || value.Held == nil || len(*value.Seen) > 2000 || len(*value.Snoozed) > 2000 || len(*value.Held) > 2000 {
+		if json.Unmarshal(raw, &value) != nil || value.Day == nil || !dayKey.MatchString(*value.Day) || value.Seen == nil || value.Snoozed == nil || value.Held == nil || len(*value.Seen) > 2000 || len(*value.Snoozed) > 2000 || len(*value.Held) > 2000 || len(value.Archived) > 2000 {
 			return ErrInvalid
 		}
 		if _, err := time.Parse("2006-1-2", *value.Day); err != nil {
@@ -260,6 +262,11 @@ func validate(kind string, raw []byte) error {
 		}
 		for key, head := range *value.Held {
 			if len(key) > 300 || head == nil || len(*head) > 128 {
+				return ErrInvalid
+			}
+		}
+		for key, at := range value.Archived {
+			if len(key) > 300 || at == nil || *at < 0 {
 				return ErrInvalid
 			}
 		}

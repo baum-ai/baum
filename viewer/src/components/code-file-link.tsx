@@ -1,11 +1,14 @@
-import { type ReactNode, useContext } from "react";
+import { type ReactNode, useContext, useMemo } from "react";
 
+import { formatLines, humanize, hunkLine, hunkUrl, type ReviewDocument } from "../review-document";
 import { cn, FOCUS_RING } from "./classnames";
 import { ExternalLinkIcon } from "./icons";
 import {
   ReviewFilesContext,
+  ReviewHunksContext,
   ReviewSourcesContext,
   type ReviewFiles,
+  type ReviewHunk,
   type ReviewSources,
 } from "./review-contexts";
 
@@ -85,4 +88,36 @@ export function ReviewSourcesProvider({
   children: ReactNode;
 }) {
   return <ReviewSourcesContext.Provider value={sources}>{children}</ReviewSourcesContext.Provider>;
+}
+
+/** Set by the review workspace so a hunk ID written into the review's prose
+ *  reads as a link to its file and line. A hunk ID names the hunk's content,
+ *  so the shown documents' hunks are pooled: a historical section cites hunks
+ *  of its own version. */
+export function ReviewHunksProvider({
+  document,
+  historical,
+  children,
+}: {
+  document: ReviewDocument | null;
+  historical: ReviewDocument | null;
+  children: ReactNode;
+}) {
+  const hunks = useMemo(() => {
+    const byId = new Map<string, ReviewHunk>();
+    for (const shown of [document, historical]) {
+      if (!shown) continue;
+      for (const hunk of shown.index.hunks) {
+        if (byId.has(hunk.id)) continue;
+        byId.set(hunk.id, {
+          path: hunk.path,
+          line: hunkLine(hunk),
+          href: hunkUrl(shown, hunk),
+          title: `${humanize(hunk.change)} ${hunk.role} hunk in ${hunk.path}, ${formatLines(hunk.additions, hunk.deletions)}`,
+        });
+      }
+    }
+    return byId;
+  }, [document, historical]);
+  return <ReviewHunksContext.Provider value={hunks}>{children}</ReviewHunksContext.Provider>;
 }

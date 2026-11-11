@@ -6,8 +6,16 @@ import example from "../../schema/review-example.json" with { type: "json" };
 import { App } from "./app";
 import type { Entry, Job, LiveSession, ReviewGroup } from "./api";
 import { FOR_ME } from "./inboxes";
-import { othersState, queueItems, snoozeOptions, snoozeText, upNext, waitingOn } from "./up-next";
-import { forgetLastRows } from "./shortcuts";
+import {
+  othersState,
+  queueItems,
+  snoozeOptions,
+  snoozeText,
+  upNext,
+  waitingOn,
+  withGroups,
+} from "./up-next";
+import { forgetLastRows, MAC } from "./shortcuts";
 
 type Overrides = Partial<Omit<Entry, "pull_request">> & {
   pull_request?: Partial<Entry["pull_request"]>;
@@ -84,7 +92,7 @@ it("keeps a stacked pull request GitHub would merge waiting on the lowest open o
       merge: "ready",
       checks: "passing",
       ...overrides,
-      pull_request: { head_ref: head, base_ref: base },
+      pull_request: { head_ref: head, base_ref: base, ...overrides.pull_request },
     });
   const stack: ReviewGroup = {
     id: "s1",
@@ -102,7 +110,7 @@ it("keeps a stacked pull request GitHub would merge waiting on the lowest open o
   };
   const entries = [
     // The bottom targets main, which wants a review first.
-    stacked(1, "one", "main", { merge: "blocked" }),
+    stacked(1, "one", "main", { merge: "blocked", pull_request: { review_required: true } }),
     stacked(2, "two", "one"),
     stacked(3, "three", "two"),
     // A failing one still needs fixing, whatever lies under it.
@@ -143,8 +151,8 @@ it("says no checks reported for a blocked pull request with no checks and no rev
   expect(waitingOn(stuck(false))).toBe("No checks reported");
   // A required review may be what blocks it; an older daemon doesn't say.
   expect(waitingOn(stuck(true))).toBe("Waiting on review");
-  expect(waitingOn(stuck(undefined))).toBe("Waiting on review");
-  expect(waitingOn({ ...stuck(false), checks: "passing" })).toBe("Waiting on review");
+  expect(waitingOn(stuck(undefined))).toBe("Blocked on GitHub");
+  expect(waitingOn({ ...stuck(false), checks: "passing" })).toBe("Blocked on GitHub");
 });
 
 it("orders what waits on the person and sets apart what waits on others", () => {
@@ -317,6 +325,63 @@ const render = async () => {
 };
 const panel = () => node.querySelector("article.upnext-panel")!;
 const shown = () => panel().querySelector("h2")!.textContent;
+
+it("distinguishes a GitHub blocker from a required review without requiring approvals to merge", async () => {
+  entries = [
+    mine(1130, {
+      merge: "blocked",
+      checks: "passing",
+      review: "commented",
+      pull_request: { review_required: false },
+    }),
+    mine(1131, {
+      merge: "blocked",
+      checks: "passing",
+      review: "commented",
+      pull_request: { review_required: true },
+    }),
+    mine(1132, { merge: "ready", checks: "passing", review: "unreviewed" }),
+    // An older snapshot has no review-required signal, so its blocker is unknown.
+    mine(1133, { merge: "blocked", checks: "passing", review: "unreviewed" }),
+  ];
+  await render();
+  expect(groups()).toEqual(["Ready to merge · 1", "Waiting · 3"]);
+  expect(row("Change 1130").textContent).toContain("Blocked on GitHub");
+  expect(row("Change 1131").textContent).toContain("Waiting on review");
+  expect(upNext(entries).items.map(({ kind, entry }) => [kind, entry.pull_request.number])).toEqual(
+    [["merge", 1132]],
+  );
+  expect(row("Change 1133").textContent).toContain("Blocked on GitHub");
+  await act(async () => row("Change 1130").click());
+  expect(panel().querySelector(".upnext-chip-waiting")?.textContent).toBe("Blocked on GitHub");
+  expect(panel().querySelector('[aria-label="Why this is waiting"]')).toBeNull();
+  const github = Array.from(panel().querySelectorAll(".upnext-block")).find(
+    (block) => block.querySelector("h3")?.textContent === "On GitHub",
+  )!;
+  expect(github.textContent).toContain("Merge blocked by GitHub");
+  expect(github.textContent).toContain("GitHub has not supplied the reason.");
+  expect(
+    panel().querySelector('.upnext-actions a[href="https://github.com/acme/demo/pull/1130"]')
+      ?.textContent,
+  ).toBe("Open on GitHub");
+});
+
+it.each<Overrides>([
+  { merge: "blocked", checks: "running" },
+  { merge: "blocked", checks: "failing" },
+  { merge: "conflict" },
+  { merge: "blocked", pull_request: { review_required: true } },
+  { merge: "blocked", review: "changes_requested" },
+  { merge: "blocked", unresolved: 1 },
+  { merge: "blocked", pull_request: { behind: true } },
+])("keeps the existing explanation for a known blocker: %j", async (state) => {
+  entries = [mine(1, state)];
+  await render();
+  if (!panel()) await act(async () => row("Change 1").click());
+  expect(panel().textContent).not.toContain("Merge blocked by GitHub");
+  expect(panel().querySelector('[aria-label="Why this is waiting"]')).toBeNull();
+});
+
 const list = () =>
   Array.from(node.querySelectorAll(".upnext-row-title")).map((title) => title.textContent);
 // A heading's name and count, as "Ready to merge · 2".
@@ -360,7 +425,7 @@ it("groups what waits on the person and opens on the first", async () => {
     "Needs your eyes · 1",
     "Ready to merge · 2",
     "Hand to an agent · 1",
-    "Waiting on checks or reviews · 1",
+    "Waiting · 1",
     "Not waiting on you · 1",
   ]);
   // The person's own pull requests that wait on others come next, then
@@ -380,6 +445,31 @@ it("groups what waits on the person and opens on the first", async () => {
   expect(node.querySelector(".local-rail a.local-rail-sub")!.getAttribute("aria-current")).toBe(
     "page",
   );
+});
+
+const githubKey = () =>
+  new KeyboardEvent("keydown", {
+    key: "G",
+    code: "KeyG",
+    shiftKey: true,
+    ...(MAC ? { metaKey: true } : { ctrlKey: true }),
+    bubbles: true,
+    cancelable: true,
+  });
+
+it("opens the selected pull request on GitHub with the command key, Shift and G", async () => {
+  const opened: string[] = [];
+  vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (
+    this: HTMLAnchorElement,
+  ) {
+    if (this.target === "_blank") opened.push(this.href);
+  });
+  await render();
+  await press("j");
+  expect(shown()).toBe("Change 3");
+  await act(async () => document.body.dispatchEvent(githubKey()));
+  expect(opened).toEqual(["https://github.com/acme/demo/pull/3"]);
+  vi.restoreAllMocks();
 });
 
 it("moves with j and k, opens with Enter and merges with m", async () => {
@@ -474,10 +564,82 @@ it("snoozes, undoes and brings back, and remembers it", async () => {
     node.querySelector<HTMLButtonElement>('button[aria-label="Actions for acme/demo #3"]')!.click(),
   );
   const choices = Array.from(node.querySelectorAll<HTMLElement>('[role="menu"] [role^=menuitem]'));
-  expect(choices.map((item) => item.textContent)).toEqual(["Bring back"]);
+  expect(choices.map((item) => item.textContent)).toEqual(["Bring back", "Archive"]);
   await act(async () => choices[0]!.click());
   expect(list()).toContain("Change 3");
   expect(shown()).toBe("Change 3");
+});
+
+it("archives with e, undoes with u, and never shows it again, not even as done", async () => {
+  await render();
+  await act(async () => row("Change 3").click());
+  await press("e");
+  expect(node.querySelector('[role="status"]')!.textContent).toMatch(/^Archived #3/);
+  // The pull request that takes its place is selected.
+  expect(shown()).toBe("Change 4");
+  expect(list()).toEqual(["Change 1", "Change 4", "Change 2", "Change 5", "Change 6"]);
+  await press("u");
+  expect(shown()).toBe("Change 3");
+  expect(list()).toContain("Change 3");
+  // The panel's button archives too.
+  await act(async () => button("Archive").click());
+  expect(list()).not.toContain("Change 3");
+  // There is no Archived group, it is not done today, and a reload keeps it.
+  await render();
+  expect(list()).toEqual(["Change 1", "Change 4", "Change 2", "Change 5", "Change 6"]);
+  expect(groups().join()).not.toMatch(/Archived|Snoozed/);
+  expect(await cleared()).toBeNull();
+  expect(node.textContent).not.toContain("Change 3");
+});
+
+it("archives from a row's menu, a snoozed one too, and a snooze waits for the unarchive", async () => {
+  await render();
+  await rightClick("Change 4");
+  await choose("Archive");
+  expect(list()).not.toContain("Change 4");
+  await act(async () => row("Change 3").click());
+  await press("s");
+  await act(async () => snoozeFor("Until it changes").click());
+  await act(async () => button("Snoozed").click());
+  await act(async () =>
+    node.querySelector<HTMLButtonElement>('button[aria-label="Actions for acme/demo #3"]')!.click(),
+  );
+  await act(async () =>
+    Array.from(node.querySelectorAll<HTMLElement>('[role="menu"] [role^=menuitem]'))
+      .find((item) => item.textContent === "Archive")!
+      .click(),
+  );
+  expect(groups().join()).not.toContain("Snoozed");
+  expect(node.textContent).not.toContain("Change 3");
+  // Undone, it is snoozed again.
+  await press("u");
+  expect(groups()).toContain("Snoozed · 1");
+  expect(list()).not.toContain("Change 3");
+});
+
+it("forgets an archive once its pull request closes, so a reopened one comes back", async () => {
+  await render();
+  await act(async () => row("Change 3").click());
+  await press("e");
+  const all = entries;
+  entries = all.filter((e) => e.pull_request.number !== 3);
+  await render();
+  expect(list()).not.toContain("Change 3");
+  entries = all;
+  await render();
+  expect(list()).toContain("Change 3");
+});
+
+it("forgets an archive once the read says it merged, though its repository has nothing else open", async () => {
+  entries = [ready(3)];
+  await render();
+  await press("e");
+  expect(list()).toEqual([]);
+  entries = [mine(3, { merge: "ready", checks: "passing", pull_request: { state: "MERGED" } })];
+  await render();
+  entries = [ready(3)];
+  await render();
+  expect(list()).toEqual(["Change 3"]);
 });
 
 it("keeps arrows, j/k and Control+n/p on Snooze's choices", async () => {
@@ -550,6 +712,75 @@ it("says under the actions that the review is generating until its summary is wr
   expect(status?.textContent).toBe("Generating the review.");
   // Straight after the actions, so it reads under Open, Comment and Snooze.
   expect(status?.previousElementSibling?.classList.contains("upnext-actions")).toBe(true);
+});
+
+it("says there is no review yet and generates one from the panel", async () => {
+  entries = [requested(7)];
+  await render();
+  const card = panel().querySelector(".upnext-noreview")!;
+  expect(card.textContent).toContain("No review yet.");
+  expect(card.previousElementSibling?.classList.contains("upnext-actions")).toBe(true);
+  // The next read has the queued job.
+  entries = [requested(7, { status: "generating" })];
+  await act(async () => button("Generate").click());
+  const starts = vi.mocked(fetch).mock.calls.filter(isStart);
+  expect(starts.map(([, init]) => JSON.parse(String(init!.body)))).toEqual([
+    { items: [{ clone: "clone", pr: 7 }], mode: "single", confirm_isolation: false },
+  ]);
+  // From the click it reads as generating, not as missing.
+  expect(panel().querySelector(".upnext-noreview")).toBeNull();
+  expect(panel().textContent).toContain("Generating the review.");
+});
+
+it("offers to try again when the review failed", async () => {
+  entries = [requested(7, { status: "failed", failure_reason: "the agent timed out" })];
+  await render();
+  const card = panel().querySelector(".upnext-noreview")!;
+  expect(card.textContent).toContain("baum's review failed: the agent timed out");
+  expect(button("Try again")).toBeTruthy();
+});
+
+it("says in the card why the daemon did not start the review, and on the PR page", async () => {
+  // The PR page's review watches its layout.
+  const observer = class {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+    takeRecords() {
+      return [];
+    }
+  };
+  vi.stubGlobal("ResizeObserver", observer);
+  vi.stubGlobal("IntersectionObserver", observer);
+  entries = [requested(7)];
+  const original = vi.mocked(fetch).getMockImplementation()!;
+  vi.mocked(fetch).mockImplementation(async (...args) =>
+    isStart(args)
+      ? Response.json({ message: "the queue is full" }, { status: 400 })
+      : original(...args),
+  );
+  await render();
+  await act(async () => button("Generate").click());
+  await settle();
+  expect(panel().querySelector('[role="alert"]')!.textContent).toContain(
+    "Couldn't start the review: the queue is full",
+  );
+  // Once, in the card: not again under the page.
+  expect(node.textContent!.split("the queue is full").length).toBe(2);
+  // The PR page opened from the inbox has no panel, so the page says it.
+  await press("Enter");
+  expect(location.search).toBe(`?inbox=${DEFAULT_INBOX.id}&clone=clone&pr=7`);
+  await settle();
+  expect(node.querySelector("article.upnext-panel")).toBeNull();
+  expect(node.textContent).toContain("the queue is full");
+});
+
+it("lists what baum will do instead of the card when it needs a clone", async () => {
+  entries = [requested(7, { needs_clone: true })];
+  await render();
+  // A clone item lists what baum will do instead of the card.
+  expect(panel().querySelector(".upnext-noreview")).toBeNull();
+  expect(panel().textContent).toContain("What baum will do");
 });
 
 it("shows the available summary in a Fix preview while its first review is being written", async () => {
@@ -739,7 +970,7 @@ it("waits on checks that run before calling a pull request ready to merge", asyn
     "Needs your eyes · 1",
     "Ready to merge · 1",
     "Hand to an agent · 1",
-    "Waiting on checks or reviews · 2",
+    "Waiting · 2",
     "Not waiting on you · 1",
   ]);
 });
@@ -1141,6 +1372,33 @@ it("formats Markdown in the review summary, risk explanation and section titles"
   expect(panel().querySelector(".upnext-block-text code")!.textContent).toBe("repository");
 });
 
+it("shows a hunk ID in the review's prose as a chip for its file and line", async () => {
+  const doc = structuredClone(example);
+  const hunk = doc.index.hunks[0]!;
+  const reason = doc.summary.risk_score.reasons[0]!;
+  reason.text = `Skips events already handled (${hunk.id}).`;
+  doc.summary.text = `See \`${hunk.id}\` and h_000000000000.`;
+  entries = [fixture()[2]!];
+  const original = vi.mocked(fetch).getMockImplementation()!;
+  vi.mocked(fetch).mockImplementation(async (...args) =>
+    String(args[0]).includes("api/document") ? Response.json(doc) : original(...args),
+  );
+  await render();
+  const name = hunk.path.slice(hunk.path.lastIndexOf("/") + 1);
+  // Up next has no file view, so the chip opens the hunk on GitHub.
+  for (const prose of [
+    panel().querySelector(".upnext-risk .upnext-prose")!,
+    panel().querySelector(".upnext-lead")!,
+  ]) {
+    expect(prose.textContent).not.toContain(hunk.id);
+    const chip = prose.querySelector("a")!;
+    expect(chip.textContent).toMatch(new RegExp(`^${name}`));
+    expect(chip.getAttribute("href")).toContain("https://github.com/");
+  }
+  // An ID the review does not have stays as written.
+  expect(panel().querySelector(".upnext-lead")!.textContent).toContain("h_000000000000");
+});
+
 it("lists the files that conflict with the base", async () => {
   entries = [mine(2, { merge: "conflict" })];
   const original = vi.mocked(fetch).getMockImplementation()!;
@@ -1204,7 +1462,7 @@ it("opens an unresolved thread to its whole conversation", async () => {
   ]);
 });
 
-it("lists a review group as one row that opens to its members", async () => {
+it("places a stack by its first shown open member and opens to its members", async () => {
   entries = [ready(3), mine(2, { checks: "failing" }), requested(1), ready(4)];
   const original = vi.mocked(fetch).getMockImplementation()!;
   vi.mocked(fetch).mockImplementation(async (...args) =>
@@ -1230,10 +1488,10 @@ it("lists a review group as one row that opens to its members", async () => {
       : original(...args),
   );
   await render();
-  // The group sits where its first member in the list would be, under Ready
-  // to merge, and its members leave their own rows.
-  expect(groups()).toEqual(["Needs your eyes · 1", "Ready to merge · 3"]);
-  expect(list()).toEqual(["Change 1", "Payments stack", "Change 4"]);
+  // The stack follows #2's failing checks, even though #3 is ready to merge.
+  expect(groups()).toEqual(["Needs your eyes · 1", "Ready to merge · 1", "Hand to an agent · 2"]);
+  expect(list()).toEqual(["Change 1", "Change 4", "Payments stack"]);
+  await press("j");
   await press("j");
   expect(shown()).toBe("Payments stack");
   expect(panel().textContent).toContain("There is no group review yet");
@@ -1246,18 +1504,59 @@ it("lists a review group as one row that opens to its members", async () => {
   expect(node.textContent).not.toContain("Merge all");
   // Space opens the group, and from a member closes it again, back on the group.
   await press(" ");
-  expect(list()).toEqual(["Change 1", "Payments stack", "Change 2", "Change 3", "Change 4"]);
+  expect(list()).toEqual(["Change 1", "Change 4", "Payments stack", "Change 2", "Change 3"]);
   await press("j");
   expect(shown()).toBe("Change 2");
   await press(" ");
   expect(shown()).toBe("Payments stack");
-  expect(list()).toEqual(["Change 1", "Payments stack", "Change 4"]);
+  expect(list()).toEqual(["Change 1", "Change 4", "Payments stack"]);
   // On the group itself it opens and closes it.
   await press(" ");
-  expect(list()).toEqual(["Change 1", "Payments stack", "Change 2", "Change 3", "Change 4"]);
+  expect(list()).toEqual(["Change 1", "Change 4", "Payments stack", "Change 2", "Change 3"]);
   await press(" ");
-  expect(list()).toEqual(["Change 1", "Payments stack", "Change 4"]);
+  expect(list()).toEqual(["Change 1", "Change 4", "Payments stack"]);
 });
+
+it.each([
+  [true, "review", "merge", true, "review"],
+  [true, "waiting", "agent", true, "waiting"],
+  [true, "merge", "agent", true, "merge"],
+  [true, "agent", "merge", true, "agent"],
+  [true, "agent", "waiting", true, "agent"],
+  [false, "waiting", "merge", true, "merge"],
+  [true, "waiting", "agent", false, "agent"],
+] as const)(
+  "places stack=%s, first=%s, later=%s, first visible=%s in %s",
+  (stack, first, later, visible, expected) => {
+    const firstRow = { key: "first", entry: mine(1), waiting: first === "waiting" };
+    const laterRow = { key: "later", entry: mine(2), waiting: later === "waiting" };
+    const sections = ["review", "merge", "agent", "waiting"].map((id) => ({
+      id,
+      rows: [...(visible && id === first ? [firstRow] : []), ...(id === later ? [laterRow] : [])],
+    }));
+    const group: ReviewGroup = {
+      id: "stack",
+      repository: "acme/demo",
+      name: "Stack",
+      members: [1, 2],
+      stack,
+      created_at: "",
+      updated_at: "",
+      version_count: 0,
+      latest: null,
+      risk_score: null,
+      reviewed: [],
+      outdated: false,
+    };
+    const placed = withGroups(sections, [group]);
+    expect(placed.flatMap(({ id, lines }) => lines.map((line) => [id, line.key]))).toEqual([
+      [expected, "group:stack"],
+    ]);
+    const line = placed.flatMap(({ lines }) => lines)[0]!;
+    if (!("members" in line)) throw Error("expected a grouped row");
+    expect(line.members.map(({ key }) => key)).toEqual(visible ? ["first", "later"] : ["later"]);
+  },
+);
 
 it.each(["1 hour", "Until it changes"])(
   "hides a stack when every member is snoozed for %s, including one waiting on its base",

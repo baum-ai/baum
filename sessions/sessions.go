@@ -94,6 +94,26 @@ type Session struct {
 	// CreatedCommits is independent, durable Git-hook evidence supplied by
 	// the local resolver. It never changes the mapped transcript graph.
 	CreatedCommits []string
+	// Key identifies what the graph is mapped from: the session's files as
+	// they stood (see mapKey), or the content of the Entire checkpoint it was
+	// read from and the session's id there. Two sessions with the same Key
+	// map to the same graph. It is empty when that cannot be described.
+	Key string
+	// Unmapped is set on a session LoadReusing did not map because its
+	// caller already holds what it needs from the graph Key names. Graph is
+	// then nil, and Transcript says whether that graph has a transcript.
+	Unmapped   bool
+	Transcript bool
+}
+
+// HasTranscript reports whether the session's graph records anything the
+// agent did, as HasTranscript does; for an unmapped session, whether the
+// graph its Key names does.
+func (s Session) HasTranscript() bool {
+	if s.Unmapped {
+		return s.Transcript
+	}
+	return HasTranscript(s.Graph)
 }
 
 // Root is the session's top-level session row, or nil for an empty graph.
@@ -164,6 +184,15 @@ type Discovery struct {
 	// entire describes the checkpoint store, whether or not Entire is read;
 	// empty when the clone has none.
 	entire string
+	// stores is the checkpoint stores entire describes, held is whether
+	// there are any, and storesErr why they could not be listed. Load and
+	// Checkpoints read these rather than listing the refs again.
+	stores    entire.Store
+	held      bool
+	storesErr error
+	// repo, when set, is the clone whose private repository checkpoints are
+	// read in (ShareRepo).
+	repo *gitlocal.Repo
 }
 
 // Discover finds what Load would read for the repository containing dir.
@@ -197,16 +226,46 @@ func Discover(ctx context.Context, dir string, opts Options) (*Discovery, error)
 	// The store is described even when Entire is not read: commit checkpoint
 	// fallback reads the checkpoints commits name whatever the sources.
 	if root, err := collector.RepoRoot(dir); err == nil {
-		d.entire = entireState(ctx, root)
+		d.stores, d.held, d.storesErr = entire.Resolve(ctx, root)
+		d.entire = entireState(d.stores, d.held, d.storesErr)
 	}
 	return d, nil
+}
+
+// ShareRepo has Load and Checkpoints read Entire checkpoints in repo's private
+// repository instead of opening one of their own. repo must be a clone of the
+// same repository, and stay open until they are done.
+func (d *Discovery) ShareRepo(repo *gitlocal.Repo) { d.repo = repo }
+
+// Checkpoints opens the checkpoints of the clone as Discover found them, for
+// several lookups. It returns nil and no error when the clone has neither
+// checkpoint refs nor a checkpoint branch. The caller closes it.
+func (d *Discovery) Checkpoints(ctx context.Context) (*Checkpoints, error) {
+	root, err := collector.RepoRoot(d.dir)
+	if err != nil {
+		return nil, err
+	}
+	store, ok, err := d.checkpointStore(ctx, root)
+	if err != nil || !ok {
+		return nil, err
+	}
+	return &Checkpoints{store: store}, nil
+}
+
+// checkpointStore opens the checkpoint stores Discover found in the clone at
+// root; ok is false when it has none. The caller closes a store it got.
+func (d *Discovery) checkpointStore(ctx context.Context, root string) (*checkpointStore, bool, error) {
+	if d.storesErr != nil || !d.held {
+		return nil, false, d.storesErr
+	}
+	store, err := newCheckpointStore(ctx, root, d.stores, d.repo)
+	return store, err == nil, err
 }
 
 // entireState describes the clone's Entire checkpoint stores: the branch
 // commit and every checkpoint ref, or why they could not be listed, so a
 // different listing gives a different description.
-func entireState(ctx context.Context, root string) string {
-	store, ok, err := entire.Resolve(ctx, root)
+func entireState(store entire.Store, ok bool, err error) string {
 	switch {
 	case err != nil:
 		return "error: " + err.Error()
@@ -257,12 +316,56 @@ func (d *Discovery) Fingerprint() (string, bool) {
 // Load maps the discovered sessions and reads the Entire checkpoints, as
 // Load does.
 func (d *Discovery) Load(ctx context.Context) ([]Session, Report, error) {
+	return d.LoadReusing(ctx, nil)
+}
+
+// Reuse tells LoadReusing which sessions it need not map. Given a session's
+// Key, ok says the caller already holds everything it needs from the graph
+// that Key names, and transcript whether that graph has a transcript
+// (HasTranscript). It is called from one goroutine at a time.
+type Reuse func(key string) (transcript, ok bool)
+
+// LoadReusing is Load, except that a session whose Key reuse accepts is not
+// mapped: it is returned Unmapped, without its graph or mapper notes (its
+// discovery warnings are kept), and an Entire checkpoint is not read when
+// what Load needs from it is already known. Which sessions are returned,
+// their order and every other field are what Load returns. A nil reuse maps
+// everything.
+func (d *Discovery) LoadReusing(ctx context.Context, reuse Reuse) ([]Session, Report, error) {
 	workstats.Inc("sessions.load.calls")
 	opts, wanted := d.opts, d.wanted
 	report := Report{Skipped: d.skipped}
-	mapped, err := mapAll(ctx, wanted)
+	keys := make([]string, len(wanted))
+	reused := make([]bool, len(wanted))
+	transcript := make([]bool, len(wanted))
+	var toMap []collector.Session
+	for i, s := range wanted {
+		keys[i] = sessionKey(s)
+		if reuse != nil && keys[i] != "" {
+			transcript[i], reused[i] = reuse(keys[i])
+		}
+		if reused[i] {
+			workstats.Inc("sessions.load.reused")
+			continue
+		}
+		toMap = append(toMap, s)
+	}
+	mappedOnly, err := mapAll(ctx, toMap)
 	if err != nil {
 		return nil, report, err
+	}
+	mapped := make([]mapped, len(wanted))
+	for i, next := 0, 0; i < len(wanted); i++ {
+		if reused[i] {
+			continue
+		}
+		mapped[i] = mappedOnly[next]
+		next++
+		// A file that changed while it was mapped gave a graph the key
+		// computed before does not describe.
+		if keys[i] != "" && sessionKey(wanted[i]) != keys[i] {
+			keys[i] = ""
+		}
 	}
 	var sessions []Session
 	native := map[string]bool{}
@@ -272,11 +375,15 @@ func (d *Discovery) Load(ctx context.Context) ([]Session, Report, error) {
 			continue
 		}
 		native[s.SessionID] = true
-		sessions = append(sessions, Session{
+		next := Session{
 			Source: s.Source, Vendor: s.Source.String(), ID: s.SessionID, Path: s.Path,
 			RepoRoot: s.RepoRoot, WorktreeRoot: s.WorktreeRoot, ModifiedAt: s.ModifiedAt,
-			Graph: mapped[i].graph, Notes: mapped[i].notes,
-		})
+			Graph: mapped[i].graph, Notes: mapped[i].notes, Key: keys[i],
+		}
+		if reused[i] {
+			next.Notes, next.Unmapped, next.Transcript = slices.Clone(s.Warnings), true, transcript[i]
+		}
+		sessions = append(sessions, next)
 	}
 
 	if opts.wants(Entire) {
@@ -286,7 +393,7 @@ func (d *Discovery) Load(ctx context.Context) ([]Session, Report, error) {
 		}
 		// A clone git cannot read still has its home-directory sessions, so a
 		// checkpoint branch that cannot be listed is reported, not fatal.
-		fromEntire, commit, failures, err := loadEntire(ctx, root, opts, native)
+		fromEntire, commit, failures, err := loadEntire(ctx, root, d, opts, native, reuse)
 		if err != nil {
 			failures = append(failures, Failure{Source: Entire, Path: root, Err: err})
 		}
@@ -319,6 +426,12 @@ var ErrUnbalanced = errors.New("mapper did not account for every record")
 // is shared with every other caller that mapped the same files, so callers
 // must not change it.
 func Map(s collector.Session) (*session.Graph, []string, error) {
+	return mapCtx(context.Background(), s)
+}
+
+// mapCtx is Map, waiting for decode budget only while ctx lives. A cancelled
+// wait returns ctx's error, which is never cached.
+func mapCtx(ctx context.Context, s collector.Session) (*session.Graph, []string, error) {
 	workstats.Inc("sessions.map.calls")
 	key, cost, cacheable := mapKey(s)
 	if cacheable {
@@ -326,10 +439,22 @@ func Map(s collector.Session) (*session.Graph, []string, error) {
 			return entry.graph, mapNotes(s, entry), entry.err
 		}
 	}
+	// A transcript that grew is decoded from where its kept lines end.
+	release, err := decodeBudget.acquire(ctx, tails.pending(s, cost))
+	if err != nil {
+		return nil, nil, err
+	}
+	defer release()
+	if decodeObserver != nil {
+		defer decodeObserver(cost)()
+	}
 	workstats.Inc("sessions.map.decodes." + string(s.Source))
-	workstats.Add("sessions.map.decoded_bytes", cost)
+	if s.Source == vendors.Cursor {
+		// Transcript files count the bytes they read (tailCache).
+		workstats.Add("sessions.map.decoded_bytes", cost)
+	}
 	graph, notes, err := mapSession(s)
-	entry := &mapEntry{key: key, graph: graph, notes: notes, err: err, cost: cost}
+	entry := &mapEntry{key: key, session: mapIdentity(s), graph: graph, notes: notes, err: err, cost: graphBytes(graph) + int64(len(key)), transcript: cost}
 	// A file that could not be opened or read may read next time (too many
 	// open files, a permission fixed); only what its content caused is kept.
 	var pathErr *fs.PathError
@@ -337,6 +462,35 @@ func Map(s collector.Session) (*session.Graph, []string, error) {
 		cache.put(entry)
 	}
 	return graph, mapNotes(s, entry), err
+}
+
+// racyWindow is how recently a session file may have been modified and its
+// session still get a Key. A file rewritten at the same size within its
+// modification time's resolution looks unchanged, so, as git does with its
+// index, a file modified this recently, or in the future, is not trusted to
+// describe its content: the session is mapped, and not reused, until it is
+// older.
+const racyWindow = 2 * time.Second
+
+// sessionKey is the Key of a session mapped from s: a digest of mapKey, or
+// "" when a file cannot be described or was modified within racyWindow.
+func sessionKey(s collector.Session) string {
+	now := time.Now()
+	for _, f := range s.Files {
+		if f.Data != nil {
+			continue
+		}
+		info, err := os.Stat(f.Path)
+		if err != nil || info.ModTime().After(now.Add(-racyWindow)) {
+			return ""
+		}
+	}
+	key, _, ok := mapKey(s)
+	if !ok {
+		return ""
+	}
+	sum := sha256.Sum256([]byte(key))
+	return "map:" + hex.EncodeToString(sum[:])
 }
 
 // mapNotes are the discovery warnings followed by the mapper's notes, or none
@@ -351,9 +505,21 @@ func mapNotes(s collector.Session, entry *mapEntry) []string {
 // mapSession reads and maps the session's files; its notes are the mapper's
 // alone.
 func mapSession(s collector.Session) (*session.Graph, []string, error) {
+	return mapSessionWith(s, tails)
+}
+
+// mapSessionWith is mapSession reading transcripts through t, or decoding
+// each whole, with every line kept as read, when t is nil.
+func mapSessionWith(s collector.Session, t *tailCache) (*session.Graph, []string, error) {
 	switch s.Source {
 	case vendors.ClaudeCode:
-		tree, err := claudetranscript.DecodeLocalFiles(model.Files(s.Files))
+		var tree *claudetranscript.Tree
+		var err error
+		if t != nil {
+			tree, err = claudetranscript.DecodeLocalFilesWith(model.Files(s.Files), t.claude)
+		} else {
+			tree, err = claudetranscript.DecodeLocalFiles(model.Files(s.Files))
+		}
 		if err != nil {
 			return nil, nil, fmt.Errorf("reading Claude Code transcripts: %w", err)
 		}
@@ -368,7 +534,13 @@ func mapSession(s collector.Session) (*session.Graph, []string, error) {
 		}
 		return graph, report.Notes, nil
 	case vendors.Codex:
-		tree, err := codextranscript.DecodeLocalFiles(model.Files(s.Files))
+		var tree *codextranscript.Tree
+		var err error
+		if t != nil {
+			tree, err = codextranscript.DecodeFilesWith(model.Files(s.Files), t.codex)
+		} else {
+			tree, err = codextranscript.DecodeLocalFiles(model.Files(s.Files))
+		}
 		if err != nil {
 			return nil, nil, fmt.Errorf("reading Codex rollouts: %w", err)
 		}
@@ -415,7 +587,7 @@ func HasTranscript(graph *session.Graph) bool {
 // Fuller reports whether a is a better reading of a session than b: one with
 // a transcript over one without, and otherwise the one written later.
 func Fuller(a, b Session) bool {
-	if ha, hb := HasTranscript(a.Graph), HasTranscript(b.Graph); ha != hb {
+	if ha, hb := a.HasTranscript(), b.HasTranscript(); ha != hb {
 		return ha
 	}
 	return a.ModifiedAt.After(b.ModifiedAt)

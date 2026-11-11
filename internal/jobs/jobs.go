@@ -343,6 +343,9 @@ type Queue struct {
 	cancel  context.CancelFunc
 	wg      sync.WaitGroup
 	changed func(Job)
+	// usage, when set, takes the reports changed would get that change only
+	// a job's usage; see SetUsageChanged.
+	usage func(Usage)
 	// clock, when set, stamps automatic jobs' CreatedAt; see SetClock.
 	clock func() time.Time
 	// lock keeps every other process from opening this journal.
@@ -685,6 +688,22 @@ func (q *Queue) List() []Job {
 	copy(out, q.jobs)
 	for i := range out {
 		out[i].Accounting = out[i].Accounting.Clone()
+	}
+	return out
+}
+
+// ActiveFixes is the queued or running fix jobs, as List shows them, without
+// copying the history of the others: what a view that asks only whether a
+// pull request is being fixed needs.
+func (q *Queue) ActiveFixes() []Job {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	var out []Job
+	for _, job := range q.jobs {
+		if job.Kind == KindFix && (job.State == "queued" || job.State == "running") {
+			job.Accounting = job.Accounting.Clone()
+			out = append(out, job)
+		}
 	}
 	return out
 }
@@ -1287,6 +1306,7 @@ func (q *Queue) worker(chat bool) {
 					return
 				}
 				job := &q.jobs[k]
+				before := *job
 				job.Phase = p.Phase
 				job.Calls = p.Calls
 				job.Tokens = p.Tokens
@@ -1326,8 +1346,16 @@ func (q *Queue) worker(chat bool) {
 				}
 				current := *job
 				current.Accounting = current.Accounting.Clone()
+				usage := q.usage
+				if !usageOnly(before, current) {
+					usage = nil
+				}
 				q.mu.Unlock()
-				q.notify(current)
+				if usage != nil {
+					usage(usageOf(current))
+				} else {
+					q.notify(current)
+				}
 			})
 			// A member's head moved: the group waits for it instead of failing.
 			if err != nil && errors.Is(err, ErrHeadChanged) && j.Group != "" && j.Kind == "" && ctx.Err() == nil {

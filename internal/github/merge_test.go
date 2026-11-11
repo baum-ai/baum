@@ -52,6 +52,7 @@ func TestMergePullRequest(t *testing.T) {
 		{"method not allowed", "abc", "OPEN", "REBASE", merged, MergeMethod, 0},
 		{"head moved at GitHub", "abc", "OPEN", "MERGE", `{"errors":[{"type":"UNPROCESSABLE","message":"Head branch was modified. Review and try the merge again."}]}`, MergeHeadMoved, 1},
 		{"conflicts", "abc", "OPEN", "MERGE", `{"errors":[{"type":"UNPROCESSABLE","message":"Pull request is not mergeable"}]}`, MergeConflict, 1},
+		{"workflow filename is not a scope error", "abc", "OPEN", "MERGE", `{"errors":[{"type":"UNPROCESSABLE","message":"Merge conflict in .github/workflows/scope.yml"}]}`, MergeConflict, 1},
 		{"checks", "abc", "OPEN", "MERGE", `{"errors":[{"type":"UNPROCESSABLE","message":"Required status check \"build\" is expected."}]}`, MergeBlocked, 1},
 		{"branch protection", "abc", "OPEN", "MERGE", `{"errors":[{"type":"UNPROCESSABLE","message":"At least 1 approving review is required by reviewers with write access."}]}`, MergeBlocked, 1},
 		{"permission", "abc", "OPEN", "MERGE", `{"errors":[{"type":"FORBIDDEN","message":"Resource not accessible by personal access token"}]}`, MergeForbidden, 1},
@@ -77,6 +78,66 @@ func TestMergePullRequest(t *testing.T) {
 				if input["pullRequestId"] != "PR_1" || input["mergeMethod"] != c.method || input["expectedHeadOid"] != "abc" {
 					t.Fatalf("input: %v", input)
 				}
+			}
+		})
+	}
+}
+
+func TestMergePullRequestExplainsPermissionRefusals(t *testing.T) {
+	const workflowRefusal = "refusing to allow an OAuth App to create or update workflow `.github/workflows/review-checks.yml` without `workflow` scope"
+	for _, c := range []struct {
+		name, kind, message, explanation string
+	}{
+		{
+			name:        "missing workflow scope",
+			kind:        "FORBIDDEN",
+			message:     workflowRefusal,
+			explanation: "This pull request changes GitHub Actions workflows, which needs workflow access that baum's GitHub connection does not have. Merge it on GitHub, or choose Reconnect with workflow access in Settings. GitHub says: " + workflowRefusal,
+		},
+		{
+			name:        "workflow scope with another error type",
+			kind:        "UNAUTHORIZED-WRITE",
+			message:     "Failed to merge: " + workflowRefusal,
+			explanation: "This pull request changes GitHub Actions workflows, which needs workflow access that baum's GitHub connection does not have. Merge it on GitHub, or choose Reconnect with workflow access in Settings. GitHub says: Failed to merge: " + workflowRefusal,
+		},
+		{
+			name:        "single quoted workflow scope",
+			kind:        "FORBIDDEN",
+			message:     strings.ReplaceAll(workflowRefusal, "`workflow`", "'workflow'"),
+			explanation: "This pull request changes GitHub Actions workflows, which needs workflow access that baum's GitHub connection does not have. Merge it on GitHub, or choose Reconnect with workflow access in Settings. GitHub says: " + strings.ReplaceAll(workflowRefusal, "`workflow`", "'workflow'"),
+		},
+		{
+			name:        "token permission",
+			kind:        "FORBIDDEN",
+			message:     "  Resource not accessible by personal access token\n",
+			explanation: "GitHub refused the merge with the current connection. Check its repository permissions and authorization scopes. GitHub says: Resource not accessible by personal access token",
+		},
+		{
+			name:        "permission without forbidden type",
+			kind:        "UNPROCESSABLE",
+			message:     "You do not have permission to merge this pull request.",
+			explanation: "GitHub refused the merge with the current connection. Check its repository permissions and authorization scopes. GitHub says: You do not have permission to merge this pull request.",
+		},
+		{
+			name:        "no explanation from GitHub",
+			kind:        "FORBIDDEN",
+			message:     " \n ",
+			explanation: "GitHub refused the merge with the current connection. Check its repository permissions and authorization scopes.",
+		},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			reply, err := json.Marshal(map[string]any{"errors": []map[string]string{{"type": c.kind, "message": c.message}}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			var mutations []map[string]any
+			err = mergeClient("abc", "OPEN", string(reply), &mutations).MergePullRequest(context.Background(), Repository{Host: "github.com", Owner: "acme", Name: "app"}, 7, "MERGE", "abc")
+			var refusal *MergeError
+			if !errors.As(err, &refusal) || refusal.Code != MergeForbidden || refusal.Message != c.explanation {
+				t.Fatalf("refusal = %v, want forbidden: %s", err, c.explanation)
+			}
+			if len(mutations) != 1 {
+				t.Fatalf("%d mutations, want 1 (no retry)", len(mutations))
 			}
 		})
 	}

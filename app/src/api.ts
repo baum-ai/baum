@@ -918,17 +918,29 @@ export function backTo(search: URLSearchParams): { href: string; label: string; 
   if (filter) back.set("filter", filter);
   return { href: appURL(`?${back}`), label: "Pull requests", prefix: "page=pulls&" };
 }
-/** Requests `path`, relative to the namespace, as `api/repos`. */
+/** The daemon answers these with an ETag and 304 for an unchanged snapshot.
+ *  `no-cache` lets the webview store the answer and revalidate it on every
+ *  request; `no-store` would resend the whole body each time. */
+function revalidated(path: string): boolean {
+  const [pathname] = path.split("?");
+  return pathname === "api/index" || pathname === "api/prs";
+}
+
+/** Requests `path`, relative to the namespace, as `api/repos`. `cache` is
+ *  "no-cache" only for an answer the daemon tags with an ETag, which the
+ *  browser then revalidates instead of downloading again; `api/index` and
+ *  `api/prs` always are. */
 export async function request<T>(
   path: string,
   body?: unknown,
   method = body === undefined ? "GET" : "POST",
   signal?: AbortSignal,
+  cache: RequestCache = "no-store",
 ): Promise<T> {
   const response = await fetch(appURL(path), {
     method,
     signal,
-    cache: "no-store",
+    cache: method === "GET" && revalidated(path) ? "no-cache" : cache,
     ...(body === undefined
       ? {}
       : { headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }),
@@ -1089,6 +1101,7 @@ export function documentRequest(clone: string, pr: number, version?: number, sig
     undefined,
     "GET",
     signal,
+    "no-cache",
   ).then(validDocument);
 }
 export function groupDocumentRequest(id: string, version?: number, signal?: AbortSignal) {
@@ -1126,12 +1139,26 @@ export function detailsJob(entry: Entry, jobs: Job[]): Job | undefined {
 }
 /** The PR's questions to the review's agent, oldest first. */
 export function chatJobs(entry: Pick<Entry, "pull_request">, jobs: Job[]): Job[] {
-  return jobs.filter(
-    (job) =>
-      job.kind === "chat" &&
-      job.pr === entry.pull_request.number &&
-      job.repository.toLowerCase() === entry.pull_request.repository.toLowerCase(),
-  );
+  return jobsOf(entry, jobs).filter((job) => job.kind === "chat");
+}
+/** The jobs by PR (repository lower-cased, with its host, and number), built
+ *  once per jobs array: the workspace asks about every PR on each render, and
+ *  a scan of every job for each would grow with both. */
+const jobIndexes = new WeakMap<Job[], Map<string, Job[]>>();
+function jobsOf(entry: Pick<Entry, "pull_request">, jobs: Job[]): Job[] {
+  let index = jobIndexes.get(jobs);
+  if (!index) {
+    index = new Map();
+    for (const job of jobs) {
+      const key = `${job.repository.toLowerCase()}#${job.pr}`;
+      const bucket = index.get(key);
+      if (bucket) bucket.push(job);
+      else index.set(key, [job]);
+    }
+    jobIndexes.set(jobs, index);
+  }
+  const { repository, number } = entry.pull_request;
+  return index.get(`${repository.toLowerCase()}#${number}`) ?? [];
 }
 /** What a fix or chat job is called: the Jobs list and transcript page title. */
 export function jobName(job: Job): string {
@@ -1144,7 +1171,9 @@ export function fixJob(entry: Entry, jobs: Job[]): Job | undefined {
 }
 /** Every fix job of the PR, newest first. */
 export function fixJobs(entry: Entry, jobs: Job[]): Job[] {
-  return jobs.filter((job) => job.kind === "fix" && ofPR(entry, job)).reverse();
+  return jobsOf(entry, jobs)
+    .filter((job) => job.kind === "fix" && ofPR(entry, job))
+    .reverse();
 }
 /** The fix whose transcript `t` opens: the running one, else the latest that
  *  kept a transcript. */
@@ -1160,7 +1189,8 @@ function ofPR(entry: Entry, job: Job) {
 }
 function prJob(entry: Entry, jobs: Job[], kind: (job: Job) => boolean): Job | undefined {
   const matches = (job: Job) => kind(job) && ofPR(entry, job);
-  return jobs.findLast((job) => matches(job) && isActiveJob(job)) ?? jobs.findLast(matches);
+  const ofThePR = jobsOf(entry, jobs);
+  return ofThePR.findLast((job) => matches(job) && isActiveJob(job)) ?? ofThePR.findLast(matches);
 }
 /** The group's latest active job, else its latest job. */
 export function groupJob(group: Pick<ReviewGroup, "id">, jobs: Job[]): Job | undefined {
@@ -1282,16 +1312,26 @@ export type GitHubConnection = {
   source?: string;
   override: boolean;
   saved: boolean;
+  /** The saved connection was granted workflow access, which merging a pull
+   *  request that changes GitHub Actions workflows needs. Opt-in. */
+  workflow?: boolean;
   pending?: {
     id: string;
     user_code: string;
     verification_uri: string;
     expires_at: string;
     interval: number;
+    /** This sign-in asks GitHub for workflow access too. */
+    workflow?: boolean;
   };
   error?: string;
   message?: string;
+  organization_access?: OrganizationAccess;
 };
+
+/** Organizations the person belongs to that the GitHub sign-in cannot reach,
+ *  usually because they restrict OAuth app access until an owner approves baum. */
+export type OrganizationAccess = { hidden: string[]; approval_url: string };
 
 /** What a question is about: a section of the review, a stop of the
  *  walkthrough, or the pull request as a whole. */

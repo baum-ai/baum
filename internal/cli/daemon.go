@@ -41,7 +41,9 @@ import (
 	"github.com/baum-ai/baum/internal/facts"
 	"github.com/baum-ai/baum/internal/focus"
 	"github.com/baum-ai/baum/internal/generate"
+	"github.com/baum-ai/baum/internal/githooks"
 	"github.com/baum-ai/baum/internal/github"
+	"github.com/baum-ai/baum/internal/githubauth"
 	"github.com/baum-ai/baum/internal/githubrepos"
 	"github.com/baum-ai/baum/internal/gitlocal"
 	"github.com/baum-ai/baum/internal/hookevents"
@@ -348,26 +350,29 @@ func sshAgent() *shellenv.Agent {
 
 // applyLoginEnvironment replaces this process's environment with the
 // variables the daemon keeps, taken from the login shell when it answers (see
-// shellenv.Merge). Only variable names are logged.
+// shellenv.Merge). Only variable names are logged, and how long the shell
+// took: the daemon listens only after this returns.
 func applyLoginEnvironment(ctx context.Context, log *slog.Logger) {
 	inherited := os.Environ()
+	began := time.Now()
 	result, err := resolveShell(ctx, shellenv.Options{Environ: inherited})
+	took := time.Since(began).Round(time.Millisecond)
 	var resolved map[string]string
 	switch {
 	case errors.Is(err, shellenv.ErrUnsupported):
-		log.Info("using the inherited environment", "reason", err.Error())
+		log.Info("using the inherited environment", "reason", err.Error(), "duration", took)
 	case err != nil:
-		log.Warn("login shell environment not read; using the inherited environment", "shell", result.Shell, "reason", err.Error())
+		log.Warn("login shell environment not read; using the inherited environment", "shell", result.Shell, "reason", err.Error(), "duration", took)
 	case result.Shell == "":
 		// Windows: the inherited environment with the registry's PATH.
 		resolved = result.Env
-		log.Info("read PATH from the registry")
+		log.Info("read PATH from the registry", "duration", took)
 	case result.Fallback != "":
 		resolved = result.Env
-		log.Warn("read the environment of a login shell that is not interactive", "shell", result.Shell, "reason", result.Fallback)
+		log.Warn("read the environment of a login shell that is not interactive", "shell", result.Shell, "reason", result.Fallback, "duration", took)
 	default:
 		resolved = result.Env
-		log.Info("read the login shell environment", "shell", result.Shell)
+		log.Info("read the login shell environment", "shell", result.Shell, "duration", took)
 	}
 	env := shellenv.Merge(inherited, resolved)
 	os.Clearenv()
@@ -396,6 +401,7 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 			events.Close()
 			return daemon.App{}, err
 		}
+		hooks := gitHooks(registry, log)
 		discover := discovery.New(github.NewFromConfig(cfg, github.Options{}), "")
 		// Every reader shares one cached index. Discovery's writes only
 		// invalidate it: the index watcher publishes if the index moved.
@@ -459,7 +465,7 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 		builds := &featureBuilder{}
 		prefs, _ := registry.Preferences(ctx)
 		queue, err := jobs.Open(database, &jobs.Local{Registry: registry, Groups: groups, Config: cfg, Client: github.NewFromConfig(cfg, github.Options{}), Features: builds, Chat: chats, Log: log}, prefs.Concurrency(), func(job jobs.Job) {
-			_ = server.Publish("progress", map[string]any{"job": job})
+			_ = server.PublishProgress(job)
 			if event, ok := jobs.ChatEvent(job); ok {
 				_ = server.Publish("chat", event)
 			}
@@ -483,6 +489,9 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 			return daemon.App{}, err
 		}
 		queue.SetLogger(log)
+		// A running job's usage, reported every few seconds, wakes no full
+		// read in the app or the tray.
+		queue.SetUsageChanged(func(usage jobs.Usage) { _ = server.PublishUsage(usage) })
 		scheduler.Queue = queue
 		queue.SetAutomaticGate(scheduler.Gate)
 		queue.SetChat(chats)
@@ -518,7 +527,10 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 		// The live transcripts are written as the review page's are, and a
 		// waiting session's message is masked the same way.
 		renderer := transcript.NewRenderer("")
-		live := events.liveSessions(paths, registry, discover, server, log)
+		// The list and the tracker share what was confirmed of Claude Code's
+		// processes.
+		claude := &livesessions.ClaudeProcesses{}
+		live := events.liveSessions(paths, registry, discover, server, log, claude)
 		var liveAPI, requestsAPI http.Handler
 		var requests *agentrequests.Store
 		var requestEvents <-chan hookevents.Record
@@ -529,7 +541,7 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 			// A session that starts waiting for a permission or an answer is
 			// a notice; reading the registry for it must not hold the tracker.
 			live.Waiting = func(session livesessions.Session) { go notify.SessionWaiting(ctx, session) }
-			transcripts = &livesessions.Transcripts{Tracker: live, Render: renderer.Render, Log: log, Senders: liveSenders(), Enders: liveEnders(), EndChecks: liveEndChecks(), Focus: &focus.Focuser{}}
+			transcripts = &livesessions.Transcripts{Tracker: live, Render: renderer.Render, Log: log, Senders: liveSenders(), Enders: liveEnders(), EndChecks: liveEndChecks(claude), Focus: &focus.Focuser{}}
 			liveAPI = transcripts.Handler()
 			// What agents wait on the app to answer, and the messages queued
 			// for running sessions, stay in memory, masked as the sessions
@@ -579,6 +591,9 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 			Lister: github.NewFromConfig(cfg, github.Options{}), Registry: registry,
 			Token:  func(ctx context.Context) (string, error) { return cfg.ResolveGitHubToken(ctx, config.GitHubHost) },
 			Health: config.GitHubAuth.Health, Home: home, Context: ctx, Changed: settingsChanged,
+			Organizations: func(ctx context.Context, refresh bool) (githubauth.OrganizationAccess, error) {
+				return config.DeviceOrganizations(ctx, cfg, refresh)
+			},
 		}
 		// The delivery figures' searches, cached per repository, and the
 		// review threads and failing checks the Inbox lists; an account
@@ -606,6 +621,9 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 		}
 		githubConnection := uiserver.NewGitHubAuthentication(ctx, config.GitHubAuth, cfg, changed, beginIdentityChange)
 		connectionLogin = githubConnection.Login
+		githubConnection.Organizations = func(ctx context.Context, refresh bool) (githubauth.OrganizationAccess, error) {
+			return config.DeviceOrganizations(ctx, cfg, refresh)
+		}
 		// A write to a pull request re-reads the repository's pull requests so
 		// the inbox shows its new state.
 		githubClient := github.NewFromConfig(cfg, github.Options{})
@@ -682,7 +700,7 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 		savedInboxes := inboxes.Open(database)
 		// The app's Inbox, and which saved inboxes hold each pull request;
 		// the desktop app's badge and tray count what it lists.
-		inboxQueue := &inboxqueue.Service{Index: index.Snapshot, Jobs: queue.List, Groups: groups.List, Snoozes: func() (json.RawMessage, error) {
+		inboxQueue := &inboxqueue.Service{Index: index.Snapshot, Jobs: queue.ActiveFixes, Groups: groups.List, Snoozes: func() (json.RawMessage, error) {
 			record, err := uiState.Read("inbox", "")
 			return record.Value, err
 		}, Inboxes: func() ([]inboxes.Inbox, error) {
@@ -756,6 +774,7 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 				}
 				wg.Go(func() { sessionIndex.Run(ctx) })
 				wg.Go(func() { maintainReviewRuns(ctx, log) })
+				wg.Go(func() { hooks.Run(ctx) })
 				wg.Go(func() { planHistory.Run(ctx) })
 				wg.Go(func() { delivery.Run(ctx) })
 				if endedSessions != nil {
@@ -834,7 +853,7 @@ func (h hookEvents) Methods() map[string]daemon.Method {
 // liveSessions tracks the agent sessions the record's events show, or nothing
 // when the record is not open. It tells the app over the events stream when
 // they change.
-func (h hookEvents) liveSessions(paths daemon.Paths, registry *repos.Registry, discover *discovery.Service, server *uiserver.Server, log *slog.Logger) *livesessions.Tracker {
+func (h hookEvents) liveSessions(paths daemon.Paths, registry *repos.Registry, discover *discovery.Service, server *uiserver.Server, log *slog.Logger, claude *livesessions.ClaudeProcesses) *livesessions.Tracker {
 	if h.service == nil {
 		return nil
 	}
@@ -845,7 +864,7 @@ func (h hookEvents) liveSessions(paths daemon.Paths, registry *repos.Registry, d
 		// and a Claude Code session waiting for its user while its process runs.
 		StateDir:     hookevents.RecordDir(paths),
 		Attributions: &commitattribution.Store{},
-		Alive:        liveAlive(),
+		Alive:        liveAlive(claude),
 		Notify:       func() { _ = server.Publish("live", struct{}{}) },
 		Log:          log,
 	}
@@ -854,11 +873,11 @@ func (h hookEvents) liveSessions(paths daemon.Paths, registry *repos.Registry, d
 // liveAlive is how the tracker tells a silent session's agent still runs:
 // Claude Code registers its processes (macOS and Linux). Codex's run in a
 // shared app server, so there is none for them.
-func liveAlive() func(agent, id string) bool {
+func liveAlive(claude *livesessions.ClaudeProcesses) func(agent, id string) bool {
 	if runtime.GOOS == "windows" {
 		return nil
 	}
-	return livesessions.ClaudeAlive{}.Alive
+	return claude.Alive
 }
 
 // liveSenders are how the app's messages reach a waiting session: Claude
@@ -887,12 +906,13 @@ func liveEnders() map[string]livesessions.Ender {
 
 // liveEndChecks tell the list whether liveEnders would end a session now,
 // so it offers End only where ending would go through: a Claude Code
-// session still running a background command is not offered it.
-func liveEndChecks() map[string]livesessions.EndCheck {
+// session still running a background command is not offered it. End itself
+// confirms the process again.
+func liveEndChecks(claude *livesessions.ClaudeProcesses) map[string]livesessions.EndChecker {
 	if runtime.GOOS == "windows" {
 		return nil
 	}
-	return map[string]livesessions.EndCheck{livesessions.AgentClaudeCode: livesessions.ClaudeExit{}.Check}
+	return map[string]livesessions.EndChecker{livesessions.AgentClaudeCode: claude.EndCheck}
 }
 
 // Run drains the spool until ctx ends.
@@ -930,6 +950,46 @@ func currentName(client *github.Client) repos.CurrentName {
 		}
 		return client.CurrentName(ctx, repo)
 	}
+}
+
+// gitHooks builds the service that keeps baum's Git hook dispatchers in the
+// registered clones that are present, ensures each clone the registry stores
+// from now on and gives a clone it drops its own hooks back. Only the daemon's
+// registry does this: the CLI's installs no hooks.
+func gitHooks(registry *repos.Registry, log *slog.Logger) *githooks.Service {
+	convert := func(clones []repos.Clone, available bool) []githooks.Clone {
+		var out []githooks.Clone
+		seen := map[string]bool{}
+		for _, c := range clones {
+			// Linked worktrees of one repository share its hooks.
+			if (c.Available || !available) && (!available || !seen[c.CommonDir]) {
+				seen[c.CommonDir] = true
+				out = append(out, githooks.Clone{ID: c.ID, Path: c.Path, CommonDir: c.CommonDir})
+			}
+		}
+		return out
+	}
+	service := &githooks.Service{Log: log,
+		Clones: func(ctx context.Context) ([]githooks.Clone, error) {
+			clones, err := registry.List(ctx)
+			return convert(clones, true), err
+		},
+		Registered: func(ctx context.Context) ([]githooks.Clone, error) {
+			clones, err := registry.CloneRows(ctx)
+			return convert(clones, false), err
+		},
+	}
+	// A dispatcher falls back to this binary when baum is not on the PATH of
+	// the process Git runs.
+	if exe, err := os.Executable(); err == nil {
+		service.Options.Baum = exe
+	}
+	toClone := func(c repos.Clone) githooks.Clone {
+		return githooks.Clone{ID: c.ID, Path: c.Path, CommonDir: c.CommonDir}
+	}
+	registry.Registered = func(c repos.Clone) { service.Added(toClone(c)) }
+	registry.Removed = func(c repos.Clone) { service.Removed(toClone(c)) }
+	return service
 }
 
 // maintainReviewRuns expires the run directories of reviews that kept their

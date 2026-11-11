@@ -1,4 +1,6 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useState } from "react";
+
+import { useStoredSetting } from "./use-stored-setting";
 
 export const CONVERSATION_MIN = 320;
 export const CONVERSATION_MAX = 760;
@@ -51,45 +53,26 @@ export function clampPaneWidth(width: number, available = Number.POSITIVE_INFINI
  *  — the reader would widen the window again and find their split gone. Only a
  *  width they chose is stored.
  *
- *  The stored value is read after mount rather than during render: the server
- *  has no `localStorage`, and a width that differed between the two would
- *  hydrate into a mismatch. Every access is guarded because storage throws
- *  rather than returning null in a blocked-cookies browser. */
+ *  The stored value comes from `useStoredSetting`, which tolerates storage
+ *  that throws and keeps the server and first client render identical. */
 export function usePaneWidth(limits: PaneLimits) {
-  const [width, setWidth] = useState(limits.fallback);
-  // What the reader asked for, which outlives a window too narrow to show it.
-  const chosen = useRef(limits.fallback);
-  // The limits are constants per pane; a ref keeps the callbacks stable.
-  const limitsRef = useRef(limits);
+  const [stored, store] = useStoredSetting(limits.storageKey);
+  // What the row can give; unlimited until the row measures itself.
+  const [available, setAvailable] = useState(Number.POSITIVE_INFINITY);
 
-  useEffect(() => {
-    try {
-      const stored = Number(localStorage.getItem(limitsRef.current.storageKey));
-      if (Number.isFinite(stored) && stored > 0) {
-        const remembered = clampWidth(stored, limitsRef.current);
-        chosen.current = remembered;
-        setWidth(remembered);
-      }
-    } catch {
-      // Storage is unavailable; the default split is a fine answer.
-    }
-  }, []);
+  const number = Number(stored);
+  // What the reader asked for, which outlives a window too narrow to show it.
+  const chosen =
+    stored !== null && Number.isFinite(number) && number > 0
+      ? clampWidth(number, limits)
+      : limits.fallback;
+  const width = clampWidth(chosen, limits, available);
 
   /** A width the reader picked, by dragging or by keyboard. Remembered. */
-  const choose = useCallback((next: number) => {
-    chosen.current = next;
-    setWidth(next);
-    try {
-      localStorage.setItem(limitsRef.current.storageKey, String(next));
-    } catch {
-      // Not remembering the split is better than failing the drag.
-    }
-  }, []);
+  const choose = useCallback((next: number) => store(String(next)), [store]);
 
   /** The chosen width brought inside what the row can give. Not remembered. */
-  const fit = useCallback((available: number) => {
-    setWidth(clampWidth(chosen.current, limitsRef.current, available));
-  }, []);
+  const fit = useCallback((room: number) => setAvailable(room), []);
 
   return { width, choose, fit };
 }

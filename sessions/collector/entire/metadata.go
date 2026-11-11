@@ -48,8 +48,18 @@ type Snapshot struct {
 // for List; nothing is fetched. An id the store does not hold is absent from
 // the result.
 func Sessions(ctx context.Context, repoRoot string, store Store, ids []string) (map[string][]Snapshot, error) {
+	result, _, err := sessionsOf(ctx, repoRoot, store, ids)
+	return result, err
+}
+
+// sessionsOf is Sessions, and also says which of the ids it read every
+// metadata file of, by canonical id: for those the answer, whether a list of
+// snapshots or nothing, follows from the checkpoint's content alone, so it
+// holds for as long as the checkpoint's tree does. A file that was not there,
+// as in a partial clone, or was too large to read, leaves the answer open.
+func sessionsOf(ctx context.Context, repoRoot string, store Store, ids []string) (map[string][]Snapshot, map[string]bool, error) {
 	if store.Branch != "" && !commitPattern.MatchString(store.Branch) {
-		return nil, fmt.Errorf("invalid Entire checkpoint branch commit %q", store.Branch)
+		return nil, nil, fmt.Errorf("invalid Entire checkpoint branch commit %q", store.Branch)
 	}
 	var valid []string
 	var where []location
@@ -65,8 +75,9 @@ func Sessions(ctx context.Context, repoRoot string, store Store, ids []string) (
 			where = append(where, loc)
 		}
 	}
+	settled := map[string]bool{}
 	if len(valid) == 0 {
-		return map[string][]Snapshot{}, nil
+		return map[string][]Snapshot{}, settled, nil
 	}
 
 	tops := make([]string, len(valid))
@@ -75,7 +86,7 @@ func Sessions(ctx context.Context, repoRoot string, store Store, ids []string) (
 	}
 	topData, err := catBlobs(ctx, repoRoot, tops)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	sessionPaths := map[string][]string{}
 	var wanted []string
@@ -84,6 +95,7 @@ func Sessions(ctx context.Context, repoRoot string, store Store, ids []string) (
 		if !ok {
 			continue
 		}
+		settled[id] = true
 		var top struct {
 			Sessions []struct {
 				Metadata string `json:"metadata"`
@@ -108,7 +120,7 @@ func Sessions(ctx context.Context, repoRoot string, store Store, ids []string) (
 	}
 	sessionData, err := catBlobs(ctx, repoRoot, wanted)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	result := make(map[string][]Snapshot, len(sessionPaths))
@@ -125,7 +137,11 @@ next:
 				CreatedAt string `json:"created_at"`
 			}
 			data, ok := sessionData[p]
-			if !ok || json.Unmarshal(data, &meta) != nil || meta.SessionID == "" {
+			if !ok {
+				settled[id] = false
+				continue next
+			}
+			if json.Unmarshal(data, &meta) != nil || meta.SessionID == "" {
 				continue next
 			}
 			at, err := time.Parse(time.RFC3339Nano, meta.CreatedAt)
@@ -136,7 +152,7 @@ next:
 		}
 		result[id] = snapshots
 	}
-	return result, nil
+	return result, settled, nil
 }
 
 // sessionDir is the directory inside a checkpoint holding its index-th
