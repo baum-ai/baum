@@ -11,6 +11,9 @@ import (
 	"github.com/baum-ai/baum/sessions"
 )
 
+// newFence gives each prompt its random tag; tests pin it.
+var newFence = untrusted.New
+
 // turnPrompt is what one turn sends: the chat instructions, then the
 // question and its focus as untrusted data between markers that carry a
 // random nonce, which the data cannot know and so cannot close early.
@@ -19,7 +22,7 @@ import (
 // with sessions.GenerationRunMarker, so session evidence leaves the chat's
 // own session out, as it does a review's.
 func turnPrompt(ctx context.Context, redactor *bundle.Redactor, backend, question string, focus *Focus, seeded bool) (string, error) {
-	fence := untrusted.New()
+	fence := newFence()
 	var b strings.Builder
 	b.WriteString(sessions.GenerationRunMarker + "\n")
 	b.WriteString(prompt.Chat(backend))

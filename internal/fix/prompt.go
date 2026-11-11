@@ -27,6 +27,9 @@ type task struct {
 	Prompts prompt.Overrides
 }
 
+// newFence gives each prompt its random tag; tests pin it.
+var newFence = untrusted.New
+
 // buildPrompt is the public fix instructions followed by the data they refer
 // to. Every piece of data is untrusted and sits between markers that carry a
 // random nonce, which the data cannot know and so cannot close early. Secrets
@@ -39,7 +42,7 @@ func buildPrompt(ctx context.Context, t task, conflicts, checks bool) (string, s
 	if err != nil {
 		return "", "", err
 	}
-	fence := untrusted.New()
+	fence := newFence()
 	tag := fence.Tag()
 	var b strings.Builder
 	text, _ := prompt.FixWith(t.Prompts, conflicts, checks, len(t.Threads) > 0, t.Chat != nil && len(t.Chat.Turns) > 0)
