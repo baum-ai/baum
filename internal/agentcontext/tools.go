@@ -55,18 +55,23 @@ type PageSpec struct {
 //
 // A tool takes the repository and pull request it reads only from Target's
 // return value, never from its arguments or the page directly: Target is
-// what keeps an action to its own repository. As a backstop, an action's
-// Reader refuses any request that does not name its repository.
+// what keeps an action to its own repository. An action's tools default to
+// its own pull request and may read others in that repository. As a
+// backstop, an action's Reader reads only the routes in actionRoutes, each
+// bound to the action's repository the way its handler finds what it
+// serves: by the parameter the handler reads, by the path, or by checking
+// the repository in the response.
 type CallContext struct {
 	Consumer Consumer
 	// Page is the consumer's page; HasPage is false until one is set.
 	Page    PageContext
 	HasPage bool
 	// Reader reads the routes the tool declared (Tool.Reads); an action's
-	// reads only its repository.
+	// reads only its repository's, through actionRoutes.
 	Reader *Reader
-	// Proposals records changes a chat proposes (Propose).
-	Proposals *Proposals
+	// proposals is the store behind Propose; tools reach it only through
+	// Propose, which never gives them a proposal's Before.
+	proposals *Proposals
 }
 
 // Target resolves the repository and pull request a tool reads: the ones
@@ -95,9 +100,21 @@ func (c CallContext) Target(repository string, number int) (string, int, error) 
 	return repository, number, nil
 }
 
+// Receipt is what an agent learns of a proposal it made: never the target's
+// current value, which only the person sees.
+type Receipt struct {
+	ID     string `json:"id"`
+	Page   string `json:"page"`
+	Target string `json:"target"`
+}
+
 // Propose records a change for the user to save or dismiss.
-func (c CallContext) Propose(ctx context.Context, p Proposal) (Proposal, error) {
-	return c.Proposals.Propose(ctx, c.Consumer.ID, p)
+func (c CallContext) Propose(ctx context.Context, p Proposal) (Receipt, error) {
+	recorded, err := c.proposals.Propose(ctx, c.Consumer.ID, p)
+	if err != nil {
+		return Receipt{}, err
+	}
+	return Receipt{ID: recorded.ID, Page: recorded.Page, Target: recorded.Target}, nil
 }
 
 func (t *Tool) compile() error {

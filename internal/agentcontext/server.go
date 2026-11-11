@@ -325,7 +325,7 @@ func (s *Server) call(ctx context.Context, consumer Consumer, t Tool, args json.
 	if consumer.Kind == Action {
 		bound = consumer.Repository
 	}
-	c := CallContext{Consumer: consumer, Reader: s.reader.within(t.Reads, bound), Proposals: s.Proposals}
+	c := CallContext{Consumer: consumer, Reader: s.reader.within(t.Reads, bound), proposals: s.Proposals}
 	c.Page, c.HasPage = s.Registry.Page(consumer.ID)
 	out, callErr := t.Call(ctx, c, args)
 	if callErr != nil {

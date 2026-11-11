@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"sync"
 )
 
@@ -20,7 +21,8 @@ type Proposal struct {
 	// Before is the target's value when the proposal was recorded, and After
 	// the value proposed, in the page's own encoding. An agent may send the
 	// Before it read; Propose refuses it when the target has changed since,
-	// and records the value the proposer read instead.
+	// and records the value the proposer read instead. Before is shown to the
+	// person, never returned to the agent.
 	Before json.RawMessage `json:"before,omitempty"`
 	After  json.RawMessage `json:"after"`
 	// Revision is the target's revision Before was read at. Propose sets it
@@ -34,16 +36,18 @@ type Proposal struct {
 // Proposer is how one page takes proposals. Every method gets the page
 // context the proposal was made on, so it can refuse a target that does not
 // belong to what that page shows (another pull request's item on a pull
-// request's page).
+// request's page). Its errors reach the agent, so they name no value.
 type Proposer interface {
-	// Current reads the target's value and revision.
+	// Current reads the target's value and revision. The value is kept for
+	// the person to compare and never sent to the agent.
 	Current(ctx context.Context, page PageContext, target string) (value json.RawMessage, revision string, err error)
 	// Validate refuses a proposal the page would not save.
 	Validate(ctx context.Context, page PageContext, p Proposal) error
 	// Apply saves p.After when the target is still at revision, comparing
 	// and writing in one transaction (as appdb.Update does with its
 	// revision); otherwise it changes nothing and returns ErrStale. It is the
-	// same change the page's own save makes.
+	// same change the page's own save makes. It runs under the proposals'
+	// lock and must not call back into Proposals.
 	Apply(ctx context.Context, page PageContext, p Proposal, revision string) error
 }
 
@@ -57,7 +61,10 @@ var (
 	ErrNoProposer      = errors.New("this page takes no proposals")
 	ErrUnknownProposal = errors.New("unknown proposal")
 	// ErrStale is a target that changed since it was read.
-	ErrStale            = errors.New("the target changed since it was read; nothing was saved")
+	ErrStale = errors.New("the target changed since it was read; nothing was saved")
+	// ErrNotRecorded is a proposal whose Before is not the target's current
+	// value. It says no more, so an agent cannot use it to guess the value.
+	ErrNotRecorded      = errors.New("the proposal was not recorded")
 	errTooManyProposals = fmt.Errorf("at most %d open proposals", maxProposals)
 )
 
@@ -108,7 +115,7 @@ func (p *Proposals) Propose(ctx context.Context, consumer string, proposal Propo
 		return Proposal{}, err
 	}
 	if len(proposal.Before) > 0 && !sameJSON(proposal.Before, value) {
-		return Proposal{}, fmt.Errorf("%w: read it again", ErrStale)
+		return Proposal{}, ErrNotRecorded
 	}
 	proposal.Before, proposal.Revision, proposal.Context = value, revision, page
 	if err := proposer.Validate(ctx, page, proposal); err != nil {
@@ -126,7 +133,13 @@ func (p *Proposals) Propose(ctx context.Context, consumer string, proposal Propo
 		return Proposal{}, errTooManyProposals
 	}
 	p.open[consumer] = append(p.open[consumer], proposal)
-	return proposal, nil
+	return proposal.clone(), nil
+}
+
+// clone copies p with nothing shared with the stored proposal.
+func (p Proposal) clone() Proposal {
+	p.Before, p.After, p.Context = bytes.Clone(p.Before), bytes.Clone(p.After), p.Context.clone()
+	return p
 }
 
 func sameJSON(a, b json.RawMessage) bool {
@@ -138,7 +151,11 @@ func sameJSON(a, b json.RawMessage) bool {
 func (p *Proposals) List(consumer string) []Proposal {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	return append([]Proposal(nil), p.open[consumer]...)
+	list := make([]Proposal, 0, len(p.open[consumer]))
+	for _, proposal := range p.open[consumer] {
+		list = append(list, proposal.clone())
+	}
+	return list
 }
 
 func (p *Proposals) find(consumer, id string) (Proposal, bool) {
@@ -146,7 +163,7 @@ func (p *Proposals) find(consumer, id string) (Proposal, bool) {
 	defer p.mu.Unlock()
 	for _, proposal := range p.open[consumer] {
 		if proposal.ID == id {
-			return proposal, true
+			return proposal.clone(), true
 		}
 	}
 	return Proposal{}, false
@@ -155,7 +172,10 @@ func (p *Proposals) find(consumer, id string) (Proposal, bool) {
 // Save applies a proposal when its target still belongs to the page it was
 // made on and is still at the revision it was read at. The proposer compares
 // and writes in one step, so an edit that lands meanwhile makes the save fail
-// with ErrStale. A refused proposal stays open; a saved one is closed.
+// with ErrStale. A refused proposal stays open; a saved one is closed. The
+// write runs under the lock a revoke takes to drop proposals, after checking
+// the consumer is still live and the proposal still open: a revoke either
+// comes first and the save fails, or waits for the write.
 func (p *Proposals) Save(ctx context.Context, consumer, id string) error {
 	proposal, ok := p.find(consumer, id)
 	if !ok {
@@ -171,10 +191,18 @@ func (p *Proposals) Save(ctx context.Context, consumer, id string) error {
 	} else if revision != proposal.Revision {
 		return ErrStale
 	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if !p.registry.live(consumer) {
+		return ErrUnknownConsumer
+	}
+	if !slices.ContainsFunc(p.open[consumer], func(open Proposal) bool { return open.ID == id }) {
+		return ErrUnknownProposal
+	}
 	if err := proposer.Apply(ctx, proposal.Context, proposal, proposal.Revision); err != nil {
 		return err
 	}
-	p.remove(consumer, id)
+	p.removeLocked(consumer, id)
 	return nil
 }
 
@@ -189,6 +217,10 @@ func (p *Proposals) Dismiss(consumer, id string) error {
 func (p *Proposals) remove(consumer, id string) bool {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	return p.removeLocked(consumer, id)
+}
+
+func (p *Proposals) removeLocked(consumer, id string) bool {
 	open := p.open[consumer]
 	for i, proposal := range open {
 		if proposal.ID == id {

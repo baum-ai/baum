@@ -24,6 +24,7 @@ type fakeProposer struct {
 	gone       map[string]bool
 	invalid    error
 	onValidate func()
+	onCurrent  func()
 	// beforeWrite runs inside Apply between its reads and its write, as an
 	// edit landing concurrently would.
 	beforeWrite func()
@@ -46,6 +47,9 @@ func (f *fakeProposer) belongs(page PageContext, target string) error {
 }
 
 func (f *fakeProposer) Current(_ context.Context, page PageContext, target string) (json.RawMessage, string, error) {
+	if f.onCurrent != nil {
+		f.onCurrent()
+	}
 	if err := f.belongs(page, target); err != nil {
 		return nil, "", err
 	}
@@ -183,7 +187,7 @@ func TestProposalRevisionComesFromTheServer(t *testing.T) {
 	prompts.set("review", "newer")
 	// The agent read "old" before the edit and claims a revision ahead of
 	// the target's; neither is believed.
-	if _, err := s.Proposals.Propose(ctx, id, Proposal{Page: PageSettings, Target: "review", Before: json.RawMessage(`"old"`), After: json.RawMessage(`"mine"`), Revision: "99"}); !errors.Is(err, ErrStale) {
+	if _, err := s.Proposals.Propose(ctx, id, Proposal{Page: PageSettings, Target: "review", Before: json.RawMessage(`"old"`), After: json.RawMessage(`"mine"`), Revision: "99"}); !errors.Is(err, ErrNotRecorded) || strings.Contains(err.Error(), "newer") {
 		t.Fatal("an outdated before was accepted:", err)
 	}
 	p, err := s.Proposals.Propose(ctx, id, Proposal{Page: PageSettings, Target: "review", After: json.RawMessage(`"mine"`), Revision: "99"})
@@ -254,11 +258,23 @@ func TestProposalsBelongToWhatThePageShows(t *testing.T) {
 func TestProposeThroughATool(t *testing.T) {
 	ctx := context.Background()
 	s := newServer(t)
-	prompts := newFake("review", "")
-	if err := s.RegisterTool(Tool{Name: "propose_prompt", Description: "Proposes a prompt.", Scope: ScopeRepository, Call: func(ctx context.Context, c CallContext, _ json.RawMessage) (string, error) {
-		p, err := c.Propose(ctx, Proposal{Page: PageSettings, Target: "review", After: json.RawMessage(`"proposed"`)})
-		return p.ID, err
-	}}); err != nil {
+	prompts := newFake("review", "current-secret-value")
+	if err := s.RegisterTool(Tool{Name: "propose_prompt", Description: "Proposes a prompt.", Scope: ScopeRepository,
+		InputSchema: json.RawMessage(`{"type":"object","properties":{"before":{"type":"string"}}}`),
+		Call: func(ctx context.Context, c CallContext, args json.RawMessage) (string, error) {
+			var a struct{ Before *string }
+			_ = json.Unmarshal(args, &a)
+			proposal := Proposal{Page: PageSettings, Target: "review", After: json.RawMessage(`"proposed"`)}
+			if a.Before != nil {
+				proposal.Before, _ = json.Marshal(*a.Before)
+			}
+			receipt, err := c.Propose(ctx, proposal)
+			if err != nil {
+				return "", err
+			}
+			out, err := json.Marshal(receipt)
+			return string(out), err
+		}}); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.RegisterPage(PageSpec{Name: PageSettings, Tools: []string{"propose_prompt"}, Proposer: prompts}); err != nil {
@@ -269,9 +285,22 @@ func TestProposeThroughATool(t *testing.T) {
 		t.Fatal(err)
 	}
 	result := call(t, s, token, "propose_prompt", nil)
-	proposalID, _ := unwrap(t, result.Content[0].Text)
-	if result.IsError || len(s.Proposals.List(id)) != 1 || s.Proposals.List(id)[0].ID != proposalID || prompts.value("review") != "" {
+	data, _ := unwrap(t, result.Content[0].Text)
+	var receipt Receipt
+	if err := json.Unmarshal([]byte(data), &receipt); err != nil {
+		t.Fatal(err, data)
+	}
+	proposalID := receipt.ID
+	if result.IsError || len(s.Proposals.List(id)) != 1 || s.Proposals.List(id)[0].ID != proposalID || prompts.value("review") != "current-secret-value" {
 		t.Fatalf("%+v", result)
+	}
+	// The person sees the current value; the agent never does, not even by
+	// guessing it.
+	if string(s.Proposals.List(id)[0].Before) != `"current-secret-value"` || strings.Contains(result.Content[0].Text, "current-secret-value") {
+		t.Fatalf("the current value reached the agent: %s", result.Content[0].Text)
+	}
+	if r := call(t, s, token, "propose_prompt", map[string]string{"before": "a guess"}); !r.IsError || strings.Contains(r.Content[0].Text, "current-secret-value") || !strings.Contains(r.Content[0].Text, ErrNotRecorded.Error()) {
+		t.Fatalf("a wrong guess: %+v", r)
 	}
 	// The tool is repository-scoped, so an action may call it; Propose
 	// still refuses an action.
@@ -284,7 +313,55 @@ func TestProposeThroughATool(t *testing.T) {
 	if len(s.Proposals.List(id)) != 0 {
 		t.Fatal("a revoked consumer's proposals were kept")
 	}
-	if err := s.Proposals.Save(ctx, id, proposalID); !errors.Is(err, ErrUnknownProposal) || prompts.value("review") != "" {
+	if err := s.Proposals.Save(ctx, id, proposalID); !errors.Is(err, ErrUnknownProposal) || prompts.value("review") != "current-secret-value" {
 		t.Fatal(err)
+	}
+}
+
+func TestListedProposalsAreCopies(t *testing.T) {
+	ctx := context.Background()
+	s := newServer(t)
+	if err := s.RegisterPage(PageSpec{Name: PageSettings, Proposer: newFake("review", "old")}); err != nil {
+		t.Fatal(err)
+	}
+	_, id := chat(t, s)
+	if err := s.Registry.SetPage(id, PageContext{Page: PageSettings, Filters: map[string]string{"tab": "prompts"}, Focus: json.RawMessage(`{"k":1}`)}); err != nil {
+		t.Fatal(err)
+	}
+	returned, err := s.Proposals.Propose(ctx, id, Proposal{Page: PageSettings, Target: "review", After: json.RawMessage(`"new"`)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range []Proposal{returned, s.Proposals.List(id)[0]} {
+		p.Context.Filters["tab"] = "changed"
+		p.Context.Focus[1] = 'X'
+		p.Before[1] = 'X'
+		p.After[1] = 'X'
+	}
+	p := s.Proposals.List(id)[0]
+	if p.Context.Filters["tab"] != "prompts" || string(p.Context.Focus) != `{"k":1}` || string(p.Before) != `"old"` || string(p.After) != `"new"` {
+		t.Fatalf("a stored proposal was changed from outside: %+v", p)
+	}
+}
+
+func TestSaveRacingARevoke(t *testing.T) {
+	ctx := context.Background()
+	s := newServer(t)
+	prompts := newFake("review", "old")
+	if err := s.RegisterPage(PageSpec{Name: PageSettings, Proposer: prompts}); err != nil {
+		t.Fatal(err)
+	}
+	_, id, revoke := mint(t, s, Consumer{Kind: Chat})
+	if err := s.Registry.SetPage(id, PageContext{Page: PageSettings}); err != nil {
+		t.Fatal(err)
+	}
+	p, err := s.Proposals.Propose(ctx, id, Proposal{Page: PageSettings, Target: "review", After: json.RawMessage(`"new"`)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The token is revoked after Save found the proposal, before it writes.
+	prompts.onCurrent = revoke
+	if err := s.Proposals.Save(ctx, id, p.ID); !errors.Is(err, ErrUnknownConsumer) || prompts.value("review") != "old" {
+		t.Fatal("a revoked consumer's proposal was saved:", err)
 	}
 }
