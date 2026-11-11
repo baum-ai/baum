@@ -8,6 +8,7 @@ import (
 
 	"github.com/baum-ai/baum/internal/commitattribution"
 	"github.com/baum-ai/baum/internal/hookevents"
+	"github.com/baum-ai/baum/sessions/vendors"
 )
 
 // A session's working directory is not always where its work goes: an agent
@@ -29,7 +30,7 @@ const (
 
 // workItem is a commit or a push a session's agent made.
 type workItem struct {
-	// id is the hook event's; with branch it names the item.
+	// id is the hook event's; with branch and head it names the item.
 	id string
 	at time.Time
 	// dir is where Git ran the hook; empty for an item restored from
@@ -48,7 +49,7 @@ type workItem struct {
 }
 
 func (w workItem) same(o workItem) bool {
-	return w.id != "" && w.id == o.id && w.branch == o.branch
+	return w.id != "" && w.id == o.id && w.branch == o.branch && w.head == o.head
 }
 
 // WorkLinker links the commits and pushes of a session's agent; *Resolver is
@@ -65,11 +66,42 @@ type WorkLinker interface {
 }
 
 // matchWork reports the Git hook events that say an agent committed or
-// pushed: a post-commit, or a pre-push that let the push go, carrying the
+// pushed: a post-commit, a post-rewrite, or a pre-push that let the push go.
+// They say which agent by the session the hook's environment names, or by the
 // hook's ancestors.
 func matchWork(e hookevents.Event) bool {
-	return e.Kind == hookevents.KindGit && (e.Name == "post-commit" || (e.Name == "pre-push" && e.Exit == 0)) &&
-		e.Terminal != nil && len(e.Terminal.Processes) > 0 && filepath.IsAbs(e.Dir)
+	if e.Kind != hookevents.KindGit || !filepath.IsAbs(e.Dir) {
+		return false
+	}
+	switch e.Name {
+	case "post-commit", "post-rewrite":
+	case "pre-push":
+		if e.Exit != 0 {
+			return false
+		}
+	default:
+		return false
+	}
+	_, _, named := namedSession(e)
+	return named || (e.Terminal != nil && len(e.Terminal.Processes) > 0)
+}
+
+// namedSession is the session a Git hook's environment named: an agent whose
+// sessions the daemon stores observations for, its session id, and where the
+// agent's own process is among the hook's ancestors (the index in
+// Terminal.Processes). A hook that does not show the agent among its ancestors
+// is left to them: what it names may only be inherited.
+func namedSession(e hookevents.Event) (key, int, bool) {
+	if e.Kind != hookevents.KindGit || e.Session == nil || e.Session.ID == "" || len(e.Session.ID) > maxID ||
+		e.Agent == "" || !vendors.Slug(commitattribution.Vendor(e.Agent)).Valid() ||
+		e.Session.AgentPID <= 0 || e.Terminal == nil {
+		return key{}, 0, false
+	}
+	i := slices.IndexFunc(e.Terminal.Processes, func(p hookevents.Process) bool { return p.PID == e.Session.AgentPID })
+	if i < 0 {
+		return key{}, 0, false
+	}
+	return key{e.Agent, e.Session.ID}, i, true
 }
 
 func matchTracked(e hookevents.Event) bool { return matchAgent(e) || matchWork(e) }
@@ -82,8 +114,9 @@ type processKey struct {
 // ownerLocked is the open session whose agent ran the Git hook of e: the
 // nearest of the hook's ancestors that is the process a session's own hooks
 // run under (their parent), matched by id and start time. A process two open
-// sessions name is neither's.
-func (t *Tracker) ownerLocked(e hookevents.Event) (key, *entry) {
+// sessions name is neither's. It also returns the index of that process among
+// the ancestors.
+func (t *Tracker) ownerLocked(e hookevents.Event) (key, *entry, int) {
 	agents := map[processKey]key{}
 	shared := map[processKey]bool{}
 	for k, s := range t.sessions {
@@ -100,16 +133,16 @@ func (t *Tracker) ownerLocked(e hookevents.Event) (key, *entry) {
 		}
 		agents[pk] = k
 	}
-	for _, p := range e.Terminal.Processes {
+	for i, p := range e.Terminal.Processes {
 		pk := processKey{p.PID, p.Start}
 		if k, ok := agents[pk]; ok {
 			if shared[pk] {
-				return key{}, nil
+				return key{}, nil, 0
 			}
-			return k, t.sessions[k]
+			return k, t.sessions[k], i
 		}
 	}
-	return key{}, nil
+	return key{}, nil, 0
 }
 
 // applyWorkLocked records the commit or push of e for the session whose agent
@@ -122,25 +155,54 @@ func (t *Tracker) applyWorkLocked(e hookevents.Event, now time.Time) {
 	if now.Sub(at) > EndedFor {
 		return
 	}
-	k, s := t.ownerLocked(e)
-	if s == nil {
-		return
+	k, agentAt, named := namedSession(e)
+	var s *entry
+	if named {
+		s = t.sessions[k]
+		// The agent's command may run under another agent it started, such as a
+		// Codex session launched from a Claude command: the nearer one ran Git.
+		if owner, entry, i := t.ownerLocked(e); entry != nil && i < agentAt {
+			k, s = owner, entry
+		}
+	} else {
+		k, s, _ = t.ownerLocked(e)
+		if s == nil {
+			return
+		}
 	}
 	var items []workItem
-	if e.Name == "pre-push" {
+	switch e.Name {
+	case "pre-push":
 		if e.Git == nil || len(e.Git.Args) == 0 || !hookevents.RemoteName(e.Git.Args[0]) {
 			return
 		}
 		for _, p := range hookevents.Pushes(e.Git.Lines) {
 			items = append(items, workItem{id: e.ID, at: at, dir: e.Dir, pushed: true, remote: e.Git.Args[0], branch: p.Branch, head: p.New})
 		}
-	} else {
+	case "post-rewrite":
+		// A rewrite made these commits; the lines name each new one. The
+		// post-commit of an amend or a rebase pick may have recorded one.
+		if e.Git == nil {
+			return
+		}
+		for _, head := range hookevents.Rewritten(e.Git.Lines) {
+			if !s.hasCommit(head) {
+				items = append(items, workItem{id: e.ID, at: at, dir: e.Dir, head: head})
+			}
+		}
+	default:
 		// A commit whose hook could not read it says nothing: the directory's
 		// checkout later may be another branch's.
 		if e.Git == nil || e.Git.Head == "" {
 			return
 		}
 		items = []workItem{{id: e.ID, at: at, dir: e.Dir, branch: e.Git.Branch, head: e.Git.Head}}
+	}
+	if s == nil {
+		// The named session has no entry: it ended and was dropped, or has not
+		// been seen. Its work is still recorded, without a session to show.
+		t.detachLocked(k, items)
+		return
 	}
 	added := false
 	for _, item := range items {
@@ -157,6 +219,77 @@ func (t *Tracker) applyWorkLocked(e hookevents.Event, now time.Time) {
 	if !s.unlinked {
 		t.queue(k)
 	}
+}
+
+// hasCommit reports whether the session recorded a commit of head; a nil
+// session has none.
+func (s *entry) hasCommit(head string) bool {
+	return s != nil && slices.ContainsFunc(s.work, func(w workItem) bool { return !w.pushed && w.head == head })
+}
+
+// maxDetached bounds the work waiting to be looked up for sessions that are not
+// tracked.
+const maxDetached = 256
+
+// detachedWork is a commit or push of a session the tracker holds no entry for.
+type detachedWork struct {
+	k    key
+	item workItem
+}
+
+// detachLocked queues items of a session without an entry, to be looked up and
+// recorded as observations by persistAttributions. Without a store there is
+// nothing to record them in.
+func (t *Tracker) detachLocked(k key, items []workItem) {
+	if t.Attributions == nil || len(items) == 0 {
+		return
+	}
+	dropped := 0
+	for _, item := range items {
+		if len(t.detached) >= maxDetached {
+			dropped++
+			continue
+		}
+		t.detached = append(t.detached, detachedWork{k, item})
+	}
+	if dropped > 0 {
+		t.logger().Warn("commit observations of untracked sessions dropped: too many waiting", "dropped", dropped)
+	}
+	select {
+	case t.wake <- struct{}{}:
+	default:
+	}
+}
+
+// resolveDetached looks up the queued work of untracked sessions and adds what
+// links to a repository to the observations to record.
+func (t *Tracker) resolveDetached(ctx context.Context) {
+	t.mu.Lock()
+	batch := t.detached
+	t.detached = nil
+	t.mu.Unlock()
+	var observations []commitattribution.Observation
+	for i, d := range batch {
+		read := t.readWork(ctx, []workItem{d.item}, false)
+		if ctx.Err() != nil {
+			t.mu.Lock()
+			t.detached = append(slices.Clone(batch[i:]), t.detached...)
+			t.mu.Unlock()
+			break
+		}
+		if len(read) != 1 || read[0].link.Repository == "" {
+			continue
+		}
+		w, l := read[0], read[0].link
+		observations = append(observations, workObservation(d.k, savedWork{WorkObservation: WorkObservation{At: w.at, Repository: l.Repository, HeadRepository: l.HeadRepository, HeadSHA: l.HeadSHA}, ID: w.id, Push: w.pushed}))
+	}
+	t.mu.Lock()
+	for _, o := range observations {
+		if !slices.Contains(t.pendingAttributions, o) {
+			t.pendingAttributions = append(t.pendingAttributions, o)
+		}
+	}
+	t.mu.Unlock()
 }
 
 // readWork looks up the items not read yet, running git, and, when fallback
@@ -311,8 +444,8 @@ func restoredWork(saved []savedWork) []workItem {
 		if w.Repository == "" {
 			continue
 		}
-		// An item is named by its event and branch, so the replayed event does
-		// not add it again.
+		// An item is named by its event, branch and commit, so the replayed
+		// event does not add it again.
 		out = append(out, workItem{id: w.ID, at: w.At, pushed: w.Push, branch: w.Branch, head: w.HeadSHA, read: true, link: Link{Repository: w.Repository, Branch: w.Branch, HeadSHA: w.HeadSHA, Upstream: w.Upstream, PR: w.PR, HeadRepository: w.HeadRepository, UpstreamRepository: w.UpstreamRepository}})
 	}
 	if len(out) > maxWork {
@@ -359,6 +492,7 @@ func (t *Tracker) persistAttributions(ctx context.Context) {
 	}
 	t.attributionMu.Lock()
 	defer t.attributionMu.Unlock()
+	t.resolveDetached(ctx)
 	t.mu.Lock()
 	pending := map[key][]workItem{}
 	for k, s := range t.sessions {

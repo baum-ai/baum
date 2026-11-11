@@ -16,6 +16,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"slices"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -158,6 +159,11 @@ type Session struct {
 	// AgentID is the Claude Code subagent (or in-process teammate) the hook
 	// fired in, when it fired in one.
 	AgentID string `json:"agent_id,omitempty"`
+	// AgentPID is the process id a Git hook's agent exported for itself,
+	// beside the session id it names: the hook checked it is among
+	// Terminal.Processes, and the daemon takes its place there to tell a
+	// nearer agent from this one.
+	AgentPID int `json:"agent_pid,omitempty"`
 	// AutoReview says Codex's active turn delegates approvals to its automatic
 	// reviewer. Its PermissionRequest is not a request for the user's attention.
 	AutoReview bool `json:"auto_review,omitempty"`
@@ -207,6 +213,21 @@ func Pushes(lines []string) []Push {
 		pushes = append(pushes, p)
 	}
 	return pushes
+}
+
+// Rewritten reads a post-rewrite hook's lines, "<old oid> <new oid>[ <extra>]",
+// and returns the new commits, each once. A malformed line, and a commit a
+// rebase replayed unchanged (old equals new), is skipped.
+func Rewritten(lines []string) []string {
+	var out []string
+	for _, line := range lines {
+		fields := strings.Fields(line)
+		if len(fields) < 2 || len(fields) > 3 || !validOID(fields[0]) || !validOID(fields[1]) || zeroOID(fields[1]) || fields[0] == fields[1] || slices.Contains(out, fields[1]) {
+			continue
+		}
+		out = append(out, fields[1])
+	}
+	return out
 }
 
 // RemoteName reports whether a pre-push hook's first argument can be a
