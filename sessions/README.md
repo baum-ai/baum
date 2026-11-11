@@ -182,6 +182,10 @@ reads each one once:
 directories, file metadata and the Entire refs, and never a transcript.
 `Discovery.Fingerprint` describes everything `Load` would read, so a caller can
 tell whether anything changed before paying for the decode.
+`Options.SessionIDs` keeps only the sessions with those native session IDs; the
+others are never mapped, so a caller that needs a few sessions does not decode
+every transcript of the repository. An Entire session is dropped when the
+agent's own store holds its ID, as without the option.
 `Options.StartedBefore` drops sessions the agent's own store says began after
 it. Claude Code's start comes from its first records and Codex's from its
 `session_meta`; a session with no known start is kept.
