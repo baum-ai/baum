@@ -310,6 +310,33 @@ it("keeps a draft when another prompt is opened, and marks the row unsaved", asy
   );
 });
 
+it("offers Save only when there is something to save", async () => {
+  stub(
+    () => ({
+      prompts: [
+        entry("review", "reviews"),
+        entry("fix", "fixes", { custom_text: "Mine", invalid: true, invalid_reason: "too long" }),
+      ],
+    }),
+    () => ({}),
+  );
+  act(() => root.render(<Section />));
+  await flush();
+  // A default prompt, untouched: saving would only copy it.
+  act(() => toggle("review").click());
+  expect(button("Save").disabled).toBe(true);
+  await type("Changed");
+  expect(button("Save").disabled).toBe(false);
+  // Typed back to the starting text: nothing to save again.
+  await type(entry("review", "reviews").default_text);
+  expect(button("Save").disabled).toBe(true);
+  // A stored text not in use, unchanged, would only be refused again.
+  act(() => toggle("fix").click());
+  expect(button("Save").disabled).toBe(true);
+  await type("Shorter");
+  expect(button("Save").disabled).toBe(false);
+});
+
 it("discards a draft back to the stored text", async () => {
   stub(
     () => ({ prompts: all() }),

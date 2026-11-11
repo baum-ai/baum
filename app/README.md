@@ -1850,7 +1850,9 @@ A segmented **Edit**, **Changes** and **Default** switch above the field shows
 the text, a line diff (longest common subsequence) of it against the effective
 text, or the built-in text read only; the field stays mounted while hidden, so it
 keeps its undo history. Nothing is saved until **Save** (`PUT
-api/settings/prompts/{id}`), and one save or reset runs at a time; **Discard
+api/settings/prompts/{id}`), which is offered only while the text differs from
+the stored one, or from the starting text when none is stored, and one save or
+reset runs at a time; **Discard
 changes**, shown while there is a draft, goes back to the stored text, and **Reset
 to default**, on the right, sends `null`. The editor is a monospace textarea over a
 transparent mirror of its text, so the text of each safety rule is marked where it

@@ -370,7 +370,9 @@ export function PromptEditor({
       <div className="prompt-actions">
         <Button
           size="compact"
-          disabled={busy !== "" || empty || (stored !== null && text === stored && !entry.invalid)}
+          // Nothing to save until the text differs from what is stored (or
+          // the starting text): the draft holds only such a text.
+          disabled={busy !== "" || empty || draft === undefined}
           onClick={() => void send(text, "save")}
         >
           {busy === "save" ? "Saving…" : saveLabel}
