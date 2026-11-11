@@ -146,5 +146,18 @@ spending limits.
 
 `baum internal repos add <path>` registers an existing clone for desktop
 onboarding. Repository selection, removal and settings are managed through
-the desktop app and the authenticated HTTP routes above. Registration changes
+the desktop app and the authenticated HTTP routes above. The command changes
 no Git configuration or hooks and starts no daemon.
+
+A registration the daemon stores (`POST /api/repos`, `AddFor`, `AttachFound`,
+a cloned repository) calls `Registry.Registered`, which the daemon sets to
+ensure baum's Git hook dispatchers in the clone in the background
+([githooks](../githooks)). It never fails or waits for the registration. A
+registry opened elsewhere, such as the CLI's, has no such hook.
+`git config baum.hooks false` in a clone opts it out: the daemon takes the
+dispatchers out and restores the hooks they replaced. `Remove` and `Unpick` call
+`Registry.Removed` for each clone they delete, and the daemon then does the same,
+unless a registered clone, the same one registered again included, shares the
+clone's path or common Git directory; the daemon reads the registry again
+before it installs or restores, so a sweep cannot reinstall hooks of a clone
+removed meanwhile. A removal before the service starts is restored when it does.

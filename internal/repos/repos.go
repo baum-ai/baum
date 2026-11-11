@@ -316,7 +316,15 @@ type Clone struct {
 	Available  bool     `json:"available"`
 }
 type Registry struct {
-	db *sql.DB
+	// Registered, when set, is called with each clone a registration stored
+	// (Add, AddFor, AddForwarded and AttachFound), after it is stored. It
+	// must not block: the daemon uses it to start work on the new clone. A
+	// registry the CLI opens has none.
+	Registered func(Clone)
+	// Removed, when set, is called with each clone Remove or Unpick deleted,
+	// after it is deleted, and must not block.
+	Removed func(Clone)
+	db      *sql.DB
 	// noSchema marks a read-only registry whose file has no tables yet.
 	noSchema bool
 	noPicked bool
@@ -714,7 +722,13 @@ func (r *Registry) addPatch(ctx context.Context, path, repository string, guard 
 	if _, e = tx.ExecContext(ctx, "INSERT INTO picked VALUES (?) ON CONFLICT DO NOTHING", c.Repository); e != nil {
 		return Clone{}, e
 	}
-	return c, tx.Commit()
+	if e = tx.Commit(); e != nil {
+		return Clone{}, e
+	}
+	if r.Registered != nil {
+		r.Registered(c)
+	}
+	return c, nil
 }
 
 // Remove accepts an ID or path, including a path that no longer exists.
@@ -726,6 +740,16 @@ func (r *Registry) Remove(ctx context.Context, idOrPath string) error {
 	if resolved, e := filepath.EvalSymlinks(p); e == nil {
 		p = resolved
 	}
+	var removed []Clone
+	if r.Removed != nil {
+		if all, e := r.cloneRows(ctx, ""); e == nil {
+			for _, c := range all {
+				if c.ID == idOrPath || c.Path == p {
+					removed = append(removed, c)
+				}
+			}
+		}
+	}
 	// The repository stays picked: its picked row is not touched.
 	result, e := r.db.ExecContext(ctx, "DELETE FROM clones WHERE id=? OR path=?", idOrPath, p)
 	if e != nil {
@@ -735,7 +759,19 @@ func (r *Registry) Remove(ctx context.Context, idOrPath string) error {
 	if e == nil && n == 0 {
 		return ErrNotFound
 	}
+	if e == nil {
+		r.removed(removed)
+	}
 	return e
+}
+
+func (r *Registry) removed(clones []Clone) {
+	if r.Removed == nil {
+		return
+	}
+	for _, c := range clones {
+		r.Removed(c)
+	}
 }
 func (r *Registry) List(ctx context.Context) ([]Clone, error) { return r.clones(ctx, "") }
 
@@ -1066,6 +1102,10 @@ func (r *Registry) Pick(ctx context.Context, repository string, settings *Settin
 // repositories row stays, as in Remove, so its settings survive a later pick.
 func (r *Registry) Unpick(ctx context.Context, repository string) error {
 	identity := strings.ToLower(repository)
+	var removed []Clone
+	if r.Removed != nil {
+		removed, _ = r.cloneRows(ctx, identity)
+	}
 	tx, e := r.db.BeginTx(ctx, nil)
 	if e != nil {
 		return e
@@ -1085,7 +1125,11 @@ func (r *Registry) Unpick(ctx context.Context, repository string) error {
 	if rows == 0 {
 		return ErrNotFound
 	}
-	return tx.Commit()
+	if e = tx.Commit(); e != nil {
+		return e
+	}
+	r.removed(removed)
+	return nil
 }
 
 // Repositories lists every picked repository by identity, with its clones

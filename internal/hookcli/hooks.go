@@ -1,11 +1,17 @@
 package hookcli
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"regexp"
+	"slices"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -16,9 +22,32 @@ import (
 )
 
 var gitHookArgumentCounts = map[string]int{
-	"post-commit": 0,
-	"pre-push":    1,
+	"post-commit":  0,
+	"post-rewrite": 1,
+	"pre-push":     1,
 }
+
+// sessionEnv are the variables a coding agent exports to the commands it runs,
+// so a Git hook such as post-commit names the session that ran Git. An agent
+// not listed here is found through the hook's ancestor processes instead.
+var sessionEnv = []struct {
+	agent, name, pid string
+	// process says whether a process name (comm) can be the agent, so a pid
+	// reused after the agent exited is not taken for it.
+	process func(name string) bool
+}{
+	{"claude-code", "CLAUDE_CODE_SESSION_ID", "CLAUDE_PID", func(name string) bool {
+		name = strings.ToLower(name)
+		// A native install can be named by its version, the target of the link.
+		return strings.HasPrefix(name, "claude") || name == "node" || name == "bun" || versionName.MatchString(name)
+	}},
+}
+
+// versionName is a process named by a version, such as 2.1.34.
+var versionName = regexp.MustCompile(`^\d+\.\d+\.\d+`)
+
+// maxSessionID bounds an environment session id, like a stored observation's.
+const maxSessionID = 128
 
 func newHooksCommand(stdout, stderr io.Writer) *cobra.Command {
 	cmd := &cobra.Command{Use: "hooks", Short: "Manage baum's local coding-agent plugins", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error { return cmd.Help() }}
@@ -32,7 +61,9 @@ func newGitHooksCommand() *cobra.Command {
 	return &cobra.Command{Use: "git HOOK [args...]", Short: "Record a local Git event", Hidden: true,
 		Args: cobra.MinimumNArgs(1), DisableFlagParsing: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if args[0] == "--check" {
+			switch args[0] {
+			case "--check":
+				// Dispatchers of earlier versions fall back to their own hooks.
 				if len(args) != 2 {
 					return errors.New("usage: baum hooks git --check HOOK")
 				}
@@ -40,20 +71,34 @@ func newGitHooksCommand() *cobra.Command {
 					return fmt.Errorf("unsupported Git hook %q", args[1])
 				}
 				return errors.New("repository Git hook dispatchers are no longer supported")
+			case "--check-dispatcher":
+				// The check of the dispatchers the daemon installs.
+				if len(args) != 2 {
+					return errors.New("usage: baum hooks git --check-dispatcher HOOK")
+				}
+				if _, ok := gitHookArgumentCounts[args[1]]; !ok {
+					return fmt.Errorf("unsupported Git hook %q", args[1])
+				}
+				if err := hooksEnabled(); err != nil {
+					return err
+				}
+				return repositoryHooksOn(cmd.Context())
 			}
 			if _, ok := gitHookArgumentCounts[args[0]]; !ok {
 				return fmt.Errorf("unsupported Git hook %q", args[0])
 			}
 			started := time.Now()
 			var input *hookInput
-			if args[0] == "pre-push" {
+			if args[0] == "pre-push" || args[0] == "post-rewrite" {
 				input = newHookInput(cmd.InOrStdin())
 				input.read()
 			}
 			event := newHookEvent(hookevents.KindGit, "", args[0], started)
 			event.Git = gitHookEvent(args, input.payload())
 			if tiesToSession(args[0]) {
-				if processes := captureAncestors(); len(processes) > 0 {
+				processes := captureAncestors()
+				event.Agent, event.Session = environmentSession(os.Getenv, processes)
+				if len(processes) > 0 {
 					event.Terminal = &hookevents.Terminal{Processes: processes}
 				}
 			}
@@ -130,6 +175,45 @@ func newAgentHooksCommand(stdout io.Writer) *cobra.Command {
 			return nil
 		},
 	}
+}
+
+// environmentSession is the agent session whose command ran Git, named by the
+// variables its agent exports, or nothing. Processes the agent starts inherit
+// its variables (a tmux server, an editor, another agent), so the session counts
+// only when the agent's own process id, which it exports too, is among the
+// hook's ancestors: Git then ran under that agent's command.
+func environmentSession(getenv func(string) string, processes []hookevents.Process) (string, *hookevents.Session) {
+	for _, v := range sessionEnv {
+		id := getenv(v.name)
+		if id == "" || len(id) > maxSessionID || strings.ContainsFunc(id, func(r rune) bool {
+			letter := r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9'
+			return !letter && !strings.ContainsRune("-_.:", r)
+		}) {
+			continue
+		}
+		pid, err := strconv.Atoi(getenv(v.pid))
+		if err != nil || pid <= 0 || !slices.ContainsFunc(processes, func(p hookevents.Process) bool { return p.PID == pid && v.process(p.Name) }) {
+			continue
+		}
+		return v.agent, &hookevents.Session{ID: id, AgentPID: pid}
+	}
+	return "", nil
+}
+
+// gitConfigWait bounds the one git call a dispatcher check makes.
+const gitConfigWait = time.Second
+
+// repositoryHooksOn reports an error when the repository opted out of baum's
+// Git hooks with `git config baum.hooks false`. That keeps a dispatcher the
+// daemon could not take out (another tool moved it aside) from running baum.
+func repositoryHooksOn(ctx context.Context) error {
+	ctx, cancel := context.WithTimeout(ctx, gitConfigWait)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "git", "config", "--bool", "--get", "baum.hooks").Output()
+	if err == nil && strings.TrimSpace(string(out)) == "false" {
+		return errors.New("baum hooks are off in this repository (baum.hooks is false)")
+	}
+	return nil
 }
 
 // Checks are local and never inspect credentials or third-party hook settings.

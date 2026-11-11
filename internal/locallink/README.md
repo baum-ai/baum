@@ -110,8 +110,9 @@ whose result reports a non-zero exit gives none either.
 
 When several sessions fit, or none, the commit stays unresolved. Merges are
 never reflog evidence. A reflog match outranks a hook observation of the same
-commit, which guesses the session from the process tree; hook observations
-still decide when the reflog has no single Git-writing creator. A background
+commit, which falls back to guessing the session from the process tree when
+the agent exports no session id; hook observations still decide when the
+reflog has no single Git-writing creator. A background
 command that commits after its tool call returned, and that no poll covers, lies
 outside every window. Entries are read from the newest 8 MiB of each reflog.
 `ReflogFingerprint` hashes the creation entries of the pull request's commits

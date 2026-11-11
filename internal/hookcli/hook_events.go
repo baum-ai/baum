@@ -243,7 +243,7 @@ func commitCheckout(ctx context.Context) (head, branch string) {
 // which agent session committed or pushed: the agent is one of them when its
 // own command ran Git.
 func tiesToSession(hook string) bool {
-	return hook == "post-commit" || hook == "pre-push"
+	return hook == "post-commit" || hook == "post-rewrite" || hook == "pre-push"
 }
 
 // locatesTerminal reports the agent hook events that record where the agent

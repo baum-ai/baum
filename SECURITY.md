@@ -141,15 +141,29 @@ to Codex and must be reviewed with `/hooks`; installation grants no trust.
 
 Plugin callbacks check only that they run in a Git worktree and that baum's
 local daemon has run. They read no hosted credentials, Entire settings or
-third-party hook configuration. baum neither installs repository hooks nor
-installs, configures or invokes Entire. Independent hooks may run alongside
-baum, and independently recorded checkpoint refs remain readable. Owners can
-remove legacy baum-specific repository dispatchers themselves; preserve their
-other hooks, Entire configuration and checkpoint refs. There is no automatic
-migration or cleanup of those files.
+third-party hook configuration. baum does not install, configure or invoke
+Entire. Independently recorded checkpoint refs remain readable.
+
+The daemon installs Git hook dispatchers (`post-commit`, `post-rewrite`,
+`pre-push`) in the registered clones, at registration, at start and daily. A
+dispatcher runs baum, then the hook the clone had before, which it moved to
+`<hook>.pre-baum`; it never overwrites a hook it cannot preserve, a symlink or a
+hook Entire manages, skips clones with `core.hooksPath`, guards against
+re-entry and never runs a backup that is itself a dispatcher. `git config
+baum.hooks false` opts a clone out, and removing a clone from baum restores its
+hooks. Dispatchers of earlier versions are repaired in place; other legacy
+repository dispatchers are not migrated, and their owners can remove them,
+preserving their other hooks, Entire configuration and checkpoint refs.
+
+A Git hook reads one thing from the environment: the session id an agent exports
+(Claude Code's `CLAUDE_CODE_SESSION_ID`), kept only if the agent's exported
+`CLAUDE_PID` is among the hook's ancestor processes. Any local process can set
+these variables, so the resulting commit attribution is local evidence of what
+ran on this machine, not proof of authorship. The daemon does not pass them to
+processes it starts.
 
 Callbacks report bounded metadata to the local daemon: agent/event or local
-`post-commit`/`pre-push`, working directory, session identifiers, transcript
+`post-commit`/`post-rewrite`/`pre-push`, working directory, session identifiers, transcript
 path, source/end reason and terminal location. A Claude notification can also
 carry its type and message, cut to 512 bytes. Ordinary capture is bounded to
 300 ms; permission and completed-tool input has a two-second bound. Incomplete

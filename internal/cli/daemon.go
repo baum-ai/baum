@@ -41,6 +41,7 @@ import (
 	"github.com/baum-ai/baum/internal/facts"
 	"github.com/baum-ai/baum/internal/focus"
 	"github.com/baum-ai/baum/internal/generate"
+	"github.com/baum-ai/baum/internal/githooks"
 	"github.com/baum-ai/baum/internal/github"
 	"github.com/baum-ai/baum/internal/githubauth"
 	"github.com/baum-ai/baum/internal/githubrepos"
@@ -400,6 +401,7 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 			events.Close()
 			return daemon.App{}, err
 		}
+		hooks := gitHooks(registry, log)
 		discover := discovery.New(github.NewFromConfig(cfg, github.Options{}), "")
 		// Every reader shares one cached index. Discovery's writes only
 		// invalidate it: the index watcher publishes if the index moved.
@@ -772,6 +774,7 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 				}
 				wg.Go(func() { sessionIndex.Run(ctx) })
 				wg.Go(func() { maintainReviewRuns(ctx, log) })
+				wg.Go(func() { hooks.Run(ctx) })
 				wg.Go(func() { planHistory.Run(ctx) })
 				wg.Go(func() { delivery.Run(ctx) })
 				if endedSessions != nil {
@@ -947,6 +950,46 @@ func currentName(client *github.Client) repos.CurrentName {
 		}
 		return client.CurrentName(ctx, repo)
 	}
+}
+
+// gitHooks builds the service that keeps baum's Git hook dispatchers in the
+// registered clones that are present, ensures each clone the registry stores
+// from now on and gives a clone it drops its own hooks back. Only the daemon's
+// registry does this: the CLI's installs no hooks.
+func gitHooks(registry *repos.Registry, log *slog.Logger) *githooks.Service {
+	convert := func(clones []repos.Clone, available bool) []githooks.Clone {
+		var out []githooks.Clone
+		seen := map[string]bool{}
+		for _, c := range clones {
+			// Linked worktrees of one repository share its hooks.
+			if (c.Available || !available) && (!available || !seen[c.CommonDir]) {
+				seen[c.CommonDir] = true
+				out = append(out, githooks.Clone{ID: c.ID, Path: c.Path, CommonDir: c.CommonDir})
+			}
+		}
+		return out
+	}
+	service := &githooks.Service{Log: log,
+		Clones: func(ctx context.Context) ([]githooks.Clone, error) {
+			clones, err := registry.List(ctx)
+			return convert(clones, true), err
+		},
+		Registered: func(ctx context.Context) ([]githooks.Clone, error) {
+			clones, err := registry.CloneRows(ctx)
+			return convert(clones, false), err
+		},
+	}
+	// A dispatcher falls back to this binary when baum is not on the PATH of
+	// the process Git runs.
+	if exe, err := os.Executable(); err == nil {
+		service.Options.Baum = exe
+	}
+	toClone := func(c repos.Clone) githooks.Clone {
+		return githooks.Clone{ID: c.ID, Path: c.Path, CommonDir: c.CommonDir}
+	}
+	registry.Registered = func(c repos.Clone) { service.Added(toClone(c)) }
+	registry.Removed = func(c repos.Clone) { service.Removed(toClone(c)) }
+	return service
 }
 
 // maintainReviewRuns expires the run directories of reviews that kept their

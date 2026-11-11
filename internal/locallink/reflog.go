@@ -255,7 +255,8 @@ type callWindow struct {
 // addReflogCommits supplies commit creation evidence from the clone's reflogs:
 // a commit made while one session's successful Git-writing shell call ran in
 // the same working tree was made by that session. It outranks hook
-// observations, which guess the session from the process tree. Unreadable
+// observations, which guess the session from the process tree when the agent
+// exports no session id. Unreadable
 // reflogs give no evidence. A session the load left unmapped takes its calls
 // from its digest in book; with a nil book every session must be mapped.
 func addReflogCommits(ctx context.Context, repo *gitlocal.Repo, dir string, found []sessions.Session, commits []gitlocal.Commit, book *digestBook) []sessions.Session {
