@@ -859,16 +859,49 @@ func (q *Queue) Generate(ctx context.Context, items []Item, mode string, isolati
 
 // reviewMembers queues the reviews a group job awaits, except those of
 // members already queued or running. An automatic group's are automatic
-// reviews of the members' new heads.
+// reviews of the members' new heads. A person's group does not wait behind
+// queued automatic work: it makes the queued automatic review of a member's
+// current head theirs (promote), and cancels one of another head as
+// superseded, in the same write, before queuing its own review of that
+// member. A running automatic review is not stopped; the group waits for it.
 func (q *Queue) reviewMembers(ctx context.Context, group Prepared, automatic, isolation bool) error {
+	members, _ := groupMembers(group.Members)
 	q.mu.Lock()
 	items := []Item{}
+	var before, changed []Job
 	for _, number := range group.Awaiting {
+		if !automatic {
+			if i, current := q.automaticReview(group.Clone, number, members); i >= 0 {
+				if before == nil {
+					before = append([]Job(nil), q.jobs...)
+				}
+				j := &q.jobs[i]
+				if current {
+					q.promote(j)
+					changed = append(changed, *j)
+					continue
+				}
+				j.State, j.Reason, j.Phase, j.UpdatedAt = "cancelled", "superseded", "finished", time.Now().UTC()
+				q.mark(j.ID)
+				changed = append(changed, *j)
+			}
+		}
 		if !q.reviewPending(group.Clone, number) {
 			items = append(items, Item{Clone: group.Clone, PR: number})
 		}
 	}
+	if len(changed) > 0 {
+		if err := q.save(); err != nil {
+			q.jobs = before
+			q.mu.Unlock()
+			return err
+		}
+		q.signal()
+	}
 	q.mu.Unlock()
+	for _, j := range changed {
+		q.notify(j)
+	}
 	if len(items) == 0 {
 		return nil
 	}
@@ -1018,6 +1051,33 @@ func (q *Queue) reviewPending(clone string, number int) bool {
 	return false
 }
 
+// promote makes a queued automatic job a person's: a person asked for this
+// very run, so it waits no longer behind automatic work (next) and settles
+// as a person's job does. The caller holds mu and saves.
+func (q *Queue) promote(j *Job) {
+	j.Automatic, j.Trigger = false, ""
+	j.UpdatedAt = time.Now().UTC()
+	q.mark(j.ID)
+}
+
+// automaticReview is the index of the queued automatic review of a group
+// member in the group's clone, or -1, and whether it is of the member's
+// head in members. mu is held.
+func (q *Queue) automaticReview(clone string, number int, members []generate.GroupMember) (int, bool) {
+	head := ""
+	for _, m := range members {
+		if m.Number == number {
+			head = m.Head
+		}
+	}
+	for i, j := range q.jobs {
+		if j.Automatic && j.State == "queued" && j.Kind == "" && j.Group == "" && j.PR == number && j.Clone == clone {
+			return i, head != "" && j.HeadSHA == head
+		}
+	}
+	return -1, false
+}
+
 // forget drops an estimate nothing will submit.
 func (q *Queue) forget(estimateID string) {
 	q.mu.Lock()
@@ -1091,6 +1151,10 @@ func (q *Queue) SubmitConfirmed(ctx context.Context, estimateID string, c Confir
 				return nil, errors.New("a job is already running for this pull request")
 			}
 			if j.sameConfirmedInputs(p) {
+				if j.Automatic {
+					q.promote(j)
+					changes = append(changes, *j)
+				}
 				out = append(out, *j)
 				continue
 			}
@@ -1252,14 +1316,7 @@ func (q *Queue) worker(chat bool) {
 			i := -1
 			// Outside the chat lane a worker takes a job only below limit.
 			if chat || q.running() < q.limit {
-				for n, j := range q.jobs {
-					// Without a gate an automatic job waits: the daemon installs it
-					// right after Open, and a journaled job must not start first.
-					if j.State == "queued" && (j.Kind == KindChat) == chat && (!j.Automatic || q.gate != nil) && (chat || (!q.pullRunning(j) && !q.membersBusy(j))) {
-						i = n
-						break
-					}
-				}
+				i = q.next(chat)
 			}
 			if i < 0 {
 				q.mu.Unlock()
@@ -1520,6 +1577,29 @@ func (q *Queue) worker(chat bool) {
 			}
 		}
 	}
+}
+
+// next is the index of the queued job of its lane a worker starts next, or
+// -1: the oldest job a person started, else the oldest automatic one, so an
+// automatic backlog never holds up a person's job. A job waiting for another
+// of its pull requests (pullRunning, membersBusy) is passed over. mu is held.
+func (q *Queue) next(chat bool) int {
+	automatic := -1
+	for n, j := range q.jobs {
+		// Without a gate an automatic job waits: the daemon installs it
+		// right after Open, and a journaled job must not start first.
+		if j.State != "queued" || (j.Kind == KindChat) != chat || (j.Automatic && (q.gate == nil || automatic >= 0)) {
+			continue
+		}
+		if !chat && (q.pullRunning(j) || q.membersBusy(j)) {
+			continue
+		}
+		if !j.Automatic {
+			return n
+		}
+		automatic = n
+	}
+	return automatic
 }
 
 // maxSummary and maxDetail bound a job's Summary, a fix agent's own account
