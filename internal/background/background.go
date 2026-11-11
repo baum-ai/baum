@@ -281,9 +281,10 @@ func (s *Service) wait() time.Duration {
 
 // Only pull requests with a saved review are read; discovery covers the
 // others. An open one is read when discovery reports a change: a push, edit,
-// review or comment moves its updated time, a push its head, and a check
-// finishing its check rollup. Otherwise it is read once its evidence is
-// openReadAge old. One that leaves the open ones is read once more, to record
+// review or comment moves its updated time, a push its head, a check
+// finishing its check rollup and a resolved thread its unresolved count; or
+// when the person refreshes its repository (Asked). Otherwise it is read once
+// its evidence is openReadAge old. One that leaves the open ones is read once more, to record
 // that it merged or closed, and never again while it stays closed: a saved
 // document that records the final state is retired.
 const (
@@ -453,7 +454,7 @@ func (s *Service) dueReason(key string, r read, saved SavedReview, observation d
 	spread := r.at.IsZero() && now.Before(s.started.Add(spreadOffset(key)))
 	if !open {
 		switch {
-		case saved.final(), saved.closedDraft(observation) && r.failures == 0:
+		case saved.final(), saved.closedDraft(observation):
 			return false, false, "retired"
 		case r.failures >= maxReadFailures && !r.again:
 			// Not open, it moves no more: a failing final read stops until
@@ -479,7 +480,7 @@ func (s *Service) dueReason(key string, r read, saved SavedReview, observation d
 		}
 		return !now.Before(r.at.Add(stoppedRetry)), false, "stopped"
 	case last.IsZero():
-		return !spread, false, "never_read"
+		return !spread || asked.After(r.at), false, "never_read"
 	case updated:
 		return true, true, "updated"
 	case r.failures > 0:
@@ -487,7 +488,7 @@ func (s *Service) dueReason(key string, r read, saved SavedReview, observation d
 	case moved:
 		return true, true, "new_head"
 	case rollup(checks) != "" && rollup(pr.Checks) != "" && rollup(checks) != rollup(pr.Checks):
-		return !spread, false, "checks"
+		return !spread || asked.After(r.at), false, "checks"
 	case !r.at.IsZero() && unresolved != nil && pr.Unresolved != nil && *unresolved != *pr.Unresolved:
 		return true, false, "threads"
 	case asked.After(r.at):
@@ -528,10 +529,12 @@ func spreadOffset(key string) time.Duration {
 }
 
 // spend records the GraphQL requests a read made.
-func (s *Service) spend(requests int, epoch uint64) {
+func (s *Service) spend(requests int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if epoch != s.epoch || requests <= 0 {
+	// Not fenced by the identity epoch: the requests were made, and the
+	// count survives an identity change.
+	if requests <= 0 {
 		return
 	}
 	s.spent = append(s.trimSpent(), spend{s.now(), requests})
@@ -578,13 +581,13 @@ func (s *Service) reserved(ctx context.Context, repo github.Repository) bool {
 
 // read runs one Refresh within its time limits, counting its GitHub requests
 // toward refreshRequestsPerHour.
-func (s *Service) read(ctx context.Context, clone repos.Clone, number int, epoch uint64) (discovery.Observation, error) {
+func (s *Service) read(ctx context.Context, clone repos.Clone, number int) (discovery.Observation, error) {
 	ctx, cancel := context.WithTimeout(ctx, readLimit)
 	defer cancel()
 	ctx, requests := github.CountRequests(github.WithRequestTimeout(ctx, readRequestTimeout))
 	workstats.Inc("background.refreshes")
 	observation, err := s.Refresh(ctx, clone, number)
-	s.spend(requests(), epoch)
+	s.spend(requests())
 	return observation, err
 }
 
@@ -805,7 +808,8 @@ func (s *Service) Sync(ctx context.Context) {
 		defer release()
 	}
 	for _, current := range targets {
-		if ctx.Err() != nil {
+		if ctx.Err() != nil || s.identityEpoch() != epoch {
+			// Under another identity the next pass starts over.
 			return
 		}
 		p := current.polled
@@ -836,7 +840,7 @@ func (s *Service) Sync(ctx context.Context) {
 			// Left to discovery and generation until the window resets.
 			continue
 		}
-		observation, err := s.read(ctx, current.clone, current.number, epoch)
+		observation, err := s.read(ctx, current.clone, current.number)
 		if ctx.Err() != nil {
 			// Stopped, not failed: the read stays due.
 			return
@@ -891,6 +895,8 @@ func (s *Service) probe(ctx context.Context, names []string) (changed map[string
 	if s.now().Before(s.probed.Add(s.interval())) {
 		return nil, false
 	}
+	// Reads may have failed since the last probe, before this one failed.
+	previous := s.probed
 	s.probed = s.now()
 	repositories := make([]github.Repository, 0, len(names))
 	for _, name := range names {
@@ -903,7 +909,7 @@ func (s *Service) probe(ctx context.Context, names []string) (changed map[string
 	changed, err := s.Discovery.Probe(requestCtx, repositories)
 	if err != nil {
 		if !s.probeFailed {
-			s.failedSince = s.now()
+			s.failedSince = previous
 		}
 		s.probeFailed = true
 		return nil, false
@@ -968,7 +974,7 @@ func (s *Service) RefreshNow(ctx context.Context, clone repos.Clone, numbers []i
 		if ctx.Err() != nil {
 			break
 		}
-		observation, err := s.read(ctx, clone, number, epoch)
+		observation, err := s.read(ctx, clone, number)
 		if ctx.Err() != nil {
 			break
 		}
@@ -983,10 +989,14 @@ func (s *Service) RefreshNow(ctx context.Context, clone repos.Clone, numbers []i
 			s.setPause(repo.Host, limited.ResumeAt, epoch)
 			break
 		}
-		// What discovery showed at the last scheduled read still stands.
 		key := readKey(clone, number)
 		seen := s.lastRead(key)
 		seen.head, seen.open = observation.HeadSHA, observation.State == "OPEN" || observation.State == ""
+		if err == nil || errors.Is(err, store.ErrConflict) {
+			// This read stands for the last: GitHub's update time is compared
+			// with its observation, and the checks with what it read.
+			seen.updated, seen.checks = time.Time{}, observation.Checks
+		}
 		s.recordRead(key, err, epoch, seen)
 		if err != nil && !errors.Is(err, store.ErrConflict) {
 			errs = append(errs, err)

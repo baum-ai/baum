@@ -3819,13 +3819,15 @@ while the probes did, or for the next process. A rate-limited one stays due and
 goes first after the reset, so a small renewed budget still reaches every pull
 request. Reads are kept in memory; in a new process (or identity) those due
 by age or check rollup, and final reads, are spread over `restartSpread`
-(30 min) by a hash of the pull request. The reads make at most `refreshRequestsPerHour` (1,000) GraphQL
-requests an hour (`github.CountRequests`), and wait while discovery's ledger
-shows fewer than `refreshReserve` (1,000) GraphQL points left or a secondary
-limit (`discovery.Service.GraphQLBudget`). Each GitHub request of a read may
-take 30 s (`github.WithRequestTimeout`); only a read that never ends stops at
-10 minutes, and `Fetch` reads a pull request's parts three at a time. `Run` passes every 30 seconds, or sooner
-when a repository is due sooner, as a settling one is. Linked worktrees are
+(30 min) by a hash of the pull request. The reads make at most
+`refreshRequestsPerHour` (1,000) GraphQL requests an hour
+(`github.CountRequests`), and wait while discovery's ledger shows fewer than
+`refreshReserve` (1,000) GraphQL points left or a secondary limit
+(`discovery.Service.GraphQLBudget`). Each GitHub request of a read may take
+30 s (`github.WithRequestTimeout`); only a read that never ends stops at 10
+minutes, and `Fetch` reads a pull request's parts three at a time. `Run`
+passes every 30 seconds, or sooner when a repository is due sooner, as a
+settling one is. Linked worktrees are
 deduplicated by common git directory. Saved reviews use `refresh.Refresher`
 and `Store.RefreshCurrent`'s exact-byte CAS, which writes nothing when only the
 refresh time changed. A read counts as the last read whether or not it wrote,

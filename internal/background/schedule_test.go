@@ -1,6 +1,7 @@
 package background
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -358,7 +359,7 @@ func TestReadsStopAtTheHourlyRequestBudget(t *testing.T) {
 			calls++
 			return discovery.Observation{Number: n, HeadSHA: "new", FetchedAt: now}, nil
 		}}, now)
-	s.spend(refreshRequestsPerHour, s.identityEpoch())
+	s.spend(refreshRequestsPerHour)
 	for range 59 {
 		s.Sync(context.Background())
 		now = now.Add(time.Minute)
@@ -428,13 +429,58 @@ func TestRefreshNowIgnoresTheSchedule(t *testing.T) {
 	if calls != maxReadFailures {
 		t.Fatalf("calls=%d, want the read stopped after %d", calls, maxReadFailures)
 	}
-	s.spend(refreshRequestsPerHour, s.identityEpoch())
+	s.spend(refreshRequestsPerHour)
 	fail = false
 	if _, err := s.RefreshNow(context.Background(), clone, []int{1, 2}); err != nil || calls != maxReadFailures+2 {
 		t.Fatalf("refresh now err=%v calls=%d", err, calls)
 	}
 	if r := s.lastRead(readKey(clone, 1)); r.failures != 0 {
 		t.Fatalf("read %+v, want its failures cleared", r)
+	}
+}
+
+// A push's RefreshNow read stands for the background's: the update time and
+// checks it moved do not make the next pass read the pull request again.
+func TestRefreshNowStandsForTheNextRead(t *testing.T) {
+	now := time.Now()
+	clone := repos.Clone{Repository: "acme/app", CommonDir: "a", Available: true}
+	d := &fakeDiscovery{updated: now.Add(-time.Hour), checks: "running"}
+	calls := 0
+	s := settled(&Service{Registry: registry{clone}, Discovery: d, Now: func() time.Time { return now }, Saved: saved(1),
+		Refresh: func(_ context.Context, _ repos.Clone, n int) (discovery.Observation, error) {
+			calls++
+			return discovery.Observation{Number: n, State: "OPEN", HeadSHA: cmp.Or(d.head, "new"), Checks: "success", FetchedAt: now}, nil
+		}}, now)
+	s.Sync(context.Background())
+	// A push: GitHub's update time and head move, and the hook reads it.
+	now = now.Add(time.Minute)
+	d.updated, d.head = now.Add(-10*time.Second), "pushed"
+	if _, err := s.RefreshNow(context.Background(), clone, []int{1}); err != nil {
+		t.Fatal(err)
+	}
+	d.checks = "passing"
+	now = now.Add(time.Minute)
+	s.Sync(context.Background())
+	if calls != 2 {
+		t.Fatalf("calls=%d, want no background read after the hook's", calls)
+	}
+}
+
+// A secondary limit discovery met holds the reads too.
+func TestReadsWaitOutASecondaryLimit(t *testing.T) {
+	now := time.Now()
+	calls := 0
+	s := settled(&Service{Registry: registry{{Repository: "acme/app", CommonDir: "a", Available: true}}, Discovery: &fakeDiscovery{}, Now: func() time.Time { return now }, Saved: saved(1),
+		Budget: func(context.Context, github.Repository) (discovery.RateLimit, error) {
+			return discovery.RateLimit{RetryAt: now.Add(time.Minute)}, nil
+		},
+		Refresh: func(_ context.Context, _ repos.Clone, n int) (discovery.Observation, error) {
+			calls++
+			return discovery.Observation{Number: n, HeadSHA: "new", FetchedAt: now}, nil
+		}}, now)
+	s.Sync(context.Background())
+	if calls != 0 {
+		t.Fatalf("calls=%d during a secondary limit, want none", calls)
 	}
 }
 
