@@ -360,10 +360,14 @@ func TestWriteArchiveKeepsComparedTextWithNULs(t *testing.T) {
 	}
 }
 
-// A compared file whose patch was not read (past the diff's file limit) is
-// sniffed like any other: the diff never showed it was text.
-func TestWriteArchiveSniffsUnreadComparedFiles(t *testing.T) {
-	export := fakeExport{head: map[string]string{"logo.png": "\x89PNG\x00", "notes.txt": "text\n"}}
+// A file whose patch was not read (past the diff's file limit) is not
+// exported as a compared path: only the head tree's pass takes it, sniffed
+// like any other file.
+func TestWriteArchiveTakesUnreadFilesOnlyFromTheHeadTree(t *testing.T) {
+	export := fakeExport{
+		head:      map[string]string{"logo.png": "\x89PNG\x00", "notes.txt": "text\n"},
+		mergeBase: map[string]string{"notes.txt": "old\n"},
+	}
 	hunks := []Hunk{
 		{Path: "logo.png", Textless: true, TextlessReason: FileLimitReason},
 		{Path: "notes.txt", Textless: true, TextlessReason: FileLimitReason},
@@ -375,6 +379,9 @@ func TestWriteArchiveSniffsUnreadComparedFiles(t *testing.T) {
 	}
 	if files["head/notes.txt"] != "text\n" {
 		t.Fatalf("unread text file missing: %q", files)
+	}
+	if _, ok := files["merge-base/notes.txt"]; ok {
+		t.Fatalf("unread file exported at the merge base: %q", files)
 	}
 }
 

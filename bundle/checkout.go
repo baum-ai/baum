@@ -209,12 +209,17 @@ func (b *CheckoutBuilder) WriteArchive(ctx context.Context, pinned PinnedExport,
 	if err != nil {
 		return nil, err
 	}
+	// A file whose patch was not read (past the diff's file limit) is not a
+	// compared path: exporting each one on its own would undo the bound the
+	// limit puts on the work. The head tree's pass still takes it, sniffed
+	// like any other file, while the budget lasts.
+	hunks = slices.DeleteFunc(slices.Clone(hunks), func(hunk Hunk) bool {
+		return hunk.Textless && hunk.TextlessReason == FileLimitReason
+	})
 	diffBinary, diffText := map[string]bool{}, map[string]bool{}
 	for _, hunk := range hunks {
 		kind := diffText
-		// A file whose patch was not read is sniffed like a binary one: the
-		// diff never showed it was text.
-		if hunk.Textless && (hunk.TextlessReason == OmittedBinaryReason || hunk.TextlessReason == FileLimitReason) {
+		if hunk.Textless && hunk.TextlessReason == OmittedBinaryReason {
 			kind = diffBinary
 		}
 		kind[hunk.Path] = true

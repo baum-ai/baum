@@ -29,8 +29,8 @@ type indexFile struct {
 //  1. every generated or vendored file (lockfiles among them) with more
 //     than one entry is collapsed to one entry;
 //  2. the other files are collapsed one at a time, the largest saving first;
-//  3. whole files are left out, one at a time, generated and vendored first,
-//     each from the end of the diff.
+//  3. whole files are left out, one at a time, in dropTier order, each tier
+//     from the end of the diff.
 //
 // A collapsed entry has the file's ID (as a textless file has), path,
 // change and role, its hunks' summed line counts and the new-side span from
@@ -120,9 +120,9 @@ func fitDiffIndex(bundle *Bundle, limit int) {
 
 	if !fitsNow() {
 		dropped := 0
-		for _, pass := range []bool{true, false} {
+		for tier := range 4 {
 			for i := len(files) - 1; i >= 0 && !fitsNow(); i-- {
-				if file := files[i]; !file.dropped && lowValue(file) == pass {
+				if file := files[i]; !file.dropped && dropTier(bundle.Diff[file.entries[0]].Role) == tier {
 					file.dropped = true
 					size -= file.bytes
 					dropped++
@@ -130,7 +130,7 @@ func fitDiffIndex(bundle *Bundle, limit int) {
 			}
 		}
 		if dropped > 0 {
-			notes = append(notes, fmt.Sprintf("%d file(s) left out of the diff index to fit its limit, generated and vendored files first", dropped))
+			notes = append(notes, fmt.Sprintf("%d file(s) left out of the diff index to fit its limit: generated and vendored files first, then docs, then tests and config, code last", dropped))
 		}
 	}
 
@@ -147,6 +147,21 @@ func fitDiffIndex(bundle *Bundle, limit int) {
 	}
 	bundle.Diff = kept
 	bundle.Truncated = append(bundle.Truncated, notes...)
+}
+
+// dropTier orders the files fitDiffIndex leaves out: generated and vendored
+// first, then docs, then tests and config, and code and migrations last.
+func dropTier(role string) int {
+	switch role {
+	case RoleGenerated, RoleVendored:
+		return 0
+	case RoleDocs:
+		return 1
+	case RoleTest, RoleConfig:
+		return 2
+	default:
+		return 3
+	}
 }
 
 // collapseHunks is the one entry that stands for every hunk of a file, in

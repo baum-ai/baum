@@ -98,23 +98,24 @@ func TestFitCollapsesOtherFilesLargestFirst(t *testing.T) {
 	}
 }
 
-// When collapsing every file is not enough, whole files are left out,
-// generated and vendored first, each from the end of the diff.
+// When collapsing every file is not enough, whole files are left out:
+// generated and vendored first, then docs, then tests and config, code
+// last, each kind from the end of the diff.
 func TestFitLeavesFilesOutLast(t *testing.T) {
-	var diff []Hunk
+	diff := slices.Concat(indexHunks("README.md", 1), indexHunks("src/a_test.go", 1))
 	for i := range 6 {
 		diff = append(diff, indexHunks(fmt.Sprintf("src/f%d.go", i), 1)...)
 		diff = append(diff, indexHunks(fmt.Sprintf("gen/f%d.pb.go", i), 1)...)
 	}
 	bundle := &Bundle{Diff: diff}
-	keep := diffIndexBytes(&Bundle{Diff: []Hunk{diff[0], diff[2], diff[4]}})
+	keep := diffIndexBytes(&Bundle{Diff: []Hunk{diff[2], diff[4], diff[6]}})
 	if err := Fit(bundle, Caps{MaxDiffIndexBytes: keep}); err != nil {
 		t.Fatal(err)
 	}
 	if got := diffPaths(bundle.Diff); !slices.Equal(got, []string{"src/f0.go", "src/f1.go", "src/f2.go"}) {
 		t.Fatalf("diff paths %q", got)
 	}
-	if !slices.Equal(bundle.Truncated, []string{"9 file(s) left out of the diff index to fit its limit, generated and vendored files first"}) {
+	if !slices.Equal(bundle.Truncated, []string{"11 file(s) left out of the diff index to fit its limit: generated and vendored files first, then docs, then tests and config, code last"}) {
 		t.Fatalf("notes %q", bundle.Truncated)
 	}
 }
@@ -186,7 +187,7 @@ func TestFitReviewsAPullRequestWithThousandsOfFiles(t *testing.T) {
 	if bundle.Diff[0].Path != diff[0].Path {
 		t.Fatalf("the first files must be kept: %q", bundle.Diff[0].Path)
 	}
-	want := fmt.Sprintf("%d file(s) left out of the diff index to fit its limit, generated and vendored files first", 3000-len(bundle.Diff))
+	want := fmt.Sprintf("%d file(s) left out of the diff index to fit its limit: generated and vendored files first, then docs, then tests and config, code last", 3000-len(bundle.Diff))
 	if !slices.Contains(bundle.Truncated, want) {
 		t.Fatalf("notes %q, want %q", bundle.Truncated, want)
 	}

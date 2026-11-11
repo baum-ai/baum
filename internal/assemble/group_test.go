@@ -2,6 +2,8 @@ package assemble_test
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"slices"
 	"testing"
@@ -47,5 +49,23 @@ func TestMergeGroupKeepsTheMembersOfACollapsedFile(t *testing.T) {
 	}
 	if got := merged.HunkMembers[fmt.Sprintf("h_%012x", 1007)]; !slices.Equal(got, []int{7}) {
 		t.Fatalf("members of pr7.go %v, want [7]", got)
+	}
+
+	// A member's own fit already collapsed the file, the checkout omitted it,
+	// and the other member's hunks collapse into the same entry: it keeps
+	// the file's ID and the omission, and still names both members.
+	sum := sha256.Sum256([]byte("yarn.lock\x00"))
+	fileID := "h_" + hex.EncodeToString(sum[:6])
+	first := member(7, 0, 0)
+	first.Result.Bundle.Diff = append(first.Result.Bundle.Diff, bundle.Hunk{
+		ID: fileID, Path: "yarn.lock", Change: "modified", Role: bundle.RoleGenerated, StartLine: 10, LineCount: 400,
+		Textless: true, TextlessReason: bundle.OmittedSizeReason,
+	})
+	merged, err = assemble.MergeGroup(context.Background(), "Group", []assemble.GroupMember{first, member(9, 20, 40)}, nil, bundle.Caps{MaxBytes: 1 << 20, MaxDiffIndexBytes: 2048}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := merged.HunkMembers[fileID]; !slices.Equal(got, []int{7, 9}) {
+		t.Fatalf("members of the collapsed, omitted file %v, want [7 9]; diff %+v", got, merged.Bundle.Diff)
 	}
 }

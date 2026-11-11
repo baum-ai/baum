@@ -576,6 +576,14 @@ func TestDiffIndexOverItsBudgetDegrades(t *testing.T) {
 	}) {
 		t.Errorf("index budget: diff %+v, notes %q", r.result.Bundle.Diff, r.result.Bundle.Truncated)
 	}
+	// Facts, which no model reads, keep every file whatever the index budget.
+	r, err = assembleWith(t, repo, repo.Evidence(), nil, func(req *assemble.Request, _ *assemble.Assembler) {
+		req.Facts, req.Checkout, req.Attachments = true, nil, nil
+		req.Limits.Caps.MaxDiffIndexBytes = 100
+	})
+	if err != nil || len(r.result.Bundle.Diff) != len(full.result.Bundle.Diff) {
+		t.Errorf("facts: %v, diff %+v", err, r.result.Bundle.Diff)
+	}
 	r, err = assembleWith(t, repo, repo.Evidence(), nil, func(req *assemble.Request, _ *assemble.Assembler) {
 		req.Limits.Caps.MaxDiffFiles = 1
 	})

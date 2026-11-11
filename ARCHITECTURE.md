@@ -232,22 +232,26 @@ backoff, `sources` and the mapping onto the bundle.
   @mentions are not rewritten; a host defangs them where it posts text.
   SHAs, IDs and closed enums are exempt. The checkout is not redacted; it is
   the repository the user already has.
-- Trimming cuts in a fixed order and never drops a hunk. Each cut adds a
+- Content trimming cuts in a fixed order and never drops a hunk. Each cut adds a
   `generator.truncated` note. When whole sessions are dropped, one note gives
   the total number omitted; its bytes count against the size limit.
 - The diff index (every hunk's entry without its patch) has its own byte
   limit (`max_diff_index_bytes`). A pull request over it is still reviewed:
   `Fit` first collapses each generated or vendored file (lockfiles among
   them) to one entry, then other files one at a time, the largest saving
-  first, and only then leaves whole files out of the index, generated and
-  vendored first, each from the end of the diff. A collapsed entry has the
+  first, and only then leaves whole files out of the index: generated and
+  vendored first, then docs, then tests and config, code last, each kind
+  from the end of the diff. Facts, which no model reads, have no diff index
+  limit. A collapsed entry has the
   file's ID (as a textless file has), path, role, summed line counts and the
   new-side span of its hunks, and no patch (`textless_reason` `collapsed`, or
   the checkout's `omitted_` reason when it had one). Each stage adds one
   `generator.truncated` note with its count. Past `max_diff_files` changed
   files, assembly does not read a file's patch: generated and vendored files
   are the first left unread, each is one textless entry (`file_limit`) with
-  the comparison's line counts, and one note gives their count. Only the
+  the comparison's line counts, and one note gives their count. The
+  checkout does not export such a file as a compared path; only the head
+  tree's pass takes it, while the budget lasts. Only the
   patch-byte limit (`max_diff_patch_bytes`) still fails assembly.
 - The checkout has `head/` and `merge-base/` trees, read-only, without Git
   metadata. Files over the size limit, binary files (a NUL byte in the first
