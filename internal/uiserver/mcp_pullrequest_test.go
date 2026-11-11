@@ -14,6 +14,7 @@ import (
 	"testing"
 
 	"github.com/baum-ai/baum/internal/agentcontext"
+	"github.com/baum-ai/baum/internal/appdb/appdbtest"
 	"github.com/baum-ai/baum/internal/config"
 	"github.com/baum-ai/baum/internal/discovery"
 	"github.com/baum-ai/baum/internal/inboxqueue"
@@ -22,6 +23,7 @@ import (
 	"github.com/baum-ai/baum/internal/repos"
 	"github.com/baum-ai/baum/internal/reviewgroups"
 	"github.com/baum-ai/baum/internal/reviewindex"
+	"github.com/baum-ai/baum/internal/store"
 	"github.com/baum-ai/baum/sessions/session"
 )
 
@@ -34,32 +36,67 @@ type pullFixture struct {
 	clone   repos.Clone
 	updater *fakeUpdater
 	merger  *fakeMerger
+	groups  *reviewgroups.Store
+	// own is a group of owner/repo holding pull requests 7 and 8, foreign one
+	// of other/repo.
+	own, foreign reviewgroups.Group
 }
 
-const pullHead = "aaaaaaaa"
+const (
+	pullHead     = "aaaaaaaa"
+	reviewedHead = "dddddddd"
+)
 
 func newPullFixture(t *testing.T) *pullFixture {
 	t.Helper()
 	registry, clone := factsRegistry(t)
+	ctx := context.Background()
+	// A real saved review of pull request 8, in the clone's store.
+	versions, err := store.Open(clone.CommonDir, "", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reviewed := store.Metadata{Version: 1, Head: reviewedHead, Base: "bbbbbbbb", MergeBase: "bbbbbbbb", Backend: "claude", Model: "opus", GeneratedAt: "2026-11-01T10:00:00Z", RecordedCostUSD: ptr(0.5),
+		Session: &store.ReviewSession{Backend: "claude", ID: "secret-session", Directory: "/home/secret"}}
+	reviewDocument := []byte(`{"review":{"repository":"owner/repo","pull_request":8,"version":1,"head":"` + reviewedHead + `","base":"bbbbbbbb","merge_base":"bbbbbbbb"},"index":{"hunks":[{"id":"h_1","path":"main.go","change":"modified","additions":2,"deletions":1},{"id":"h_2","path":"docs.md","change":"added","additions":9,"deletions":0}]}}`)
+	if err := versions.Put(ctx, store.Key{Repository: "owner/repo", Number: 8}, store.Version{}, store.Version{Metadata: reviewed, Document: reviewDocument}); err != nil {
+		t.Fatal(err)
+	}
 	facts := &fakeFacts{document: []byte(`{"schema":"baum.facts/1","review":{"repository":"owner/repo","pull_request":7,"head":"` + pullHead + `","base":"bbbbbbbb","merge_base":"bbbbbbbb"},"index":{"hunks":[{"id":"h_1","path":"main.go","change":"modified","additions":4,"deletions":1},{"id":"h_2","path":"main.go","change":"modified","additions":1,"deletions":0}]}}`)}
 	updater, merger := &fakeUpdater{}, &fakeMerger{}
 	unresolved := 2
 	index := reviewindex.Snapshot{Entries: []reviewindex.Entry{
-		{PullRequest: discovery.PullRequest{Repository: "owner/repo", Number: 7, HeadSHA: pullHead, Title: "Add search", Author: "ada", Unresolved: &unresolved}, CloneID: clone.ID, Status: "none"},
+		{PullRequest: discovery.PullRequest{Repository: "owner/repo", Number: 7, HeadSHA: pullHead, Title: "Add search", Author: "ada", Unresolved: &unresolved, ReviewRequestedFromMe: true}, CloneID: clone.ID, Status: "none"},
+		{PullRequest: discovery.PullRequest{Repository: "owner/repo", Number: 8, HeadSHA: reviewedHead, Title: "Reviewed search"}, CloneID: clone.ID, Status: "ready", VersionCount: 1, Latest: &reviewed},
 		{PullRequest: discovery.PullRequest{Repository: "other/repo", Number: 7, HeadSHA: "cccccccc", Title: "Another repository"}, CloneID: "elsewhere", Status: "none"},
 	}, Problems: []reviewindex.Problem{{CloneID: "elsewhere", Reason: "private reason"}}}
-	queue := inboxqueue.Queue{Count: 2, Items: []inboxqueue.Item{
-		{Key: "owner/repo#7", Kind: inboxqueue.Review, Inboxes: []string{"mine"}},
-		{Key: "other/repo#7", Kind: inboxqueue.Fix, Fixing: true, Inboxes: []string{"mine"}},
-	}, Inboxes: []inboxqueue.Inbox{{ID: "mine", Query: "private query", Count: 2}}}
+	snapshot := func(context.Context) (reviewindex.Snapshot, error) { return index, nil }
+	groups, err := reviewgroups.Open(filepath.Join(appdbtest.TempDir(t), "groups.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = groups.Close() })
+	own, err := groups.Create(ctx, "owner/repo", "Search", []int{7, 8})
+	if err != nil {
+		t.Fatal(err)
+	}
+	foreign, err := groups.Create(ctx, "other/repo", "Private", []int{1, 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	groupsAPI := &reviewgroups.API{Store: groups, Registry: registry, Index: snapshot, Changed: func() {}}
+	groupsHandler := groupsAPI.Handler()
+	t.Cleanup(groupsAPI.Close)
+	inbox := &inboxqueue.Service{Index: snapshot, Jobs: func() []jobs.Job { return nil }, Groups: groups.List,
+		Snoozes: func() (json.RawMessage, error) { return nil, nil }}
 	api := LocalAPI{
 		Registry: registry, Config: config.Default(), Facts: facts,
 		Update: UpdateHandler(registry, updater, nil, nil),
 		Merge:  MergeHandler(registry, merger, nil, nil),
 		Index:  jsonHandler(index),
-		Inbox:  jsonHandler(queue),
+		Inbox:  inbox.Handler(),
 		Jobs:   fakeJobs(clone.ID),
-		Groups: fakeGroups(),
+		Groups: groupsHandler,
 	}.Handler()
 	t.Cleanup(api.Close)
 	graph := &session.Graph{
@@ -79,7 +116,7 @@ func newPullFixture(t *testing.T) *pullFixture {
 	mcp := agentcontext.New(agentcontext.Options{API: api, Version: "test", Clone: func(ctx context.Context, id string) (string, error) {
 		return RegisteredRepository(ctx, registry, id)
 	}})
-	return &pullFixture{api: api, mcp: mcp, clone: clone, updater: updater, merger: merger}
+	return &pullFixture{api: api, mcp: mcp, clone: clone, updater: updater, merger: merger, groups: groups, own: own, foreign: foreign}
 }
 
 func ptr[T any](v T) *T { return &v }
@@ -96,7 +133,10 @@ func jsonHandler(v any) http.Handler {
 
 // fakeJobs answers as the queue's handler does: a pull request's jobs by
 // repository and pr, one job by id, and a fix job's transcript. Writes
-// are method patterns, as the real handler's are.
+// are method patterns, as the real handler's are. It is a fake because the
+// real handler is a jobs.Queue, which needs an executor, a runner and the
+// agent backends to open (jobs' own tests build one; this package's browser
+// fixture is the only place that wires it up, with a whole app around it).
 func fakeJobs(cloneID string) http.Handler {
 	fix := jobs.Job{ID: "j-fix", State: "done", Phase: "done", Summary: "Renamed the helper", HasTranscript: true,
 		Prepared: jobs.Prepared{Repository: "owner/repo", HeadSHA: pullHead, Item: jobs.Item{Clone: cloneID, PR: 7, Kind: jobs.KindFix}}}
@@ -133,27 +173,6 @@ func fakeJobs(cloneID string) http.Handler {
 		writeJSON(w, map[string]any{"entries": []map[string]any{{"seq": 1, "kind": "text", "text": "I renamed the helper in " + job.ID}}, "next": 1, "more": false, "done": true})
 	})
 	mux.HandleFunc("POST /api/jobs/{id}/cancel", func(http.ResponseWriter, *http.Request) { panic("cancelled by a read") })
-	return mux
-}
-
-// fakeGroups answers as the groups' handler does.
-func fakeGroups() http.Handler {
-	own := map[string]any{"id": "g-own", "repository": "owner/repo", "name": "Search", "members": []int{7, 8}, "stack": false, "landed": []reviewgroups.LandedMember{}, "outdated": true}
-	foreign := map[string]any{"id": "g-foreign", "repository": "other/repo", "name": "Private", "members": []int{1, 2}, "landed": []reviewgroups.LandedMember{}, "outdated": false}
-	byID := map[string]map[string]any{"g-own": own, "g-foreign": foreign}
-	mux := http.NewServeMux()
-	mux.HandleFunc("GET /api/groups/{id}", func(w http.ResponseWriter, r *http.Request) {
-		group, ok := byID[r.PathValue("id")]
-		if !ok {
-			http.NotFound(w, r)
-			return
-		}
-		writeJSON(w, group)
-	})
-	mux.HandleFunc("GET /api/groups/{id}/versions", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, []map[string]any{{"version": 1, "group": r.PathValue("id")}})
-	})
-	mux.HandleFunc("DELETE /api/groups/{id}", func(http.ResponseWriter, *http.Request) { panic("deleted by a read") })
 	return mux
 }
 
@@ -308,7 +327,21 @@ func TestPullRequestToolsReturnWhatTheAppRoutesReturn(t *testing.T) {
 
 			text, _ = f.callTool(t, token, "checks", nil)
 			sameJSON(t, "checks", field(t, text, "checks"), field(t, string(f.route(t, "/api/prs/checks?repository=owner/repo&pr=7&head_sha="+pullHead)), "checks"))
-			sameJSON(t, "failing checks", field(t, text, "failing"), field(t, string(f.route(t, "/api/prs/failing-checks?repository=owner/repo&pr=7&head_sha="+pullHead)), "checks"))
+			// The failing ones are the completed, failing checks of that same list.
+			var all struct {
+				Checks []struct{ Status, Conclusion string }
+			}
+			var allChecks []json.RawMessage
+			_ = json.Unmarshal(f.route(t, "/api/prs/checks?repository=owner/repo&pr=7&head_sha="+pullHead), &all)
+			_ = json.Unmarshal(field(t, string(f.route(t, "/api/prs/checks?repository=owner/repo&pr=7&head_sha="+pullHead)), "checks"), &allChecks)
+			var failing []json.RawMessage
+			for i, c := range all.Checks {
+				if c.Status == "completed" && c.Conclusion == "failure" {
+					failing = append(failing, allChecks[i])
+				}
+			}
+			wantFailing, _ := json.Marshal(failing)
+			sameJSON(t, "failing checks", field(t, text, "failing"), wantFailing)
 
 			text, failed = f.callTool(t, token, "review_threads", nil)
 			if failed {
@@ -338,20 +371,70 @@ func TestPullRequestToolsReturnWhatTheAppRoutesReturn(t *testing.T) {
 				t.Errorf("another repository's job: %v %s", failed, text)
 			}
 
-			text, failed = f.callTool(t, token, "group", map[string]any{"id": "g-own"})
+			text, failed = f.callTool(t, token, "group", map[string]any{"id": f.own.ID})
 			if failed {
 				t.Fatalf("group: %s", text)
 			}
-			sameJSON(t, "group", json.RawMessage(text), f.route(t, "/api/groups/g-own"))
-			text, failed = f.callTool(t, token, "group_versions", map[string]any{"id": "g-own"})
+			sameJSON(t, "group", json.RawMessage(text), f.route(t, "/api/groups/"+f.own.ID))
+			text, failed = f.callTool(t, token, "group_versions", map[string]any{"id": f.own.ID})
 			if failed {
 				t.Fatalf("group_versions: %s", text)
 			}
-			sameJSON(t, "group versions", json.RawMessage(text), f.route(t, "/api/groups/g-own/versions"))
+			sameJSON(t, "group versions", json.RawMessage(text), f.route(t, "/api/groups/"+f.own.ID+"/versions"))
 			for _, tool := range []string{"group", "group_versions"} {
-				if text, failed := f.callTool(t, token, tool, map[string]any{"id": "g-foreign"}); !failed || strings.Contains(text, "Private") || strings.Contains(text, "version") {
+				if text, failed := f.callTool(t, token, tool, map[string]any{"id": f.foreign.ID}); !failed || strings.Contains(text, "Private") || strings.Contains(text, `"members":[1,2]`) {
 					t.Errorf("%s of another repository's group: %v %s", tool, failed, text)
 				}
+			}
+
+			// A pull request with a saved review reads the review's routes: the
+			// document's files, the version's patches, commits and sessions.
+			sel8 := "clone=" + f.clone.ID + "&pr=8"
+			text, failed = f.callTool(t, token, "diff", map[string]any{"pr": 8})
+			if failed {
+				t.Fatalf("diff of a reviewed pull request: %s", text)
+			}
+			if string(field(t, text, "source")) != `"review"` || string(field(t, text, "head")) != `"`+reviewedHead+`"` {
+				t.Errorf("source %s", text)
+			}
+			var reviewed []struct {
+				Path  string
+				Patch json.RawMessage
+			}
+			if err := json.Unmarshal(field(t, text, "files"), &reviewed); err != nil || len(reviewed) != 2 || reviewed[0].Path != "main.go" || reviewed[1].Path != "docs.md" {
+				t.Fatalf("files %s: %v", text, err)
+			}
+			for _, file := range reviewed {
+				var patch struct{ Patch json.RawMessage }
+				if err := json.Unmarshal(f.route(t, "/api/patch?"+sel8+"&path="+file.Path), &patch); err != nil {
+					t.Fatal(err)
+				}
+				sameJSON(t, "patch of "+file.Path, file.Patch, patch.Patch)
+			}
+			for tool, route := range map[string]string{"commits": "/api/commits?" + sel8, "sessions": "/api/sessions?" + sel8} {
+				text, failed := f.callTool(t, token, tool, map[string]any{"pr": 8})
+				if failed {
+					t.Fatalf("%s of a reviewed pull request: %s", tool, text)
+				}
+				sameJSON(t, tool+" of a reviewed pull request", json.RawMessage(text), f.route(t, route))
+			}
+			text, failed = f.callTool(t, token, "session_transcript", map[string]any{"id": "s1", "pr": 8})
+			if failed {
+				t.Fatalf("session_transcript of a reviewed pull request: %s", text)
+			}
+			sameJSON(t, "session transcript of a reviewed pull request", json.RawMessage(text), f.route(t, "/api/sessions/s1?"+sel8))
+			// The page's latest review, without the session that wrote it.
+			text, _ = f.callTool(t, token, "pull_request", map[string]any{"pr": 8})
+			if !strings.Contains(text, `"backend":"claude"`) || !strings.Contains(text, `"recorded_cost_usd":0.5`) || !strings.Contains(text, `"version_count":1`) ||
+				strings.Contains(text, "secret-session") || strings.Contains(text, "/home/secret") || strings.Contains(text, `"session"`) {
+				t.Errorf("latest review: %s", text)
+			}
+			// The groups the pull request is in, and an action's default group.
+			if got := field(t, text, "groups"); !strings.Contains(string(got), f.own.ID) || strings.Contains(string(got), f.foreign.ID) {
+				t.Errorf("groups %s", got)
+			}
+			if text, failed := f.callTool(t, token, "group", map[string]any{"repository": "owner/repo", "id": ""}); name == "action" && (failed || !strings.Contains(text, f.own.ID)) {
+				t.Errorf("an action's default group: %v %s", failed, text)
 			}
 		})
 	}
@@ -377,10 +460,15 @@ func TestPullRequestToolsReturnWhatTheAppRoutesReturn(t *testing.T) {
 
 var writeRoute = regexp.MustCompile(`"(POST|PUT|PATCH|DELETE) (/api/[^"]*)"`)
 
-// No tool can reach a route that writes: every write route the daemon
-// registers beside the routes the tools read is registered for its own
-// method, so the reader's GET never reaches it, and the daemon answers a GET
-// to it with 405 or 404 with nothing done.
+// No tool can reach a route that writes. The guarantee is Reader.fetch, which
+// builds only GET requests, together with every handler under a tool's prefix
+// using method patterns (or checking for GET), so a GET to a write route is
+// answered 405 or 404 and nothing is done. This test scans the daemon's own
+// route registrations for write routes under the tools' prefixes and sends a
+// GET to each through the real handlers: the real groups handler and the real
+// inbox, and the jobs handler's method patterns as the fake keeps them (the
+// real jobs handler needs a whole queue; its write routes are method patterns
+// too, which the scan of its source checks).
 func TestNoToolReadsAWriteRoute(t *testing.T) {
 	f := newPullFixture(t)
 	reads := f.mcp.ToolReads()
@@ -436,6 +524,10 @@ func TestNoToolReadsAWriteRoute(t *testing.T) {
 	}
 	if found == 0 {
 		t.Fatal("no write route found under the tools' prefixes: the scan is broken")
+	}
+	// The real groups handler lost nothing to the GETs.
+	if list, err := f.groups.List(context.Background()); err != nil || len(list) != 2 {
+		t.Errorf("groups after the GETs: %v %v", list, err)
 	}
 	if len(f.merger.merged) != 0 {
 		t.Errorf("merged %v", f.merger.merged)

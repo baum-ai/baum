@@ -5146,7 +5146,11 @@ routes do work beyond reading. A tool's reader takes only clean paths under
 the prefixes it declared, a whole segment at a time, and never the
 unreadable ones (`/api/settings`, `/api/debug`, `/api/github` and
 `/api/github-auth`, `/api/diagnostics`, `/api/plan-usage`, `/api/events`,
-`/api/mcp`), which no tool may declare. It fails a body over 8 MiB.
+`/api/mcp`), which no tool may declare. It fails a body over 8 MiB, except
+`/api/document` and `/api/facts`, which the daemon serves up to
+`viewserver.MaxDocumentBytes` (32 MiB) and which are read up to that (a test
+keeps the two equal); a tool projects what it needs, so its result is bounded
+as before.
 
 An action's reader also reads only the routes in `actionRoutes`
 (`reader.go`). Each entry is a path pattern, the query parameters it allows
@@ -5165,9 +5169,11 @@ refused. The table holds:
 - by `repository` (parameters `pr`, and as listed): `GET /api/jobs`,
   `/api/prs/description`, `/api/prs/checks` (`head_sha`),
   `/api/prs/failing-checks` (`head_sha`), `/api/prs/review-threads`
-  (`unresolved`), `/api/prs/merge-options`, `/api/prs/update-branch-options`
-  and `/api/prs/rerun-checks-options`;
-- by `clone` (parameter `pr`, and as listed): `GET /api/versions`,
+  (`unresolved`), `/api/prs/conflicts`, `/api/prs/merge-options`,
+  `/api/prs/update-branch-options` and `/api/prs/rerun-checks-options`;
+- by `clone` (parameter `pr`, and as listed; `GET /api/versions` and the
+  `version` parameters are added ahead of the review tools of the next step
+  and read by no tool yet): `GET /api/versions`,
   `/api/document` and `/api/commits` (`version`), `/api/patch` (`version`,
   `path`), `/api/sessions` and `/api/sessions/{id}` (`version`), `/api/facts`,
   `/api/facts/commits`, `/api/facts/sessions` and `/api/facts/sessions/{id}`
@@ -5177,9 +5183,15 @@ refused. The table holds:
 - by lookup: `GET /api/jobs/{id}/transcript` (`after`), after `/api/jobs/{id}`,
   and `/api/groups/{id}/versions`, after `/api/groups/{id}`;
 - by filter: `GET /api/index` (`history`), which keeps the entries of the
-  action's repository and drops the problems, and `GET /api/inbox`, which keeps
-  the items of its repository by their `owner/name#number` keys and drops the
-  saved inboxes, whose queries are the user's own.
+  action's repository and drops the problems; `GET /api/groups`, which keeps
+  the groups of its repository; and `GET /api/inbox`, which keeps the items of
+  its repository by their `owner/name#number` keys, drops each item's
+  saved-inbox ids and the saved inboxes themselves (their queries are the
+  user's own), and recounts `count` over what is kept by the daemon's own rule
+  (items queued for the user, not being fixed, snoozed or archived). A filtered
+  route that answers an error, or `{"available":false}`, is refused as
+  unavailable, which the tools report apart from a pull request that is not in
+  the index.
 
 Routes are added beside the tools that need them.
 
@@ -5192,17 +5204,17 @@ action its pull request, and only through `CallContext.Target`:
 
 | Tool | Reads |
 | --- | --- |
-| `pull_request` | the header and review status from `/api/index`, `/api/prs/description`, and its inbox state (`kind`, `fixing`, `snoozed`, `archived`) from `/api/inbox` |
-| `diff` | the changed files from `/api/document` (a saved review) or `/api/facts` (none), and each file's patch from `/api/patch` or `/api/facts/patch`, one file by `path` or the first 100 |
-| `commits` | `/api/commits`, or `/api/facts/commits` after `/api/facts` has built the facts |
-| `checks` | `/api/prs/checks` and `/api/prs/failing-checks` at the head the index shows |
+| `pull_request` | the header and review status from `/api/index` (of the clone with a saved review, else one with a clone; the latest review is only its version, heads, backend, model, `generated_at` and cost, never the session, accounting, digests or policy), `/api/prs/description`, its inbox state (`kind`, `fixing`, `snoozed`, `archived`) from `/api/inbox`, and the groups and stacks it is a member of (`id`, `name`, `stack`) from `/api/groups` |
+| `diff` | the changed files from `/api/document` (a saved review) or `/api/facts` (none), and each file's patch from `/api/patch` or `/api/facts/patch`, one file by `path`, else patches up to 100 files and about 1 MiB of patch text, the files left out listed by path |
+| `commits` | `/api/commits`, or `/api/facts/commits` at the head the index shows, building the facts (`/api/facts`) only when the daemon has none |
+| `checks` | `/api/prs/checks` at the head the index shows, its failing checks marked apart, and `/api/prs/failing-checks` only when `/api/prs/checks` is not found, as the page does |
 | `review_threads` | `/api/prs/review-threads`, with the unresolved count discovery has |
-| `merge_state` | the three `-options` routes, nothing is changed |
+| `merge_state` | the three `-options` routes, and `/api/prs/conflicts` when the pull request conflicts; nothing is changed |
 | `jobs` | `/api/jobs` of the pull request, less each job's accounting |
 | `job_transcript` | `/api/jobs/{id}` to check that the job is the repository's and pull request's, then its transcript; a job with none says only fix jobs keep one |
 | `sessions`, `session_transcript` | `/api/sessions` or `/api/facts/sessions`, and one session's transcript, which the viewer serves only for a session the pull request's commits link |
 | `focus` | no route: the focus of the consumer's page, or `none` |
-| `group`, `group_versions` | `/api/groups/{id}` and `/api/groups/{id}/versions`; a group of another repository is refused |
+| `group`, `group_versions` | `/api/groups/{id}` and `/api/groups/{id}/versions`; a group of another repository is refused. The group defaults to the open group page's; for an action, to the one group its pull request is in (`/api/groups`), and none or several must be named |
 
 Labels, reviewer lists, check log tails and the inbox's Up next sentence are
 not returned, as the app shows none of them. The facts and review document

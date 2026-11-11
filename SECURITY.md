@@ -1406,7 +1406,7 @@ another method, and refuses the `refresh` and `more` parameters, which make
 some `GET` routes fetch from GitHub or rebuild a cache. Each tool reads only
 the route prefixes it declares, and no tool can read settings, GitHub
 authentication or GitHub listings, diagnostics, debugging, plan usage, the
-event stream or `/api/mcp`. Responses are bounded to 8 MiB.
+event stream or `/api/mcp`. Responses are bounded to 8 MiB, apart from a review document and the facts, which are read up to the 32 MiB the daemon serves.
 
 An action's token is bound to its repository. Its tools default to its own
 pull request and may read other pull requests of that repository, never
@@ -1422,7 +1422,8 @@ names no repository (a job's transcript, a group's versions) is read only
 after the record its id names has been checked the same way, and a route that
 answers for every repository (the review index, the inbox) is filtered to the
 action's repository inside the reader, which also drops other clones'
-problems and the user's saved inbox queries. Any other route, and any query
+problems, the user's saved inbox queries and each inbox item's saved-inbox
+ids, and recounts the inbox total over what is kept. Any other route, and any query
 parameter its entry does not list, is refused. An
 action never proposes changes.
 
