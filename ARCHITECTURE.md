@@ -5079,7 +5079,8 @@ random bytes, an opaque consumer id and a revoke function, and refuses any
 consumer but a `chat` (bound to nothing) or an `action` with an `owner/name`
 repository and a pull request number. Nothing about tokens is persisted or
 logged. A chat may read any page and propose changes to the page it has
-open; an action only reads. `SetPage(id, PageContext)` records a chat's
+open; an action only reads, within its repository: its tools default to its
+pull request and may read the repository's other pull requests. `SetPage(id, PageContext)` records a chat's
 page: its name (`inbox`, `pulls`, `timeline`, `sessions`, `analytics`,
 `jobs`, `repositories`, `settings`, or a detail page: `pull_request`,
 `group`, `session`, `job`, `feature`), the repository, pull request, group,
@@ -5089,7 +5090,7 @@ id, not the token, to set the page.
 
 Tools are registered with a name, description, JSON Schema, a scope, the
 route prefixes they read (`Reads`) and a call that gets a `CallContext`:
-the consumer, its page, a reader and the proposals. A `ScopeGlobal` tool,
+the consumer, its page, a reader and `Propose`. A `ScopeGlobal` tool,
 the zero value, reads across repositories or the app's own state; actions
 neither list nor call it (a call is an unknown tool). A `ScopeRepository`
 tool reads one repository, which it takes only from
@@ -5102,16 +5103,24 @@ call, and `read_more`.
 
 Tools read through `Reader`, which serves an in-process `GET` against the
 `LocalAPI` handler, below the app server's authentication and with no
-credentials. `Get` is its only method, so nothing but `GET` can be sent. A
-tool's reader takes only clean paths under the prefixes it declared, a
-whole segment at a time, and never the unreadable ones (`/api/settings`,
-`/api/debug`, `/api/github` and `/api/github-auth`, `/api/diagnostics`,
-`/api/plan-usage`, `/api/events`, `/api/mcp`), which no tool may declare.
-An action's reader also takes only requests that name its repository, by a
-`repository=` or `repo=` parameter, a `clone=` parameter of one of its
-clones (resolved through `Options.Clone`) or an
-`/api/repositories/{owner}/{name}` path, and none that name another. It
-fails a body over 8 MiB.
+credentials. `Get` is its only method, so nothing but `GET` can be sent,
+and it refuses the `refresh` and `more` parameters, which make some `GET`
+routes do work beyond reading. A tool's reader takes only clean paths under
+the prefixes it declared, a whole segment at a time, and never the
+unreadable ones (`/api/settings`, `/api/debug`, `/api/github` and
+`/api/github-auth`, `/api/diagnostics`, `/api/plan-usage`, `/api/events`,
+`/api/mcp`), which no tool may declare. It fails a body over 8 MiB.
+
+An action's reader also reads only the routes in `actionRoutes`
+(`reader.go`). Each entry is a path pattern, the query parameters it allows
+and how the route is bound to the action's repository: by the `repository`
+parameter its handler reads, by a `clone` parameter resolved through
+`Options.Clone`, by `{owner}/{name}` in the path, or, for a route that finds
+a record by id, by a check that reads the repository from the response and
+returns nothing on a mismatch. Any other route, and any parameter its entry
+does not list, is refused. The table holds `GET /api/jobs?repository=&pr=`
+and `GET /api/jobs/{id}` (checked by the job's `repository`); routes are
+added beside the tools that need them.
 
 Every result goes through one envelope. It masks the text with
 `bundle.NewRedactor`, cuts it at most 64 KiB in at a UTF-8 boundary, and
@@ -5133,13 +5142,17 @@ after, the target's revision and the page context it was made on. A
 saves it (`Apply`), each given that page context so it refuses a target the
 page does not show. `Propose` refuses an action, a page other than the open
 one and a page with no proposer; it reads the target's value and revision
-itself, ignoring the agent's revision, refuses a `Before` the agent sent
-that no longer matches, and records the proposal; nothing changes. `Save`
-reads the target again, which refuses one that left the page and a changed
-revision, then calls `Apply` with the recorded revision; the proposer
-compares and writes in one transaction, as `appdb.Update` does, and returns
-`ErrStale` without writing when the target moved meanwhile. `Dismiss` drops
-a proposal. No page has a proposer yet, and the app reaches proposals only
+itself, ignoring the agent's revision, refuses with the bare
+`ErrNotRecorded` a `Before` the agent sent that no longer matches, and
+records the proposal; nothing changes. A tool gets only a `Receipt` (id,
+page, target): the current value is for the person, through the Go API,
+never for the agent. `List` returns deep copies. `Save` reads the target
+again, which refuses one that left the page and a changed revision; then,
+under the lock a revoke takes to drop proposals, it checks that the
+consumer is live and the proposal open and calls `Apply` with the recorded
+revision. The proposer compares and writes in one transaction, as
+`appdb.Update` does, and returns `ErrStale` without writing when the target
+moved meanwhile. `Dismiss` drops a proposal. No page has a proposer yet, and the app reaches proposals only
 through the Go API.
 
 ### Transports and control protocol

@@ -1373,28 +1373,39 @@ to `app.sqlite`, `config.toml`, `credential.json` or any other file, never
 logged, and die with the daemon or when revoked; a revoked token is refused.
 Lookups compare a hash of the token in constant time.
 
-An MCP token can only read, through the same routes the app calls, and only
-with `GET`: the tools' reader has no way to send another method. Each tool
-reads only the route prefixes it declares, and no tool can read settings,
-GitHub authentication or GitHub listings, diagnostics, debugging, plan
-usage, the event stream or `/api/mcp`. Responses are bounded to 8 MiB.
+Tools read through the same routes the app calls, only through `GET` routes
+on an allowlist and without refresh flags: the reader has no way to send
+another method, and refuses the `refresh` and `more` parameters, which make
+some `GET` routes fetch from GitHub or rebuild a cache. Each tool reads only
+the route prefixes it declares, and no tool can read settings, GitHub
+authentication or GitHub listings, diagnostics, debugging, plan usage, the
+event stream or `/api/mcp`. Responses are bounded to 8 MiB.
 
-An action's token is bound to its repository and pull request. Tools are
-either global or scoped to one repository; an action neither lists nor
-calls a global tool. The repository-scoped tools read the repository and
-pull request the server resolves for them, which for an action is always
-its own, and an action's reader also refuses any request that does not name
-its repository. An action never proposes changes.
+An action's token is bound to its repository. Its tools default to its own
+pull request and may read other pull requests of that repository, never
+another repository. Tools are either global or scoped to one repository; an
+action neither lists nor calls a global tool. The repository-scoped tools
+read the repository the server resolves for them, which for an action is
+always its own. As a backstop, an action's reader reads only the routes in
+a fixed table, each bound to the repository the way its handler finds what
+it serves: by the `repository` or `clone` parameter that handler reads, by
+an `owner/name` path, or, for a route that finds a record by id, by checking
+the record's repository and returning nothing on a mismatch. Any other
+route, and any query parameter its entry does not list, is refused. An
+action never proposes changes.
 
 A chat's token may also propose a change to the page the user has open, and
 only to something that page shows (on a pull request's page, only that pull
 request's items). A proposal changes nothing until the user saves it in the
 app. The value and revision it is compared against are read by the daemon
 when the proposal is recorded, never taken from the agent; a value the agent
-says it read must match the current one. Saving checks that the target
-still belongs to the page, and the page compares the revision and writes in
-one step, so a target changed by anyone since the proposal was made is
-refused and nothing is saved.
+says it read must match the current one, and a mismatch is refused with an
+error that says nothing more. The current value is shown to you, never
+returned to the agent. Saving checks that the target still belongs to the
+page and that the agent's token is still live, and the page compares the
+revision and writes in one step, so a target changed by anyone since the
+proposal was made is refused and nothing is saved. A token revoked while a
+save is writing takes effect once the write ends.
 
 Every tool result is masked with the same redaction as prompts, cut to at
 most 64 KiB, and placed between `BEGIN UNTRUSTED DATA` and
