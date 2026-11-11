@@ -85,7 +85,7 @@ func TestMarkIncompleteLowersACompleteRecord(t *testing.T) {
 	if err := Record(root, run, true, "c1"); err != nil {
 		t.Fatal(err)
 	}
-	if err := MarkIncomplete(root, run); err != nil {
+	if err := MarkIncomplete(root, run, true); err != nil {
 		t.Fatal(err)
 	}
 	if err := Remove(root, run); err != nil {

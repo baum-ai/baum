@@ -14,7 +14,7 @@ import (
 
 // maxRollouts bounds how many Codex rollout files one fallback scan reads the
 // first line of. The scan goes newest first, so what it can miss is old.
-const maxRollouts = 50000
+var maxRollouts = 50000
 
 var sessionName = regexp.MustCompile(`^[0-9A-Za-z-]+$`)
 
@@ -90,7 +90,7 @@ func RemoveSessions(root, dir string, ids ...string) error {
 	if !recorded {
 		m = manifest{Created: time.Unix(1, 0)}
 	}
-	err := errors.Join(removeClaude(dir, nil), removeCodex(dir, m.IDs, m.Created, !recorded || !m.Complete))
+	err := errors.Join(removeClaude(dir, nil), removeCodex(dir, m.IDs, m.Created, !recorded || !m.Complete || m.Pending))
 	if err == nil {
 		removeManifest(root, dir)
 	}

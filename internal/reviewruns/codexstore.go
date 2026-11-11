@@ -73,6 +73,8 @@ func removeCodex(dir string, ids []string, since time.Time, walk bool) error {
 		if err != nil {
 			continue
 		}
+		// Names start with the timestamp: newest first within the day too.
+		slices.Reverse(entries)
 		for _, e := range entries {
 			name := e.Name()
 			// A link is neither a directory nor a regular file here.
@@ -84,8 +86,9 @@ func removeCodex(dir string, ids []string, since time.Time, walk bool) error {
 				if !walk {
 					continue
 				}
+				// Past the cap only the files named by id are still matched.
 				if scanned++; scanned > maxRollouts {
-					return errors.Join(errs...)
+					continue
 				}
 			}
 			path := filepath.Join(day, name)

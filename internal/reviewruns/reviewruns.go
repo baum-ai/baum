@@ -15,6 +15,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -128,7 +129,9 @@ func PruneVersions(root string, versions []store.Metadata) error {
 	}
 	var remove []string
 	for _, dir := range old {
-		if !keep[dir] && !pruned(root, dir) {
+		// Versions that continue a run share its directory: list it once, or
+		// the second removal would find no record and scan.
+		if !keep[dir] && !pruned(root, dir) && !slices.Contains(remove, dir) {
 			remove = append(remove, dir)
 		}
 	}
@@ -178,6 +181,13 @@ func Expire(root string, now time.Time, maxAge time.Duration) error {
 	for _, entry := range entries {
 		name, ok := strings.CutPrefix(entry.Name(), manifestPrefix)
 		if !ok || !entry.Type().IsRegular() || !strings.HasPrefix(name, agent.RunDirPrefix) {
+			continue
+		}
+		if strings.HasPrefix(name, agent.RunDirPrefix+"tmp-") {
+			// A write that crashed before its rename.
+			if info, err := entry.Info(); err == nil && now.Sub(info.ModTime()) > maxAge {
+				_ = os.Remove(filepath.Join(resolvedRoot(root), entry.Name()))
+			}
 			continue
 		}
 		dir := filepath.Join(resolvedRoot(root), name)

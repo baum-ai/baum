@@ -240,6 +240,9 @@ func (s *Service) Run(ctx context.Context, ref Ref, o RunOptions) (report Report
 	defer func() {
 		if fellBack && !recorded {
 			_ = reviewruns.Remove(root, directory)
+		} else if !recorded {
+			// The call ended without a session id: it may have left one.
+			_ = reviewruns.MarkIncomplete(root, directory, true)
 		}
 	}()
 	fallback := func(reason string) error {
@@ -265,7 +268,7 @@ func (s *Service) Run(ctx context.Context, ref Ref, o RunOptions) (report Report
 	}
 	if !fellBack {
 		// The call may create a session this turn never learns the id of.
-		_ = reviewruns.MarkIncomplete(root, directory)
+		_ = reviewruns.MarkIncomplete(root, directory, false)
 	}
 	result, err := call(agent.Request{Directory: directory, Prompt: text, ResumeSession: resume, ForkSession: fork})
 	if err != nil && errors.Is(err, agent.ErrSessionNotFound) && !fellBack {

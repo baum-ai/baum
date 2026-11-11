@@ -8,6 +8,8 @@ import (
 	"slices"
 	"sync"
 	"time"
+
+	"github.com/baum-ai/baum/agent"
 )
 
 // manifestPrefix names the file next to a run directory (in the root, never
@@ -24,7 +26,9 @@ const manifestPrefix = ".sessions-"
 type manifest struct {
 	Created  time.Time `json:"created"`
 	Complete bool      `json:"complete"`
-	IDs      []string  `json:"ids"`
+	// Pending is set while a call runs whose session id is not known yet.
+	Pending bool     `json:"pending,omitempty"`
+	IDs     []string `json:"ids"`
 }
 
 var manifestMu sync.Mutex
@@ -56,7 +60,7 @@ func writeManifest(root, dir string, m manifest) error {
 		return err
 	}
 	path := manifestPath(root, dir)
-	tmp, err := os.CreateTemp(filepath.Dir(path), manifestPrefix+"tmp-*")
+	tmp, err := os.CreateTemp(filepath.Dir(path), manifestPrefix+agent.RunDirPrefix+"tmp-*")
 	if err != nil {
 		return err
 	}
@@ -92,6 +96,10 @@ func Record(root, dir string, complete bool, ids ...string) error {
 	defer manifestMu.Unlock()
 	m, ok := readManifest(root, dir)
 	if !ok {
+		if _, err := os.Lstat(dir); err != nil {
+			// Gone (removed while the call ran): nothing to attach a record to.
+			return nil
+		}
 		// A directory with no record of its start: its sessions are not all
 		// known, whatever the caller says, and only a scan can find the
 		// rest, from any date (the epoch means an unknown start).
@@ -104,14 +112,19 @@ func Record(root, dir string, complete bool, ids ...string) error {
 		}
 	}
 	m.Complete = m.Complete || complete
+	if len(ids) > 0 {
+		m.Pending = false
+	}
 	return writeManifest(root, dir, m)
 }
 
 // MarkIncomplete notes that a call is about to run in dir whose session id is
-// not known yet (a chat resuming or forking in a kept directory): if it
-// fails before Record, removing the directory scans for the session. A
-// directory with no record needs nothing, it is scanned anyway.
-func MarkIncomplete(root, dir string) error {
+// not known yet (a chat resuming or forking in a kept directory). Until a
+// Record with ids clears it the directory counts as having unknown sessions,
+// so a crash in between still leaves removal to a scan. With lost the call
+// is known to have ended without an id, which is permanent. A directory with
+// no record needs nothing, it is scanned anyway.
+func MarkIncomplete(root, dir string, lost bool) error {
 	dir = filepath.Clean(dir)
 	if !underRoot(root, dir) {
 		return nil
@@ -119,10 +132,14 @@ func MarkIncomplete(root, dir string) error {
 	manifestMu.Lock()
 	defer manifestMu.Unlock()
 	m, ok := readManifest(root, dir)
-	if !ok || !m.Complete {
+	if !ok {
 		return nil
 	}
-	m.Complete = false
+	if lost {
+		m.Complete = false
+	} else {
+		m.Pending = true
+	}
 	return writeManifest(root, dir, m)
 }
 
