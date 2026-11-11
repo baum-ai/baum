@@ -2,6 +2,7 @@ package locallink
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -17,12 +18,15 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
-	"mvdan.cc/sh/v3/syntax"
+	"github.com/baum-ai/agentcmd"
+	"github.com/baum-ai/agentcmd/model"
+	nativestd "github.com/baum-ai/agentcmd/native/standard"
+	"github.com/baum-ai/agentcmd/rules/standard"
 
 	"github.com/baum-ai/baum/internal/gitlocal"
-	"github.com/baum-ai/baum/linkage/gitevidence"
 	"github.com/baum-ai/baum/sessions"
 	"github.com/baum-ai/baum/sessions/session"
 	"github.com/baum-ai/baum/sessions/traceprocessing"
@@ -37,8 +41,6 @@ const (
 	// reflogSlack is how far outside a tool call a reflog entry may fall: git
 	// records whole seconds and the transcript's clock is not git's.
 	reflogSlack = 2 * time.Second
-	// maxShellDepth bounds how deep `bash -c` scripts nest.
-	maxShellDepth = 4
 )
 
 // creationMessage matches the reflog messages of commits made in a working
@@ -50,9 +52,6 @@ var creationMessage = regexp.MustCompile(`^(commit( \((amend|initial|cherry-pick
 
 // gitWriteCommands are the git subcommands that can create a commit.
 var gitWriteCommands = map[string]bool{"commit": true, "rebase": true, "cherry-pick": true, "revert": true, "am": true, "pull": true}
-
-// gitEnvVars redirect git to another repository or working tree.
-var gitEnvVars = map[string]bool{"GIT_DIR": true, "GIT_WORK_TREE": true}
 
 // reflogFile is one reflog of the clone. A HEAD log belongs to the working
 // tree worktree, "" when that is unknown; a branch log belongs to the branch.
@@ -263,7 +262,7 @@ func addReflogCommits(ctx context.Context, dir string, found []sessions.Session,
 	locate := rootLocator(log.mainRoot, log.roots)
 	var windows []callWindow
 	for _, s := range found {
-		windows = append(windows, callWindows(s, locate)...)
+		windows = append(windows, callWindows(ctx, s, locate)...)
 	}
 	for sha, creator := range creatorsOf(log, windows) {
 		applied := false
@@ -486,7 +485,7 @@ func windowEnd(start, end time.Time, text string, polls []poll) time.Time {
 // included, that succeeded and write to Git. A call that failed, was rejected
 // or denied, whose command does not write Git, or a poll of a running command
 // establishes nothing and has no window of its own.
-func callWindows(s sessions.Session, locate func(string) string) []callWindow {
+func callWindows(ctx context.Context, s sessions.Session, locate func(string) string) []callWindow {
 	g := s.Graph
 	if g == nil {
 		return nil
@@ -534,19 +533,17 @@ func callWindows(s sessions.Session, locate func(string) string) []callWindow {
 		}
 		branch := branchAt(g, use.SessionID, top, *use.Timestamp)
 		seen := map[string]bool{}
-		for _, c := range shellCalls(use.Name, use.Input, base) {
-			for _, dir := range writeDirs(c.command, c.dir) {
-				root := locate(dir)
-				if seen[dir] || nestedRepository(dir, root) {
-					continue
-				}
-				seen[dir] = true
-				if polls == nil {
-					polls = pollsOf(g, results)
-				}
-				end := windowEnd(*use.Timestamp, result.at, result.text, polls)
-				windows = append(windows, callWindow{session: s.ID, start: *use.Timestamp, end: end, root: root, branch: branch})
+		for _, dir := range gitWriteDirs(ctx, use.Name, use.Input, base) {
+			root := locate(dir)
+			if seen[dir] || nestedRepository(dir, root) {
+				continue
 			}
+			seen[dir] = true
+			if polls == nil {
+				polls = pollsOf(g, results)
+			}
+			end := windowEnd(*use.Timestamp, result.at, result.text, polls)
+			windows = append(windows, callWindow{session: s.ID, start: *use.Timestamp, end: end, root: root, branch: branch})
 		}
 	}
 	return windows
@@ -571,45 +568,136 @@ func nestedRepository(dir, root string) bool {
 	return false
 }
 
-// shellCall is one command a tool call ran, and the directory it started in
-// ("" when unknown).
-type shellCall struct {
-	command, dir string
-}
+// commandEngine analyzes shell tool calls. It is built once and holds no
+// per-call state. It links no tree-sitter: inline Python and JavaScript are
+// not analyzed, and Git commands are only ever run by shell.
+var commandEngine = sync.OnceValues(func() (*agentcmd.Engine, error) {
+	return agentcmd.New(agentcmd.Config{Rules: standard.Rules(), Native: nativestd.Bindings()})
+})
 
-// shellCalls are the commands of one tool call, each with its own directory.
-// A Codex code-mode program holds several, each with its workdir, and one with
-// a command or workdir built at run time is left out. A call without command
-// text, such as a poll of a running command, has none.
-func shellCalls(name string, input json.RawMessage, base string) []shellCall {
-	if strings.EqualFold(name, traceprocessing.CodexExecName) {
-		if source, ok := codeModeSource(input); ok {
-			var calls []shellCall
-			for _, c := range traceprocessing.CodexExecCalls(source) {
-				if !c.CommandStatic || (c.HasWorkdir && !c.WorkdirStatic) {
-					continue
-				}
-				dir := base
-				if c.HasWorkdir {
-					dir = resolveDir(base, c.Workdir)
-				}
-				calls = append(calls, shellCall{command: c.Command, dir: dir})
-			}
-			return calls
-		}
-	}
-	command := commandText(input)
-	if command == "" {
+// boundTools are the shell tools agentcmd reads natively: Claude Code's Bash,
+// and Codex's exec_command, shell and code-mode exec, each with its own
+// workdir.
+var boundTools = map[string]bool{"Bash": true, "exec_command": true, "shell": true, traceprocessing.CodexExecName: true}
+
+// gitWriteDirs are the directories in which one tool call runs a git
+// subcommand that can create a commit, one for each such command, as agentcmd
+// reads it: only commands count, never quoted text, heredoc bodies or
+// substitutions; `cd`, `pushd`, `git -C`, `bash -c` and a Codex workdir move
+// the directory, and one that cannot be known (`cd -`, `~`, a variable, a
+// directory change inside a branch) leaves the command unplaced. A code-mode
+// program contributes each call whose command and workdir are literal.
+//
+// A command redirected with --git-dir or --work-tree, a --dry-run, and every
+// command of a call that mentions GIT_DIR or GIT_WORK_TREE (agentcmd does not
+// follow those variables) are left out, as is anything agentcmd cannot read.
+func gitWriteDirs(ctx context.Context, name string, input json.RawMessage, base string) []string {
+	// Most calls run no git at all; agentcmd only names git from a literal
+	// executable, so an input without the word cannot run it (about 30 µs
+	// of analysis saved per call).
+	if !bytes.Contains(input, []byte("git")) ||
+		bytes.Contains(input, []byte("GIT_DIR")) || bytes.Contains(input, []byte("GIT_WORK_TREE")) {
 		return nil
 	}
-	dir := base
-	var shape struct {
-		Workdir string `json:"workdir"`
+	engine, err := commandEngine()
+	if err != nil {
+		return nil
 	}
-	if json.Unmarshal(input, &shape) == nil && shape.Workdir != "" {
-		dir = resolveDir(base, shape.Workdir)
+	execution := model.ExecutionContext{Namespace: model.Namespace{Kind: model.NamespaceHost}}
+	if base != "" {
+		execution.WorkingDir = model.KnownFact(filepath.ToSlash(base), "transcript")
 	}
-	return []shellCall{{command: command, dir: dir}}
+	var analysis model.Analysis
+	if tool := boundToolName(name, input); tool != "" {
+		analysis, err = engine.Analyze(ctx, model.Invocation{
+			ID:      "call",
+			Tool:    model.ToolIdentity{Namespace: "harness", Name: tool},
+			Input:   model.Input{Kind: model.InputJSON, JSON: input},
+			Context: execution,
+		})
+	} else {
+		command := commandText(input)
+		if command == "" {
+			return nil
+		}
+		var shape struct {
+			Workdir string `json:"workdir"`
+		}
+		if json.Unmarshal(input, &shape) == nil && shape.Workdir != "" {
+			execution.WorkingDir = model.Fact{}
+			if dir := resolveDir(base, shape.Workdir); dir != "" {
+				execution.WorkingDir = model.KnownFact(filepath.ToSlash(dir), "transcript")
+			}
+		}
+		analysis, err = engine.AnalyzeShell(ctx, []byte(command), execution)
+	}
+	if err != nil {
+		return nil
+	}
+	return writeDirsOf(analysis)
+}
+
+// boundToolName is the agentcmd tool that reads the call, "" for a tool
+// agentcmd has no binding for. A Codex exec whose input carries a "cmd" is an
+// exec_command, not a code-mode program.
+func boundToolName(name string, input json.RawMessage) string {
+	if strings.EqualFold(name, traceprocessing.CodexExecName) {
+		if _, ok := codeModeSource(input); !ok {
+			return "exec_command"
+		}
+		return traceprocessing.CodexExecName
+	}
+	if boundTools[name] {
+		return name
+	}
+	return ""
+}
+
+// writeDirsOf reads the creating git commands of an analysis.
+func writeDirsOf(analysis model.Analysis) []string {
+	nodes := make(map[string]*model.Node, len(analysis.Nodes))
+	for i := range analysis.Nodes {
+		nodes[analysis.Nodes[i].ID] = &analysis.Nodes[i]
+	}
+	var dirs []string
+	for _, action := range analysis.Actions {
+		if action.Git == nil || !gitWriteCommands[action.Git.Subcommand] {
+			continue
+		}
+		node := nodes[action.Node]
+		if node == nil || node.Command == nil || node.Reach == model.ReachUnreachable || redirected(node.Command.Args, action.Git.Subcommand) {
+			continue
+		}
+		for _, r := range action.Resources {
+			if r.Role == "repository" && r.Resolved != "" && path.IsAbs(r.Resolved) {
+				dirs = append(dirs, filepath.FromSlash(path.Clean(r.Resolved)))
+			}
+		}
+	}
+	return dirs
+}
+
+// redirected reports whether git's arguments point it at another repository
+// or working tree before the subcommand, or ask for a dry run, or are not
+// known before the subcommand.
+func redirected(args []model.Value, subcommand string) bool {
+	before := true
+	for _, arg := range args {
+		if before && arg.Concrete() && arg.Text == subcommand {
+			before = false
+			continue
+		}
+		switch {
+		case before && !arg.Concrete():
+			return true
+		case before && (arg.Text == "--git-dir" || arg.Text == "--work-tree" ||
+			strings.HasPrefix(arg.Text, "--git-dir=") || strings.HasPrefix(arg.Text, "--work-tree=")):
+			return true
+		case !before && arg.Text == "--dry-run":
+			return true
+		}
+	}
+	return false
 }
 
 // codeModeSource is the JavaScript program of a Codex code-mode input: a JSON
@@ -627,215 +715,6 @@ func codeModeSource(input json.RawMessage) (string, bool) {
 	}
 	if json.Unmarshal(input, &object) == nil && object.Input != "" && object.Cmd == nil {
 		return object.Input, true
-	}
-	return "", false
-}
-
-// shellScope is what a script has done to the directory it runs in.
-type shellScope struct {
-	// dir is the current directory, "" when unknown.
-	dir string
-	// gitEnv is set once GIT_DIR or GIT_WORK_TREE was set.
-	gitEnv bool
-	// moves counts the cd, pushd and popd commands seen, shared by every
-	// scope of a script, so a compound command can tell that one ran inside.
-	moves *int
-}
-
-// writeDirs are the directories in which the command runs a git subcommand
-// that can create a commit, one for each such command, or none when the
-// command does not parse. Only commands count: quoted text, heredoc bodies and
-// substitutions never do. A `cd` or `pushd` to a literal path moves the
-// directory within its scope (a subshell has its own); `cd -`, `~`, a variable
-// or a dynamic path leaves it unknown, so a later git command is unplaced. So
-// is one redirected with GIT_DIR, --git-dir or --work-tree, unless `-C` names
-// an absolute directory.
-func writeDirs(command, dir string) []string {
-	var dirs []string
-	scanScript(command, shellScope{dir: dir, moves: new(int)}, &dirs, 0)
-	return dirs
-}
-
-func scanScript(script string, scope shellScope, out *[]string, depth int) {
-	if depth > maxShellDepth {
-		return
-	}
-	file, err := syntax.NewParser(syntax.Variant(syntax.LangBash)).Parse(strings.NewReader(script), "")
-	if err != nil {
-		return
-	}
-	scanStmts(file.Stmts, &scope, out, depth)
-}
-
-func scanStmts(stmts []*syntax.Stmt, scope *shellScope, out *[]string, depth int) {
-	for _, stmt := range stmts {
-		scanStmt(stmt, scope, out, depth)
-	}
-}
-
-func scanStmt(stmt *syntax.Stmt, scope *shellScope, out *[]string, depth int) {
-	switch cmd := stmt.Cmd.(type) {
-	case *syntax.CallExpr:
-		scanCall(cmd, scope, out, depth)
-	case *syntax.BinaryCmd:
-		if cmd.Op == syntax.Pipe || cmd.Op == syntax.PipeAll {
-			left, right := *scope, *scope
-			scanStmt(cmd.X, &left, out, depth)
-			scanStmt(cmd.Y, &right, out, depth)
-			return
-		}
-		scanStmt(cmd.X, scope, out, depth)
-		scanStmt(cmd.Y, scope, out, depth)
-	case *syntax.Subshell:
-		inner := *scope
-		scanStmts(cmd.Stmts, &inner, out, depth)
-	case *syntax.Block:
-		scanStmts(cmd.Stmts, scope, out, depth)
-	case *syntax.DeclClause:
-		for _, assign := range cmd.Args {
-			if assign.Name != nil && gitEnvVars[assign.Name.Value] {
-				scope.gitEnv = true
-			}
-		}
-	case *syntax.IfClause, *syntax.WhileClause, *syntax.ForClause, *syntax.CaseClause, *syntax.TimeClause:
-		// Which branches run is unknown, so each starts from the current
-		// directory and a directory change inside leaves it unknown after.
-		before := *scope.moves
-		for _, list := range clauseStmts(cmd) {
-			inner := *scope
-			scanStmts(list, &inner, out, depth)
-		}
-		if *scope.moves != before {
-			scope.dir = ""
-		}
-	}
-}
-
-// clauseStmts are the statement lists of a compound command.
-func clauseStmts(cmd syntax.Command) [][]*syntax.Stmt {
-	switch cmd := cmd.(type) {
-	case *syntax.IfClause:
-		var lists [][]*syntax.Stmt
-		for clause := cmd; clause != nil; clause = clause.Else {
-			lists = append(lists, clause.Cond, clause.Then)
-		}
-		return lists
-	case *syntax.WhileClause:
-		return [][]*syntax.Stmt{cmd.Cond, cmd.Do}
-	case *syntax.ForClause:
-		return [][]*syntax.Stmt{cmd.Do}
-	case *syntax.CaseClause:
-		var lists [][]*syntax.Stmt
-		for _, item := range cmd.Items {
-			lists = append(lists, item.Stmts)
-		}
-		return lists
-	case *syntax.TimeClause:
-		if cmd.Stmt != nil {
-			return [][]*syntax.Stmt{{cmd.Stmt}}
-		}
-	}
-	return nil
-}
-
-func scanCall(call *syntax.CallExpr, scope *shellScope, out *[]string, depth int) {
-	envGit := false
-	for _, assign := range call.Assigns {
-		if assign.Name != nil && gitEnvVars[assign.Name.Value] {
-			envGit = true
-		}
-	}
-	if len(call.Args) == 0 {
-		if envGit {
-			scope.gitEnv = true
-		}
-		return
-	}
-	words := make([]string, len(call.Args))
-	static := make([]bool, len(call.Args))
-	for i, arg := range call.Args {
-		words[i], static[i] = gitevidence.StaticWord(arg)
-	}
-	if !static[0] {
-		return
-	}
-	switch path.Base(words[0]) {
-	case "cd":
-		*scope.moves++
-		scope.dir = changeDir(scope.dir, words[1:], static[1:], true)
-	case "pushd":
-		*scope.moves++
-		scope.dir = changeDir(scope.dir, words[1:], static[1:], false)
-	case "popd":
-		*scope.moves++
-		scope.dir = ""
-	case "git":
-		if dir, ok := gitWriteDir(words[1:], static[1:], *scope, envGit); ok {
-			*out = append(*out, dir)
-		}
-	case "bash", "sh", "zsh":
-		for i := 1; i < len(words); i++ {
-			if !static[i] || !strings.HasPrefix(words[i], "-") {
-				return
-			}
-			if !strings.HasPrefix(words[i], "--") && strings.Contains(words[i], "c") {
-				if i+1 < len(words) && static[i+1] {
-					scanScript(words[i+1], *scope, out, depth+1)
-				}
-				return
-			}
-		}
-	}
-}
-
-// changeDir is the directory after "cd" or "pushd" with the arguments, ""
-// when it cannot be known. Only cd takes the -P and -L flags.
-func changeDir(dir string, words []string, static []bool, cd bool) string {
-	for len(words) > 0 && static[0] && strings.HasPrefix(words[0], "-") && words[0] != "-" {
-		if !cd {
-			return ""
-		}
-		words, static = words[1:], static[1:]
-	}
-	if len(words) == 0 || !static[0] || strings.HasPrefix(words[0], "+") {
-		return ""
-	}
-	return resolveDir(dir, words[0])
-}
-
-// gitWriteDir reads the arguments of a git command: it reports the directory
-// the command runs in and whether its subcommand can create a commit. The
-// subcommand is the first word that is not an option or an option's value.
-func gitWriteDir(args []string, static []bool, scope shellScope, envGit bool) (string, bool) {
-	dir := scope.dir
-	redirected, anchored := scope.gitEnv || envGit, false
-	for i := 0; i < len(args); i++ {
-		if !static[i] {
-			return "", false
-		}
-		arg := args[i]
-		switch {
-		case arg == "-C":
-			if i+1 >= len(args) || !static[i+1] {
-				return "", false
-			}
-			dir = resolveDir(dir, args[i+1])
-			anchored = filepath.IsAbs(args[i+1])
-			i++
-		case arg == "--git-dir" || arg == "--work-tree":
-			redirected = true
-			i++
-		case strings.HasPrefix(arg, "--git-dir=") || strings.HasPrefix(arg, "--work-tree="):
-			redirected = true
-		case arg == "-c" || arg == "--namespace" || arg == "--exec-path" || arg == "--config-env":
-			i++
-		case strings.HasPrefix(arg, "-"):
-		default:
-			if !gitWriteCommands[arg] || (redirected && !anchored) || slices.Contains(args[i+1:], "--dry-run") {
-				return "", false
-			}
-			return dir, dir != ""
-		}
 	}
 	return "", false
 }

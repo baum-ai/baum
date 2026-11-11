@@ -56,21 +56,25 @@ covers plain commits, amends, cherry-picks and reverts of a removed worktree,
 not its rebase picks (a branch log records only the end of a rebase) and not
 once the branch is deleted. Reflogs expire with Git's gc (90 days by default).
 
-A call is placed by its `workdir`, else by the nested session's `cwd` attribute
-and working directory, then the top-level session's. A Codex code-mode program
-is stored as its JavaScript plus the command lines it runs; the resolver reads
-the program itself, so each `exec_command({...})` call is a command with its
-own `workdir` and no `cd` carried between them (string escapes such as `\n` are
-decoded). Only an object passed directly to `exec_command(` counts. A command or
-workdir the program builds at run time (a template, a variable, a shorthand
-`{workdir}`, a spread or computed key) gives no evidence. The command is parsed
-as shell: only commands count, never quoted text, heredoc bodies or
-substitutions, and a script that does not parse gives no evidence. A `cd` or
-`pushd` to a literal path moves the directory within its scope (a subshell has
-its own), and `bash -c` scripts are followed. A dynamic path, `~` or `cd -`
-leaves the directory unknown, and so does a `cd` inside a conditional or loop.
-Git redirected by `GIT_DIR`, `--git-dir` or `--work-tree` is unplaced unless
-`-C` names an absolute directory. A directory inside a nested repository (a
+A call starts in its `workdir`, else in the nested session's `cwd` attribute
+and working directory, then the top-level session's. Its commands are read by
+[agentcmd](https://github.com/baum-ai/agentcmd) without tree-sitter: Claude
+Code's `Bash`, Codex's `exec_command` and `shell` with their `workdir`, and
+Codex code-mode `exec` programs. A code-mode program is stored as its
+JavaScript plus the command lines it runs; agentcmd reads the program itself,
+so each `tools.exec_command({...})` call is a command with its own `workdir`
+and no `cd` carried between them. A command or workdir the program builds at
+run time (a template, a variable, a shorthand `{workdir}`, a spread or
+computed key) gives no evidence. Another tool marked as a command is read as
+shell from its `command` or `cmd` field. Only commands count, never quoted
+text, heredoc bodies or substitutions, and a script that does not parse gives
+no evidence. A `cd` or `pushd` to a literal path moves the directory within
+its scope (a subshell has its own), and `bash -c` scripts and shell functions
+are followed. A dynamic path, `~` or `cd -` leaves the directory unknown, and
+so does a `cd` inside a conditional or loop. `git notes` and `git apply` make
+no commit in a working tree's history. Git redirected by `--git-dir` or
+`--work-tree`, a `--dry-run`, and every command of a call that mentions
+`GIT_DIR` or `GIT_WORK_TREE` are unplaced. A directory inside a nested repository (a
 submodule, or a clone within the working tree: a `.git` entry below the working
 tree's root) is not placed, since its commits are not in this reflog.
 Directories map to the deepest existing linked worktree, else a removed

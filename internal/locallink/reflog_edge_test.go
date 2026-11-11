@@ -87,12 +87,14 @@ func TestWriteDirs(t *testing.T) {
 		{"git status; git cherry-pick abc; git revert def", []string{"/w", "/w"}},
 		{"git commit -q; cd /x", []string{"/w"}},
 		{"git commit -m \"$(cat <<'EOF'\nmessage\nEOF\n)\"", []string{"/w"}},
-		{"git --git-dir=/x/.git -C /y commit -q", []string{"/y"}},
+		{"for f in a b; do git commit -m $f; done", []string{"/w"}},
+		{"f() { git commit -q; }; f", []string{"/w"}},
 		{"git log -- rebase.go", nil},
 		{"git log --grep=revert", nil},
 		{"git show HEAD:commit.go", nil},
 		{"git status && echo commit", nil},
 		{"git commit --dry-run", nil},
+		{"git notes add -m x; git apply p.patch", nil},
 		{"echo \"done; git commit later\"", nil},
 		{"gh pr comment 1 --body \"Rebased; git pull --rebase to update\"", nil},
 		{"cat > release.sh <<'EOF'\ngit commit -am release\nEOF", nil},
@@ -101,49 +103,52 @@ func TestWriteDirs(t *testing.T) {
 		{"cd $HOME && git commit", nil},
 		{"cd \"$DIR\" && git commit", nil},
 		{"git -C \"$X\" commit", nil},
+		{"git -c \"$X\" commit", nil},
 		{"if true; then cd /x; fi; git commit -q", nil},
 		{"GIT_DIR=/x/.git git commit -m m", nil},
 		{"export GIT_DIR=/x/.git; git commit -m m", nil},
+		{"env GIT_WORK_TREE=/x git commit -m m", nil},
 		{"git --git-dir=/x/.git commit -m m", nil},
+		{"git --git-dir=/x/.git -C /y commit -q", nil},
 		{"git --work-tree /x commit -m m", nil},
 		{"git commit -m 'unterminated", nil},
 		{"go test ./...", nil},
 	} {
-		if got := writeDirs(tc.command, "/w"); !slices.Equal(got, tc.want) {
+		input, _ := json.Marshal(map[string]string{"command": tc.command})
+		if got := gitWriteDirs(context.Background(), "Bash", input, "/w"); !slices.Equal(got, tc.want) {
 			t.Errorf("%q: %v, want %v", tc.command, got, tc.want)
 		}
 	}
 }
 
-func TestShellCallsPairCodeModeCommandsWithTheirWorkdirs(t *testing.T) {
+func TestGitWriteDirsReadEachToolsDirectory(t *testing.T) {
 	source := `await tools.exec_command({cmd:"git commit -q -m x", workdir:"/a"});
 await tools.exec_command({cmd:"cd /b && ls", workdir:"/a"});
 await tools.exec_command({cmd:"git commit -q -m y"});
 await tools.exec_command({cmd:` + "`git commit -m ${message}`" + `, workdir:"/c"});
 await tools.exec_command({cmd:"git commit -q -m z", workdir:dir});`
-	input, _ := json.Marshal(source)
-	calls := shellCalls("exec", input, "/base")
-	want := []shellCall{{"git commit -q -m x", "/a"}, {"cd /b && ls", "/a"}, {"git commit -q -m y", "/base"}}
-	if !slices.Equal(calls, want) {
-		t.Fatalf("calls = %v, want %v", calls, want)
-	}
-	var dirs []string
-	for _, c := range calls {
-		dirs = append(dirs, writeDirs(c.command, c.dir)...)
-	}
-	if !slices.Equal(dirs, []string{"/a", "/base"}) {
-		t.Fatalf("write dirs = %v", dirs)
-	}
-	stored := traceprocessing.NormalizeCodexExecInput("exec", input)
+	program, _ := json.Marshal(source)
+	stored := traceprocessing.NormalizeCodexExecInput("exec", program)
 	if !strings.Contains(string(stored), `"command"`) {
 		t.Fatalf("the stored input has no command: %s", stored)
 	}
-	if got := shellCalls("exec", stored, "/base"); !slices.Equal(got, want) {
-		t.Fatalf("object input: %v", got)
-	}
-	plain := shellCalls("exec_command", json.RawMessage(`{"cmd":"git commit -q","workdir":"sub"}`), "/base")
-	if !slices.Equal(plain, []shellCall{{"git commit -q", "/base/sub"}}) {
-		t.Fatalf("plain call: %v", plain)
+	for _, tc := range []struct {
+		name, tool string
+		input      json.RawMessage
+		want       []string
+	}{
+		{"code-mode program", "exec", program, []string{"/a", "/base"}},
+		{"stored code-mode input", "exec", stored, []string{"/a", "/base"}},
+		{"exec_command workdir", "exec_command", json.RawMessage(`{"cmd":"git commit -q","workdir":"sub"}`), []string{"/base/sub"}},
+		{"exec with a cmd", "exec", json.RawMessage(`{"cmd":"git commit -q","workdir":"/d"}`), []string{"/d"}},
+		{"shell argv", "shell", json.RawMessage(`{"command":["bash","-lc","git commit -q"],"workdir":"/e"}`), []string{"/e"}},
+		{"unbound tool", "run_terminal_cmd", json.RawMessage(`{"command":"git commit -q","workdir":"/f"}`), []string{"/f"}},
+		{"no command", "write_stdin", json.RawMessage(`{"session_id":3,"chars":""}`), nil},
+		{"code-mode GIT_DIR", "exec", json.RawMessage(`"await tools.exec_command({cmd:\"GIT_DIR=/x git commit\"})"`), nil},
+	} {
+		if got := gitWriteDirs(context.Background(), tc.tool, tc.input, "/base"); !slices.Equal(got, tc.want) {
+			t.Errorf("%s: %v, want %v", tc.name, got, tc.want)
+		}
 	}
 }
 

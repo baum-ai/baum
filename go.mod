@@ -3,6 +3,7 @@ module github.com/baum-ai/baum
 go 1.26.10
 
 require (
+	github.com/baum-ai/agentcmd v0.1.0
 	github.com/baum-ai/goredact v0.4.0
 	github.com/cli/go-gh/v2 v2.16.1
 	github.com/cli/shurcooL-graphql v0.0.4
@@ -19,7 +20,7 @@ require (
 	golang.org/x/sync v0.23.0
 	golang.org/x/sys v0.49.0
 	modernc.org/sqlite v1.54.0
-	mvdan.cc/sh/v3 v3.13.1
+	mvdan.cc/sh/v3 v3.14.1
 )
 
 require (
