@@ -8,9 +8,11 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -287,6 +289,61 @@ func TestMCPBridgeRefusesOversizedAndKeepsGoing(t *testing.T) {
 	}
 	if err, _ := p.finish(t); err != nil {
 		t.Error(err)
+	}
+}
+
+// A dial failure means nothing was sent: the bridge reads the credential again
+// and retries once, so a daemon that moved is found.
+func TestMCPBridgePostRetriesWhenNoConnectionWasMade(t *testing.T) {
+	var hits atomic.Int32
+	live := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		_, _ = io.WriteString(w, `{"jsonrpc":"2.0","id":1,"result":{}}`)
+	}))
+	defer live.Close()
+	origins := []string{closedOrigin(t), live.URL}
+	reads := 0
+	b := &mcpBridge{token: "t", client: &http.Client{Timeout: 5 * time.Second}, origin: func() (string, error) {
+		reads++
+		return origins[min(reads-1, len(origins)-1)], nil
+	}}
+	status, _, err := b.post(context.Background(), []byte(`{"jsonrpc":"2.0","id":1,"method":"ping"}`))
+	if err != nil || status != 200 || hits.Load() != 1 || reads != 2 {
+		t.Errorf("status %d, err %v, hits %d, credential reads %d", status, err, hits.Load(), reads)
+	}
+}
+
+// A request that reached the daemon, which then dropped the connection, may
+// have been acted on: the bridge reports the failure and sends nothing again.
+func TestMCPBridgePostDoesNotRetryAfterTheRequestWasSent(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	var accepted atomic.Int32
+	go func() {
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			accepted.Add(1)
+			// Read the request, then drop the connection without answering.
+			_, _ = bufio.NewReader(conn).ReadString('}')
+			_ = conn.Close()
+		}
+	}()
+	reads := 0
+	b := &mcpBridge{token: "t", client: &http.Client{Timeout: 5 * time.Second}, origin: func() (string, error) {
+		reads++
+		return "http://" + listener.Addr().String(), nil
+	}}
+	if _, _, err := b.post(context.Background(), []byte(`{"jsonrpc":"2.0","id":1,"method":"tools/call"}`)); err == nil {
+		t.Fatal("a dropped connection was not an error")
+	}
+	if accepted.Load() != 1 || reads != 1 {
+		t.Errorf("connections %d, credential reads %d: the request was sent again", accepted.Load(), reads)
 	}
 }
 

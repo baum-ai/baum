@@ -606,11 +606,17 @@ func (b *limitedBuffer) Write(p []byte) (int, error) {
 	return n, nil
 }
 
+// mcpEnvVars are the variables Codex forwards to baum's MCP server.
+var mcpEnvVars = []string{agent.MCPTokenEnv, "XDG_STATE_HOME", "XDG_RUNTIME_DIR"}
+
 // mcpConfig configures baum's own MCP server, the only one a run has:
 // --ignore-user-config already keeps the user's servers out. The token is not
-// in it. env_vars makes Codex forward the variable named agent.MCPTokenEnv
-// from its own environment to the server's process, so the value never
-// appears in an argument.
+// in it. Codex starts an MCP server with only a default set of variables, so
+// env_vars names the ones to forward from its own environment, which keeps the
+// token out of every argument. They are the token and what baum mcp needs to
+// find the daemon: daemon.DefaultPaths reads XDG_STATE_HOME and XDG_RUNTIME_DIR
+// (and HOME or USERPROFILE, which Codex's default set already carries).
+// Names that are unset are skipped.
 func mcpConfig(server *agent.MCPServer) ([]string, error) {
 	command, err := json.Marshal(server.Command)
 	if err != nil {
@@ -620,7 +626,7 @@ func mcpConfig(server *agent.MCPServer) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	names, err := json.Marshal([]string{agent.MCPTokenEnv})
+	names, err := json.Marshal(mcpEnvVars)
 	if err != nil {
 		return nil, err
 	}

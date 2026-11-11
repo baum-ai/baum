@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -17,15 +18,13 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/baum-ai/baum/internal/agentcontext"
 	"github.com/baum-ai/baum/internal/daemon"
 )
 
 // mcpTokenEnv names the variable that carries the MCP token. The token is
 // never a flag, so it stays out of the process list.
 const mcpTokenEnv = "BAUM_MCP_TOKEN"
-
-// mcpProtocolVersion is the MCP revision the daemon's /api/mcp route speaks.
-const mcpProtocolVersion = "2025-06-18"
 
 const (
 	// maxMCPLine bounds one JSON-RPC message on stdin, as the daemon bounds
@@ -52,11 +51,13 @@ the baum app. baum starts it itself for the agent runs that need it, with
 BAUM_MCP_TOKEN set to that run's token; you do not run it by hand.
 
 It forwards every JSON-RPC message the agent writes on stdin, one per line, to
-the local baum daemon's /api/mcp route and prints each response on stdout. It
-reads no files, runs no commands and talks to nothing but the local daemon,
-whose address it takes from the daemon's credential file (never its token).
-The token comes only from the BAUM_MCP_TOKEN environment variable and is never
-logged. It exits when stdin closes.`,
+the local baum daemon's /api/mcp route and prints each response on stdout,
+one request at a time. It runs no commands and talks to nothing but the local
+daemon. The files it touches are the daemon's credential file, read for the
+daemon's address (never its token), and the repository registry baum opens
+read-only before any command; nothing it does writes to stdout. The token comes
+only from the BAUM_MCP_TOKEN environment variable and is never logged. It exits
+when stdin closes.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			token := os.Getenv(mcpTokenEnv)
@@ -98,11 +99,14 @@ func daemonOrigin() (string, error) {
 	return "", daemon.ErrNoCredential
 }
 
-// mcpBridge relays JSON-RPC messages from stdin to the daemon.
+// mcpBridge relays JSON-RPC messages from stdin to the daemon. It handles one
+// message at a time, in order: the next line is not forwarded until the
+// daemon has answered the last, so a slow tool call delays the messages behind
+// it (a cancellation included).
 type mcpBridge struct {
 	token string
-	// origin reads the daemon's address; called again after a connection
-	// failure so a restarted daemon on a new port is found.
+	// origin reads the daemon's address; called again after a dial failure so
+	// a restarted daemon on a new port is found.
 	origin func() (string, error)
 	client *http.Client
 	// out receives only protocol lines; errw receives diagnostics.
@@ -212,31 +216,38 @@ func (b *mcpBridge) handle(ctx context.Context, message []byte) {
 	}
 }
 
-// post sends one message to the daemon. After a connection failure it reads
-// the credential again and tries once more, so a daemon that restarted on a
-// new port is found.
+// post sends one message to the daemon. When no connection could be made (a
+// dial failure such as connection refused) it reads the credential again and
+// tries once more, so a daemon that restarted on a new port is found. A
+// failure after the request may have reached the daemon (a timeout, a dropped
+// connection) is returned as it is and never retried: the daemon may already
+// have acted on the message, and a tool call must not run twice.
 func (b *mcpBridge) post(ctx context.Context, message []byte) (int, []byte, error) {
-	var lastErr error
-	for attempt := 0; attempt < 2; attempt++ {
-		if b.cached == "" || attempt > 0 {
-			origin, err := b.origin()
-			if err != nil {
-				lastErr = err
-				b.cached = ""
-				continue
-			}
-			b.cached = origin
+	if b.cached == "" {
+		origin, err := b.origin()
+		if err != nil {
+			return 0, nil, err
 		}
-		status, body, err := b.send(ctx, b.cached, message)
-		if err == nil {
-			return status, body, nil
-		}
-		lastErr = err
-		if ctx.Err() != nil {
-			break
-		}
+		b.cached = origin
 	}
-	return 0, nil, lastErr
+	status, body, err := b.send(ctx, b.cached, message)
+	if err == nil || ctx.Err() != nil || !notConnected(err) {
+		return status, body, err
+	}
+	origin, err := b.origin()
+	if err != nil {
+		b.cached = ""
+		return 0, nil, err
+	}
+	b.cached = origin
+	return b.send(ctx, origin, message)
+}
+
+// notConnected reports an error from before any connection to the daemon
+// existed, so nothing of the request was sent.
+func notConnected(err error) bool {
+	var op *net.OpError
+	return errors.As(err, &op) && op.Op == "dial"
 }
 
 func (b *mcpBridge) send(ctx context.Context, origin string, message []byte) (int, []byte, error) {
@@ -247,7 +258,7 @@ func (b *mcpBridge) send(ctx context.Context, origin string, message []byte) (in
 	req.Header.Set("Authorization", "Bearer "+b.token)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
-	req.Header.Set("MCP-Protocol-Version", mcpProtocolVersion)
+	req.Header.Set("MCP-Protocol-Version", agentcontext.ProtocolVersion)
 	resp, err := b.client.Do(req)
 	if err != nil {
 		// The error names the URL, never the token (a header).

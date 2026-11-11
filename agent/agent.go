@@ -150,8 +150,8 @@ type MCPServer struct {
 // Validate rejects a server the CLI could not start or could not authenticate.
 func (m *MCPServer) Validate() error {
 	switch {
-	case m.Command == "":
-		return errors.New("the MCP server needs a command")
+	case !filepath.IsAbs(m.Command):
+		return errors.New("the MCP server needs the absolute path of its command")
 	case m.Token == "":
 		return errors.New("the MCP server needs a token")
 	case strings.ContainsAny(m.Token, "\r\n\x00"):

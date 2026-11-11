@@ -44,7 +44,7 @@ func TestMCPConfiguresOnlyBaumAndKeepsTheTokenOutOfArguments(t *testing.T) {
 	script := fakeCodex(t, "codex-cli 0.162.1", recording)
 	for name, fix := range map[string]bool{"review (read-only)": false, "fix (workspace-write)": true} {
 		args, env := runWith(t, &Backend{Binary: script, Model: "m", Env: []string{"BAUM_MCP_TOKEN=user-supplied"}}, fix, testMCP())
-		for _, want := range []string{`mcp_servers.baum.command="/opt/baum/bin/baum"`, `mcp_servers.baum.args=["mcp"]`, `mcp_servers.baum.env_vars=["BAUM_MCP_TOKEN"]`} {
+		for _, want := range []string{`mcp_servers.baum.command="/opt/baum/bin/baum"`, `mcp_servers.baum.args=["mcp"]`, `mcp_servers.baum.env_vars=["BAUM_MCP_TOKEN","XDG_STATE_HOME","XDG_RUNTIME_DIR"]`} {
 			at := slices.Index(args, want)
 			if at < 1 || args[at-1] != "-c" {
 				t.Errorf("%s: missing -c %s in %q", name, want, args)
