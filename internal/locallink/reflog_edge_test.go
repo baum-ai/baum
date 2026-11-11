@@ -475,3 +475,20 @@ func TestReflogPlacesACallThroughASymbolicLink(t *testing.T) {
 	_, links := resolveReflog(t, r, []sessions.Session{linked, other}, r.commits(sha))
 	assertLinks(t, links, sha, "session-linked")
 }
+
+// A main working tree whose .git directory is a symbolic link keeps its HEAD
+// log: the working tree is its own, not where the git directory resolves.
+func TestReflogKeepsTheMainWorktreeOfASymlinkedGitDir(t *testing.T) {
+	r := newReflogRepo(t)
+	stored := filepath.Join(t.TempDir(), "widgets-git")
+	if err := os.Rename(filepath.Join(r.main, ".git"), stored); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(stored, filepath.Join(r.main, ".git")); err != nil {
+		t.Skipf("symbolic links are unavailable: %v", err)
+	}
+	sha := r.commit(r.main, "b.txt", "Main work", "10:30:00")
+	writer := reflogSession("session-main", "claude-code", r.main, bash("git commit -q -m Main", "10:29:58", "10:30:02"))
+	_, links := resolveReflog(t, r, []sessions.Session{writer}, r.commits(sha))
+	assertLinks(t, links, sha, "session-main")
+}

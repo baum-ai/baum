@@ -82,7 +82,7 @@ func reflogFiles(common string) []reflogFile {
 			files = append(files, f)
 		}
 	}
-	add(reflogFile{path: filepath.Join(common, "logs", "HEAD"), head: true, worktree: mainRootOf(common)})
+	add(reflogFile{path: filepath.Join(common, "logs", "HEAD"), head: true, worktree: realPath(mainRootOf(common))})
 	if entries, err := os.ReadDir(filepath.Join(common, "worktrees")); err == nil {
 		for _, e := range entries {
 			admin := filepath.Join(common, "worktrees", e.Name())
@@ -141,9 +141,8 @@ func readReflog(ctx context.Context, repo *gitlocal.Repo, dir string, wanted map
 			return reflog{}
 		}
 	}
-	common = realPath(common)
 	files := reflogFiles(common)
-	log := reflog{mainRoot: mainRootOf(common)}
+	log := reflog{mainRoot: realPath(mainRootOf(common))}
 	for _, f := range files {
 		if f.head && f.worktree != "" {
 			log.roots = append(log.roots, f.worktree)
