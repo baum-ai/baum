@@ -135,6 +135,59 @@ func TestPersonsGroupPromotesItsMembersWaitingAutomaticReviews(t *testing.T) {
 	waitState(t, q, jobs[0].ID, "completed")
 }
 
+// A member whose waiting automatic review is of an older head gets the
+// person's own review of its current head instead, which supersedes the
+// automatic one: the person's group never waits behind automatic work.
+func TestPersonsGroupSupersedesAMembersStaleAutomaticReview(t *testing.T) {
+	f := &fakeExecutor{head: "old", started: make(chan Prepared, 10), release: make(chan struct{}), awaiting: []int{1}}
+	q, err := Open(filepath.Join(privateDir(t), "jobs.json"), f, 1, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(q.Close)
+	q.SetAutomaticGate(func(Job) Admission { return Admission{} })
+	ctx := context.Background()
+	submit := func(pr int) Job {
+		t.Helper()
+		j, err := q.SubmitAutomatic(ctx, AutomaticRequest{Item: Item{Clone: "clone", PR: pr}, Repository: "org/repo", Head: "old", Trigger: TriggerNewHead})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return j
+	}
+	submit(3)
+	<-f.started
+	earlier := submit(5)
+	stale := submit(1)
+	f.mu.Lock()
+	f.head = "first"
+	f.mu.Unlock()
+	jobs, err := q.Generate(ctx, []Item{{Clone: "clone", Group: "g1"}}, "single", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if j := loaded(t, q, stale.ID); j.State != "cancelled" || j.Reason != "superseded" {
+		t.Fatalf("stale automatic review %+v", j)
+	}
+	for _, want := range []string{"pr 1 at first", "group", "pr 5"} {
+		f.release <- struct{}{}
+		p := <-f.started
+		got := "group"
+		if p.Group == "" {
+			got = "pr " + string(rune('0'+p.PR)) + " at " + p.HeadSHA
+			if p.PR == 5 {
+				got = "pr 5"
+			}
+		}
+		if got != want {
+			t.Fatalf("started %s, want %s", got, want)
+		}
+	}
+	f.release <- struct{}{}
+	waitState(t, q, earlier.ID, "completed")
+	waitState(t, q, jobs[0].ID, "completed")
+}
+
 // A group job that finds a member's head moved, as after a fix's push,
 // waits again at the new heads for that member's review instead of failing.
 func TestGroupJobWaitsForAMovedMember(t *testing.T) {

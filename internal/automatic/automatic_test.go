@@ -462,6 +462,33 @@ func TestNewerHeadReplacesAWaitingReviewInPlace(t *testing.T) {
 	h.waitIdle()
 }
 
+// A head GitHub already shows moved on before discovery does stays pending
+// in its place and is tried again a minute later; the new head discovery
+// brings replaces it there.
+func TestHeadMovedBeforeDiscoveryKeepsItsPlace(t *testing.T) {
+	h := newHarness(t)
+	h.observe(pr{number: 1, head: "a1", authored: true})
+	h.observe(pr{number: 1, head: "a2", authored: true})
+	h.scheduler.mu.Lock()
+	since := h.scheduler.load().Repositories["org/repo"].PRs[1].Waiting
+	h.scheduler.mu.Unlock()
+	h.exec.setHead(1, "a3", false)
+	h.now = h.now.Add(time.Second)
+	h.pass()
+	h.want()
+	h.scheduler.mu.Lock()
+	state := *h.scheduler.load().Repositories["org/repo"].PRs[1]
+	h.scheduler.mu.Unlock()
+	if state.Pending != "a2" || !state.Waiting.Equal(since) || !state.RetryAt.Equal(h.now.Add(time.Minute)) {
+		t.Fatalf("after a moved head %+v, want a2 pending since %v, retried in a minute", state, since)
+	}
+	h.now = h.now.Add(time.Second)
+	h.observe(pr{number: 1, head: "a3", authored: true})
+	h.pass()
+	h.want("org/repo#1@a3:new_head")
+	h.waitIdle()
+}
+
 // A pass leaves at most two automatic jobs per running slot waiting in the
 // queue. The rest stay pending, and the PRs that have waited longest go
 // first, whatever their numbers.
@@ -490,6 +517,21 @@ func TestPassKeepsTheQueueShortAndServesTheLongestWaitingFirst(t *testing.T) {
 	if err != nil || len(o.Repositories) != 1 || o.Repositories[0].Pending != 2 {
 		t.Fatalf("overview %+v %v, want PRs 2 and 3 pending", o, err)
 	}
+	// A pending PR pushed again keeps its place in the scheduler's line.
+	waitingSince := func(n int) time.Time {
+		h.scheduler.mu.Lock()
+		defer h.scheduler.mu.Unlock()
+		return h.scheduler.load().Repositories["org/repo"].PRs[n].Waiting
+	}
+	before := waitingSince(3)
+	h.now = h.now.Add(time.Minute)
+	open[2].head = "c3"
+	h.observe(open...)
+	if after := waitingSince(3); !after.Equal(before) || after.IsZero() {
+		t.Fatalf("PR 3 waits since %v after a push, want %v", after, before)
+	}
+	open[2].head = "c2"
+	h.observe(open...)
 	// A new head of a waiting PR replaces its review though the queue is full.
 	open[3].head = "d3"
 	h.observe(open...)

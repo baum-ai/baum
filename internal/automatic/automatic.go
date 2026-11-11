@@ -850,8 +850,10 @@ func (s *Scheduler) submit(ctx context.Context, v view, w work, now time.Time) (
 		// Nothing changed that anyone needs announcing.
 		result, quiet = stopRepository, true
 	case errors.Is(err, jobs.ErrHeadChanged):
-		// Discovery reports the newer head, which triggers again.
-		pr.Pending, pr.Trigger = "", ""
+		// GitHub shows a newer head than discovery did: it stays pending,
+		// keeping its place (Waiting), and is tried again a minute later,
+		// by when discovery has usually replaced the pending head.
+		pr.RetryAt = now.Add(time.Minute)
 	case errors.As(err, &notAllowed):
 		// Turned off since this pass read the settings: the next pass drops
 		// the repository's state, or submits once it is back on.

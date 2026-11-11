@@ -860,8 +860,10 @@ func (q *Queue) Generate(ctx context.Context, items []Item, mode string, isolati
 // reviewMembers queues the reviews a group job awaits, except those of
 // members already queued or running. An automatic group's are automatic
 // reviews of the members' new heads. A person's group makes the queued
-// automatic review of a member's current head theirs (promote), so their
-// group does not wait behind automatic work.
+// automatic review of a member's current head theirs (promote), and queues
+// its own review of a member whose waiting automatic review is of another
+// head (SubmitConfirmed supersedes that one), so their group never waits
+// behind automatic work.
 func (q *Queue) reviewMembers(ctx context.Context, group Prepared, automatic, isolation bool) error {
 	members, _ := groupMembers(group.Members)
 	q.mu.Lock()
@@ -878,7 +880,7 @@ func (q *Queue) reviewMembers(ctx context.Context, group Prepared, automatic, is
 				continue
 			}
 		}
-		if !q.reviewPending(group.Clone, number) {
+		if !q.reviewPending(group.Clone, number, !automatic) {
 			items = append(items, Item{Clone: group.Clone, PR: number})
 		}
 	}
@@ -1033,9 +1035,14 @@ var groupRequeueWait = 10 * time.Second
 
 // reviewPending reports whether a pull request's own review is queued or
 // running in a clone. Only one in the group's clone counts: each clone has
-// its own review store, which the group's review reads. mu is held.
-func (q *Queue) reviewPending(clone string, number int) bool {
+// its own review store, which the group's review reads. For a person's
+// group (manual) a queued automatic review does not count: the person's
+// start supersedes it. mu is held.
+func (q *Queue) reviewPending(clone string, number int, manual bool) bool {
 	for _, j := range q.jobs {
+		if manual && j.Automatic && j.State == "queued" {
+			continue
+		}
 		if j.Kind == "" && j.Group == "" && j.PR == number && j.Clone == clone && (j.State == "queued" || j.State == "running") {
 			return true
 		}

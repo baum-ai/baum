@@ -3321,7 +3321,10 @@ first (a waiting one that took a newer head keeps its place, see
 job holds (`Queue.SubmitConfirmed` with the same inputs) makes that job
 theirs: it keeps its id, loses `automatic` and `trigger`, and goes ahead with
 the person's jobs; a person's group review does the same for the waiting
-automatic reviews of its members at their current heads. The
+automatic reviews of its members at their current heads, and queues its own
+review of a member whose waiting automatic review is of another head, which
+supersedes that one. A promoted job settles as a person's: an interrupted
+run is not retried automatically, and a missing clone fails it. The
 `job_concurrency` preference lowers the
 limit (`PUT api/settings/job-concurrency`, 1–4), and `Queue.SetConcurrency`
 applies it to the running queue: lowering it stops no running job, it only
@@ -3482,8 +3485,9 @@ a person would have to confirm: a fork or an author without known write
 access, and a draft. A model without a price, cursor-agent included, runs
 automatically like any other. Under the queue mutex
 it refuses with `ErrRestarting` while draining, `ErrBusy` while the PR (or the
-group) has a running job or a queued one other than its own automatic review
-of another head (it never joins one),
+group) has a running job or a queued one, except a pull request's (never a
+group's) queued automatic review of another head (see below; it never joins
+one),
 `ErrDuplicate` when any job, manual or automatic, already exists for that head
 (a group's: its member heads) (except a single
 automatic job a daemon stop or restart interrupted, which `Interrupted` lists
@@ -4166,8 +4170,9 @@ it and `Queue.SubmitAutomatic` decides each job.
   group queues are not bounded. A head whose latest saved review
   already has it is skipped. Outcomes: queued, or `ErrDuplicate`, marks the
   head handled; `ErrBusy` waits for the PR's job; `ErrRestarting` ends the
-  pass and is retried; `ErrHeadChanged` drops it (discovery brings the new
-  head); a `NotAllowedError` (turned off meanwhile)
+  pass and is retried; `ErrHeadChanged` keeps it pending, in its place, and
+  tries it again a minute later, by when discovery has usually brought the
+  new head, which replaces it; a `NotAllowedError` (turned off meanwhile)
   leaves the head for the next pass, which forgets it if the repository stays
   off; a `NotAutomaticError` (a draft, a fork or an author without write
   access) drops it with its reason as the notice; other errors retry
