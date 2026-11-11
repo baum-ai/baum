@@ -21,11 +21,13 @@ type Caps struct {
 	MaxComments                int
 	MaxHunkPatchLines          int
 	// MaxBytes bounds the encoded bundle apart from the diff index's hunk
-	// entries; patch text counts here. MaxDiffIndexBytes bounds those entries.
+	// entries; patch text counts here. MaxDiffIndexBytes bounds those
+	// entries: Fit collapses files' hunks, then leaves files out, to fit it.
 	MaxBytes          int
 	MaxDiffIndexBytes int
 	// MaxDiffFiles and MaxDiffPatchBytes bound what assembly reads for the
-	// diff index.
+	// diff index: past MaxDiffFiles a file's patch is not read, and past
+	// MaxDiffPatchBytes assembly fails.
 	MaxDiffFiles      int
 	MaxDiffPatchBytes int64
 	// MaxImageAltBytes bounds each description image's alt text and heading.
@@ -178,12 +180,14 @@ func joinLines(lines []string) string { return strings.Join(lines, "\n") }
 // bundle cannot be made to fit its byte limits.
 const EvidenceBudgetExceededReason = "evidence byte budget exceeded"
 
-// Fit trims the encoded bundle in the documented order until its
-// content is within MaxBytes, then checks the diff index against its own
-// MaxDiffIndexBytes. The diff index
-// is every hunk's entry without its patch text; patch text is content. So
-// trimming can empty every patch but never drops a hunk, and the hunk count
-// alone never exceeds the content limit. The documented order is assistant
+// Fit first fits the diff index within its own MaxDiffIndexBytes
+// (fitDiffIndex: collapsing a file's hunks to one entry, then leaving files
+// out, with a note for each), then trims the encoded bundle in the
+// documented order until its content is within MaxBytes. The diff index is
+// every hunk's entry without its patch text; patch text is content. So
+// content trimming can empty every patch but never drops a hunk, and the
+// hunk count alone never exceeds the content limit. The index is fitted
+// first so its notes count as content. The documented order is assistant
 // replies, older prompts, command paraphrases, comment bodies oldest first
 // (keeping review verdicts), generated and vendored patch text, superseded
 // session decisions, ordinary patch text, the text of cited prompts, then whole
@@ -207,11 +211,13 @@ const EvidenceBudgetExceededReason = "evidence byte budget exceeded"
 // parsing keeps past the line cap, and a secret the cap runs through is
 // masked whole.
 func Fit(bundle *Bundle, caps Caps) error {
+	fitDiffIndex(bundle, caps.MaxDiffIndexBytes)
 	capPatches(bundle, caps)
 	capAttachments(bundle, caps)
 	if err := fitContent(bundle, caps); err != nil {
 		return err
 	}
+	// A backstop: only a limit below an empty index's two bytes fails here.
 	if limit := caps.MaxDiffIndexBytes; limit > 0 && diffIndexBytes(bundle) > limit {
 		return fmt.Errorf("%s: diff index limit %d bytes", EvidenceBudgetExceededReason, limit)
 	}
@@ -333,12 +339,9 @@ func fits(bundle *Bundle, limit int) bool {
 // counts as content too, so trimming content never grows the index. The
 // encoded bundle's size is this plus the content fits measures.
 func diffIndexBytes(bundle *Bundle) int {
-	index := slices.Clone(bundle.Diff)
-	for i := range index {
-		index[i].Patch = ""
-		if strings.HasPrefix(index[i].TextlessReason, "trimmed_") {
-			index[i].Textless, index[i].TextlessReason = false, ""
-		}
+	index := make([]Hunk, len(bundle.Diff))
+	for i, hunk := range bundle.Diff {
+		index[i] = indexEntry(hunk)
 	}
 	encoded, _ := json.Marshal(index)
 	return len(encoded)

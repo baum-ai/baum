@@ -560,23 +560,35 @@ func TestKeyAcrossTheHunkLineCapIsMaskedWhole(t *testing.T) {
 	}
 }
 
-// A diff index over its budget fails the assembly; it is never shortened.
-func TestDiffIndexOverItsBudgetFails(t *testing.T) {
+// A diff index over its budget, or a diff over its file limit, still
+// assembles: the bundle says what it collapsed, left out or did not read.
+func TestDiffIndexOverItsBudgetDegrades(t *testing.T) {
 	repo := assembletest.NewRepo(t, assembletest.Options{})
+	full := mustAssemble(t, repo, repo.Evidence(), nil)
 	r, err := assembleWith(t, repo, repo.Evidence(), nil, func(req *assemble.Request, _ *assemble.Assembler) {
 		req.Limits.Caps.MaxDiffIndexBytes = 100
 	})
-	if err == nil || !strings.HasPrefix(err.Error(), bundle.EvidenceBudgetExceededReason) {
-		t.Fatalf("err = %v", err)
+	if err != nil {
+		t.Fatalf("index budget: %v", err)
 	}
-	if r.result.JSON != nil {
-		t.Error("a bundle was returned alongside the error")
+	if len(r.result.Bundle.Diff) >= len(full.result.Bundle.Diff) || !slices.ContainsFunc(r.result.Bundle.Truncated, func(note string) bool {
+		return strings.Contains(note, "diff index")
+	}) {
+		t.Errorf("index budget: diff %+v, notes %q", r.result.Bundle.Diff, r.result.Bundle.Truncated)
 	}
-	_, err = assembleWith(t, repo, repo.Evidence(), nil, func(req *assemble.Request, _ *assemble.Assembler) {
-		req.Limits.Caps.MaxDiffFiles = 2
+	r, err = assembleWith(t, repo, repo.Evidence(), nil, func(req *assemble.Request, _ *assemble.Assembler) {
+		req.Limits.Caps.MaxDiffFiles = 1
 	})
-	if err == nil || !strings.Contains(err.Error(), "diff files") {
-		t.Errorf("file budget: err = %v", err)
+	if err != nil {
+		t.Fatalf("file limit: %v", err)
+	}
+	unread := slices.ContainsFunc(r.result.Bundle.Diff, func(hunk bundle.Hunk) bool {
+		return hunk.Textless && hunk.TextlessReason == bundle.FileLimitReason && hunk.Patch == ""
+	})
+	if !unread || !slices.ContainsFunc(r.result.Bundle.Truncated, func(note string) bool {
+		return strings.Contains(note, "over the 1-file limit")
+	}) {
+		t.Errorf("file limit: diff %+v, notes %q", r.result.Bundle.Diff, r.result.Bundle.Truncated)
 	}
 }
 

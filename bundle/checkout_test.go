@@ -360,6 +360,24 @@ func TestWriteArchiveKeepsComparedTextWithNULs(t *testing.T) {
 	}
 }
 
+// A compared file whose patch was not read (past the diff's file limit) is
+// sniffed like any other: the diff never showed it was text.
+func TestWriteArchiveSniffsUnreadComparedFiles(t *testing.T) {
+	export := fakeExport{head: map[string]string{"logo.png": "\x89PNG\x00", "notes.txt": "text\n"}}
+	hunks := []Hunk{
+		{Path: "logo.png", Textless: true, TextlessReason: FileLimitReason},
+		{Path: "notes.txt", Textless: true, TextlessReason: FileLimitReason},
+	}
+	config := CheckoutConfig{MaxFileBytes: 1024, MaxTotalBytes: 1024, MaxTotalFiles: 10}
+	omissions, files := writeAndReadArchive(t, export, hunks, config)
+	if want := []CheckoutOmission{{Path: "logo.png", Reason: OmittedBinaryReason}}; !slices.Equal(omissions, want) {
+		t.Fatalf("omissions = %+v, want %+v", omissions, want)
+	}
+	if files["head/notes.txt"] != "text\n" {
+		t.Fatalf("unread text file missing: %q", files)
+	}
+}
+
 // Over the byte or file budget, the export keeps the compared paths at both
 // trees, fills the rest of the budget with other head files, and omits what
 // does not fit instead of failing; the archive unpacks under the same caps.

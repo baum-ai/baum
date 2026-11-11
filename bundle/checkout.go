@@ -212,7 +212,9 @@ func (b *CheckoutBuilder) WriteArchive(ctx context.Context, pinned PinnedExport,
 	diffBinary, diffText := map[string]bool{}, map[string]bool{}
 	for _, hunk := range hunks {
 		kind := diffText
-		if hunk.Textless && hunk.TextlessReason == OmittedBinaryReason {
+		// A file whose patch was not read is sniffed like a binary one: the
+		// diff never showed it was text.
+		if hunk.Textless && (hunk.TextlessReason == OmittedBinaryReason || hunk.TextlessReason == FileLimitReason) {
 			kind = diffBinary
 		}
 		kind[hunk.Path] = true

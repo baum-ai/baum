@@ -9,6 +9,8 @@ import (
 	"math/rand/v2"
 	"os"
 	"path/filepath"
+	"reflect"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -383,14 +385,61 @@ func TestDiffLimitsFailNamingTheCheckoutBudget(t *testing.T) {
 		fetched++
 		return []byte(hunkA), nil
 	}
-	if _, _, err := BuildDiffIndexWithin(comparison, fetch, RoleForPath, DiffLimits{MaxFiles: 1}); err == nil || err.Error() != BudgetExceededReason("diff files") || fetched != 0 {
-		t.Fatalf("file limit: %v after %d fetches", err, fetched)
-	}
 	if _, _, err := BuildDiffIndexWithin(comparison, fetch, RoleForPath, DiffLimits{MaxFiles: 2, MaxPatchBytes: int64(len(hunkA)) + 1}); err == nil || err.Error() != BudgetExceededReason("diff bytes") || fetched != 2 {
 		t.Fatalf("byte limit: %v after %d fetches", err, fetched)
 	}
 	if hunks, _, err := BuildDiffIndexWithin(comparison, fetch, RoleForPath, DiffLimits{MaxFiles: 2, MaxPatchBytes: 2 * int64(len(hunkA))}); err != nil || len(hunks) != 2 {
 		t.Fatalf("within limits: %v %+v", err, hunks)
+	}
+}
+
+// Past the file limit, a file's patch is not read: it is one textless entry
+// with the comparison's line counts. Generated and vendored files are the
+// first left unread, then the rest from the end of the comparison.
+func TestFilesPastTheFileLimitAreNotRead(t *testing.T) {
+	added, removed := int64(7), int64(3)
+	comparison := Comparison{Files: []FileChange{
+		{NewPath: "a.go", Status: "modified"},
+		{NewPath: "vendor/lib.go", Status: "modified", Additions: &added, Deletions: &removed},
+		{NewPath: "new.go", OldPath: "old.go", Status: "renamed"},
+		{NewPath: "c.go", Status: "modified"},
+	}}
+	var fetched []string
+	fetch := func(paths ...string) ([]byte, error) {
+		fetched = append(fetched, paths[len(paths)-1])
+		return []byte(hunkA), nil
+	}
+	hunks, notes, err := BuildDiffIndexWithin(comparison, fetch, RoleForPath, DiffLimits{MaxFiles: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(fetched, []string{"a.go", "new.go"}) {
+		t.Fatalf("fetched %q, want a.go and new.go", fetched)
+	}
+	var paths []string
+	for _, hunk := range hunks {
+		paths = append(paths, hunk.Path)
+	}
+	if !slices.Equal(paths, []string{"a.go", "vendor/lib.go", "new.go", "c.go"}) {
+		t.Fatalf("paths %q: the comparison's order must be kept", paths)
+	}
+	lib, c := hunks[1], hunks[3]
+	want := Hunk{ID: fileHunkID("vendor/lib.go"), Path: "vendor/lib.go", Change: "modified", Role: RoleVendored, Additions: 7, Deletions: 3, DiffURL: HunkDiffURL("vendor/lib.go", 0), Textless: true, TextlessReason: FileLimitReason}
+	if !reflect.DeepEqual(lib, want) {
+		t.Fatalf("unread vendored file:\n got %+v\nwant %+v", lib, want)
+	}
+	if c.ID != fileHunkID("c.go") || !c.Textless || c.TextlessReason != FileLimitReason || c.Patch != "" || c.Additions != 0 {
+		t.Fatalf("unread code file: %+v", c)
+	}
+	if hunks[2].Textless || hunks[2].OldPath != "old.go" {
+		t.Fatalf("read rename: %+v", hunks[2])
+	}
+	if want := "patch text not read for 2 file(s) over the 2-file limit, generated and vendored files first; each is one diff index entry"; !slices.Contains(notes, want) {
+		t.Fatalf("notes %q, want %q", notes, want)
+	}
+	fetched = nil
+	if _, notes, err := BuildDiffIndexWithin(comparison, fetch, RoleForPath, DiffLimits{MaxFiles: 4}); err != nil || len(fetched) != 4 || len(notes) != 0 {
+		t.Fatalf("within the limit: %v, fetched %q, notes %q", err, fetched, notes)
 	}
 }
 

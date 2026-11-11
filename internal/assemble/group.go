@@ -177,8 +177,25 @@ func MergeGroup(ctx context.Context, name string, members []GroupMember, previou
 		return GroupResult{}, fmt.Errorf("previous group review: %w", err)
 	}
 	b.Sources["previous_version"] = b.Previous != nil
+	// Fit may collapse a file's hunks to one entry of a new ID: it belongs to
+	// every member that held one of the file's hunks.
+	pathMembers := map[string][]int{}
+	for _, hunk := range b.Diff {
+		for _, number := range hunkMembers[hunk.ID] {
+			if !slices.Contains(pathMembers[hunk.Path], number) {
+				pathMembers[hunk.Path] = append(pathMembers[hunk.Path], number)
+			}
+		}
+	}
 	if err := bundle.Fit(&b, caps); err != nil {
 		return GroupResult{}, err
+	}
+	for _, hunk := range b.Diff {
+		if _, known := hunkMembers[hunk.ID]; !known || hunk.TextlessReason == bundle.CollapsedReason {
+			hunkMembers[hunk.ID] = slices.SortedFunc(slices.Values(pathMembers[hunk.Path]), func(a, b int) int {
+				return slices.Index(numbers, a) - slices.Index(numbers, b)
+			})
+		}
 	}
 	if err := bundle.SetDigest(&b); err != nil {
 		return GroupResult{}, err
