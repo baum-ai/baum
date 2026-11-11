@@ -582,21 +582,24 @@ var boundTools = map[string]bool{"Bash": true, "exec_command": true, "shell": tr
 
 // gitWriteDirs are the directories in which one tool call runs a git
 // subcommand that can create a commit, one for each such command, as agentcmd
-// reads it: only commands count, never quoted text, heredoc bodies or
-// substitutions; `cd`, `pushd`, `git -C`, `bash -c` and a Codex workdir move
-// the directory, and one that cannot be known (`cd -`, `~`, a variable, a
-// directory change inside a branch) leaves the command unplaced. A code-mode
-// program contributes each call whose command and workdir are literal.
+// reads it: only commands that run count (in a command substitution or a
+// script fed to a shell too), never quoted text or a heredoc that is only
+// data; `cd`, `pushd`, `git -C`, `bash -c`, wrappers such as `env -C` and a
+// Codex workdir move the directory, and one that cannot be known (`cd -`,
+// `~`, a variable, a directory change inside a branch) leaves the command
+// unplaced. A code-mode program contributes each call whose command and
+// workdir are literal.
 //
-// A command redirected with --git-dir or --work-tree, a --dry-run, and every
-// command of a call that mentions GIT_DIR or GIT_WORK_TREE (agentcmd does not
-// follow those variables) are left out, as is anything agentcmd cannot read.
+// Left out: a command run on another host or in a container, one run by
+// find, one redirected with --git-dir, --work-tree or core.worktree, a
+// --dry-run, every command of a call that mentions a variable of
+// gitEnvNames (agentcmd does not follow them), and anything agentcmd cannot
+// read.
 func gitWriteDirs(ctx context.Context, name string, input json.RawMessage, base string) []string {
 	// Most calls run no git at all; agentcmd only names git from a literal
 	// executable, so an input without the word cannot run it (about 30 µs
 	// of analysis saved per call).
-	if !bytes.Contains(input, []byte("git")) ||
-		bytes.Contains(input, []byte("GIT_DIR")) || bytes.Contains(input, []byte("GIT_WORK_TREE")) {
+	if !bytes.Contains(input, []byte("git")) || mentionsGitEnv(input) {
 		return nil
 	}
 	engine, err := commandEngine()
@@ -653,7 +656,54 @@ func boundToolName(name string, input json.RawMessage) string {
 	return ""
 }
 
-// writeDirsOf reads the creating git commands of an analysis.
+// gitEnvNames are the environment variables that move git to another
+// repository or working tree: GIT_DIR, GIT_WORK_TREE, GIT_COMMON_DIR, and the
+// GIT_CONFIG_* ones, which can set core.worktree.
+var gitEnvNames = [][]byte{[]byte("GIT_DIR"), []byte("GIT_WORK_TREE"), []byte("GIT_COMMON_DIR"), []byte("GIT_CONFIG")}
+
+// mentionsGitEnv reports whether a call may set one of gitEnvNames, which
+// agentcmd does not follow: the name appears in the input or in any string it
+// holds once JSON escapes are decoded, or a string that names a GIT_ variable
+// also holds a JavaScript \u or \x escape that could spell one.
+func mentionsGitEnv(input json.RawMessage) bool {
+	named := func(s []byte) bool {
+		return slices.ContainsFunc(gitEnvNames, func(name []byte) bool { return bytes.Contains(s, name) })
+	}
+	if named(input) {
+		return true
+	}
+	var value any
+	if json.Unmarshal(input, &value) != nil {
+		return false
+	}
+	found := false
+	var walk func(any)
+	walk = func(v any) {
+		switch v := v.(type) {
+		case string:
+			s := []byte(v)
+			if named(s) || bytes.Contains(s, []byte("GIT_")) && (bytes.Contains(s, []byte(`\u`)) || bytes.Contains(s, []byte(`\x`))) {
+				found = true
+			}
+		case []any:
+			for _, x := range v {
+				walk(x)
+			}
+		case map[string]any:
+			for _, x := range v {
+				walk(x)
+			}
+		}
+	}
+	walk(value)
+	return found
+}
+
+// writeDirsOf reads the creating git commands of an analysis. Only commands
+// run on this host count: agentcmd follows ssh, docker and kubectl into a
+// remote or container namespace, whose paths are not this clone's. A command
+// run by find (-exec or -execdir) is left out, since -execdir runs it in each
+// match's directory.
 func writeDirsOf(analysis model.Analysis) []string {
 	nodes := make(map[string]*model.Node, len(analysis.Nodes))
 	for i := range analysis.Nodes {
@@ -665,35 +715,79 @@ func writeDirsOf(analysis model.Analysis) []string {
 			continue
 		}
 		node := nodes[action.Node]
-		if node == nil || node.Command == nil || node.Reach == model.ReachUnreachable || redirected(node.Command.Args, action.Git.Subcommand) {
+		if node == nil || node.Command == nil || node.Reach == model.ReachUnreachable ||
+			node.Context.Namespace.Kind != model.NamespaceHost || slices.Contains(node.Command.Wrappers, "find") ||
+			redirected(node.Command.Args) {
 			continue
 		}
 		for _, r := range action.Resources {
-			if r.Role == "repository" && r.Resolved != "" && path.IsAbs(r.Resolved) {
-				dirs = append(dirs, filepath.FromSlash(path.Clean(r.Resolved)))
+			if r.Role != "repository" || r.Namespace.Kind != model.NamespaceHost {
+				continue
+			}
+			if dir, ok := hostDir(r.Resolved); ok {
+				dirs = append(dirs, dir)
 			}
 		}
 	}
 	return dirs
 }
 
-// redirected reports whether git's arguments point it at another repository
-// or working tree before the subcommand, or ask for a dry run, or are not
-// known before the subcommand.
-func redirected(args []model.Value, subcommand string) bool {
-	before := true
-	for _, arg := range args {
-		if before && arg.Concrete() && arg.Text == subcommand {
-			before = false
+// hostDir is a resolved directory as a path of this host. agentcmd resolves
+// in slash form, so a backslash means a Windows path it took as relative, and
+// a "~", "$" or "+" segment one it joined literally (`workdir: "~/r"`,
+// `pushd +1`); those are unknown.
+func hostDir(resolved string) (string, bool) {
+	if resolved == "" || strings.Contains(resolved, `\`) {
+		return "", false
+	}
+	clean := path.Clean(resolved)
+	for i, segment := range strings.Split(clean, "/") {
+		if segment != "" && strings.ContainsAny(segment[:1], "~$+") || i > 0 && strings.Contains(segment, ":") {
+			return "", false
+		}
+	}
+	dir := filepath.FromSlash(clean)
+	if !filepath.IsAbs(dir) {
+		return "", false
+	}
+	return dir, true
+}
+
+// gitValueOptions are git's global options that take the next argument as
+// their value.
+var gitValueOptions = map[string]bool{"-C": true, "-c": true, "--git-dir": true, "--work-tree": true, "--namespace": true, "--config-env": true}
+
+// redirected reports whether git's global options point it at another
+// repository or working tree or are not known, or the subcommand's arguments
+// ask for a dry run.
+func redirected(args []model.Value) bool {
+	i := 0
+	for ; i < len(args); i++ {
+		arg := args[i]
+		switch {
+		case !arg.Concrete():
+			return true
+		case arg.Text == "--git-dir" || arg.Text == "--work-tree" ||
+			strings.HasPrefix(arg.Text, "--git-dir=") || strings.HasPrefix(arg.Text, "--work-tree="):
+			return true
+		case gitValueOptions[arg.Text]:
+			// The value must be known; `-c core.worktree=...` moves the
+			// working tree like --work-tree does.
+			i++
+			if i >= len(args) || !args[i].Concrete() {
+				return true
+			}
+			if (arg.Text == "-c" || arg.Text == "--config-env") && strings.HasPrefix(strings.ToLower(args[i].Text), "core.worktree") {
+				return true
+			}
+			continue
+		case strings.HasPrefix(arg.Text, "-"):
 			continue
 		}
-		switch {
-		case before && !arg.Concrete():
-			return true
-		case before && (arg.Text == "--git-dir" || arg.Text == "--work-tree" ||
-			strings.HasPrefix(arg.Text, "--git-dir=") || strings.HasPrefix(arg.Text, "--work-tree=")):
-			return true
-		case !before && arg.Text == "--dry-run":
+		break
+	}
+	for _, arg := range args[min(i+1, len(args)):] {
+		if arg.Text == "--dry-run" {
 			return true
 		}
 	}

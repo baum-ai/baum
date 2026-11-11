@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -111,12 +112,63 @@ func TestWriteDirs(t *testing.T) {
 		{"git --git-dir=/x/.git commit -m m", nil},
 		{"git --git-dir=/x/.git -C /y commit -q", nil},
 		{"git --work-tree /x commit -m m", nil},
+		{"git -C commit --git-dir=/x/.git commit -q", nil},
+		{"git -c core.editor=true -C /x commit -q", []string{"/x"}},
+		{"git -c core.worktree=/x commit -q", nil},
+		{"GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.worktree GIT_CONFIG_VALUE_0=/x git commit -q", nil},
+		{"GIT_COMMON_DIR=/x/.git git commit -q", nil},
+		{"git --config-env core.worktree=WT commit -q", nil},
+		{"ssh host 'cd /w/sub && git commit -q -m x'", nil},
+		{"ssh host git -C /w/sub commit -q", nil},
+		{"docker exec -w /w/sub ctr git commit -q", nil},
+		{"docker run --rm -w /w img git commit -q", nil},
+		{"kubectl exec pod -- git -C /w commit -q", nil},
+		{"find /other -name .git -execdir git pull \\;", nil},
+		{"pushd /a; pushd /b; pushd +1; git commit -q", nil},
 		{"git commit -m 'unterminated", nil},
 		{"go test ./...", nil},
 	} {
 		input, _ := json.Marshal(map[string]string{"command": tc.command})
 		if got := gitWriteDirs(context.Background(), "Bash", input, "/w"); !slices.Equal(got, tc.want) {
 			t.Errorf("%q: %v, want %v", tc.command, got, tc.want)
+		}
+	}
+}
+
+// realRollout is a code-mode exec input as Codex records it: a multi-line
+// command with JavaScript escapes, then an MCP call.
+var realRollout, _ = json.Marshal(`text(await tools.exec_command({cmd:"git add a b\n git diff --cached --check\n git commit -m 'Subject' -m 'Body text.'","workdir":"/abs/wt","sandbox_permissions":"require_escalated","justification":"May I commit?","max_output_tokens":2500,"yield_time_ms":1000}));
+text(await tools.mcp__codex_apps__github_get_user_login({}));
+`)
+
+func TestHostDir(t *testing.T) {
+	cases := []struct {
+		in, want string
+		ok       bool
+	}{
+		{"/w/sub", "/w/sub", true},
+		{"/w/./sub/..", "/w", true},
+		{"", "", false},
+		{"sub", "", false},
+		{"/w/~/r", "", false},
+		{"/w/$HOME/r", "", false},
+		{"/b/+1", "", false},
+		{`/w/C:\r`, "", false},
+		{"/w/C:/r", "", false},
+	}
+	if runtime.GOOS == "windows" {
+		cases = []struct {
+			in, want string
+			ok       bool
+		}{
+			{"C:/Users/me/repo", `C:\Users\me\repo`, true},
+			{"C:/Users/me/repo/C:/r", "", false},
+			{"/abs", "", false},
+		}
+	}
+	for _, tc := range cases {
+		if got, ok := hostDir(tc.in); got != tc.want || ok != tc.ok {
+			t.Errorf("hostDir(%q) = %q, %v; want %q, %v", tc.in, got, ok, tc.want, tc.ok)
 		}
 	}
 }
@@ -145,6 +197,14 @@ await tools.exec_command({cmd:"git commit -q -m z", workdir:dir});`
 		{"unbound tool", "run_terminal_cmd", json.RawMessage(`{"command":"git commit -q","workdir":"/f"}`), []string{"/f"}},
 		{"no command", "write_stdin", json.RawMessage(`{"session_id":3,"chars":""}`), nil},
 		{"code-mode GIT_DIR", "exec", json.RawMessage(`"await tools.exec_command({cmd:\"GIT_DIR=/x git commit\"})"`), nil},
+		{"code-mode GIT_DIR in a \\u escape", "exec", json.RawMessage(`"await tools.exec_command({cmd:\"GIT_\\u0044IR=/x/.git git commit -q\", workdir:\"/a\"})"`), nil},
+		{"code-mode GIT_DIR in a \\x escape", "exec", json.RawMessage(`"await tools.exec_command({cmd:\"GIT_\\x44IR=/x/.git git commit -q\", workdir:\"/a\"})"`), nil},
+		{"Bash GIT_DIR in a JSON escape", "Bash", json.RawMessage(`{"command":"GIT_DIR=/x/.git git commit -q"}`), nil},
+		{"real code-mode rollout", "exec", realRollout, []string{"/abs/wt"}},
+		{"home workdir", "exec_command", json.RawMessage(`{"cmd":"git commit -q","workdir":"~/r"}`), nil},
+		{"variable workdir", "exec_command", json.RawMessage(`{"cmd":"git commit -q","workdir":"$HOME/r"}`), nil},
+		{"windows workdir", "exec_command", json.RawMessage(`{"cmd":"git commit -q","workdir":"C:\\r"}`), nil},
+		{"windows workdir with slashes", "exec_command", json.RawMessage(`{"cmd":"git commit -q","workdir":"C:/r"}`), nil},
 	} {
 		if got := gitWriteDirs(context.Background(), tc.tool, tc.input, "/base"); !slices.Equal(got, tc.want) {
 			t.Errorf("%s: %v, want %v", tc.name, got, tc.want)

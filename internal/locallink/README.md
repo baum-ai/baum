@@ -66,15 +66,24 @@ so each `tools.exec_command({...})` call is a command with its own `workdir`
 and no `cd` carried between them. A command or workdir the program builds at
 run time (a template, a variable, a shorthand `{workdir}`, a spread or
 computed key) gives no evidence. Another tool marked as a command is read as
-shell from its `command` or `cmd` field. Only commands count, never quoted
-text, heredoc bodies or substitutions, and a script that does not parse gives
-no evidence. A `cd` or `pushd` to a literal path moves the directory within
-its scope (a subshell has its own), and `bash -c` scripts and shell functions
-are followed. A dynamic path, `~` or `cd -` leaves the directory unknown, and
-so does a `cd` inside a conditional or loop. `git notes` and `git apply` make
-no commit in a working tree's history. Git redirected by `--git-dir` or
-`--work-tree`, a `--dry-run`, and every command of a call that mentions
-`GIT_DIR` or `GIT_WORK_TREE` are unplaced. A directory inside a nested repository (a
+shell from its `command` or `cmd` field. Only commands that run count, in a
+command substitution or a script fed to a shell too, never quoted text or a
+heredoc that is only data, and a script that does not parse gives no
+evidence. A `cd` or `pushd` to a literal path moves the directory within its
+scope (a subshell has its own), and `bash -c` scripts, shell functions and
+wrappers (`env -C`, `timeout`, `nohup`, `xargs`) are followed. A dynamic path,
+`~`, `cd -` or `pushd +N` leaves the directory unknown, and so does a `cd`
+inside a conditional or loop. `git notes` and `git apply` make no commit in a
+working tree's history. Unplaced, too:
+- commands run on another host or in a container (`ssh`, `docker`, `kubectl`);
+- commands run by `find`, since `-execdir` runs them in each match's directory;
+- Git redirected by `--git-dir`, `--work-tree` or `core.worktree`;
+- a `--dry-run`;
+- every command of a call that mentions `GIT_DIR`, `GIT_WORK_TREE`,
+  `GIT_COMMON_DIR` or a `GIT_CONFIG` variable, which agentcmd does not follow;
+- a Windows path in a `workdir`.
+
+A directory inside a nested repository (a
 submodule, or a clone within the working tree: a `.git` entry below the working
 tree's root) is not placed, since its commits are not in this reflog.
 Directories map to the deepest existing linked worktree, else a removed
