@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -94,12 +95,12 @@ func (d *reviewDaemon) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		switch q.Get("pr") {
 		case "12":
 			if running {
-				reply(`{"available":true,"jobs":[{"id":"j-fix","kind":"fix","state":"running","draft":0},{"id":"j-run","state":"running","draft":%d,"head_sha":"h12"}]}`, draftN)
+				reply(`{"available":true,"jobs":[{"id":"j-fix","kind":"fix","state":"running","draft":0},{"id":"j-run","state":"running","draft":%d,"head_sha":"h12"},{"id":"j-chat","kind":"chat","state":"running","draft":5,"head_sha":"h12"},{"id":"j-fix2","kind":"fix","state":"running","draft":6},{"id":"j-group","group":"g-web","state":"running","draft":7}]}`, draftN)
 			} else {
 				reply(`{"available":true,"jobs":[{"id":"j-old","state":"done","draft":0}]}`)
 			}
 		case "13":
-			reply(`{"available":true,"jobs":[{"id":"j-done","state":"done","head_sha":"h13","context_failed":true}]}`)
+			reply(`{"available":true,"jobs":[{"id":"j-done","state":"completed","head_sha":"h13","context_failed":true}]}`)
 		default:
 			reply(`{"available":true,"jobs":[]}`)
 		}
@@ -291,6 +292,14 @@ func TestReviewToolsSayWhenAPartIsFailedPendingOrAbsent(t *testing.T) {
 	if err != nil || !strings.Contains(text, `"state":"failed"`) || !strings.Contains(text, "could not be written") {
 		t.Errorf("failed context: %v %s", err, text)
 	}
+	// Only a completed job says its context failed, as the page does.
+	for _, state := range []string{"running", "failed", "queued"} {
+		s4 := New(Options{API: documentOverride(jobsOverride(&reviewDaemon{}, `{"available":true,"jobs":[{"id":"j","state":"`+state+`","head_sha":"h13","context_failed":true}]}`), failed)})
+		text, err = direct(t, s4, "review_context", map[string]any{"repository": "acme/web", "pr": 13})
+		if err != nil || !strings.Contains(text, `"state":"absent"`) {
+			t.Errorf("a %s job with context_failed: %v %s", state, err, text)
+		}
+	}
 	// With no failure recorded it is absent.
 	s3 := New(Options{API: documentOverride(rewriteJobs(&reviewDaemon{}), failed)})
 	text, err = direct(t, s3, "review_context", map[string]any{"repository": "acme/web", "pr": 13})
@@ -305,6 +314,18 @@ func documentOverride(next http.Handler, doc string) http.Handler {
 		if r.URL.Path == "/api/document" && r.URL.Query().Get("pr") == "13" {
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write([]byte(doc))
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// jobsOverride answers every jobs list with body.
+func jobsOverride(next http.Handler, body string) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/jobs" {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(body))
 			return
 		}
 		next.ServeHTTP(w, r)
@@ -456,22 +477,40 @@ func TestReviewToolsAreBoundForActions(t *testing.T) {
 			t.Errorf("an action cannot list %s", tool)
 		}
 	}
-	foreign := map[string]any{"repository": "evil/secrets", "pr": 1, "id": "sec_1"}
-	for _, tool := range []string{"facts", "review_outline", "review_section", "review_context", "review_draft", "review_versions", "review_conversations"} {
+	// Each tool gets the arguments its schema takes, so a refusal is the
+	// binding's, not the schema's.
+	foreignArgs := map[string]map[string]any{
+		"facts":                {"repository": "evil/secrets", "pr": 1},
+		"review_outline":       {"repository": "evil/secrets", "pr": 1, "version": 1, "group": ""},
+		"review_section":       {"repository": "evil/secrets", "pr": 1, "version": 1, "id": "sec_1"},
+		"review_context":       {"repository": "evil/secrets", "pr": 1, "version": 1},
+		"review_draft":         {"repository": "evil/secrets", "pr": 1, "part": "outline", "id": "d1"},
+		"review_versions":      {"repository": "evil/secrets", "pr": 1},
+		"review_conversations": {"repository": "evil/secrets", "pr": 1, "id": "c1"},
+	}
+	for tool, args := range foreignArgs {
 		d.reset()
-		text, failed := data(t, s, action, tool, foreign)
-		if !failed || strings.Contains(text, "FOREIGN") {
+		text, failed := data(t, s, action, tool, args)
+		if !failed || strings.Contains(text, "FOREIGN") || strings.Contains(text, "input schema") || !strings.Contains(text, "own pull request's repository") {
 			t.Errorf("%s of another repository: %v %s", tool, failed, text)
 		}
 		if strings.Contains(strings.Join(d.requests(), " "), "evil") || strings.Contains(strings.Join(d.requests(), " "), "c-evil") {
 			t.Errorf("%s read %v", tool, d.requests())
 		}
 	}
-	// Another repository's group.
-	for _, tool := range []string{"review_outline", "review_section", "review_context", "review_versions"} {
+	// Another repository's group, in the action's own repository's name: the
+	// reader (or the tool) refuses the group, and nothing of it is read.
+	foreignGroup := map[string]map[string]any{
+		"review_outline":  {"group": "g-evil"},
+		"review_section":  {"group": "g-evil", "id": "x"},
+		"review_context":  {"group": "g-evil", "version": 1},
+		"review_versions": {"group": "g-evil"},
+	}
+	for tool, args := range foreignGroup {
 		d.reset()
-		text, failed := data(t, s, action, tool, map[string]any{"group": "g-evil", "id": "x"})
-		if !failed || strings.Contains(text, "FOREIGN") {
+		text, failed := data(t, s, action, tool, args)
+		if !failed || strings.Contains(text, "FOREIGN") || strings.Contains(text, "input schema") ||
+			(!strings.Contains(text, "own pull request's repository") && !strings.Contains(text, "is not a group of")) {
 			t.Errorf("%s of a foreign group: %v %s", tool, failed, text)
 		}
 		for _, r := range d.requests() {
@@ -524,5 +563,126 @@ func TestFactsToolReadsTheFactsAtTheIndexHead(t *testing.T) {
 	}
 	if got := strings.Join(d.requests(), " "); !strings.Contains(got, "/api/facts?clone=c-web&head=h12&pr=12") {
 		t.Errorf("requests %v", d.requests())
+	}
+}
+
+// A running review is found among the jobs by its kind: a fix, a chat and a
+// group's job with drafts are not it.
+func TestReviewDraftIgnoresOtherKindsOfJob(t *testing.T) {
+	s, d := reviewServer(t)
+	d.mu.Lock()
+	d.running, d.draftN = true, 4
+	d.mu.Unlock()
+	d.reset()
+	text, err := direct(t, s, "review_draft", map[string]any{"repository": "acme/web", "pr": 12})
+	if err != nil || !strings.Contains(text, "DRAFT-OVERVIEW") {
+		t.Fatalf("draft: %v %s", err, text)
+	}
+	for _, r := range d.requests() {
+		if strings.Contains(r, "j-chat") || strings.Contains(r, "j-fix") || strings.Contains(r, "j-group") {
+			t.Errorf("read the draft of another kind of job: %s", r)
+		}
+	}
+}
+
+// What the jobs say is not hidden: an unreadable or unavailable list is an
+// error, not "no running review".
+func TestReviewDraftReportsUnavailableJobs(t *testing.T) {
+	for name, body := range map[string]string{"off": `{"available":false,"code":"runner_unavailable"}`, "garbled": `{"jobs":`} {
+		s := New(Options{API: jobsOverride(&reviewDaemon{}, body)})
+		text, err := direct(t, s, "review_draft", map[string]any{"repository": "acme/web", "pr": 12})
+		if err == nil || text == noRunningReview {
+			t.Errorf("%s: %q %v", name, text, err)
+		}
+	}
+	// A list with no jobs is no running review.
+	s := New(Options{API: jobsOverride(&reviewDaemon{}, `{"available":true,"jobs":null}`)})
+	if text, err := direct(t, s, "review_draft", map[string]any{"repository": "acme/web", "pr": 12}); err != nil || text != noRunningReview {
+		t.Errorf("no jobs: %q %v", text, err)
+	}
+}
+
+// A group's versions route failing is said as it is.
+func TestReviewVersionsPassOnErrors(t *testing.T) {
+	failing := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/api/groups/g-web":
+			_, _ = w.Write([]byte(`{"id":"g-web","repository":"acme/web"}`))
+		default:
+			http.Error(w, "boom", http.StatusInternalServerError)
+		}
+	})
+	s := New(Options{API: failing})
+	_, err := direct(t, s, "review_versions", map[string]any{"repository": "acme/web", "group": "g-web"})
+	if err == nil || !strings.Contains(err.Error(), "500") || strings.Contains(err.Error(), "no versions route") {
+		t.Errorf("a failing versions route: %v", err)
+	}
+	// The binding's refusal reaches the agent as it is.
+	s, _ = reviewServer(t)
+	action, _, revoke := mint(t, s, Consumer{Kind: Action, Repository: "acme/web", PullRequest: 13})
+	defer revoke()
+	if text, failed := data(t, s, action, "review_versions", map[string]any{"group": "g-evil"}); !failed || strings.Contains(text, "no versions route") || strings.Contains(text, "no saved versions") {
+		t.Errorf("a foreign group's versions: %v %s", failed, text)
+	}
+}
+
+// A draft is as large as a document can be.
+func TestDraftReadsUpToTheDocumentBound(t *testing.T) {
+	if readLimit("/api/jobs/j/draft") != maxDocumentRead || readLimit("/api/jobs/j/transcript") != maxRead || readLimit("/api/jobs/j") != maxRead {
+		t.Error("read limits")
+	}
+	big := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprintf(w, `{"pad":%q}`, strings.Repeat("x", 9<<20))
+	})
+	reader := NewReader(big, nil).within([]string{"/api/jobs"}, "")
+	if _, err := reader.Get(context.Background(), "/api/jobs/j/draft"); err != nil {
+		t.Errorf("a 9 MiB draft: %v", err)
+	}
+	if _, err := reader.Get(context.Background(), "/api/jobs/j/transcript"); err == nil {
+		t.Error("a 9 MiB transcript was read")
+	}
+}
+
+// The section view keeps the outline's own fields, and the tool schemas take
+// only what the tools read.
+func TestReviewToolSchemasAndPages(t *testing.T) {
+	s := New(Options{API: http.NotFoundHandler()})
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	take := map[string][]string{
+		"review_outline": {"group", "version"}, "review_section": {"group", "version"}, "review_context": {"group", "version"},
+		"review_versions": {"group"}, "review_draft": {}, "review_conversations": {}, "facts": {},
+	}
+	for tool, args := range take {
+		tl, _ := s.tool(tool)
+		var schema struct {
+			Properties map[string]json.RawMessage `json:"properties"`
+		}
+		if err := json.Unmarshal(tl.InputSchema, &schema); err != nil {
+			t.Fatal(err)
+		}
+		for _, name := range []string{"group", "version"} {
+			_, has := schema.Properties[name]
+			if want := slices.Contains(args, name); has != want {
+				t.Errorf("%s takes %s: %v", tool, name, has)
+			}
+		}
+	}
+	group := s.pages[PageGroup].Tools
+	for _, tool := range []string{"facts", "review_draft", "review_conversations"} {
+		if slices.Contains(group, tool) {
+			t.Errorf("the group page lists %s", tool)
+		}
+	}
+	for _, tool := range []string{"group", "group_versions", "review_outline", "review_section", "review_context", "review_versions", "focus"} {
+		if !slices.Contains(group, tool) {
+			t.Errorf("the group page lacks %s", tool)
+		}
+	}
+	for _, tool := range []string{"facts", "review_draft", "review_conversations", "review_outline"} {
+		if !slices.Contains(s.pages[PagePullRequest].Tools, tool) {
+			t.Errorf("the pull request page lacks %s", tool)
+		}
 	}
 }

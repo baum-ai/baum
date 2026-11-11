@@ -75,9 +75,16 @@ func New(opts Options) *Server {
 		}
 		return out
 	}
-	// "focus" is the page's own; the rest read the pull request or group.
+	// "focus" is the page's own. A group page has no pull request, so the tools
+	// that need one are not its tools.
+	forGroup := names(group)
+	for _, name := range names(reviews) {
+		if !slices.Contains([]string{"facts", "review_draft", "review_conversations"}, name) {
+			forGroup = append(forGroup, name)
+		}
+	}
 	s.pages[PagePullRequest] = PageSpec{Name: PagePullRequest, Tools: append(names(pull), names(reviews)...)}
-	s.pages[PageGroup] = PageSpec{Name: PageGroup, Tools: append(append(names(group), names(reviews)[1:]...), "focus")}
+	s.pages[PageGroup] = PageSpec{Name: PageGroup, Tools: append(forGroup, "focus")}
 	return s
 }
 

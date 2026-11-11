@@ -18,11 +18,14 @@ import (
 // never sent whole. No tool here marshals the document it read: each builds
 // its result from the fields of its part.
 
+// groupProperty is the `group` argument of the tools that read a group's
+// review.
+const groupProperty = `"group":{"type":"string","description":"Read a review group's combined review instead of the pull request's: a group id, or \"this\" for the open group page's, or for an action the one group its pull request is in."}`
+
 // reviewSchema is the schema of a review tool: the pull request, a group and
 // a version, and the properties extra adds.
 func reviewSchema(extra string, required ...string) json.RawMessage {
-	properties := `"group":{"type":"string","description":"Read a review group's combined review instead of the pull request's: a group id, or \"this\" for the open group page's, or for an action the one group its pull request is in."},` +
-		`"version":{"type":"integer","minimum":1,"description":"A saved version. Defaults to the latest."}`
+	properties := groupProperty + `,` + `"version":{"type":"integer","minimum":1,"description":"A saved version. Defaults to the latest."}`
 	if extra != "" {
 		properties += "," + extra
 	}
@@ -79,7 +82,7 @@ func (s *Server) reviewTools() []Tool {
 	}, {
 		Name:        "review_versions",
 		Description: "The saved versions of the pull request's review, or of a group's: version, heads, when and by what model it was generated, and its recorded cost.",
-		InputSchema: reviewSchema(""),
+		InputSchema: targetSchema(groupProperty),
 		Scope:       ScopeRepository,
 		Reads:       []string{index, "/api/versions", "/api/groups"},
 		Call:        callReviewVersions,
@@ -307,7 +310,7 @@ func sectionView(doc []byte, id string) (map[string]any, error) {
 		switch h.Details {
 		case "failed", "pending":
 			// Only the outline fields are meaningful; the rest is empty.
-			for _, key := range []string{"id", "title", "kind", "hunks", "assessment"} {
+			for _, key := range review.OutlineSectionFields() {
 				if v, ok := all[key]; ok {
 					out[key] = v
 				}
@@ -344,11 +347,10 @@ func contextView(doc []byte) (json.RawMessage, reviewHeader, error) {
 }
 
 func callReviewOutline(ctx context.Context, c CallContext, args json.RawMessage) (string, error) {
-	a, src, err := c.reviewRead(ctx, args)
+	_, src, err := c.reviewRead(ctx, args)
 	if err != nil {
 		return "", err
 	}
-	_ = a
 	out, err := outlineView(src.doc)
 	if err != nil {
 		return "", err
@@ -402,6 +404,7 @@ func (c CallContext) contextFailed(ctx context.Context, repository string, numbe
 	}
 	var list struct {
 		Jobs []struct {
+			State         string `json:"state"`
 			HeadSHA       string `json:"head_sha"`
 			ContextFailed bool   `json:"context_failed"`
 		} `json:"jobs"`
@@ -410,7 +413,8 @@ func (c CallContext) contextFailed(ctx context.Context, repository string, numbe
 		return false
 	}
 	for _, j := range list.Jobs {
-		if j.ContextFailed && j.HeadSHA == head {
+		// As the page does: only a completed job says its context failed.
+		if j.State == "completed" && j.ContextFailed && j.HeadSHA == head {
 			return true
 		}
 	}
@@ -450,7 +454,8 @@ func callReviewDraft(ctx context.Context, c CallContext, args json.RawMessage) (
 		return "", err
 	}
 	var list struct {
-		Jobs []struct {
+		Available *bool `json:"available"`
+		Jobs      []struct {
 			ID    string `json:"id"`
 			Kind  string `json:"kind"`
 			State string `json:"state"`
@@ -458,8 +463,11 @@ func callReviewDraft(ctx context.Context, c CallContext, args json.RawMessage) (
 			Draft int    `json:"draft"`
 		} `json:"jobs"`
 	}
-	if json.Unmarshal(body, &list) != nil {
-		return noRunningReview, nil
+	if err := json.Unmarshal(body, &list); err != nil {
+		return "", errors.New("the jobs are not readable, so whether a review is running is unknown")
+	}
+	if list.Available != nil && !*list.Available {
+		return "", errors.New("the jobs are unavailable, so whether a review is running is unknown")
 	}
 	job := ""
 	drafts := 0
@@ -550,8 +558,11 @@ func callReviewVersions(ctx context.Context, c CallContext, args json.RawMessage
 			return "", err
 		}
 		b, missing, err := c.get(ctx, "/api/groups/"+url.PathEscape(id)+"/versions", nil)
-		if err != nil || missing {
-			return "", fmt.Errorf("group %s has no versions route", id)
+		if err != nil {
+			return "", err
+		}
+		if missing {
+			return "", fmt.Errorf("group %s has no saved versions", id)
 		}
 		body, out["group"] = b, id
 	} else {

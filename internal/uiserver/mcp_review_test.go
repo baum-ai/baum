@@ -112,15 +112,35 @@ func TestReviewToolsReadPartsOfTheRealRoutes(t *testing.T) {
 	if text, failed := f.callTool(t, actionToken, "review_outline", map[string]any{"group": "this"}); failed || !strings.Contains(text, "GroupOverview") {
 		t.Errorf("an action's group: %v %s", failed, text)
 	}
-	// Another repository's group, job and clone are refused, for each family.
-	for _, tool := range []string{"review_outline", "review_section", "review_context", "review_versions"} {
-		if text, failed := f.callTool(t, actionToken, tool, map[string]any{"group": f.foreign.ID, "id": "x"}); !failed || strings.Contains(text, "Private") {
-			t.Errorf("%s of a foreign group: %v %s", tool, failed, text)
+	// Another repository's group, job and clone are refused, for each family:
+	// the arguments are the ones each tool's schema takes, so the refusal is
+	// the binding's.
+	refused := func(what, text string, failed bool) {
+		t.Helper()
+		binding := strings.Contains(text, "own pull request's repository") || strings.Contains(text, "is not a group of")
+		if !failed || !binding || strings.Contains(text, "input schema") || strings.Contains(text, "Private") || strings.Contains(text, "Another") {
+			t.Errorf("%s: %v %s", what, failed, text)
 		}
 	}
-	for _, tool := range []string{"facts", "review_outline", "review_section", "review_context", "review_draft", "review_versions", "review_conversations"} {
-		if text, failed := f.callTool(t, actionToken, tool, map[string]any{"repository": "other/repo", "pr": 8, "id": "x"}); !failed || strings.Contains(text, "Another") {
-			t.Errorf("%s of another repository: %v %s", tool, failed, text)
-		}
+	for tool, args := range map[string]map[string]any{
+		"review_outline":  {"group": f.foreign.ID},
+		"review_section":  {"group": f.foreign.ID, "id": "x"},
+		"review_context":  {"group": f.foreign.ID},
+		"review_versions": {"group": f.foreign.ID},
+	} {
+		text, failed := f.callTool(t, actionToken, tool, args)
+		refused(tool+" of a foreign group", text, failed)
+	}
+	for tool, args := range map[string]map[string]any{
+		"facts":                {"repository": "other/repo", "pr": 8},
+		"review_outline":       {"repository": "other/repo", "pr": 8},
+		"review_section":       {"repository": "other/repo", "pr": 8, "id": "sec_1"},
+		"review_context":       {"repository": "other/repo", "pr": 8},
+		"review_draft":         {"repository": "other/repo", "pr": 8},
+		"review_versions":      {"repository": "other/repo", "pr": 8},
+		"review_conversations": {"repository": "other/repo", "pr": 8, "id": "conv-1"},
+	} {
+		text, failed := f.callTool(t, actionToken, tool, args)
+		refused(tool+" of another repository", text, failed)
 	}
 }

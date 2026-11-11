@@ -16,14 +16,16 @@ import (
 const maxRead = 8 << 20
 
 // maxDocumentRead bounds the body of a read of a review document or of the
-// facts, which the daemon serves up to viewserver.MaxDocumentBytes (a test
+// facts and a running review's draft, which the daemon serves up to viewserver.MaxDocumentBytes (a test
 // keeps the two equal). Only those routes may be that large; a tool
 // projects what it needs, so the result's own bounds are unchanged.
 const maxDocumentRead = 32 << 20
 
 // readLimit is the body bound of a read of path.
 func readLimit(path string) int {
-	if path == "/api/document" || path == "/api/facts" || (strings.HasPrefix(path, "/api/groups/") && strings.HasSuffix(path, "/document")) {
+	if path == "/api/document" || path == "/api/facts" ||
+		(strings.HasPrefix(path, "/api/groups/") && strings.HasSuffix(path, "/document")) ||
+		(strings.HasPrefix(path, "/api/jobs/") && strings.HasSuffix(path, "/draft")) {
 		return maxDocumentRead
 	}
 	return maxRead

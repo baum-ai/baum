@@ -5221,12 +5221,19 @@ not returned, as the app shows none of them.
 The review tools read a review in parts, one per call, so the document is
 never sent whole; none marshals the document it read, and a document that
 cannot be read is an error that quotes none of it. Each takes `repository` and
-`pr` as above, and `version` (a saved version, the latest by default) and
-`group` (a group id, `this` for the open group page's or, for an action, the
-one group its pull request is in, or none: the pull request's own review; a
-chat on a group page defaults to its group). A group's tools read its combined
-review through `/api/groups/{id}/document` and `/api/groups/{id}/versions`,
-after `/api/groups/{id}` has shown the group is the repository's.
+`pr` as above.
+The tools `review_outline`, `review_section` and `review_context`
+also take `version` (a saved version, the latest by default); `review_versions`
+lists every version and takes none. `review_outline`, `review_section`,
+`review_context` and `review_versions` take `group` (a group id, `this` for
+the open group page's or, for an action, the one group its pull request is in,
+or none: the pull request's own review; a chat on a group page defaults to its
+group). `facts`, `review_draft` and `review_conversations` take neither: they
+need a pull request, so the group page does not list them. A group's tools read
+its combined review through `/api/groups/{id}/document` and
+`/api/groups/{id}/versions`, after `/api/groups/{id}` has shown the group is
+the repository's. `/api/jobs/{id}/draft` is read up to the 32 MiB document
+bound, like the documents.
 
 | Tool | Reads |
 | --- | --- |
