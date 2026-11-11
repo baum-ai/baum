@@ -38,6 +38,26 @@ func TestHandlerServesFilesOnly(t *testing.T) {
 	}
 }
 
+func TestAssetCaching(t *testing.T) {
+	h := handler(fstest.MapFS{
+		"index.html":           {Data: []byte(`<div id="root"></div>`)},
+		"setup.html":           {Data: []byte("x")},
+		"assets/app-abc123.js": {Data: []byte("x")},
+	})
+	for path, want := range map[string]string{
+		"/":                     "",
+		"/setup.html":           "",
+		"/assets/app-abc123.js": "public, max-age=31536000, immutable",
+		"/assets/missing.js":    "",
+	} {
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, httptest.NewRequest("GET", path, nil))
+		if got := w.Header().Get("Cache-Control"); got != want {
+			t.Errorf("%s: %d Cache-Control %q, want %q", path, w.Code, got, want)
+		}
+	}
+}
+
 func TestUnbuiltAppSaysSo(t *testing.T) {
 	h := handler(fstest.MapFS{".gitkeep": {}})
 	w := httptest.NewRecorder()
