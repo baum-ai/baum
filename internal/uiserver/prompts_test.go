@@ -21,7 +21,7 @@ func TestPromptRoutesMounted(t *testing.T) {
 		handler.ServeHTTP(w, httptest.NewRequest(method, "http://local"+path, strings.NewReader(body)))
 		return w.Code, w.Body.String()
 	}
-	if code, body := serve("GET", "/api/settings/prompts", ""); code != 200 || !strings.Contains(body, `"prompts":[{"id":"review"`) {
+	if code, body := serve("GET", "/api/settings/prompts", ""); code != 200 || !strings.Contains(body, `"prompts":[{"id":"review-group"`) {
 		t.Fatalf("%d %.200s", code, body)
 	}
 	if code, body := serve("PUT", "/api/settings/prompts/fix", `{"text":"mine"}`); code != 200 || !strings.Contains(body, `"custom_text":"mine"`) {

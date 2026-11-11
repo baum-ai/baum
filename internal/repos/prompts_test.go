@@ -56,7 +56,7 @@ func TestPromptOverrideValidation(t *testing.T) {
 		"unknown":    {"nope", "text"},
 		"empty":      {prompt.IDFix, "  \n"},
 		"too large":  {prompt.IDFix, strings.Repeat("a", prompt.MaxOverrideBytes+1)},
-		"submitting": {prompt.IDReview, "Review.\n\n## Submitting\nDo it."},
+		"submitting": {prompt.IDReviewGroup, "Review.\n\n## Submitting\nDo it."},
 	} {
 		_, e := r.SetPromptOverride(ctx, GlobalPrompts, c.id, c.text)
 		if !errors.Is(e, ErrInvalidPrompt) || e.Error() == ErrInvalidPrompt.Error() {
@@ -94,7 +94,7 @@ func TestResolvePrompts(t *testing.T) {
 		repo string
 		id   prompt.ID
 		text string
-	}{{"owner/a", prompt.IDFix, "repo fix"}, {GlobalPrompts, prompt.IDReview, "global review"}} {
+	}{{"owner/a", prompt.IDFix, "repo fix"}, {GlobalPrompts, prompt.IDReviewGroup, "global review"}} {
 		if _, e := r.SetPromptOverride(ctx, s.repo, s.id, s.text); e != nil {
 			t.Fatal(e)
 		}
@@ -120,10 +120,10 @@ func TestResolvePrompts(t *testing.T) {
 			}
 		}
 	}
-	ownText := map[prompt.ID]string{prompt.IDFix: "repo fix", prompt.IDReview: "global review"}
-	ownSrc := map[prompt.ID]PromptSource{prompt.IDFix: PromptSourceRepository, prompt.IDReview: PromptSourceGlobal}
-	globalText := map[prompt.ID]string{prompt.IDReview: "global review"}
-	globalSrc := map[prompt.ID]PromptSource{prompt.IDReview: PromptSourceGlobal}
+	ownText := map[prompt.ID]string{prompt.IDFix: "repo fix", prompt.IDReviewGroup: "global review"}
+	ownSrc := map[prompt.ID]PromptSource{prompt.IDFix: PromptSourceRepository, prompt.IDReviewGroup: PromptSourceGlobal}
+	globalText := map[prompt.ID]string{prompt.IDReviewGroup: "global review"}
+	globalSrc := map[prompt.ID]PromptSource{prompt.IDReviewGroup: PromptSourceGlobal}
 	check("OWNER/A", ownText, ownSrc)
 	check("owner/b", globalText, globalSrc)
 	check(GlobalPrompts, globalText, globalSrc)
@@ -157,7 +157,7 @@ func TestForwardedRenameCarriesPromptOverrides(t *testing.T) {
 			if _, e := r.Pick(ctx, "new/name", nil); e != nil {
 				t.Fatal(e)
 			}
-			if _, e := r.SetPromptOverride(ctx, "new/name", prompt.IDReview, "new review"); e != nil {
+			if _, e := r.SetPromptOverride(ctx, "new/name", prompt.IDReviewGroup, "new review"); e != nil {
 				t.Fatal(e)
 			}
 		}
@@ -170,7 +170,7 @@ func TestForwardedRenameCarriesPromptOverrides(t *testing.T) {
 			t.Fatal(e)
 		}
 		if currentHasRows {
-			if len(got) != 1 || got[prompt.IDReview].Text != "new review" {
+			if len(got) != 1 || got[prompt.IDReviewGroup].Text != "new review" {
 				t.Errorf("rows were merged: %+v", got)
 			}
 		} else if len(got) != 1 || got[prompt.IDFix].Text != "old fix" || got[prompt.IDFix].BasedOn == "" {

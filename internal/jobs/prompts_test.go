@@ -71,12 +71,11 @@ func requestsMention(requests []agent.Request, marker string) bool {
 
 func TestReviewUsesTheRepositorysPrompts(t *testing.T) {
 	registry, clone := registeredClone(t)
-	setOverride(t, registry, clone.Repository, prompt.IDReview, "ONE-PASS-REPO-MARKER")
 	setOverride(t, registry, clone.Repository, prompt.IDReviewStagedShared, "STAGED-REPO-MARKER")
 
-	requests, metadata := runReview(t, registry, clone.Repository, false)
-	if !requestsMention(requests, "ONE-PASS-REPO-MARKER") {
-		t.Fatalf("one-pass prompt lacks the override: %q", requests[0].Prompt)
+	requests, metadata := runReview(t, registry, clone.Repository, true)
+	if !requestsMention(requests, "STAGED-REPO-MARKER") {
+		t.Fatalf("staged prompts lack the override: %d requests", len(requests))
 	}
 	if !strings.HasSuffix(metadata.PromptVersion, prompt.CustomSuffix) || metadata.PromptSource != "repository" {
 		t.Fatalf("metadata %q %q", metadata.PromptVersion, metadata.PromptSource)
@@ -84,34 +83,27 @@ func TestReviewUsesTheRepositorysPrompts(t *testing.T) {
 	if !strings.HasPrefix(requests[0].Prompt, sessions.GenerationRunMarker) {
 		t.Fatal("the generation-run marker no longer starts the prompt")
 	}
-
-	requests, metadata = runReview(t, registry, clone.Repository, true)
-	if !requestsMention(requests, "STAGED-REPO-MARKER") || strings.Contains(requests[0].Prompt, "ONE-PASS-REPO-MARKER") {
-		t.Fatalf("staged prompts: %d requests", len(requests))
-	}
-	if !strings.HasSuffix(metadata.PromptVersion, prompt.CustomSuffix) || metadata.PromptSource != "repository" {
-		t.Fatalf("metadata %q %q", metadata.PromptVersion, metadata.PromptSource)
-	}
 }
 
 func TestReviewUsesTheGlobalPromptsInAnotherRepository(t *testing.T) {
 	registry, _ := registeredClone(t)
-	setOverride(t, registry, "", prompt.IDReview, "GLOBAL-MARKER")
-	requests, metadata := runReview(t, registry, "someone/else", false)
+	setOverride(t, registry, "", prompt.IDReviewStagedShared, "GLOBAL-MARKER")
+	requests, metadata := runReview(t, registry, "someone/else", true)
 	if !requestsMention(requests, "GLOBAL-MARKER") || metadata.PromptSource != "global" || !strings.HasSuffix(metadata.PromptVersion, prompt.CustomSuffix) {
 		t.Fatalf("%q %q", metadata.PromptVersion, metadata.PromptSource)
 	}
 }
 
 // An override of a prompt the review does not use leaves it built in and
-// unmarked.
+// unmarked: a one-pass review takes none.
 func TestReviewWithoutCustomPromptsIsUnmarked(t *testing.T) {
 	registry, clone := registeredClone(t)
 	_, before := runReview(t, registry, clone.Repository, false)
 	setOverride(t, registry, clone.Repository, prompt.IDFix, "FIX-ONLY-MARKER")
 	setOverride(t, registry, clone.Repository, prompt.IDReviewStagedShared, "STAGED-ONLY-MARKER")
+	setOverride(t, registry, clone.Repository, prompt.IDReviewGroup, "GROUP-ONLY-MARKER")
 	requests, after := runReview(t, registry, clone.Repository, false)
-	if requestsMention(requests, "STAGED-ONLY-MARKER") || after.PromptSource != "" || after.PromptVersion != before.PromptVersion || strings.HasSuffix(after.PromptVersion, prompt.CustomSuffix) {
+	if requestsMention(requests, "STAGED-ONLY-MARKER") || requestsMention(requests, "GROUP-ONLY-MARKER") || after.PromptSource != "" || after.PromptVersion != before.PromptVersion || strings.HasSuffix(after.PromptVersion, prompt.CustomSuffix) {
 		t.Fatalf("%q %q (was %q)", after.PromptVersion, after.PromptSource, before.PromptVersion)
 	}
 }

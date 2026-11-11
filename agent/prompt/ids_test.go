@@ -10,9 +10,9 @@ func TestReviewIDsByMode(t *testing.T) {
 		group, staged bool
 		want          []ID
 	}{
-		{false, false, []ID{IDReview}},
-		{true, false, []ID{IDReview, IDReviewGroup}},
-		{true, true, []ID{IDReview, IDReviewGroup}},
+		{false, false, nil},
+		{true, false, []ID{IDReviewGroup}},
+		{true, true, []ID{IDReviewGroup}},
 		{false, true, []ID{IDReviewStagedShared, IDReviewStagedOutline, IDReviewStagedDetails, IDReviewStagedContext}},
 	} {
 		if got := ReviewIDs(c.group, c.staged); !slices.Equal(got, c.want) {

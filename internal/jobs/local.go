@@ -881,7 +881,7 @@ func (l *Local) applyPrompts(ctx context.Context, repository string, o *generate
 	if e != nil {
 		return fmt.Errorf("resolving the prompts: %w", e)
 	}
-	o.Prompts, o.StagedPrompts = prompt.Prompts{Overrides: overrides}, prompt.StagedPrompts{Overrides: overrides}
+	o.StagedPrompts = prompt.StagedPrompts{Overrides: overrides}
 	if o.Group != nil {
 		o.Prompts = prompt.GroupPrompts{Overrides: overrides}
 	}

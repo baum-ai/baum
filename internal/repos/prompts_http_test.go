@@ -66,7 +66,7 @@ func TestGlobalPromptRoutes(t *testing.T) {
 	do := promptDo(promptServer(r))
 	list := promptList(t, do, "/api/settings/prompts")
 	cat := prompt.Catalogue()
-	if len(list) != len(cat) || len(list) < 12 {
+	if len(list) != len(cat) || len(list) < 11 {
 		t.Fatalf("%d entries for %d prompts", len(list), len(cat))
 	}
 	for i, c := range cat {
@@ -128,7 +128,7 @@ func TestGlobalPromptRoutes(t *testing.T) {
 	}
 
 	// Validation: readable message without the sentinel.
-	code, body = do("PUT", "/api/settings/prompts/review", `{"text":"x\n\n## Submitting\ny"}`)
+	code, body = do("PUT", "/api/settings/prompts/review-group", `{"text":"x\n\n## Submitting\ny"}`)
 	if m := promptMessage(t, body); code != 400 || !strings.Contains(m, "Submitting") || strings.Contains(m, "invalid prompt") {
 		t.Fatalf("%d %s", code, body)
 	}
@@ -224,7 +224,7 @@ func TestRepositoryPromptRoutes(t *testing.T) {
 	if code, _ = do("PUT", base+"/nope", `{"text":"x"}`); code != 404 {
 		t.Fatalf("unknown %d", code)
 	}
-	if code, body = do("PUT", base+"/review", `{"text":"## Submitting"}`); code != 400 || strings.Contains(promptMessage(t, body), "invalid prompt") {
+	if code, body = do("PUT", base+"/review-group", `{"text":"## Submitting"}`); code != 400 || strings.Contains(promptMessage(t, body), "invalid prompt") {
 		t.Fatalf("%d %s", code, body)
 	}
 	if code, _ = do("PUT", base+"/fix", `{"text":"x","a":1}`); code != 400 {

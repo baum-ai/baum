@@ -42,8 +42,10 @@
 // # Custom prompts
 //
 // A host may replace the text of any prompt by passing Overrides (a map from
-// ID to text) in the Overrides field of Prompts, GroupPrompts, StagedPrompts
-// or to FixWith. An override replaces the built-in text of its part only: the
+// ID to text) in the Overrides field of GroupPrompts or StagedPrompts, or to
+// FixWith. The one-pass review (Prompts) is not replaceable: a review of one
+// pull request is staged, and a group's prompt (review-group) is the whole
+// text, the review instructions included. An override replaces the built-in text of its part only: the
 // Submitting heading and the backend's submit block (the output contract)
 // stay baum's and are always appended, so an override never includes them
 // (Validate rejects one that does). A composition whose parts include an
@@ -100,12 +102,10 @@ var submitCodex string
 //go:embed submit-cursor.md
 var submitCursor string
 
-// Prompts implements agent.Prompts with this module's public review prompt.
-type Prompts struct {
-	// Overrides replaces built-in texts; Prompts uses the review entry.
-	// Callers must Validate the text first; composition does not.
-	Overrides Overrides
-}
+// Prompts implements agent.Prompts with this module's public review prompt,
+// written in one pass. A review of one pull request is staged
+// (StagedPrompts), so it is not one of the prompts a host replaces.
+type Prompts struct{}
 
 var _ agent.Prompts = Prompts{}
 
@@ -119,17 +119,16 @@ func (p Prompts) Instructions(_ context.Context, backend string) (agent.Prompt, 
 	if err != nil {
 		return agent.Prompt{}, err
 	}
-	review, custom := p.Overrides.text(IDReview, reviewBody)
-	return composed(withCustom(Version, custom), review+submitting+"\n"+submit), nil
+	return composed(Version, reviewBody+submitting+"\n"+submit), nil
 }
 
 // GroupPrompts implements agent.Prompts for a review group's combined review:
 // the public review prompt with the group instructions (group-public-v1.md)
 // inserted before its Submitting heading, then the backend's submit block.
 type GroupPrompts struct {
-	// Overrides replaces built-in texts; GroupPrompts uses the review and
-	// review-group entries. Callers must Validate the text first;
-	// composition does not.
+	// Overrides replaces built-in texts; GroupPrompts uses the review-group
+	// entry, which replaces the whole text before the Submitting heading.
+	// Callers must Validate the text first; composition does not.
 	Overrides Overrides
 }
 
@@ -141,9 +140,8 @@ func (g GroupPrompts) Instructions(_ context.Context, backend string) (agent.Pro
 	if err != nil {
 		return agent.Prompt{}, err
 	}
-	review, reviewCustom := g.Overrides.text(IDReview, reviewBody)
-	group, groupCustom := g.Overrides.text(IDReviewGroup, groupPublic)
-	return composed(withCustom(GroupVersion, reviewCustom || groupCustom), review+group+submitting+"\n"+submit), nil
+	group, custom := g.Overrides.text(IDReviewGroup, groupBody)
+	return composed(withCustom(GroupVersion, custom), group+submitting+"\n"+submit), nil
 }
 
 // StagedVersion is the prompt version of a staged review. Change it with the

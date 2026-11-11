@@ -57,11 +57,11 @@ func sha(s string) string {
 func TestZeroValueMatchesPreviousOutput(t *testing.T) {
 	ctx := context.Background()
 	for _, b := range backends {
-		for _, o := range []prompt.Overrides{nil, {}, {prompt.IDReview: "", prompt.IDFix: ""}} {
-			p, err := prompt.Prompts{Overrides: o}.Instructions(ctx, b)
-			if err != nil || p.Version != prompt.Version || p.Digest != baseline[b+" review"] || sha(p.Body) != p.Digest {
-				t.Errorf("%s review: %v %q %s", b, err, p.Version, p.Digest)
-			}
+		p, err := prompt.Prompts{}.Instructions(ctx, b)
+		if err != nil || p.Version != prompt.Version || p.Digest != baseline[b+" review"] || sha(p.Body) != p.Digest {
+			t.Errorf("%s review: %v %q %s", b, err, p.Version, p.Digest)
+		}
+		for _, o := range []prompt.Overrides{nil, {}, {prompt.IDReviewGroup: "", prompt.IDFix: ""}} {
 			g, err := prompt.GroupPrompts{Overrides: o}.Instructions(ctx, b)
 			if err != nil || g.Version != prompt.GroupVersion || g.Digest != baseline[b+" group"] {
 				t.Errorf("%s group: %v %q %s", b, err, g.Version, g.Digest)
@@ -91,34 +91,18 @@ func TestOverridesAreUsed(t *testing.T) {
 		submit := readFile(t, map[string]string{"claude": "submit-claude.md", "anthropic": "submit-claude.md", "codex": "submit-codex.md", "cursor-agent": "submit-cursor.md"}[b])
 		stageSubmit := readFile(t, map[string]string{"claude": "submit-stage-claude.md", "anthropic": "submit-stage-claude.md", "codex": "submit-stage-codex.md", "cursor-agent": "submit-stage-cursor.md"}[b])
 
-		// review, with and without a trailing newline
-		for _, text := range []string{"MY REVIEW\n", "MY REVIEW"} {
-			p, _ := prompt.Prompts{Overrides: prompt.Overrides{prompt.IDReview: text}}.Instructions(ctx, b)
-			if p.Body != "MY REVIEW\n## 10. Submitting\n\n"+submit || p.Version != prompt.Version+"+custom" || p.Digest != sha(p.Body) {
-				t.Errorf("%s review override: %q %q", b, p.Version, p.Body)
+		// group: one text before the Submitting heading, with and without a
+		// trailing newline
+		for _, text := range []string{"MY GROUP\n", "MY GROUP"} {
+			g, _ := prompt.GroupPrompts{Overrides: prompt.Overrides{prompt.IDReviewGroup: text}}.Instructions(ctx, b)
+			if g.Body != "MY GROUP\n## 10. Submitting\n\n"+submit || g.Version != prompt.GroupVersion+"+custom" || g.Digest != sha(g.Body) {
+				t.Errorf("%s group override: %q %q", b, g.Version, g.Body)
 			}
 		}
-		// a fix or group override does not touch the review
-		p, _ := prompt.Prompts{Overrides: prompt.Overrides{prompt.IDFix: "x", prompt.IDReviewGroup: "x", prompt.IDReviewStagedShared: "x"}}.Instructions(ctx, b)
-		if p.Digest != baseline[b+" review"] || p.Version != prompt.Version {
-			t.Errorf("%s: unrelated overrides changed the review", b)
-		}
-
-		// group: each of its two parts
-		review := strings.TrimSuffix(readFile(t, "review-public-v6.md"), "## 10. Submitting\n")
-		group := readFile(t, "group-public-v1.md")
-		for o, want := range map[prompt.ID]string{
-			prompt.IDReview:      "R\n" + group + "## 10. Submitting\n\n" + submit,
-			prompt.IDReviewGroup: review + "G\n## 10. Submitting\n\n" + submit,
-		} {
-			text := "R"
-			if o == prompt.IDReviewGroup {
-				text = "G"
-			}
-			g, _ := prompt.GroupPrompts{Overrides: prompt.Overrides{o: text}}.Instructions(ctx, b)
-			if g.Body != want || g.Version != prompt.GroupVersion+"+custom" || g.Digest != sha(g.Body) {
-				t.Errorf("%s group override %s: %q", b, o, g.Version)
-			}
+		// a fix or staged override does not touch the group
+		g, _ := prompt.GroupPrompts{Overrides: prompt.Overrides{prompt.IDFix: "x", prompt.IDReviewStagedShared: "x"}}.Instructions(ctx, b)
+		if g.Digest != baseline[b+" group"] || g.Version != prompt.GroupVersion {
+			t.Errorf("%s: unrelated overrides changed the group", b)
 		}
 
 		// staged: each of the four parts
@@ -170,11 +154,8 @@ func TestOverridesAreUsed(t *testing.T) {
 				t.Errorf("%s %s digest", b, id)
 			}
 		}
-		if _, err := (prompt.StagedPrompts{Overrides: prompt.Overrides{prompt.IDReview: "x"}}).StagedInstructions(ctx, b); err != nil {
-			t.Fatal(err)
-		}
-		if s, _ := (prompt.StagedPrompts{Overrides: prompt.Overrides{prompt.IDReview: "x"}}).StagedInstructions(ctx, b); s.Digest != def.Digest || s.Version != prompt.StagedVersion {
-			t.Errorf("%s: the one-pass override changed the staged review", b)
+		if s, _ := (prompt.StagedPrompts{Overrides: prompt.Overrides{prompt.IDReviewGroup: "x"}}).StagedInstructions(ctx, b); s.Digest != def.Digest || s.Version != prompt.StagedVersion {
+			t.Errorf("%s: the group override changed the staged review", b)
 		}
 	}
 }
@@ -228,16 +209,18 @@ func TestCatalogue(t *testing.T) {
 			}
 		}
 	}
-	want := []prompt.ID{"review", "review-group", "review-staged-shared", "review-staged-outline", "review-staged-details", "review-staged-context", "fix", "fix-conflicts", "fix-checks", "fix-threads", "fix-chat", "extraction"}
+	want := []prompt.ID{"review-group", "review-staged-shared", "review-staged-outline", "review-staged-details", "review-staged-context", "fix", "fix-conflicts", "fix-checks", "fix-threads", "fix-chat", "extraction"}
 	if !slices.Equal(ids, want) {
 		t.Errorf("order: %v", ids)
 	}
 	if _, ok := prompt.Lookup("nope"); ok {
 		t.Error("unknown id found")
 	}
-	// the review default is the file without its heading; the others are their files
-	if e, _ := prompt.Lookup(prompt.IDReview); e.Default+"## 10. Submitting\n" != readFile(t, "review-public-v6.md") || e.DefaultVersion != prompt.Version {
-		t.Error("review default")
+	// the group default is the review file without its heading, then the
+	// group file; the others are their files
+	review := strings.TrimSuffix(readFile(t, "review-public-v6.md"), "## 10. Submitting\n")
+	if e, _ := prompt.Lookup(prompt.IDReviewGroup); e.Default != review+readFile(t, "group-public-v1.md") || e.DefaultVersion != prompt.GroupVersion {
+		t.Error("group default")
 	}
 	if e, _ := prompt.Lookup(prompt.IDReviewStagedOutline); e.Default+"## Submitting\n" != readFile(t, "review-outline-public-v1.md") {
 		t.Error("outline default")
@@ -251,15 +234,14 @@ func TestCatalogue(t *testing.T) {
 	// the catalogue is a copy
 	c := prompt.Catalogue()
 	c[0].SafetyRules[0].Text = "changed"
-	if e, _ := prompt.Lookup(prompt.IDReview); e.SafetyRules[0].Text == "changed" {
+	if e, _ := prompt.Lookup(prompt.IDReviewGroup); e.SafetyRules[0].Text == "changed" {
 		t.Error("Catalogue exposes its rules")
 	}
 }
 
 func TestSafetyRulesPerEntry(t *testing.T) {
 	want := map[prompt.ID][]string{
-		prompt.IDReview:              {"review.untrusted-data", "review.no-secrets", "review.run-directory", "review.restricted-sessions"},
-		prompt.IDReviewGroup:         {"review-group.untrusted-member-reviews"},
+		prompt.IDReviewGroup:         {"review-group.untrusted-data", "review-group.no-secrets", "review-group.run-directory", "review-group.restricted-sessions", "review-group.untrusted-member-reviews"},
 		prompt.IDReviewStagedShared:  {"review-staged-shared.untrusted-data", "review-staged-shared.no-secrets", "review-staged-shared.run-directory", "review-staged-shared.restricted-sessions"},
 		prompt.IDReviewStagedOutline: {"review-staged-outline.no-injected-instructions"},
 		prompt.IDReviewStagedDetails: {"review-staged-details.no-injected-instructions"},
@@ -316,30 +298,30 @@ func TestValidate(t *testing.T) {
 		text string
 		want string // substring of the error; empty for none
 	}{
-		{"ok", prompt.IDReview, "Review the change.\n", ""},
+		{"ok", prompt.IDReviewGroup, "Review the change.\n", ""},
 		{"unknown id", "nope", "x", "unknown prompt"},
 		{"invalid utf-8", prompt.IDFix, "bad \xff", "UTF-8"},
 		{"empty", prompt.IDFix, "", "empty"},
 		{"blank", prompt.IDExtraction, " \n\t\r\n", "empty"},
 		{"limit", prompt.IDFix, strings.Repeat("a", prompt.MaxOverrideBytes), ""},
 		{"over the limit", prompt.IDFix, strings.Repeat("a", prompt.MaxOverrideBytes+1), "limit"},
-		{"submitting 10", prompt.IDReview, "Intro\n## 10. Submitting\nmore", "Submitting"},
+		{"submitting 10", prompt.IDReviewGroup, "Intro\n## 10. Submitting\nmore", "Submitting"},
 		{"submitting plain", prompt.IDReviewStagedDetails, "Intro\n## Submitting\n", "Submitting"},
 		{"submitting h3 crlf", prompt.IDReviewStagedShared, "Intro\r\n### Submitting  \r\nx", "Submitting"},
 		{"submitting group", prompt.IDReviewGroup, "# Submitting", "Submitting"},
-		{"submitting feedback", prompt.IDReview, "## Submitting feedback\n", "Submitting"},
-		{"submitting colon", prompt.IDReview, "### Submitting:\n", "Submitting"},
+		{"submitting feedback", prompt.IDReviewGroup, "## Submitting feedback\n", "Submitting"},
+		{"submitting colon", prompt.IDReviewGroup, "### Submitting:\n", "Submitting"},
 		{"submitting upper closed", prompt.IDReviewStagedOutline, "## SUBMITTING ##\n", "Submitting"},
-		{"submitting indented", prompt.IDReview, " ## Submitting\n", "Submitting"},
-		{"submitting numbered", prompt.IDReview, "## 3.2 Submitting\n", "Submitting"},
-		{"heading ending in the word", prompt.IDReview, "## Results Submitting\n", ""},
-		{"code-indented heading", prompt.IDReview, "    ## Submitting\n", ""},
+		{"submitting indented", prompt.IDReviewGroup, " ## Submitting\n", "Submitting"},
+		{"submitting numbered", prompt.IDReviewGroup, "## 3.2 Submitting\n", "Submitting"},
+		{"heading ending in the word", prompt.IDReviewGroup, "## Results Submitting\n", ""},
+		{"code-indented heading", prompt.IDReviewGroup, "    ## Submitting\n", ""},
 		{"open backtick fence", prompt.IDFix, "Run:\n```sh\nmake\n", "fenced"},
 		{"open tilde fence", prompt.IDExtraction, "~~~\ncode", "fenced"},
 		{"closed fence", prompt.IDFix, "```sh\nmake\n```\n", ""},
 		{"closed longer fence", prompt.IDFix, "````\n```\n````\n", ""},
 		{"fence closed by wrong char", prompt.IDFix, "```\ncode\n~~~\n", "fenced"},
-		{"submitting in prose", prompt.IDReview, "Say how Submitting works.\n", ""},
+		{"submitting in prose", prompt.IDReviewGroup, "Say how Submitting works.\n", ""},
 		{"submitting allowed in fix", prompt.IDFix, "## Submitting\n", ""},
 		{"submitting allowed in extraction", prompt.IDExtraction, "## Submitting\n", ""},
 	}

@@ -7,7 +7,6 @@ type ID string
 
 // The prompts a host can replace.
 const (
-	IDReview              ID = "review"
 	IDReviewGroup         ID = "review-group"
 	IDReviewStagedShared  ID = "review-staged-shared"
 	IDReviewStagedOutline ID = "review-staged-outline"
@@ -43,7 +42,10 @@ func withCustom(version string, custom bool) string {
 const stagedSubmitting = "## Submitting\n"
 
 var (
-	reviewBody        = strings.TrimSuffix(reviewPublic, submitting)
+	reviewBody = strings.TrimSuffix(reviewPublic, submitting)
+	// A review group's prompt is one text: the review instructions with what
+	// changes for a group, which is what a custom group prompt replaces.
+	groupBody         = reviewBody + groupPublic
 	stagedOutlineBody = strings.TrimSuffix(stagedOutline, stagedSubmitting)
 	stagedDetailsBody = strings.TrimSuffix(stagedDetails, stagedSubmitting)
 	stagedContextBody = strings.TrimSuffix(stagedContext, stagedSubmitting)
