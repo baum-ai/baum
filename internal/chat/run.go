@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -236,12 +237,31 @@ func (s *Service) Run(ctx context.Context, ref Ref, o RunOptions) (report Report
 		notes = append(notes, text)
 		return st.NoteTurn(ctx, key, ref.Conversation, ref.Turn, strings.Join(notes, " "))
 	}
+	// recordSessions tells the review-runs record every session id the turn's
+	// attempts reported (a retried attempt that failed after creating a
+	// session included), and the one it settled on. An errored attempt may
+	// have left a session it never reported, so the record then stays
+	// incomplete, as it does for generation.
+	recordSessions := func(session string) {
+		var ids []string
+		for _, id := range append(slices.Clone(outcome.Sessions), session) {
+			if id != "" && agent.ValidSessionID(id) && !slices.Contains(ids, id) {
+				ids = append(ids, id)
+			}
+		}
+		_ = reviewruns.Record(root, directory, fellBack && outcome.ErroredAttempts == 0, ids...)
+		if outcome.ErroredAttempts > 0 {
+			_ = reviewruns.MarkIncomplete(root, directory, true)
+		}
+	}
 	// A seeded directory no session was recorded for is not used again.
 	defer func() {
 		if fellBack && !recorded {
 			_ = reviewruns.Remove(root, directory)
 		} else if !recorded {
-			// The call ended without a session id: it may have left one.
+			// The call ended without a session id: it may have left one,
+			// and its retries' ids are still known.
+			recordSessions("")
 			_ = reviewruns.MarkIncomplete(root, directory, true)
 		}
 	}()
@@ -300,7 +320,7 @@ func (s *Service) Run(ctx context.Context, ref Ref, o RunOptions) (report Report
 			return report, err
 		}
 		recorded = true
-		_ = reviewruns.Record(root, directory, fellBack, session)
+		recordSessions(session)
 	} else {
 		// The answer stands, but the next question cannot continue this
 		// session: it starts from the saved review and the earlier turns.
@@ -331,7 +351,7 @@ func (s *Service) Run(ctx context.Context, ref Ref, o RunOptions) (report Report
 			document = repaired.Document
 			if repaired.SessionID != "" && repaired.SessionID != session && agent.ValidSessionID(repaired.SessionID) {
 				session = repaired.SessionID
-				_ = reviewruns.Record(root, directory, fellBack, session)
+				recordSessions(session)
 				if err := st.SetConversationSession(ctx, key, ref.Conversation, session, directory, seeded, s.now()); err != nil {
 					return report, err
 				}

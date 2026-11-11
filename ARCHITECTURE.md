@@ -2292,7 +2292,9 @@ dated folders from two days before the start, newest first, checking each
 one's cwd before deleting it, and then deletes the record. The record is
 marked complete only when `generate` saw no errored attempt (an errored call
 may leave a session without reporting its id). A chat call marks it pending
-until its session id is recorded, and lost if it ends without one. A directory
+until its session ids are recorded (every id its attempts reported, retried
+ones included), lost if it ends without a session id, and incomplete after any
+errored attempt. A directory
 with no record (made before records existed) is scanned from any date; one
 whose record is incomplete, lost or pending is scanned from its start date.
 The scan also reads the first line of Codex rollouts, newest first, at most
