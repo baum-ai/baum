@@ -692,6 +692,22 @@ func (q *Queue) List() []Job {
 	return out
 }
 
+// ActiveFixes is the queued or running fix jobs, as List shows them, without
+// copying the history of the others: what a view that asks only whether a
+// pull request is being fixed needs.
+func (q *Queue) ActiveFixes() []Job {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	var out []Job
+	for _, job := range q.jobs {
+		if job.Kind == KindFix && (job.State == "queued" || job.State == "running") {
+			job.Accounting = job.Accounting.Clone()
+			out = append(out, job)
+		}
+	}
+	return out
+}
+
 // Draft is the latest draft of a running staged review and the count it is
 // (Job.Draft), or false when the job has none now.
 func (q *Queue) Draft(jobID string) ([]byte, int, bool) {

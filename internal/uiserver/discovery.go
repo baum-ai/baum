@@ -3,11 +3,15 @@ package uiserver
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/baum-ai/baum/internal/discovery"
+	"github.com/baum-ai/baum/internal/etagjson"
 	"github.com/baum-ai/baum/internal/github"
 	"github.com/baum-ai/baum/internal/repos"
 )
@@ -26,16 +30,33 @@ type DiscoveryCache interface {
 // of never, while a busy repository's refresh may take minutes.
 var refreshTimeout = 45 * time.Second
 
+// revisioned is what a DiscoveryCache may also offer: a stamp of what Cached
+// would read, which lets GET /api/prs reuse its encoded answer.
+type revisioned interface {
+	Revision(context.Context, github.Repository) (discovery.Revision, error)
+}
+
+// listing is an encoded GET /api/prs answer and what it was built from.
+type listing struct {
+	key  string
+	body etagjson.Body
+	// until is when a snapshot in it reaches its next poll and turns stale,
+	// which no revision records; zero when none does.
+	until time.Time
+}
+
 func DiscoveryHandler(registry *repos.Registry, service DiscoveryCache, changed func()) http.Handler {
 	mux := http.NewServeMux()
+	var mu sync.Mutex
+	var last *listing
 	mux.HandleFunc("GET /api/prs", func(w http.ResponseWriter, r *http.Request) {
-		list, err := registry.Repositories(r.Context())
+		list, err := registry.RepositoryRows(r.Context())
 		if err != nil {
 			apiError(w, err)
 			return
 		}
 		seen := map[string]bool{}
-		out := []discovery.Snapshot{}
+		var picks []github.Repository
 		for _, picked := range list {
 			if seen[picked.Repository] {
 				continue
@@ -46,15 +67,58 @@ func DiscoveryHandler(registry *repos.Registry, service DiscoveryCache, changed 
 				apiError(w, err)
 				return
 			}
+			picks = append(picks, repo)
+		}
+		// The key is read before the snapshots: a write in between caches
+		// newer data under the older key, which only costs another encode.
+		key, keyed := "", false
+		if rev, ok := service.(revisioned); ok {
+			keyed = true
+			var b strings.Builder
+			for _, repo := range picks {
+				stamp, err := rev.Revision(r.Context(), repo)
+				if err != nil {
+					keyed = false
+					break
+				}
+				fmt.Fprintf(&b, "%s %+v\n", repo, stamp)
+			}
+			key = b.String()
+		}
+		if keyed {
+			mu.Lock()
+			hit := last
+			mu.Unlock()
+			if hit != nil && hit.key == key && (hit.until.IsZero() || time.Now().Before(hit.until)) {
+				etagjson.Serve(w, r, hit.body)
+				return
+			}
+		}
+		out := []discovery.Snapshot{}
+		var until time.Time
+		for _, repo := range picks {
 			snapshot, err := service.Cached(r.Context(), repo)
 			if err != nil {
 				snapshot.Repository = repo.String()
 				snapshot.Stale = true
 				snapshot.Error = "cache_unavailable"
+				keyed = false
+			} else if !snapshot.Stale && !snapshot.NextPoll.IsZero() && (until.IsZero() || snapshot.NextPoll.Before(until)) {
+				until = snapshot.NextPoll
 			}
 			out = append(out, snapshot)
 		}
-		writeJSON(w, out)
+		body, err := etagjson.Encode(out)
+		if err != nil {
+			apiError(w, err)
+			return
+		}
+		if keyed {
+			mu.Lock()
+			last = &listing{key: key, body: body, until: until}
+			mu.Unlock()
+		}
+		etagjson.Serve(w, r, body)
 	})
 	mux.HandleFunc("POST /api/prs/refresh", func(w http.ResponseWriter, r *http.Request) {
 		r.Body = http.MaxBytesReader(w, r.Body, 1024)

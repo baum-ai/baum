@@ -12,6 +12,7 @@ import (
 	"os"
 	"slices"
 	"strings"
+	"sync"
 
 	"github.com/baum-ai/baum/sessions/session"
 	"github.com/baum-ai/baum/sessions/vendors"
@@ -258,6 +259,15 @@ func (t *Transcripts) Image(ctx context.Context, agent, id, turn string, n int) 
 	if !ok || found.ref == "" || n < 0 || n >= len(found.types) || path == "" {
 		return "", nil, ErrNoImage
 	}
+	key := imageKey{path: path, ref: found.ref, n: n}
+	if info, err := os.Stat(path); err == nil {
+		key.size, key.mtime = info.Size(), info.ModTime().UnixNano()
+		if mediaType, data, ok := recentImages.get(key); ok {
+			return mediaType, data, nil
+		}
+	} else {
+		key.size = -1
+	}
 	// A ref's images are counted across its records, in order.
 	var image *pastedImage
 	seen := 0
@@ -286,5 +296,76 @@ func (t *Transcripts) Image(ctx context.Context, agent, id, turn string, n int) 
 	if err != nil {
 		return "", nil, ErrNoImage
 	}
+	if key.size >= 0 {
+		recentImages.put(key, image.mediaType, data)
+	}
 	return image.mediaType, data, nil
+}
+
+// imageKey names an image of a transcript as the file stood when it was read:
+// a transcript that grew or was rewritten has another size or time.
+type imageKey struct {
+	path  string
+	ref   string
+	n     int
+	size  int64
+	mtime int64
+}
+
+// Bounds on the images kept: a few, as a prompt's images are asked for one
+// after another, and not more than a few megabytes in all.
+const (
+	recentImageCount = 8
+	recentImageBytes = 32 << 20
+)
+
+type recentImage struct {
+	key       imageKey
+	mediaType string
+	data      []byte
+}
+
+// imageCache is the images last served, oldest first, so an image asked for
+// again is not found by reading its transcript again. Served data is never
+// modified.
+type imageCache struct {
+	mu      sync.Mutex
+	entries []recentImage
+}
+
+var recentImages imageCache
+
+func (c *imageCache) get(key imageKey) (string, []byte, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for _, e := range c.entries {
+		if e.key == key {
+			return e.mediaType, e.data, true
+		}
+	}
+	return "", nil, false
+}
+
+func (c *imageCache) put(key imageKey, mediaType string, data []byte) {
+	if len(data) > recentImageBytes {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	// Another size or time of the same image is a stale one.
+	c.entries = slices.DeleteFunc(c.entries, func(e recentImage) bool {
+		return e.key.path == key.path && e.key.ref == key.ref && e.key.n == key.n
+	})
+	c.entries = append(c.entries, recentImage{key, mediaType, data})
+	total := 0
+	for _, e := range c.entries {
+		total += len(e.data)
+	}
+	for len(c.entries) > recentImageCount || (total > recentImageBytes && len(c.entries) > 1) {
+		total -= len(c.entries[0].data)
+		// The backing array keeps the slice's skipped prefix alive: let go
+		// of the evicted buffer.
+		c.entries[0] = recentImage{}
+		c.entries = c.entries[1:]
+	}
 }

@@ -19,8 +19,9 @@ import (
 // Membership is an association, not proof that the session contributed. Missing
 // local transcripts are loaded from the checkpoint when possible; an unreadable
 // transcript does not erase the recorded membership. Nothing is fetched.
-// Checkpoints are read even when Sessions.Sources excludes the Entire store.
-func checkpointLinks(ctx context.Context, dir string, commits []gitlocal.Commit, found []sessions.Session, remote string, warn io.Writer) (associated map[string][]string, extra []sessions.Session) {
+// Checkpoints are read even when Sessions.Sources excludes the Entire store,
+// from the stores d found.
+func checkpointLinks(ctx context.Context, d *sessions.Discovery, commits []gitlocal.Commit, found []sessions.Session, remote string, warn io.Writer) (associated map[string][]string, extra []sessions.Session) {
 	named := map[string][]string{} // commit → checkpoints, in trailer order
 	firstNamedBy := map[string]string{}
 	var ids []string
@@ -43,7 +44,7 @@ func checkpointLinks(ctx context.Context, dir string, commits []gitlocal.Commit,
 	if len(ids) == 0 {
 		return nil, nil
 	}
-	branch, err := sessions.OpenCheckpoints(ctx, dir)
+	branch, err := d.Checkpoints(ctx)
 	if err != nil {
 		warnf(warn, "warning: reading the Entire checkpoints the commits name: %v\n", err)
 		return nil, nil

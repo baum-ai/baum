@@ -1690,7 +1690,8 @@ inside the clone and the session store overrides, and does this:
    ignores case on Windows. The answer is the same from the main checkout and
    from any worktree. Each Entire session is mapped once, from the newest
    checkpoint holding it: one `git cat-file --batch` reads the metadata of every
-   checkpoint in the window and another the metadata of their sessions, and
+   checkpoint in the window not read before (metadata is remembered by the
+   checkpoint's tree) and another the metadata of their sessions, and
    only the checkpoints holding the newest snapshot of a session no
    home-directory store has are read whole. A newest snapshot that cannot be
    mapped, or that carries no transcript (Entire sometimes writes a checkpoint
@@ -1963,6 +1964,18 @@ a process reuses what it built:
   kept leave out the raw record copies the mapper does not read, and are
   bounded by `sessions.DefaultTailCacheBytes` (64 MiB of estimated memory). The
   [sessions README](sessions/README.md#incremental-decoding) has the details.
+* **Entire checkpoints.** A refresh reads the clone through one `gitlocal`
+  repository: the caller's (`EvidenceRequest.Repo`, which the daemon's
+  refresh and review jobs set), or one it opens, shared by session loading,
+  the checkpoint trailers' lookups and the observed-commit lookup. The Entire
+  refs are resolved once, by `sessions.Discover`. Checkpoint listings, dates
+  and metadata are remembered per clone by the commits and trees that name
+  them (`entire.Listing`), so a refresh whose checkpoint branch and refs did
+  not move runs no git for them, and a branch that moved forward is dated
+  from its new commits alone. Checkpoints read whole are kept, as the
+  sessions they map to, in a cache keyed by their tree and bounded at 64 MiB
+  of checkpoint bytes (`sessions.DefaultCheckpointCacheBytes`). See the
+  [sessions README](sessions/README.md#entire-checkpoint-reuse).
 
 Callers get deep copies of reused evidence, because they cap and redact it in
 place. A reused answer prints no warnings.
@@ -2863,6 +2876,14 @@ lease-based run status independently of immutable successful version history;
 expired leases are read as interrupted without mutating stores during indexing.
 Once `Store.Put` commits a version, generation succeeds: failing to record the
 run's outcome afterwards is only a warning, and the lease later expires.
+
+`GET /api/index` and `GET /api/prs` revalidate: the JSON of a cached snapshot is
+encoded once per cache version and `history` flag (`/api/prs`: once per
+discovery `Revision` of the picked repositories, until a snapshot reaches its
+next poll), answered with a strong `ETag` (digest of the bytes), `Cache-Control:
+no-cache` and 304 for a matching `If-None-Match`. The app fetches them with
+`cache: "no-cache"` so the webview sends the validator; every other endpoint
+stays `no-store`.
 
 `Service.Build` is uncached: each call probes every clone with git, reads the
 discovery cache and opens every store. The daemon reads it through one

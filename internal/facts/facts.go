@@ -80,7 +80,7 @@ func (l Local) Build(ctx context.Context, clone repos.Clone, number int) (Built,
 		return Built{}, err
 	}
 	defer func() { _ = git.Close() }()
-	assembler := &assemble.Assembler{GitHub: l.Client, Git: git, Fetcher: git, Sessions: assemble.LocalSessions{Dir: git.Dir(), Warn: io.Discard}, Warn: io.Discard}
+	assembler := &assemble.Assembler{GitHub: l.Client, Git: git, Fetcher: git, Sessions: assemble.LocalSessions{Dir: git.Dir(), Warn: io.Discard, Repo: git}, Warn: io.Discard}
 	result, err := assembler.Assemble(ctx, assemble.Request{Repository: repo, Number: number, Limits: assemble.LimitsFrom(caps), Facts: true})
 	if err != nil {
 		return Built{}, err

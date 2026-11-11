@@ -10,30 +10,62 @@ export function useVisibleInterval(fn: () => void, ms: number | null) {
   latest.current = fn;
   useEffect(() => {
     if (ms === null) return;
-    let timer: ReturnType<typeof setInterval> | undefined;
-    const stop = () => {
-      clearInterval(timer);
-      timer = undefined;
-    };
-    const start = () => {
-      if (timer === undefined) timer = setInterval(() => latest.current(), ms);
-    };
-    const changed = () => {
-      if (document.hidden) {
-        stop();
-        return;
-      }
-      stop();
-      latest.current();
-      start();
-    };
-    if (!document.hidden) start();
-    document.addEventListener("visibilitychange", changed);
-    return () => {
-      document.removeEventListener("visibilitychange", changed);
-      stop();
-    };
+    return visibleInterval(() => latest.current(), ms);
   }, [ms]);
+}
+
+/** `useVisibleInterval` for an effect that owns its callback. Returns the
+ *  function that stops it. */
+export function visibleInterval(fn: () => void, ms: number): () => void {
+  let timer: ReturnType<typeof setInterval> | undefined;
+  const stop = () => {
+    clearInterval(timer);
+    timer = undefined;
+  };
+  const start = () => {
+    if (timer === undefined) timer = setInterval(fn, ms);
+  };
+  const changed = () => {
+    stop();
+    if (document.hidden) return;
+    fn();
+    start();
+  };
+  if (!document.hidden) start();
+  document.addEventListener("visibilitychange", changed);
+  return () => {
+    document.removeEventListener("visibilitychange", changed);
+    stop();
+  };
+}
+
+/** Calls `fn` once, `ms` from now. If the wait runs out while the page is
+ *  hidden, `fn` runs as soon as the page is visible again. Returns the
+ *  function that cancels it. For polls that schedule their next read after
+ *  each one. */
+export function visibleTimeout(fn: () => void, ms: number): () => void {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let due = false;
+  const cancel = () => {
+    clearTimeout(timer);
+    timer = undefined;
+    document.removeEventListener("visibilitychange", changed);
+  };
+  const changed = () => {
+    if (document.hidden || !due) return;
+    cancel();
+    fn();
+  };
+  document.addEventListener("visibilitychange", changed);
+  timer = setTimeout(() => {
+    timer = undefined;
+    if (document.hidden) due = true;
+    else {
+      cancel();
+      fn();
+    }
+  }, ms);
+  return cancel;
 }
 
 const shared = new Map<number, { listeners: Set<() => void>; release: () => void }>();

@@ -698,7 +698,7 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 		savedInboxes := inboxes.Open(database)
 		// The app's Inbox, and which saved inboxes hold each pull request;
 		// the desktop app's badge and tray count what it lists.
-		inboxQueue := &inboxqueue.Service{Index: index.Snapshot, Jobs: queue.List, Groups: groups.List, Snoozes: func() (json.RawMessage, error) {
+		inboxQueue := &inboxqueue.Service{Index: index.Snapshot, Jobs: queue.ActiveFixes, Groups: groups.List, Snoozes: func() (json.RawMessage, error) {
 			record, err := uiState.Read("inbox", "")
 			return record.Value, err
 		}, Inboxes: func() ([]inboxes.Inbox, error) {

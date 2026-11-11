@@ -414,7 +414,7 @@ func (l *Local) Execute(ctx context.Context, p Prepared, progress func(Progress)
 			backend.transcript = func(entry agent.TranscriptEntry) { writer.Add(ctx, entry) }
 		}
 	}
-	assembler := &assemble.Assembler{GitHub: l.Client, Git: clone, Fetcher: clone, Sessions: assemble.LocalSessions{Dir: clone.Dir(), Warn: io.Discard}, Images: assemble.NewHTTPImageFetcher(nil), Warn: io.Discard}
+	assembler := &assemble.Assembler{GitHub: l.Client, Git: clone, Fetcher: clone, Sessions: assemble.LocalSessions{Dir: clone.Dir(), Warn: io.Discard, Repo: clone}, Images: assemble.NewHTTPImageFetcher(nil), Warn: io.Discard}
 	// An assembly which observes a changed head must stop before calling a model.
 	var guarded generate.Assembler = headAssembler{Assembler: assembler, head: p.HeadSHA}
 	var published generate.Versions = identityVersions{versions, manager}
