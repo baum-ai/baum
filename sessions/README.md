@@ -111,6 +111,22 @@ continued read), `sessions.tail.reads.full` and `.appended`, and
 `sessions.tail_cache.bytes` (estimated memory), `.transcript_bytes` and
 `.entries` gauges give what is kept.
 
+## Decode bound
+
+A decode holds a whole transcript and its decoded lines, and transcripts reach
+over 150 MB, so decoding is bounded two ways.
+
+* **Parallelism:** `Load` maps, and reads Entire checkpoints, up to
+  `min(GOMAXPROCS, 8)` sessions at once. A context marked with
+  `WithBackground` (the daemon's background pass sets it) allows
+  `BackgroundParallel` (2) instead; interactive loads keep the larger bound.
+* **Bytes:** a process-wide weighted semaphore of `DefaultDecodeBudgetBytes`
+  (256 MiB) is acquired with a session's transcript size before it is decoded,
+  less the bytes its kept lines cover (see "Incremental decoding"),
+  and with a fixed estimate for each checkpoint read. A session larger than
+  the budget is clamped to it, so it runs alone rather than waiting forever.
+  Waiting ends when the context is cancelled. Cache hits take no budget.
+
 `Load` is `Discover` followed by `Discovery.Load`. `Discover` reads
 directories, file metadata and the Entire refs, and never a transcript.
 `Discovery.Fingerprint` describes everything `Load` would read, so a caller can

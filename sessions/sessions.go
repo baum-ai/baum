@@ -319,12 +319,27 @@ var ErrUnbalanced = errors.New("mapper did not account for every record")
 // is shared with every other caller that mapped the same files, so callers
 // must not change it.
 func Map(s collector.Session) (*session.Graph, []string, error) {
+	return mapCtx(context.Background(), s)
+}
+
+// mapCtx is Map, waiting for decode budget only while ctx lives. A cancelled
+// wait returns ctx's error, which is never cached.
+func mapCtx(ctx context.Context, s collector.Session) (*session.Graph, []string, error) {
 	workstats.Inc("sessions.map.calls")
 	key, cost, cacheable := mapKey(s)
 	if cacheable {
 		if entry, ok := cache.get(key); ok {
 			return entry.graph, mapNotes(s, entry), entry.err
 		}
+	}
+	// A transcript that grew is decoded from where its kept lines end.
+	release, err := decodeBudget.acquire(ctx, tails.pending(s, cost))
+	if err != nil {
+		return nil, nil, err
+	}
+	defer release()
+	if decodeObserver != nil {
+		defer decodeObserver(cost)()
 	}
 	workstats.Inc("sessions.map.decodes." + string(s.Source))
 	if s.Source == vendors.Cursor {

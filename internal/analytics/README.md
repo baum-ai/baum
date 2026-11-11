@@ -38,6 +38,11 @@ prompt, message, tool input or output, or file path is stored.
 - The daemon builds it in the background when it starts and refreshes it every
   five minutes and when an agent session ends. While the first pass runs, the
   report answers with what it has and `indexing: {done, total, complete}`.
+- A refresh that changed nothing writes nothing: the document is saved only
+  when an entry was added, replaced or dropped (a failed save is retried on the
+  next refresh). The head of each Claude transcript (working directory, start)
+  is remembered by path, size and modification time, so an unchanged transcript
+  is not opened again; the memory is per process and forgets deleted files.
 - baum's own generation runs are kept as marked entries, so they are not read
   again, and never count.
 - A session that does not map counts with unknown usage.

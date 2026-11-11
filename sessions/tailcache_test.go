@@ -175,7 +175,15 @@ func TestMapDecodesOnlyAppendedLines(t *testing.T) {
 
 			for len(missing) > 0 {
 				n := min(4, len(missing))
+				// The decode budget is taken for the appended bytes, and the
+				// sidecars, which are always read whole.
+				_, cost, _ := mapKey(s)
+				sidecars := c.pending(s, cost)
 				appendTo(t, main, missing[:n]...)
+				_, cost, _ = mapKey(s)
+				if want := int64(len(bytes.Join(missing[:n], nil))); c.pending(s, cost)-sidecars != want {
+					t.Fatalf("pending = %d of %d bytes, %d before; want the %d appended", c.pending(s, cost), cost, sidecars, want)
+				}
 				missing = missing[n:]
 				before := c.counts()
 				mapsAsWhole(t, s, "after growing")

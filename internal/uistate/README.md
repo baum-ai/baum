@@ -9,7 +9,7 @@ reviews are outside this store.
 
 | Document | Contents |
 | --- | --- |
-| `ui/inbox` | local day; per-PR seen/cleared records; time-based snoozes; head-based snoozes |
+| `ui/inbox` | local day; per-PR seen/cleared records; time-based snoozes; head-based snoozes; archives (`archived`, optional) |
 | `ui/filters` | each page's filter query and the saved Pull requests tabs (`{pages: {<page>: query}, tabs: [{id, name, view, query}]}`) |
 | `ui/tour` | whether this computer has finished or skipped the app's first-run tour (`{seen}`) |
 | `ui/walkthrough` | per repository/PR/review-version seen stops, draft comments per stop, and overall comment |

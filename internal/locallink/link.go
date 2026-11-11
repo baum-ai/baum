@@ -226,7 +226,7 @@ func Resolve(ctx context.Context, req Request) (Result, error) {
 	case err != nil:
 		return Result{}, fmt.Errorf("reading the pull request's commits: %w", err)
 	}
-	engine, err := redact.New()
+	engine, err := redact.Shared()
 	if err != nil {
 		return Result{}, err
 	}

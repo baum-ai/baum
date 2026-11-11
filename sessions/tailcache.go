@@ -12,6 +12,7 @@ import (
 	"github.com/baum-ai/baum/internal/workstats"
 	"github.com/baum-ai/baum/sessions/claudetranscript"
 	"github.com/baum-ai/baum/sessions/codextranscript"
+	"github.com/baum-ai/baum/sessions/collector"
 )
 
 // DefaultTailCacheBytes bounds the estimated memory of the decoded lines Map
@@ -71,6 +72,7 @@ type tailCache struct {
 // cache's lock guards cost, used, kept and the entry's place in the cache.
 type tailEntry struct {
 	key     string
+	path    string
 	mu      sync.Mutex
 	reading tailReading
 	info    os.FileInfo
@@ -163,7 +165,7 @@ func tailRead[T any](c *tailCache, key, path, what string, start func() tailRead
 		return zero, fmt.Errorf("opening %s %s: %w", what, path, err)
 	}
 
-	e := c.entry(key, info)
+	e := c.entry(key, path, info)
 	if e == nil {
 		reading := start()
 		_, rest, err := c.continueFrom(reading, f, 0)
@@ -258,7 +260,7 @@ func readAt(f *os.File, off, n int64) []byte {
 
 // entry is the entry for key, created when the file is worth keeping lines
 // for, or nil.
-func (c *tailCache) entry(key string, info os.FileInfo) *tailEntry {
+func (c *tailCache) entry(key, path string, info os.FileInfo) *tailEntry {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if element, ok := c.entries[key]; ok {
@@ -270,9 +272,32 @@ func (c *tailCache) entry(key string, info os.FileInfo) *tailEntry {
 	if c.limit <= 0 || time.Since(info.ModTime()) > tailActiveFor {
 		return nil
 	}
-	e := &tailEntry{key: key, used: time.Now()}
+	e := &tailEntry{key: key, path: path, used: time.Now()}
 	c.entries[key] = c.order.PushFront(e)
 	return e
+}
+
+// pending is how much of the session's cost, the size of its files, is
+// left to decode: the bytes its kept lines do not cover. It is what Map takes
+// from the decode budget.
+func (c *tailCache) pending(s collector.Session, cost int64) int64 {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if len(c.entries) == 0 {
+		return cost
+	}
+	paths := map[string]bool{}
+	for _, f := range s.Files {
+		if f.Data == nil {
+			paths[f.Path] = true
+		}
+	}
+	for _, element := range c.entries {
+		if e := element.Value.(*tailEntry); paths[e.path] {
+			cost -= e.covered
+		}
+	}
+	return max(cost, 0)
 }
 
 // account records the Reading's size as the entry's cost, unless the entry
