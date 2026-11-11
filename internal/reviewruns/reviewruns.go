@@ -4,7 +4,9 @@
 // Kept directories live under one root in the user's cache directory, named
 // with agent.RunDirPrefix. Pruning only ever removes directories directly
 // under the root whose names carry the prefix, and never follows a symlink.
-// It removes directories only: the CLI's own session files stay.
+// Each directory has a small record next to it (see Record) of the agent
+// sessions its run created, so removing it deletes those session files by id
+// and does not scan the agents' stores.
 package reviewruns
 
 import (
@@ -59,6 +61,12 @@ func Create(root string) (string, error) {
 		_ = os.RemoveAll(dir)
 		return "", err
 	}
+	// Record the start so removing the run only looks at Codex's dated
+	// folders from then on. Failing to write it is not fatal: the run then
+	// counts as one with no record.
+	manifestMu.Lock()
+	_ = writeManifest(root, resolved, manifest{Created: time.Now()})
+	manifestMu.Unlock()
 	return resolved, nil
 }
 
@@ -120,11 +128,25 @@ func PruneVersions(root string, versions []store.Metadata) error {
 	}
 	var remove []string
 	for _, dir := range old {
-		if !keep[dir] {
+		if !keep[dir] && !pruned(root, dir) {
 			remove = append(remove, dir)
 		}
 	}
 	return Remove(root, remove...)
+}
+
+// pruned reports whether a run directory is already gone together with its
+// session record: an earlier Remove or Expire did everything, so pruning it
+// again would only rescan the agent's store.
+func pruned(root, dir string) bool {
+	if !underRoot(root, dir) {
+		return false
+	}
+	if _, err := os.Lstat(dir); !errors.Is(err, fs.ErrNotExist) {
+		return false
+	}
+	_, err := os.Lstat(manifestPath(root, dir))
+	return errors.Is(err, fs.ErrNotExist)
 }
 
 // Expire removes the run directories under root last modified more than
@@ -150,6 +172,24 @@ func Expire(root string, now time.Time, maxAge time.Duration) error {
 		}
 		dir := filepath.Join(resolvedRoot(root), entry.Name())
 		errs = append(errs, removeTree(filepath.Join(root, entry.Name())), RemoveSessions(root, dir))
+	}
+	// A record whose directory is gone (a crash between the two removals)
+	// still names sessions to delete.
+	for _, entry := range entries {
+		name, ok := strings.CutPrefix(entry.Name(), manifestPrefix)
+		if !ok || !entry.Type().IsRegular() || !strings.HasPrefix(name, agent.RunDirPrefix) {
+			continue
+		}
+		dir := filepath.Join(resolvedRoot(root), name)
+		if _, err := os.Lstat(dir); !errors.Is(err, fs.ErrNotExist) {
+			continue
+		}
+		// The record's age, and that the first loop did not just remove it.
+		info, err := os.Lstat(manifestPath(root, dir))
+		if err != nil || now.Sub(info.ModTime()) <= maxAge {
+			continue
+		}
+		errs = append(errs, RemoveSessions(root, dir))
 	}
 	return errors.Join(errs...)
 }

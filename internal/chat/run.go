@@ -263,6 +263,10 @@ func (s *Service) Run(ctx context.Context, ref Ref, o RunOptions) (report Report
 	if err != nil {
 		return report, err
 	}
+	if !fellBack {
+		// The call may create a session this turn never learns the id of.
+		_ = reviewruns.MarkIncomplete(root, directory)
+	}
 	result, err := call(agent.Request{Directory: directory, Prompt: text, ResumeSession: resume, ForkSession: fork})
 	if err != nil && errors.Is(err, agent.ErrSessionNotFound) && !fellBack {
 		// The session's files are gone though its directory is not: start
@@ -293,6 +297,7 @@ func (s *Service) Run(ctx context.Context, ref Ref, o RunOptions) (report Report
 			return report, err
 		}
 		recorded = true
+		_ = reviewruns.Record(root, directory, fellBack, session)
 	} else {
 		// The answer stands, but the next question cannot continue this
 		// session: it starts from the saved review and the earlier turns.
@@ -323,6 +328,7 @@ func (s *Service) Run(ctx context.Context, ref Ref, o RunOptions) (report Report
 			document = repaired.Document
 			if repaired.SessionID != "" && repaired.SessionID != session && agent.ValidSessionID(repaired.SessionID) {
 				session = repaired.SessionID
+				_ = reviewruns.Record(root, directory, fellBack, session)
 				if err := st.SetConversationSession(ctx, key, ref.Conversation, session, directory, seeded, s.now()); err != nil {
 					return report, err
 				}

@@ -284,8 +284,15 @@ func TestFallbackHappensOnlyOnce(t *testing.T) {
 		}
 	}
 	// The seeded directory no session was recorded for is removed.
-	if entries, _ := os.ReadDir(f.Root); len(entries) != 1 {
-		t.Errorf("%d run directories, want the review's alone", len(entries))
+	dirs := 0
+	entries, _ := os.ReadDir(f.Root)
+	for _, e := range entries {
+		if e.IsDir() {
+			dirs++
+		}
+	}
+	if dirs != 1 {
+		t.Errorf("%d run directories, want the review's alone", dirs)
 	}
 }
 

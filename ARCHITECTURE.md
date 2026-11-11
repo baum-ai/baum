@@ -2283,6 +2283,19 @@ chat forks made later included. It acts only on a directory directly under the
 review-runs root with the run prefix, deletes only a real Claude project
 directory of that encoded name and `rollout-*.jsonl` regular files whose cwd is
 that directory, never follows a symlink and ignores files that are gone.
+Nothing scans the Codex store for a run that recorded its sessions. Each run
+directory has a record next to it in the root, `.sessions-<run dir name>`
+(`reviewruns.Create` writes it with the start time; `generate` adds the ids of
+`Outcome.Sessions` and `chat` adds the ids of its forks, `reviewruns.Record`).
+Removing the directory deletes the recorded Codex rollouts by file name in the
+dated folders from two days before the start, newest first, checking each
+one's cwd before deleting it, and then deletes the record. Only a directory
+with no record (made before records existed), or whose record is not marked
+complete (a crash before the ids were written, or a chat call whose session id
+was not learned), also reads the first line of Codex rollouts, newest first and
+from the start date only, at most 50000. A pruned directory that is already
+gone with its record is skipped by `PruneVersions`, and `Expire` also deletes
+the sessions of a record whose directory is gone.
 The directory itself is pruned the same way and only real directories directly
 under the root whose names carry the prefix: after a successful publish the directories of a pull request's versions
 beyond the latest two (`reviewruns.PruneVersions`), and, when the daemon starts

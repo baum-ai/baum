@@ -334,6 +334,8 @@ func Run(ctx context.Context, o Options) (result Result, err error) {
 				RemoveTree(runDir)
 				if len(sessionIDs) > 0 {
 					_ = reviewruns.RemoveSessions(sessionRoot, runDir)
+				} else {
+					reviewruns.Forget(sessionRoot, runDir)
 				}
 			case len(sessionIDs) > 1:
 				var others []string
@@ -452,6 +454,13 @@ func Run(ctx context.Context, o Options) (result Result, err error) {
 		outcome, document, genErr = generator.Generate(runCtx, run)
 		sessionIDs = outcome.Sessions
 		document, closed, redactErr = agent.RedactOutput(redactCtx, validator, redactor, document, &b, checkout, &outcome)
+	}
+	if keepSession && len(sessionIDs) > 0 {
+		// Removing the run deletes exactly these sessions by id. A failed
+		// write only leaves the removal to a bounded scan.
+		if e := reviewruns.Record(sessionRoot, runDir, true, sessionIDs...); e != nil {
+			progress("warning: recording the agent sessions: %v", e)
+		}
 	}
 	if redactErr == nil {
 		document, _ = agent.RejectSecrets(&outcome, document, closed)
