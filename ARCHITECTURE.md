@@ -2884,6 +2884,20 @@ or another reader replaced it does the watcher read the index, and it publishes
 `index` only when the snapshot's JSON hash differs from the last one it
 published. The first read publishes.
 
+With no event stream connected the watcher builds nothing, since nobody would
+be told: a moved fingerprint still invalidates the cache, so a reader of
+`/api/index` never gets a stale snapshot, and the read it owes happens when a
+stream connects (which wakes the watcher). The desktop shell's tray keeps its
+own `/api/events` stream open (with reconnect), so while the desktop app runs
+there is always a subscriber and this idle skip rarely applies; it covers a
+daemon running without the shell. What helps while the app runs is the next
+point. A run's 30-second lease
+renewal (`store.HeartbeatRun`) rewrites `versions.sqlite` but changes nothing
+the index shows, so the fingerprint looks through the latest renewal made by
+this process (`store.SeenThroughHeartbeats`: the file stamp the renewal left
+maps back to the one before it, and any other write still moves it). A
+renewal by another process, such as the CLI, still moves the fingerprint.
+
 The fingerprint reads registry rows rather than `app.sqlite`'s file times or
 `PRAGMA data_version`: most daemon stores (jobs, chat, UI state, analytics,
 automatic generation, decisions) open their own connections, and
