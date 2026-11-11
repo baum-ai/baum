@@ -479,6 +479,57 @@ it("keeps the PR page through queued, running and completed SSE states across cl
     )!.disabled,
   ).toBe(false);
 });
+it("reads the open pull request's document again for an index event, not for a job's progress", async () => {
+  const events: EventTarget[] = [];
+  vi.stubGlobal(
+    "EventSource",
+    class extends EventTarget {
+      constructor() {
+        super();
+        events.push(this);
+      }
+      close() {}
+    },
+  );
+  documentValue = structuredClone(example) as unknown as ReviewDocument;
+  const original = globalThis.fetch;
+  const documents = () =>
+    vi.mocked(fetch).mock.calls.filter(([path]) => String(path).includes("api/document")).length;
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (path: string, ...args: unknown[]) =>
+      path === "/s/test-ns/api/repos"
+        ? Response.json([
+            {
+              id: "selected-clone",
+              repository: "acme/demo",
+              available: true,
+              path: "/fixture",
+              settings: { automatic: false },
+            },
+          ])
+        : path.startsWith("/s/test-ns/api/index")
+          ? Response.json({
+              entries: [{ ...entry, status: "current", version_count: 1 }],
+              problems: [],
+            })
+          : path === "/s/test-ns/api/jobs"
+            ? Response.json({ jobs: [job("running")] })
+            : path === "/s/test-ns/api/prs"
+              ? Response.json([])
+              : original(path, ...(args as [])),
+    ),
+  );
+  history.replaceState(null, "", "/s/test-ns/?clone=selected-clone&pr=7");
+  await act(async () => root.render(<App />));
+  const loaded = documents();
+  expect(loaded).toBeGreaterThan(0);
+  for (let i = 0; i < 3; i++)
+    await act(async () => events[0]!.dispatchEvent(new Event("progress")));
+  expect(documents()).toBe(loaded);
+  await act(async () => events[0]!.dispatchEvent(new Event("index")));
+  expect(documents()).toBeGreaterThan(loaded);
+});
 it("opens the description a source chip cites in a panel, and another pull request in the app", async () => {
   Object.defineProperty(HTMLDialogElement.prototype, "showModal", {
     configurable: true,
