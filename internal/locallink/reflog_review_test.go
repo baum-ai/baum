@@ -139,6 +139,7 @@ func TestReflogCodeModeNeedsEachCommandsOutcome(t *testing.T) {
 		})
 	}
 	t.Run("a successful commit", func(t *testing.T) {
+		skipWindowsWorkdir(t)
 		s := reflogSession("session-codex", "codex", wt, codeModeCall(source, "10:29:58", "10:30:02"))
 		_, links := resolveReflog(t, r, []sessions.Session{s}, r.commits(sha))
 		assertLinks(t, links, sha, "session-codex")
@@ -175,6 +176,7 @@ func TestReflogYieldedCommandThatFailedGivesNoWindow(t *testing.T) {
 }
 
 func TestReflogCodeModeCommandsKeepTheirOwnWorkdir(t *testing.T) {
+	skipWindowsWorkdir(t)
 	t.Run("a command in another workdir does not place the commit", func(t *testing.T) {
 		r := newReflogRepo(t)
 		a, b := r.worktree("a", "feature-a"), r.worktree("b", "feature-b")

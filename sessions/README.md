@@ -182,10 +182,20 @@ reads each one once:
 `Load` is `Discover` followed by `Discovery.Load`. `Discover` reads
 directories, file metadata and the Entire refs, and never a transcript.
 `Discovery.Fingerprint` describes everything `Load` would read, so a caller can
-tell whether anything changed before paying for the decode. Cursor is the
-exception: it keeps every conversation in one database, so discovery reads the
-store's conversation index and builds the tree of each repository conversation
-for its payload. `Options.Since` bounds that: a conversation last updated
+tell whether anything changed before paying for the decode.
+Codex discovery indexes the whole Codex store (every rollout's first record),
+because a session's children and fork sources can be anywhere in it. The
+collector keeps what it read in a `codex.Cache` keyed by rollout path, size and
+modification time, so an unchanged rollout is not opened again and a deleted
+one is dropped by the next scan; `FindOptions.CodexCache` selects the cache,
+and by default the process-wide `codex.Shared` is used. Discovery returns the
+same sessions with or without it. Within a `Cache.BeginPass`/`EndPass` pair
+the store is scanned once however many clones look it up, and so does not see a
+rollout added during the pass. The parent and child lookups are built once per
+scan, not once per session.
+Cursor is the exception to "never a transcript": it keeps every conversation
+in one database, so discovery reads the store's conversation index and builds
+the tree of each repository conversation for its payload. `Options.Since` bounds that: a conversation last updated
 before it is skipped on the index's update time, before its tree is read.
 `Options.SessionIDs` keeps only the sessions with those native session IDs; the
 others are never mapped, so a caller that needs a few sessions does not decode

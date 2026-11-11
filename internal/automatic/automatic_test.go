@@ -402,10 +402,13 @@ func TestAlreadyReviewedHeadIsSkipped(t *testing.T) {
 func TestOneJobPerPRAndNewerHeadWaitsForTheRunningJob(t *testing.T) {
 	h := newHarness(t)
 	h.exec.block = make(chan struct{})
+	h.exec.started = make(chan struct{}, 10)
 	h.observe(pr{number: 1, head: "a1", authored: true})
 	h.observe(pr{number: 1, head: "a2", authored: true})
 	h.pass()
 	h.want("org/repo#1@a2:new_head")
+	// Running, it is not replaced (a queued one would be).
+	<-h.exec.started
 	h.observe(pr{number: 1, head: "a3", authored: true})
 	h.pass()
 	h.want("org/repo#1@a2:new_head")
@@ -413,6 +416,133 @@ func TestOneJobPerPRAndNewerHeadWaitsForTheRunningJob(t *testing.T) {
 	h.waitIdle()
 	h.pass()
 	h.want("org/repo#1@a2:new_head", "org/repo#1@a3:new_head")
+}
+
+// running is the head of the job that runs now, "" for none.
+func (h *harness) running() string {
+	for _, j := range h.queue.List() {
+		if j.State == "running" {
+			return j.HeadSHA
+		}
+	}
+	return ""
+}
+
+// A new head of a PR whose automatic review still waits in the queue
+// replaces that review and keeps its place, so a PR pushed more often than
+// the queue moves is still reviewed, at its newest head.
+func TestNewerHeadReplacesAWaitingReviewInPlace(t *testing.T) {
+	h := newHarness(t)
+	h.exec.block = make(chan struct{})
+	h.exec.started = make(chan struct{}, 10)
+	open := []pr{{number: 1, head: "a1", authored: true}, {number: 2, head: "b1", authored: true}, {number: 3, head: "c1", authored: true}}
+	h.observe(open...)
+	open[0].head = "a2"
+	h.observe(open...)
+	h.pass()
+	<-h.exec.started
+	// PR 2 and then PR 3 wait behind PR 1; PR 2 is pushed twice meanwhile.
+	for _, step := range []struct {
+		i    int
+		head string
+	}{{1, "b2"}, {2, "c2"}, {1, "b3"}, {1, "b4"}} {
+		h.now = h.now.Add(time.Minute)
+		open[step.i].head = step.head
+		h.observe(open...)
+		h.pass()
+	}
+	// No job of PR 2's older heads is left, cancelled or otherwise.
+	h.want("org/repo#1@a2:new_head", "org/repo#2@b4:new_head", "org/repo#3@c2:new_head")
+	h.exec.block <- struct{}{}
+	<-h.exec.started
+	if head := h.running(); head != "b4" {
+		t.Fatalf("running %q, want PR 2's newest head in PR 2's place", head)
+	}
+	close(h.exec.block)
+	h.waitIdle()
+}
+
+// A head GitHub already shows moved on before discovery does stays pending
+// in its place and is tried again a minute later; the new head discovery
+// brings replaces it there.
+func TestHeadMovedBeforeDiscoveryKeepsItsPlace(t *testing.T) {
+	h := newHarness(t)
+	h.observe(pr{number: 1, head: "a1", authored: true})
+	h.observe(pr{number: 1, head: "a2", authored: true})
+	h.scheduler.mu.Lock()
+	since := h.scheduler.load().Repositories["org/repo"].PRs[1].Waiting
+	h.scheduler.mu.Unlock()
+	h.exec.setHead(1, "a3", false)
+	h.now = h.now.Add(time.Second)
+	h.pass()
+	h.want()
+	h.scheduler.mu.Lock()
+	state := *h.scheduler.load().Repositories["org/repo"].PRs[1]
+	h.scheduler.mu.Unlock()
+	if state.Pending != "a2" || !state.Waiting.Equal(since) || !state.RetryAt.Equal(h.now.Add(time.Minute)) {
+		t.Fatalf("after a moved head %+v, want a2 pending since %v, retried in a minute", state, since)
+	}
+	h.now = h.now.Add(time.Second)
+	h.observe(pr{number: 1, head: "a3", authored: true})
+	h.pass()
+	h.want("org/repo#1@a3:new_head")
+	h.waitIdle()
+}
+
+// A pass leaves at most two automatic jobs per running slot waiting in the
+// queue. The rest stay pending, and the PRs that have waited longest go
+// first, whatever their numbers.
+func TestPassKeepsTheQueueShortAndServesTheLongestWaitingFirst(t *testing.T) {
+	h := newHarness(t)
+	h.registry.set(func(p *repos.Preferences, _ *repos.Settings) { p.JobConcurrency = 1 })
+	h.exec.block = make(chan struct{})
+	h.exec.started = make(chan struct{}, 10)
+	open := []pr{}
+	for n := 1; n <= 5; n++ {
+		open = append(open, pr{number: n, head: string(rune('a'+n-1)) + "1", authored: true})
+	}
+	h.observe(open...)
+	open[0].head = "a2"
+	h.observe(open...)
+	h.pass()
+	<-h.exec.started
+	for _, i := range []int{4, 3, 2, 1} {
+		h.now = h.now.Add(time.Minute)
+		open[i].head = open[i].head[:1] + "2"
+		h.observe(open...)
+	}
+	h.pass()
+	h.want("org/repo#1@a2:new_head", "org/repo#5@e2:new_head", "org/repo#4@d2:new_head")
+	o, err := h.scheduler.Overview(context.Background())
+	if err != nil || len(o.Repositories) != 1 || o.Repositories[0].Pending != 2 {
+		t.Fatalf("overview %+v %v, want PRs 2 and 3 pending", o, err)
+	}
+	// A pending PR pushed again keeps its place in the scheduler's line.
+	waitingSince := func(n int) time.Time {
+		h.scheduler.mu.Lock()
+		defer h.scheduler.mu.Unlock()
+		return h.scheduler.load().Repositories["org/repo"].PRs[n].Waiting
+	}
+	before := waitingSince(3)
+	h.now = h.now.Add(time.Minute)
+	open[2].head = "c3"
+	h.observe(open...)
+	if after := waitingSince(3); !after.Equal(before) || after.IsZero() {
+		t.Fatalf("PR 3 waits since %v after a push, want %v", after, before)
+	}
+	open[2].head = "c2"
+	h.observe(open...)
+	// A new head of a waiting PR replaces its review though the queue is full.
+	open[3].head = "d3"
+	h.observe(open...)
+	h.pass()
+	h.want("org/repo#1@a2:new_head", "org/repo#5@e2:new_head", "org/repo#4@d3:new_head")
+	// Once the queue moves, the rest follow.
+	close(h.exec.block)
+	h.waitIdle()
+	h.pass()
+	h.want("org/repo#1@a2:new_head", "org/repo#5@e2:new_head", "org/repo#4@d3:new_head", "org/repo#3@c2:new_head", "org/repo#2@b2:new_head")
+	h.waitIdle()
 }
 
 // cursor-agent, which baum cannot price, runs like any backend.

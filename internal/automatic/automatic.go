@@ -65,7 +65,16 @@ type Queue interface {
 	// CancelDisallowedAutomatic cancels queued automatic jobs the gate
 	// (Scheduler.Gate) now refuses.
 	CancelDisallowedAutomatic() []jobs.Job
+	// QueuedAutomatic lists the automatic jobs waiting to start.
+	QueuedAutomatic() []jobs.Job
 }
+
+// queuedPerSlot bounds the automatic jobs a pass leaves waiting in the queue:
+// this many for each job the queue runs at once (repos.Preferences.
+// Concurrency). Heads past it stay pending, so a backlog waits in the
+// scheduler, where a newer head simply replaces a pending one, and a pass
+// submits the PRs that have waited longest first.
+const queuedPerSlot = 2
 
 // Scheduler decides which pull requests get automatic jobs. Run it once in
 // the daemon; Observe and Trigger may be called from other goroutines.
@@ -200,6 +209,10 @@ type prState struct {
 	// Pending is a head that needs an automatic job; Trigger says why.
 	Pending string `json:"pending,omitempty"`
 	Trigger string `json:"trigger,omitempty"`
+	// Waiting is when the PR started waiting for its pending head's job,
+	// which orders a pass: a newer head that replaces a pending one keeps
+	// it. Meaningless while nothing is pending.
+	Waiting time.Time `json:"waiting,omitzero"`
 	// Done is the last head queued or found already reviewed.
 	Done     string    `json:"done,omitempty"`
 	Attempts int       `json:"attempts,omitempty"`
@@ -210,6 +223,15 @@ type prState struct {
 	// Refused is the ID of the last job refused before it started (Queue
 	// Refused) whose head was put back as pending, so each is put back once.
 	Refused string `json:"refused,omitempty"`
+}
+
+// wait makes head pending for trigger, with fresh attempts. A PR already
+// waiting for another head keeps its place (Waiting).
+func (p *prState) wait(head, trigger string, now time.Time) {
+	if p.Pending == "" || p.Waiting.IsZero() {
+		p.Waiting = now.UTC()
+	}
+	p.Pending, p.Trigger, p.Attempts, p.RetryAt = head, trigger, 0, time.Time{}
 }
 
 func (s *Scheduler) init() {
@@ -471,15 +493,14 @@ func (s *Scheduler) Observe(ctx context.Context, snapshot discovery.Snapshot) {
 		previous.Eligible = eligible(pr, v.prefs)
 		switch {
 		case (newHead || newRequest || ready) && previous.Eligible && pr.HeadSHA != previous.Done:
-			previous.Pending, previous.Attempts, previous.RetryAt = pr.HeadSHA, 0, time.Time{}
+			trigger := jobs.TriggerReadyForReview
 			switch {
 			case newHead:
-				previous.Trigger = jobs.TriggerNewHead
+				trigger = jobs.TriggerNewHead
 			case newRequest:
-				previous.Trigger = jobs.TriggerReviewRequested
-			default:
-				previous.Trigger = jobs.TriggerReadyForReview
+				trigger = jobs.TriggerReviewRequested
 			}
+			previous.wait(pr.HeadSHA, trigger, s.now())
 		case previous.Pending != "" && (previous.Pending != pr.HeadSHA || !eligible(pr, v.prefs)):
 			previous.Pending, previous.Trigger = "", ""
 		}
@@ -623,7 +644,8 @@ func (s *Scheduler) CatchUp(ctx context.Context, n int) error {
 		}
 		// The baseline marked the head retried; an interrupted catch-up run
 		// gets its one retry like any other.
-		pr.Pending, pr.Trigger, pr.Retried, pr.Attempts, pr.RetryAt = pr.Head, jobs.TriggerSetup, "", 0, time.Time{}
+		pr.wait(pr.Head, jobs.TriggerSetup, s.now())
+		pr.Retried = ""
 		queued = true
 	}
 	if queued {
@@ -642,6 +664,7 @@ type work struct {
 	number  int
 	head    string
 	trigger string
+	waiting time.Time
 }
 
 // Pass submits every pending job that is due. Exposed for tests.
@@ -664,6 +687,7 @@ func (s *Scheduler) Pass(ctx context.Context) {
 	var due []work
 	interrupted := s.Queue.Interrupted()
 	refused := s.Queue.Refused()
+	queued := s.Queue.QueuedAutomatic()
 	s.mu.Lock()
 	state := s.load()
 	changed := s.prune(v)
@@ -686,7 +710,8 @@ func (s *Scheduler) Pass(ctx context.Context) {
 		if pr == nil || pr.Head != j.HeadSHA || !pr.Eligible || pr.Pending != "" || pr.Retried == j.HeadSHA {
 			continue
 		}
-		pr.Pending, pr.Trigger, pr.Retried, pr.Attempts, pr.RetryAt = j.HeadSHA, jobs.TriggerRetry, j.HeadSHA, 0, time.Time{}
+		pr.wait(j.HeadSHA, jobs.TriggerRetry, now)
+		pr.Retried = j.HeadSHA
 		changed = true
 	}
 	// A queued job stopped before it started did not use up its head: one
@@ -707,45 +732,57 @@ func (s *Scheduler) Pass(ctx context.Context) {
 		if j.Reason == jobs.ReasonDraft {
 			trigger = jobs.TriggerReadyForReview
 		}
-		pr.Pending, pr.Trigger, pr.Refused, pr.Attempts, pr.RetryAt = j.HeadSHA, trigger, j.ID, 0, time.Time{}
+		pr.wait(j.HeadSHA, trigger, now)
+		pr.Refused = j.ID
 		changed = true
 	}
-	names := make([]string, 0, len(state.Repositories))
-	for name := range state.Repositories {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	for _, name := range names {
-		rs := state.Repositories[name]
+	for name, rs := range state.Repositories {
 		r := v.repos[name]
 		if !r.clone.Available {
 			continue
 		}
-		numbers := make([]int, 0, len(rs.PRs))
 		for number, pr := range rs.PRs {
 			if pr.Pending != "" && !now.Before(pr.RetryAt) {
-				numbers = append(numbers, number)
+				due = append(due, work{name, r, number, pr.Pending, pr.Trigger, pr.Waiting})
 			}
 		}
-		sort.Ints(numbers)
-		for _, number := range numbers {
-			pr := rs.PRs[number]
-			due = append(due, work{name, r, number, pr.Pending, pr.Trigger})
-		}
 	}
+	// The PRs that have waited longest go first, whatever their repository.
+	slices.SortFunc(due, func(a, b work) int {
+		return cmp.Or(a.waiting.Compare(b.waiting), strings.Compare(a.name, b.name), cmp.Compare(a.number, b.number))
+	})
 	if changed {
 		s.save()
 	}
 	s.mu.Unlock()
+	// At most queuedPerSlot automatic jobs per running slot wait in the
+	// queue; the rest stay pending for a later pass. A new head that a PR's
+	// waiting review takes over adds none, so it is always submitted.
+	room := queuedPerSlot * v.prefs.Concurrency()
+	type prKey struct {
+		name   string
+		number int
+	}
+	waiting := map[prKey]bool{}
+	for _, j := range queued {
+		room--
+		if j.Group == "" && j.Kind == "" {
+			waiting[prKey{strings.ToLower(j.Repository), j.PR}] = true
+		}
+	}
 	paused := map[string]bool{}
 	for _, w := range due {
 		if ctx.Err() != nil || (s.Hold != nil && s.Hold()) {
 			return
 		}
-		if paused[w.name] {
+		replaces := waiting[prKey{w.name, w.number}]
+		if paused[w.name] || (room <= 0 && !replaces) {
 			continue
 		}
-		stop := s.submit(ctx, v, w, now)
+		stop, queuedOne := s.submit(ctx, v, w, now)
+		if queuedOne && !replaces {
+			room--
+		}
 		if stop == stopAll {
 			return
 		}
@@ -764,7 +801,9 @@ const (
 	stopAll
 )
 
-func (s *Scheduler) submit(ctx context.Context, v view, w work, now time.Time) outcome {
+// submit asks the queue for w's job and records the outcome; queued reports
+// that a job joined the queue.
+func (s *Scheduler) submit(ctx context.Context, v view, w work, now time.Time) (_ outcome, queued bool) {
 	reviewed := s.Reviewed
 	if reviewed == nil {
 		reviewed = SavedHead
@@ -775,6 +814,7 @@ func (s *Scheduler) submit(ctx context.Context, v view, w work, now time.Time) o
 		err = jobs.ErrDuplicate
 	} else {
 		job, err = s.Queue.SubmitAutomatic(ctx, jobs.AutomaticRequest{Item: jobs.Item{Clone: w.repo.clone.ID, PR: w.number}, Repository: w.repo.clone.Repository, Head: w.head, Trigger: w.trigger})
+		queued = err == nil
 	}
 	s.mu.Lock()
 	rs := s.load().Repositories[w.name]
@@ -785,7 +825,7 @@ func (s *Scheduler) submit(ctx context.Context, v view, w work, now time.Time) o
 	if pr == nil || pr.Pending != w.head {
 		// Disabled, closed or moved on while this was submitted.
 		s.mu.Unlock()
-		return carryOn
+		return carryOn, queued
 	}
 	result := carryOn
 	notice := rs.Notice
@@ -800,7 +840,8 @@ func (s *Scheduler) submit(ctx context.Context, v view, w work, now time.Time) o
 	case errors.Is(err, jobs.ErrDuplicate):
 		pr.Done, pr.Pending, pr.Trigger = w.head, "", ""
 	case errors.Is(err, jobs.ErrBusy):
-		// Its running job's completion wakes the next pass.
+		// Its running job's completion wakes the next pass. (A waiting
+		// automatic review of another head is never busy: it takes this head.)
 	case errors.Is(err, jobs.ErrRestarting):
 		result = stopAll
 	case errors.Is(err, jobs.ErrNeedsClone):
@@ -809,8 +850,10 @@ func (s *Scheduler) submit(ctx context.Context, v view, w work, now time.Time) o
 		// Nothing changed that anyone needs announcing.
 		result, quiet = stopRepository, true
 	case errors.Is(err, jobs.ErrHeadChanged):
-		// Discovery reports the newer head, which triggers again.
-		pr.Pending, pr.Trigger = "", ""
+		// GitHub shows a newer head than discovery did: it stays pending,
+		// keeping its place (Waiting), and is tried again a minute later,
+		// by when discovery has usually replaced the pending head.
+		pr.RetryAt = now.Add(time.Minute)
 	case errors.As(err, &notAllowed):
 		// Turned off since this pass read the settings: the next pass drops
 		// the repository's state, or submits once it is back on.
@@ -836,7 +879,7 @@ func (s *Scheduler) submit(ctx context.Context, v view, w work, now time.Time) o
 	if announce {
 		s.notify([]Status{status})
 	}
-	return result
+	return result, queued
 }
 
 func (s *Scheduler) notify(statuses []Status) {

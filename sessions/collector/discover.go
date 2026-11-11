@@ -46,6 +46,10 @@ type FindOptions struct {
 	// ClaudeHeads, when set, remembers each Claude Code transcript's head
 	// between calls, so an unchanged transcript is not opened again.
 	ClaudeHeads *claudecode.HeadCache
+	// CodexCache remembers each Codex rollout's first record between calls and,
+	// within one of its passes, the scan of the store. Nil uses codex.Shared,
+	// the process-wide cache.
+	CodexCache *codex.Cache
 	// Since skips Claude Code transcripts and Cursor conversations last
 	// modified before it without opening them. Zero keeps every session.
 	Since time.Time
@@ -105,7 +109,11 @@ func FindSessions(dir string, opts FindOptions) ([]Session, ScanReport, error) {
 	if err != nil {
 		return nil, report, err
 	}
-	codexSessions, codexReport, err := codex.FindSessions(codexDir, roots)
+	codexCache := opts.CodexCache
+	if codexCache == nil {
+		codexCache = codex.Shared
+	}
+	codexSessions, codexReport, err := codex.FindSessionsCached(codexDir, roots, codexCache)
 	if err != nil {
 		return nil, report, err
 	}

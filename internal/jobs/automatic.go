@@ -47,8 +47,9 @@ const ReasonSettingsUnreadable = "settings_unreadable"
 // stays an ordinary cancelled job.
 
 var (
-	// ErrBusy: a job for the pull request is queued or running. Retry once it
-	// finishes; one PR never has two jobs at a time.
+	// ErrBusy: a job for the pull request is queued or running, other than
+	// a queued automatic review of another head, which a new head takes over.
+	// Retry once it finishes; one PR never has two jobs at a time.
 	ErrBusy = errors.New("a job for this pull request is queued or running")
 	// ErrDuplicate: a job for this head already exists, in any state other
 	// than one automatic run a daemon stop or restart interrupted.
@@ -81,14 +82,18 @@ type AutomaticRequest struct {
 // exactly as a person's start does, so the job runs with the same budgets,
 // recheck and isolation as a confirmed one, and refuses what a person would
 // have to confirm: a fork or an author without known write access. Nothing
-// about the price stops it. It never supersedes or joins another job of the
-// PR and runs a head once (one interrupted automatic run is retried once),
-// and it is refused with ErrRestarting while the daemon drains.
+// about the price stops it. It runs a head once (one interrupted automatic
+// run is retried once), and it is refused with ErrRestarting while the
+// daemon drains. It never joins another job of the PR. A new head of a PR
+// whose automatic review has not started replaces that review in place: the
+// waiting job takes the new head and keeps its id and its place in line, so
+// a PR pushed more often than the queue moves is still reviewed, at its
+// newest head. Any other queued or running job of the PR is ErrBusy.
 func (q *Queue) SubmitAutomatic(ctx context.Context, r AutomaticRequest) (Job, error) {
 	// Refuse what the journal alone decides before asking GitHub.
 	if r.Repository != "" {
 		q.mu.Lock()
-		err := q.automaticConflict(r.Repository, r.PR, r.Group, r.Head)
+		_, err := q.automaticConflict(r.Repository, r.PR, r.Group, r.Head)
 		q.mu.Unlock()
 		if err != nil {
 			return Job{}, err
@@ -118,11 +123,19 @@ func (q *Queue) SubmitAutomatic(ctx context.Context, r AutomaticRequest) (Job, e
 			q.notify(j)
 		}
 	}()
-	if err := q.automaticConflict(p.Repository, p.PR, p.Group, p.head()); err != nil {
+	replace, err := q.automaticConflict(p.Repository, p.PR, p.Group, p.head())
+	if err != nil {
 		return Job{}, err
 	}
 	now := q.clock0()
 	j := Job{ID: id(), Prepared: p, Automatic: true, Trigger: r.Trigger, State: "queued", Phase: "queued", CreatedAt: now, UpdatedAt: now}
+	if replace >= 0 {
+		// The waiting job takes the new head: same id, same place in line,
+		// and created_at still when it first queued, which the gate compares
+		// with an account change: the gate below refuses a job queued before
+		// one, and each scheduler pass cancels such jobs before it submits.
+		j.ID, j.CreatedAt = q.jobs[replace].ID, q.jobs[replace].CreatedAt
+	}
 	// Settings are read again here, under the mutex the worker and
 	// CancelDisallowedAutomatic hold, so a pass that read them before an off
 	// cannot queue after it.
@@ -138,7 +151,11 @@ func (q *Queue) SubmitAutomatic(ctx context.Context, r AutomaticRequest) (Job, e
 	if p.Group == "" {
 		superseded, stop = q.supersedeDetails(p.Repository, p.PR, p.HeadSHA)
 	}
-	q.jobs = append(q.jobs, j)
+	if replace >= 0 {
+		q.jobs[replace] = j
+	} else {
+		q.jobs = append(q.jobs, j)
+	}
 	q.mark(j.ID)
 	if err := q.save(); err != nil {
 		q.jobs = before
@@ -220,24 +237,34 @@ func (q *Queue) CancelDisallowedAutomatic() []Job {
 	return out
 }
 
-// automaticConflict is called with mu held.
-func (q *Queue) automaticConflict(repository string, pr int, group, head string) error {
+// automaticConflict refuses an automatic job of a pull request's (or a
+// group's) head with ErrRestarting, ErrBusy or ErrDuplicate, or returns the
+// index of the queued job that takes the new head, -1 for none: the pull
+// request's automatic review of another head that has not started. A
+// group's queued job is not taken over: it waits for its members, and its
+// recheck follows their moves (requeueGroup). mu is held.
+func (q *Queue) automaticConflict(repository string, pr int, group, head string) (int, error) {
 	if q.draining {
-		return ErrRestarting
+		return -1, ErrRestarting
 	}
 	if q.ctx.Err() != nil {
-		return errors.New("job queue stopped")
+		return -1, errors.New("job queue stopped")
 	}
+	replace := -1
 	sameHead := 0
 	retryable := false
-	for _, j := range q.jobs {
+	for i, j := range q.jobs {
 		// A retry of a version's details is not a review of its head, and a
 		// review of another head supersedes it.
 		if !strings.EqualFold(j.Repository, repository) || j.PR != pr || j.Group != group || j.Kind == KindChat || j.Kind == KindDetails {
 			continue
 		}
+		if j.State == "queued" && j.Automatic && j.Kind == "" && group == "" && j.head() != head && replace < 0 {
+			replace = i
+			continue
+		}
 		if j.State == "queued" || j.State == "running" {
-			return ErrBusy
+			return -1, ErrBusy
 		}
 		// A fix of the head is not its review.
 		if j.head() == head && !unsettled(j) && j.Kind != KindFix {
@@ -251,9 +278,9 @@ func (q *Queue) automaticConflict(repository string, pr int, group, head string)
 		sameHead, retryable = sameHead+archived, false
 	}
 	if sameHead > 1 || (sameHead == 1 && !retryable) {
-		return ErrDuplicate
+		return -1, ErrDuplicate
 	}
-	return nil
+	return replace, nil
 }
 
 // unsettled: an automatic job cancelled before any model call for a reason
@@ -320,6 +347,22 @@ func (q *Queue) Interrupted() []Job {
 	for _, j := range q.jobs {
 		key := headKey(j)
 		if j.Automatic && j.State == "interrupted" && count[key]+q.heads[key].runs+q.heads[key].others == 1 {
+			j.Accounting = j.Accounting.Clone()
+			out = append(out, j)
+		}
+	}
+	return out
+}
+
+// QueuedAutomatic lists the automatic jobs waiting in the queue, so the
+// scheduler can keep their number bounded and knows which pull requests'
+// waiting reviews a new head takes over.
+func (q *Queue) QueuedAutomatic() []Job {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	var out []Job
+	for _, j := range q.jobs {
+		if j.Automatic && j.State == "queued" {
 			j.Accounting = j.Accounting.Clone()
 			out = append(out, j)
 		}
