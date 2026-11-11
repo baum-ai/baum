@@ -1696,7 +1696,9 @@ inside the clone and the session store overrides, and does this:
    mapped, or that carries no transcript (Entire sometimes writes a checkpoint
    with only metadata and the prompt), gives way to the next newest; a
    snapshot is not necessarily fuller than the one before it. Sessions and those checkpoints are mapped up to eight at
-   a time. It then
+   a time (two in a background pass, `sessions.WithBackground`), and the
+   transcript bytes decoded at once are bounded by a 256 MiB budget
+   (`sessions.DefaultDecodeBudgetBytes`; a larger session runs alone). It then
    projects each into a
    `linkage.RunCandidate` as the hosted resolver does: `RunID` the session id,
    `Agent` the vendor that ran, `Source` the store it came from, branches, files
