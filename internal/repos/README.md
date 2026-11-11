@@ -34,7 +34,9 @@ its HTTP handler uses.
   check or does not show the token is kept, but a fix does not push while
   one is: a repository the token cannot see may have taken the name. The
   remote is never rewritten.
-  `Repositories` lists them as `earlier_names`.
+  `Repositories` lists as `earlier_names` only those a registered clone's remote
+  still uses, read from the clones' git configuration on each listing, so
+  updating the remote clears it; the alias itself stays.
 - `preferences(key, value)`: the global preferences as one JSON row. Its
   `appearance` object (`theme`, `key_hints`, `page_modifier`) stores the device’s General
   settings independently of the daemon’s loopback port. Its

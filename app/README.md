@@ -1711,7 +1711,7 @@ opens the searchable account picker, the only way to add one: baum works with
 GitHub repositories only. Explicit per-repository folder attachment uses any
 matching remote, including an upstream remote in a fork clone, or one using
 an earlier name GitHub forwards to the repository, which the picker and
-Repositories rows then show (`earlier_names`); a folder of another repository
+Repositories rows then show (`earlier_names`) only while a clone's remote still uses the earlier name; a folder of another repository
 shows the daemon's error naming that repository. Settings apply
 to the repository through `PUT api/repositories/{owner}/{name}/settings`, with
 automatic generation and decision capture only: the harnesses and models are

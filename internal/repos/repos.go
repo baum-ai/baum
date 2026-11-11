@@ -1060,8 +1060,9 @@ type Repository struct {
 	Repository string   `json:"repository"`
 	Settings   Settings `json:"settings"`
 	Clones     []Clone  `json:"clones"`
-	// EarlierNames are names GitHub forwards to the repository that clones'
-	// remotes were registered with (AddForwarded).
+	// EarlierNames are recorded names GitHub forwards to the repository that
+	// a clone's remote still uses, read from the clones' configuration on
+	// each listing (AddForwarded records them).
 	EarlierNames []string `json:"earlier_names,omitempty"`
 }
 
@@ -1176,7 +1177,6 @@ func (r *Registry) repositories(ctx context.Context, only string, listClones fun
 			return nil, e
 		}
 		v.Clones = []Clone{}
-		v.EarlierNames = gitlocal.EarlierNames(v.Repository)
 		byIdentity[v.Repository] = len(result)
 		result = append(result, v)
 	}
@@ -1194,7 +1194,28 @@ func (r *Registry) repositories(ctx context.Context, only string, listClones fun
 			result[i].Clones = append(result[i].Clones, c)
 		}
 	}
+	// Only an earlier name a clone's remote still uses is worth a caution;
+	// the remote is read again each time, so updating it clears the name.
+	for i := range result {
+		result[i].EarlierNames = usedEarlierNames(result[i].Repository, result[i].Clones)
+	}
 	return result, nil
+}
+
+// usedEarlierNames lists the recorded earlier names of repository that a remote
+// of one of its clones still uses, sorted, read from the clones' git
+// configuration now. A clone that cannot be read contributes nothing.
+func usedEarlierNames(repository string, clones []Clone) []string {
+	var names []string
+	for _, c := range clones {
+		for _, name := range gitlocal.RemoteEarlierNames(c.CommonDir) {
+			if gitlocal.RenamedTo(name) == repository && !slices.Contains(names, name) {
+				names = append(names, name)
+			}
+		}
+	}
+	slices.Sort(names)
+	return names
 }
 
 // UpdateRepository replaces a picked repository's shared settings by identity.
