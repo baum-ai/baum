@@ -139,7 +139,7 @@ func (s *scan) read(path string) (Entry, error) {
 		c.mu.Lock()
 		e, ok := c.entries[path]
 		if ok && e.size == info.Size() && e.modTime.Equal(info.ModTime()) {
-			e.gen = s.gen
+			e.gen = max(e.gen, s.gen)
 			c.entries[path] = e
 			c.mu.Unlock()
 			return e.entry, nil
