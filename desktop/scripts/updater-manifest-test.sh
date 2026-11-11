@@ -12,7 +12,7 @@ work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 dir=$work/release
 mkdir -p "$dir"
-base=https://github.com/baum-ai/baum/releases/download/v1.2.3
+base=https://downloads.usebaum.com/update/v1.2.3
 
 minisign=${MINISIGN:-minisign}
 
@@ -109,8 +109,11 @@ fail "signature of another bundle" "does not verify" "$manifest" verify "$dir"
 edit '.platforms["linux-x86_64"] = .platforms["windows-x86_64"]'
 fail "another platform's bundle, correctly signed" "is not $base/ followed by its bundle" "$manifest" verify "$dir"
 
-edit '.platforms["linux-x86_64"].url |= sub("github.com"; "github.com.example.net")'
+edit '.platforms["linux-x86_64"].url |= sub("downloads.usebaum.com"; "downloads.usebaum.com.example.net")'
 fail "foreign host" "is not $base/ followed by its bundle" "$manifest" verify "$dir"
+
+edit '.platforms["linux-x86_64"].url |= sub("https://downloads.usebaum.com/update/"; "https://github.com/baum-ai/baum/releases/download/")'
+fail "the GitHub release file, which is not counted" "is not $base/ followed by its bundle" "$manifest" verify "$dir"
 
 edit '.platforms["linux-x86_64"].url |= sub("/v1.2.3/"; "/v1.2.2/")'
 fail "another tag" "is not $base/ followed by its bundle" "$manifest" verify "$dir"
