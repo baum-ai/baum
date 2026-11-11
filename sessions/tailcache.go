@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"container/list"
 	"fmt"
+	"hash/crc32"
 	"io"
 	"os"
 	"sync"
@@ -13,6 +14,7 @@ import (
 	"github.com/baum-ai/baum/sessions/claudetranscript"
 	"github.com/baum-ai/baum/sessions/codextranscript"
 	"github.com/baum-ai/baum/sessions/collector"
+	"github.com/baum-ai/baum/sessions/traceprocessing"
 )
 
 // DefaultTailCacheBytes bounds the estimated memory of the decoded lines Map
@@ -26,17 +28,12 @@ const DefaultTailCacheBytes = 64 << 20
 // keeping its lines would only push out those of the transcripts that do.
 const tailActiveFor = time.Hour
 
-// tailIdleFor is how long a kept transcript must have gone unread before a
-// newly read one may push it out. Within that time a newly read transcript is
-// only kept if it fits: a session tree larger than the cache, read file by
-// file on every refresh, would otherwise push out each file before it is read
-// again, and none would ever be continued.
+// tailIdleFor is how long a kept transcript may go unread before its lines
+// are released: its session has most likely finished. Within that time a
+// newly read transcript is only kept if it fits, since a session tree larger
+// than the cache, read file by file on every refresh, would otherwise push
+// out each file before it is read again, and none would ever be continued.
 const tailIdleFor = 30 * time.Minute
-
-// tailCheckBytes is how many bytes at the start of a transcript, and just
-// before where the last read stopped, a continued read compares with what it
-// saw then.
-const tailCheckBytes = 4 << 10
 
 // tailCache keeps, for each Claude Code transcript and Codex rollout Map read
 // recently that was changing, its decoded lines and the byte offset they
@@ -45,13 +42,16 @@ const tailCheckBytes = 4 << 10
 // all of its lines.
 //
 // A file is read from its start instead when it is not the file read last
-// time (another inode: replaced), it is shorter than the offset (shrunk), or
-// its first bytes or the bytes just before the offset differ from what they
-// were (rewritten). A final line without a newline is never kept: a writer
-// may still be writing it, so each read decodes it again.
+// time (another inode: replaced), it is shorter than the offset (shrunk), it
+// kept its size but its modification time moved, or the CRC-32C of its bytes
+// before the offset is no longer that of the bytes the lines were decoded
+// from (rewritten). The checksum is taken from the bytes Continue consumed,
+// never from a second read of the file. A final line without a newline is
+// never kept: a writer may still be writing it, so each read decodes it again.
 //
 // Only files changed within tailActiveFor are kept, within limit bytes of
 // estimated line memory (Reading.Bytes); see account for what goes first.
+// Files unread for tailIdleFor are released on the next read of any file.
 // The graphs the mapping cache keeps do not depend on this: it sits below
 // the mapping cache, which still keys a session on its files' sizes and
 // modification times.
@@ -75,10 +75,10 @@ type tailEntry struct {
 	path    string
 	mu      sync.Mutex
 	reading tailReading
-	info    os.FileInfo
-	offset  int64
-	head    []byte
-	before  []byte
+	// info is the file as it was before the last read, and offset where the
+	// lines the reading kept end.
+	info   os.FileInfo
+	offset int64
 	// cost and covered are the Reading's estimated memory and offset when
 	// last accounted; used is when the file was last read; kept is false
 	// until a read was kept.
@@ -92,6 +92,7 @@ type tailReading interface {
 	Continue(io.Reader) (consumed int64, rest []byte, err error)
 	Lines() int
 	Bytes() int64
+	Sum() uint32
 }
 
 var tails = newTailCache(DefaultTailCacheBytes)
@@ -168,7 +169,7 @@ func tailRead[T any](c *tailCache, key, path, what string, start func() tailRead
 	e := c.entry(key, path, info)
 	if e == nil {
 		reading := start()
-		_, rest, err := c.continueFrom(reading, f, 0)
+		_, rest, err := c.continueFrom(reading, f, 0, info.Size())
 		if err != nil {
 			return zero, err
 		}
@@ -187,28 +188,25 @@ func tailRead[T any](c *tailCache, key, path, what string, start func() tailRead
 		}
 	}
 	if e.reading == nil {
-		e.reading, e.offset, e.head, e.before = start(), 0, nil, nil
+		e.reading, e.offset = start(), 0
 	}
-	consumed, rest, err := c.continueFrom(e.reading, f, from)
+	consumed, rest, err := c.continueFrom(e.reading, f, from, info.Size())
 	if err != nil {
 		e.reading = nil
 		c.forget(e)
 		return zero, err
 	}
 	e.info, e.offset = info, from+consumed
-	e.head = readAt(f, 0, min(e.offset, tailCheckBytes))
-	e.before = readAt(f, e.offset-min(e.offset, tailCheckBytes), min(e.offset, tailCheckBytes))
 	c.account(e)
 	return build(e.reading, rest)
 }
 
-// continueFrom continues reading at offset from and counts what it read.
-func (c *tailCache) continueFrom(reading tailReading, f *os.File, from int64) (int64, []byte, error) {
-	if _, err := f.Seek(from, io.SeekStart); err != nil {
-		return 0, nil, err
-	}
+// continueFrom continues reading at offset from, up to the size the file had
+// when it was opened, and counts what it read. Bytes written past that size
+// meanwhile are read next time.
+func (c *tailCache) continueFrom(reading tailReading, f *os.File, from, size int64) (int64, []byte, error) {
 	before := reading.Lines()
-	consumed, rest, err := reading.Continue(f)
+	consumed, rest, err := reading.Continue(io.NewSectionReader(f, from, max(size-from, 0)))
 	if err != nil {
 		return 0, nil, err
 	}
@@ -236,33 +234,44 @@ func (c *tailCache) continueFrom(reading tailReading, f *os.File, from int64) (i
 
 // changed says why the file can no longer be read from the entry's offset,
 // or "" when it can.
+//
+// A file whose size and modification time are those it had before the last
+// read is taken as unchanged without reading it. Otherwise its bytes before
+// the offset are checksummed again, which reads them but decodes nothing.
 func (e *tailEntry) changed(f *os.File, info os.FileInfo) string {
 	switch {
 	case !os.SameFile(e.info, info):
 		return "replaced"
 	case info.Size() < e.offset:
 		return "shrunk"
-	case !bytes.Equal(readAt(f, 0, int64(len(e.head))), e.head),
-		!bytes.Equal(readAt(f, e.offset-int64(len(e.before)), int64(len(e.before))), e.before):
+	case info.Size() == e.info.Size() && info.ModTime().Equal(e.info.ModTime()):
+		return ""
+	case info.Size() == e.info.Size():
+		return "rewritten"
+	}
+	if sum, ok := prefixSum(f, e.offset); !ok || sum != e.reading.Sum() {
 		return "rewritten"
 	}
 	return ""
 }
 
-// readAt reads n bytes at off, or returns nil when it cannot read them all.
-func readAt(f *os.File, off, n int64) []byte {
-	buf := make([]byte, n)
-	if _, err := f.ReadAt(buf, off); err != nil && (err != io.EOF || n != 0) {
-		return nil
-	}
-	return buf
+// prefixSum is the CRC-32C of the file's first n bytes; ok is false when
+// they cannot all be read.
+func prefixSum(f *os.File, n int64) (uint32, bool) {
+	h := crc32.New(traceprocessing.Castagnoli)
+	read, err := io.CopyBuffer(h, io.NewSectionReader(f, 0, n), make([]byte, min(n+1, 256<<10)))
+	return h.Sum32(), err == nil && read == n
 }
 
 // entry is the entry for key, created when the file is worth keeping lines
-// for, or nil.
+// for, or nil. Every call releases the files unread for tailIdleFor.
 func (c *tailCache) entry(key, path string, info os.FileInfo) *tailEntry {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	idle := time.Now().Add(-tailIdleFor)
+	for last := c.order.Back(); last != nil && last.Value.(*tailEntry).used.Before(idle); last = c.order.Back() {
+		c.remove(last)
+	}
 	if element, ok := c.entries[key]; ok {
 		c.order.MoveToFront(element)
 		e := element.Value.(*tailEntry)
@@ -301,9 +310,10 @@ func (c *tailCache) pending(s collector.Session, cost int64) int64 {
 }
 
 // account records the Reading's size as the entry's cost, unless the entry
-// was evicted meanwhile, and makes it fit: first by dropping entries unread
-// for tailIdleFor, then, for a file read for the first time, by dropping it,
-// and for one kept already, by dropping the least recently read.
+// was evicted meanwhile, and makes it fit. Files unread for tailIdleFor are
+// already gone (entry), so every other file was read recently: a file read
+// for the first time that does not fit is dropped rather than pushing them
+// out, and one kept already that grew pushes out the least recently read.
 func (c *tailCache) account(e *tailEntry) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -314,14 +324,6 @@ func (c *tailCache) account(e *tailEntry) {
 	c.held += e.reading.Bytes() - e.cost
 	c.covered += e.offset - e.covered
 	e.cost, e.covered = e.reading.Bytes(), e.offset
-	idle := time.Now().Add(-tailIdleFor)
-	for other := c.order.Back(); other != nil && c.held > c.limit; {
-		previous := other.Prev()
-		if o := other.Value.(*tailEntry); o != e && o.used.Before(idle) {
-			c.remove(other)
-		}
-		other = previous
-	}
 	if c.held > c.limit && !e.kept {
 		c.remove(element)
 		return

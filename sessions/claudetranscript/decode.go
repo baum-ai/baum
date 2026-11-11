@@ -3,6 +3,7 @@ package claudetranscript
 import (
 	"encoding/json"
 	"fmt"
+	"hash/crc32"
 	"io"
 	"time"
 	"unsafe"
@@ -82,6 +83,7 @@ type Reading struct {
 	seenUUID             map[string]int
 	seenToolUse          map[string]int
 	size                 int64
+	sum                  uint32
 }
 
 // NewReading starts reading the transcript called name (its base name, which
@@ -109,6 +111,8 @@ func (r *Reading) Continue(src io.Reader) (consumed int64, rest []byte, err erro
 		r.lines = append(r.lines, line)
 		r.size += lineBytes(&line)
 		return nil
+	}, func(consumed []byte) {
+		r.sum = crc32.Update(r.sum, traceprocessing.Castagnoli, consumed)
 	})
 	if err != nil {
 		return 0, nil, fmt.Errorf("reading transcript %s: %w", r.label, err)
@@ -119,6 +123,10 @@ func (r *Reading) Continue(src io.Reader) (consumed int64, rest []byte, err erro
 
 // Lines is the number of lines read so far.
 func (r *Reading) Lines() int { return len(r.lines) }
+
+// Sum is the CRC-32C (traceprocessing.Castagnoli) of the bytes the lines read
+// so far were decoded from: every byte Continue consumed.
+func (r *Reading) Sum() uint32 { return r.sum }
 
 // Bytes estimates the memory the lines read so far take.
 func (r *Reading) Bytes() int64 { return r.size }
@@ -146,7 +154,10 @@ func lineBytes(l *Line) int64 {
 // File is the transcript read so far, followed by rest, the final line the
 // last Continue left unread, decoded as Decode decodes a final line. The
 // Reading is unchanged, and the File shares its lines, so neither may be
-// changed.
+// changed. A final line that decodes is added to a copy of the lines: the
+// spare capacity after them is where the next Continue appends, while the
+// File may still be mapped. Claude Code ends every line it writes with a
+// newline, so rest is normally empty or torn and nothing is copied.
 func (r *Reading) File(rest []byte) (*File, error) {
 	lines := r.lines[:len(r.lines):len(r.lines)]
 	line, ok, torn, err := traceprocessing.DecodeFinalJSONL(rest, r.next, func(raw []byte, ordinal int) (Line, error) {

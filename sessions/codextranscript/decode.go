@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"hash/crc32"
 	"io"
 	"io/fs"
 	"os"
@@ -114,6 +115,7 @@ type Reading struct {
 	next  int
 	order ordering
 	size  int64
+	sum   uint32
 }
 
 // NewReading starts reading a rollout, reported as label.
@@ -138,6 +140,8 @@ func (r *Reading) Continue(src io.Reader) (consumed int64, rest []byte, err erro
 		// from.
 		r.size += int64(unsafe.Sizeof(line)) + int64(len(raw)) + int64(len(line.Payload))
 		return nil
+	}, func(consumed []byte) {
+		r.sum = crc32.Update(r.sum, traceprocessing.Castagnoli, consumed)
 	})
 	if err != nil {
 		return 0, nil, fmt.Errorf("reading rollout %s: %w", r.label, err)
@@ -149,12 +153,20 @@ func (r *Reading) Continue(src io.Reader) (consumed int64, rest []byte, err erro
 // Lines is the number of lines read so far.
 func (r *Reading) Lines() int { return len(r.lines) }
 
+// Sum is the CRC-32C (traceprocessing.Castagnoli) of the bytes the lines read
+// so far were decoded from: every byte Continue consumed.
+func (r *Reading) Sum() uint32 { return r.sum }
+
 // Bytes estimates the memory the lines read so far take.
 func (r *Reading) Bytes() int64 { return r.size }
 
 // File is the rollout read so far, followed by rest, the final line the last
 // Continue left unread, decoded as Decode decodes a final line. The Reading
-// is unchanged, and the File shares its lines, so neither may be changed.
+// is unchanged, and the File shares its lines, so neither may be changed. A
+// final line that decodes is added to a copy of the lines: the spare capacity
+// after them is where the next Continue appends, while the File may still be
+// mapped. Codex ends every record it writes with a newline, so rest is
+// normally empty or torn and nothing is copied.
 func (r *Reading) File(rest []byte) (*File, error) {
 	lines := r.lines[:len(r.lines):len(r.lines)]
 	order := r.order

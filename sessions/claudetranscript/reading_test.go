@@ -2,11 +2,14 @@ package claudetranscript
 
 import (
 	"bytes"
+	"hash/crc32"
 	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/baum-ai/baum/sessions/traceprocessing"
 )
 
 // cutPoints are offsets in data a growing file can be read at: each line's
@@ -33,9 +36,12 @@ func readInPieces(t *testing.T, data []byte, cut int, name, agentID string) (*Fi
 	if err != nil {
 		return nil, err
 	}
-	_, rest, err := r.Continue(bytes.NewReader(data[consumed:]))
+	more, rest, err := r.Continue(bytes.NewReader(data[consumed:]))
 	if err != nil {
 		return nil, err
+	}
+	if sum := crc32.Checksum(data[:consumed+more], traceprocessing.Castagnoli); r.Sum() != sum {
+		t.Fatalf("cut at %d: Sum %08x, want the checksum of the %d bytes consumed, %08x", cut, r.Sum(), consumed+more, sum)
 	}
 	return r.File(rest)
 }

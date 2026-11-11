@@ -75,12 +75,18 @@ func scanInPieces(input string, cuts ...int) (lines []int, torn bool, err error)
 		lines = append(lines, line)
 		return err
 	}
+	var seen []byte
 	for _, cut := range append(cuts, len(input)) {
-		consumed, after, unread, err := ScanWholeJSONL(strings.NewReader(input[offset:cut]), next, collect)
+		consumed, after, unread, err := ScanWholeJSONL(strings.NewReader(input[offset:cut]), next, collect, func(line []byte) {
+			seen = append(seen, line...)
+		})
 		if err != nil {
 			return nil, false, err
 		}
 		offset, next, rest = offset+consumed, after, unread
+		if string(seen) != input[:offset] {
+			return nil, false, fmt.Errorf("seen %q, consumed %q", seen, input[:offset])
+		}
 	}
 	line, ok, torn, err := DecodeFinalJSONL(rest, next, decodeTestLine)
 	if err != nil {
@@ -108,6 +114,9 @@ func TestScanWholeJSONLResumesAnywhere(t *testing.T) {
 		for first := 0; first <= len(input); first++ {
 			for second := first; second <= len(input); second++ {
 				got, torn, err := scanInPieces(input, first, second)
+				if err != nil && strings.HasPrefix(err.Error(), "seen") {
+					t.Fatalf("%q cut at %d and %d: %v", input, first, second, err)
+				}
 				if !slices.Equal(got, want) || torn != wantTorn || (err != nil) != (wantErr != nil) {
 					t.Errorf("%q cut at %d and %d = %v, torn=%v, err=%v; whole = %v, torn=%v, err=%v",
 						input, first, second, got, torn, err, want, wantTorn, wantErr)
@@ -118,11 +127,11 @@ func TestScanWholeJSONLResumesAnywhere(t *testing.T) {
 }
 
 func TestScanWholeJSONLLeavesTheUnterminatedLine(t *testing.T) {
-	consumed, next, rest, err := ScanWholeJSONL(strings.NewReader("{}\n\n{\"a\""), 1, func([]byte, int) error { return nil })
+	consumed, next, rest, err := ScanWholeJSONL(strings.NewReader("{}\n\n{\"a\""), 1, func([]byte, int) error { return nil }, nil)
 	if err != nil || consumed != 4 || next != 3 || string(rest) != `{"a"` {
 		t.Fatalf("ScanWholeJSONL() = consumed %d, next %d, rest %q, err %v", consumed, next, rest, err)
 	}
-	if _, _, rest, _ := ScanWholeJSONL(strings.NewReader("{}\n"), 1, func([]byte, int) error { return nil }); rest != nil {
+	if _, _, rest, _ := ScanWholeJSONL(strings.NewReader("{}\n"), 1, func([]byte, int) error { return nil }, nil); rest != nil {
 		t.Errorf("a reader ending in a newline left %q", rest)
 	}
 }

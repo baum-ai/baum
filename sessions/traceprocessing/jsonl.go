@@ -6,10 +6,16 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"hash/crc32"
 	"io"
 )
 
 const maxJSONLLineBytes = 64 << 20
+
+// Castagnoli is the CRC-32C table resumable readers checksum the bytes they
+// consumed with (ScanWholeJSONL's seen), so a later read can tell the file's
+// prefix is still what their lines were decoded from.
+var Castagnoli = crc32.MakeTable(crc32.Castagnoli)
 
 // ReadJSONLLine reads one bounded line, accumulating across the reader's buffer.
 func ReadJSONLLine(reader *bufio.Reader) ([]byte, error) {
@@ -78,8 +84,18 @@ func ScanJSONL[T any](r io.Reader, decode func([]byte, int) (T, error)) (lines [
 // writing. consumed is the bytes of the lines read, newlines included; next is
 // the ordinal of the line after them; rest is that final line, nil when r
 // ended with a newline. DecodeFinalJSONL decodes rest as ScanJSONL would.
-func ScanWholeJSONL(r io.Reader, first int, decode func([]byte, int) error) (consumed int64, next int, rest []byte, err error) {
-	reader := bufio.NewReaderSize(r, 1<<20)
+//
+// seen, when not nil, is given the bytes of each line consumed, newline
+// included, in order, after the line decoded: together they are exactly the
+// consumed bytes, so a caller can checksum what its lines were decoded from.
+// A reader with a Size method (io.SectionReader) gets a read buffer no larger
+// than it needs.
+func ScanWholeJSONL(r io.Reader, first int, decode func([]byte, int) error, seen func([]byte)) (consumed int64, next int, rest []byte, err error) {
+	size := 1 << 20
+	if sized, ok := r.(interface{ Size() int64 }); ok {
+		size = int(min(max(sized.Size()+1, 4<<10), int64(size)))
+	}
+	reader := bufio.NewReaderSize(r, size)
 	for ordinal := first; ; ordinal++ {
 		raw, n, readErr := readJSONLLine(reader)
 		if errors.Is(readErr, io.EOF) {
@@ -92,12 +108,15 @@ func ScanWholeJSONL(r io.Reader, first int, decode func([]byte, int) error) (con
 			return 0, 0, nil, fmt.Errorf("reading line %d: %w", ordinal, readErr)
 		}
 		consumed += int64(n)
-		trimmed := bytes.TrimSpace(raw)
-		if len(trimmed) == 0 {
-			continue
+		if trimmed := bytes.TrimSpace(raw); len(trimmed) > 0 {
+			if err := decode(trimmed, ordinal); err != nil {
+				return 0, 0, nil, err
+			}
 		}
-		if err := decode(trimmed, ordinal); err != nil {
-			return 0, 0, nil, err
+		if seen != nil {
+			// raw is the line with its line ending trimmed off; the n bytes it
+			// took are still behind it.
+			seen(raw[:n])
 		}
 	}
 }

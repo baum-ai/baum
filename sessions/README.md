@@ -44,6 +44,13 @@ one only once until it changes.
   used to count transcript bytes overstated the memory held about six times.
   The `sessions.map_cache.bytes` gauge is the estimate and
   `sessions.map_cache.transcript_bytes` the transcripts behind it.
+* **Memory bound:** what `sessions` keeps after decoding is at most 64 MiB of
+  estimated graph memory (256 MiB while `HoldMappings` holds it) plus 64 MiB
+  of estimated kept transcript lines (`DefaultTailCacheBytes`, see
+  "Incremental decoding"): 128 MiB, or 320 MiB during a background pass.
+  The Entire checkpoint cache adds graphs of at most 64 MiB of checkpoint
+  files, about a sixth of that in memory (see "Entire checkpoint reuse").
+  Decoding in progress is bounded separately (see "Decode bound").
 * **Sharing:** cached graphs are shared between callers, so callers must not
   change a graph `Map` or `Load` returns.
 * **Holds:** `HoldMappings` raises the limit to `HeldMapCacheBytes` (256 MiB)
@@ -71,16 +78,25 @@ Cursor sessions arrive as generated content and are always decoded whole.
   next read starts at its first byte. Until then it is decoded on each read as
   a whole read decodes a last line (a partial write sets `TornFinalLine`).
 * **Whole reads:** a file is read from its start when it is another file than
-  last time (a different inode: replaced), shorter than the offset (shrunk), or
-  its first 4 KiB or the 4 KiB before the offset differ from what they were
-  (rewritten). A file that could not be decoded loses its kept lines.
+  last time (a different inode: replaced), shorter than the offset (shrunk),
+  or rewritten: it kept its size but its modification time moved, or the
+  CRC-32C of its bytes before the offset differs from that of the bytes the
+  kept lines were decoded from. That checksum is updated from the bytes each
+  read consumed, never from a second read, and checked again whenever the
+  size or modification time changed; checking reads the prefix but decodes
+  nothing (25–35 ms for a 164 MB transcript in the page cache). A file whose
+  size and modification time did not change is taken as unchanged. A read
+  stops at the size the file had when it was opened. A file that could not be
+  decoded loses its kept lines.
 * **What is kept:** only files changed in the last hour, since older ones are
   unlikely to grow, within `DefaultTailCacheBytes` (64 MiB) of estimated line
-  memory (`Reading.Bytes`). A file read for the first time only pushes out
-  files unread for 30 minutes; if it still does not fit, it is not kept. A
-  session tree larger than the cache, read file by file on every refresh,
-  then keeps what fits instead of pushing out each file before it is read
-  again. A kept file that grew pushes out the least recently read.
+  memory (`Reading.Bytes`). Files unread for 30 minutes are released on the
+  next read of any file, so a finished session's lines do not stay resident.
+  A file read for the first time that does not fit is not kept, rather than
+  pushing out files read recently: a session tree larger than the cache, read
+  file by file on every refresh, then keeps what fits instead of pushing out
+  each file before it is read again. A kept file that grew pushes out the
+  least recently read.
   `SetTailCacheLimit` changes the limit; zero or less turns it off, and every
   transcript is then decoded whole each time.
 * **Slim lines:** the kept lines leave out the copies of each record the
@@ -150,7 +166,8 @@ reads each one once:
   checkpoint's tree, as the sessions it maps to, or the error parsing or
   mapping it gave. The checkpoint's files themselves, the transcripts, are not
   kept. An entry costs the size of the checkpoint's files, which bounds its
-  graphs' memory as the mapping cache's cost does; least recently used entries
+  graphs' memory from above (a graph takes about a sixth of its transcript's
+  size; see "Mapping cache"); least recently used entries
   go first once `DefaultCheckpointCacheBytes` (64 MiB) is held, and a
   checkpoint larger than that is not kept. `SetCheckpointCacheLimit` changes
   the limit; zero or less turns the cache off. A checkpoint whose export
