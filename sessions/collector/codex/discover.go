@@ -54,25 +54,48 @@ type scanned struct {
 // FindSessions scans the dated rollout store and returns repository-scoped
 // root sessions with every child and fork source needed to decode each tree.
 func FindSessions(sessionsDir string, roots []string) ([]model.Session, model.ScanReport, error) {
+	return FindSessionsCached(sessionsDir, roots, nil)
+}
+
+// FindSessionsCached is FindSessions reading rollout first records through
+// cache, which may be nil to read every one. The sessions found are the same
+// either way.
+func FindSessionsCached(sessionsDir string, roots []string, cache *Cache) ([]model.Session, model.ScanReport, error) {
 	if _, err := os.Stat(sessionsDir); os.IsNotExist(err) {
 		return nil, model.ScanReport{}, nil
 	} else if err != nil {
 		return nil, model.ScanReport{}, err
 	}
 	sessionsDir = filepath.Clean(sessionsDir)
-	index, report, scanWarning := loadIndex(sessionsDir)
+	l := cache.index(sessionsDir)
 	var sessions []model.Session
-	for _, entry := range index {
+	for _, entry := range l.entries {
 		c, ok := eligible(entry, sessionsDir, roots)
 		if ok {
-			sessions = append(sessions, buildSession(c, index, scanWarning))
+			sessions = append(sessions, buildSession(c, l.tree, l.warning))
 		}
 	}
-	return sessions, report, nil
+	return sessions, l.report, nil
 }
 
-func loadIndex(sessionsDir string) ([]Entry, model.ScanReport, string) {
-	index, scan, err := ScanStore(filepath.Dir(sessionsDir))
+// loaded is one scan of the store: the entries, the tree lookups built from
+// them once, and what the scan had to report.
+type loaded struct {
+	entries []Entry
+	tree    *Tree
+	report  model.ScanReport
+	warning string
+}
+
+func loadIndex(sessionsDir string, cache *Cache) *loaded {
+	l := &loaded{}
+	l.entries, l.report, l.warning = loadEntries(sessionsDir, cache)
+	l.tree = NewTree(l.entries)
+	return l
+}
+
+func loadEntries(sessionsDir string, cache *Cache) ([]Entry, model.ScanReport, string) {
+	index, scan, err := scanStore(filepath.Dir(sessionsDir), cache)
 	if err == nil {
 		var report model.ScanReport
 		for _, path := range scan.SkippedPaths {
@@ -100,13 +123,13 @@ func eligible(entry Entry, sessionsDir string, roots []string) (candidate, bool)
 	return candidate{entry: entry, cwd: cwd, modTime: info.ModTime().UTC()}, true
 }
 
-func buildSession(c candidate, index []Entry, scanWarning string) model.Session {
+func buildSession(c candidate, tree *Tree, scanWarning string) model.Session {
 	files := RootFile(c.entry.Path)
 	var warnings []string
 	if scanWarning != "" {
 		warnings = append(warnings, scanWarning)
 	}
-	if found, err := Find(index, c.entry); err != nil {
+	if found, err := tree.Find(c.entry); err != nil {
 		warnings = append(warnings, fmt.Sprintf("Codex session tree discovery fell back to the root rollout: %v", err))
 	} else {
 		files = found
@@ -124,8 +147,14 @@ func buildSession(c candidate, index []Entry, scanWarning string) model.Session 
 // ScanStore builds the first-line metadata index used by FIND. Rollout bodies
 // are not read here.
 func ScanStore(codexHome string) ([]Entry, ScanReport, error) {
+	return scanStore(codexHome, nil)
+}
+
+// scanStore is ScanStore reading first records through cache, which may be nil.
+func scanStore(codexHome string, cache *Cache) ([]Entry, ScanReport, error) {
 	var report ScanReport
 	var paths []string
+	scan := cache.beginScan(codexHome)
 	for _, dir := range []string{filepath.Join(codexHome, "sessions"), filepath.Join(codexHome, "archived_sessions")} {
 		err := filepath.WalkDir(dir, func(path string, entry os.DirEntry, err error) error {
 			if err != nil {
@@ -160,11 +189,12 @@ func ScanStore(codexHome string) ([]Entry, ScanReport, error) {
 	group.SetLimit(runtime.GOMAXPROCS(0))
 	for i, path := range paths {
 		group.Go(func() error {
-			read[i].entry, read[i].err = readEntry(path)
+			read[i].entry, read[i].err = scan.read(path)
 			return nil
 		})
 	}
 	_ = group.Wait()
+	scan.end()
 
 	entries := make([]Entry, 0, len(paths))
 	seen := map[string]string{}
@@ -245,19 +275,60 @@ func softIndex(sessionsDir string) ([]Entry, model.ScanReport) {
 }
 
 // Find returns the file list for rootEntry using only the first-line index.
+// Callers that look up several roots build one Tree and call its Find.
 func Find(index []Entry, rootEntry Entry) (Files, error) {
-	byID := make(map[string]*Entry, len(index))
-	childrenByParent := map[string][]*Entry{}
+	return NewTree(index).Find(rootEntry)
+}
+
+// Tree is the lookups Find needs over one scan of the store, built once so that
+// finding each root session does not walk the whole index again.
+type Tree struct {
+	byID             map[string]*Entry
+	childrenByParent map[string][]*Entry
+	// buildErr is why no root can be found: an entry without thread metadata.
+	buildErr error
+	// chainErr is, per session id, the first parent chain error among the
+	// session's children, in index order.
+	chainErr map[string]error
+}
+
+// NewTree indexes entries by thread id and parent, and validates every parent
+// chain.
+func NewTree(index []Entry) *Tree {
+	t := &Tree{
+		byID:             make(map[string]*Entry, len(index)),
+		childrenByParent: map[string][]*Entry{},
+		chainErr:         map[string]error{},
+	}
 	for i := range index {
 		entry := &index[i]
 		if entry.Meta == nil || entry.Meta.ID == "" {
-			return nil, fmt.Errorf("store entry %s has no thread metadata", entry.Path)
+			t.buildErr = fmt.Errorf("store entry %s has no thread metadata", entry.Path)
+			return t
 		}
-		byID[entry.Meta.ID] = entry
+		t.byID[entry.Meta.ID] = entry
 		if entry.Class == codextranscript.ThreadChild {
-			childrenByParent[entry.Meta.ParentThreadID] = append(childrenByParent[entry.Meta.ParentThreadID], entry)
+			t.childrenByParent[entry.Meta.ParentThreadID] = append(t.childrenByParent[entry.Meta.ParentThreadID], entry)
 		}
 	}
+	for i := range index {
+		child := &index[i]
+		if child.Class != codextranscript.ThreadChild || t.chainErr[child.Meta.SessionID] != nil {
+			continue
+		}
+		if _, err := walkToRoot(t.byID, child); err != nil {
+			t.chainErr[child.Meta.SessionID] = err
+		}
+	}
+	return t
+}
+
+// Find returns the file list for rootEntry.
+func (t *Tree) Find(rootEntry Entry) (Files, error) {
+	if t.buildErr != nil {
+		return nil, t.buildErr
+	}
+	byID, childrenByParent := t.byID, t.childrenByParent
 	if rootEntry.Meta == nil {
 		return nil, fmt.Errorf("rollout %s is not in the store index", rootEntry.Path)
 	}
@@ -274,7 +345,7 @@ func Find(index []Entry, rootEntry Entry) (Files, error) {
 		}
 		return nil, fmt.Errorf("rollout %s is a child whose root is missing", root.Path)
 	}
-	if err := validateParentChains(byID, root.Meta.SessionID); err != nil {
+	if err := t.chainErr[root.Meta.SessionID]; err != nil {
 		return nil, err
 	}
 
@@ -323,17 +394,6 @@ func Find(index []Entry, rootEntry Entry) (Files, error) {
 	}
 	sort.Slice(files[1:], func(i, j int) bool { return files[i+1].Name < files[j+1].Name })
 	return files, nil
-}
-
-func validateParentChains(byID map[string]*Entry, sessionID string) error {
-	for _, child := range byID {
-		if child.Class == codextranscript.ThreadChild && child.Meta.SessionID == sessionID {
-			if _, err := walkToRoot(byID, child); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
 }
 
 func walkToRoot(byID map[string]*Entry, start *Entry) (*Entry, error) {

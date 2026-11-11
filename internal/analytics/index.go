@@ -21,6 +21,7 @@ import (
 	"github.com/baum-ai/baum/sessions"
 	"github.com/baum-ai/baum/sessions/collector"
 	"github.com/baum-ai/baum/sessions/collector/claudecode"
+	"github.com/baum-ai/baum/sessions/collector/codex"
 	"github.com/baum-ai/baum/sessions/session"
 )
 
@@ -76,6 +77,9 @@ type Index struct {
 	write func(path, namespace, key string, raw []byte) error
 	// heads remembers each Claude transcript's head between refreshes.
 	heads claudecode.HeadCache
+	// codex remembers each Codex rollout's first record between refreshes and
+	// scans the Codex store once per refresh, not once per clone.
+	codex codex.Cache
 
 	mu      sync.RWMutex
 	entries map[string]Entry
@@ -224,6 +228,8 @@ func (x *Index) Refresh(ctx context.Context) error {
 	}
 	x.heads.BeginPass()
 	defer x.heads.EndPass()
+	x.codex.BeginPass()
+	defer x.codex.EndPass()
 	cutoff := x.now().Add(-Retention)
 	registered := map[string]bool{}
 	scanned := map[string]bool{}
@@ -242,7 +248,7 @@ func (x *Index) Refresh(ctx context.Context) error {
 		}
 		list, _, err := collector.FindSessions(clone.Path, collector.FindOptions{
 			ClaudeProjectsDir: x.Stores.ClaudeProjectsDir, CodexSessionsDir: x.Stores.CodexSessionsDir, CursorStorePaths: x.Stores.CursorStorePaths,
-			ClaudeHeads: &x.heads, Worktrees: worktrees, Since: cutoff, ExcludeNestedClones: true,
+			ClaudeHeads: &x.heads, CodexCache: &x.codex, Worktrees: worktrees, Since: cutoff, ExcludeNestedClones: true,
 		})
 		if err != nil {
 			if ctx.Err() != nil {
