@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -97,9 +98,21 @@ func assertCodexUnlinked(t *testing.T, result Result) {
 	}
 }
 
+// skipWindowsWorkdir skips a test that needs a Codex workdir to place a
+// commit. agentcmd treats only a path that starts with "/" as absolute, so a
+// Windows drive path is joined onto the base, hostDir rejects it as unknown
+// and the call gives no evidence. ENG-1917 adds Windows support.
+func skipWindowsWorkdir(t *testing.T) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("agentcmd does not resolve Windows drive paths in a Codex workdir")
+	}
+}
+
 const codexSession = "019f0000-0000-7000-8000-000000000001"
 
 func TestCodexRolloutRealCommitShapeLinksThroughTheStoredInput(t *testing.T) {
+	skipWindowsWorkdir(t)
 	c := newCodexRepo(t)
 	wt := c.worktree("real", "feature")
 	sha := c.commit(wt, "b.txt", "Subject", "10:30:00")
@@ -122,6 +135,7 @@ func TestCodexRolloutRealCommitShapeLinksThroughTheStoredInput(t *testing.T) {
 }
 
 func TestCodexRolloutCommandsKeepTheirOwnWorkdir(t *testing.T) {
+	skipWindowsWorkdir(t)
 	t.Run("a command in another workdir does not place the commit", func(t *testing.T) {
 		c := newCodexRepo(t)
 		a, b := c.worktree("a", "feature-a"), c.worktree("b", "feature-b")
@@ -182,6 +196,7 @@ func TestReflogExtendsAYieldedCommandToItsLastPoll(t *testing.T) {
 		output: "Chunk ID: c\nProcess exited with code 0\n"}
 
 	t.Run("the commit lands between polls", func(t *testing.T) {
+		skipWindowsWorkdir(t)
 		s := reflogSession("session-slow", "codex", wt, start, running, finished)
 		_, links := resolveReflog(t, r, []sessions.Session{s}, r.commits(sha))
 		assertLinks(t, links, sha, "session-slow")
@@ -216,6 +231,7 @@ func TestReflogExtendsAYieldedCommandToItsLastPoll(t *testing.T) {
 }
 
 func TestCodexRolloutYieldedCommandIsExtendedByCodeModePolls(t *testing.T) {
+	skipWindowsWorkdir(t)
 	c := newCodexRepo(t)
 	wt := c.worktree("yield", "feature")
 	sha := c.commit(wt, "b.txt", "Slow hooks", "10:29:30")

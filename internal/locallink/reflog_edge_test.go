@@ -236,6 +236,7 @@ await tools.exec_command({cmd:"git commit -q -m z", workdir:dir});`
 }
 
 func TestReflogLinksCodexCodeModeRebaseByQuotedWorkdir(t *testing.T) {
+	skipWindowsWorkdir(t)
 	r := newReflogRepo(t)
 	wt := r.worktree("quoted", "feature")
 	r.commit(wt, "b.txt", "Feature work", "10:30:00")

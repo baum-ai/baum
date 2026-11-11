@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"testing"
 	"time"
@@ -337,6 +338,11 @@ func TestReflogUsesAttributeAndCodexWorkdir(t *testing.T) {
 	codex := reflogSession("session-codex", "codex", r.main, execCommand("git commit -q -m Two", two, "10:29:50", "10:30:10"))
 	_, links := resolveReflog(t, r, []sessions.Session{claude, codex}, append(r.commits(first), r.commits(second)...))
 	assertLinks(t, links, first, "session-claude")
+	if runtime.GOOS == "windows" {
+		// See skipWindowsWorkdir: the drive path is unknown, so no link.
+		assertLinks(t, links, second)
+		return
+	}
 	assertLinks(t, links, second, "session-codex")
 }
 
