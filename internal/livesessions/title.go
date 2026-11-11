@@ -93,6 +93,9 @@ type described struct {
 	// title, excerpt and summary are as served: masked and cut.
 	title, excerpt, summary string
 	activity                *Activity
+	// readEnded is set when the last full read happened with the session
+	// ended and its files caught up: an ended session is not read again.
+	readEnded bool
 	// found is the file a lookup by id found, so the store is searched once.
 	found string
 	scan  scanState
@@ -209,7 +212,7 @@ func (t *Transcripts) listed() []Listed {
 		// A session neither ended nor waiting on its user is working, or went
 		// silent and may be (settle).
 		working := s.State != StateEnded && s.WaitingReason == ""
-		title, excerpt, _, activity := t.describe(k, path, working)
+		title, excerpt, _, activity := t.describe(k, path, working, s.State == StateEnded)
 		if empty(s.Agent, title, activity) {
 			continue
 		}
@@ -241,7 +244,7 @@ func (t *Transcripts) listed() []Listed {
 // at long enough ago. A failed read keeps what was read before and is tried
 // again by the next request, since a transcript can be named before it is
 // written.
-func (t *Transcripts) describe(k key, path string, working bool) (title, excerpt, summary string, activity *Activity) {
+func (t *Transcripts) describe(k key, path string, working, ended bool) (title, excerpt, summary string, activity *Activity) {
 	t.mu.Lock()
 	if t.described == nil {
 		t.described = map[key]*described{}
@@ -255,6 +258,13 @@ func (t *Transcripts) describe(k key, path string, working bool) (title, excerpt
 
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	if ended && e.readEnded {
+		// The session ended and was read to its end afterwards: nothing
+		// writes to it any more, so it is not looked at again for as long as
+		// it stays listed. A session that comes back is not ended, and is
+		// described as before.
+		return e.title, e.excerpt, e.summary, e.activity
+	}
 	every := TitleRecheckEvery
 	switch {
 	case k.agent == AgentCursor:
@@ -270,11 +280,13 @@ func (t *Transcripts) describe(k key, path string, working bool) (title, excerpt
 	if err != nil {
 		return e.title, e.excerpt, e.summary, e.activity
 	}
-	version, err := Location{files: src.files(), store: src.store}.Version()
+	version, err := Location{ID: k.id, files: src.files(), store: src.store}.Version()
 	if err != nil {
 		return e.title, e.excerpt, e.summary, e.activity
 	}
 	if version == e.version {
+		// e.version is only held once a read caught up with the files.
+		e.readEnded = ended
 		e.checked = now
 		return e.title, e.excerpt, e.summary, e.activity
 	}
@@ -299,6 +311,7 @@ func (t *Transcripts) describe(k key, path string, working bool) (title, excerpt
 	if caught {
 		e.version = version
 	}
+	e.readEnded = caught && ended
 	e.checked = now
 	return e.title, e.excerpt, e.summary, e.activity
 }
@@ -517,11 +530,13 @@ func (s *describeSource) read(id string, scan *scanState) error {
 			return err
 		}
 		defer func() { _ = store.Close() }()
-		tree, err := store.Tree(id)
-		if err != nil || tree.Composer == nil || tree.Composer.Data == nil {
+		// Only the conversation's own record is read: building its tree
+		// would load every bubble of it and index the whole database.
+		name, err := store.Name(id)
+		if err != nil {
 			return errors.New("no conversation")
 		}
-		s.name = tree.Composer.Data.Name
+		s.name = name
 		return nil
 	}
 	return fmt.Errorf("sessions of %s are not described", s.agent)

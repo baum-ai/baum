@@ -182,7 +182,11 @@ reads each one once:
 `Load` is `Discover` followed by `Discovery.Load`. `Discover` reads
 directories, file metadata and the Entire refs, and never a transcript.
 `Discovery.Fingerprint` describes everything `Load` would read, so a caller can
-tell whether anything changed before paying for the decode.
+tell whether anything changed before paying for the decode. Cursor is the
+exception: it keeps every conversation in one database, so discovery reads the
+store's conversation index and builds the tree of each repository conversation
+for its payload. `Options.Since` bounds that: a conversation last updated
+before it is skipped on the index's update time, before its tree is read.
 `Options.SessionIDs` keeps only the sessions with those native session IDs; the
 others are never mapped, so a caller that needs a few sessions does not decode
 every transcript of the repository. An Entire session is dropped when the

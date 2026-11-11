@@ -338,8 +338,16 @@ func (s Location) Size() (int64, error) {
 }
 
 // Version is a fingerprint of the size and modification time of every file
-// the transcript is read from.
+// the transcript is read from; for a Cursor conversation, of its record in the
+// database, falling back to the database's own size and times.
 func (s Location) Version() (string, error) {
+	if s.store != "" && s.ID != "" {
+		// Cursor writes its database all the time, for every conversation. The
+		// conversation's own record changes only with it.
+		if revision, err := cursorRevision(s.store, s.ID); err == nil {
+			return revision, nil
+		}
+	}
 	paths := make([]string, 0, len(s.files)+2)
 	for _, f := range s.files {
 		paths = append(paths, f.Path)
@@ -557,4 +565,14 @@ func (s Location) Graph() (*session.Graph, error) {
 	}
 	graph, _, err := sessions.Map(found)
 	return graph, err
+}
+
+// cursorRevision fingerprints one conversation's record in Cursor's database.
+func cursorRevision(store, id string) (string, error) {
+	db, err := cursortranscript.Open(store)
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = db.Close() }()
+	return db.Revision(id)
 }
