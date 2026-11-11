@@ -1,4 +1,4 @@
-import { mockStateFetch } from "./ui-state-test-helper";
+import { mockStateFetch, seedUIState } from "./ui-state-test-helper";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
@@ -255,6 +255,23 @@ it("matches active PR jobs across clones while isolating GitHub hosts and PRs", 
     ]),
   ).toBeUndefined();
   expect(reviewJob(entry, [job("failed"), terminal])).toBe(terminal);
+});
+it("says an archived pull request is archived, and unarchives it", async () => {
+  const archived = () =>
+    Array.from(node.querySelectorAll(".local-notice")).find((notice) =>
+      notice.textContent?.startsWith("Archived."),
+    );
+  seedUIState("api/ui-state/inbox", {
+    day: "2026-11-10",
+    seen: {},
+    snoozed: {},
+    held: {},
+    archived: { "acme/demo#7": 1 },
+  });
+  await render(job("queued"));
+  expect(archived()!.textContent).toContain("doesn't show in your inboxes");
+  await act(async () => archived()!.querySelector("button")!.click());
+  expect(archived()).toBeUndefined();
 });
 it("shows queued initial generation and progress instead of an empty review", async () => {
   await render(job("queued"));

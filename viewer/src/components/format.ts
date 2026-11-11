@@ -75,16 +75,27 @@ export function formatUSD(value: number | null | undefined, locale?: string): st
   if (value == null || !Number.isFinite(value)) return EM_DASH;
   const absolute = Math.abs(value);
   const digits = absolute >= 100 ? 0 : absolute >= 1 ? 2 : 4;
-  return new Intl.NumberFormat(locale, {
-    style: "currency",
-    currency: "USD",
-    currencyDisplay: "narrowSymbol",
-    minimumFractionDigits: digits,
-    maximumFractionDigits: digits,
-  })
+  return usdFormat(locale, digits)
     .formatToParts(value)
     .map((part) => (part.type === "currency" ? "$" : part.value))
     .join("");
+}
+
+const usdFormats = new Map<string, Intl.NumberFormat>();
+function usdFormat(locale: string | undefined, digits: number): Intl.NumberFormat {
+  const key = `${locale ?? ""}|${digits}`;
+  let format = usdFormats.get(key);
+  if (!format) {
+    format = new Intl.NumberFormat(locale, {
+      style: "currency",
+      currency: "USD",
+      currencyDisplay: "narrowSymbol",
+      minimumFractionDigits: digits,
+      maximumFractionDigits: digits,
+    });
+    usdFormats.set(key, format);
+  }
+  return format;
 }
 
 /** Seconds to the coarsest unit that still says something useful. */
@@ -172,13 +183,14 @@ export function formatTime(iso: string | null | undefined): string {
   return Number.isNaN(at.getTime()) ? EM_DASH : timeLabel.format(at);
 }
 
+const relative = new Intl.RelativeTimeFormat(undefined, { numeric: "auto" });
+
 /** Relative time for "synced 4 minutes ago" style captions. */
 export function formatRelative(iso: string | null | undefined, now = Date.now()): string {
   if (!iso) return EM_DASH;
   const at = new Date(iso).getTime();
   if (Number.isNaN(at)) return EM_DASH;
   const seconds = Math.round((at - now) / 1000);
-  const relative = new Intl.RelativeTimeFormat(undefined, { numeric: "auto" });
   const units: [Intl.RelativeTimeFormatUnit, number][] = [
     ["second", 60],
     ["minute", 60],
@@ -248,9 +260,15 @@ export function durationSeconds(
 
 export { EM_DASH };
 
+const dateTimeLabel = new Intl.DateTimeFormat("en-GB", {
+  dateStyle: "medium",
+  timeStyle: "short",
+  timeZone: "UTC",
+});
+
 /** Evidence comparisons need time of day, with an explicit common timezone. */
 export function formatDateTime(iso: string): string {
-  return `${new Intl.DateTimeFormat("en-GB", { dateStyle: "medium", timeStyle: "short", timeZone: "UTC" }).format(new Date(iso))} UTC`;
+  return `${dateTimeLabel.format(new Date(iso))} UTC`;
 }
 
 const shortDateTimeLabel = new Intl.DateTimeFormat("en-GB", {

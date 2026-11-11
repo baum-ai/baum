@@ -832,3 +832,67 @@ func TestArchivedJobsAreOutsideEveryWindow(t *testing.T) {
 		}
 	}
 }
+
+func TestIndexSkipsSaveAndHeadReadsWhenNothingChanged(t *testing.T) {
+	f := newFixture(t)
+	saves, fail := 0, false
+	f.index.write = func(path, ns, key string, raw []byte) error {
+		saves++
+		if fail {
+			return errors.New("disk full")
+		}
+		return appdb.Write(path, ns, key, raw)
+	}
+	path := f.write(t, f.repo, sessionID, claudeTranscript(f.repo, sessionID))
+	ctx := context.Background()
+	refresh := func() {
+		t.Helper()
+		if err := f.index.Refresh(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	refresh()
+	if saves != 1 || f.index.heads.Reads() != 1 {
+		t.Fatalf("first refresh: saves %d, head reads %d", saves, f.index.heads.Reads())
+	}
+	refresh()
+	if saves != 1 || f.index.heads.Reads() != 1 {
+		t.Fatalf("unchanged refresh: saves %d, head reads %d", saves, f.index.heads.Reads())
+	}
+	// A changed transcript is read and saved.
+	f.write(t, f.repo, sessionID, strings.Replace(claudeTranscript(f.repo, sessionID), "Now push it", "Now push it to origin", 1))
+	refresh()
+	if saves != 2 || f.index.heads.Reads() != 2 {
+		t.Fatalf("changed refresh: saves %d, head reads %d", saves, f.index.heads.Reads())
+	}
+	// A new transcript is too.
+	other := "bbbbbbbb-0000-4000-8000-000000000002"
+	f.write(t, f.repo, other, claudeTranscript(f.repo, other))
+	refresh()
+	if saves != 3 || f.index.heads.Reads() != 3 {
+		t.Fatalf("new refresh: saves %d, head reads %d", saves, f.index.heads.Reads())
+	}
+	// A failed save stays dirty and is retried.
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	fail = true
+	if err := f.index.Refresh(ctx); err == nil {
+		t.Fatal("a failed save was not reported")
+	}
+	fail = false
+	refresh()
+	if saves != 5 {
+		t.Fatalf("saves after a failed one = %d, want 5", saves)
+	}
+	if entries, _ := f.index.Snapshot(); len(entries) != 1 {
+		t.Fatalf("a deleted session stayed: %+v", entries)
+	}
+	if n := f.index.heads.Len(); n != 1 {
+		t.Fatalf("head cache holds %d entries, want only the remaining transcript", n)
+	}
+	refresh()
+	if saves != 5 {
+		t.Fatalf("an unchanged refresh saved again")
+	}
+}

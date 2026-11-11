@@ -48,7 +48,8 @@ func (a LocalAPI) linkedSessions(cache *documentCache) LinkedSessions {
 			if err != nil {
 				continue
 			}
-			version, err := s.Latest(ctx, store.Key{Repository: c.Repository, Number: number})
+			key := store.Key{Repository: c.Repository, Number: number}
+			version, err := s.Latest(ctx, key)
 			if errors.Is(err, store.ErrNotFound) {
 				continue
 			}
@@ -75,7 +76,7 @@ func (a LocalAPI) linkedSessions(cache *documentCache) LinkedSessions {
 				return nil, time.Time{}, ctx.Err()
 			}
 			defer func() { <-cache.requests }()
-			viewer, release, err := cache.get(c, version.Document)
+			viewer, release, err := cache.get(ctx, c, version.Document, revisionKey(c, s, key, version.Metadata.Version, version.Revision))
 			if err != nil {
 				return unlinked("viewer", "error", err)
 			}

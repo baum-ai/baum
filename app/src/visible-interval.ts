@@ -68,6 +68,49 @@ export function visibleTimeout(fn: () => void, ms: number): () => void {
   return cancel;
 }
 
+const shared = new Map<number, { listeners: Set<() => void>; release: () => void }>();
+
+/** `useVisibleInterval`'s schedule for many subscribers: one interval and one
+ *  `visibilitychange` listener per period however many rows ask, each
+ *  subscriber called on every tick. Returns the unsubscribe. */
+export function subscribeVisibleInterval(fn: () => void, ms: number): () => void {
+  let entry = shared.get(ms);
+  if (!entry) {
+    const listeners = new Set<() => void>();
+    let timer: ReturnType<typeof setInterval> | undefined;
+    const tick = () => {
+      for (const listener of listeners) listener();
+    };
+    const stop = () => {
+      clearInterval(timer);
+      timer = undefined;
+    };
+    const changed = () => {
+      stop();
+      if (document.hidden) return;
+      tick();
+      timer = setInterval(tick, ms);
+    };
+    if (!document.hidden) timer = setInterval(tick, ms);
+    document.addEventListener("visibilitychange", changed);
+    entry = {
+      listeners,
+      release: () => {
+        document.removeEventListener("visibilitychange", changed);
+        stop();
+        shared.delete(ms);
+      },
+    };
+    shared.set(ms, entry);
+  }
+  const { listeners, release } = entry;
+  listeners.add(fn);
+  return () => {
+    listeners.delete(fn);
+    if (listeners.size === 0) release();
+  };
+}
+
 /** Marks <html data-hidden> while the page is hidden, so the stylesheet can
  *  pause every animation: a hidden window must not repaint. */
 export function trackHidden() {

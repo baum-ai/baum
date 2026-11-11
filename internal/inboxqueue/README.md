@@ -16,7 +16,8 @@ over the daemon's state, read on each request:
 - the review groups, since a stacked pull request with an open member under it
   is not ready to merge;
 - the ui-state `inbox` record, whose snoozes (until a time, or while the head
-  stays the one it was held on) hide a pull request;
+  stays the one it was held on) hide a pull request, and whose archives
+  (`archived`) hide one for good;
 - the saved inboxes (`internal/inboxes`).
 
 ## Kinds
@@ -38,15 +39,15 @@ Each open pull request is one item with a kind, which is also what an inbox's
 ## Counts
 
 The total (`count`, and `{"waiting":N}` on `GET /api/index?view=waiting`) is
-the number of distinct, unsnoozed items in the queue: `review`, `clone`, and
+the number of distinct items in the queue, neither snoozed nor archived: `review`, `clone`, and
 `fix`, `merge` and `update` without `fixing`. It is the same number as the
 total on the app's sidebar Inbox heading, and this package is where that
 definition is kept. Saved inboxes play no part: the total includes pull
 requests that match no inbox, counts one in several inboxes once, and ignores
 each inbox's badge switch. With nothing waiting it is zero.
 
-An inbox's own `count` is what its sidebar row shows: the unsnoozed items it
-holds that are in the queue or someone else's (`other`).
+An inbox's own `count` is what its sidebar row shows: the items it holds,
+neither snoozed nor archived, that are in the queue or someone else's (`other`).
 
 ## Matching
 

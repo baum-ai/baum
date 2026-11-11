@@ -20,6 +20,7 @@ import (
 	"github.com/baum-ai/baum/internal/workstats"
 	"github.com/baum-ai/baum/sessions"
 	"github.com/baum-ai/baum/sessions/collector"
+	"github.com/baum-ai/baum/sessions/collector/claudecode"
 	"github.com/baum-ai/baum/sessions/session"
 )
 
@@ -71,6 +72,10 @@ type Index struct {
 	Now    func() time.Time
 	// mapSession maps a found session; tests count its calls.
 	mapSession func(collector.Session) (*session.Graph, []string, error)
+	// write stores the document; tests replace it to count and fail saves.
+	write func(path, namespace, key string, raw []byte) error
+	// heads remembers each Claude transcript's head between refreshes.
+	heads claudecode.HeadCache
 
 	mu      sync.RWMutex
 	entries map[string]Entry
@@ -78,8 +83,11 @@ type Index struct {
 	bands    []int64
 	progress Progress
 	loaded   bool
-	wake     chan struct{}
-	once     sync.Once
+	// dirty is set when entries differ from what was last stored, so an
+	// unchanged refresh writes nothing.
+	dirty bool
+	wake  chan struct{}
+	once  sync.Once
 }
 
 type indexFile struct {
@@ -147,6 +155,8 @@ func (x *Index) load() {
 	x.loaded = true
 	x.entries = map[string]Entry{}
 	x.bands = pricing.Active().PromptBands()
+	// Nothing valid is stored yet: the first save has to write.
+	x.dirty = true
 	raw, err := appdb.Read(x.Path, "cache", "analytics-index")
 	if err != nil {
 		return
@@ -158,16 +168,33 @@ func (x *Index) load() {
 	for path, e := range stored.Entries {
 		x.entries[path] = e
 	}
+	x.dirty = false
 }
 
+// save stores the document unless it is what was stored last. A failed write
+// leaves it dirty, so the next refresh tries again.
 func (x *Index) save() error {
-	x.mu.RLock()
-	raw, err := json.Marshal(indexFile{Version: indexVersion, Bands: x.bands, Entries: x.entries})
-	x.mu.RUnlock()
-	if err != nil {
-		return err
+	x.mu.Lock()
+	if !x.dirty {
+		x.mu.Unlock()
+		return nil
 	}
-	return appdb.Write(x.Path, "cache", "analytics-index", raw)
+	raw, err := json.Marshal(indexFile{Version: indexVersion, Bands: x.bands, Entries: x.entries})
+	x.dirty = false
+	x.mu.Unlock()
+	if err == nil {
+		write := x.write
+		if write == nil {
+			write = appdb.Write
+		}
+		err = write(x.Path, "cache", "analytics-index", raw)
+	}
+	if err != nil {
+		x.mu.Lock()
+		x.dirty = true
+		x.mu.Unlock()
+	}
+	return err
 }
 
 // found is one session file discovery returned, with the clone it is in.
@@ -187,7 +214,7 @@ func (x *Index) Refresh(ctx context.Context) error {
 	x.load()
 	// A newer price list with other thresholds groups usage differently.
 	if bands := pricing.Active().PromptBands(); !slices.Equal(x.bands, bands) {
-		x.entries, x.bands = map[string]Entry{}, bands
+		x.entries, x.bands, x.dirty = map[string]Entry{}, bands, true
 	}
 	x.mu.Unlock()
 
@@ -195,6 +222,8 @@ func (x *Index) Refresh(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	x.heads.BeginPass()
+	defer x.heads.EndPass()
 	cutoff := x.now().Add(-Retention)
 	registered := map[string]bool{}
 	scanned := map[string]bool{}
@@ -213,7 +242,7 @@ func (x *Index) Refresh(ctx context.Context) error {
 		}
 		list, _, err := collector.FindSessions(clone.Path, collector.FindOptions{
 			ClaudeProjectsDir: x.Stores.ClaudeProjectsDir, CodexSessionsDir: x.Stores.CodexSessionsDir, CursorStorePaths: x.Stores.CursorStorePaths,
-			Worktrees: worktrees, Since: cutoff, ExcludeNestedClones: true,
+			ClaudeHeads: &x.heads, Worktrees: worktrees, Since: cutoff, ExcludeNestedClones: true,
 		})
 		if err != nil {
 			if ctx.Err() != nil {
@@ -241,6 +270,7 @@ func (x *Index) Refresh(ctx context.Context) error {
 		drop := !registered[e.Clone] || e.ModifiedAt.Before(cutoff) || (scanned[e.Clone] && !seen[path])
 		if drop {
 			delete(x.entries, path)
+			x.dirty = true
 		}
 	}
 	var todo []found
@@ -264,6 +294,7 @@ func (x *Index) Refresh(ctx context.Context) error {
 		entry := x.read(ctx, f)
 		x.mu.Lock()
 		x.entries[f.session.Path] = entry
+		x.dirty = true
 		x.progress.Done++
 		x.mu.Unlock()
 		if (i+1)%saveEvery == 0 {

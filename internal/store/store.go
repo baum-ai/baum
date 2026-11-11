@@ -5,7 +5,8 @@
 // exact bytes are unchanged, so concurrent refreshes cannot lose each other,
 // and only when it changes more than the refresh time.
 // Triggers keep the index projection of each latest document in the summaries
-// table current in the writer's own transaction; see Snapshot.
+// table current in the writer's own transaction; see Snapshot. Others renew
+// each version's document revision with every write; see Revision.
 //
 // A stored document holds no hunk evidence: Put removes every indexed hunk's
 // patch text and GitHub fragment (review.StripHunkEvidence), which the clone
@@ -97,6 +98,10 @@ type Version struct {
 	Attachments []Attachment    `json:"-"`
 	Metadata    Metadata        `json:"metadata"`
 	Document    json.RawMessage `json:"document"`
+	// Revision names Document's stored bytes (see Store.Revision), read with
+	// them: a nonzero revision equal to one read before means the same bytes.
+	// 0 when the store cannot vouch for one, and on versions not yet stored.
+	Revision int64 `json:"-"`
 }
 type Store struct{ root string }
 
@@ -188,6 +193,9 @@ func openRoot(root string, write bool) (*Store, error) {
 		err = setupSummaries(context.Background(), db)
 	}
 	if err == nil {
+		err = setupRevisions(context.Background(), db)
+	}
+	if err == nil {
 		_, err = db.Exec(chatSchema)
 	}
 	if err == nil {
@@ -239,22 +247,34 @@ func (s *Store) load(ctx context.Context, k Key, n int) (Version, error) {
 		return Version{}, err
 	}
 	defer db.Close()
-	query := `SELECT metadata,document FROM versions WHERE repository=? AND pr=?`
+	// One read transaction, so the revision is the one of the bytes read.
+	tx, err := db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return Version{}, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	current, err := currentRevisions(ctx, tx)
+	if err != nil {
+		return Version{}, err
+	}
+	column, join := revisionSelect(current)
+	query := `SELECT v.metadata,v.document,` + column + ` FROM versions v` + join + ` WHERE v.repository=? AND v.pr=?`
 	args := []any{k.repository(), k.Number}
 	if n > 0 {
-		query += ` AND version=?`
+		query += ` AND v.version=?`
 		args = append(args, n)
 	}
-	query += ` ORDER BY version DESC LIMIT 1`
+	query += ` ORDER BY v.version DESC LIMIT 1`
 	var m, doc []byte
-	err = db.QueryRowContext(ctx, query, args...).Scan(&m, &doc)
+	var revision int64
+	err = tx.QueryRowContext(ctx, query, args...).Scan(&m, &doc, &revision)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Version{}, ErrNotFound
 	}
 	if err != nil {
 		return Version{}, err
 	}
-	v := Version{Document: doc}
+	v := Version{Document: doc, Revision: revision}
 	err = json.Unmarshal(m, &v.Metadata)
 	return v, err
 }

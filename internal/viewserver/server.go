@@ -19,6 +19,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -135,8 +136,10 @@ type Server struct {
 
 	mu       sync.RWMutex
 	document []byte
-	review   Review
-	hub      hub
+	// etag names document, the served bytes, for If-None-Match.
+	etag   string
+	review Review
+	hub    hub
 	// paths are the paths of the document's cited hunks, versions the other
 	// saved versions read for /api/patch, and patches its answers; all are
 	// replaced with the document.
@@ -168,7 +171,8 @@ type Server struct {
 	lifeCancel context.CancelFunc
 
 	// baseline is the file as it was when the served document was read, so the
-	// watcher compares against what is actually being served.
+	// watcher compares against what is actually being served, and hash is the
+	// file's content then. Only a document file has them.
 	baseline fs.FileInfo
 	hash     [sha256.Size]byte
 
@@ -205,6 +209,8 @@ func New(opts Options) (*Server, error) {
 	s.hub.subscribers = map[chan struct{}]struct{}{}
 
 	document := opts.Document
+	// The served bytes replace the given ones, which are not kept.
+	s.opts.Document = nil
 	if opts.Path != "" {
 		// Stat first: a save after this point differs from the baseline.
 		s.baseline, _ = os.Stat(opts.Path)
@@ -213,18 +219,18 @@ func New(opts Options) (*Server, error) {
 			return nil, err
 		}
 		document = loaded
+		s.hash = sha256.Sum256(document)
 	} else if !isJSON(document) {
 		return nil, errors.New("viewserver: the document is not valid JSON")
 	}
+	s.review, s.paths = parseDocument(document)
+	s.files = locallink.CitedFiles(document)
 	s.document = WithHunkURLs(document)
-	s.review = parseReview(document)
-	s.paths = hunkPaths(document)
+	s.etag = entityTag(s.document)
 	s.patches = &patchCache{jobs: map[string]*patchJob{}}
 	s.commits = &patchCache{jobs: map[string]*patchJob{}}
-	s.files = locallink.CitedFiles(document)
 	s.fileReads = &patchCache{jobs: map[string]*patchJob{}}
 	s.patchSlots = make(chan struct{}, maxConcurrentPatches)
-	s.hash = sha256.Sum256(document)
 
 	s.mux = http.NewServeMux()
 	s.mux.HandleFunc("GET /api/document", s.handleDocument)
@@ -348,16 +354,38 @@ func (s *Server) current() []byte {
 	return s.document
 }
 
+// entityTag is the strong ETag of served bytes.
+func entityTag(document []byte) string {
+	sum := sha256.Sum256(document)
+	return `"` + hex.EncodeToString(sum[:]) + `"`
+}
+
+// handleDocument serves the document with its ETag. no-cache lets a client
+// keep it but revalidate every time: a request naming the current ETag in
+// If-None-Match is a 304 without the body, and a changed document never is.
 func (s *Server) handleDocument(w http.ResponseWriter, r *http.Request) {
+	s.mu.RLock()
+	document, etag := s.document, s.etag
+	s.mu.RUnlock()
 	h := w.Header()
 	h.Set("Content-Type", "application/json")
-	h.Set("Cache-Control", "no-store")
-	document := s.current()
-	h.Set("Content-Length", strconv.Itoa(len(document)))
-	if r.Method == http.MethodHead {
-		return
+	h.Set("Cache-Control", "no-cache")
+	h.Set("ETag", etag)
+	http.ServeContent(w, r, "", time.Time{}, bytes.NewReader(document))
+}
+
+// CachedBytes estimates the memory the server holds for its document: the
+// served bytes and the finished answers its patch, commit and file caches
+// keep. A host bounding several servers can use it as their size.
+func (s *Server) CachedBytes() int64 {
+	s.mu.RLock()
+	n := int64(len(s.document))
+	caches := []*patchCache{s.patches, s.commits, s.fileReads}
+	s.mu.RUnlock()
+	for _, cache := range caches {
+		n += cache.bytes()
 	}
-	_, _ = w.Write(document)
+	return n
 }
 
 func handleHealth(w http.ResponseWriter, _ *http.Request) {
@@ -478,12 +506,13 @@ func WithHunkURLs(document []byte) []byte {
 
 // setDocument swaps the served bytes and tells every open event stream.
 func (s *Server) setDocument(document []byte) {
-	review := parseReview(document)
-	paths := hunkPaths(document)
+	review, paths := parseDocument(document)
 	files := locallink.CitedFiles(document)
 	document = WithHunkURLs(document)
+	etag := entityTag(document)
 	s.mu.Lock()
 	s.document = document
+	s.etag = etag
 	s.review = review
 	s.paths = paths
 	s.versions = nil
