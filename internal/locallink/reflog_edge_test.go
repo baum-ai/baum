@@ -118,6 +118,10 @@ func TestWriteDirs(t *testing.T) {
 		{"GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.worktree GIT_CONFIG_VALUE_0=/x git commit -q", nil},
 		{"GIT_COMMON_DIR=/x/.git git commit -q", nil},
 		{"git --config-env core.worktree=WT commit -q", nil},
+		{"WT=/x git --config-env=core.worktree=WT commit -q", nil},
+		{"git -c include.path=/x/cfg commit -q", nil},
+		{"git --exec-path /x commit -q", nil},
+		{"git --list-cmds=main commit -q", nil},
 		{"ssh host 'cd /w/sub && git commit -q -m x'", nil},
 		{"ssh host git -C /w/sub commit -q", nil},
 		{"docker exec -w /w/sub ctr git commit -q", nil},
@@ -141,6 +145,12 @@ var realRollout, _ = json.Marshal(`text(await tools.exec_command({cmd:"git add a
 text(await tools.mcp__codex_apps__github_get_user_login({}));
 `)
 
+// escaped is a JSON input with a backslash at every %s, so the escapes a
+// test means stay escapes in the source.
+func escaped(format string) json.RawMessage {
+	return json.RawMessage(strings.ReplaceAll(format, "%s", string(rune(0x5c))))
+}
+
 func TestHostDir(t *testing.T) {
 	cases := []struct {
 		in, want string
@@ -161,8 +171,8 @@ func TestHostDir(t *testing.T) {
 			in, want string
 			ok       bool
 		}{
-			{"C:/Users/me/repo", `C:\Users\me\repo`, true},
-			{"C:/Users/me/repo/C:/r", "", false},
+			{"C:/work/repo", `C:\work\repo`, true},
+			{"C:/work/repo/C:/r", "", false},
 			{"/abs", "", false},
 		}
 	}
@@ -199,7 +209,14 @@ await tools.exec_command({cmd:"git commit -q -m z", workdir:dir});`
 		{"code-mode GIT_DIR", "exec", json.RawMessage(`"await tools.exec_command({cmd:\"GIT_DIR=/x git commit\"})"`), nil},
 		{"code-mode GIT_DIR in a \\u escape", "exec", json.RawMessage(`"await tools.exec_command({cmd:\"GIT_\\u0044IR=/x/.git git commit -q\", workdir:\"/a\"})"`), nil},
 		{"code-mode GIT_DIR in a \\x escape", "exec", json.RawMessage(`"await tools.exec_command({cmd:\"GIT_\\x44IR=/x/.git git commit -q\", workdir:\"/a\"})"`), nil},
-		{"Bash GIT_DIR in a JSON escape", "Bash", json.RawMessage(`{"command":"GIT_DIR=/x/.git git commit -q"}`), nil},
+		{"Bash GIT_DIR in a JSON escape", "Bash", escaped(`{"command":"GIT_%su0044IR=/x/.git git commit -q"}`), nil},
+		{"code-mode identity escape", "exec", escaped(`"await tools.exec_command({cmd:\"GIT%s%s_DIR=/x/.git git commit -q\", workdir:\"/a\"})"`), nil},
+		{"code-mode escaped G", "exec", escaped(`"await tools.exec_command({cmd:\"%s%sx47IT_DIR=/x/.git git commit -q\", workdir:\"/a\"})"`), nil},
+		{"code-mode escaped underscore", "exec", escaped(`"await tools.exec_command({cmd:\"GIT%s%sx5fDIR=/x/.git git commit -q\", workdir:\"/a\"})"`), nil},
+		{"code-mode braced escape", "exec", escaped(`"await tools.exec_command({cmd:\"GIT_%s%su{44}IR=/x/.git git commit -q\", workdir:\"/a\"})"`), nil},
+		{"code-mode line continuation", "exec", escaped(`"await tools.exec_command({cmd:\"GIT_D%s%s\nIR=/x/.git git commit -q\", workdir:\"/a\"})"`), nil},
+		{"bash ANSI-C quoting", "Bash", escaped(`{"command":"export $'GIT%s%sx5fDIR=/x/.git'; git commit -q"}`), nil},
+		{"escaped commit message", "Bash", escaped(`{"command":"git commit -q -m 'a%s%snb'"}`), []string{"/base"}},
 		{"real code-mode rollout", "exec", realRollout, []string{"/abs/wt"}},
 		{"home workdir", "exec_command", json.RawMessage(`{"cmd":"git commit -q","workdir":"~/r"}`), nil},
 		{"variable workdir", "exec_command", json.RawMessage(`{"cmd":"git commit -q","workdir":"$HOME/r"}`), nil},

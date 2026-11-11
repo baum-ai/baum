@@ -662,9 +662,9 @@ func boundToolName(name string, input json.RawMessage) string {
 var gitEnvNames = [][]byte{[]byte("GIT_DIR"), []byte("GIT_WORK_TREE"), []byte("GIT_COMMON_DIR"), []byte("GIT_CONFIG")}
 
 // mentionsGitEnv reports whether a call may set one of gitEnvNames, which
-// agentcmd does not follow: the name appears in the input or in any string it
-// holds once JSON escapes are decoded, or a string that names a GIT_ variable
-// also holds a JavaScript \u or \x escape that could spell one.
+// agentcmd does not follow: the name appears in the input, or in any string it
+// holds once JSON escapes are decoded and then backslash escapes too (the
+// JavaScript ones of a code-mode program, and bash's $'...').
 func mentionsGitEnv(input json.RawMessage) bool {
 	named := func(s []byte) bool {
 		return slices.ContainsFunc(gitEnvNames, func(name []byte) bool { return bytes.Contains(s, name) })
@@ -681,8 +681,7 @@ func mentionsGitEnv(input json.RawMessage) bool {
 	walk = func(v any) {
 		switch v := v.(type) {
 		case string:
-			s := []byte(v)
-			if named(s) || bytes.Contains(s, []byte("GIT_")) && (bytes.Contains(s, []byte(`\u`)) || bytes.Contains(s, []byte(`\x`))) {
+			if named([]byte(v)) || named([]byte(unescapeBackslashes(v))) {
 				found = true
 			}
 		case []any:
@@ -697,6 +696,63 @@ func mentionsGitEnv(input json.RawMessage) bool {
 	}
 	walk(value)
 	return found
+}
+
+// unescapeBackslashes decodes the backslash escapes of a JavaScript string or
+// a bash $'...' string, wherever they appear: hex (x), Unicode (u with four
+// digits or braces), line continuations, and identity escapes, which stand
+// for the character itself. Control escapes become a space. It only serves to
+// spot names spelled through escapes.
+func unescapeBackslashes(s string) string {
+	if !strings.Contains(s, `\`) {
+		return s
+	}
+	var out strings.Builder
+	hex := func(digits string) (rune, bool) {
+		n, err := strconv.ParseUint(digits, 16, 32)
+		return rune(n), err == nil && digits != ""
+	}
+	for i := 0; i < len(s); i++ {
+		if s[i] != '\\' || i+1 >= len(s) {
+			out.WriteByte(s[i])
+			continue
+		}
+		i++
+		switch c := s[i]; c {
+		case '\n':
+		case '\r':
+			if i+1 < len(s) && s[i+1] == '\n' {
+				i++
+			}
+		case 'x':
+			if r, ok := hex(s[i+1 : min(i+3, len(s))]); ok && i+2 < len(s) {
+				out.WriteRune(r)
+				i += 2
+				continue
+			}
+			out.WriteByte(c)
+		case 'u':
+			if i+1 < len(s) && s[i+1] == '{' {
+				if end := strings.IndexByte(s[i:], '}'); end > 0 {
+					if r, ok := hex(s[i+2 : i+end]); ok {
+						out.WriteRune(r)
+						i += end
+						continue
+					}
+				}
+			} else if r, ok := hex(s[i+1 : min(i+5, len(s))]); ok && i+4 < len(s) {
+				out.WriteRune(r)
+				i += 4
+				continue
+			}
+			out.WriteByte(c)
+		case 'n', 't', 'r', 'b', 'f', 'v', '0':
+			out.WriteByte(' ')
+		default:
+			out.WriteByte(c)
+		}
+	}
+	return out.String()
 }
 
 // writeDirsOf reads the creating git commands of an analysis. Only commands
@@ -757,6 +813,21 @@ func hostDir(resolved string) (string, bool) {
 // their value.
 var gitValueOptions = map[string]bool{"-C": true, "-c": true, "--git-dir": true, "--work-tree": true, "--namespace": true, "--config-env": true}
 
+// movingConfig reports whether a `-c` or `--config-env` setting can move git
+// to another working tree: core.worktree itself, or an include of a file that
+// may set it.
+func movingConfig(setting string) bool {
+	key := strings.ToLower(setting)
+	return strings.HasPrefix(key, "core.worktree") || strings.HasPrefix(key, "include.") || strings.HasPrefix(key, "includeif.")
+}
+
+// gitInfoOption reports whether a global option makes git print something and
+// exit before any subcommand runs.
+func gitInfoOption(arg string) bool {
+	return arg == "--exec-path" || arg == "--version" || arg == "--help" || arg == "-h" ||
+		arg == "--html-path" || arg == "--man-path" || arg == "--info-path" || strings.HasPrefix(arg, "--list-cmds")
+}
+
 // redirected reports whether git's global options point it at another
 // repository or working tree or are not known, or the subcommand's arguments
 // ask for a dry run.
@@ -770,6 +841,13 @@ func redirected(args []model.Value) bool {
 		case arg.Text == "--git-dir" || arg.Text == "--work-tree" ||
 			strings.HasPrefix(arg.Text, "--git-dir=") || strings.HasPrefix(arg.Text, "--work-tree="):
 			return true
+		case gitInfoOption(arg.Text):
+			return true // prints and exits: no commit
+		case strings.HasPrefix(arg.Text, "--config-env="):
+			if movingConfig(strings.TrimPrefix(arg.Text, "--config-env=")) {
+				return true
+			}
+			continue
 		case gitValueOptions[arg.Text]:
 			// The value must be known; `-c core.worktree=...` moves the
 			// working tree like --work-tree does.
@@ -777,7 +855,7 @@ func redirected(args []model.Value) bool {
 			if i >= len(args) || !args[i].Concrete() {
 				return true
 			}
-			if (arg.Text == "-c" || arg.Text == "--config-env") && strings.HasPrefix(strings.ToLower(args[i].Text), "core.worktree") {
+			if (arg.Text == "-c" || arg.Text == "--config-env") && movingConfig(args[i].Text) {
 				return true
 			}
 			continue

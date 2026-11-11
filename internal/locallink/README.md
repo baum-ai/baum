@@ -77,10 +77,12 @@ inside a conditional or loop. `git notes` and `git apply` make no commit in a
 working tree's history. Unplaced, too:
 - commands run on another host or in a container (`ssh`, `docker`, `kubectl`);
 - commands run by `find`, since `-execdir` runs them in each match's directory;
-- Git redirected by `--git-dir`, `--work-tree` or `core.worktree`;
+- Git redirected by `--git-dir`, `--work-tree`, `core.worktree` or a config
+  include, and options that only print (`--exec-path`, `--version`);
 - a `--dry-run`;
 - every command of a call that mentions `GIT_DIR`, `GIT_WORK_TREE`,
-  `GIT_COMMON_DIR` or a `GIT_CONFIG` variable, which agentcmd does not follow;
+  `GIT_COMMON_DIR` or a `GIT_CONFIG` variable, which agentcmd does not follow,
+  also when spelled with JSON, JavaScript or `$'...'` escapes;
 - a Windows path in a `workdir`.
 
 A directory inside a nested repository (a
