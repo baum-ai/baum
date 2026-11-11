@@ -186,6 +186,31 @@ tell whether anything changed before paying for the decode.
 it. Claude Code's start comes from its first records and Codex's from its
 `session_meta`; a session with no known start is kept.
 
+## Reusing sessions a caller already read
+
+Each session `Load` returns carries a `Key` naming what its graph was mapped
+from. For a session from the agent's own store, the key is a digest of the
+mapping cache's key. A file modified in the last 2 seconds, or in the future,
+gives its session no key at all: a rewrite at the same size within one
+modification-time tick would look unchanged. For an Entire session, the key is
+the clone, the checkpoint's tree and the session's id. A tree names its
+content, so the key never goes stale. The clone is part of the key, as in the
+checkpoint cache's key, so that one clone's reads never answer for another's.
+`Discovery.LoadReusing` takes a callback that says which keys the caller
+already holds what it needs from. Those sessions are not mapped. They come back
+`Unmapped`, with no graph, and `Transcript` says whether their graph has a
+transcript, so `Fuller` still compares them. Everything else is what `Load`
+returns. `locallink` uses this to map only the sessions that changed.
+
+Choosing an Entire session's snapshot needs only each checkpoint's session ids,
+dates, warnings and whether each mapped and has a transcript. The process
+remembers these by clone and checkpoint tree (8,192 checkpoints). They are
+small, so they outlive the whole-read cache's evictions. After the first read,
+a checkpoint is read whole again only when a session chosen from it has to be
+mapped, and that read goes through the whole-read cache. If the read now fails,
+the choice is made again from what the read found, as a load that remembered
+nothing would make it.
+
 ## Product profiles
 
 `traceprocessing.Local` is the zero value and the default of existing public

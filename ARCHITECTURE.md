@@ -1945,6 +1945,39 @@ a process reuses what it built:
     time, the worktrees, the Codex thread index and the Entire refs;
   * what each checkout has checked out: `HEAD` and the branch's commit. Index
     rewrites from `git status` are ignored.
+* **Unchanged sessions.** When any of that changed, which in a busy clone is
+  nearly always, because some agent is writing a session in the window, only
+  the sessions that changed are mapped. The process keeps a digest of each
+  session it mapped (`locallink.sessionDigests`, up to
+  `locallink.DefaultDigestBytes`, 64 MiB), keyed by `sessions.Session.Key`:
+  each file's path, size and modification time, or for an Entire session the
+  clone and the tree of its checkpoint, which names its content. A session
+  with a file modified in the last 2 seconds, or in the future, gets no key:
+  a same-size rewrite within one modification-time tick would look
+  unchanged. Such a session is mapped and not reused until it is older.
+  `Discovery.LoadReusing` skips a session whose digest is held. The digest holds what linking reads
+  from the graph: whether it is a generation run, whether it has a
+  transcript, the top-level session's start, end and branch, and the
+  `sessioncorrelate` evidence. For each linked session it also holds the
+  evidence that was built for it, with what that evidence depended on
+  besides the transcript:
+  * the caps;
+  * the session's id, path and vendor, and for Codex the thread names it
+    looked up in the thread index;
+  * where each absolute path it touched lands among the clone's checkouts.
+    These are replayed against the current checkouts, so an unrelated new
+    worktree changes nothing;
+  * the answers about which paths its commands name exist in the checkout or
+    the pull request.
+
+  Each of these is checked again, so the evidence is the same as a full
+  rebuild. A linked session whose evidence no longer fits is mapped by
+  loading again, refusing its digest. The other sessions are still reused.
+  If an unmapped session's digest is gone by the time linking reads it, the
+  build loads once more and maps everything. Choosing each Entire session's
+  snapshot uses small per-checkpoint facts that `sessions` remembers by
+  clone and tree. A checkpoint is read whole again, through the checkpoint
+  cache below, only when a session chosen from it has to be mapped.
 * **Closed and merged pull requests.** A refresh of a pull request that is
   closed or merged sets `EvidenceRequest.Frozen`. Its sessions are read once in
   the process, then kept for the same commits without looking at the stores
