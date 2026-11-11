@@ -132,13 +132,18 @@ Repositories come from GitHub only: without sign-in there is nothing to pick.
 
 Repository settings apply once per repository, including one with no clone.
 A repository's name in the list opens its page
-(`?page=repositories&repository=<owner/name>`, `RepositoryPage` in
-`src/settings.tsx`), with a back link and Esc or `u` back to the list. The page
-has three sections: **Reviews** (automatic reviews for this repository and
-decision capture, saved together by **Save repository settings**, which then says
-"Saved" and stays on the page), **Prompts** (below) and **Registration**, whose
-**Remove registration** returns to the list. A repository not registered, or no
-longer, shows "This repository is not registered" with a link to the list.
+(`?page=repositories&repository=<owner/name>&section=`, `RepositoryPage` in
+`src/settings.tsx`), drawn as Settings is: its sections in a sand list down the
+left, each with a line under its name, and the chosen one on the warm panel, with
+the same keys (`useSettingsKeys`: j/k, 1 to 3, Enter into a section, Esc back to
+the list). Esc on the list, `u`, or the back link return to Repositories. The
+sections are **Reviews** (automatic reviews for this repository and decision
+capture, setting rows saved as they change with "Saved" by the heading, as
+Settings' sections are), **Prompts** (below; its line counts the custom ones and
+shows an attention dot as Settings › Prompts does) and **Registration** (the local
+clone, and **Remove registration**, which returns to the list). A repository not
+registered, or no longer, shows "This repository is not registered" with a link
+to the list.
 **Change local clone** lists registrations and lets the person remove one or
 choose another folder; files and saved review stores are left on disk. Keep the
 clone baum should use registered. An explicitly chosen fork clone may be filed
@@ -1864,8 +1869,7 @@ their source: a **Custom** pill for the repository's own, a **Global** pill for
 one inherited from Settings, and none for the default. Its editor is seeded with
 `inherited_text`, its **Changes** compares with that text, **Save for this
 repository** saves it, and **Use inherited** sends `null`. These save at once
-through their own `PUT`s and are not part of **Save repository settings**, which
-the section says. Typed text not yet saved is kept per prompt while the page is
+through their own `PUT`s, which the section says. Typed text not yet saved is kept per prompt while the page is
 open (a row shows "Unsaved changes"), so opening another prompt does not drop it;
 leaving the page or the Settings section discards it, which the repository page says. On a review, the "Generated
 with" line adds "Custom prompt (global)" or "Custom prompt (this repository)"

@@ -45,6 +45,7 @@ test("replaces a global prompt, overrides it for a repository and resets both", 
     await page.getByRole("link", { name: "Repositories", exact: true }).click();
     await page.getByRole("link", { name: "Settings for acme/demo" }).click();
     const repository = page.getByRole("region", { name: "Repository acme/demo", exact: true });
+    await repository.getByRole("button", { name: /^Prompts/ }).click();
     await expect(row(page, id)).toContainText("Global");
     await toggle(page, id).click();
     const own = repository.getByRole("textbox", { name: `${title} prompt` });
@@ -53,7 +54,7 @@ test("replaces a global prompt, overrides it for a repository and resets both", 
     await row(page, id).getByRole("button", { name: "Save for this repository" }).click();
     await expect(row(page, id)).toContainText("Custom");
 
-    // The page is in the address, so a reload stays on it.
+    // The page and its section are in the address, so a reload stays on them.
     await page.reload();
     await expect(row(page, id)).toContainText("Custom");
     await toggle(page, id).click();

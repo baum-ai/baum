@@ -335,9 +335,7 @@ test("automatic review of a new head, shown as started automatically", async ({ 
   await page.getByRole("link", { name: "Repositories", exact: true }).click();
   await page.getByRole("link", { name: "Settings for acme/demo" }).click();
   const repository = page.getByRole("region", { name: "Repository acme/demo", exact: true });
-  await expect(
-    repository.getByText(/Automatic reviews are paused by the global switch/),
-  ).toBeVisible();
+  await expect(repository.getByText(/Paused by the global switch/)).toBeVisible();
   // Esc goes back to the list.
   await page.keyboard.press("Escape");
   await expect(page.getByRole("link", { name: "Settings for acme/demo" })).toBeVisible();

@@ -9,7 +9,6 @@ import {
   useState,
   type ComponentType,
   type FocusEvent,
-  type FormEvent,
   type ReactNode,
 } from "react";
 import type { ViewerLinkProps } from "@baum/viewer/navigation";
@@ -64,7 +63,7 @@ import { DiagnosticsSection } from "./diagnostics";
 import { pendingUpdate, UpdatesSection, type AppUpdates } from "./desktop/updates";
 import { invoke } from "./desktop/native";
 import { withCode } from "./desktop/code-terms";
-import { Notice, PageBar, PanelHeader, RefreshButton, pageScroll } from "./shell";
+import { Notice, PageBar, PanelHeader, RefreshButton } from "./shell";
 import { listKeys, MAC, onBody, pageModifier, useRowFocus, useShortcuts } from "./shortcuts";
 import {
   TerminalIcon,
@@ -173,16 +172,18 @@ const SECTION_CONTROLS = [
  *  changes the focused one, and Esc, h or ← go back to the list. Esc in a text
  *  field or select gives it up first (`useEscapeBlurs`), leaving the place in
  *  the section, so j and k go on from it. */
-function useSettingsKeys(
-  sections: readonly SettingsSection[],
-  section: SettingsSection,
-  setSection: (section: SettingsSection) => void,
+function useSettingsKeys<S extends string>(
+  sections: readonly S[],
+  section: S,
+  setSection: (section: S) => void,
+  /** Esc on the section list: where the page goes back to, if anywhere. */
+  back?: () => void,
 ) {
   const nav = useRef<HTMLElement>(null);
   const content = useRef<HTMLDivElement>(null);
   // The control last focused in the section, kept while a field is given up.
   const at = useRef<HTMLElement | null>(null);
-  const navItem = (id: SettingsSection) =>
+  const navItem = (id: S) =>
     nav.current?.querySelector<HTMLElement>(`[data-section="${id}"]`) ?? null;
   const controls = () =>
     Array.from(content.current?.querySelectorAll<HTMLElement>(SECTION_CONTROLS) ?? []).filter(
@@ -192,7 +193,7 @@ function useSettingsKeys(
     target?.focus({ preventScroll: true });
     target?.scrollIntoView?.({ block: "nearest" });
   };
-  const show = (next: SettingsSection) => {
+  const show = (next: S) => {
     at.current = null;
     setSection(next);
     focus(navItem(next));
@@ -244,6 +245,9 @@ function useSettingsKeys(
     } else if (/^[1-9]$/.test(key) && sections[Number(key) - 1]) {
       event.preventDefault();
       show(sections[Number(key) - 1]!);
+    } else if (key === "Escape" && back) {
+      event.preventDefault();
+      back();
     } else if (key === "Enter" || key === "l" || key === "ArrowRight") {
       const first = controls()[0];
       if (!first) return;
@@ -463,9 +467,9 @@ export function PromptsSection({ prompts }: { prompts: ReturnType<typeof useProm
   );
 }
 
-/** The prompts as one repository sees them, each saved straight to the
- *  daemon by its own editor. */
-export function RepositoryPrompts({ repository }: { repository: string }) {
+/** One repository's prompts, read once and kept in step with each save so
+ *  the section list and the section agree. */
+export function useRepositoryPrompts(repository: string) {
   const [entries, setEntries] = useState<RepositoryPromptEntry[] | null>(null);
   const [error, setError] = useState("");
   const load = () =>
@@ -479,39 +483,40 @@ export function RepositoryPrompts({ repository }: { repository: string }) {
   useEffect(() => {
     void load();
   }, [repository]);
-  const custom = entries?.filter(isCustom).length ?? 0;
+  const replace = (entry: PromptEntry) =>
+    setEntries(
+      (all) => all?.map((e) => (e.id === entry.id ? (entry as RepositoryPromptEntry) : e)) ?? all,
+    );
+  return { entries, error, load, replace };
+}
+
+/** A repository's Prompts section, each prompt saved straight to the daemon
+ *  by its own editor. */
+export function RepositoryPrompts({
+  repository,
+  prompts,
+}: {
+  repository: string;
+  prompts: ReturnType<typeof useRepositoryPrompts>;
+}) {
   return (
     <section aria-labelledby="repository-prompts-heading" className="settings-section">
       <SectionHead
         id="repository-prompts-heading"
         title="Prompts"
         detail="A prompt customised here replaces the global one for this repository only. Each saves on its own; unsaved text is lost when you leave this page."
-        status={
-          entries && custom ? (
-            <span className="repository-prompts-count">{custom} custom</span>
-          ) : null
-        }
       />
-      {error ? (
+      {prompts.error ? (
         <Alert>
-          {error}{" "}
-          <Button variant="secondary" size="compact" onClick={() => void load()}>
+          {prompts.error}{" "}
+          <Button variant="secondary" size="compact" onClick={() => void prompts.load()}>
             Try again
           </Button>
         </Alert>
       ) : null}
-      {entries ? (
-        <PromptList
-          entries={entries}
-          repository={repository}
-          replace={(entry) =>
-            setEntries(
-              (all) =>
-                all?.map((e) => (e.id === entry.id ? (entry as RepositoryPromptEntry) : e)) ?? all,
-            )
-          }
-        />
-      ) : error ? null : (
+      {prompts.entries ? (
+        <PromptList entries={prompts.entries} repository={repository} replace={prompts.replace} />
+      ) : prompts.error ? null : (
         <LoadingStatus block>Reading the prompts…</LoadingStatus>
       )}
     </section>
@@ -2390,113 +2395,110 @@ export function RepositoriesPage({
   );
 }
 
-function Field({ label, children }: { label: string; children: ReactNode }) {
-  return (
-    <label className="local-field-label">
-      {label}
-      {children}
-    </label>
-  );
-}
+/** How a repository's automatic reviews are set: by the global switch, or
+ *  on or off for it alone. */
+type AutomaticMode = "default" | "on" | "off";
+const automaticMode = (clone: Clone): AutomaticMode =>
+  clone.settings.automatic === null || clone.settings.automatic === undefined
+    ? "default"
+    : clone.settings.automatic
+      ? "on"
+      : "off";
 
-/** A repository's own review settings, saved together by Save. */
-function RepositorySettings({
+/** A repository's Reviews section, saved as it changes, as Settings' are. */
+function RepositoryReviews({
   clone,
   automatic,
   status,
-  save,
+  changed,
 }: {
   clone: Clone;
   automatic: Automatic | null;
   status?: AutomaticStatus;
-  /** Resolves true once stored. */
-  save: (settings: Clone["settings"]) => Promise<boolean>;
+  changed: () => Promise<void>;
 }) {
-  const [mode, setMode] = useState(
-    clone.settings.automatic === null || clone.settings.automatic === undefined
-      ? "default"
-      : clone.settings.automatic
-        ? "on"
-        : "off",
-  );
-  const [decisions, setDecisions] = useState(clone.settings.decisions !== false);
-  const [pending, setPending] = useState(false);
-  // "Saved" shows until the next change.
-  const [saved, setSaved] = useState(false);
-  const submit = (event: FormEvent) => {
-    event.preventDefault();
-    setPending(true);
-    setSaved(false);
-    void save({
-      automatic: mode === "default" ? null : mode === "on",
-      decisions: decisions ? null : false,
-    })
-      .then(setSaved)
-      .finally(() => setPending(false));
+  const saver = useAutoSave(changed, `api/repositories/${clone.repository}/settings`);
+  const stored = () => ({
+    mode: automaticMode(clone),
+    decisions: clone.settings.decisions !== false,
+  });
+  const [draft, setDraft] = useState(stored);
+  // A failed save puts the controls back to what is stored.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: only after a failure
+  useEffect(() => {
+    if (saver.failures) setDraft(stored());
+  }, [saver.failures]);
+  const change = (patch: Partial<ReturnType<typeof stored>>) => {
+    const next = { ...draft, ...patch };
+    setDraft(next);
+    saver.save({
+      automatic: next.mode === "default" ? null : next.mode === "on",
+      decisions: next.decisions ? null : false,
+    });
   };
   const notice = status ? automaticNotice(status) : null;
   return (
-    <form onSubmit={submit} className="local-stack" noValidate>
-      {automatic ? (
-        <div className="local-fields">
-          <Field label="Automatic reviews">
+    <section aria-labelledby="repository-reviews-heading" className="settings-section">
+      <SectionHead
+        id="repository-reviews-heading"
+        title="Reviews"
+        detail="How baum reviews this repository's pull requests and reads its agent sessions."
+        status={saver.status}
+      />
+      {saver.error ? <Alert>{saver.error}</Alert> : null}
+      {notice ? <Notice>{notice}</Notice> : null}
+      <div className="local-panel settings-list">
+        {automatic ? (
+          <SettingRow
+            label="Automatic reviews"
+            htmlFor="repository-automatic"
+            detail={
+              status ? (
+                <span role="status">
+                  {status.enabled
+                    ? "On for this repository."
+                    : clone.settings.automatic === false
+                      ? "Off for this repository."
+                      : `Paused by the global switch${
+                          clone.settings.automatic ? ", although this repository is set to On" : ""
+                        }. Turn them on in Settings to resume them.`}
+                  {status.pending ? ` ${status.pending} waiting to start.` : ""}
+                </span>
+              ) : (
+                "New pushes and review requests in this repository."
+              )
+            }
+          >
             <select
-              className="local-field"
-              value={mode}
-              onChange={(e) => {
-                setMode(e.target.value);
-                setSaved(false);
-              }}
+              id="repository-automatic"
+              className="local-field settings-select"
+              value={draft.mode}
+              onChange={(e) => change({ mode: e.target.value as AutomaticMode })}
             >
               <option value="default">Global setting ({automatic.enabled ? "on" : "off"})</option>
               <option value="on">
-                {automatic.enabled
-                  ? "On for this repository"
-                  : "On for this repository (paused by the global switch)"}
+                {automatic.enabled ? "On" : "On (paused by the global switch)"}
               </option>
-              <option value="off">Off for this repository</option>
+              <option value="off">Off</option>
             </select>
-          </Field>
-        </div>
-      ) : null}
-
-      {status ? (
-        <p className="text-xs text-(--text-tertiary)" role="status">
-          {status.enabled
-            ? "Automatic reviews are on for this repository."
-            : clone.settings.automatic === false
-              ? "Automatic reviews are off for this repository."
-              : `Automatic reviews are paused by the global switch${
-                  clone.settings.automatic ? ", although this repository is set to On" : ""
-                }. Turn them on in Settings to resume them.`}
-
-          {status.pending ? ` ${status.pending} waiting to start.` : ""}
-        </p>
-      ) : null}
-      {notice ? <Notice>{notice}</Notice> : null}
-      <label className="local-switch-label">
-        <input
-          type="checkbox"
-          role="switch"
-          className="local-switch"
-          checked={decisions}
-          disabled={pending}
-          onChange={(event) => {
-            setDecisions(event.target.checked);
-            setSaved(false);
-          }}
-        />
-        Capture the decisions of agent sessions in this repository
-      </label>
-      <div className="prompt-actions">
-        <Button type="submit" size="compact" disabled={pending}>
-          {pending ? "Saving…" : "Save repository settings"}
-        </Button>
-        <p role="status" className="settings-saved">
-          {saved ? "Saved" : ""}
-        </p>
+          </SettingRow>
+        ) : null}
+        <SettingRow
+          label="Capture decisions"
+          htmlFor="repository-decisions"
+          detail="Read the decisions of agent sessions in this repository."
+        >
+          <input
+            id="repository-decisions"
+            type="checkbox"
+            role="switch"
+            className="local-switch"
+            checked={draft.decisions}
+            onChange={(event) => change({ decisions: event.target.checked })}
+          />
+        </SettingRow>
       </div>
-    </form>
+    </section>
   );
 }
 
@@ -2719,14 +2721,27 @@ function primaryClone(repository: Repository): Clone {
 export const repositoryHref = (repository: string) =>
   appURL(`?page=repositories&repository=${encodeURIComponent(repository)}`);
 
-/** `?page=repositories&repository=<owner/name>`: one repository's review
- *  settings and prompts, and its registration. */
+const repositorySections = ["reviews", "prompts", "registration"] as const;
+export type RepositorySection = (typeof repositorySections)[number];
+const repositorySectionTitles: Record<RepositorySection, string> = {
+  reviews: "Reviews",
+  prompts: "Prompts",
+  registration: "Registration",
+};
+/** A section named in the address, else the first. */
+export const repositorySection = (value: string | null): RepositorySection =>
+  repositorySections.find((s) => s === value) ?? "reviews";
+
+/** `?page=repositories&repository=<owner/name>&section=`: one repository's
+ *  settings, drawn as Settings is, its sections in a list down the left. */
 export function RepositoryPage({
   name,
   repositories,
   loading,
   automatic,
   changed,
+  section,
+  setSection,
   Link,
 }: {
   /** The repository in the address. */
@@ -2735,14 +2750,16 @@ export function RepositoryPage({
   loading: boolean;
   automatic: Automatic | null;
   changed: () => Promise<void>;
+  section: RepositorySection;
+  setSection: (section: RepositorySection) => void;
   Link: ComponentType<ViewerLinkProps>;
 }) {
   const repository = repositories.find((r) => sameRepository(r.repository, name));
+  const prompts = useRepositoryPrompts(repository?.repository ?? name);
   const [error, setError] = useState("");
   const [removing, setRemoving] = useState(false);
-  useEffect(() => {
-    pageScroll().to(0);
-  }, [name]);
+  const toList = () => navigate(appURL("?page=repositories"));
+  const keys = useSettingsKeys(repositorySections, section, setSection, toList);
   const back = (
     <Link
       href={appURL("?page=repositories")}
@@ -2784,15 +2801,42 @@ export function RepositoryPage({
     void request(`api/repositories/${repository.repository}`, {}, "DELETE")
       .then(async () => {
         await changed();
-        navigate(appURL("?page=repositories"));
+        toList();
       })
       .catch((e: unknown) => {
         setError(errorText(e));
         setRemoving(false);
       });
   };
+  const mode = automaticMode(clone);
+  const nav: { id: RepositorySection; sub: string; tone?: Tone }[] = [
+    {
+      id: "reviews",
+      sub: [
+        status ? (status.enabled ? "Automatic" : "When you ask") : null,
+        mode === "default" ? null : "set here",
+        clone.settings.decisions === false ? "no decisions" : null,
+      ]
+        .filter(Boolean)
+        .join(" · "),
+    },
+    {
+      id: "prompts",
+      sub: prompts.entries
+        ? `${prompts.entries.filter(isCustom).length} custom`
+        : prompts.error
+          ? "Unavailable"
+          : "Reading…",
+      tone: prompts.entries && promptsNeedAttention(prompts.entries) ? "caution" : undefined,
+    },
+    {
+      id: "registration",
+      sub: clone.available ? homePath(clone.path) : "Needs a local clone",
+      tone: clone.available ? undefined : "caution",
+    },
+  ];
   return (
-    <section aria-label={`Repository ${repository.repository}`}>
+    <section className="settings-page" aria-label={`Repository ${repository.repository}`}>
       <PageBar
         title={repository.repository}
         detail={
@@ -2800,51 +2844,82 @@ export function RepositoryPage({
         }
         back={back}
       />
-      <div className="local-page-body repository-page">
-        {error ? <Alert>{error}</Alert> : null}
-        <section aria-labelledby="repository-reviews-heading" className="settings-section">
-          <SectionHead
-            id="repository-reviews-heading"
-            title="Reviews"
-            detail="How baum reviews this repository's pull requests and reads its sessions."
-          />
-          <div className="local-panel">
-            <RepositorySettings
+      <div className="local-page-body settings-layout">
+        <nav ref={keys.nav} aria-label="Repository sections" className="settings-nav">
+          {nav.map((item, index) => (
+            <button
+              key={item.id}
+              type="button"
+              className="settings-nav-item"
+              data-section={item.id}
+              aria-current={item.id === section ? "page" : undefined}
+              aria-keyshortcuts={String(index + 1)}
+              onClick={() => setSection(item.id)}
+            >
+              <span className="settings-nav-text">
+                <span className="settings-nav-label">
+                  {repositorySectionTitles[item.id]}{" "}
+                  {item.tone ? (
+                    <span
+                      role="img"
+                      aria-label="Needs attention"
+                      title="Needs attention"
+                      className="ml-2 inline-flex"
+                    >
+                      <Dot tone={item.tone} />
+                    </span>
+                  ) : null}
+                </span>
+                {item.sub ? <span className="settings-nav-sub">{item.sub}</span> : null}
+              </span>
+            </button>
+          ))}
+        </nav>
+        <div ref={keys.content} className="settings-content" onFocus={keys.onFocus}>
+          {error ? <Alert>{error}</Alert> : null}
+          {section === "reviews" ? (
+            <RepositoryReviews
               key={repository.repository}
               clone={clone}
               automatic={automatic}
               status={status}
-              save={async (settings) => {
-                try {
-                  await request(
-                    `api/repositories/${repository.repository}/settings`,
-                    settings,
-                    "PUT",
-                  );
-                  setError("");
-                  await changed();
-                  return true;
-                } catch (e) {
-                  setError(errorText(e));
-                  return false;
-                }
-              }}
+              changed={changed}
             />
-          </div>
-        </section>
-        <RepositoryPrompts repository={repository.repository} />
-        <section aria-labelledby="repository-registration-heading" className="settings-section">
-          <SectionHead
-            id="repository-registration-heading"
-            title="Registration"
-            detail="Removing the registration stops baum reviewing this repository. Its files and saved reviews stay on disk."
-          />
-          <div>
-            <Button variant="danger-outline" size="compact" disabled={removing} onClick={remove}>
-              {removing ? "Removing…" : "Remove registration"}
-            </Button>
-          </div>
-        </section>
+          ) : section === "prompts" ? (
+            <RepositoryPrompts repository={repository.repository} prompts={prompts} />
+          ) : (
+            <section aria-labelledby="repository-registration-heading" className="settings-section">
+              <SectionHead
+                id="repository-registration-heading"
+                title="Registration"
+                detail="The local clone baum reads this repository from."
+              />
+              <div className="local-panel settings-list">
+                <SettingRow
+                  label={clone.available ? "Local clone" : "No local clone"}
+                  detail={
+                    clone.available
+                      ? clone.path
+                      : "Choose a folder or clone it from the repository's menu in Repositories."
+                  }
+                />
+                <SettingRow
+                  label="Remove registration"
+                  detail="baum stops reviewing this repository. Its files and saved reviews stay on disk."
+                >
+                  <Button
+                    variant="danger-outline"
+                    size="compact"
+                    disabled={removing}
+                    onClick={remove}
+                  >
+                    {removing ? "Removing…" : "Remove registration"}
+                  </Button>
+                </SettingRow>
+              </div>
+            </section>
+          )}
+        </div>
       </div>
     </section>
   );

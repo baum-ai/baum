@@ -91,6 +91,7 @@ import { useDiagnosticProblems } from "./diagnostics";
 import {
   RepositoriesPage,
   RepositoryPage,
+  repositorySection,
   SettingsPage,
   settingsSection,
   useCommandLineCheck,
@@ -1357,6 +1358,7 @@ function Workspace({ url }: { url: UrlState }) {
         event.preventDefault();
         url.update((current) => {
           current.delete("repository");
+          current.delete("section");
           return current;
         });
       } else if (openJob && (event.key === "u" || (event.key === "Escape" && onBody(event)))) {
@@ -1511,6 +1513,14 @@ function Workspace({ url }: { url: UrlState }) {
               loading={loading && revision === 0}
               automatic={automatic}
               changed={reload}
+              section={repositorySection(url.search.get("section"))}
+              setSection={(section) =>
+                url.update((current) => {
+                  if (section === "reviews") current.delete("section");
+                  else current.set("section", section);
+                  return current;
+                })
+              }
               Link={LocalLink}
             />
           ) : page === "repositories" ? (

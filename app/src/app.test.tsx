@@ -1332,15 +1332,11 @@ it("sets automatic reviews per repository, with no daily cap", async () => {
   const mode = region.querySelector<HTMLSelectElement>("select")!;
   expect(mode.value).toBe("default");
   expect(mode.options[0]!.textContent).toBe("Global setting (on)");
+  // It saves as it changes, as Settings does.
   await act(async () => {
     mode.value = "off";
     mode.dispatchEvent(new Event("change", { bubbles: true }));
   });
-  await act(async () =>
-    Array.from(region.querySelectorAll("button"))
-      .find((b) => b.textContent === "Save repository settings")!
-      .click(),
-  );
   expect(puts).toContainEqual({
     path: "/s/test-ns/api/repositories/acme/demo/settings",
     body: { automatic: false, decisions: null },
@@ -1361,11 +1357,6 @@ it("turns decision capture off for one repository", async () => {
   // On by default.
   expect(toggle.checked).toBe(true);
   await act(async () => toggle.click());
-  await act(async () =>
-    Array.from(region.querySelectorAll("button"))
-      .find((b) => b.textContent === "Save repository settings")!
-      .click(),
-  );
   expect(puts.at(-1)!.body).toMatchObject({ decisions: false });
 });
 it("shows a repository's decision capture turned off", async () => {
@@ -1629,14 +1620,11 @@ it("saves a repository's automatic choice as explicit null when automatic settin
   );
   await act(async () => root.render(<App />));
   const region = await openRepository();
-  await act(async () =>
-    Array.from(region.querySelectorAll("button"))
-      .find((b) => b.textContent === "Save repository settings")!
-      .click(),
-  );
+  expect(region.querySelector("select")).toBeNull();
+  await act(async () => region.querySelector<HTMLInputElement>('input[role="switch"]')!.click());
   expect(puts).toContainEqual({
     path: "/s/test-ns/api/repositories/acme/demo/settings",
-    body: { automatic: null, decisions: null },
+    body: { automatic: null, decisions: false },
   });
 });
 it("shows a repository set to On as paused while the global switch is off", async () => {
@@ -1659,11 +1647,9 @@ it("shows a repository set to On as paused while the global switch is off", asyn
   const region = await openRepository();
   const mode = region.querySelector<HTMLSelectElement>("select")!;
   expect(mode.value).toBe("on");
-  expect(mode.selectedOptions[0]!.textContent).toBe(
-    "On for this repository (paused by the global switch)",
-  );
+  expect(mode.selectedOptions[0]!.textContent).toBe("On (paused by the global switch)");
   expect(region.textContent).toContain(
-    "Automatic reviews are paused by the global switch, although this repository is set to On.",
+    "Paused by the global switch, although this repository is set to On.",
   );
 });
 it("shows a job's pull request title, when it started and how long it took", async () => {

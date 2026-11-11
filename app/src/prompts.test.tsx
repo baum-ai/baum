@@ -4,7 +4,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { PromptEntry, Provenance, RepositoryPromptEntry } from "./api";
 import { lineDiff, markRules, promptsNeedAttention } from "./prompt-editor";
 import { GeneratedBy } from "./review";
-import { PromptsSection, RepositoryPrompts, usePrompts } from "./settings";
+import { PromptsSection, RepositoryPrompts, usePrompts, useRepositoryPrompts } from "./settings";
 
 let root: Root;
 let host: HTMLElement;
@@ -80,6 +80,10 @@ async function type(text: string) {
 function Section() {
   const prompts = usePrompts();
   return <PromptsSection prompts={prompts} />;
+}
+function RepositorySection() {
+  const prompts = useRepositoryPrompts("acme/demo");
+  return <RepositoryPrompts repository="acme/demo" prompts={prompts} />;
 }
 
 it("lists every prompt grouped, staged ones included, with its state", async () => {
@@ -243,7 +247,7 @@ it("shows each prompt's source in a repository and customises from the inherited
       return rows.find((r) => r.id === id);
     },
   );
-  act(() => root.render(<RepositoryPrompts repository="acme/demo" />));
+  act(() => root.render(<RepositorySection />));
   await flush();
   expect(calls[0]!.path).toMatch(/api\/repositories\/acme\/demo\/prompts$/);
   const text = (id: string) => host.querySelector(`[data-prompt="${id}"]`)!.textContent;
@@ -404,7 +408,7 @@ it("seeds a repository prompt from the inherited text again after Use inherited"
       return row;
     },
   );
-  act(() => root.render(<RepositoryPrompts repository="acme/demo" />));
+  act(() => root.render(<RepositorySection />));
   await flush();
   act(() => toggle("review").click());
   expect(area().value).toBe("Own");
