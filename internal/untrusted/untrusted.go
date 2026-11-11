@@ -24,10 +24,6 @@ func New() Fence {
 	return Fence{tag: hex.EncodeToString(nonce[:])}
 }
 
-// Fixed returns a fence with the given tag, for tests that pin the bytes a
-// fence writes.
-func Fixed(tag string) Fence { return Fence{tag: tag} }
-
 // Tag is the fence's random tag.
 func (f Fence) Tag() string { return f.tag }
 
