@@ -282,7 +282,7 @@ func loadEntire(ctx context.Context, root string, d *Discovery, opts Options, na
 			continue
 		}
 		for _, snapshot := range snapshots {
-			if native[snapshot.SessionID] || (!opts.Since.IsZero() && snapshot.CreatedAt.Before(opts.Since)) {
+			if native[snapshot.SessionID] || !opts.wantsID(snapshot.SessionID) || (!opts.Since.IsZero() && snapshot.CreatedAt.Before(opts.Since)) {
 				continue
 			}
 			picks[snapshot.SessionID] = append(picks[snapshot.SessionID], pick{checkpoint: id, at: snapshot.CreatedAt})

@@ -3,6 +3,7 @@ package locallink
 import (
 	"bytes"
 	"container/list"
+	"context"
 	"io"
 	"reflect"
 	"strings"
@@ -62,6 +63,9 @@ type sessionFacts struct {
 	startedAt, endedAt *time.Time
 	gitBranch          *string
 	correlated         sessioncorrelate.Result
+	// writes are the session's Git-writing shell calls (gitWrites), which
+	// the reflog matcher places in the clone's working trees.
+	writes []gitWrite
 }
 
 // graphFacts reads the facts of s from its graph.
@@ -70,6 +74,7 @@ func graphFacts(s sessions.Session) sessionFacts {
 		generationRun: sessions.IsGenerationRun(s.Graph),
 		transcript:    sessions.HasTranscript(s.Graph),
 		correlated:    sessioncorrelate.Correlate(s.Graph, s.Vendor),
+		writes:        gitWrites(context.Background(), s),
 	}
 	if root := s.Root(); root != nil {
 		facts.root = true
@@ -95,6 +100,13 @@ func (f sessionFacts) detached() sessionFacts {
 		out.gitBranch = &branch
 	}
 	out.correlated = detach(f.correlated)
+	out.writes = make([]gitWrite, len(f.writes))
+	for i, w := range f.writes {
+		out.writes[i] = gitWrite{start: w.start, end: w.end, branch: strings.Clone(w.branch), dirs: make([]string, len(w.dirs))}
+		for j, dir := range w.dirs {
+			out.writes[i].dirs[j] = strings.Clone(dir)
+		}
+	}
 	return out
 }
 
@@ -258,6 +270,15 @@ func (b *digestBook) facts(s sessions.Session) sessionFacts {
 		return d.facts
 	}
 	return graphFacts(s)
+}
+
+// gitWrites are the Git-writing shell calls of s, which the reflog matcher
+// places: from its digest, so an unmapped session still has them.
+func (b *digestBook) gitWrites(ctx context.Context, s sessions.Session) []gitWrite {
+	if d := b.digest(s); d != nil {
+		return d.facts.writes
+	}
+	return gitWrites(ctx, s)
 }
 
 // generationRun reports whether s is one of baum's own generation runs.

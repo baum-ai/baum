@@ -2,6 +2,7 @@ package locallink
 
 import (
 	"container/list"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -107,8 +108,9 @@ func (c *evidenceCache) store(key string, evidence []bundle.Session, complete bo
 // the sessions discovered for it (sessions.Discovery.Fingerprint, which
 // covers the clone's worktrees and Entire refs), the home directory, and the
 // state of the clone's checkouts, whose files bound the paths a session
-// touched. ok is false when any of it cannot be described.
-func evidenceKey(req EvidenceRequest, dir string, d *sessions.Discovery) (string, bool) {
+// touched, and the reflog entries that created the commits. ok is false when
+// any of it cannot be described.
+func evidenceKey(ctx context.Context, req EvidenceRequest, dir string, d *sessions.Discovery) (string, bool) {
 	discovered, ok := d.Fingerprint()
 	if !ok {
 		return "", false
@@ -118,9 +120,13 @@ func evidenceKey(req EvidenceRequest, dir string, d *sessions.Discovery) (string
 		return "", false
 	}
 	home, _ := os.UserHomeDir()
+	oids := make([]string, len(req.Commits))
+	for i, c := range req.Commits {
+		oids[i] = c.OID
+	}
 	h := sha256.New()
-	_, _ = fmt.Fprintf(h, "%s\x00%s\x00%s\x00%d\x00%d\x00%#v\x00", discovered, clone, home,
-		req.MaxPromptsPerSession, req.MaxCommandEventsPerSession, req.Sessions)
+	_, _ = fmt.Fprintf(h, "%s\x00%s\x00%s\x00%d\x00%d\x00%#v\x00%s\x00", discovered, clone, home,
+		req.MaxPromptsPerSession, req.MaxCommandEventsPerSession, req.Sessions, ReflogFingerprint(ctx, req.Repo, dir, oids))
 	for _, c := range req.Commits {
 		_, _ = fmt.Fprintf(h, "%#v\x01", c)
 	}

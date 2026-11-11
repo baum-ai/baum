@@ -64,6 +64,10 @@ type Options struct {
 	// it. A session whose start discovery does not know (Cursor) is kept,
 	// and Entire checkpoints are not filtered by it.
 	StartedBefore time.Time
+	// SessionIDs, when not empty, keeps only the sessions whose own ID (the
+	// agent's native session ID, Session.ID) is listed. The others are never
+	// mapped, and Entire sessions with other IDs are dropped.
+	SessionIDs []string
 	// Store overrides, mainly for tests. Empty means the vendor default.
 	ClaudeProjectsDir string
 	CodexSessionsDir  string
@@ -72,6 +76,11 @@ type Options struct {
 
 func (o Options) wants(source vendors.Slug) bool {
 	return len(o.Sources) == 0 || slices.Contains(o.Sources, source)
+}
+
+// wantsID reports whether a session with this ID passes SessionIDs.
+func (o Options) wantsID(id string) bool {
+	return len(o.SessionIDs) == 0 || slices.Contains(o.SessionIDs, id)
 }
 
 // Session is one mapped session tree.
@@ -219,7 +228,7 @@ func Discover(ctx context.Context, dir string, opts Options) (*Discovery, error)
 	d.skipped = scan.Skipped
 	for _, s := range found {
 		startedLater := !opts.StartedBefore.IsZero() && !s.StartedAt.IsZero() && s.StartedAt.After(opts.StartedBefore)
-		if opts.wants(s.Source) && (opts.Since.IsZero() || !s.ModifiedAt.Before(opts.Since)) && !startedLater {
+		if opts.wants(s.Source) && opts.wantsID(s.SessionID) && (opts.Since.IsZero() || !s.ModifiedAt.Before(opts.Since)) && !startedLater {
 			d.wanted = append(d.wanted, s)
 		}
 	}
@@ -399,7 +408,11 @@ func (d *Discovery) LoadReusing(ctx context.Context, reuse Reuse) ([]Session, Re
 		}
 		report.EntireCommit = commit
 		report.Failures = append(report.Failures, failures...)
-		sessions = append(sessions, fromEntire...)
+		for _, s := range fromEntire {
+			if opts.wantsID(s.ID) {
+				sessions = append(sessions, s)
+			}
+		}
 	}
 
 	slices.SortStableFunc(sessions, func(a, b Session) int {

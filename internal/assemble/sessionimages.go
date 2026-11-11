@@ -29,7 +29,19 @@ func (l LocalSessions) ImageEvidence(ctx context.Context, linked []bundle.Sessio
 	if len(linked) == 0 || maxImages <= 0 || maxBytes <= 0 {
 		return nil, nil, nil
 	}
+	var ids []string
+	for _, s := range linked {
+		if !s.Restricted && s.RootSessionID != "" && !slices.Contains(ids, s.RootSessionID) {
+			ids = append(ids, s.RootSessionID)
+		}
+	}
+	if len(ids) == 0 {
+		return nil, nil, nil
+	}
 	opts := l.Stores
+	// Only the linked sessions are read; mapping every session of the
+	// repository decoded gigabytes of unrelated transcripts.
+	opts.SessionIDs = ids
 	opts.Sources = nil
 	for _, source := range []vendors.Slug{vendors.ClaudeCode, vendors.Codex} {
 		if len(l.Stores.Sources) == 0 || slices.Contains(l.Stores.Sources, source) {

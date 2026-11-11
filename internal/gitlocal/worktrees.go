@@ -36,32 +36,41 @@ type Worktree struct {
 // reads no object, runs no hook, filter or helper, and never contacts a
 // remote. It needs git 2.36 or newer, for -z.
 func Worktrees(ctx context.Context, dir string) ([]Worktree, error) {
-	abs, err := filepath.Abs(dir)
+	common, err := CommonDir(ctx, dir)
 	if err != nil {
 		return nil, err
 	}
-	const timeout = DefaultCommandTimeout
-	out, err := run(ctx, runSpec{dir: abs, env: userEnv(), limit: 64 << 10, timeout: timeout},
-		"rev-parse", "--git-common-dir")
-	if err != nil {
-		return nil, err
-	}
-	common := strings.TrimRight(string(out), "\r\n")
-	if common == "" {
-		return nil, errors.New("listing worktrees: git named no repository directory")
-	}
-	common = filepath.FromSlash(common)
-	if !filepath.IsAbs(common) {
-		common = filepath.Join(abs, common)
-	}
-	common = filepath.Clean(common)
-	out, err = run(ctx, runSpec{dir: common, env: worktreeEnv(common), limit: maxWorktreeListBytes, timeout: timeout},
+	out, err := run(ctx, runSpec{dir: common, env: worktreeEnv(common), limit: maxWorktreeListBytes, timeout: DefaultCommandTimeout},
 		"worktree", "list", "--porcelain", "-z")
 	if err != nil {
 		return nil, err
 	}
 	home, _ := os.UserHomeDir()
 	return trustedWorktrees(parseWorktrees(out), common, home), nil
+}
+
+// CommonDir is the absolute, cleaned git directory shared by every working
+// tree of the clone containing dir: the one holding the branch reflogs and the
+// linked worktrees' bookkeeping.
+func CommonDir(ctx context.Context, dir string) (string, error) {
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		return "", err
+	}
+	out, err := run(ctx, runSpec{dir: abs, env: userEnv(), limit: 64 << 10, timeout: DefaultCommandTimeout},
+		"rev-parse", "--git-common-dir")
+	if err != nil {
+		return "", err
+	}
+	common := strings.TrimRight(string(out), "\r\n")
+	if common == "" {
+		return "", errors.New("git named no repository directory")
+	}
+	common = filepath.FromSlash(common)
+	if !filepath.IsAbs(common) {
+		common = filepath.Join(abs, common)
+	}
+	return filepath.Clean(common), nil
 }
 
 // trustedWorktrees keeps the worktrees a caller may treat as part of the
