@@ -27,7 +27,8 @@ prompt, message, tool input or output, or file path is stored.
 
 - Only sessions whose working directory is inside a registered clone (any of
   its worktrees) are read, from the same stores and with the same discovery
-  as the PR page (`sessions/collector`, `sessions.Map`). Sessions last written
+  as the PR page (`sessions/collector`, `sessions.Map`); a refresh scans the
+  Codex store once for all clones, and unchanged rollouts are not reopened. Sessions last written
   more than 90 days ago are skipped, and their entries dropped.
 - The index format version invalidates derived evidence after parser changes,
   including Codex code-mode command extraction.
