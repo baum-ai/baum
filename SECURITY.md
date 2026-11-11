@@ -336,6 +336,15 @@ Codex's own read-only sandbox:
   `CODEX_HOME` when you set it. `CODEX_API_KEY`, `OPENAI_*` and the other
   provider and cloud credentials are removed; `CODEX_API_KEY` and the base URL
   are set only when you configure an endpoint for baum.
+- A run with an MCP server (none does yet; the chat and quick actions will) gets
+  `-c mcp_servers.baum.command`, `.args` and `.env_vars`. `env_vars` names
+  `BAUM_MCP_TOKEN` (the token, so it is never an argument) and `XDG_STATE_HOME`
+  and `XDG_RUNTIME_DIR`, which `baum mcp` needs to find the daemon; Codex
+  forwards the names that are set. Codex starts `baum mcp` itself, outside its
+  sandbox (`read-only` or `workspace-write` with `network_access=false`),
+  which confines the commands the model runs and not Codex's own MCP servers.
+  The process's only network peer is the loopback daemon, and it runs no
+  commands. See [MCP server for agents](#mcp-server-for-agents).
 - It uses your own login (`codex login`, kept in `CODEX_HOME` or `~/.codex`).
   The output schema is written to a private temporary file that is removed
   after the run; baum never writes into `CODEX_HOME`.
@@ -1369,8 +1378,8 @@ its environment and Codex through `mcp_servers.baum.env_vars`. baum sets it
 after the user's `agent_env`, so that cannot replace or remove it. Only the
 local profiles run an MCP server; the hosted and container profiles refuse a
 request that asks for one. Claude Code runs with `--strict-mcp-config` and
-Codex with `--ignore-user-config`, so baum's server is the only one, and only
-runs the chat or a quick action starts have it.
+Codex with `--ignore-user-config`, so baum's server is the only one. No job
+sets it yet: the chat and quick actions will, and no other run has it.
 
 The application server also serves `POST /api/mcp`, an MCP server that lets
 an agent read what the app shows. It takes only an MCP token, sent as

@@ -26,11 +26,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/baum-ai/baum/agent"
-	"github.com/baum-ai/baum/agent/claude"
-	"github.com/baum-ai/baum/agent/codex"
 	"github.com/baum-ai/baum/internal/agentcontext"
 	"github.com/baum-ai/baum/internal/uiserver"
 )
@@ -76,6 +73,13 @@ func (r *recorder) called(name string) bool {
 	return false
 }
 
+// seen is a copy of the tools/call names received so far.
+func (r *recorder) seen() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]string(nil), r.calls...)
+}
+
 func (r *recorder) reset() {
 	r.mu.Lock()
 	r.calls = nil
@@ -84,8 +88,11 @@ func (r *recorder) reset() {
 
 // fixture starts the app server on a loopback port with an MCP server, writes
 // a daemon state directory whose credential points at it, and points the
-// environment's XDG_STATE_HOME there so "baum mcp" finds it. The agent CLIs
-// pass XDG_STATE_HOME on to their children.
+// environment's XDG_STATE_HOME there so "baum mcp" finds it rather than the
+// real daemon's credential. baum's allowlist lets XDG_STATE_HOME reach the agent
+// CLI; Codex then forwards it to the MCP server only because the backend names
+// it in mcp_servers.baum.env_vars, and Claude Code is expected to give its stdio
+// servers its own environment (what this check also verifies).
 func fixture(t *testing.T) (*recorder, agent.MCPServer, string) {
 	t.Helper()
 	api := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = io.WriteString(w, `{}`) })
@@ -146,65 +153,3 @@ func baumBinary(t *testing.T) string {
 	return out
 }
 
-func request(t *testing.T, mcp agent.MCPServer) agent.Request {
-	t.Helper()
-	dir := t.TempDir()
-	return agent.Request{Directory: dir, Prompt: question, Schema: []byte(schema), MaxCalls: 6, MaxTokens: 200000, MCP: &mcp}
-}
-
-func check(t *testing.T, server *recorder, answer []byte, page string) {
-	t.Helper()
-	if !strings.Contains(string(answer), page) {
-		t.Errorf("the answer %q does not name the page %q", answer, page)
-	}
-	if !server.called("current_page") {
-		t.Errorf("the server saw no tools/call for current_page; it saw %v", server.calls)
-	}
-}
-
-func TestLiveClaude(t *testing.T) {
-	if os.Getenv("BAUM_LIVE_SKIP_CLAUDE") != "" {
-		t.Skip("BAUM_LIVE_SKIP_CLAUDE is set")
-	}
-	server, mcp, page := fixture(t)
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-	defer cancel()
-	backend := &claude.Backend{Model: os.Getenv("BAUM_LIVE_CLAUDE_MODEL")}
-	result, err := backend.Run(ctx, request(t, mcp))
-	if err != nil {
-		t.Fatalf("claude: %v", err)
-	}
-	check(t, server, result.Document, page)
-}
-
-func TestLiveCodex(t *testing.T) {
-	if os.Getenv("BAUM_LIVE_SKIP_CODEX") != "" {
-		t.Skip("BAUM_LIVE_SKIP_CODEX is set")
-	}
-	server, mcp, page := fixture(t)
-	backend := &codex.Backend{Model: os.Getenv("BAUM_LIVE_CODEX_MODEL")}
-	t.Run("read-only sandbox", func(t *testing.T) {
-		server.reset()
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-		defer cancel()
-		result, err := backend.Run(ctx, request(t, mcp))
-		if err != nil {
-			t.Fatalf("codex: %v", err)
-		}
-		check(t, server, result.Document, page)
-	})
-	t.Run("workspace-write sandbox", func(t *testing.T) {
-		server.reset()
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-		defer cancel()
-		// A fix runs in the workspace-write sandbox and answers in text.
-		fix := request(t, mcp)
-		fix.Schema = nil
-		fix.Prompt = question + " Do not change any file."
-		result, err := backend.Fix(ctx, fix)
-		if err != nil {
-			t.Fatalf("codex fix: %v", err)
-		}
-		check(t, server, result.Document, page)
-	})
-}

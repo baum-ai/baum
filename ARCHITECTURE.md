@@ -5062,7 +5062,10 @@ building one). See
 shows: the app's chat, and actions working on one pull request. The app
 server routes `POST /api/mcp` to it (`uiserver.Options.MCP`, set through
 `daemon.App.MCP`). It speaks JSON-RPC 2.0 by hand, MCP revision
-`2025-06-18`: `initialize`, `ping`, `tools/list` and `tools/call`, one JSON
+`2025-06-18`: `initialize`, `ping`, `tools/list` (each tool carries
+annotations: `readOnlyHint` true and `openWorldHint` false, or, for a tool with
+`Tool.Proposes`, `readOnlyHint` false and `destructiveHint` false, so a client
+can approve reading tools unasked) and `tools/call`, one JSON
 response per request, no batches and no event stream. A notification gets
 202 with no body. Malformed JSON is -32700, an invalid request (a batch
 included) -32600, an unknown method -32601, and missing or invalid params,
@@ -5079,7 +5082,11 @@ token, from `credential.json` and reads that file again after a connection
 failure, so a daemon restarted on a new port is found. When the daemon is
 unreachable or refuses the token (revoked), each request gets a JSON-RPC
 error (-32000) with its id and a notification gets nothing; the bridge keeps
-running until stdin closes (exit 0) or SIGTERM. Only protocol lines go to
+running until stdin closes (exit 0) or SIGTERM. It re-reads the credential and
+retries only when no connection was made (a dial failure); a timeout or a
+failure after the request was written is returned as the error and never
+retried, because the daemon may have acted on it. It handles one message at a
+time: a slow tool call delays the messages behind it. Only protocol lines go to
 stdout; diagnostics go to stderr, once per kind, never with the token.
 
 `agent.Request.MCP` (`agent.MCPServer{Command, Args, Token}`) starts it for a
@@ -5087,8 +5094,10 @@ run: Command is the absolute path of the running baum with `mcp`. Claude
 keeps `--strict-mcp-config` and names only `baum` in `--mcp-config` (a stdio
 server, no token), and adds `--allowedTools mcp__baum`, since `--tools` only
 selects built-in tools and a `--print` run cannot ask permission. Codex adds
-`-c mcp_servers.baum.command`, `.args` and `.env_vars=["BAUM_MCP_TOKEN"]`
-under `--ignore-user-config`. Both put `BAUM_MCP_TOKEN` last in the child's
+`-c mcp_servers.baum.command`, `.args` and
+`.env_vars=["BAUM_MCP_TOKEN","XDG_STATE_HOME","XDG_RUNTIME_DIR"]` (Codex gives
+an MCP server only a default environment; the names that are set are
+forwarded, so `baum mcp` finds the same daemon) under `--ignore-user-config`. Both put `BAUM_MCP_TOKEN` last in the child's
 environment, after `agent_env`. Only the Claude `User` and Codex `Local`
 profiles accept it; the others return an error. With no `MCP` the arguments
 are what they always were. No job sets it yet.
