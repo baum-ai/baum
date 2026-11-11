@@ -305,7 +305,7 @@ func loadDiscovered(ctx context.Context, d *sessions.Discovery, dir string, repo
 	if err != nil {
 		return nil, nil, false, fmt.Errorf("reading observed commit creation: %w", err)
 	}
-	found = addReflogCommits(ctx, dir, found, commits)
+	found = addReflogCommits(ctx, repo, dir, found, commits)
 	found, associations = withoutGenerationRuns(found, associations)
 	return found, associations, complete, nil
 }

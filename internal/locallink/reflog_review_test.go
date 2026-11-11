@@ -2,7 +2,9 @@ package locallink
 
 import (
 	"encoding/json"
+	"fmt"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/baum-ai/baum/sessions"
@@ -64,9 +66,76 @@ func TestCreatorsOfUsesOnlyTheEarliestCreation(t *testing.T) {
 	}
 }
 
+// codeModeCall is a code-mode program whose commands all printed a
+// successful result, as `text(await tools.exec_command(...))` does.
 func codeModeCall(source, start, end string) call {
 	input, _ := json.Marshal(source)
-	return call{tool: "exec", input: string(traceprocessing.NormalizeCodexExecInput("exec", input)), start: at(start), end: at(end)}
+	return call{tool: "exec", input: string(traceprocessing.NormalizeCodexExecInput("exec", input)), start: at(start), end: at(end),
+		output: nestedResults(strings.Count(source, "exec_command("))}
+}
+
+// nestedResults is the printed output of n code-mode commands that finished
+// with status 0.
+func nestedResults(n int) string {
+	var lines []string
+	for i := range n {
+		lines = append(lines, fmt.Sprintf(`{"chunk_id":"c%d","wall_time_seconds":0.5,"exit_code":0,"original_token_count":0,"output":""}`, i))
+	}
+	return strings.Join(lines, "\n")
+}
+
+func TestReflogCodeModeNeedsEachCommandsOutcome(t *testing.T) {
+	r := newReflogRepo(t)
+	wt := r.worktree("outcome", "feature")
+	sha := r.commit(wt, "b.txt", "By someone else", "10:30:00")
+	source := `text(await tools.exec_command({cmd:"git commit -q -m Mine", workdir:"` + wt + `"}));`
+	for name, output := range map[string]string{
+		"a failed commit":   `{"chunk_id":"a","exit_code":1,"output":"nothing to commit"}`,
+		"no printed result": "",
+		"escaped once more": `{\"chunk_id\":\"a\",\"exit_code\":128,\"output\":\"fatal\"}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			c := codeModeCall(source, "10:29:58", "10:30:02")
+			c.output = output
+			s := reflogSession("session-codex", "codex", wt, c)
+			_, links := resolveReflog(t, r, []sessions.Session{s}, r.commits(sha))
+			assertLinks(t, links, sha)
+		})
+	}
+	t.Run("a successful commit", func(t *testing.T) {
+		s := reflogSession("session-codex", "codex", wt, codeModeCall(source, "10:29:58", "10:30:02"))
+		_, links := resolveReflog(t, r, []sessions.Session{s}, r.commits(sha))
+		assertLinks(t, links, sha, "session-codex")
+	})
+}
+
+func TestReflogPollsOfAnotherCommandDoNotExtendAProgram(t *testing.T) {
+	r := newReflogRepo(t)
+	wt := r.worktree("tests", "feature")
+	late := r.commit(wt, "b.txt", "By hand during the tests", "10:31:00")
+	source := `text(await tools.exec_command({cmd:"git commit -q -m Mine", workdir:"` + wt + `"}));
+text(await tools.exec_command({cmd:"just test", workdir:"` + wt + `", yield_time_ms:1000}));`
+	program := codeModeCall(source, "10:29:58", "10:30:02")
+	program.output = `{"chunk_id":"a","exit_code":0,"output":"[feature abc] Mine"}` + "\n" +
+		`{"chunk_id":"b","session_id":777,"output":"running"}`
+	poll := call{tool: "write_stdin", input: `{"session_id":777,"chars":""}`, start: at("10:30:30"), end: at("10:31:30"),
+		output: "Chunk ID: c\nProcess exited with code 0\n"}
+	s := reflogSession("session-codex", "codex", wt, program, poll)
+	_, links := resolveReflog(t, r, []sessions.Session{s}, r.commits(late))
+	assertLinks(t, links, late)
+}
+
+func TestReflogYieldedCommandThatFailedGivesNoWindow(t *testing.T) {
+	r := newReflogRepo(t)
+	wt := r.worktree("slow", "feature")
+	sha := r.commit(wt, "b.txt", "By hand", "10:29:30")
+	start := call{tool: "exec_command", input: `{"cmd":"git commit -q -m x","workdir":"` + wt + `"}`, start: at("10:29:00"), end: at("10:29:02"),
+		output: "Chunk ID: a\nProcess running with session ID 4242\n"}
+	failed := call{tool: "write_stdin", input: `{"session_id":4242,"chars":""}`, start: at("10:29:40"), end: at("10:29:42"),
+		output: "Chunk ID: b\nProcess exited with code 1\n"}
+	s := reflogSession("session-slow", "codex", wt, start, failed)
+	_, links := resolveReflog(t, r, []sessions.Session{s}, r.commits(sha))
+	assertLinks(t, links, sha)
 }
 
 func TestReflogCodeModeCommandsKeepTheirOwnWorkdir(t *testing.T) {

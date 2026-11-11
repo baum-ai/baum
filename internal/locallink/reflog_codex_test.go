@@ -129,7 +129,7 @@ func TestCodexRolloutCommandsKeepTheirOwnWorkdir(t *testing.T) {
 		manual := c.commit(b, "b.txt", "By hand", "10:30:01")
 		program := `await tools.exec_command({cmd:"git commit -q -m Own",workdir:"` + a + `"});` + "\n" +
 			`await tools.exec_command({cmd:"ls",workdir:"` + b + `"});` + "\n"
-		c.rollout(codexSession, rolloutCall{program: program, start: "10:29:58", end: "10:30:03", output: "ok"})
+		c.rollout(codexSession, rolloutCall{program: program, start: "10:29:58", end: "10:30:03", output: nestedResults(2)})
 		assertCodexLinked(t, c.resolve(own), codexSession)
 		assertCodexUnlinked(t, c.resolve(manual))
 	})
@@ -139,7 +139,7 @@ func TestCodexRolloutCommandsKeepTheirOwnWorkdir(t *testing.T) {
 		own := c.commit(a, "a.txt", "Own", "10:30:00")
 		program := `await tools.exec_command({cmd:"cd ` + b + ` && ls",workdir:"` + a + `"});` + "\n" +
 			`await tools.exec_command({cmd:"git commit -q -m Own",workdir:"` + a + `"});` + "\n"
-		c.rollout(codexSession, rolloutCall{program: program, start: "10:29:58", end: "10:30:03", output: "ok"})
+		c.rollout(codexSession, rolloutCall{program: program, start: "10:29:58", end: "10:30:03", output: nestedResults(2)})
 		assertCodexLinked(t, c.resolve(own), codexSession)
 	})
 	t.Run("a quoted workdir key places a rebase pick", func(t *testing.T) {
@@ -150,7 +150,7 @@ func TestCodexRolloutCommandsKeepTheirOwnWorkdir(t *testing.T) {
 		c.git(wt, "10:50:00", "rebase", "-q", "main")
 		rebased := c.git(wt, "10:50:00", "rev-parse", "HEAD")
 		program := `text(await tools.exec_command({cmd:"git rebase main; git status --short --branch","workdir":"` + wt + `","sandbox_permissions":"require_escalated"}));` + "\n"
-		c.rollout(codexSession, rolloutCall{program: program, start: "10:49:58", end: "10:50:02", output: "ok"})
+		c.rollout(codexSession, rolloutCall{program: program, start: "10:49:58", end: "10:50:02", output: nestedResults(1)})
 		assertCodexLinked(t, c.resolve(rebased), codexSession)
 	})
 }

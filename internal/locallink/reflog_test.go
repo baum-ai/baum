@@ -156,7 +156,7 @@ func withCwdAttribute(s sessions.Session, cwd string) sessions.Session {
 func resolveReflog(t *testing.T, r *reflogRepo, found []sessions.Session, commits []gitlocal.Commit) ([]sessions.Session, map[string][]string) {
 	t.Helper()
 	ctx := context.Background()
-	found = addReflogCommits(ctx, r.main, found, commits)
+	found = addReflogCommits(ctx, nil, r.main, found, commits)
 	_, _, edges, err := linkSessions(ctx, found, commits)
 	if err != nil {
 		t.Fatal(err)
@@ -345,20 +345,32 @@ func TestReflogFingerprintTracksOnlyCreationsOfTheCommits(t *testing.T) {
 	wt := r.worktree("fingerprint", "feature")
 	ctx := context.Background()
 	sha := r.commit(wt, "b.txt", "More", "10:30:00")
-	before := ReflogFingerprint(ctx, r.main, []string{sha})
-	if before == "" || before != ReflogFingerprint(ctx, wt, []string{sha}) || before != ReflogFingerprint(ctx, r.main, []string{sha}) {
+	before := ReflogFingerprint(ctx, nil, r.main, []string{sha})
+	if before == "" || before != ReflogFingerprint(ctx, nil, wt, []string{sha}) || before != ReflogFingerprint(ctx, nil, r.main, []string{sha}) {
 		t.Fatalf("fingerprint %q is empty or unstable", before)
+	}
+	// An open clone gives the same fingerprint without running git.
+	for _, dir := range []string{r.main, wt} {
+		repo, err := gitlocal.Open(ctx, dir, gitlocal.Options{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := ReflogFingerprint(ctx, repo, dir, []string{sha})
+		_ = repo.Close()
+		if got != before {
+			t.Fatalf("fingerprint from the open clone of %s = %q, want %q", dir, got, before)
+		}
 	}
 	// Moving HEAD and making another commit are not creations of sha.
 	r.git(wt, "10:31:00", "checkout", "-q", "--detach")
 	r.git(wt, "10:32:00", "checkout", "-q", "feature")
 	r.commit(wt, "c.txt", "Unrelated", "10:33:00")
-	if after := ReflogFingerprint(ctx, r.main, []string{sha}); after != before {
+	if after := ReflogFingerprint(ctx, nil, r.main, []string{sha}); after != before {
 		t.Fatal("an unrelated reflog entry changed the fingerprint")
 	}
 	r.git(wt, "10:35:00", "commit", "-q", "--amend", "-m", "Amended")
 	amended := r.git(wt, "10:35:00", "rev-parse", "HEAD")
-	if ReflogFingerprint(ctx, r.main, []string{sha, amended}) == ReflogFingerprint(ctx, r.main, []string{sha}) {
+	if ReflogFingerprint(ctx, nil, r.main, []string{sha, amended}) == ReflogFingerprint(ctx, nil, r.main, []string{sha}) {
 		t.Fatal("a new creation did not change the fingerprint")
 	}
 }

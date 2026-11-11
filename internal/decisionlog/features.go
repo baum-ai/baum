@@ -628,7 +628,7 @@ func linkInputs(ctx context.Context, dir string, commits []gitlocal.Commit, opts
 		return ""
 	}
 	h := sha256.New()
-	_, _ = fmt.Fprintf(h, "%s\x00%q\x00%+v\x00%s", discovered, shas, observed, locallink.ReflogFingerprint(ctx, dir, shas))
+	_, _ = fmt.Fprintf(h, "%s\x00%q\x00%+v\x00%s", discovered, shas, observed, locallink.ReflogFingerprint(ctx, nil, dir, shas))
 	return hex.EncodeToString(h.Sum(nil))
 }
 

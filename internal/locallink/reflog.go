@@ -129,11 +129,17 @@ type reflog struct {
 }
 
 // readReflog reads the creations of the wanted commits from the clone
-// containing dir. Unreadable reflogs give no evidence.
-func readReflog(ctx context.Context, dir string, wanted map[string]bool) reflog {
-	common, err := gitlocal.CommonDir(ctx, dir)
-	if err != nil {
-		return reflog{}
+// containing dir. Unreadable reflogs give no evidence. repo, when not nil, is
+// the clone already open, whose repository directory needs no git process.
+func readReflog(ctx context.Context, repo *gitlocal.Repo, dir string, wanted map[string]bool) reflog {
+	var common string
+	if repo != nil {
+		common = repo.CommonDir()
+	} else {
+		var err error
+		if common, err = gitlocal.CommonDir(ctx, dir); err != nil {
+			return reflog{}
+		}
 	}
 	files := reflogFiles(common)
 	log := reflog{mainRoot: mainRootOf(common)}
@@ -217,13 +223,14 @@ func parseCreation(line string, wanted map[string]bool) (creation, bool) {
 // ReflogFingerprint describes the creation entries the clone's reflogs hold
 // for the commits, for a cache that must notice a new one. Moving HEAD or a
 // branch without making one of the commits does not change it. A clone whose
-// reflogs cannot be read fingerprints as having no entries.
-func ReflogFingerprint(ctx context.Context, dir string, commits []string) string {
+// reflogs cannot be read fingerprints as having no entries. repo, when not
+// nil, is the clone of dir already open.
+func ReflogFingerprint(ctx context.Context, repo *gitlocal.Repo, dir string, commits []string) string {
 	wanted := make(map[string]bool, len(commits))
 	for _, sha := range commits {
 		wanted[sha] = true
 	}
-	log := readReflog(ctx, dir, wanted)
+	log := readReflog(ctx, repo, dir, wanted)
 	lines := make([]string, 0, len(log.creations))
 	for _, c := range log.creations {
 		lines = append(lines, fmt.Sprintf("%s|%d|%t|%s|%s|%s", c.sha, c.at.Unix(), c.head, c.worktree, c.branch, c.kind))
@@ -250,12 +257,12 @@ type callWindow struct {
 // the same working tree was made by that session. It outranks hook
 // observations, which guess the session from the process tree. Unreadable
 // reflogs give no evidence.
-func addReflogCommits(ctx context.Context, dir string, found []sessions.Session, commits []gitlocal.Commit) []sessions.Session {
+func addReflogCommits(ctx context.Context, repo *gitlocal.Repo, dir string, found []sessions.Session, commits []gitlocal.Commit) []sessions.Session {
 	wanted := make(map[string]bool, len(commits))
 	for _, c := range commits {
 		wanted[c.OID] = true
 	}
-	log := readReflog(ctx, dir, wanted)
+	log := readReflog(ctx, repo, dir, wanted)
 	if len(log.creations) == 0 {
 		return found
 	}
@@ -462,8 +469,9 @@ func pollsOf(g *session.Graph, results map[string]callOutcome) []poll {
 // windowEnd is when the call's command was last known to be running. A command
 // that yielded while it ran (a commit waiting on slow hooks) ends in a later
 // poll of the same process, so the window reaches to the last poll that still
-// found it running, or the one that found it finished.
-func windowEnd(start, end time.Time, text string, polls []poll) time.Time {
+// found it running, or the one that found it finished. failed is set when
+// that poll reports a non-zero exit: the command did not succeed.
+func windowEnd(start, end time.Time, text string, polls []poll) (time.Time, bool) {
 	active := processIDs(text)
 	for _, p := range polls {
 		if len(active) == 0 {
@@ -476,9 +484,13 @@ func windowEnd(start, end time.Time, text string, polls []poll) time.Time {
 			end = p.end
 		}
 		still := processIDs(p.output)
-		active = slices.DeleteFunc(active, func(id string) bool { return slices.Contains(p.ids, id) && !slices.Contains(still, id) })
+		finished := slices.DeleteFunc(slices.Clone(active), func(id string) bool { return !slices.Contains(p.ids, id) || slices.Contains(still, id) })
+		if len(finished) > 0 && reportsFailure(p.output) {
+			return end, true
+		}
+		active = slices.DeleteFunc(active, func(id string) bool { return slices.Contains(finished, id) })
 	}
-	return end
+	return end, false
 }
 
 // callWindows lists the shell calls of one session, every nested session
@@ -531,18 +543,43 @@ func callWindows(ctx context.Context, s sessions.Session, locate func(string) st
 		if base == "" {
 			base = s.WorktreeRoot
 		}
+		analysis, ok := analyzeCall(ctx, use.Name, use.Input, base)
+		if !ok {
+			continue
+		}
+		dirs := writeDirsOf(analysis)
+		if len(dirs) == 0 {
+			continue
+		}
+		commands := shellCommands(analysis)
+		if boundToolName(use.Name, use.Input) == traceprocessing.CodexExecName && !codeModeOutcomeKnown(result.text, commands) {
+			continue
+		}
+		if use.Name != "Bash" && reportsFailure(result.text) {
+			continue
+		}
 		branch := branchAt(g, use.SessionID, top, *use.Timestamp)
+		end := result.at
+		failed := false
+		if commands == 1 {
+			// Only a call that ran one command reports that command's
+			// process id; with several, a poll of another one (a test run
+			// after the commit) must not keep the window open.
+			if polls == nil {
+				polls = pollsOf(g, results)
+			}
+			end, failed = windowEnd(*use.Timestamp, result.at, result.text, polls)
+		}
+		if failed {
+			continue
+		}
 		seen := map[string]bool{}
-		for _, dir := range gitWriteDirs(ctx, use.Name, use.Input, base) {
+		for _, dir := range dirs {
 			root := locate(dir)
 			if seen[dir] || nestedRepository(dir, root) {
 				continue
 			}
 			seen[dir] = true
-			if polls == nil {
-				polls = pollsOf(g, results)
-			}
-			end := windowEnd(*use.Timestamp, result.at, result.text, polls)
 			windows = append(windows, callWindow{session: s.ID, start: *use.Timestamp, end: end, root: root, branch: branch})
 		}
 	}
@@ -596,15 +633,25 @@ var boundTools = map[string]bool{"Bash": true, "exec_command": true, "shell": tr
 // gitEnvNames (agentcmd does not follow them), and anything agentcmd cannot
 // read.
 func gitWriteDirs(ctx context.Context, name string, input json.RawMessage, base string) []string {
+	analysis, ok := analyzeCall(ctx, name, input, base)
+	if !ok {
+		return nil
+	}
+	return writeDirsOf(analysis)
+}
+
+// analyzeCall runs agentcmd on one tool call; ok is false for a call that
+// cannot run git as gitWriteDirs reads it, or that agentcmd cannot read.
+func analyzeCall(ctx context.Context, name string, input json.RawMessage, base string) (model.Analysis, bool) {
 	// Most calls run no git at all; agentcmd only names git from a literal
 	// executable, so an input without the word cannot run it (about 30 µs
 	// of analysis saved per call).
 	if !bytes.Contains(input, []byte("git")) || mentionsGitEnv(input) {
-		return nil
+		return model.Analysis{}, false
 	}
 	engine, err := commandEngine()
 	if err != nil {
-		return nil
+		return model.Analysis{}, false
 	}
 	execution := model.ExecutionContext{Namespace: model.Namespace{Kind: model.NamespaceHost}}
 	if base != "" {
@@ -621,7 +668,7 @@ func gitWriteDirs(ctx context.Context, name string, input json.RawMessage, base 
 	} else {
 		command := commandText(input)
 		if command == "" {
-			return nil
+			return model.Analysis{}, false
 		}
 		var shape struct {
 			Workdir string `json:"workdir"`
@@ -635,9 +682,60 @@ func gitWriteDirs(ctx context.Context, name string, input json.RawMessage, base 
 		analysis, err = engine.AnalyzeShell(ctx, []byte(command), execution)
 	}
 	if err != nil {
-		return nil
+		return model.Analysis{}, false
 	}
-	return writeDirsOf(analysis)
+	return analysis, true
+}
+
+// shellCommands counts the commands a tool call runs: the shell programs and
+// the unreadable calls directly under its native operation (several for a
+// code-mode program), or one for a call read as shell text.
+func shellCommands(analysis model.Analysis) int {
+	native := ""
+	for _, n := range analysis.Nodes {
+		if n.Kind == model.NodeNative && native == "" {
+			native = n.ID
+		}
+	}
+	if native == "" {
+		return 1
+	}
+	count := 0
+	for _, n := range analysis.Nodes {
+		if n.Parent == native && (n.Kind == model.NodeShell || n.Kind == model.NodeUnknown) {
+			count++
+		}
+	}
+	return count
+}
+
+// exitCode finds the exit status a shell tool reports for a command that
+// finished: `"exit_code":N` in a structured result (code-mode programs print
+// these, JSON-escaped once more inside their text), `Process exited with code
+// N` in the text of a native one.
+var exitCode = regexp.MustCompile(`\\?"exit_code\\?"\s*:\s*(-?\d+)|Process exited with code (-?\d+)`)
+
+// reportsFailure reports whether a result says one of its commands exited
+// with a non-zero status.
+func reportsFailure(text string) bool {
+	for _, m := range exitCode.FindAllStringSubmatch(text, -1) {
+		if m[1]+m[2] != "0" {
+			return true
+		}
+	}
+	return false
+}
+
+// codeModeOutcomeKnown reports whether a code-mode program's result shows how
+// its commands went. The program succeeding says nothing about them; only the
+// results it prints do: none failed, and each finished (an exit status) or is
+// still running (a process id). A program that printed fewer results than it
+// ran commands, or failed ones, gives no evidence.
+func codeModeOutcomeKnown(text string, commands int) bool {
+	if reportsFailure(text) {
+		return false
+	}
+	return len(exitCode.FindAllStringIndex(text, -1))+len(processIDs(text)) >= commands
 }
 
 // boundToolName is the agentcmd tool that reads the call, "" for a tool

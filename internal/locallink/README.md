@@ -98,7 +98,15 @@ A command that yielded while it ran (Codex `exec_command` with a short
 last successful `write_stdin` or `wait` call on the same process, following
 polls that still find it running until one finds it finished. Where the result
 does not report the process id (a program that does not print it), the window
-is the call's own.
+is the call's own. Only a call that ran one command is extended this way: in a
+code-mode program with several, a process id may be another command's (a test
+run after the commit). A poll that finds the process exited with a non-zero
+status means the command failed, and the call gives no evidence.
+
+A code-mode program that completed says nothing about its commands. It gives
+evidence only when its printed results show how each went (an exit status or
+a process id per command) and none exited with a non-zero status. A Codex call
+whose result reports a non-zero exit gives none either.
 
 When several sessions fit, or none, the commit stays unresolved. Merges are
 never reflog evidence. A reflog match outranks a hook observation of the same

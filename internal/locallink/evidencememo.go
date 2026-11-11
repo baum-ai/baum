@@ -125,7 +125,7 @@ func evidenceKey(ctx context.Context, req EvidenceRequest, dir string, d *sessio
 	}
 	h := sha256.New()
 	_, _ = fmt.Fprintf(h, "%s\x00%s\x00%s\x00%d\x00%d\x00%#v\x00%s\x00", discovered, clone, home,
-		req.MaxPromptsPerSession, req.MaxCommandEventsPerSession, req.Sessions, ReflogFingerprint(ctx, dir, oids))
+		req.MaxPromptsPerSession, req.MaxCommandEventsPerSession, req.Sessions, ReflogFingerprint(ctx, req.Repo, dir, oids))
 	for _, c := range req.Commits {
 		_, _ = fmt.Fprintf(h, "%#v\x01", c)
 	}
