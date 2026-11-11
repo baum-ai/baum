@@ -36,6 +36,7 @@ func TestReaderOnlyGets(t *testing.T) {
 	for _, target := range []string{
 		"/api/../launch.js", "/api/./prs", "/launch.js", "/s/ns/api/prs", "http://127.0.0.1:1/api/prs",
 		"//evil.example/api/prs", "/api/mcp", "api/prs", "/api/prs#frag", "/api//prs", "/api/prsx", "/api/repos",
+		"/api/prs?refresh=1", "/api/prs?more=true", "/api/prs?a=1&refresh", "/api/prs?x=1;y=2",
 	} {
 		if _, err := reader.Get(context.Background(), target); err == nil {
 			t.Fatalf("%s was read", target)

@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -110,7 +111,7 @@ func TestActionIsBoundToItsPullRequest(t *testing.T) {
 	s := newServer(t)
 	var targets []string
 	if err := s.RegisterTool(Tool{
-		Name: "read_pr", Description: "Reads a pull request.", Scope: ScopeRepository, Reads: []string{"/api/prs"},
+		Name: "read_pr", Description: "Reads a pull request's jobs.", Scope: ScopeRepository, Reads: []string{"/api/jobs"},
 		InputSchema: json.RawMessage(`{"type":"object","properties":{"repository":{"type":"string"},"number":{"type":"integer"}}}`),
 		Call: func(ctx context.Context, c CallContext, args json.RawMessage) (string, error) {
 			var a struct {
@@ -123,7 +124,7 @@ func TestActionIsBoundToItsPullRequest(t *testing.T) {
 				return "", err
 			}
 			targets = append(targets, repository+"#"+strconv.Itoa(number))
-			response, err := c.Reader.Get(ctx, "/api/prs?repository="+repository+"&number="+strconv.Itoa(number))
+			response, err := c.Reader.Get(ctx, "/api/jobs?repository="+repository+"&pr="+strconv.Itoa(number))
 			return string(response.Body), err
 		},
 	}); err != nil {
@@ -177,11 +178,28 @@ func TestActionIsBoundToItsPullRequest(t *testing.T) {
 }
 
 // A tool that skips Target cannot take an action outside its repository:
-// the action's reader refuses requests that do not name it.
+// the action's reader reads only the routes in actionRoutes, each bound the
+// way its handler finds what it serves.
 func TestActionReaderIsBoundToItsRepository(t *testing.T) {
+	saved := actionRoutes
+	t.Cleanup(func() { actionRoutes = saved })
+	actionRoutes = append(append([]actionRoute(nil), saved...),
+		actionRoute{pattern: "/api/groups", bind: byClone},
+		actionRoute{pattern: "/api/repositories/{owner}/{name}/clone-target", bind: byPath},
+	)
 	var seen []string
+	jobs := map[string]string{"j-web": "acme/web", "j-other": "evil/secrets"}
 	api := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		seen = append(seen, r.URL.RequestURI())
+		if id, ok := strings.CutPrefix(r.URL.Path, "/api/jobs/"); ok {
+			repository, found := jobs[id]
+			if !found {
+				http.NotFound(w, r)
+				return
+			}
+			_, _ = fmt.Fprintf(w, `{"id":%q,"repository":%q,"title":"secret title"}`, id, repository)
+			return
+		}
 		_, _ = w.Write([]byte("{}"))
 	})
 	clones := map[string]string{"c-web": "acme/web", "c-other": "evil/secrets"}
@@ -192,13 +210,14 @@ func TestActionReaderIsBoundToItsRepository(t *testing.T) {
 		return "", errors.New("unknown clone")
 	}})
 	if err := s.RegisterTool(Tool{
-		Name: "raw_read", Description: "Reads a path as given.", Scope: ScopeRepository, Reads: []string{"/api/prs", "/api/repositories", "/api/timeline"},
+		Name: "raw_read", Description: "Reads a path as given.", Scope: ScopeRepository,
+		Reads:       []string{"/api/prs", "/api/jobs", "/api/groups", "/api/repositories", "/api/timeline"},
 		InputSchema: json.RawMessage(`{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}`),
 		Call: func(ctx context.Context, c CallContext, args json.RawMessage) (string, error) {
 			var a struct{ Path string }
 			_ = json.Unmarshal(args, &a)
-			_, err := c.Reader.Get(ctx, a.Path)
-			return "read", err
+			response, err := c.Reader.Get(ctx, a.Path)
+			return string(response.Body), err
 		},
 	}); err != nil {
 		t.Fatal(err)
@@ -206,28 +225,49 @@ func TestActionReaderIsBoundToItsRepository(t *testing.T) {
 	action, _, revoke := mint(t, s, Consumer{Kind: Action, Repository: "acme/web", PullRequest: 12})
 	defer revoke()
 	chatToken, _ := chat(t, s)
-	for path, allowed := range map[string]bool{
-		"/api/prs?repository=acme/web&number=12":  true,
-		"/api/prs?repo=ACME/web":                  true,
-		"/api/prs?clone=c-web":                    true,
-		"/api/repositories/acme/web/clone-target": true,
-		"/api/prs":                         false,
-		"/api/prs?repository=evil/secrets": false,
-		"/api/prs?repository=acme/web&repository=evil/x": false,
-		"/api/prs?repository=acme/web&clone=c-other":     false,
-		"/api/prs?clone=unknown":                         false,
-		"/api/repositories/evil/secrets/clone-target":    false,
-		"/api/timeline/decisions":                        false,
+	for _, tt := range []struct {
+		path    string
+		allowed bool
+		reached bool
+	}{
+		{"/api/jobs?repository=ACME/web&pr=12", true, true},
+		{"/api/jobs/j-web", true, true},
+		{"/api/groups?clone=c-web", true, true},
+		{"/api/repositories/acme/web/clone-target", true, true},
+		// No handler reads repo=, and /api/prs is not an action's route.
+		{"/api/prs?repo=acme/web", false, false},
+		{"/api/prs?repository=acme/web", false, false},
+		{"/api/jobs", false, false},
+		{"/api/jobs?pr=12", false, false},
+		{"/api/jobs?repository=evil/secrets&pr=1", false, false},
+		{"/api/jobs?repository=acme/web&repository=evil/x&pr=1", false, false},
+		{"/api/jobs?repository=acme/web&pr=12&limit=5", false, false},
+		{"/api/jobs?repository=acme/web&pr=12&refresh=1", false, false},
+		{"/api/groups?clone=c-other", false, false},
+		{"/api/groups?clone=unknown", false, false},
+		{"/api/repositories/evil/secrets/clone-target", false, false},
+		{"/api/jobs/j-web/transcript", false, false},
+		{"/api/timeline/decisions", false, false},
+		// Found by id: the job answered, but it is another repository's, so
+		// nothing of it comes back.
+		{"/api/jobs/j-other", false, true},
+		{"/api/jobs/missing", false, true},
 	} {
-		if r := call(t, s, action, "raw_read", map[string]string{"path": path}); r.IsError == allowed {
-			t.Errorf("action read %s: %s", path, r.Content[0].Text)
+		seen = nil
+		r := call(t, s, action, "raw_read", map[string]string{"path": tt.path})
+		if r.IsError == tt.allowed || (len(seen) > 0) != tt.reached {
+			t.Errorf("action read %s: reached %v: %s", tt.path, seen, r.Content[0].Text)
+		}
+		// The error names the path asked for, nothing the API answered.
+		if (strings.Contains(r.Content[0].Text, "evil/secrets") && !strings.Contains(tt.path, "evil/secrets")) || (!tt.allowed && strings.Contains(r.Content[0].Text, "secret title")) {
+			t.Errorf("%s leaked: %s", tt.path, r.Content[0].Text)
 		}
 	}
-	// A chat is bound to no repository.
-	if r := call(t, s, chatToken, "raw_read", map[string]string{"path": "/api/prs?repository=evil/secrets"}); r.IsError {
+	// A chat is bound to no repository; it reads its tool's prefixes.
+	if r := call(t, s, chatToken, "raw_read", map[string]string{"path": "/api/jobs/j-other"}); r.IsError || !strings.Contains(r.Content[0].Text, "evil/secrets") {
 		t.Fatal(r.Content[0].Text)
 	}
-	if len(seen) != 5 {
-		t.Fatalf("requests reached the API: %q", seen)
+	if r := call(t, s, chatToken, "raw_read", map[string]string{"path": "/api/prs?refresh=1"}); !r.IsError {
+		t.Fatal("a chat asked for a refresh")
 	}
 }
