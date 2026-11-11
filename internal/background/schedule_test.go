@@ -4,6 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"slices"
 	"testing"
 	"time"
@@ -85,12 +88,13 @@ func TestMergedPullRequestGetsOneFinalRead(t *testing.T) {
 }
 
 // A final read that keeps failing stops after maxReadFailures: a closed pull
-// request reports no change that would make it worth another try.
+// request reports no change that would make it worth another try. A refresh
+// the person asks for tries it once more.
 func TestFailingFinalReadStops(t *testing.T) {
 	now := time.Now()
 	d := &fakeDiscovery{closed: true}
 	calls := 0
-	s := settled(&Service{Registry: registry{{Repository: "acme/app", CommonDir: "a", Available: true}}, Discovery: d, Now: func() time.Time { return now }, Interval: time.Minute, Saved: saved(1),
+	s := settled(&Service{Registry: registry{{Repository: "acme/app", CommonDir: "a", Available: true}}, Discovery: d, Now: func() time.Time { return now }, Interval: time.Minute, Saved: saved(2),
 		Refresh: func(context.Context, repos.Clone, int) (discovery.Observation, error) {
 			calls++
 			return discovery.Observation{}, errors.New("git objects missing")
@@ -102,11 +106,157 @@ func TestFailingFinalReadStops(t *testing.T) {
 	if calls != maxReadFailures {
 		t.Fatalf("calls=%d, want %d", calls, maxReadFailures)
 	}
-	// GitHub answering again after it did not retries it once.
-	s.Retry("")
+	s.Asked("acme/app")
 	s.Sync(context.Background())
 	if calls != maxReadFailures+1 {
-		t.Fatalf("calls=%d after a retry, want one more", calls)
+		t.Fatalf("calls=%d after a refresh asked for, want one more", calls)
+	}
+}
+
+// Reads that failed while GitHub did not answer the probes are tried again
+// once it does; a read stopped before the outage is not.
+func TestReconnectRetriesOnlyReadsThatFailedOffline(t *testing.T) {
+	now := time.Now()
+	offline := errors.New("dial tcp: no such host")
+	d := &fakeDiscovery{closed: true}
+	var calls []int
+	failing := map[int]bool{2: true}
+	s := settled(&Service{Registry: registry{{Repository: "acme/app", CommonDir: "a", Available: true}}, Discovery: d, Now: func() time.Time { return now }, Interval: time.Minute, Saved: saved(2, 3),
+		Refresh: func(_ context.Context, _ repos.Clone, n int) (discovery.Observation, error) {
+			calls = append(calls, n)
+			if failing[n] {
+				return discovery.Observation{}, offline
+			}
+			return discovery.Observation{Number: n, State: "OPEN", HeadSHA: "h", FetchedAt: now}, nil
+		}}, now)
+	for range 5 {
+		s.Sync(context.Background())
+		now = now.Add(time.Hour)
+	}
+	// 2 is stopped; 3 was read and waits for its age. Then the probes fail,
+	// and so does 3's next read.
+	d.probeErr = offline
+	failing[3] = true
+	now = now.Add(openReadAge)
+	for range 5 {
+		s.Sync(context.Background())
+		now = now.Add(time.Hour)
+	}
+	before := len(calls)
+	d.probeErr = nil
+	failing[3] = false
+	s.Sync(context.Background())
+	if got := calls[before:]; !slices.Equal(got, []int{3}) {
+		t.Fatalf("reads after reconnecting %v, want only the one that failed offline", got)
+	}
+}
+
+// A closed draft's document still records a draft: once a read after its
+// generation observed it closed, it is retired too.
+func TestClosedDraftIsRetired(t *testing.T) {
+	now := time.Now()
+	d := &fakeDiscovery{closed: true}
+	calls := 0
+	generated := now.Add(-time.Hour)
+	s := settled(&Service{Registry: registry{{Repository: "acme/app", CommonDir: "a", Available: true}}, Discovery: d, Now: func() time.Time { return now },
+		Saved: func(context.Context, repos.Clone) ([]SavedReview, error) {
+			return []SavedReview{{Number: 2, State: "draft", Generated: generated}}, nil
+		},
+		Refresh: func(_ context.Context, _ repos.Clone, n int) (discovery.Observation, error) {
+			calls++
+			return discovery.Observation{Number: n, State: "CLOSED", HeadSHA: "h", FetchedAt: now}, nil
+		}}, now)
+	for range 10 {
+		s.Sync(context.Background())
+		now = now.Add(6 * time.Hour)
+	}
+	if calls != 1 {
+		t.Fatalf("calls=%d, want one final read", calls)
+	}
+	// A new process retires it without reading it.
+	fresh := settled(&Service{Registry: s.Registry, Discovery: d, Now: s.Now, Saved: s.Saved, Refresh: s.Refresh}, now)
+	fresh.Sync(context.Background())
+	if calls != 1 {
+		t.Fatalf("calls=%d, want none in a new process", calls)
+	}
+}
+
+// A comment made while a read ran moves GitHub's update time past the one
+// the read was due at, though not past when the read finished: it is read
+// again.
+func TestUpdateDuringAReadIsReadAgain(t *testing.T) {
+	now := time.Now()
+	d := &fakeDiscovery{updated: now.Add(-time.Hour)}
+	calls := 0
+	s := settled(&Service{Registry: registry{{Repository: "acme/app", CommonDir: "a", Available: true}}, Discovery: d, Now: func() time.Time { return now }, Saved: saved(1),
+		Refresh: func(_ context.Context, _ repos.Clone, n int) (discovery.Observation, error) {
+			calls++
+			started := now
+			now = now.Add(time.Minute)
+			if calls == 1 {
+				d.mu.Lock()
+				d.updated = started.Add(10 * time.Second)
+				d.mu.Unlock()
+			}
+			return discovery.Observation{Number: n, State: "OPEN", HeadSHA: "new", FetchedAt: started}, nil
+		}}, now)
+	s.Sync(context.Background())
+	now = now.Add(time.Minute)
+	s.Sync(context.Background())
+	now = now.Add(time.Minute)
+	s.Sync(context.Background())
+	if calls != 2 {
+		t.Fatalf("calls=%d, want the update made during the first read read once more", calls)
+	}
+}
+
+// A refresh the person asks for reads the repository's open saved reviews
+// once, whether or not they are due.
+func TestAskedRefreshReadsOpenReviewsOnce(t *testing.T) {
+	now := time.Now()
+	calls := 0
+	s := settled(&Service{Registry: registry{{Repository: "acme/app", CommonDir: "a", Available: true}}, Discovery: &fakeDiscovery{}, Now: func() time.Time { return now }, Saved: saved(1),
+		Refresh: func(_ context.Context, _ repos.Clone, n int) (discovery.Observation, error) {
+			calls++
+			return discovery.Observation{Number: n, State: "OPEN", HeadSHA: "new", FetchedAt: now}, nil
+		}}, now)
+	s.Sync(context.Background())
+	now = now.Add(time.Minute)
+	s.Asked("acme/other")
+	s.Sync(context.Background())
+	if calls != 1 {
+		t.Fatalf("calls=%d, want one read", calls)
+	}
+	s.Asked("Acme/App")
+	now = now.Add(time.Minute)
+	s.Sync(context.Background())
+	now = now.Add(time.Minute)
+	s.Sync(context.Background())
+	if calls != 2 {
+		t.Fatalf("calls=%d, want one more read for the refresh asked for", calls)
+	}
+}
+
+// Resolving a review thread moves no update time; the unresolved count
+// discovery reports makes the saved review due.
+func TestUnresolvedCountChangeReadsTheReview(t *testing.T) {
+	now := time.Now()
+	two, one := 2, 1
+	d := &fakeDiscovery{unresolved: &two}
+	calls := 0
+	s := settled(&Service{Registry: registry{{Repository: "acme/app", CommonDir: "a", Available: true}}, Discovery: d, Now: func() time.Time { return now }, Saved: saved(1),
+		Refresh: func(_ context.Context, _ repos.Clone, n int) (discovery.Observation, error) {
+			calls++
+			return discovery.Observation{Number: n, State: "OPEN", HeadSHA: "new", FetchedAt: now}, nil
+		}}, now)
+	s.Sync(context.Background())
+	now = now.Add(time.Minute)
+	s.Sync(context.Background())
+	d.unresolved = &one
+	now = now.Add(time.Minute)
+	s.Sync(context.Background())
+	if calls != 2 {
+		t.Fatalf("calls=%d, want a read once a thread was resolved", calls)
 	}
 }
 
@@ -137,20 +287,25 @@ func TestCheckRollupChangeReadsTheReview(t *testing.T) {
 
 // After a restart, the reads already due by age are spread over
 // restartSpread rather than all made in the first pass, while one GitHub
-// reports changed is read at once.
+// reports changed is read at once. Half the pull requests are open and due
+// by age, half closed and due their final read.
 func TestRestartSpreadsDueReads(t *testing.T) {
 	now := time.Now()
 	const count = 60
 	var observations []discovery.Observation
 	var numbers []int
+	var more []discovery.PullRequest
 	for n := 2; n < count+2; n++ {
 		numbers = append(numbers, n)
 		observations = append(observations, discovery.Observation{Number: n, State: "OPEN", HeadSHA: "h", FetchedAt: now.Add(-3 * openReadAge)})
+		if n%2 == 0 {
+			more = append(more, discovery.PullRequest{Number: n, HeadSHA: "h", UpdatedAt: now.Add(-4 * openReadAge)})
+		}
 	}
 	// Pull request 1 was updated on GitHub since it was last read.
 	observations = append(observations, discovery.Observation{Number: 1, State: "OPEN", HeadSHA: "new", FetchedAt: now.Add(-time.Hour)})
 	numbers = append(numbers, 1)
-	d := &fakeDiscovery{observations: observations, updated: now.Add(-time.Minute)}
+	d := &fakeDiscovery{observations: observations, updated: now.Add(-time.Minute), more: more}
 	reads := map[int]int{}
 	var first []int
 	s := &Service{Registry: registry{{Repository: "acme/app", CommonDir: "a", Available: true}}, Discovery: d, Now: func() time.Time { return now }, Saved: func(context.Context, repos.Clone) ([]SavedReview, error) {
@@ -280,5 +435,54 @@ func TestRefreshNowIgnoresTheSchedule(t *testing.T) {
 	}
 	if r := s.lastRead(readKey(clone, 1)); r.failures != 0 {
 		t.Fatalf("read %+v, want its failures cleared", r)
+	}
+}
+
+// toServer sends every request to a test server.
+type toServer struct{ target *url.URL }
+
+func (t toServer) RoundTrip(request *http.Request) (*http.Response, error) {
+	clone := request.Clone(request.Context())
+	clone.URL.Scheme, clone.URL.Host, clone.Host = t.target.Scheme, t.target.Host, ""
+	return http.DefaultTransport.RoundTrip(clone)
+}
+
+// The GitHub requests a read makes count toward the hour's budget.
+func TestReadsCountTheirRequests(t *testing.T) {
+	t.Setenv("GH_CONFIG_DIR", t.TempDir())
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":{"repository":null}}`))
+	}))
+	t.Cleanup(server.Close)
+	target, _ := url.Parse(server.URL)
+	client := github.New(func(context.Context, string) (string, error) { return "token", nil }, github.Options{Transport: toServer{target}})
+	now := time.Now()
+	s := settled(&Service{Registry: registry{{Repository: "acme/app", CommonDir: "a", Available: true}}, Discovery: &fakeDiscovery{}, Now: func() time.Time { return now }, Saved: saved(1, 2),
+		Refresh: func(ctx context.Context, clone repos.Clone, n int) (discovery.Observation, error) {
+			repo, _ := github.ParseRepository(clone.Repository)
+			_, err := client.Fetch(ctx, repo, n, github.FetchOptions{})
+			return discovery.Observation{}, err
+		}}, now)
+	s.Sync(context.Background())
+	if spent := s.spentLastHour(); spent != 2 {
+		t.Fatalf("spent %d requests, want one for each read", spent)
+	}
+}
+
+// A read cut short because the pass was cancelled is not a failure: it stays
+// unread.
+func TestCancelledReadIsNotRecorded(t *testing.T) {
+	now := time.Now()
+	ctx, cancel := context.WithCancel(context.Background())
+	clone := repos.Clone{Repository: "acme/app", CommonDir: "a", Available: true}
+	s := settled(&Service{Registry: registry{clone}, Discovery: &fakeDiscovery{}, Now: func() time.Time { return now }, Saved: saved(1),
+		Refresh: func(ctx context.Context, _ repos.Clone, _ int) (discovery.Observation, error) {
+			cancel()
+			return discovery.Observation{}, ctx.Err()
+		}}, now)
+	s.Sync(ctx)
+	if r := s.lastRead(readKey(clone, 1)); !r.at.IsZero() || r.failures != 0 {
+		t.Fatalf("read %+v, want none recorded", r)
 	}
 }

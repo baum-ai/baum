@@ -3802,26 +3802,29 @@ still feeds `Service.Discovered`. A pass polls every due repository first and
 publishes an index change, so no repository's pull requests wait behind
 another's reads. It then reads, within `refreshBudget` (30 s), the saved
 reviews that are due; open pull requests without one are left to discovery.
-An open one is due when discovery shows a newer `updated_at`, another head or
-another check rollup than at the last read, and otherwise once unread for
-`openReadAge` (2 h). A saved review whose pull request left the open ones gets
-one final read while its document still says open or draft; once the document
-records `merged` or `closed` it is retired and never read in the background
-again, until discovery lists it open again. Changes go first; then the longest
+An open one is due when discovery shows a newer `updated_at` (compared with
+GitHub's own time when the last read was due), another head, another check
+rollup or another unresolved thread count than at the last read, and otherwise
+once unread for `openReadAge` (2 h). A saved review whose pull request left the
+open ones gets one final read while its document still says open or draft;
+once the document records `merged` or `closed` (or a draft was observed closed
+after its generation) it is retired and never read in the background again,
+until discovery lists it open again. Changes go first; then the longest
 unread. A failed read is retried after the interval, doubling, without backing
 off the repository's polls; after `maxReadFailures` (3) in a row it waits for
 the pull request's `updated_at` or head to move (an open one also after a day),
-for a refresh the person asks for (`Service.Retry`), for GitHub answering again
-after it did not, or for the next process. A rate-limited one stays due and
+for a refresh the person asks for (`Service.Asked`, which also reads the
+repository's open saved reviews once), for GitHub answering again if it failed
+while the probes did, or for the next process. A rate-limited one stays due and
 goes first after the reset, so a small renewed budget still reaches every pull
-request. Reads are kept in memory; in a new process those due by age, and
-final reads, are spread over `restartSpread` (30 min) by a hash of the pull
-request. The reads make at most `refreshRequestsPerHour` (1,000) GraphQL
+request. Reads are kept in memory; in a new process (or identity) those due
+by age or check rollup, and final reads, are spread over `restartSpread`
+(30 min) by a hash of the pull request. The reads make at most `refreshRequestsPerHour` (1,000) GraphQL
 requests an hour (`github.CountRequests`), and wait while discovery's ledger
-shows fewer than `refreshReserve` (1,000) GraphQL points left
-(`discovery.Service.GraphQLBudget`). Each GitHub request of a read may take
-30 s (`github.WithRequestTimeout`) and the read 2 minutes, and `Fetch` reads a
-pull request's parts three at a time. `Run` passes every 30 seconds, or sooner
+shows fewer than `refreshReserve` (1,000) GraphQL points left or a secondary
+limit (`discovery.Service.GraphQLBudget`). Each GitHub request of a read may
+take 30 s (`github.WithRequestTimeout`); only a read that never ends stops at
+10 minutes, and `Fetch` reads a pull request's parts three at a time. `Run` passes every 30 seconds, or sooner
 when a repository is due sooner, as a settling one is. Linked worktrees are
 deduplicated by common git directory. Saved reviews use `refresh.Refresher`
 and `Store.RefreshCurrent`'s exact-byte CAS, which writes nothing when only the

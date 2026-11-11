@@ -707,7 +707,7 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 			state, err := savedInboxes.Read()
 			return state.Inboxes, err
 		}}
-		api := uiserver.LocalAPI{GitHubAuth: githubConnection.Handler(), Registry: registry, Config: cfg, PRs: uiserver.DiscoveryHandler(registry, askedRefresh{discover, worker.Retry}, changed), Index: inboxQueue.CountHandler(index.Handler()), Inbox: inboxQueue.Handler(), Jobs: queue.Handler(), Chat: uiserver.ChatHandler(registry, queue), Background: worker.Handler(), Automatic: scheduler.Handler(), Live: liveAPI, AgentRequests: requestsAPI, Clones: clones.Handler(), GitHubRepositories: pickList.Handler(), CurrentName: currentName(githubClient), PlanUsage: plans.Handler(), Analytics: insights.Handler(), Timeline: timeline, Merge: uiserver.MergeHandler(registry, actions.RecordMerges(githubClient), mergedPullRequest, changed), Review: uiserver.ReviewHandler(registry, githubClient, changed), Update: uiserver.UpdateHandler(registry, actions.RecordUpdates(prupdate.Service{Client: githubClient, Cache: panelCache, Counted: countedThreads, Clone: availableClone}), refreshRepository, changed), Changed: settingsChanged,
+		api := uiserver.LocalAPI{GitHubAuth: githubConnection.Handler(), Registry: registry, Config: cfg, PRs: uiserver.DiscoveryHandler(registry, askedRefresh{discover, worker.Asked}, changed), Index: inboxQueue.CountHandler(index.Handler()), Inbox: inboxQueue.Handler(), Jobs: queue.Handler(), Chat: uiserver.ChatHandler(registry, queue), Background: worker.Handler(), Automatic: scheduler.Handler(), Live: liveAPI, AgentRequests: requestsAPI, Clones: clones.Handler(), GitHubRepositories: pickList.Handler(), CurrentName: currentName(githubClient), PlanUsage: plans.Handler(), Analytics: insights.Handler(), Timeline: timeline, Merge: uiserver.MergeHandler(registry, actions.RecordMerges(githubClient), mergedPullRequest, changed), Review: uiserver.ReviewHandler(registry, githubClient, changed), Update: uiserver.UpdateHandler(registry, actions.RecordUpdates(prupdate.Service{Client: githubClient, Cache: panelCache, Counted: countedThreads, Clone: availableClone}), refreshRepository, changed), Changed: settingsChanged,
 			UIState:   uiState.Handler(),
 			Inboxes:   (&inboxes.API{Store: savedInboxes, Changed: changed}).Handler(),
 			Groups:    groupsAPI.Handler(),
@@ -828,23 +828,24 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 	}
 }
 
-// hookEvents is the daemon's record of hook events, or nothing when it cannot
-// be opened: a broken record must not keep the daemon from starting, or every
-// hook would start another. Hooks then get unknown_method and spool.
 // askedRefresh is discovery as the app's refresh button reaches it: a
-// refresh the person asks for also has the background refresh read again
-// the repository's saved reviews whose reads failed, including those it
-// stopped reading until their pull request changes.
+// refresh the person asks for also has the background refresh read the
+// repository's open saved reviews once more, and again those whose reads
+// failed, including those it stopped reading until their pull request
+// changes (background.Service.Asked).
 type askedRefresh struct {
 	*discovery.Service
-	retry func(repository string)
+	asked func(repository string)
 }
 
 func (a askedRefresh) PollNow(ctx context.Context, repo github.Repository) (discovery.Snapshot, error) {
-	a.retry(repo.String())
+	a.asked(repo.String())
 	return a.Service.PollNow(ctx, repo)
 }
 
+// hookEvents is the daemon's record of hook events, or nothing when it cannot
+// be opened: a broken record must not keep the daemon from starting, or every
+// hook would start another. Hooks then get unknown_method and spool.
 type hookEvents struct{ service *hookevents.Service }
 
 func openHookEvents(paths daemon.Paths, log *slog.Logger) hookEvents {

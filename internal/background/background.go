@@ -80,12 +80,16 @@ type Service struct {
 	probedEpoch uint64
 	probed      time.Time
 	// probeFailed says the latest probe failed, as every request does while
-	// the machine is offline.
+	// the machine is offline, and failedSince when the probes began to fail.
 	probeFailed bool
+	failedSince time.Time
 	retained    map[string]retention
-	// started is this process's first pass, from which the reads its
-	// predecessor left due are spread (restartSpread).
+	// started is this process's first pass, or the first under the current
+	// identity, from which the reads not yet made are spread (restartSpread).
 	started time.Time
+	// asked is when the person last refreshed each repository (Asked), by
+	// lower-case name.
+	asked map[string]time.Time
 	// spent is the GraphQL requests the reads made in the last hour, oldest
 	// first, which refreshRequestsPerHour bounds.
 	spent []spend
@@ -105,14 +109,21 @@ type SavedReview struct {
 	State string
 	// Head is the head the latest version reviewed.
 	Head string
-	// Generated is when the latest version was generated; zero when unknown.
-	Generated time.Time
+	// Generated is when the latest version was generated, and Started when
+	// its generation began to read the evidence; zero when unknown.
+	Generated, Started time.Time
 }
 
 // final says the saved document records that its pull request merged or
 // closed: a read of it while it is not open has nothing left to learn.
 func (r SavedReview) final() bool {
 	return strings.EqualFold(r.State, "merged") || strings.EqualFold(r.State, "closed")
+}
+
+// closedDraft says the saved document is of a draft that a read after its
+// generation observed closed: a document records a closed draft as a draft.
+func (r SavedReview) closedDraft(observation discovery.Observation) bool {
+	return strings.EqualFold(r.State, "draft") && (observation.State == "CLOSED" || observation.State == "MERGED") && observation.FetchedAt.After(r.Generated)
 }
 
 // retention is this process's last Retain of a common git directory.
@@ -183,7 +194,7 @@ func (s *Service) ResetIdentity() {
 	s.states = nil
 	s.hostPause = nil
 	s.reads = nil
-	s.spent = nil
+	s.asked = nil
 }
 func (s *Service) identityEpoch() uint64 { s.mu.Lock(); defer s.mu.Unlock(); return s.epoch }
 
@@ -287,9 +298,10 @@ const (
 	// limit stops spending the budget.
 	maxReadFailures = 3
 	stoppedRetry    = 24 * time.Hour
-	// refreshBudget bounds the pull request reads of one pass, so the next
-	// pass's polls never wait long behind them; the oldest due reads go first
-	// and the rest wait for the next pass.
+	// refreshBudget bounds the pull request reads a pass starts, so the next
+	// pass's polls seldom wait long behind them; the oldest due reads go first
+	// and the rest wait for the next pass. A read under way is not cut short,
+	// so a huge pull request may hold the next pass for up to readLimit.
 	refreshBudget = 30 * time.Second
 	// refreshRequestsPerHour bounds the GraphQL requests the reads make in
 	// any hour, a fifth of a token's usual 5,000 points, so they never drain
@@ -300,11 +312,11 @@ const (
 	// leave to discovery and generation: while discovery last read fewer
 	// remaining in the current window, reads wait for its reset.
 	refreshReserve = 1000
-	// readRequestTimeout bounds each GitHub request of a read, and readLimit
-	// the whole read, so a huge pull request can take as many requests as
-	// it needs while a stalled one fails.
+	// readRequestTimeout bounds each GitHub request of a read, so a huge pull
+	// request can take as many requests as it needs while a stalled one fails.
+	// readLimit only stops a read that never ends.
 	readRequestTimeout = 30 * time.Second
-	readLimit          = 2 * time.Minute
+	readLimit          = 10 * time.Minute
 	// pollConcurrency is how many repositories poll at once. They share the
 	// credential's GitHub budget, which discovery checks before every request.
 	pollConcurrency = 3
@@ -322,13 +334,16 @@ type read struct {
 	// again asks for a failed read at the next pass: GitHub answers again
 	// after it did not, or the person refreshed the repository.
 	again bool
-	// head, open, updated and checks are what discovery showed of the pull
-	// request when it was read: a change from them is what makes it due, so a
-	// GitHub that still reports the old state is not read every pass.
-	head    string
-	open    bool
-	updated time.Time
-	checks  string
+	// head, open, updated, checks and unresolved are what discovery showed of
+	// the pull request when its read was due: a change from them is what makes
+	// it due again, so a GitHub that still reports the old state is not read
+	// every pass. updated is GitHub's own time, so a change made while the
+	// read ran is read again, whatever this computer's clock says.
+	head       string
+	open       bool
+	updated    time.Time
+	checks     string
+	unresolved *int
 }
 
 func readKey(clone repos.Clone, number int) string {
@@ -352,7 +367,7 @@ func (s *Service) recordRead(key string, err error, epoch uint64, seen read) {
 	if s.reads == nil {
 		s.reads = map[string]read{}
 	}
-	r := read{at: s.now(), head: seen.head, open: seen.open, updated: seen.updated, checks: seen.checks}
+	r := read{at: s.now(), head: seen.head, open: seen.open, updated: seen.updated, checks: seen.checks, unresolved: seen.unresolved}
 	// A conflict means a generation or another refresh published first, with
 	// fresh evidence of its own.
 	if err != nil && !errors.Is(err, store.ErrConflict) {
@@ -361,16 +376,41 @@ func (s *Service) recordRead(key string, err error, epoch uint64, seen read) {
 	s.reads[key] = r
 }
 
-// Retry has the next pass read again every saved pull request of repository
-// whose last read failed, stopped or not; "" retries those of every
-// repository. A refresh the person asks for, and GitHub answering again
-// after it did not, call it.
-func (s *Service) Retry(repository string) {
+// Asked records a refresh of repository the person asked for: the next pass
+// reads its open saved reviews once more, and again those whose reads
+// failed, stopped or not. Retired reviews of closed pull requests stay
+// retired.
+func (s *Service) Asked(repository string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	marker := "\x00" + strings.ToLower(repository) + "#"
+	repository = strings.ToLower(repository)
+	if s.asked == nil {
+		s.asked = map[string]time.Time{}
+	}
+	s.asked[repository] = s.now()
+	marker := "\x00" + repository + "#"
 	for key, r := range s.reads {
-		if r.failures > 0 && (repository == "" || strings.Contains(key, marker)) {
+		if r.failures > 0 && strings.Contains(key, marker) {
+			r.again = true
+			s.reads[key] = r
+		}
+	}
+}
+
+func (s *Service) askedAt(repository string) time.Time {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.asked[strings.ToLower(repository)]
+}
+
+// retryFailedSince has the next pass read again the saved pull requests
+// whose last read failed at or after since: GitHub answers again after it
+// did not, so those failures may say nothing about the pull requests.
+func (s *Service) retryFailedSince(since time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for key, r := range s.reads {
+		if r.failures > 0 && !r.at.Before(since) {
 			r.again = true
 			s.reads[key] = r
 		}
@@ -379,8 +419,8 @@ func (s *Service) Retry(repository string) {
 
 // due says whether a saved pull request's evidence should be read now, and
 // whether first (urgent): GitHub reported a change since the last read.
-func (s *Service) due(key string, r read, saved SavedReview, observation discovery.Observation, pr discovery.PullRequest, open bool) (due, urgent bool) {
-	due, urgent, reason := s.dueReason(key, r, saved, observation, pr, open)
+func (s *Service) due(key string, r read, saved SavedReview, observation discovery.Observation, pr discovery.PullRequest, open bool, asked time.Time) (due, urgent bool) {
+	due, urgent, reason := s.dueReason(key, r, saved, observation, pr, open, asked)
 	if due {
 		workstats.Inc("background.due." + reason)
 	} else if reason == "retired" || reason == "stopped" {
@@ -391,20 +431,29 @@ func (s *Service) due(key string, r read, saved SavedReview, observation discove
 
 // dueReason is due with the rule that decided it, which the work counters
 // record; one that is not due may name why it waits for a change (retired,
-// stopped).
-func (s *Service) dueReason(key string, r read, saved SavedReview, observation discovery.Observation, pr discovery.PullRequest, open bool) (due, urgent bool, reason string) {
+// stopped). asked is when the person last refreshed the repository.
+func (s *Service) dueReason(key string, r read, saved SavedReview, observation discovery.Observation, pr discovery.PullRequest, open bool, asked time.Time) (due, urgent bool, reason string) {
 	last := maxTime(maxTime(observation.FetchedAt, r.at), saved.Generated)
+	// What GitHub's update time is compared with: its own time when this
+	// process's last read was due, else when the evidence was last read.
+	since := maxTime(observation.FetchedAt, saved.Started)
+	if !r.updated.IsZero() {
+		since = r.updated
+	}
 	// Unread in this process: what was last observed stands for it.
-	head := r.head
+	head, checks, unresolved := r.head, r.checks, r.unresolved
 	if r.at.IsZero() {
 		head = cmp.Or(observation.HeadSHA, saved.Head)
+		if observation.HeadSHA == pr.HeadSHA {
+			checks = observation.Checks
+		}
 	}
 	now := s.now()
 	// A read this process has not made yet waits for its turn in the spread.
 	spread := r.at.IsZero() && now.Before(s.started.Add(spreadOffset(key)))
 	if !open {
 		switch {
-		case saved.final():
+		case saved.final(), saved.closedDraft(observation) && r.failures == 0:
 			return false, false, "retired"
 		case r.failures >= maxReadFailures && !r.again:
 			// Not open, it moves no more: a failing final read stops until
@@ -421,24 +470,47 @@ func (s *Service) dueReason(key string, r read, saved SavedReview, observation d
 		// Read since it left the open ones, and GitHub still said open.
 		return !now.Before(last.Add(openReadAge)), false, "age"
 	}
+	updated := pr.UpdatedAt.After(since)
+	moved := head != "" && pr.HeadSHA != head
 	switch {
 	case r.failures >= maxReadFailures && !r.again:
-		if pr.UpdatedAt.After(maxTime(last, r.updated)) || head != "" && pr.HeadSHA != head {
+		if updated || moved {
 			return true, true, "changed"
 		}
 		return !now.Before(r.at.Add(stoppedRetry)), false, "stopped"
 	case last.IsZero():
 		return !spread, false, "never_read"
-	case pr.UpdatedAt.After(last):
+	case updated:
 		return true, true, "updated"
 	case r.failures > 0:
 		return r.again || !now.Before(r.at.Add(s.backoff(r.failures))), false, "retry"
-	case head != "" && pr.HeadSHA != head:
+	case moved:
 		return true, true, "new_head"
-	case !r.at.IsZero() && r.checks != "" && pr.Checks != r.checks:
-		return true, false, "checks"
+	case rollup(checks) != "" && rollup(pr.Checks) != "" && rollup(checks) != rollup(pr.Checks):
+		return !spread, false, "checks"
+	case !r.at.IsZero() && unresolved != nil && pr.Unresolved != nil && *unresolved != *pr.Unresolved:
+		return true, false, "threads"
+	case asked.After(r.at):
+		return true, false, "asked"
 	}
 	return !spread && !now.Before(last.Add(openReadAge)), false, "age"
+}
+
+// rollup is a check rollup in one vocabulary, discovery's (passing, failing,
+// running, none) or an observation's (success, failure, pending, none); ""
+// when unknown.
+func rollup(checks string) string {
+	switch checks {
+	case "passing", "success":
+		return "passing"
+	case "failing", "failure":
+		return "failing"
+	case "running", "pending":
+		return "running"
+	case "none":
+		return "none"
+	}
+	return ""
 }
 
 // backoff is how long after its failures-th failure in a row a read is tried
@@ -488,16 +560,20 @@ func (s *Service) trimSpent() []spend {
 }
 
 // reserved says whether discovery last read less than refreshReserve of the
-// host's GraphQL points left in the current window.
+// host's GraphQL points left in the current window, or was asked to wait.
 func (s *Service) reserved(ctx context.Context, repo github.Repository) bool {
 	if s.Budget == nil {
 		return false
 	}
 	rate, err := s.Budget(ctx, repo)
-	if err != nil || rate.Remaining == nil || !rate.Reset.After(s.now()) {
+	if err != nil {
 		return false
 	}
-	return *rate.Remaining < refreshReserve
+	if rate.RetryAt.After(s.now()) {
+		// A secondary limit discovery met.
+		return true
+	}
+	return rate.Remaining != nil && rate.Reset.After(s.now()) && *rate.Remaining < refreshReserve
 }
 
 // read runs one Refresh within its time limits, counting its GitHub requests
@@ -527,6 +603,8 @@ func (s *Service) Sync(ctx context.Context) {
 		s.probed = time.Time{}
 		s.probeFailed = false
 		s.probedEpoch = epoch
+		// Another identity: every read is a first one again.
+		s.started = time.Time{}
 	}
 	if s.started.IsZero() {
 		s.started = s.now()
@@ -561,10 +639,11 @@ func (s *Service) Sync(ctx context.Context) {
 		names = append(names, name)
 	}
 	sort.Strings(names)
+	failedSince := s.failedSince
 	changed, reconnected := s.probe(ctx, names)
 	if reconnected {
 		// Reads that failed while GitHub did not answer are tried again.
-		s.Retry("")
+		s.retryFailedSince(failedSince)
 	}
 
 	type polled struct {
@@ -673,13 +752,14 @@ func (s *Service) Sync(ctx context.Context) {
 				if err != nil {
 					p.state.Error = "store_unreadable"
 				}
+				asked := s.askedAt(name)
 				for _, review := range saved {
 					key := readKey(clone, review.Number)
 					r := s.lastRead(key)
 					observation := observations[review.Number]
 					pr, isOpen := open[review.Number]
-					if due, urgent := s.due(key, r, review, observation, pr, isOpen); due {
-						seen := read{head: pr.HeadSHA, open: isOpen, updated: pr.UpdatedAt, checks: pr.Checks}
+					if due, urgent := s.due(key, r, review, observation, pr, isOpen, asked); due {
+						seen := read{head: pr.HeadSHA, open: isOpen, updated: pr.UpdatedAt, checks: pr.Checks, unresolved: pr.Unresolved}
 						if !isOpen {
 							seen.head = cmp.Or(observation.HeadSHA, review.Head)
 						}
@@ -822,6 +902,9 @@ func (s *Service) probe(ctx context.Context, names []string) (changed map[string
 	defer cancel()
 	changed, err := s.Discovery.Probe(requestCtx, repositories)
 	if err != nil {
+		if !s.probeFailed {
+			s.failedSince = s.now()
+		}
 		s.probeFailed = true
 		return nil, false
 	}
@@ -936,8 +1019,11 @@ func Saved(ctx context.Context, clone repos.Clone) ([]SavedReview, error) {
 	var saved []SavedReview
 	for _, row := range rows {
 		if strings.EqualFold(row.Key.Repository, clone.Repository) && row.Latest != nil {
-			generated, _ := time.Parse(time.RFC3339Nano, row.Latest.GeneratedAt)
-			saved = append(saved, SavedReview{Number: row.Key.Number, State: row.PRState, Head: row.Latest.Head, Generated: generated})
+			review := SavedReview{Number: row.Key.Number, State: row.PRState, Head: row.Latest.Head}
+			if generated, err := time.Parse(time.RFC3339Nano, row.Latest.GeneratedAt); err == nil {
+				review.Generated, review.Started = generated, generated.Add(-row.Latest.Elapsed)
+			}
+			saved = append(saved, review)
 		}
 	}
 	return saved, nil

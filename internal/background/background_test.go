@@ -58,6 +58,9 @@ type fakeDiscovery struct {
 	closed bool
 	// head and checks are pull request 1's; head defaults to "new".
 	head, checks string
+	unresolved   *int
+	// more are other open pull requests, listed after pull request 1.
+	more []discovery.PullRequest
 }
 
 // Poll lists pull request 1 as open, with the latest observation of each
@@ -77,10 +80,11 @@ func (f *fakeDiscovery) poll(repo github.Repository) (discovery.Snapshot, error)
 	for _, o := range latest {
 		observations = append(observations, o)
 	}
-	open := []discovery.PullRequest{{Number: 1, HeadSHA: cmp.Or(f.head, "new"), UpdatedAt: f.updated, Checks: f.checks}}
+	open := []discovery.PullRequest{{Number: 1, HeadSHA: cmp.Or(f.head, "new"), UpdatedAt: f.updated, Checks: f.checks, Unresolved: f.unresolved}}
 	if f.closed {
 		open = nil
 	}
+	open = append(open, f.more...)
 	return discovery.Snapshot{Repository: repo.String(), NextPoll: f.next, Settling: f.settling, PullRequests: open, Observations: observations}, f.err
 }
 func (f *fakeDiscovery) PollNow(_ context.Context, repo github.Repository) (discovery.Snapshot, error) {
@@ -570,7 +574,7 @@ func TestFailedReadBacksOffThenWaitsForAChange(t *testing.T) {
 	pass(time.Minute, 5)
 	pass(time.Hour, 5)
 	// The person refreshes the repository: one read.
-	s.Retry("acme/app")
+	s.Asked("acme/app")
 	pass(time.Minute, 6)
 	pass(time.Hour, 6)
 	// Unchanged for a day: one more read.
