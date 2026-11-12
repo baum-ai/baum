@@ -166,16 +166,31 @@ export function GroupPage({
       ? history.state.document
       : null
     : doc;
-  // The group review's threads are its members' (landed ones included), as a
+  // The group review's threads are its members' (removed and landed included), as a
   // snapshot from when it was generated; the Activity tab reads them as
   // GitHub has them now.
   const threadsNow = useLiveThreadsOf(
     group.repository,
-    [...landed, ...members].map(({ number, entry }) => ({
-      number,
-      unresolved: entry?.pull_request.unresolved ?? null,
-      capped: entry?.pull_request.unresolved_capped ?? false,
-    })),
+    [
+      ...new Set([
+        ...landed.map(({ number }) => number),
+        ...group.members,
+        ...(doc?.stack?.members.map(({ number }) => number) ?? []),
+        ...(viewedDocument?.stack?.members.map(({ number }) => number) ?? []),
+      ]),
+    ].map((number) => {
+      const same = entries.filter(
+        (e) =>
+          sameRepository(e.pull_request.repository, group.repository) &&
+          e.pull_request.number === number,
+      );
+      const entry = same.find((e) => !e.historical) ?? same[0];
+      return {
+        number,
+        unresolved: entry?.pull_request.unresolved ?? null,
+        capped: entry?.pull_request.unresolved_capped ?? false,
+      };
+    }),
     revision,
   );
   // Decisions, Sessions and Commits come from the members' own saved reviews:

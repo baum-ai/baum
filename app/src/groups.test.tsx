@@ -631,6 +631,32 @@ it("hands the viewer every member's review threads as GitHub has them now", asyn
   expect(rail.liveThreads?.(example as never)).toBeNull();
 });
 
+it("keeps reading a removed member's threads while its saved review is displayed", async () => {
+  entries = [entry(7)];
+  entries[0]!.pull_request.unresolved = 0;
+  groups = [group([7], { version_count: 1, outdated: true })];
+  const saved = {
+    ...example,
+    review: { ...example.review, repository: "acme/demo" },
+    stack: {
+      title: "Saved group",
+      members: [7, 8].map((number) => ({ number, head_sha: "head", review_version: 1 })),
+    },
+  };
+  const path = "api/prs/review-threads?repository=acme%2Fdemo&pr=8&unresolved=-1";
+  answers = {
+    "api/groups/g1/document": saved,
+    [path]: { threads: [{ id: "T8" }], capped: false },
+  };
+  history.replaceState(null, "", "/s/test-ns/?group=g1");
+  await act(async () => root.render(<App />));
+  expect(requests.map((r) => r.path)).toContain(path);
+  expect(rail.liveThreads?.(saved as never)).toEqual({
+    unresolved: new Set(["T8"]),
+    complete: true,
+  });
+});
+
 it("shows a stack member's file patch once however many of its hunks the review cites", async () => {
   entries = [{ ...entry(7), status: "current", version_count: 1 }];
   groups = [group([7], { version_count: 1, stack: true })];
