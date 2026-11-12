@@ -370,6 +370,21 @@ func TestPullRequestToolsReturnWhatTheAppRoutesReturn(t *testing.T) {
 			wantFailing, _ := json.Marshal(failing)
 			sameJSON(t, "failing checks", field(t, text, "failing"), wantFailing)
 
+			// The log tail of a check, by name or id, is the route's answer.
+			for _, check := range []any{"test", 21} {
+				text, failed = f.callTool(t, token, "check_log", map[string]any{"check": check})
+				if failed {
+					t.Fatalf("check_log %v: %s", check, text)
+				}
+				sameJSON(t, "check log", json.RawMessage(text), f.route(t, "/api/prs/check-log?repository=owner/repo&pr=7&check=21"))
+			}
+			if text, failed = f.callTool(t, token, "check_log", map[string]any{"check": "build"}); !failed && !strings.Contains(text, `"no_log"`) {
+				t.Errorf("a check without an id: %s", text)
+			}
+			if text, failed = f.callTool(t, token, "check_log", map[string]any{"check": "nothing"}); !failed {
+				t.Errorf("a check the pull request lacks: %s", text)
+			}
+
 			text, failed = f.callTool(t, token, "review_threads", nil)
 			if failed {
 				t.Fatalf("review_threads: %s", text)
@@ -466,8 +481,12 @@ func TestPullRequestToolsReturnWhatTheAppRoutesReturn(t *testing.T) {
 		})
 	}
 	// An action is refused every other repository, by tool; a chat is not.
-	for _, tool := range []string{"pull_request", "diff", "commits", "checks", "review_threads", "merge_state", "jobs", "sessions"} {
-		if text, failed := f.callTool(t, actionToken, tool, map[string]any{"repository": "other/repo", "pr": 7}); !failed || strings.Contains(text, "Another repository") {
+	for _, tool := range []string{"pull_request", "diff", "commits", "checks", "check_log", "review_threads", "merge_state", "jobs", "sessions"} {
+		args := map[string]any{"repository": "other/repo", "pr": 7}
+		if tool == "check_log" {
+			args["check"] = "test"
+		}
+		if text, failed := f.callTool(t, actionToken, tool, args); !failed || strings.Contains(text, "Another repository") || !strings.Contains(text, "own pull request's repository") {
 			t.Errorf("an action's %s of another repository: %v %s", tool, failed, text)
 		}
 	}
