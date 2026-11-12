@@ -23,12 +23,11 @@ const deliveryTimeout = 2 * time.Minute
 
 // Search pacing. GitHub's search API allows 30 requests a minute, and a
 // search is up to five serial requests (one a page), so searches run on a
-// small pool and each request is given searchSpacing: 24 a minute across the
-// pool, under the limit.
+// small pool and every request, each page and retry, waits for a slot
+// searchSpacing after the last: 24 a minute across the pool, under the limit.
 const (
 	deliveryWorkers = 3
 	searchSpacing   = 2500 * time.Millisecond
-	searchPageSize  = 50
 )
 
 // PullRequestSearcher finds the pull requests the signed-in account opened;
@@ -61,8 +60,10 @@ type Delivery struct {
 	entries map[string]*deliveryEntry
 	queue   []queuedSearch
 	workers int
-	// next is when the next search request may start.
-	next time.Time
+	// next is when the next search request may start; limitedUntil is the
+	// reset of a rate limit a search hit.
+	next         time.Time
+	limitedUntil time.Time
 	// ctx is the daemon's, which searches run under.
 	ctx context.Context
 }
@@ -164,7 +165,7 @@ func (d *Delivery) Pulls(repositories []string) []repositoryPulls {
 		}
 		out = append(out, repositoryPulls{Repository: name, Pulls: slices.Clone(e.pulls), Loaded: e.loaded, Reason: e.reason, FetchedAt: e.fetchedAt})
 	}
-	for d.workers < deliveryWorkers && d.workers < len(d.queue) {
+	for d.workers < deliveryWorkers && len(d.queue) > 0 {
 		d.workers++
 		go d.work()
 	}
@@ -191,29 +192,47 @@ func (d *Delivery) work() {
 	}
 }
 
-// pages is how many requests a search of that many pull requests makes.
-func pages(pulls int) int { return max(1, (pulls+searchPageSize-1)/searchPageSize) }
-
-// reserve takes request slots for a search, as many as its last answer
-// needed (one when it has none), and returns when it may start.
-func (d *Delivery) reserve(requests int) time.Time {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	start := d.next
-	if now := d.clock(); start.Before(now) {
-		start = now
+// pacer holds each request of a search on host to the shared pace: it waits
+// for the next slot, and refuses while a rate limit holds, so a search that
+// waited for its slot does not go on into a limit another one hit.
+func (d *Delivery) pacer(host string) func(context.Context) error {
+	return func(ctx context.Context) error {
+		if err := d.held(host); err != nil {
+			return err
+		}
+		d.mu.Lock()
+		start := d.next
+		if now := d.clock(); start.Before(now) {
+			start = now
+		}
+		d.next = start.Add(searchSpacing)
+		wait := start.After(d.clock())
+		d.mu.Unlock()
+		if wait {
+			if err := d.wait(ctx, start); err != nil {
+				return err
+			}
+		}
+		return d.held(host)
 	}
-	d.next = start.Add(time.Duration(requests) * searchSpacing)
-	return start
 }
 
-// charge accounts for requests a search made beyond the slots it reserved.
-func (d *Delivery) charge(pulls, reserved int) {
-	if extra := pages(pulls) - reserved; extra > 0 {
-		d.mu.Lock()
-		d.next = d.next.Add(time.Duration(extra) * searchSpacing)
-		d.mu.Unlock()
+// held is a rate limit error while the refresh or an earlier search has the
+// host's limit holding requests back, nil otherwise.
+func (d *Delivery) held(host string) error {
+	now := d.now()
+	d.mu.Lock()
+	resume := d.limitedUntil
+	d.mu.Unlock()
+	if d.Paused != nil {
+		if at := d.Paused(host); at.After(resume) {
+			resume = at
+		}
 	}
+	if resume.After(now) {
+		return &github.RateLimitedError{ResumeAt: resume}
+	}
+	return nil
 }
 
 // settle records a search's outcome unless the entries were reset meanwhile.
@@ -234,31 +253,15 @@ func (d *Delivery) fetch(parent context.Context, name string, e *deliveryEntry) 
 		d.fail(name, e, err)
 		return
 	}
-	// A rate limit the refresh or an earlier search hit holds this one back.
-	if d.Paused != nil {
-		if resume := d.Paused(repo.Host); resume.After(d.now()) {
-			d.fail(name, e, &github.RateLimitedError{ResumeAt: resume})
-			return
-		}
-	}
-	d.mu.Lock()
-	reserved := pages(len(e.pulls))
-	d.mu.Unlock()
-	if start := d.reserve(reserved); start.After(d.clock()) {
-		if err := d.wait(parent, start); err != nil {
-			// The daemon is stopping; leave the entry to be searched again.
-			d.settle(name, e, func(*deliveryEntry) {})
-			return
-		}
-	}
 	ctx, cancel := context.WithTimeout(parent, deliveryTimeout)
 	defer cancel()
+	ctx = github.WithRequestPacer(ctx, d.pacer(repo.Host))
 	pulls, err := d.Search.AuthoredPullRequests(ctx, repo, d.now().Add(-Retention))
 	if parent.Err() != nil {
+		// The daemon is stopping; leave the entry to be searched again.
 		d.settle(name, e, func(*deliveryEntry) {})
 		return
 	}
-	d.charge(len(pulls), reserved)
 	if err != nil {
 		d.fail(name, e, err)
 		return
@@ -270,7 +273,9 @@ func (d *Delivery) fetch(parent context.Context, name string, e *deliveryEntry) 
 
 // fail records a failed search. A rate limit also holds back every queued
 // search until the limit resets: their repositories keep what they had and
-// carry the reason, so the panel shows the others, and are tried again then.
+// carry the reason, so the panel shows the others, and are tried again after
+// the reset, at least deliveryRetry from now. The limit is shared with the
+// background refresh.
 func (d *Delivery) fail(name string, e *deliveryEntry, err error) {
 	now := d.now()
 	var limited *github.RateLimitedError
@@ -278,16 +283,30 @@ func (d *Delivery) fail(name string, e *deliveryEntry, err error) {
 		d.settle(name, e, func(e *deliveryEntry) { e.fetchedAt, e.reason, e.retryAt = now, deliveryReason(err), time.Time{} })
 		return
 	}
-	resume := limited.ResumeAt
-	if resume.IsZero() || resume.Before(now.Add(deliveryRetry)) {
-		resume = now.Add(deliveryRetry)
+	d.mu.Lock()
+	if d.entries[name] != e {
+		// Reset while it ran: the limit is the old account's.
+		d.mu.Unlock()
+		return
+	}
+	reset := limited.ResumeAt
+	if reset.IsZero() || !reset.After(now) {
+		reset = now.Add(deliveryRetry)
+	}
+	if reset.After(d.limitedUntil) {
+		d.limitedUntil = reset
+	}
+	d.mu.Unlock()
+	retryAt := reset
+	if earliest := now.Add(deliveryRetry); retryAt.Before(earliest) {
+		retryAt = earliest
 	}
 	if d.Limited != nil {
 		if repo, perr := github.ParseRepository(name); perr == nil {
-			d.Limited(repo.Host, resume)
+			d.Limited(repo.Host, reset)
 		}
 	}
-	mark := func(e *deliveryEntry) { e.fetchedAt, e.reason, e.retryAt = now, deliveryReason(err), resume }
+	mark := func(e *deliveryEntry) { e.fetchedAt, e.reason, e.retryAt = now, deliveryReason(err), retryAt }
 	d.settle(name, e, mark)
 	d.mu.Lock()
 	queued := d.queue
@@ -306,6 +325,7 @@ func (d *Delivery) Reset() {
 	// Queued searches belong to the old account; a running one is dropped
 	// when it settles.
 	d.queue = nil
+	d.limitedUntil = time.Time{}
 }
 
 // deliveryReason says why a search failed in fixed words, never GitHub's.

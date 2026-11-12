@@ -144,21 +144,24 @@ request's latest head now, not its history. Line survival is not measured and
 must not be added. A failed search is a reason in fixed words, never GitHub's
 text. An account change forgets every answer and the queue.
 
-Queued searches run on three workers and are paced to 24 search requests a
-minute across them, under GitHub's search limit of 30. A search is one request
-a page (50 pull requests), up to five; a repository searched before reserves
-as many slots as its last answer needed, and a search that needed more charges
-the difference. Repositories whose answers expire together are therefore
-spread over time rather than searched at once, and the section shows the ones
-read so far (`loading` only while one has no answer and no failure).
+Queued searches run on three workers. Every GitHub request they make, each
+page (50 pull requests, up to five a search) and each retry, first waits for a
+slot 2.5 seconds after the last: at most 24 search requests a minute across
+the workers, under GitHub's search limit of 30. The pace reaches the client
+through `github.WithRequestPacer`. Repositories whose answers expire together
+are therefore spread over time rather than searched at once, and the section
+shows the ones read so far (`loading` only while one has no answer and no
+failure).
 
 A rate limit stops the queue: the repository that hit it, and every one still
 queued, keep their earlier answer and carry the rate-limit reason, and none is
-searched again before the limit's reset (at least five minutes). The daemon
-shares the limit with the background refresh in both directions
-(`background.Service.Paused` and `Limited`): a search waits while the refresh
-holds a pause, and a limit a search hits pauses the refresh. Searches do not
-count against the refresh's hourly request budget.
+searched again before the limit's reset (at least five minutes). A request
+that has waited for its slot checks the limit again before it is sent. The
+limit is shared with the background refresh in both directions
+(`background.Service.Paused` and `Limited`): while the refresh holds a pause,
+searches are not sent and fail with the same reason, and a limit a search hits
+pauses the refresh until its reset. Searches do not count against the
+refresh's hourly request budget.
 
 ## Plan usage
 
