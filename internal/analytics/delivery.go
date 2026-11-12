@@ -283,10 +283,12 @@ func (d *Delivery) fail(name string, e *deliveryEntry, err error) {
 		d.settle(name, e, func(e *deliveryEntry) { e.fetchedAt, e.reason, e.retryAt = now, deliveryReason(err), time.Time{} })
 		return
 	}
+	// One critical section from the identity check to the drain, so a Reset
+	// cannot slip between them and have the new account's queue drained.
 	d.mu.Lock()
+	defer d.mu.Unlock()
 	if d.entries[name] != e {
 		// Reset while it ran: the limit is the old account's.
-		d.mu.Unlock()
 		return
 	}
 	reset := limited.ResumeAt
@@ -296,7 +298,6 @@ func (d *Delivery) fail(name string, e *deliveryEntry, err error) {
 	if reset.After(d.limitedUntil) {
 		d.limitedUntil = reset
 	}
-	d.mu.Unlock()
 	retryAt := reset
 	if earliest := now.Add(deliveryRetry); retryAt.Before(earliest) {
 		retryAt = earliest
@@ -306,15 +307,17 @@ func (d *Delivery) fail(name string, e *deliveryEntry, err error) {
 			d.Limited(repo.Host, reset)
 		}
 	}
-	mark := func(e *deliveryEntry) { e.fetchedAt, e.reason, e.retryAt = now, deliveryReason(err), retryAt }
-	d.settle(name, e, mark)
-	d.mu.Lock()
-	queued := d.queue
-	d.queue = nil
-	d.mu.Unlock()
-	for _, item := range queued {
-		d.settle(item.name, item.entry, mark)
+	mark := func(e *deliveryEntry) {
+		e.fetching = false
+		e.fetchedAt, e.reason, e.retryAt = now, deliveryReason(err), retryAt
 	}
+	mark(e)
+	for _, item := range d.queue {
+		if d.entries[item.name] == item.entry {
+			mark(item.entry)
+		}
+	}
+	d.queue = nil
 }
 
 // Reset forgets every answer, as when the signed-in GitHub account changes.

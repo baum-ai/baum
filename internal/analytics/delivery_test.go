@@ -320,3 +320,44 @@ func TestDeliveryResetDropsTheQueueAndALateLimit(t *testing.T) {
 		}
 	}
 }
+
+// TestDeliveryResetRacesARateLimitedSearch interleaves Reset, Pulls and
+// searches that end rate limited: whatever the order, the repositories
+// searched for the new account never inherit the old account's limit.
+func TestDeliveryResetRacesARateLimitedSearch(t *testing.T) {
+	for range 30 {
+		clock := newTestClock(time.Date(2026, 11, 12, 12, 0, 0, 0, time.UTC))
+		var old atomic.Bool
+		old.Store(true)
+		release := make(chan struct{})
+		d, search := newPaced(func(string) ([]github.AuthoredPullRequest, error) {
+			if old.Load() {
+				<-release
+				return nil, &github.RateLimitedError{ResumeAt: clock.now().Add(time.Hour)}
+			}
+			return []github.AuthoredPullRequest{{Number: 1}}, nil
+		})
+		d.Now = clock.now
+		names := repoNames(8)
+		d.Pulls(names)
+		for {
+			if searches, _ := search.count(); searches >= deliveryWorkers {
+				break
+			}
+			time.Sleep(time.Millisecond)
+		}
+		var wg sync.WaitGroup
+		wg.Add(2)
+		go func() { defer wg.Done(); close(release) }()
+		go func() {
+			defer wg.Done()
+			d.Reset()
+			old.Store(false)
+			d.Pulls(names)
+		}()
+		wg.Wait()
+		if got := waitFor(t, d, names, allLoaded); len(got) != len(names) {
+			t.Fatalf("got %d repositories", len(got))
+		}
+	}
+}
