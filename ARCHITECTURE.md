@@ -654,8 +654,10 @@ approval_policy="never"`, then the `mcp_servers.baum` config and `[--model
 M]`, with none of `--ignore-user-config`, `--ignore-rules`, `--disable` or
 `--ephemeral`; it checks the sandbox before a workspace turn only, and records
 no speed, since the person's `config.toml` may choose a service tier. Both
-keep the environment of every local run (`LocalEnvironment`, `agent_env`, the
-token last). Any run may set `Request.SessionStarted`, called as soon as the
+run with `agent.ConverseEnvironment` (`LocalEnvironment` plus the SSH agent,
+`GITHUB_TOKEN`, `GH_*` and `GIT_*` but the repository-location Git
+variables), then `agent_env` and the token last; no provider key or base URL
+is set. Any run may set `Request.SessionStarted`, called as soon as the
 CLI names its session (Claude's `init` event, Codex's `thread.started`), and
 `Request.TextDelta`, which gets Claude's streamed `text_delta` pieces.
 
@@ -5061,65 +5063,104 @@ A conversation is a row of `console_conversations` in `<state>/app.sqlite`:
 its id (32 hex characters), agent (`claude-code` or `codex`), model (empty for
 the agent's default), mode (`full` or `workspace`, the `agent.Access`; `full`
 by default), directory, the repository, pull request and branch it is a
-checkout of and whether baum created that worktree, the agent's session id,
+checkout of, whether baum created that worktree (`created_worktree`) and,
+separately, whether baum created its branch (`created_branch`; a branch baum
+did not create is the person's, and nothing baum cleans up may ever delete
+it), why a pull request's conversation got an empty directory instead
+(`directory_note`), the agent's session id,
 the pages it was opened and sent from (at most 20, no repeat in a row), its
 title (the first message's first line, at most 80 characters), created and
 updated times, state (`idle`, `running`, `failed` or `closed`), why the last
 turn failed or stopped, and the cost of its priced turns (`cost_partial` when
 a turn that started a session could not be priced, so the cost is a lower
-bound). New columns are added as the other relational stores add theirs. When
+bound). Columns added later are added as the other relational stores add
+theirs (`created_branch` and `directory_note` already are). When
 the service opens, a conversation a stopped daemon left `running` becomes
 `failed` with the reason that baum stopped while the agent answered.
 
-`Create` chooses the directory. On a `pull_request` page of a repository
-with an available registered clone it is a worktree with the pull request's
-head checked out, read from `git worktree list` of every clone of the
-repository, main checkouts included: one on the head branch (a fork's only
-while at the head commit discovery saw, since a fork's branch may be named
-anything, the base's included) or on a `baum/pr-<N>` branch. Without one,
-`gitlocal.AddPullWorktree` adds a worktree to the first clone at
+`Create` refuses a page the MCP server would refuse
+(`PageContext.Validate`) and chooses the directory. On a `pull_request` page
+of a repository with an available registered clone it is a worktree with the
+pull request's head checked out, read from `git worktree list` of every clone
+of the repository, main checkouts included: one on the head branch (a fork's
+only while at the head commit discovery saw, since a fork's branch may be
+named anything, the base's included) or on a `baum/pr-<N>` branch. Without
+one, `gitlocal.AddPullWorktree` adds a worktree to the first clone at
 `<cache>/baum/console/worktrees/<id>/<name>` (`os.UserCacheDir`): it fetches
 the head into `refs/baum/pull/<N>/head` (from the head branch, or
 `refs/pull/<N>/head` for a fork or a head whose name discovery has not kept),
 then checks out the first of the head branch's name (not for a fork),
 `baum/pr-<N>` and `baum/pr-<N>-<first 8 of the id>` that no worktree has
-checked out. An existing branch is checked out as it is, never moved; a new
-one starts at the head and tracks it (`branch.<name>.remote`, `.merge`). No
-hook runs (`core.hooksPath` names nothing) and no other worktree's HEAD,
-index or files change. Every other page, a pull request discovery has not
-seen, and a repository with no clone get a new private, empty directory,
-`<cache>/baum/console/sessions/<id>`. These directories are actual working
-directories, so they live on disk, not in the database, and stay when a
-conversation closes, since a worktree may hold the agent's work. Their names
-never start with `agent.RunDirPrefix`: the agents' hooks report these
-sessions, and they show on the Sessions page like any other.
+checked out; a branch git refuses because a worktree has it checked out (one
+mid-rebase or mid-bisect lists as detached) counts as taken. An existing
+branch is used only while it points at the fetched head, and is never moved:
+one at another commit is skipped for the next name, so the agent never starts
+on stale code. A new one starts at the head and tracks it
+(`branch.<name>.remote`, `.merge`). No hook runs (`core.hooksPath` names
+nothing) and no other worktree's HEAD, index or files change. Placement on one
+repository runs one conversation at a time, so two opened together on one pull
+request share the worktree the first adds. When the head branch cannot be
+fetched or checked out (deleted, offline, expired credentials), a second try
+uses `refs/pull/<N>/head`; when that fails too, the conversation's
+`worktrees/<id>` directory is removed and it gets an empty directory with the
+reason in `directory_note`, as it does for a repository with no clone. Every
+other page and a pull request discovery has not seen get a new private, empty
+directory, `<cache>/baum/console/sessions/<id>`. These directories are actual
+working directories, so they live on disk, not in the database, and stay when
+a conversation closes, since a worktree may hold the agent's work. Their names
+never start with `agent.RunDirPrefix`, so the agents' hooks report these
+sessions; those in a pull request worktree show on the Sessions page like any
+other, and those in an empty directory will with the panel's routes (the
+Sessions page lists only sessions linked to a repository).
 
 Each conversation holds one `chat` MCP token, minted by the MCP server's
 `Registry` when it is created or, after a restart, on its next turn, bound
 to its session (`SetSession`, with `SessionKey(agent, id)`) as soon as the
 agent names it, and revoked when it is closed and when the daemon stops.
-`SetPage` sets the page the person has open on every open conversation's
-token and the ones minted later, so `current_page` and proposals follow the
-person; changes to baum's own state still go through proposals the person
-saves. `Send` starts a turn in the background and answers at once: it
-refuses a conversation that is running (`ErrBusy`) or closed, or whose
-directory is gone, saves the page it came from, and runs the agent in the
-directory with the message as the prompt, the conversation's session
-resumed and `baum mcp` (this executable) as its MCP server. The run time
-limit (`run_timeout`, as Settings resolves it; 30 minutes by default) bounds
-each turn. `Stop` cancels it, which kills the agent's whole process group on
-Unix, and the conversation goes back to `idle` with the reason; a turn over
-the limit fails naming it; the daemon stopping fails running turns with the
-reason and revokes every token. A turn's usage is priced as the backend's
+The page the person has open is the service's, not stamped per token:
+`SetPage`, `Create` (with the page it was opened from) and `Send` (with the
+page it was sent from) set it on every open conversation's token and the ones
+minted later, so `current_page` and proposals follow the person; changes to
+baum's own state still go through proposals the person saves. `Send` starts a
+turn in the background and answers at once: it refuses a conversation that is
+running (`ErrBusy`) or closed, or whose directory is gone, saves the page it
+came from, and runs the agent in the directory with the message as the
+prompt, the conversation's session resumed and `baum mcp` (this executable)
+as its MCP server. The agent backend is built once per agent, model,
+executable and agent environment, so its version check runs once. The run
+time limit (`run_timeout`, as Settings resolves it; 30 minutes by default)
+bounds each turn. `Stop` cancels it, which kills the agent's whole process
+group on Unix, and the conversation goes back to `idle` with the reason; a
+turn over the limit fails naming it. When the agent cannot find the session
+to resume (`agent.ErrSessionNotFound`), the turn fails saying so, the stored
+session is cleared and the token is replaced by a new one bound to no session
+(a token binds to one session, once), so the next turn starts a new session
+in the same directory. Once shutdown begins, `Create` and `Send` are refused
+(`ErrShuttingDown`); shutdown waits for a `Create` in flight (a fetch it runs
+is cancelled, giving an empty directory), fails running turns with the reason
+and revokes every token. A turn's usage is priced as the backend's
 (`BackendAccountingCost`).
+
+The agent runs with `agent.ConverseEnvironment`: the local allowlist plus
+`SSH_AUTH_SOCK`, `GITHUB_TOKEN`, `GH_*` and `GIT_*` other than the variables
+that point at another repository, so it can push and use `gh`; review, fix and
+chat runs keep `LocalEnvironment`. Claude Code still gets the fixed
+`DISABLE_AUTOUPDATER`, `DISABLE_TELEMETRY` and
+`CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` variables every local run sets.
+`BAUM_MCP_TOKEN` is in the environment of the person's Claude Code process, so
+their own hooks and stdio MCP servers can read it; that gives them nothing
+they lack, since they run as the person, who can open the app. Codex forwards
+it to MCP servers only through baum's `env_vars`; what its commands and hooks
+inherit follows the person's own `shell_environment_policy`.
 
 Progress is published as `console` events, `{"conversation","kind","state"}`
 with the kind `created`, `state`, `session` (the agent named its session),
-`text` (at most every 250 ms while the answer grows) or `finished` (with
+`text` (at most once a second per conversation while the answer grows, since
+the event stream replays only its last 128 events) or `finished` (with
 `cost_usd` when the turn could be priced); they never carry text. `Progress`
 holds, in memory, a turn's answer so far (its finished messages, then
-Claude's streaming one, and after the turn its final message), the tool it
-runs and its session.
+Claude's streaming one, and after the turn its final message; at most
+`agent.MaxConverseBytes`, keeping the end), the tool it runs and its session.
 
 ### Decision capture
 

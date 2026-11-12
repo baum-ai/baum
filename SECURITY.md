@@ -1395,8 +1395,21 @@ adds without changing your other checkouts and without running hooks) or an
 empty directory of its own. Each conversation holds a `chat` token of its own,
 bound to its session once the agent names it and revoked when you close it or
 the daemon stops; through it the agent can propose changes to baum's state,
-which change nothing until you save them, like any chat's. The agent's
-environment is filtered as for every local run.
+which change nothing until you save them, like any chat's.
+
+A conversation's environment is the one every local run gets plus what you
+need to work as you would in a terminal: your SSH agent (`SSH_AUTH_SOCK`),
+`GITHUB_TOKEN`, `GH_*` and your `GIT_*` settings, so the agent can push and
+use `gh` with your credentials. Git variables that point at another
+repository (`GIT_DIR`, `GIT_WORK_TREE`, `GIT_INDEX_FILE`,
+`GIT_OBJECT_DIRECTORY`, `GIT_ALTERNATE_OBJECT_DIRECTORIES`, `GIT_COMMON_DIR`,
+`GIT_NAMESPACE`, `GIT_PREFIX`) and provider and cloud credentials are still
+removed; reviews, fixes and the chat keep the narrower environment. Claude
+Code still gets `DISABLE_AUTOUPDATER`, `DISABLE_TELEMETRY` and
+`CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC`. `BAUM_MCP_TOKEN` is in the
+environment of your Claude Code process, so your own hooks and stdio MCP
+servers can read it; that gives them no access they lack, since they run as
+you. Codex forwards it to MCP servers only through baum's `env_vars`.
 
 The application server also serves `POST /api/mcp`, an MCP server that lets
 an agent read what the app shows. It takes only an MCP token, sent as
