@@ -4582,10 +4582,11 @@ replace it.
   left, or used only to resume another; Claude Code writes no transcript until
   then) and is left out of the list (`empty`). Since agents report few
   events during a turn, `Transcripts.Watch` builds the list every second
-  while a session is running (every 5 seconds while sessions are listed but
-  none runs, and every 15 when none is live, so an idle daemon does not wake
-  every second), reading a working session's transcript (one neither ended nor waiting)
-  when it grew and the others' every 5 seconds, only what they appended, and
+  while a session is running and every 15 seconds otherwise. Applied hook
+  events and app-driven resume or end changes wake the watcher to shorten
+  its wait when a session starts running; repeated events never postpone a
+  scheduled read. It reads a working session's transcript (one neither ended nor waiting)
+  when it grew and the others' no more often than every 5 seconds, only what they appended, and
   publishes `live` when it differs from the last one: a running session's
   steps, files and message, and a session settling, reach the app without a
   hook event, what an agent says within a couple of seconds.

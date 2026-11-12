@@ -166,44 +166,49 @@ var safeID = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
 // (only what they appended) and the others' no more often than describe
 // allows.
 //
-// It looks every WorkingRecheckEvery only while a session is running, every
-// TitleRecheckEvery while sessions are listed but none runs, and every
-// QuietRecheckEvery when none is live, so an idle daemon does not wake every
-// second.
+// It looks every WorkingRecheckEvery only while a session is running, and
+// every QuietRecheckEvery otherwise. Tracker changes wake it to shorten the
+// wait when a session resumes, without postponing an already scheduled read.
 func (t *Transcripts) Watch(ctx context.Context, notify func()) {
+	t.Tracker.init()
 	var last []byte
-	timer := time.NewTimer(WorkingRecheckEvery)
+	t.moved(&last)
+	every := t.recheckEvery()
+	next := time.Now().Add(every)
+	timer := time.NewTimer(every)
 	defer timer.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
+		case <-t.Tracker.watch:
+			if every := t.recheckEvery(); every < time.Until(next) {
+				next = time.Now().Add(every)
+				timer.Reset(every)
+			}
 		case <-timer.C:
 			if t.moved(&last) {
 				notify()
 			}
-			timer.Reset(t.recheckEvery())
+			every := t.recheckEvery()
+			next = time.Now().Add(every)
+			timer.Reset(every)
 		}
 	}
 }
 
-// QuietRecheckEvery is how often Watch looks while no session is live; a
-// hook event announces a new session without it.
+// QuietRecheckEvery is how often Watch looks while no session is running;
+// hook events wake it when a session starts or resumes.
 const QuietRecheckEvery = 15 * time.Second
 
 // recheckEvery is how long Watch waits before its next look.
 func (t *Transcripts) recheckEvery() time.Duration {
-	every := QuietRecheckEvery
 	for _, s := range t.Tracker.Sessions() {
-		switch s.State {
-		case StateRunning:
+		if s.State == StateRunning {
 			return WorkingRecheckEvery
-		case StateEnded:
-		default:
-			every = TitleRecheckEvery
 		}
 	}
-	return every
+	return QuietRecheckEvery
 }
 
 // moved reports whether the list differs from last, which it then holds. The
