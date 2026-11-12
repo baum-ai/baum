@@ -76,6 +76,7 @@ func newRepository(t *testing.T) repository {
 	fork := git(t, seed, "rev-parse", "HEAD")
 	git(t, seed, "push", "-q", "origin", "elsewhere:refs/pull/9/head")
 	git(t, remote, "update-ref", "refs/pull/7/head", head)
+	git(t, remote, "update-ref", "refs/pull/10/head", head)
 	clone := filepath.Join(base, "clone")
 	git(t, base, "clone", "-q", remote, clone)
 	return repository{remote: remote, clone: clone, head: head, fork: fork}
@@ -96,6 +97,12 @@ func pullFixture(t *testing.T, r repository, extra ...repos.Clone) *fixture {
 				return Pull{HeadRef: "feature", HeadSHA: r.head}, nil
 			case number == 9:
 				return Pull{HeadRef: "main", HeadSHA: r.fork, Fork: true}, nil
+			case number == 10:
+				// Its head branch was deleted; refs/pull/10/head remains.
+				return Pull{HeadRef: "deleted", HeadSHA: r.head}, nil
+			case number == 11:
+				// Neither its head branch nor its pull request ref exists.
+				return Pull{HeadRef: "nope", HeadSHA: r.head}, nil
 			}
 			return Pull{}, errors.New("unknown pull request")
 		}
@@ -116,7 +123,7 @@ func TestDirectoryIsAnExistingWorktree(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.Directory != existing || c.CreatedWorktree || c.Branch != "feature" || c.Repository != "Owner/Repo" || c.PullRequest != 7 {
+	if c.Directory != existing || c.CreatedWorktree || c.CreatedBranch || c.Branch != "feature" || c.Repository != "Owner/Repo" || c.PullRequest != 7 {
 		t.Fatalf("created %+v", c)
 	}
 }
@@ -147,7 +154,7 @@ func TestDirectoryIsANewWorktree(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.Directory != filepath.Join(f.opts.Root, "worktrees", c.ID, "Repo") || !c.CreatedWorktree || c.Branch != "feature" {
+	if c.Directory != filepath.Join(f.opts.Root, "worktrees", c.ID, "Repo") || !c.CreatedWorktree || !c.CreatedBranch || c.Branch != "feature" || c.DirectoryNote != "" {
 		t.Fatalf("created %+v", c)
 	}
 	if got := git(t, c.Directory, "rev-parse", "HEAD"); got != r.head {

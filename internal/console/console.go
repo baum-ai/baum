@@ -73,6 +73,8 @@ const (
 	ReasonRestarted = "baum stopped while the agent was answering, so the turn ended without an answer. Send the message again to continue the session."
 	ReasonStopping  = "baum stopped while the agent was answering. Send the message again to continue the session."
 	ReasonStopped   = "Stopped before the agent finished."
+	// ReasonSessionGone: the agent could not find the session to resume.
+	ReasonSessionGone = "The agent could not find this conversation's session any more (its history may have been removed), so the next message starts a new session in the same directory."
 )
 
 var (
@@ -82,8 +84,9 @@ var (
 	ErrBusy = errors.New("the agent is still answering the last message")
 	// ErrClosed is a message to, or a stop of, a closed conversation.
 	ErrClosed = errors.New("the conversation is closed")
-	// ErrStopping is a message sent while the daemon stops.
-	ErrStopping = errors.New("baum is stopping")
+	// ErrShuttingDown is a conversation opened or a message sent once the
+	// service has begun to shut down.
+	ErrShuttingDown = errors.New("baum is shutting down")
 )
 
 // InvalidError is a request the rules refuse.
@@ -110,6 +113,14 @@ type Conversation struct {
 	PullRequest     int    `json:"pull_request,omitempty"`
 	Branch          string `json:"branch,omitempty"`
 	CreatedWorktree bool   `json:"created_worktree"`
+	// CreatedBranch is set when baum also created Branch for that worktree.
+	// A branch baum did not create is the person's: nothing baum does when
+	// it cleans up may delete it.
+	CreatedBranch bool `json:"created_branch"`
+	// DirectoryNote says why a conversation opened on a pull request works
+	// in an empty directory instead of a checkout of it: no clone, or a head
+	// that could not be fetched or checked out.
+	DirectoryNote string `json:"directory_note,omitempty"`
 	// Session is the agent's session id once the agent reported it; every
 	// later turn resumes it.
 	Session string `json:"session,omitempty"`
@@ -186,7 +197,15 @@ type Service struct {
 	live     map[string]*live
 	page     *agentcontext.PageContext
 	stopping bool
+	// creating counts the Creates in flight and turns the running turns,
+	// which Shutdown waits for before it revokes the tokens.
+	creating sync.WaitGroup
 	turns    sync.WaitGroup
+	// placing serializes placement per repository (lockRepository).
+	placing map[string]*sync.Mutex
+	// backends are the agents built so far, by what builds them, so each
+	// checks its CLI's version once.
+	backends map[backendKey]builtBackend
 }
 
 // live is what a conversation holds while the daemon runs: its MCP token and
@@ -233,7 +252,8 @@ func New(opts Options) (*Service, error) {
 		return nil, err
 	}
 	base, cancel := context.WithCancel(context.Background())
-	return &Service{opts: opts, store: st, root: root, base: base, cancel: cancel, live: map[string]*live{}}, nil
+	return &Service{opts: opts, store: st, root: root, base: base, cancel: cancel, live: map[string]*live{},
+		placing: map[string]*sync.Mutex{}, backends: map[backendKey]builtBackend{}}, nil
 }
 
 // CreateRequest opens a conversation.
@@ -264,12 +284,26 @@ func (s *Service) Create(ctx context.Context, request CreateRequest) (Conversati
 	if len(request.Model) > maxModel || strings.ContainsFunc(request.Model, unicode.IsControl) {
 		return Conversation{}, &InvalidError{Message: "the model is one line of at most 200 characters"}
 	}
-	s.mu.Lock()
-	stopping := s.stopping
-	s.mu.Unlock()
-	if stopping {
-		return Conversation{}, ErrStopping
+	if request.Page != nil {
+		if err := request.Page.Validate(); err != nil {
+			return Conversation{}, &InvalidError{Message: "page: " + err.Error()}
+		}
 	}
+	s.mu.Lock()
+	if s.stopping {
+		s.mu.Unlock()
+		return Conversation{}, ErrShuttingDown
+	}
+	// Shutdown waits for this Create, so the row is saved for any directory
+	// it made and the token it mints is revoked with the others.
+	s.creating.Add(1)
+	s.mu.Unlock()
+	defer s.creating.Done()
+	// Shutting down cancels a fetch in progress; the conversation then gets
+	// an empty directory.
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	defer context.AfterFunc(s.base, cancel)()
 	id := newID()
 	placed, err := s.place(ctx, id, request.Page)
 	if err != nil {
@@ -278,7 +312,7 @@ func (s *Service) Create(ctx context.Context, request CreateRequest) (Conversati
 	now := s.opts.Now().UTC()
 	c := Conversation{ID: id, Agent: request.Agent, Model: request.Model, Mode: request.Mode, Directory: placed.dir,
 		Repository: placed.repository, PullRequest: placed.number, Branch: placed.branch, CreatedWorktree: placed.created,
-		Pages: []agentcontext.PageContext{}, CreatedAt: now, UpdatedAt: now, State: StateIdle}
+		CreatedBranch: placed.newBranch, DirectoryNote: placed.note, Pages: []agentcontext.PageContext{}, CreatedAt: now, UpdatedAt: now, State: StateIdle}
 	if request.Page != nil {
 		c.Pages = addPage(c.Pages, *request.Page)
 	}
@@ -286,6 +320,11 @@ func (s *Service) Create(ctx context.Context, request CreateRequest) (Conversati
 		return Conversation{}, err
 	}
 	s.mu.Lock()
+	// The person is on the page they opened the conversation from, so it is
+	// the page every token, the new one included, has open.
+	if request.Page != nil {
+		s.setPageLocked(*request.Page)
+	}
 	_, err = s.liveLocked(c)
 	s.mu.Unlock()
 	if err != nil {
@@ -317,7 +356,7 @@ func (s *Service) Send(_ context.Context, id, message string, page *agentcontext
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.stopping {
-		return Conversation{}, ErrStopping
+		return Conversation{}, ErrShuttingDown
 	}
 	c, err := s.store.get(id)
 	if err != nil {
@@ -337,9 +376,10 @@ func (s *Service) Send(_ context.Context, id, message string, page *agentcontext
 		return Conversation{}, err
 	}
 	if page != nil {
-		if err := s.opts.Registry.SetPage(l.consumer, *page); err != nil {
+		if err := page.Validate(); err != nil {
 			return Conversation{}, &InvalidError{Message: "page: " + err.Error()}
 		}
+		s.setPageLocked(*page)
 		c.Pages = addPage(c.Pages, *page)
 	}
 	if c.Title == "" {
@@ -420,21 +460,26 @@ func (s *Service) Close(ctx context.Context, id string) (Conversation, error) {
 }
 
 // SetPage records the page the person has open for every open conversation's
-// MCP token, and for the tokens minted later. It returns the first refusal
-// of the page.
+// MCP token, and for the tokens minted later, and refuses a page the MCP
+// server would refuse. Create and Send set the page they come from too.
 func (s *Service) SetPage(page agentcontext.PageContext) error {
+	if err := page.Validate(); err != nil {
+		return err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	var first error
-	for _, l := range s.live {
-		if err := s.opts.Registry.SetPage(l.consumer, page); err != nil && first == nil {
-			first = err
+	s.setPageLocked(page)
+	return nil
+}
+
+// setPageLocked sets a valid page on every token. s.mu is held.
+func (s *Service) setPageLocked(page agentcontext.PageContext) {
+	for id, l := range s.live {
+		if err := s.opts.Registry.SetPage(l.consumer, page); err != nil {
+			s.opts.Log.Warn("page not set on a conversation's token", "conversation", id, "error", err)
 		}
 	}
-	if first == nil {
-		s.page = &page
-	}
-	return first
+	s.page = &page
 }
 
 // Progress is a turn as it runs, kept in memory: the latest text of the
@@ -465,7 +510,7 @@ func (s *Service) Progress(id string) (Progress, bool) {
 		return Progress{}, false
 	}
 	p := l.progress
-	p.Text = joinText(p.Text, p.streaming)
+	p.Text = tail(joinText(p.Text, p.streaming), agent.MaxConverseBytes)
 	p.streaming = ""
 	return p, true
 }
@@ -476,13 +521,15 @@ func (s *Service) Run(ctx context.Context) {
 	s.Shutdown()
 }
 
-// Shutdown stops every running turn, waits until they are recorded failed
-// (ReasonStopping) and revokes every MCP token. Later sends are refused.
+// Shutdown stops every running turn, waits until they and the Creates in
+// flight are recorded, the turns failed (ReasonStopping), and revokes every
+// MCP token. Later Creates and Sends are refused with ErrShuttingDown.
 func (s *Service) Shutdown() {
 	s.mu.Lock()
 	s.stopping = true
 	s.mu.Unlock()
 	s.cancel()
+	s.creating.Wait()
 	s.turns.Wait()
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -516,14 +563,22 @@ func (s *Service) liveLocked(c Conversation) (*live, error) {
 	if err != nil {
 		return nil, err
 	}
-	l := &live{token: token, consumer: consumerID, revoke: revoke, session: c.Session}
-	if s.page != nil {
-		if err := s.opts.Registry.SetPage(consumerID, *s.page); err != nil {
-			s.opts.Log.Warn("page not set on a conversation's token", "conversation", c.ID, "error", err)
-		}
-	}
+	l := &live{}
+	s.bindLocked(c.ID, l, token, consumerID, revoke)
+	l.session = c.Session
 	s.live[c.ID] = l
 	return l, nil
+}
+
+// bindLocked gives l a newly minted token, with the page the person has
+// open. s.mu is held.
+func (s *Service) bindLocked(id string, l *live, token, consumer string, revoke func()) {
+	l.token, l.consumer, l.revoke, l.session = token, consumer, revoke, ""
+	if s.page != nil {
+		if err := s.opts.Registry.SetPage(consumer, *s.page); err != nil {
+			s.opts.Log.Warn("page not set on a conversation's token", "conversation", id, "error", err)
+		}
+	}
 }
 
 func newID() string {
@@ -571,6 +626,18 @@ func joinText(before, next string) string {
 		return before
 	}
 	return before + "\n\n" + next
+}
+
+// tail keeps the last limit bytes of text, from a rune boundary.
+func tail(text string, limit int) string {
+	if len(text) <= limit {
+		return text
+	}
+	start := len(text) - limit
+	for start < len(text) && !utf8.RuneStart(text[start]) {
+		start++
+	}
+	return text[start:]
 }
 
 // bounded cuts text to at most limit bytes on a rune boundary.

@@ -35,6 +35,13 @@ prompt=$(cat)
 printf '%s\n' "$@" > "$log/arguments.txt"
 pwd > "$log/pwd.txt"
 env > "$log/environment.txt"
+case "$*" in
+*--resume*)
+  if [ -f "$log/gone" ]; then
+    echo '{"type":"result","subtype":"error_during_execution","is_error":true,"num_turns":0,"errors":["No conversation found with session ID: ` + testSession + `"]}'
+    exit 1
+  fi;;
+esac
 echo '{"type":"system","subtype":"init","session_id":"` + testSession + `"}'
 case "$prompt" in
 *wait*)
@@ -205,8 +212,9 @@ func TestConversationRunsAndResumes(t *testing.T) {
 	if !ok || consumer.Kind != agentcontext.Chat || consumer.Session != agentcontext.SessionKey(AgentClaudeCode, testSession) {
 		t.Fatalf("consumer %+v %v", consumer, ok)
 	}
-	if page, ok := f.opts.Registry.Page(l.consumer); ok {
-		t.Fatalf("a page was set before any was given: %+v", page)
+	// The page it was opened from is the token's page.
+	if page, ok := f.opts.Registry.Page(l.consumer); !ok || page.Page != agentcontext.PageInbox {
+		t.Fatalf("the token's page is %+v %v", page, ok)
 	}
 
 	if _, err := f.service.Send(ctx, c.ID, "and now?", &agentcontext.PageContext{Page: agentcontext.PageJobs}); err != nil {
@@ -407,7 +415,7 @@ func TestTokenLifecycle(t *testing.T) {
 			t.Error("shutdown kept a token")
 		}
 	}
-	if _, err := f.service.Send(ctx, two.ID, "hello", nil); !errors.Is(err, ErrStopping) {
+	if _, err := f.service.Send(ctx, two.ID, "hello", nil); !errors.Is(err, ErrShuttingDown) {
 		t.Errorf("a message after shutdown: %v", err)
 	}
 }

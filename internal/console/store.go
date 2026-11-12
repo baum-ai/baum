@@ -34,6 +34,10 @@ func openStore(path, reason string, now time.Time) (*store, error) {
 		_ = db.Close()
 		return nil, err
 	}
+	if err = addColumns(db); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
 	if _, err = db.Exec(`UPDATE console_conversations SET state=?, error=?, updated=? WHERE state=?`, StateFailed, reason, now.UnixMilli(), StateRunning); err != nil {
 		_ = db.Close()
 		return nil, err
@@ -41,9 +45,33 @@ func openStore(path, reason string, now time.Time) (*store, error) {
 	return &store{db: db}, nil
 }
 
+// addedColumns are the columns added after the table was first created,
+// with their definitions.
+var addedColumns = [][2]string{
+	{"created_branch", "INTEGER NOT NULL DEFAULT 0"},
+	{"directory_note", "TEXT NOT NULL DEFAULT ''"},
+}
+
+// addColumns adds the columns a table created by an earlier baum lacks.
+func addColumns(db *sql.DB) error {
+	for _, column := range addedColumns {
+		var found int
+		if err := db.QueryRow(`SELECT count(*) FROM pragma_table_info('console_conversations') WHERE name=?`, column[0]).Scan(&found); err != nil {
+			return err
+		}
+		if found > 0 {
+			continue
+		}
+		if _, err := db.Exec(`ALTER TABLE console_conversations ADD COLUMN ` + column[0] + ` ` + column[1]); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (s *store) close() error { return s.db.Close() }
 
-const columns = `id, agent, model, mode, directory, repository, pull_request, branch, created_worktree, session_id, pages, title, created, updated, state, error, cost_usd, cost_partial`
+const columns = `id, agent, model, mode, directory, repository, pull_request, branch, created_worktree, session_id, pages, title, created, updated, state, error, cost_usd, cost_partial, created_branch, directory_note`
 
 // save writes the whole conversation, inserting it or replacing its row.
 func (s *store) save(c Conversation) error {
@@ -55,12 +83,13 @@ func (s *store) save(c Conversation) error {
 	if c.CostUSD != nil {
 		cost = sql.NullFloat64{Float64: *c.CostUSD, Valid: true}
 	}
-	_, err = s.db.Exec(`INSERT INTO console_conversations(`+columns+`) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+	_, err = s.db.Exec(`INSERT INTO console_conversations(`+columns+`) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 ON CONFLICT(id) DO UPDATE SET agent=excluded.agent, model=excluded.model, mode=excluded.mode, directory=excluded.directory, repository=excluded.repository,
 pull_request=excluded.pull_request, branch=excluded.branch, created_worktree=excluded.created_worktree, session_id=excluded.session_id, pages=excluded.pages,
-title=excluded.title, created=excluded.created, updated=excluded.updated, state=excluded.state, error=excluded.error, cost_usd=excluded.cost_usd, cost_partial=excluded.cost_partial`,
+title=excluded.title, created=excluded.created, updated=excluded.updated, state=excluded.state, error=excluded.error, cost_usd=excluded.cost_usd, cost_partial=excluded.cost_partial,
+created_branch=excluded.created_branch, directory_note=excluded.directory_note`,
 		c.ID, c.Agent, c.Model, c.Mode, c.Directory, c.Repository, c.PullRequest, c.Branch, c.CreatedWorktree, c.Session, string(pages), c.Title,
-		c.CreatedAt.UnixMilli(), c.UpdatedAt.UnixMilli(), c.State, c.Error, cost, c.CostPartial)
+		c.CreatedAt.UnixMilli(), c.UpdatedAt.UnixMilli(), c.State, c.Error, cost, c.CostPartial, c.CreatedBranch, c.DirectoryNote)
 	return err
 }
 
@@ -72,7 +101,7 @@ func scan(row scanner) (Conversation, error) {
 	var created, updated int64
 	var cost sql.NullFloat64
 	if err := row.Scan(&c.ID, &c.Agent, &c.Model, &c.Mode, &c.Directory, &c.Repository, &c.PullRequest, &c.Branch, &c.CreatedWorktree, &c.Session,
-		&pages, &c.Title, &created, &updated, &c.State, &c.Error, &cost, &c.CostPartial); err != nil {
+		&pages, &c.Title, &created, &updated, &c.State, &c.Error, &cost, &c.CostPartial, &c.CreatedBranch, &c.DirectoryNote); err != nil {
 		return Conversation{}, err
 	}
 	// A page list that does not parse is shown as none rather than hiding

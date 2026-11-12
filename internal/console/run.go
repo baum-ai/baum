@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/baum-ai/baum/agent"
@@ -40,8 +41,10 @@ type Event struct {
 	CostUSD *float64 `json:"cost_usd,omitempty"`
 }
 
-// textInterval is the most often a running turn's text is announced.
-const textInterval = 250 * time.Millisecond
+// textInterval is the most often a running turn's text is announced: the
+// event stream replays only its last 128 events, which text must not crowd
+// out.
+const textInterval = time.Second
 
 func (s *Service) publish(e Event) {
 	if s.opts.Publish != nil {
@@ -78,10 +81,15 @@ func (s *Service) turn(ctx context.Context, c Conversation, message string, l *l
 		s.opts.Log.Warn("conversation not read after its turn", "conversation", c.ID, "error", readErr)
 		current = c
 	}
-	if result.SessionID != "" && current.Session == "" {
+	// A session the agent cannot find any more is forgotten, so the next
+	// turn starts a new one instead of failing the same way for ever.
+	sessionGone := err != nil && errors.Is(err, agent.ErrSessionNotFound) && !stopped && !stopping
+	switch {
+	case sessionGone:
+		current.Session = ""
+	case result.SessionID != "" && current.Session == "":
 		current.Session = result.SessionID
-	}
-	if l.session != "" && current.Session == "" {
+	case l.session != "" && current.Session == "":
 		current.Session = l.session
 	}
 	current.UpdatedAt = s.opts.Now().UTC()
@@ -93,6 +101,8 @@ func (s *Service) turn(ctx context.Context, c Conversation, message string, l *l
 		current.Error = ReasonStopped
 	case stopping:
 		current.State, current.Error = StateFailed, ReasonStopping
+	case sessionGone:
+		current.State, current.Error = StateFailed, ReasonSessionGone
 	case errors.Is(err, context.DeadlineExceeded):
 		current.State = StateFailed
 		current.Error = fmt.Sprintf("The answer took longer than the run time limit of %s and was stopped; the limit is in Settings.", limitText(l.limit))
@@ -118,11 +128,23 @@ func (s *Service) turn(ctx context.Context, c Conversation, message string, l *l
 	if saveErr := s.store.save(current); saveErr != nil {
 		s.opts.Log.Warn("conversation not saved after its turn", "conversation", c.ID, "error", saveErr)
 	}
+	// A token is bound to one session, once: the new session needs a new
+	// token. A conversation that cannot get one mints it on its next turn.
+	if sessionGone && !closed && s.live[c.ID] == l {
+		l.revoke()
+		token, consumer, revoke, mintErr := s.opts.Registry.Mint(agentcontext.Consumer{Kind: agentcontext.Chat})
+		if mintErr != nil {
+			s.opts.Log.Warn("conversation token not minted again", "conversation", c.ID, "error", mintErr)
+			delete(s.live, c.ID)
+		} else {
+			s.bindLocked(c.ID, l, token, consumer, revoke)
+		}
+	}
 	l.progress.State, l.progress.Session, l.progress.Tool, l.progress.CostUSD = current.State, current.Session, "", cost
 	if err == nil && len(result.Document) > 0 {
-		l.progress.Text, l.progress.streaming = string(result.Document), ""
+		l.progress.Text, l.progress.streaming = tail(string(result.Document), agent.MaxConverseBytes), ""
 	} else {
-		l.progress.Text, l.progress.streaming = joinText(l.progress.Text, l.progress.streaming), ""
+		l.progress.Text, l.progress.streaming = tail(joinText(l.progress.Text, l.progress.streaming), agent.MaxConverseBytes), ""
 	}
 	if err != nil && !stopped {
 		s.opts.Log.Info("conversation turn failed", "conversation", c.ID, "agent", c.Agent, "error", err)
@@ -157,11 +179,7 @@ func (s *Service) converse(ctx context.Context, c Conversation, message string, 
 	s.mu.Unlock()
 	ctx, cancel := context.WithTimeout(ctx, limit)
 	defer cancel()
-	build := s.opts.Backend
-	if build == nil {
-		build = localBackend
-	}
-	backend, name, err := build(c.Agent, c.Model, cfg)
+	backend, name, err := s.backend(c.Agent, c.Model, cfg)
 	if err != nil {
 		return agent.Result{}, "", err
 	}
@@ -171,9 +189,12 @@ func (s *Service) converse(ctx context.Context, c Conversation, message string, 
 			return agent.Result{}, name, fmt.Errorf("finding baum for its MCP server: %w", err)
 		}
 	}
+	s.mu.Lock()
+	token := l.token
+	s.mu.Unlock()
 	request := agent.Request{
 		Directory: c.Directory, Prompt: message, ResumeSession: c.Session,
-		MCP:            &agent.MCPServer{Command: command, Args: []string{"mcp"}, Token: l.token},
+		MCP:            &agent.MCPServer{Command: command, Args: []string{"mcp"}, Token: token},
 		SessionStarted: func(id string) { s.sessionStarted(c, l, id) },
 		TextDelta:      func(text string) { s.textDelta(c.ID, l, text) },
 		Transcript:     func(entry agent.TranscriptEntry) { s.transcript(c.ID, l, entry) },
@@ -183,6 +204,48 @@ func (s *Service) converse(ctx context.Context, c Conversation, message string, 
 		err = ctx.Err()
 	}
 	return result, name, err
+}
+
+// backendKey is what an agent backend is built from. The access is not part
+// of it: it is passed with each turn.
+type backendKey struct{ agent, model, binary, env string }
+
+type builtBackend struct {
+	backend agent.Converser
+	name    string
+}
+
+// backend returns the agent for a turn, built once for each agent, model,
+// executable and agent environment, so its CLI's version (and Codex's
+// sandbox) is checked once rather than on every turn. A change of the
+// executable or the agent environment in Settings builds a new one.
+func (s *Service) backend(agentName, model string, cfg config.Config) (agent.Converser, string, error) {
+	binary := cfg.BackendPaths[config.BackendClaude]
+	if agentName == AgentCodex {
+		binary = cfg.BackendPaths[config.BackendCodex]
+	}
+	key := backendKey{agent: agentName, model: model, binary: binary, env: strings.Join(cfg.AgentEnviron(), "\x00")}
+	s.mu.Lock()
+	built, ok := s.backends[key]
+	s.mu.Unlock()
+	if ok {
+		return built.backend, built.name, nil
+	}
+	build := s.opts.Backend
+	if build == nil {
+		build = localBackend
+	}
+	backend, name, err := build(agentName, model, cfg)
+	if err != nil {
+		return nil, "", err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if built, ok := s.backends[key]; ok {
+		return built.backend, built.name, nil
+	}
+	s.backends[key] = builtBackend{backend: backend, name: name}
+	return backend, name, nil
 }
 
 // localBackend builds the person's own Claude Code or Codex, with the
@@ -230,7 +293,7 @@ func (s *Service) sessionStarted(c Conversation, l *live, id string) {
 func (s *Service) textDelta(id string, l *live, text string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	l.progress.streaming += text
+	l.progress.streaming = tail(l.progress.streaming+text, agent.MaxConverseBytes)
 	s.textChangedLocked(id, l)
 }
 
@@ -241,7 +304,7 @@ func (s *Service) transcript(id string, l *live, entry agent.TranscriptEntry) {
 	defer s.mu.Unlock()
 	switch entry.Kind {
 	case "message":
-		l.progress.Text, l.progress.streaming = joinText(l.progress.Text, entry.Text), ""
+		l.progress.Text, l.progress.streaming = tail(joinText(l.progress.Text, entry.Text), agent.MaxConverseBytes), ""
 	case "tool":
 		if entry.Status == "running" {
 			l.progress.Tool = bounded(entry.Title, 512)
