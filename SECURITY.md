@@ -725,8 +725,10 @@ What remains:
 ## Writes to GitHub
 
 The local application writes to GitHub only when you click and confirm, one
-pull request at a time, with the credential you saved for baum. There are seven
-writes and no others:
+pull request at a time, with the credential you saved for baum. An agent may
+propose a merge, a branch update, a re-run, resolving a thread or a fix, but it
+runs only when you confirm it in the app, through the same route the button
+calls (see "MCP server for agents"). There are seven writes and no others:
 
 - **Merge** (`internal/github/merge.go`): GraphQL `mergePullRequest` with
   `expectedHeadOid` set to the head you saw.
@@ -1534,8 +1536,8 @@ app. The value and revision it is compared against are read by the daemon
 when the proposal is recorded, never taken from the agent; a value the agent
 says it read must match the current one, and a mismatch is refused with an
 error that says nothing more. The current value is shown to you, never
-returned to the agent: a proposal tool answers only the proposal's id, page
-and target. Saving checks that you still have the page open, showing the
+returned to the agent: a proposal tool answers only the proposal's id, page,
+target and kind. Saving checks that you still have the page open, showing the
 same repository, pull request or group, that the target still belongs to the
 section you see and that the agent's token is still live, and the page
 compares the revision and writes in one step, so a target changed by anyone
@@ -1559,8 +1561,49 @@ environment variable's value and never learns one: it may propose a
 variable's name to add or remove, the proposal holds only the name, and you
 type the value when you save it; the value goes from the app's save to the
 setting and is never stored in the proposal, returned to the agent, printed
-or logged. Nothing outside that list can be proposed: not your GitHub
-connection, a repository's registration or clones, nor any GitHub write.
+or logged. Nothing outside that list can be changed through a saved
+proposal: not your GitHub connection, a repository's registration or clones,
+nor any GitHub write.
+
+A chat may also propose an operation: one of the buttons of the page you
+have open, for something that page shows. The agent never runs anything.
+Nothing runs until you confirm it in the app, and then the daemon runs the
+same route the button calls, with that route's own checks, once: the
+proposal is taken out before it runs, so a second confirm, or two at once,
+runs nothing more. Confirming checks that you still have the page the
+proposal was made on open, showing the same thing, that its target is still
+on it (a request still pending, a job still queued or running) and that the
+agent's token is still live; a token revoked before your confirm took the
+proposal runs nothing. Each operation sends one fixed method to one fixed
+route: the values an agent's arguments put in the path must each be one
+plain segment, and the request is checked to be that route before it is
+sent, so no argument can reach another route. The agent's answer is the
+proposal's id, page, target and kind, never what will run or what the route
+answered. You read what will happen and on what before you confirm: the
+pull request's title and number and the head, the job, the session and its
+title, or for an agent's request the requesting agent, its session and
+exactly what it asked (the tool and its input, or the questions).
+
+What you can be asked to confirm: on a pull request's page, a merge (with a
+method GitHub allows, at the head the page showed), a branch update, a re-run
+of the failed checks or of one failed job, resolving one review thread, a fix
+and a new review; on the Inbox and Pull requests, a review, a refresh from
+GitHub and (Pull requests) a new review group; on the sessions pages,
+answering an agent's pending request, a message to a session, ending a
+session and bringing it forward; on the jobs pages, cancelling a job; on a
+group's page, deleting it; on the Repositories page, registering a
+repository, removing one or a clone's registration, and cloning a registered
+repository into the folder the app would choose by default, which the summary
+names (an agent cannot choose the folder). A fix and a review start a paid
+agent run: the summary says so and names the harness, model and effort from
+your settings. A merge, ending a session, deleting a group and removing a
+repository or a clone are marked as not undoable. An agent's request is
+answered only from a page that lists it (the Sessions page, or that
+session's page for its own), and a chat never answers a request of its own
+session (the chat's token names the session it runs in), so it cannot
+approve its own tool calls. A review of a pull request from a fork or an
+untrusted author is refused by the route without your isolation
+confirmation, which an agent cannot give; you start it from the app.
 
 Every tool result is masked with the same redaction as prompts, cut to at
 most 64 KiB, and placed between `BEGIN UNTRUSTED DATA` and
