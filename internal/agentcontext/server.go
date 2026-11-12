@@ -20,6 +20,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"time"
 )
 
 // ProtocolVersion is the MCP revision the server speaks.
@@ -48,25 +49,39 @@ type Options struct {
 	// GitHub (no search, no reload), so a tool call cannot use up the
 	// account's rate limit. Nil has the tool report none.
 	PickList func(ctx context.Context, query string) (PickList, error)
+	// PlanChoices returns the entries of Settings' plan usage choice (each
+	// {provider, name, shown, default, explicit}, as GET
+	// /api/settings/plan-usage answers), worked out from the plan usage cache
+	// alone: the route reads the providers when the cache is stale, and a tool
+	// call must never cause that fetch. Nil has the tool report none.
+	PlanChoices func(ctx context.Context) ([]json.RawMessage, error)
+	// CodexHooks returns the Codex hook state the daemon last read for the
+	// app, and when, without reading again: a read starts Codex processes,
+	// which a tool call must never do. ok is false when none was read. Nil
+	// has the tool report none.
+	CodexHooks func() (state string, at time.Time, ok bool)
 }
 
 // Server is the MCP server. Register tools and pages before serving.
 type Server struct {
-	Registry  *Registry
-	Proposals *Proposals
-	reader    *Reader
-	envelope  *envelope
-	version   string
-	planUsage func(ctx context.Context) ([]json.RawMessage, error)
-	pickList  func(ctx context.Context, query string) (PickList, error)
-	mu        sync.RWMutex
-	tools     []Tool
-	pages     map[string]PageSpec
+	Registry    *Registry
+	Proposals   *Proposals
+	reader      *Reader
+	envelope    *envelope
+	version     string
+	planUsage   func(ctx context.Context) ([]json.RawMessage, error)
+	pickList    func(ctx context.Context, query string) (PickList, error)
+	planChoices func(ctx context.Context) ([]json.RawMessage, error)
+	codexHooks  func() (string, time.Time, bool)
+	mu          sync.RWMutex
+	tools       []Tool
+	pages       map[string]PageSpec
 }
 
 func New(opts Options) *Server {
 	registry := NewRegistry()
-	s := &Server{Registry: registry, reader: NewReader(opts.API, opts.Clone), envelope: newEnvelope(registry.live), version: opts.Version, planUsage: opts.PlanUsage, pickList: opts.PickList, pages: map[string]PageSpec{}}
+	s := &Server{Registry: registry, reader: NewReader(opts.API, opts.Clone), envelope: newEnvelope(registry.live), version: opts.Version, planUsage: opts.PlanUsage, pickList: opts.PickList,
+		planChoices: opts.PlanChoices, codexHooks: opts.CodexHooks, pages: map[string]PageSpec{}}
 	s.Proposals = newProposals(registry, func(page string) Proposer {
 		spec, _ := s.page(page)
 		return spec.Proposer
@@ -75,7 +90,8 @@ func New(opts Options) *Server {
 	pull, group, reviews, common := s.pullTools(), s.groupTools(), s.reviewTools(), s.commonTools()
 	lists, sessions, timeline := s.listTools(), s.sessionTools(), s.timelineTools()
 	extras, analytics, repositories := s.pullExtraTools(), s.analyticsTools(), s.repositoryTools()
-	for _, t := range slices.Concat(s.builtinTools(), pull, group, reviews, common, lists, sessions, timeline, extras, analytics, repositories) {
+	settings, repositoryPage := s.settingsTools(), repositoryPageToolList()
+	for _, t := range slices.Concat(s.builtinTools(), pull, group, reviews, common, lists, sessions, timeline, extras, analytics, repositories, settings, repositoryPage) {
 		if err := t.compile(); err != nil {
 			panic(err)
 		}
@@ -127,14 +143,16 @@ func New(opts Options) *Server {
 	s.pages[PageSession] = PageSpec{Name: PageSession, Tools: withCommonTools(names(sessions))}
 	// Analytics reads its report and the plan figures; the Jobs list and a
 	// job's page its jobs; the Repositories page and a repository's page the
-	// registered repositories, the clones found and the pickers. Settings
-	// lists the Report a problem summary.
+	// registered repositories, the clones found and the pickers, and a
+	// repository's page its sections' tools (current_page lists those only
+	// when the page shows a repository). Settings lists its sections' tools
+	// and the Report a problem summary.
 	s.pages[PageAnalytics] = PageSpec{Name: PageAnalytics, Tools: withCommonTools(byName(analytics, "analytics", "plan_usage"))}
 	jobPage := byName(analytics, "job", "job_failure", "job_list")
 	s.pages[PageJobs] = PageSpec{Name: PageJobs, Tools: withCommonTools(slices.Concat(jobPage, []string{"jobs", "job_transcript"}))}
 	s.pages[PageJob] = PageSpec{Name: PageJob, Tools: withCommonTools(slices.Concat(jobPage, []string{"job_transcript"}))}
-	s.pages[PageRepositories] = PageSpec{Name: PageRepositories, Tools: withCommonTools(byName(repositories, "repositories", "clones_found", "github_repositories", "clone_target"))}
-	s.pages[PageSettings] = PageSpec{Name: PageSettings, Tools: withCommonTools(byName(repositories, "diagnostics_summary"))}
+	s.pages[PageRepositories] = PageSpec{Name: PageRepositories, Tools: withCommonTools(slices.Concat(byName(repositories, "repositories", "clones_found", "github_repositories", "clone_target"), names(repositoryPage)))}
+	s.pages[PageSettings] = PageSpec{Name: PageSettings, Tools: withCommonTools(slices.Concat(names(settings), byName(repositories, "diagnostics_summary")))}
 	s.pages[PageTimeline] = PageSpec{Name: PageTimeline, Tools: withCommonTools(names(timeline))}
 	s.pages[PageFeature] = PageSpec{Name: PageFeature, Tools: withCommonTools(names(timeline))}
 	return s

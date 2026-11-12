@@ -351,9 +351,22 @@ type diagnosticCheck struct {
 }
 
 func callDiagnosticsSummary(ctx context.Context, c CallContext, _ json.RawMessage) (string, error) {
+	status, checks, err := readDiagnostics(ctx, c)
+	if err != nil {
+		return "", err
+	}
+	return compactJSON(struct {
+		Status string            `json:"status"`
+		Checks []diagnosticCheck `json:"checks"`
+	}{status, checks})
+}
+
+// readDiagnostics reads /api/diagnostics, a projected route, and returns the
+// report's status and each check as diagnosticCheck keeps it, scrubbed.
+func readDiagnostics(ctx context.Context, c CallContext) (string, []diagnosticCheck, error) {
 	body, _, err := c.get(ctx, "/api/diagnostics", nil)
 	if err != nil {
-		return "", errors.New("diagnostics are unavailable now")
+		return "", nil, errors.New("diagnostics are unavailable now")
 	}
 	var answer struct {
 		Home   string `json:"home"`
@@ -369,10 +382,10 @@ func callDiagnosticsSummary(ctx context.Context, c CallContext, _ json.RawMessag
 		} `json:"report"`
 	}
 	if json.Unmarshal(body, &answer) != nil {
-		return "", errors.New("the diagnostics are not readable")
+		return "", nil, errors.New("the diagnostics are not readable")
 	}
 	if answer.Report == nil {
-		return "", errors.New("the daemon has run no diagnostics")
+		return "", nil, errors.New("the daemon has run no diagnostics")
 	}
 	// A label, version or source is words, but one could quote a folder, an
 	// account name or a secret: each is scrubbed as the public issue summary
@@ -393,10 +406,7 @@ func callDiagnosticsSummary(ctx context.Context, c CallContext, _ json.RawMessag
 		}
 		return head + ": " + scrub(rest)
 	}
-	out := struct {
-		Status string            `json:"status"`
-		Checks []diagnosticCheck `json:"checks"`
-	}{Status: answer.Report.Status, Checks: []diagnosticCheck{}}
+	checks := []diagnosticCheck{}
 	for _, k := range answer.Report.Checks {
 		id, label, source := k.ID, k.Label, k.Source
 		if strings.HasPrefix(k.ID, "github-token-") {
@@ -408,7 +418,7 @@ func callDiagnosticsSummary(ctx context.Context, c CallContext, _ json.RawMessag
 		if strings.HasPrefix(source, "backend_paths.") {
 			source = ""
 		}
-		out.Checks = append(out.Checks, diagnosticCheck{id, scrubLabel(label), k.Status, scrub(k.Version), scrub(source)})
+		checks = append(checks, diagnosticCheck{id, scrubLabel(label), k.Status, scrub(k.Version), scrub(source)})
 	}
-	return compactJSON(out)
+	return answer.Report.Status, checks, nil
 }

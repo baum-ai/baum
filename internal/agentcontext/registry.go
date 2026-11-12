@@ -62,8 +62,10 @@ var pageNames = map[string]bool{
 }
 
 // PageContext is what the user has open in the app: the page, the thing it
-// shows and the filters on it. Focus is the part of the page the user picked,
-// as the page describes it.
+// shows and the filters on it. Section is the open section of the Settings
+// page (settingsSections) or of a repository's page, the Repositories page
+// with a repository (repositorySections); no other page has one. Focus is the
+// part of the page the user picked, as the page describes it.
 type PageContext struct {
 	Page        string            `json:"page"`
 	Repository  string            `json:"repository,omitempty"`
@@ -72,6 +74,7 @@ type PageContext struct {
 	Session     string            `json:"session,omitempty"`
 	Job         string            `json:"job,omitempty"`
 	Feature     string            `json:"feature,omitempty"`
+	Section     string            `json:"section,omitempty"`
 	Filters     map[string]string `json:"filters,omitempty"`
 	Focus       json.RawMessage   `json:"focus,omitempty"`
 }
@@ -89,10 +92,13 @@ func (p PageContext) validate() error {
 	if len(p.Filters) > maxFilters {
 		return fmt.Errorf("at most %d filters", maxFilters)
 	}
-	for _, text := range []string{p.Repository, p.Group, p.Session, p.Job, p.Feature} {
+	for _, text := range []string{p.Repository, p.Group, p.Session, p.Job, p.Feature, p.Section} {
 		if len(text) > maxPageText {
 			return errors.New("page field too long")
 		}
+	}
+	if err := checkSection(p.Page, strings.TrimSpace(p.Repository), p.Section); err != nil {
+		return err
 	}
 	for key, value := range p.Filters {
 		if len(key) > maxPageText || len(value) > maxPageText {

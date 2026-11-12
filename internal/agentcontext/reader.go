@@ -46,8 +46,19 @@ var unreadable = []string{"/api/settings", "/api/debug", "/api/github", "/api/di
 // only the tool named may declare it (Tool.Projected, checked when the tool is
 // compiled), only a ScopeGlobal tool may, and an action's reader refuses it
 // whatever a tool declares. A test lists these pairs exactly.
+//
+// A route under an unreadable prefix is still unreadable (/api/settings/
+// appearance is under /api/settings), so each Settings route a tool reads is
+// named here on its own.
 var projectedReads = map[string][]string{
-	"diagnostics_summary": {"/api/diagnostics"},
+	"diagnostics_summary":  {"/api/diagnostics"},
+	"settings_general":     {"/api/settings/appearance"},
+	"settings_reviews":     {"/api/settings", "/api/settings/decisions"},
+	"settings_fixes":       {"/api/settings"},
+	"settings_connections": {"/api/github-auth"},
+	"settings_computer":    {"/api/settings", "/api/diagnostics"},
+	"prompts":              {"/api/settings/prompts"},
+	"prompt":               {"/api/settings/prompts"},
 }
 
 // checkProjected refuses a tool a projected route it was not allowed.
@@ -198,6 +209,72 @@ var actionRoutes = []actionRoute{
 	// The running sessions answer for every repository: the reader keeps the
 	// action's repository's.
 	{pattern: "/api/live-sessions", bind: byFilter, filter: filterLiveSessions},
+
+	// A repository's page: its settings, clones and earlier names, and its
+	// automatic review state, from lists of every repository the reader
+	// rebuilds from the action's repository's row alone; and its prompts, by
+	// path.
+	{pattern: "/api/repositories", bind: byFilter, filter: filterRepositories},
+	{pattern: "/api/automatic", bind: byFilter, filter: filterAutomatic},
+	{pattern: "/api/repositories/{owner}/{name}/prompts", bind: byPath},
+}
+
+// filterRepositories keeps the row of repository in an /api/repositories
+// body, rebuilt from its settings, its clones' ids and availability and its
+// earlier names: a clone's folder and git directory are dropped.
+func filterRepositories(body []byte, repository string) ([]byte, error) {
+	if disabled(body) {
+		return nil, errUnavailable
+	}
+	type clone struct {
+		ID         string `json:"id"`
+		Repository string `json:"repository"`
+		Available  bool   `json:"available"`
+	}
+	type row struct {
+		Repository string `json:"repository"`
+		Settings   struct {
+			Automatic *bool `json:"automatic"`
+			Decisions *bool `json:"decisions"`
+		} `json:"settings"`
+		Clones       []clone  `json:"clones"`
+		EarlierNames []string `json:"earlier_names,omitempty"`
+	}
+	var list []row
+	if err := json.Unmarshal(body, &list); err != nil {
+		return nil, err
+	}
+	kept := []row{}
+	for _, r := range list {
+		if strings.EqualFold(r.Repository, repository) {
+			kept = append(kept, r)
+		}
+	}
+	return json.Marshal(kept)
+}
+
+// filterAutomatic keeps the status row of repository in an /api/automatic
+// body (whether automatic reviews are on for it, the latest notice and how
+// many wait), and drops the global switch and choice of pull requests, which
+// are Settings', not the repository's.
+func filterAutomatic(body []byte, repository string) ([]byte, error) {
+	var v struct {
+		Available    *bool          `json:"available"`
+		Repositories []automaticRow `json:"repositories"`
+	}
+	if err := json.Unmarshal(body, &v); err != nil {
+		return nil, err
+	}
+	if v.Available != nil && !*v.Available {
+		return nil, errUnavailable
+	}
+	kept := []automaticRow{}
+	for _, r := range v.Repositories {
+		if strings.EqualFold(r.Repository, repository) {
+			kept = append(kept, r)
+		}
+	}
+	return json.Marshal(map[string]any{"repositories": kept})
 }
 
 // filterLiveSessions keeps the sessions of repository in an

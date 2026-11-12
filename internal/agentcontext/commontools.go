@@ -443,6 +443,31 @@ var (
 	filterKey = regexp.MustCompile(`^[a-z][a-z0-9_]{0,31}$`)
 )
 
+// checkSection refuses a section the page does not have: Settings has
+// settingsSections, a repository's page (the Repositories page with a
+// repository) repositorySections, and no other page has any. The page context
+// and link share it, so a section current_page reports is one link builds.
+func checkSection(page, repository, section string) error {
+	switch {
+	case section == "":
+		return nil
+	case page == PageSettings:
+		if !slices.Contains(settingsSections, section) {
+			return fmt.Errorf("settings has no section %q; it has %s", section, strings.Join(settingsSections, ", "))
+		}
+	case page == PageRepositories:
+		if repository == "" {
+			return errors.New("a repository section needs the repository")
+		}
+		if !slices.Contains(repositorySections, section) {
+			return fmt.Errorf("a repository has no section %q; it has %s", section, strings.Join(repositorySections, ", "))
+		}
+	default:
+		return fmt.Errorf("page %s has no sections", page)
+	}
+	return nil
+}
+
 // linkOf is the app address of a page, as the app builds its own: the query
 // strings of pages.ts and the detail pages' hrefs.
 func linkOf(page, repository string, pullRequest int, group, session, job, feature, section string, filters map[string]string) (string, error) {
@@ -472,6 +497,9 @@ func linkOf(page, repository string, pullRequest int, group, session, job, featu
 	if repository != "" && strings.Count(repository, "/") != 1 {
 		return "", errors.New("name the repository as owner/name")
 	}
+	if err := checkSection(page, repository, section); err != nil {
+		return "", err
+	}
 	query := url.Values{}
 	switch page {
 	case PagePullRequest:
@@ -490,9 +518,6 @@ func linkOf(page, repository string, pullRequest int, group, session, job, featu
 	case PageSettings:
 		query.Set("page", "settings")
 		if section != "" {
-			if !slices.Contains(settingsSections, section) {
-				return "", fmt.Errorf("settings has no section %q; it has %s", section, strings.Join(settingsSections, ", "))
-			}
 			query.Set("section", section)
 		}
 	case PageRepositories:
@@ -501,12 +526,6 @@ func linkOf(page, repository string, pullRequest int, group, session, job, featu
 			query.Set("repository", repository)
 		}
 		if section != "" {
-			if repository == "" {
-				return "", errors.New("a repository section needs the repository")
-			}
-			if !slices.Contains(repositorySections, section) {
-				return "", fmt.Errorf("a repository has no section %q; it has %s", section, strings.Join(repositorySections, ", "))
-			}
 			query.Set("section", section)
 		}
 	default:

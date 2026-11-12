@@ -17,7 +17,14 @@ import (
 // reads settings, the GitHub connection or the raw diagnostics belongs here
 // only as a typed projection.
 var allowedProjectedReads = map[string][]string{
-	"diagnostics_summary": {"/api/diagnostics"},
+	"diagnostics_summary":  {"/api/diagnostics"},
+	"settings_general":     {"/api/settings/appearance"},
+	"settings_reviews":     {"/api/settings", "/api/settings/decisions"},
+	"settings_fixes":       {"/api/settings"},
+	"settings_connections": {"/api/github-auth"},
+	"settings_computer":    {"/api/settings", "/api/diagnostics"},
+	"prompts":              {"/api/settings/prompts"},
+	"prompt":               {"/api/settings/prompts"},
 }
 
 func TestProjectedReadsAreExactlyTheAllowedPairs(t *testing.T) {
@@ -76,6 +83,13 @@ func TestOnlyTheNamedToolMayDeclareAProjectedRoute(t *testing.T) {
 		{"github among reads", Tool{Name: "github_repositories", Scope: ScopeGlobal, Reads: []string{"/api/github/repositories"}, Call: call}},
 		{"github as a projected route", Tool{Name: "github_repositories", Scope: ScopeGlobal, Projected: []string{"/api/github/repositories"}, Call: call}},
 		{"the connection among reads", Tool{Name: "github_repositories", Scope: ScopeGlobal, Reads: []string{"/api/github-auth"}, Call: call}},
+		{"another settings route", Tool{Name: "settings_general", Scope: ScopeGlobal, Projected: []string{"/api/settings"}, Call: call}},
+		{"a settings route below its own", Tool{Name: "prompts", Scope: ScopeGlobal, Projected: []string{"/api/settings/prompts/fix"}, Call: call}},
+		{"the plan usage choices route", Tool{Name: "settings_general", Scope: ScopeGlobal, Projected: []string{"/api/settings/plan-usage"}, Call: call}},
+		{"a sign-in route", Tool{Name: "settings_connections", Scope: ScopeGlobal, Projected: []string{"/api/github-auth/start"}, Call: call}},
+		{"a repository-scoped settings tool", Tool{Name: "settings_fixes", Scope: ScopeRepository, Projected: []string{"/api/settings"}, Call: call}},
+		{"settings among reads", Tool{Name: "settings_fixes", Scope: ScopeGlobal, Reads: []string{"/api/settings"}, Call: call}},
+		{"a repository page tool", Tool{Name: "repository_prompts", Scope: ScopeRepository, Projected: []string{"/api/settings/prompts"}, Call: call}},
 	} {
 		if err := tt.tool.compile(); err == nil {
 			t.Errorf("%s: the tool compiled", tt.why)
