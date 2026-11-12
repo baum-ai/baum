@@ -515,7 +515,7 @@ func TestNoToolReadsAWriteRoute(t *testing.T) {
 		return false
 	}
 	var sources []string
-	for _, pattern := range []string{"*.go", "../jobs/*.go", "../reviewgroups/*.go", "../repos/*.go", "../livesessions/*.go", "../decisionlog/*.go", "../background/*.go", "../inboxqueue/*.go", "../reviewindex/*.go"} {
+	for _, pattern := range []string{"*.go", "../jobs/*.go", "../reviewgroups/*.go", "../repos/*.go", "../livesessions/*.go", "../decisionlog/*.go", "../background/*.go", "../inboxqueue/*.go", "../reviewindex/*.go", "../inboxes/*.go", "../uistate/*.go", "../agentrequests/*.go"} {
 		matches, err := filepath.Glob(pattern)
 		if err != nil {
 			t.Fatal(err)

@@ -5166,7 +5166,12 @@ the action's repository inside the reader, so the rest never reaches the agent
 (`byFilter`). Any other route, and any parameter its entry does not list, is
 refused. The table holds:
 
-- by `repository` (parameters `pr`, and as listed): `GET /api/jobs`,
+- by `repository` (parameters `pr`, and as listed): `GET /api/timeline/decisions`
+  (`q`, `who`, `category`, `file`, `person`, `superseded`, `from`, `to`, `limit`,
+  `cursor`), `/api/timeline/features` (`q`, `status`, `file`, `person`, `from`,
+  `to`, `limit`, `cursor`), `/api/timeline/build` and `/api/timeline/files`
+  (`prefix`, `limit`), whose handler reads every `repository` value and serves
+  only those, and exactly one value is allowed; `GET /api/jobs`,
   `/api/prs/description`, `/api/prs/checks` (`head_sha`),
   `/api/prs/failing-checks` (`head_sha`), `/api/prs/review-threads`
   (`unresolved`), `/api/prs/conflicts`, `/api/prs/merge-options`,
@@ -5177,7 +5182,9 @@ refused. The table holds:
   `/api/facts/commits`, `/api/facts/sessions` and `/api/facts/sessions/{id}`
   (`head`), and `/api/facts/patch` (`head`, `path`);
 - by response: `GET /api/jobs/{id}` and `/api/groups/{id}`, checked by the
-  record's `repository`;
+  record's `repository`, and `GET /api/timeline/decisions/{id}` and
+  `/api/timeline/features/{id}`, checked by the `repository.full_name` the
+  detail names (an archived feature names none, so no action reads it);
 - by lookup: `GET /api/jobs/{id}/transcript` (`after`) and
   `/api/jobs/{id}/draft`, after `/api/jobs/{id}`, and `/api/groups/{id}/document`
   (`version`) and `/api/groups/{id}/versions`, after `/api/groups/{id}`;
@@ -5187,7 +5194,8 @@ refused. The table holds:
   its repository by their `owner/name#number` keys, drops each item's
   saved-inbox ids and the saved inboxes themselves (their queries are the
   user's own), and recounts `count` over what is kept by the daemon's own rule
-  (items queued for the user, not being fixed, snoozed or archived). A filtered
+  (items queued for the user, not being fixed, snoozed or archived), and
+  `GET /api/live-sessions`, which keeps the sessions of its repository. A filtered
   route that answers an error, or `{"available":false}`, is refused as
   unavailable, which the tools report apart from a pull request that is not in
   the index.
@@ -5258,6 +5266,37 @@ another repository to an action through `CallContext.Target`.
 | `link` | no route: the app's address for a page and its subject, the query strings of `app/src/pages.ts` and the detail pages' hrefs (`?page=pulls`, `?repository=owner%2Fname&pr=7`, escaped as the app's `encodeURIComponent` does, `?group=id`, `?page=sessions&session=agent:id`, `?page=jobs&job=id`, `?page=timeline&feature=id`, a settings or repository section), relative so the chat panel makes it a link. `repository` is also accepted, unused, on group, session, job and feature so a `search` hit's page fields feed `link`. Filters are list pages' own parameters: ones that name a page or subject (`repository`, `pr`, `group`, `section`, `inbox`...) are refused, and a `repo` filter for an action goes through `Target`. Unknown pages, missing subjects, a field the page does not take and unknown sections are refused |
 | `app_help` | no route: the embedded `help.md`: each page, the words the app uses and its keyboard shortcuts; `topic` returns one section or word. A test reads `pages.ts` and `shortcuts.tsx` and fails when a page has no section or `link` mapping, or a key is not in the help |
 | `daemon_status` | `/api/background` (each repository's last and next refresh, failure count, whether the latest refresh failed and its problem count, never the error text) and `/api/jobs` (jobs queued and running), with the daemon's version. `/api/health` is answered by the app server before the API the tools read through, so `health` is `ok` when the call is answered. No paths, environment, diagnostics or tokens |
+
+The Inbox, Pull requests, Sessions and Timeline pages list the tools below (the
+`Server` registers them with `listTools`, `sessionTools` and `timelineTools`; the
+pages `inbox`, `pulls`, `sessions`, `session`, `timeline` and `feature` list
+them first, then the common four). A tool's default comes from its page's
+`Filters`, the page's own address and saved filters, which an argument
+replaces. Lists are bounded (`limit`, 50 by default and 200 at most; the
+Timeline's 25 and 100) and say how many more there are. The tools marked
+global read across repositories or the person's own state, so an action
+neither lists nor calls them; the repository-scoped ones read one repository,
+which for an action is always its own, and every route they read has an entry in
+`actionRoutes` above. The Timeline's results leave out each person's address
+and avatar.
+
+| Tool | Scope | Reads |
+| --- | --- | --- |
+| `inbox` | global | `/api/inbox` and `/api/index`: the pull requests the Inbox lists, as the queue holds them: `kind` (review, clone, fix, merge, update, other, waiting), whether an agent is fixing it, snoozed or archived, the saved inboxes holding it, the risk score and the review, merge and check state. Defaults to the page's `inbox` filter, else the queue waiting on the person; `query` keeps what `/api/inbox?query=` says an inbox filter holds |
+| `inboxes` | global | `/api/inboxes` (id, name, colour, what, owners, risk, repositories, query, bots, badge, revision) with each inbox's own count and folded filter from `/api/inbox` |
+| `test_query` | global | `/api/inbox?query=`: the daemon's draft of a query (the matches over the queue, with the kind each waits for) joined with `/api/index`; at most 100 matches and how many more. A query `prfilter.Problem` refuses is returned as `valid: false` with its message, without reading the daemon |
+| `pull_requests` | global | `/api/index?history=1`, filtered by view (open or closed), saved tab and filter query with `prfilter.Compile`, as the page does; the tab and the page's draft filter come from `/api/ui-state/filters`, the page's `filter` filter names the tab |
+| `live_sessions` | repository | `/api/live-sessions`: state, what it waits for and since when, its latest steps and message, repository, branch and pull request; not the head, upstream or the hooks' record. An action's list is its repository's by the filter above |
+| `live_session_transcript` | global | `/api/live-sessions/{agent}/{id}/transcript`: the prompts from `from_turn`, `limit` at a time, with the next turn named; no images (the answer's `images`, and any key beginning `image`, are dropped, and `/transcript/images/` is never readable by any reader), no working directory and no address |
+| `agent_requests` | global | the `requests` of `/api/agent-requests`: pending permission requests and questions; never its `settings` |
+| `agent_messages` | global | the `messages` of `/api/agent-requests`: the messages queued for running sessions |
+| `decisions` | repository | `/api/timeline/decisions`, filtered by `who`, `category`, `file`, `person`, `q`, `superseded`, dates and `repository`; the page's `repo`, `who`, `agent=hide` and other filters apply unless given; `cursor` is the result's `next_cursor` |
+| `decision` | repository | `/api/timeline/decisions/{id}` |
+| `features` | repository | `/api/timeline/features`, by `status`, `file`, `person`, `q`, dates and `repository` |
+| `feature` | repository | `/api/timeline/features/{id}`; defaults to the feature page's |
+| `feature_build` | repository | `/api/timeline/build` |
+| `file_history` | repository | `/api/timeline/files` |
+| `timeline_transcript` | global | `/api/timeline/sessions/{agent:id}/transcript`, projected as `live_session_transcript` is; it names no repository, so no action reads it |
 
 Every result goes through one envelope. It masks the text with
 `bundle.NewRedactor`, cuts it at most 64 KiB in at a UTF-8 boundary, and

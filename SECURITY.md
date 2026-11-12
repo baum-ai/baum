@@ -1406,7 +1406,14 @@ another method, and refuses the `refresh` and `more` parameters, which make
 some `GET` routes fetch from GitHub or rebuild a cache. Each tool reads only
 the route prefixes it declares, and no tool can read settings, GitHub
 authentication or GitHub listings, diagnostics, debugging, plan usage, the
-event stream or `/api/mcp`. Responses are bounded to 8 MiB, apart from a review document and the facts, which are read up to the 32 MiB the daemon serves.
+event stream or `/api/mcp`. No reader reads a pasted image of a session's
+transcript (`/transcript/images/`), which is served unmasked, and the
+transcript tools drop the image fields, the session's working directory and
+the person's address. The agents' requests are read without the person's
+settings for answering them. The Timeline's detail routes name their
+repository only in the response, which an action's reader checks (an archived
+feature names none and is never read); a session's Timeline transcript names
+none, so only a chat reads it. Responses are bounded to 8 MiB, apart from a review document and the facts, which are read up to the 32 MiB the daemon serves.
 
 An action's token is bound to its repository. Its tools default to its own
 pull request and may read other pull requests of that repository, never
@@ -1421,8 +1428,8 @@ the record's repository and returning nothing on a mismatch. A route that
 names no repository (a job's transcript or draft, a group's document or
 versions) is read only
 after the record its id names has been checked the same way, and a route that
-answers for every repository (the review index, the inbox) is filtered to the
-action's repository inside the reader, which also drops other clones'
+answers for every repository (the review index, the inbox, the running
+sessions) is filtered to the action's repository inside the reader, which also drops other clones'
 problems, the user's saved inbox queries and each inbox item's saved-inbox
 ids, and recounts the inbox total over what is kept. Any other route, and any query
 parameter its entry does not list, is refused. An
