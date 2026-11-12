@@ -40,7 +40,7 @@ type Cache struct {
 	current    *cached
 	flight     *flight
 	builds     uint64
-	bodies     map[bool]encodedBody
+	bodies     map[variant]encodedBody
 }
 
 type cached struct {
@@ -155,38 +155,38 @@ func (c *Cache) recovered(ctx context.Context, started time.Time) (snapshot Snap
 // Handler serves GET /api/index as Service.Handler does, from the cache.
 func (c *Cache) Handler() http.Handler { return handler(c.encoded) }
 
-// encodedBody is a version's JSON for one history flag.
+// encodedBody is a version JSON for one variant.
 type encodedBody struct {
 	version uint64
 	body    etagjson.Body
 }
 
 // encoded is the JSON of the current snapshot, encoded once per cached
-// version and history flag. A snapshot an invalidation kept out of the cache
+// version and variant. A snapshot an invalidation kept out of the cache
 // (version 0) has no identity to key on, so it is encoded each time.
-func (c *Cache) encoded(ctx context.Context, history bool) (etagjson.Body, error) {
+func (c *Cache) encoded(ctx context.Context, v variant) (etagjson.Body, error) {
 	snapshot, version, err := c.Current(ctx)
 	if err != nil {
 		return etagjson.Body{}, err
 	}
 	if version != 0 {
 		c.mu.Lock()
-		e, ok := c.bodies[history]
+		e, ok := c.bodies[v]
 		c.mu.Unlock()
 		if ok && e.version == version {
 			return e.body, nil
 		}
 	}
-	body, err := etagjson.Encode(withHistory(snapshot, history))
+	body, err := v.encode(snapshot)
 	if err != nil || version == 0 {
 		return body, err
 	}
 	c.mu.Lock()
-	if e, ok := c.bodies[history]; !ok || e.version < version {
+	if e, ok := c.bodies[v]; !ok || e.version < version {
 		if c.bodies == nil {
-			c.bodies = map[bool]encodedBody{}
+			c.bodies = map[variant]encodedBody{}
 		}
-		c.bodies[history] = encodedBody{version: version, body: body}
+		c.bodies[v] = encodedBody{version: version, body: body}
 	}
 	c.mu.Unlock()
 	return body, nil

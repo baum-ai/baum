@@ -451,7 +451,7 @@ it("keeps the PR page through queued, running and completed SSE states across cl
           ? Response.json({ entries: [indexed], problems: [] })
           : path === "/s/test-ns/api/jobs"
             ? Response.json({ jobs: [currentJob] })
-            : path === "/s/test-ns/api/prs"
+            : path === "/s/test-ns/api/prs?view=health"
               ? Response.json([])
               : path === "/s/test-ns/api/health"
                 ? Response.json({})
@@ -515,7 +515,7 @@ it("reads the open pull request's document again for an index event, not for a j
             })
           : path === "/s/test-ns/api/jobs"
             ? Response.json({ jobs: [job("running")] })
-            : path === "/s/test-ns/api/prs"
+            : path === "/s/test-ns/api/prs?view=health"
               ? Response.json([])
               : original(path, ...(args as [])),
     ),

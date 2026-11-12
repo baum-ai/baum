@@ -2984,6 +2984,16 @@ no-cache` and 304 for a matching `If-None-Match`. The app fetches them with
 `cache: "no-cache"` so the webview sends the validator; every other endpoint
 stays `no-store`.
 
+The app asks for the trimmed forms: `GET /api/index?history=1&detail=summary`
+leaves each entry's `latest` with `version`, `head`, `backend`, `model`,
+`generated_at`, `calls`, `tokens` and `recorded_cost_usd` (no `accounting`
+attempts, digests, policy or kept session, several KB per entry; a version's own
+read serves them), and `GET /api/prs?view=health` answers one
+`{repository, stale, fetched_at, next_poll, rate, error?, settling?}` per picked
+repository, without the pull requests and observations (the index lists those).
+Both are encoded and tagged once per version like the full forms, which stay the
+default for other clients; an unknown `/api/prs` view is `400`.
+
 `Service.Build` is uncached: each call probes every clone with git, reads the
 discovery cache and opens every store. The daemon reads it through one
 `reviewindex.Cache`, shared by `GET /api/index` (all views; the `history`

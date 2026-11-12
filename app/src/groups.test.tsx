@@ -177,7 +177,7 @@ beforeEach(() => {
       if (path === "api/jobs") return Response.json({ jobs });
       if (path === "api/github-auth")
         return Response.json({ state: "disconnected", host: "github.com", saved: false });
-      if (path === "api/repositories" || path === "api/prs") return Response.json([]);
+      if (path === "api/repositories" || path === "api/prs?view=health") return Response.json([]);
       return Response.json({});
     }),
   );

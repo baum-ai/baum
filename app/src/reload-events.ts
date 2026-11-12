@@ -4,7 +4,7 @@ import { isActiveJob, type Job } from "./api";
  *  parts it can change, so a job's progress does not read the index. */
 export type ReloadPart =
   | "clones" // api/repos, api/repositories, api/clones/found
-  | "index" // api/index?history=1, api/inbox
+  | "index" // api/index?history=1&detail=summary, api/inbox
   | "jobs" // api/jobs
   | "discovery" // api/prs, api/background
   | "automatic" // api/automatic
