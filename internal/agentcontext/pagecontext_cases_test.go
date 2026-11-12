@@ -33,7 +33,7 @@ func TestAppPageContextsAreValid(t *testing.T) {
 			t.Errorf("%q: %+v refused: %v", c.Query, p, err)
 			continue
 		}
-		if _, err := linkOf(p.Page, p.Repository, p.PullRequest, p.Group, p.Session, p.Job, p.Feature, p.Section, p.Filters); err != nil {
+		if _, err := linkOf(p.Page, p.Repository, p.PullRequest, p.Group, p.Session, p.Job, p.Feature, p.Section, "", p.Filters); err != nil {
 			t.Errorf("%q: %+v has no link: %v", c.Query, p, err)
 		}
 	}
