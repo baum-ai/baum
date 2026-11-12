@@ -1138,16 +1138,19 @@ makes it.
 ### Linux
 
 The Linux bundles are built in this directory's Docker image, on Ubuntu
-22.04 (the base image pinned by digest), the oldest supported distribution.
-They need glibc 2.35 or newer and WebKitGTK with the 4.1 API
-(`libwebkit2gtk-4.1-0`; Ubuntu 22.04, Debian 12 and newer). The deb declares
-that dependency and installs `baum-desktop` and `baum` in `/usr/bin`. The
-AppImage carries its own WebKitGTK, GTK and Pango but uses the system's
-glibc, HarfBuzz and the other libraries linuxdeploy leaves out, which is why
-it is built on the oldest system: one built on Debian 12 carries a Pango
-that needs HarfBuzz 4, and fails on Ubuntu 22.04. It updates itself in
-place, so keep it in a directory you can write (for example
-`~/Applications`).
+24.04 (the base image pinned by digest), the oldest supported distribution.
+They require Ubuntu 24.04 or newer, or a compatible distribution with glibc
+2.39 or newer and the corresponding system libraries. Ubuntu 22.04 and
+Debian 12 are no longer supported. The deb uses the system's WebKitGTK with
+the 4.1 API (`libwebkit2gtk-4.1-0`), declares its package dependencies and
+installs `baum-desktop` and `baum` in `/usr/bin`.
+
+The AppImage carries its own WebKitGTK, GTK and Pango but uses the system's
+glibc, HarfBuzz and the other libraries linuxdeploy leaves out. The image
+requires WebKitGTK 2.50.5 or newer; Ubuntu 24.04 currently supplies 2.52.6.
+This includes the [NetworkLoadClient lifetime fix](https://github.com/WebKit/WebKit/commit/b99f8c3daae0d6d0fdb99338c2e6f63cf4c6dc49)
+for the resource-loader memory leak in 2.50.4. The AppImage updates itself in place,
+so keep it in a directory you can write (for example `~/Applications`).
 
 A downloaded AppImage is not executable. With an integration tool that
 handles AppImages (AppImageLauncher 3.x, Gear Lever), double-clicking it
@@ -1160,9 +1163,9 @@ the AppImage does not start there; 3.x fixed that. Other AppImages built on
 this runtime, such as Cursor's, have the same limitation.
 
 On NVIDIA GPUs under Wayland, WebKitGTK only uses its fast GPU renderer
-from 2.54. The AppImage carries Ubuntu 22.04's WebKitGTK (2.50), so it renders
+from 2.54. The AppImage carries Ubuntu 24.04's WebKitGTK (2.52), so it renders
 slowly there, as does the deb on systems whose WebKitGTK is older than 2.54.
-No Ubuntu release offers 2.54 yet, so a newer build image would not help.
+The move to Ubuntu 24.04 fixes the loader leak but does not fix this limitation.
 User-facing limitations like these are listed in
 [KNOWN_ISSUES.md](../KNOWN_ISSUES.md).
 
