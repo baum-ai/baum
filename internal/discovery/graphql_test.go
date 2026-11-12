@@ -97,6 +97,11 @@ func TestGraphQLPaginationEndpointsStatesAndIndependentBudgets(t *testing.T) {
 			if got.Rate.Cost == nil || *got.Rate.Cost != 2 || got.Rate.Remaining == nil || *got.Rate.Remaining != 4998 || !got.Rate.Reset.Equal(reset) {
 				t.Fatalf("rate=%+v", got.Rate)
 			}
+			// Another reader of the token sees the points left without a request.
+			polled := calls
+			if budget, err := s.GraphQLBudget(context.Background(), repo); err != nil || budget.Remaining == nil || *budget.Remaining != 4998 || !budget.Reset.Equal(reset) || calls != polled {
+				t.Fatalf("budget=%+v err=%v calls=%d", budget, err, calls-polled)
+			}
 			now = got.NextPoll
 			failPage = true
 			cached, err := s.Poll(context.Background(), repo)

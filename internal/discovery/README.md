@@ -118,7 +118,8 @@ and not reused.
   limit one poll meets stops the next request of the others. Within one rate
   window the lower remaining count stands. They are saved with each poll and
   merged with the saved record at the start of the next, so a restart honours
-  them.
+  them. `GraphQLBudget` reads the GraphQL budget without a request, so the
+  background refresh can leave discovery and generation their share.
 
 ## Time limits and concurrency
 

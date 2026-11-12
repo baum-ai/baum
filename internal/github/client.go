@@ -295,12 +295,20 @@ func (c *Client) query(ctx context.Context, host, operation string, q any, varia
 	}
 	for attempt := 0; ; attempt++ {
 		reflect.ValueOf(q).Elem().SetZero()
-		err := gql.QueryNamed(ctx, operation, q, variables)
+		countRequest(ctx)
+		requestCtx, cancel := requestContext(ctx)
+		err := gql.QueryNamed(requestCtx, operation, q, variables)
+		timedOut := requestCtx.Err() != nil
+		cancel()
 		if err == nil {
 			return nil
 		}
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return ctxErr
+		}
+		if timedOut {
+			after, _ := ctx.Value(requestTimeoutKey{}).(time.Duration)
+			return &requestTimeoutError{operation: operation, after: after}
 		}
 		wait, resumeAt, limited, retry := c.retryWait(err, attempt)
 		switch {
