@@ -212,7 +212,7 @@ func proseFindings(value any, bundle *bundlepkg.Bundle, scope proseScope) []stri
 		findings = append(findings, sectionShapeFindings(prefix, section)...)
 	}
 	switch scope {
-	case proseFull:
+	case proseFull, proseHostExchange:
 		findings = append(findings, recommendationFindings(root, sections, false)...)
 	case proseOutline:
 		findings = append(findings, recommendationFindings(root, sections, true)...)
@@ -312,6 +312,12 @@ func walkProse(node any, where string, visit func(where, key, text string)) {
 		for i, child := range node {
 			label := fmt.Sprintf("item %d", i+1)
 			if object, ok := child.(map[string]any); ok {
+				// A decision carrying decision_id is copied from session
+				// extraction, by the host after the repair loop or by the
+				// model verbatim; its wording is not the review's to repair.
+				if _, extracted := object["decision_id"]; extracted {
+					continue
+				}
 				if id, _ := object["id"].(string); id != "" {
 					label = id
 				}

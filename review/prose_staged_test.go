@@ -199,3 +199,33 @@ func TestHostBuiltExchangeIsNotReadByTheProseRules(t *testing.T) {
 		t.Errorf("findings %q", findings)
 	}
 }
+
+func TestHostExchangeScopeStillChecksTheRecommendation(t *testing.T) {
+	v, err := sharedValidator()
+	checkNoError(t, err)
+	doc := mustDecode(t, authoredFixture())
+	doc["summary"].(map[string]any)["recommendation"] = map[string]any{"decision": "look_first", "text": "Look at the parser first.", "refs": []any{"sec_gone"}}
+	if _, findings := v.PrepareHostExchange(encodeJSON(t, doc), proseBundle(), t.TempDir()); !strings.Contains(findings, `"sec_gone"`) {
+		t.Errorf("an unresolved recommendation ref in a stack review: findings %q", findings)
+	}
+}
+
+func TestExtractedDecisionsAreNotReadByTheProseRules(t *testing.T) {
+	decision := func(extracted bool) string {
+		return proseFindingsOf(t, func(summary, section map[string]any) {
+			item := map[string]any{
+				"id": "dec_choice", "title": "ENG" + "-1799: Chose a slice", "by": "agent", "text": "Chose a slice.",
+				"rationale": "Kept 0123456789abcdef0123456789abcdef01234567 as the base.",
+				"anchors":   []any{map[string]any{"type": "hunk", "id": testHunk}},
+			}
+			if extracted {
+				item["decision_id"] = "0b1c2d3e-4f50-4a6b-8c7d-9e0f1a2b3c4d"
+			}
+			section["blocks"] = []any{map[string]any{"kind": "decisions", "items": []any{item}}}
+		})
+	}
+	checkEqual(t, "", decision(true))
+	if findings := decision(false); !strings.Contains(findings, "ticket") || !strings.Contains(findings, "0123456789abcdef") {
+		t.Errorf("a model-written decision with a ticket key and a full SHA: findings %q", findings)
+	}
+}
