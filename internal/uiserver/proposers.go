@@ -103,9 +103,12 @@ func (p *Proposers) revision(state any) string {
 	p.init()
 	raw, err := json.Marshal(state)
 	if err != nil {
-		// Every state is plain data; one that does not encode matches no
-		// revision, so nothing is saved over it.
-		return "unencodable"
+		// Every state is plain data; one that does not encode gets a fresh
+		// random revision each time, which matches no other, so nothing is
+		// saved over it.
+		fresh := make([]byte, 32)
+		_, _ = rand.Read(fresh)
+		return "unencodable-" + hex.EncodeToString(fresh)
 	}
 	mac := hmac.New(sha256.New, p.key)
 	mac.Write(raw)
@@ -701,6 +704,21 @@ func (p *Proposers) agentEnvTarget(name string) *target {
 		}
 		return next, config.ValidateAgentEnv(next)
 	}
+	// save is the preferences the route's save makes of prefs with the
+	// change. It is refused when the environment in force would then differ
+	// from the proposed one: an app environment left empty goes back to the
+	// config file's, which would bring back what was removed, or more.
+	save := func(in agentcontext.AgentEnvChange, prefs repos.Preferences, value string) (repos.Preferences, error) {
+		next, err := change(in, env(prefs), value)
+		if err != nil {
+			return prefs, err
+		}
+		saved := setAgentEnv(prefs, next)
+		if !maps.Equal(env(saved), next) {
+			return prefs, fmt.Errorf("removing %s leaves the app no variables of its own, so the config file's agent_env would apply again and change more than %s: the person edits the config file for that", name, name)
+		}
+		return saved, nil
+	}
 	t := p.prefsTarget(
 		func(prefs repos.Preferences) any {
 			_, set := env(prefs)[name]
@@ -715,7 +733,7 @@ func (p *Proposers) agentEnvTarget(name string) *target {
 			if err != nil {
 				return err
 			}
-			_, err = change(in, env(prefs), "")
+			_, err = save(in, prefs, "")
 			return err
 		}, nil)
 	t.takesValue = true
@@ -738,11 +756,7 @@ func (p *Proposers) agentEnvTarget(name string) *target {
 			if err := unchanged(agentEnvState{env(prefs), len(prefs.AgentEnv) > 0}); err != nil {
 				return prefs, err
 			}
-			next, err := change(in, env(prefs), value)
-			if err != nil {
-				return prefs, err
-			}
-			return setAgentEnv(prefs, next), nil
+			return save(in, prefs, value)
 		})
 		return err
 	}

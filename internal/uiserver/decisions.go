@@ -158,9 +158,6 @@ func decisionSettingsOf(p repos.Preferences) decisionSettings {
 	return out
 }
 
-// putDecisionSettings serves PUT /api/settings/decisions, which replaces the
-// whole decision capture preferences, except that a missing backend or
-// effort keeps the saved one, as an app from before them sends neither.
 // decisionsInput is the body of PUT /api/settings/decisions. Enabled is
 // required; a nil backend or effort keeps the saved one.
 type decisionsInput struct {
@@ -209,6 +206,9 @@ func (a LocalAPI) decisionsChanged() {
 	}
 }
 
+// putDecisionSettings serves PUT /api/settings/decisions, which replaces the
+// whole decision capture preferences, except that a missing backend or
+// effort keeps the saved one, as an app from before them sends neither.
 func (a LocalAPI) putDecisionSettings(w http.ResponseWriter, r *http.Request) {
 	var input decisionsInput
 	r.Body = http.MaxBytesReader(w, r.Body, 4<<10)

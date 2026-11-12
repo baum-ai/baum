@@ -75,53 +75,27 @@ func (p *Proposers) promptTarget(scope, id string) (*target, error) {
 			if err != nil {
 				return err
 			}
-			entries, err := registry.PromptEntries(ctx, scope)
+			state, err := registry.PromptState(ctx, scope, prompt.ID(id))
 			if err != nil {
 				return promptFailure(err)
 			}
-			i := slices.IndexFunc(entries, func(e repos.PromptEntry) bool { return e.ID == id })
-			if i < 0 {
-				return errors.New("unknown prompt")
-			}
-			entry := entries[i]
-			// What runs after the save: the text, or after a reset the
-			// built-in text, or for a repository the text it inherits.
-			next := entry.DefaultText
-			if text != nil {
-				if err := prompt.Validate(prompt.ID(id), *text); err != nil {
-					return err
-				}
-				next = *text
-			} else {
-				if entry.CustomText == nil {
-					return errors.New("the prompt is not customised here: there is nothing to reset")
-				}
-				if entry.InheritedText != nil {
-					next = *entry.InheritedText
-				}
-			}
-			var removed []string
-			for _, missing := range prompt.MissingSafetyRules(prompt.ID(id), next) {
-				if !slices.Contains(entry.MissingRules, missing) {
-					for _, rule := range entry.SafetyRules {
-						if rule.ID == missing {
-							removed = append(removed, rule.Label)
-						}
-					}
-				}
-			}
-			if len(removed) > 0 {
-				return fmt.Errorf("the change would take a safety rule out of the prompt in use (%s): an agent may not propose that", strings.Join(removed, "; "))
-			}
-			return nil
+			return checkPromptChange(prompt.ID(id), state, text)
 		},
 		apply: func(ctx context.Context, after json.RawMessage, unchanged func(any) error, _ agentcontext.SaveInput) error {
 			text, err := decode(after)
 			if err != nil {
 				return err
 			}
-			err = registry.PutPromptOverrideIf(ctx, scope, prompt.ID(id), text, func(state repos.PromptState) error { return unchanged(state) })
-			if errors.Is(err, agentcontext.ErrStale) {
+			// The rows the writing transaction reads are checked again: the
+			// revision, and that the change keeps the safety rules.
+			err = registry.PutPromptOverrideIf(ctx, scope, prompt.ID(id), text, func(state repos.PromptState) error {
+				if err := unchanged(state); err != nil {
+					return err
+				}
+				return checkPromptChange(prompt.ID(id), state, text)
+			})
+			var refused *promptRefusal
+			if errors.Is(err, agentcontext.ErrStale) || errors.As(err, &refused) {
 				return err
 			}
 			if err != nil {
@@ -135,6 +109,61 @@ func (p *Proposers) promptTarget(scope, id string) (*target, error) {
 			return nil
 		},
 	}, nil
+}
+
+// promptRefusal is a prompt change refused beyond the route's own checks.
+type promptRefusal struct{ reason string }
+
+func (e *promptRefusal) Error() string { return e.reason }
+
+// promptInUse is the text a run of the scope uses with these rows, as
+// repos.resolvePrompt picks it: the scope's own valid text, else the valid
+// global one, else the built-in; inherited is the same without the own row.
+func promptInUse(id prompt.ID, state repos.PromptState) (inUse, inherited string) {
+	entry, _ := prompt.Lookup(id)
+	inherited = entry.Default
+	if g := state.Global; g != nil && prompt.Validate(id, g.Text) == nil {
+		inherited = g.Text
+	}
+	inUse = inherited
+	if o := state.Own; o != nil && prompt.Validate(id, o.Text) == nil {
+		inUse = o.Text
+	}
+	return inUse, inherited
+}
+
+// checkPromptChange refuses a text the route refuses (prompt.Validate), a
+// reset of a prompt not customised in the scope, and a change after which
+// the text in use would lack a safety rule's text that the text in use holds
+// now. It checks that each rule's text is there, not what the rest of the
+// text says about it: the person reads the diff for that.
+func checkPromptChange(id prompt.ID, state repos.PromptState, text *string) error {
+	inUse, next := promptInUse(id, state)
+	if text != nil {
+		if err := prompt.Validate(id, *text); err != nil {
+			return err
+		}
+		next = *text
+	} else if state.Own == nil {
+		return &promptRefusal{"the prompt is not customised here: there is nothing to reset"}
+	}
+	entry, _ := prompt.Lookup(id)
+	missingNow := prompt.MissingSafetyRules(id, inUse)
+	var removed []string
+	for _, missing := range prompt.MissingSafetyRules(id, next) {
+		if slices.Contains(missingNow, missing) {
+			continue
+		}
+		for _, rule := range entry.SafetyRules {
+			if rule.ID == missing {
+				removed = append(removed, rule.Label)
+			}
+		}
+	}
+	if len(removed) > 0 {
+		return &promptRefusal{fmt.Sprintf("the change would take a safety rule's text out of the prompt in use (%s): an agent may not propose that", strings.Join(removed, "; "))}
+	}
+	return nil
 }
 
 // repositoryChanged is what the app server does after a write to the
@@ -272,7 +301,8 @@ func (p *Proposers) inboxTarget(_ agentcontext.PageContext, name string) (*targe
 				return nil, errors.New(problem)
 			}
 		}
-		list := slices.Clone(state.Inboxes)
+		// The page holds every inbox folded, and saves the list so.
+		list := foldedInboxes(state.Inboxes)
 		var inbox *inboxes.Inbox
 		if create {
 			if in.Name == nil {
@@ -321,7 +351,8 @@ func (p *Proposers) inboxTarget(_ agentcontext.PageContext, name string) (*targe
 			if err != nil {
 				return nil, nil, err
 			}
-			return state.Inboxes[i], state.Revision, nil
+			// As the page shows it: its parts folded into its query.
+			return foldedInbox(state.Inboxes[i]), state.Revision, nil
 		},
 		validate: func(_ context.Context, after json.RawMessage) error {
 			state, err := read()
@@ -356,6 +387,31 @@ func (p *Proposers) inboxTarget(_ agentcontext.PageContext, name string) (*targe
 			return err
 		},
 	}, nil
+}
+
+// foldedInbox is the app's folded (app/src/inboxes.ts), which the Inbox
+// applies to every saved inbox it reads: the older fields (what, owners,
+// risk, repositories, no bots) folded into the query and cleared, so the
+// query alone says what the inbox holds and an edit of the query replaces
+// all of it. An inbox whose folded query would not be one the app saves, or
+// whose own query does not read, stays as it is.
+func foldedInbox(inbox inboxes.Inbox) inboxes.Inbox {
+	query := prfilter.FoldedQuery(prfilter.Parts{What: inbox.What, Owners: inbox.Owners, Risk: inbox.Risk,
+		Repositories: inbox.Repositories, Query: inbox.Query, NoBots: inbox.NoBots})
+	if query == inbox.Query || prfilter.Problem(query) != "" || prfilter.Problem(inbox.Query) != "" {
+		return inbox
+	}
+	inbox.What, inbox.Owners, inbox.Risk, inbox.Repositories, inbox.NoBots, inbox.Query = "any", []string{}, "any", []string{}, false, query
+	return inbox
+}
+
+// foldedInboxes is the list as the Inbox holds it and saves it.
+func foldedInboxes(list []inboxes.Inbox) []inboxes.Inbox {
+	out := make([]inboxes.Inbox, len(list))
+	for i, inbox := range list {
+		out[i] = foldedInbox(inbox)
+	}
+	return out
 }
 
 // groupState is what a group proposal's revision covers.

@@ -84,6 +84,12 @@ const (
 
 func newProposalFixture(t *testing.T) *proposalFixture {
 	t.Helper()
+	return newProposalFixtureWith(t, config.Default())
+}
+
+// newProposalFixtureWith is newProposalFixture over the config file cfg.
+func newProposalFixtureWith(t *testing.T, cfg config.Config) *proposalFixture {
+	t.Helper()
 	ctx := context.Background()
 	registry, _ := readRegistry(t)
 	if _, err := registry.Pick(ctx, "other/repo", nil); err != nil {
@@ -102,7 +108,7 @@ func newProposalFixture(t *testing.T) *proposalFixture {
 	inboxesAPI := &inboxes.API{Store: inboxes.Open(app), Changed: func() { f.inboxesChanged.Add(1) }}
 	uiState := &uistate.Store{Path: app}
 	f.requests = &agentrequests.Store{Database: filepath.Join(dir, "requests.sqlite")}
-	local := uiserver.LocalAPI{Registry: registry, Config: config.Default(),
+	local := uiserver.LocalAPI{Registry: registry, Config: cfg,
 		Automatic: scheduler.Handler(), AgentRequests: f.requests.Handler(), Inboxes: inboxesAPI.Handler(), Groups: groupsAPI.Handler(), UIState: uiState.Handler(),
 		Changed:            func() { f.settingsChanged.Add(1) },
 		DecisionsChanged:   func() { f.decisionsChanged.Add(1) },
@@ -131,6 +137,7 @@ func newProposalFixture(t *testing.T) *proposalFixture {
 	// What the person set, through the app's own routes.
 	f.must("PUT", "/api/settings/agent-env", fmt.Sprintf(`{"agent_env":{"ZED_TOKEN":%q}}`, envSentinel))
 	f.must("PUT", "/api/settings/prompts/fix-conflicts", fmt.Sprintf(`{"text":%q}`, promptSentinel))
+	f.must("PUT", "/api/repositories/owner/repo/prompts/fix-conflicts", `{"text":"The repository's conflicts prompt."}`)
 	var group struct{ ID string }
 	if err := json.Unmarshal([]byte(f.must("POST", "/api/groups", `{"name":"Checkout","members":[{"repository":"owner/repo","number":1},{"repository":"owner/repo","number":2}]}`)), &group); err != nil || group.ID == "" {
 		t.Fatal(err)
@@ -138,7 +145,15 @@ func newProposalFixture(t *testing.T) *proposalFixture {
 	f.group = group.ID
 	f.must("PUT", "/api/ui-state/review?key="+url.QueryEscape("owner/repo#7"),
 		`{"revision":0,"mutation_id":"personwindow1:1","value":{"comments":[{"id":"mine","target":{"kind":"general","id":"","title":"The pull request"},"body":"My own draft.","place":null,"head":"","created":1}],"note":"My note.","sent":[]}}`)
-	f.must("GET", "/api/inboxes", "")
+	// An inbox an older app saved with its filter in the older fields.
+	var inboxList struct {
+		Revision int              `json:"revision"`
+		Inboxes  []map[string]any `json:"inboxes"`
+	}
+	_ = json.Unmarshal([]byte(f.must("GET", "/api/inboxes", "")), &inboxList)
+	inboxList.Inboxes = append(inboxList.Inboxes, olderInbox())
+	seeded, _ := json.Marshal(inboxList)
+	f.must("PUT", "/api/inboxes", string(seeded))
 	f.settingsChanged.Store(0)
 	f.groupsChanged.Store(0)
 	f.inboxesChanged.Store(0)
@@ -279,6 +294,22 @@ type proposalCase struct {
 	route func(*proposalFixture) (method, path, body string)
 	// change is the route a person's concurrent edit of the target sends.
 	change func(*proposalFixture) (method, path, body string)
+	// inbox, from 1, is the saved inbox whose id the args take.
+	inbox int
+}
+
+// caseArgs are the case's args, with the id of the inbox it edits.
+func (tc proposalCase) caseArgs(f *proposalFixture) map[string]any {
+	if tc.inbox == 0 {
+		return tc.args
+	}
+	var state struct{ Inboxes []struct{ ID string } }
+	_ = json.Unmarshal([]byte(f.must("GET", "/api/inboxes", "")), &state)
+	args := map[string]any{"id": state.Inboxes[tc.inbox-1].ID}
+	for k, v := range tc.args {
+		args[k] = v
+	}
+	return args
 }
 
 func settingsAt(section string) func(*proposalFixture) agentcontext.PageContext {
@@ -298,6 +329,23 @@ func fixed(method, path, body string) func(*proposalFixture) (string, string, st
 }
 
 // inboxPut is PUT /api/inboxes of the stored list changed by edit.
+// olderInbox is an inbox saved with the older fields, which the Inbox folds
+// into its query.
+func olderInbox() map[string]any {
+	return map[string]any{"name": "Reviews", "color": "purple", "what": "review", "owners": []string{"owner"}, "risk": "4",
+		"repositories": []string{}, "query": "is!=draft", "no_bots": true, "badge": true}
+}
+
+// olderInboxFolded is olderInbox as the Inbox holds it (folded in
+// app/src/inboxes.ts, the query as prfilter's shared cases fold it).
+func olderInboxFolded(inbox map[string]any) map[string]any {
+	inbox["what"], inbox["owners"], inbox["risk"], inbox["repositories"], inbox["no_bots"] = "any", []string{}, "any", []string{}, false
+	inbox["query"] = "waiting=review org=owner risk>=4 is!=bot is!=draft"
+	return inbox
+}
+
+// inboxPut is PUT /api/inboxes of the list as the Inbox holds it (every
+// inbox folded) changed by edit.
 func inboxPut(edit func([]map[string]any) []map[string]any) func(*proposalFixture) (string, string, string) {
 	return func(f *proposalFixture) (string, string, string) {
 		var state struct {
@@ -305,6 +353,11 @@ func inboxPut(edit func([]map[string]any) []map[string]any) func(*proposalFixtur
 			Inboxes  []map[string]any `json:"inboxes"`
 		}
 		_ = json.Unmarshal([]byte(f.must("GET", "/api/inboxes", "")), &state)
+		for _, inbox := range state.Inboxes {
+			if inbox["name"] == "Reviews" && inbox["what"] == "review" {
+				olderInboxFolded(inbox)
+			}
+		}
 		state.Inboxes = edit(state.Inboxes)
 		body, _ := json.Marshal(state)
 		return "PUT", "/api/inboxes", string(body)
@@ -378,6 +431,10 @@ func proposalCases() []proposalCase {
 		route:  fixed("PUT", "/api/repositories/owner/repo/prompts/fix-checks", `{"text":"Repository checks text."}`),
 		change: fixed("PUT", "/api/repositories/owner/repo/prompts/fix-checks", `{"text":"Edited by hand."}`),
 	}, {
+		name: "repository prompt reset", page: repositoryAt("prompts"), tool: "propose_prompt_reset", args: map[string]any{"id": "fix-conflicts"},
+		route:  fixed("PUT", "/api/repositories/owner/repo/prompts/fix-conflicts", `{"text":null}`),
+		change: fixed("PUT", "/api/settings/prompts/fix-conflicts", `{"text":"The global text the repository inherits, edited."}`),
+	}, {
 		name: "repository settings", page: repositoryAt(""), tool: "propose_repository_settings", args: map[string]any{"automatic": false},
 		// The page sends the whole settings object.
 		route:  fixed("PUT", "/api/repositories/owner/repo/settings", `{"automatic":false,"decisions":null}`),
@@ -395,12 +452,23 @@ func proposalCases() []proposalCase {
 		name: "rename an inbox", page: func(*proposalFixture) agentcontext.PageContext {
 			return agentcontext.PageContext{Page: agentcontext.PageInbox}
 		},
-		tool: "propose_inbox",
+		tool: "propose_inbox", inbox: 1, args: map[string]any{"name": "Mine", "query": "author=@me"},
 		route: inboxPut(func(list []map[string]any) []map[string]any {
 			list[0]["name"], list[0]["query"] = "Mine", "author=@me"
 			return list
 		}),
 		change: inboxPut(func(list []map[string]any) []map[string]any { list[0]["color"] = "red"; return list }),
+	}, {
+		name: "query of an inbox with the older fields", page: func(*proposalFixture) agentcontext.PageContext {
+			return agentcontext.PageContext{Page: agentcontext.PageInbox}
+		},
+		// The page shows the folded query; the new one replaces all of it.
+		tool: "propose_inbox", inbox: 2, args: map[string]any{"query": "author=@me"},
+		route: inboxPut(func(list []map[string]any) []map[string]any {
+			list[1]["query"] = "author=@me"
+			return list
+		}),
+		change: inboxPut(func(list []map[string]any) []map[string]any { list[1]["badge"] = false; return list }),
 	}, {
 		name: "group", page: func(f *proposalFixture) agentcontext.PageContext {
 			return agentcontext.PageContext{Page: agentcontext.PageGroup, Group: f.group, Repository: "owner/repo"}
@@ -445,12 +513,7 @@ func TestProposalSavesAsThePageDoes(t *testing.T) {
 	for _, tc := range proposalCases() {
 		t.Run(tc.name, func(t *testing.T) {
 			proposed, saved := newProposalFixture(t), newProposalFixture(t)
-			args := tc.args
-			if tc.name == "rename an inbox" {
-				var state struct{ Inboxes []struct{ ID string } }
-				_ = json.Unmarshal([]byte(proposed.must("GET", "/api/inboxes", "")), &state)
-				args = map[string]any{"id": state.Inboxes[0].ID, "name": "Mine", "query": "author=@me"}
-			}
+			args := tc.caseArgs(proposed)
 			proposed.page(tc.page(proposed))
 			before, effects := proposed.state(), proposed.effects()
 			p, err := proposed.propose(tc.tool, args)
@@ -487,12 +550,7 @@ func TestStaleProposalsAreNotSaved(t *testing.T) {
 		for _, when := range []string{"before the save", "during the save"} {
 			t.Run(tc.name+" "+when, func(t *testing.T) {
 				f := newProposalFixture(t)
-				args := tc.args
-				if tc.name == "rename an inbox" {
-					var state struct{ Inboxes []struct{ ID string } }
-					_ = json.Unmarshal([]byte(f.must("GET", "/api/inboxes", "")), &state)
-					args = map[string]any{"id": state.Inboxes[0].ID, "name": "Mine"}
-				}
+				args := tc.caseArgs(f)
 				f.page(tc.page(f))
 				p, err := f.propose(tc.tool, args)
 				if err != nil {
@@ -533,12 +591,7 @@ func TestAChangeBetweenReadAndWriteRefusesTheSave(t *testing.T) {
 		}
 		t.Run(tc.name, func(t *testing.T) {
 			f := newProposalFixture(t)
-			args := tc.args
-			if tc.name == "rename an inbox" {
-				var state struct{ Inboxes []struct{ ID string } }
-				_ = json.Unmarshal([]byte(f.must("GET", "/api/inboxes", "")), &state)
-				args = map[string]any{"id": state.Inboxes[0].ID, "name": "Mine"}
-			}
+			args := tc.caseArgs(f)
 			f.page(tc.page(f))
 			p, err := f.propose(tc.tool, args)
 			if err != nil {
@@ -864,5 +917,67 @@ func TestProposalAnswersCarryNoCurrentValue(t *testing.T) {
 	text, failed = (&readFixture{mcp: f.mcp}).callTool(t, f.token, "propose_group", map[string]any{"remove": []int{2}})
 	if !failed || strings.Contains(text, "Checkout") {
 		t.Errorf("a refused group change: %s", text)
+	}
+}
+
+// The person compares a saved inbox's change with the inbox as the Inbox
+// shows it: an older inbox's fields folded into its query.
+func TestInboxProposalsShowTheFoldedInbox(t *testing.T) {
+	f := newProposalFixture(t)
+	f.page(agentcontext.PageContext{Page: agentcontext.PageInbox})
+	var state struct{ Inboxes []struct{ ID string } }
+	_ = json.Unmarshal([]byte(f.must("GET", "/api/inboxes", "")), &state)
+	p, err := f.propose("propose_inbox", map[string]any{"id": state.Inboxes[1].ID, "badge": false})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var before map[string]any
+	if err := json.Unmarshal(p.Before, &before); err != nil || before["query"] != "waiting=review org=owner risk>=4 is!=bot is!=draft" || before["what"] != "any" || before["no_bots"] != false {
+		t.Errorf("before: %s %v", p.Before, err)
+	}
+}
+
+// Removing an agent environment variable must change only that variable in
+// the environment in force. With no variables of the app's own left, the
+// config file's apply again, so such a removal is refused and nothing saved.
+func TestAgentEnvironmentRemovalKeepsToTheName(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		file map[string]string
+	}{
+		{"the file sets the name too", map[string]string{"ZED_TOKEN": "from the file", "FILE_ONLY": "x"}},
+		{"the file sets others", map[string]string{"FILE_ONLY": "x"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := config.Default()
+			cfg.AgentEnv = tc.file
+			f := newProposalFixtureWith(t, cfg)
+			f.page(agentcontext.PageContext{Page: agentcontext.PageSettings, Section: "computer"})
+			before := f.state()
+			_, err := f.propose("propose_agent_env", map[string]any{"name": "ZED_TOKEN", "action": "remove"})
+			if err == nil || !strings.Contains(err.Error(), "config file") {
+				t.Fatalf("a removal the file undoes: %v", err)
+			}
+			if strings.Contains(err.Error(), envSentinel) || strings.Contains(err.Error(), "from the file") || len(f.mcp.Proposals.List(f.id)) != 0 || f.state() != before {
+				t.Errorf("refused with %v, leaving %d proposals", err, len(f.mcp.Proposals.List(f.id)))
+			}
+		})
+	}
+	// With another variable of the app's own left, the removal is the change
+	// proposed.
+	cfg := config.Default()
+	cfg.AgentEnv = map[string]string{"ZED_TOKEN": "from the file"}
+	f := newProposalFixtureWith(t, cfg)
+	f.must("PUT", "/api/settings/agent-env", fmt.Sprintf(`{"agent_env":{"ZED_TOKEN":%q,"OTHER":"y"}}`, envSentinel))
+	f.page(agentcontext.PageContext{Page: agentcontext.PageSettings, Section: "computer"})
+	p, err := f.propose("propose_agent_env", map[string]any{"name": "ZED_TOKEN", "action": "remove"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.save(p, agentcontext.SaveInput{}); err != nil {
+		t.Fatal(err)
+	}
+	if prefs := f.prefs(); strings.Contains(prefs, "ZED_TOKEN") || !strings.Contains(prefs, `"OTHER":"y"`) {
+		t.Errorf("saved %s", prefs)
 	}
 }
