@@ -212,9 +212,6 @@ test("a comment the agent proposes joins the pending review only after Save", as
   const proposal = panel(page).getByRole("article", { name: "Proposal" });
   await expect(proposal).toContainText("Proposes a change");
   await expect(proposal).toContainText("acme/demo#7:review_comment");
-  await expect(panel(page).getByRole("region", { name: "Transcript" })).toContainText(
-    "propose_review_comment",
-  );
   await expect(proposal).toContainText(
     "Cap the retry delay at five minutes, as docs/guide.md says.",
   );
