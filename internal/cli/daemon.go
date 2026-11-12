@@ -598,7 +598,7 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 		// The delivery figures' searches, cached per repository, and the
 		// review threads and failing checks the Inbox lists; an account
 		// change forgets both.
-		delivery := &analytics.Delivery{Search: github.NewFromConfig(cfg, github.Options{})}
+		delivery := &analytics.Delivery{Search: github.NewFromConfig(cfg, github.Options{}), Paused: worker.Paused, Limited: worker.Limited}
 		panelCache := &prupdate.Cache{}
 		beginIdentityChange := func() func(bool) {
 			if token, _ := cfg.ExplicitGitHubTokenSource("github.com"); token != "" {

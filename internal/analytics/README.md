@@ -135,14 +135,30 @@ its rows. Without the store, `available` is false.
 `Delivery` caches one GitHub search per picked repository (`repo:owner/name
 is:pr author:@me created:>=…`, `github.AuthoredPullRequests`) for the last 90
 days, for an hour (five minutes after a failure). A request never waits for
-it: a repository not searched yet makes the section `loading` and starts the
-search in the background, and the app reads the page again. Figures cover
+it: a repository not searched yet makes the section `loading` and queues the
+search, and the app reads the page again. Figures cover
 non-draft pull requests opened in the window; drafts are counted separately.
 Time to merge and to the first review by someone else are medians. The
 conflict and failing-checks share is what GitHub reports for each pull
 request's latest head now, not its history. Line survival is not measured and
 must not be added. A failed search is a reason in fixed words, never GitHub's
-text. An account change forgets every answer.
+text. An account change forgets every answer and the queue.
+
+Queued searches run on three workers and are paced to 24 search requests a
+minute across them, under GitHub's search limit of 30. A search is one request
+a page (50 pull requests), up to five; a repository searched before reserves
+as many slots as its last answer needed, and a search that needed more charges
+the difference. Repositories whose answers expire together are therefore
+spread over time rather than searched at once, and the section shows the ones
+read so far (`loading` only while one has no answer and no failure).
+
+A rate limit stops the queue: the repository that hit it, and every one still
+queued, keep their earlier answer and carry the rate-limit reason, and none is
+searched again before the limit's reset (at least five minutes). The daemon
+shares the limit with the background refresh in both directions
+(`background.Service.Paused` and `Limited`): a search waits while the refresh
+holds a pause, and a limit a search hits pauses the refresh. Searches do not
+count against the refresh's hourly request budget.
 
 ## Plan usage
 
