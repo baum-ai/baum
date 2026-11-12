@@ -1684,8 +1684,10 @@ not proposed or confirmed at all.
 
 What you can be asked to confirm: on a pull request's page, a merge (with a
 method GitHub allows, at the head the page showed), a branch update, a re-run
-of the failed checks or of one failed job, resolving one review thread, a fix
-and a new review; on the Inbox and Pull requests, a review, a refresh from
+of the failed checks or of one failed job, resolving one review thread,
+adding a comment to your pending review (never sent to GitHub: you send the
+review; its text, what it is about and its line are shown as the agent's), a
+fix and a new review; on the Inbox and Pull requests, a review, a refresh from
 GitHub and (Pull requests) a new review group; on the sessions pages,
 answering an agent's pending request, a message to a session, ending a
 session and bringing it forward; on the jobs pages, cancelling a job the

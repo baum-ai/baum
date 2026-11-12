@@ -35,6 +35,7 @@ import (
 	"github.com/baum-ai/baum/internal/reviewindex"
 	"github.com/baum-ai/baum/internal/transcript"
 	"github.com/baum-ai/baum/internal/uiserver"
+	"github.com/baum-ai/baum/internal/uistate"
 	"github.com/baum-ai/baum/sessions/session"
 )
 
@@ -226,6 +227,7 @@ type opFixture struct {
 	queue        *jobs.Queue
 	requests     *agentrequests.Store
 	groups       *reviewgroups.Store
+	ui           *uistate.Store
 	group        string
 	// sent, ended and focused are what the live sessions' agents were
 	// asked; cloned the clones started.
@@ -267,6 +269,7 @@ func newOpFixture(t *testing.T) *opFixture {
 		return f.index, nil
 	}
 
+	f.ui = &uistate.Store{Path: filepath.Join(dir, "app.sqlite")}
 	f.groups, err = reviewgroups.Open(filepath.Join(dir, "app.sqlite"))
 	if err != nil {
 		t.Fatal(err)
@@ -347,7 +350,7 @@ func newOpFixture(t *testing.T) *opFixture {
 		Update: uiserver.UpdateHandler(registry, f.github, nil, nil),
 		PRs:    uiserver.DiscoveryHandler(registry, f.github, nil),
 		Jobs:   f.queue.Handler(), Live: transcripts.Handler(), AgentRequests: f.requests.Handler(),
-		Groups: groupsAPI.Handler(), GitHubRepositories: clones.Handler()}.Handler()
+		Groups: groupsAPI.Handler(), GitHubRepositories: clones.Handler(), UIState: f.ui.Handler()}.Handler()
 	t.Cleanup(api.Close)
 	f.log = &writeLog{next: api}
 	f.mcp = agentcontext.New(agentcontext.Options{API: f.log, Version: "test"})
@@ -488,6 +491,11 @@ func opCases(f *opFixture) []opCase {
 		{op: "rerun_checks", page: pullPage, args: map[string]any{}, action: "Re-run the failed checks of owner/repo#7", effect: calls("rerun checks owner/repo#7 abc")},
 		{op: "rerun_failed_job", page: pullPage, args: map[string]any{"job_id": 21}, action: "Re-run one failed check of owner/repo#7", effect: calls("rerun job owner/repo#7 abc 21")},
 		{op: "resolve_thread", page: pullPage, args: map[string]any{"thread": "RT_1"}, action: "Resolve a review thread of owner/repo#7", effect: calls("resolve owner/repo#7 RT_1")},
+		{op: "add_review_comment", page: pullPage, args: map[string]any{"body": "Why is the delay capped?"}, action: "Add a comment to your pending review of owner/repo#7", effect: func(t *testing.T, f *opFixture) {
+			if record, err := f.ui.Read("review", "owner/repo#7"); err != nil || !strings.Contains(string(record.Value), "Why is the delay capped?") {
+				t.Errorf("pending review %s %v", record.Value, err)
+			}
+		}},
 		{op: "fix", page: pullPage, args: map[string]any{"only": "checks"}, action: "Start a fix of the failing checks of owner/repo#7", effect: func(t *testing.T, f *opFixture) {
 			if js := f.queue.OfPullRequest("owner/repo", 7); len(js) != 1 || js[0].Kind != "fix" || js[0].Only != "checks" || js[0].Clone != f.clone.ID {
 				t.Errorf("jobs %+v", js)
@@ -837,7 +845,7 @@ func TestOperationsCallOnlyTheirOwnRoute(t *testing.T) {
 func TestOperationFlags(t *testing.T) {
 	f := newOpFixture(t)
 	want := map[string][2]bool{ // paid, irreversible
-		"merge": {false, true}, "update_branch": {}, "rerun_checks": {}, "rerun_failed_job": {}, "resolve_thread": {},
+		"merge": {false, true}, "update_branch": {}, "rerun_checks": {}, "rerun_failed_job": {}, "resolve_thread": {}, "add_review_comment": {},
 		"fix": {true, false}, "review": {true, false}, "refresh": {},
 		"answer_request": {}, "send_message": {}, "queue_message": {}, "end_session": {false, true}, "focus_session": {},
 		"cancel_job": {}, "create_group": {}, "delete_group": {false, true},

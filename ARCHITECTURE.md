@@ -5983,6 +5983,7 @@ app or the terminal. Denying it may be proposed.
 | `rerun_checks` | `pull_request` | `POST /api/prs/rerun-checks` | | |
 | `rerun_failed_job` (a failing check's `job_id`) | `pull_request` | `POST /api/prs/rerun-job` | | |
 | `resolve_thread` (an unresolved thread the account can resolve) | `pull_request` | `POST /api/prs/resolve-thread` | | |
+| `add_review_comment` (a comment for the person's pending review, at most 100; body, target title and place shown as the agent's) | `pull_request` | `POST /api/ui-state/review/comments` | | |
 | `fix` (`only: checks` for Fix CI) | `pull_request` | `POST /api/jobs` (`kind: fix`, mode `single`) | yes | |
 | `review` (no isolation confirmation: the route refuses a fork's and the person starts it in the app) | `pull_request`, `inbox`, `pulls` | `POST /api/jobs` (a review item, mode `single`) | yes | |
 | `refresh` (by repository, else a registered clone of it) | `inbox`, `pulls` | `POST /api/prs/refresh` | | |

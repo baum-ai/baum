@@ -57,6 +57,15 @@ JSON-content checks. These routes grant no filesystem access.
 - `PUT /api/ui-state/walkthrough?key=<URL-encoded review key>`
 - `GET /api/ui-state/review?key=<URL-encoded pull request key>`
 - `PUT /api/ui-state/review?key=<URL-encoded pull request key>`
+- `POST /api/ui-state/review/comments` with `{repository, pr, body, target?,
+  place?, head?}`: appends one comment to that pull request's review
+  (`AddReviewComment`), with a new random id and the time now, keeping its
+  other comments, note and sent reviews; the target defaults to the pull
+  request in general. It answers 201 `{id, revision, message}`, never the
+  record; a comment the record would not hold, or a review already holding
+  100, is 400 with the reason. A review saved meanwhile is read again. This is
+  the route of the session panel's `add_review_comment` operation, which runs
+  only once the person confirms it.
 
 Reads return `{revision, value}`; an absent record is `{revision: 0, value:
 null}`. Reads never create a database. Writes require `{revision, mutation_id,
@@ -87,9 +96,7 @@ Callback errors and stale writes leave prior bytes untouched.
 `oss/app/src/ui-state.tsx` owns per-window shared snapshots, asynchronous
 hydration, sequential pending changes and explicit Retry after a failed
 read/write. Changes made during a read are replayed on what the daemon returns.
-An in-flight refresh cannot race a save. The walkthrough and Ask panel share
-one record; append/Undo replay against current text, preserving unrelated
-comments and later edits. Focus refreshes an idle record from another window.
+An in-flight refresh cannot race a save. Focus refreshes an idle record from another window.
 
 Tests cover database reopening, concurrent CAS and independent reviews,
 retention with repeated/backwards clocks, corruption preservation, input
