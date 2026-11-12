@@ -238,7 +238,8 @@ func (c CallContext) sourceOf(ctx context.Context, e reviewEntry, files bool) (p
 	}
 	var doc struct {
 		Review struct {
-			Head string `json:"head"`
+			Head    string `json:"head"`
+			Version int    `json:"version"`
 		} `json:"review"`
 		Index struct {
 			Hunks []sourceHunk `json:"hunks"`
@@ -258,6 +259,12 @@ func (c CallContext) sourceOf(ctx context.Context, e reviewEntry, files bool) (p
 		query.Set("head", doc.Review.Head)
 	} else {
 		query.Del("head")
+		// Patches are read from the version this document is, not from
+		// whatever version is latest when each is read: a review saved
+		// meanwhile must not mix its patches with this head and these hunks.
+		if doc.Review.Version > 0 {
+			query.Set("version", strconv.Itoa(doc.Review.Version))
+		}
 	}
 	return pullSource{Name: name, Prefix: prefix, Query: query, Head: doc.Review.Head, Hunks: doc.Index.Hunks}, nil
 }
