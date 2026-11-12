@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"path"
+	"slices"
 	"strings"
 )
 
@@ -36,6 +37,32 @@ func readLimit(path string) int {
 // the MCP route itself. Each is a plain string prefix, so /api/github covers
 // /api/github-auth and /api/github/.
 var unreadable = []string{"/api/settings", "/api/debug", "/api/github", "/api/diagnostics", "/api/plan-usage", "/api/events", "/api/mcp"}
+
+// projectedReads are the only exceptions to unreadable: the tools that may read
+// one exact unreadable route, in process, by name. Each returns a typed
+// projection of the answer, never the answer itself, so what the route holds
+// beyond what the app shows on that page (paths, home, environment, sign-in
+// state) never reaches an agent. The route is matched whole (not as a prefix),
+// only the tool named may declare it (Tool.Projected, checked when the tool is
+// compiled), only a ScopeGlobal tool may, and an action's reader refuses it
+// whatever a tool declares. A test lists these pairs exactly.
+var projectedReads = map[string][]string{
+	"diagnostics_summary": {"/api/diagnostics"},
+	"github_repositories": {"/api/github/repositories"},
+}
+
+// checkProjected refuses a tool a projected route it was not allowed.
+func checkProjected(name string, scope Scope, routes []string) error {
+	for _, route := range routes {
+		if !slices.Contains(projectedReads[name], route) {
+			return fmt.Errorf("%s may not read %s: it is not in projectedReads", name, route)
+		}
+		if scope != ScopeGlobal {
+			return fmt.Errorf("%s reads %s: only a global tool may read a projected route", name, route)
+		}
+	}
+	return nil
+}
 
 // refreshFlags are query parameters that make a GET route do work beyond
 // reading (refresh a cache, fetch more from GitHub); no read sends them.
@@ -65,6 +92,10 @@ const (
 	// only the bound repository's records (actionRoute.filter) and the agent
 	// never sees the rest.
 	byFilter
+	// byKey: the route is the saved UI state, named by a key (key=); the
+	// handler cannot tell whose it is, so the reader requires the key to be
+	// the action's own pull request's (actionRoute.key).
+	byKey
 )
 
 // actionRoute is a route an action may read and how it is bound to the
@@ -82,6 +113,8 @@ type actionRoute struct {
 	lookup func(vars map[string]string) string
 	// filter keeps only repository's records of a byFilter route's body.
 	filter func(body []byte, repository string) ([]byte, error)
+	// key reports whether a byKey route's key= names the pull request.
+	key func(key, repository string, pull int) bool
 }
 
 // actionRoutes are the only routes an action reads; any other is refused to
@@ -120,6 +153,18 @@ var actionRoutes = []actionRoute{
 	{pattern: "/api/commits", bind: byClone, params: []string{"pr", "version"}},
 	{pattern: "/api/sessions", bind: byClone, params: []string{"pr", "version"}},
 	{pattern: "/api/sessions/{id}", bind: byClone, params: []string{"pr", "version"}},
+	// The files and commits the review cites, and the decisions captured
+	// for the pull request (by repository and number: the handler's other
+	// form, by session, names no repository and is not allowed).
+	{pattern: "/api/file", bind: byClone, params: []string{"pr", "version", "path"}},
+	{pattern: "/api/commit", bind: byClone, params: []string{"pr", "version", "oid"}},
+	{pattern: "/api/commit-patch", bind: byClone, params: []string{"pr", "version", "oid", "path"}},
+	{pattern: "/api/decisions", bind: byRepository, params: []string{"pr"}},
+
+	// The person's own draft review and walkthrough place are kept by key,
+	// which says whose they are: only the action's own pull request's key.
+	{pattern: "/api/ui-state/review", bind: byKey, key: ownReviewKey},
+	{pattern: "/api/ui-state/walkthrough", bind: byKey, key: ownWalkthroughKey},
 
 	// Its facts, before a review exists.
 	{pattern: "/api/facts", bind: byClone, params: []string{"pr", "head"}},
@@ -127,6 +172,8 @@ var actionRoutes = []actionRoute{
 	{pattern: "/api/facts/commits", bind: byClone, params: []string{"pr", "head"}},
 	{pattern: "/api/facts/sessions", bind: byClone, params: []string{"pr", "head"}},
 	{pattern: "/api/facts/sessions/{id}", bind: byClone, params: []string{"pr", "head"}},
+	{pattern: "/api/facts/commit", bind: byClone, params: []string{"pr", "head", "oid"}},
+	{pattern: "/api/facts/commit-patch", bind: byClone, params: []string{"pr", "head", "oid", "path"}},
 
 	// A review group, by id; its versions name no repository, so the group
 	// is read first.
@@ -134,6 +181,8 @@ var actionRoutes = []actionRoute{
 	{pattern: "/api/groups/{id}", bind: byResponse, check: repositoryField},
 	{pattern: "/api/groups/{id}/document", bind: byLookup, params: []string{"version"}, check: repositoryField, lookup: func(v map[string]string) string { return "/api/groups/" + v["id"] }},
 	{pattern: "/api/groups/{id}/versions", bind: byLookup, check: repositoryField, lookup: func(v map[string]string) string { return "/api/groups/" + v["id"] }},
+	{pattern: "/api/groups/{id}/patch", bind: byLookup, params: []string{"version", "path", "hunk"}, check: repositoryField, lookup: func(v map[string]string) string { return "/api/groups/" + v["id"] }},
+	{pattern: "/api/groups/{id}/file", bind: byLookup, params: []string{"version", "path"}, check: repositoryField, lookup: func(v map[string]string) string { return "/api/groups/" + v["id"] }},
 
 	// The Timeline's lists name the repository (the handler reads every
 	// repository= value and serves only those), and its details name it in
@@ -317,9 +366,14 @@ func repositoryField(body []byte) (string, error) {
 type Reader struct {
 	api http.Handler
 	// clone resolves a registered clone's id to its repository.
-	clone      func(ctx context.Context, id string) (string, error)
-	allow      []string
+	clone func(ctx context.Context, id string) (string, error)
+	allow []string
+	// projected are the exact unreadable routes the tool may read (see
+	// projectedReads); an action's reader never has any.
+	projected  []string
 	repository string
+	// pull is the action's pull request, which a byKey route is bound to.
+	pull int
 }
 
 // NewReader reads through api, the LocalAPI handler; clone resolves clone
@@ -333,6 +387,18 @@ func NewReader(api http.Handler, clone func(ctx context.Context, id string) (str
 // when it is not empty.
 func (r *Reader) within(allow []string, repository string) *Reader {
 	return &Reader{api: r.api, clone: r.clone, allow: allow, repository: repository}
+}
+
+// forTool is the reader of one tool's call: its routes, its projected routes
+// when the reader is no action's, and an action's repository and pull
+// request.
+func (r *Reader) forTool(t Tool, repository string, pull int) *Reader {
+	reader := r.within(t.Reads, repository)
+	reader.pull = pull
+	if repository == "" {
+		reader.projected = t.Projected
+	}
+	return reader
 }
 
 // Response is what one read returned.
@@ -352,6 +418,9 @@ var (
 	errRefreshFlag     = errors.New("reads never ask for a refresh")
 	errNotActionRoute  = errors.New("not a route this agent reads")
 	errOtherRepository = errors.New("this agent may read only its own pull request's repository")
+	// errOtherPullRequest is a kept state (the person's draft review, their
+	// walkthrough place) of a pull request that is not the action's own.
+	errOtherPullRequest = errors.New("this agent may read only its own pull request's saved state")
 )
 
 // Get reads target, an /api/ path with an optional query.
@@ -370,7 +439,7 @@ func (r *Reader) Get(ctx context.Context, target string) (Response, error) {
 			return Response{}, fmt.Errorf("read %s: %w", u.Path, errRefreshFlag)
 		}
 	}
-	if !readable(u.Path, r.allow) {
+	if !readable(u.Path, r.allow) && !(r.repository == "" && slices.Contains(r.projected, u.Path)) {
 		return Response{}, fmt.Errorf("read %s: %w", u.Path, errNotReadable)
 	}
 	// A pasted image is served as it was pasted, unmasked: no tool reads one.
@@ -528,6 +597,12 @@ func (r *Reader) bind(ctx context.Context, p string, query url.Values) (*actionR
 		case byPath:
 			named = vars["owner"] + "/" + vars["name"]
 		case byResponse, byLookup, byFilter:
+			named = r.repository
+		case byKey:
+			allowed["key"] = true
+			if len(query["key"]) != 1 || r.pull <= 0 || !route.key(query.Get("key"), r.repository, r.pull) {
+				return nil, nil, errOtherPullRequest
+			}
 			named = r.repository
 		}
 		for name := range query {

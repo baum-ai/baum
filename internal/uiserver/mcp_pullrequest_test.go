@@ -501,7 +501,9 @@ func TestNoToolReadsAWriteRoute(t *testing.T) {
 	reads := f.mcp.ToolReads()
 	var prefixes []string
 	for tool, tp := range reads {
-		if len(tp) == 0 && tool != "focus" && tool != "current_page" && tool != "read_more" && tool != "link" && tool != "app_help" {
+		// plan_usage reads the daemon's cache through an accessor, and the
+		// projected tools read one exact route each (ToolProjected).
+		if len(tp) == 0 && len(f.mcp.ToolProjected()[tool]) == 0 && tool != "focus" && tool != "current_page" && tool != "read_more" && tool != "link" && tool != "app_help" && tool != "plan_usage" {
 			t.Errorf("%s declares no route", tool)
 		}
 		prefixes = append(prefixes, tp...)

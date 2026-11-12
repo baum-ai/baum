@@ -34,6 +34,10 @@ type Tool struct {
 	// whole path segment at a time. The routes listed in unreadable can never
 	// be declared.
 	Reads []string
+	// Projected are the exact routes, otherwise unreadable, this tool may
+	// read in process, and only if projectedReads names them for this tool.
+	// The tool returns a typed projection of them, never their text.
+	Projected []string
 	// Proposes marks a tool that records a proposal for the user to review. The
 	// default, false, is a read-only tool; tools/list reports it in the tool's
 	// annotations so a client can approve read-only tools unasked.
@@ -129,6 +133,9 @@ func (t *Tool) compile() error {
 		return fmt.Errorf("tool %s: unknown scope", t.Name)
 	}
 	if err := checkReads(t.Reads); err != nil {
+		return fmt.Errorf("tool %s: %w", t.Name, err)
+	}
+	if err := checkProjected(t.Name, t.Scope, t.Projected); err != nil {
 		return fmt.Errorf("tool %s: %w", t.Name, err)
 	}
 	schema := t.InputSchema
