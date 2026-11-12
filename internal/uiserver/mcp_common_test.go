@@ -39,8 +39,10 @@ func fakeTimeline() http.Handler {
 	})
 }
 
-// daemon_status and search read the real routes: the background service, the
-// queue's list, the review index, the groups store and the registry.
+// daemon_status and search read through the daemon's LocalAPI: the review
+// index, the groups store and the registry are real; the background service
+// is real but holds no state, and the queue's list, live sessions and Timeline
+// are fakes that answer the shapes the real routes do.
 func TestCommonToolsReadTheRealRoutes(t *testing.T) {
 	f := newPullFixture(t)
 	chatToken, _, revokeChat, err := f.mcp.Registry.Mint(agentcontext.Consumer{Kind: agentcontext.Chat})
@@ -58,7 +60,7 @@ func TestCommonToolsReadTheRealRoutes(t *testing.T) {
 	if failed || !strings.Contains(text, `"health":"ok"`) || !strings.Contains(text, `"version":"test"`) || !strings.Contains(text, `"repositories":[]`) {
 		t.Fatalf("daemon_status: %v %s", failed, text)
 	}
-	// The queue's two running jobs, as the real route lists them.
+	// The queue's two running jobs, as the fake queue lists them.
 	if !strings.Contains(text, `"running":2`) || !strings.Contains(text, `"queued":0`) {
 		t.Errorf("queue depth: %s", text)
 	}

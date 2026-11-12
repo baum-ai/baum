@@ -34,7 +34,7 @@ func withCommonTools(names []string) []string {
 // commonTools are the tools every page offers.
 func (s *Server) commonTools() []Tool {
 	return []Tool{{
-		Name: "search",
+		Name:        "search",
 		Description: "Finds pull requests, review groups, running sessions, repositories, features and decisions by words, as the app's Go to (Ctrl or Cmd+K) does: every word must be in the item's title, repository, kind or keywords, ignoring case; a title that starts with the words comes first. Each hit names its kind and the page it opens (the page fields current_page uses). The first hits only: pass limit (at most 50) for more or narrow the words.",
 		InputSchema: json.RawMessage(`{"type":"object","properties":{` +
 			`"query":{"type":"string","minLength":1,"maxLength":200,"description":"The words to look for, such as \"checkout 42\" or \"retry\"."},` +
@@ -46,11 +46,11 @@ func (s *Server) commonTools() []Tool {
 		Reads: []string{"/api/index", "/api/groups", "/api/live-sessions", "/api/repositories", "/api/timeline/features", "/api/timeline/decisions"},
 		Call:  callSearch,
 	}, {
-		Name: "link",
+		Name:        "link",
 		Description: "The address the baum app uses for a page and what it shows, as a relative query string such as ?page=pulls or ?repository=acme/web&pr=42. The chat panel turns it into a link the person can click, so write it as a Markdown link. Reads nothing. Pages: inbox, pulls, timeline, sessions, analytics, jobs, repositories, settings (all take filters, a map of the page's own address parameters such as repo or who), and pull_request (repository, pull_request), group (group), session (session as agent:id), job (job), feature (feature). settings takes a section; repositories takes a repository and then a section.",
 		InputSchema: json.RawMessage(`{"type":"object","properties":{` +
 			`"page":{"type":"string","enum":["inbox","pulls","timeline","sessions","analytics","jobs","repositories","settings","pull_request","group","session","job","feature"],"description":"The page to link to."},` +
-			`"repository":{"type":"string","description":"owner/name, for pull_request, or repositories to open one repository's page."},` +
+			`"repository":{"type":"string","description":"owner/name: for pull_request, or repositories to open one repository's page; context only (not in the address) for group, session, job and feature."},` +
 			`"pull_request":{"type":"integer","minimum":1,"description":"The pull request number, for pull_request."},` +
 			`"group":{"type":"string","description":"The group id, for group."},` +
 			`"session":{"type":"string","description":"The session as agent:id, for session."},` +
@@ -122,7 +122,7 @@ func callSearch(ctx context.Context, c CallContext, args json.RawMessage) (strin
 	// the others still answer.
 	read := func(name, path string, query url.Values) json.RawMessage {
 		body, missing, err := c.get(ctx, path, query)
-		if err != nil || missing {
+		if err != nil || missing || disabled(body) {
 			unavailable = append(unavailable, name)
 			return nil
 		}
@@ -205,7 +205,12 @@ func matches(candidates []candidate, words []string) []hit {
 		if slices.ContainsFunc(words, func(w string) bool { return !strings.Contains(c.words, w) }) {
 			continue
 		}
-		key := c.Kind + "\x00" + c.Title + "\x00" + c.Detail
+		o := c.Opens
+		key := fmt.Sprint(c.Kind, "\x00", o.Page, "\x00", o.Repository, "\x00", o.PullRequest, "\x00", o.Group, "\x00", o.Session, "\x00", o.Feature)
+		if c.Kind == "decision" {
+			// Decisions share a page; their words tell them apart.
+			key += "\x00" + c.Title + "\x00" + c.Detail
+		}
 		if seen[key] {
 			continue
 		}
@@ -225,6 +230,15 @@ func matches(candidates []candidate, words []string) []hit {
 		hits[i] = r.hit
 	}
 	return hits
+}
+
+// disabled reports a capability the daemon has not got: the route answers 200
+// {"available":false} instead of its data.
+func disabled(body json.RawMessage) bool {
+	var v struct {
+		Available *bool `json:"available"`
+	}
+	return json.Unmarshal(body, &v) == nil && v.Available != nil && !*v.Available
 }
 
 var nonWord = regexp.MustCompile(`[^a-z0-9]+`)
@@ -383,7 +397,10 @@ func decisionCandidates(body json.RawMessage, query string) []candidate {
 		}
 		// A decision has no page of its own: the Timeline's All decisions
 		// tab, filtered to its words, shows it.
-		opens := PageContext{Page: PageTimeline, Repository: repository, Filters: map[string]string{"tab": "all", "q": query}}
+		opens := PageContext{Page: PageTimeline, Filters: map[string]string{"tab": "all", "q": query}}
+		if repository != "" {
+			opens.Filters["repo"] = repository
+		}
 		detail := strings.Join(slices.DeleteFunc([]string{repository, d.Category}, func(p string) bool { return p == "" }), " · ")
 		out = append(out, candidateOf("decision", d.Summary, detail, "", opens))
 	}
@@ -401,10 +418,10 @@ var pageSubjects = map[string][]string{
 	PageRepositories: {"repository", "section", "filters"},
 	PageSettings:     {"section", "filters"},
 	PagePullRequest:  {"repository", "pull_request"},
-	PageGroup:        {"group"},
-	PageSession:      {"session"},
-	PageJob:          {"job"},
-	PageFeature:      {"feature"},
+	PageGroup:        {"group", "repository"},
+	PageSession:      {"session", "repository"},
+	PageJob:          {"job", "repository"},
+	PageFeature:      {"feature", "repository"},
 }
 
 // requiredSubjects are the fields a page's address cannot do without.
@@ -419,7 +436,11 @@ var requiredSubjects = map[string][]string{
 var (
 	settingsSections   = []string{"general", "reviews", "fixes", "connections", "computer", "prompts"}
 	repositorySections = []string{"reviews", "prompts", "registration"}
-	filterKey          = regexp.MustCompile(`^[a-z][a-z0-9_]{0,31}$`)
+	// reservedKeys are the address parameters that name a page or its subject:
+	// they are set by their own arguments, which are checked, never by a filter.
+	reservedKeys = map[string]bool{"page": true, "repository": true, "clone": true, "pr": true, "group": true, "session": true,
+		"job": true, "feature": true, "section": true, "inbox": true, "peek": true, "walk": true}
+	filterKey = regexp.MustCompile(`^[a-z][a-z0-9_]{0,31}$`)
 )
 
 // linkOf is the app address of a page, as the app builds its own: the query
@@ -444,8 +465,8 @@ func linkOf(page, repository string, pullRequest int, group, session, job, featu
 		}
 	}
 	for key, value := range filters {
-		if !filterKey.MatchString(key) || key == "page" || len(value) > 256 {
-			return "", fmt.Errorf("filter %q is not an address parameter", key)
+		if !filterKey.MatchString(key) || reservedKeys[key] || len(value) > 256 {
+			return "", fmt.Errorf("filter %q is not a filter: the subject of a page is named by its own argument", key)
 		}
 	}
 	if repository != "" && strings.Count(repository, "/") != 1 {
@@ -536,13 +557,21 @@ func callLink(_ context.Context, c CallContext, args json.RawMessage) (string, e
 	if err := json.Unmarshal(args, &a); err != nil {
 		return "", err
 	}
-	// An action may name only its own repository.
+	// An action may name only its own repository, in the subject or in a
+	// filter that names repositories (the Timeline's and Analytics' repo).
 	if a.Repository != "" {
 		repository, _, err := c.Target(a.Repository, 0)
 		if err != nil {
 			return "", err
 		}
 		a.Repository = repository
+	}
+	for part := range strings.SplitSeq(a.Filters["repo"], ",") {
+		if part = strings.TrimSpace(part); part != "" {
+			if _, _, err := c.Target(part, 0); err != nil {
+				return "", err
+			}
+		}
 	}
 	address, err := linkOf(a.Page, a.Repository, a.PullRequest, a.Group, a.Session, a.Job, a.Feature, a.Section, a.Filters)
 	if err != nil {
@@ -639,6 +668,9 @@ func (s *Server) callDaemonStatus(ctx context.Context, c CallContext, _ json.Raw
 	if err != nil {
 		return "", fmt.Errorf("the background work is unavailable: %w", err)
 	}
+	if disabled(body) {
+		return "", errors.New("the background work is unavailable: the daemon has none")
+	}
 	var states []struct {
 		Repository  string `json:"repository"`
 		LastSuccess string `json:"last_success"`
@@ -664,7 +696,7 @@ func (s *Server) callDaemonStatus(ctx context.Context, c CallContext, _ json.Raw
 			State string `json:"state"`
 		} `json:"jobs"`
 	}
-	if err != nil || json.Unmarshal(body, &jobs) != nil {
+	if err != nil || disabled(body) || json.Unmarshal(body, &jobs) != nil {
 		out.Jobs.Unavailable = true
 	}
 	for _, j := range jobs.Jobs {

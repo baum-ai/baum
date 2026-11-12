@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	"regexp"
 	"slices"
@@ -16,8 +17,10 @@ import (
 type commonDaemon struct {
 	mu   sync.Mutex
 	seen []string
-	// down lists the route paths that answer 503.
+	// down lists the route paths that answer 503; off those that answer 200
+	// {"available":false}, as a daemon without the capability does.
 	down map[string]bool
+	off  map[string]bool
 	// pulls is how many pull requests the index holds, besides the named ones.
 	pulls int
 }
@@ -31,9 +34,13 @@ func (d *commonDaemon) requests() []string {
 func (d *commonDaemon) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	d.mu.Lock()
 	d.seen = append(d.seen, r.Method+" "+r.URL.RequestURI())
-	down := d.down[r.URL.Path]
+	down, off := d.down[r.URL.Path], d.off[r.URL.Path]
 	d.mu.Unlock()
 	w.Header().Set("Content-Type", "application/json")
+	if off {
+		_, _ = fmt.Fprint(w, `{"available":false,"code":"unavailable"}`)
+		return
+	}
 	if down {
 		http.Error(w, "down", http.StatusServiceUnavailable)
 		return
@@ -55,7 +62,7 @@ func (d *commonDaemon) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case "/api/groups":
 		_, _ = fmt.Fprint(w, `{"available":true,"groups":[{"id":"g-1","repository":"acme/web","name":"Retry rollout","members":[12,13]}]}`)
 	case "/api/live-sessions":
-		_, _ = fmt.Fprint(w, `{"sessions":[{"agent":"claude","session_id":"s-1","title":"Retry the checkout","repository":"acme/web","branch":"retry","waiting_message":"secret"},{"agent":"codex","session_id":"s-2","repository":"acme/api","branch":"main"}]}`)
+		_, _ = fmt.Fprint(w, `{"sessions":[{"agent":"claude","session_id":"s-1","title":"Retry the checkout","repository":"acme/web","branch":"retry","waiting_message":"secret"},{"agent":"codex","session_id":"s-2","repository":"acme/api","branch":"main"},{"agent":"codex","session_id":"s-3","repository":"acme/api","branch":"main"}]}`)
 	case "/api/repositories":
 		_, _ = fmt.Fprint(w, `[{"repository":"acme/web","clones":[{"path":"/home/dev/web"}]},{"repository":"acme/retry-lib","clones":[]}]`)
 	case "/api/timeline/features":
@@ -137,6 +144,26 @@ func TestSearchFindsWhatGoToFinds(t *testing.T) {
 	if dec := got["decision:Retry only idempotent calls"]; dec.Page != PageTimeline || dec.Filters["q"] != "Retry" {
 		t.Errorf("decision opens %+v", dec)
 	}
+	// Every hit's page feeds link, as the page fields current_page uses.
+	for _, h := range out.Hits {
+		args := map[string]any{"page": h.Opens.Page}
+		for k, v := range map[string]any{"repository": h.Opens.Repository, "pull_request": h.Opens.PullRequest, "group": h.Opens.Group,
+			"session": h.Opens.Session, "job": h.Opens.Job, "feature": h.Opens.Feature} {
+			if v != "" && v != 0 {
+				args[k] = v
+			}
+		}
+		if len(h.Opens.Filters) > 0 {
+			args["filters"] = h.Opens.Filters
+		}
+		if text, failed := data(t, s, token, "link", args); failed {
+			t.Errorf("link refuses the page of %s %q: %v: %s", h.Kind, h.Title, args, text)
+		}
+	}
+	// Sessions with the same title and detail are two hits.
+	if o, _, _ := search(t, s, token, map[string]any{"query": "codex on main", "kinds": []string{"session"}}); len(o.Hits) != 2 {
+		t.Errorf("two sessions of one title are %d hits", len(o.Hits))
+	}
 	// Two clones of a pull request are one hit; a session's private fields are
 	// not returned; titles that start with the words come first.
 	if n := strings.Count(text, "Add checkout retry"); n != 1 {
@@ -215,7 +242,7 @@ func TestLinkBuildsTheAppsAddresses(t *testing.T) {
 	}{
 		{map[string]any{"page": "inbox"}, "?page=inbox"},
 		{map[string]any{"page": "pulls"}, "?page=pulls"},
-		{map[string]any{"page": "pulls", "filters": map[string]string{"filter": "mine", "repo": "acme/web"}}, "?page=pulls&filter=mine&repo=acme%2Fweb"},
+		{map[string]any{"page": "pulls", "filters": map[string]string{"filter": "history", "repo": "acme/web"}}, "?page=pulls&filter=history&repo=acme%2Fweb"},
 		{map[string]any{"page": "timeline"}, "?page=timeline&who=human"},
 		{map[string]any{"page": "timeline", "filters": map[string]string{"tab": "all"}}, "?page=timeline&tab=all"},
 		{map[string]any{"page": "sessions"}, "?page=sessions"},
@@ -535,5 +562,150 @@ func TestSettingsSectionsMatchTheApp(t *testing.T) {
 	}
 	if !slices.Equal(found[0], settingsSections) || !slices.Equal(found[1], repositorySections) {
 		t.Errorf("settings sections %v and %v, link knows %v and %v", found[0], found[1], settingsSections, repositorySections)
+	}
+}
+
+func TestLinkFiltersCannotNameTheSubject(t *testing.T) {
+	s, token := commonServer(t, &commonDaemon{})
+	action, _, revoke := mint(t, s, Consumer{Kind: Action, Repository: "acme/web", PullRequest: 12})
+	defer revoke()
+	for _, key := range []string{"repository", "clone", "pr", "group", "session", "job", "feature", "section", "inbox", "page"} {
+		for _, page := range []string{"repositories", "settings", "timeline"} {
+			args := map[string]any{"page": page, "filters": map[string]string{key: "evil/secrets"}}
+			for who, tok := range map[string]string{"chat": token, "action": action} {
+				if text, failed := data(t, s, tok, "link", args); !failed {
+					t.Errorf("%s: %s with filter %s accepted: %s", who, page, key, text)
+				}
+			}
+		}
+	}
+	// A filter that names repositories is another repository to an action.
+	for _, repo := range []string{"evil/secrets", "acme/web,evil/secrets"} {
+		text, failed := data(t, s, action, "link", map[string]any{"page": "timeline", "filters": map[string]string{"repo": repo}})
+		if !failed || !strings.Contains(text, errOtherRepository.Error()) {
+			t.Errorf("an action linked the timeline of %s: %s", repo, text)
+		}
+	}
+	if text, failed := data(t, s, action, "link", map[string]any{"page": "timeline", "filters": map[string]string{"repo": "acme/web"}}); failed {
+		t.Errorf("an action's own repository filter: %s", text)
+	}
+	if text, failed := data(t, s, token, "link", map[string]any{"page": "analytics", "filters": map[string]string{"repo": "any/thing"}}); failed {
+		t.Errorf("a chat's repo filter: %s", text)
+	}
+}
+
+func TestDisabledCapabilitiesAreUnavailable(t *testing.T) {
+	d := &commonDaemon{off: map[string]bool{"/api/groups": true}}
+	s, token := commonServer(t, d)
+	out, text, failed := search(t, s, token, map[string]any{"query": "retry"})
+	if failed || !slices.Equal(out.Unavailable, []string{"groups"}) {
+		t.Fatalf("%v %s", failed, text)
+	}
+	if _, text, failed := search(t, s, token, map[string]any{"query": "retry", "kinds": []string{"group"}}); !failed || !strings.Contains(text, "could not be searched") {
+		t.Errorf("a search of a disabled source succeeded: %s", text)
+	}
+	d.off = map[string]bool{"/api/background": true}
+	if text, failed := data(t, s, token, "daemon_status", nil); !failed {
+		t.Errorf("background off: %s", text)
+	}
+	d.off = map[string]bool{"/api/jobs": true}
+	if text, failed := data(t, s, token, "daemon_status", nil); failed || !strings.Contains(text, `"unavailable":true`) || strings.Contains(text, `"queued":2`) {
+		t.Errorf("jobs off: %v %s", failed, text)
+	}
+}
+
+// link builds the addresses the app's own source builds: the sidebar pages'
+// hrefs in pages.ts and the detail pages' hrefs.
+func TestLinkMatchesTheAppsHrefs(t *testing.T) {
+	src := appSource(t, "pages.ts")
+	_, table, _ := strings.Cut(src, "export const PAGES")
+	table, _, _ = strings.Cut(table, "\n];")
+	entries := regexp.MustCompile(`page:\s*"(\w+)",\s*label:\s*"[^"]*",\s*href:\s*\(\)\s*=>\s*appURL\((?:"([^"]*)")?\)`).FindAllStringSubmatch(table, -1)
+	if len(entries) != len(appPages(t)) {
+		t.Fatalf("parsed %d hrefs for %d pages", len(entries), len(appPages(t)))
+	}
+	for _, e := range entries {
+		got, err := linkOf(e[1], "", 0, "", "", "", "", "", nil)
+		want := e[2]
+		// The inbox's address is the bare path, which link names with its page.
+		if want == "" {
+			want = "?page=inbox"
+		}
+		if err != nil || got != want {
+			t.Errorf("page %s: link %q (%v), the app %q", e[1], got, err, want)
+		}
+	}
+	// The detail pages' hrefs, as templates in their sources, filled in.
+	fill := func(template string, values ...string) string {
+		i := 0
+		return regexp.MustCompile(`\$\{[^}]*\}`).ReplaceAllStringFunc(template, func(string) string {
+			i++
+			return url.QueryEscape(values[i-1])
+		})
+	}
+	for _, tt := range []struct {
+		file, template string
+		values         []string
+		got            func() (string, error)
+	}{
+		{"timeline.tsx", "?repository=${encodeURIComponent(repository)}&pr=${number}", []string{"acme/web", "7"},
+			func() (string, error) { return linkOf(PagePullRequest, "acme/web", 7, "", "", "", "", "", nil) }},
+		{"api.ts", "?page=jobs&job=${encodeURIComponent(job.id)}", []string{"j-1"},
+			func() (string, error) { return linkOf(PageJob, "", 0, "", "", "j-1", "", "", nil) }},
+		{"sessions.tsx", "?page=sessions&session=${encodeURIComponent(sessionKey(s))}", []string{"claude:s-1"},
+			func() (string, error) { return linkOf(PageSession, "", 0, "", "claude:s-1", "", "", "", nil) }},
+		{"app.tsx", "?group=${encodeURIComponent(group.id)}", []string{"g-1"},
+			func() (string, error) { return linkOf(PageGroup, "", 0, "g-1", "", "", "", "", nil) }},
+		{"settings.tsx", "?page=repositories&repository=${encodeURIComponent(repository)}", []string{"acme/web"},
+			func() (string, error) { return linkOf(PageRepositories, "acme/web", 0, "", "", "", "", "", nil) }},
+	} {
+		if !strings.Contains(appSource(t, tt.file), "`"+tt.template+"`") && !strings.Contains(appSource(t, tt.file), "appURL(`"+tt.template+"`)") {
+			t.Errorf("%s no longer has the href %s: update link", tt.file, tt.template)
+			continue
+		}
+		if got, err := tt.got(); err != nil || got != fill(tt.template, tt.values...) {
+			t.Errorf("%s: link %q (%v), the app %q", tt.file, got, err, fill(tt.template, tt.values...))
+		}
+	}
+}
+
+// The keys shortcuts.tsx names by identifier, not literal, are resolved here:
+// each definition is checked in the source so a change to one is caught, then
+// the help must have the key.
+func TestHelpHasTheKeysNamedByIdentifiers(t *testing.T) {
+	src := appSource(t, "shortcuts.tsx")
+	_, help := helpSections()
+	shortcuts := help["shortcuts"]
+	for _, tt := range []struct{ definition, key string }{
+		{"export const REFRESH_KEY_LABEL = `${COMMAND}R`;", "Mod+R"},
+		{`export const GITHUB_KEY_LABEL = MAC ? "⇧⌘G" : "Ctrl+Shift+G";`, "Mod+Shift+G"},
+		{"const digit = /^(?:Digit|Numpad)([1-9])$/.exec(event.code)?.[1];", "Mod+1"},
+		{`if (event.key === ",") return { kind: "page", page: "settings" };`, "Mod+,"},
+		{`if (letter === "k") return { kind: "go-to" };`, "Mod+K"},
+	} {
+		if !strings.Contains(src, tt.definition) {
+			t.Errorf("shortcuts.tsx no longer has %s: update the help", tt.definition)
+		}
+		if !strings.Contains(shortcuts, "`"+tt.key+"`") {
+			t.Errorf("the help lacks %s", tt.key)
+		}
+	}
+	// The page keys run to the number of sidebar pages.
+	if want := fmt.Sprintf("`Mod+1` to `Mod+%d`", len(appPages(t))); !strings.Contains(shortcuts, want) {
+		t.Errorf("the help lacks %s", want)
+	}
+	// The pull request tabs' keys are a literal table.
+	m := regexp.MustCompile(`VIEW_KEYS = \{ previous: \[([^\]]*)\], next: \[([^\]]*)\] \}`).FindStringSubmatch(src)
+	if m == nil {
+		t.Fatal("shortcuts.tsx has no VIEW_KEYS")
+	}
+	for _, key := range regexp.MustCompile(`"(\w+)"`).FindAllStringSubmatch(m[1]+m[2], -1) {
+		name := map[string]string{"ArrowLeft": "←", "ArrowRight": "→"}[key[1]]
+		if name == "" {
+			name = key[1]
+		}
+		if !strings.Contains(shortcuts, "`"+name+"`") {
+			t.Errorf("the help lacks the view key %s", name)
+		}
 	}
 }

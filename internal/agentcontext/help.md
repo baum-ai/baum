@@ -8,11 +8,11 @@ The Inbox is the first page. It shows the saved inboxes, each a query over pull 
 
 ## pulls
 
-Pull requests lists every pull request of the picked repositories in views (For you, Requested, Mine and others) with a filter. Opening a row opens the pull request page.
+Pull requests lists every pull request of the picked repositories in tabs: Open, any saved tabs the person made (each a saved filter), and Closed. A filter narrows the list. Opening a row opens the pull request page.
 
 ## timeline
 
-The Timeline shows what was decided and built, from the person's agent sessions. Its Features tab lists features, each a group of related pull requests, sessions and decisions; its All decisions tab lists every decision. It opens on human decisions. The filter takes repository, who (human or agent), category, person, date and words.
+The Timeline shows what was decided and built, from the person's agent sessions. Its Features tab lists features, each a group of related pull requests, sessions and decisions; its All decisions tab lists every decision. It opens on human decisions. The filter takes repo, who (human or agent), category, person, file, date, status (Features tab only) and words.
 
 ## sessions
 
@@ -20,7 +20,7 @@ Sessions lists the agent sessions (Claude Code, Codex and others) running or rec
 
 ## analytics
 
-Analytics charts review cost, usage and the pull request flow over a window of days, by repository and agent.
+Analytics charts agent activity, usage and the pull request flow over a window of 7, 30 or 90 days, filtered by repository and agent.
 
 ## jobs
 
@@ -32,7 +32,7 @@ Repositories lists the picked repositories and lets the person add more from Git
 
 ## settings
 
-Settings has six sections: General (appearance and keyboard), Reviews (the review agent and automation), Fixes (the fix agent), Connections (GitHub and agent hooks), Computer (diagnostics, command line, updates, environment) and Prompts (the prompts baum sends agents, customisable). The 1 to 6 keys go to a section.
+Settings has six sections: General (appearance and keyboard), Reviews (the review agent and automation), Fixes (the fix agent), Connections (GitHub and agent hooks), This computer (diagnostics, command line, updates, environment) and Prompts (the prompts baum sends agents, customisable). The 1 to 6 keys go to a section.
 
 ## pull_request
 
@@ -83,22 +83,25 @@ Anywhere:
 - `?`: the help menu, then the shortcuts list, or hide it.
 - `⌥ Option` on a Mac, `Alt` elsewhere: hold to show the page's keys.
 - `Escape`: close the list.
-- `Mod+Shift+G`: open the pull request on GitHub.
 
 Lists (Inbox, Pull requests, Sessions, Jobs, Repositories, Timeline):
 
 - `j`, `↓`: next row. `k`, `↑`: previous row.
-- `Enter`, `o`: open the row.
-- `Space`: peek at the review or session below the row, or show or hide a group's pull requests.
-- `x`: select or deselect.
-- `/`: open the filter, or search on Repositories and Timeline.
-- `h`, `←` and `l`, `→`: previous and next view on Pull requests.
-- `m`: merge. `f`: fix. `t`: watch the fix agent or read its transcript. `r`: refresh from GitHub on Pull requests.
+- `Enter`, `o`: open the row (the Inbox's Up next takes `Enter` only).
+- `Escape`: clear the row focus.
+
+Pull requests (and, for `m`, `f` and `t`, the Inbox):
+
+- `x`: select or deselect. `Space`: peek at the review below the row, or show or hide a group's pull requests.
+- `m`: merge, where offered. `f`: fix, where offered. `t`: watch the fix agent or read its transcript. `r`: refresh from GitHub (Pull requests only).
+- `/`: open the filter (Inbox and Pull requests).
+- `h`, `←` and `l`, `→`: previous and next tab on Pull requests.
+- `Mod+Shift+G`: open the focused pull request on GitHub (Inbox, Pull requests and a pull request page).
 
 Inbox (Up next):
 
 - `v`: review: approve, comment or request changes.
-- `s`: snooze, then 1 to 4 for until when (`1–9` is for Sessions).
+- `s`: snooze, then a number key for until when.
 - `e`: archive. `u`: undo a snooze or archive.
 - `⇧J`, `⇧K`, `⌃↓`, `⌃↑` on a Mac, `Shift+J`, `Shift+K`, `Ctrl+↓`, `Ctrl+↑` elsewhere: next and previous inbox.
 
@@ -121,7 +124,9 @@ Sessions and transcripts:
 - `1–9`: answer the focused question or permission; `Enter` submits several.
 - In a transcript, `j`, `k` move between messages, `Space` shows all of one and `Enter` opens it.
 
-Repositories: `a`: add repositories, or finish adding.
+Repositories: `a`: add repositories, or finish adding; `/`: search GitHub repositories while adding.
+
+Timeline: `/`: search the features or decisions; `Enter` opens or closes one.
 
 Settings:
 
