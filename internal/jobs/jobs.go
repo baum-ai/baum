@@ -374,6 +374,13 @@ type Queue struct {
 	// heads are the archived runs of each head (headKey), as job_heads
 	// keeps them.
 	heads map[string]headRuns
+	// journalMu orders journal writes: a write takes it before it lets go of
+	// mu, so writes commit in the order their rows were read (saveOutside).
+	journalMu sync.Mutex
+	// flushing is set while saveOutside writes without mu; flushed, made
+	// on first use, is signalled with mu when it ends.
+	flushing bool
+	flushed  *sync.Cond
 }
 
 // mark records that the job with this id changed; mu is held.
@@ -490,7 +497,85 @@ func Open(path string, executor Executor, concurrency int, changed func(Job)) (*
 // reduced, or stays marked and unwritten, and the others are written. mu is
 // held.
 func (q *Queue) save() error {
-	var rows []journalRow
+	rows, gone := q.pending()
+	if len(rows) > 0 || len(gone) > 0 {
+		// Waits for a saveOutside write under way, which holds older rows.
+		q.journalMu.Lock()
+		e := writeJournal(q.path, rows, gone)
+		q.journalMu.Unlock()
+		if e != nil {
+			return e
+		}
+	}
+	for _, row := range rows {
+		delete(q.dirty, row.job.ID)
+	}
+	for _, id := range gone {
+		delete(q.dirty, id)
+	}
+	q.unsaved = false
+	return nil
+}
+
+// saveOutside writes the jobs marked changed, as save does, but lets go of mu
+// while it writes, so List and the other workers do not wait on the disk. mu
+// is held on entry and released on return. It returns once every change made
+// before the call is committed, by this write or another, or with the error
+// of its own write, after which the changes it held are marked again.
+//
+// Writes stay in order: one saveOutside writes at a time, a save waits for it
+// (journalMu), and its rows are read under mu, so nothing older commits after
+// something newer. The marks of the rows it holds are cleared when they are
+// read, and a change while it writes marks them again.
+func (q *Queue) saveOutside() error {
+	q.waitFlush()
+	rows, gone := q.pending()
+	if len(rows) == 0 && len(gone) == 0 {
+		q.mu.Unlock()
+		return nil
+	}
+	for _, row := range rows {
+		delete(q.dirty, row.job.ID)
+	}
+	for _, id := range gone {
+		delete(q.dirty, id)
+	}
+	q.flushing = true
+	path := q.path
+	q.journalMu.Lock()
+	q.mu.Unlock()
+	err := writeJournal(path, rows, gone)
+	q.journalMu.Unlock()
+	q.mu.Lock()
+	q.flushing = false
+	q.flushed.Broadcast()
+	if err != nil {
+		for _, row := range rows {
+			q.mark(row.job.ID)
+		}
+		for _, id := range gone {
+			q.mark(id)
+		}
+	}
+	q.mu.Unlock()
+	return err
+}
+
+// waitFlush waits until no saveOutside is writing. mu is held, and let go of
+// while waiting.
+func (q *Queue) waitFlush() {
+	if q.flushed == nil {
+		q.flushed = sync.NewCond(&q.mu)
+	}
+	for q.flushing {
+		q.flushed.Wait()
+	}
+}
+
+// pending returns the rows of the jobs marked changed and the ids of those no
+// longer in the history. A job too large for the journal is logged and left
+// out, still marked. mu is held.
+func (q *Queue) pending() (rows []journalRow, gone []string) {
 	present := map[string]bool{}
 	for _, j := range q.jobs {
 		if !q.dirty[j.ID] {
@@ -509,25 +594,12 @@ func (q *Queue) save() error {
 		}
 		rows = append(rows, journalRow{j, raw})
 	}
-	var gone []string
 	for id := range q.dirty {
 		if !present[id] {
 			gone = append(gone, id)
 		}
 	}
-	if len(rows) > 0 || len(gone) > 0 {
-		if e := writeJournal(q.path, rows, gone); e != nil {
-			return e
-		}
-	}
-	for _, row := range rows {
-		delete(q.dirty, row.job.ID)
-	}
-	for _, id := range gone {
-		delete(q.dirty, id)
-	}
-	q.unsaved = false
-	return nil
+	return rows, gone
 }
 
 // Delays between retries of a failed journal write; variables for tests.
@@ -1394,20 +1466,28 @@ func (q *Queue) worker(chat bool) {
 				}
 				job.UpdatedAt = time.Now().UTC()
 				q.mark(job.ID)
-				// Save every reported usage update before publishing it. A crash
-				// may lose in-flight provider usage, never the reports we received.
-				if e := q.save(); e != nil {
-					cancel()
-					q.mu.Unlock()
-					return
-				}
 				current := *job
 				current.Accounting = current.Accounting.Clone()
 				usage := q.usage
 				if !usageOnly(before, current) {
 					usage = nil
 				}
+				// Save every reported usage update before publishing it. A crash
+				// may lose in-flight provider usage, never the reports we received.
+				// The write lets go of mu (saveOutside).
+				if e := q.saveOutside(); e != nil {
+					cancel()
+					return
+				}
+				// A state change made while it was written (a cancellation, the
+				// end) published itself, saved; this older report would undo it.
+				q.mu.Lock()
+				k = q.find(current.ID)
+				superseded := k < 0 || q.jobs[k].State != current.State
 				q.mu.Unlock()
+				if superseded {
+					return
+				}
 				if usage != nil {
 					usage(usageOf(current))
 				} else {

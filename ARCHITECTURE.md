@@ -3033,14 +3033,15 @@ maps back to the one before it, and any other write still moves it). A
 renewal by another process, such as the CLI, still moves the fingerprint.
 
 The fingerprint reads registry rows rather than `app.sqlite`'s file times or
-`PRAGMA data_version`: most daemon stores (jobs, chat, UI state, analytics,
-automatic generation, decisions) open their own connections, and
-`appdb.Read`/`Write` a new one per call, so both signals move on every job
-progress save, which is no input to the index. A store's SQLite header change
-counter is not read either: closing any descriptor of a SQLite file drops the
-POSIX locks this process's own connections hold on it, and the daemon reads and
-writes stores itself. The databases use the rollback journal, so a commit
-changes the main file's modification time; two commits within one timestamp
+`PRAGMA data_version`: every daemon store (jobs, chat, UI state, analytics,
+automatic generation, decisions) writes `app.sqlite`, so both signals move on
+every job progress save, which is no input to the index. A store's SQLite
+header change counter is not read either: closing any descriptor of a SQLite
+file drops the POSIX locks this process's own connections hold on it, and the
+daemon reads and writes stores itself. The databases use the write-ahead log
+(see `internal/appdb`), so a commit changes the modification time of
+`versions.sqlite-wal`, and a checkpoint that of `versions.sqlite`; the
+fingerprint stats both (`store.StampOf`). Two commits within one timestamp
 step of a check, at the same size, look alike until `MaxAge`. What nothing
 models is also bounded by `MaxAge`: a clone made unavailable by a change the
 stats miss, and a GitHub credential replaced outside baum. Connecting and
@@ -3903,7 +3904,12 @@ so far (`agent.Request.Usage`: Claude Code per stream event, Codex per turn,
 the Anthropic API per response), and the queue adds it to the accounting it
 publishes, at most every two seconds, as `job` events (see "Authenticated local application host").
 Queue progress is saved before SSE publication and snapshots detach mutable
-accounting. Existing version records are never backfilled. Pricing sums
+accounting. A progress report is written without holding the queue's lock,
+so job lists and the other workers do not wait for the disk; reports that
+arrive while one is written are written together next, in order. A job list
+may show a report while it is being written, which a crash at that moment
+loses; a published one it never loses. State changes are still written under
+the lock. Existing version records are never backfilled. Pricing sums
 individually attributable model reports and estimates the rest at the lowest
 rates they could have been billed at, with a fixed reason marking the cost a
 lower bound; the cost is null only when nothing can be priced. The local SPA renders both job accounting

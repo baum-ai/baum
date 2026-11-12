@@ -272,6 +272,10 @@ func oldStore(t *testing.T) *Store {
 		t.Fatal(err)
 	}
 	defer db.Close()
+	// Stores older binaries wrote use the rollback journal.
+	if _, err := db.Exec(`PRAGMA journal_mode=DELETE`); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := db.Exec(oldSchema); err != nil {
 		t.Fatal(err)
 	}

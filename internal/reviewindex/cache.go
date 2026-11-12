@@ -211,11 +211,21 @@ func Fingerprint(rows func(context.Context) ([]repos.Repository, error), identit
 			case err != nil:
 				_, _ = fmt.Fprintf(h, "%q -\n", path)
 			case times:
-				stamp := store.SeenThroughHeartbeats(path, store.FileStamp{Size: info.Size(), ModTime: info.ModTime().UnixNano()})
-				_, _ = fmt.Fprintf(h, "%q %d %d %v\n", path, stamp.Size, stamp.ModTime, info.Mode())
+				_, _ = fmt.Fprintf(h, "%q %d %d %v\n", path, info.Size(), info.ModTime().UnixNano(), info.Mode())
 			default:
 				_, _ = fmt.Fprintf(h, "%q %v\n", path, info.Mode().Type())
 			}
+		}
+		// A store's commits land in its write-ahead log first.
+		statStore := func(path string) {
+			info, err := os.Stat(path)
+			stamp, stampErr := store.StampOf(path)
+			if err != nil || stampErr != nil {
+				_, _ = fmt.Fprintf(h, "%q -\n", path)
+				return
+			}
+			stamp = store.SeenThroughHeartbeats(path, stamp)
+			_, _ = fmt.Fprintf(h, "%q %d %d %d %d %v\n", path, stamp.Size, stamp.ModTime, stamp.WALSize, stamp.WALModTime, info.Mode())
 		}
 		if identity != nil {
 			_, _ = fmt.Fprintf(h, "identity %q\n", identity())
@@ -237,7 +247,7 @@ func Fingerprint(rows func(context.Context) ([]repos.Repository, error), identit
 					continue
 				}
 				for _, root := range roots {
-					stat(filepath.Join(root, "versions.sqlite"), true)
+					statStore(filepath.Join(root, "versions.sqlite"))
 				}
 			}
 		}
