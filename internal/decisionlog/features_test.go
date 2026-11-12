@@ -795,3 +795,65 @@ func TestPullFlowReadsOpenedOrMergedSince(t *testing.T) {
 		t.Errorf("flow = %+v, want ada's merged one, then mine", got)
 	}
 }
+
+// Skipping an unchanged window must not freeze the persisted links when
+// the actual contribution evidence in a previously cached session changes.
+func TestFeatureIndexRefreshesLinksAfterSessionEvidenceChanges(t *testing.T) {
+	ctx := context.Background()
+	f := linktest.New(t)
+	c := &clock{time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC)}
+	s := openStore(t, c)
+	if _, err := s.Activate(ctx, linktest.Repository); err != nil {
+		t.Fatal(err)
+	}
+	pull := github.ListedPull{Number: 1, State: "open", HeadSHA: f.Head, BaseSHA: f.Base, UpdatedAt: c.now}
+	if err := s.SavePulls(ctx, linktest.Repository, []github.ListedPull{pull}, "", c.now); err != nil {
+		t.Fatal(err)
+	}
+	recorded := []PullCommit{}
+	for _, sha := range f.Commits {
+		recorded = append(recorded, PullCommit{SHA: sha, CommittedAt: c.now.Add(-time.Hour)})
+	}
+	if err := s.SetPullPaths(ctx, linktest.Repository, 1, f.Head, []string{"b.txt", "c.txt"}, recorded); err != nil {
+		t.Fatal(err)
+	}
+	settle := func() {
+		t.Helper()
+		files, err := filepath.Glob(filepath.Join(f.Store.ClaudeProjectsDir, "*", "*.jsonl"))
+		if err != nil || len(files) == 0 {
+			t.Fatal(err)
+		}
+		for _, p := range files {
+			if err := os.Chtimes(p, c.now, c.now); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	settle()
+	w := &FeatureWorker{Store: s, Now: c.Now, Sessions: f.Store}
+	run := func(full, unchanged bool, want int) {
+		t.Helper()
+		report, err := w.Index(ctx, linktest.Repository, f.Repo, nil, full)
+		if err != nil || report.Unchanged != unchanged {
+			t.Fatalf("index %+v %v", report, err)
+		}
+		var n int
+		if err := s.db.QueryRow(`SELECT COUNT(*) FROM session_commit WHERE repository=?`, linktest.Repository).Scan(&n); err != nil || n != want {
+			t.Fatalf("persisted links %d want %d: %v", n, want, err)
+		}
+	}
+	run(true, false, 1)
+	c.now = c.now.Add(FeatureQuiet)
+	run(false, true, 1)
+	// Replace commit creation with an edit to an unrelated path. Neither
+	// transcript commit evidence nor a Git-writing reflog window remains.
+	f.AddEditor(t, linktest.SessionID, "10", "unrelated.txt")
+	settle()
+	c.now = c.now.Add(FeatureQuiet)
+	run(false, false, 0)
+	// Restoring real commit creation must restore attribution too.
+	f.AddSession(t, linktest.SessionID, f.Repo, "restored contribution")
+	settle()
+	c.now = c.now.Add(FeatureQuiet)
+	run(false, false, 1)
+}
