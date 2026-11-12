@@ -135,7 +135,7 @@ func (s *Store) sourceContext(ctx context.Context, agent, id string) (*SourceCon
 }
 
 func sourceCovered(head Session) bool {
-	return head.Source != nil && head.Source.Version == sourceContextVersion
+	return head.Source != nil && head.Source.Version == sourceContextVersion && head.Source.Repository == head.Repository
 }
 
 func (c *Capturer) repositorySource(ctx context.Context, t Target) (repositorySource, error) {

@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/baum-ai/baum/agent"
 	"github.com/baum-ai/baum/decisions"
@@ -215,7 +216,7 @@ func TestSourceProvenancePreservesOriginalAndMigratesOldStore(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer writable.Close()
+	defer func() { _ = writable.Close() }()
 	first := &SourceContext{Version: sourceContextVersion, Repository: "o/r", Revision: "first", References: []string{"first.go"}}
 	second := &SourceContext{Version: sourceContextVersion, Repository: "o/r", Revision: "second", References: []string{"second.go"}}
 	newChoice := decision("new", "new choice", 2)
@@ -251,5 +252,66 @@ func TestSourcePersistenceFailureRollsBackCapture(t *testing.T) {
 	current, err := f.store.Current(context.Background(), SessionKey{f.target.Agent, f.target.ID})
 	if err != nil || len(current) != 0 {
 		t.Fatalf("partial capture persisted: %+v %v", current, err)
+	}
+}
+
+func TestCaptureDoesNotReuseSourceFromAnotherRepository(t *testing.T) {
+	for _, sameFingerprint := range []bool{true, false} {
+		t.Run(map[bool]string{true: "fingerprint", false: "content"}[sameFingerprint], func(t *testing.T) {
+			f := newFixture(t)
+			f.capture(t, Options{})
+			head, _, err := f.store.Session(context.Background(), f.target.Agent, f.target.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			f.target.Repository = "other/repository"
+			prepare := f.capturer.source
+			f.capturer.source = func(ctx context.Context, target Target) (repositorySource, error) {
+				if target.HeadSHA != "" {
+					t.Fatalf("another repository's revision reused: %q", target.HeadSHA)
+				}
+				return prepare(ctx, target)
+			}
+			// A metadata update can move the session before extraction catches up;
+			// its stored source remains the original repository's until success.
+			if err := f.store.Covered(context.Background(), Meta{Agent: f.target.Agent, ID: f.target.ID, Repository: f.target.Repository, Fingerprint: head.Fingerprint, Path: f.path}); err != nil {
+				t.Fatal(err)
+			}
+			f.later(MinInterval)
+			if !sameFingerprint {
+				f.touch(t, 9)
+			}
+			got := f.capture(t, Options{})
+			if got.Outcome != OutcomeExtracted || got.Source == nil || got.Source.Repository != f.target.Repository || f.backend.calls != 2 {
+				t.Fatalf("old repository source reused: %+v calls=%d", got, f.backend.calls)
+			}
+		})
+	}
+}
+
+func TestCaptureRetriesMovedRepositoryAfterSourceUnavailable(t *testing.T) {
+	f := newFixture(t)
+	f.capture(t, Options{})
+	f.target.Repository = "other/repository"
+	f.later(MinInterval)
+	prepare := f.capturer.source
+	f.capturer.source = nil
+	if got := f.capture(t, Options{}); got.Outcome != OutcomeSkipped || got.Reason != ReasonSourceUnavailable {
+		t.Fatalf("%+v", got)
+	}
+	head, _, err := f.store.Session(context.Background(), f.target.Agent, f.target.ID)
+	if err != nil || head.Repository != f.target.Repository || head.Source.Repository == f.target.Repository {
+		t.Fatalf("expected moved metadata and old source: %+v %v", head, err)
+	}
+	f.capturer.source = func(ctx context.Context, target Target) (repositorySource, error) {
+		if target.HeadSHA != "" {
+			t.Fatalf("old repository revision reused: %q", target.HeadSHA)
+		}
+		return prepare(ctx, target)
+	}
+	f.later(24 * time.Hour)
+	got := f.capture(t, Options{})
+	if got.Outcome != OutcomeExtracted || got.Source == nil || got.Source.Repository != f.target.Repository || f.backend.calls != 2 {
+		t.Fatalf("retry reused old source: %+v calls=%d", got, f.backend.calls)
 	}
 }

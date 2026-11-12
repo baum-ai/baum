@@ -429,7 +429,7 @@ func (c *Capturer) Capture(ctx context.Context, t Target, o Options) (Report, er
 	}
 
 	sourceTarget := t
-	if sourceTarget.HeadSHA == "" && head.Source != nil && head.Repository == t.Repository && head.ContentHash == hash {
+	if sourceTarget.HeadSHA == "" && head.Source != nil && head.Source.Repository == t.Repository && head.ContentHash == hash {
 		sourceTarget.HeadSHA = head.Source.Revision
 	}
 	source, err := c.repositorySource(ctx, sourceTarget)

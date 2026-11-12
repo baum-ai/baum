@@ -162,7 +162,7 @@ func newFixture(t *testing.T) *fixture {
 	build := func(string) generate.CheckedBackend { return f.backend }
 	f.capturer = &Capturer{Store: f.store, Registry: f.registry, Config: config.Config{Backend: config.BackendClaude}, Home: home, Now: f.clock.Now,
 		Backends: generate.Backends{Claude: build, Codex: build, Anthropic: build, CursorAgent: build}}
-	f.capturer.source = func(context.Context, Target) (repositorySource, error) {
+	f.capturer.source = func(_ context.Context, target Target) (repositorySource, error) {
 		dir, err := os.MkdirTemp("", agent.RunDirPrefix+"*")
 		if err != nil {
 			return repositorySource{}, err
@@ -170,7 +170,7 @@ func newFixture(t *testing.T) *fixture {
 		if err := os.Mkdir(filepath.Join(dir, "head"), 0700); err != nil {
 			return repositorySource{}, err
 		}
-		return repositorySource{Directory: dir, Context: SourceContext{Version: sourceContextVersion, Repository: "o/r", Revision: "fixture"}}, nil
+		return repositorySource{Directory: dir, Context: SourceContext{Version: sourceContextVersion, Repository: target.Repository, Revision: "fixture"}}, nil
 	}
 	f.target = Target{Agent: "claude-code", ID: "s1", Path: f.path, Repository: "o/r", Branch: "feature"}
 	return f
