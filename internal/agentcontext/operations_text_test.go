@@ -51,7 +51,7 @@ func TestPlainShowsNoInvisibleCharacters(t *testing.T) {
 	for name, c := range invisibles {
 		for _, multiline := range []bool{false, true} {
 			got := plain("a"+c+"b", multiline)
-			if got != "ab" && got != "a b" && !(multiline && got == "a\nb") {
+			if got != "ab" && got != "a b" && (!multiline || got != "a\nb") {
 				t.Errorf("%s (multiline %v): plain gives %q", name, multiline, got)
 			}
 		}

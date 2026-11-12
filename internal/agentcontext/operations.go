@@ -238,7 +238,7 @@ func (op *Operation) compile() error {
 		}
 	}
 	for _, segment := range strings.Split(op.Route[1:], "/") {
-		if strings.ContainsAny(segment, "{}") && !(strings.HasPrefix(segment, "{") && strings.HasSuffix(segment, "}") && len(segment) > 2 && !strings.ContainsAny(segment[1:len(segment)-1], "{}")) {
+		if strings.ContainsAny(segment, "{}") && !wildcardSegment(segment) {
 			return fmt.Errorf("operation %s: route %s: a wildcard is one whole segment", op.Name, op.Route)
 		}
 	}
@@ -544,4 +544,14 @@ func (p *Proposals) Confirm(ctx context.Context, consumer, id, seen string) (Ope
 	// Taken, it runs to the end: the person confirmed it, and a run cut off
 	// halfway would leave its outcome unknown.
 	return p.writer.run(context.WithoutCancel(ctx), op, req)
+}
+
+// wildcardSegment is a route segment that is one whole wildcard, {name}.
+func wildcardSegment(segment string) bool {
+	name, ok := strings.CutPrefix(segment, "{")
+	if !ok {
+		return false
+	}
+	name, ok = strings.CutSuffix(name, "}")
+	return ok && name != "" && !strings.ContainsAny(name, "{}")
 }
