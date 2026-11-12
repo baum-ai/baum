@@ -237,6 +237,19 @@ links open Changes. Changes are ordered by review score, with attention items
 first when scores tie. The Changes count excludes obsolete sections, which are
 hidden by default and can be revealed with “View obsolete changes.”
 
+The document's `summary.recommendation` leads the Summary, above the overview: a
+boxed block labelled with the decision (Approve, Look first or Request changes,
+toned positive, caution or critical), its one sentence, and a chip for each ref
+that names a section, risk, evidence or decision the document has (a staged
+review's refs are section IDs). A chip opens the section and scrolls to the
+item, opening a disclosure that holds it; a ref the document does not have is
+left out. It speaks of the code and the decisions in it, never of CI, which the
+Details tab's live checks report. A document without the key, or with null,
+shows nothing in its place, and the summary `attention` is not drawn on the
+Summary: a section's own attention is. The Review exchange shows a null
+`review_exchange.summary` as its figures alone, without the model's sentence,
+and says no review tool assessed the pull request when nothing was exchanged.
+
 The document's `summary.context` sits under the Summary's overview, after the
 breaking change and release note and before Intent and instructions, as a
 Context part that starts collapsed; the reviewer expands it. Each part it
@@ -287,7 +300,9 @@ summary. Category labels are omitted and lifecycle labels use quiet text
 (“Since v1”). Attention includes referenced high and critical risks only.
 Medium and low risks appear in Risks after Key decisions even when attention
 references them; a callout referencing only lower-tier risks is omitted.
-Evidence the attention references is listed only when it adds something to
+A section's Risks part lists its open risks and holds the mitigated ones
+behind a disclosure ("1 mitigated risk"), whose rows keep their "Mitigated in
+vN" label. Evidence the attention references is listed only when it adds something to
 open or act on (failed, pending, skipped, observed or reported); missing,
 asserted and unavailable claims, which restate the attention, are left out.
 Under the attention, **Where to look** shows the changed lines and files its
@@ -714,7 +729,17 @@ Inside the review workspace, `Markdown` reads the shown review's hunks
 known hunk ID in the prose, bare or as a whole code span, becomes a chip
 naming its file and first line (`ui-state.tsx:42`, the full path in its
 tooltip) that opens the file view there, or the diff on GitHub when the file
-view cannot. The app's Up next panel sets the same provider for the review
+view cannot. The same pass (`reviewRefs`, `ReviewRefsContext`) links the other
+IDs the document has: a risk, evidence, decision or section ID
+(`(rsk|ev|dec|sec)_…`) as a chip with the risk text, claim or section title,
+truncated, that opens the section and scrolls to the item through
+`ReviewJumpContext` (the workspace provides it; elsewhere the chip is plain); a
+check (`check_run:N`, `status:N`, or its indexed ID) as its name and conclusion,
+toned as the Checks list tones them, linking to its run; a review thread
+(`PRRT_…`) as `file:line` and open or resolved, linking to it; `comment N` or a
+code span of a comment's number as "Comment by author", linking when the index
+has a URL; and a session UUID as its title, opening the session when the host
+lists sessions. Links into another repository are dropped as everywhere else. The app's Up next panel sets the same provider for the review
 it previews, where every chip opens the diff on GitHub. Unknown IDs, link
 text and code blocks stay as written, and without the provider nothing
 changes. The pass runs after sanitising, so a

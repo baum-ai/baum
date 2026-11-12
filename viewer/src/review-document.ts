@@ -197,6 +197,36 @@ export type Block =
 
 export type Attention = { text: string; refs: string[] } | null;
 
+export type RecommendationDecision = "approve" | "look_first" | "request_changes";
+
+/** The reviewer's bottom line for a person deciding what to do with the pull
+ *  request. `refs` are section IDs on a staged review and risk, evidence,
+ *  decision or section IDs on a single-pass one. */
+export type Recommendation = {
+  decision: RecommendationDecision;
+  text: string;
+  refs: string[];
+};
+
+export const RECOMMENDATION_LABEL: Record<RecommendationDecision, string> = {
+  approve: "Approve",
+  look_first: "Look first",
+  request_changes: "Request changes",
+};
+
+export const RECOMMENDATION_TONE: Record<RecommendationDecision, Tone> = {
+  approve: "positive",
+  look_first: "caution",
+  request_changes: "critical",
+};
+
+/** The recommendation a document states, or null when it has none: an older
+ *  document lacks the key, and a review that could not give one stores null. */
+export function reviewRecommendation(document: Pick<ReviewDocument, "summary">) {
+  const stated = document.summary.recommendation;
+  return stated && RECOMMENDATION_LABEL[stated.decision] ? stated : null;
+}
+
 /** The rubric's 1–5 scale of inherent risk, independent of any finding. */
 export type RiskScoreLevel = 1 | 2 | 3 | 4 | 5;
 
@@ -506,13 +536,17 @@ export type ReviewDocument = {
     review_minutes?: number | null;
     breaking_change: string | null;
     attention: Attention;
+    /** The reviewer's bottom line. Absent on documents generated before it
+     *  existed; null when the review could not give one. */
+    recommendation?: Recommendation | null;
     /** The generator's account of how the review went. It was a plain string
      *  before it was an object, and documents generated then are still in the
      *  store. */
     review_exchange?:
       | string
       | {
-          summary?: string;
+          /** Null when the review has not been exchanged with any tool. */
+          summary?: string | null;
           reviews?: number;
           back_and_forths?: number | null;
           critical_issues_found?: number | null;
@@ -699,6 +733,16 @@ export function evidenceTone(status: EvidenceStatus): Tone {
       return "neutral";
   }
 }
+
+/** How a check's conclusion reads where it is listed or named in prose. */
+export const CHECK_CONCLUSION_TONES: Record<string, Tone> = {
+  success: "positive",
+  failure: "critical",
+  cancelled: "critical",
+  pending: "neutral",
+  skipped: "neutral",
+  neutral: "neutral",
+};
 
 export function checkTone(conclusion: CheckConclusion): Tone {
   switch (conclusion) {
@@ -2041,4 +2085,130 @@ export function normalizeReviewDocument(document: ReviewDocument): ReviewDocumen
       return { ...section, title, risks };
     }),
   };
+}
+
+/** What a review's prose names by ID, resolved against the document that
+ *  carries it, so a chip can say what the ID stands for. */
+export type ReviewRef =
+  | {
+      kind: "item";
+      item: "risk" | "evidence" | "decision" | "section";
+      id: string;
+      /** The section the item sits in; a section's own ID for a section. */
+      section: string;
+      label: string;
+    }
+  | { kind: "check"; id: string; name: string; conclusion: CheckConclusion; url?: string }
+  | {
+      kind: "thread";
+      id: string;
+      path: string | null;
+      line: number | null;
+      resolved: boolean;
+      url?: string;
+    }
+  | { kind: "comment"; id: string; author: string; url?: string }
+  | { kind: "session"; id: string; title: string | null; vendor: string };
+
+/** The characters of a risk's text or a claim kept for a chip's label. */
+const REF_LABEL_LENGTH = 48;
+
+function shortLabel(text: string): string {
+  // Markdown marks and line breaks would show as written inside a chip.
+  const plain = text
+    .replace(/\[([^\]]*)\]\([^)]*\)/g, "$1")
+    .replace(/[`*_~]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  return plain.length > REF_LABEL_LENGTH
+    ? `${plain.slice(0, REF_LABEL_LENGTH - 1).trimEnd()}…`
+    : plain;
+}
+
+/** Every ID of the document that prose may name, by the key a chip looks up:
+ *  the ID itself, and `comment:<id>` for a comment. The first of a repeated
+ *  ID wins. A link outside the pull request's repository is dropped, as
+ *  everywhere else. */
+export function reviewRefs(document: ReviewEvidence): Map<string, ReviewRef> {
+  const refs = new Map<string, ReviewRef>();
+  const add = (key: string, ref: ReviewRef) => {
+    if (!refs.has(key)) refs.set(key, ref);
+  };
+  if ("sections" in document) {
+    for (const section of document.sections) {
+      add(section.id, {
+        kind: "item",
+        item: "section",
+        id: section.id,
+        section: section.id,
+        label: section.title,
+      });
+      for (const risk of section.risks) {
+        add(risk.id, {
+          kind: "item",
+          item: "risk",
+          id: risk.id,
+          section: section.id,
+          label: shortLabel(risk.text),
+        });
+      }
+      for (const evidence of section.evidence) {
+        add(evidence.id, {
+          kind: "item",
+          item: "evidence",
+          id: evidence.id,
+          section: section.id,
+          label: shortLabel(evidence.claim),
+        });
+      }
+      for (const block of section.blocks) {
+        if (block.kind !== "decisions") continue;
+        for (const decision of (block as Extract<Block, { kind: "decisions" }>).items ?? []) {
+          add(decision.id, {
+            kind: "item",
+            item: "decision",
+            id: decision.id,
+            section: section.id,
+            label: shortLabel(decision.title?.trim() || decision.text),
+          });
+        }
+      }
+    }
+  }
+  for (const check of document.index.checks) {
+    add(check.id, {
+      kind: "check",
+      id: check.id,
+      name: check.name,
+      conclusion: check.conclusion,
+      url: repositoryLink(document, check.url),
+    });
+  }
+  for (const thread of document.index.threads) {
+    add(thread.id, {
+      kind: "thread",
+      id: thread.id,
+      path: thread.path,
+      line: thread.line,
+      resolved: thread.resolved,
+      url: repositoryLink(document, thread.url),
+    });
+  }
+  for (const comment of document.index.comments) {
+    add(`comment:${comment.id}`, {
+      kind: "comment",
+      id: String(comment.id),
+      author: comment.author,
+      url: repositoryLink(document, comment.url),
+    });
+  }
+  for (const session of document.index.sessions) {
+    add(session.id, {
+      kind: "session",
+      id: session.id,
+      title: session.title,
+      vendor: session.vendor,
+    });
+  }
+  return refs;
 }

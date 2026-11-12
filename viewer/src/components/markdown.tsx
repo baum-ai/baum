@@ -11,11 +11,13 @@ import {
   type HighlightedLine,
   type Lang,
 } from "../highlight";
+import type { ReviewRef } from "../review-document";
 import { chipLinkClass } from "./chip-classes";
 import { cn } from "./classnames";
 import { CodeFileLink } from "./code-file-link";
 import { HighlightedText } from "./highlighted-text";
-import { useReviewHunks, type ReviewHunk } from "./review-contexts";
+import { useReviewHunks, useReviewRefs, type ReviewHunk } from "./review-contexts";
+import { ReviewRefChip } from "./review-ref-chip";
 
 const REMARK_PLUGINS = [remarkGfm, remarkBreaks];
 const INLINE_REMARK_PLUGINS = [remarkGfm];
@@ -42,7 +44,26 @@ const REHYPE_PLUGINS = [
 /** A hunk ID as a generated review sometimes writes it into its prose, beside
  *  the anchors that cite it properly. */
 const HUNK_ID = /\bh_[0-9a-f]{12}\b/;
-const HUNK_IDS = new RegExp(HUNK_ID.source, "g");
+
+/** Every ID of a review that its prose may name, in the forms a review writes
+ *  them: a hunk, a risk, evidence, a decision or a section, a check, a review
+ *  thread, a session, and a comment as "comment 123". */
+const REF_TOKEN = new RegExp(
+  [
+    HUNK_ID.source,
+    String.raw`\b(?:rsk|ev|dec|sec)_[a-z0-9_]+\b`,
+    String.raw`\b(?:check_run|status):\d+\b`,
+    String.raw`\bchk_[A-Za-z0-9]+\b`,
+    String.raw`\bPRRT_[A-Za-z0-9_-]+`,
+    String.raw`\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b`,
+    String.raw`\b[Cc]omment (\d+)\b`,
+  ].join("|"),
+);
+const REF_TOKENS = new RegExp(REF_TOKEN.source, "g");
+/** A code span that is a whole reference, or only a comment's number. */
+const REF_SPAN = new RegExp(`^(?:${REF_TOKEN.source}|(\\d+))$`);
+/** Whether text may hold a reference, for the cheap check before parsing. */
+const MAY_REFER = new RegExp(`${REF_TOKEN.source}|\`\\d+\``);
 
 type HastText = { type: "text"; value: string };
 type HastElement = {
@@ -56,28 +77,46 @@ type HastNode =
   | HastElement
   | { type: "root" | "comment" | "doctype"; children?: HastNode[] };
 
-function hunkRefNode(id: string): HastElement {
+/** The key a review's reference map knows a token by: a comment's number is
+ *  `comment:<number>`, any other token is its own ID. */
+function refKey(token: string, comment: string | undefined): string {
+  return comment ? `comment:${comment}` : token;
+}
+
+function refNode(property: "dataHunkRef" | "dataRef", key: string, text: string): HastElement {
   return {
     type: "element",
     tagName: "a",
-    properties: { dataHunkRef: id },
-    children: [{ type: "text", value: id }],
+    properties: { [property]: key },
+    children: [{ type: "text", value: text }],
   };
 }
 
-/** Turns each ID of a known hunk in the text, bare or as a whole code span,
- *  into a link the `a` component renders as a chip for its file and line.
- *  It runs after sanitising, so only this pass makes such links: a comment's
- *  own `data-*` attributes never survive. Links and code blocks keep their
- *  text, and an unknown ID stays as written. */
-function rehypeHunkRefs(hunks: ReadonlyMap<string, ReviewHunk>) {
+/** Turns each ID the review knows in the text, bare or as a whole code span,
+ *  into a link the `a` component renders as a chip: a hunk as its file and
+ *  line, anything else (an item, a check, a thread, a comment, a session) as
+ *  what it is. It runs after sanitising, so only this pass makes such links:
+ *  a comment's own `data-*` attributes never survive. Links and code blocks
+ *  keep their text, and an unknown ID stays as written. */
+function rehypeReviewRefs(
+  hunks: ReadonlyMap<string, ReviewHunk> | null,
+  refs: ReadonlyMap<string, ReviewRef> | null,
+) {
+  const link = (token: string, comment: string | undefined): HastElement | null => {
+    if (/^h_[0-9a-f]{12}$/.test(token)) {
+      return hunks?.has(token) ? refNode("dataHunkRef", token, token) : null;
+    }
+    const key = refKey(token, comment);
+    return refs?.has(key) ? refNode("dataRef", key, token) : null;
+  };
   const split = (value: string): HastNode[] | null => {
     const parts: HastNode[] = [];
     let last = 0;
-    for (const match of value.matchAll(HUNK_IDS)) {
-      if (!hunks.has(match[0])) continue;
+    for (const match of value.matchAll(REF_TOKENS)) {
+      const node = link(match[0], match[1]);
+      if (!node) continue;
       if (match.index > last) parts.push({ type: "text", value: value.slice(last, match.index) });
-      parts.push(hunkRefNode(match[0]));
+      parts.push(node);
       last = match.index + match[0].length;
     }
     if (last === 0) return null;
@@ -92,8 +131,12 @@ function rehypeHunkRefs(hunks: ReadonlyMap<string, ReviewHunk>) {
       if (child.tagName === "a" || child.tagName === "pre") return [child];
       if (child.tagName === "code") {
         const [only] = child.children;
-        const id = child.children.length === 1 && only?.type === "text" ? only.value.trim() : "";
-        return hunks.has(id) ? [hunkRefNode(id)] : [child];
+        const text = child.children.length === 1 && only?.type === "text" ? only.value.trim() : "";
+        const match = REF_SPAN.exec(text);
+        if (!match) return [child];
+        // Digits alone name a comment.
+        const chip = /^\d+$/.test(text) ? link(text, text) : link(match[0], match[1]);
+        return [chip ?? child];
       }
       walk(child);
       return [child];
@@ -202,6 +245,8 @@ const COMPONENTS: Components = {
   a: ({ href, children, node }) => {
     const hunk = node?.properties?.dataHunkRef;
     if (typeof hunk === "string") return <HunkRef id={hunk} />;
+    const ref = node?.properties?.dataRef;
+    if (typeof ref === "string") return <ReviewRefChip refKey={ref} />;
     return (
       <a href={href} target="_blank" rel="noreferrer" className="text-(--text-link) underline">
         {children}
@@ -368,10 +413,11 @@ export const Markdown = memo(function Markdown({
   reading?: boolean;
 }) {
   const hunks = useReviewHunks();
+  const refs = useReviewRefs();
   const sanitize = html ? (NEEDS_RAW.test(children) ? REHYPE_PLUGINS : SANITIZE_ONLY) : [];
   const rehypePlugins =
-    hunks?.size && HUNK_ID.test(children)
-      ? [...sanitize, rehypeHunkRefs(hunks) as RehypePlugin]
+    (hunks?.size || refs?.size) && MAY_REFER.test(children)
+      ? [...sanitize, rehypeReviewRefs(hunks, refs) as RehypePlugin]
       : html
         ? sanitize
         : undefined;

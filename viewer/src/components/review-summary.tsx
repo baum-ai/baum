@@ -11,6 +11,10 @@ import {
   summaryIntent,
   riskScoreTone,
   riskScoreView,
+  RECOMMENDATION_LABEL,
+  RECOMMENDATION_TONE,
+  reviewRecommendation,
+  reviewRefs,
   type Tone,
   type TriageRisk,
   triageRisks,
@@ -21,6 +25,7 @@ import { Markdown } from "./markdown";
 import { ContextPart } from "./review-context";
 import { SectionIcon } from "./icons";
 import { Item, ItemMeta, JumpLink, Lines, None, Part, PROSE, RiskTags } from "./review-parts";
+import { chipLinkClass } from "./chip-classes";
 import { cn } from "./classnames";
 import { Badge, CardHeader, SegmentedControl } from "./ui";
 
@@ -37,7 +42,8 @@ export function ReviewSummary({
   contextPending = false,
 }: {
   document: ReviewDocument;
-  onSelectSection: (id: string) => void;
+  /** Opens a section, and scrolls to one of its items when one is named. */
+  onSelectSection: (id: string, item?: string) => void;
   /** Opens one of the review's other panes. The "view all" links and the
    *  other jump links go through it; without it they are not drawn. */
   onNavigate?: (destination: SummaryDestination) => void;
@@ -74,6 +80,7 @@ export function ReviewSummary({
                 : "This pull request changes REVIEW.md. The base branch has no REVIEW.md, so the review used the default review policy."}
             </StatusLine>
           )}
+          <RecommendationPart document={document} onSelectSection={onSelectSection} />
           <div
             data-review-block=""
             className="space-y-3 rounded-(--radius-sm) outline-none data-[review-block-active]:bg-(--surface-wash)"
@@ -190,6 +197,66 @@ export function ReviewSummary({
         </div>
       </div>
     </>
+  );
+}
+
+/** The reviewer's bottom line, first on the page: what to do with the pull
+ *  request, why in a sentence, and the sections and items it rests on. It
+ *  speaks of the code and the decisions in it, never of CI, which the Details
+ *  tab reports live. A document without one (older, or one the review could
+ *  not give) shows nothing in its place. */
+function RecommendationPart({
+  document,
+  onSelectSection,
+}: {
+  document: ReviewDocument;
+  onSelectSection: (id: string, item?: string) => void;
+}) {
+  const recommendation = reviewRecommendation(document);
+  if (!recommendation) return null;
+  const known = reviewRefs(document);
+  // An ID the document does not have is left out rather than shown dead.
+  const targets = [...new Set(recommendation.refs)].flatMap((ref) => {
+    const found = known.get(ref);
+    return found?.kind === "item" ? [found] : [];
+  });
+  return (
+    <section
+      aria-label="Recommendation"
+      data-review-block=""
+      className="rounded-(--radius-md) outline-none data-[review-block-active]:bg-(--surface-wash)"
+    >
+      <StatusBlock
+        boxed
+        tone={RECOMMENDATION_TONE[recommendation.decision]}
+        label={RECOMMENDATION_LABEL[recommendation.decision]}
+      >
+        <Markdown className="max-w-[90ch] text-base leading-[1.5] text-(--text-primary) [overflow-wrap:anywhere]">
+          {recommendation.text}
+        </Markdown>
+        {targets.length > 0 && (
+          <ul aria-label="Where to look" className="mt-2 flex flex-wrap gap-1.5">
+            {targets.map((target) => (
+              <li key={target.id} className="max-w-full min-w-0">
+                <button
+                  type="button"
+                  title={`${target.item[0]!.toUpperCase()}${target.item.slice(1)} ${target.id}`}
+                  onClick={() =>
+                    onSelectSection(
+                      target.section,
+                      target.item === "section" ? undefined : target.id,
+                    )
+                  }
+                  className={cn(chipLinkClass, "cursor-pointer")}
+                >
+                  <span className="truncate">{target.label}</span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </StatusBlock>
+    </section>
   );
 }
 

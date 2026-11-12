@@ -110,6 +110,13 @@ export function ReviewSection({
   const attentionRiskIds = new Set(attention?.refs ?? []);
   const attentionRisks = section.risks.filter((risk) => attentionRiskIds.has(risk.id));
   const otherRisks = section.risks.filter((risk) => !attentionRiskIds.has(risk.id));
+  // A risk the code has since addressed is no longer the reader's to weigh,
+  // so it waits behind a disclosure rather than sharing the list with the
+  // open ones. In an obsolete section every risk is shown as obsolete instead.
+  const isMitigated = (risk: Section["risks"][number]) =>
+    risk.state === "mitigated" && derived.state !== "stale";
+  const openRisks = otherRisks.filter((risk) => !isMitigated(risk));
+  const mitigatedRisks = otherRisks.filter(isMitigated);
   const renderRisk = (risk: Section["risks"][number], position: number, inAttention = false) => {
     const Container = inAttention ? "li" : Item;
     return (
@@ -242,9 +249,21 @@ export function ReviewSection({
 
         {otherRisks.length > 0 && (
           <Part label="Risks">
-            <ol className="space-y-2">
-              {otherRisks.map((risk, position) => renderRisk(risk, position))}
-            </ol>
+            {openRisks.length > 0 && (
+              <ol className="space-y-2">
+                {openRisks.map((risk, position) => renderRisk(risk, position))}
+              </ol>
+            )}
+            {mitigatedRisks.length > 0 && (
+              <details className={openRisks.length > 0 ? "mt-2.5" : undefined}>
+                <summary className="cursor-pointer text-base text-(--text-link) hover:underline">
+                  {pluralize("mitigated risk", mitigatedRisks.length, true)}
+                </summary>
+                <ol className="mt-2 space-y-2">
+                  {mitigatedRisks.map((risk, position) => renderRisk(risk, position))}
+                </ol>
+              </details>
+            )}
           </Part>
         )}
 

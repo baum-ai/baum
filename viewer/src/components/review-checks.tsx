@@ -1,6 +1,7 @@
 import pluralize from "pluralize";
 
 import {
+  CHECK_CONCLUSION_TONES,
   type CheckStatus,
   checksHead,
   checkStatus,
@@ -13,7 +14,7 @@ import { StatusBlock } from "./editorial";
 import { formatDate, formatRelative } from "./format";
 import { ExternalLinkIcon } from "./icons";
 import { Part } from "./review-parts";
-import { Badge, type BadgeTone } from "./ui";
+import { Badge } from "./ui";
 
 /** How old a check snapshot may be before the line says when it was taken. */
 const STALE_AFTER_MS = 60 * 60 * 1000;
@@ -118,15 +119,6 @@ export function FailingChecks({ status }: { status: CheckStatus }) {
   );
 }
 
-const CONCLUSION_TONES: Record<string, BadgeTone> = {
-  success: "positive",
-  failure: "critical",
-  cancelled: "critical",
-  pending: "neutral",
-  skipped: "neutral",
-  neutral: "neutral",
-};
-
 /** The Details tab's Checks part: the state of CI on this head in one line, the
  *  failures in the open, and every run behind a disclosure, so a reader who
  *  wants to know what else ran does not have to leave the review. */
@@ -170,7 +162,10 @@ export function ChecksPart({ document: supplied }: { document: ReviewEvidence })
             <ul aria-label="Checks on this head" className="mt-2 divide-y divide-(--border-subtle)">
               {checks.map((check) => (
                 <li key={check.id} className="flex flex-wrap items-center gap-x-2 gap-y-1 py-2">
-                  <Badge tone={CONCLUSION_TONES[check.conclusion] ?? "neutral"} size="compact">
+                  <Badge
+                    tone={CHECK_CONCLUSION_TONES[check.conclusion] ?? "neutral"}
+                    size="compact"
+                  >
                     {humanize(check.conclusion)}
                   </Badge>
                   <CheckLink check={check} />
