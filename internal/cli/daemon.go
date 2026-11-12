@@ -464,7 +464,10 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 		// Feature builds run on the feature worker made below.
 		builds := &featureBuilder{}
 		prefs, _ := registry.Preferences(ctx)
-		queue, err := jobs.Open(database, &jobs.Local{Registry: registry, Groups: groups, Config: cfg, Client: github.NewFromConfig(cfg, github.Options{}), Features: builds, Chat: chats, Log: log}, prefs.Concurrency(), func(job jobs.Job) {
+		// Held until the application is wired below: a journaled feature
+		// build needs the feature log, and the queue's logger, usage events
+		// and chat service are set after it opens.
+		queue, err := jobs.OpenHeld(database, &jobs.Local{Registry: registry, Groups: groups, Config: cfg, Client: github.NewFromConfig(cfg, github.Options{}), Features: builds, Chat: chats, Log: log}, prefs.Concurrency(), func(job jobs.Job) {
 			_ = server.PublishProgress(job)
 			if event, ok := jobs.ChatEvent(job); ok {
 				_ = server.Publish("chat", event)
@@ -738,6 +741,8 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 			Diagnostics: uiDiagnostics, Version: version()}.Handler()
 		// The tour's sample project, written when first asked for.
 		sample := &sampleapp.Workspace{Dir: filepath.Join(state, "sample"), Own: api}
+		// Everything the journaled jobs need is wired: start them.
+		queue.Resume()
 		return daemon.App{
 			API:     api,
 			Assets:  localapp.Handler(),
@@ -806,9 +811,10 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 				})
 				wg.Wait()
 			},
-			Shutdown: queue.Shutdown,
-			Drain:    queue.Drain,
-			Resume:   queue.Resume,
+			Shutdown:     queue.Shutdown,
+			Drain:        queue.Drain,
+			DrainRunning: queue.DrainRunning,
+			Resume:       queue.Resume,
 			Close: func() {
 				sample.Close()
 				api.Close()

@@ -98,7 +98,8 @@ type Scheduler struct {
 	// their members' (see passGroups). Nil generates no group review.
 	Groups Groups
 	// Hold reports that the daemon is stopping or waiting to restart as a
-	// newer version; nothing is submitted meanwhile, so the queue can drain.
+	// newer version; nothing is submitted meanwhile, and the new daemon's
+	// passes submit what is pending.
 	Hold func() bool
 	// Notify publishes a repository's changed status (a notice) for the app
 	// and the desktop app's notifications.

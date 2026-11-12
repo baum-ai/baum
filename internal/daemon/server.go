@@ -73,7 +73,15 @@ type App struct {
 	// slip in between; when work is pending it changes nothing and reports
 	// false. Without it the daemon is always idle.
 	Drain func() bool
-	// Resume accepts paid work again after a Drain that led nowhere.
+	// DrainRunning is Drain for a restart into a newer version, which
+	// waits only for running work: it starts no queued work, and reports
+	// true once none runs, stopping accepting paid work in the same step.
+	// Queued work stays for the new daemon. While it reports false, it
+	// keeps holding queued work until Resume. Without it a restart waits for
+	// Drain.
+	DrainRunning func() bool
+	// Resume accepts paid work again after a Drain or DrainRunning that led
+	// nowhere, and starts queued work again.
 	Resume func()
 	// Methods registers further control requests the application serves,
 	// beside Options.Methods; they require the client's protocol to match.
@@ -241,7 +249,7 @@ func Run(ctx context.Context, opts Options) error {
 	if trust == nil {
 		trust = trustedExecutable
 	}
-	control := &controller{status: status, stop: stop, methods: methods, waits: waits, log: log, conns: map[net.Conn]struct{}{}, drain: app.Drain, resume: app.Resume, respawn: opts.Respawn, trust: trust}
+	control := &controller{status: status, stop: stop, methods: methods, waits: waits, log: log, conns: map[net.Conn]struct{}{}, drain: app.Drain, drainRunning: app.DrainRunning, resume: app.Resume, respawn: opts.Respawn, trust: trust}
 	if opts.Respawn != nil {
 		executable := opts.executable
 		if executable == "" {
@@ -393,9 +401,11 @@ type controller struct {
 	log     *slog.Logger
 	conns   map[net.Conn]struct{}
 	drain   func() bool
-	resume  func()
-	respawn func(string, Status) error
-	trust   func(string) (string, error)
+	// drainRunning, when set, is what a restart waits for (App.DrainRunning).
+	drainRunning func() bool
+	resume       func()
+	respawn      func(string, Status) error
+	trust        func(string) (string, error)
 	// restartInto is the trusted executable of the newest client that asked
 	// the daemon to restart as its version, and restartVersion that version.
 	restartInto, restartVersion string
@@ -428,7 +438,16 @@ func (c *controller) current() Status {
 // c.mu: the application's drain never calls back into the controller.
 func (c *controller) drained() bool { return c.drain == nil || c.drain() }
 
-// undrain accepts paid work again.
+// drainedRunning holds queued work and stops accepting paid work once none
+// runs (App.DrainRunning), or is drained without it. Callers may hold c.mu.
+func (c *controller) drainedRunning() bool {
+	if c.drainRunning == nil {
+		return c.drained()
+	}
+	return c.drainRunning()
+}
+
+// undrain accepts paid work again, and starts queued work again.
 func (c *controller) undrain() {
 	if c.resume != nil {
 		c.resume()
@@ -436,7 +455,8 @@ func (c *controller) undrain() {
 }
 
 // restartWhenIdle starts the requested executable and stops once no job is
-// queued or running.
+// running. Meanwhile no queued job starts; the queued jobs stay journaled and
+// the new daemon runs them.
 func (c *controller) restartWhenIdle(ctx context.Context) {
 	timer := time.NewTimer(c.restartWait())
 	defer timer.Stop()
@@ -455,13 +475,14 @@ func (c *controller) restartWhenIdle(ctx context.Context) {
 		}
 		timer.Reset(c.restartWait())
 		c.restartIfReplaced()
-		// Drain refuses new jobs in the same step that finds none pending,
-		// so a job confirmed now gets a "restarting, retry" answer instead of
-		// being interrupted. The daemon is marked stopping under the same
-		// lock, so no hello sees it idle and usable in between.
+		// DrainRunning refuses new jobs in the same step that finds none
+		// running, so a job confirmed now gets a "restarting, retry" answer
+		// instead of being interrupted, and one confirmed earlier waits
+		// queued for the new daemon. The daemon is marked stopping under the
+		// same lock, so no hello sees it idle and usable in between.
 		c.mu.Lock()
 		executable := c.restartInto
-		if executable == "" || !c.drained() {
+		if executable == "" || !c.drainedRunning() {
 			c.mu.Unlock()
 			continue
 		}

@@ -3438,12 +3438,23 @@ no limit, unless the config file sets them; `agent.Exceeds` and the backends
 treat a zero call or token budget as none, and Claude Code gets `--max-turns`
 only with a call budget.
 `Queue.Drain` refuses new jobs and reports true only when none is queued or
-running, under the mutex `Submit` checks, so a restart never cuts a started
-job short: one started during it gets `503` with `Retry-After` and is started
-again against the new daemon. Workers use the same `generate.Publish`
+running, under the mutex `Submit` checks. A restart into a newer version uses
+`Queue.DrainRunning` instead, which waits only for running jobs: it holds the
+queue, so no queued job starts in either lane, and once none runs it refuses
+new jobs in the same step, so a restart never cuts a started job short. A job
+started while the restart waits is accepted and queued behind the hold; one
+started after it drained gets `503` with `Retry-After` and is started again
+against the new daemon. It does not drain while a person's group generation
+queues its members' reviews and then its own job, so a group is accepted or
+refused whole. Queued jobs stay journaled, and the new daemon runs
+them in the usual order (`Queue.next`); `Resume` releases the hold when the
+restart fails. Workers use the same `generate.Publish`
 entry point as the terminal: previous-version lookup, run lease, generation and
 strict validation, then atomic version publication. Running journal entries are
 interrupted on restart; queued entries retain their confirmed input fingerprint.
+The daemon opens the queue held (`jobs.OpenHeld`) and resumes it once the
+application is wired, so a journaled feature build or chat job never starts
+before the feature log or the chat service exists.
 `GET /api/jobs` reads the queue in three forms, so no client reads the whole
 history on every refresh; each answers `{"available":true,"jobs":[…]}`:
 
@@ -4021,9 +4032,11 @@ protocol but an older version (an older release by semver; a development
 build is older than any release, and two development builds are left alone)
 is kept and sent `stop` with `{"when_idle":true,"executable":<the client's
 baum>}`: an idle daemon stops at once and the client starts its own version;
-a busy one answers with `restart_pending` and, once `Drain` succeeds, starts
+a busy one (a job queued or running) answers with `restart_pending`, starts
+no further queued job, and once `DrainRunning` finds none running starts
 that executable detached on the same port and stops, so no confirmed run is
-interrupted. Of racing clients the newest version is the one it restarts
+interrupted and a queued backlog does not hold the update back: the new
+daemon runs it. Of racing clients the newest version is the one it restarts
 as, and a client tells its user about the deferred restart only when it
 first schedules it. Because a client may be a sandboxed agent's hook and the
 executable runs unsandboxed with the daemon's environment, the daemon
@@ -4223,13 +4236,13 @@ it and `Queue.SubmitAutomatic` decides each job.
   request in a stack group counts with its group as one, and the group's
   eligible members are made pending together, so the group's review follows
   theirs. The pass submits them like any other pending head: a head already
-  reviewed is skipped, the switches and Drain apply, and an interrupted run
+  reviewed is skipped, the switches and a restart's drain apply, and an interrupted run
   is retried once. A repository whose poll fails is left out.
 - **Interrupted runs.** Each pass asks `Queue.Interrupted` for automatic jobs
   a daemon stop or restart cut short that are the only job for their head; if
   the PR is still open at that head and eligible, the head is pending again
   with trigger `retry`, once (`retried` records it). The retry goes through
-  the same pass, so Drain and the switches apply. Failed and
+  the same pass, so a restart's drain and the switches apply. Failed and
   cancelled runs are never retried; the next push triggers as usual. A run
   interrupted before a repository's baseline (turned off, then on again) is not
   retried: the baseline marks its heads as already retried.
@@ -4273,7 +4286,7 @@ it and `Queue.SubmitAutomatic` decides each job.
   when settings change and when a job finishes. A pass submits due pending
   heads, the PRs that have waited longest first across repositories (then by
   repository and number), unless the daemon is stopping or has a restart
-  pending (`daemon.Self`), so the queue can drain. It leaves at most two
+  pending (`daemon.Self`); the new daemon's passes submit those heads. It leaves at most two
   automatic jobs waiting in the queue for each job the queue runs at once
   (`job_concurrency`, so 8 by default); further heads stay pending for a
   later pass, where a newer push simply replaces the pending head. A head
@@ -4374,7 +4387,7 @@ report to the daemon; the hook side is in `internal/hookcli` (see its
   answer in time, answers an error, or does not know `event` gets the event
   through the spool; one older than the hook's baum is sent `stop` with
   `when_idle`, as `Ensure` sends it: an idle one stops and the next hook starts
-  the newer version, a busy one restarts as it when its jobs finish. A daemon
+  the newer version, a busy one restarts as it when its running jobs finish. A daemon
   holding the socket but not answering is never replaced by a hook.
 - **Spool.** `<state>/spool/`, 0700, one 0600 file per event named by the
   nanosecond it was spooled, written to a temporary file and renamed.
@@ -5217,8 +5230,8 @@ and two files:
    one), waits until it serves, and prints one JSON line on stdout:
    `{"protocol":1,"version":"v0.3.0","pid":4242,"started_at":"2026-10-19T16:00:00Z","app":"http://127.0.0.1:53124","socket":"/run/user/1000/baum/daemon.sock","state":"/home/user/.local/state/baum/daemon"}`.
    `stopping` appears only while it shuts down, and `restart_pending` when an
-   older daemon was kept because it is running jobs and will restart as this
-   version once they finish (see Lifecycle). On failure it exits non-zero
+   older daemon was kept because it has jobs queued or running and will
+   restart as this version once the running ones finish (see Lifecycle). On failure it exits non-zero
    with the reason on stderr. `--port` applies only when it starts the daemon.
 2. `<state>/credential.json`, mode 0600 (Windows: current-user DACL), holds
    `{"url":"http://127.0.0.1:PORT/#token=<43 characters>"}`, the launch URL.

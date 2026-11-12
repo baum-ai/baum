@@ -356,6 +356,13 @@ type Queue struct {
 	released chan struct{}
 	// draining refuses new jobs while the daemon restarts.
 	draining bool
+	// held starts no queued job while a restart waits for the running ones
+	// (DrainRunning).
+	held bool
+	// grouping counts the group generations queuing their members' reviews
+	// and then the group's job in separate steps; DrainRunning waits for
+	// them, so none is cut in half.
+	grouping int
 	// gate, when set, answers whether an automatic job may run now (and
 	// under which daily cap); see SetAutomaticGate.
 	gate func(Job) Admission
@@ -414,6 +421,18 @@ func DefaultPath() (string, error) {
 }
 
 func Open(path string, executor Executor, concurrency int, changed func(Job)) (*Queue, error) {
+	return open(path, executor, concurrency, changed, false)
+}
+
+// OpenHeld is Open with the queue held: no journaled job starts until
+// Resume, so the caller can first wire what the executor and the queue's
+// settings need (a queued feature build needs the feature log, a chat job
+// the chat service). Jobs are accepted meanwhile.
+func OpenHeld(path string, executor Executor, concurrency int, changed func(Job)) (*Queue, error) {
+	return open(path, executor, concurrency, changed, true)
+}
+
+func open(path string, executor Executor, concurrency int, changed func(Job), held bool) (*Queue, error) {
 	if executor == nil || !validConcurrency(concurrency) {
 		return nil, errors.New("invalid runner configuration")
 	}
@@ -438,7 +457,7 @@ func Open(path string, executor Executor, concurrency int, changed func(Job)) (*
 		return nil, err
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	q := &Queue{path: path, transcripts: filepath.Join(filepath.Dir(path), "transcripts"), executor: executor, estimates: map[string]Estimate{}, drafts: map[string][]byte{}, superseded: map[string]bool{}, cancels: map[string]context.CancelFunc{}, dirty: map[string]bool{}, wake: make(chan struct{}, 1), chatWake: make(chan struct{}, 1), ctx: ctx, cancel: cancel, changed: changed, lock: lock, limit: concurrency}
+	q := &Queue{path: path, transcripts: filepath.Join(filepath.Dir(path), "transcripts"), executor: executor, estimates: map[string]Estimate{}, drafts: map[string][]byte{}, superseded: map[string]bool{}, cancels: map[string]context.CancelFunc{}, dirty: map[string]bool{}, wake: make(chan struct{}, 1), chatWake: make(chan struct{}, 1), ctx: ctx, cancel: cancel, changed: changed, lock: lock, limit: concurrency, held: held}
 	opened := false
 	defer func() {
 		if !opened {
@@ -747,11 +766,35 @@ func (q *Queue) Drain() bool {
 	return true
 }
 
-// Resume accepts jobs again after Drain.
-func (q *Queue) Resume() {
+// DrainRunning prepares a restart without waiting for the queued jobs: it
+// holds the queue, so no queued job starts in either lane, and reports true
+// once none is running, refusing new jobs with ErrRestarting in the same step
+// (as Drain does). Queued jobs stay journaled, and the next Open runs them.
+// While it reports false the queue stays held and still accepts jobs, which
+// queue behind the hold; Resume releases it.
+func (q *Queue) DrainRunning() bool {
 	q.mu.Lock()
 	defer q.mu.Unlock()
-	q.draining = false
+	q.held = true
+	if q.grouping > 0 {
+		return false
+	}
+	for _, j := range q.jobs {
+		if j.State == "running" {
+			return false
+		}
+	}
+	q.draining = true
+	return true
+}
+
+// Resume accepts jobs again after Drain, and starts queued jobs again after
+// DrainRunning.
+func (q *Queue) Resume() {
+	q.mu.Lock()
+	q.draining, q.held = false, false
+	q.mu.Unlock()
+	q.signal()
 }
 func (q *Queue) List() []Job {
 	q.mu.Lock()
@@ -919,6 +962,21 @@ func (q *Queue) Generate(ctx context.Context, items []Item, mode string, isolati
 		return nil, &BlockedError{e.Items[0].BlockedReason}
 	}
 	if group := e.Items[0]; len(group.Awaiting) > 0 {
+		// A restart that drains between the members' reviews and the
+		// group's job would accept half of what the person asked for.
+		q.mu.Lock()
+		if q.draining {
+			q.mu.Unlock()
+			q.forget(e.ID)
+			return nil, ErrRestarting
+		}
+		q.grouping++
+		q.mu.Unlock()
+		defer func() {
+			q.mu.Lock()
+			q.grouping--
+			q.mu.Unlock()
+		}()
 		// The group's isolation covers its members: confirmed for it, it is
 		// confirmed for their reviews.
 		if err := q.reviewMembers(ctx, group, false, isolation); err != nil {
@@ -1386,8 +1444,9 @@ func (q *Queue) worker(chat bool) {
 				return
 			}
 			i := -1
-			// Outside the chat lane a worker takes a job only below limit.
-			if chat || q.running() < q.limit {
+			// Outside the chat lane a worker takes a job only below limit;
+			// none starts while a restart waits (DrainRunning).
+			if !q.held && !q.draining && (chat || q.running() < q.limit) {
 				i = q.next(chat)
 			}
 			if i < 0 {
