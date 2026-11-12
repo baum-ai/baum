@@ -554,9 +554,12 @@ func (r *featureRun) scoredCandidates(ctx context.Context, input assign.Item, pu
 			sampled[f.PullRequests[j].Number] = true
 		}
 	}
-	generated, err := s.pullSummaries(ctx, r.repository, slices.Collect(maps.Keys(sampled)))
-	if err != nil {
-		return nil, nil, err
+	var generated map[int]generatedSummary
+	if r.opts.building && !r.opts.adaptive {
+		generated, err = s.pullSummaries(ctx, r.repository, slices.Collect(maps.Keys(sampled)))
+		if err != nil {
+			return nil, nil, err
+		}
 	}
 	for i, f := range ranked {
 		for _, j := range assign.SampledPullRequests(len(f.PullRequests)) {

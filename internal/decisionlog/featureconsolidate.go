@@ -234,15 +234,6 @@ WHERE fp.version_id=? AND fp.repository=? ORDER BY p.created_at, p.number`, r.ve
 	return out, nil
 }
 
-// pullSummary is the summary a consolidation call shows for a pull
-// request: its saved review's, else its generated one.
-func (r *featureRun) shownSummary(ctx context.Context, number int, generated map[int]generatedSummary) string {
-	if summary := r.reviewSummary(ctx, number); summary != "" {
-		return summary
-	}
-	return generated[number].Summary
-}
-
 // heldApart reports whether a merge of a and b would undo a split of the
 // last FeatureSplitHold: one is a part of the other, or both are parts of
 // one split.
@@ -298,16 +289,6 @@ func (r *featureRun) consolidate(ctx context.Context, gated bool) (ConsolidateRe
 		return report, err
 	}
 	report.Features = len(found)
-	var numbers []int
-	for _, f := range found {
-		for _, p := range f.pulls {
-			numbers = append(numbers, p.Number)
-		}
-	}
-	generated, err := s.pullSummaries(ctx, r.repository, numbers)
-	if err != nil {
-		return report, err
-	}
 	addCall := func(result callResult) {
 		if result.Cost != nil {
 			report.Spent += *result.Cost
@@ -326,7 +307,7 @@ func (r *featureRun) consolidate(ctx context.Context, gated bool) (ConsolidateRe
 			inputs[i] = consolidate.Feature{Title: f.Title, Description: f.Description, Digest: f.Digest, Paths: f.Paths, Sessions: f.sessions}
 			for _, p := range f.pulls {
 				inputs[i].PullRequests = append(inputs[i].PullRequests, consolidate.PullRequestTitle{
-					Number: int32(p.Number), Title: p.Title, Summary: r.shownSummary(ctx, p.Number, generated)})
+					Number: int32(p.Number), Title: p.Title, Summary: r.reviewSummary(ctx, p.Number)})
 			}
 			if j, ok := index[f.splitFrom]; ok && r.now.Sub(f.splitAt) < FeatureSplitHold {
 				inputs[i].SplitFrom = &j
@@ -431,7 +412,7 @@ func (r *featureRun) consolidate(ctx context.Context, gated bool) (ConsolidateRe
 		input := consolidate.SplitInput{Title: f.Title, Description: f.Description}
 		for _, p := range pulls {
 			input.PullRequests = append(input.PullRequests, consolidate.PullRequest{Number: int32(p.Number), Title: p.Title, Body: p.Body,
-				Summary: r.shownSummary(ctx, p.Number, generated), State: p.State, OpenedAt: p.Opened, Paths: p.Paths})
+				Summary: r.reviewSummary(ctx, p.Number), State: p.State, OpenedAt: p.Opened, Paths: p.Paths})
 		}
 		rendered, err := consolidate.RenderSplit(input, consolidate.DefaultMaxInputBytes)
 		if errors.Is(err, consolidate.ErrTooLarge) {

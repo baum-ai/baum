@@ -221,3 +221,51 @@ func TestSplitRehomesSupportedScopeAndRetiresConflictingContext(t *testing.T) {
 		t.Fatalf("split context provenance missing %s %v", source, err)
 	}
 }
+
+func TestLiveGroupingOmitsUnverifiedGeneratedSummaries(t *testing.T) {
+	f := newFeatureFixture(t)
+	version := f.live()
+	f.clock.now = t0.Add(time.Hour)
+	f.pull(1, "Current repository Settings", t0, "h1", []string{"a.go"}, "Fresh Settings behavior description")
+	f.feature(version, "settings", 1)
+	f.pull(2, "Extend repository Settings", t0.Add(time.Minute), "h2", []string{"a.go"})
+	f.exec(`INSERT INTO pr_summary(repository,number,content_hash,summary,created_at)VALUES(?,1,'obsolete-input','STALE GENERATED PACKAGING CLAIM',0)`, repo)
+	f.backend.assign = func(user string) (string, error) {
+		if strings.Contains(user, "STALE GENERATED") {
+			t.Fatalf("placement trusted unverified summary: %s", user)
+		}
+		if !strings.Contains(user, "Current repository Settings") || !strings.Contains(user, "Extend repository Settings") {
+			t.Fatalf("placement lost current metadata: %s", user)
+		}
+		return choose("existing", "F1", ""), nil
+	}
+	if report := f.assign(FeatureOptions{Manual: true}); len(report.Items) != 1 || report.Items[0].Feature != "settings" {
+		t.Fatalf("placement %+v", report)
+	}
+	f.pull(3, "Independent packaging", t0, "h3", []string{"packaging.go"})
+	f.feature(version, "packaging", 3)
+	f.backend.merge = func(user string) (string, error) {
+		if strings.Contains(user, "STALE GENERATED") {
+			t.Fatalf("merge trusted unverified summary: %s", user)
+		}
+		if !strings.Contains(user, "Current repository Settings") {
+			t.Fatal("merge lost current PR metadata")
+		}
+		return `{"groups":[]}`, nil
+	}
+	f.backend.split = func(user string) (string, error) {
+		if strings.Contains(user, "STALE GENERATED") {
+			t.Fatalf("split trusted unverified summary: %s", user)
+		}
+		if !strings.Contains(user, "Fresh Settings behavior description") {
+			t.Fatal("split lost current PR body")
+		}
+		return `{"parts":[{"title":"Repository Settings","description":"Configure repository preferences.","pull_requests":["P1","P2"]}]}`, nil
+	}
+	if report := f.consolidate(FeatureOptions{Manual: true}); report.Outcome != ConsolidationDone || report.KeptWhole != 1 {
+		t.Fatalf("consolidation %+v", report)
+	}
+	if f.backend.calls["pull"] != 0 {
+		t.Fatal("live grouping generated a replacement per-PR summary")
+	}
+}

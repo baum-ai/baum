@@ -359,7 +359,10 @@ by one pull request only; sharing a linked session; or mentioned as `#N`),
 best path
 score first, then the best path scores of the rest (10), then the most
 recently changed. Each candidate shows its digest and its pull requests'
-titles with their saved review summaries, else already generated ones. Durable
+titles with available saved review summaries. Unverified generated text is
+omitted from live placement and consolidation; the tasks use current metadata,
+paths and source instead. The explicit legacy build may retain generated
+candidate summaries. Durable
 `feature_scope` purpose, exclusion boundaries, paths and validated examples
 remain candidate context after first membership. Source-only scopes are also
 candidates and materialize only on their first supported join. Scope aliases
@@ -477,8 +480,7 @@ Claude Code's models think within the reply's bound, and a merge over a
 first build's features needs the room.
 
 - **Merge.** With two features or more, one call sees each feature's text,
-  digest, paths, pull requests with their summaries (the saved review's,
-  else the generated one) and how many sessions are in it on their own. Each
+  digest, paths, pull requests with available saved-review summaries and how many sessions are in it on their own. Each
   group's duplicates are merged into its survivor: their pull requests and
   sessions move to it as `consolidation`'s, the duplicate gets `merged_into`
   (and so do the features merged into it before), both are marked, and a
