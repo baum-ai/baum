@@ -2283,6 +2283,26 @@ chat forks made later included. It acts only on a directory directly under the
 review-runs root with the run prefix, deletes only a real Claude project
 directory of that encoded name and `rollout-*.jsonl` regular files whose cwd is
 that directory, never follows a symlink and ignores files that are gone.
+Nothing scans the Codex store for a run that recorded its sessions. Each run
+directory has a record next to it in the root, `.sessions-<run dir name>`
+(`reviewruns.Create` writes it with the start time; `generate` adds the ids of
+`Outcome.Sessions` and `chat` adds the ids of its forks, `reviewruns.Record`).
+Removing the directory deletes the recorded Codex rollouts by file name in the
+dated folders from two days before the start, newest first, checking each
+one's cwd before deleting it, and then deletes the record. The record is
+marked complete only when `generate` saw no errored attempt (an errored call
+may leave a session without reporting its id). A chat call marks it pending
+until its session ids are recorded (every id its attempts reported, retried
+ones included), lost if it ends without a session id, and incomplete after any
+errored attempt. A directory
+with no record (made before records existed) is scanned from any date; one
+whose record is incomplete, lost or pending is scanned from its start date.
+The scan also reads the first line of Codex rollouts, newest first, at most
+50000 (past the cap only files named by a recorded id are still matched), and
+deletes those whose cwd is the run directory. A directory that is already gone
+with its record is skipped by `PruneVersions`, which lists a directory shared
+by several versions once; `Expire` also deletes the sessions of a record whose
+directory is gone, and stale `.sessions-*tmp-*` files.
 The directory itself is pruned the same way and only real directories directly
 under the root whose names carry the prefix: after a successful publish the directories of a pull request's versions
 beyond the latest two (`reviewruns.PruneVersions`), and, when the daemon starts
