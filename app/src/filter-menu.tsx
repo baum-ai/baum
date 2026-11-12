@@ -257,6 +257,8 @@ export function FilterButton({
   // Count matches belonging to this option, not the union of every selected
   // value of its field. Other fields still narrow the count. All of a list in
   // one go, found again only when the pull requests, query or list change.
+  // Callers pass `kindOf` inline, so it is read through a ref rather than
+  // made a dependency; their `entries` change whenever what it reads does.
   const kinds = useRef(kindOf);
   kinds.current = kindOf;
   const subCounts = useMemo(

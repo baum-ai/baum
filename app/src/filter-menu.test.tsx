@@ -106,6 +106,32 @@ it("counts each organisation's matches rather than the combined selection", asyn
   node.remove();
 });
 
+it("caps a long list of values, keeping those the query requires", async () => {
+  const node = document.createElement("div");
+  document.body.append(node);
+  const root = createRoot(node);
+  const entries = Array.from(
+    { length: 130 },
+    (_, i) => ({ pull_request: { repository: `acme/r${String(i).padStart(3, "0")}` } }) as Entry,
+  );
+  await act(async () =>
+    root.render(<FilterButton query="repo=acme/r129" onChange={vi.fn()} entries={entries} />),
+  );
+  await act(async () => node.querySelector<HTMLElement>("summary")!.click());
+  const repo = Array.from(node.querySelectorAll<HTMLElement>("[data-filter-row]")).find((row) =>
+    row.textContent?.includes("Repository"),
+  )!;
+  await act(async () => repo.click());
+  const options = Array.from(node.querySelectorAll('[aria-label="Repository"] [role="option"]'));
+  expect(options).toHaveLength(101);
+  expect(options.at(-1)?.textContent).toContain("acme/r129");
+  expect(options.at(-1)?.querySelector(".filter-menu-count")?.textContent).toBe("1");
+  expect(options[0]?.querySelector(".filter-menu-count")?.textContent).toBe("1");
+  expect(node.textContent).toContain("29 more");
+  await act(async () => root.unmount());
+  node.remove();
+});
+
 it("offers Write a query… only while no query shows its box", async () => {
   const node = document.createElement("div");
   document.body.append(node);
