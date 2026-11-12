@@ -264,7 +264,7 @@ func (b *mcpBridge) send(ctx context.Context, origin string, message []byte) (in
 		// The error names the URL, never the token (a header).
 		return 0, nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxMCPResponse))
 	if err != nil {
 		return 0, nil, err
