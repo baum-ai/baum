@@ -207,7 +207,7 @@ func (f *proposalFixture) propose(tool string, args any) (agentcontext.Proposal,
 			}
 		}
 	})
-	if !slices.Equal(keys, []string{"id", "page", "target", "status"}) && !slices.Equal(keys, []string{"id", "page", "status", "target"}) {
+	if !slices.Equal(keys, []string{"id", "kind", "page", "status", "target"}) || receipt["kind"] != string(agentcontext.ProposalDiff) {
 		f.t.Fatalf("%s answered more than its receipt: %s", tool, text)
 	}
 	for _, p := range f.mcp.Proposals.List(f.id) {

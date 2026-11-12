@@ -72,7 +72,7 @@ func TestProposeToolsNameTheirTargets(t *testing.T) {
 			continue
 		}
 		var got map[string]any
-		if err := json.Unmarshal([]byte(text), &got); err != nil || len(got) != 4 || got["status"] != proposedStatus || strings.Contains(text, "current") {
+		if err := json.Unmarshal([]byte(text), &got); err != nil || len(got) != 5 || got["kind"] != string(ProposalDiff) || got["status"] != proposedStatus || strings.Contains(text, "current") {
 			t.Errorf("%s answered %s", tt.tool, text)
 		}
 		list := s.Proposals.List(id)

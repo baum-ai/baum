@@ -7,15 +7,31 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"slices"
 	"strings"
 	"sync"
 )
 
-// Proposal is a change an agent suggests to something a page edits. Nothing
-// changes until the user saves it.
+// ProposalKind is what a proposal asks of the person.
+type ProposalKind string
+
+const (
+	// ProposalDiff is a change to something a page edits, which the person
+	// saves (Save) or dismisses.
+	ProposalDiff ProposalKind = "diff"
+	// ProposalOperation is something the page does with a button (merge,
+	// cancel, answer), which the person confirms (Confirm) or dismisses; see
+	// Operation.
+	ProposalOperation ProposalKind = "operation"
+)
+
+// Proposal is a change an agent suggests to something a page edits, or an
+// operation it suggests the person runs. Nothing changes until the user
+// saves or confirms it.
 type Proposal struct {
-	ID string `json:"id"`
+	ID   string       `json:"id"`
+	Kind ProposalKind `json:"kind"`
 	// Page is the page whose state it changes, Target what on that page
 	// (a page's own name for it, such as a prompt's key).
 	Page   string `json:"page"`
@@ -33,6 +49,9 @@ type Proposal struct {
 	// Context is the page the consumer had open when it proposed, which the
 	// target must still belong to when the user saves.
 	Context PageContext `json:"context"`
+	// Operation is an operation proposal's operation, request and summary;
+	// nil for a diff, which uses Before, After and Revision instead.
+	Operation *OperationProposal `json:"operation,omitempty"`
 }
 
 // Proposer is how one page takes proposals. Every method gets the page
@@ -96,12 +115,17 @@ var (
 type Proposals struct {
 	registry  *Registry
 	proposers func(page string) Proposer
+	// operation finds an operation by name; reader reads what operations
+	// read, and writer runs a confirmed one.
+	operation func(name string) *Operation
+	reader    *Reader
+	writer    writer
 	mu        sync.Mutex
 	open      map[string][]Proposal
 }
 
-func newProposals(registry *Registry, proposers func(string) Proposer) *Proposals {
-	p := &Proposals{registry: registry, proposers: proposers, open: map[string][]Proposal{}}
+func newProposals(registry *Registry, proposers func(string) Proposer, operation func(string) *Operation, reader *Reader, api http.Handler) *Proposals {
+	p := &Proposals{registry: registry, proposers: proposers, operation: operation, reader: reader, writer: writer{api}, open: map[string][]Proposal{}}
 	registry.onRevoke(func(id string) {
 		p.mu.Lock()
 		delete(p.open, id)
@@ -122,6 +146,11 @@ func (p *Proposals) Propose(ctx context.Context, consumer string, proposal Propo
 	if c.Kind != Chat {
 		return Proposal{}, ErrReadOnly
 	}
+	// An operation is proposed only through ProposeOperation.
+	if (proposal.Kind != "" && proposal.Kind != ProposalDiff) || proposal.Operation != nil {
+		return Proposal{}, ErrNotADiff
+	}
+	proposal.Kind = ProposalDiff
 	page, ok := p.registry.Page(consumer)
 	if !ok || page.Page != proposal.Page {
 		return Proposal{}, ErrNotCurrentPage
@@ -162,6 +191,7 @@ func (p *Proposals) Propose(ctx context.Context, consumer string, proposal Propo
 // clone copies p with nothing shared with the stored proposal.
 func (p Proposal) clone() Proposal {
 	p.Before, p.After, p.Context = bytes.Clone(p.Before), bytes.Clone(p.After), p.Context.clone()
+	p.Operation = p.Operation.clone()
 	return p
 }
 
@@ -206,6 +236,9 @@ func (p *Proposals) Save(ctx context.Context, consumer, id string, input SaveInp
 	if !ok {
 		return ErrUnknownProposal
 	}
+	if proposal.Kind != ProposalDiff {
+		return ErrNotADiff
+	}
 	proposer := p.proposers(proposal.Page)
 	if proposer == nil {
 		return ErrNoProposer
@@ -247,7 +280,7 @@ func samePage(a, b PageContext) bool {
 		a.Group == b.Group && a.Session == b.Session && a.Job == b.Job && a.Feature == b.Feature
 }
 
-// Dismiss closes a proposal without applying it.
+// Dismiss closes a proposal without applying or running it.
 func (p *Proposals) Dismiss(consumer, id string) error {
 	if !p.remove(consumer, id) {
 		return ErrUnknownProposal

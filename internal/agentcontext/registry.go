@@ -35,7 +35,15 @@ type Consumer struct {
 	// Repository ("owner/name") and PullRequest bind an Action.
 	Repository  string `json:"repository,omitempty"`
 	PullRequest int    `json:"pull_request,omitempty"`
+	// Session is the agent session a chat runs in, as "agent:id" (the
+	// agent, such as claude or codex, and its session id), when the panel
+	// that minted the token knows it. A chat may never propose answering a
+	// request of its own session (approving its own tool call).
+	Session string `json:"session,omitempty"`
 }
+
+// SessionKey is the Consumer.Session of an agent's session.
+func SessionKey(agent, id string) string { return agent + ":" + id }
 
 // The pages a consumer can be on: the app's sidebar pages, then the pages
 // that show one thing.
@@ -165,9 +173,18 @@ func (c Consumer) validate() error {
 		if c.Repository != "" || c.PullRequest != 0 {
 			return errors.New("a chat is bound to no repository or pull request")
 		}
+		if c.Session != "" {
+			agent, id, ok := strings.Cut(c.Session, ":")
+			if !ok || agent == "" || id == "" || len(c.Session) > maxPageText {
+				return errors.New(`a chat's session is "agent:id"`)
+			}
+		}
 	case Action:
 		if !validRepository(c.Repository) || c.PullRequest <= 0 {
 			return errors.New("an action needs an owner/name repository and a pull request number")
+		}
+		if c.Session != "" {
+			return errors.New("an action names no session: it proposes nothing")
 		}
 	default:
 		return fmt.Errorf("unknown consumer kind %q", c.Kind)
