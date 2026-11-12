@@ -686,7 +686,7 @@ func TestLocalAppBrowserFixture(t *testing.T) {
 		// scripted agent (panelAgent): no agent CLI runs, and every
 		// conversation gets an empty directory, as without a clone.
 		mcp := agentcontext.New(agentcontext.Options{API: api, Version: "fixture"})
-		panel := &panelAgent{events: events, home: home}
+		panel := &panelAgent{events: events, home: home, mcp: mcp}
 		conversations, err := console.New(console.Options{Database: filepath.Join(home, "app.sqlite"), Root: filepath.Join(home, "console"),
 			Registry: mcp.Registry, Proposals: mcp.Proposals, MCPCommand: filepath.Join(home, "baum"),
 			Backend: func(string, string, config.Config) (agent.Converser, string, error) {

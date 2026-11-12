@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	"github.com/baum-ai/baum/agent"
+	"github.com/baum-ai/baum/internal/agentcontext"
 	"github.com/baum-ai/baum/internal/hookevents"
 )
 
@@ -19,10 +21,15 @@ import (
 // Claude Code that runs nothing. Each turn reports its session, runs one
 // tool, streams its answer a few words at a time and finishes, writing its
 // transcript and hook events as Claude Code and its hooks do, so the panel
-// and the Sessions page show it as they show a real session.
+// and the Sessions page show it as they show a real session. A message that
+// mentions a comment has it propose one for the person's pending review
+// (add_review_comment) through baum's MCP server, as the agent would call
+// the tool, before it answers.
 type panelAgent struct {
 	events *hookevents.Store
 	home   string
+	// mcp is the server the turn's MCP token authenticates with.
+	mcp *agentcontext.Server
 
 	mu    sync.Mutex
 	turns map[string][]string
@@ -73,6 +80,9 @@ func (a *panelAgent) Converse(ctx context.Context, r agent.Request, _ agent.Acce
 	if r.Transcript != nil {
 		r.Transcript(agent.TranscriptEntry{Kind: "tool", ID: "toolu_read", Tool: "Read", Title: "Read docs/guide.md", Status: "completed"})
 	}
+	if strings.Contains(strings.ToLower(r.Prompt), "comment") {
+		a.proposeComment(ctx, r)
+	}
 	answer := panelAnswer(r.Prompt)
 	words := strings.SplitAfter(answer, " ")
 	for i, part := range [][]string{words[:len(words)/3], words[len(words)/3 : 2*len(words)/3], words[2*len(words)/3:]} {
@@ -88,6 +98,34 @@ func (a *panelAgent) Converse(ctx context.Context, r agent.Request, _ agent.Acce
 	writePanelTranscript(path, id, r.Directory, prompts, true)
 	a.hook(id, r.Directory, path, "stop")
 	return agent.Result{Document: []byte(answer), SessionID: id, Calls: 1, Tokens: 120}, nil
+}
+
+// panelComment is the comment the panel agent proposes for the pending
+// review.
+const panelComment = "Cap the retry delay at five minutes, as docs/guide.md says."
+
+// proposeComment proposes panelComment for the pending review of the pull
+// request the panel's page shows, as the agent's add_review_comment tool
+// call would. A refusal, such as from a page that shows no pull request, is
+// recorded in the transcript as the tool's failure.
+func (a *panelAgent) proposeComment(ctx context.Context, r agent.Request) {
+	status, text := "completed", "Proposed the comment; the person confirms it in the panel."
+	err := errors.New("the turn has no MCP server")
+	if a.mcp != nil && r.MCP != nil {
+		consumer, ok := a.mcp.Registry.Authenticate(r.MCP.Token)
+		if !ok {
+			err = errors.New("the turn's MCP token is not known")
+		} else {
+			args, _ := json.Marshal(map[string]string{"body": panelComment})
+			_, err = a.mcp.Proposals.ProposeOperation(ctx, consumer.ID, "add_review_comment", args)
+		}
+	}
+	if err != nil {
+		status, text = "failed", err.Error()
+	}
+	if r.Transcript != nil {
+		r.Transcript(agent.TranscriptEntry{Kind: "tool", ID: "toolu_comment", Tool: "mcp__baum__propose_add_review_comment", Title: "propose_add_review_comment", Status: status, Text: text})
+	}
 }
 
 // hook records a Claude Code hook event of the session, as its hooks would.
