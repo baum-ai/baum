@@ -1405,8 +1405,8 @@ on an allowlist and without refresh flags: the reader has no way to send
 another method, and refuses the `refresh` and `more` parameters, which make
 some `GET` routes fetch from GitHub or rebuild a cache. Each tool reads only
 the route prefixes it declares, and no tool can read settings, GitHub
-authentication or GitHub listings, diagnostics, debugging, plan usage, the
-event stream or `/api/mcp`. No reader reads a pasted image of a session's
+authentication, GitHub listings, diagnostics, debugging, plan usage, the
+event stream or `/api/mcp`, with two narrow exceptions below. No reader reads a pasted image of a session's
 transcript (`/transcript/images/`), which is served unmasked, and the
 transcript tools drop the image fields, the session's working directory and
 the person's address. The agents' requests are read without the person's
@@ -1414,6 +1414,24 @@ settings for answering them. The Timeline's detail routes name their
 repository only in the response, which an action's reader checks (an archived
 feature names none and is never read); a session's Timeline transcript names
 none, so only a chat reads it. Responses are bounded to 8 MiB, apart from a review document and the facts, which are read up to the 32 MiB the daemon serves.
+
+The exceptions are a fixed list of tool and exact route pairs in the daemon's
+source, `diagnostics_summary` with `/api/diagnostics` and `github_repositories`
+with `/api/github/repositories`, which a test pins. Those two tools are global,
+so an action neither lists nor calls them, and the reader refuses an action
+their routes whatever a tool declares. Each returns a typed projection that is
+filled only with what the app shows on that page: diagnostics give a check's
+id, label, status, version and where it was found (with the home folder written
+`~`), never the home folder, a check's path, detail or suggested fix, the
+environment or the issue the Report a problem dialog drafts; the repository
+picker gives owner/name, whether it is private or a fork, its description, last
+push and whether it is picked or cloned, never anything about the GitHub
+connection (not its failures, its organisations or its token). The plan usage
+route is not an exception, since it fetches from Claude or Codex when its cache
+is stale: the plan usage tool reads the cache the daemon already holds, through
+an accessor that cannot fetch. The repositories tools never return a folder: a
+clone is a count, an availability and an id, and the suggested clone folder is
+written from the home folder (`~/...`).
 
 An action's token is bound to its repository. Its tools default to its own
 pull request and may read other pull requests of that repository, never
@@ -1436,7 +1454,17 @@ parameter its entry does not list, is refused. An
 action never proposes changes. An action reads a review only in parts, one per
 tool call, and through the same bindings: its pull request's saved review, a
 running draft of a job of its repository, conversations of its clones, and a
-group of its repository.
+group of its repository. An action may also read, for its own repository, a
+file the review cites at the review's head (text cut at 512 KiB), the commits
+and commit patches its pull request's commits link, the decisions captured
+from the sessions of its pull requests, the group patches and files its groups'
+reviews cite, and what the app offers about a branch and the failed checks.
+It may read the person's own draft review comments and walkthrough place only
+for its own pull request: those are kept by a key that names the repository
+and pull request, the handler cannot tell whose a key is, so the reader refuses
+any key but the action's own pull request's (and any other kind of saved state),
+whatever the repository. A chat reads them for any pull request, as it reads
+the page the person has open.
 
 A chat's token may also propose a change to the page the user has open, and
 only to something that page shows (on a pull request's page, only that pull
