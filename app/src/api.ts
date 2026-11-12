@@ -918,17 +918,36 @@ export function backTo(search: URLSearchParams): { href: string; label: string; 
   if (filter) back.set("filter", filter);
   return { href: appURL(`?${back}`), label: "Pull requests", prefix: "page=pulls&" };
 }
-/** The daemon answers these with an ETag and 304 for an unchanged snapshot.
+/** The daemon answers `api/index`, `api/prs` and `api/document` with an ETag
+ *  and 304 for an unchanged snapshot.
  *  The app revalidates them itself (see `request`); no answer goes through the
  *  webview's HTTP cache, which leaks memory in WebKitGTK 2.50. */
 function revalidated(path: string): boolean {
   const [pathname] = path.split("?");
-  return pathname === "api/index" || pathname === "api/prs";
+  return pathname === "api/index" || pathname === "api/prs" || pathname === "api/document";
 }
 
-/** The last answer of each revalidated path, query included, with its ETag.
- *  The paths are few and fixed, so this stays small. */
+/** The last answers of revalidated paths, query included, with their ETags.
+ *  A document is keyed by its clone, pull request and version, so the set of
+ *  paths is not fixed: this is a small LRU. A hit is re-inserted as the newest
+ *  and the oldest entry goes once there are more than `KEPT_LIMIT`. */
+export const KEPT_LIMIT = 16;
 const kept = new Map<string, { etag: string; value: unknown }>();
+
+function keptGet(path: string) {
+  const entry = kept.get(path);
+  if (entry) {
+    kept.delete(path);
+    kept.set(path, entry);
+  }
+  return entry;
+}
+
+function keptSet(path: string, entry: { etag: string; value: unknown }) {
+  kept.delete(path);
+  kept.set(path, entry);
+  while (kept.size > KEPT_LIMIT) kept.delete(kept.keys().next().value!);
+}
 
 /** Forgets every kept answer. For tests. */
 export function resetRevalidation(): void {
@@ -967,7 +986,7 @@ async function failure(response: Response): Promise<LocalRequestError> {
 }
 
 /** Requests `path`, relative to the namespace, as `api/repos`. `cache` applies
- *  to every request but a GET of `api/index` or `api/prs`: those are always
+ *  to every request but a GET of `api/index`, `api/prs` or `api/document`: those are always
  *  `no-store`, and the app sends `If-None-Match` with the ETag of the answer it
  *  kept. A 304 returns that same value object, so callers can tell it did not
  *  change. */
@@ -979,17 +998,19 @@ export async function request<T>(
   cache: RequestCache = "no-store",
 ): Promise<T> {
   const conditional = method === "GET" && revalidated(path);
-  const send = (etag?: string) =>
-    fetch(appURL(path), {
+  const send = (etag?: string) => {
+    const headers: Record<string, string> = {};
+    if (etag) headers["If-None-Match"] = etag;
+    if (body !== undefined) headers["Content-Type"] = "application/json";
+    return fetch(appURL(path), {
       method,
       signal,
       cache: conditional ? "no-store" : cache,
-      ...(etag ? { headers: { "If-None-Match": etag } } : {}),
-      ...(body === undefined
-        ? {}
-        : { headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }),
+      ...(Object.keys(headers).length > 0 ? { headers } : {}),
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     });
-  const entry = conditional ? kept.get(path) : undefined;
+  };
+  const entry = conditional ? keptGet(path) : undefined;
   let response = await send(entry?.etag);
   if (response.status === 304) {
     if (entry) return entry.value as T;
@@ -1001,7 +1022,7 @@ export async function request<T>(
   const value = await response.json();
   if (conditional) {
     const etag = response.headers.get("ETag");
-    if (etag) kept.set(path, { etag, value });
+    if (etag) keptSet(path, { etag, value });
     else kept.delete(path);
   }
   return value;
@@ -1129,7 +1150,6 @@ export function documentRequest(clone: string, pr: number, version?: number, sig
     undefined,
     "GET",
     signal,
-    "no-cache",
   ).then(validDocument);
 }
 export function groupDocumentRequest(id: string, version?: number, signal?: AbortSignal) {

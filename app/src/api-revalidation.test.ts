@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { LocalRequestError, request, resetRevalidation } from "./api";
+import { KEPT_LIMIT, LocalRequestError, request, resetRevalidation } from "./api";
 
 const path = "api/index?history=1&detail=summary";
 const fetchMock = vi.fn();
@@ -91,4 +91,22 @@ it("sends no condition for other paths or methods", async () => {
   await request(path, undefined, "POST");
   expect(sent(3)).toBeNull();
   expect(sent(4)).toBeNull();
+});
+
+it("evicts the oldest entry beyond the cap and refreshes recency on a hit", async () => {
+  const doc = (i: number) => `api/document?clone=c&pr=${i}`;
+  fetchMock.mockImplementation(async (_url: string, init: RequestInit) =>
+    new Headers(init.headers).has("If-None-Match")
+      ? new Response(null, { status: 304 })
+      : ok({ n: 1 }, '"e"'),
+  );
+  for (let i = 0; i < KEPT_LIMIT; i++) await request(doc(i));
+  // A hit on the oldest makes entry 1 the oldest.
+  await request(doc(0));
+  await request(doc(KEPT_LIMIT));
+  fetchMock.mockClear();
+  await request(doc(0));
+  expect(sent(0)).toBe('"e"');
+  await request(doc(1));
+  expect(sent(1)).toBeNull();
 });
