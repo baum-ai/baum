@@ -97,6 +97,25 @@ func (s *Service) Handler() http.Handler {
 		}
 		writeJSON(w, http.StatusOK, s.detail(c))
 	})
+	mux.HandleFunc("GET /api/console/conversations/{id}/transcript", func(w http.ResponseWriter, r *http.Request) {
+		c, err := s.Get(r.Context(), r.PathValue("id"))
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		// Only the conversation's own session, by the id its agent reported:
+		// nothing in the request names the file read.
+		if c.Session == "" || s.opts.Transcript == nil {
+			reason := "The agent has not started this conversation's session yet."
+			if c.Session != "" {
+				reason = "This daemon does not read conversation transcripts."
+			}
+			w.Header().Set("Cache-Control", "no-store")
+			writeJSON(w, http.StatusOK, map[string]any{"available": false, "live": c.State == StateRunning, "code": "transcript_unavailable", "message": reason})
+			return
+		}
+		s.opts.Transcript(w, r, c.Agent, c.Session)
+	})
 	mux.HandleFunc("POST /api/console/conversations/{id}/messages", func(w http.ResponseWriter, r *http.Request) {
 		var input struct {
 			Text string                    `json:"text"`

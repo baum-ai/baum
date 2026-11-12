@@ -705,7 +705,12 @@ func TestLocalAppBrowserFixture(t *testing.T) {
 			Backend: func(string, string, config.Config) (agent.Converser, string, error) {
 				return panel, agent.BackendClaude, nil
 			},
-			Publish: func(event console.Event) { _ = server.Publish("console", event) }})
+			Publish: func(event console.Event) { _ = server.Publish("console", event) },
+			// A conversation's transcript, as the daemon serves it.
+			Transcript: func(w http.ResponseWriter, r *http.Request, agent, id string) {
+				answer, err := transcripts.Read(r.Context(), agent, id, "", "")
+				transcripts.WriteAnswer(w, r, answer, err)
+			}})
 		if err != nil {
 			return daemon.App{}, err
 		}

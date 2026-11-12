@@ -845,7 +845,8 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 			Price: func(backend string, accounting *agent.Accounting) (*float64, string) {
 				return pricing.Active().BackendAccountingCost(backend, accounting)
 			},
-			Publish: func(event console.Event) { _ = server.Publish("console", event) },
+			Publish:    func(event console.Event) { _ = server.Publish("console", event) },
+			Transcript: conversationTranscript(transcripts),
 		})
 		if err != nil {
 			log.Warn("the session panel is off: its conversations did not open", "error", err)
@@ -986,6 +987,19 @@ func (h hookEvents) Methods() map[string]daemon.Method {
 		return nil
 	}
 	return h.service.Methods()
+}
+
+// conversationTranscript serves a session panel conversation's transcript
+// as the live sessions' transcript route does, whether the tracker still
+// lists its session or not; nil without live transcripts.
+func conversationTranscript(transcripts *livesessions.Transcripts) func(http.ResponseWriter, *http.Request, string, string) {
+	if transcripts == nil {
+		return nil
+	}
+	return func(w http.ResponseWriter, r *http.Request, agent, id string) {
+		answer, err := transcripts.Read(r.Context(), agent, id, "", "")
+		transcripts.WriteAnswer(w, r, answer, err)
+	}
 }
 
 // liveSessions tracks the agent sessions the record's events show, or nothing

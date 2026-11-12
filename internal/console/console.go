@@ -17,6 +17,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
 	"path/filepath"
 	"slices"
@@ -215,7 +216,13 @@ type Options struct {
 	SSHAgent func(ctx context.Context) string
 	// Price prices a turn's usage for a backend; nil prices none.
 	Price func(backend string, accounting *agent.Accounting) (*float64, string)
-	Log   *slog.Logger
+	// Transcript writes the transcript of the agent's session id as the live
+	// sessions' transcript route answers (livesessions.Transcripts.Read and
+	// WriteAnswer): found by its id in the agent's own session store,
+	// whether or not the tracker lists it, never from a path a request
+	// names. Nil answers every conversation's transcript as unavailable.
+	Transcript func(w http.ResponseWriter, r *http.Request, agent, id string)
+	Log        *slog.Logger
 	// Now is the clock; nil is time.Now.
 	Now func() time.Time
 }
@@ -577,8 +584,14 @@ type Progress struct {
 	Tool string `json:"tool,omitempty"`
 	// CostUSD is what the turn cost, once it is over and could be priced.
 	CostUSD *float64 `json:"cost_usd,omitempty"`
-	// streaming is the message still streaming, not yet in Text.
-	streaming string
+	// Message is the turn's latest message on its own: the one streaming,
+	// else the last one finished (after the turn, its final message). The
+	// app shows it until the session's transcript holds it, so a turn of
+	// several messages shows each as it comes rather than all or none.
+	Message string `json:"message,omitempty"`
+	// streaming is the message still streaming, not yet in Text; last is the
+	// last message finished.
+	streaming, last string
 }
 
 // Progress returns the running or last turn of the conversation since the
@@ -591,8 +604,12 @@ func (s *Service) Progress(id string) (Progress, bool) {
 		return Progress{}, false
 	}
 	p := l.progress
+	p.Message = p.last
+	if p.streaming != "" {
+		p.Message = p.streaming
+	}
 	p.Text = tail(joinText(p.Text, p.streaming), agent.MaxConverseBytes)
-	p.streaming = ""
+	p.streaming, p.last = "", ""
 	return p, true
 }
 

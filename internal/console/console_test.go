@@ -460,3 +460,39 @@ func TestTextIsThrottled(t *testing.T) {
 		t.Fatalf("the held text was not published: %d events", count)
 	}
 }
+
+// Progress names the turn's latest message on its own, the one streaming or
+// else the last finished, so a turn of several messages shows each one.
+func TestProgressNamesTheLatestMessage(t *testing.T) {
+	f := newFixture(t, nil)
+	l := &live{revoke: func() {}, progress: Progress{Conversation: "c", State: StateRunning}}
+	f.service.mu.Lock()
+	f.service.live["c"] = l
+	f.service.mu.Unlock()
+	read := func() Progress {
+		t.Helper()
+		p, ok := f.service.Progress("c")
+		if !ok {
+			t.Fatal("no progress")
+		}
+		return p
+	}
+	f.service.textDelta("c", l, "Looking")
+	if p := read(); p.Message != "Looking" || p.Text != "Looking" {
+		t.Fatalf("streaming: %+v", p)
+	}
+	f.service.transcript("c", l, agent.TranscriptEntry{Kind: "message", Text: "Looking at the guide."})
+	f.service.transcript("c", l, agent.TranscriptEntry{Kind: "tool", Title: "Read docs/guide.md", Status: "running"})
+	if p := read(); p.Message != "Looking at the guide." || p.Tool != "Read docs/guide.md" {
+		t.Fatalf("after the first message: %+v", p)
+	}
+	f.service.transcript("c", l, agent.TranscriptEntry{Kind: "tool", Title: "Read docs/guide.md", Status: "completed"})
+	f.service.textDelta("c", l, "It is capped")
+	if p := read(); p.Message != "It is capped" || p.Text != "Looking at the guide.\n\nIt is capped" {
+		t.Fatalf("the second message streaming: %+v", p)
+	}
+	f.service.transcript("c", l, agent.TranscriptEntry{Kind: "message", Text: "It is capped."})
+	if p := read(); p.Message != "It is capped." {
+		t.Fatalf("the second message finished: %+v", p)
+	}
+}
