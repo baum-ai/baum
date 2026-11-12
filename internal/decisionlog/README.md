@@ -284,6 +284,15 @@ the session stores it reads (`sessions.Discovery`'s fingerprint) and the
 commits' observed creations are as at the repository's last links: it would
 link the same. The daily re-link and a daemon start always link again.
 
+Successful range reads are kept by clone, base, head and shallow boundary,
+within 128 ranges and 16 MiB of estimated metadata. Returned slices do not
+share mutable storage with the cache. Failed or oversized reads are not kept;
+the daily re-link reads ranges again. A successful full or fresh link also
+records its input fingerprint, so the first following unchanged window can
+skip linking. `LinkCommits` reuses the same bounded compact session facts as
+review evidence: unchanged transcripts need not be mapped again even after
+the full graph cache evicts them. Changed files get new keys.
+
 A commit linked to a session more than one way keeps its strongest link.
 
 `Store.SessionLinks` reads what attributes a captured session's decisions

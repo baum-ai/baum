@@ -23,11 +23,6 @@ import (
 // 150 MB transcript, the largest seen growing.
 const DefaultTailCacheBytes = 64 << 20
 
-// tailActiveFor is how recently a transcript must have changed for Map to
-// keep its decoded lines. One unchanged for longer is unlikely to grow, and
-// keeping its lines would only push out those of the transcripts that do.
-const tailActiveFor = time.Hour
-
 // tailIdleFor is how long a kept transcript may go unread before its lines
 // are released: its session has most likely finished. Within that time a
 // newly read transcript is only kept if it fits, since a session tree larger
@@ -49,8 +44,8 @@ const tailIdleFor = 30 * time.Minute
 // never from a second read of the file. A final line without a newline is
 // never kept: a writer may still be writing it, so each read decodes it again.
 //
-// Only files changed within tailActiveFor are kept, within limit bytes of
-// estimated line memory (Reading.Bytes); see account for what goes first.
+// Files of any age are kept within limit bytes of estimated line memory
+// (Reading.Bytes); see account for what goes first.
 // Files unread for tailIdleFor are released on the next read of any file.
 // The graphs the mapping cache keeps do not depend on this: it sits below
 // the mapping cache, which still keys a session on its files' sizes and
@@ -166,7 +161,7 @@ func tailRead[T any](c *tailCache, key, path, what string, start func() tailRead
 		return zero, fmt.Errorf("opening %s %s: %w", what, path, err)
 	}
 
-	e := c.entry(key, path, info)
+	e := c.entry(key, path)
 	if e == nil {
 		reading := start()
 		_, rest, err := c.continueFrom(reading, f, 0, info.Size())
@@ -265,7 +260,7 @@ func prefixSum(f *os.File, n int64) (uint32, bool) {
 
 // entry is the entry for key, created when the file is worth keeping lines
 // for, or nil. Every call releases the files unread for tailIdleFor.
-func (c *tailCache) entry(key, path string, info os.FileInfo) *tailEntry {
+func (c *tailCache) entry(key, path string) *tailEntry {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	idle := time.Now().Add(-tailIdleFor)
@@ -278,7 +273,7 @@ func (c *tailCache) entry(key, path string, info os.FileInfo) *tailEntry {
 		e.used = time.Now()
 		return e
 	}
-	if c.limit <= 0 || time.Since(info.ModTime()) > tailActiveFor {
+	if c.limit <= 0 {
 		return nil
 	}
 	e := &tailEntry{key: key, path: path, used: time.Now()}

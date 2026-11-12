@@ -2024,6 +2024,33 @@ a process reuses what it built:
   snapshot uses small per-checkpoint facts that `sessions` remembers by
   clone and tree. A checkpoint is read whole again, through the checkpoint
   cache below, only when a session chosen from it has to be mapped.
+* **New evidence contexts.** A digest may retain a context-independent slim
+  evidence basis, capped at 4 MiB per session within the existing 64 MiB
+  digest budget. It keeps only the evidence projector's inputs, with bounded
+  prompt/reply text and without tool output, assistant content or patch
+  hunks. New caps, known paths, checkout placements and thread names run the
+  same projector against this basis. Optional bases are shed before compact
+  facts; admission may replace colder optional bases but cannot evict facts.
+  An absent or oversized basis preserves the full-read fallback and can be
+  refilled by that mapped read. Every retained byte/string is detached from
+  the graph; byte accounting includes the whole basis.
+* **Linked-session views.** `locallink.Resolve` uses compact facts to select
+  the linked sessions, then maps only those whose graphs it must return. The
+  local app uses `ResolveSummary` for lists and decision attribution: its
+  compact facts include titles and outcomes, so even a linked graph evicted
+  from the mapping cache is not decoded merely to list its metadata. The
+  summary returns the same JSON and a lazy graph reader bound to the pinned
+  request. Opening a transcript rechecks that it is still linked and reads its
+  graph then, under the daemon's local-read semaphore and the viewer's shared
+  transcript job, lifetime and timeout. Default `Resolve` still returns full
+  linked graphs. Missing facts and changed selection retain the full-read
+  fallback.
+* **Feature linkage.** `locallink.LinkCommits` shares those compact facts and
+  skips unchanged session graphs too. The feature worker caches successful
+  recorded commit ranges by clone, base, head and shallow boundary, bounded
+  at 128 ranges and 16 MiB of estimated metadata. Full daily relinks bypass
+  range reuse, but keep their input fingerprint so a following unchanged
+  window can skip linking immediately.
 * **Closed and merged pull requests.** A refresh of a pull request that is
   closed or merged sets `EvidenceRequest.Frozen`. Its sessions are read once in
   the process, then kept for the same commits without looking at the stores
@@ -2036,7 +2063,7 @@ a process reuses what it built:
   memory, about a sixth of their transcripts' size.
 * **Growing transcripts.** A session an agent is still running changes on
   every append, so none of the above applies to it. For each Claude Code
-  transcript and Codex rollout changed in the last hour, `sessions.Map` keeps
+  transcript and Codex rollout, regardless of age, `sessions.Map` may keep
   the decoded lines and the byte offset they end at, and decodes only what was
   appended since; the mapper still runs over every line. A file that shrank,
   was replaced or had its earlier bytes rewritten is decoded whole. The lines
@@ -2065,8 +2092,13 @@ place. A reused answer prints no warnings.
 `/api/sessions` answer lists, and only those: it reads that answer from the
 same cache, computing it through the same single-flight path when it is not
 there yet, and any other id, a session read but not linked, or an unavailable
-answer is 404. The answer keeps the linked sessions' graphs for this
-(`Result.Graphs`, never part of its JSON).
+answer is 404. A full linkage answer may keep its linked graphs
+(`Result.Graphs`, never part of its JSON). The daemon's metadata-only answer
+instead supplies a lazy reader: an explicit transcript request revalidates
+linkage to the pinned document commits, under the same local-read semaphore,
+and shares one graph read and render for that session. A no-longer-linked or
+unreadable graph is not served. The lazy read has the viewer's lifetime and a
+two-minute bound; failed builds are retried on the next request.
 
 The transcript is shaped and bounded first, from the graph as read, and
 redacted after, so nothing past the limits below is ever redacted or held
