@@ -1,83 +1,85 @@
 package uiserver
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/baum-ai/baum/agent"
 	"github.com/baum-ai/baum/internal/appdb/appdbtest"
+	"github.com/baum-ai/baum/internal/assemble/assembletest"
 	"github.com/baum-ai/baum/internal/chat"
-	"github.com/baum-ai/baum/internal/chat/chattest"
 	"github.com/baum-ai/baum/internal/jobs"
+	"github.com/baum-ai/baum/internal/repos"
 	"github.com/baum-ai/baum/internal/store"
 )
 
 type chatAPI struct {
 	t       *testing.T
-	fixture *chattest.Fixture
-	queue   *jobs.Queue
+	clone   repos.Clone
 	handler *LocalHandler
 }
 
-func newChatAPI(t *testing.T, o chattest.Options) chatAPI {
+// newChatAPI serves the stored conversations of a registered clone of
+// acme/demo whose pull request 7 has one answered conversation, kept with a
+// session and directory that must never be shown.
+func newChatAPI(t *testing.T) chatAPI {
 	t.Helper()
-	f := chattest.New(t, o)
+	ctx := context.Background()
+	repo := assembletest.NewRepo(t, assembletest.Options{})
+	remote := exec.Command("git", "remote", "add", "origin", "https://github.com/acme/demo")
+	remote.Dir = repo.Dir
+	if out, err := remote.CombinedOutput(); err != nil {
+		t.Fatal(string(out), err)
+	}
+	registry, err := repos.Open(filepath.Join(appdbtest.TempDir(t), "repos.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = registry.Close() })
+	clone, err := registry.AddFor(ctx, repo.Dir, "acme/demo", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st, err := store.Open(clone.CommonDir, "", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := store.Key{Repository: clone.Repository, Number: assembletest.Number}
+	at := time.Date(2026, 10, 1, 9, 0, 0, 0, time.UTC)
+	c := store.Conversation{ID: "c1", Version: 1, Backend: "claude", Model: "m", SessionID: "secret-session", Directory: "/kept/secret-run", Created: at, Updated: at}
+	if err := st.CreateConversation(ctx, key, c, store.Turn{Seq: 1, Question: "Why?", Focus: json.RawMessage(`{"kind":"section","id":"s1"}`), JobID: "job-1", State: store.TurnQueued, Created: at}); err != nil {
+		t.Fatal(err)
+	}
+	answer, _ := json.Marshal(chat.Answer{Markdown: "Because.", Citations: []chat.Citation{{Path: "README.md", StartLine: 1, EndLine: 1}}})
+	if _, err := st.SettleTurn(ctx, key, "c1", 1, store.Settlement{State: store.TurnCompleted, Answer: answer, Finished: at.Add(time.Minute)}); err != nil {
+		t.Fatal(err)
+	}
 	state := appdbtest.TempDir(t)
 	if err := os.Chmod(state, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	queue, err := jobs.Open(filepath.Join(state, "jobs.json"), &jobs.Local{Registry: f.Registry, Chat: f.Service}, 1, nil)
+	queue, err := jobs.Open(filepath.Join(state, "jobs.json"), &jobs.Local{Registry: registry}, 1, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(queue.Close)
-	queue.SetChat(f.Service)
-	h := LocalAPI{Registry: f.Registry, Chat: ChatHandler(f.Registry, queue)}.Handler()
+	queue.SetChat(&chat.Service{Registry: registry})
+	h := LocalAPI{Registry: registry, Chat: ChatHandler(registry, queue)}.Handler()
 	t.Cleanup(h.Close)
-	return chatAPI{t, f, queue, h}
+	return chatAPI{t, clone, h}
 }
 
-func (a chatAPI) do(method, path, body string) *httptest.ResponseRecorder {
+func (a chatAPI) do(method, path string) *httptest.ResponseRecorder {
 	w := httptest.NewRecorder()
-	a.handler.ServeHTTP(w, httptest.NewRequest(method, "http://local"+path, strings.NewReader(body)))
+	a.handler.ServeHTTP(w, httptest.NewRequest(method, "http://local"+path, strings.NewReader("{}")))
 	return w
-}
-
-func (a chatAPI) post(body string) *httptest.ResponseRecorder {
-	return a.do("POST", "/api/prs/chat", body)
-}
-
-func (a chatAPI) list() []store.Conversation {
-	a.t.Helper()
-	w := a.do("GET", fmt.Sprintf("/api/prs/chat?clone=%s&pr=7", a.fixture.Clone.ID), "")
-	var body struct {
-		Conversations []store.Conversation `json:"conversations"`
-	}
-	if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &body) != nil {
-		a.t.Fatalf("list: %d %s", w.Code, w.Body)
-	}
-	return body.Conversations
-}
-
-func (a chatAPI) waitSettled(conversation string, turn int) store.Turn {
-	a.t.Helper()
-	deadline := time.Now().Add(30 * time.Second)
-	for time.Now().Before(deadline) {
-		for _, c := range a.list() {
-			if c.ID == conversation && len(c.Turns) >= turn && !store.Pending(c.Turns[turn-1].State) {
-				return c.Turns[turn-1]
-			}
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	a.t.Fatal("the turn did not settle")
-	return store.Turn{}
 }
 
 func code(t *testing.T, w *httptest.ResponseRecorder) string {
@@ -89,51 +91,20 @@ func code(t *testing.T, w *httptest.ResponseRecorder) string {
 	return body.Code
 }
 
-func TestChatAPIAsksAndLists(t *testing.T) {
-	a := newChatAPI(t, chattest.Options{})
-	secret := "AKIA" + "UJZDEGXDNCF32EPF"
-	release := make(chan struct{})
-	a.fixture.Agent.Reply = func(r agent.Request, n int) (agent.Result, error) {
-		<-release
-		result := a.fixture.Agent.Default(r)
-		result.Document = chattest.Answer("key "+secret, chattestCitation())
-		return result, nil
+func TestChatAPIListsTheStoredConversations(t *testing.T) {
+	a := newChatAPI(t)
+	list := a.do("GET", fmt.Sprintf("/api/prs/chat?clone=%s&pr=7", a.clone.ID))
+	if list.Code != 200 {
+		t.Fatalf("list: %d %s", list.Code, list.Body)
 	}
-	clone := a.fixture.Clone.ID
-	w := a.post(fmt.Sprintf(`{"clone":%q,"pr":7,"version":1,"question":"Why?","focus":{"kind":"section","id":"s1","title":"Limits","anchors":[{"path":"src/app.go","start_line":1}]}}`, clone))
-	if w.Code != 202 {
-		t.Fatalf("ask: %d %s", w.Code, w.Body)
-	}
-	var queued struct {
-		Conversation string   `json:"conversation_id"`
-		Turn         int      `json:"turn"`
-		Job          jobs.Job `json:"job"`
-	}
-	if err := json.Unmarshal(w.Body.Bytes(), &queued); err != nil || queued.Conversation == "" || queued.Turn != 1 || queued.Job.Kind != jobs.KindChat || queued.Job.PR != 7 {
-		t.Fatalf("queued: %s (%v)", w.Body, err)
-	}
-	// A second question waits for the first.
-	busy := a.post(fmt.Sprintf(`{"clone":%q,"pr":7,"version":1,"conversation_id":%q,"question":"And?"}`, clone, queued.Conversation))
-	if busy.Code != 409 || code(t, busy) != "busy" {
-		t.Errorf("busy: %d %s", busy.Code, busy.Body)
-	}
-	close(release)
-	turn := a.waitSettled(queued.Conversation, 1)
-	if turn.State != store.TurnCompleted || turn.JobID != queued.Job.ID || len(turn.Focus) == 0 {
-		t.Fatalf("turn: %+v", turn)
-	}
-	list := a.do("GET", fmt.Sprintf("/api/prs/chat?clone=%s&pr=7", clone), "")
-	if strings.Contains(list.Body.String(), secret) || !strings.Contains(list.Body.String(), `"answer_markdown":"key `) {
-		t.Errorf("listed answer: %s", list.Body)
-	}
-	for _, private := range []string{"session", "directory", a.fixture.ReviewDir} {
+	for _, private := range []string{"session", "directory", "secret-run"} {
 		if strings.Contains(list.Body.String(), private) {
 			t.Errorf("the listing shows %q: %s", private, list.Body)
 		}
 	}
 	var body map[string][]map[string]any
-	if err := json.Unmarshal(list.Body.Bytes(), &body); err != nil {
-		t.Fatal(err)
+	if err := json.Unmarshal(list.Body.Bytes(), &body); err != nil || len(body["conversations"]) != 1 {
+		t.Fatalf("%s (%v)", list.Body, err)
 	}
 	conversation := body["conversations"][0]
 	for _, key := range []string{"id", "version", "backend", "model", "seeded", "created", "updated", "turns"} {
@@ -141,89 +112,47 @@ func TestChatAPIAsksAndLists(t *testing.T) {
 			t.Errorf("conversation lacks %s: %v", key, conversation)
 		}
 	}
-	next := a.post(fmt.Sprintf(`{"clone":%q,"pr":7,"version":1,"conversation_id":%q,"question":"And?"}`, clone, queued.Conversation))
-	if next.Code != 202 || !strings.Contains(next.Body.String(), `"turn":2`) {
-		t.Errorf("next: %d %s", next.Code, next.Body)
+	// The job of the turn is gone from the journal, but the turn was
+	// settled with its answer and keeps it.
+	if !strings.Contains(list.Body.String(), `"answer_markdown":"Because."`) || !strings.Contains(list.Body.String(), `"state":"completed"`) {
+		t.Errorf("listed turn: %s", list.Body)
 	}
-	a.waitSettled(queued.Conversation, 2)
-}
-
-func chattestCitation() chat.Citation {
-	return chat.Citation{Path: "README.md", StartLine: 1, EndLine: 1}
 }
 
 func TestChatAPIRefusals(t *testing.T) {
-	a := newChatAPI(t, chattest.Options{})
-	clone := a.fixture.Clone.ID
-	ask := func(extra string) string {
-		return fmt.Sprintf(`{"clone":%q,"pr":7,"version":1,"question":"q"%s}`, clone, extra)
-	}
+	a := newChatAPI(t)
 	for name, c := range map[string]struct {
-		body   string
+		path   string
 		status int
 		code   string
 	}{
-		"not json":             {`nope`, 400, "invalid_request"},
-		"unknown field":        {ask(`,"extra":1`), 400, "invalid_request"},
-		"unknown focus field":  {ask(`,"focus":{"kind":"stop","extra":1}`), 400, "invalid_request"},
-		"bad focus kind":       {ask(`,"focus":{"kind":"file"}`), 400, "invalid_request"},
-		"missing version":      {fmt.Sprintf(`{"clone":%q,"pr":7,"question":"q"}`, clone), 400, "invalid_request"},
-		"empty question":       {fmt.Sprintf(`{"clone":%q,"pr":7,"version":1,"question":""}`, clone), 400, "invalid_request"},
-		"long question":        {fmt.Sprintf(`{"clone":%q,"pr":7,"version":1,"question":%q}`, clone, strings.Repeat("x", 4001)), 400, "invalid_request"},
-		"unregistered":         {`{"clone":"nope","pr":7,"version":1,"question":"q"}`, 404, "not_found"},
-		"no review":            {fmt.Sprintf(`{"clone":%q,"pr":7,"version":9,"question":"q"}`, clone), 404, "no_review"},
-		"unknown conversation": {ask(`,"conversation_id":"` + strings.Repeat("0", 32) + `"`), 404, "not_found"},
+		"no pr":        {"/api/prs/chat?clone=" + a.clone.ID, 400, "invalid_request"},
+		"bad pr":       {"/api/prs/chat?clone=" + a.clone.ID + "&pr=x", 400, "invalid_request"},
+		"unregistered": {"/api/prs/chat?clone=nope&pr=7", 404, "not_found"},
 	} {
-		w := a.post(c.body)
-		if w.Code != c.status || code(t, w) != c.code {
+		if w := a.do("GET", c.path); w.Code != c.status || code(t, w) != c.code {
 			t.Errorf("%s: %d %s", name, w.Code, w.Body)
 		}
 	}
-	for name, path := range map[string]string{"no pr": "/api/prs/chat?clone=" + clone, "unregistered": "/api/prs/chat?clone=nope&pr=7"} {
-		if w := a.do("GET", path, ""); w.Code/100 != 4 {
-			t.Errorf("%s: %d", name, w.Code)
-		}
-	}
-	if len(a.queue.List()) != 0 {
-		t.Errorf("refused questions queued jobs: %+v", a.queue.List())
-	}
-
-	cursor := newChatAPI(t, chattest.Options{Backend: agent.BackendCursorAgent, NoSession: true})
-	if w := cursor.post(fmt.Sprintf(`{"clone":%q,"pr":7,"version":1,"question":"q"}`, cursor.fixture.Clone.ID)); w.Code != 422 || code(t, w) != "unsupported_backend" {
-		t.Errorf("cursor: %d %s", w.Code, w.Body)
-	}
-
-	moved := newChatAPI(t, chattest.Options{})
-	if err := os.Rename(moved.fixture.Clone.Path, moved.fixture.Clone.Path+"-moved"); err != nil {
-		t.Fatal(err)
-	}
-	if w := moved.post(fmt.Sprintf(`{"clone":%q,"pr":7,"version":1,"question":"q"}`, moved.fixture.Clone.ID)); w.Code != 409 || code(t, w) != "needs_clone" {
-		t.Errorf("needs clone: %d %s", w.Code, w.Body)
+	// Nothing asks new questions: no route takes a POST.
+	if w := a.do("POST", "/api/prs/chat"); w.Code < 400 {
+		t.Errorf("post: %d %s", w.Code, w.Body)
 	}
 }
 
 func TestChatAPIUnavailable(t *testing.T) {
-	f := chattest.New(t, chattest.Options{})
-	h := LocalAPI{Registry: f.Registry}.Handler()
+	h := LocalAPI{}.Handler()
 	defer h.Close()
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, httptest.NewRequest("GET", "http://local/api/prs/chat?clone=x&pr=7", nil))
 	if w.Code != 200 || !strings.Contains(w.Body.String(), `"chat_unavailable"`) {
 		t.Errorf("get: %d %s", w.Code, w.Body)
 	}
-	w = httptest.NewRecorder()
-	h.ServeHTTP(w, httptest.NewRequest("POST", "http://local/api/prs/chat", strings.NewReader(`{}`)))
-	if w.Code != 503 {
-		t.Errorf("post: %d", w.Code)
-	}
 }
 
-func TestChatEventsArePublished(t *testing.T) {
+func TestChatEventsAreNotPublished(t *testing.T) {
 	s := testServer(t)
-	if err := s.Publish("chat", map[string]any{"conversation": "c", "repository": "acme/demo", "pr": 7, "turn": 1, "state": "queued"}); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.Publish("chatter", struct{}{}); err == nil {
-		t.Error("an unknown kind was published")
+	if err := s.Publish("chat", struct{}{}); err == nil {
+		t.Error("a chat event was published")
 	}
 }

@@ -188,7 +188,7 @@ func (w *Workspace) build(ctx context.Context, now time.Time) (http.Handler, err
 	w.closers = append(w.closers, func() { _ = queue.Shutdown(context.Background()) })
 	cfg := config.Default()
 	cfg.Backend, cfg.Model = config.BackendClaude, "claude-sonnet-4-5"
-	queue.SetChat(&chat.Service{Registry: registry, Config: cfg, Root: filepath.Join(dir, "review-runs")})
+	queue.SetChat(&chat.Service{Registry: registry})
 	groups, err := reviewgroups.Open(appDB)
 	if err != nil {
 		return nil, err

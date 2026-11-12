@@ -344,7 +344,7 @@ var errEventTooLarge = errors.New("event too large")
 // Publish records a small notification, not sensitive documents. Clients that
 // miss the bounded replay window receive a reset event and rebuild their index.
 func (s *Server) Publish(kind string, data any) error {
-	if kind != "index" && kind != "progress" && kind != "job" && kind != "automatic" && kind != "live" && kind != "notice" && kind != "chat" && kind != "timeline" && kind != "decisions" && kind != "console" {
+	if kind != "index" && kind != "progress" && kind != "job" && kind != "automatic" && kind != "live" && kind != "notice" && kind != "timeline" && kind != "decisions" && kind != "console" {
 		return errors.New("unknown event kind")
 	}
 	b, err := json.Marshal(data)

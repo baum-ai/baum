@@ -28,7 +28,6 @@ import (
 	"github.com/baum-ai/baum/internal/assemble/assembletest"
 	"github.com/baum-ai/baum/internal/automatic"
 	"github.com/baum-ai/baum/internal/chat"
-	"github.com/baum-ai/baum/internal/chat/chattest"
 	"github.com/baum-ai/baum/internal/clonefind"
 	"github.com/baum-ai/baum/internal/config"
 	"github.com/baum-ai/baum/internal/console"
@@ -393,6 +392,7 @@ func TestLocalAppBrowserFixture(t *testing.T) {
 		}
 		previous = next
 	}
+	seedAskConversation(t, versions, previous.Metadata.Version)
 	write := true
 	prs := []discovery.PullRequest{{Repository: "acme/demo", Number: 7, HeadSHA: repo.Head, Title: "Reuse the existing PR page", State: "OPEN", URL: "https://github.com/acme/demo/pull/7", ReviewRequestedFromMe: true, AuthorHasWrite: &write, TeamMembershipKnown: true}, {Repository: "acme/demo", Number: 8, HeadSHA: repo.Head, Title: "A pull request without a review", State: "OPEN", URL: "https://github.com/acme/demo/pull/8", AuthoredByMe: true, AuthorHasWrite: &write, TeamMembershipKnown: true}, {Repository: "acme/demo", Number: 9, HeadSHA: repo.Head, Title: "A fork requiring confirmation", State: "OPEN", URL: "https://github.com/acme/demo/pull/9", Fork: true, AuthorHasWrite: &write, TeamMembershipKnown: true}, {Repository: "acme/demo", Number: 10, HeadSHA: repo.MergeBase, Title: "An automatically reviewed change", State: "OPEN", URL: "https://github.com/acme/demo/pull/10", AuthoredByMe: true, AssignedToMe: true, AuthorHasWrite: &write, TeamMembershipKnown: true}, {Repository: "acme/demo", Number: 11, HeadSHA: repo.Head, Title: "A branch behind its base", State: "OPEN", URL: "https://github.com/acme/demo/pull/11", AuthoredByMe: true, AuthorHasWrite: &write, TeamMembershipKnown: true}}
 	prs[0].Review, prs[0].Checks, prs[0].Merge, prs[0].Unresolved = "approved", "passing", "ready", new(0)
@@ -574,18 +574,8 @@ func TestLocalAppBrowserFixture(t *testing.T) {
 		result.Usage = agent.Usage{Input: 60, Output: 40, CacheRead: 900}
 		return result, e
 	}}
-	// Questions to the review's agent are answered at once by a scripted agent,
-	// which cites lines of docs/guide.md, a file of the review's own hunks.
-	chatAgent := &chattest.Agent{}
-	chatAgent.BackendName, chatAgent.Version = agent.BackendClaude, "fixture"
-	chatAgent.RunFunc = func(_ context.Context, r agent.Request, _ int) (agent.Result, error) {
-		result := chatAgent.Default(r)
-		result.Document = chattest.Answer("The delay is **capped** so a long outage cannot push retries out forever.", chat.Citation{Path: "docs/guide.md", StartLine: 3, EndLine: 6})
-		return result, nil
-	}
-	chatCfg := cfg
-	chatCfg.Budgets.MaxCalls, chatCfg.Budgets.MaxTokens, chatCfg.Budgets.RunTimeout = 20, 100000, config.Duration(10*time.Minute)
-	chats := &chat.Service{Registry: registry, Config: chatCfg, Root: filepath.Join(home, "review-runs"), Backends: generate.Backends{Claude: func(string) generate.CheckedBackend { return chatAgent }}}
+	// The stored conversations of the earlier Ask feature, read-only.
+	chats := &chat.Service{Registry: registry}
 	index := &reviewindex.Service{Registry: registry, Discovery: disc}
 	// The real daemon serves the app: lock, credential file, control socket
 	// and app transport. Only GitHub and the model backend are synthetic.
@@ -631,12 +621,9 @@ func TestLocalAppBrowserFixture(t *testing.T) {
 			_ = events.Close()
 			return daemon.App{}, err
 		}
-		runner, err := jobs.Open(filepath.Join(home, "app.sqlite"), &jobs.Local{Registry: registry, Groups: groups, Config: cfg, Client: client, FixDirectory: filepath.Join(home, "fixes"), Features: fixtureBuilder{}, Chat: chats, Backends: generate.Backends{Claude: func(string) generate.CheckedBackend { return fixtureFixer{backend} }}}, 1, func(job jobs.Job) {
+		runner, err := jobs.Open(filepath.Join(home, "app.sqlite"), &jobs.Local{Registry: registry, Groups: groups, Config: cfg, Client: client, FixDirectory: filepath.Join(home, "fixes"), Features: fixtureBuilder{}, Backends: generate.Backends{Claude: func(string) generate.CheckedBackend { return fixtureFixer{backend} }}}, 1, func(job jobs.Job) {
 			_ = server.PublishProgress(job)
 			_ = server.Publish("index", map[string]any{})
-			if event, ok := jobs.ChatEvent(job); ok {
-				_ = server.Publish("chat", event)
-			}
 			if job.Phase == "finished" {
 				scheduler.Wake()
 			}
@@ -797,4 +784,28 @@ func browserFlow(_ context.Context, repository string, _ time.Time) ([]decisionl
 		pulls = append(pulls, p)
 	}
 	return pulls, true, nil
+}
+
+// seedAskConversation stores one answered conversation of the earlier Ask
+// feature about version of acme/demo#7's review, as a completed question
+// was stored, so the app shows it read-only. Its answer cites lines of
+// docs/guide.md, a file of the review's own hunks.
+func seedAskConversation(t *testing.T, versions *store.Store, version int) {
+	t.Helper()
+	ctx := context.Background()
+	key := store.Key{Repository: "acme/demo", Number: 7}
+	asked := time.Now().UTC().Add(-2 * time.Hour).Truncate(time.Second)
+	c := store.Conversation{ID: "0123456789abcdef0123456789abcdef", Version: version, Backend: agent.BackendClaude, Model: "claude-sonnet-4-5", Created: asked, Updated: asked.Add(time.Minute)}
+	if err := versions.CreateConversation(ctx, key, c, store.Turn{Seq: 1, Question: "Why is the delay capped?", JobID: "ask-fixture", State: store.TurnQueued, Created: asked}); err != nil {
+		t.Fatal(err)
+	}
+	answer, err := json.Marshal(chat.Answer{Markdown: "The delay is **capped** so a long outage cannot push retries out forever.",
+		Citations: []chat.Citation{{Path: "docs/guide.md", StartLine: 3, EndLine: 6}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cost := 0.02
+	if _, err := versions.SettleTurn(ctx, key, c.ID, 1, store.Settlement{State: store.TurnCompleted, Answer: answer, CostUSD: &cost, Finished: asked.Add(time.Minute)}); err != nil {
+		t.Fatal(err)
+	}
 }

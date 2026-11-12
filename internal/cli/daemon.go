@@ -467,15 +467,12 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 			notify.Observe(ctx, snapshot)
 		}
 		scheduler.Discovered = worker.Discovered
-		chats := &chat.Service{Registry: registry, Config: cfg, Log: log}
+		chats := &chat.Service{Registry: registry}
 		// Feature builds run on the feature worker made below.
 		builds := &featureBuilder{}
 		prefs, _ := registry.Preferences(ctx)
-		queue, err := jobs.Open(database, &jobs.Local{Registry: registry, Groups: groups, Config: cfg, Client: github.NewFromConfig(cfg, github.Options{}), Features: builds, Chat: chats, Log: log}, prefs.Concurrency(), func(job jobs.Job) {
+		queue, err := jobs.Open(database, &jobs.Local{Registry: registry, Groups: groups, Config: cfg, Client: github.NewFromConfig(cfg, github.Options{}), Features: builds, Log: log}, prefs.Concurrency(), func(job jobs.Job) {
 			_ = server.PublishProgress(job)
-			if event, ok := jobs.ChatEvent(job); ok {
-				_ = server.Publish("chat", event)
-			}
 			if job.Phase == "finished" {
 				changed()
 				// Reading the index takes a moment; the queue must not wait.

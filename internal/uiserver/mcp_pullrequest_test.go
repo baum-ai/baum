@@ -18,7 +18,6 @@ import (
 	"github.com/baum-ai/baum/internal/agentcontext"
 	"github.com/baum-ai/baum/internal/appdb/appdbtest"
 	"github.com/baum-ai/baum/internal/background"
-	"github.com/baum-ai/baum/internal/chat"
 	"github.com/baum-ai/baum/internal/config"
 	"github.com/baum-ai/baum/internal/discovery"
 	"github.com/baum-ai/baum/internal/inboxqueue"
@@ -591,10 +590,6 @@ func TestNoToolReadsAWriteRoute(t *testing.T) {
 
 // fakeChatQueue is the conversations' store behind the real chat handler.
 type fakeChatQueue struct{}
-
-func (fakeChatQueue) Ask(context.Context, chat.Ask) (jobs.ChatQueued, error) {
-	panic("asked by a read")
-}
 
 func (fakeChatQueue) Conversations(_ context.Context, _ string, pr int) ([]store.Conversation, error) {
 	if pr != 8 {
