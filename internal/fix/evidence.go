@@ -125,6 +125,11 @@ type Check struct {
 	Log string `json:"log,omitempty"`
 	// JobID is the GitHub Actions job behind a check run, 0 for another app.
 	JobID int64 `json:"-"`
+	// ID is the check run's ID, set by AllChecks; 0 for a commit status.
+	ID int64 `json:"-"`
+	// Actions reports a check run of GitHub Actions, whose ID is the job
+	// whose log GitHub keeps; set by AllChecks.
+	Actions bool `json:"-"`
 	// URL is where the check's details are: the app's details page, else
 	// the check run on GitHub, or a commit status's target. The app links it;
 	// the prompt leaves it out.
@@ -272,7 +277,7 @@ func AllChecks(ctx context.Context, r Reader, repository github.Repository, sha 
 		}
 		for _, run := range runs.CheckRuns {
 			actions := run.App != nil && run.App.Slug == "github-actions"
-			check := Check{Name: bounded(workflows.name(actions, run.CheckSuite, run.Name), 256), Status: run.Status, Title: bounded(run.Output.Title, 512), Summary: bounded(run.Output.Summary, 512), URL: cmp.Or(run.DetailsURL, run.HTMLURL)}
+			check := Check{ID: run.ID, Actions: actions, Name: bounded(workflows.name(actions, run.CheckSuite, run.Name), 256), Status: run.Status, Title: bounded(run.Output.Title, 512), Summary: bounded(run.Output.Summary, 512), URL: cmp.Or(run.DetailsURL, run.HTMLURL)}
 			// GitHub also reports waiting, requested and pending runs, which
 			// have not started.
 			if check.Status != "completed" && check.Status != "in_progress" {

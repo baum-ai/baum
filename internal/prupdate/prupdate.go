@@ -585,6 +585,12 @@ type CheckStatus struct {
 	// JobID is the GitHub Actions job behind a failing check run, which
 	// RerunJob re-runs; absent otherwise.
 	JobID int64 `json:"job_id,omitempty"`
+	// ID is the check run's ID, which check-log takes; absent for a commit
+	// status.
+	ID int64 `json:"id,omitempty"`
+	// HasLog: GitHub keeps a log for the check, a completed GitHub Actions
+	// run.
+	HasLog bool `json:"has_log,omitempty"`
 }
 
 // CheckList lists all of a head commit's checks, failing ones first, then
@@ -625,7 +631,7 @@ func (s Service) AllChecks(ctx context.Context, repository github.Repository, nu
 	}
 	out := CheckList{HeadSHA: head, Checks: []CheckStatus{}}
 	for _, check := range list {
-		out.Checks = append(out.Checks, CheckStatus{Name: check.Name, Status: check.Status, Conclusion: check.Conclusion, Title: checkTitle(check), URL: check.URL, JobID: check.JobID})
+		out.Checks = append(out.Checks, CheckStatus{Name: check.Name, Status: check.Status, Conclusion: check.Conclusion, Title: checkTitle(check), URL: check.URL, JobID: check.JobID, ID: check.ID, HasLog: check.Actions && check.Status == "completed"})
 	}
 	rank := func(c CheckStatus) int {
 		switch {

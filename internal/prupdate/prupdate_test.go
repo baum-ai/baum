@@ -44,6 +44,10 @@ type fakeGitHub struct {
 	// rerunStatus answers a re-run by run ID, 201 when absent.
 	rerunStatus map[int]int
 	rerunBody   map[int]string
+	// logs are the job logs by job ID; logStatus answers a log with a
+	// status other than 200.
+	logs      map[int]string
+	logStatus map[int]int
 	// graphql answers each GraphQL document.
 	graphql func(query string, variables map[string]any) string
 
@@ -112,6 +116,13 @@ func (f *fakeGitHub) client() *github.Client {
 				return answer(200, `{"workflow_runs":[]}`)
 			}
 			return answer(200, `{"workflow_runs":[`+strings.Join(f.runs, ",")+`]}`)
+		case strings.Contains(path, "/actions/jobs/") && strings.HasSuffix(path, "/logs"):
+			var id int
+			_, _ = fmt.Sscanf(path[strings.Index(path, "/jobs/"):], "/jobs/%d/logs", &id)
+			if s, ok := f.logStatus[id]; ok {
+				return answer(s, `{"message":"gone"}`)
+			}
+			return answer(200, f.logs[id])
 		case strings.HasSuffix(path, "/check-runs"):
 			return answer(200, `{"check_runs":[`+strings.Join(f.checks, ",")+`]}`)
 		case strings.HasSuffix(path, "/status"):
@@ -556,15 +567,15 @@ func TestAllChecks(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := CheckList{HeadSHA: "abc", Checks: []CheckStatus{
-		{Name: "ci/circle", Status: "completed", Conclusion: "timed_out"},
+		{Name: "ci/circle", Status: "completed", Conclusion: "timed_out", ID: 25},
 		{Name: "ci/jenkins", Status: "completed", Conclusion: "error", Title: "Crashed"},
-		{Name: "test", Status: "completed", Conclusion: "failure", Title: "2 tests failed", URL: "https://github.com/acme/app/runs/21", JobID: 21},
-		{Name: "build", Status: "in_progress"},
+		{Name: "test", Status: "completed", Conclusion: "failure", Title: "2 tests failed", URL: "https://github.com/acme/app/runs/21", JobID: 21, ID: 21, HasLog: true},
+		{Name: "build", Status: "in_progress", ID: 23},
 		{Name: "ci/travis", Status: "in_progress", Title: "Waiting", URL: "https://travis.example/1"},
-		{Name: "deploy", Status: "queued"},
+		{Name: "deploy", Status: "queued", ID: 24},
 		{Name: "ci/ok", Status: "completed", Conclusion: "success"},
-		{Name: "docs", Status: "completed", Conclusion: "skipped"},
-		{Name: "lint", Status: "completed", Conclusion: "success"},
+		{Name: "docs", Status: "completed", Conclusion: "skipped", ID: 26, HasLog: true},
+		{Name: "lint", Status: "completed", Conclusion: "success", ID: 22, HasLog: true},
 	}}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("checks %+v, want %+v", got, want)

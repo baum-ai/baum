@@ -168,6 +168,9 @@ func (g *opGitHub) RerunJob(_ context.Context, r github.Repository, number int, 
 func (g *opGitHub) AllChecks(context.Context, github.Repository, int, string) (prupdate.CheckList, error) {
 	return prupdate.CheckList{}, nil
 }
+func (g *opGitHub) CheckLog(context.Context, github.Repository, int, int64) (prupdate.CheckLog, error) {
+	return prupdate.CheckLog{}, nil
+}
 func (g *opGitHub) Conflicts(context.Context, github.Repository, int) (prupdate.ConflictFiles, error) {
 	return prupdate.ConflictFiles{}, nil
 }

@@ -688,6 +688,9 @@ func (f fakeWrites) FailingChecks(context.Context, github.Repository, int, strin
 func (f fakeWrites) AllChecks(context.Context, github.Repository, int, string) (prupdate.CheckList, error) {
 	return prupdate.CheckList{}, nil
 }
+func (f fakeWrites) CheckLog(context.Context, github.Repository, int, int64) (prupdate.CheckLog, error) {
+	return prupdate.CheckLog{}, nil
+}
 func (f fakeWrites) Conflicts(context.Context, github.Repository, int) (prupdate.ConflictFiles, error) {
 	return prupdate.ConflictFiles{}, nil
 }
