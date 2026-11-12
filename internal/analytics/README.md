@@ -17,8 +17,9 @@ with the reasons beside it where there are any.
 
 ## The session index
 
-`Index` keeps one entry per session file in the `cache/analytics-index` document in `app.sqlite` in the
-daemon's state directory (`$XDG_STATE_HOME/baum`). It holds aggregates only:
+`Index` keeps one entry per session file, one row each in the
+`analytics_sessions` table of `app.sqlite` in the daemon's state directory
+(`$XDG_STATE_HOME/baum`). It holds aggregates only:
 the agent, the clone and its repository, the top-level session's branch, its
 start and end, active seconds (in total and by hour), human prompts, tool
 calls and failed ones, subagents, model calls, token sums by model, speed and
@@ -39,9 +40,17 @@ prompt, message, tool input or output, or file path is stored.
 - The daemon builds it in the background when it starts and refreshes it every
   five minutes and when an agent session ends. While the first pass runs, the
   report answers with what it has and `indexing: {done, total, complete}`.
-- A refresh that changed nothing writes nothing: the document is saved only
-  when an entry was added, replaced or dropped (a failed save is retried on the
-  next refresh). The head of each Claude transcript (working directory, start)
+- A save writes only the rows of entries added, replaced or dropped since the
+  last one, in one transaction, so a refresh that changed nothing writes
+  nothing and a failed save is retried whole on the next refresh. A first build
+  saves after every 25 sessions read, so a restart resumes from the last save
+  instead of starting over. The one-row `analytics_index` table holds the
+  index format version and the price list's long-prompt thresholds the entries
+  were summed with; rows stored under others are ignored and deleted with the
+  next save. Refreshes run one at a time. An older baum kept the whole index in
+  the `cache/analytics-index` document; the first open moves its entries into
+  rows and deletes it in one transaction (a document of another version or
+  thresholds is deleted unread). The head of each Claude transcript (working directory, start)
   is remembered by path, size and modification time, so an unchanged transcript
   is not opened again; the memory is per process and forgets deleted files.
 - baum's own generation runs are kept as marked entries, so they are not read
