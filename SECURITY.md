@@ -1416,21 +1416,62 @@ feature names none and is never read); a session's Timeline transcript names
 none, so only a chat reads it. Responses are bounded to 8 MiB, apart from a review document and the facts, which are read up to the 32 MiB the daemon serves.
 
 The exception is a fixed list of tool and exact route pairs in the daemon's
-source, today `diagnostics_summary` with `/api/diagnostics`, which a test pins.
-The tool is global, so an action neither lists nor calls it, and the reader
-refuses an action the route whatever a tool declares. It returns a typed
-projection filled only with what the app shows on that page: a check's id,
+source, which a test pins: `diagnostics_summary` with `/api/diagnostics`, and
+the Settings tools with the Settings routes their sections show
+(`/api/settings`, `/api/settings/appearance`, `/api/settings/decisions`,
+`/api/settings/prompts`, `/api/github-auth` and, for This computer's agent
+setup, `/api/diagnostics`). These routes stay unreadable to every other tool,
+and every other route under `/api/settings` and `/api/github` (the sign-in's
+start, the plan usage choice) stays unreadable to all. The tools are global,
+so an action neither lists nor calls them, and the reader refuses an action the
+routes whatever a tool declares. Each returns a typed projection filled only
+with what the app shows in that section. The diagnostics give a check's id,
 label, status, version and where it was found, scrubbed as the public issue
 summary is (home folder and account names, secrets and addresses removed; a
 GitHub Enterprise host is `other host`; token and backend checks name no
 source), never the home folder, a check's path, detail or suggested fix, the
-environment or the issue the Report a problem dialog drafts. Two routes that
-look like candidates are not exceptions, because they reach outside: the plan
-usage route fetches from Claude or Codex when its cache is stale, and the
-picker's list contacts GitHub (a new query starts a search that spends the
-account's rate limit). Their tools read the caches the daemon already holds,
-through accessors that cannot fetch (a call never waits for a fetch in
-progress, and the picker's list says when none is loaded). A job's failure
+environment or the issue the Report a problem dialog drafts.
+
+What the Settings tools expose: the theme, key hints and page shortcut
+modifier; which plans show their usage; whether automatic reviews are on and
+for which pull requests; the review, fix and decision capture harness, model
+and effort; the GitHub connection's state, login, `github.com` or `other host`,
+the kind of place its token comes from (the app's sign-in, an environment
+variable or the config file, never which variable or file), whether workflow
+access was granted, an error code and fixed message (scrubbed), and the
+organizations it cannot reach; the Codex hooks state the app last saw; job
+concurrency and time limits; the names of the agent environment variables and
+whether the app or the config file sets them; whether the app answers Codex's
+permission requests; the agent checks' labels, statuses and versions; and the
+prompts with their texts (built-in, custom and inherited), as the Prompts
+section shows them. What they never expose: an agent environment variable's
+value (the values are not even decoded), the GitHub token, a waiting
+sign-in's user code or verification address (the waiting sign-in is decoded
+only for whether there is one), the budgets and caps, a check's folder,
+detail or fix, the configuration file's folder, an enterprise host, or the
+home folder. A repository's page tools (its review choices and automatic
+status, its prompts, its registration) are repository-scoped: an action reads
+its own repository's, through routes bound to it (the repositories and
+automatic lists are rebuilt from its row alone, without clone folders or the
+global switches, and the prompts route is bound by its path), and never a
+clone's folder.
+
+Four routes that look like candidates are not exceptions, because they reach
+outside or start programs: the plan usage route fetches from Claude or Codex
+when its cache is stale, and so does the plan usage choice
+(`/api/settings/plan-usage`), which reads the plans to work out the default;
+the Codex hooks route starts Codex when its cache is stale or holds a warning;
+and the picker's list contacts GitHub (a new query starts a search that spends
+the account's rate limit). Their tools read what the daemon already holds,
+through accessors that cannot fetch or start anything (a call never waits for
+a fetch in progress, the picker's list says when none is loaded, and the Codex
+hooks state is the newest the app's own check returned, or says none was).
+Decision capture's settings route resolves an auto backend by running the
+harnesses' version checks on this computer, as opening the section in the app
+does; it reaches nothing outside. Reading the GitHub connection may start, as
+the section does when it opens, the background check of the organizations the
+sign-in cannot reach: at most every 30 seconds, answered from a five-minute
+cache. A job's failure
 text, which can quote git's output and so the home folder, is scrubbed the same
 way in every job tool. The repositories tools never return a folder: a
 clone is a count, an availability and an id, and the suggested clone folder is
