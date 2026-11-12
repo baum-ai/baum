@@ -47,7 +47,7 @@ func (s *Server) commonTools() []Tool {
 		Call:  callSearch,
 	}, {
 		Name:        "link",
-		Description: "The address the baum app uses for a page and what it shows, as a relative query string such as ?page=pulls or ?repository=acme/web&pr=42. The chat panel turns it into a link the person can click, so write it as a Markdown link. Reads nothing. Pages: inbox, pulls, timeline, sessions, analytics, jobs, repositories, settings (all take filters, a map of the page's own address parameters such as repo or who), and pull_request (repository, pull_request), group (group), session (session as agent:id), job (job), feature (feature). settings takes a section; repositories takes a repository and then a section.",
+		Description: "The address the baum app uses for a page and what it shows, as a relative query string such as ?page=pulls or ?repository=acme/web&pr=42. The chat panel turns it into a link the person can click, so write it as a Markdown link. Reads nothing. Pages: inbox (inbox, a saved inbox's id from the inboxes tool, opens that inbox), pulls, timeline, sessions, analytics, jobs, repositories, settings (all take filters, a map of the page's own address parameters such as repo or who), and pull_request (repository, pull_request), group (group), session (session as agent:id), job (job), feature (feature). settings takes a section; repositories takes a repository and then a section.",
 		InputSchema: json.RawMessage(`{"type":"object","properties":{` +
 			`"page":{"type":"string","enum":["inbox","pulls","timeline","sessions","analytics","jobs","repositories","settings","pull_request","group","session","job","feature"],"description":"The page to link to."},` +
 			`"repository":{"type":"string","description":"owner/name: for pull_request, or repositories to open one repository's page; context only (not in the address) for group, session, job and feature."},` +
@@ -56,6 +56,7 @@ func (s *Server) commonTools() []Tool {
 			`"session":{"type":"string","description":"The session as agent:id, for session."},` +
 			`"job":{"type":"string","description":"The job id, for job."},` +
 			`"feature":{"type":"string","description":"The feature id, for feature."},` +
+			`"inbox":{"type":"string","description":"A saved inbox's id from the inboxes tool, for inbox. Without it the inbox page opens on the person's first inbox."},` +
 			`"section":{"type":"string","description":"The settings section (general, reviews, fixes, connections, computer, prompts) or, with a repository, its section (reviews, prompts, registration)."},` +
 			`"filters":{"type":"object","additionalProperties":{"type":"string"},"description":"Address parameters of a list page, such as {\"repo\":\"acme/web\"}."}},` +
 			`"required":["page"],"additionalProperties":false}`),
@@ -409,7 +410,7 @@ func decisionCandidates(body json.RawMessage, query string) []candidate {
 
 // pageSubjects are the address fields each page takes.
 var pageSubjects = map[string][]string{
-	PageInbox:        {"filters"},
+	PageInbox:        {"inbox", "filters"},
 	PagePulls:        {"filters"},
 	PageTimeline:     {"filters"},
 	PageSessions:     {"filters"},
@@ -441,6 +442,8 @@ var (
 	reservedKeys = map[string]bool{"page": true, "repository": true, "clone": true, "pr": true, "group": true, "session": true,
 		"job": true, "feature": true, "section": true, "inbox": true, "peek": true, "walk": true}
 	filterKey = regexp.MustCompile(`^[a-z][a-z0-9_]{0,31}$`)
+	// inboxID is the shape of a saved inbox's id, as the inbox store makes it.
+	inboxID = regexp.MustCompile(`^[0-9a-f]{32}$`)
 )
 
 // checkSection refuses a section the page does not have: Settings has
@@ -470,14 +473,14 @@ func checkSection(page, repository, section string) error {
 
 // linkOf is the app address of a page, as the app builds its own: the query
 // strings of pages.ts and the detail pages' hrefs.
-func linkOf(page, repository string, pullRequest int, group, session, job, feature, section string, filters map[string]string) (string, error) {
+func linkOf(page, repository string, pullRequest int, group, session, job, feature, section, inbox string, filters map[string]string) (string, error) {
 	takes, ok := pageSubjects[page]
 	if !ok {
 		return "", fmt.Errorf("unknown page %q", page)
 	}
 	given := map[string]bool{
 		"repository": repository != "", "pull_request": pullRequest != 0, "group": group != "", "session": session != "",
-		"job": job != "", "feature": feature != "", "section": section != "", "filters": len(filters) > 0,
+		"job": job != "", "feature": feature != "", "section": section != "", "inbox": inbox != "", "filters": len(filters) > 0,
 	}
 	for _, field := range slices.Sorted(maps.Keys(given)) {
 		if given[field] && !slices.Contains(takes, field) {
@@ -499,6 +502,9 @@ func linkOf(page, repository string, pullRequest int, group, session, job, featu
 	}
 	if err := checkSection(page, repository, section); err != nil {
 		return "", err
+	}
+	if inbox != "" && !inboxID.MatchString(inbox) {
+		return "", errors.New("inbox is a saved inbox's id from the inboxes tool")
 	}
 	query := url.Values{}
 	switch page {
@@ -533,6 +539,9 @@ func linkOf(page, repository string, pullRequest int, group, session, job, featu
 		// The Timeline opens on human decisions unless an address says otherwise.
 		if page == PageTimeline && len(filters) == 0 {
 			query.Set("who", "human")
+		}
+		if inbox != "" {
+			query.Set("inbox", inbox)
 		}
 	}
 	for key, value := range filters {
@@ -571,6 +580,7 @@ func callLink(_ context.Context, c CallContext, args json.RawMessage) (string, e
 		Job         string            `json:"job"`
 		Feature     string            `json:"feature"`
 		Section     string            `json:"section"`
+		Inbox       string            `json:"inbox"`
 		Filters     map[string]string `json:"filters"`
 	}
 	if err := json.Unmarshal(args, &a); err != nil {
@@ -592,7 +602,7 @@ func callLink(_ context.Context, c CallContext, args json.RawMessage) (string, e
 			}
 		}
 	}
-	address, err := linkOf(a.Page, a.Repository, a.PullRequest, a.Group, a.Session, a.Job, a.Feature, a.Section, a.Filters)
+	address, err := linkOf(a.Page, a.Repository, a.PullRequest, a.Group, a.Session, a.Job, a.Feature, a.Section, a.Inbox, a.Filters)
 	if err != nil {
 		return "", err
 	}

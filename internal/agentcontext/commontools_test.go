@@ -241,6 +241,7 @@ func TestLinkBuildsTheAppsAddresses(t *testing.T) {
 		want string
 	}{
 		{map[string]any{"page": "inbox"}, "?page=inbox"},
+		{map[string]any{"page": "inbox", "inbox": "0123456789abcdef0123456789abcdef"}, "?page=inbox&inbox=0123456789abcdef0123456789abcdef"},
 		{map[string]any{"page": "pulls"}, "?page=pulls"},
 		{map[string]any{"page": "pulls", "filters": map[string]string{"filter": "history", "repo": "acme/web"}}, "?page=pulls&filter=history&repo=acme%2Fweb"},
 		{map[string]any{"page": "timeline"}, "?page=timeline&who=human"},
@@ -288,7 +289,7 @@ func TestLinkRefusesWhatItCannotBuild(t *testing.T) {
 			t.Errorf("%s accepted: %s", name, text)
 		}
 	}
-	if _, err := linkOf("nowhere", "", 0, "", "", "", "", "", nil); err == nil {
+	if _, err := linkOf("nowhere", "", 0, "", "", "", "", "", "", nil); err == nil {
 		t.Error("linkOf built an unknown page")
 	}
 }
@@ -511,7 +512,7 @@ func TestHelpAndLinkCoverTheAppsSources(t *testing.T) {
 		if _, ok := sections[page]; !ok {
 			t.Errorf("app_help has no section for the page %s (sections %v)", page, names)
 		}
-		if _, err := linkOf(page, "", 0, "", "", "", "", "", nil); err != nil {
+		if _, err := linkOf(page, "", 0, "", "", "", "", "", "", nil); err != nil {
 			t.Errorf("link cannot build the page %s: %v", page, err)
 		}
 	}
@@ -570,13 +571,24 @@ func TestLinkFiltersCannotNameTheSubject(t *testing.T) {
 	action, _, revoke := mint(t, s, Consumer{Kind: Action, Repository: "acme/web", PullRequest: 12})
 	defer revoke()
 	for _, key := range []string{"repository", "clone", "pr", "group", "session", "job", "feature", "section", "inbox", "page"} {
-		for _, page := range []string{"repositories", "settings", "timeline"} {
+		for _, page := range []string{"inbox", "repositories", "settings", "timeline"} {
 			args := map[string]any{"page": page, "filters": map[string]string{key: "evil/secrets"}}
 			for who, tok := range map[string]string{"chat": token, "action": action} {
 				if text, failed := data(t, s, tok, "link", args); !failed {
 					t.Errorf("%s: %s with filter %s accepted: %s", who, page, key, text)
 				}
 			}
+		}
+	}
+	// A saved inbox is named by its own argument, in the store's id shape,
+	// and only on the inbox page.
+	for _, args := range []map[string]any{
+		{"page": "inbox", "inbox": "../settings"},
+		{"page": "inbox", "inbox": "0123456789ABCDEF0123456789ABCDEF"},
+		{"page": "pulls", "inbox": "0123456789abcdef0123456789abcdef"},
+	} {
+		if text, failed := data(t, s, token, "link", args); !failed {
+			t.Errorf("link %v accepted: %s", args, text)
 		}
 	}
 	// A filter that names repositories is another repository to an action.
@@ -625,7 +637,7 @@ func TestLinkMatchesTheAppsHrefs(t *testing.T) {
 		t.Fatalf("parsed %d hrefs for %d pages", len(entries), len(appPages(t)))
 	}
 	for _, e := range entries {
-		got, err := linkOf(e[1], "", 0, "", "", "", "", "", nil)
+		got, err := linkOf(e[1], "", 0, "", "", "", "", "", "", nil)
 		want := e[2]
 		// The inbox's address is the bare path, which link names with its page.
 		if want == "" {
@@ -649,15 +661,15 @@ func TestLinkMatchesTheAppsHrefs(t *testing.T) {
 		got            func() (string, error)
 	}{
 		{"timeline.tsx", "?repository=${encodeURIComponent(repository)}&pr=${number}", []string{"acme/web", "7"},
-			func() (string, error) { return linkOf(PagePullRequest, "acme/web", 7, "", "", "", "", "", nil) }},
+			func() (string, error) { return linkOf(PagePullRequest, "acme/web", 7, "", "", "", "", "", "", nil) }},
 		{"api.ts", "?page=jobs&job=${encodeURIComponent(job.id)}", []string{"j-1"},
-			func() (string, error) { return linkOf(PageJob, "", 0, "", "", "j-1", "", "", nil) }},
+			func() (string, error) { return linkOf(PageJob, "", 0, "", "", "j-1", "", "", "", nil) }},
 		{"sessions.tsx", "?page=sessions&session=${encodeURIComponent(sessionKey(s))}", []string{"claude:s-1"},
-			func() (string, error) { return linkOf(PageSession, "", 0, "", "claude:s-1", "", "", "", nil) }},
+			func() (string, error) { return linkOf(PageSession, "", 0, "", "claude:s-1", "", "", "", "", nil) }},
 		{"app.tsx", "?group=${encodeURIComponent(group.id)}", []string{"g-1"},
-			func() (string, error) { return linkOf(PageGroup, "", 0, "g-1", "", "", "", "", nil) }},
+			func() (string, error) { return linkOf(PageGroup, "", 0, "g-1", "", "", "", "", "", nil) }},
 		{"settings.tsx", "?page=repositories&repository=${encodeURIComponent(repository)}", []string{"acme/web"},
-			func() (string, error) { return linkOf(PageRepositories, "acme/web", 0, "", "", "", "", "", nil) }},
+			func() (string, error) { return linkOf(PageRepositories, "acme/web", 0, "", "", "", "", "", "", nil) }},
 	} {
 		if !strings.Contains(appSource(t, tt.file), "`"+tt.template+"`") && !strings.Contains(appSource(t, tt.file), "appURL(`"+tt.template+"`)") {
 			t.Errorf("%s no longer has the href %s: update link", tt.file, tt.template)
