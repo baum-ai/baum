@@ -92,6 +92,9 @@ func TestRunStateWording(t *testing.T) {
 		"The pipeline is pending.":                                                      "is pending",
 		"The bot was running.":                                                          "was running",
 		"The tests were not yet completed.":                                             "not yet completed",
+		"The lint check is pending.":                                                    "is pending",
+		"The checks are queued.":                                                        "are queued",
+		"The check run was running.":                                                    "was running",
 	} {
 		requireJudged(t, text, phrase)
 	}
@@ -107,6 +110,9 @@ func TestRunStateWording(t *testing.T) {
 		"It copies only fix jobs that are queued or running.",
 		"The review is pending.",
 		"The run is queued behind another.",
+		"Reviewer code checks that a restart is pending.",
+		"Check that the job is queued before it starts.",
+		"The scheduler checks its Hold flag, which is true only while a restart is pending.",
 	} {
 		requireNotJudged(t, text)
 	}

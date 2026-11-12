@@ -416,18 +416,24 @@ copy:
   outline (`PrepareOutline`) gets them with prose and recommendation refs
   limited to section IDs, because no risk, evidence or decision exists yet
   ("the outline can cite only section IDs; cite the section"); a section's
-  details (`PrepareSectionDetails`) are checked on their own, citing their own
-  items and any section; details a previous version wrote
+  details (`PrepareSectionDetails`) are checked without the outline around
+  them (summary, section title and assessment belong to the outline, which a
+  details reply cannot change, and a continued run's stored outline is
+  unchecked), citing their own items and any section; details a previous version wrote
   (`PrepareReusedSectionDetails`) get the wording rules but no identifier is
   resolved against the bundle, since a check or hunk of an earlier head does
   not exist now and the section would be rewritten on every push; the context
   stage, a stored outline that is continued (`PrepareStoredOutline`) and the
   final assembly (`PrepareStaged`, `CompleteStaged`) apply none, since each
   part was checked when it was written or accepted.
+- A host that writes the summary's review exchange itself, as a stack review
+  does from its members' exchanges, uses `PrepareHostExchange` and
+  `CompleteWithPromptHostExchange`: the model never sees that field, so no
+  finding on it could be repaired, and the rules do not read it.
 - The rules, and the fields they read:
   - Run-state wording ("still in progress", "had not finished", "at the
     snapshot", and "was/is in progress, queued or pending" when the sentence
-    is about a check, CI, a workflow, suite, pipeline or bot: the evidence
+    is about a CI check, workflow, suite, pipeline or bot, not the verb "check": the evidence
     status is refreshed later, the sentence is not) and talk about the model's
     inputs ("in the bundle", "in the excerpts", "in the supplied snapshot",
     "in the head checkout", "outline stage", "I read") are checked only in the

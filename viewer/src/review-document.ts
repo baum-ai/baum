@@ -115,7 +115,7 @@ export type BehaviorStep = {
   before?: string;
   /** How it behaves now, in plain words for a reader who has not read the code. */
   after?: string;
-  /** One question the reviewer should ask to judge the step, answerable from the code. */
+  /** Optional. A question the code cannot settle, such as intent or a product decision; omit it when the code answers it. */
   question?: string;
   /** The precise technical statement of the behaviour. */
   text: string;

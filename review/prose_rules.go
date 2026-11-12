@@ -81,7 +81,7 @@ var (
 	// progress" and "no job was queued or running" are product text. Job, run,
 	// thread and review are not subjects: "runs" is as often the verb.
 	runStateWithSubject = regexp.MustCompile(`(?i)\b(?:(?:was|were|is|are|remains?|remained) (?:currently )?(?:in[ -]progress|queued|pending)|(?:was|were) (?:currently )?running)\b`)
-	runStateSubject     = regexp.MustCompile(`(?i)\b(?:checks?|ci|workflows?|suites?|pipelines?|bots?)\b`)
+	runStateSubject     = regexp.MustCompile(`(?i)\b(?:checks?|ci|workflows?|suites?|pipelines?|bots?)\b(?:\s+(\w+))?`)
 	sentenceEnd         = regexp.MustCompile(`[.!?;]\s`)
 
 	// Talk about the model's inputs and its own process. The review is the
@@ -137,6 +137,9 @@ const (
 	// no identifier is resolved against the bundle (a check or hunk of an
 	// earlier head does not exist now).
 	proseReused
+	// proseHostExchange is proseFull for a document whose review exchange the
+	// host wrote, which the rules do not read.
+	proseHostExchange
 	// proseOff applies no prose rule: a stored outline being continued, the
 	// context stage and the final assembly of stages already checked one by
 	// one.
@@ -159,6 +162,15 @@ func proseFindings(value any, bundle *bundlepkg.Bundle, scope proseScope) []stri
 	// accepted by its stage, or is a stored one that is continued.
 	detailsOnly := scope == proseDetails || scope == proseReused
 	if summary, ok := root["summary"].(map[string]any); ok && !detailsOnly {
+		if scope == proseHostExchange {
+			trimmed := make(map[string]any, len(summary))
+			for key, value := range summary {
+				if key != "review_exchange" {
+					trimmed[key] = value
+				}
+			}
+			summary = trimmed
+		}
 		walkProse(summary, "summary", func(where, key, text string) {
 			findings = append(findings, textFindings(known, where, key, text)...)
 		})
@@ -174,7 +186,7 @@ func proseFindings(value any, bundle *bundlepkg.Bundle, scope proseScope) []stri
 		visit := func(where, key, text string) {
 			findings = append(findings, textFindings(known, prefix+" "+where, key, text)...)
 		}
-		if title, ok := section["title"].(string); ok {
+		if title, ok := section["title"].(string); ok && !detailsOnly {
 			visit("title", "title", title)
 		}
 		for _, field := range []string{"summary", "attention"} {
@@ -196,7 +208,7 @@ func proseFindings(value any, bundle *bundlepkg.Bundle, scope proseScope) []stri
 				walkProse(block, "block "+kind, visit)
 			}
 		}
-		findings = append(findings, sectionJudgmentFindings(prefix, section)...)
+		findings = append(findings, sectionJudgmentFindings(prefix, section, detailsOnly)...)
 		findings = append(findings, sectionShapeFindings(prefix, section)...)
 	}
 	switch scope {
@@ -240,7 +252,7 @@ func summaryJudgmentFindings(summary map[string]any) []string {
 	return findings
 }
 
-func sectionJudgmentFindings(prefix string, section map[string]any) []string {
+func sectionJudgmentFindings(prefix string, section map[string]any, skipAssessment bool) []string {
 	var findings []string
 	judge := func(where, text string) {
 		findings = append(findings, judgmentFindings(prefix+" "+where, text)...)
@@ -264,7 +276,7 @@ func sectionJudgmentFindings(prefix string, section map[string]any) []string {
 			}
 		}
 	}
-	if assessment, ok := section["assessment"].(map[string]any); ok {
+	if assessment, ok := section["assessment"].(map[string]any); ok && !skipAssessment {
 		for i, reason := range jsonObjects(assessment["reasons"]) {
 			if text, ok := reason["text"].(string); ok {
 				judge(fmt.Sprintf("assessment reason %d text", i+1), text)
@@ -374,12 +386,37 @@ func runStateWithSubjectIn(text string) string {
 	start := 0
 	for _, end := range append(sentenceEnd.FindAllStringIndex(text, -1), []int{len(text), len(text)}) {
 		sentence := text[start:end[0]]
-		if match := runStateWithSubject.FindString(sentence); match != "" && runStateSubject.MatchString(sentence) {
+		if match := runStateWithSubject.FindString(sentence); match != "" && hasRunSubject(sentence) {
 			return match
 		}
 		start = end[1]
 	}
 	return ""
+}
+
+// checkVerbFollowers are the words after "check" or "checks" that show it is
+// the verb ("checks that", "Check whether"), not a CI check.
+var checkVerbFollowers = []string{"that", "whether", "if", "its", "the", "for", "it", "each", "every", "all", "a", "an", "their", "this", "these", "those", "which", "how", "what", "when", "against"}
+
+// hasRunSubject reports whether the sentence is about a CI check, workflow,
+// suite, pipeline or bot. "check" is a subject as a noun ("the lint check",
+// "checks are", "check run") and not as a verb ("checks that", a sentence that
+// opens with the imperative "Check").
+func hasRunSubject(sentence string) bool {
+	for _, found := range runStateSubject.FindAllStringSubmatch(sentence, -1) {
+		word := strings.ToLower(strings.Fields(found[0])[0])
+		if word != "check" && word != "checks" {
+			return true
+		}
+		if word == "check" && strings.HasPrefix(strings.TrimSpace(sentence), "Check ") && strings.ToLower(found[1]) != "run" {
+			continue
+		}
+		if slices.Contains(checkVerbFollowers, strings.ToLower(found[1])) {
+			continue
+		}
+		return true
+	}
+	return false
 }
 
 // matchRule returns the text a rule matches, or "" when it does not match or

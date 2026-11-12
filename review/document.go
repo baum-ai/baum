@@ -963,6 +963,20 @@ func (v *DocumentValidator) CompleteWithPrompt(document []byte, b *bundlepkg.Bun
 	return v.complete(v.authored, document, b, directory, model, promptVersion, now, proseFull)
 }
 
+// PrepareHostExchange is Prepare for a host that writes the summary's review
+// exchange itself, as a stack review does from its members': the model never
+// sees that field, so the prose rules do not read it, and no finding on it
+// could be repaired.
+func (v *DocumentValidator) PrepareHostExchange(document []byte, bundle *bundlepkg.Bundle, directory string) ([]byte, string) {
+	return v.prepare(v.authored, document, bundle, directory, proseHostExchange)
+}
+
+// CompleteWithPromptHostExchange is CompleteWithPrompt for a host that writes
+// the review exchange itself (PrepareHostExchange).
+func (v *DocumentValidator) CompleteWithPromptHostExchange(document []byte, b *bundlepkg.Bundle, directory string, model, promptVersion string, now time.Time) ([]byte, string) {
+	return v.complete(v.authored, document, b, directory, model, promptVersion, now, proseHostExchange)
+}
+
 func (v *DocumentValidator) complete(view authoredView, document []byte, b *bundlepkg.Bundle, directory string, model, promptVersion string, now time.Time, prose proseScope) ([]byte, string) {
 	document, findings := v.prepare(view, document, b, directory, prose)
 	if findings != "" {

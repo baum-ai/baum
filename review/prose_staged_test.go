@@ -155,3 +155,47 @@ func TestReusedDetailsKeepTheWordingRulesButNotIDResolution(t *testing.T) {
 		}
 	}
 }
+
+// A continued run's stored outline is unchecked, and a details reply cannot
+// change its section titles or assessments: the details of its sections are
+// checked without them.
+func TestDetailsDoNotCheckTheOutlinesTitleAndAssessment(t *testing.T) {
+	v, err := sharedValidator()
+	checkNoError(t, err)
+	b := stagedBundle()
+	noisy := stagedOutlineReply(t, func(outline map[string]any) {
+		section := outline["sections"].([]any)[0].(map[string]any)
+		section["title"] = "ENG" + "-1893: Parser"
+		section["assessment"].(map[string]any)["reasons"] = []any{map[string]any{"text": "The check was still in progress.", "anchors": []any{map[string]any{"type": "hunk", "id": testHunk}}}}
+	})
+	outline, findings := v.PrepareStoredOutline(noisy, b, t.TempDir())
+	checkEqual(t, "", findings)
+	details := encodeJSON(t, stagedDetails("sec_parser", testHunk))
+	for name, prepare := range map[string]func([]byte, []byte, *bundlepkg.Bundle, string) ([]byte, string){"fresh": v.PrepareSectionDetails, "reused": v.PrepareReusedSectionDetails} {
+		if _, findings := prepare(outline, details, b, t.TempDir()); findings != "" {
+			t.Errorf("%s details rejected for the outline's title or assessment: %s", name, findings)
+		}
+	}
+	// Written fresh, the same outline is rejected.
+	if _, findings := v.PrepareOutline(noisy, b, t.TempDir()); !strings.Contains(findings, "ticket key") || !strings.Contains(findings, "still in progress") {
+		t.Errorf("a new outline with a noisy title and assessment: findings %q", findings)
+	}
+}
+
+func TestHostBuiltExchangeIsNotReadByTheProseRules(t *testing.T) {
+	v, err := sharedValidator()
+	checkNoError(t, err)
+	doc := mustDecode(t, authoredFixture())
+	doc["summary"].(map[string]any)["review_exchange"] = map[string]any{"summary": "The check was still running when the bundle was taken; PRRT_kwDOTPgJG862TD-9 is open."}
+	if _, findings := v.PrepareHostExchange(encodeJSON(t, doc), proseBundle(), t.TempDir()); findings != "" {
+		t.Errorf("host-built exchange rejected: %s", findings)
+	}
+	if _, findings := v.Prepare(encodeJSON(t, doc), proseBundle(), t.TempDir()); !strings.Contains(findings, "review_exchange summary") {
+		t.Errorf("a model-written exchange with noise: findings %q", findings)
+	}
+	// Everything else is still read.
+	doc["summary"].(map[string]any)["text"] = "The check was still running."
+	if _, findings := v.PrepareHostExchange(encodeJSON(t, doc), proseBundle(), t.TempDir()); !strings.Contains(findings, "summary text") {
+		t.Errorf("findings %q", findings)
+	}
+}
