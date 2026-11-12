@@ -3239,7 +3239,11 @@ head, and is emptied with the threads on an account change.
 
 `GET /api/prs/checks?repository=&pr=&head_sha=` lists every check of
 `head_sha` (`fix.AllChecks`: check runs of their latest attempt and commit
-statuses, at most 100). It answers `{head_sha, checks}`, each check's `name`,
+statuses). It reads up to 5 pages of check runs and 3 of statuses (and 3 of
+workflow runs to name Actions jobs), sorts, then keeps at most 100, so
+failing checks and commit statuses are never what is cut. It answers
+`{head_sha, checks, total, capped}` (`total` is how many GitHub reports,
+`capped` is true when `checks` lists fewer), each check's `name`,
 `status` (`queued`, `in_progress` or `completed`; a pending commit status is
 `in_progress`), `conclusion` (the run's conclusion or the status's state, empty
 until completed), `title`, `url` and `job_id` (only for a failing GitHub
