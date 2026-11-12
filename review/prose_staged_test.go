@@ -230,7 +230,7 @@ func TestExtractedDecisionsAreNotReadByTheProseRules(t *testing.T) {
 	}
 }
 
-// The regression the prose rules exist for (ENG-1957): a review generated
+// The regression the prose rules exist for: a review generated
 // while a required check ran said so in its evidence, and once the check
 // succeeded the page showed "Verified" beside "still in progress". Through
 // the staged path, the run-state claim goes back for repair; a claim that
