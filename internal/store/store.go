@@ -84,14 +84,17 @@ type Metadata struct {
 	Calls           int           `json:"calls"`
 	Tokens          int           `json:"tokens"`
 	RecordedCostUSD *float64      `json:"recorded_cost_usd"`
-	// Session is the local agent session that produced the version, kept with
-	// its run directory so a chat can continue from it. Absent for hosted and
-	// other runs, and in versions stored before it existed.
+	// Session is the local agent session that produced the version, which
+	// earlier versions of baum kept with its run directory so a question could
+	// continue from it. Only those versions wrote it; it stays so their
+	// metadata still decodes and is stored again unchanged. Nothing reads it
+	// to resume a session, and the daemon expires the kept directories.
 	Session *ReviewSession `json:"session,omitempty"`
 }
 
-// ReviewSession names a kept Claude Code session or Codex thread: resuming it
-// has to run in Directory, the cwd the session was recorded under.
+// ReviewSession names a Claude Code session or Codex thread an earlier
+// version kept (Metadata.Session), in Directory, the cwd it was recorded
+// under.
 type ReviewSession struct {
 	Backend   string `json:"backend"`
 	ID        string `json:"id"`
