@@ -651,6 +651,29 @@ func TestAllChecksCapsAfterSorting(t *testing.T) {
 	}
 }
 
+// Paging is bounded: a head with more checks than five pages hold reads five
+// pages and reports GitHub's total.
+func TestAllChecksPagingIsBounded(t *testing.T) {
+	var checks []string
+	for i := range 650 {
+		checks = append(checks, fmt.Sprintf(`{"id":%d,"name":"job %03d","status":"completed","conclusion":"success","app":{"slug":"circleci"},"output":{}}`, i+1, i))
+	}
+	fake := fakeGitHub{head: "abc", checks: checks}
+	got, err := Service{Client: fake.client()}.AllChecks(context.Background(), repo, 7, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	reads := 0
+	for _, path := range fake.gets {
+		if strings.HasSuffix(path, "/check-runs") {
+			reads++
+		}
+	}
+	if reads != 5 || got.Total != 650 || !got.Capped || len(got.Checks) != 100 {
+		t.Fatalf("%d reads, total %d capped %v listed %d, want 5, 650, true, 100", reads, got.Total, got.Capped, len(got.Checks))
+	}
+}
+
 func TestConflictsNeedsAClone(t *testing.T) {
 	fake := fakeGitHub{head: "abc"}
 	_, err := Service{Client: fake.client()}.Conflicts(context.Background(), repo, 7)
