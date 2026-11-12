@@ -295,6 +295,9 @@ func (c *Client) query(ctx context.Context, host, operation string, q any, varia
 	}
 	for attempt := 0; ; attempt++ {
 		reflect.ValueOf(q).Elem().SetZero()
+		if err := PaceRequest(ctx); err != nil {
+			return err
+		}
 		countRequest(ctx)
 		requestCtx, cancel := requestContext(ctx)
 		err := gql.QueryNamed(requestCtx, operation, q, variables)
