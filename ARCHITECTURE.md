@@ -399,6 +399,39 @@ copy:
   matches a file or directory inside either tree, including the case of
   every path component even on case-insensitive filesystems. It never spends
   a repair on a reference.
+- `summary.recommendation` (`null`, or a `decision` of `approve`,
+  `look_first` or `request_changes` with a `text` and `refs`) is optional in
+  the stored schema, for documents generated before it existed, and required
+  (null allowed) in the authored contract and the model schema. The outline
+  stage writes it, so it survives into the assembled and stored document;
+  refresh never adds or changes it. `summary.review_exchange.summary` may be
+  null, for a pull request nobody has reviewed.
+- Prose rules (`prose_rules.go`) run on newly authored documents only, in
+  `Validate` and `Prepare` (so in every stage of a staged run), and their
+  findings go back to the model through the repair loop. `ValidateStored`
+  and `Refresh` never apply them, so a stored review is never rejected or
+  rewritten for them. They reject, in the prose fields of the summary and
+  sections: run-state wording about checks, bot reviews or threads ("still in
+  progress", "had not finished", "at the snapshot": the evidence status is
+  refreshed later, the sentence is not); talk about the model's inputs
+  ("the bundle", "excerpts", "the snapshot", "outline stage", "the checkout",
+  "I read"); a ticket key in a title; `ci` evidence (the page shows the
+  checks); an absence claim ("No test covers X") whose status is not
+  `missing`, `unavailable`, `failed`, `skipped` or `pending`; more than one
+  `missing` evidence or three risks in a section; two risks, or a risk and
+  the section's attention, that state one point (the shorter text has at
+  least six distinct words and at least 80% of them, stop words aside, appear in the
+  longer one); and recommendation refs that name no section, risk, evidence
+  or decision, or are empty for `look_first` and `request_changes`.
+  Identifiers in prose must resolve, because the viewer links them: a hunk
+  ID must be in the bundle's diff, a `rsk_`, `ev_`, `dec_` or `sec_` ID in the
+  document, a `check_run:` or `status:` ID among the bundle's checks, a `PRRT_`
+  ID among its review threads, `comment <digits>` (or a code span of digits)
+  among its conversation items, and a session UUID a non-restricted session;
+  without a bundle only the document's own IDs are checked, and while a
+  staged review's sections lack their details only section IDs are, since
+  another stage writes the rest. A full 40-hex SHA is rejected: write the
+  short SHA.
 
 ### History
 

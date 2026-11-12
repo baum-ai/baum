@@ -26,7 +26,7 @@ import (
 // reading time, which the host computes (ReviewMinutes).
 var (
 	outlineFields        = []string{"schema", "summary", "sections", "relations"}
-	outlineSummaryFields = []string{"text", "review_exchange", "change_kind", "implements", "release_note", "breaking_change", "attention", "authorship"}
+	outlineSummaryFields = []string{"text", "review_exchange", "change_kind", "implements", "release_note", "breaking_change", "attention", "recommendation", "authorship"}
 	outlineSectionFields = []string{"id", "title", "kind", "hunks", "assessment"}
 	detailsSectionFields = []string{"id", "summary", "attention", "risks", "evidence", "blocks", "tiles"}
 )

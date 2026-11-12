@@ -107,7 +107,7 @@ func stagedOutlineDocument(sections ...string) []byte {
 	for _, id := range sections {
 		items = append(items, fmt.Sprintf(`{"id":%q,"title":"Section %s","kind":"logical","hunks":[%q],"assessment":{"level":2,"factors":[],"reasons":[{"text":"A local change.","anchors":[{"type":"hunk","id":%q}]}]}}`, id, id, hunks[id], hunks[id]))
 	}
-	return []byte(`{"schema":"baum.review/1","summary":{"text":"Adds a parser and its tests.","review_exchange":{"summary":"No reviews yet."},"change_kind":"feature","implements":[],"release_note":null,"breaking_change":null,"attention":null,"authorship":{"declared":"none","declared_tools":[],"anchors":[]}},"relations":[],"sections":[` + strings.Join(items, ",") + `]}`)
+	return []byte(`{"schema":"baum.review/1","summary":{"text":"Adds a parser and its tests.","review_exchange":{"summary":"No reviews yet."},"change_kind":"feature","implements":[],"release_note":null,"breaking_change":null,"attention":null,"recommendation":null,"authorship":{"declared":"none","declared_tools":[],"anchors":[]}},"relations":[],"sections":[` + strings.Join(items, ",") + `]}`)
 }
 
 func stagedSectionDetails(id, text string) string {

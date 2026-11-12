@@ -110,6 +110,7 @@ func newDocumentValidator() (*DocumentValidator, error) {
 	summary := props["summary"].(map[string]any)
 	omitProperties(summary, "title", "author", "risk_score")
 	requireAuthoredContext(summary)
+	requireAuthoredRecommendation(summary)
 	authorship := summary["properties"].(map[string]any)["authorship"].(map[string]any)
 	omitProperties(authorship, "observed_sessions", "observed_vendors", "observed_models")
 	exchange := summary["properties"].(map[string]any)["review_exchange"].(map[string]any)
@@ -326,6 +327,22 @@ func requireAuthoredContext(summary map[string]any) {
 	}
 }
 
+// requireAuthoredRecommendation makes summary.recommendation part of every
+// authored document, as an object or null. The stored contract lets it be
+// absent, for documents generated before it existed; those are never
+// rewritten, and refresh leaves the recommendation they lack absent.
+func requireAuthoredRecommendation(summary map[string]any) {
+	recommendation := summary["properties"].(map[string]any)["recommendation"].(map[string]any)
+	if description, _ := recommendation["description"].(string); description != "" {
+		if cut := strings.Index(description, " Absent on documents"); cut >= 0 {
+			recommendation["description"] = description[:cut]
+		}
+	}
+	if required, _ := summary["required"].([]any); !containsString(stringSlice(required), "recommendation") {
+		summary["required"] = append(required, "recommendation")
+	}
+}
+
 // omitSectionDetails removes a section's details state from the authored
 // contract. The host records it on a section whose details are still being
 // written or could not be written, which then may lack its summary; the model
@@ -393,6 +410,9 @@ func (v *DocumentValidator) validate(view authoredView, document []byte, bundle 
 	if err != nil {
 		return err.Error()
 	}
+	// The prose rules are for what the model writes now; ValidateStored and
+	// refresh never apply them, so stored reviews are not rejected for them.
+	findings = append(findings, proseFindings(value, bundle)...)
 	return strings.Join(findings, "\n")
 }
 
@@ -759,6 +779,9 @@ func (v *DocumentValidator) prepare(view authoredView, document []byte, bundle *
 		findings = append(findings, semantic...)
 	}
 	findings = append(findings, validateTileSources(restored.Sections, bundle, directory)...)
+	// The prose rules read what the model wrote (value), not the reconciled
+	// document, which also carries trusted sections of the previous version.
+	findings = append(findings, proseFindings(value, bundle)...)
 	return encoded, strings.Join(findings, "\n")
 }
 
