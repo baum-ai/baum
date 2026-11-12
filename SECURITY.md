@@ -1583,19 +1583,32 @@ answered. You read what will happen and on what before you confirm: the
 pull request's number and title and the head, the job, the session's agent,
 id, title and repository, or for an agent's request the requesting agent, its
 session and exactly what it asked (the tool and every input value, or every
-question, in full). The summary's sentence is baum's own and names things
-only by identifiers; any text that is not baum's (a title, a thread, what a
-tool asked, what the agent wrote) is a separate quoted field, never part of
-the sentence. Text read from the daemon is shown plain: control and
-invisible formatting characters (bidirectional overrides and isolates,
-zero-width characters) are removed, and line breaks are kept only in fields
-that are meant to be multi-line. What the agent wrote (a message, an answer,
-a group's name) is shown in full, exactly as it will be sent: it is never cut,
-text longer than the operation takes is refused, and text with control or
-invisible formatting characters is refused rather than cleaned. Confirming
-reads the summary again; when it reads differently from the one you saw
-(another title, harness, model or effort), nothing runs and the proposal
-shows the new summary for you to confirm again.
+question, in full). The app stores a request as it shows it: a value cut at
+its bound (4,000 characters for an input value, 1,000 for a question),
+cleaned of control or formatting characters, or with a secret masked is not
+exactly what the agent will run, so such a request can be denied from a
+proposal but never allowed or answered: you answer it in the app or the
+terminal. The summary's sentence is baum's own and names things only by
+identifiers that pass their own check (a repository spelled as GitHub spells
+one, an id that is one plain path segment); anything else, and any text that
+is not baum's (a title, a thread, what a tool asked, what the agent wrote),
+is a separate quoted field, never part of the sentence or a field's label.
+Text read from the daemon is shown plain: control characters, invalid UTF-8
+and invisible characters (bidirectional overrides and isolates, zero-width
+characters, the soft hyphen, tags, variation selectors, Hangul fillers and
+the other default-ignorable characters) are removed, and line breaks are kept
+only in fields that are meant to be multi-line. What the agent wrote (a
+message, an answer, a group's name) is shown in full, exactly as it will be
+sent: it is never cut, text longer than the operation takes is refused, and
+text with control, invisible or line-separator characters is refused rather
+than cleaned. A repository is sent and named as baum's registry spells it.
+The app confirms with the revision of the summary it showed you: confirming
+reads the summary again, and when it reads differently from the one you saw
+(another title, harness, model or effort), or the app sends the revision of
+an older summary (a second click after the summary changed), nothing runs
+and the proposal shows the new summary for you to confirm again. A fix or a
+review whose harness, model and effort cannot be read from your settings is
+not proposed or confirmed at all.
 
 What you can be asked to confirm: on a pull request's page, a merge (with a
 method GitHub allows, at the head the page showed), a branch update, a re-run
@@ -1617,10 +1630,11 @@ session's page for its own), only with allow, deny or answers to its
 questions: a permission's suggestions (always allow, a permission mode), which
 can change the agent's permissions for good, are yours to apply in the app
 and cannot be proposed. A chat's token names the agent session the chat runs
-in, set when the token is minted or once afterwards (it cannot be changed);
-a chat never answers a request of its own session, so it cannot approve its
-own tool calls, and while its session is not known it answers no request at
-all. It never messages, ends or brings forward its own session either. A
+in (Claude Code or Codex), set when the token is minted or once afterwards
+(it cannot be changed); a chat never answers a request of its own session,
+so it cannot approve its own tool calls, and never messages, ends or brings
+forward its own session. While its session is not known, it can propose
+none of these for any session: no answer, message, end or focus at all. A
 review of a pull request from a fork or an
 untrusted author is refused by the route without your isolation
 confirmation, which an agent cannot give; you start it from the app.

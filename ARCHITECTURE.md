@@ -4965,8 +4965,12 @@ saved, in the `state/agent-requests` document in `app.sqlite`.
 - **API.** `LocalAPI.AgentRequests` mounts `Store.Handler` behind the same
   authentication as every route (without a record:
   `agent_requests_unavailable`). `GET /api/agent-requests` answers
-  `{"requests":[{"id","agent","session_id","kind","tool","created_at","input":[{"label","value","code"?}],"suggestions":[{"id","label"}],"questions":[{"question","header"?,"multi_select","options":[{"label","description"?}]}]}],"messages":[{"agent","session_id","text","queued_at"}],"settings":{"codex_approvals"}}`,
-  oldest request first, message text masked. `POST
+  `{"requests":[{"id","agent","session_id","kind","tool","created_at","input":[{"label","value","code"?}],"suggestions":[{"id","label"}],"questions":[{"question","header"?,"multi_select","options":[{"label","description"?}]}],"altered"?}],"messages":[{"agent","session_id","text","queued_at"}],"settings":{"codex_approvals"}}`,
+  oldest request first, message text masked. `altered` is true when the
+  request's tool, input, questions or options are not shown exactly as the
+  agent sent them (a value cut at its bound, cleaned of control or format
+  characters or folded blanks, or with a secret masked); the MCP server's
+  `answer_request` then never proposes allowing it. `POST
   /api/agent-requests/{id}/answer` takes
   `{"behavior","suggestion"?,"answers"?}` (answers keyed by the question and
   option labels shown, several labels joined by ", ") and answers
@@ -5620,14 +5624,25 @@ identifiers (a repository and number, an agent and session id, a job id). All
 else is a `SummaryField` in `Details`: baum's own facts, or `Quoted` text
 that is not baum's, shown in full and never cut. Quoted text read from a
 route (a title, a thread, a tool's input, a question) is made plain (`plain`:
-control and format characters, bidirectional overrides and isolates and
-zero-width characters among them, are dropped, and line breaks become spaces
-unless the field is `Multiline`). Text the agent wrote (a message, an answer,
-a group's name; `ByAgent`) is sent as it is, so `Build` refuses it when it
-holds any such character or a carriage return (`checkAgentText`), and its
-schema's `maxLength` (in characters) refuses one longer than the route takes:
-the field is exactly what runs. A clone's target folder that `plain` would
-change is refused the same way.
+control characters (C0, C1, DEL), invalid UTF-8 and the default-ignorable
+characters (format characters such as bidirectional overrides and isolates,
+zero-width characters, the soft hyphen and tags; variation selectors; the
+other default-ignorables, the Hangul fillers and U+034F, U+17B4 and U+17B5
+among them) are dropped, and line breaks, tabs and the line and paragraph
+separators become spaces unless the field is `Multiline`, which keeps line
+breaks and tabs). Text the agent wrote (a message, an answer, a group's name;
+`ByAgent`) is sent as it is, so `Build` refuses it when it holds any such
+character, a carriage return or a line or paragraph separator
+(`checkAgentText`), and its schema's `maxLength` (in characters) refuses one
+longer than the route takes: the field is exactly what runs. A clone's target
+folder that `plain` would change is refused the same way. An identifier is
+named in the sentence, or in a field's label, only when it passes its own
+check (`validRepository`, `validSegment`, a hex head, a known merge method or
+job kind); otherwise the sentence names it generically ("a pull request", "an
+agent session") and the value is a quoted field. `refresh` and
+`register_repository` send, and name, the registry's spelling of the
+repository, not the agent's. A paid run whose settings cannot be read is
+refused, at `Propose` and at `Confirm`, rather than shown with a guess.
 
 `ProposeOperation(ctx, consumer, name, args)` refuses any consumer but a
 chat, a page that does not offer the operation, and a target `Build` or
@@ -5642,15 +5657,20 @@ lists nor calls it), listed on the pages that offer it, whose answer is the
 `Receipt` (`{id, page, target, kind}`) and a fixed status, never the summary,
 the request or anything a route answered.
 
-`Confirm(ctx, consumer, id)` checks that the consumer is live, the person
+`Confirm(ctx, consumer, id, seen)` checks that the consumer is live, the person
 still has the page the proposal was made on open, showing the same thing (as
 `Save` does), and runs `Describe` again against the page as it is now (the
 request still pending on the page, the job still on it, the clone still
-registered); a refusal leaves the proposal open. The summary `Describe`
-writes then must equal the one stored, which the person read: when it reads
-differently (another title, harness, model or effort), nothing runs, `Confirm`
-returns `ErrOperationChanged` and the proposal stays open holding the new
-summary, for the person to read and confirm again. It then takes the proposal
+registered); a refusal leaves the proposal open. Each operation proposal
+holds its summary's revision (`OperationProposal.Revision`, the SHA-256 of
+the summary's JSON), which `List` returns and the app sends back as `seen`:
+under the store's lock, `seen` must be the stored summary's revision and that
+must be the revision of the summary `Describe` just wrote. When either
+differs (another title, harness, model or effort; or a summary that another
+`Confirm` replaced meanwhile, as a double click's second confirm finds),
+nothing runs, `Confirm` returns `ErrOperationChanged` and the proposal stays
+open holding the new summary and revision, for the person to read and confirm
+again. It then takes the proposal
 out of the store under the lock a revoke and every other `Confirm` take, so
 of two confirms only one runs it and a revoke either comes first and nothing
 runs or comes after the person's confirm took it; and runs its request once,
@@ -5665,16 +5685,21 @@ to the app; an error means nothing ran, and a status other than 2xx is the
 route's own refusal. There is no app route for listing or confirming
 proposals yet.
 
-The chat's `Consumer.Session` (`agent:id`) is the agent session it runs in,
-set at `Mint` or once afterwards with `Registry.SetSession` (Codex reports its
-session id late); setting another session after one is refused. A chat never
-proposes answering a request of its own session, and while its session is
-unknown it proposes answering none (fail closed); it never messages, queues
-for, ends or brings forward its own session. These are checked at `Propose`
-and at `Confirm`. `answer_request` carries only allow or deny and a
-question's answers: a permission's suggestions (always allow, a permission
-mode) can change the agent's permissions for good, so only the person applies
-them, in the app.
+The chat's `Consumer.Session` (`agent:id`, the agent `claude-code` or
+`codex` as the live sessions and agent requests name them, the id one plain
+segment) is the agent session it runs in, set at `Mint` or once afterwards
+with `Registry.SetSession` (Codex reports its session id late); setting
+another session after one is refused, so no proposal can come to target the
+chat's own session after it was made. A chat never proposes answering a
+request of its own session, nor messaging, queuing for, ending or bringing
+forward its own session; while its session is unknown it proposes none of
+these for any session (fail closed). These are checked at `Propose` and at
+`Confirm`. `answer_request` carries only allow or deny and a question's
+answers: a permission's suggestions (always allow, a permission mode) can
+change the agent's permissions for good, so only the person applies them, in
+the app. Allowing (or answering) a request the store marks `altered`, or one
+holding text `plain` would change, is refused: the person answers it in the
+app or the terminal. Denying it may be proposed.
 
 | Operation (tool `propose_<name>`) | Pages | Route | Paid | Irreversible |
 | --- | --- | --- | --- | --- |
