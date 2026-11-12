@@ -12,7 +12,6 @@ import {
   riskScoreTone,
   riskScoreView,
   RECOMMENDATION_LABEL,
-  RECOMMENDATION_TONE,
   reviewRecommendation,
   reviewRefs,
   type Tone,
@@ -81,7 +80,6 @@ export function ReviewSummary({
                 : "This pull request changes REVIEW.md. The base branch has no REVIEW.md, so the review used the default review policy."}
             </StatusLine>
           )}
-          <RecommendationPart document={document} onSelectSection={onSelectSection} />
           <div
             data-review-block=""
             className="space-y-3 rounded-(--radius-sm) outline-none data-[review-block-active]:bg-(--surface-wash)"
@@ -102,6 +100,8 @@ export function ReviewSummary({
               </StatusBlock>
             )}
           </div>
+
+          <RecommendationPart document={document} onSelectSection={onSelectSection} />
 
           {(document.summary.context || contextPending) && (
             <div
@@ -201,7 +201,7 @@ export function ReviewSummary({
   );
 }
 
-/** The reviewer's bottom line, first on the page: what to do with the pull
+/** The reviewer's bottom line, below the overview: what to do with the pull
  *  request, why in a sentence, and the sections and items it rests on. It
  *  speaks of the code and the decisions in it, never of CI, which the Details
  *  tab reports live. A document without one (older, or one the review could
@@ -231,11 +231,7 @@ function RecommendationPart({
       data-review-block=""
       className="rounded-(--radius-md) outline-none data-[review-block-active]:bg-(--surface-wash)"
     >
-      <StatusBlock
-        boxed
-        tone={RECOMMENDATION_TONE[recommendation.decision]}
-        label={RECOMMENDATION_LABEL[recommendation.decision]}
-      >
+      <Part label={RECOMMENDATION_LABEL[recommendation.decision]}>
         <Markdown className="max-w-[90ch] text-base leading-[1.5] text-(--text-primary) [overflow-wrap:anywhere]">
           {recommendation.text}
         </Markdown>
@@ -260,7 +256,7 @@ function RecommendationPart({
             ))}
           </ul>
         )}
-      </StatusBlock>
+      </Part>
     </section>
   );
 }

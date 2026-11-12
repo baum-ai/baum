@@ -51,7 +51,7 @@ function documentWithRecommendation() {
   return document;
 }
 
-test("the recommendation leads the summary and its chips open the section", async ({
+test("the recommendation follows the summary and its chips open the section", async ({
   page,
   browserErrors,
 }, testInfo) => {
@@ -62,13 +62,13 @@ test("the recommendation leads the summary and its chips open the section", asyn
   const recommendation = summary.getByRole("region", { name: "Recommendation" });
   await expect(recommendation).toContainText("Look first");
   await expect(recommendation).toContainText("read from a header the client can set");
-  // It comes before the summary prose.
+  // It follows the summary prose as a normal section.
   const prose = summary.getByText("Jobs that fail now back off exponentially");
   const [recommendationTop, proseTop] = await Promise.all([
     recommendation.evaluate((element) => element.getBoundingClientRect().top),
     prose.evaluate((element) => element.getBoundingClientRect().top),
   ]);
-  expect(recommendationTop).toBeLessThan(proseTop);
+  expect(recommendationTop).toBeGreaterThan(proseTop);
 
   // A reference in the prose is a chip for the thread's place and state.
   const thread = summary.getByRole("link", { name: /auth\.go:28/ });
@@ -78,8 +78,10 @@ test("the recommendation leads the summary and its chips open the section", asyn
   if (process.env.E2E_SCREENSHOTS) {
     // Let the page finish fading in.
     await page.waitForTimeout(800);
+    await recommendation.scrollIntoViewIfNeeded();
     await page.screenshot({ path: testInfo.outputPath("summary-desktop.png") });
     await page.setViewportSize({ width: 390, height: 844 });
+    await recommendation.scrollIntoViewIfNeeded();
     await page.screenshot({ path: testInfo.outputPath("summary-phone.png") });
     await page.setViewportSize({ width: 1280, height: 720 });
   }

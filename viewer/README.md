@@ -237,9 +237,9 @@ links open Changes. Changes are ordered by review score, with attention items
 first when scores tie. The Changes count excludes obsolete sections, which are
 hidden by default and can be revealed with “View obsolete changes.”
 
-The document's `summary.recommendation` leads the Summary, above the overview: a
-boxed block labelled with the decision (Approve, Look first or Request changes,
-toned positive, caution or critical), its one sentence, and a chip for each ref
+The document's `summary.recommendation` follows the Summary's overview as a
+normal section labelled with the decision (Approve, Look first or Request changes),
+its one sentence, and a chip for each ref
 that names a section, risk, evidence or decision the document has (a staged
 review's refs are section IDs). A chip opens the section and scrolls to the
 item, opening a disclosure that holds it; a ref the document does not have is
