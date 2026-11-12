@@ -91,7 +91,7 @@ func (s *Service) Build(ctx context.Context) (Snapshot, error) {
 
 // build also returns the earliest instant after now at which building again
 // could give another snapshot with nothing written: a run lease expiring, a
-// discovery snapshot reaching its next poll, or an observation turning stale.
+// discovery snapshot reaching its next poll,.
 // It is zero when there is none. With kept, a repository whose inputs did not
 // change since kept read it is not read again (parts.go).
 func (s *Service) build(ctx context.Context, now time.Time, kept *parts) (Snapshot, time.Time, error) {
@@ -346,9 +346,7 @@ func (s *Service) readPart(ctx context.Context, now time.Time, g *group) (p *par
 			entry.PullRequest.Title = value.Title
 			entry.PullRequest.State = value.State
 			entry.PullRequest.Draft = value.Draft
-			entry.Stale = stale || time.Since(value.FetchedAt) > 2*time.Minute
-			// Stale once strictly more than two minutes have passed.
-			changeAt(value.FetchedAt.Add(2*time.Minute + time.Nanosecond))
+			entry.Stale = stale
 			switch value.Checks {
 			case "success", "passing":
 				entry.Checks = "passing"

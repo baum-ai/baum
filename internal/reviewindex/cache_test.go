@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
 	"sync"
@@ -307,8 +308,9 @@ func TestBuildReportsNextChange(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := fetched.Add(2*time.Minute + time.Nanosecond); !next.Equal(want) {
-		t.Fatalf("observation: next %v want %v", next, want)
+	// The age of an observation is no change instant: the lease comes first.
+	if !next.Equal(lease) {
+		t.Fatalf("observation: next %v want the lease %v", next, lease)
 	}
 	fetched = now.Add(-5 * time.Minute)
 	s.Discovery.(source)["acme/a"].Observations[0].FetchedAt = fetched
@@ -318,6 +320,42 @@ func TestBuildReportsNextChange(t *testing.T) {
 	lease = now.Add(-time.Second)
 	if _, next, _ = s.build(context.Background(), now, nil); !next.Equal(poll) {
 		t.Fatalf("poll: next %v want %v", next, poll)
+	}
+}
+
+// Time alone does not change the index: an observation fetched a minute ago
+// reads the same three minutes on, and its age gives no next-change instant.
+func TestBuildDoesNotChangeWithObservationAge(t *testing.T) {
+	now := time.Now()
+	fetched := now.Add(-time.Minute)
+	s := &Service{
+		Registry: registry{{ID: "c", Repository: "acme/a", CommonDir: "/c", Available: true}},
+		Discovery: source{"acme/a": {
+			PullRequests: []discovery.PullRequest{{Number: 1, HeadSHA: "h", State: "OPEN"}},
+			Observations: []discovery.Observation{{Number: 1, HeadSHA: "h", State: "OPEN", FetchedAt: fetched}},
+			FetchedAt:    fetched,
+			NextPoll:     now.Add(time.Hour),
+		}},
+		OpenStore: func(string) (Reader, error) {
+			return readerFunc(func(context.Context) ([]store.Summary, error) { return nil, nil }), nil
+		},
+	}
+	first, next, err := s.build(context.Background(), now, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	later, _, err := s.build(context.Background(), now.Add(3*time.Minute), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(first, later) {
+		t.Fatalf("snapshot changed with time alone:\n%+v\n%+v", first, later)
+	}
+	if first.Entries[0].Stale || first.Entries[0].MetadataFetchedAt == "" {
+		t.Fatalf("entry %+v: want fresh with its fetch time", first.Entries[0])
+	}
+	if next.Equal(fetched.Add(2*time.Minute)) || next.Equal(fetched.Add(2*time.Minute+time.Nanosecond)) {
+		t.Fatalf("next change %v follows the observation's age", next)
 	}
 }
 
