@@ -3403,7 +3403,9 @@ queue, so no queued job starts in either lane, and once none runs it refuses
 new jobs in the same step, so a restart never cuts a started job short. A job
 started while the restart waits is accepted and queued behind the hold; one
 started after it drained gets `503` with `Retry-After` and is started again
-against the new daemon. Queued jobs stay journaled, and the new daemon runs
+against the new daemon. It does not drain while a person's group generation
+queues its members' reviews and then its own job, so a group is accepted or
+refused whole. Queued jobs stay journaled, and the new daemon runs
 them in the usual order (`Queue.next`); `Resume` releases the hold when the
 restart fails. Workers use the same `generate.Publish`
 entry point as the terminal: previous-version lookup, run lease, generation and
@@ -4190,13 +4192,13 @@ it and `Queue.SubmitAutomatic` decides each job.
   request in a stack group counts with its group as one, and the group's
   eligible members are made pending together, so the group's review follows
   theirs. The pass submits them like any other pending head: a head already
-  reviewed is skipped, the switches and Drain apply, and an interrupted run
+  reviewed is skipped, the switches and a restart's drain apply, and an interrupted run
   is retried once. A repository whose poll fails is left out.
 - **Interrupted runs.** Each pass asks `Queue.Interrupted` for automatic jobs
   a daemon stop or restart cut short that are the only job for their head; if
   the PR is still open at that head and eligible, the head is pending again
   with trigger `retry`, once (`retried` records it). The retry goes through
-  the same pass, so Drain and the switches apply. Failed and
+  the same pass, so a restart's drain and the switches apply. Failed and
   cancelled runs are never retried; the next push triggers as usual. A run
   interrupted before a repository's baseline (turned off, then on again) is not
   retried: the baseline marks its heads as already retried.

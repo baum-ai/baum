@@ -202,6 +202,8 @@ func TestDrainRunningAndSubmitNeverStartAJob(t *testing.T) {
 		wg.Go(func() { drained = q.DrainRunning() })
 		wg.Go(func() { submitted, submitErr = q.Submit(context.Background(), e.ID, true, false) })
 		wg.Wait()
+		// Submit prepares outside the lock, so the drain usually wins;
+		// every outcome must still keep the invariants.
 		switch {
 		case drained && submitErr != nil && !errors.Is(submitErr, ErrRestarting):
 			t.Fatalf("drained, and submit failed: %v", submitErr)
@@ -217,5 +219,76 @@ func TestDrainRunningAndSubmitNeverStartAJob(t *testing.T) {
 			close(f.release)
 		}
 		q.Close()
+	}
+}
+
+// pausedMembers pauses the preparation of a group's member reviews, between
+// the group's own preparation and the queuing of its members.
+type pausedMembers struct {
+	*fakeExecutor
+	entered, resume chan struct{}
+}
+
+func (p *pausedMembers) Prepare(ctx context.Context, item Item) (Prepared, string, error) {
+	if item.Group == "" && item.PR != 0 {
+		select {
+		case p.entered <- struct{}{}:
+			<-p.resume
+		default:
+		}
+	}
+	return p.fakeExecutor.Prepare(ctx, item)
+}
+
+// A restart does not drain while a person's group generation queues its
+// members' reviews and then its own job, so it never accepts only half of
+// it; one asked for after the drain is refused whole.
+func TestDrainRunningWaitsForAGroupGeneration(t *testing.T) {
+	ctx := context.Background()
+	f := &pausedMembers{
+		fakeExecutor: &fakeExecutor{head: "first", started: make(chan Prepared, 10), release: make(chan struct{}), awaiting: []int{1, 2}},
+		entered:      make(chan struct{}),
+		resume:       make(chan struct{}),
+	}
+	q, err := Open(filepath.Join(privateDir(t), "jobs.json"), f, 4, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(q.Close)
+	generated := make(chan error, 1)
+	go func() {
+		_, err := q.Generate(ctx, []Item{{Clone: "clone", Group: "g1"}}, "single", false)
+		generated <- err
+	}()
+	select {
+	case <-f.entered:
+	case <-time.After(3 * time.Second):
+		t.Fatal("the members were never prepared")
+	}
+	if q.DrainRunning() {
+		t.Fatal("drained in the middle of a group generation")
+	}
+	close(f.resume)
+	if err := <-generated; err != nil {
+		t.Fatal(err)
+	}
+	if !q.DrainRunning() {
+		t.Fatal("not drained after the group generation")
+	}
+	jobs := q.List()
+	if len(jobs) != 3 {
+		t.Fatalf("%d jobs, want the group and its two members: %+v", len(jobs), jobs)
+	}
+	for _, j := range jobs {
+		if j.State != "queued" {
+			t.Fatalf("PR %d group %q is %s", j.PR, j.Group, j.State)
+		}
+	}
+	noneStarts(t, f.started, "held")
+	if _, err := q.Generate(ctx, []Item{{Clone: "clone", Group: "g2"}}, "single", false); !errors.Is(err, ErrRestarting) {
+		t.Fatalf("group generated after the drain: %v", err)
+	}
+	if n := len(q.List()); n != 3 {
+		t.Fatalf("%d jobs after a refused group generation", n)
 	}
 }

@@ -359,6 +359,10 @@ type Queue struct {
 	// held starts no queued job while a restart waits for the running ones
 	// (DrainRunning).
 	held bool
+	// grouping counts the group generations queuing their members' reviews
+	// and then the group's job in separate steps; DrainRunning waits for
+	// them, so none is cut in half.
+	grouping int
 	// gate, when set, answers whether an automatic job may run now (and
 	// under which daily cap); see SetAutomaticGate.
 	gate func(Job) Admission
@@ -760,6 +764,9 @@ func (q *Queue) DrainRunning() bool {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	q.held = true
+	if q.grouping > 0 {
+		return false
+	}
 	for _, j := range q.jobs {
 		if j.State == "running" {
 			return false
@@ -943,6 +950,21 @@ func (q *Queue) Generate(ctx context.Context, items []Item, mode string, isolati
 		return nil, &BlockedError{e.Items[0].BlockedReason}
 	}
 	if group := e.Items[0]; len(group.Awaiting) > 0 {
+		// A restart that drains between the members' reviews and the
+		// group's job would accept half of what the person asked for.
+		q.mu.Lock()
+		if q.draining {
+			q.mu.Unlock()
+			q.forget(e.ID)
+			return nil, ErrRestarting
+		}
+		q.grouping++
+		q.mu.Unlock()
+		defer func() {
+			q.mu.Lock()
+			q.grouping--
+			q.mu.Unlock()
+		}()
 		// The group's isolation covers its members: confirmed for it, it is
 		// confirmed for their reviews.
 		if err := q.reviewMembers(ctx, group, false, isolation); err != nil {
