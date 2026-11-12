@@ -95,7 +95,13 @@ export type Entry = GitHubState & {
   } | null;
   risk_score: { score: number | null; status: string } | null;
   historical: boolean;
+  /** The repository's list is not current (discovery failed, unvalidated or past its next poll). Age is not part of it: see `metadataStale`. */
   stale: boolean;
+  /** When the pull request's state, head and checks were fetched (RFC 3339). */
+  metadata_fetched_at?: string;
+  /** When the observation applied to the entry was fetched (RFC 3339); absent
+   *  without one. `metadataStale` counts its age. */
+  observed_at?: string;
   failure_reason?: string;
   store_error?: string;
 };

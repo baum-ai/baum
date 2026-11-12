@@ -74,6 +74,10 @@ type Entry struct {
 	ReviewMinutes     *int   `json:"review_minutes"`
 	Checks            string `json:"checks"`
 	MetadataFetchedAt string `json:"metadata_fetched_at,omitempty"`
+	// ObservedAt is when the observation applied to the entry was fetched, and
+	// is empty without one. The app counts its age; the index does not, so it
+	// does not change with time alone.
+	ObservedAt string `json:"observed_at,omitempty"`
 }
 type Problem struct {
 	CloneID string `json:"clone_id"`
@@ -90,10 +94,11 @@ func (s *Service) Build(ctx context.Context) (Snapshot, error) {
 }
 
 // build also returns the earliest instant after now at which building again
-// could give another snapshot with nothing written: a run lease expiring, a
-// discovery snapshot reaching its next poll, or an observation turning stale.
-// It is zero when there is none. With kept, a repository whose inputs did not
-// change since kept read it is not read again (parts.go).
+// could give another snapshot with nothing written: a run lease expiring or a
+// discovery snapshot reaching its next poll. The age of fetched metadata does
+// not count: the app works that out itself. It is zero when there is none.
+// With kept, a repository whose inputs did not change since kept read it is
+// not read again (parts.go).
 func (s *Service) build(ctx context.Context, now time.Time, kept *parts) (Snapshot, time.Time, error) {
 	var next time.Time
 	changeAt := func(t time.Time) {
@@ -346,9 +351,7 @@ func (s *Service) readPart(ctx context.Context, now time.Time, g *group) (p *par
 			entry.PullRequest.Title = value.Title
 			entry.PullRequest.State = value.State
 			entry.PullRequest.Draft = value.Draft
-			entry.Stale = stale || time.Since(value.FetchedAt) > 2*time.Minute
-			// Stale once strictly more than two minutes have passed.
-			changeAt(value.FetchedAt.Add(2*time.Minute + time.Nanosecond))
+			entry.Stale = stale
 			switch value.Checks {
 			case "success", "passing":
 				entry.Checks = "passing"
@@ -364,6 +367,7 @@ func (s *Service) readPart(ctx context.Context, now time.Time, g *group) (p *par
 			entry.PullRequest.Review, entry.PullRequest.Checks, entry.PullRequest.Merge = entry.Review, entry.Checks, entry.Merge
 			entry.PullRequest.Unresolved, entry.PullRequest.UnresolvedCapped = entry.Unresolved, entry.UnresolvedCapped
 			entry.MetadataFetchedAt = value.FetchedAt.UTC().Format(time.RFC3339Nano)
+			entry.ObservedAt = entry.MetadataFetchedAt
 			if entry.Latest != nil && (entry.Status == "unknown" || entry.Status == "current" || entry.Status == "outdated") {
 				entry.Status = "outdated"
 				if entry.Latest.Head == value.HeadSHA {
