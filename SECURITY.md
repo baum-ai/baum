@@ -1580,9 +1580,22 @@ plain segment, and the request is checked to be that route before it is
 sent, so no argument can reach another route. The agent's answer is the
 proposal's id, page, target and kind, never what will run or what the route
 answered. You read what will happen and on what before you confirm: the
-pull request's title and number and the head, the job, the session and its
-title, or for an agent's request the requesting agent, its session and
-exactly what it asked (the tool and its input, or the questions).
+pull request's number and title and the head, the job, the session's agent,
+id, title and repository, or for an agent's request the requesting agent, its
+session and exactly what it asked (the tool and every input value, or every
+question, in full). The summary's sentence is baum's own and names things
+only by identifiers; any text that is not baum's (a title, a thread, what a
+tool asked, what the agent wrote) is a separate quoted field, never part of
+the sentence. Text read from the daemon is shown plain: control and
+invisible formatting characters (bidirectional overrides and isolates,
+zero-width characters) are removed, and line breaks are kept only in fields
+that are meant to be multi-line. What the agent wrote (a message, an answer,
+a group's name) is shown in full, exactly as it will be sent: it is never cut,
+text longer than the operation takes is refused, and text with control or
+invisible formatting characters is refused rather than cleaned. Confirming
+reads the summary again; when it reads differently from the one you saw
+(another title, harness, model or effort), nothing runs and the proposal
+shows the new summary for you to confirm again.
 
 What you can be asked to confirm: on a pull request's page, a merge (with a
 method GitHub allows, at the head the page showed), a branch update, a re-run
@@ -1590,7 +1603,8 @@ of the failed checks or of one failed job, resolving one review thread, a fix
 and a new review; on the Inbox and Pull requests, a review, a refresh from
 GitHub and (Pull requests) a new review group; on the sessions pages,
 answering an agent's pending request, a message to a session, ending a
-session and bringing it forward; on the jobs pages, cancelling a job; on a
+session and bringing it forward; on the jobs pages, cancelling a job the
+page lists as queued or running (on a job's page, that job); on a
 group's page, deleting it; on the Repositories page, registering a
 repository, removing one or a clone's registration, and cloning a registered
 repository into the folder the app would choose by default, which the summary
@@ -1599,9 +1613,15 @@ agent run: the summary says so and names the harness, model and effort from
 your settings. A merge, ending a session, deleting a group and removing a
 repository or a clone are marked as not undoable. An agent's request is
 answered only from a page that lists it (the Sessions page, or that
-session's page for its own), and a chat never answers a request of its own
-session (the chat's token names the session it runs in), so it cannot
-approve its own tool calls. A review of a pull request from a fork or an
+session's page for its own), only with allow, deny or answers to its
+questions: a permission's suggestions (always allow, a permission mode), which
+can change the agent's permissions for good, are yours to apply in the app
+and cannot be proposed. A chat's token names the agent session the chat runs
+in, set when the token is minted or once afterwards (it cannot be changed);
+a chat never answers a request of its own session, so it cannot approve its
+own tool calls, and while its session is not known it answers no request at
+all. It never messages, ends or brings forward its own session either. A
+review of a pull request from a fork or an
 untrusted author is refused by the route without your isolation
 confirmation, which an agent cannot give; you start it from the app.
 

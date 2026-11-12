@@ -5615,6 +5615,20 @@ for a paid run the harness, model and effort; the app computes no cost
 estimate before a run, so none is shown). `Paid` marks an operation that
 starts an agent run, `Irreversible` one that cannot be undone.
 
+A summary's `Action` is baum's own sentence, naming things only by
+identifiers (a repository and number, an agent and session id, a job id). All
+else is a `SummaryField` in `Details`: baum's own facts, or `Quoted` text
+that is not baum's, shown in full and never cut. Quoted text read from a
+route (a title, a thread, a tool's input, a question) is made plain (`plain`:
+control and format characters, bidirectional overrides and isolates and
+zero-width characters among them, are dropped, and line breaks become spaces
+unless the field is `Multiline`). Text the agent wrote (a message, an answer,
+a group's name; `ByAgent`) is sent as it is, so `Build` refuses it when it
+holds any such character or a carriage return (`checkAgentText`), and its
+schema's `maxLength` (in characters) refuses one longer than the route takes:
+the field is exactly what runs. A clone's target folder that `plain` would
+change is refused the same way.
+
 `ProposeOperation(ctx, consumer, name, args)` refuses any consumer but a
 chat, a page that does not offer the operation, and a target `Build` or
 `Describe` refuses (another page's pull request, a session, request, job,
@@ -5632,7 +5646,11 @@ the request or anything a route answered.
 still has the page the proposal was made on open, showing the same thing (as
 `Save` does), and runs `Describe` again against the page as it is now (the
 request still pending on the page, the job still on it, the clone still
-registered); a refusal leaves the proposal open. It then takes the proposal
+registered); a refusal leaves the proposal open. The summary `Describe`
+writes then must equal the one stored, which the person read: when it reads
+differently (another title, harness, model or effort), nothing runs, `Confirm`
+returns `ErrOperationChanged` and the proposal stays open holding the new
+summary, for the person to read and confirm again. It then takes the proposal
 out of the store under the lock a revoke and every other `Confirm` take, so
 of two confirms only one runs it and a revoke either comes first and nothing
 runs or comes after the person's confirm took it; and runs its request once,
@@ -5647,9 +5665,16 @@ to the app; an error means nothing ran, and a status other than 2xx is the
 route's own refusal. There is no app route for listing or confirming
 proposals yet.
 
-The chat's `Consumer.Session` (`agent:id`, set at `Mint` when the panel knows
-the session it runs in) keeps it from answering its own session's requests:
-`answer_request` is refused for one, at `Propose` and at `Confirm`.
+The chat's `Consumer.Session` (`agent:id`) is the agent session it runs in,
+set at `Mint` or once afterwards with `Registry.SetSession` (Codex reports its
+session id late); setting another session after one is refused. A chat never
+proposes answering a request of its own session, and while its session is
+unknown it proposes answering none (fail closed); it never messages, queues
+for, ends or brings forward its own session. These are checked at `Propose`
+and at `Confirm`. `answer_request` carries only allow or deny and a
+question's answers: a permission's suggestions (always allow, a permission
+mode) can change the agent's permissions for good, so only the person applies
+them, in the app.
 
 | Operation (tool `propose_<name>`) | Pages | Route | Paid | Irreversible |
 | --- | --- | --- | --- | --- |
@@ -5661,12 +5686,12 @@ the session it runs in) keeps it from answering its own session's requests:
 | `fix` (`only: checks` for Fix CI) | `pull_request` | `POST /api/jobs` (`kind: fix`, mode `single`) | yes | |
 | `review` (no isolation confirmation: the route refuses a fork's and the person starts it in the app) | `pull_request`, `inbox`, `pulls` | `POST /api/jobs` (a review item, mode `single`) | yes | |
 | `refresh` (by repository, else a registered clone of it) | `inbox`, `pulls` | `POST /api/prs/refresh` | | |
-| `answer_request` (allow or deny, a suggestion, a question's answers) | `sessions`, `session` (its own requests) | `POST /api/agent-requests/{id}/answer` | | |
+| `answer_request` (allow or deny, a question's answers; no suggestion) | `sessions`, `session` (its own requests) | `POST /api/agent-requests/{id}/answer` | | |
 | `send_message` (a session at its prompt) | `sessions`, `session` | `POST /api/live-sessions/{agent}/{id}/message` | | |
 | `queue_message` (a running session) | `sessions`, `session` | `POST /api/agent-messages` | | |
 | `end_session` (an endable session) | `sessions`, `session` | `POST /api/live-sessions/{agent}/{id}/end` | | yes |
 | `focus_session` | `sessions`, `session` | `POST /api/live-sessions/{agent}/{id}/focus` | | |
-| `cancel_job` (queued or running) | `jobs`, `job` (its own) | `POST /api/jobs/{id}/cancel` | | |
+| `cancel_job` (one `GET /api/jobs` lists as queued or running) | `jobs`, `job` (its own) | `POST /api/jobs/{id}/cancel` | | |
 | `create_group` (2 to 8 pull requests of one repository the list shows) | `pulls` | `POST /api/groups` | | |
 | `delete_group` | `group` (its own) | `DELETE /api/groups/{id}` | | yes |
 | `register_repository` | `repositories` | `POST /api/repositories` | | |
