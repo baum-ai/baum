@@ -4626,12 +4626,18 @@ replace it.
   a directory in no registered clone, or one whose clone is unavailable, is
   not tracked at all, except a session panel conversation's: `Tracker.Panel`
   (the console's `Owns`) names the conversation of a session by its id, or by
-  a directory baum made for a conversation, and such a session is listed
+  a conversation's empty directory, and such a session is listed
   with no repository and `link_status` `panel` when its directory is in no
   clone. Every live session answer (`GET /api/live-sessions`, which the
   Sessions page reads) marks a panel session, in its empty directory or a
   pull request worktree, with `origin` `panel` and `conversation`, its
-  conversation's id; other sessions carry neither. A panel session in an
+  conversation's id; other sessions carry neither. A panel session has
+  `endable`, `messageable` and `focus` unset, and its end, message and focus
+  routes answer 409 `panel_session`: the panel runs and stops it. The agent
+  requests store's `Panel` (the same `Owns`, by session id) leaves a panel
+  session's permission requests to its own permission mode, so none is
+  shown, and refuses a queued message or an answer for it with 409
+  `panel_session`. A panel session in an
   empty directory has no repository, so decision capture, which needs one,
   skips it, and `live-sessions.json` does not keep it across a restart (it
   drops entries without a repository): once it ends it stays listed for
@@ -5126,10 +5132,12 @@ never start with `agent.RunDirPrefix`, so the agents' hooks report these
 sessions, and they show on the Sessions page like any other, those in an
 empty directory included, marked as the panel's (`origin` `panel`, see "Live
 sessions"). `Owns` claims a session by the agent session id a conversation
-recorded, or by a directory baum made for one (its empty directory, or a
-worktree it added, subdirectories included); a person's own worktree a
-conversation runs in is claimed by session id only, so their other sessions
-there stay theirs.
+recorded, or by a conversation's empty directory (its subdirectories
+included; an exact-path map, walked up from the session's directory, whose
+links were resolved when the conversation was indexed). A conversation in a
+pull request worktree, the person's or one baum added, is claimed by session
+id only: the worktree is a checkout the person works in too, and stays after
+the conversation closes, so their own sessions there stay theirs.
 
 Each conversation holds one `chat` MCP token, minted by the MCP server's
 `Registry` when it is created or, after a restart, on its next turn, bound
@@ -5197,7 +5205,8 @@ fix model counts); an unset model with a chosen agent is that agent's own
 default unless it is the fix agent. `GET /api/settings/panel` answers
 `{"agent","model","mode","position","agent_source","model_source"}`, the
 sources `fix` or `panel`; `PUT /api/settings/panel` takes any of `agent`
-(empty follows the fix agent again, model included), `model` (one line of at
+(empty follows the fix agent again; any change of agent drops a chosen model
+unless the same request sets one), `model` (one line of at
 most 200 characters), `mode` and `position`, answers the same, and refuses
 anything else with 400.
 
@@ -5209,8 +5218,12 @@ page the MCP server would refuse), 404 `conversation_not_found` or
 `proposal_not_found`, 409 `busy`, `closed`, `not_current_page`, `stale`,
 `not_offered` or `conversation_closed`, 400 `wrong_kind` (confirming a change
 or saving an operation), 422 `refused` (the page's own refusal of a saved
-value or the operation route's), 503 `shutting_down`. Without the service the
-routes answer 503.
+value or the operation route's), 503 `shutting_down`. A body over the bound
+(the message's 64 KiB and 64 KiB more) is 400 `invalid_request`, as the other
+routes refuse one. Without the service (its conversations did not open) the
+routes answer as the local API does for a capability it lacks: a read with
+200 `{"available":false,"code":"console_unavailable"}`, anything else with
+503 `{"code":"console_unavailable","message"}` (`console.Unavailable`).
 
 | Route | Does |
 | --- | --- |

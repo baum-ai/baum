@@ -1411,6 +1411,23 @@ environment of your Claude Code process, so your own hooks and stdio MCP
 servers can read it; that gives them no access they lack, since they run as
 you. Codex forwards it to MCP servers only through baum's `env_vars`.
 
+#### Session panel
+
+Full mode runs your agent with your permissions, as running it yourself with
+every prompt approved would. Saving or confirming a proposal in the app is the
+boundary for an agent that cooperates with baum, not a sandbox: an agent in
+Full mode can read the daemon's launch credential (`credential.json`) or
+`app.sqlite` and act on baum directly, as any program you run can, and its
+MCP token, which its own hooks and stdio MCP servers can read too, opens only
+the MCP route. Workspace mode narrows that only as far as the agent's own
+sandbox does: Claude Code's `acceptEdits` refuses commands it would ask about,
+and Codex's `workspace-write` sandbox limits where its commands write; neither
+is a boundary baum adds. The panel's sessions are listed on the Sessions page
+marked as the panel's, without the end, message or focus actions, and their
+routes, the message queue and request answers refuse them (409
+`panel_session`): the panel runs and stops them. A panel session's permission
+requests are never shown in the app; its own permission mode decides them.
+
 The application server also serves `POST /api/mcp`, an MCP server that lets
 an agent read what the app shows. It takes only an MCP token, sent as
 `Authorization: Bearer`. The launch capability and the session cookie are
