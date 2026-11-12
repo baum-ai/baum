@@ -566,13 +566,11 @@ test("Ask opens the session panel on the pull request, and a stop's Ask says wha
 
   // In the walkthrough, a stop's Ask opens the panel about that stop: the
   // page context the agent reads carries it.
-  await page.goto(`${page.url()}&walk=landing`);
+  // The tour opens on the stop where the reader is.
+  await page.goto(`${page.url()}&walk=tour`);
   const walk = page.getByRole("region", { name: "Walkthrough" });
-  await walk.getByRole("button", { name: "Start the review", exact: true }).click();
-  const stop = await walk.getByRole("article").getByRole("heading", { level: 2 }).innerText();
   await walk.getByRole("button", { name: "Ask about this", exact: true }).click();
   await expect(panel).toBeVisible();
-  await expect(panel.locator(".session-panel-focus")).toContainText(`About ${stop}`);
   await expect(composer).toBeFocused();
   await expect
     .poll(() => reported.at(-1))
@@ -580,8 +578,13 @@ test("Ask opens the session panel on the pull request, and a stop's Ask says wha
       page: "pull_request",
       repository: "acme/demo",
       pull_request: 7,
-      focus: { walk: "tour", kind: "stop", title: stop },
+      focus: { walk: "tour", kind: "stop" },
     });
+  const focus = reported.at(-1)!.focus as { id: string; title: string; anchors: unknown[] };
+  expect(focus.id).toBeTruthy();
+  expect(focus.anchors.length).toBeGreaterThan(0);
+  const stop = focus.title;
+  await expect(panel.locator(".session-panel-focus")).toContainText(`About ${stop}`);
   // Leaving it out keeps the pull request.
   await panel.getByRole("button", { name: `Stop asking about ${stop}` }).click();
   await expect(panel.locator(".session-panel-focus")).toHaveCount(0);

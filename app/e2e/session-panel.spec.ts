@@ -201,7 +201,7 @@ test("a comment the agent proposes joins the pending review only once confirmed"
   await page.getByRole("link", { name: "Pull requests", exact: true }).first().click();
   await page.getByRole("link", { name: /Reuse the existing PR page/ }).click();
   await expect(page.getByRole("heading", { name: "Reuse the existing PR page" })).toBeVisible();
-  const count = page.locator("[data-review-button] .review-count");
+  const count = page.locator("[data-review-button] .review-count").first();
   const before = (await count.count()) ? Number(await count.innerText()) : 0;
 
   // Asked for a comment, the scripted agent proposes one: an operation to

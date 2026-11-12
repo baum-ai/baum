@@ -329,7 +329,7 @@ func TestACommentJoinsThePendingReviewOnlyOnConfirm(t *testing.T) {
 	}
 	f.page(pullPage)
 	for _, refused := range []map[string]any{
-		{"body": "hi ‮evil"},
+		{"body": "hi \u202eevil"},
 		{"body": "ok", "target": map[string]any{"kind": "section", "id": "s", "title": "a\nb"}},
 		{"body": "ok", "target": map[string]any{"kind": "line", "id": "s", "title": "t"}},
 	} {
