@@ -412,7 +412,10 @@ func TestCacheSeesStoreWritesThroughFileStamps(t *testing.T) {
 			mu.Unlock()
 			return store.Open(common, "", false)
 		},
-		StoreStamp: func(common string) (string, bool) { return fileStoreStamp(common, time.Now()) },
+		StoreStamp: func(common string) (string, bool) {
+			stamp, _, ok := fileStoreStamp(common, time.Now())
+			return stamp, ok
+		},
 	}
 	c := NewCache(ctx, service)
 	read := func() Snapshot {
@@ -448,5 +451,86 @@ func TestCacheSeesStoreWritesThroughFileStamps(t *testing.T) {
 	read()
 	if got := counts(); got != [2]int{3, 1} {
 		t.Fatalf("after acme/a settled, opened %v", got)
+	}
+	// A write whose files settled before the next build still moves the
+	// stamp.
+	put("acme/b", 2)
+	age("acme/b")
+	if e := entry(t, read(), "acme/b", 2); e.Status != "current" {
+		t.Fatalf("new review %+v", e)
+	}
+	if got := counts(); got != [2]int{3, 2} {
+		t.Fatalf("after a settled write to acme/b, opened %v", got)
+	}
+}
+
+// A store's stamp moves with a lease renewal, which can bring a lapsed run
+// back to generating, and with a file replaced by another of the same size,
+// times and mode.
+func TestStoreStampFollowsRenewalsAndReplacedFiles(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	t.Setenv("XDG_DATA_HOME", filepath.Join(root, "data"))
+	sqlitepool.Enable()
+	t.Cleanup(sqlitepool.Disable)
+	common := filepath.Join(root, "clone")
+	s, err := store.Open(common, "", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, err := s.BeginRun(ctx, store.Key{Repository: "acme/a", Number: 1}, time.Now().Add(time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Seen from later on, so that no file is too recent to vouch.
+	later := func() partKey {
+		t.Helper()
+		stamp, files, ok := fileStoreStamp(common, time.Now().Add(time.Hour))
+		if !ok {
+			t.Fatal("stamp does not vouch")
+		}
+		return partKey{inputs: stamp, files: files}
+	}
+	before := later()
+	if !before.same(later()) {
+		t.Fatal("an unchanged store's stamp moved")
+	}
+	if err := s.HeartbeatRun(ctx, id, time.Now().Add(2*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if later().same(before) {
+		t.Fatal("a lease renewal did not move the stamp")
+	}
+
+	// Replaced by a copy with the same bytes, size, times and mode. Handles
+	// are closed first, as a file open elsewhere cannot be replaced on
+	// Windows; closing the last one checkpoints, so the stamp is taken after.
+	sqlitepool.Disable()
+	path := filepath.Join(common, "baum", "reviews", "versions.sqlite")
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stamped := later()
+	copied := path + ".copy"
+	if err := os.WriteFile(copied, raw, info.Mode()); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(copied, info.ModTime(), info.ModTime()); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(copied, path); err != nil {
+		t.Fatal(err)
+	}
+	replaced := later()
+	if replaced.inputs != stamped.inputs {
+		t.Fatalf("the copy differs in size, time or mode:\n%s\n%s", replaced.inputs, stamped.inputs)
+	}
+	if replaced.same(stamped) {
+		t.Fatal("a replaced file kept the stamp")
 	}
 }

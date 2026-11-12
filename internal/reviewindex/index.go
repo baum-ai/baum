@@ -118,7 +118,7 @@ func (s *Service) assemble(ctx context.Context, now time.Time, kept *parts, chan
 	}
 	byIdentity := make(map[string]*part, len(groups))
 	for _, g := range groups {
-		p, err := s.repositoryPart(ctx, now, g, kept, reuse)
+		p, err := s.repositoryPart(ctx, now, g, kept, reuse, changeAt)
 		if err != nil {
 			return out, err
 		}

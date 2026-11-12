@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -27,8 +28,9 @@ import (
 // A part read with an error, or under a key that cannot vouch for its inputs
 // (no Revision, a store file modified within racyWindow, a stat that failed)
 // is never reused. Every part is read again once MaxAge has passed since the
-// build that last read them all, so what no key covers (another process
-// writing the discovery cache) is still seen within MaxAge, as before.
+// build that last read them all, and none is used once MaxAge has passed
+// since it was read, so what no key covers (another process writing the
+// discovery cache) is still seen within MaxAge, as before.
 type parts struct {
 	mu     sync.Mutex
 	byRepo map[string]*part
@@ -49,6 +51,21 @@ type part struct {
 type partKey struct {
 	revision discovery.Revision
 	inputs   string
+	// files are the store files inputs stamps, compared by identity too: a
+	// file replaced by another of the same size and time is another file.
+	files []os.FileInfo
+}
+
+func (k partKey) same(o partKey) bool {
+	if k.revision != o.revision || k.inputs != o.inputs || len(k.files) != len(o.files) {
+		return false
+	}
+	for i := range k.files {
+		if !os.SameFile(k.files[i], o.files[i]) {
+			return false
+		}
+	}
+	return true
 }
 
 // racyWindow is how recently a store file may have been modified for its
@@ -94,12 +111,16 @@ func (k *parts) get(identity string) *part {
 	return k.byRepo[identity]
 }
 
-// put keeps p, or forgets the repository's part when p is nil.
+// put keeps p, or forgets the repository's part when p is nil. A part read
+// before the kept one, by a build that ran alongside, does not replace it.
 func (k *parts) put(identity string, p *part) {
 	k.mu.Lock()
 	defer k.mu.Unlock()
 	if p == nil {
 		delete(k.byRepo, identity)
+		return
+	}
+	if old := k.byRepo[identity]; old != nil && old.read.After(p.read) {
 		return
 	}
 	if k.byRepo == nil {
@@ -109,8 +130,9 @@ func (k *parts) put(identity string, p *part) {
 }
 
 // repositoryPart is g's part: the kept one when reuse allows and its key
-// still holds, otherwise read now and kept for later builds.
-func (s *Service) repositoryPart(ctx context.Context, now time.Time, g *group, kept *parts, reuse bool) (*part, error) {
+// still holds, otherwise read now and kept for later builds. changeAt is
+// told when a kept part reaches MaxAge.
+func (s *Service) repositoryPart(ctx context.Context, now time.Time, g *group, kept *parts, reuse bool, changeAt func(time.Time)) (*part, error) {
 	if kept == nil {
 		p, _, err := s.readPart(ctx, now, g)
 		return p, err
@@ -120,7 +142,8 @@ func (s *Service) repositoryPart(ctx context.Context, now time.Time, g *group, k
 		return nil, err
 	}
 	if reuse && trusted {
-		if p := kept.get(g.identity); p != nil && p.key == key && now.Sub(p.read) < MaxAge && (p.next.IsZero() || now.Before(p.next)) {
+		if p := kept.get(g.identity); p != nil && p.key.same(key) && now.Sub(p.read) < MaxAge && (p.next.IsZero() || now.Before(p.next)) {
+			changeAt(p.read.Add(MaxAge))
 			return p, nil
 		}
 	}
@@ -141,18 +164,20 @@ func (s *Service) repositoryPart(ctx context.Context, now time.Time, g *group, k
 // false when the stamp cannot vouch for it.
 func (s *Service) partKey(ctx context.Context, g *group) (partKey, bool, error) {
 	var b strings.Builder
+	var files []os.FileInfo
 	trusted := true
 	_, _ = fmt.Fprintf(&b, "picked=%t bare=%d clone=%t\n", g.picked, g.bare, g.hasClone)
 	for _, c := range g.clones {
 		_, _ = fmt.Fprintf(&b, "%q %q %t %t", c.clone.ID, c.clone.CommonDir, c.clone.Available, c.owned)
 		if c.owned {
-			stamp, ok := s.storeStamp(c.clone.CommonDir)
+			stamp, stamped, ok := s.storeStamp(c.clone.CommonDir)
 			trusted = trusted && ok
+			files = append(files, stamped...)
 			_, _ = fmt.Fprintf(&b, " %q", stamp)
 		}
 		b.WriteByte('\n')
 	}
-	key := partKey{inputs: b.String()}
+	key := partKey{inputs: b.String(), files: files}
 	if !g.picked || s.Discovery == nil {
 		return key, trusted, nil
 	}
@@ -172,44 +197,51 @@ func (s *Service) partKey(ctx context.Context, g *group) (partKey, bool, error) 
 	return key, trusted, nil
 }
 
-func (s *Service) storeStamp(commonDir string) (string, bool) {
+func (s *Service) storeStamp(commonDir string) (string, []os.FileInfo, bool) {
 	switch {
 	case s.StoreStamp != nil:
-		return s.StoreStamp(commonDir)
+		stamp, ok := s.StoreStamp(commonDir)
+		return stamp, nil, ok
 	case s.OpenStore != nil:
-		return "", false
+		return "", nil, false
 	}
 	return fileStoreStamp(commonDir, time.Now())
 }
 
-// fileStoreStamp stamps the store store.Open reads for commonDir: the size
-// and modification time of versions.sqlite and its write-ahead log under
-// both roots it chooses between, a missing file included. It only stats
-// them (closing a descriptor to a SQLite file drops this process's locks on
-// it), and looks through this process's latest lease renewal, which changes
-// nothing a summary shows but the lease's end, which a part's next already
-// holds.
-func fileStoreStamp(commonDir string, now time.Time) (string, bool) {
+// fileStoreStamp stamps the store store.Open reads for commonDir: the size,
+// modification time and mode of versions.sqlite and its write-ahead log
+// under both roots it chooses between, a missing file included, and the
+// files themselves for their identity. It only stats them: closing a
+// descriptor to a SQLite file drops this process's locks on it.
+//
+// Unlike the watcher's fingerprint, it does not look through lease renewals
+// (store.SeenThroughHeartbeats): a renewal of a lease that had already
+// lapsed makes an interrupted run read as generating again, so a renewal
+// reads the store again, as any write does.
+func fileStoreStamp(commonDir string, now time.Time) (string, []os.FileInfo, bool) {
 	roots, err := store.Roots(commonDir)
 	if err != nil {
-		return "", false
+		return "", nil, false
 	}
 	var b strings.Builder
+	var files []os.FileInfo
 	for _, root := range roots {
-		path := filepath.Join(root, "versions.sqlite")
-		stamp, err := store.StampOf(path)
-		switch {
-		case errors.Is(err, fs.ErrNotExist):
-			_, _ = fmt.Fprintf(&b, "%q -\n", path)
-			continue
-		case err != nil:
-			return "", false
+		for _, name := range []string{"versions.sqlite", "versions.sqlite-wal"} {
+			path := filepath.Join(root, name)
+			info, err := os.Stat(path)
+			switch {
+			case errors.Is(err, fs.ErrNotExist):
+				_, _ = fmt.Fprintf(&b, "%q -\n", path)
+				continue
+			case err != nil:
+				return "", nil, false
+			}
+			if now.Sub(info.ModTime()) < racyWindow {
+				return "", nil, false
+			}
+			_, _ = fmt.Fprintf(&b, "%q %d %d %v\n", path, info.Size(), info.ModTime().UnixNano(), info.Mode())
+			files = append(files, info)
 		}
-		if now.Sub(time.Unix(0, stamp.ModTime)) < racyWindow || stamp.WALSize >= 0 && now.Sub(time.Unix(0, stamp.WALModTime)) < racyWindow {
-			return "", false
-		}
-		stamp = store.SeenThroughHeartbeats(path, stamp)
-		_, _ = fmt.Fprintf(&b, "%q %d %d %d %d\n", path, stamp.Size, stamp.ModTime, stamp.WALSize, stamp.WALModTime)
 	}
-	return b.String(), true
+	return b.String(), files, true
 }

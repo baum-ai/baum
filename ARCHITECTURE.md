@@ -3023,22 +3023,26 @@ A build after an invalidation reads again only the repositories whose inputs
 moved. The cache keeps each repository's rows, problems and next change (a
 part), keyed on the repository's `discovery.Revision`, its clones as the
 registry lists them (ID, common directory, availability, which clone reads a
-shared store) and, for each store it reads, the size and modification time of
-`versions.sqlite` and its write-ahead log under both roots, looking through
-this process's latest lease renewal as the fingerprint does. The registry is
-listed on every build. The key is taken before the repository is read, so a
-write landing during the read moves the key and the next build reads again. A
-part is read again when its key moved or its own next change passed. It is also
-read again when it came from a failed read, or when its key cannot vouch for
-it: a discovery without `Revision`, a store file modified within the last three
+shared store). For each store it reads, the key also holds the size,
+modification time, mode and file identity of `versions.sqlite` and its
+write-ahead log under both roots. Unlike the fingerprint, it does not look
+through lease renewals: renewing a lease that had already lapsed makes an
+interrupted run read as generating again. The registry is listed on every
+build. The key is taken before the repository is read, so a write landing
+during the read moves the key and the next build reads again. A part is read
+again when its key moved or its own next change passed. It is also read again
+when it came from a failed read, or when its key cannot vouch for it: a
+discovery without `Revision`, a store file modified within the last three
 seconds, a failed stat, or a custom `OpenStore` without a `StoreStamp`. Every
 repository is read again once `MaxAge` has passed since the build that last
-read them all, so `MaxAge` still bounds what no key covers. Merged in
-repository order, the parts give the same snapshot a full build does. A write
-for one repository therefore costs a read of that repository's discovery cache
-and stores, stats of the others' store files and one registry listing. It also
-re-encodes the merged snapshot once for `/api/index` and once for the watcher's
-hash. `Service.Build` keeps nothing and reads everything.
+read them all, and no part is used once `MaxAge` has passed since it was read,
+so `MaxAge` still bounds what no key covers. Merged in repository order, the
+parts give the same snapshot a full build does. A write for one repository
+therefore costs a read of that repository's discovery cache and stores, one
+`Revision` (an in-memory stamp that resolves the credential) and the store
+stats of each other repository, and one registry listing. It also re-encodes
+the merged snapshot once for `/api/index` and once for the watcher's hash.
+`Service.Build` keeps nothing and reads everything.
 
 `uiserver.Server.WatchIndex` catches changes made outside the daemon
 (another process editing the registry) and those that
