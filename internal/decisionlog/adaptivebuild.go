@@ -84,6 +84,18 @@ func (w *FeatureWorker) buildAdaptive(ctx context.Context, repository, dir strin
 		report.SpentUSD = b.spent.run
 		report.Placed = len(b.state.Assignments)
 		report.PullRequests = len(b.state.Selected)
+		// A rejected checkpoint may have mutated the working maps. Final API/job
+		// progress must describe SQLite's accepted checkpoint, not the proposal.
+		if err != nil {
+			report.Coverage = nil
+			report.Placed = 0
+			report.PullRequests = 0
+			if durable, readErr := w.Store.adaptiveState(context.WithoutCancel(ctx), r.version); readErr == nil && durable != nil {
+				report.Coverage = durable.coverage()
+				report.Placed = len(durable.Assignments)
+				report.PullRequests = len(durable.Selected)
+			}
+		}
 		_ = w.Store.db.QueryRowContext(context.WithoutCancel(ctx), `SELECT spent_usd,unpriced_calls FROM feature_version WHERE id=?`, r.version).Scan(&report.VersionSpentUSD, &report.UnpricedCalls)
 		if err != nil {
 			report.Stopped = "failed"

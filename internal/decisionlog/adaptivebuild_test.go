@@ -529,6 +529,10 @@ func TestAdaptiveCheckpointPersistenceFailureCannotPromote(t *testing.T) {
 	if f.count(`SELECT count(*) FROM feature_pull`) != 0 || f.count(`SELECT count(*) FROM feature WHERE version_id=?`, report.Version) != 0 {
 		t.Fatal("failed checkpoint partially committed")
 	}
+	durable, readErr := f.store.FeatureCoverage(context.Background(), repo, VersionBuilding)
+	if readErr != nil || report.Coverage == nil || durable == nil || report.Coverage.Completed != durable.Completed || report.Coverage.Selected != durable.Selected || report.Placed != durable.Completed || report.PullRequests != durable.Selected {
+		t.Fatalf("failed proposal reported as accepted: report %+v durable %+v %v", report, durable, readErr)
+	}
 }
 
 func TestAdaptiveOlderBinaryCannotStartLegacyBesideCandidate(t *testing.T) {
@@ -925,5 +929,24 @@ func TestAdaptiveCancelledOrTimedOutUnitRetainsAcceptedCheckpoint(t *testing.T) 
 				t.Fatalf("guard resume %+v %v", next, err)
 			}
 		})
+	}
+}
+
+func TestAdaptiveReportOmitsCoverageWhenDurableStateCannotBeRead(t *testing.T) {
+	f, dir, _ := adaptiveFixture(t)
+	calls := 0
+	f.backend.task = func(agent.Request) (agent.Result, error) {
+		calls++
+		if calls == 1 {
+			return adaptiveTaskReply(t, adaptive.Reply{Action: "checkpoint", Selected: []int{1}, Scopes: []adaptive.Scope{widgetScope()}, Assignments: []adaptive.Assignment{{Number: 1, Scope: "widgets", Reason: "Accepted outcome"}}}), nil
+		}
+		if err := f.store.Close(); err != nil {
+			t.Fatal(err)
+		}
+		return adaptiveTaskReply(t, adaptive.Reply{Action: "finish"}), nil
+	}
+	report, err := f.worker.Build(context.Background(), repo, dir, BuildOptions{Adaptive: true})
+	if err == nil || report.Current || report.Coverage != nil || report.Placed != 0 || report.PullRequests != 0 {
+		t.Fatalf("unreadable durable state reported working coverage %+v %v", report, err)
 	}
 }

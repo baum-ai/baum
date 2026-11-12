@@ -1524,7 +1524,7 @@ func (q *Queue) worker(chat bool) {
 				job := &q.jobs[k]
 				before := *job
 				job.Phase = p.Phase
-				if p.BuildCoverage != nil {
+				if p.BuildCoverage != nil || p.BuildWorkflow != "" {
 					job.BuildCoverage = p.BuildCoverage.Clone()
 				}
 				if p.BuildWorkflow != "" {

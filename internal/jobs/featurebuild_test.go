@@ -3,15 +3,17 @@ package jobs
 import (
 	"context"
 	"errors"
-	"github.com/baum-ai/baum/features/adaptive"
 	"path/filepath"
 	"testing"
+
+	"github.com/baum-ai/baum/features/adaptive"
 )
 
 type fakeBuilder struct {
-	plan   FeatureBuildPlan
-	ran    chan struct{}
-	result error
+	plan            FeatureBuildPlan
+	ran             chan struct{}
+	result          error
+	unknownCoverage bool
 }
 
 func (b *fakeBuilder) PlanFeatureBuild(context.Context, string, string, string) (FeatureBuildPlan, error) {
@@ -20,6 +22,9 @@ func (b *fakeBuilder) PlanFeatureBuild(context.Context, string, string, string) 
 
 func (b *fakeBuilder) BuildFeatures(_ context.Context, _, _, _ string, progress func(Progress)) (float64, error) {
 	progress(Progress{Phase: "placing", Calls: 1, BuildWorkflow: adaptive.Version, BuildCoverage: &adaptive.Coverage{Protocol: adaptive.Version, Catalogued: 120, Inspected: 3, Selected: 4, Completed: 2, Remaining: 2, Source: &adaptive.SourceCoverage{Revision: "fixture", Limitations: []string{"Committed source only"}}}})
+	if b.unknownCoverage {
+		progress(Progress{Phase: "finished", BuildWorkflow: adaptive.Version})
+	}
 	b.ran <- struct{}{}
 	return 0.5, b.result
 }
@@ -106,5 +111,24 @@ func TestDefaultFeatureRequestJoinsQueuedFreshBuildAcrossClones(t *testing.T) {
 	}
 	if len(second) != 1 || second[0].ID != first[0].ID || second[0].FeatureBuildMode != "fresh" {
 		t.Fatalf("queued fresh was replaced: %+v %+v", first, second)
+	}
+}
+
+func TestFinalUnknownFeatureCoverageClearsAcceptedJobSnapshot(t *testing.T) {
+	registry, clone := registeredClone(t)
+	builder := &fakeBuilder{ran: make(chan struct{}, 1), plan: FeatureBuildPlan{Backend: "claude", Model: "fixture"}, result: &StoppedError{Reason: "failed"}, unknownCoverage: true}
+	q, err := Open(filepath.Join(privateDir(t), "jobs.sqlite"), &Local{Registry: registry, Features: builder}, 1, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer q.Close()
+	submitted, err := q.Generate(context.Background(), []Item{{Clone: clone.ID, Kind: KindFeatureBuild}}, "single", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	<-builder.ran
+	done := waitState(t, q, submitted[0].ID, "failed")
+	if done.BuildCoverage != nil || done.BuildWorkflow != adaptive.Version {
+		t.Fatalf("unknown final coverage retained stale snapshot %+v", done)
 	}
 }

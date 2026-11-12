@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -28,6 +29,8 @@ import (
 type buildRecoveryBackend struct {
 	fail        atomic.Bool
 	unavailable atomic.Bool
+	failCommit  atomic.Bool
+	db          *sql.DB
 	calls       atomic.Int32
 }
 
@@ -62,6 +65,13 @@ func (b *buildRecoveryBackend) Run(ctx context.Context, req agent.Request) (agen
 			return agent.Result{}, errors.New("accepted membership missing on resume")
 		}
 	}
+	if b.failCommit.Load() {
+		if _, err := b.db.Exec(`CREATE TRIGGER reject_build_checkpoint BEFORE UPDATE ON feature_build_state BEGIN SELECT RAISE(ABORT,'synthetic commit failure'); END`); err != nil {
+			return agent.Result{}, err
+		}
+		reply.Selected = []int{2}
+		reply.Assignments = []adaptive.Assignment{{Number: 2, Scope: "search", Reason: "Proposed additional work"}}
+	}
 	data, _ := json.Marshal(reply)
 	return agent.Result{Document: data, Model: "claude-haiku-5-5", Calls: 1, Usage: agent.Usage{Input: 100, Output: 40}}, ctx.Err()
 }
@@ -71,6 +81,16 @@ type buildRecoveryReader struct{ head string }
 func (r buildRecoveryReader) Read(_ context.Context, _ string, _ string) (int, http.Header, []byte, error) {
 	at := time.Now().UTC().Format(time.RFC3339)
 	data, _ := json.Marshal([]map[string]any{{"number": 1, "title": "Search local data", "state": "open", "created_at": at, "updated_at": at, "user": map[string]any{"login": "fixture", "type": "User"}, "head": map[string]any{"ref": "feature", "sha": r.head}, "base": map[string]any{"ref": "main", "sha": r.head}}})
+	var rows []map[string]any
+	_ = json.Unmarshal(data, &rows)
+	extra := map[string]any{}
+	for key, value := range rows[0] {
+		extra[key] = value
+	}
+	extra["number"] = 2
+	extra["title"] = "Follow-up search work"
+	rows = append(rows, extra)
+	data, _ = json.Marshal(rows)
 	return http.StatusOK, http.Header{}, data, nil
 }
 
@@ -118,7 +138,7 @@ func TestFreshFeatureJobRecoveryAndAdmissionPreserveVersions(t *testing.T) {
 	if err = db.QueryRow(`SELECT id FROM feature_version WHERE state='building'`).Scan(&legacy); err != nil {
 		t.Fatal(err)
 	}
-	backend := &buildRecoveryBackend{}
+	backend := &buildRecoveryBackend{db: db}
 	backend.fail.Store(true)
 	worker := &decisionlog.FeatureWorker{Store: store, Config: config.Default(), Backends: generate.Backends{Claude: func(string) generate.CheckedBackend { return backend }}, GitHub: func(context.Context, github.Repository) (github.Reader, error) { return buildRecoveryReader{head}, nil }}
 	builder := &featureBuilder{}
@@ -205,6 +225,31 @@ func TestFreshFeatureJobRecoveryAndAdmissionPreserveVersions(t *testing.T) {
 	var newCandidate int64
 	if err = db.QueryRow(`SELECT id FROM feature_version WHERE state='building_adaptive'`).Scan(&newCandidate); err != nil || newCandidate == candidate {
 		t.Fatal("distinct fresh request did not create a new candidate")
+	}
+	assertFeatureRecovery(t, db, candidate, newCandidate)
+	backend.fail.Store(false)
+	backend.failCommit.Store(true)
+	rejected, err := reopened.Generate(ctx, []jobs.Item{{Clone: clone.ID, Kind: jobs.KindFeatureBuild}}, "single", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	failed := waitFeatureJob(t, reopened, rejected[0].ID, "failed")
+	durable, err := store.FeatureCoverage(ctx, "acme/recovery", decisionlog.VersionBuilding)
+	if err != nil || durable == nil || failed.BuildCoverage == nil || failed.BuildCoverage.Selected != durable.Selected || failed.BuildCoverage.Completed != durable.Completed || durable.Completed != 1 {
+		t.Fatalf("job reported rejected checkpoint %+v durable %+v %v", failed.BuildCoverage, durable, err)
+	}
+	response := httptest.NewRecorder()
+	(&decisionlog.Timeline{Store: store, Registry: registry}).Handler().ServeHTTP(response, httptest.NewRequest("GET", "/api/timeline/build?repository=acme%2Frecovery", nil))
+	var api struct {
+		Building struct {
+			Coverage *adaptive.Coverage `json:"coverage"`
+		} `json:"building"`
+	}
+	if response.Code != http.StatusOK {
+		t.Fatalf("build API %d %s", response.Code, response.Body.String())
+	}
+	if err = json.Unmarshal(response.Body.Bytes(), &api); err != nil || api.Building.Coverage == nil || api.Building.Coverage.Completed != failed.BuildCoverage.Completed || api.Building.Coverage.Selected != failed.BuildCoverage.Selected {
+		t.Fatalf("job/API disagreement %s job%+v %v", response.Body.String(), failed.BuildCoverage, err)
 	}
 	assertFeatureRecovery(t, db, candidate, newCandidate)
 }

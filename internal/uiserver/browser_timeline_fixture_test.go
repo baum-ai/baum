@@ -169,6 +169,7 @@ changed_at, created_at, updated_at) VALUES (?,?,?,?,?,?,?,1,?,?,?,?)`, id, versi
 	exec(`UPDATE pull_request SET head_sha=?,base_sha=?,paths_head_sha=?,paths_json='["app/src/timeline.tsx"]' WHERE number=7`, head, head, head)
 	exec(`UPDATE feature_pull SET assigned_head_sha=?,assigned_paths_json='["app/src/timeline.tsx"]' WHERE number=7`, head)
 	exec(`INSERT INTO pull_commit(repository,number,sha,committed_at) VALUES (?,12,?,?)`, repo, head, ms(day(1, 11)))
+	exec(`INSERT INTO pull_commit(repository,number,sha,committed_at) VALUES (?,7,?,?)`, repo, head, ms(day(1, 11)))
 	exec(`INSERT INTO session_commit(agent,session_id,repository,sha,method,confidence) VALUES ('claude-code','timeline-1',?,?,'checkpoint',1)`, repo, head)
 	exec(`INSERT INTO pr_summary(repository, number, content_hash, summary, created_at) VALUES (?,12,'h','Adds the local Timeline API and page.',?)`, repo, ms(day(1, 16)))
 	// Generate real validated relevance/cache rows. Legacy seeded display keys
