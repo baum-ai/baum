@@ -3007,15 +3007,42 @@ group and GitHub-account changes all go through) calls `Invalidate` first, so
 a client reading after the event gets a new build, and a build that started
 before an invalidation still answers its waiting readers but is not kept.
 Discovery, which only the daemon runs, invalidates through
-`discovery.Service.Updated` after each cache write and each change to its live
-freshness, without an event of its own: the watcher below publishes if the
-index moved. A panicking build is an error for its readers and is not kept. A
+`discovery.Service.Updated` after each write of a repository's cache and each
+change to its live freshness, without an event of its own: the watcher below
+publishes if the index moved. A write of the credential's budget record alone
+(a probe saves only that), which `Cached` does not read, does not invalidate. A
+panicking build is an error for its readers and is not kept. A
 kept snapshot expires at the earliest instant at which building again could
 differ with nothing written: a `generating` run's lease end (it then reads as
 interrupted), a fresh discovery snapshot's next poll, or an applied
 observation turning stale two minutes after it was fetched; and at the latest
 after `reviewindex.MaxAge` (2 minutes), for what nothing models (below).
 Nothing is persisted: a restarted daemon builds on first read.
+
+A build after an invalidation reads again only the repositories whose inputs
+moved. The cache keeps each repository's rows, problems and next change (a
+part), keyed on the repository's `discovery.Revision`, its clones as the
+registry lists them (ID, common directory, availability, which clone reads a
+shared store). For each store it reads, the key also holds the size,
+modification time, mode and file identity of `versions.sqlite` and its
+write-ahead log under both roots. Unlike the fingerprint, it does not look
+through lease renewals: renewing a lease that had already lapsed makes an
+interrupted run read as generating again. The registry is listed on every
+build. The key is taken before the repository is read, so a write landing
+during the read moves the key and the next build reads again. A part is read
+again when its key moved or its own next change passed. It is also read again
+when it came from a failed read, or when its key cannot vouch for it: a
+discovery without `Revision`, a store file modified within the last three
+seconds, a failed stat, or a custom `OpenStore` without a `StoreStamp`. Every
+repository is read again once `MaxAge` has passed since the build that last
+read them all, and no part is used once `MaxAge` has passed since it was read,
+so `MaxAge` still bounds what no key covers. Merged in repository order, the
+parts give the same snapshot a full build does. A write for one repository
+therefore costs a read of that repository's discovery cache and stores, one
+`Revision` (an in-memory stamp that resolves the credential) and the store
+stats of each other repository, and one registry listing. It also re-encodes
+the merged snapshot once for `/api/index` and once for the watcher's hash.
+`Service.Build` keeps nothing and reads everything.
 
 `uiserver.Server.WatchIndex` catches changes made outside the daemon
 (another process editing the registry) and those that

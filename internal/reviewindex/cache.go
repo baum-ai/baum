@@ -41,6 +41,8 @@ type Cache struct {
 	flight     *flight
 	builds     uint64
 	bodies     map[variant]encodedBody
+	// parts are each repository's rows as the last builds read them.
+	parts parts
 }
 
 type cached struct {
@@ -58,9 +60,15 @@ type flight struct {
 	err        error
 }
 
-// NewCache caches s's snapshots. Builds stop when ctx ends.
+// NewCache caches s's snapshots. Builds stop when ctx ends. A build after an
+// invalidation reads again only the repositories whose discovery cache,
+// clones or stores changed (parts.go).
 func NewCache(ctx context.Context, s *Service) *Cache {
-	return &Cache{life: ctx, build: s.build, now: time.Now}
+	c := &Cache{life: ctx, now: time.Now}
+	c.build = func(ctx context.Context, now time.Time) (Snapshot, time.Time, error) {
+		return s.build(ctx, now, &c.parts)
+	}
+	return c
 }
 
 // Invalidate makes the next reader build again. A build already running

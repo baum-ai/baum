@@ -303,7 +303,7 @@ func TestBuildReportsNextChange(t *testing.T) {
 			}), nil
 		},
 	}
-	_, next, err := s.build(context.Background(), now)
+	_, next, err := s.build(context.Background(), now, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -312,11 +312,11 @@ func TestBuildReportsNextChange(t *testing.T) {
 	}
 	fetched = now.Add(-5 * time.Minute)
 	s.Discovery.(source)["acme/a"].Observations[0].FetchedAt = fetched
-	if _, next, _ = s.build(context.Background(), now); !next.Equal(lease) {
+	if _, next, _ = s.build(context.Background(), now, nil); !next.Equal(lease) {
 		t.Fatalf("lease: next %v want %v", next, lease)
 	}
 	lease = now.Add(-time.Second)
-	if _, next, _ = s.build(context.Background(), now); !next.Equal(poll) {
+	if _, next, _ = s.build(context.Background(), now, nil); !next.Equal(poll) {
 		t.Fatalf("poll: next %v want %v", next, poll)
 	}
 }

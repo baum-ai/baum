@@ -41,7 +41,11 @@ how many times this service changed it. Two equal revisions read the same
 snapshot, except that `Stale` turns true once `NextPoll` passes. The count
 lives in memory, so it holds only because the daemon's service is the cache's
 one writer: the daemon runs once, and nothing else writes `cache/discovery`.
-Live sessions use it to decode a cache again only after it changed.
+Live sessions and the review index use it to read a cache again only after it
+changed. `Updated`, when set, is called after each write of a repository's
+cache, an identity reset and each change to live freshness. A write of the
+budget record alone (a probe saves only that) is not reported, since `Cached`
+does not read it.
 
 ## A poll
 
