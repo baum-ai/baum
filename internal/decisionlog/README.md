@@ -141,8 +141,15 @@ changes; other skips only when it changes.
   every insert or delete of, and every change of a column the snapshot reads
   in, `feature_version`, `feature`, `feature_pull`, `feature_session`,
   `pull_request`, `pull_commit`, `session_commit`, `capture_session`,
-  `decision` and `decision_file`. A write to anything else in `app.sqlite`,
-  or to a column the snapshot does not read, leaves it alone.
+  `decision` and `decision_file`; for the feature tables only rows of the
+  current version count, a building version moves it when it is switched in.
+  A decision moves the revision of its own repository and of its session's.
+  A write to anything else in `app.sqlite`, or to a column the snapshot does
+  not read, leaves it alone. A writer that deletes and inserts the same rows
+  again (a relink, a path refresh, a re-extraction's files) moves it
+  although nothing differs. The triggers are named after a hash of their
+  definitions and replaced, in one transaction, when a build opens a store
+  with others.
 - `capture_attempt`: the ledger of calls (backend, model, full or extend,
   reservation, cost, tokens, state, failure reason, rejected replies), with the `stage` that made the call
   (`capture`, or a feature log stage) and the `item` it was about.
@@ -592,9 +599,10 @@ people share one snapshot of each repository's features, built once and kept
 until the repository's `timeline_revision` moves (a write, by any
 connection or process, to a row or column the snapshot reads; writes
 elsewhere in `app.sqlite` do not count), the user's identity is read again,
-or it is 30 seconds old (for the clone's branches, which the revision does
-not cover); a search builds its own. Each repository builds under its own
-lock, so one repository's build does not hold up another's.
+or it is 30 seconds old (a bound for what the revision does not cover); a
+search builds its own. Each repository builds under its own lock, so one
+repository's build does not wait for another's; their queries still share the
+store's one connection and take turns on it.
 
 - **`GET /repositories`**: `decisions_enabled` (the decisions switch),
   `repositories`, the picked repositories whose decisions are not turned

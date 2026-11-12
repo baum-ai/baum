@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/baum-ai/baum/decisions"
 )
@@ -18,11 +19,19 @@ func TestTimelineRevisionOnlyMovesWithTimelineInputs(t *testing.T) {
 	f := newTimelineFixture(t)
 	list := func() {
 		t.Helper()
+		// A build opens the clone; so does reading the user's identity
+		// again, which the real clock would do after selfTTL.
+		f.timeline.selfMu.Lock()
+		if !f.timeline.selfAt.IsZero() {
+			f.timeline.selfAt = time.Now()
+		}
+		f.timeline.selfMu.Unlock()
 		if code := f.get("/api/timeline/features", url.Values{"repository": {repo}}, nil); code != 200 {
 			t.Fatalf("features = %d", code)
 		}
 	}
 	list()
+	f.get("/api/timeline/features", url.Values{"repository": {gadgets}}, nil)
 	version, err := f.store.LiveVersion(context.Background(), repo)
 	if err != nil {
 		t.Fatal(err)
@@ -53,6 +62,19 @@ SELECT agent, session_id, repository, branch, coverage, 1 FROM capture_session W
 repository=excluded.repository, branch=excluded.branch, updated_at=excluded.updated_at`)
 	// Another repository's rows are not this one's.
 	check("other repository", false, `UPDATE feature SET title='Counts' WHERE id='G1'`)
+	// A feature version still building is not read until it is switched in.
+	check("building version", true, `INSERT INTO feature_version(repository, state, created_at) VALUES (?, 'building', 1)`, repo)
+	var building int64
+	if err := f.store.db.QueryRow(`SELECT id FROM feature_version WHERE state='building' AND repository=?`, repo).Scan(&building); err != nil {
+		t.Fatal(err)
+	}
+	check("building feature", false, `INSERT INTO feature(id, version_id, repository, changed_at, created_at, updated_at) VALUES ('B1',?,?,0,1,1)`, building, repo)
+	check("building feature text", false, `UPDATE feature SET title='Draft', membership_version=3 WHERE id='B1'`)
+	check("building placement", false, `INSERT INTO feature_pull(version_id, repository, number, feature_id, assigned_by, assigned_at) VALUES (?,?,1,'B1','a',1)`, building, repo)
+	check("building session", false, `INSERT INTO feature_session(version_id, repository, agent, session_id, feature_id, assigned_at) VALUES (?,?,'claude-code','s1','B1',1)`, building, repo)
+	check("building removed", false, `DELETE FROM feature WHERE id='B1'`)
+	check("building discarded", false, `DELETE FROM feature_pull WHERE version_id=?`, building)
+	check("building retired", true, `UPDATE feature_version SET state='retired' WHERE id=?`, building)
 	// Read by it.
 	check("feature text", true, `UPDATE feature SET title='Renamed' WHERE id='F1'`)
 	check("feature merged", true, `UPDATE feature SET merged_into='F1' WHERE id='F2'`)
@@ -73,6 +95,7 @@ repository=excluded.repository, branch=excluded.branch, updated_at=excluded.upda
 	check("decision file", true, `INSERT INTO decision_file(decision_id, path) VALUES ('d-s2', 'new.go')`)
 	check("decision file removed", true, `DELETE FROM decision_file WHERE decision_id='d-s2'`)
 	// A session moved to this repository moves both revisions.
+	f.get("/api/timeline/features", url.Values{"repository": {gadgets}}, nil)
 	check("session moved in", true, `UPDATE capture_session SET repository=? WHERE session_id='g1'`, repo)
 	before := f.clones
 	f.get("/api/timeline/features", url.Values{"repository": {gadgets}}, nil)
@@ -115,9 +138,26 @@ func TestTimelineRevisionMovesWithCapture(t *testing.T) {
 	if second := revision(); second <= first {
 		t.Fatalf("revision after a changed decision = %d, was %d", second, first)
 	}
+	second := revision()
 	f.exec(`INSERT INTO app_documents(bucket, key, value) VALUES ('ui', 'a', x'00')`)
-	if n := revision(); n <= first {
-		t.Fatalf("revision = %d, was %d", n, first)
+	if n := revision(); n != second {
+		t.Fatalf("revision after an unrelated write = %d, was %d", n, second)
+	}
+	// Reordering decisions changes how a feature's decisions are ordered.
+	f.exec(`UPDATE decision SET ordinal=ordinal+5 WHERE decision_id='d-s3'`)
+	if n := revision(); n <= second {
+		t.Fatalf("revision after a reorder = %d, was %d", n, second)
+	}
+	// A session moved to another repository takes its decisions with it
+	// while their rows still name the old one: ending them moves the new.
+	f.exec(`UPDATE capture_session SET repository=? WHERE session_id='s3'`, gadgets)
+	moved, err := f.store.revision(ctx, gadgets)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.exec(`UPDATE decision SET obsolete_at=1 WHERE decision_id='d-s3'`)
+	if n, err := f.store.revision(ctx, gadgets); err != nil || n <= moved {
+		t.Fatalf("revision of the session's repository after its decisions ended = %d, was %d, %v", n, moved, err)
 	}
 }
 
@@ -125,14 +165,38 @@ func TestTimelineRevisionMovesWithCapture(t *testing.T) {
 // timelineInputs leaves the Timeline stale.
 func TestTimelineRevisionTriggersExist(t *testing.T) {
 	f := newTimelineFixture(t)
-	for _, in := range timelineInputs {
-		for _, event := range []string{"insert", "delete"} {
+	updated := map[string]bool{"feature_version": true, "feature": true, "feature_pull": true, "feature_session": true,
+		"pull_request": true, "capture_session": true, "decision": true}
+	for _, table := range []string{"feature_version", "feature", "feature_pull", "feature_session", "pull_request", "pull_commit",
+		"session_commit", "capture_session", "decision", "decision_file"} {
+		events := []string{"insert", "delete"}
+		if updated[table] {
+			events = append(events, "update")
+		}
+		for _, event := range events {
 			var n int
-			name := fmt.Sprintf("timeline_revision_%s_%s", in.table, event)
-			if err := f.store.db.QueryRow(`SELECT count(*) FROM sqlite_master WHERE type='trigger' AND name=?`, name).Scan(&n); err != nil || n != 1 {
-				t.Errorf("%s: %d, %v", name, n, err)
+			if err := f.store.db.QueryRow(`SELECT count(*) FROM sqlite_master WHERE type='trigger' AND name LIKE 'timeline_revision_%' AND substr(name, 28)=?`, table+"_"+event).Scan(&n); err != nil || n != 1 {
+				t.Errorf("trigger for %s %s: %d, %v", table, event, n, err)
 			}
 		}
+	}
+}
+
+// Opening a store whose triggers an older build defined replaces them all.
+func TestTimelineRevisionTriggersAreReplaced(t *testing.T) {
+	f := newTimelineFixture(t)
+	f.exec(`DROP TRIGGER ` + timelineRevisionTriggers()[0].name)
+	f.exec(`CREATE TRIGGER timeline_revision_old_feature_insert AFTER INSERT ON feature BEGIN SELECT 1; END`)
+	if err := installTimelineRevision(context.Background(), f.store.db); err != nil {
+		t.Fatal(err)
+	}
+	var n, old int
+	if err := f.store.db.QueryRow(`SELECT count(*), count(*) FILTER (WHERE name='timeline_revision_old_feature_insert') FROM sqlite_master
+WHERE type='trigger' AND name LIKE 'timeline_revision_%'`).Scan(&n, &old); err != nil {
+		t.Fatal(err)
+	}
+	if n != len(timelineRevisionTriggers()) || old != 0 {
+		t.Fatalf("triggers = %d, old ones = %d", n, old)
 	}
 }
 
