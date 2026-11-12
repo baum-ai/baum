@@ -451,6 +451,20 @@ func TestServiceCachesAndLimitsRefresh(t *testing.T) {
 	}
 }
 
+func TestCachedNeverReads(t *testing.T) {
+	src := &countingSource{}
+	now := clock
+	s := &Service{Sources: []Source{src}, Now: func() time.Time { return now }}
+	if got := s.Cached(); got != nil || src.n != 0 {
+		t.Fatalf("an empty cache: %v after %d reads", got, src.n)
+	}
+	s.Plans(context.Background(), false)
+	now = now.Add(CacheTTL * 10)
+	if got := s.Cached(); len(got) != 1 || got[0].Provider != "x" || src.n != 1 {
+		t.Fatalf("a stale cache: %v after %d reads", got, src.n)
+	}
+}
+
 func TestHandler(t *testing.T) {
 	s := &Service{Sources: []Source{&countingSource{}}, Now: func() time.Time { return clock }}
 	rec := httptest.NewRecorder()

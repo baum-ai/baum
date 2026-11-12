@@ -1,6 +1,7 @@
 package uiserver
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -129,24 +130,44 @@ func (a LocalAPI) planUsageHandler(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write(rec.Body.Bytes())
 		return
 	}
-	prefs, err := a.Registry.Preferences(r.Context())
+	kept, err := a.shownPlans(r.Context(), body.Plans)
 	if err != nil {
 		http.Error(w, "Could not read plan usage settings", http.StatusInternalServerError)
 		return
 	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	_ = json.NewEncoder(w).Encode(map[string]any{"plans": kept})
+}
+
+// shownPlans keeps the plans the person chose to show, or by default those
+// baum uses.
+func (a LocalAPI) shownPlans(ctx context.Context, plans []json.RawMessage) ([]json.RawMessage, error) {
+	prefs, err := a.Registry.Preferences(ctx)
+	if err != nil {
+		return nil, err
+	}
 	shown := map[string]bool{}
-	for _, e := range planEntries(prefs, a.Config, body.Plans) {
+	for _, e := range planEntries(prefs, a.Config, plans) {
 		shown[e.Provider] = e.Shown
 	}
 	kept := []json.RawMessage{}
-	for _, raw := range body.Plans {
+	for _, raw := range plans {
 		if provider, _ := planProvider(raw); shown[provider] {
 			kept = append(kept, raw)
 		}
 	}
-	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Cache-Control", "no-store")
-	_ = json.NewEncoder(w).Encode(map[string]any{"plans": kept})
+	return kept, nil
+}
+
+// CachedPlans are the plans the app's sidebar shows, from the plan usage
+// service's cache alone (PlanUsageCached): it never reads a provider, so it
+// causes no fetch. None cached, or no such cache, reads as no plans.
+func (a LocalAPI) CachedPlans(ctx context.Context) ([]json.RawMessage, error) {
+	if a.PlanUsageCached == nil {
+		return nil, nil
+	}
+	return a.shownPlans(ctx, a.PlanUsageCached())
 }
 
 func (a LocalAPI) getPlanUsageSettings(w http.ResponseWriter, r *http.Request) {

@@ -97,6 +97,10 @@ history behind the Analytics chart samples every plan regardless.
 
 ## Caching
 
+`Service.Cached` returns the plans last read, however old, and never asks a
+provider: the MCP server's plan usage tool reads it, so a chat's question can
+never cause a fetch.
+
 `Service` keeps the result for five minutes. `?refresh=1` (the app sends it when
 a page opens) reads again, but never more than once a minute. One mutex covers a
 reading, so simultaneous requests share it.
