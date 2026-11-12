@@ -2,6 +2,7 @@ package chat_test
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -36,7 +37,7 @@ func TestRetriedForkAttemptSessionIsRecorded(t *testing.T) {
 	rollout := func(id string) string {
 		name := "rollout-" + now.Format("2006-01-02T15-04-05") + "-" + id + ".jsonl"
 		path := filepath.Join(os.Getenv("CODEX_HOME"), "sessions", now.Format("2006"), now.Format("01"), now.Format("02"), name)
-		line := `{"timestamp":"` + now.Format(time.RFC3339) + `","type":"session_meta","payload":{"id":"` + id + `","cwd":"` + f.ReviewDir + `","cli_version":"0.69.0","model_provider":"openai"}}` + "\n"
+		line := fmt.Sprintf(`{"timestamp":%q,"type":"session_meta","payload":{"id":%q,"cwd":%q,"cli_version":"0.69.0","model_provider":"openai"}}`+"\n", now.Format(time.RFC3339), id, f.ReviewDir)
 		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 			t.Fatal(err)
 		}
