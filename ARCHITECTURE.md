@@ -3204,9 +3204,33 @@ statuses, at most 100). It answers `{head_sha, checks}`, each check's `name`,
 `status` (`queued`, `in_progress` or `completed`; a pending commit status is
 `in_progress`), `conclusion` (the run's conclusion or the status's state, empty
 until completed), `title`, `url` and `job_id` (only for a failing GitHub
-Actions run, so `rerun-job` accepts it). Failing checks come first, then
-those not completed, each by name. The cache keeps a head's list for 20
-seconds, and a re-run forgets it.
+Actions run, so `rerun-job` accepts it), `id` (the check run's id; absent for
+a commit status) and `has_log` (a completed GitHub Actions run). Failing
+checks come first, then those not completed, each by name. The cache keeps a
+head's list for 20 seconds, and a re-run forgets it.
+
+`GET /api/prs/check-log?repository=&pr=&check=<check run id>` answers the tail
+of one check's log, read only when a caller asks (the app when a person opens
+**Show log**, or the `check_log` tool): `prupdate.Service.CheckLog` reads the
+pull request's current head and its checks (`AllChecks`) and refuses, as
+`not_found`, a check run that is not one of them, so a request cannot name
+another run. A completed GitHub Actions run (its check run id is the job id)
+has its job log read through `RESTReader.Download` (`GET
+/repos/{owner}/{repo}/actions/jobs/{id}/logs`; one redirect to a signed https
+URL is followed and the token goes to the API host alone) and streamed through
+a tail writer that keeps only the last 200 lines (a line cut at 2 KiB), then
+the last whole lines within 64 KiB, so memory stays bounded however long the
+log; its timestamps, terminal escapes and control characters are dropped and
+the tail goes through the bundle redactor (a redactor failure refuses the log).
+It answers `{id, name, available, reason, message, log, truncated, url}`:
+`available` with `log`, or not with `reason` `no_log` (another app's check run
+or a commit status), `running` (not completed) or `expired` (GitHub answered
+404 or 410), none of them an error. GitHub's 401, 403, 429 and other statuses
+are refusals in the same words as the other GitHub routes. `prupdate.Cache`
+keeps a finished run's tail, and an expired answer, per repository and check
+run, at most 64, least recently used first, with no age limit (a finished log
+does not change); a re-run or an account change empties them. Nothing reads a
+log in the background.
 
 `GET /api/prs/conflicts?repository=&pr=` answers `{head_sha, base_ref,
 base_sha, files}`: the files in which the pull request's head conflicts with
@@ -5245,7 +5269,8 @@ refused. The table holds:
   only those, and exactly one value is allowed;
 - by `repository` (parameters `pr`, and as listed): `GET /api/jobs`,
   `/api/prs/description`, `/api/prs/checks` (`head_sha`),
-  `/api/prs/failing-checks` (`head_sha`), `/api/prs/review-threads`
+  `/api/prs/failing-checks` (`head_sha`), `/api/prs/check-log` (`check`),
+  `/api/prs/review-threads`
   (`unresolved`), `/api/prs/conflicts`, `/api/prs/merge-options`,
   `/api/prs/update-branch-options` and `/api/prs/rerun-checks-options`;
 - by `clone` (parameter `pr`, and as listed): `GET /api/versions`,
@@ -5403,6 +5428,7 @@ tools, and is repository-scoped, so an action reads its own repository's):
 | `file` | `/api/file`: a file of the repository at the saved review's head, text cut at 512 KiB with `truncated`, or no content for a directory, a binary file or a path the head lacks; only a path the review cites, and only a pull request with a saved review |
 | `commit`, `commit_patch` | `/api/commit` and `/api/commit-patch`, or the `/api/facts` forms before a review exists, as `commits` reads: one commit's message body and changed files, and one file's patch in it; the commit must be one `commits` lists |
 | `pull_request_decisions` | `/api/decisions?repository=&pr=`: the linked sessions and their captured decisions, and which are provisional (the Timeline's `decisions` lists across a repository) |
+| `check_log` | `/api/prs/check-log` for a check of the pull request's `/api/prs/checks` (at the head the index shows), named by its name or id: the tail of its GitHub Actions log, as the page shows it; a name several checks share needs the id, and a commit status answers that it has no log without reading the route |
 | `update_branch_options`, `rerun_options` | `/api/prs/update-branch-options` and `/api/prs/rerun-checks-options`; nothing is changed |
 | `pending_review` | `/api/ui-state/review?key=<repository lower-case>#<number>`, projected: each comment's target, text, place and head, the summary note and the reviews sent from baum; not their ids or the record's revision |
 | `walkthrough_position` | `/api/ui-state/walkthrough?key=<repository>#<number>@v<version>` (the latest version by default, from the index): the stops seen, the notes and the overall comment |
