@@ -770,7 +770,13 @@ export function LocalReview({
   const liveChecks = useChecks(pr.repository, pr.number, pr.head_sha);
   // A review's threads are a snapshot from when it was generated; the
   // Activity tab reads them as GitHub has them now.
-  const threadsNow = useLiveThreads(pr.repository, pr.number, pr.unresolved, pr.unresolved_capped);
+  const threadsNow = useLiveThreads(
+    pr.repository,
+    pr.number,
+    pr.unresolved,
+    pr.unresolved_capped,
+    revision,
+  );
   const factsHead = shownFacts?.review.head ?? "";
   const factsBase = shownFacts?.review.base ?? "";
   const factsMergeBase = shownFacts?.review.merge_base ?? "";

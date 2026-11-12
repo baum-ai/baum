@@ -252,6 +252,9 @@ export function useLiveThreads(
   number: number,
   unresolved: number | null,
   capped: boolean,
+  // The page's refresh revision: a refresh asks for the list again even when
+  // the count did not change.
+  revision = 0,
 ): LiveThreads | null {
   const known = unresolved === 0 && !capped;
   // A read stands for its pull request until the next one answers, so a
@@ -281,7 +284,7 @@ export function useLiveThreads(
         if (!abort.signal.aborted) setRead(null);
       });
     return () => abort.abort();
-  }, [known, pull, repository, number, unresolved]);
+  }, [known, pull, repository, number, unresolved, revision]);
   return useMemo(
     () =>
       known
