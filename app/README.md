@@ -352,7 +352,10 @@ those threads carry read over the snapshot (`withLiveThreads`). A thread in the
 list is open, one missing from a complete list is resolved, and one missing
 from a list cut short keeps its stored state. With discovery counting none
 unresolved, nothing is asked. An earlier version, a read not back yet and a
-read that failed keep the snapshot.
+read that failed keep the snapshot. A group's review holds its members'
+threads, landed members included, so the group page reads each member's list
+(`useLiveThreadsOf`) and hands the viewer them as one: complete only when
+every member's is, and the snapshot until every member's has answered.
 
 The checks (`useChecks` and `PullRequestChecks` in `src/checks.tsx`) are asked
 for by their row as soon as the panel shows it, open or not, with `GET
