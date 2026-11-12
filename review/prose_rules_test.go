@@ -18,7 +18,7 @@ func proseBundle() *bundlepkg.Bundle {
 		Sources:      bundlepkg.Sources{"diff": true},
 		Diff:         []bundlepkg.Hunk{{ID: testHunk, Path: "main.go", Role: bundlepkg.RoleCode, Change: "added"}},
 		Checks:       []bundlepkg.Check{{ID: "check_run:123", Name: "CI", Kind: "check_run"}, {ID: "status:456", Name: "lint", Kind: "status"}},
-		Threads:      []bundlepkg.Thread{{ID: "PRRT_kwDOabc"}},
+		Threads:      []bundlepkg.Thread{{ID: "PRRT_kwDOabc"}, {ID: "PRRT_kwDOTPgJG862TD-9"}},
 		Conversation: []bundlepkg.ConversationItem{{ID: "123456789012", Kind: "comment"}},
 		Sessions: []bundlepkg.Session{
 			{RootSessionID: proseSession, Vendor: "claude"},
@@ -55,34 +55,46 @@ func TestProseFixtureIsClean(t *testing.T) {
 	checkEqual(t, "", proseFindingsOf(t, func(summary, section map[string]any) {}))
 }
 
-func requireProse(t *testing.T, text string, want ...string) {
+// judged prepares a document whose first risk has the text, which is a field
+// that carries the review's judgement, and returns the findings.
+func judged(t *testing.T, text string) string {
 	t.Helper()
-	findings := proseFindingsOf(t, func(summary, section map[string]any) {
-		section["summary"].(map[string]any)["text"] = text
+	return proseFindingsOf(t, func(summary, section map[string]any) {
+		section["risks"] = []any{proseRisk("rsk_judged", text)}
 	})
-	if len(want) == 0 {
-		checkEqual(t, "", findings)
-		return
+}
+
+// requireJudged asserts the text is flagged at the risk's location, quoting
+// the matched phrase.
+func requireJudged(t *testing.T, text, phrase string) {
+	t.Helper()
+	want := fmt.Sprintf("section 1 (sec_parser) risk rsk_judged text: %q ", phrase)
+	if findings := judged(t, text); !strings.Contains(findings, want) {
+		t.Errorf("%q: findings %q lack %q", text, findings, want)
 	}
-	for _, fragment := range want {
-		if !strings.Contains(findings, fragment) {
-			t.Errorf("%q: findings %q lack %q", text, findings, fragment)
-		}
+}
+
+func requireNotJudged(t *testing.T, text string) {
+	t.Helper()
+	if findings := judged(t, text); findings != "" {
+		t.Errorf("%q rejected: %s", text, findings)
 	}
 }
 
 func TestRunStateWording(t *testing.T) {
-	for _, text := range []string{
-		"The Open-source module check was still in progress when the bundle was taken.",
-		"The deploy job is still pending.",
-		"The CI run had not yet finished.",
-		"The lint workflow was running at the snapshot.",
-		"The review is pending.",
-		"The suite was queued.",
+	for text, phrase := range map[string]string{
+		"The Open-source module check was still in progress when the bundle was taken.": "still in progress",
+		"The deploy job is still pending.":                                              "still pending",
+		"The CI run had not yet finished.":                                              "had not yet finished",
+		"The lint workflow was running at the snapshot.":                                "at the snapshot",
+		"The check has not finished.":                                                   "has not finished",
+		"The suite was queued.":                                                         "was queued",
+		"The pipeline is pending.":                                                      "is pending",
+		"The bot was running.":                                                          "was running",
+		"The tests were not yet completed.":                                             "not yet completed",
 	} {
-		requireProse(t, text, "section 1 (sec_parser) summary text: ")
+		requireJudged(t, text, phrase)
 	}
-	requireProse(t, "The CI job was still running.", `"still running" states when a check`)
 	// Product text that only looks like run state.
 	for _, text := range []string{
 		"A feature in progress ships behind a flag.",
@@ -91,25 +103,40 @@ func TestRunStateWording(t *testing.T) {
 		"Sessions that are in progress keep their draft.",
 		"The queue was pending a rebuild of the index.",
 		"The check passes on every commit.",
+		"Drain waited until no job was queued or running.",
+		"It copies only fix jobs that are queued or running.",
+		"The review is pending.",
+		"The run is queued behind another.",
 	} {
-		requireProse(t, text)
+		requireNotJudged(t, text)
 	}
+	// The rules read the review's judgement only, not fields that describe the
+	// code: a behaviour step may say a background command is still running.
+	findings := proseFindingsOf(t, func(summary, section map[string]any) {
+		section["blocks"] = []any{map[string]any{"kind": "behavior", "steps": []any{map[string]any{"id": "beh_wait", "title": "Wait", "text": "A background command is still running.", "before": "Report usage while a run is in progress.", "after": "The bundle was taken.", "anchors": []any{map[string]any{"type": "hunk", "id": testHunk}}}}}}
+		section["title"] = "The snapshot at the bundle"
+	})
+	checkEqual(t, "", findings)
 }
 
 func TestMetaTalkWording(t *testing.T) {
-	for _, text := range []string{
-		"The bundle was truncated.",
-		"This is not in the bundle.",
-		"The excerpts show the call.",
-		"The snapshot lacks the logs.",
-		"The section details stage wrote this.",
-		"The outline stage chose it.",
-		"The checkout does not contain the helper.",
-		"I read the handler and it is fine.",
-		"I couldn't find a caller.",
-		"My reading is that it is safe.",
+	for text, phrase := range map[string]string{
+		"This is not in the bundle.":                  "in the bundle",
+		"The bundle was truncated.":                   "The bundle was",
+		"The excerpts show the call.":                 "The excerpts show",
+		"Nothing in the excerpt proves it.":           "in the excerpt",
+		"It is not visible in the supplied snapshot.": "in the supplied snapshot",
+		"The captured snapshot lacks the logs.":       "The captured snapshot",
+		"The section details stage wrote this.":       "section details stage",
+		"The outline stage chose it.":                 "outline stage",
+		"Not found in the head checkout.":             "in the head checkout",
+		"The helper is absent in the checkout shown.": "in the checkout shown",
+		"I read the handler and it is fine.":          "I read",
+		"I couldn't find a caller.":                   "I couldn't",
+		"My reading is that it is safe.":              "My reading",
+		"It was not available at bundle time.":        "bundle time",
 	} {
-		requireProse(t, text, "talks about the model's inputs or process")
+		requireJudged(t, text, phrase)
 	}
 	for _, text := range []string{
 		"The JS bundle size grows by 4 KB.",
@@ -117,12 +144,25 @@ func TestMetaTalkWording(t *testing.T) {
 		"The snapshot test covers the output.",
 		"The snapshot isolation level is unchanged.",
 		"The checkout page keeps the cart.",
-		"The checkout flow now validates the address.",
-		"Bundle the assets before the release.",
+		"Keep the failed step of a job log in the fix agent's excerpt.",
+		"Code excerpts add no time to the estimate.",
+		"It rebuilds a repository's snapshot and the snapshot reads the head.",
+		"The snapshot's NextPoll is set once.",
+		"Committed links stay inside the checkout.",
 		"The reader checked the result.",
+		"The checkout flow now validates the address.",
 	} {
-		requireProse(t, text)
+		requireNotJudged(t, text)
 	}
+	// Look-alikes from the code under review, in fields the rules do not read.
+	for _, text := range []string{"Clear the AppImage magic bytes at bundle time.", "After the bundle step, the same job installs Chromium."} {
+		findings := proseFindingsOf(t, func(summary, section map[string]any) {
+			section["blocks"] = []any{map[string]any{"kind": "behavior", "steps": []any{map[string]any{"id": "beh_build", "title": "Build", "text": text, "anchors": []any{map[string]any{"type": "hunk", "id": testHunk}}}}}}
+			section["summary"].(map[string]any)["text"] = text
+		})
+		checkEqual(t, "", findings)
+	}
+	requireNotJudged(t, "After the bundle step, the same job installs Chromium.")
 }
 
 func TestIDsInProseMustResolve(t *testing.T) {
@@ -141,6 +181,7 @@ func TestIDsInProseMustResolve(t *testing.T) {
 		"See sec_parser and rsk_real and ev_real.",
 		"Fails in check_run:123 and status:456.",
 		"Thread PRRT_kwDOabc is open.",
+		"Thread PRRT_kwDOTPgJG862TD-9 is open.",
 		"As said in comment 123456789012, this changed.",
 		"As said in `123456789012`, this changed.",
 		"Written in session " + proseSession + ".",
@@ -160,7 +201,7 @@ func TestIDsInProseMustResolve(t *testing.T) {
 		"See sec_gone.":                               `"sec_gone" is not a known section`,
 		"Fails in check_run:999.":                     `"check_run:999" is not a known check ID`,
 		"Fails in status:999.":                        `"status:999" is not a known check ID`,
-		"Thread PRRT_other is open.":                  `"PRRT_other" is not a known review thread ID`,
+		"Thread PRRT_other-1 is open.":                `"PRRT_other-1" is not a known review thread ID`,
 		"As said in comment 999999999, this changed.": `"comment 999999999" is not a known comment ID`,
 		"As said in `999999999`, this changed.":       `"999999999" is not a known comment ID`,
 		"Written in session 00000000-2222-3333-4444-555555555555.": "is not a known session ID",
@@ -181,15 +222,6 @@ func TestIDsInProseMustResolve(t *testing.T) {
 	}
 }
 
-func TestIDsInProseOfAnOutlineAwaitItsSections(t *testing.T) {
-	// While sections lack their details, an item another stage writes does not
-	// exist yet; section IDs are still checked.
-	root := map[string]any{"sections": []any{map[string]any{"id": "sec_a", "details": "pending"}}}
-	known := newKnownIDs(root, nil)
-	checkEqual(t, 0, len(known.unresolved("x", "Later rsk_later and sec_a.")))
-	checkEqual(t, 1, len(known.unresolved("x", "Later sec_gone.")))
-}
-
 func TestTicketKeyInTitles(t *testing.T) {
 	titled := func(title string) string {
 		return proseFindingsOf(t, func(summary, section map[string]any) { section["title"] = title })
@@ -207,18 +239,35 @@ func TestTicketKeyInTitles(t *testing.T) {
 }
 
 func TestCIEvidenceIsRejected(t *testing.T) {
+	// The authored contract has no ci kind; the schema rejects it.
 	findings := proseFindingsOf(t, func(summary, section map[string]any) {
 		section["evidence"] = []any{proseEvidence("ev_ci", "ci", "The checks pass.", "asserted")}
 	})
-	requireFinding(t, strings.Split(findings, "\n"), `section 1 (sec_parser) evidence ev_ci has kind "ci"`)
-	requireFinding(t, strings.Split(findings, "\n"), `make it a "test" item whose claim names what the tests cover`)
+	if !strings.Contains(findings, "ev_ci") || !strings.Contains(findings, "ci") {
+		t.Errorf("a ci evidence item was accepted: %q", findings)
+	}
+	// The rule remains as a fallback for a path without the enum.
+	section := map[string]any{"evidence": []any{proseEvidence("ev_ci", "ci", "The checks pass.", "asserted")}}
+	got := strings.Join(sectionShapeFindings("section 1 (sec_parser)", section), "\n")
+	for _, want := range []string{`section 1 (sec_parser) evidence ev_ci has kind "ci"`, `make it a "test" item whose claim names what the tests cover`} {
+		if !strings.Contains(got, want) {
+			t.Errorf("findings %q lack %q", got, want)
+		}
+	}
 	checkEqual(t, "", proseFindingsOf(t, func(summary, section map[string]any) {
 		section["evidence"] = []any{proseEvidence("ev_test", "test", "The parser tests cover the new grammar.", "asserted")}
 	}))
+	// A stored document keeps accepting it.
+	stored := storedExample(t)
+	firstSection(stored)["evidence"] = []any{proseEvidence("ev_old", "ci", "CI passed.", "asserted")}
+	firstSection(stored)["attention"] = nil
+	if findings := validateStored(t, stored, nil); findings != nil {
+		t.Errorf("stored ci evidence rejected: %q", findings)
+	}
 }
 
 func TestAbsenceClaimsNeedStatusMissing(t *testing.T) {
-	for _, claim := range []string{"No test covers the new branch.", "None of the callers are tested.", "Nothing exercises the retry.", "The result is not shown in the checks.", "There is no passing check for it."} {
+	for _, claim := range []string{"No test covers the new branch.", "None of the tests exercise the retry.", "No passing check exists for it.", "There is no passing check for it.", "No CI run covers it."} {
 		findings := proseFindingsOf(t, func(summary, section map[string]any) {
 			section["evidence"] = []any{proseEvidence("ev_gap", "test", claim, "asserted")}
 		})
@@ -233,26 +282,27 @@ func TestAbsenceClaimsNeedStatusMissing(t *testing.T) {
 			t.Errorf("status %s flagged: %s", status, findings)
 		}
 	}
-	// A claim that only starts like an absence is not one.
-	checkEqual(t, "", proseFindingsOf(t, func(summary, section map[string]any) {
-		section["evidence"] = []any{proseEvidence("ev_ok", "test", "Normal inputs are covered by the parser tests.", "asserted")}
-	}))
+	// Code facts and claims that only start like an absence are not absence of evidence.
+	for _, claim := range []string{"No caller of RESTReader.Tail remains.", "Normal inputs are covered by the parser tests.", "The result is not shown in the checks."} {
+		checkEqual(t, "", proseFindingsOf(t, func(summary, section map[string]any) {
+			section["evidence"] = []any{proseEvidence("ev_ok", "review", claim, "asserted")}
+		}))
+	}
 }
 
 func TestSectionItemLimits(t *testing.T) {
 	findings := proseFindingsOf(t, func(summary, section map[string]any) {
 		section["evidence"] = []any{proseEvidence("ev_a", "test", "Lacks a test of the first branch.", "missing"), proseEvidence("ev_b", "test", "Lacks a test of the second branch.", "missing")}
+	})
+	requireFinding(t, strings.Split(findings, "\n"), `section 1 (sec_parser) has 2 evidence items with status "missing"; keep at most 1`)
+	// Risks are not capped: dropping a real risk would record it as mitigated.
+	checkEqual(t, "", proseFindingsOf(t, func(summary, section map[string]any) {
+		section["evidence"] = []any{proseEvidence("ev_a", "test", "Lacks a test of the first branch.", "missing")}
 		var risks []any
-		for i, text := range []string{"Alpha causes trouble.", "Bravo breaks callers.", "Charlie leaks memory.", "Delta slows startup."} {
+		for i, text := range []string{"Alpha causes trouble.", "Bravo breaks callers.", "Charlie leaks memory.", "Delta slows startup.", "Echo drops writes."} {
 			risks = append(risks, proseRisk(fmt.Sprintf("rsk_%d", i), text))
 		}
 		section["risks"] = risks
-	})
-	requireFinding(t, strings.Split(findings, "\n"), `section 1 (sec_parser) has 2 evidence items with status "missing"; keep at most 1`)
-	requireFinding(t, strings.Split(findings, "\n"), `section 1 (sec_parser) has 4 risks; keep at most 3`)
-	checkEqual(t, "", proseFindingsOf(t, func(summary, section map[string]any) {
-		section["evidence"] = []any{proseEvidence("ev_a", "test", "Lacks a test of the first branch.", "missing")}
-		section["risks"] = []any{proseRisk("rsk_0", "Alpha causes trouble."), proseRisk("rsk_1", "Bravo breaks callers."), proseRisk("rsk_2", "Charlie leaks memory.")}
 	}))
 }
 

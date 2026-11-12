@@ -454,7 +454,7 @@ func (s *stagedReview) outlineStage(ctx context.Context) error {
 // an outline that no longer validates is the run's error, not a reply to
 // repair.
 func (s *stagedReview) continueOutline() error {
-	outline, findings := s.g.Validator.PrepareOutline(s.run.Outline, s.run.Bundle, s.run.Directory)
+	outline, findings := s.g.Validator.PrepareStoredOutline(s.run.Outline, s.run.Bundle, s.run.Directory)
 	if findings != "" {
 		return errors.New("the outline to continue is no longer valid: " + boundedText(findings, 2048))
 	}
@@ -496,7 +496,7 @@ func (s *stagedReview) reuse() []string {
 	var toWrite []string
 	for _, section := range outline.Sections {
 		if details, ok := reusable[section.ID]; ok {
-			merged, findings := s.g.Validator.PrepareSectionDetails(s.parts.Outline, details, s.run.Bundle, s.run.Directory)
+			merged, findings := s.g.Validator.PrepareReusedSectionDetails(s.parts.Outline, details, s.run.Bundle, s.run.Directory)
 			if findings == "" {
 				s.parts.Sections[section.ID] = merged
 				s.outcome.Details.Reused = append(s.outcome.Details.Reused, section.ID)

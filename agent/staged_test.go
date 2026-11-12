@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -860,4 +861,42 @@ func TestStagedReviewContinuesAnOutline(t *testing.T) {
 	if _, _, err := generator.StagedReview(context.Background(), run); err == nil || len(backend.calls) != 0 {
 		t.Fatalf("err %v, calls %d", err, len(backend.calls))
 	}
+}
+
+// A stored outline and the details a previous version wrote were accepted
+// before the prose rules existed: continuing them neither fails the run nor
+// rewrites every section.
+func TestStagedReviewContinuesAStoredOutlineWithOldNoise(t *testing.T) {
+	noisy := "The Open-source module check was still in progress when the bundle was taken; see rsk_gone."
+	previousSection := func(id string) bundle.PreviousSection {
+		var content map[string]any
+		if err := json.Unmarshal([]byte(stagedSectionDetails(id, "Failed in check_run:999 on an earlier head.")), &content); err != nil {
+			t.Fatal(err)
+		}
+		hunk := map[string]string{"sec_parser": testHunk, "sec_tests": stagedTestHunk}[id]
+		content["title"], content["kind"], content["hunks"] = "Section "+id, "logical", []string{hunk}
+		encoded, err := json.Marshal(content)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return bundle.PreviousSection{ID: id, Title: "Section " + id, Kind: "logical", HunkContentHashes: []string{hunk}, Content: encoded}
+	}
+	generator, run, backend := stagedFixture(t, nil, nil)
+	run.Outline = bytes.Replace(stagedOutlineDocument(), []byte("Adds a parser and its tests."), []byte(noisy), 1)
+	if !bytes.Contains(run.Outline, []byte("still in progress")) {
+		t.Fatalf("the fixture outline has no summary to make noisy: %s", run.Outline)
+	}
+	run.Context = []byte(`{"area":{"text":"The parser turns source text into a syntax tree.","refs":[]}}`)
+	run.Reuse = &bundle.PreviousVersion{Version: 1, Sections: []bundle.PreviousSection{previousSection("sec_parser"), previousSection("sec_tests")}}
+	outcome, document, err := generator.StagedReview(context.Background(), run)
+	if err != nil || outcome.Reason != "" {
+		t.Fatalf("%+v %v", outcome.Outcome, err)
+	}
+	if len(backend.calls) != 0 || !slices.Equal(outcome.Details.Reused, []string{"sec_parser", "sec_tests"}) {
+		t.Fatalf("calls %d, details %+v", len(backend.calls), outcome.Details)
+	}
+	if text := stagedSummary(t, document)["text"]; text != noisy {
+		t.Fatalf("summary text %v", text)
+	}
+	completesStaged(t, run, document)
 }

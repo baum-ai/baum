@@ -21,10 +21,11 @@ import (
 // problem is, quotes what matched and says how to repair it.
 
 const (
-	// maxMissingEvidence and maxSectionRisks bound what one section may list;
-	// more than this buries the point a reviewer should act on.
+	// maxMissingEvidence bounds the missing items a section may list; more
+	// buries the point a reviewer should act on. Risks are not capped: a cap
+	// makes the model drop real risks, which a later version then records as
+	// mitigated.
 	maxMissingEvidence = 1
-	maxSectionRisks    = 3
 
 	// nearDuplicateThreshold is the containment at or above which two texts of
 	// one section state the same point. Containment is the share of the
@@ -75,25 +76,24 @@ var (
 	// The state changes after generation, and the evidence status is refreshed
 	// without the prose, so the page would show "Verified" beside "still running".
 	runStateAlways = regexp.MustCompile(`(?i)\b(?:still[ -](?:running|in[ -]progress|pending|queued)|had not (?:yet )?(?:finished|completed)|has not (?:yet )?(?:finished|completed)|not yet (?:finished|completed)|at (?:the )?(?:snapshot|capture)|when the bundle was (?:taken|captured))\b`)
-	// These forms are run state only when the sentence is about a check, job,
-	// run, CI, workflow, review or suite; "in-progress sessions" or "a feature
-	// in progress" are product text.
+	// These forms are run state only when the sentence is about a check, CI, a
+	// workflow, suite, pipeline or bot; "in-progress sessions", "a feature in
+	// progress" and "no job was queued or running" are product text. Job, run,
+	// thread and review are not subjects: "runs" is as often the verb.
 	runStateWithSubject = regexp.MustCompile(`(?i)\b(?:(?:was|were|is|are|remains?|remained) (?:currently )?(?:in[ -]progress|queued|pending)|(?:was|were) (?:currently )?running)\b`)
-	runStateSubject     = regexp.MustCompile(`(?i)\b(?:checks?|jobs?|runs?|ci|workflows?|reviews?|suites?|bots?|threads?|pipelines?)\b`)
+	runStateSubject     = regexp.MustCompile(`(?i)\b(?:checks?|ci|workflows?|suites?|pipelines?|bots?)\b`)
 	sentenceEnd         = regexp.MustCompile(`[.!?;]\s`)
 
 	// Talk about the model's inputs and its own process. The review is the
-	// reader's page, not a log of how it was written.
+	// reader's page, not a log of how it was written. The patterns name the
+	// phrasings about the review's input: "the excerpts" or "the snapshot" alone
+	// are common words in the code under review.
 	metaRules = []proseRule{
-		{pattern: regexp.MustCompile(`(?i)\b(?:(?:in|from|of|to|at) the bundle|the bundle (?:was|were|is|shows?|showed|lists?|listed|contains?|contained|provided|includes?|included|has|had|did|does|omits?|omitted|only|given|supplied)|(?:when|while|after|before) the bundle|bundle time)\b`)},
-		{pattern: regexp.MustCompile(`(?i)\bexcerpts?\b`)},
-		{pattern: regexp.MustCompile(`(?i)\b(?:the|this|that) snapshot\b(?:\s+(\w+))?`), follower: func(next string) bool {
-			return !slices.Contains([]string{"test", "tests", "testing", "file", "files", "image", "images", "isolation", "backup", "backups", "restore", "golden"}, next)
-		}},
+		{pattern: regexp.MustCompile(`(?i)\b(?:(?:in|from|of|to|at) the bundle|the bundle (?:was|were|is|shows?|showed|lists?|listed|contains?|contained|provided|includes?|included|has|had|did|does|omits?|omitted|only|given|supplied)|(?:when|while) the bundle (?:was|were|is|had|has)|bundle time)\b`)},
+		{pattern: regexp.MustCompile(`(?i)\b(?:(?:in|from|outside) the excerpts?|the excerpts (?:show|do not|omit))\b`)},
+		{pattern: regexp.MustCompile(`(?i)\b(?:(?:at|in) the (?:(?:supplied|captured) )?snapshot|the (?:supplied|captured|check) snapshot)\b`)},
 		{pattern: regexp.MustCompile(`(?i)\b(?:section details|outline) stage\b`)},
-		{pattern: regexp.MustCompile(`(?i)\bthe checkout\b(?:\s+(\w+))?`), follower: func(next string) bool {
-			return next == "" || slices.Contains([]string{"does", "did", "is", "was", "has", "had", "shows", "show", "showed", "contains", "contain", "only", "and", "or", "to", "for", "so", "but", "which", "that", "there", "lacks", "omits", "confirms", "reads", "read"}, next)
-		}},
+		{pattern: regexp.MustCompile(`(?i)\b(?:(?:in|from) the head checkout|in the checkout (?:read|shown))\b`)},
 		{pattern: regexp.MustCompile(`\bI (?:read|opened|did not|didn't|could not|couldn't|checked|ran)\b|(?i:\bmy reading\b)`)},
 	}
 
@@ -103,34 +103,73 @@ var (
 	hunkIDPattern    = regexp.MustCompile(`\bh_[0-9a-f]{8,}\b`)
 	itemIDPattern    = regexp.MustCompile(`\b(?:rsk|ev|dec|sec)_[a-z0-9_]+\b`)
 	checkIDPattern   = regexp.MustCompile(`\b(?:check_run|status):\d+\b`)
-	threadIDPattern  = regexp.MustCompile(`\bPRRT_\w+`)
+	threadIDPattern  = regexp.MustCompile(`\bPRRT_[A-Za-z0-9_-]+`)
 	commentIDPattern = regexp.MustCompile(`\bcomment (\d{6,})\b|` + "`(\\d{6,})`")
 	sessionIDPattern = regexp.MustCompile(`\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b`)
 	fullSHAPattern   = regexp.MustCompile(`\b[0-9a-f]{40}\b`)
 
 	ticketTitle = regexp.MustCompile(`^\s*[A-Z][A-Z0-9]+-\d+(?:[:\s]|$)|\([A-Z][A-Z0-9]+-\d+\)`)
 
-	absenceStart    = regexp.MustCompile(`(?i)^\s*(?:no|none of|nothing)\b`)
-	absenceContains = regexp.MustCompile(`(?i)\b(?:is not shown|are not shown|no (?:passing|completed|finished) (?:check|run|result))`)
+	// An absence claim is about tests, checks, runs or evidence ("No test
+	// covers X"); "No caller of X remains" is a code fact and is not.
+	absenceStart    = regexp.MustCompile(`(?i)^\s*(?:no|none of the|nothing)\s+(?:(?:passing|completed|finished|new|automated|unit|integration)\s+)*(?:tests?|checks?|runs?|ci|coverage|evidence|results?)\b`)
+	absenceContains = regexp.MustCompile(`(?i)\bno (?:passing|completed|finished) (?:check|run|result)`)
 )
 
 // absenceStatuses are the evidence statuses that can say something is absent.
 var absenceStatuses = []string{"missing", "unavailable", "failed", "skipped", "pending"}
 
+// proseScope says which prose rules apply to the document being prepared.
+type proseScope int
+
+const (
+	// proseFull is a document written in one pass: every rule, every
+	// identifier resolved against the document and the bundle.
+	proseFull proseScope = iota
+	// proseOutline is a staged outline: no risk, evidence or decision exists
+	// yet, so prose and the recommendation may cite section IDs only.
+	proseOutline
+	// proseDetails is one section's details merged into the outline: its own
+	// items resolve, and so does any section ID; the recommendation was
+	// checked with the outline.
+	proseDetails
+	// proseReused is details a previous version wrote: the wording rules, but
+	// no identifier is resolved against the bundle (a check or hunk of an
+	// earlier head does not exist now).
+	proseReused
+	// proseOff applies no prose rule: a stored outline being continued, the
+	// context stage and the final assembly of stages already checked one by
+	// one.
+	proseOff
+)
+
 // proseFindings applies the prose rules to an authored document's decoded
 // value; the bundle, when there is one, tells which identifiers exist.
-func proseFindings(value any, bundle *bundlepkg.Bundle) []string {
+func proseFindings(value any, bundle *bundlepkg.Bundle, scope proseScope) []string {
+	if scope == proseOff {
+		return nil
+	}
+	if scope == proseReused {
+		bundle = nil
+	}
 	root, _ := value.(map[string]any)
-	known := newKnownIDs(root, bundle)
+	known := newKnownIDs(root, bundle, scope)
 	var findings []string
-	if summary, ok := root["summary"].(map[string]any); ok {
+	// A section's details are checked on their own: the outline around them was
+	// accepted by its stage, or is a stored one that is continued.
+	detailsOnly := scope == proseDetails || scope == proseReused
+	if summary, ok := root["summary"].(map[string]any); ok && !detailsOnly {
 		walkProse(summary, "summary", func(where, key, text string) {
 			findings = append(findings, textFindings(known, where, key, text)...)
 		})
+		findings = append(findings, summaryJudgmentFindings(summary)...)
 	}
 	sections := jsonObjects(root["sections"])
 	for i, section := range sections {
 		id, _ := section["id"].(string)
+		if detailsOnly && section["details"] != nil {
+			continue
+		}
 		prefix := fmt.Sprintf("section %d (%s)", i+1, id)
 		visit := func(where, key, text string) {
 			findings = append(findings, textFindings(known, prefix+" "+where, key, text)...)
@@ -157,9 +196,82 @@ func proseFindings(value any, bundle *bundlepkg.Bundle) []string {
 				walkProse(block, "block "+kind, visit)
 			}
 		}
+		findings = append(findings, sectionJudgmentFindings(prefix, section)...)
 		findings = append(findings, sectionShapeFindings(prefix, section)...)
 	}
-	return append(findings, recommendationFindings(root, sections)...)
+	switch scope {
+	case proseFull:
+		findings = append(findings, recommendationFindings(root, sections, false)...)
+	case proseOutline:
+		findings = append(findings, recommendationFindings(root, sections, true)...)
+	}
+	return findings
+}
+
+// The run-state and meta rules apply only to the fields that carry the
+// review's own judgement: evidence claims, details and expectations,
+// attention, risk text, the overview, the review exchange, assessment reasons
+// and the recommendation. Behaviour steps, context, intent, titles and the
+// other blocks describe the code under review, which may itself run jobs, take
+// snapshots and bundle things.
+func summaryJudgmentFindings(summary map[string]any) []string {
+	var findings []string
+	judge := func(where, text string) {
+		findings = append(findings, judgmentFindings(where, text)...)
+	}
+	if text, ok := summary["text"].(string); ok {
+		judge("summary text", text)
+	}
+	if exchange, ok := summary["review_exchange"].(map[string]any); ok {
+		if text, ok := exchange["summary"].(string); ok {
+			judge("summary review_exchange summary", text)
+		}
+	}
+	if attention, ok := summary["attention"].(map[string]any); ok {
+		if text, ok := attention["text"].(string); ok {
+			judge("summary attention text", text)
+		}
+	}
+	if recommendation, ok := summary["recommendation"].(map[string]any); ok {
+		if text, ok := recommendation["text"].(string); ok {
+			judge("summary recommendation text", text)
+		}
+	}
+	return findings
+}
+
+func sectionJudgmentFindings(prefix string, section map[string]any) []string {
+	var findings []string
+	judge := func(where, text string) {
+		findings = append(findings, judgmentFindings(prefix+" "+where, text)...)
+	}
+	if attention, ok := section["attention"].(map[string]any); ok {
+		if text, ok := attention["text"].(string); ok {
+			judge("attention text", text)
+		}
+	}
+	for _, risk := range jsonObjects(section["risks"]) {
+		id, _ := risk["id"].(string)
+		if text, ok := risk["text"].(string); ok {
+			judge("risk "+id+" text", text)
+		}
+	}
+	for _, evidence := range jsonObjects(section["evidence"]) {
+		id, _ := evidence["id"].(string)
+		for _, key := range []string{"claim", "detail", "expects"} {
+			if text, ok := evidence[key].(string); ok {
+				judge("evidence "+id+" "+key, text)
+			}
+		}
+	}
+	if assessment, ok := section["assessment"].(map[string]any); ok {
+		for i, reason := range jsonObjects(assessment["reasons"]) {
+			if text, ok := reason["text"].(string); ok {
+				judge(fmt.Sprintf("assessment reason %d text", i+1), text)
+			}
+		}
+	}
+	return findings
 }
 
 // walkProse visits every prose string under node, with where naming its path.
@@ -205,8 +317,8 @@ func walkProse(node any, where string, visit func(where, key, text string)) {
 	}
 }
 
-// textFindings applies the rules that look at one prose string.
-func textFindings(known knownIDs, where, key, text string) []string {
+// judgmentFindings applies the run-state and meta rules to one text.
+func judgmentFindings(where, text string) []string {
 	var findings []string
 	finding := func(format string, args ...any) {
 		findings = append(findings, fmt.Sprintf("%s: "+format, append([]any{where}, args...)...))
@@ -214,7 +326,7 @@ func textFindings(known knownIDs, where, key, text string) []string {
 	if match := runStateAlways.FindString(text); match != "" {
 		finding("%q states when a check, bot review or thread was captured; that state changes after the review is written and the page shows its current status, so describe what the check covers or the finding itself, not whether it had finished", match)
 	} else if match := runStateWithSubjectIn(text); match != "" {
-		finding("%q states the run state of a check, job or review; that state changes after the review is written and the page shows its current status, so describe what it covers, not whether it had finished", match)
+		finding("%q states the run state of a check; that state changes after the review is written and the page shows its current status, so describe what it covers, not whether it had finished", match)
 	}
 	for _, rule := range metaRules {
 		if match := matchRule(rule, text); match != "" {
@@ -222,10 +334,16 @@ func textFindings(known knownIDs, where, key, text string) []string {
 			break
 		}
 	}
-	findings = append(findings, known.unresolved(where, text)...)
+	return findings
+}
+
+// textFindings applies the rules that look at any prose string: identifiers
+// must resolve, and a title carries no ticket key.
+func textFindings(known knownIDs, where, key, text string) []string {
+	findings := known.unresolved(where, text)
 	if key == "title" {
 		if match := ticketKey(text); match != "" {
-			finding("title carries the ticket key %q; the key is shown elsewhere, so write the title without it", strings.TrimSpace(match))
+			findings = append(findings, fmt.Sprintf("%s: title carries the ticket key %q; the key is shown elsewhere, so write the title without it", where, strings.TrimSpace(match)))
 		}
 	}
 	return findings
@@ -251,7 +369,7 @@ func ticketKey(text string) string {
 }
 
 // runStateWithSubjectIn returns the run-state phrase of the first sentence of
-// text that has one and is about a check, job, run, workflow, review or suite.
+// text that has one and is about a check, CI, a workflow, suite, pipeline or bot.
 func runStateWithSubjectIn(text string) string {
 	start := 0
 	for _, end := range append(sentenceEnd.FindAllStringIndex(text, -1), []int{len(text), len(text)}) {
@@ -283,8 +401,8 @@ func matchRule(rule proseRule, text string) string {
 }
 
 // sectionShapeFindings applies the rules about a section's items: ci
-// evidence, absence claimed as a finding, too many missing items or risks,
-// and a point stated twice.
+// evidence, absence claimed as a finding, too many missing items, and a
+// point stated twice.
 func sectionShapeFindings(prefix string, section map[string]any) []string {
 	var findings []string
 	missing := 0
@@ -313,9 +431,6 @@ func sectionShapeFindings(prefix string, section map[string]any) []string {
 		findings = append(findings, fmt.Sprintf("%s has %d evidence items with status \"missing\"; keep at most %d, the one that matters most, and drop or merge the rest", prefix, missing, maxMissingEvidence))
 	}
 	risks := jsonObjects(section["risks"])
-	if len(risks) > maxSectionRisks {
-		findings = append(findings, fmt.Sprintf("%s has %d risks; keep at most %d, the ones a reviewer must act on, and merge or drop the rest", prefix, len(risks), maxSectionRisks))
-	}
 	type point struct{ label, text string }
 	var points []point
 	if attention, ok := section["attention"].(map[string]any); ok {
@@ -332,7 +447,7 @@ func sectionShapeFindings(prefix string, section map[string]any) []string {
 	for i := range points {
 		for j := i + 1; j < len(points); j++ {
 			if textContainment(points[i].text, points[j].text) >= nearDuplicateThreshold {
-				findings = append(findings, fmt.Sprintf("%s states the same point as %s (near-duplicate text); say it once, in the risk, and make attention point at something else or set it to null", points[j].label, points[i].label))
+				findings = append(findings, fmt.Sprintf("%s states the same point as %s (near-duplicate text); say each point once: drop or rewrite the repeat, and keep attention for something the risks do not already say, or set it to null", points[j].label, points[i].label))
 			}
 		}
 	}
@@ -380,53 +495,36 @@ func wordSet(text string) map[string]bool {
 
 // recommendationFindings checks summary.recommendation.refs: each names a
 // section, or a risk, evidence item or decision of some section, and a
-// decision to look first or request changes names at least one. While a
-// staged review's sections lack their details (the outline stage writes the
-// recommendation before any risk exists), only section IDs can be checked.
-func recommendationFindings(root map[string]any, sections []map[string]any) []string {
+// decision to look first or request changes names at least one. The outline
+// stage writes the recommendation before any risk exists, so there
+// (sectionsOnly) a ref may name a section only.
+func recommendationFindings(root map[string]any, sections []map[string]any, sectionsOnly bool) []string {
 	summary, _ := root["summary"].(map[string]any)
 	recommendation, _ := summary["recommendation"].(map[string]any)
 	if recommendation == nil {
 		return nil
 	}
-	known := map[string]bool{}
-	incomplete := false
-	for _, section := range sections {
-		if id, _ := section["id"].(string); id != "" {
-			known[id] = true
-		}
-		if section["details"] != nil {
-			incomplete = true
-		}
-		for _, field := range []string{"risks", "evidence"} {
-			for _, item := range jsonObjects(section[field]) {
-				if id, _ := item["id"].(string); id != "" {
-					known[id] = true
-				}
-			}
-		}
-		for _, block := range jsonObjects(section["blocks"]) {
-			if block["kind"] != "decisions" {
-				continue
-			}
-			for _, item := range jsonObjects(block["items"]) {
-				if id, _ := item["id"].(string); id != "" {
-					known[id] = true
-				}
-			}
-		}
-	}
+	known := newKnownIDs(root, nil, proseFull)
 	refs := stringSlice(recommendation["refs"])
 	var findings []string
 	decision, _ := recommendation["decision"].(string)
 	if (decision == "look_first" || decision == "request_changes") && len(refs) == 0 {
 		findings = append(findings, fmt.Sprintf("summary recommendation: decision %q needs refs naming the sections, risks or evidence to look at", decision))
 	}
-	for _, ref := range refs {
-		if known[ref] || (incomplete && !strings.HasPrefix(ref, "sec_")) {
-			continue
+	sectionIDs := map[string]bool{}
+	for _, section := range sections {
+		if id, _ := section["id"].(string); id != "" {
+			sectionIDs[id] = true
 		}
-		findings = append(findings, fmt.Sprintf("summary recommendation ref %q: does not resolve to a section, or a risk, evidence or decision of a section; name an existing ID or drop the ref", ref))
+	}
+	for _, ref := range refs {
+		switch {
+		case sectionIDs[ref]:
+		case sectionsOnly:
+			findings = append(findings, fmt.Sprintf("summary recommendation ref %q: the outline can cite only section IDs; cite the section", ref))
+		case !known.items[ref]:
+			findings = append(findings, fmt.Sprintf("summary recommendation ref %q: does not resolve to a section, or a risk, evidence or decision of a section; name an existing ID or drop the ref", ref))
+		}
 	}
 	return findings
 }
@@ -434,25 +532,21 @@ func recommendationFindings(root map[string]any, sections []map[string]any) []st
 // knownIDs are the identifiers prose may name: the document's own items, and
 // the bundle's hunks, checks, review threads, comments and sessions.
 type knownIDs struct {
-	// items holds the section, risk, evidence and decision IDs; itemsFinal is
-	// false while a staged review's sections lack their details, when an item
-	// another stage writes does not exist yet and only section IDs are checked.
-	items      map[string]bool
-	itemsFinal bool
+	// items holds the section, risk, evidence and decision IDs; sectionsOnly is
+	// set for a staged outline, which can cite sections only.
+	items        map[string]bool
+	sectionsOnly bool
 	// withBundle is false without a bundle, which leaves hunk, check, thread,
 	// comment and session IDs unchecked.
 	withBundle                                 bool
 	hunks, checks, threads, comments, sessions map[string]bool
 }
 
-func newKnownIDs(root map[string]any, bundle *bundlepkg.Bundle) knownIDs {
-	known := knownIDs{items: map[string]bool{}, itemsFinal: true}
+func newKnownIDs(root map[string]any, bundle *bundlepkg.Bundle, scope proseScope) knownIDs {
+	known := knownIDs{items: map[string]bool{}, sectionsOnly: scope == proseOutline}
 	for _, section := range jsonObjects(root["sections"]) {
 		if id, _ := section["id"].(string); id != "" {
 			known.items[id] = true
-		}
-		if section["details"] != nil {
-			known.itemsFinal = false
 		}
 		for _, field := range []string{"risks", "evidence"} {
 			for _, item := range jsonObjects(section[field]) {
@@ -505,7 +599,10 @@ func (k knownIDs) unresolved(where, text string) []string {
 		findings = append(findings, fmt.Sprintf("%s: %q is not a known %s; cite an existing one or drop it", where, match, kind))
 	}
 	for _, match := range itemIDPattern.FindAllString(text, -1) {
-		if !k.items[match] && (k.itemsFinal || strings.HasPrefix(match, "sec_")) {
+		switch {
+		case k.sectionsOnly && !strings.HasPrefix(match, "sec_"):
+			findings = append(findings, fmt.Sprintf("%s: %q: the outline can cite only section IDs; cite the section", where, match))
+		case !k.items[match]:
 			report(match, "section, risk, evidence or decision ID of this review")
 		}
 	}

@@ -406,32 +406,60 @@ copy:
   stage writes it, so it survives into the assembled and stored document;
   refresh never adds or changes it. `summary.review_exchange.summary` may be
   null, for a pull request nobody has reviewed.
-- Prose rules (`prose_rules.go`) run on newly authored documents only, in
-  `Validate` and `Prepare` (so in every stage of a staged run), and their
-  findings go back to the model through the repair loop. `ValidateStored`
+- Prose rules (`prose_rules.go`) run on newly authored documents only, and
+  their findings go back to the model through the repair loop. `ValidateStored`
   and `Refresh` never apply them, so a stored review is never rejected or
-  rewritten for them. They reject, in the prose fields of the summary and
-  sections: run-state wording about checks, bot reviews or threads ("still in
-  progress", "had not finished", "at the snapshot": the evidence status is
-  refreshed later, the sentence is not); talk about the model's inputs
-  ("the bundle", "excerpts", "the snapshot", "outline stage", "the checkout",
-  "I read"); a ticket key in a title; `ci` evidence (the page shows the
-  checks); an absence claim ("No test covers X") whose status is not
-  `missing`, `unavailable`, `failed`, `skipped` or `pending`; more than one
-  `missing` evidence or three risks in a section; two risks, or a risk and
-  the section's attention, that state one point (the shorter text has at
-  least six distinct words and at least 80% of them, stop words aside, appear in the
-  longer one); and recommendation refs that name no section, risk, evidence
-  or decision, or are empty for `look_first` and `request_changes`.
-  Identifiers in prose must resolve, because the viewer links them: a hunk
-  ID must be in the bundle's diff, a `rsk_`, `ev_`, `dec_` or `sec_` ID in the
-  document, a `check_run:` or `status:` ID among the bundle's checks, a `PRRT_`
-  ID among its review threads, `comment <digits>` (or a code span of digits)
-  among its conversation items, and a session UUID a non-restricted session;
-  without a bundle only the document's own IDs are checked, and while a
-  staged review's sections lack their details only section IDs are, since
-  another stage writes the rest. A full 40-hex SHA is rejected: write the
-  short SHA.
+  rewritten for them. Which rules run depends on what is being prepared:
+  a one-pass document (`Validate`, `Prepare`) gets all of them; a staged
+  outline (`PrepareOutline`) gets them with prose and recommendation refs
+  limited to section IDs, because no risk, evidence or decision exists yet
+  ("the outline can cite only section IDs; cite the section"); a section's
+  details (`PrepareSectionDetails`) are checked on their own, citing their own
+  items and any section; details a previous version wrote
+  (`PrepareReusedSectionDetails`) get the wording rules but no identifier is
+  resolved against the bundle, since a check or hunk of an earlier head does
+  not exist now and the section would be rewritten on every push; the context
+  stage, a stored outline that is continued (`PrepareStoredOutline`) and the
+  final assembly (`PrepareStaged`, `CompleteStaged`) apply none, since each
+  part was checked when it was written or accepted.
+- The rules, and the fields they read:
+  - Run-state wording ("still in progress", "had not finished", "at the
+    snapshot", and "was/is in progress, queued or pending" when the sentence
+    is about a check, CI, a workflow, suite, pipeline or bot: the evidence
+    status is refreshed later, the sentence is not) and talk about the model's
+    inputs ("in the bundle", "in the excerpts", "in the supplied snapshot",
+    "in the head checkout", "outline stage", "I read") are checked only in the
+    fields that carry the review's judgement: evidence claim, detail and
+    expects, attention text, risk text, the overview, the review exchange
+    summary, assessment reasons and the recommendation text. Behaviour steps,
+    context, intent, titles, the other descriptive blocks, tiles and the
+    release note describe the code under review, which may itself run jobs and
+    take snapshots, and are not checked for them.
+  - Identifiers in any prose field must resolve, because the viewer links
+    them: a hunk ID must be in the bundle's diff; a `rsk_`, `ev_`, `dec_` or
+    `sec_` ID in the document; a `check_run:` or `status:` ID among the
+    bundle's checks; a `PRRT_` ID (hyphens allowed) among its review threads;
+    `comment <digits>` (or a code span of digits) among its conversation items;
+    a session UUID a non-restricted session. Without a bundle only the
+    document's own IDs are checked. A full 40-hex SHA is rejected: write the
+    short SHA.
+  - A ticket key in a title (section, step or decision titles).
+  - `ci` evidence: the authored contract and the model schema do not offer the
+    kind (the page shows the checks; a `test` item whose claim names what the
+    tests cover, anchored to the check, replaces it); the stored contract keeps
+    it, and the finding remains for a path without the enum.
+  - An absence claim about tests, checks, runs or evidence ("No test covers
+    X", "no passing check") whose status is not `missing`, `unavailable`,
+    `failed`, `skipped` or `pending`; "No caller of X remains" is a code fact
+    and is left alone.
+  - More than one `missing` evidence item in a section. Risks are not capped:
+    a cap makes the model drop real risks, which the next version then records
+    as mitigated.
+  - Two risks, or a risk and the section's attention, that state one point:
+    at least six distinct words in the shorter text and at least 80% of them
+    (stop words aside) in the longer one.
+  - Recommendation refs that name no section, risk, evidence or decision, or
+    none for `look_first` and `request_changes`.
 
 ### History
 
