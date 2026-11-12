@@ -810,6 +810,14 @@ it("opens on the pull request an Ask names, with the part of the review it picke
   // Leaving the pull request's page forgets the Ask.
   await render({ page: "inbox" });
   await until(() => expect(state!.ask).toBeNull());
+  // Another PR's first Ask must still open the panel after navigation
+  // cleared the prior focus; it starts a new conversation for that PR.
+  await act(async () => sessionPanel.hide());
+  await render({ ...pr, pull_request: 8 });
+  await act(async () => sessionPanel.ask({ repository: "acme/demo", number: 8 }));
+  await until(() => expect(panel()).not.toBeNull());
+  expect(state!.conversation).toBeNull();
+  expect(document.activeElement).toBe(composer());
 });
 
 it("shows a comment saved to the pending review at once", async () => {

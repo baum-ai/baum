@@ -60,6 +60,7 @@ function loadState(): PanelState {
 }
 
 let state = loadState();
+let askSequence = 0;
 const listeners = new Set<() => void>();
 function change(patch: Partial<PanelState>) {
   state = { ...state, ...patch };
@@ -120,7 +121,7 @@ export const sessionPanel = {
         repository: pull.repository,
         pull_request: pull.number,
         focus,
-        seq: (state.ask?.seq ?? 0) + 1,
+        seq: ++askSequence,
       },
     });
   },
@@ -153,6 +154,7 @@ export function resetSessionPanel() {
     // Nothing kept.
   }
   state = loadState();
+  askSequence = 0;
   returnTo = null;
   for (const listener of listeners) listener();
 }
