@@ -229,3 +229,75 @@ func TestExtractedDecisionsAreNotReadByTheProseRules(t *testing.T) {
 		t.Errorf("a model-written decision with a ticket key and a full SHA: findings %q", findings)
 	}
 }
+
+// The regression the prose rules exist for (ENG-1957): a review generated
+// while a required check ran said so in its evidence, and once the check
+// succeeded the page showed "Verified" beside "still in progress". Through
+// the staged path, the run-state claim goes back for repair; a claim that
+// names what the tests cover, anchored to the check and a test hunk, passes
+// as pending; and a refresh after the check succeeded verifies it with its
+// text unchanged and still true.
+func TestRunStateClaimIsRepairedAndAStatelessClaimRefreshes(t *testing.T) {
+	v, err := sharedValidator()
+	checkNoError(t, err)
+	b := stagedBundle()
+	required := true
+	b.Checks = []bundlepkg.Check{{ID: "check_run:777", Name: "Open-source module", Kind: "check_run", Status: "in_progress", HeadSHA: "aaaaaaa", Required: &required}}
+	directory := t.TempDir()
+	outline := preparedOutline(t, v, b)
+	details := func(claim string) []byte {
+		d := stagedDetails("sec_tests", stagedTestHunk)
+		d["evidence"] = []any{map[string]any{
+			"id": "ev_retry", "kind": "test", "claim": claim, "status": "pending", "source": "model",
+			"anchors": []any{map[string]any{"type": "check", "id": "check_run:777"}, map[string]any{"type": "hunk", "id": stagedTestHunk}},
+		}}
+		return encodeJSON(t, d)
+	}
+
+	_, findings := v.PrepareSectionDetails(outline, details("The Open-source module check was still in progress when the bundle was taken."), b, directory)
+	for _, want := range []string{
+		`section 2 (sec_tests) evidence ev_retry claim: "still in progress" states when a check`,
+		`section 2 (sec_tests) evidence ev_retry claim: "when the bundle was" talks about the model's inputs`,
+	} {
+		if !strings.Contains(findings, want) {
+			t.Errorf("findings %q lack %q", findings, want)
+		}
+	}
+
+	const claim = "TestX covers the retry path."
+	tests, findings := v.PrepareSectionDetails(outline, details(claim), b, directory)
+	checkEqual(t, "", findings)
+	parser, findings := v.PrepareSectionDetails(outline, encodeJSON(t, stagedDetails("sec_parser", testHunk)), b, directory)
+	checkEqual(t, "", findings)
+	final, err := AssembleStaged(StagedParts{Outline: outline, Sections: map[string][]byte{"sec_parser": parser, "sec_tests": tests}}, true)
+	checkNoError(t, err)
+	prepared, findings := v.PrepareStaged(final, b, directory)
+	checkEqual(t, "", findings)
+	completed, findings := v.CompleteStaged(prepared, b, directory, "model", "staged-v1", time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+	checkEqual(t, "", findings)
+	if stored := v.ValidateStored(completed, b); stored != nil {
+		t.Fatalf("the completed document is not a valid stored one: %q", stored)
+	}
+	testsSection := func(document []byte) map[string]any {
+		t.Helper()
+		section := mustDecode(t, document)["sections"].([]any)[1].(map[string]any)
+		checkEqual(t, "sec_tests", section["id"])
+		return section
+	}
+	evidence := testsSection(completed)["evidence"].([]any)[0].(map[string]any)
+	checkEqual(t, "pending", evidence["status"])
+	checkEqual(t, claim, evidence["claim"])
+
+	b.Checks[0].Status, b.Checks[0].Conclusion = "completed", "success"
+	refreshed, err := v.Refresh(completed, b, time.Date(2026, 1, 1, 1, 0, 0, 0, time.UTC))
+	checkNoError(t, err)
+	if stored := v.ValidateStored(refreshed, b); stored != nil {
+		t.Fatalf("the refreshed document is not a valid stored one: %q", stored)
+	}
+	section := testsSection(refreshed)
+	evidence = section["evidence"].([]any)[0].(map[string]any)
+	checkEqual(t, "verified", evidence["status"])
+	checkEqual(t, claim, evidence["claim"])
+	// The refreshed text still meets the rules a new review is written to.
+	checkEqual(t, "", strings.Join(sectionJudgmentFindings("section 2 (sec_tests)", section, false), "\n"))
+}
