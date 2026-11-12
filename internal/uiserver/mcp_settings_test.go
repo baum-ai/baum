@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -304,10 +305,12 @@ func TestSettingsToolsReadTheRealRoutesAndNoSecret(t *testing.T) {
 	for name, token := range map[string]string{"chat": chat, "action": action} {
 		for _, id := range []string{"fix", "fix-checks"} {
 			text = call(token, "repository_prompts", map[string]any{"repository": "owner/repo", "id": id})
-			for _, entry := range own.Prompts {
-				if string(entry["id"]) != `"`+id+`"` {
+			for _, stored := range own.Prompts {
+				if string(stored["id"]) != `"`+id+`"` {
 					continue
 				}
+				// A copy: the map's order may give the action its turn first.
+				entry := maps.Clone(stored)
 				if name == "action" {
 					if string(entry["source"]) == `"global"` {
 						entry["missing_safety_rules"] = json.RawMessage("null")
