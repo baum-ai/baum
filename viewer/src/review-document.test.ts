@@ -28,6 +28,7 @@ import {
   reviewExchange,
   reviewExchangeFacts,
   reviewThreadStatus,
+  withLiveThreads,
   type ReviewExchangeFacts,
   combineExchangeFacts,
   contextRefUrl,
@@ -1426,31 +1427,31 @@ describe("combineExchangeFacts", () => {
   });
 });
 
-describe("reviewThreadStatus", () => {
-  const withThreads = (
-    synced: boolean,
-    threads: ReturnType<typeof indexedThread>[],
-    findings: { thread: string; severity: FindingSeverity }[] = [],
-  ): ReviewDocument => ({
-    ...document,
-    review: { ...document.review, sources: { review_threads: synced } },
-    agent_reviews: [
-      {
-        ...document.agent_reviews[0]!,
-        findings: findings.map(({ thread, severity }) => ({
-          id: `f_${thread}`,
-          severity,
-          text: `on ${thread}`,
-          section: null,
-          anchors: [{ type: "review_thread", id: thread }],
-          state: "open",
-          addressed_by: null,
-        })),
-      },
-    ],
-    index: { ...document.index, threads },
-  });
+const withThreads = (
+  synced: boolean,
+  threads: ReturnType<typeof indexedThread>[],
+  findings: { thread: string; severity: FindingSeverity }[] = [],
+): ReviewDocument => ({
+  ...document,
+  review: { ...document.review, sources: { review_threads: synced } },
+  agent_reviews: [
+    {
+      ...document.agent_reviews[0]!,
+      findings: findings.map(({ thread, severity }) => ({
+        id: `f_${thread}`,
+        severity,
+        text: `on ${thread}`,
+        section: null,
+        anchors: [{ type: "review_thread", id: thread }],
+        state: "open",
+        addressed_by: null,
+      })),
+    },
+  ],
+  index: { ...document.index, threads },
+});
 
+describe("reviewThreadStatus", () => {
   // GitHub still lists an outdated thread nobody resolved as unresolved.
   it("lists unresolved threads, outdated ones included", () => {
     const status = reviewThreadStatus(
@@ -1493,6 +1494,65 @@ describe("reviewThreadStatus", () => {
   it("is unknown when the document carries no synced threads", () => {
     expect(reviewThreadStatus(withThreads(false, [indexedThread("T1", false)]))).toBeNull();
     expect(reviewThreadStatus(document)).toBeNull();
+  });
+});
+
+const live = (unresolved: string[], complete = true) => ({
+  unresolved: new Set(unresolved),
+  complete,
+});
+const findingStates = (shown: ReviewDocument) =>
+  shown.agent_reviews.flatMap((review) => review.findings.map((finding) => finding.state));
+
+describe("withLiveThreads", () => {
+  // The case behind it: a thread resolved seconds after the review read it.
+  it("resolves a thread GitHub no longer lists, with the finding it carries", () => {
+    const stored = withThreads(
+      true,
+      [indexedThread("T1", false), indexedThread("T2", false)],
+      [{ thread: "T1", severity: "should_fix" }],
+    );
+    const shown = withLiveThreads(stored, live(["T2"]));
+    expect(openIds(reviewThreadStatus(shown))).toEqual(["T2"]);
+    expect(findingStates(shown)).toEqual(["resolved"]);
+    // The stored review is left as it was.
+    expect(openIds(reviewThreadStatus(stored))).toEqual(["T1", "T2"]);
+  });
+
+  it("reopens a thread GitHub lists as unresolved again", () => {
+    const stored = withThreads(
+      true,
+      [indexedThread("T1", true)],
+      [{ thread: "T1", severity: "must_fix" }],
+    );
+    stored.agent_reviews[0]!.findings[0]!.state = "resolved";
+    const shown = withLiveThreads(stored, live(["T1"]));
+    expect(openIds(reviewThreadStatus(shown))).toEqual(["T1"]);
+    expect(findingStates(shown)).toEqual(["open"]);
+  });
+
+  it("keeps the stored state of a thread missing from a list cut short", () => {
+    const stored = withThreads(true, [indexedThread("T1", false), indexedThread("T2", false)]);
+    const shown = withLiveThreads(stored, live(["T2"], false));
+    expect(openIds(reviewThreadStatus(shown))).toEqual(["T1", "T2"]);
+  });
+
+  it("leaves a dismissed finding dismissed", () => {
+    const stored = withThreads(
+      true,
+      [indexedThread("T1", false)],
+      [{ thread: "T1", severity: "consider" }],
+    );
+    stored.agent_reviews[0]!.findings[0]!.state = "dismissed";
+    expect(findingStates(withLiveThreads(stored, live([])))).toEqual(["dismissed"]);
+  });
+
+  it("returns the document itself when nothing changed, threads are not synced or nothing is read", () => {
+    const stored = withThreads(true, [indexedThread("T1", false)]);
+    expect(withLiveThreads(stored, live(["T1"]))).toBe(stored);
+    expect(withLiveThreads(stored, null)).toBe(stored);
+    const unsynced = withThreads(false, [indexedThread("T1", false)]);
+    expect(withLiveThreads(unsynced, live([]))).toBe(unsynced);
   });
 });
 

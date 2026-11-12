@@ -344,6 +344,16 @@ a comment over 16,000 characters, or one from an older daemon, which sends no
 once, without a dialog, reads **Resolving…** meanwhile, and removes the thread
 from the list once GitHub confirms; a refusal is shown under the thread.
 
+A review's own thread index is a snapshot from when it was generated, so a
+thread resolved after that would still read as unresolved. The review page
+reads the same list (`useLiveThreads` in `src/threads.tsx`) and hands it to the
+viewer as `liveThreads`, which the Activity tab, its badge and the findings
+those threads carry read over the snapshot (`withLiveThreads`). A thread in the
+list is open, one missing from a complete list is resolved, and one missing
+from a list cut short keeps its stored state. With discovery counting none
+unresolved, nothing is asked. An earlier version, a read not back yet and a
+read that failed keep the snapshot.
+
 The checks (`useChecks` and `PullRequestChecks` in `src/checks.tsx`) are asked
 for by their row as soon as the panel shows it, open or not, with `GET
 api/prs/checks` and the head commit the panel shows (`head_sha`), again when
