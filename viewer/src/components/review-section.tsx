@@ -677,6 +677,10 @@ function BlockView({
     }
     case "behavior": {
       const behavior = block as Extract<Block, { kind: "behavior" }>;
+      const firstCiting = new Map<string, string>();
+      for (const step of behavior.steps) {
+        for (const ref of step.evidence) if (!firstCiting.has(ref)) firstCiting.set(ref, step.id);
+      }
       return (
         <Part label="Behavior">
           <ol className="space-y-2">
@@ -692,7 +696,11 @@ function BlockView({
                       {step.evidence.map((ref) => {
                         const evidence = section.evidence.find((item) => item.id === ref);
                         return (
-                          <li key={ref}>
+                          <li
+                            key={ref}
+                            // The first step that cites it is where the item is.
+                            id={firstCiting.get(ref) === step.id ? itemId(ref) : undefined}
+                          >
                             {evidence ? (
                               <EvidenceBadge evidence={evidence} compact />
                             ) : (

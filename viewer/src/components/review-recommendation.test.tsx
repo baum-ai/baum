@@ -5,6 +5,7 @@ import { reviewDocumentFor } from "../../test/review-document";
 import {
   reviewExchangeFacts,
   reviewRecommendation,
+  type Block,
   type Recommendation,
   type ReviewDocument,
 } from "../review-document";
@@ -173,5 +174,19 @@ describe("mitigated risks in a section", () => {
       for (const risk of document.sections[0]!.risks) risk.state = "active";
     });
     expect(html).not.toContain("mitigated risk");
+  });
+});
+
+describe("evidence items on the page", () => {
+  it("gives evidence an element ID on the first step that cites it, once", () => {
+    const html = sectionHtml((document) => {
+      const behavior = document.sections[0]!.blocks.find((block) => block.kind === "behavior") as
+        | Extract<Block, { kind: "behavior" }>
+        | undefined;
+      const first = behavior!.steps[0]!;
+      first.evidence = ["ev_1"];
+      behavior!.steps.push({ ...structuredClone(first), id: "beh_again" });
+    });
+    expect(html.match(/id="overview-ev_1"/g)).toHaveLength(1);
   });
 });
