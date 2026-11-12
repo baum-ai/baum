@@ -116,6 +116,26 @@ const KEY_NAMES: Record<string, string> = {
   Escape: "Esc",
   " ": "Space",
 };
+/** The key that shows or hides the session panel anywhere but in a text
+ *  field: the backtick, under Escape, where a drop-down terminal's is. */
+export const PANEL_KEY = "`";
+export const PANEL_KEY_LABEL = "`";
+
+/** Whether a keydown is the session panel's key: the backtick, or the key in
+ *  its place on a layout where it types something else or is a dead key. */
+export function isPanelKey(
+  event: Pick<KeyboardEvent, "key" | "code" | "ctrlKey" | "metaKey" | "altKey" | "shiftKey">,
+) {
+  if (event.key === PANEL_KEY) return true;
+  return (
+    event.code === "Backquote" &&
+    !event.ctrlKey &&
+    !event.metaKey &&
+    !event.altKey &&
+    !event.shiftKey
+  );
+}
+
 /** The app's command modifier as drawn: ⌘ on a Mac, Ctrl elsewhere. */
 export const COMMAND = MAC ? "⌘" : "Ctrl+";
 
@@ -838,7 +858,7 @@ function shortcutGroups(
       rows: [
         { keys: [`${COMMAND}K`], label: "Go to a page, pull request or session" },
         {
-          keys: ["`"],
+          keys: [PANEL_KEY_LABEL],
           label: "Show or hide the session panel; Esc in it hides it",
         },
         { keys: [`${COMMAND}.`], label: "Actions for the focused row, as a right click" },

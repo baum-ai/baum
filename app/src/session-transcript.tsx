@@ -143,11 +143,14 @@ const transcriptPath = (agent: string, id: string, version: string | null) =>
  *  the state changes only for another version or an answer of another kind,
  *  so an unchanged transcript renders nothing again. Reads never overlap: one
  *  asked for during another follows it. A failed read keeps a transcript
- *  shown. */
+ *  shown. `route`, when given, is the route that answers it instead of the
+ *  live sessions' (a session panel conversation's, which serves its
+ *  session's transcript whether or not the session is still listed), the
+ *  same answer under another address. */
 export function useLiveTranscript(
   agent: string,
   id: string,
-  { tick, poll }: { tick: number; poll: number | null },
+  { tick, poll, route }: { tick: number; poll: number | null; route?: string },
 ): { state: LiveTranscriptState; retry: () => void } {
   const [state, setState] = useState<LiveTranscriptState>({ kind: "loading" });
   const [attempt, setAttempt] = useState(0);
@@ -170,7 +173,11 @@ export function useLiveTranscript(
           let next: LiveTranscriptState | null = null;
           try {
             const answer = parseLiveTranscript(
-              await request<unknown>(transcriptPath(agent, id, known)),
+              await request<unknown>(
+                route
+                  ? `${route}${known ? `?version=${encodeURIComponent(known)}` : ""}`
+                  : transcriptPath(agent, id, known),
+              ),
             );
             if (!answer) throw Error("The daemon's answer was not a transcript.");
             if (!answer.available) {
@@ -221,7 +228,7 @@ export function useLiveTranscript(
       stopped = true;
       read.current = () => {};
     };
-  }, [agent, id, attempt]);
+  }, [agent, id, attempt, route]);
   const first = useRef(tick);
   useEffect(() => {
     if (tick === first.current) return;

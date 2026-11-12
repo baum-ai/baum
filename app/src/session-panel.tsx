@@ -5,7 +5,6 @@ import {
   useLayoutEffect,
   useRef,
   useState,
-  useSyncExternalStore,
   type FormEvent,
   type KeyboardEvent as ReactKeyboardEvent,
   type PointerEvent as ReactPointerEvent,
@@ -41,134 +40,27 @@ import {
   type SummaryField,
 } from "./console-api";
 import { useContextMenu, type MenuItem } from "./context-menu";
+import { ConfirmDialog } from "./group-dialogs";
 import { modelName } from "./desktop/setup-model";
 import { useNow } from "./live";
 import { LoadingStatus, NineDots } from "./nine-dots";
 import { hrefOf, pageLabel, samePage, type PageContext } from "./page-context";
 import { Diff } from "./prompt-editor";
 import { POLL_RUNNING, TranscriptReader, useLiveTranscript } from "./session-transcript";
-import { useShortcuts } from "./shortcuts";
+import { isPanelKey, PANEL_KEY, PANEL_KEY_LABEL, useShortcuts } from "./shortcuts";
 import { useToast } from "./toast";
 import { useVisibleInterval } from "./visible-interval";
+import { MIN_HEIGHT, sessionPanel, useSessionPanel, type PanelState } from "./session-panel-state";
 import "./session-panel.css";
 
-/** The key that shows or hides the session panel anywhere but in a text
- *  field: the backtick, under Escape, as a drop-down terminal's. */
-export const PANEL_KEY = "`";
-export const PANEL_KEY_LABEL = "`";
-
-// The panel's own state, kept for the whole window: whether it is open, the
-// conversation it shows, its height and what is typed in it. Open, height and
-// conversation are remembered across reloads in this window's storage, as
-// the sidebar's fold is.
-const STORE_KEY = "baum.session-panel.v1";
-export const MIN_HEIGHT = 200;
-export const DEFAULT_HEIGHT = 380;
-
-type PanelState = {
-  open: boolean;
-  /** The conversation shown; null for a new one. */
-  conversation: string | null;
-  height: number;
-  /** Whether the daemon runs the session panel; null until known. */
-  available: boolean | null;
-  /** What is typed in the composer. */
-  draft: string;
-  /** Counts the requests to put the keys in the composer. */
-  focus: number;
-};
-
-function loadState(): PanelState {
-  const state: PanelState = {
-    open: false,
-    conversation: null,
-    height: DEFAULT_HEIGHT,
-    available: null,
-    draft: "",
-    focus: 0,
-  };
-  try {
-    const saved = JSON.parse(localStorage.getItem(STORE_KEY) ?? "null") as Partial<PanelState>;
-    if (saved && typeof saved === "object") {
-      state.open = saved.open === true;
-      state.conversation = typeof saved.conversation === "string" ? saved.conversation : null;
-      if (typeof saved.height === "number" && saved.height >= MIN_HEIGHT)
-        state.height = saved.height;
-    }
-  } catch {
-    // Starts closed.
-  }
-  return state;
-}
-
-let state = loadState();
-const listeners = new Set<() => void>();
-function change(patch: Partial<PanelState>) {
-  state = { ...state, ...patch };
-  try {
-    localStorage.setItem(
-      STORE_KEY,
-      JSON.stringify({ open: state.open, conversation: state.conversation, height: state.height }),
-    );
-  } catch {
-    // Not remembered across reloads.
-  }
-  for (const listener of listeners) listener();
-}
-
-/** What opens, hides and points the session panel, from anywhere in the app:
- *  its button, its key, Go to and the Sessions page's "Open in panel". */
-export const sessionPanel = {
-  /** Opens it with the keys in its composer; on `conversation` when given
-   *  (null for a new one), else on the one it showed. */
-  show(conversation?: string | null) {
-    change({
-      open: true,
-      focus: state.focus + 1,
-      ...(conversation !== undefined ? { conversation } : {}),
-    });
-  },
-  hide() {
-    if (state.open) change({ open: false });
-  },
-  toggle() {
-    if (state.open) sessionPanel.hide();
-    else sessionPanel.show();
-  },
-  select(conversation: string | null) {
-    change({ conversation, focus: state.focus + 1 });
-  },
-  setHeight(height: number) {
-    change({ height: Math.max(MIN_HEIGHT, Math.round(height)) });
-  },
-  setAvailable(available: boolean) {
-    if (state.available !== available) change({ available });
-  },
-  setDraft(draft: string) {
-    change({ draft });
-  },
-};
-
-/** Puts the panel back as a fresh window starts it; for tests. */
-export function resetSessionPanel() {
-  try {
-    localStorage.removeItem(STORE_KEY);
-  } catch {
-    // Nothing kept.
-  }
-  state = loadState();
-  for (const listener of listeners) listener();
-}
-
-const subscribe = (listener: () => void) => {
-  listeners.add(listener);
-  return () => {
-    listeners.delete(listener);
-  };
-};
-export function useSessionPanel(): PanelState {
-  return useSyncExternalStore(subscribe, () => state);
-}
+export { PANEL_KEY, PANEL_KEY_LABEL } from "./shortcuts";
+export {
+  DEFAULT_HEIGHT,
+  MIN_HEIGHT,
+  resetSessionPanel,
+  sessionPanel,
+  useSessionPanel,
+} from "./session-panel-state";
 
 /** A change to a conversation, as the daemon's `console` event carries it:
  *  ids and state, never text. */
@@ -307,7 +199,7 @@ function usePanelSettings() {
  *  every few seconds while it runs in case an event was missed. */
 function useConversation(id: string | null) {
   const [conversation, setConversation] = useState<Conversation | null>(null);
-  const [error, setError] = useState("");
+  const [error, setError] = useState<{ message: string; code?: string } | null>(null);
   const current = useRef(id);
   current.current = id;
   const read = useCoalesced(async () => {
@@ -317,15 +209,18 @@ function useConversation(id: string | null) {
       const answer = await readConversation(asked);
       if (current.current !== asked) return;
       setConversation(answer);
-      setError("");
+      setError(null);
     } catch (e) {
       if (current.current !== asked) return;
-      setError(e instanceof Error ? e.message : "The session could not be read.");
+      setError({
+        message: e instanceof Error ? e.message : "The session could not be read.",
+        code: e instanceof LocalRequestError ? e.code : undefined,
+      });
     }
   });
   useEffect(() => {
     setConversation(null);
-    setError("");
+    setError(null);
     if (id) read();
   }, [id, read]);
   useConsoleEvents((event) => {
@@ -419,7 +314,7 @@ export function SessionPanelHost({
   const settings = usePanelSettings();
   usePageReport(page, panel.available !== false);
   useShortcuts((event) => {
-    if (event.key !== PANEL_KEY) return;
+    if (!isPanelKey(event)) return;
     event.preventDefault();
     sessionPanel.toggle();
   });
@@ -509,27 +404,67 @@ function SessionPanel({
   useLayoutEffect(() => {
     composer.current?.focus({ preventScroll: true });
   }, [panel.focus]);
-  // Hidden while the keys were in it, they go back to the page.
-  useEffect(
-    () => () => {
+  // Hidden while the keys were in it, they go back to what had them before
+  // it opened, or to the page.
+  // Measured as it unmounts, before its elements leave the page and the focus
+  // with them.
+  useLayoutEffect(() => {
+    const element = root.current;
+    return () => {
       const focused = document.activeElement;
-      if (focused instanceof HTMLElement && root.current?.contains(focused)) focused.blur();
-    },
-    [],
-  );
+      if (!(focused instanceof HTMLElement) || !element?.contains(focused)) return;
+      focused.blur();
+      const back = sessionPanel.takeReturnTo();
+      if (back instanceof HTMLElement && back.isConnected && !element.contains(back))
+        back.focus({ preventScroll: true });
+    };
+  }, []);
+  // The page under it scrolls clear of it: its frame knows how much of it the
+  // panel covers, and from which edge (`--session-panel-inset`).
+  useLayoutEffect(() => {
+    const element = root.current;
+    const frame = element?.closest<HTMLElement>(".local-frame");
+    if (!element || !frame) return;
+    const measure = () => {
+      const box = element.getBoundingClientRect();
+      const edge = frame.getBoundingClientRect();
+      const covered = position === "bottom" ? edge.bottom - box.top : box.bottom - edge.top;
+      frame.style.setProperty("--session-panel-inset", `${Math.max(0, Math.round(covered))}px`);
+    };
+    frame.dataset.sessionPanel = position;
+    measure();
+    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(measure);
+    observer?.observe(element);
+    addEventListener("resize", measure);
+    return () => {
+      observer?.disconnect();
+      removeEventListener("resize", measure);
+      delete frame.dataset.sessionPanel;
+      frame.style.removeProperty("--session-panel-inset");
+    };
+  }, [position]);
   const available = panel.available !== false;
   const running = conversation?.state === "running";
   const closed = conversation?.state === "closed";
   // An id from an earlier window that the daemon no longer has opens a new
   // conversation instead.
   useEffect(() => {
-    if (id && readError && /not found/i.test(readError)) sessionPanel.select(null);
+    if (id && readError?.code === "conversation_not_found") sessionPanel.select(null);
   }, [id, readError]);
+  // The model the session runs, once its transcript names it.
+  const [usedModel, setUsedModel] = useState("");
+  useEffect(() => setUsedModel(""), [id]);
+  const [closing, setClosing] = useState(false);
 
   const send = async (event?: FormEvent) => {
     event?.preventDefault();
     const text = panel.draft.trim();
-    if (!text || sending || running || !available) return;
+    if (!text || sending || !available) return;
+    // A message while the agent answers waits in the composer.
+    if (running) {
+      setSendError("The agent is still answering: wait for the turn to finish, or Stop it.");
+      return;
+    }
     // Shown at once: the prompt, the composer emptied and the button working.
     setSending(id && !closed ? "sending" : "starting");
     setSendError("");
@@ -552,7 +487,7 @@ function SessionPanel({
     } catch (e) {
       setTurn(null);
       // What was typed comes back, unless something new was typed meanwhile.
-      if (!state.draft) sessionPanel.setDraft(text);
+      if (!sessionPanel.draft()) sessionPanel.setDraft(text);
       setSendError(sendErrorText(e));
     } finally {
       setSending(null);
@@ -590,34 +525,42 @@ function SessionPanel({
       items.push({
         label: "Close this session",
         danger: true,
-        note: "Stops its turn; its directory stays",
-        onSelect: () =>
-          void closeConversation(id).then(update, (e: unknown) =>
-            toast({
-              title: "Could not close the session",
-              detail: e instanceof Error ? e.message : undefined,
-              error: true,
-            }),
-          ),
+        note: running ? "Stops the turn running; its directory stays" : "Its directory stays",
+        // While the agent works, closing it stops the turn: asked first.
+        onSelect: () => (running ? setClosing(true) : close()),
       });
     return items;
+  };
+  const close = () => {
+    if (!id) return;
+    void closeConversation(id).then(update, (e: unknown) =>
+      toast({
+        title: "Could not close the session",
+        detail: e instanceof Error ? e.message : undefined,
+        error: true,
+      }),
+    );
   };
   const onKeyDown = (event: ReactKeyboardEvent) => {
     if (event.key !== "Escape" || event.defaultPrevented || event.nativeEvent.isComposing) return;
     const target = event.target as HTMLElement;
-    // A field with something in it keeps its Escape (it gives up the keys).
+    event.preventDefault();
+    // A field with something in it gives up the keys to the panel, which the
+    // next Escape hides; the page under it never sees either.
     if (
       (target instanceof HTMLTextAreaElement || target instanceof HTMLInputElement) &&
       target.value
-    )
+    ) {
+      root.current?.focus({ preventScroll: true });
       return;
-    event.preventDefault();
+    }
     sessionPanel.hide();
   };
   const heading = conversation?.title || (id ? "Session" : "New session");
   const agent = conversation?.agent ?? settings?.agent ?? "claude-code";
-  const model = conversation ? conversation.model : (settings?.model ?? "");
+  const model = conversation ? conversation.model || usedModel : (settings?.model ?? "");
   const directory = conversation?.directory;
+  const looking = pageLabel(page, title);
   const headId = useId();
   return (
     <section
@@ -625,10 +568,27 @@ function SessionPanel({
       aria-labelledby={headId}
       className="session-panel"
       data-position={position}
+      tabIndex={-1}
       style={{ height: `min(${panel.height}px, calc(100dvh - 4rem))` }}
       onKeyDown={onKeyDown}
     >
       {menu.menu}
+      {closing ? (
+        <ConfirmDialog
+          title="Close this session while the agent works?"
+          action="Close session"
+          danger
+          pending={false}
+          close={() => setClosing(false)}
+          confirm={() => {
+            setClosing(false);
+            close();
+          }}
+        >
+          Closing it stops the turn running now. Its directory and what the agent changed there
+          stay.
+        </ConfirmDialog>
+      ) : null}
       {position === "bottom" ? <Grip position={position} height={panel.height} /> : null}
       <header className="session-panel-head">
         <div className="session-panel-title">
@@ -641,10 +601,11 @@ function SessionPanel({
               <LiveDot className="text-(--status-positive)" /> Working
             </span>
           ) : null}
-          <button
+          <Button
             ref={picker}
-            type="button"
-            className="session-panel-picker"
+            variant="secondary"
+            size="compact"
+            className="gap-1"
             aria-haspopup="menu"
             aria-expanded={menu.anchor !== null && menu.anchor === picker.current}
             onClick={() => {
@@ -653,16 +614,18 @@ function SessionPanel({
           >
             Sessions
             <ChevronDownIcon size={14} />
-          </button>
+          </Button>
           <CloseButton
             label={`Hide the session panel (${PANEL_KEY_LABEL})`}
             onClick={() => sessionPanel.hide()}
           />
         </div>
         <dl className="session-panel-facts">
-          <div>
+          <div className="session-panel-looking">
             <dt>Looking at</dt>
-            <dd data-testid="session-panel-page">{pageLabel(page, title)}</dd>
+            <dd data-testid="session-panel-page" title={looking}>
+              {looking}
+            </dd>
           </div>
           <div className="session-panel-directory">
             <dt>Directory</dt>
@@ -722,7 +685,7 @@ function SessionPanel({
           <LoadingStatus block>Reading the session…</LoadingStatus>
         ) : readError && !conversation ? (
           <p role="alert" className="session-panel-error">
-            {readError}
+            {readError.message}
           </p>
         ) : !conversation && !turn ? (
           <div className="local-empty session-panel-empty">
@@ -742,8 +705,9 @@ function SessionPanel({
             turn={turn}
             sending={sending}
             liveTick={liveTick}
-            onPrompts={(count) => {
+            onTranscript={(count, used) => {
               prompts.current = count;
+              if (used) setUsedModel(used);
             }}
           />
         )}
@@ -771,7 +735,7 @@ function SessionPanel({
           ) : null}
           {closed ? (
             <p className="session-panel-note">
-              This session is closed. Start a new one from Sessions to go on.
+              This session is closed. Choose New session in the panel's Sessions menu to go on.
             </p>
           ) : null}
           <div className="session-panel-compose">
@@ -851,6 +815,7 @@ function Grip({ position, height }: { position: "bottom" | "top"; height: number
       aria-label="Resize the session panel"
       aria-valuenow={height}
       aria-valuemin={MIN_HEIGHT}
+      aria-valuemax={Math.max(MIN_HEIGHT, Math.round(window.innerHeight - 64))}
       tabIndex={0}
       className="session-panel-grip"
       onPointerDown={(event: ReactPointerEvent<HTMLDivElement>) => {
@@ -916,29 +881,30 @@ function ConversationView({
   turn,
   sending,
   liveTick,
-  onPrompts,
+  onTranscript,
 }: {
   conversation: Conversation | null;
   turn: { text: string; prompts: number } | null;
   sending: "starting" | "sending" | null;
   liveTick: number;
-  onPrompts: (count: number) => void;
+  onTranscript: (prompts: number, model: string) => void;
 }) {
   const session = sessionOf(conversation?.session_key);
   const running = conversation?.state === "running";
-  if (session)
+  if (conversation && session)
     return (
       <SessionTranscriptView
-        key={`${session.agent}:${session.id}`}
+        key={`${conversation.id}:${session.agent}:${session.id}`}
+        conversation={conversation.id}
         agent={session.agent}
         id={session.id}
-        title={conversation?.title}
+        title={conversation.title}
         running={running}
-        progress={conversation?.progress ?? null}
+        progress={conversation.progress}
         turn={turn}
         sending={sending}
         liveTick={liveTick}
-        onPrompts={onPrompts}
+        onTranscript={onTranscript}
       />
     );
   return (
@@ -948,12 +914,28 @@ function ConversationView({
       turn={turn}
       sending={sending}
       showPrompt
-      showText
+      text={conversation?.progress?.text ?? ""}
     />
   );
 }
 
+/** Text as compared for being in a transcript: its words, one space apart. */
+const words = (text: string) => text.replace(/\s+/g, " ").trim();
+
+/** Whether a transcript's replies hold `message`, or the start of it: a reply
+ *  may be shown shortened, and a message still streaming is the start of
+ *  the reply it becomes. */
+export function holdsMessage(replies: { text: string }[], message: string) {
+  const start = words(message).slice(0, 200);
+  return start !== "" && replies.some((reply) => words(reply.text).includes(start));
+}
+
+/** The conversation's session as its transcript, read through the
+ *  conversation (`api/console/conversations/{id}/transcript`), so it is
+ *  served whether or not the session is still listed, with what the
+ *  transcript does not hold yet under it. */
 function SessionTranscriptView({
+  conversation,
   agent,
   id,
   title,
@@ -962,8 +944,9 @@ function SessionTranscriptView({
   turn,
   sending,
   liveTick,
-  onPrompts,
+  onTranscript,
 }: {
+  conversation: string;
   agent: string;
   id: string;
   title?: string;
@@ -972,24 +955,32 @@ function SessionTranscriptView({
   turn: { text: string; prompts: number } | null;
   sending: "starting" | "sending" | null;
   liveTick: number;
-  onPrompts: (count: number) => void;
+  onTranscript: (prompts: number, model: string) => void;
 }) {
   const { state } = useLiveTranscript(agent, id, {
     tick: liveTick,
     poll: running ? POLL_RUNNING : null,
+    route: `api/console/conversations/${encodeURIComponent(conversation)}/transcript`,
   });
   const read = state.kind === "ready" ? state.transcript : null;
   const count = read?.session.prompts.length ?? 0;
-  useEffect(() => onPrompts(count), [count, onPrompts]);
+  const model = read?.session.models[0] ?? "";
+  useEffect(() => onTranscript(count, model), [count, model, onTranscript]);
   // A transcript of nothing but the first prompt has no trace to draw yet:
   // the prompt shows as just sent until the agent's first step is in it.
   const transcript = read?.session.has_inner_trace ? read : null;
   // The transcript has caught up once it holds the prompt sent (any prompt,
-  // for a turn sent elsewhere), and has answered it once that prompt has a
-  // reply.
+  // for a turn sent elsewhere). Then only the turn's latest message, while
+  // the transcript does not hold it yet, shows under it; before, the whole
+  // answer so far does.
   const last = transcript?.session.prompts.at(-1);
   const holdsPrompt = transcript !== null && count > (turn ? turn.prompts : count - 1);
-  const answered = holdsPrompt && (last?.replies.length ?? 0) > 0;
+  const latest = progress?.message ?? "";
+  const text = !holdsPrompt
+    ? (progress?.text ?? "")
+    : latest && !holdsMessage(last?.replies ?? [], latest)
+      ? latest
+      : "";
   return (
     <>
       {transcript && state.kind === "ready" ? (
@@ -1002,10 +993,12 @@ function SessionTranscriptView({
         />
       ) : state.kind === "loading" && !turn && !running ? (
         <LoadingStatus block>Reading the session's transcript…</LoadingStatus>
-      ) : state.kind !== "loading" && state.kind !== "ready" && !running && !progress?.text ? (
+      ) : (state.kind === "unavailable" || state.kind === "failed") && !running ? (
         <p className="local-transcript-note">
-          {state.kind === "unavailable" ? state.message : "The transcript could not be read."} It
-          shows once the agent's hooks report the session.
+          {progress?.text
+            ? "Only the last answer is shown: the session's transcript can't be read. "
+            : "The session's transcript can't be read. "}
+          {state.message}
         </p>
       ) : null}
       <Tail
@@ -1014,7 +1007,7 @@ function SessionTranscriptView({
         turn={turn}
         sending={sending}
         showPrompt={!holdsPrompt}
-        showText={!answered}
+        text={text}
       />
     </>
   );
@@ -1028,16 +1021,17 @@ function Tail({
   turn,
   sending,
   showPrompt,
-  showText,
+  text: shownText,
 }: {
   progress: Progress | null;
   running: boolean;
   turn: { text: string; prompts: number } | null;
   sending: "starting" | "sending" | null;
   showPrompt: boolean;
-  showText: boolean;
+  /** The answer, or the part of it, the transcript does not hold yet. */
+  text: string;
 }) {
-  const text = showText ? progress?.text?.trim() : "";
+  const text = shownText.trim();
   if (!(turn && showPrompt) && !text && !running && !sending) return null;
   return (
     <div className="session-panel-tail" aria-live="polite">
@@ -1100,10 +1094,55 @@ function ProposalList({
 }
 
 /** A proposal's value as text: a string as it is, anything else as JSON. */
-function shown(value: unknown): string {
+export function shown(value: unknown): string {
   if (value === undefined || value === null) return "";
   if (typeof value === "string") return value;
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  if (typeof value === "object" && !Array.isArray(value)) {
+    const entries = Object.entries(value);
+    // One text (a prompt's `{text}`) is that text, its lines its own.
+    if (entries.length === 1 && typeof entries[0]![1] === "string") return entries[0]![1];
+    // Plain fields are read as lines, a text of several lines under its name.
+    if (entries.every(([, v]) => v === null || ["string", "number", "boolean"].includes(typeof v)))
+      return entries
+        .map(([key, v]) =>
+          typeof v === "string" && v.includes("\n") ? `${key}:\n${v}` : `${key}: ${v ?? "none"}`,
+        )
+        .join("\n");
+  }
   return JSON.stringify(value, null, 2);
+}
+
+/** A prompt's change (`{text}`, null for the default): what the default
+ *  stands for, said in words beside the diff. */
+function textChange(value: unknown): { text: string | null } | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const keys = Object.keys(value);
+  const text = (value as { text?: unknown }).text;
+  return keys.length === 1 && keys[0] === "text" && (text === null || typeof text === "string")
+    ? { text: text as string | null }
+    : null;
+}
+
+/** What a change saves against what is saved now, as text. */
+function ChangeView({ before, after }: { before: unknown; after: unknown }) {
+  const from = textChange(before);
+  const to = textChange(after);
+  if (from || to) {
+    const note =
+      to?.text === null || to?.text === ""
+        ? "Resets the prompt to baum's default."
+        : !from || from.text === null
+          ? "Replaces baum's default prompt with this text."
+          : null;
+    return (
+      <>
+        {note ? <p className="session-panel-note">{note}</p> : null}
+        <Diff before={from?.text ?? ""} after={to?.text ?? ""} />
+      </>
+    );
+  }
+  return <Diff before={shown(before)} after={shown(after)} />;
 }
 
 /** A change proposed by the agent (`diff`): what it would save against what
@@ -1194,7 +1233,7 @@ export function ProposalCard({
       {summary ? (
         <OperationView summary={summary} />
       ) : (
-        <Diff before={shown(proposal.before)} after={shown(proposal.after)} />
+        <ChangeView before={proposal.before} after={proposal.after} />
       )}
       {needsValue ? (
         <div className="session-panel-value">
@@ -1315,11 +1354,15 @@ function Detail({ field }: { field: SummaryField }) {
             className={cn("session-panel-quoted", whole && "whole")}
             data-quoted=""
             aria-label={`Quoted: ${field.label}`}
+            // A box that scrolls is reached and scrolled from the keyboard.
+            tabIndex={whole ? 0 : undefined}
           >
             {field.value}
           </blockquote>
         ) : (
-          <span className={cn(whole && "session-panel-whole")}>{field.value}</span>
+          <span className={cn(whole && "session-panel-whole")} tabIndex={whole ? 0 : undefined}>
+            {field.value}
+          </span>
         )}
       </dd>
     </div>

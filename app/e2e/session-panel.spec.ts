@@ -55,12 +55,19 @@ test("opens the session panel on a pull request and starts a session there", asy
   await expect(panel(page).getByText("Read docs/guide.md")).toBeVisible();
   await expect(panel(page).getByText("Working", { exact: true })).toBeVisible();
   await expect(panel(page).getByRole("button", { name: "Stop" })).toBeVisible();
-  await page.screenshot({ path: "test-results/session-panel-running.png" });
+  await page.screenshot({ path: "test-results/session-panel-running.png", animations: "disabled" });
 
+  // The Sessions menu stays open while the turn goes on under it.
+  await panel(page).getByRole("button", { name: "Sessions" }).click();
+  await expect(page.getByRole("menu")).toBeVisible();
   // Once it finished, the session's transcript holds the turn.
   await expect(panel(page).getByRole("region", { name: "Transcript" })).toContainText(
     "the retry delay is capped",
   );
+  await expect(page.getByRole("menu")).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("menu")).toHaveCount(0);
+  await expect(panel(page)).toBeVisible();
   await expect(panel(page).getByText("Working", { exact: true })).toHaveCount(0);
   await expect(panel(page).getByRole("button", { name: "Send" })).toBeVisible();
   await expect(
@@ -68,7 +75,10 @@ test("opens the session panel on a pull request and starts a session there", asy
   ).toBeVisible();
   await expect(panel(page).locator(".session-panel-directory code")).toContainText("console");
   await expect(panel(page).getByText("Full access", { exact: true })).toBeVisible();
-  await page.screenshot({ path: "test-results/session-panel-answered.png" });
+  await page.screenshot({
+    path: "test-results/session-panel-answered.png",
+    animations: "disabled",
+  });
 
   // Escape in the empty composer hides it; the key brings it back on the
   // same session.
@@ -78,6 +88,20 @@ test("opens the session panel on a pull request and starts a session there", asy
   await expect(
     panel(page).getByRole("heading", { name: "Why is the retry delay capped?" }),
   ).toBeVisible();
+
+  // With something typed, the first Escape gives the keys to the panel and
+  // the second hides it; the pull request's page under it keeps both, so it
+  // does not go back to its list.
+  await composer.fill("A half-written question");
+  await composer.press("Escape");
+  await expect(panel(page)).toBeVisible();
+  await expect(panel(page)).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(panel(page)).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "Reuse the existing PR page" })).toBeVisible();
+  await page.keyboard.press("`");
+  await expect(composer).toHaveValue("A half-written question");
+  await composer.fill("");
 
   // The Sessions page lists it as the panel's, to open in the panel.
   await page.getByRole("link", { name: "Sessions", exact: true }).first().click();
@@ -89,7 +113,10 @@ test("opens the session panel on a pull request and starts a session there", asy
   await expect(menu.getByRole("menuitem", { name: /Reply|End session|Focus session/ })).toHaveCount(
     0,
   );
-  await page.screenshot({ path: "test-results/session-panel-sessions.png" });
+  await page.screenshot({
+    path: "test-results/session-panel-sessions.png",
+    animations: "disabled",
+  });
 });
 
 test("the panel follows the page the person has open", async ({ page }) => {
@@ -111,11 +138,57 @@ test("the panel follows the page the person has open", async ({ page }) => {
   await page.getByRole("button", { name: /^Fixes/ }).click();
   await expect(page.getByTestId("session-panel-page")).toHaveText("Settings · Fixes");
   await expect.poll(() => reported.at(-1)).toEqual({ page: "settings", section: "fixes" });
-  await page.screenshot({ path: "test-results/session-panel-settings.png" });
+  // The page scrolls clear of the panel: its last section comes into view
+  // above it.
+  const section = page.getByRole("heading", { name: "Session panel", exact: true });
+  await section.scrollIntoViewIfNeeded();
+  const footnote = page.getByText("Changes apply to the next session you start");
+  await footnote.scrollIntoViewIfNeeded();
+  const panelTop = (await panel(page).boundingBox())!.y;
+  expect((await footnote.boundingBox())!.y + 10).toBeLessThan(panelTop);
+  await page.screenshot({
+    path: "test-results/session-panel-settings.png",
+    animations: "disabled",
+  });
 
   // ⌘K (Ctrl+K here) hides it as the key does.
   await page.keyboard.press("Control+k");
   await page.getByRole("combobox", { name: "Go to" }).fill("session panel");
   await page.keyboard.press("Enter");
   await expect(panel(page)).toHaveCount(0);
+});
+
+test("from the top, the panel leaves the pull request's bar in view", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.goto(await launchURL());
+  await page.getByRole("link", { name: "Settings", exact: true }).first().click();
+  await page.getByRole("button", { name: /^Fixes/ }).click();
+  await page.getByRole("button", { name: "Top", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Top", pressed: true })).toBeVisible();
+  try {
+    await page.getByRole("link", { name: "Pull requests", exact: true }).first().click();
+    await page.getByRole("link", { name: /Reuse the existing PR page/ }).click();
+    await expect(page.getByRole("heading", { name: "Reuse the existing PR page" })).toBeVisible();
+    await page.keyboard.press("`");
+    await expect(panel(page)).toBeVisible();
+    await expect(panel(page)).toHaveAttribute("data-position", "top");
+    const box = (await panel(page).boundingBox())!;
+    expect(box.y).toBeLessThan(20);
+    // The page starts under it: the pull request's title and its actions
+    // stay in view, not under the panel.
+    const merge = page.getByRole("button", { name: /^Merge/ }).first();
+    await expect(merge).toBeVisible();
+    expect((await merge.boundingBox())!.y).toBeGreaterThan(box.y + box.height);
+    const title = page.getByRole("heading", { name: "Reuse the existing PR page" });
+    expect((await title.boundingBox())!.y).toBeGreaterThan(box.y + box.height);
+    await page.screenshot({ path: "test-results/session-panel-top.png", animations: "disabled" });
+  } finally {
+    await page.evaluate(() =>
+      fetch("api/settings/panel", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ position: "bottom" }),
+      }),
+    );
+  }
 });

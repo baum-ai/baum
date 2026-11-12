@@ -13,7 +13,8 @@ import {
   type AgentRequests,
   type LiveSession,
 } from "./api";
-import { forgetFoldedSections, SessionsPage } from "./sessions";
+import { forgetFoldedSections, LiveSessions, needsYou, SessionsPage } from "./sessions";
+import { resetSessionPanel, useSessionPanel } from "./session-panel-state";
 import { ToastProvider } from "./toast";
 import { useActionsKey } from "./context-menu";
 import { useReadlineArrows } from "./shortcuts";
@@ -1519,6 +1520,22 @@ it("marks the session panel's sessions and opens them in the panel instead of ac
     [...running.querySelectorAll("button")].find((b) => b.textContent === "Open in panel")!.click(),
   );
   expect(openInPanel).toHaveBeenLastCalledWith("conv1");
+  // A finished panel turn waits on the panel, not on the person: it is not
+  // under Waiting for you, even from a daemon that still says it waits.
+  expect(node.querySelector('[aria-label="Waiting for you"]')).toBeNull();
+  expect(
+    node.querySelector('[aria-label="Running now"] [data-row-id="claude-code:p2"]'),
+  ).not.toBeNull();
+  expect(
+    needsYou([
+      session({
+        state: "idle",
+        waiting_reason: "turn_finished",
+        origin: "panel",
+        conversation: "c",
+      }),
+    ]),
+  ).toEqual([]);
   const waiting = node.querySelector('[data-row-id="claude-code:p2"]')!;
   expect(waiting.querySelector(".local-session-origin")).not.toBeNull();
   await act(async () => {
@@ -1534,4 +1551,41 @@ it("marks the session panel's sessions and opens them in the panel instead of ac
   expect(labels.some((t) => /^(Reply|Focus session|Show window|End session)/.test(t))).toBe(false);
   await act(async () => items[0]!.click());
   expect(openInPanel).toHaveBeenLastCalledWith("conv2");
+});
+
+it("tags a panel session in a pull request's sessions and opens it in the panel", async () => {
+  resetSessionPanel();
+  const seen: { state?: ReturnType<typeof useSessionPanel> } = {};
+  function Watch() {
+    seen.state = useSessionPanel();
+    return null;
+  }
+  await act(async () =>
+    root.render(
+      <>
+        <Watch />
+        <LiveSessions
+          sessions={[
+            session({ session_id: "p1", origin: "panel", conversation: "conv1" }),
+            session({ session_id: "s2" }),
+          ]}
+          Link={Link}
+        />
+      </>,
+    ),
+  );
+  const cards = [...node.querySelectorAll(".local-pr-session")];
+  expect(cards[0]!.querySelector(".local-session-origin")!.textContent).toBe("Panel");
+  expect(cards[1]!.querySelector(".local-session-origin")).toBeNull();
+  expect(
+    [...cards[1]!.querySelectorAll("button")].some((b) => b.textContent === "Open in panel"),
+  ).toBe(false);
+  await act(async () =>
+    [...cards[0]!.querySelectorAll("button")]
+      .find((b) => b.textContent === "Open in panel")!
+      .click(),
+  );
+  expect(seen.state!.open).toBe(true);
+  expect(seen.state!.conversation).toBe("conv1");
+  resetSessionPanel();
 });

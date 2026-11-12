@@ -420,6 +420,9 @@ body {
 }
 /* A narrow window keeps the glyphs only; the links keep their names. */
 @media (width < 64rem) {
+  /* On the root, so what is placed beside the sidebar (the session panel,
+     the toasts) follows it too. */
+  :root,
   .local-rail {
     --rail-width: 56px;
   }

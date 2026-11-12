@@ -55,6 +55,7 @@ import { useToast } from "./toast";
 import { LiveSessionDecisions } from "./decisions";
 import { listKeys, useRowFocus, useShortcuts } from "./shortcuts";
 import { SMALL } from "./action-classes";
+import { sessionPanel } from "./session-panel-state";
 import { cn } from "@baum/viewer/components/classnames";
 
 /** What marks a list row for the row focus (`useRowFocus`). */
@@ -132,10 +133,14 @@ export const asksYou = (sessions: LiveSession[]) =>
 
 /** The sessions waiting on their user, the longest wait first: those that
  *  ask for a permission or an answer, finished their turn or went quiet. A
- *  session working, nor an ended one, is not one. */
+ *  session working, nor an ended one, is not one; nor is a session panel's,
+ *  whose finished turn waits on the panel, not on the person. */
 export function needsYou(sessions: LiveSession[]): LiveSession[] {
   return sessions
-    .filter((s) => s.state !== "ended" && s.waiting_reason && waitingReasons[s.waiting_reason])
+    .filter(
+      (s) =>
+        s.state !== "ended" && !inPanel(s) && s.waiting_reason && waitingReasons[s.waiting_reason],
+    )
     .sort(
       (a, b) =>
         new Date(waitingSince(a)).getTime() - new Date(waitingSince(b)).getTime() ||
@@ -434,6 +439,7 @@ export function LiveSessionCard({
         </span>
       ) : null}
       <span className="local-pr-session-meta">
+        {s.origin === "panel" ? <PanelMark /> : null}
         {s.branch ? (
           <code className="local-session-branch" title={s.branch}>
             {s.branch}
@@ -452,6 +458,11 @@ export function LiveSessionCard({
         >
           Open transcript
         </Link>
+        {inPanel(s) ? (
+          <JumpLink tone="primary" onClick={() => sessionPanel.show(s.conversation)}>
+            Open in panel
+          </JumpLink>
+        ) : null}
       </span>
       <LiveSessionDecisions session={s} />
     </div>

@@ -35,6 +35,9 @@ export type Progress = {
   /** The answer so far: its finished messages, then the one streaming;
    *  after the turn, its final message. */
   text: string;
+  /** The turn's latest message on its own: the one streaming, else the last
+   *  finished. Absent from an older daemon. */
+  message?: string;
   /** The tool the agent runs now. */
   tool?: string;
   cost_usd?: number;
