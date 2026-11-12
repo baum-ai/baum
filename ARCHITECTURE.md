@@ -2024,6 +2024,11 @@ a process reuses what it built:
   snapshot uses small per-checkpoint facts that `sessions` remembers by
   clone and tree. A checkpoint is read whole again, through the checkpoint
   cache below, only when a session chosen from it has to be mapped.
+* **Linked-session views.** `locallink.Resolve` uses compact facts to select
+  the linked sessions, then maps only those whose graphs it must return for
+  rows and transcript access. Its retry follows the evidence build's fallback
+  when remapping changes the selection or facts go missing. Unchanged unlinked
+  candidates are never mapped just to refresh an open review page.
 * **Feature linkage.** `locallink.LinkCommits` shares those compact facts and
   skips unchanged session graphs too. The feature worker caches successful
   recorded commit ranges by clone, base, head and shallow boundary, bounded

@@ -143,8 +143,10 @@ and skips unchanged session graphs too, including transcripts older than an
 hour and graphs evicted from the mapping cache. It recomputes observed and
 reflog creation evidence for the current commits, so changing external evidence
 still changes the links. If facts needed for an unmapped session are missing,
-it retries with full mapping. `Resolve`, which returns session rows, still maps
-every session.
+it retries with full mapping. `Resolve` also selects links using those compact
+facts, then maps only linked sessions to produce their complete rows and
+transcript graphs. If a remap changes the selected sessions it retries, with a
+full read as the final fallback. Unlinked unchanged candidates need no graph.
 
 Run `just oss-go test ./internal/locallink/...` from the monorepo root. The
 tests cover concurrent readers/editors, stale sessions, matching-parent false

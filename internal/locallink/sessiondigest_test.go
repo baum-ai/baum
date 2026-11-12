@@ -397,3 +397,96 @@ func TestDigestCacheEvictsPastItsLimit(t *testing.T) {
 		t.Errorf("a digest grown past the limit was kept (held %d)", c.held)
 	}
 }
+
+// Resolve needs full graphs only for linked sessions. An unchanged unrelated
+// candidate must not be decoded after its graph has been evicted.
+func TestResolveMapsOnlyLinkedOrChangedSessions(t *testing.T) {
+	useSessionDigests(t)
+	sessions.SetTailCacheLimit(0)
+	t.Cleanup(func() { sessions.SetTailCacheLimit(sessions.DefaultTailCacheBytes) })
+	f := linktest.New(t)
+	const promoted = "bbbbbbbb-0000-4000-8000-000000000001"
+	const other = "bbbbbbbb-0000-4000-8000-000000000002"
+	f.AddEditor(t, promoted, "08", "unrelated.txt")
+	f.AddEditor(t, other, "08", "other.txt")
+	req := request(f)
+	settleRequest := EvidenceRequest{Sessions: f.Store}
+	cold := func() Result {
+		t.Helper()
+		kept := sessionDigests
+		sessionDigests = newDigestCache(DefaultDigestBytes)
+		defer func() { sessionDigests = kept }()
+		return resolve(t, req)
+	}
+	same := func(got, want Result) {
+		t.Helper()
+		a, err := json.Marshal(got)
+		if err != nil {
+			t.Fatal(err)
+		}
+		b, err := json.Marshal(want)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(a) != string(b) || !reflect.DeepEqual(got.Graphs, want.Graphs) {
+			t.Fatal("reused Resolve differs from full result or linked graphs")
+		}
+	}
+	run := func(want int64) Result {
+		t.Helper()
+		settle(t, settleRequest)
+		before := decodes()
+		got := resolve(t, req)
+		if n := decodes() - before; n != want {
+			t.Fatalf("decoded %d sessions, want %d", n, want)
+		}
+		same(got, cold())
+		return got
+	}
+	first := run(3)
+	warm := run(1)
+	same(first, warm)
+	if len(warm.Graphs) != 1 || warm.Graphs[linktest.SessionID] == nil {
+		t.Fatal("linked graph missing")
+	}
+	// A previously unrelated candidate gains actual commit creation evidence;
+	// the old creator now only edits an unrelated file. Both changed sessions
+	// must be reconsidered, and the newly linked graph must be returned.
+	f.AddEditor(t, linktest.SessionID, "08", "unrelated-original.txt")
+	f.AddSession(t, promoted, f.Repo, "new creator")
+	changed := run(2)
+	if len(changed.Sessions) != 1 || changed.Sessions[0].ID != promoted || changed.Graphs[promoted] == nil || changed.Graphs[linktest.SessionID] != nil {
+		t.Fatalf("contribution change not reflected: %+v", changed.Sessions)
+	}
+	retitle(t, transcriptOf(f, promoted), promoted, "updated linked transcript")
+	titled := run(1)
+	if titled.Sessions[0].Title != "updated linked transcript" {
+		t.Fatal("linked graph/row title stale")
+	}
+	run(1)
+}
+
+func TestResolveRecoversWhenCompactFactsGoMissing(t *testing.T) {
+	useSessionDigests(t)
+	sessions.SetTailCacheLimit(0)
+	t.Cleanup(func() { sessions.SetTailCacheLimit(sessions.DefaultTailCacheBytes) })
+	f := linktest.New(t)
+	f.AddEditor(t, "bbbbbbbb-0000-4000-8000-000000000001", "08", "unrelated.txt")
+	settle(t, EvidenceRequest{Sessions: f.Store})
+	want := resolve(t, request(f))
+	previous := newBuildBook
+	t.Cleanup(func() { newBuildBook = previous })
+	newBuildBook = func(cache *digestCache) *digestBook {
+		b := newDigestBook(cache)
+		b.afterReuse = func(key string) { delete(b.held, key); forget(cache, key) }
+		return b
+	}
+	before := decodes()
+	got := resolve(t, request(f))
+	if decodes()-before != 2 {
+		t.Fatal("missing facts did not trigger full read")
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatal("full fallback changed results")
+	}
+}
