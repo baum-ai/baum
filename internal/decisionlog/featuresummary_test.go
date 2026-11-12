@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/baum-ai/baum/decisions"
+	"github.com/baum-ai/baum/internal/config"
 )
 
 func (f *featureFixture) summarize(o FeatureOptions) SummaryReport {
@@ -46,8 +47,8 @@ func (f *featureFixture) text(id string) (title string, keys string, clean bool)
 // A feature's text waits for its members to be quiet, is written from its
 // pull requests (a generated summary standing in for a missing review
 // summary) and attributed decisions, and kept without a call while its
-// input is unchanged; a generated pull request summary is reused too.
-func TestFeatureTextDebounceReuseAndPullSummaries(t *testing.T) {
+// input is unchanged; no per-PR model calls are generated.
+func TestFeatureTextDebounceReuseWithoutPullSummaryFanout(t *testing.T) {
 	f := newFeatureFixture(t)
 	feature := f.placed()
 	if report := f.summarize(FeatureOptions{}); len(report.Features) != 0 {
@@ -55,7 +56,7 @@ func TestFeatureTextDebounceReuseAndPullSummaries(t *testing.T) {
 	}
 	f.clock.now = f.clock.now.Add(FeatureQuiet)
 	report := f.summarize(FeatureOptions{})
-	if len(report.Features) != 1 || report.Features[0].Outcome != FeatureSummarized || report.Features[0].PullSummaries != 1 ||
+	if len(report.Features) != 1 || report.Features[0].Outcome != FeatureSummarized || report.Features[0].PullSummaries != 0 ||
 		report.Features[0].Decisions != 1 || report.Spent <= 0 {
 		t.Fatalf("report = %+v", report)
 	}
@@ -67,7 +68,7 @@ func TestFeatureTextDebounceReuseAndPullSummaries(t *testing.T) {
 	// Marked with nothing changed: no call at all.
 	f.markAll(feature)
 	report = f.summarize(FeatureOptions{Manual: true})
-	if report.Features[0].Outcome != FeatureReused || report.Features[0].PullSummariesReused != 1 || f.backend.calls["text"] != 1 || f.backend.calls["pull"] != 1 {
+	if report.Features[0].Outcome != FeatureReused || report.Features[0].PullSummariesReused != 0 || f.backend.calls["text"] != 1 || f.backend.calls["pull"] != 0 {
 		t.Fatalf("report = %+v, calls %v", report, f.backend.calls)
 	}
 	if _, _, clean := f.text(feature); !clean {
@@ -82,7 +83,7 @@ func TestFeatureTextDebounceReuseAndPullSummaries(t *testing.T) {
 		return `{"title":"Widget export","description":"Exports widgets.","digest":"D.","key_decisions":[]}`, nil
 	}
 	report = f.summarize(FeatureOptions{Manual: true})
-	if report.Features[0].Outcome != FeatureSummarized || f.backend.calls["pull"] != 2 || f.backend.calls["text"] != 2 {
+	if report.Features[0].Outcome != FeatureSummarized || f.backend.calls["pull"] != 0 || f.backend.calls["text"] != 2 {
 		t.Fatalf("report = %+v, calls %v", report, f.backend.calls)
 	}
 }
@@ -123,7 +124,7 @@ func TestFeatureTextConcurrent(t *testing.T) {
 		pulls = append(pulls, out.PullRequests...)
 	}
 	slices.Sort(pulls)
-	if !slices.Equal(pulls, []int{1, 2}) || f.backend.calls["text"] != 2 || f.backend.calls["pull"] != 2 {
+	if !slices.Equal(pulls, []int{1, 2}) || f.backend.calls["text"] != 2 || f.backend.calls["pull"] != 0 {
 		t.Fatalf("report = %+v, calls %v", report, f.backend.calls)
 	}
 }
@@ -172,7 +173,7 @@ func TestFeatureTextInputAndFailures(t *testing.T) {
 	if report.Features[0].Outcome != FeatureDeferred {
 		t.Fatalf("report = %+v", report)
 	}
-	for _, want := range []string{`"repository":"acme/widgets"`, `"current":{"title":"Widgets"`, `Export as CSV.`, `Adds an export.`} {
+	for _, want := range []string{`"repository":"acme/widgets"`, `"title":"Widgets"`, `Export as CSV.`, `Adds a CSV export.`} {
 		if !strings.Contains(f.backend.textInput, want) {
 			t.Fatalf("the input lacks %s: %s", want, f.backend.textInput)
 		}
@@ -268,8 +269,8 @@ func TestFeatureTextKeepsTheNamedKeyDecision(t *testing.T) {
 	}
 }
 
-// The gate is read before every call: turned off after a feature's first
-// pull request summary, it makes no further call.
+// The gate is read before every repository task: a disabled repository
+// starts no further feature text, and live text makes no per-PR call.
 func TestFeatureTextRereadsTheGateBeforeEachCall(t *testing.T) {
 	f := newFeatureFixture(t)
 	f.clock.now = t0.Add(time.Hour)
@@ -283,10 +284,18 @@ func TestFeatureTextRereadsTheGateBeforeEachCall(t *testing.T) {
 		return choose("existing", "F1", ""), nil
 	}
 	f.assign(FeatureOptions{})
-	f.backend.onCall = func() { f.off = true }
+	originalSource := f.worker.source
+	prepared := 0
+	f.worker.source = func(ctx context.Context, dir, repository, revision, branch string, cfg config.Config) (repositorySource, error) {
+		source, err := originalSource(ctx, dir, repository, revision, branch, cfg)
+		prepared++
+		f.off = true
+		return source, err
+	}
 	f.clock.now = f.clock.now.Add(FeatureQuiet)
 	report := f.summarize(FeatureOptions{})
-	if report.Stopped != ReasonDisabled || f.backend.calls["pull"] != 1 || f.backend.calls["text"] != 0 {
-		t.Fatalf("report = %+v, calls %v", report, f.backend.calls)
+	if report.Stopped != ReasonDisabled || prepared != 1 || f.backend.calls["pull"] != 0 || f.backend.calls["text"] != 0 {
+		t.Fatalf("disabled between prepare/call: %+v prepared=%d calls=%v", report, prepared, f.backend.calls)
 	}
+
 }

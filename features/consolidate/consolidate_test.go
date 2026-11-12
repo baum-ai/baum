@@ -290,7 +290,7 @@ func TestRequestRoundTripsItsVersionAndKind(t *testing.T) {
 	if _, err := testPrompts.Request(PublicVersion, "other", "{}", 0); err == nil {
 		t.Fatal("an unknown kind built a request")
 	}
-	if !Public.KnownPromptVersion(PublicVersion) || !slices.Equal(Public.PromptVersions(), []string{PublicVersion}) {
+	if !Public.KnownPromptVersion(PublicVersion) || !slices.Equal(Public.PromptVersions(), []string{PublicVersion, RepositoryVersion}) {
 		t.Fatalf("prompt versions = %v", Public.PromptVersions())
 	}
 }

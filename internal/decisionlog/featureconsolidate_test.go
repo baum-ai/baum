@@ -299,7 +299,7 @@ func TestConsolidationSplitSlots(t *testing.T) {
 	f.backend.merge = func(string) (string, error) { return `{"groups":[]}`, nil }
 	f.backend.split = func(string) (string, error) { return `{"parts":[]}`, nil }
 	got := f.consolidate(FeatureOptions{})
-	if f.backend.calls["split"] != 3 || got.InvalidSplits != 3 || got.KeptWhole != 1 {
+	if f.backend.calls["split"] != 9 || got.InvalidSplits != 3 || got.KeptWhole != 1 {
 		t.Fatalf("split calls %d, report %+v", f.backend.calls["split"], got)
 	}
 }

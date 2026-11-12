@@ -14,8 +14,9 @@ const (
 	// AssignVersion, SummaryVersion and ConsolidateVersion are the published
 	// prompts the feature log calls.
 	AssignVersion      = assign.PublicVersion
-	SummaryVersion     = summary.PublicVersion
-	ConsolidateVersion = consolidate.PublicVersion
+	LiveAssignVersion  = assign.RepositoryVersion
+	SummaryVersion     = summary.RepositoryVersion
+	ConsolidateVersion = consolidate.RepositoryVersion
 
 	// FeatureTick is how often the feature worker runs its stages.
 	FeatureTick = time.Minute
@@ -52,10 +53,9 @@ const (
 	// run of placement and the features one run of the text stage take.
 	FeatureAssignRunLimit  = 100
 	FeatureSummaryRunLimit = 50
-	// FeatureSummaryConcurrency is how many features the text stage writes
-	// at once: each feature's text and pull request summaries are calls of
-	// their own. Fewer than a hosted rebuild's, as each local call may be a
-	// CLI process on the user's machine and plan.
+	// FeatureSummaryConcurrency is how many feature text tasks run at once.
+	// Live summaries read PR evidence together; legacy builds may still call
+	// per-PR summaries. Each local task may start a CLI process.
 	FeatureSummaryConcurrency = 4
 	// FeatureBackoff is how long an item or feature whose call failed
 	// waits; after FeatureMaxFailures counted failures for one trigger it
@@ -67,12 +67,9 @@ const (
 	// FeatureConsolidateEvery is how often a repository's features are
 	// consolidated, when they changed.
 	FeatureConsolidateEvery = 7 * 24 * time.Hour
-	// FeatureSplitPulls and FeatureSplitAge make a feature a split
-	// candidate: more pull requests than that, or pull requests opened
-	// further apart. A pass offers at most FeatureMaxSplits features.
-	FeatureSplitPulls = 30
-	FeatureSplitAge   = 8 * 7 * 24 * time.Hour
-	FeatureMaxSplits  = 3
+	// FeatureMaxSplits bounds semantic repair tasks per pass. Groups of two
+	// or more PRs qualify regardless of age or volume.
+	FeatureMaxSplits = 3
 	// FeatureConsolidateOutputTokens bounds a merge or split reply. Hosted
 	// uses consolidate.MaxOutputTokens; locally Claude Code's models think
 	// within the reply's bound whatever thinking is set to, and a merge over a

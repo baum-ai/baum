@@ -17,6 +17,7 @@ new version. Each package also embeds published versions, `Public`:
 | `assign` | `feature-assign-public-v1`, its batch version `-batch` and seeded form `-batch-2` | may skip a small change; lists each candidate's digest and pull requests |
 | `summary` | `feature-summary-public-v1` | the feature call reads the feature's current text; owns its pull request prompt |
 | `consolidate` | `feature-consolidate-public-v1` | the merge call sees each feature's digest and pull request summaries |
+| Local repository versions | `feature-assign-repository-v1`, `feature-summary-repository-v1`, `feature-consolidate-repository-v1` | source-aware grouping; significance/zero-key policy; small independent-outcome split repair |
 | `discover` | `feature-discover-public-v1` | composed from `feature-assign-public-v1`'s definition of a feature |
 
 A version's name is part of what a host keys stored results on (for example
@@ -98,6 +99,11 @@ for persistence, recovery and coverage. Published prompts are never edited after
 release; changes use a new protocol version.
 
 ## Decision attribution
+
+The following shared rule remains unchanged for hosted callers. Local storage
+uses [durable semantic attribution](../internal/decisionlog/README.md#semantic-decision-attribution)
+in its worker and a conservative storage-only reader, preserving ambiguous
+decisions in All decisions and excluding routine housekeeping highlights.
 
 `SessionLinks.Attributor` gives each current decision of a session exactly
 one feature, or none when the session has none:

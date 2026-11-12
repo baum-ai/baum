@@ -64,6 +64,7 @@ type FeatureWorker struct {
 	once     sync.Once
 	wake     chan struct{}
 	redactor *bundle.Redactor
+	source   func(context.Context, string, string, string, string, config.Config) (repositorySource, error)
 	initErr  error
 	// mu guards windowLinked, each repository's last re-link of the session
 	// window, and retryAt, when a failed repository is tried again: a first

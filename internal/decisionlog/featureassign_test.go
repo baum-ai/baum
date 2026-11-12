@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
@@ -30,6 +32,7 @@ type scriptBackend struct {
 	pull   func() (string, error)
 	// batch, merge and split answer a build's and consolidation's calls.
 	batch, merge, split func(user string) (string, error)
+	attribute           func(string) (string, error)
 	calls               map[string]int
 	// usage, when set, is reported instead of a small call's.
 	usage  *agent.Usage
@@ -55,11 +58,33 @@ type scriptBackend struct {
 func (b *scriptBackend) Name() string                          { return agent.BackendClaude }
 func (b *scriptBackend) Check(context.Context) (string, error) { return "1.0.0", nil }
 func (b *scriptBackend) Run(_ context.Context, req agent.Request) (agent.Result, error) {
-	if b.task == nil {
-		return agent.Result{}, errors.New("not used")
+	if _, err := os.Stat(filepath.Join(req.Directory, "instructions.txt")); b.task != nil && os.IsNotExist(err) {
+		b.runs++
+		return b.task(req)
 	}
-	b.runs++
-	return b.task(req)
+	// Existing synthetic PR head labels map explicitly to the fixture clone.
+	// Every local classification still goes through Run with browsable source.
+	instructions, err := os.ReadFile(filepath.Join(req.Directory, "instructions.txt"))
+	if err != nil {
+		return agent.Result{}, err
+	}
+	user, err := os.ReadFile(filepath.Join(req.Directory, "transcript.txt"))
+	if err != nil {
+		return agent.Result{}, err
+	}
+	if _, err = os.Stat(filepath.Join(req.Directory, "head", "src", "search", "a.go")); err != nil {
+		return agent.Result{}, err
+	}
+	maxOutput := 8192
+	if strings.Contains(string(req.Schema), `"choice"`) {
+		maxOutput = 4096
+	}
+	if strings.Contains(string(req.Schema), `"groups"`) || strings.Contains(string(req.Schema), `"parts"`) {
+		maxOutput = int(FeatureConsolidateOutputTokens)
+	}
+	out, err := b.Complete(context.Background(), agent.CompleteRequest{System: string(instructions), User: string(user), Schema: req.Schema, MaxOutputTokens: maxOutput})
+	data, marshalErr := json.Marshal(sourceReply{Extraction: out.Document, References: []string{"src/search/a.go"}})
+	return agent.Result{Document: data, Calls: 1, Model: out.Model, Usage: out.Usage, StructuredOutputRejections: out.Rejections}, errors.Join(err, marshalErr)
 }
 
 func (b *scriptBackend) Complete(_ context.Context, req agent.CompleteRequest) (agent.Completion, error) {
@@ -89,6 +114,30 @@ func (b *scriptBackend) record(req agent.CompleteRequest) (agent.Completion, fun
 	}
 	schema, user := string(req.Schema), req.User
 	switch {
+	case strings.Contains(schema, `"key_eligible"`):
+		b.calls["attribution"]++
+		if b.attribute != nil {
+			return out, func() (string, error) { return b.attribute(user) }
+		}
+		return out, func() (string, error) {
+			var input attributionInput
+			if err := json.Unmarshal([]byte(user), &input); err != nil {
+				return "", err
+			}
+			reply := struct {
+				Decisions []decisionResolution `json:"decisions"`
+			}{}
+			for _, d := range input.Decisions {
+				r := decisionResolution{DecisionID: d.ID, Reason: "synthetic fixture significant explicit choice"}
+				if len(input.Candidates) == 1 {
+					r.FeatureID = input.Candidates[0].ID
+					r.KeyEligible = true
+				}
+				reply.Decisions = append(reply.Decisions, r)
+			}
+			data, err := json.Marshal(reply)
+			return string(data), err
+		}
 	case strings.Contains(schema, `"assignments"`):
 		b.calls["batch"]++
 		b.batchSystems = append(b.batchSystems, req.System)
@@ -98,7 +147,25 @@ func (b *scriptBackend) record(req agent.CompleteRequest) (agent.Completion, fun
 		return out, func() (string, error) { return b.merge(user) }
 	case strings.Contains(schema, `"parts"`):
 		b.calls["split"]++
-		return out, func() (string, error) { return b.split(user) }
+		return out, func() (string, error) {
+			if b.split != nil {
+				return b.split(user)
+			}
+			var input struct {
+				Pulls []struct {
+					ID string `json:"id"`
+				} `json:"pull_requests"`
+			}
+			if err := json.Unmarshal([]byte(user), &input); err != nil {
+				return "", err
+			}
+			ids := []string{}
+			for _, p := range input.Pulls {
+				ids = append(ids, p.ID)
+			}
+			data, _ := json.Marshal(map[string]any{"parts": []any{map[string]any{"title": "Whole", "description": "One supported outcome.", "pull_requests": ids}}})
+			return string(data), nil
+		}
 	case strings.Contains(schema, `"choice"`):
 		b.calls["assign"]++
 		return out, func() (string, error) { return b.assign(user) }
@@ -142,6 +209,16 @@ func newFeatureFixture(t *testing.T) *featureFixture {
 	build := func(string) generate.CheckedBackend { return f.backend }
 	f.worker = &FeatureWorker{Store: f.store, Now: f.clock.Now, Config: config.Config{Backend: config.BackendClaude},
 		Backends: generate.Backends{Claude: build, Codex: build, Anthropic: build, CursorAgent: build}}
+	var sourceOnce sync.Once
+	sourceDir := ""
+	f.worker.source = func(ctx context.Context, _ string, repository, revision, branch string, cfg config.Config) (repositorySource, error) {
+		sourceOnce.Do(func() { sourceDir = discoveryClone(t) })
+		source, err := prepareRepositorySource(ctx, sourceDir, repository, "", "main", cfg)
+		if err == nil {
+			source.Context.Limitations = append(source.Context.Limitations, "Synthetic fixture PR labels map to this committed test source.")
+		}
+		return source, err
+	}
 	f.worker.Registry = registryOf(f)
 	// The whole history is listed: a build lists none.
 	if _, err := f.store.db.Exec(`INSERT INTO pull_sync(repository, activated_at, history_listed_at) VALUES (?, ?, ?)`, repo, t0.UnixMilli(), t0.UnixMilli()); err != nil {

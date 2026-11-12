@@ -16,6 +16,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/baum-ai/baum/features/consolidate"
+	"github.com/baum-ai/baum/internal/generate"
 )
 
 // Consolidation (README.md, "Consolidation"): the weekly merge of duplicate
@@ -128,6 +129,7 @@ WHERE version_id=? AND repository=? ORDER BY id`, version, repository))
 		return "", err
 	}
 	sum := sha256.New()
+	sum.Write([]byte(ConsolidateVersion))
 	for _, row := range rows {
 		sum.Write([]byte(row + "\n"))
 	}
@@ -160,8 +162,12 @@ type consolidationPull struct {
 func (r *featureRun) consolidationFeatures(ctx context.Context) ([]*consolidationFeature, error) {
 	s := r.w.Store
 	found, err := s.candidateFeatures(ctx, r.version, r.repository, r.now.Add(-FeatureCandidateWindow), "")
-	if err != nil || len(found) == 0 {
+	if err != nil {
 		return nil, err
+	}
+	found = slices.DeleteFunc(found, func(f *candidateFeature) bool { return !f.materialized })
+	if len(found) == 0 {
+		return nil, nil
 	}
 	byID := map[string]*consolidationFeature{}
 	out := make([]*consolidationFeature, 0, len(found))
@@ -179,12 +185,12 @@ func (r *featureRun) consolidationFeatures(ctx context.Context) ([]*consolidatio
 	metas, err := collect(func(rows *sql.Rows) (meta, error) {
 		var m meta
 		return m, rows.Scan(&m.id, &m.membership, &m.checked, &m.splitFrom, &m.splitAt, &m.sessions)
-	})(s.db.QueryContext(ctx, `SELECT f.id, f.membership_version, f.split_checked_version, COALESCE(f.split_from, ''), COALESCE(f.split_at, 0),
+	})(s.db.QueryContext(ctx, `SELECT f.id, f.membership_version, COALESCE((SELECT checked_version FROM feature_reconcile rc WHERE rc.feature_id=f.id AND rc.version_id=f.version_id AND rc.prompt_version=?3),0), COALESCE(f.split_from, ''), COALESCE(f.split_at, 0),
 (SELECT COUNT(*) FROM feature_session fs WHERE fs.feature_id=f.id AND NOT EXISTS (SELECT 1 FROM session_commit sc
   JOIN pull_commit pc ON pc.repository=sc.repository AND pc.sha=sc.sha
   JOIN feature_pull fp ON fp.version_id=f.version_id AND fp.repository=pc.repository AND fp.number=pc.number
   WHERE sc.repository=fs.repository AND sc.agent=fs.agent AND sc.session_id=fs.session_id))
-FROM feature f WHERE f.version_id=? AND f.repository=? AND f.merged_into IS NULL`, r.version, r.repository))
+FROM feature f WHERE f.version_id=?1 AND f.repository=?2 AND f.merged_into IS NULL`, r.version, r.repository, ConsolidateVersion))
 	if err != nil {
 		return nil, err
 	}
@@ -333,8 +339,16 @@ func (r *featureRun) consolidate(ctx context.Context, gated bool) (ConsolidateRe
 		if err != nil {
 			return report, err
 		}
-		result, callErr := r.calls.complete(ctx, r.opts.Backend, r.opts.Model,
-			Attempt{Repository: r.repository, Stage: StageConsolidate, Item: "merge"}, request)
+		ids := make([]string, len(found))
+		for i, f := range found {
+			ids[i] = f.ID
+		}
+		request.User, _, err = r.contextInput(ctx, request.User, ids)
+		if err != nil {
+			return report, err
+		}
+		result, callErr := r.semanticCall(ctx, "",
+			Attempt{Repository: r.repository, Stage: StageConsolidate, Item: "merge"}, request, func(data []byte) error { _, _, err := consolidate.ParseMergeReply(data, rendered); return err })
 		addCall(result)
 		switch {
 		case result.Skip != "":
@@ -393,7 +407,7 @@ func (r *featureRun) consolidate(ctx context.Context, gated bool) (ConsolidateRe
 		if len(pulls) == 0 || (!merged[i] && f.checked > 0 && f.checked == f.membership) {
 			continue
 		}
-		if len(pulls) > FeatureSplitPulls || pulls[len(pulls)-1].Opened.Sub(pulls[0].Opened) > FeatureSplitAge {
+		if len(pulls) >= 2 {
 			offered = append(offered, i)
 		}
 	}
@@ -403,6 +417,12 @@ func (r *featureRun) consolidate(ctx context.Context, gated bool) (ConsolidateRe
 	var splits []plannedSplit
 	slots := 0
 	for _, i := range offered {
+		if retired, err := r.retired(ctx); err != nil {
+			return report, err
+		} else if retired {
+			report.Stopped = ReasonVersionRetired
+			return report, nil
+		}
 		if slots >= FeatureMaxSplits {
 			break
 		}
@@ -430,8 +450,12 @@ func (r *featureRun) consolidate(ctx context.Context, gated bool) (ConsolidateRe
 		}
 		// A call takes a slot whatever its outcome.
 		slots++
-		result, callErr := r.calls.complete(ctx, r.opts.Backend, r.opts.Model,
-			Attempt{Repository: r.repository, Stage: StageConsolidate, Item: kindFeature + ":" + f.ID}, request)
+		request.User, _, err = r.contextInput(ctx, request.User, []string{f.ID})
+		if err != nil {
+			return report, err
+		}
+		result, callErr := r.semanticCall(ctx, f.ID,
+			Attempt{Repository: r.repository, Stage: StageConsolidate, Item: kindFeature + ":" + f.ID}, request, func(data []byte) error { _, err := consolidate.ParseSplitReply(data, rendered); return err })
 		addCall(result)
 		switch {
 		case result.Skip != "":
@@ -446,6 +470,11 @@ func (r *featureRun) consolidate(ctx context.Context, gated bool) (ConsolidateRe
 		case callErr != nil && ctx.Err() != nil:
 			return report, ctx.Err()
 		case callErr != nil:
+			var invalid *generate.Error
+			if errors.As(callErr, &invalid) && invalid.Category == generate.CategoryValidation {
+				report.InvalidSplits++
+				continue
+			}
 			// A failed call defers the pass too.
 			report.DiscardedMerges = len(groups)
 			return r.consolidationFailed(ctx, report, fingerprint, map[bool]int{true: 1}[result.Called], callErr)
@@ -495,9 +524,9 @@ func (r *featureRun) consolidate(ctx context.Context, gated bool) (ConsolidateRe
 	for _, planned := range splits {
 		f := planned.feature
 		if planned.checked {
-			if _, err := s.db.ExecContext(write, `UPDATE feature SET split_checked_version=membership_version WHERE id=? AND membership_version=?
-AND version_id IN (SELECT id FROM feature_version WHERE state != 'retired')`,
-				f.ID, expected[f.ID]); err != nil {
+			if _, err := s.db.ExecContext(write, `INSERT INTO feature_reconcile(feature_id,version_id,prompt_version,checked_version)
+SELECT id,version_id,?,membership_version FROM feature WHERE id=? AND membership_version=? AND version_id IN (SELECT id FROM feature_version WHERE state!='retired')
+ON CONFLICT(feature_id) DO UPDATE SET prompt_version=excluded.prompt_version,checked_version=excluded.checked_version`, ConsolidateVersion, f.ID, expected[f.ID]); err != nil {
 				return r.consolidationFailed(write, report, fingerprint, 0, err)
 			}
 			continue
@@ -694,6 +723,9 @@ VALUES (?1,?2,?3,?4,?5,?6,?7,?7,?7,?7)`, newID, version, repository, part.Title,
 		}
 		for _, part := range ids {
 			if _, err := tx.ExecContext(ctx, `UPDATE feature SET split_checked_version=membership_version WHERE id=?`, part); err != nil {
+				return err
+			}
+			if _, err := tx.ExecContext(ctx, `INSERT INTO feature_reconcile(feature_id,version_id,prompt_version,checked_version) SELECT id,version_id,?,membership_version FROM feature WHERE id=? ON CONFLICT(feature_id) DO UPDATE SET prompt_version=excluded.prompt_version,checked_version=excluded.checked_version`, ConsolidateVersion, part); err != nil {
 				return err
 			}
 		}

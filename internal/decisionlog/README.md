@@ -150,7 +150,8 @@ the transcript changes; other skips only when it changes.
   every insert or delete of, and every change of a column the snapshot reads
   in, `feature_version`, `feature`, `feature_pull`, `feature_session`,
   `pull_request`, `pull_commit`, `session_commit`, `capture_session`,
-  `decision` and `decision_file`; for the feature tables only rows of the
+  `decision`, `decision_file`, source provenance, durable scopes and local
+  semantic attribution; for the feature tables only rows of the
   current version count, a building version moves it when it is switched in.
   A decision moves the revision of its own repository and of its session's.
   A write to anything else in `app.sqlite`, or to a column the snapshot does
@@ -303,12 +304,22 @@ session with no capture row has none.
 
 ### Model calls
 
-Placement, feature text and consolidation call as capture does (steps 6 to
-8 above): the same backend, model, reservation (the request's byte bound and
+Local placement, semantic decision attribution, feature text and consolidation
+run code-capable tasks through the same `generate.RunTask` adapter as capture.
+They read the full system/user/schema contract plus a pinned read-only `head/`
+and `source.json`; source references are validated before redaction and again
+afterwards. Incoming PR placement uses that PR's committed head, including new
+paths absent from an older map. Session context prefers capture provenance, then
+a linked session commit; a pre-source capture with neither uses explicitly
+labeled map/current committed context, never claimed to be session-time code.
+Unavailable source backs off explicitly. Map revisions remain separate.
+
+The same backend and accounting apply (capture steps 6 to 8): model,
+reservation (the request's byte bound and
 the call's reply bound: 4,096 tokens for a placement, 32,768 for a batch,
 merge or split, 8,192 for a text or pull request summary), 10-minute bound
 and ledger, each attempt recorded with its stage (`feature_assign`,
-`feature_summary`, `pr_summary` or `feature_consolidate`) and item. Rejected
+`feature_attribution`, `feature_summary`, legacy `pr_summary` or `feature_consolidate`) and item. Rejected
 replies and a ledger that cannot be written are handled as capture's. The
 preferences and the repository's settings are read again before every call,
 so a repository turned off makes no further call. A repository turned off or
@@ -317,7 +328,7 @@ a missing backend stops the stage until its next run, with no failure counted.
 ### Placement
 
 After the sync and the linking, each run places at most 100 pending items,
-oldest trigger first, one call each with the published assigner prompt. An
+oldest trigger first, one task each with `feature-assign-repository-v1`. An
 item is pending when:
 
 - a pull request is in no feature, was opened at or after the activation and
@@ -348,7 +359,15 @@ by one pull request only; sharing a linked session; or mentioned as `#N`),
 best path
 score first, then the best path scores of the rest (10), then the most
 recently changed. Each candidate shows its digest and its pull requests'
-titles with their saved review summaries, else generated ones.
+titles with their saved review summaries, else already generated ones. Durable
+`feature_scope` purpose, exclusion boundaries, paths and validated examples
+remain candidate context after first membership. Source-only scopes are also
+candidates and materialize only on their first supported join. Scope aliases
+follow consolidation merges to valid targets. Direct links, matching examples,
+purpose-word relevance and source/path evidence affect retrieval; broad paths
+and a direct link do not establish a common outcome. A chosen placement or
+explicit skip records its reason, incoming source and separate map context in
+`feature_judgment` under `repository-placement-v1`.
 
 The reply joins a candidate, starts a feature with its provisional text, or
 skips a small change. A session only joins: with no candidate it is settled
@@ -374,11 +393,42 @@ a commit change, the features holding a pull request with it and the
 features of those sessions (an unchanged re-link marks none). Marking
 raises `membership_version` and sets `dirty_since` and `changed_at`.
 
+### Semantic decision attribution
+
+`FeatureWorker.AttributeDecisions`, also invoked by public `Summarize`, refreshes
+local decisions before text is written. It uses `feature-attribution-repository-v1`
+tasks with meanings, quoted extracted evidence, cited turns, linked commits/PRs,
+durable scopes and source. It never rereads complete transcripts. One task
+answers at most 40 pending decisions from one session; a pass takes at most 50
+pending session units (or its explicit limit), including unavailable-source
+attempts. Inputs over 512 KiB remain unresolved with a reason. Failures use the
+same per-input backoff as placement. Every supplied ID must occur exactly once;
+only supplied eligible features/PRs may be chosen, and explicit no-match is valid.
+
+`feature_decision` stores repository/version/decision ID, input hash, context
+version, selected feature and optional supported PR, key eligibility, reason and
+source manifest/references. Immutable `decision_source` provenance accompanies
+the current capture context; an original decision from another repository stays
+unresolved. Cache identity includes decision IDs/text/citations/source, eligible
+scope definitions and linked PR heads/text/paths/commits. Display text derived by
+a summary is excluded from cache identity to avoid a feedback loop. Unrelated
+clone HEAD changes do not invalidate pinned evidence. Repository input revision
+is compared inside the write transaction, so changes during the task cannot
+persist stale relevance or highlights. Accepted answers dirty affected features,
+including initially clean adaptive scopes, without blocking build promotion.
+
+Timeline and `summarySource` share one bulk storage-only resolver. A current
+semantic answer wins, including explicit none. While absent/stale, only file
+evidence supporting exactly one feature is accepted; multiple positively
+supported features, ties, no match and fileless/own-session guesses remain in
+All decisions. No dominant or earliest-feature fallback runs locally. Until a
+semantic answer establishes significance, fallback decisions cannot be keys.
+The shared hosted `features.Attributor` keeps its published behavior.
+
 ### Feature text
 
 Each run writes the text of at most 50 features behind their members, not
-changed for 15 minutes, longest behind first, 4 at once, with the published
-summary prompt. A stop or an error starts no further feature; those being
+changed for 15 minutes, longest behind first, 4 at once, with `feature-summary-repository-v1`. A stop or an error starts no further feature; those being
 written finish. A feature's input is its pull requests, earliest opened first
 (title, description, state, and the summary of the latest review saved in
 the clone, else a generated one), the current decisions of its sessions that
@@ -386,10 +436,15 @@ attribution gives it (what was decided and why and the cited files, never a
 session's prompts or quoted evidence) and its paths. The call also reads the
 repository's name and the feature's current title and description.
 
-A pull request with no saved review summary gets one from its own call, from
-its title, description and the feature's decisions of the sessions linked
-to it, kept in `pr_summary` with its input's hash and reused while that is
-unchanged; one with neither a description nor such a decision gets none.
+Live repository summaries read PR titles, descriptions, paths, available saved
+review/generated summaries and source directly; they never fan out to a model
+call per PR. The explicitly selected legacy full-history build retains its old
+per-PR fallback. Only semantically eligible, significant choices may be keys:
+routine agent tests, lint/build checks, PR preparation and bookkeeping are
+excluded. A deliberate testing/tooling policy may qualify; merely performing
+checks does not. Zero key decisions is valid. Explicit human choices and stable
+citations are retained. A reply naming an ineligible key cannot store it; reads
+also hide legacy/stale keys until relevance is established.
 
 The text is kept with the hash of its input and its own text, decisions
 named by session and first cited turn, so the same decisions extracted again
@@ -406,8 +461,8 @@ version.
 
 ### Consolidation
 
-After the text, a repository's features are consolidated as hosted ones are,
-with the published consolidation prompt, at most once every 7 days (from the
+After the text, a repository's features are consolidated with the local
+`feature-consolidate-repository-v1` repository task, at most once every 7 days (from the
 start of the last pass) and only when their fingerprint (every feature's id,
 membership and text versions and `merged_into`, merged ones included)
 changed since the last pass (`feature_consolidation`). A pass's own merges
@@ -429,13 +484,13 @@ first build's features needs the room.
   with the feature it was split from, or of two of its parts, is dropped
   from the reply; the merge call marks such a part with its origin. A part
   merged into another feature passes its origin and split time on.
-- **Split.** At most 3 features, as they will be after the merges, with more
-  than 30 pull requests or pull requests opened more than 8 weeks apart,
-  largest first, get one split call each (a call takes its slot whatever its
+- **Split.** At most 3 features, as they will be after the merges, with at least
+  two pull requests,
+  largest first, get one split task each (a call takes its slot whatever its
   outcome) with their pull requests' text,
   state, opening date, placed paths and summaries. A feature kept whole, or
   too large to offer (over 200 pull requests or its input over its bound,
-  which takes no slot), is recorded as checked (`split_checked_version`) and
+  which takes no slot), is recorded as checked (`feature_reconcile`) and
   not offered again until its members change; a survivor of the pass's
   merges always is. Otherwise the largest part keeps the feature's id (ties
   to the part with the earliest opened pull request), and each other part
@@ -443,6 +498,10 @@ first build's features needs the room.
   `split_at`, its pull requests moved as `consolidation`'s at the head and
   paths they were placed with; sessions in it on their own stay. The parts
   are recorded as checked.
+  Small mixed groups may split into one-PR parts when they represent independent
+  substantial outcomes. Shared paths do not force a join; stages, tests and
+  follow-ups of one outcome stay together. `feature_reconcile` keys checked
+  memberships by prompt version, so an old policy does not suppress repair.
 - **Writing.** Every call of a pass is made before anything is written. Each
   merge and split is written in its own transaction, only while its features
   are at the membership versions the pass read (as its own earlier writes
@@ -668,6 +727,8 @@ paths as a build does.
   ETag, cursor, activation, last full re-link and history listing.
 - `session_commit`: each session linked to a commit, with the method and
   confidence.
+- `feature_judgment`, `feature_decision`, `feature_reconcile`: local source/decision
+  context, durable semantic answers and prompt-aware reconciliation checks.
 - `feature_version`, `feature`, `feature_pull`, `feature_session`,
   `feature_settle`, `pr_summary`, `feature_consolidation`: the tables
   placement, text, consolidation and a build write.

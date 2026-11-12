@@ -269,7 +269,7 @@ func TestRequestNamesItsVersionAndKind(t *testing.T) {
 	if _, err := testPrompts.Request(PublicVersion, "other", "{}", 0); err == nil {
 		t.Fatal("an unknown kind was accepted")
 	}
-	if !Public.KnownPromptVersion(PublicVersion) || !slices.Equal(Public.PromptVersions(), []string{PublicVersion}) {
+	if !Public.KnownPromptVersion(PublicVersion) || !slices.Equal(Public.PromptVersions(), []string{PublicVersion, RepositoryVersion}) {
 		t.Fatal("the published prompt version is not released")
 	}
 }
