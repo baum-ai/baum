@@ -23,6 +23,16 @@ type IndexWatch struct {
 	Snapshot func(context.Context) (any, uint64, error)
 }
 
+// CheckIndex wakes the index watcher after an in-process invalidation. It
+// publishes nothing itself; the watcher compares content and skips builds
+// while no event stream is connected.
+func (s *Server) CheckIndex() {
+	select {
+	case s.indexChanged <- struct{}{}:
+	default:
+	}
+}
+
 // IndexWatchEvery is WatchIndex's default interval. What this process changes
 // invalidates the index directly; the watch only finds what other processes
 // changed, which can wait a few seconds, so the daemon does not wake every
@@ -75,6 +85,7 @@ func (s *Server) WatchIndex(ctx context.Context, interval time.Duration, w Index
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
+			case <-s.indexChanged:
 			case <-s.joined:
 			}
 			continue
@@ -102,6 +113,7 @@ func (s *Server) WatchIndex(ctx context.Context, interval time.Duration, w Index
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+		case <-s.indexChanged:
 		case <-s.joined:
 		}
 	}

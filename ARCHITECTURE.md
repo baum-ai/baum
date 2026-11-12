@@ -3008,17 +3008,22 @@ a client reading after the event gets a new build, and a build that started
 before an invalidation still answers its waiting readers but is not kept.
 Discovery, which only the daemon runs, invalidates through
 `discovery.Service.Updated` after each write of a repository's cache and each
-change to its live freshness, without an event of its own: the watcher below
-publishes if the index moved. A write of the credential's budget record alone
+change to its live freshness. It wakes the watcher below, which publishes
+only if the index moved. Background pass callbacks use the same path instead
+of publishing directly at both the poll and read boundaries. The watcher also
+compares the background repository errors the app displays, so a refresh
+failure or recovery is announced even when the index rows stayed the same.
+Routine background success times and retry counts do not trigger an event. A write of the credential's budget record alone
 (a probe saves only that), which `Cached` does not read, does not invalidate. A
 panicking build is an error for its readers and is not kept. A
 kept snapshot expires at the earliest instant at which building again could
 differ with nothing written: a `generating` run's lease end (it then reads as
-interrupted) or a fresh discovery snapshot's next poll; and at the latest
-after `reviewindex.MaxAge` (2 minutes), for what nothing models (below). An
+interrupted); and at the latest after `reviewindex.MaxAge` (2 minutes), for what nothing models (below). An
 applied observation's age does not count: the entry carries `observed_at` and
 the app shows it as stale two minutes later, so the index does not change with
-time alone.
+time alone. The index reads discovery through `CachedStable`, which keeps
+failed or not-yet-validated data stale but does not age it at `NextPoll`. Other
+discovery readers retain the deadline-based `Cached` answer.
 Nothing is persisted: a restarted daemon builds on first read.
 
 A build after an invalidation reads again only the repositories whose inputs

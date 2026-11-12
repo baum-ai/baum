@@ -300,10 +300,10 @@ func TestCacheReadsRepositoriesAgainWhenTheyMayHaveChanged(t *testing.T) {
 	if got := f.reads(); got != [4]int{1, 1, 1, 1} {
 		t.Fatalf("reads %v", got)
 	}
-	// acme/a reaches its next poll, after which its snapshot reads stale.
+	// Poll deadlines alone do not invalidate the review index.
 	f.clock.Advance(31 * time.Second)
 	f.rebuild(t)
-	if got := f.reads(); got != [4]int{2, 2, 1, 1} {
+	if got := f.reads(); got != [4]int{1, 1, 1, 1} {
 		t.Fatalf("after acme/a's next poll, reads %v", got)
 	}
 	// The kept snapshot expires when every repository is due again.
@@ -315,7 +315,7 @@ func TestCacheReadsRepositoriesAgainWhenTheyMayHaveChanged(t *testing.T) {
 		t.Fatalf("expires %v, want %v", expires, f.clock.Now())
 	}
 	f.rebuild(t)
-	if got := f.reads(); got != [4]int{3, 3, 2, 2} {
+	if got := f.reads(); got != [4]int{2, 2, 2, 2} {
 		t.Fatalf("after MaxAge, reads %v", got)
 	}
 }

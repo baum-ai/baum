@@ -76,3 +76,30 @@ func TestBudgetWriteIsNotReported(t *testing.T) {
 		t.Fatalf("revision moved: %+v -> %+v (%v)", before, after, err)
 	}
 }
+
+func TestCachedStableDoesNotAgeAtPollDeadline(t *testing.T) {
+	ctx := context.Background()
+	s, now := service(t, recordedFixture())
+	polled, err := s.Poll(ctx, testRepo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, err := s.CachedStable(ctx, testRepo)
+	if err != nil || before.Stale {
+		t.Fatalf("validated: %+v %v", before, err)
+	}
+	*now = polled.NextPoll.Add(time.Second)
+	after, err := s.CachedStable(ctx, testRepo)
+	if err != nil || after.Stale {
+		t.Fatalf("past deadline: %+v %v", after, err)
+	}
+	ordinary, err := s.Cached(ctx, testRepo)
+	if err != nil || !ordinary.Stale {
+		t.Fatalf("ordinary reader lost aging: %+v %v", ordinary, err)
+	}
+	s.ResetIdentity()
+	unvalidated, err := s.CachedStable(ctx, testRepo)
+	if err != nil || !unvalidated.Stale {
+		t.Fatalf("unvalidated: %+v %v", unvalidated, err)
+	}
+}

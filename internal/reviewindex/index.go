@@ -94,8 +94,8 @@ func (s *Service) Build(ctx context.Context) (Snapshot, error) {
 }
 
 // build also returns the earliest instant after now at which building again
-// could give another snapshot with nothing written: a run lease expiring or a
-// discovery snapshot reaching its next poll. The age of fetched metadata does
+// could give another snapshot with nothing written: a run lease expiring.
+// Discovery poll deadlines and the age of fetched metadata do
 // not count: the app works that out itself. It is zero when there is none.
 // With kept, a repository whose inputs did not change since kept read it is
 // not read again (parts.go).
@@ -223,11 +223,14 @@ func (s *Service) readPart(ctx context.Context, now time.Time, g *group) (p *par
 			if err != nil {
 				return nil, false, err
 			}
-			snapshot, err := s.Discovery.Cached(ctx, parsed)
-			stale = err != nil || snapshot.Stale
-			if !stale {
-				changeAt(snapshot.NextPoll)
+			read := s.Discovery.Cached
+			if stable, ok := s.Discovery.(interface {
+				CachedStable(context.Context, github.Repository) (discovery.Snapshot, error)
+			}); ok {
+				read = stable.CachedStable
 			}
+			snapshot, err := read(ctx, parsed)
+			stale = err != nil || snapshot.Stale
 			fetched = snapshot.FetchedAt
 			if err != nil {
 				if ctx.Err() != nil {

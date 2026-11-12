@@ -50,6 +50,7 @@ type Server struct {
 	events                             []event
 	subscribers                        map[chan struct{}]struct{}
 	joined                             chan struct{} // poked when a subscriber connects
+	indexChanged                       chan struct{} // coalesced request to check the index
 	done                               chan struct{}
 }
 type event struct {
@@ -78,7 +79,7 @@ func New(opts Options) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Server{opts: opts, launch: launch, session: session, namespace: namespace, subscribers: map[chan struct{}]struct{}{}, joined: make(chan struct{}, 1), done: make(chan struct{})}, nil
+	return &Server{opts: opts, launch: launch, session: session, namespace: namespace, subscribers: map[chan struct{}]struct{}{}, joined: make(chan struct{}, 1), indexChanged: make(chan struct{}, 1), done: make(chan struct{})}, nil
 }
 func (s *Server) Listen(port int) (string, error) {
 	if port < 0 || port > 65535 {

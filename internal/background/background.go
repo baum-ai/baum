@@ -227,6 +227,21 @@ func (s *Service) put(state State, epoch uint64) {
 	}
 	s.states[state.Repository] = state
 }
+
+// Errors is the state the app uses to show repository refresh failures.
+// Routine poll times and retry counts do not change this answer.
+func (s *Service) Errors() map[string]string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := map[string]string{}
+	for repository, state := range s.states {
+		if state.Error != "" {
+			out[repository] = state.Error
+		}
+	}
+	return out
+}
+
 func (s *Service) Handler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {

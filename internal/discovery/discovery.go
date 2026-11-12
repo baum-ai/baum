@@ -396,6 +396,17 @@ func (s *Service) Revision(ctx context.Context, repository github.Repository) (R
 // partitions results by credential, so changing accounts cannot reuse an inbox.
 // Disk snapshots are always stale until a successful conditional poll.
 func (s *Service) Cached(ctx context.Context, repository github.Repository) (Snapshot, error) {
+	return s.cached(ctx, repository, true)
+}
+
+// CachedStable reports data freshness without aging a successful poll at its
+// next deadline. Errors and caches not validated in this process remain stale.
+// The review index uses it so the passage of time does not change its rows.
+func (s *Service) CachedStable(ctx context.Context, repository github.Repository) (Snapshot, error) {
+	return s.cached(ctx, repository, false)
+}
+
+func (s *Service) cached(ctx context.Context, repository github.Repository, age bool) (Snapshot, error) {
 	epoch := s.Epoch()
 	reader, err := s.client.REST(ctx, repository)
 	if err != nil {
@@ -414,7 +425,7 @@ func (s *Service) Cached(ctx context.Context, repository github.Repository) (Sna
 	snapshot := cache.Snapshot
 	snapshot.PullRequests = slices.Clone(snapshot.PullRequests)
 	snapshot.Observations = slices.Clone(snapshot.Observations)
-	snapshot.Stale = snapshot.Stale || !s.isValidated(path) || !s.now().Before(snapshot.NextPoll)
+	snapshot.Stale = snapshot.Stale || !s.isValidated(path) || (age && !s.now().Before(snapshot.NextPoll))
 	if epoch != s.Epoch() {
 		return Snapshot{}, github.ErrIdentityChanged
 	}

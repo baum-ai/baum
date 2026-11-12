@@ -94,6 +94,12 @@ next refresh and the error of the last pass: `discovery_unavailable`,
 poll backs off exponentially, for at most 15 minutes. A settling poll is due
 when discovery says.
 
+The daemon routes pass callbacks through the index watcher's content check.
+An unchanged pass publishes no `index` event at its poll or read boundary.
+Repository error transitions also participate in that check, so the app's
+refresh health updates even when the pull request rows did not change. Routine
+success and next-refresh times alone do not announce an index change.
+
 ## Tests
 
 ```sh
