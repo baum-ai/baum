@@ -98,7 +98,9 @@ The daemon routes pass callbacks through the index watcher's content check.
 An unchanged pass publishes no `index` event at its poll or read boundary.
 Repository error transitions also participate in that check, so the app's
 refresh health updates even when the pull request rows did not change. Routine
-success and next-refresh times alone do not announce an index change.
+success and next-refresh times, and an unchanged discovery poll's metadata
+fetch timestamp, alone do not announce an index change. API readers still get
+the actual timestamps; applied observation times remain in the comparison.
 
 ## Tests
 

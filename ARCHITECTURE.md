@@ -3013,7 +3013,12 @@ only if the index moved. Background pass callbacks use the same path instead
 of publishing directly at both the poll and read boundaries. The watcher also
 compares the background repository errors the app displays, so a refresh
 failure or recovery is announced even when the index rows stayed the same.
-Routine background success times and retry counts do not trigger an event. A write of the credential's budget record alone
+Routine background success times and retry counts do not trigger an event.
+The watcher's comparison also omits `metadata_fetched_at`: an unchanged
+successful discovery poll advances that bookkeeping timestamp, but changes no
+visible row. Applied observations still carry `observed_at`, which the app ages,
+and all actual PR fields participate. The API snapshot retains its timestamps;
+the watcher copies entries before dropping the field from its comparison. A write of the credential's budget record alone
 (a probe saves only that), which `Cached` does not read, does not invalidate. A
 panicking build is an error for its readers and is not kept. A
 kept snapshot expires at the earliest instant at which building again could
