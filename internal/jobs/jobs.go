@@ -421,6 +421,18 @@ func DefaultPath() (string, error) {
 }
 
 func Open(path string, executor Executor, concurrency int, changed func(Job)) (*Queue, error) {
+	return open(path, executor, concurrency, changed, false)
+}
+
+// OpenHeld is Open with the queue held: no journaled job starts until
+// Resume, so the caller can first wire what the executor and the queue's
+// settings need (a queued feature build needs the feature log, a chat job
+// the chat service). Jobs are accepted meanwhile.
+func OpenHeld(path string, executor Executor, concurrency int, changed func(Job)) (*Queue, error) {
+	return open(path, executor, concurrency, changed, true)
+}
+
+func open(path string, executor Executor, concurrency int, changed func(Job), held bool) (*Queue, error) {
 	if executor == nil || !validConcurrency(concurrency) {
 		return nil, errors.New("invalid runner configuration")
 	}
@@ -445,7 +457,7 @@ func Open(path string, executor Executor, concurrency int, changed func(Job)) (*
 		return nil, err
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	q := &Queue{path: path, transcripts: filepath.Join(filepath.Dir(path), "transcripts"), executor: executor, estimates: map[string]Estimate{}, drafts: map[string][]byte{}, superseded: map[string]bool{}, cancels: map[string]context.CancelFunc{}, dirty: map[string]bool{}, wake: make(chan struct{}, 1), chatWake: make(chan struct{}, 1), ctx: ctx, cancel: cancel, changed: changed, lock: lock, limit: concurrency}
+	q := &Queue{path: path, transcripts: filepath.Join(filepath.Dir(path), "transcripts"), executor: executor, estimates: map[string]Estimate{}, drafts: map[string][]byte{}, superseded: map[string]bool{}, cancels: map[string]context.CancelFunc{}, dirty: map[string]bool{}, wake: make(chan struct{}, 1), chatWake: make(chan struct{}, 1), ctx: ctx, cancel: cancel, changed: changed, lock: lock, limit: concurrency, held: held}
 	opened := false
 	defer func() {
 		if !opened {

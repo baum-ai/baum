@@ -292,3 +292,60 @@ func TestDrainRunningWaitsForAGroupGeneration(t *testing.T) {
 		t.Fatalf("%d jobs after a refused group generation", n)
 	}
 }
+
+// A queue opened held starts no journaled job until Resume, so the daemon
+// can wire what the jobs need first; it accepts jobs meanwhile.
+func TestOpenHeldStartsJournaledJobsOnResume(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(privateDir(t), "jobs.json")
+	f := &fakeExecutor{head: "first", started: make(chan Prepared, 10), release: make(chan struct{})}
+	q, err := Open(path, f, 1, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	running, err := q.Generate(ctx, []Item{{Clone: "clone", PR: 1}}, "single", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	<-f.started
+	if q.DrainRunning() {
+		t.Fatal("drained while a job runs")
+	}
+	journaled, err := q.Generate(ctx, []Item{{Clone: "clone", PR: 2}}, "single", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	releaseJob(t, f)
+	waitState(t, q, running[0].ID, "completed")
+	if err := q.Shutdown(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	next, err := OpenHeld(path, f, 4, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(next.Close)
+	accepted, err := next.Generate(ctx, []Item{{Clone: "clone", PR: 3}}, "single", false)
+	if err != nil {
+		t.Fatal("refused while held at open:", err)
+	}
+	noneStarts(t, f.started, "before Resume")
+	next.Resume()
+	started := map[int]bool{}
+	for range 2 {
+		select {
+		case p := <-f.started:
+			started[p.PR] = true
+		case <-time.After(3 * time.Second):
+			t.Fatalf("held jobs did not start after Resume: %v", started)
+		}
+	}
+	if !started[2] || !started[3] {
+		t.Fatalf("started %v, want PRs 2 and 3", started)
+	}
+	releaseJob(t, f)
+	releaseJob(t, f)
+	waitState(t, next, journaled[0].ID, "completed")
+	waitState(t, next, accepted[0].ID, "completed")
+}

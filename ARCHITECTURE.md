@@ -3411,6 +3411,9 @@ restart fails. Workers use the same `generate.Publish`
 entry point as the terminal: previous-version lookup, run lease, generation and
 strict validation, then atomic version publication. Running journal entries are
 interrupted on restart; queued entries retain their confirmed input fingerprint.
+The daemon opens the queue held (`jobs.OpenHeld`) and resumes it once the
+application is wired, so a journaled feature build or chat job never starts
+before the feature log or the chat service exists.
 `GET /api/jobs` reads the queue in three forms, so no client reads the whole
 history on every refresh; each answers `{"available":true,"jobs":[…]}`:
 
