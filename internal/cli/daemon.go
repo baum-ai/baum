@@ -23,6 +23,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/baum-ai/baum/agent"
 	"github.com/baum-ai/baum/internal/agentcli"
 	"github.com/baum-ai/baum/internal/agentcontext"
 	"github.com/baum-ai/baum/internal/agentplugins"
@@ -35,6 +36,7 @@ import (
 	"github.com/baum-ai/baum/internal/clonefind"
 	"github.com/baum-ai/baum/internal/commitattribution"
 	"github.com/baum-ai/baum/internal/config"
+	"github.com/baum-ai/baum/internal/console"
 	"github.com/baum-ai/baum/internal/daemon"
 	"github.com/baum-ai/baum/internal/decisionlog"
 	"github.com/baum-ai/baum/internal/discovery"
@@ -786,6 +788,42 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 			}
 			return "", errors.New("unknown clone")
 		}})
+		// The session panel's conversations run the person's own agent CLI
+		// with baum's MCP server; each holds a chat token of this server.
+		// A store that does not open leaves the panel off, not the daemon.
+		conversations, err := console.New(console.Options{Database: database, Registry: mcp.Registry, Clones: registry.List, Log: log,
+			Pull: func(ctx context.Context, repository string, number int) (console.Pull, error) {
+				repo, err := github.ParseRepository(repository)
+				if err != nil {
+					return console.Pull{}, err
+				}
+				snapshot, err := discover.Cached(ctx, repo)
+				if err != nil {
+					return console.Pull{}, err
+				}
+				for _, pr := range snapshot.PullRequests {
+					if pr.Number == number {
+						return console.Pull{HeadRef: pr.HeadRef, HeadSHA: pr.HeadSHA, Fork: pr.Fork}, nil
+					}
+				}
+				return console.Pull{}, fmt.Errorf("pull request %d of %s is not among the discovered ones", number, repository)
+			},
+			Config: func(ctx context.Context) (config.Config, error) {
+				prefs, err := registry.Preferences(ctx)
+				if err != nil {
+					return config.Config{}, err
+				}
+				return prefs.Resolve(cfg), nil
+			},
+			Price: func(backend string, accounting *agent.Accounting) (*float64, string) {
+				return pricing.Active().BackendAccountingCost(backend, accounting)
+			},
+			Publish: func(event console.Event) { _ = server.Publish("console", event) },
+		})
+		if err != nil {
+			log.Warn("the session panel is off: its conversations did not open", "error", err)
+			conversations = nil
+		}
 		return daemon.App{
 			API:     api,
 			Assets:  localapp.Handler(),
@@ -826,6 +864,11 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 				wg.Go(func() { hooks.Run(ctx) })
 				wg.Go(func() { planHistory.Run(ctx) })
 				wg.Go(func() { delivery.Run(ctx) })
+				if conversations != nil {
+					// Stopping ends every running turn and revokes the
+					// conversations' tokens.
+					wg.Go(func() { conversations.Run(ctx) })
+				}
 				if endedSessions != nil {
 					wg.Go(func() {
 						for {
@@ -869,6 +912,9 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 				events.Close()
 				if decisionStore != nil {
 					_ = decisionStore.Close()
+				}
+				if conversations != nil {
+					_ = conversations.CloseStore()
 				}
 				_ = groups.Close()
 				_ = registry.Close()
