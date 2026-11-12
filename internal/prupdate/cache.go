@@ -8,6 +8,8 @@ import (
 	"sync"
 	"time"
 
+	"golang.org/x/sync/singleflight"
+
 	"github.com/baum-ai/baum/internal/github"
 )
 
@@ -42,6 +44,8 @@ type Cache struct {
 	// first in logOrder.
 	logs     map[string]CheckLog
 	logOrder []string
+	// flights are the log reads under way.
+	flights singleflight.Group
 	// gen counts account changes, so a read that began before one is not
 	// stored.
 	gen uint64
@@ -198,6 +202,17 @@ func (c *Cache) storeAllChecks(key string, gen uint64, checks CheckList) {
 	if gen == c.gen {
 		store(&c.allChecks, key, checks, cmp.Or(c.AllChecksTTL, DefaultAllChecksTTL), c.now())
 	}
+}
+
+// readLog runs read for the log under key, once for however many callers
+// ask while it runs; the others wait for its answer.
+func (c *Cache) readLog(key string, read func() (CheckLog, error)) (CheckLog, error) {
+	if c == nil {
+		return read()
+	}
+	v, err, _ := c.flights.Do(key, func() (any, error) { return read() })
+	log, _ := v.(CheckLog)
+	return log, err
 }
 
 func logKey(repository github.Repository, check int64) string {

@@ -631,7 +631,7 @@ func (s Service) AllChecks(ctx context.Context, repository github.Repository, nu
 	}
 	out := CheckList{HeadSHA: head, Checks: []CheckStatus{}}
 	for _, check := range list {
-		out.Checks = append(out.Checks, CheckStatus{Name: check.Name, Status: check.Status, Conclusion: check.Conclusion, Title: checkTitle(check), URL: check.URL, JobID: check.JobID, ID: check.ID, HasLog: check.Actions && check.Status == "completed"})
+		out.Checks = append(out.Checks, CheckStatus{Name: check.Name, Status: check.Status, Conclusion: check.Conclusion, Title: checkTitle(check), URL: check.URL, JobID: check.JobID, ID: check.ID, HasLog: check.Actions && check.Status == "completed" && logConclusions[check.Conclusion]})
 	}
 	rank := func(c CheckStatus) int {
 		switch {

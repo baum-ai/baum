@@ -287,6 +287,15 @@ func callCheckLog(ctx context.Context, c CallContext, args json.RawMessage) (str
 			matches = append(matches, i)
 		}
 	}
+	// An id given as text (a model's habit) is an id when no check has that
+	// name.
+	if n, err := strconv.ParseInt(name, 10, 64); len(matches) == 0 && id == 0 && err == nil && n > 0 {
+		for i, check := range list.Checks {
+			if check.ID == n {
+				matches = append(matches, i)
+			}
+		}
+	}
 	switch {
 	case len(matches) == 0:
 		return "", errors.New("that is not one of the pull request's checks: name or number one that checks lists")

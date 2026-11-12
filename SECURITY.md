@@ -1539,11 +1539,14 @@ credentials (`GET /repos/{owner}/{repo}/actions/jobs/{id}/logs`, which answers
 with a redirect to a signed download address: the redirect is followed once,
 only to https, and the token is sent to the API host alone). It first checks
 that the check run is one of the pull request's current checks, so a request
-cannot name another run, and it streams the download, keeping only the last 200
-lines and 64 KiB (timestamps, terminal escapes and control characters dropped)
-rather than holding the log. GitHub masks the secrets it knows in a job log; baum
-runs the same redactor it uses for all text it shows on the tail as well, and
-refuses the log if that fails. The tail is held in the daemon's memory only, per
+cannot name another run. It asks the download host for the last 8 MiB of the
+log only (a range request) and streams it, keeping only the last 200 lines and
+64 KiB (timestamps, terminal escapes, control and invisible format characters
+dropped) rather than holding the log; a log too long to read the end of, from a
+host that ignores the range, is answered as too long, never from its middle.
+GitHub masks the secrets it knows in a job log; baum runs the same redactor it
+uses for all text it shows on the tail as well, over each whole line before it
+is cut, and refuses the log if that fails. The tail is held in the daemon's memory only, per
 check run (at most 64, the least recently used going first), is emptied when
 the GitHub account changes or a check is re-run, and is never written to disk.
 A log is the check's own output and so untrusted text, like any CI output: the

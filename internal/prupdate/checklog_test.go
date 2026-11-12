@@ -3,8 +3,12 @@ package prupdate
 import (
 	"context"
 	"fmt"
+	"io"
+	"net/http"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 )
 
 func logChecks() []string {
@@ -170,13 +174,156 @@ func TestLogCacheIsBounded(t *testing.T) {
 	}
 }
 
-func TestCheckLogExpired(t *testing.T) {
+func TestCheckLogUnavailable(t *testing.T) {
 	for _, status := range []int{404, 410} {
 		fake := fakeGitHub{head: "abc", checks: logChecks(), logStatus: map[int]int{21: status}}
-		got, err := Service{Client: fake.client()}.CheckLog(context.Background(), repo, 7, 21)
-		if err != nil || got.Available || got.Reason != LogExpired || got.Message == "" {
+		s := Service{Client: fake.client(), Cache: &Cache{}}
+		got, err := s.CheckLog(context.Background(), repo, 7, 21)
+		if err != nil || got.Available || got.Reason != LogUnavailable || !strings.Contains(got.Message, "may not have run") {
 			t.Fatalf("status %d: log %+v, %v", status, got, err)
 		}
+		// It is not kept: GitHub may still be writing the log.
+		if _, err := s.CheckLog(context.Background(), repo, 7, 21); err != nil || logFetches(&fake) != 2 {
+			t.Fatalf("status %d: %d fetches for two reads, %v", status, logFetches(&fake), err)
+		}
+	}
+}
+
+// Only a run whose job ran has a log to offer.
+func TestOnlyARunThatRanHasALog(t *testing.T) {
+	var checks []string
+	conclusions := []string{"failure", "success", "cancelled", "timed_out", "neutral", "skipped", "startup_failure", "action_required", "stale"}
+	for i, c := range conclusions {
+		checks = append(checks, fmt.Sprintf(`{"id":%d,"name":"c%d","status":"completed","conclusion":%q,"app":{"slug":"github-actions"},"output":{}}`, 100+i, i, c))
+	}
+	fake := fakeGitHub{head: "abc", checks: checks}
+	list, err := Service{Client: fake.client()}.AllChecks(context.Background(), repo, 7, "abc")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range list.Checks {
+		want := slicesContains([]string{"failure", "success", "cancelled", "timed_out", "neutral"}, c.Conclusion)
+		if c.HasLog != want {
+			t.Errorf("%s: has_log %v", c.Conclusion, c.HasLog)
+		}
+	}
+}
+
+func slicesContains(list []string, s string) bool {
+	for _, item := range list {
+		if item == s {
+			return true
+		}
+	}
+	return false
+}
+
+// A log far over the bound is read from the end by a range request on the
+// download host.
+func TestCheckLogOfALongLogIsReadFromItsEnd(t *testing.T) {
+	var log strings.Builder
+	for i := 1; i <= 300000; i++ {
+		fmt.Fprintf(&log, "2026-11-01T10:00:00.0000000Z line %d padding padding padding\n", i)
+	}
+	whole := log.String() // over 16 MiB
+	var ranges []string
+	fake := fakeGitHub{head: "abc", checks: logChecks(), logs: map[int]string{21: ""}, logHost: func(r *http.Request) *http.Response {
+		ranges = append(ranges, r.Header.Get("Range"))
+		var n int
+		if _, err := fmt.Sscanf(r.Header.Get("Range"), "bytes=-%d", &n); err != nil {
+			return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(whole))}
+		}
+		// The first line of the part is cut in the middle.
+		return &http.Response{StatusCode: 206, Body: io.NopCloser(strings.NewReader(whole[len(whole)-n:]))}
+	}}
+	got, err := Service{Client: fake.client()}.CheckLog(context.Background(), repo, 7, 21)
+	if err != nil || !got.Available || !got.Truncated || len(ranges) != 1 || ranges[0] != fmt.Sprintf("bytes=-%d", maxTailRead) {
+		t.Fatalf("log %+v, %v, ranges %v", got, err, ranges)
+	}
+	lines := strings.Split(got.Log, "\n")
+	if len(lines) != MaxLogLines || lines[len(lines)-1] != "line 300000 padding padding padding" {
+		t.Fatalf("%d lines, last %q", len(lines), lines[len(lines)-1])
+	}
+}
+
+// A host that ignores the range, for a log over the read bound, gets a
+// plain answer that the log is too long: never the wrong part of it.
+func TestCheckLogTooLongToShowTheEndOf(t *testing.T) {
+	fake := fakeGitHub{head: "abc", checks: logChecks(), logs: map[int]string{21: ""}, logHost: func(*http.Request) *http.Response {
+		return &http.Response{StatusCode: 200, Body: io.NopCloser(io.LimitReader(zeroLines{}, 65<<20))}
+	}}
+	got, err := Service{Client: fake.client()}.CheckLog(context.Background(), repo, 7, 21)
+	if err != nil || got.Available || got.Reason != LogTooLong || got.Log != "" || got.Message == "" {
+		t.Fatalf("log %+v, %v", got, err)
+	}
+}
+
+type zeroLines struct{}
+
+func (zeroLines) Read(p []byte) (int, error) {
+	for i := range p {
+		p[i] = 'x'
+		if i%80 == 79 {
+			p[i] = '\n'
+		}
+	}
+	return len(p), nil
+}
+
+func TestCheckLogDropsInvisibleFormatCharacters(t *testing.T) {
+	raw := "a‮b​c⁦d‎️e f\n"
+	fake := fakeGitHub{head: "abc", checks: logChecks(), logs: map[int]string{21: raw}}
+	got, err := Service{Client: fake.client()}.CheckLog(context.Background(), repo, 7, 21)
+	if err != nil || got.Log != "abcdef" {
+		t.Fatalf("log %q, %v", got.Log, err)
+	}
+}
+
+// A secret that straddles the cut of a long line is masked, not left as a
+// half token.
+func TestCheckLogRedactsASecretAcrossTheCut(t *testing.T) {
+	secret := "ghp_" + strings.Repeat("a1B2", 9)
+	line := strings.Repeat("x", maxLogLine-10) + " " + secret + " end"
+	fake := fakeGitHub{head: "abc", checks: logChecks(), logs: map[int]string{21: line + "\n"}}
+	got, err := Service{Client: fake.client()}.CheckLog(context.Background(), repo, 7, 21)
+	if err != nil || !got.Available {
+		t.Fatalf("log %+v, %v", got, err)
+	}
+	if strings.Contains(got.Log, "ghp_") || strings.Contains(got.Log, "a1B2") {
+		t.Fatalf("a part of the secret is shown: %q", got.Log[len(got.Log)-40:])
+	}
+	if len(got.Log) > maxLogLine+len("…") {
+		t.Fatalf("line of %d bytes", len(got.Log))
+	}
+}
+
+func TestCheckLogReadsOnceForConcurrentOpens(t *testing.T) {
+	release := make(chan struct{})
+	var mu sync.Mutex
+	started := 0
+	fake := fakeGitHub{head: "abc", checks: logChecks(), logs: map[int]string{21: ""}, logHost: func(*http.Request) *http.Response {
+		mu.Lock()
+		started++
+		mu.Unlock()
+		<-release
+		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader("boom\n"))}
+	}}
+	s := Service{Client: fake.client(), Cache: &Cache{}}
+	var wg sync.WaitGroup
+	for range 4 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if got, err := s.CheckLog(context.Background(), repo, 7, 21); err != nil || got.Log != "boom" {
+				t.Errorf("log %+v, %v", got, err)
+			}
+		}()
+	}
+	time.Sleep(200 * time.Millisecond)
+	close(release)
+	wg.Wait()
+	if started != 1 {
+		t.Fatalf("%d downloads for concurrent opens", started)
 	}
 }
 

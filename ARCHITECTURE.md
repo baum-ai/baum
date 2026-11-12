@@ -3214,23 +3214,36 @@ of one check's log, read only when a caller asks (the app when a person opens
 **Show log**, or the `check_log` tool): `prupdate.Service.CheckLog` reads the
 pull request's current head and its checks (`AllChecks`) and refuses, as
 `not_found`, a check run that is not one of them, so a request cannot name
-another run. A completed GitHub Actions run (its check run id is the job id)
-has its job log read through `RESTReader.Download` (`GET
-/repos/{owner}/{repo}/actions/jobs/{id}/logs`; one redirect to a signed https
-URL is followed and the token goes to the API host alone) and streamed through
-a tail writer that keeps only the last 200 lines (a line cut at 2 KiB), then
-the last whole lines within 64 KiB, so memory stays bounded however long the
-log; its timestamps, terminal escapes and control characters are dropped and
-the tail goes through the bundle redactor (a redactor failure refuses the log).
-It answers `{id, name, available, reason, message, log, truncated, url}`:
-`available` with `log`, or not with `reason` `no_log` (another app's check run
-or a commit status), `running` (not completed) or `expired` (GitHub answered
-404 or 410), none of them an error. GitHub's 401, 403, 429 and other statuses
-are refusals in the same words as the other GitHub routes. `prupdate.Cache`
-keeps a finished run's tail, and an expired answer, per repository and check
-run, at most 64, least recently used first, with no age limit (a finished log
-does not change); a re-run or an account change empties them. Nothing reads a
-log in the background.
+another run. A completed GitHub Actions run whose job ran (`has_log`: its
+conclusion is `failure`, `success`, `cancelled`, `timed_out` or `neutral`; its
+check run id is the job id) has its job log read through
+`RESTReader.DownloadTail` (`GET /repos/{owner}/{repo}/actions/jobs/{id}/logs`;
+one redirect to a signed https URL is followed and the token goes to the API
+host alone). After the redirect it asks the download host, by a suffix `Range`
+request, for the last 8 MiB only, so the end of a log of any length is read
+without downloading the rest, and drops the first line of that part, which the
+range may have cut. A host that ignores the range sends the whole file, which
+is read when it is within 64 MiB; over that the answer is `too_long` and the
+log is never passed off from its middle. The read is streamed through a tail
+writer that keeps the last 200 lines (each up to 16 KiB, so a secret near the
+cut is found), the lines are redacted whole by the bundle redactor (a
+redactor failure refuses the log), and only then is each cut to 2 KiB and the
+last whole lines kept within 64 KiB. Timestamps, terminal escapes, control
+characters and invisible format characters (bidirectional overrides and
+isolates, zero-width characters, variation selectors) are dropped.
+Concurrent opens of one log download it once. It answers `{id, name,
+available, reason, message, log, truncated, url}`: `available` with `log` (and
+`truncated` whenever it is not the whole log), or not with `reason` `no_log`
+(another app's check run, a commit status or a job that did not run), `running`
+(not completed), `unavailable` (GitHub answered 404 or 410: the job may not
+have run, or its log is older than the repository keeps) or `too_long`, none
+of them an error. GitHub's 401, 403, 429 and other statuses are refusals in
+the same words as the other GitHub routes. `prupdate.Cache` keeps a finished
+log's tail, and a `too_long` answer, per repository and check run, at most 64,
+least recently used first, with no age limit (a finished log does not
+change); an `unavailable` answer is not kept, as GitHub may still be writing
+the log. A re-run or an account change empties the cache. Nothing reads a log
+in the background.
 
 `GET /api/prs/conflicts?repository=&pr=` answers `{head_sha, base_ref,
 base_sha, files}`: the files in which the pull request's head conflicts with

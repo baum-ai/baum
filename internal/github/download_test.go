@@ -8,6 +8,77 @@ import (
 	"testing"
 )
 
+type zeros struct{}
+
+func (zeros) Read(p []byte) (int, error) { clear(p); return len(p), nil }
+
+// tailReader reads a download whose host is given by serve, after the API's
+// redirect to it.
+func tailReader(t *testing.T, serve func(*http.Request) *http.Response) *RESTReader {
+	t.Helper()
+	client := New(func(context.Context, string) (string, error) { return "private-value", nil }, Options{Transport: restTransportFunc(func(request *http.Request) (*http.Response, error) {
+		if request.URL.Host == "api.github.com" {
+			return &http.Response{StatusCode: 302, Header: http.Header{"Location": []string{"https://logs.example/job/1"}}, Body: io.NopCloser(strings.NewReader("")), Request: request}, nil
+		}
+		response := serve(request)
+		response.Request = request
+		if response.Header == nil {
+			response.Header = http.Header{}
+		}
+		return response, nil
+	})})
+	reader, err := client.REST(context.Background(), Repository{Host: "github.com", Owner: "acme", Name: "app"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return reader
+}
+
+// DownloadTail asks the download host for the end of the file, and says
+// when that is all it got.
+func TestDownloadTailAsksForTheEnd(t *testing.T) {
+	const file = "0123456789"
+	reader := tailReader(t, func(r *http.Request) *http.Response {
+		if r.Header.Get("Range") != "bytes=-4" {
+			t.Errorf("range %q", r.Header.Get("Range"))
+		}
+		return &http.Response{StatusCode: 206, Body: io.NopCloser(strings.NewReader(file[len(file)-4:]))}
+	})
+	var body strings.Builder
+	status, partial, err := reader.DownloadTail(context.Background(), "/repos/acme/app/actions/jobs/1/logs", &body, 4)
+	if err != nil || status != 200 || !partial || body.String() != "6789" {
+		t.Fatalf("status %d partial %v body %q err %v", status, partial, body.String(), err)
+	}
+}
+
+func TestDownloadTailOfAHostThatIgnoresTheRange(t *testing.T) {
+	reader := tailReader(t, func(*http.Request) *http.Response {
+		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader("whole file"))}
+	})
+	var body strings.Builder
+	status, partial, err := reader.DownloadTail(context.Background(), "/repos/acme/app/actions/jobs/1/logs", &body, 4)
+	if err != nil || status != 200 || partial || body.String() != "whole file" {
+		t.Fatalf("status %d partial %v body %q err %v", status, partial, body.String(), err)
+	}
+	// Over the bound, the wrong part of the file is never passed off as the end.
+	reader = tailReader(t, func(*http.Request) *http.Response {
+		return &http.Response{StatusCode: 200, Body: io.NopCloser(io.LimitReader(zeros{}, maxDownload+10))}
+	})
+	if _, _, err := reader.DownloadTail(context.Background(), "/repos/acme/app/actions/jobs/1/logs", io.Discard, 4); err != ErrDownloadTooLarge {
+		t.Fatalf("err %v", err)
+	}
+}
+
+func TestDownloadTailOfAnEmptyFile(t *testing.T) {
+	reader := tailReader(t, func(*http.Request) *http.Response {
+		return &http.Response{StatusCode: 416, Body: io.NopCloser(strings.NewReader(""))}
+	})
+	status, partial, err := reader.DownloadTail(context.Background(), "/repos/acme/app/actions/jobs/1/logs", io.Discard, 4)
+	if err != nil || status != 200 || partial {
+		t.Fatalf("status %d partial %v err %v", status, partial, err)
+	}
+}
+
 // A job log redirects to a signed URL on another host: Download follows it
 // once, without the token, and writes the body.
 func TestDownloadFollowsOneRedirectWithoutTheToken(t *testing.T) {

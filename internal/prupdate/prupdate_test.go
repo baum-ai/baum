@@ -10,6 +10,7 @@ import (
 	"reflect"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -22,6 +23,9 @@ func (f transportFunc) RoundTrip(r *http.Request) (*http.Response, error) { retu
 
 // fakeGitHub answers the REST calls of one pull request and records the
 // writes it receives.
+// fakeGetsMu guards every fake's gets, which concurrent reads append to.
+var fakeGetsMu sync.Mutex
+
 type fakeGitHub struct {
 	// head is the pull request's current head; mergeableState and mergeable
 	// are what GitHub reports of it.
@@ -48,6 +52,10 @@ type fakeGitHub struct {
 	// status other than 200.
 	logs      map[int]string
 	logStatus map[int]int
+	// mu guards gets, which concurrent reads append to.
+
+	// logHost, when set, is the signed download host the log redirects to.
+	logHost func(*http.Request) *http.Response
 	// graphql answers each GraphQL document.
 	graphql func(query string, variables map[string]any) string
 
@@ -62,9 +70,19 @@ func (f *fakeGitHub) client() *github.Client {
 		answer := func(status int, body string) (*http.Response, error) {
 			return &http.Response{StatusCode: status, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(body)), Request: r}, nil
 		}
+		if r.URL.Host == "logs.example" {
+			response := f.logHost(r)
+			response.Request = r
+			if response.Header == nil {
+				response.Header = http.Header{}
+			}
+			return response, nil
+		}
 		path := r.URL.Path
 		if r.Method == "GET" {
+			fakeGetsMu.Lock()
 			f.gets = append(f.gets, path)
+			fakeGetsMu.Unlock()
 		}
 		switch {
 		case path == "/graphql":
@@ -119,6 +137,9 @@ func (f *fakeGitHub) client() *github.Client {
 		case strings.Contains(path, "/actions/jobs/") && strings.HasSuffix(path, "/logs"):
 			var id int
 			_, _ = fmt.Sscanf(path[strings.Index(path, "/jobs/"):], "/jobs/%d/logs", &id)
+			if f.logHost != nil {
+				return &http.Response{StatusCode: 302, Header: http.Header{"Location": []string{"https://logs.example/job"}}, Body: io.NopCloser(strings.NewReader("")), Request: r}, nil
+			}
 			if s, ok := f.logStatus[id]; ok {
 				return answer(s, `{"message":"gone"}`)
 			}
@@ -574,7 +595,7 @@ func TestAllChecks(t *testing.T) {
 		{Name: "ci/travis", Status: "in_progress", Title: "Waiting", URL: "https://travis.example/1"},
 		{Name: "deploy", Status: "queued", ID: 24},
 		{Name: "ci/ok", Status: "completed", Conclusion: "success"},
-		{Name: "docs", Status: "completed", Conclusion: "skipped", ID: 26, HasLog: true},
+		{Name: "docs", Status: "completed", Conclusion: "skipped", ID: 26},
 		{Name: "lint", Status: "completed", Conclusion: "success", ID: 22, HasLog: true},
 	}}
 	if !reflect.DeepEqual(got, want) {

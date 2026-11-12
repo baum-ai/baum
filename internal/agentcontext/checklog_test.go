@@ -60,7 +60,8 @@ func TestCheckLogReadsTheRouteOfAChecksId(t *testing.T) {
 	}{
 		{args: map[string]any{"check": "test"}, want: []string{`"available":true`, `log of acme/web 12 21`}},
 		{args: map[string]any{"check": 21}, want: []string{`log of acme/web 12 21`}},
-		{args: map[string]any{"check": "21"}, failed: "not one of the pull request's checks"},
+		{args: map[string]any{"check": "21"}, want: []string{`log of acme/web 12 21`}},
+		{args: map[string]any{"check": "999"}, failed: "not one of the pull request's checks"},
 		{args: map[string]any{"pr": 13, "check": 32}, want: []string{`log of acme/web 13 32`}},
 		{args: map[string]any{"check": "ci/circle"}, want: []string{`log of acme/web 12 41`}},
 		{args: map[string]any{"check": "ci/status"}, want: []string{`"available":false`, `"reason":"no_log"`}},
