@@ -11,7 +11,7 @@ FROM rust:1.99.1-bookworm@sha256:e12566d5abc17a0da741628782cdb504b68b8961f5bfcf6
 
 FROM ubuntu:24.04@sha256:2198e4c65076e9cb0b3d695219df667c0e3b0072da64ca3c2648aca17dcecaf5
 
-# WebKit bug 298180 leaks resource loaders in 2.50.4; fixed in 2.50.5.
+# WebKit's NetworkLoadClient lifetime fix (b99f8c3) ships in 2.50.5 and newer.
 RUN apt-get update \
     && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
         build-essential \

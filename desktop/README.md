@@ -1142,8 +1142,8 @@ installs `baum-desktop` and `baum` in `/usr/bin`.
 The AppImage carries its own WebKitGTK, GTK and Pango but uses the system's
 glibc, HarfBuzz and the other libraries linuxdeploy leaves out. The image
 requires WebKitGTK 2.50.5 or newer; Ubuntu 24.04 currently supplies 2.52.6.
-This includes the fix for [WebKit bug 298180](https://bugs.webkit.org/show_bug.cgi?id=298180),
-the resource-loader memory leak in 2.50.4. The AppImage updates itself in place,
+This includes the [NetworkLoadClient lifetime fix](https://github.com/WebKit/WebKit/commit/b99f8c3daae0d6d0fdb99338c2e6f63cf4c6dc49)
+for the resource-loader memory leak in 2.50.4. The AppImage updates itself in place,
 so keep it in a directory you can write (for example `~/Applications`).
 
 A downloaded AppImage is not executable. With an integration tool that
