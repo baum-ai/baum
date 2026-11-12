@@ -98,8 +98,10 @@ history behind the Analytics chart samples every plan regardless.
 ## Caching
 
 `Service.Cached` returns the plans last read, however old, and never asks a
-provider: the MCP server's plan usage tool reads it, so a chat's question can
-never cause a fetch.
+provider: the MCP server's plan usage tool reads it, and so does its Settings
+tool for the show-or-hide choice (whose route, `GET /api/settings/plan-usage`,
+reads the plans to work out the default), so a chat's question can never cause
+a fetch.
 
 `Service` keeps the result for five minutes. `?refresh=1` (the app sends it when
 a page opens) reads again, but never more than once a minute. One mutex covers a

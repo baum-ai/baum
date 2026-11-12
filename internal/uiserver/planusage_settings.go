@@ -170,6 +170,31 @@ func (a LocalAPI) CachedPlans(ctx context.Context) ([]json.RawMessage, error) {
 	return a.shownPlans(ctx, a.PlanUsageCached())
 }
 
+// CachedPlanChoices are the entries GET /api/settings/plan-usage answers
+// (provider, name, shown, default, explicit), with the default worked out from
+// the plan usage cache alone (PlanUsageCached): the route asks PlanUsage, which
+// reads Claude or Codex when its cache is stale, so the MCP server reads this
+// instead and never causes a fetch.
+func (a LocalAPI) CachedPlanChoices(ctx context.Context) ([]json.RawMessage, error) {
+	prefs, err := a.Registry.Preferences(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var plans []json.RawMessage
+	if a.PlanUsageCached != nil {
+		plans = a.PlanUsageCached()
+	}
+	out := []json.RawMessage{}
+	for _, e := range planEntries(prefs, a.Config, plans) {
+		raw, err := json.Marshal(e)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, raw)
+	}
+	return out, nil
+}
+
 func (a LocalAPI) getPlanUsageSettings(w http.ResponseWriter, r *http.Request) {
 	prefs, err := a.Registry.Preferences(r.Context())
 	if err != nil {
