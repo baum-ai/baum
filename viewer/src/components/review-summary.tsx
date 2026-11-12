@@ -1,5 +1,5 @@
 import pluralize from "pluralize";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 
 import { harnessName } from "../agent-names";
 import {
@@ -22,6 +22,7 @@ import {
 import { QuotedPrompts } from "./chat";
 import { StatusBlock, StatusLine } from "./editorial";
 import { Markdown } from "./markdown";
+import { useReviewRefs } from "./review-contexts";
 import { ContextPart } from "./review-context";
 import { SectionIcon } from "./icons";
 import { Item, ItemMeta, JumpLink, Lines, None, Part, PROSE, RiskTags } from "./review-parts";
@@ -212,9 +213,13 @@ function RecommendationPart({
   document: ReviewDocument;
   onSelectSection: (id: string, item?: string) => void;
 }) {
+  const provided = useReviewRefs();
   const recommendation = reviewRecommendation(document);
+  // The workspace's refs when there are any (they pool a historical version
+  // too), else the document's own, built once per document.
+  const own = useMemo(() => (provided ? null : reviewRefs(document)), [provided, document]);
   if (!recommendation) return null;
-  const known = reviewRefs(document);
+  const known = provided ?? own!;
   // An ID the document does not have is left out rather than shown dead.
   const targets = [...new Set(recommendation.refs)].flatMap((ref) => {
     const found = known.get(ref);

@@ -28,6 +28,8 @@ function basename(path: string) {
 }
 
 /** What a chip shows and where it leads, for one reference. */
+const NO_LINK = "no link available";
+
 function describe(ref: ReviewRef): {
   content: ReactNode;
   title: string;
@@ -39,18 +41,23 @@ function describe(ref: ReviewRef): {
         content: <span className="truncate">{ref.label}</span>,
         title: `${humanize(ref.item)} ${ref.id}`,
       };
-    case "check":
+    case "check": {
+      // A check from an earlier head says nothing of the current state.
+      const result = ref.stale ? "earlier head" : humanize(ref.conclusion);
       return {
         content: (
           <>
-            <Dot tone={CHECK_CONCLUSION_TONES[ref.conclusion] ?? "neutral"} />
+            <Dot
+              tone={ref.stale ? "neutral" : (CHECK_CONCLUSION_TONES[ref.conclusion] ?? "neutral")}
+            />
             <span className="truncate">{ref.name}</span>
-            <span className="flex-none text-(--text-tertiary)">{humanize(ref.conclusion)}</span>
+            <span className="flex-none text-(--text-tertiary)">{result}</span>
           </>
         ),
-        title: `Check ${ref.name}: ${humanize(ref.conclusion)}`,
+        title: `Check ${ref.name}: ${result}${ref.linkDropped ? `, ${NO_LINK}` : ""}`,
         href: ref.url,
       };
+    }
     case "thread": {
       const place = ref.path ? `${basename(ref.path)}${ref.line ? `:${ref.line}` : ""}` : "Thread";
       return {
@@ -63,14 +70,14 @@ function describe(ref: ReviewRef): {
             </span>
           </>
         ),
-        title: `Review thread${ref.path ? ` on ${ref.path}` : ""}, ${ref.resolved ? "resolved" : "open"}`,
+        title: `Review thread${ref.path ? ` on ${ref.path}` : ""}, ${ref.resolved ? "resolved" : "open"}${ref.linkDropped ? `, ${NO_LINK}` : ""}`,
         href: ref.url,
       };
     }
     case "comment":
       return {
         content: <span className="truncate">Comment by {ref.author}</span>,
-        title: `Comment ${ref.id} by ${ref.author}`,
+        title: `Comment ${ref.id} by ${ref.author}${ref.linkDropped ? `, ${NO_LINK}` : ""}`,
         href: ref.url,
       };
     case "session":

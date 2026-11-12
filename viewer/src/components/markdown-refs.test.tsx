@@ -32,6 +32,14 @@ function documentWithIndex() {
     head: document.index.checks[0]!.head,
     url: "https://github.com/other/repo/actions/runs/5",
   });
+  document.index.checks.push({
+    id: "check_run:5",
+    kind: "check_run",
+    name: "lint",
+    conclusion: "failure",
+    required: false,
+    head: "0000000000000000000000000000000000000000",
+  });
   document.sections[1]!.id = "sec_behavior";
   document.index.sessions[0]!.id = SESSION;
   document.index.sessions[0]!.title = "Add repository filters";
@@ -83,7 +91,17 @@ describe("reference chips in review prose", () => {
     expect(html).toContain(">Failure<");
     expect(html).toContain("bg-(--status-critical)");
     expect(html).not.toContain("other/repo");
+    expect(html).toContain("no link available");
     expect(html).not.toContain("<a ");
+  });
+
+  it("does not show a check from an earlier head as current", () => {
+    const html = render("Was red in check_run:5.");
+    expect(html).toContain(">lint<");
+    expect(html).toContain(">earlier head<");
+    expect(html).toContain('title="Check lint: earlier head"');
+    expect(html).not.toContain(">Failure<");
+    expect(html).not.toContain("bg-(--status-critical)");
   });
 
   it("shows a thread as its place and state, linked to it", () => {

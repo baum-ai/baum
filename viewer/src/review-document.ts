@@ -2098,7 +2098,18 @@ export type ReviewRef =
       section: string;
       label: string;
     }
-  | { kind: "check"; id: string; name: string; conclusion: CheckConclusion; url?: string }
+  | {
+      kind: "check";
+      id: string;
+      name: string;
+      conclusion: CheckConclusion;
+      /** From a head other than the one whose checks the review counts, so its
+       *  conclusion is not the current state. */
+      stale: boolean;
+      url?: string;
+      /** The link was given but belongs to another repository. */
+      linkDropped?: boolean;
+    }
   | {
       kind: "thread";
       id: string;
@@ -2106,8 +2117,9 @@ export type ReviewRef =
       line: number | null;
       resolved: boolean;
       url?: string;
+      linkDropped?: boolean;
     }
-  | { kind: "comment"; id: string; author: string; url?: string }
+  | { kind: "comment"; id: string; author: string; url?: string; linkDropped?: boolean }
   | { kind: "session"; id: string; title: string | null; vendor: string };
 
 /** The characters of a risk's text or a claim kept for a chip's label. */
@@ -2181,7 +2193,9 @@ export function reviewRefs(document: ReviewEvidence): Map<string, ReviewRef> {
       id: check.id,
       name: check.name,
       conclusion: check.conclusion,
+      stale: check.head !== checksHead(document),
       url: repositoryLink(document, check.url),
+      ...(check.url && !repositoryLink(document, check.url) ? { linkDropped: true } : {}),
     });
   }
   for (const thread of document.index.threads) {
@@ -2192,6 +2206,7 @@ export function reviewRefs(document: ReviewEvidence): Map<string, ReviewRef> {
       line: thread.line,
       resolved: thread.resolved,
       url: repositoryLink(document, thread.url),
+      ...(thread.url && !repositoryLink(document, thread.url) ? { linkDropped: true } : {}),
     });
   }
   for (const comment of document.index.comments) {
@@ -2200,6 +2215,7 @@ export function reviewRefs(document: ReviewEvidence): Map<string, ReviewRef> {
       id: String(comment.id),
       author: comment.author,
       url: repositoryLink(document, comment.url),
+      ...(comment.url && !repositoryLink(document, comment.url) ? { linkDropped: true } : {}),
     });
   }
   for (const session of document.index.sessions) {
