@@ -419,6 +419,145 @@ describe("ReviewViewer without host slots", () => {
 });
 
 describe("ReviewViewer with an earlier version", () => {
+  it.each(["prose", "recommendation"])(
+    "jumps to the comparison pane whose %s chip names a shared item",
+    async (from) => {
+      const latest = structuredClone(current);
+      const historical = earlier();
+      const sectionId = "sec_retry";
+      for (const snapshot of [latest, historical]) {
+        const section = snapshot.sections.find((item) => item.id === sectionId)!;
+        const decisions = section.blocks.find((block) => block.kind === "decisions") as Extract<
+          Block,
+          { kind: "decisions" }
+        >;
+        decisions.items[0]!.id = "dec_snapshot";
+        snapshot.summary.text =
+          from === "prose" ? "Inspect dec_snapshot." : "Inspect the decision.";
+        snapshot.summary.recommendation =
+          from === "recommendation"
+            ? { decision: "look_first", text: "Inspect the decision.", refs: ["dec_snapshot"] }
+            : null;
+        section.summary!.text = "Inspect dec_snapshot.";
+      }
+      const targets: string[] = [];
+      const animate = vi.fn(function (this: HTMLElement) {
+        targets.push(this.id);
+        return { cancel: vi.fn() };
+      });
+      const originalAnimate = HTMLElement.prototype.animate;
+      HTMLElement.prototype.animate = animate as unknown as typeof HTMLElement.prototype.animate;
+      vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
+        callback(0);
+        return 1;
+      });
+      vi.stubGlobal("cancelAnimationFrame", vi.fn());
+      try {
+        const container = await render(
+          <Host initial="review=2&compare=1">
+            <ReviewViewer
+              document={latest}
+              versions={[2]}
+              loadVersion={async () => ({ status: "ready", document: historical })}
+            />
+          </Host>,
+        );
+        const oldPane = container.querySelector('[aria-label="Historical comparison v2"]')!;
+        const oldChip = () =>
+          oldPane.querySelector<HTMLButtonElement>('[title="Decision dec_snapshot"]')!;
+        await act(async () => oldChip().click());
+        expect(targets).toEqual(["history-v2-sec_retry-dec_snapshot"]);
+        const disclosure = (id: string) =>
+          container.querySelector<HTMLDetailsElement>(`[id="${id}"] > details`)!;
+        expect(disclosure("history-v2-sec_retry-dec_snapshot").open).toBe(true);
+        expect(disclosure("sec_retry-dec_snapshot").open).toBe(false);
+
+        const currentChip = container.querySelector<HTMLButtonElement>(
+          '#review-section [title="Decision dec_snapshot"]',
+        )!;
+        await act(async () => currentChip.click());
+        expect(targets.at(-1)).toBe("sec_retry-dec_snapshot");
+        expect(disclosure("sec_retry-dec_snapshot").open).toBe(true);
+        await act(async () => oldChip().click());
+        expect(targets.at(-1)).toBe("history-v2-sec_retry-dec_snapshot");
+      } finally {
+        act(() => root?.unmount());
+        root = null;
+        if (originalAnimate) HTMLElement.prototype.animate = originalAnimate;
+        else Reflect.deleteProperty(HTMLElement.prototype, "animate");
+        vi.unstubAllGlobals();
+      }
+    },
+  );
+
+  it.each([false, true])(
+    "resolves historical prose against its own snapshot (compare: %s)",
+    async (compare) => {
+      const latest = structuredClone(current);
+      const historical = earlier();
+      historical.review.head = "0123456789abcdef0123456789abcdef01234567";
+      const risk = structuredClone(latest.sections[0]!.risks[0]!);
+      for (const [snapshot, sectionId, label, conclusion] of [
+        [latest, "sec_api", "Current finding", "success"],
+        [historical, "sec_retry", "Historical finding", "failure"],
+      ] as const) {
+        snapshot.sections
+          .find((section) => section.id === sectionId)!
+          .risks.push({
+            ...risk,
+            id: "rsk_snapshot",
+            text: label,
+          });
+        const check = snapshot.index.checks[0]!;
+        check.id = "check_run:987";
+        check.head = snapshot.review.head;
+        check.conclusion = conclusion;
+        check.url = `https://github.com/${snapshot.review.repository}/actions/runs/${snapshot.review.version}`;
+        snapshot.summary.text = "Inspect rsk_snapshot and check_run:987; also rsk_latest.";
+      }
+      latest.sections[0]!.risks.push({ ...risk, id: "rsk_latest", text: "Latest only finding" });
+
+      const container = await render(
+        <Host initial={`review=2${compare ? "&compare=1" : ""}`}>
+          <ReviewViewer
+            document={latest}
+            versions={[2]}
+            loadVersion={async () => ({ status: "ready", document: historical })}
+          />
+        </Host>,
+      );
+      const oldPane = container.querySelector(
+        `[aria-label="Historical ${compare ? "comparison" : "view"} v2"]`,
+      )!;
+      const oldRisk = oldPane.querySelector<HTMLButtonElement>('[title="Risk rsk_snapshot"]')!;
+      expect(oldRisk.textContent).toBe("Historical finding");
+      expect(oldPane.querySelector('[data-review-ref="check"]')?.textContent).toContain("Failure");
+      expect(oldPane.querySelector('[data-review-ref="check"]')?.getAttribute("href")).toBe(
+        `https://github.com/${historical.review.repository}/actions/runs/2`,
+      );
+      expect(oldPane.textContent).toContain("rsk_latest");
+      expect(oldPane.querySelector('[title="Risk rsk_latest"]')).toBeNull();
+      if (compare) {
+        const newPane = container.querySelector("#review-section")!;
+        expect(newPane.querySelector('[title="Risk rsk_snapshot"]')?.textContent).toBe(
+          "Current finding",
+        );
+        expect(newPane.querySelector('[data-review-ref="check"]')?.textContent).toContain(
+          "Success",
+        );
+        expect(newPane.querySelector('[title="Risk rsk_latest"]')?.textContent).toBe(
+          "Latest only finding",
+        );
+      }
+
+      await act(async () => oldRisk.click());
+      expect(oldPane.querySelector("h2")?.textContent).toBe(
+        historical.sections.find((section) => section.id === "sec_retry")!.title,
+      );
+      expect(oldPane.querySelector('[id$="sec_retry-rsk_snapshot"]')).not.toBeNull();
+    },
+  );
+
   it("compares the current version with one loaded through loadVersion", async () => {
     const loadVersion = vi.fn<LoadReviewVersion>(async () => ({
       status: "ready",

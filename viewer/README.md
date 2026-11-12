@@ -307,6 +307,11 @@ open or act on (failed, pending, skipped, observed or reported); missing,
 asserted and unavailable claims, which restate the attention, are left out.
 Under the attention, **Where to look** shows the changed lines and files its
 risks, decisions and evidence cite, each once, as source chips that open them.
+Every evidence item has one destination with its full claim, detail and
+expected coverage when present: in Attention when listed there, otherwise in
+the section's Evidence part, including claims no behavior step cites and those
+left out of Attention. Repeated behavior citations keep their status badges
+without repeating the claim or its destination.
 
 The Author pane groups models under their harness, in small text without a
 second icon. Only the first model is shown, followed by the number of additional
@@ -730,7 +735,8 @@ known hunk ID in the prose, bare or as a whole code span, becomes a chip
 naming its file and first line (`ui-state.tsx:42`, the full path in its
 tooltip) that opens the file view there, or the diff on GitHub when the file
 view cannot. The same pass (`reviewRefs`, `ReviewRefsContext`) links the other
-IDs the document has: a risk, evidence, decision or section ID
+IDs from the snapshot whose prose is displayed, separately in each comparison
+pane: a risk, evidence, decision or section ID
 (`(rsk|ev|dec|sec)_…`) as a chip with the risk text, claim or section title,
 truncated, that opens the section and scrolls to the item through
 `ReviewJumpContext` (the workspace provides it; elsewhere the chip is plain); a

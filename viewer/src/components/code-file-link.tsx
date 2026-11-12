@@ -6,7 +6,6 @@ import {
   hunkLine,
   hunkUrl,
   type ReviewDocument,
-  type ReviewRef,
   reviewRefs,
 } from "../review-document";
 import { cn, FOCUS_RING } from "./classnames";
@@ -102,8 +101,8 @@ export function ReviewSourcesProvider({
 /** Set by the review workspace so a hunk ID written into the review's prose
  *  reads as a link to its file and line, and so do the other IDs it names
  *  (items, checks, threads, comments, sessions). A hunk ID names the hunk's content,
- *  so the shown documents' hunks are pooled: a historical section cites hunks
- *  of its own version. */
+ *  so the shown documents' hunks are pooled. Other IDs resolve only against
+ *  document, the version whose prose is being rendered. */
 export function ReviewHunksProvider({
   document,
   historical,
@@ -129,17 +128,22 @@ export function ReviewHunksProvider({
     }
     return byId;
   }, [document, historical]);
-  const refs = useMemo(() => {
-    const byKey = new Map<string, ReviewRef>();
-    for (const shown of [document, historical]) {
-      if (!shown) continue;
-      for (const [key, ref] of reviewRefs(shown)) if (!byKey.has(key)) byKey.set(key, ref);
-    }
-    return byKey;
-  }, [document, historical]);
   return (
     <ReviewHunksContext.Provider value={hunks}>
-      <ReviewRefsContext.Provider value={refs}>{children}</ReviewRefsContext.Provider>
+      <ReviewRefsProvider document={document}>{children}</ReviewRefsProvider>
     </ReviewHunksContext.Provider>
   );
+}
+
+/** Unlike content-addressed hunks, item and index IDs can mean different
+ *  things in each version. Comparison panes each provide their own snapshot. */
+export function ReviewRefsProvider({
+  document,
+  children,
+}: {
+  document: ReviewDocument | null;
+  children: ReactNode;
+}) {
+  const refs = useMemo(() => (document ? reviewRefs(document) : null), [document]);
+  return <ReviewRefsContext.Provider value={refs}>{children}</ReviewRefsContext.Provider>;
 }

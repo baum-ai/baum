@@ -215,8 +215,8 @@ function RecommendationPart({
 }) {
   const provided = useReviewRefs();
   const recommendation = reviewRecommendation(document);
-  // The workspace's refs when there are any (they pool a historical version
-  // too), else the document's own, built once per document.
+  // The displayed snapshot's workspace refs when available, else the
+  // document's own, built once per document.
   const own = useMemo(() => (provided ? null : reviewRefs(document)), [provided, document]);
   if (!recommendation) return null;
   const known = provided ?? own!;

@@ -68,7 +68,6 @@ type proseRule struct {
 	// returns true. RE2 has no lookahead, so look-alikes such as "the checkout
 	// page" are told apart here.
 	follower func(next string) bool
-	advice   string
 }
 
 var (

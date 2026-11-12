@@ -41,6 +41,7 @@ import { cn, FOCUS_RING } from "./classnames";
 import {
   ReviewFilesProvider,
   ReviewHunksProvider,
+  ReviewRefsProvider,
   ReviewSourcesProvider,
   type ReviewSources,
 } from "./code-file-link";
@@ -765,10 +766,14 @@ function ReviewWorkspace<F extends ReviewFile>({
   useEffect(() => {
     versionsShown.current?.(shownKey ? shownKey.split(",").map(Number) : []);
   }, [shownKey]);
-  const [decisionFocus, setDecisionFocus] = useState<{ section: string; id: string } | null>(null);
+  const [decisionFocus, setDecisionFocus] = useState<{
+    section: string;
+    id: string;
+    version?: number;
+  } | null>(null);
   const highlightedDecision = useRef<{ key: string; click: typeof decisionFocus } | null>(null);
-  const selectSection = (id: string, decision?: string) => {
-    setDecisionFocus(decision ? { section: id, id: decision } : null);
+  const selectSection = (id: string, decision?: string, version?: number) => {
+    setDecisionFocus(decision ? { section: id, id: decision, version } : null);
     setSelection({ kind: "section", id, ...(decision ? { decision } : {}) });
   };
   const selectedDecision = selection.kind === "section" ? selection.decision : undefined;
@@ -779,7 +784,15 @@ function ReviewWorkspace<F extends ReviewFile>({
       return;
     }
     if (!navigationDocument) return;
-    const key = `${selectedDecisionSection}:${selectedDecision}`;
+    const focusedVersion = decisionFocus?.version;
+    const version =
+      focusedVersion !== undefined && shownKey.split(",").map(Number).includes(focusedVersion)
+        ? focusedVersion
+        : navigationDocument.review.version;
+    const prefix =
+      historicalOnly || version !== document?.review.version ? `history-v${version}-` : "";
+    const targetId = `${prefix}${selectedDecisionSection}-${selectedDecision}`;
+    const key = `${version}:${selectedDecisionSection}:${selectedDecision}`;
     if (
       highlightedDecision.current?.key === key &&
       highlightedDecision.current.click === decisionFocus
@@ -788,7 +801,7 @@ function ReviewWorkspace<F extends ReviewFile>({
     let cancelScroll: (() => void) | undefined;
     const frame = requestAnimationFrame(() => {
       const target = [...(reviewPane.current?.querySelectorAll<HTMLElement>("[id]") ?? [])].find(
-        (element) => element.id.endsWith(`${selectedDecisionSection}-${selectedDecision}`),
+        (element) => element.id === targetId,
       );
       if (!target) return;
       highlightedDecision.current = { key, click: decisionFocus };
@@ -809,7 +822,15 @@ function ReviewWorkspace<F extends ReviewFile>({
       cancelAnimationFrame(frame);
       cancelScroll?.();
     };
-  }, [decisionFocus, selectedDecision, selectedDecisionSection, navigationDocument]);
+  }, [
+    decisionFocus,
+    selectedDecision,
+    selectedDecisionSection,
+    navigationDocument,
+    document?.review.version,
+    historicalOnly,
+    shownKey,
+  ]);
   /** Opens one file in the Files pane, which otherwise lists every file
    *  folded, at a line when one is given. */
   const openFile = (id: string, line: FileLineFocus = null) => {
@@ -1412,7 +1433,7 @@ function ReviewWorkspace<F extends ReviewFile>({
   return (
     <ReviewFilesProvider files={reviewFiles}>
       <ReviewSourcesProvider sources={reviewSources}>
-        <ReviewHunksProvider document={document} historical={historicalDocument}>
+        <ReviewHunksProvider document={navigationDocument} historical={historicalDocument}>
           <ReviewJumpContext.Provider value={reviewJump}>
             <div className="flex min-h-0 flex-1 flex-col gap-3">
               {/* Version selection, generation status and evidence age share one row.
@@ -1913,7 +1934,17 @@ function ReviewWorkspace<F extends ReviewFile>({
                         view={historyView}
                       >
                         {(snapshot, historical) => (
-                          <PaneIn key={selectionKey}>{renderPane(snapshot, historical)}</PaneIn>
+                          <ReviewRefsProvider document={snapshot}>
+                            <ReviewJumpContext.Provider
+                              value={{
+                                ...reviewJump,
+                                item: (id, item) =>
+                                  selectSection(id, item, snapshot.review.version),
+                              }}
+                            >
+                              <PaneIn key={selectionKey}>{renderPane(snapshot, historical)}</PaneIn>
+                            </ReviewJumpContext.Provider>
+                          </ReviewRefsProvider>
                         )}
                       </ReviewHistory>
                     ) : (
@@ -2117,13 +2148,15 @@ function ReviewWorkspace<F extends ReviewFile>({
   /** What the pane shows for the current selection in one snapshot of the
    *  review, current or historical. */
   function renderPane(snapshot: ReviewDocument, historical: boolean) {
+    const selectSnapshotSection = (id: string, item?: string) =>
+      selectSection(id, item, snapshot.review.version);
     if (selection.kind === "changes" || selection.kind === "risks")
       return (
         <ChangesOverview
           document={snapshot}
           showObsolete={showObsolete}
           onToggleObsolete={toggleObsolete}
-          onSelectSection={selectSection}
+          onSelectSection={selectSnapshotSection}
           renderLabels={
             renderSectionLabels ? (section) => renderSectionLabels(section, snapshot) : undefined
           }
@@ -2138,7 +2171,7 @@ function ReviewWorkspace<F extends ReviewFile>({
       return (
         <ReviewSummary
           document={snapshot}
-          onSelectSection={selectSection}
+          onSelectSection={selectSnapshotSection}
           onNavigate={historical ? undefined : navigateFromSummary}
           contextPending={!historical && contextPending}
         />
@@ -2157,7 +2190,7 @@ function ReviewWorkspace<F extends ReviewFile>({
         <ReviewSection
           document={snapshot}
           section={section}
-          onSelectSection={selectSection}
+          onSelectSection={selectSnapshotSection}
           loadVersion={loadVersion}
           activeVersions={sectionHistory?.active.get(section.id)}
           idPrefix={historical ? `history-v${snapshot.review.version}-` : ""}

@@ -191,7 +191,9 @@ describe("JSON review tiles", () => {
     );
     expect(after).toContain(doc.sections[0]!.summary!.text);
     expect(after).toContain("Risks");
-    expect(after).not.toContain('aria-label="Evidence"');
+    expect(after.match(/aria-label="Evidence"/g)?.length ?? 0).toBe(
+      before.match(/aria-label="Evidence"/g)?.length ?? 0,
+    );
   });
 
   it("isolates malformed data and retains usable anchors without executing text", () => {
