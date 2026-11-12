@@ -924,18 +924,78 @@ export function backTo(search: URLSearchParams): { href: string; label: string; 
   if (filter) back.set("filter", filter);
   return { href: appURL(`?${back}`), label: "Pull requests", prefix: "page=pulls&" };
 }
-/** The daemon answers these with an ETag and 304 for an unchanged snapshot.
- *  `no-cache` lets the webview store the answer and revalidate it on every
- *  request; `no-store` would resend the whole body each time. */
+/** The daemon answers `api/index`, `api/prs` and `api/document` with an ETag
+ *  and 304 for an unchanged snapshot.
+ *  The app revalidates them itself (see `request`); no answer goes through the
+ *  webview's HTTP cache, which leaks memory in WebKitGTK 2.50. */
 function revalidated(path: string): boolean {
   const [pathname] = path.split("?");
-  return pathname === "api/index" || pathname === "api/prs";
+  return pathname === "api/index" || pathname === "api/prs" || pathname === "api/document";
 }
 
-/** Requests `path`, relative to the namespace, as `api/repos`. `cache` is
- *  "no-cache" only for an answer the daemon tags with an ETag, which the
- *  browser then revalidates instead of downloading again; `api/index` and
- *  `api/prs` always are. */
+/** The last answers of revalidated paths, query included, with their ETags.
+ *  A document is keyed by its clone, pull request and version, so the set of
+ *  paths is not fixed: this is a small LRU. A hit is re-inserted as the newest
+ *  and the oldest entry goes once there are more than `KEPT_LIMIT`. */
+export const KEPT_LIMIT = 16;
+const kept = new Map<string, { etag: string; value: unknown }>();
+
+function keptGet(path: string) {
+  const entry = kept.get(path);
+  if (entry) {
+    kept.delete(path);
+    kept.set(path, entry);
+  }
+  return entry;
+}
+
+function keptSet(path: string, entry: { etag: string; value: unknown }) {
+  kept.delete(path);
+  kept.set(path, entry);
+  while (kept.size > KEPT_LIMIT) kept.delete(kept.keys().next().value!);
+}
+
+/** Forgets every kept answer. For tests. */
+export function resetRevalidation(): void {
+  kept.clear();
+}
+
+async function failure(response: Response): Promise<LocalRequestError> {
+  const text = await response.text();
+  let body: {
+    code?: string;
+    message?: string;
+    needs_clone?: boolean;
+    blocked_reason?: string;
+    isolation_required?: boolean;
+  } = {};
+  try {
+    body = JSON.parse(text);
+  } catch {
+    /* The daemon also returns plain text. */
+  }
+  // A run the daemon will not start (a fix of a fork, with nothing to
+  // fix…) names its reason, which is said in words.
+  return new LocalRequestError(
+    body.needs_clone
+      ? "Needs a local clone"
+      : body.blocked_reason
+        ? jobReasonText(body.blocked_reason)
+        : (body.message ?? `Local request failed (${response.status}): ${text.slice(0, 240)}`),
+    body.needs_clone
+      ? "needs_clone"
+      : body.isolation_required
+        ? "isolation_required"
+        : (body.blocked_reason ?? body.code),
+    response.status,
+  );
+}
+
+/** Requests `path`, relative to the namespace, as `api/repos`. `cache` applies
+ *  to every request but a GET of `api/index`, `api/prs` or `api/document`: those are always
+ *  `no-store`, and the app sends `If-None-Match` with the ETag of the answer it
+ *  kept. A 304 returns that same value object, so callers can tell it did not
+ *  change. */
 export async function request<T>(
   path: string,
   body?: unknown,
@@ -943,46 +1003,35 @@ export async function request<T>(
   signal?: AbortSignal,
   cache: RequestCache = "no-store",
 ): Promise<T> {
-  const response = await fetch(appURL(path), {
-    method,
-    signal,
-    cache: method === "GET" && revalidated(path) ? "no-cache" : cache,
-    ...(body === undefined
-      ? {}
-      : { headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }),
-  });
-  if (!response.ok) {
-    const text = await response.text();
-    let body: {
-      code?: string;
-      message?: string;
-      needs_clone?: boolean;
-      blocked_reason?: string;
-      isolation_required?: boolean;
-    } = {};
-    try {
-      body = JSON.parse(text);
-    } catch {
-      /* The daemon also returns plain text. */
-    }
-    // A run the daemon will not start (a fix of a fork, with nothing to
-    // fix…) names its reason, which is said in words.
-    throw new LocalRequestError(
-      body.needs_clone
-        ? "Needs a local clone"
-        : body.blocked_reason
-          ? jobReasonText(body.blocked_reason)
-          : (body.message ?? `Local request failed (${response.status}): ${text.slice(0, 240)}`),
-      body.needs_clone
-        ? "needs_clone"
-        : body.isolation_required
-          ? "isolation_required"
-          : (body.blocked_reason ?? body.code),
-      response.status,
-    );
+  const conditional = method === "GET" && revalidated(path);
+  const send = (etag?: string) => {
+    const headers: Record<string, string> = {};
+    if (etag) headers["If-None-Match"] = etag;
+    if (body !== undefined) headers["Content-Type"] = "application/json";
+    return fetch(appURL(path), {
+      method,
+      signal,
+      cache: conditional ? "no-store" : cache,
+      ...(Object.keys(headers).length > 0 ? { headers } : {}),
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    });
+  };
+  const entry = conditional ? keptGet(path) : undefined;
+  let response = await send(entry?.etag);
+  if (response.status === 304) {
+    if (entry) return entry.value as T;
+    // Nothing kept to answer with: ask again without the condition.
+    response = await send();
   }
+  if (!response.ok) throw await failure(response);
   if (response.status === 204) return undefined as T;
-  return response.json();
+  const value = await response.json();
+  if (conditional) {
+    const etag = response.headers.get("ETag");
+    if (etag) keptSet(path, { etag, value });
+    else kept.delete(path);
+  }
+  return value;
 }
 /** The jobs a page of `api/jobs?limit=` holds, newest first, and the id to
  *  pass as `before` for the next older page; absent when there is none. */
@@ -1107,7 +1156,6 @@ export function documentRequest(clone: string, pr: number, version?: number, sig
     undefined,
     "GET",
     signal,
-    "no-cache",
   ).then(validDocument);
 }
 export function groupDocumentRequest(id: string, version?: number, signal?: AbortSignal) {
