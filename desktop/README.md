@@ -26,7 +26,9 @@ may start it, and it outlives the app: quitting the app leaves it running.
 4. The window loads that URL. The daemon's bootstrap page exchanges the
    capability for a session cookie, as it does in a browser. The capability is
    never shown or logged.
-5. While attached, the app checks the daemon's `/api/health` every 5 seconds.
+5. While attached, the app checks the daemon's `/api/health` every 30 seconds
+   while the native event stream is up, and every 5 seconds otherwise. A stream
+   disconnect wakes the health check immediately.
    - If the daemon rejects the credential, a newer daemon has replaced it, and
      the app attaches to that one, once.
    - After three failures in a row, the window returns to the connecting
@@ -544,10 +546,14 @@ Two channels, each the least that does the job:
    daemon not attached then, or a failed request, only skips it). This is the
    credential the app already reads for the window and the health check,
    accepted on `/api/` routes only; the requests that change state send the daemon's own origin and JSON, as the daemon
-   requires. The events stream carries change notices only, so an event
-   makes the tray fetch the data; the stream uses the same bearer token.
+   requires. Tray change events carry no snapshots, so an event makes the
+   tray fetch the data; the stream uses the same bearer token.
 
-Notifications read the events stream separately (see "Notifications").
+The tray and notifications share one native event stream. Its reader forwards
+change notices to the tray and full `notice` payloads to a notification worker,
+so OS notification calls do not delay tray updates. It starts beyond the latest
+event and resumes from the last event ID on reconnect. Detaching or replacing
+the daemon closes the old stream immediately (see "Notifications").
 
 The tray menu adds no Tauri capability, and none names a remote URL: the
 tray, the dialogs and the autostart entry are used from Rust only, so pages
@@ -621,7 +627,7 @@ SMAppService login items replace it.
 ## Notifications
 
 The app turns daemon events into operating system notifications. It reads the
-daemon's `GET /api/events` stream itself (`src/notifications/`), so they
+daemon's `GET /api/events` stream shared with the tray (`src/events.rs`), so they
 arrive while the window is hidden (closing it hides it) or minimised, for as
 long as the app runs. Where no tray exists, closing the window quits the app
 (see "Tray, closing and quitting"), and notifications stop with it. Pages the
