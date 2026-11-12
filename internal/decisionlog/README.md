@@ -128,12 +128,21 @@ changes; other skips only when it changes.
   transcript path, the fingerprint, the head extraction (content and prefix
   hash, prompt version, backend, model, decisions with IDs, dropped citations,
   tokens and cost), the coverage (`extracted` or `skipped` with a reason) and
-  consecutive failures.
+  consecutive failures. It is indexed by `(repository, extracted_at)`, which
+  the decisions page, its coverage counts, the people count and the feature
+  assigner filter on.
 - `decision` and the `current_decision` view, `decision_file`: the decision
   log. A decision is upserted by ID; decisions a newer extraction no longer
   holds get `obsolete_at` and are never deleted. A decision is
   dated by its first cited turn's time, else the date its ID had, else the
   extraction's time.
+- `timeline_revision`: per repository, a counter the Timeline's snapshot is
+  keyed on (see Timeline API). Triggers move it, in the same transaction, on
+  every insert or delete of, and every change of a column the snapshot reads
+  in, `feature_version`, `feature`, `feature_pull`, `feature_session`,
+  `pull_request`, `pull_commit`, `session_commit`, `capture_session`,
+  `decision` and `decision_file`. A write to anything else in `app.sqlite`,
+  or to a column the snapshot does not read, leaves it alone.
 - `capture_attempt`: the ledger of calls (backend, model, full or extend,
   reservation, cost, tokens, state, failure reason, rejected replies), with the `stage` that made the call
   (`capture`, or a feature log stage) and the `item` it was about.
@@ -580,9 +589,12 @@ the local API behind its authentication, in the view models of the review
 viewer's decision log (`oss/viewer/src/decision-log.ts`). It reads the store
 and never writes it. As the review index does, the feature lists and their
 people share one snapshot of each repository's features, built once and kept
-until the store changes (a write through its connection, `total_changes`,
-or a commit by another connection or process, `data_version`), the user's
-identity is read again, or it is 30 seconds old; a search builds its own.
+until the repository's `timeline_revision` moves (a write, by any
+connection or process, to a row or column the snapshot reads; writes
+elsewhere in `app.sqlite` do not count), the user's identity is read again,
+or it is 30 seconds old (for the clone's branches, which the revision does
+not cover); a search builds its own. Each repository builds under its own
+lock, so one repository's build does not hold up another's.
 
 - **`GET /repositories`**: `decisions_enabled` (the decisions switch),
   `repositories`, the picked repositories whose decisions are not turned

@@ -103,26 +103,34 @@ type Timeline struct {
 	selfMu  sync.Mutex
 	selfAt  time.Time
 	self    *Person
-	// listMu guards lists, the repositories' snapshots the lists share.
+	// listMu guards lists, which maps each repository to its entry; an
+	// entry's own lock serializes that repository's builds, so one
+	// repository's build never holds up another's.
 	listMu sync.Mutex
-	lists  map[string]listSnapshot
+	lists  map[string]*listEntry
 }
 
-// listMaxAge bounds how long a list's snapshot is served while the store
-// holds still, for what its version does not cover: a connection the pool
-// replaced, whose counts start again.
+// listMaxAge bounds how long a list's snapshot is served while the
+// repository's revision holds still, for what the revision does not cover:
+// the clone's branches and the user's identity read through the clone.
 const listMaxAge = 30 * time.Second
 
-type listSnapshot struct {
-	snap    *timelineSnapshot
-	version storeVersion
-	at      time.Time
+// listEntry is a repository's shared snapshot and the revision it was built
+// at; mu is held while it is read or built.
+type listEntry struct {
+	mu       sync.Mutex
+	snap     *timelineSnapshot
+	revision int64
+	at       time.Time
 }
 
-// storeVersion moves with every write the store's connection makes
-// (total_changes) and every commit another connection or process makes
-// (data_version).
-type storeVersion struct{ changes, data int64 }
+// revision is the repository's timeline_revision: it moves only with a write
+// to a row its snapshot reads (timelinerevision.go), 0 before any.
+func (s *Store) revision(ctx context.Context, repository string) (int64, error) {
+	var revision int64
+	err := s.db.QueryRowContext(ctx, `SELECT COALESCE((SELECT revision FROM timeline_revision WHERE repository=?), 0)`, repository).Scan(&revision)
+	return revision, err
+}
 
 // timelineRepository names the repository a row is listed under, as the
 // viewer's DecisionRepository: the registry's name is both its id and its
@@ -878,7 +886,7 @@ func (t *Timeline) listed(ctx context.Context, repositories []string, q url.Valu
 
 // listSnapshot is the repository's snapshot for a list. Without a search, as
 // the review index is, it is built once and shared by every list until the
-// store changes (storeVersion), the user's identity is read again (selfTTL)
+// repository's revision moves, the user's identity is read again (selfTTL)
 // or it is listMaxAge old; readers never change it, and wait for a build
 // under way.
 func (t *Timeline) listSnapshot(ctx context.Context, reader *timelineReader, repository, q string) (*timelineSnapshot, error) {
@@ -886,26 +894,34 @@ func (t *Timeline) listSnapshot(ctx context.Context, reader *timelineReader, rep
 		return t.snapshot(ctx, reader, repository, q, "")
 	}
 	t.listMu.Lock()
-	defer t.listMu.Unlock()
+	if t.lists == nil {
+		t.lists = map[string]*listEntry{}
+	}
+	entry := t.lists[repository]
+	if entry == nil {
+		entry = &listEntry{}
+		t.lists[repository] = entry
+	}
+	t.listMu.Unlock()
+	entry.mu.Lock()
+	defer entry.mu.Unlock()
 	// Read before the build: a write it races leaves the snapshot older
-	// than its version, so the next list builds again.
-	var version storeVersion
-	if err := t.Store.db.QueryRowContext(ctx, "SELECT total_changes(), data_version FROM pragma_data_version").
-		Scan(&version.changes, &version.data); err != nil {
-		return nil, err
+	// than its revision, so the next list builds again.
+	revision, err := t.Store.revision(ctx, repository)
+	if err != nil {
+		// No revision to key on (a store opened read-only before the table
+		// existed): build without keeping.
+		return t.snapshot(ctx, reader, repository, "", "")
 	}
 	now := t.Store.now()
-	if c, ok := t.lists[repository]; ok && c.version == version && c.snap.self == reader.self(ctx) && now.Sub(c.at) < listMaxAge {
-		return c.snap, nil
+	if entry.snap != nil && entry.revision == revision && entry.snap.self == reader.self(ctx) && now.Sub(entry.at) < listMaxAge {
+		return entry.snap, nil
 	}
 	snap, err := t.snapshot(ctx, reader, repository, "", "")
 	if err != nil {
 		return nil, err
 	}
-	if t.lists == nil {
-		t.lists = map[string]listSnapshot{}
-	}
-	t.lists[repository] = listSnapshot{snap: snap, version: version, at: now}
+	entry.snap, entry.revision, entry.at = snap, revision, now
 	return snap, nil
 }
 
