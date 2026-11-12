@@ -57,6 +57,10 @@ const RESERVED = new Set([
 const FILTER_KEY = /^[a-z][a-z0-9_]{0,31}$/;
 const MAX_FILTERS = 32;
 const MAX_FILTER_VALUE = 256;
+/** The longest subject the MCP server takes, in bytes (`maxPageText`). */
+const MAX_PAGE_TEXT = 1024;
+const encoder = new TextEncoder();
+const bytes = (text: string) => encoder.encode(text).length;
 /** The sections the MCP server knows (`settingsSections`,
  *  `repositorySections`); another is left out. */
 const SETTINGS_SECTIONS = ["general", "reviews", "fixes", "connections", "computer", "prompts"];
@@ -87,12 +91,19 @@ export function pageContextOf(
   hash = "",
 ): PageContext {
   const requested = search.get("page") ?? "inbox";
-  const number = Number(search.get("pr"));
-  const clone = search.get("clone");
-  const repository = search.get("repository") ?? (clone ? cloneRepository(clone) : undefined);
+  // A subject is named only as the MCP server takes it: a field of at most
+  // MAX_PAGE_TEXT bytes, a pull request by its whole number.
+  const subject = (key: string) => {
+    const value = search.get(key);
+    return value && bytes(value) <= MAX_PAGE_TEXT ? value : null;
+  };
+  const pr = search.get("pr") ?? "";
+  const number = /^[1-9]\d{0,9}$/.test(pr) && Number(pr) <= 2 ** 31 - 1 ? Number(pr) : 0;
+  const clone = subject("clone");
+  const repository = subject("repository") ?? (clone ? cloneRepository(clone) : undefined);
   if ((requested === "inbox" || requested === "pulls") && number > 0 && repository) {
     const focus: Record<string, string> = {};
-    const walk = search.get("walk");
+    const walk = subject("walk");
     if (walk) focus.walk = walk;
     const anchor = hash.replace(/^#/, "");
     if (anchor) focus.anchor = anchor.slice(0, 512);
@@ -103,27 +114,28 @@ export function pageContextOf(
       ...(Object.keys(focus).length > 0 ? { focus } : {}),
     };
   }
-  const group = search.get("group");
+  const group = subject("group");
   if ((requested === "inbox" || requested === "pulls") && group) return { page: "group", group };
-  if (requested === "sessions" && search.get("session"))
-    return { page: "session", session: search.get("session")! };
-  if (requested === "jobs" && search.get("job")) return { page: "job", job: search.get("job")! };
-  if (requested === "timeline" && search.get("feature"))
-    return { page: "feature", feature: search.get("feature")! };
+  const session = subject("session");
+  if (requested === "sessions" && session) return { page: "session", session };
+  const job = subject("job");
+  if (requested === "jobs" && job) return { page: "job", job };
+  const feature = subject("feature");
+  if (requested === "timeline" && feature) return { page: "feature", feature };
   if (requested === "settings" || requested === "diagnostics") {
-    const section = requested === "diagnostics" ? "computer" : (search.get("section") ?? "general");
-    return SETTINGS_SECTIONS.includes(section)
-      ? { page: "settings", section }
-      : { page: "settings" };
+    // As the Settings page opens it: an unknown section is General.
+    const asked = requested === "diagnostics" ? "computer" : (search.get("section") ?? "general");
+    return { page: "settings", section: SETTINGS_SECTIONS.includes(asked) ? asked : "general" };
   }
   if (requested === "repositories") {
-    const name = search.get("repository");
+    const name = subject("repository");
     if (!name) return withFilters({ page: "repositories" }, search);
-    const section = search.get("section") ?? "reviews";
+    // As a repository's page opens it: an unknown section is Reviews.
+    const asked = search.get("section") ?? "reviews";
     return {
       page: "repositories",
       repository: name,
-      ...(REPOSITORY_SECTIONS.includes(section) ? { section } : {}),
+      section: REPOSITORY_SECTIONS.includes(asked) ? asked : "reviews",
     };
   }
   // The inbox's own pages (a new or edited inbox, the list of them) are the

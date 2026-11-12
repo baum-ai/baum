@@ -1,0 +1,60 @@
+{
+  "description": "The page context the app derives from its address (oss/app/src/page-context.ts, pageContextOf), and which the MCP server must take (PageContext.Validate, and link for its page and subject). clones names the repository of each clone id the app knows.",
+  "clones": { "c1": "acme/demo" },
+  "cases": [
+    { "query": "", "context": { "page": "inbox" } },
+    { "query": "inbox=abc", "context": { "page": "inbox" } },
+    { "query": "page=inbox-new", "context": { "page": "inbox" } },
+    { "query": "page=nowhere", "context": { "page": "inbox" } },
+    {
+      "query": "page=pulls&filter=all&q=author%3A%40me",
+      "context": { "page": "pulls", "filters": { "filter": "all", "q": "author:@me" } }
+    },
+    { "query": "page=timeline&who=human", "context": { "page": "timeline", "filters": { "who": "human" } } },
+    { "query": "page=sessions", "context": { "page": "sessions" } },
+    { "query": "page=sessions&peek=claude-code%3As1", "context": { "page": "sessions" } },
+    { "query": "page=analytics", "context": { "page": "analytics" } },
+    { "query": "page=jobs", "context": { "page": "jobs" } },
+    {
+      "query": "repository=acme%2Fdemo&pr=7",
+      "context": { "page": "pull_request", "repository": "acme/demo", "pull_request": 7 }
+    },
+    {
+      "query": "clone=c1&pr=7&walk=b2",
+      "hash": "#sec_rest",
+      "context": {
+        "page": "pull_request",
+        "repository": "acme/demo",
+        "pull_request": 7,
+        "focus": { "walk": "b2", "anchor": "sec_rest" }
+      }
+    },
+    { "query": "page=pulls&clone=gone&pr=7", "context": { "page": "pulls" } },
+    { "query": "repository=acme%2Fdemo&pr=7.5", "context": { "page": "inbox" } },
+    { "query": "repository=acme%2Fdemo&pr=-3", "context": { "page": "inbox" } },
+    { "query": "page=pulls&group=g1", "context": { "page": "group", "group": "g1" } },
+    {
+      "query": "page=sessions&session=claude-code%3As1",
+      "context": { "page": "session", "session": "claude-code:s1" }
+    },
+    { "query": "page=jobs&job=j1", "context": { "page": "job", "job": "j1" } },
+    { "query": "page=timeline&feature=f1", "context": { "page": "feature", "feature": "f1" } },
+    { "query": "page=settings", "context": { "page": "settings", "section": "general" } },
+    { "query": "page=settings&section=fixes", "context": { "page": "settings", "section": "fixes" } },
+    { "query": "page=settings&section=unknown", "context": { "page": "settings", "section": "general" } },
+    { "query": "page=diagnostics", "context": { "page": "settings", "section": "computer" } },
+    { "query": "page=repositories", "context": { "page": "repositories" } },
+    {
+      "query": "page=repositories&repository=acme%2Fdemo&section=prompts",
+      "context": { "page": "repositories", "repository": "acme/demo", "section": "prompts" }
+    },
+    {
+      "query": "page=repositories&repository=acme%2Fdemo&section=elsewhere",
+      "context": { "page": "repositories", "repository": "acme/demo", "section": "reviews" }
+    },
+    {
+      "query": "page=pulls&Bad=1&ok_key=1&inbox=a",
+      "context": { "page": "pulls", "filters": { "ok_key": "1" } }
+    }
+  ]
+}

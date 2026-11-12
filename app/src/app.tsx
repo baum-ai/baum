@@ -1218,7 +1218,8 @@ function Workspace({ url }: { url: UrlState }) {
         (id) => clones.find((clone) => clone.id === id)?.repository,
         location.hash,
       ),
-    [url.search, clones],
+    // The hash is a pull request's anchor: read again whenever the page draws.
+    [url.search, clones, location.hash],
   );
   const pageTitle =
     pageContext.page === "pull_request"
