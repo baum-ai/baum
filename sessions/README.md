@@ -193,6 +193,10 @@ same sessions with or without it. Within a `Cache.BeginPass`/`EndPass` pair
 the store is scanned once however many clones look it up, and so does not see a
 rollout added during the pass. The parent and child lookups are built once per
 scan, not once per session.
+Cursor is the exception to "never a transcript": it keeps every conversation
+in one database, so discovery reads the store's conversation index and builds
+the tree of each repository conversation for its payload. `Options.Since` bounds that: a conversation last updated
+before it is skipped on the index's update time, before its tree is read.
 `Options.SessionIDs` keeps only the sessions with those native session IDs; the
 others are never mapped, so a caller that needs a few sessions does not decode
 every transcript of the repository. An Entire session is dropped when the
