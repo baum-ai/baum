@@ -188,3 +188,11 @@ version_count, latest, risk_score, reviewed, outdated}`: `latest` is the
 latest version's metadata (or null), `reviewed` the members it covered with
 their heads, and `outdated` as above. Every mutation publishes an `index`
 event.
+
+`PATCH` goes through `API.Update`, which a chat's proposal to rename a group
+or add and remove its pull requests also saves with (see "MCP server for
+agents" in `ARCHITECTURE.md`). It calls `Store.UpdateWith`, `Update` with the
+name and members chosen from the group as the writing transaction reads it:
+an error the choice returns (a proposal read at another state of the group)
+writes nothing. `CheckUpdate` refuses what `Update` would refuse of a name
+or members, without writing.

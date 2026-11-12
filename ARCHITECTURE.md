@@ -5489,21 +5489,96 @@ that the consumer is live.
 `Proposals` hold changes a chat proposes: page, target, the value before and
 after, the target's revision and the page context it was made on. A
 `Proposer` reads a target (`Current`), validates a change (`Validate`) and
-saves it (`Apply`), each given that page context so it refuses a target the
+saves it (`Apply`), each given the page context so it refuses a target the
 page does not show. `Propose` refuses an action, a page other than the open
 one and a page with no proposer; it reads the target's value and revision
 itself, ignoring the agent's revision, refuses with the bare
 `ErrNotRecorded` a `Before` the agent sent that no longer matches, and
 records the proposal; nothing changes. A tool gets only a `Receipt` (id,
 page, target): the current value is for the person, through the Go API,
-never for the agent. `List` returns deep copies. `Save` reads the target
-again, which refuses one that left the page and a changed revision; then,
+never for the agent. `List` returns deep copies. `Save(ctx, consumer, id,
+input)` first checks that the person still has the page the proposal was
+made on open, showing the same repository, pull request, group, session, job
+and feature (`ErrNotCurrentPage` once they navigated away); it reads the
+target again against the page as it is now, which refuses a target of
+another section, one that left the page and a changed revision; then,
 under the lock a revoke takes to drop proposals, it checks that the
 consumer is live and the proposal open and calls `Apply` with the recorded
-revision. The proposer compares and writes in one transaction, as
-`appdb.Update` does, and returns `ErrStale` without writing when the target
-moved meanwhile. `Dismiss` drops a proposal. No page has a proposer yet, and the app reaches proposals only
-through the Go API.
+revision and the `SaveInput`. The proposer compares and writes in one
+transaction, as `appdb.Update` does, and returns `ErrStale` without writing
+when the target moved meanwhile. `Dismiss` drops a proposal. The app reaches
+proposals only through the Go API for now.
+
+`SaveInput` is what the person adds when saving, from the app's own save and
+never through an agent: the value of an agent environment variable the agent
+proposed adding. It goes to `Apply` alone, is never kept in the proposal, and
+prints and logs as withheld. Every proposer but the agent environment's
+refuses one.
+
+The `propose_*` tools record proposals. Each is global (an action neither
+lists nor calls one), reads nothing, names its page and target, passes the
+change asked for as `After`, and answers the receipt and a fixed status. A
+tool's schema bounds types and sizes only, so a value the page refuses
+reaches the proposer and is refused with the page's own words. Pages list
+their tools, and `current_page` lists a section's with its `section_tools`.
+`Options.Proposers` gives each page its proposer; the daemon passes
+`uiserver.Proposers.Pages()`:
+
+| Page (section) | Tool | Target | Saved as |
+| --- | --- | --- | --- |
+| `settings` (`general`; also an unnamed section) | `propose_appearance` | `appearance` | `PUT /api/settings/appearance` (theme, key hints, page modifier) |
+| `settings` (`general`) | `propose_plan_usage` | `plan_usage/<provider>` | `PUT /api/settings/plan-usage` |
+| `settings` (`reviews`) | `propose_reviews` | `reviews` | `PUT /api/automatic` (`automatic.Scheduler.SavePreferences`): enabled, pull requests, backend, model, effort |
+| `settings` (`reviews`) | `propose_decision_capture` | `decisions` | `PUT /api/settings/decisions`, the fields left out as the section shows them |
+| `settings` (`fixes`) | `propose_fixes` | `fixes` | `PUT /api/automatic`: fix backend, model, effort |
+| `settings` (`computer`) | `propose_time_limits` | `time_limits` | `PUT /api/settings/time-limits`, a limit left out as the section shows it |
+| `settings` (`computer`) | `propose_job_concurrency` | `job_concurrency` | `PUT /api/settings/job-concurrency`, then the queue's concurrency |
+| `settings` (`computer`) | `propose_codex_approvals` | `codex_approvals` | `PUT /api/agent-requests/settings` (`agentrequests.Store.SetSettingsIf`) |
+| `settings` (`computer`) | `propose_agent_env` | `agent_env/<NAME>` | `PUT /api/settings/agent-env` of the environment in force with the name added (the value from `SaveInput`) or removed |
+| `settings` (`prompts`) | `propose_prompt`, `propose_prompt_reset` | `prompt/<id>` | `PUT /api/settings/prompts/{id}` |
+| `repositories` with a repository (`reviews`) | `propose_repository_settings` | `<owner/name>:settings` | `PUT /api/repositories/{owner}/{name}/settings`, the field left out kept |
+| `repositories` with a repository (`prompts`) | `propose_prompt`, `propose_prompt_reset` | `<owner/name>:prompt/<id>` | `PUT /api/repositories/{owner}/{name}/prompts/{id}` |
+| `inbox` | `propose_inbox` | `inbox:new` or `inbox:<id>` | `PUT /api/inboxes` (`inboxes.API.Save`) of the list with the inbox added at the end or changed: name, colour, query, badge |
+| `group` | `propose_group` | `group:<id>`, the page's group | `PATCH /api/groups/{id}` (`reviewgroups.API.Update`): name, members added and removed |
+| `pull_request` | `propose_review_comment` | `<owner/name>#<n>:review_comment`, the page's pull request | `PUT /api/ui-state/review?key=` of the pending review with the comment appended, the other comments, note and sent reviews kept |
+
+A target of another section than the open one (General when none is named;
+Reviews on a repository's page), another repository, group or pull request is
+refused, at `Propose` and again at `Save`. Each proposer validates as the
+page's route does, with the same functions: `repos.ValidateTimeLimit`,
+`config.ParseBackend`, `config.ParseEffort`, `Preferences.ValidateChange`
+(through `automatic.EditPreferences` and the decisions route's edit),
+`config.ValidateAgentEnv`, the concurrency bound, the appearance and plan
+checks, `prompt.Validate`, `inboxes` normalisation (`State.Check`) and the
+app's query check (`prfilter.Problem`), `reviewgroups.CheckUpdate` and
+`uistate.CheckReviewComment`. Each saves through the function the route's
+handler calls and does what the route does after a save: the decisions event,
+the queue's concurrency, cancelling disallowed automatic jobs, waking the
+scheduler and the automatic notice, the settings and decisions events after a
+repository's settings or prompts, and `Changed` after an inbox or group. Beyond
+the page, an agent may not take a safety rule out of a prompt: a text, or a
+reset to the inherited text, that leaves out a rule the prompt in use has is
+refused (the person can still remove one in the editor, which warns). Adding
+an agent environment variable that is set, or removing one that is not, is
+refused.
+
+A target's revision is HMAC-SHA256, under a key made per daemon, of the
+stored state its save reads: the preference fields of its route, the agent
+environment in force (values included, which the key keeps from being
+guessed from the hash) and whether the app sets it, the Codex setting, a
+prompt's own and global rows, a repository's settings, a group's name,
+members, stack flag and landed members. Saved inboxes and pending reviews use
+their store's own revision. `Apply` checks the revision inside the writing
+transaction: `repos.Registry.UpdatePreferencesIf`, `UpdateRepositoryIf` and
+`PutPromptOverrideIf`, `reviewgroups.Store.UpdateWith` and
+`agentrequests.Store.SetSettingsIf` hand the check the state as the
+transaction (or the settings' save lock) reads it, and an error from it
+writes nothing. Saved inboxes and pending reviews are read before the write
+and saved with `inboxes.Store.Replace` and `uistate.Store.Replace`, which
+compare the revision read in their own transaction. Tests save each proposal
+and send the page's request to a twin fixture and compare the stores and
+what followed each save, and change each target through its route before the
+save, and after `Save` checked the revision, to see the save refused.
 
 ### Transports and control protocol
 

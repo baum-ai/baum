@@ -1534,11 +1534,30 @@ app. The value and revision it is compared against are read by the daemon
 when the proposal is recorded, never taken from the agent; a value the agent
 says it read must match the current one, and a mismatch is refused with an
 error that says nothing more. The current value is shown to you, never
-returned to the agent. Saving checks that the target still belongs to the
-page and that the agent's token is still live, and the page compares the
-revision and writes in one step, so a target changed by anyone since the
-proposal was made is refused and nothing is saved. A token revoked while a
-save is writing takes effect once the write ends.
+returned to the agent: a proposal tool answers only the proposal's id, page
+and target. Saving checks that you still have the page open, showing the
+same repository, pull request or group, that the target still belongs to the
+section you see and that the agent's token is still live, and the page
+compares the revision and writes in one step, so a target changed by anyone
+since the proposal was made is refused and nothing is saved. A token revoked
+while a save is writing takes effect once the write ends.
+
+What an agent can cause is a proposal for you to look at: a setting of the
+Settings page (appearance, plan usage, automatic reviews, decision capture,
+the harnesses for reviews and fixes, time limits, job concurrency, whether
+the app answers Codex's permission requests), a custom prompt or its reset, a
+repository's review and decision capture choices, a saved inbox, a review
+group's name and members, or a comment added to your pending review (never
+sent to GitHub: you send the review). Nothing is saved without your save, and
+your save is the page's own, with the page's checks, so a proposal cannot
+save what the page itself would refuse. An agent cannot propose to take a
+safety rule out of a prompt you use. An agent never proposes an agent
+environment variable's value and never learns one: it may propose a
+variable's name to add or remove, the proposal holds only the name, and you
+type the value when you save it; the value goes from the app's save to the
+setting and is never stored in the proposal, returned to the agent, printed
+or logged. Nothing outside that list can be proposed: not your GitHub
+connection, a repository's registration or clones, nor any GitHub write.
 
 Every tool result is masked with the same redaction as prompts, cut to at
 most 64 KiB, and placed between `BEGIN UNTRUSTED DATA` and
