@@ -1851,7 +1851,6 @@ it("metadataStale: stale by the repository flag or by observation age over two m
   expect(metadataStale({ stale: true }, now)).toBe(true);
   expect(metadataStale({ stale: true, observed_at: at(1) }, now)).toBe(true);
   // Discovery's own fetch time alone does not age an entry.
-  expect(
-    metadataStale({ stale: false, metadata_fetched_at: at(3600) } as Partial<Entry> as Entry, now),
-  ).toBe(false);
+  const discoveryOnly = { stale: false, metadata_fetched_at: at(3600) };
+  expect(metadataStale(discoveryOnly, now)).toBe(false);
 });

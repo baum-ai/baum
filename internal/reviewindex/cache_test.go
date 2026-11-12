@@ -384,6 +384,32 @@ func TestBuildLeavesObservedAtEmptyWithoutObservation(t *testing.T) {
 	}
 }
 
+// An observation older than discovery's own fetch is not applied, so the entry
+// has no observation time and does not age.
+func TestBuildLeavesObservedAtEmptyForSkippedObservation(t *testing.T) {
+	now := time.Now()
+	fetched := now.Add(-time.Minute)
+	s := &Service{
+		Registry: registry{{ID: "c", Repository: "acme/a", CommonDir: "/c", Available: true}},
+		Discovery: source{"acme/a": {
+			PullRequests: []discovery.PullRequest{{Number: 1, HeadSHA: "h", State: "OPEN"}},
+			Observations: []discovery.Observation{{Number: 1, HeadSHA: "old", State: "OPEN", FetchedAt: fetched.Add(-time.Hour)}},
+			FetchedAt:    fetched,
+			NextPoll:     now.Add(time.Hour),
+		}},
+		OpenStore: func(string) (Reader, error) {
+			return readerFunc(func(context.Context) ([]store.Summary, error) { return nil, nil }), nil
+		},
+	}
+	out, _, err := s.build(context.Background(), now, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if e := out.Entries[0]; e.ObservedAt != "" || e.Stale || e.PullRequest.HeadSHA != "h" {
+		t.Fatalf("entry %+v: want discovery's head, no observation time, not stale", e)
+	}
+}
+
 type readerFunc func(context.Context) ([]store.Summary, error)
 
 func (f readerFunc) Snapshot(ctx context.Context) ([]store.Summary, error) { return f(ctx) }
