@@ -19,6 +19,7 @@ import {
   threadOutcomesSummary,
   type Job,
 } from "./api";
+import { BuildCoverageSummary } from "./feature-build";
 import { phaseText, ThreadOutcomes } from "./fix";
 import { jobOrigin, jobTarget, jobType, useJobTimes } from "./job-info";
 import { UsageBar } from "./usage";
@@ -333,6 +334,12 @@ function JobHeader({ job }: { job: Job }) {
       {meta.length ? <p className="local-job-head-meta">{meta.join(" · ")}</p> : null}
       {!active && job.reason && !changedNothing(job) ? (
         <p>{jobReasonText(job.reason, job.kind)}</p>
+      ) : null}
+      {job.kind === "feature_build" && job.build_workflow === "legacy" ? (
+        <p>This saved build covers full history.</p>
+      ) : null}
+      {job.kind === "feature_build" && job.build_coverage ? (
+        <BuildCoverageSummary coverage={job.build_coverage} />
       ) : null}
       {!active && job.detail ? <pre className="local-job-detail">{job.detail}</pre> : null}
       {!active && job.summary ? (

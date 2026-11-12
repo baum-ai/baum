@@ -203,7 +203,25 @@ export type Provenance = {
   recorded_cost_usd: number | null;
   cost_reason?: string;
 };
+/** Evidence made available during a feature build, not proof every title was read. */
+export type BuildCoverage = {
+  protocol: string;
+  since: string;
+  catalogued: number;
+  inspected: number;
+  selected: number;
+  completed: number;
+  remaining: number;
+  truncated: boolean;
+  exploration_closed?: boolean;
+  reason?: string;
+  retry_at?: string;
+  source?: { revision: string; omissions: number; limitations: string[] };
+};
 export type Job = {
+  build_coverage?: BuildCoverage;
+  build_workflow?: string;
+  feature_build_mode?: "fresh";
   id: string;
   clone: string;
   repository: string;
@@ -395,6 +413,15 @@ const detailsReasons: Record<string, string> = {
 /** Why a feature build stopped or cannot run. None asks to confirm it again:
  *  where a build can be resumed, the page offers that itself. */
 const buildReasons: Record<string, string> = {
+  no_progress:
+    "The build needs attention because recent steps made no progress. Saved progress is ready to resume.",
+  selected_work_incomplete: "Some selected work is unfinished. Saved progress is ready to resume.",
+  concurrent_build: "Another build changed the saved progress. Resume to use its latest results.",
+  build_running: "A feature build is already queued or running for this repository.",
+  rate_limited: "GitHub asked baum to wait before reading more pull requests.",
+  workflow_mismatch:
+    "This saved build uses a different discovery method. Resume it or start a new build.",
+  version_retired: "A newer build replaced this saved build.",
   disabled: "Decisions are turned off for this repository, so it cannot be built.",
   preferences_unreadable: "baum could not read its preferences, so it did not make a call.",
   backend_unavailable: "The model backend is not available on this computer.",
@@ -1322,9 +1349,9 @@ export function threadOutcomesSummary(outcomes: ThreadOutcome[] | undefined): st
  *  the person asks for starts: its first build, or the rest of one that
  *  stopped. One the daemon will not run is refused with its reason as the
  *  `LocalRequestError`'s code. */
-export async function startFeatureBuild(clone: string): Promise<Job[]> {
+export async function startFeatureBuild(clone: string, mode?: "fresh"): Promise<Job[]> {
   const answer = await request<{ jobs: Job[] }>("api/jobs", {
-    items: [{ clone, pr: 0, kind: "feature_build" }],
+    items: [{ clone, pr: 0, kind: "feature_build", ...(mode ? { feature_build_mode: mode } : {}) }],
     mode: "single",
   });
   return answer.jobs;

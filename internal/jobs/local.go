@@ -807,14 +807,14 @@ func (a headAssembler) Assemble(ctx context.Context, r assemble.Request) (assemb
 // prepareFeatureBuild plans a feature build of the clone's repository. One
 // with no backend that can call now is blocked; nothing about its price is.
 func (l *Local) prepareFeatureBuild(ctx context.Context, item Item) (Prepared, string, error) {
-	if item.PR != 0 || item.Group != "" || l.Features == nil {
+	if item.PR != 0 || item.Group != "" || l.Features == nil || (item.FeatureBuildMode != "" && item.FeatureBuildMode != "fresh") {
 		return Prepared{}, "", errors.New("invalid feature build")
 	}
 	c, e := l.clone(ctx, item.Clone)
 	if e != nil {
 		return Prepared{}, "", e
 	}
-	plan, e := l.Features.PlanFeatureBuild(ctx, c.Repository, c.Path)
+	plan, e := l.Features.PlanFeatureBuild(ctx, c.Repository, c.Path, item.FeatureBuildMode)
 	if e != nil {
 		return Prepared{}, "", e
 	}
@@ -832,7 +832,7 @@ func (l *Local) executeFeatureBuild(ctx context.Context, p Prepared, progress fu
 	if e != nil {
 		return nil, e
 	}
-	spent, e := l.Features.BuildFeatures(ctx, c.Repository, c.Path, progress)
+	spent, e := l.Features.BuildFeatures(ctx, c.Repository, c.Path, p.FeatureBuildMode, progress)
 	return &spent, e
 }
 

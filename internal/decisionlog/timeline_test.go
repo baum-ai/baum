@@ -1025,3 +1025,35 @@ func (f *featureFixture) resolveFixtureDecisions(repository string, keys []Sessi
 		}
 	}
 }
+
+func TestTimelineAdaptiveCoverageSurvivesZeroFeaturePromotion(t *testing.T) {
+	f := newTimelineFixture(t)
+	ctx := context.Background()
+	version, err := featureVersion(ctx, f.store.db, repo, VersionAdaptiveBuilding, true, f.clock.now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := newAdaptiveState()
+	a.Since = "2026-06-01"
+	a.Source = SourceContext{Revision: strings.Repeat("a", 40), Limitations: []string{"Committed source only"}}
+	if err = f.store.saveAdaptive(ctx, version, repo, a, false, f.clock.now); err != nil {
+		t.Fatal(err)
+	}
+	var answer struct {
+		Building    *timelineBuild `json:"building"`
+		Coverage    *BuildCoverage `json:"current_coverage"`
+		HasFeatures bool           `json:"has_features"`
+	}
+	f.get("/api/timeline/build", url.Values{"repository": {repo}}, &answer)
+	if answer.Building == nil || answer.Building.Workflow != "feature-build-public-v1" || answer.Building.Coverage == nil || answer.Building.Coverage.Source.Revision != a.Source.Revision || !answer.HasFeatures {
+		t.Fatalf("building coverage %+v", answer)
+	}
+	a.Complete = true
+	if err = f.store.saveAdaptive(ctx, version, repo, a, true, f.clock.now); err != nil {
+		t.Fatal(err)
+	}
+	f.get("/api/timeline/build", url.Values{"repository": {repo}}, &answer)
+	if answer.Building != nil || answer.Coverage == nil || answer.Coverage.Since != a.Since || answer.HasFeatures || answer.Coverage.Selected != 0 {
+		t.Fatalf("zero promotion coverage %+v", answer)
+	}
+}

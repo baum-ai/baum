@@ -19,6 +19,8 @@ import (
 	"github.com/baum-ai/baum/agent"
 	"github.com/baum-ai/baum/decisions"
 	"github.com/baum-ai/baum/features/adaptive"
+	"github.com/baum-ai/baum/internal/config"
+	"github.com/baum-ai/baum/internal/generate"
 	"github.com/baum-ai/baum/internal/github"
 	"github.com/baum-ai/baum/internal/locallink/linktest"
 )
@@ -53,11 +55,22 @@ func (r *adaptiveReader) Read(_ context.Context, path, _ string) (int, http.Head
 	slices.SortFunc(rows, func(a, b map[string]any) int {
 		return strings.Compare(b["updated_at"].(string), a["updated_at"].(string))
 	})
-	if u.Query().Get("page") != "1" {
-		rows = nil
-	}
 	if u.Query().Get("state") == "open" {
-		rows = slices.DeleteFunc(rows, func(r map[string]any) bool { return r["state"] != "open" })
+		rows = slices.DeleteFunc(rows, func(row map[string]any) bool { return row["state"] != "open" })
+	}
+	page, _ := strconv.Atoi(u.Query().Get("page"))
+	size, _ := strconv.Atoi(u.Query().Get("per_page"))
+	if page < 1 {
+		page = 1
+	}
+	if size < 1 {
+		size = 64
+	}
+	offset := (page - 1) * size
+	if offset >= len(rows) {
+		rows = nil
+	} else {
+		rows = rows[offset:min(offset+size, len(rows))]
 	}
 	if rows == nil {
 		rows = []map[string]any{}
@@ -768,5 +781,149 @@ func TestAdaptiveRequestedDecisionEvidencePinsQuotesCitationsAndSourceAcrossResu
 	}
 	if f.count(`SELECT count(*) FROM pull_commit`) != 0 {
 		t.Fatal("decision evidence fetched code without a request")
+	}
+}
+
+// Scripted evaluation verifies host behavior and exact synthetic membership;
+// real-model semantic quality and elapsed discovery speed are not measured.
+func TestAdaptiveSyntheticVolumeAndInitialSync(t *testing.T) {
+	for _, volume := range []int{4, 240} {
+		t.Run(strconv.Itoa(volume), func(t *testing.T) {
+			f, dir, reader := adaptiveFixture(t)
+			head := reader.rows[0]["head"].(map[string]any)["sha"].(string)
+			reader.rows = nil
+			for number := 1; number <= volume; number++ {
+				p := pullJSON(number, head, head)
+				age := time.Duration(number) * time.Hour
+				if volume == 4 {
+					age = time.Duration(number*120) * 24 * time.Hour
+				}
+				date := f.clock.now.Add(-age).Format(time.RFC3339)
+				p["created_at"], p["updated_at"] = date, date
+				p["state"] = "closed"
+				p["merged_at"] = date
+				if number == volume {
+					p["state"] = "open"
+					p["merged_at"] = nil
+					p["created_at"], p["updated_at"] = f.clock.now.AddDate(-2, 0, 0).Format(time.RFC3339), f.clock.now.AddDate(-2, 0, 0).Format(time.RFC3339)
+				}
+				reader.rows = append(reader.rows, p)
+			}
+			// Startup can list cheap metadata without fetching pre-activation history.
+			sync, err := f.worker.Sync(context.Background(), repo, dir)
+			if err != nil || sync.PathsRead != 0 || f.count(`SELECT count(*) FROM pull_commit`) != 0 {
+				t.Fatalf("startup fetched history %+v %v", sync, err)
+			}
+			tasks := 0
+			f.backend.task = func(req agent.Request) (agent.Result, error) {
+				tasks++
+				switch tasks {
+				case 1:
+					return adaptiveTaskReply(t, adaptive.Reply{Action: "catalog", Since: f.clock.now.AddDate(-3, 0, 0).Format(time.DateOnly)}), nil
+				case 2:
+					return adaptiveTaskReply(t, adaptive.Reply{Action: "details", Numbers: []int{1, 2, volume}}), nil
+				default:
+					shared := widgetScope()
+					shared.Key = "cross-layer"
+					shared.Title = "Search capability"
+					shared.Purpose = "One outcome spanning implementation, interface and migration"
+					shared.Examples = []int{1, 2}
+					separate := widgetScope()
+					separate.Key = "independent"
+					separate.Title = "Independent outcome"
+					separate.Purpose = "An independent outcome sharing generic code"
+					separate.Examples = []int{volume}
+					return adaptiveTaskReply(t, adaptive.Reply{Action: "finish", Selected: []int{1, 2, volume}, Scopes: []adaptive.Scope{shared, separate}, Assignments: []adaptive.Assignment{{Number: 1, Scope: shared.Key, Reason: "Backend and interface outcome"}, {Number: 2, Scope: shared.Key, Reason: "Follow-up migration and fix for same outcome"}, {Number: volume, Scope: separate.Key, Reason: "Different outcome despite shared path"}}}), nil
+				}
+			}
+			report, err := f.worker.Build(context.Background(), repo, dir, BuildOptions{Adaptive: true})
+			if err != nil || !report.Current || report.Coverage.Catalogued != volume || report.Coverage.Inspected != 3 || report.Coverage.Completed != 3 || report.Coverage.Remaining != 0 || report.Features != 2 {
+				t.Fatalf("volume %d %+v %v", volume, report, err)
+			}
+			if f.featureOf(1) != f.featureOf(2) || f.featureOf(1) == f.featureOf(volume) {
+				t.Fatal("exact synthetic memberships changed")
+			}
+			if f.count(`SELECT count(*) FROM pull_commit`) != 0 {
+				t.Fatal("catalog/details caused Git reads")
+			}
+			t.Logf("catalog=%d requested-evidence=%d selected=%d completed=%d task-steps=%d metadata-requests=%d", report.Coverage.Catalogued, report.Coverage.Inspected, report.Coverage.Selected, report.Coverage.Completed, tasks, len(reader.paths))
+		})
+	}
+}
+
+func TestLiveSyncKeepsSelectedOldWorkAndLegacyCanReadHistory(t *testing.T) {
+	f, dir, reader := adaptiveFixture(t)
+	ctx := context.Background()
+	if _, err := f.worker.Sync(ctx, repo, dir); err != nil {
+		t.Fatal(err)
+	}
+	if f.count(`SELECT count(*) FROM pull_commit`) != 0 {
+		t.Fatal("startup read old commits")
+	}
+	version := f.live()
+	f.feature(version, "selected", 1)
+	live, err := f.store.livePullsWithoutPaths(ctx, repo)
+	if err != nil || len(live) != 1 || live[0].Number != 1 {
+		t.Fatalf("active selection %+v %v", live, err)
+	}
+	// Older open work stays available to explicit full-history preparation.
+	reader.rows = nil
+	report := SyncReport{}
+	if err = f.worker.readPaths(ctx, repo, dir, &report, false, func() bool { return false }); err != nil || report.PathsRead != 3 {
+		t.Fatalf("legacy path %+v %v", report, err)
+	}
+}
+
+type guardedBuildBackend struct {
+	run func(context.Context, agent.Request) (agent.Result, error)
+}
+
+func (*guardedBuildBackend) Name() string                          { return agent.BackendClaude }
+func (*guardedBuildBackend) Check(context.Context) (string, error) { return "fixture", nil }
+func (b *guardedBuildBackend) Run(ctx context.Context, req agent.Request) (agent.Result, error) {
+	return b.run(ctx, req)
+}
+
+func TestAdaptiveCancelledOrTimedOutUnitRetainsAcceptedCheckpoint(t *testing.T) {
+	for _, kind := range []string{"cancel", "unit timeout"} {
+		t.Run(kind, func(t *testing.T) {
+			f, dir, _ := adaptiveFixture(t)
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			calls := 0
+			resume := false
+			if kind == "unit timeout" {
+				f.worker.Config.Budgets.PassTimeout = config.Duration(100 * time.Millisecond)
+			}
+			backend := &guardedBuildBackend{run: func(unit context.Context, req agent.Request) (agent.Result, error) {
+				calls++
+				if calls == 1 {
+					return adaptiveTaskReply(t, adaptive.Reply{Action: "checkpoint", Selected: []int{1}, Scopes: []adaptive.Scope{widgetScope()}, Assignments: []adaptive.Assignment{{Number: 1, Scope: "widgets", Reason: "Accepted outcome"}}}), nil
+				}
+				if !resume {
+					if kind == "cancel" {
+						cancel()
+					}
+					<-unit.Done()
+					return agent.Result{}, unit.Err()
+				}
+				return adaptiveTaskReply(t, adaptive.Reply{Action: "finish"}), nil
+			}}
+			f.worker.Backends.Claude = func(string) generate.CheckedBackend { return backend }
+			first, err := f.worker.Build(ctx, repo, dir, BuildOptions{Adaptive: true})
+			if err == nil || first.Current || first.Coverage.Completed != 1 {
+				t.Fatalf("guard %+v %v", first, err)
+			}
+			state, err := f.store.adaptiveState(context.Background(), first.Version)
+			if err != nil || state.Assignments[1].Scope != "widgets" {
+				t.Fatal("accepted checkpoint lost", err)
+			}
+			resume = true
+			f.worker.Config.Budgets.PassTimeout = config.Default().Budgets.PassTimeout
+			next, err := f.worker.Build(context.Background(), repo, dir, BuildOptions{Adaptive: true})
+			if err != nil || !next.Current || next.Version != first.Version || next.Coverage.Completed != 1 {
+				t.Fatalf("guard resume %+v %v", next, err)
+			}
+		})
 	}
 }

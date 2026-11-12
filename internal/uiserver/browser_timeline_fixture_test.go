@@ -3,14 +3,21 @@ package uiserver_test
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	_ "modernc.org/sqlite"
 
+	"github.com/baum-ai/baum/agent"
 	"github.com/baum-ai/baum/decisions"
+	"github.com/baum-ai/baum/internal/assemble/assembletest"
+	"github.com/baum-ai/baum/internal/config"
 	"github.com/baum-ai/baum/internal/decisionlog"
+	"github.com/baum-ai/baum/internal/generate"
 	"github.com/baum-ai/baum/internal/jobs"
 	"github.com/baum-ai/baum/internal/repos"
 )
@@ -31,6 +38,21 @@ func browserTimeline(t *testing.T, home string, registry *repos.Registry) *decis
 	}
 	t.Cleanup(func() { _ = store.Close() })
 	const repo = "acme/demo"
+	// A separate source repository keeps the review fixture's HEAD unchanged.
+	sourceRepo := assembletest.NewRepo(t, assembletest.Options{})
+	assembletest.Git(t, sourceRepo.Dir, "remote", "add", "origin", "https://github.com/acme/demo")
+	for name, text := range map[string]string{"internal/decisionlog/timeline.go": "package decisionlog\n// Serve captured decisions from the private local store.\n", "app/src/timeline.tsx": "// Draw the local Timeline with existing review viewer components.\n", "internal/decisionlog/featurestore.go": "package decisionlog\n// Search captured decisions with SQLite FTS5.\n"} {
+		path := filepath.Join(sourceRepo.Dir, filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(text), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	assembletest.Git(t, sourceRepo.Dir, "add", ".")
+	assembletest.Git(t, sourceRepo.Dir, "-c", "user.name=Fixture", "-c", "user.email=fixture@example.com", "commit", "-qm", "Local Timeline source context")
+	head := strings.TrimSpace(assembletest.Git(t, sourceRepo.Dir, "rev-parse", "HEAD"))
 	day := func(days int, hour int) time.Time {
 		now := time.Now()
 		return time.Date(now.Year(), now.Month(), now.Day(), hour, 0, 0, 0, time.Local).AddDate(0, 0, -days)
@@ -142,9 +164,21 @@ changed_at, created_at, updated_at) VALUES (?,?,?,?,?,?,?,1,?,?,?,?)`, id, versi
 	}
 	own("timeline-2", "feature-search")
 	own("timeline-3", "feature-hosted")
-	exec(`INSERT INTO pull_commit(repository, number, sha, committed_at) VALUES (?,12,'commit-1',?)`, repo, ms(day(1, 11)))
-	exec(`INSERT INTO session_commit(agent, session_id, repository, sha, method, confidence) VALUES ('claude-code','timeline-1',?,'commit-1','checkpoint',1)`, repo)
+	exec(`UPDATE pull_request SET head_sha=?,base_sha=?,paths_head_sha=?,paths_json='["internal/decisionlog/timeline.go"]' WHERE number=12`, head, head, head)
+	exec(`UPDATE feature_pull SET assigned_head_sha=?,assigned_paths_json='["internal/decisionlog/timeline.go"]' WHERE number=12`, head)
+	exec(`UPDATE pull_request SET head_sha=?,base_sha=?,paths_head_sha=?,paths_json='["app/src/timeline.tsx"]' WHERE number=7`, head, head, head)
+	exec(`UPDATE feature_pull SET assigned_head_sha=?,assigned_paths_json='["app/src/timeline.tsx"]' WHERE number=7`, head)
+	exec(`INSERT INTO pull_commit(repository,number,sha,committed_at) VALUES (?,12,?,?)`, repo, head, ms(day(1, 11)))
+	exec(`INSERT INTO session_commit(agent,session_id,repository,sha,method,confidence) VALUES ('claude-code','timeline-1',?,?,'checkpoint',1)`, repo, head)
 	exec(`INSERT INTO pr_summary(repository, number, content_hash, summary, created_at) VALUES (?,12,'h','Adds the local Timeline API and page.',?)`, repo, ms(day(1, 16)))
+	// Generate real validated relevance/cache rows. Legacy seeded display keys
+	// become visible only after this code-capable worker establishes significance.
+	backend := &timelineAttributionBackend{t: t}
+	worker := &decisionlog.FeatureWorker{Store: store, Registry: registry, Config: config.Default(), Backends: generate.Backends{Claude: func(string) generate.CheckedBackend { return backend }}}
+	report, err := worker.AttributeDecisions(ctx, repo, sourceRepo.Dir, decisionlog.FeatureOptions{Manual: true, Backend: "claude", Model: "claude-haiku-5-5", AttributionLimit: 4})
+	if err != nil || report.Decisions != 4 || backend.calls == 0 {
+		t.Fatalf("fixture semantic attribution %+v calls%d %v", report, backend.calls, err)
+	}
 	return &decisionlog.Timeline{Store: store, Registry: registry, Home: home,
 		Clone: func(context.Context, string) decisionlog.TimelineClone { return fixtureClone{} },
 		Login: func(context.Context) string { return "ada-l" }}
@@ -164,10 +198,54 @@ func (fixtureClone) Review(context.Context, int, string) (string, string) { retu
 // once, as a build whose backend went away.
 type fixtureBuilder struct{}
 
-func (fixtureBuilder) PlanFeatureBuild(context.Context, string, string) (jobs.FeatureBuildPlan, error) {
+func (fixtureBuilder) PlanFeatureBuild(context.Context, string, string, string) (jobs.FeatureBuildPlan, error) {
 	return jobs.FeatureBuildPlan{Backend: "claude", Model: "claude-haiku-5-5"}, nil
 }
 
-func (fixtureBuilder) BuildFeatures(context.Context, string, string, func(jobs.Progress)) (float64, error) {
+func (fixtureBuilder) BuildFeatures(context.Context, string, string, string, func(jobs.Progress)) (float64, error) {
 	return 0, &jobs.StoppedError{Reason: "backend_unavailable"}
+}
+
+// This fake implements Run only: browser citation fixtures traverse the same
+// source export, schema validation and semantic persistence as production.
+type timelineAttributionBackend struct {
+	t     *testing.T
+	calls int
+}
+
+func (*timelineAttributionBackend) Name() string                          { return agent.BackendClaude }
+func (*timelineAttributionBackend) Check(context.Context) (string, error) { return "fixture", nil }
+func (b *timelineAttributionBackend) Run(_ context.Context, req agent.Request) (agent.Result, error) {
+	b.calls++
+	for _, path := range []string{"internal/decisionlog/timeline.go", "app/src/timeline.tsx"} {
+		if _, err := os.ReadFile(filepath.Join(req.Directory, "head", filepath.FromSlash(path))); err != nil {
+			b.t.Fatal(err)
+		}
+	}
+	data, err := os.ReadFile(filepath.Join(req.Directory, "transcript.txt"))
+	if err != nil {
+		return agent.Result{}, err
+	}
+	var input struct{ Decisions []decisionlog.Decision }
+	if err = json.Unmarshal(data, &input); err != nil {
+		return agent.Result{}, err
+	}
+	resolutions := []map[string]any{}
+	for _, d := range input.Decisions {
+		feature := ""
+		pull := 0
+		key := false
+		switch d.ID {
+		case "dec-local":
+			feature, pull, key = "feature-local", 12, true
+		case "dec-viewer":
+			feature, pull, key = "feature-local", 7, true
+		case "dec-fts":
+			feature = "feature-search"
+		}
+		resolutions = append(resolutions, map[string]any{"decision_id": d.ID, "feature_id": feature, "pull_number": pull, "key_eligible": key, "reason": "The captured choice directly supports the named local outcome; no feature is inferred for unsupported work."})
+	}
+	inner, _ := json.Marshal(map[string]any{"decisions": resolutions})
+	document, _ := json.Marshal(map[string]any{"extraction": json.RawMessage(inner), "source_refs": []string{"internal/decisionlog/timeline.go", "app/src/timeline.tsx"}})
+	return agent.Result{Document: document, Model: "claude-haiku-5-5", Calls: 1, Usage: agent.Usage{Input: 100, Output: 50}}, nil
 }

@@ -249,15 +249,16 @@ minutes.
   A listing stops at about 10,000 pull requests; older ones still due are
   skipped and logged. The explicit legacy full-history build lists all history once; the
   requested adaptive build chooses its own metadata windows.
-- Only pull requests that can be placed in a feature are read from the
-  clone: open or merged ones not opened by a bot. Each pass fetches what
+- Live sync reads Git paths only for eligible open/merged non-bot work
+  opened after activation and within the live lookback, or PRs already in a
+  current/adaptive candidate feature. Initial cheap metadata listing does not
+  fetch six months of unselected historical refs. Explicit legacy full-history
+  discovery/build retains its all-history path-read preparation. Each pass fetches what
   its due pull requests lack, as a review fetches a missing pull request
   commit: a head from `refs/pull/<N>/head` into `refs/baum/pull/<N>/head`
   and a base by its id into `refs/baum/pull/<N>/base`, both force-updated,
-  100 refspecs to a `git fetch`. So each such pull request of the 180 days
-  before activation (of the chosen window after an adaptive build, or the
-  whole history after a legacy build), and every
-  one after, gets refs in the clone; they are
+  100 refspecs to a `git fetch`. Each eligible live or explicitly selected
+  pull request gets refs in the clone; they are
   kept, not pruned, as they may back saved reviews. Each pull request's
   commits, from its base to its head, are then read from the clone's own
   objects, never fetched. Its paths are the files its commits change; its
@@ -606,7 +607,9 @@ the legacy full-history workflow below for operator/internal callers.
 
 `GET /api/timeline/build` exposes `building.workflow`, optional
 `building.coverage`, and `current_coverage` after promotion, including an empty
-result. Coverage distinguishes metadata `catalogued`, unique PRs whose
+result. Optional compact source coverage records the committed revision, omission
+count and limitations. The same optional coverage/workflow travels through
+persisted job progress and survives journal reopen. Coverage distinguishes metadata `catalogued`, unique PRs whose
 `details`, `code` or `decisions` were requested (`inspected`), `selected`, `completed` and
 `remaining`, the catalog update-date horizon and listing truncation. It does not
 claim that catalog availability proves every title was read. Old read-only
@@ -922,3 +925,29 @@ from the monorepo root:
 ```sh
 just oss-go test ./internal/decisionlog/... ./internal/jobs/...
 ```
+
+### Synthetic adaptive evaluation and recovery
+
+`TestAdaptiveSyntheticVolumeAndInitialSync` uses public synthetic four-PR and
+240-PR histories, real clone/source access and realistic metadata pagination. It
+asserts exact memberships for a cross-layer outcome and follow-up, an independent
+outcome sharing paths, older open work, requested-evidence/selection counts and
+no eager startup/catalog Git reads. The scripted agent chooses the window and
+memberships; these are host protocol/regression checks, not a measurement of
+real-model semantic quality or discovery latency.
+
+Recovery tests retain accepted selections across cancellation, a timed-out unit,
+evidence/provider failure and store reopen with changed metadata/source. They
+also reject invalid references, missing selected work, competing CAS writes and
+failed checkpoint commits without premature promotion. The daemon's real
+queue/worker integration tests cover fresh admission, execution eligibility,
+failed fresh checkpoint, journal reopen, ordinary Resume preserving the candidate
+and a distinct explicit replacement preserving current features. Fresh jobs are
+not replayed after they fail or are interrupted. The browser fixture establishes
+positive semantic relevance through a Run-only fake backend and actual committed
+source, rather than fabricated attribution cache hashes.
+
+Run the scripted matrix in Docker with
+`just oss-go test ./internal/decisionlog -run 'TestAdaptiveSynthetic|TestAdaptiveCancelled|TestLiveSync' -count=1 -v`.
+The existing semantic-attribution tests cover mixed-session cross-scope choices,
+changed evidence, unsupported decisions and routine activity excluded from keys.

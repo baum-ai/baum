@@ -28,30 +28,46 @@ type featureBuilder struct {
 
 var errFeatureLogOff = errors.New("the feature log is off: its store did not open")
 
-func (b *featureBuilder) PlanFeatureBuild(ctx context.Context, repository, dir string) (jobs.FeatureBuildPlan, error) {
+func (b *featureBuilder) PlanFeatureBuild(ctx context.Context, repository, dir, mode string) (jobs.FeatureBuildPlan, error) {
 	w := b.worker.Load()
 	if w == nil {
 		return jobs.FeatureBuildPlan{}, errFeatureLogOff
 	}
-	backend, model, reason, err := w.PlanBuild(ctx, repository, dir, decisionlog.BuildOptions{Gated: true})
+	workflow, err := w.Store.FeatureBuildWorkflow(ctx, repository)
+	if err != nil {
+		return jobs.FeatureBuildPlan{}, err
+	}
+	backend, model, reason, err := w.PlanBuild(ctx, repository, dir, decisionlog.BuildOptions{Gated: true, Adaptive: mode == "fresh" || workflow != "legacy"})
 	return jobs.FeatureBuildPlan{Backend: backend, Model: model, Reason: reason}, err
 }
 
-func (b *featureBuilder) BuildFeatures(ctx context.Context, repository, dir string, progress func(jobs.Progress)) (float64, error) {
+func (b *featureBuilder) BuildFeatures(ctx context.Context, repository, dir, mode string, progress func(jobs.Progress)) (float64, error) {
 	w := b.worker.Load()
 	if w == nil {
 		return 0, errFeatureLogOff
+	}
+	// Recheck eligibility at execution, before replacing any saved candidate.
+	plan, err := b.PlanFeatureBuild(ctx, repository, dir, mode)
+	if err != nil {
+		return 0, err
+	}
+	if plan.Reason != "" {
+		return 0, &jobs.StoppedError{Reason: plan.Reason}
+	}
+	if mode == "fresh" {
+		if err := w.Store.ArchiveFeatureBuild(ctx, repository); err != nil {
+			return 0, err
+		}
 	}
 	workflow, err := w.Store.FeatureBuildWorkflow(ctx, repository)
 	if err != nil {
 		return 0, err
 	}
 	report, err := w.Build(ctx, repository, dir, decisionlog.BuildOptions{Adaptive: workflow != "legacy", Gated: true, Progress: func(p decisionlog.BuildProgress) {
-		progress(jobs.Progress{Phase: p.Phase, Calls: p.Calls, CostReason: unpricedReason(p.Unpriced)})
+		progress(jobs.Progress{Phase: p.Phase, Calls: p.Calls, CostReason: unpricedReason(p.Unpriced), BuildCoverage: p.Coverage, BuildWorkflow: workflow})
 	}})
-	if report.UnpricedCalls > 0 {
-		progress(jobs.Progress{Phase: "finished", Calls: report.Calls, CostReason: jobs.ReasonUnpricedCalls})
-	}
+	progress(jobs.Progress{Phase: "finished", Calls: report.Calls, CostReason: unpricedReason(report.UnpricedCalls), BuildCoverage: report.Coverage, BuildWorkflow: workflow})
+
 	if !report.Current && ctx.Err() == nil {
 		// A store error stops it too, as failed.
 		err = &jobs.StoppedError{Reason: cmp.Or(report.Stopped, "failed"), Err: err}

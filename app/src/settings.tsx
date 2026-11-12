@@ -1773,7 +1773,7 @@ function TimeLimitRows() {
         "run_time_limit_minutes",
         "run-time-limit",
         "Fix time limit",
-        "How long a fix, a question to a review's agent or a feature build may run before it stops.",
+        "How long a fix or a question to a review's agent may run before it stops. Feature builds save progress between separately bounded steps.",
       )}
     </>
   );

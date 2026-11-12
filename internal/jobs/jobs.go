@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/baum-ai/baum/agent"
+	"github.com/baum-ai/baum/features/adaptive"
 	"github.com/baum-ai/baum/internal/appdb"
 	chatpkg "github.com/baum-ai/baum/internal/chat"
 	"github.com/baum-ai/baum/internal/filelock"
@@ -29,8 +30,11 @@ import (
 )
 
 type Item struct {
-	Clone string `json:"clone"`
-	PR    int    `json:"pr"`
+	// FeatureBuildMode is "fresh" only for an explicitly requested replacement.
+	// Empty preserves the existing candidate, including in old job journals.
+	FeatureBuildMode string `json:"feature_build_mode,omitempty"`
+	Clone            string `json:"clone"`
+	PR               int    `json:"pr"`
 	// Group names a review group instead of a pull request (PR is then 0):
 	// the job generates the group's combined review. See
 	// internal/reviewgroups.
@@ -95,10 +99,10 @@ const ReasonUnpricedCalls = "unpriced_calls"
 
 // FeatureBuilder plans and runs feature builds.
 type FeatureBuilder interface {
-	PlanFeatureBuild(ctx context.Context, repository, dir string) (FeatureBuildPlan, error)
+	PlanFeatureBuild(ctx context.Context, repository, dir, mode string) (FeatureBuildPlan, error)
 	// BuildFeatures runs a build and returns the run's spend; a build that
 	// stops before its version is current returns a *StoppedError.
-	BuildFeatures(ctx context.Context, repository, dir string, progress func(Progress)) (float64, error)
+	BuildFeatures(ctx context.Context, repository, dir, mode string, progress func(Progress)) (float64, error)
 }
 
 // StoppedError is a feature build that stopped before it finished, for
@@ -234,9 +238,11 @@ type Estimate struct {
 	ExpiresAt    time.Time  `json:"expires_at"`
 }
 type Job struct {
-	Accounting *agent.Accounting `json:"accounting,omitempty"`
-	CostReason string            `json:"cost_reason,omitempty"`
-	ID         string            `json:"id"`
+	BuildCoverage *adaptive.Coverage `json:"build_coverage,omitempty"`
+	BuildWorkflow string             `json:"build_workflow,omitempty"`
+	Accounting    *agent.Accounting  `json:"accounting,omitempty"`
+	CostReason    string             `json:"cost_reason,omitempty"`
+	ID            string             `json:"id"`
 	Prepared
 	// Automatic marks a job the daemon's scheduler queued without a person
 	// confirming it; Trigger says why (TriggerNewHead or
@@ -289,7 +295,9 @@ type Job struct {
 	SeenAt *time.Time `json:"seen_at,omitempty"`
 }
 type Progress struct {
-	Accounting *agent.Accounting
+	BuildCoverage *adaptive.Coverage
+	BuildWorkflow string
+	Accounting    *agent.Accounting
 	// CostUSD is what the usage so far costs at API prices, nil while it is
 	// unknown; CostReason qualifies it (see Job).
 	CostUSD                *float64
@@ -803,6 +811,7 @@ func (q *Queue) List() []Job {
 	copy(out, q.jobs)
 	for i := range out {
 		out[i].Accounting = out[i].Accounting.Clone()
+		out[i].BuildCoverage = out[i].BuildCoverage.Clone()
 	}
 	return out
 }
@@ -817,6 +826,7 @@ func (q *Queue) ActiveFixes() []Job {
 	for _, job := range q.jobs {
 		if job.Kind == KindFix && (job.State == "queued" || job.State == "running") {
 			job.Accounting = job.Accounting.Clone()
+			job.BuildCoverage = job.BuildCoverage.Clone()
 			out = append(out, job)
 		}
 	}
@@ -863,6 +873,11 @@ func (q *Queue) estimate(ctx context.Context, items []Item, mode string, isolati
 	for _, item := range items[1:] {
 		if item.Kind != "" || item.Only != "" || item.Version != 0 {
 			return Estimate{}, errors.New("invalid generation selection")
+		}
+	}
+	for _, item := range items {
+		if item.FeatureBuildMode != "" && (item.Kind != KindFeatureBuild || item.FeatureBuildMode != "fresh") {
+			return Estimate{}, errors.New("invalid feature build mode")
 		}
 	}
 	estimate := Estimate{ID: id(), Items: []Prepared{}, ExpiresAt: time.Now().Add(5 * time.Minute).UTC()}
@@ -1269,10 +1284,20 @@ func (q *Queue) SubmitConfirmed(ctx context.Context, estimateID string, c Confir
 		existing := -1
 		for i, j := range q.jobs {
 			// A review and a fix of one pull request are separate jobs.
-			if j.Repository == p.Repository && j.PR == p.PR && j.Group == p.Group && j.Kind == p.Kind && (j.State == "queued" || j.State == "running") {
+			if (j.Repository == p.Repository || (p.Kind == KindFeatureBuild && strings.EqualFold(j.Repository, p.Repository))) && j.PR == p.PR && j.Group == p.Group && j.Kind == p.Kind && (j.State == "queued" || j.State == "running") {
 				existing = i
 				break
 			}
+		}
+		if existing >= 0 && p.Kind == KindFeatureBuild {
+			if p.FeatureBuildMode == "fresh" || q.jobs[existing].State == "running" {
+				q.jobs = before
+				return nil, &BlockedError{Reason: "build_running"}
+			}
+			// A second clone/default request joins the admitted repository build;
+			// it must not silently replace a queued fresh action with a resume.
+			out = append(out, q.jobs[existing])
+			continue
 		}
 		if existing >= 0 {
 			j := &q.jobs[existing]
@@ -1339,6 +1364,7 @@ func (q *Queue) Cancel(jobID string) (Job, error) {
 			}
 			result := *j
 			result.Accounting = result.Accounting.Clone()
+			result.BuildCoverage = result.BuildCoverage.Clone()
 			return result, nil
 		}
 		if j.State == "queued" {
@@ -1356,6 +1382,7 @@ func (q *Queue) Cancel(jobID string) (Job, error) {
 		}
 		result := *j
 		result.Accounting = result.Accounting.Clone()
+		result.BuildCoverage = result.BuildCoverage.Clone()
 		return result, nil
 	}
 	return Job{}, os.ErrNotExist
@@ -1383,6 +1410,7 @@ func (q *Queue) Seen(jobID string) (Job, error) {
 		}
 		result := *j
 		result.Accounting = result.Accounting.Clone()
+		result.BuildCoverage = result.BuildCoverage.Clone()
 		return result, nil
 	}
 	return Job{}, os.ErrNotExist
@@ -1496,6 +1524,12 @@ func (q *Queue) worker(chat bool) {
 				job := &q.jobs[k]
 				before := *job
 				job.Phase = p.Phase
+				if p.BuildCoverage != nil {
+					job.BuildCoverage = p.BuildCoverage.Clone()
+				}
+				if p.BuildWorkflow != "" {
+					job.BuildWorkflow = p.BuildWorkflow
+				}
 				job.Calls = p.Calls
 				job.Tokens = p.Tokens
 				job.Repairs = p.Repairs
@@ -1527,6 +1561,7 @@ func (q *Queue) worker(chat bool) {
 				q.mark(job.ID)
 				current := *job
 				current.Accounting = current.Accounting.Clone()
+				current.BuildCoverage = current.BuildCoverage.Clone()
 				usage := q.usage
 				if !usageOnly(before, current) {
 					usage = nil
@@ -1807,6 +1842,7 @@ func (q *Queue) running() int {
 func (q *Queue) notify(j Job) {
 	if q.changed != nil {
 		j.Accounting = j.Accounting.Clone()
+		j.BuildCoverage = j.BuildCoverage.Clone()
 		q.changed(j)
 	}
 }

@@ -284,15 +284,21 @@ func (w *FeatureWorker) Sync(ctx context.Context, repository, dir string) (SyncR
 			return report, err
 		}
 	}
-	err = w.readPaths(ctx, repository, dir, &report, func() bool { return !w.enabled(ctx, repository) })
+	err = w.readPaths(ctx, repository, dir, &report, true, func() bool { return !w.enabled(ctx, repository) })
 	return report, err
 }
 
 // readPaths reads the paths and commits of each of the repository's pull
 // requests whose head changed from the clone in dir, fetching missing heads,
 // into report. It stops, setting report.Stopped, once stop says so.
-func (w *FeatureWorker) readPaths(ctx context.Context, repository, dir string, report *SyncReport, stop func() bool) error {
-	pulls, err := w.Store.PullsWithoutPaths(ctx, repository)
+func (w *FeatureWorker) readPaths(ctx context.Context, repository, dir string, report *SyncReport, liveOnly bool, stop func() bool) error {
+	var pulls []StoredPull
+	var err error
+	if liveOnly {
+		pulls, err = w.Store.livePullsWithoutPaths(ctx, repository)
+	} else {
+		pulls, err = w.Store.PullsWithoutPaths(ctx, repository)
+	}
 	if err != nil || len(pulls) == 0 {
 		return err
 	}

@@ -134,6 +134,14 @@ func TestFeatureSyncAndIndex(t *testing.T) {
 
 	c := &clock{time.Date(2026, 7, 2, 9, 0, 0, 0, time.UTC)}
 	s := openStore(t, c)
+	// This is ongoing live work: the log was activated before these PRs opened.
+	if _, err := s.Activate(ctx, "acme/widgets"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec(`UPDATE pull_sync SET activated_at=? WHERE repository='acme/widgets'`, time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC).UnixMilli()); err != nil {
+		t.Fatal(err)
+	}
+
 	// Pull request 7's listed head is nowhere; 9 is a bot's and 10 was closed
 	// unmerged, so neither is read.
 	missing := strings.Repeat("e", 40)

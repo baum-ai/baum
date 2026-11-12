@@ -1018,3 +1018,110 @@ it("shows the open tab's own filter after the tab changes", async () => {
   expect(box?.value ?? "").toBe("");
   forgetLastRows();
 });
+
+const adaptiveCoverage = {
+  protocol: "feature-build-public-v1",
+  since: "2026-10-01",
+  catalogued: 1200,
+  inspected: 12,
+  selected: 8,
+  completed: 5,
+  remaining: 3,
+  truncated: true,
+  source: {
+    revision: "1234567890abcdef",
+    omissions: 2,
+    limitations: ["Uncommitted files are not included."],
+  },
+};
+it("distinguishes available metadata, requested evidence and completed selected work", async () => {
+  answers["api/timeline/build"] = {
+    building: {
+      placed: 5,
+      total: 8,
+      stopped: "",
+      spent_usd: 1,
+      workflow: adaptiveCoverage.protocol,
+      coverage: adaptiveCoverage,
+    },
+  };
+  await act(async () =>
+    root.render(<Harness initial="page=timeline" jobs={[buildJob("running")]} />),
+  );
+  await act(async () => {});
+  await act(async () => {});
+  expect(node.textContent).toContain("1,200 pull request titles available");
+  expect(node.textContent).toContain("Evidence requested for 12 pull requests");
+  expect(node.textContent).toContain(
+    "8 selected · 5 completed (including skipped work) · 3 remaining",
+  );
+  expect(node.textContent).toContain("older open work included");
+  expect(node.textContent).toContain("More pull request history was available");
+  expect(node.textContent).toContain("Committed repository snapshot 12345678");
+  expect(node.textContent).toContain("Local timeline");
+  expect(node.textContent).not.toContain("full history");
+});
+it("keeps completed coverage when no substantial features were found", async () => {
+  answers["api/timeline/features"] = { features: [], next_cursor: null };
+  answers["api/timeline/build"] = {
+    building: null,
+    has_features: false,
+    current_since: "2026-10-31T00:00:00Z",
+    current_coverage: { ...adaptiveCoverage, selected: 0, completed: 0, remaining: 0 },
+  };
+  await show();
+  expect(node.textContent).toContain("No substantial features found in this window");
+  expect(node.textContent).toContain("1,200 pull request titles available");
+  expect(node.textContent).not.toContain("build stopped");
+});
+it("resumes a saved legacy build without silently replacing it", async () => {
+  answers["api/timeline/build"] = {
+    building: { placed: 3, total: 20, stopped: "interrupted", spent_usd: 1, workflow: "legacy" },
+  };
+  answers["api/jobs"] = { jobs: [buildJob("queued")] };
+  await show();
+  bodies.length = 0;
+  expect(node.textContent).toContain("This saved build covers full history");
+  await act(async () =>
+    [...node.querySelectorAll("button")].find((b) => b.textContent === "Resume build")!.click(),
+  );
+  expect(bodies).toEqual([
+    { items: [{ clone: "clone-1", pr: 0, kind: "feature_build" }], mode: "single" },
+  ]);
+});
+it("explicitly starts a new build while keeping current features visible", async () => {
+  answers["api/timeline/build"] = {
+    building: { placed: 3, total: 20, stopped: "no_progress", spent_usd: 1, workflow: "legacy" },
+  };
+  answers["api/jobs"] = { jobs: [buildJob("queued")] };
+  await show();
+  bodies.length = 0;
+  expect(node.textContent).toContain("replaces this build's saved progress");
+  await act(async () =>
+    [...node.querySelectorAll("button")].find((b) => b.textContent === "Start new build")!.click(),
+  );
+  expect(bodies).toEqual([
+    {
+      items: [{ clone: "clone-1", pr: 0, kind: "feature_build", feature_build_mode: "fresh" }],
+      mode: "single",
+    },
+  ]);
+  expect(node.textContent).toContain("Local timeline");
+});
+it("shows a durable GitHub wait and prevents an early resume", async () => {
+  answers["api/timeline/build"] = {
+    building: {
+      placed: 5,
+      total: 8,
+      stopped: "rate_limited",
+      spent_usd: 1,
+      coverage: { ...adaptiveCoverage, retry_at: new Date(Date.now() + 3600000).toISOString() },
+    },
+  };
+  await show();
+  expect(node.textContent).toContain("Waiting for GitHub until");
+  expect(
+    [...node.querySelectorAll("button")].find((b) => b.textContent === "Resume build")!.disabled,
+  ).toBe(true);
+  expect(node.textContent).toContain("Local timeline");
+});

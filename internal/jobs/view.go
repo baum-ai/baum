@@ -28,6 +28,7 @@ func cloneJobs(jobs []Job) []Job {
 	copy(out, jobs)
 	for i := range out {
 		out[i].Accounting = out[i].Accounting.Clone()
+		out[i].BuildCoverage = out[i].BuildCoverage.Clone()
 	}
 	return out
 }
@@ -104,6 +105,7 @@ func (q *Queue) Find(id string) (Job, bool) {
 	for _, j := range q.jobs {
 		if j.ID == id {
 			j.Accounting = j.Accounting.Clone()
+			j.BuildCoverage = j.BuildCoverage.Clone()
 			return j, true
 		}
 	}

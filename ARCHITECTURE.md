@@ -5392,3 +5392,14 @@ well as branch names. Discovery retains fork head identity; local Git records
 the origin and configured upstream identities. Thus equal branch names in the
 base, a fork and another GitHub host cannot alias one another. Older cache
 entries lacking fork head identity remain unlinked until discovery refreshes.
+
+Local adaptive build coverage is optional in both Timeline build responses and
+job progress/journals; completed zero-feature windows retain current coverage.
+A feature-build item may explicitly request `feature_build_mode=fresh`; the queue
+refuses it while that repository has active feature work, including another
+clone. Preparation is read-only, and execution rechecks eligibility before
+archiving the candidate. Current features stay until complete atomic promotion.
+Failed/interrupted jobs are not executed again on reopen; Resume submits a new
+ordinary item without replaying the replacement. Live sync's Git path reads are
+restricted to post-activation/lookback work and active selected memberships;
+explicit legacy full-history preparation keeps its unrestricted reads.

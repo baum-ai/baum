@@ -13,6 +13,7 @@ import (
 	"path"
 	"regexp"
 	"strings"
+	"time"
 	"unicode/utf8"
 )
 
@@ -115,3 +116,45 @@ func ValidPath(p string) bool {
 
 // Schema is flat: the CLI returns one next step rather than an entire history.
 var Schema = json.RawMessage(`{"type":"object","additionalProperties":false,"required":["action","since","numbers","paths","selected","scopes","assignments","reason"],"properties":{"action":{"type":"string","enum":["catalog","details","code","decisions","checkpoint","finish"]},"since":{"type":"string"},"numbers":{"type":"array","items":{"type":"integer"}},"paths":{"type":"array","items":{"type":"string"}},"selected":{"type":"array","items":{"type":"integer"}},"scopes":{"type":"array","items":{"type":"object","additionalProperties":false,"required":["key","title","purpose","boundaries","paths","examples","digest"],"properties":{"key":{"type":"string"},"title":{"type":"string"},"purpose":{"type":"string"},"boundaries":{"type":"string"},"paths":{"type":"array","items":{"type":"string"}},"examples":{"type":"array","items":{"type":"integer"}},"digest":{"type":"string"}}}},"assignments":{"type":"array","items":{"type":"object","additionalProperties":false,"required":["number","scope","reason"],"properties":{"number":{"type":"integer"},"scope":{"type":"string"},"reason":{"type":"string"}}}},"reason":{"type":"string"}}}`)
+
+// Coverage records what evidence was made available for an adaptive build.
+// Catalogued metadata is not a claim that every title was inspected.
+type Coverage struct {
+	Protocol          string          `json:"protocol"`
+	Since             string          `json:"since"`
+	Catalogued        int             `json:"catalogued"`
+	Inspected         int             `json:"inspected"`
+	Selected          int             `json:"selected"`
+	Completed         int             `json:"completed"`
+	Remaining         int             `json:"remaining"`
+	Truncated         bool            `json:"truncated"`
+	ExplorationClosed bool            `json:"exploration_closed"`
+	Reason            string          `json:"reason,omitempty"`
+	RetryAt           *time.Time      `json:"retry_at,omitempty"`
+	Source            *SourceCoverage `json:"source,omitempty"`
+}
+
+// SourceCoverage is a compact description of the committed source available.
+type SourceCoverage struct {
+	Revision    string   `json:"revision"`
+	Omissions   int      `json:"omissions"`
+	Limitations []string `json:"limitations"`
+}
+
+// Clone detaches progress from a running worker or an API caller.
+func (c *Coverage) Clone() *Coverage {
+	if c == nil {
+		return nil
+	}
+	out := *c
+	if c.RetryAt != nil {
+		at := *c.RetryAt
+		out.RetryAt = &at
+	}
+	if c.Source != nil {
+		source := *c.Source
+		source.Limitations = append([]string(nil), c.Source.Limitations...)
+		out.Source = &source
+	}
+	return &out
+}

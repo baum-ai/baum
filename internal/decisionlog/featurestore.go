@@ -344,6 +344,22 @@ AND bot=0 AND (state='open' OR merged_at IS NOT NULL) AND (paths_retry_at IS NUL
 		repository, s.now().UnixMilli())
 }
 
+// Live sync reads only work eligible for ongoing placement or already selected
+// by an active version. A metadata listing must not schedule historic Git work.
+// Explicit legacy discovery/build callers retain PullsWithoutPaths instead.
+func (s *Store) livePullsWithoutPaths(ctx context.Context, repository string) ([]StoredPull, error) {
+	state, err := s.Activate(ctx, repository)
+	if err != nil {
+		return nil, err
+	}
+	opened := later(state.ActivatedAt, s.now().Add(-FeatureLookback))
+	return s.pulls(ctx, `SELECT p.number,p.head_sha,p.base_sha,p.base_ref FROM pull_request p
+ WHERE p.repository=?1 AND p.paths_head_sha!=p.head_sha AND p.bot=0 AND (p.state='open' OR p.merged_at IS NOT NULL)
+ AND (p.paths_retry_at IS NULL OR p.paths_retry_at<=?2)
+ AND (p.created_at>=?3 OR EXISTS(SELECT 1 FROM feature_pull fp JOIN feature_version v ON v.id=fp.version_id
+ WHERE fp.repository=p.repository AND fp.number=p.number AND v.state IN (?4,?5))) ORDER BY p.updated_at DESC`, repository, s.now().UnixMilli(), opened.UnixMilli(), VersionCurrent, VersionAdaptiveBuilding)
+}
+
 // PathsFailed counts a failed read of the pull request's commits at head
 // (a new head or base starts the count again, SavePulls). It is tried again after
 // FeatureQuiet; after FeaturePathTries failures its paths are unknown at

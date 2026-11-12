@@ -39,19 +39,7 @@ type FeatureScope struct {
 // BuildCoverage distinguishes metadata available from evidence explicitly read.
 // Inspected counts unique PRs whose descriptions or code the host supplied on
 // request; it never claims the model read every available title.
-type BuildCoverage struct {
-	Protocol          string     `json:"protocol"`
-	Since             string     `json:"since"`
-	Catalogued        int        `json:"catalogued"`
-	Inspected         int        `json:"inspected"`
-	Selected          int        `json:"selected"`
-	Completed         int        `json:"completed"`
-	Remaining         int        `json:"remaining"`
-	Truncated         bool       `json:"truncated"`
-	ExplorationClosed bool       `json:"exploration_closed"`
-	Reason            string     `json:"reason,omitempty"`
-	RetryAt           *time.Time `json:"retry_at,omitempty"`
-}
+type BuildCoverage = adaptive.Coverage
 
 type adaptiveCode struct {
 	Paths   []string          `json:"paths"`
@@ -103,7 +91,11 @@ func (a *adaptiveState) coverage() *BuildCoverage {
 	if !a.RetryAt.IsZero() {
 		retry = &a.RetryAt
 	}
-	return &BuildCoverage{RetryAt: retry, Protocol: a.Protocol, Since: a.Since, Catalogued: len(a.Catalog), Inspected: len(seen), Selected: len(a.Selected), Completed: len(a.Assignments), Remaining: len(a.Selected) - len(a.Assignments), Truncated: a.Truncated, ExplorationClosed: a.ExplorationClosed, Reason: a.Feedback}
+	var source *adaptive.SourceCoverage
+	if a.Source.Revision != "" {
+		source = &adaptive.SourceCoverage{Revision: a.Source.Revision, Omissions: len(a.Source.Omissions), Limitations: slices.Clone(a.Source.Limitations)}
+	}
+	return &BuildCoverage{Source: source, RetryAt: retry, Protocol: a.Protocol, Since: a.Since, Catalogued: len(a.Catalog), Inspected: len(seen), Selected: len(a.Selected), Completed: len(a.Assignments), Remaining: len(a.Selected) - len(a.Assignments), Truncated: a.Truncated, ExplorationClosed: a.ExplorationClosed, Reason: a.Feedback}
 }
 
 func (s *Store) adaptiveState(ctx context.Context, version int64) (*adaptiveState, error) {

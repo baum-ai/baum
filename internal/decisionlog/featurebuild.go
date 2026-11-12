@@ -185,7 +185,7 @@ ORDER BY created_at, number`, r.repository, r.version))
 // call, without listing its history, or the reason it cannot run now (the
 // gate, or a backend reason). Nothing about the price stops a build.
 func (w *FeatureWorker) PlanBuild(ctx context.Context, repository, dir string, o BuildOptions) (backend, model, reason string, err error) {
-	r, err := w.newRun(ctx, repository, dir, FeatureOptions{Manual: true, DryRun: true, Backend: o.Backend, Model: o.Model, building: true})
+	r, err := w.newRun(ctx, repository, dir, FeatureOptions{Manual: true, DryRun: true, Backend: o.Backend, Model: o.Model, building: true, adaptive: o.Adaptive})
 	if err != nil {
 		return "", "", "", err
 	}
@@ -360,7 +360,7 @@ func (w *FeatureWorker) Build(ctx context.Context, repository, dir string, o Bui
 func (b *buildRun) run(ctx context.Context) error {
 	b.notify(BuildReading)
 	var paths SyncReport
-	if err := b.w.readPaths(ctx, b.repository, b.dir, &paths, func() bool {
+	if err := b.w.readPaths(ctx, b.repository, b.dir, &paths, false, func() bool {
 		on, err := b.refresh(ctx)
 		return err != nil || !on
 	}); err != nil {

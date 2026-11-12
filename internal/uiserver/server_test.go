@@ -360,3 +360,44 @@ func TestShutdownClosesEventStreams(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestFreshFeatureRequestUsesNamespaceAndCSRFBoundary(t *testing.T) {
+	reached := 0
+	server, err := New(Options{API: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		reached++
+		if r.URL.Path != "/api/jobs" {
+			t.Fatal(r.URL.Path)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})})
+	if err != nil {
+		t.Fatal(err)
+	}
+	server.origin = "http://127.0.0.1:17777"
+	body := `{"items":[{"clone":"fixture","pr":0,"kind":"feature_build","feature_build_mode":"fresh"}],"mode":"single"}`
+	for _, tt := range []struct {
+		path, origin string
+		cookie       bool
+		status       int
+	}{
+		{"/api/jobs", server.origin, true, 401},
+		{"/s/" + server.namespace + "/api/jobs", "http://unrelated.example", true, 403},
+		{"/s/" + server.namespace + "/api/jobs", server.origin, false, 401},
+		{"/s/" + server.namespace + "/api/jobs", server.origin, true, 204},
+	} {
+		r := httptest.NewRequest("POST", server.origin+tt.path, strings.NewReader(body))
+		r.Header.Set("Origin", tt.origin)
+		r.Header.Set("Content-Type", "application/json")
+		if tt.cookie {
+			r.AddCookie(&http.Cookie{Name: sessionCookie, Value: server.session})
+		}
+		w := httptest.NewRecorder()
+		server.Handler().ServeHTTP(w, r)
+		if w.Code != tt.status {
+			t.Fatalf("%s origin%s cookie%v: %d %s", tt.path, tt.origin, tt.cookie, w.Code, w.Body.String())
+		}
+	}
+	if reached != 1 {
+		t.Fatalf("unauthorized fresh request reached API: %d", reached)
+	}
+}

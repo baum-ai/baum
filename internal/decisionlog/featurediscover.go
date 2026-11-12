@@ -83,7 +83,7 @@ func (w *FeatureWorker) Discover(ctx context.Context, repository, dir string) (D
 	if _, err := w.ListHistory(ctx, repository); err != nil {
 		return DiscoverReport{Repository: repository}, err
 	}
-	if err := w.readPaths(ctx, repository, dir, &SyncReport{}, func() bool { return false }); err != nil {
+	if err := w.readPaths(ctx, repository, dir, &SyncReport{}, false, func() bool { return false }); err != nil {
 		return DiscoverReport{Repository: repository}, err
 	}
 	report, _, err := r.discover(ctx)

@@ -1617,29 +1617,43 @@ starts a `feature_build` job for each clone at once, as every run the person
 asks for starts (`src/feature-build.tsx`, `POST api/jobs` with `kind:
 "feature_build"`, one request per repository): there is no dialog, no estimate
 and nothing about the price stops it. A rebuild of a repository whose build
-stopped resumes it, as **Resume build** does. The build places the merged and open pull requests of the
-repository's whole history, discovering its features first when it has none
-newer, and the weekly consolidation pass takes the new features right after
-they become current. The button reads "Starting…" while the request is under
-way; a start the daemon refuses says why in the build's own words above the
-page ("Couldn't start the feature build: …"). While the job runs the Features
-tab says "Building feature history… N of M pull requests placed" (from
-`api/timeline/build`) and links to it. A build that stopped says why (its
-version's reason, else its latest job's: one that failed, was cancelled or was
-interrupted) with what it spent at API prices and offers **Resume build**,
-which starts it again at once; a building version with no reason and no job
-says that a build is in progress or stopped and offers Resume too, which goes
-on with the same version. A latest build that ended before it made a version
-shows "The last feature history build stopped before it made a version" with
-its reason and **Try again**, until a version newer than the job is current or
-the person closes it; closed jobs are remembered in `localStorage`, so a later
-job shows again. One the person cancelled shows nothing.
-Feature builds' reasons have their own words, here and in Jobs (`jobReasonText`
-with the job's kind). A failed read of the build state keeps what was shown.
-The current features stay listed throughout, and the lists are read again when
-a build finishes. Without a local clone the build buttons are disabled. The
-page also says when the daemon has no decision store, when the decisions switch
-is off, and which picked repositories have their decisions turned off.
+stopped resumes it, as **Resume build** does. New builds explore a committed
+repository snapshot and recent pull request metadata, including older open work.
+The agent chooses the history window and requests descriptions, selected code
+and captured decision evidence as needed. It saves accepted progress between
+steps and completes its selected work before replacing the current Timeline.
+There is no fixed PR-count default or whole-run performance deadline.
+
+The existing build panel and Jobs show metadata available, evidence requested,
+selected/completed/remaining work, the updated-since horizon, listing truncation
+and committed source revision/omissions when provided. Available titles do not
+prove every title was read. A completed recent window is not called full history;
+coverage remains visible after completion, including when no substantial features
+were found. A GitHub wait shows its retry time and disables an early Resume.
+Older daemon responses without these optional fields retain the prior display.
+
+A stopped legacy build explicitly says it covers full history and Resume keeps
+its original workflow. **Start new build** replaces the stopped build's saved
+progress and starts recent discovery again; current features stay until the new
+selected work completes. It uses the same `POST api/jobs` with
+`feature_build_mode: "fresh"` on its feature-build item, through the normal
+namespace and CSRF checks. Admission never archives a candidate. A queued/running
+repository build, including one using another clone, refuses a fresh action;
+execution checks eligibility again before replacing the saved candidate.
+
+Jobs execute an admitted fresh action once. Failed or interrupted jobs remain
+terminal when the daemon reopens; no feature-job retry endpoint replays them.
+Resume starts a new ordinary item without fresh mode and preserves the accepted
+candidate, assignments and source. A distinct Start new build deliberately
+replaces it. Old journals without the mode retain ordinary Resume behavior.
+
+The button reads "Starting…" while the request is under way; a refused start
+says why above the page. The panel links to Jobs and keeps current features
+usable throughout. A latest job stopped before creating a version offers
+Try again until a newer version is current or the person dismisses it. A failed
+build-state read keeps the last display. Without a local clone build buttons
+are disabled. Decision-store and decision-capture availability retain their
+existing explanations.
 
 The Analytics page (`?page=analytics&days=7|30|90&repo=&agent=`, `src/analytics.tsx`)
 reads `GET api/analytics` (see the daemon's [analytics README](../internal/analytics/README.md)).
@@ -1730,7 +1744,7 @@ in parallel, 1–4 and 4 by default, saved with `PUT
 api/settings/job-concurrency` and reported as `job_concurrency` by `GET
 api/settings`; the daemon applies it at once, and lowering it lets running jobs
 finish), **Review time limit** (10 minutes by default) and **Fix time limit**
-(how long a fix, a question to a review's agent or a feature build may run, 30
+(how long a fix or a question to a review's agent may run, 30
 minutes by default), each chosen from 5 to 240 minutes, saved together with
 `PUT api/settings/time-limits` as `review_time_limit_minutes` and
 `run_time_limit_minutes`, reported by `GET api/settings` and applied to runs

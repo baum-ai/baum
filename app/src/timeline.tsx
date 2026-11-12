@@ -748,6 +748,7 @@ function TimelineLog({
                 state={buildState}
                 clone={clone}
                 onBuild={() => void build.start()}
+                onNewBuild={() => void build.startNew()}
                 starting={build.starting}
               />
             ) : null
@@ -761,7 +762,7 @@ function TimelineLog({
             <>
               {several
                 ? "Features appear here as baum places these repositories' pull requests and agent sessions in them, from now on. Build their feature history from the menu at the end of the filters, or open one repository. The decisions read so far are under All decisions."
-                : "Features appear here as baum places this repository's pull requests and agent sessions in them, from now on. Build its feature history to place the pull requests of the last 180 days too. The decisions read so far are under All decisions."}
+                : "Features appear here as baum places this repository's pull requests and agent sessions in them, from now on. Build its feature history to explore recent pull requests and choose how far back to go. The decisions read so far are under All decisions."}
               <span className="mt-3 flex flex-wrap justify-center gap-2">
                 {single && !buildActive && !building ? (
                   <Button

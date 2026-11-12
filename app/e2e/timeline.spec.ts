@@ -133,3 +133,101 @@ test("the Timeline's search box narrows by text, beside the filter", async ({ pa
     features.getByRole("button", { name: /Keyword search over decisions/ }),
   ).toBeVisible();
 });
+
+const buildCoverage = {
+  protocol: "feature-build-public-v1",
+  since: "2026-10-01",
+  catalogued: 1200,
+  inspected: 12,
+  selected: 8,
+  completed: 5,
+  remaining: 3,
+  truncated: true,
+  source: {
+    revision: "1234567890abcdef",
+    omissions: 2,
+    limitations: ["Uncommitted files are not included."],
+  },
+};
+
+test("adaptive build coverage preserves the current Timeline and new-build requests stay namespaced", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.route("**/api/timeline/build?**", (route) =>
+    route.fulfill({
+      json: {
+        building: {
+          placed: 5,
+          total: 8,
+          stopped: "no_progress",
+          spent_usd: 1,
+          workflow: buildCoverage.protocol,
+          coverage: buildCoverage,
+        },
+        has_features: true,
+      },
+    }),
+  );
+  await page.goto(await launchURL());
+  const base = page.url().split("?")[0]!;
+  await page.goto(`${base}?page=timeline&repo=acme%2Fdemo`);
+  const status = page.getByRole("region", { name: "Feature build", exact: true });
+  await expect(status).toContainText("1,200 pull request titles available");
+  await expect(status).toContainText("Evidence requested for 12 pull requests");
+  await expect(status).toContainText("8 selected");
+  await expect(status).toContainText("3 remaining");
+  await expect(status).toContainText("older open work included");
+  await expect(page.getByRole("list", { name: "Features" })).toContainText("Local decision log");
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
+    true,
+  );
+  const posted = page.waitForRequest(
+    (request) => request.method() === "POST" && request.url().endsWith("/api/jobs"),
+  );
+  await page.route("**/api/jobs", async (route) => {
+    if (route.request().method() !== "POST") return route.continue();
+    await route.fulfill({ status: 409, json: { blocked_reason: "build_running" } });
+  });
+  await status.getByRole("button", { name: "Start new build", exact: true }).click();
+  const request = await posted;
+  expect(new URL(request.url()).pathname).toMatch(/^\/s\/[^/]+\/api\/jobs$/);
+  expect(request.postDataJSON().items[0]).toMatchObject({
+    kind: "feature_build",
+    feature_build_mode: "fresh",
+  });
+  await expect(page.getByRole("list", { name: "Features" })).toContainText("Local decision log");
+  await expect(page.getByText("Couldn't start the feature build:", { exact: false })).toContainText(
+    "already queued or running",
+  );
+});
+
+test("a completed empty window keeps its coverage after reopening", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.route("**/api/timeline/build?**", (route) =>
+    route.fulfill({
+      json: {
+        building: null,
+        has_features: false,
+        current_since: "2026-10-31T00:00:00Z",
+        current_coverage: { ...buildCoverage, selected: 0, completed: 0, remaining: 0 },
+      },
+    }),
+  );
+  await page.route("**/api/timeline/features?**", (route) =>
+    route.fulfill({ json: { features: [], next_cursor: null } }),
+  );
+  await page.goto(await launchURL());
+  const base = page.url().split("?")[0]!;
+  await page.goto(`${base}?page=timeline&repo=acme%2Fdemo`);
+  await expect(page.getByRole("region", { name: "Feature build coverage" })).toContainText(
+    "No substantial features found in this window",
+  );
+  await page.reload();
+  await expect(page.getByRole("region", { name: "Feature build coverage" })).toContainText(
+    "1,200 pull request titles available",
+  );
+  await expect(page.getByRole("region", { name: "Feature build coverage" })).not.toContainText(
+    "full history",
+  );
+});

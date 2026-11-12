@@ -27,6 +27,10 @@ import { ViewerLink } from "@baum/viewer/navigation";
 
 export const phases: Record<string, string> = {
   queued: "Queued",
+  discovering: "Exploring repository and pull request evidence",
+  placing: "Saving feature groups",
+  indexing: "Linking captured sessions",
+  summarizing: "Writing feature summaries",
   preparing: "Checking the pull request",
   "reading checks": "Reading the failing checks",
   "reading review comments": "Reading the review comments",
