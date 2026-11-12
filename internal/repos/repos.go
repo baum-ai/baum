@@ -2,6 +2,7 @@
 package repos
 
 import (
+	"cmp"
 	"context"
 	"crypto/sha256"
 	"database/sql"
@@ -136,6 +137,71 @@ type Preferences struct {
 	// review, and any other agent run, may take.
 	ReviewTimeLimit int `json:"review_time_limit_minutes,omitempty"`
 	RunTimeLimit    int `json:"run_time_limit_minutes,omitempty"`
+	// Panel is what the session panel opens a conversation with
+	// (ResolvePanel).
+	Panel PanelPreferences `json:"panel,omitzero"`
+}
+
+// PanelPreferences are the session panel's defaults. An empty Agent follows
+// the fix agent, model included; a nil Model is the fix agent's model when
+// Agent is that agent, else the agent's own default. An empty Mode is
+// PanelModeFull and an empty Position PanelBottom.
+type PanelPreferences struct {
+	Agent    string  `json:"agent,omitempty"`
+	Model    *string `json:"model,omitempty"`
+	Mode     string  `json:"mode,omitempty"`
+	Position string  `json:"position,omitempty"`
+}
+
+// The values of PanelPreferences: the agents a panel conversation runs, as
+// live sessions name them, its access, and where the panel opens.
+const (
+	PanelAgentClaudeCode = "claude-code"
+	PanelAgentCodex      = "codex"
+	PanelModeFull        = "full"
+	PanelModeWorkspace   = "workspace"
+	PanelBottom          = "bottom"
+	PanelTop             = "top"
+)
+
+// Panel is the session panel's defaults in force; AgentSource and
+// ModelSource say whether each is the person's choice ("panel") or follows
+// the fix agent ("fix").
+type Panel struct {
+	Agent       string `json:"agent"`
+	Model       string `json:"model"`
+	Mode        string `json:"mode"`
+	Position    string `json:"position"`
+	AgentSource string `json:"agent_source"`
+	ModelSource string `json:"model_source"`
+}
+
+// ResolvePanel gives the session panel's defaults from the preferences and
+// review, the config already resolved for reviews. The fix agent
+// (ResolveFix) is Codex when its backend is codex and Claude Code otherwise;
+// its model counts only for Claude Code or Codex, since another backend's
+// model names nothing these agents run.
+func (p Preferences) ResolvePanel(review config.Config) Panel {
+	fix := p.ResolveFix(review)
+	fixAgent, fixModel := PanelAgentClaudeCode, ""
+	switch fix.Backend {
+	case config.BackendCodex:
+		fixAgent, fixModel = PanelAgentCodex, fix.Model
+	case config.BackendClaude:
+		fixModel = fix.Model
+	}
+	out := Panel{Agent: fixAgent, Model: fixModel, Mode: cmp.Or(p.Panel.Mode, PanelModeFull), Position: cmp.Or(p.Panel.Position, PanelBottom),
+		AgentSource: "fix", ModelSource: "fix"}
+	if p.Panel.Agent != "" {
+		out.Agent, out.AgentSource = p.Panel.Agent, "panel"
+		if out.Agent != fixAgent {
+			out.Model, out.ModelSource = "", "panel"
+		}
+	}
+	if p.Panel.Model != nil {
+		out.Model, out.ModelSource = *p.Panel.Model, "panel"
+	}
+	return out
 }
 
 // MaxTimeLimit is the longest time limit, in minutes, the app sets.

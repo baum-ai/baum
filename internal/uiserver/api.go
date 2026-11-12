@@ -67,6 +67,10 @@ type LocalAPI struct {
 	// Inboxes serves /api/inboxes: the saved filters listed under Inbox in
 	// the app. Without it the route reports the capability unavailable.
 	Inboxes http.Handler
+	// Console serves /api/console/: the session panel's conversations and
+	// their proposals (internal/console). Without it the routes report the
+	// capability unavailable.
+	Console http.Handler
 	// Inbox serves /api/inbox: the queue the daemon builds, with which saved
 	// inboxes hold each pull request (internal/inboxqueue).
 	Inbox http.Handler
@@ -226,6 +230,7 @@ func (a LocalAPI) Handler() *LocalHandler {
 	mux.Handle("/api/groups", provider(a.Groups, "groups_unavailable"))
 	mux.Handle("/api/groups/", provider(a.Groups, "groups_unavailable"))
 	mux.Handle("/api/inboxes", provider(a.Inboxes, "inboxes_unavailable"))
+	mux.Handle("/api/console/", provider(a.Console, "console_unavailable"))
 	mux.Handle("/api/inbox", provider(a.Inbox, "inbox_unavailable"))
 	mux.Handle("/api/ui-state/", provider(a.UIState, "ui_state_unavailable"))
 	mux.Handle("/api/clones/found", provider(a.Clones, "clones_unavailable"))
@@ -327,6 +332,8 @@ func (a LocalAPI) Handler() *LocalHandler {
 		budgets := prefs.Resolve(a.Config).Budgets
 		writeJSON(w, map[string]int{"review_time_limit_minutes": minutes(budgets.ReviewTimeout), "run_time_limit_minutes": minutes(budgets.RunTimeout)})
 	})
+	mux.HandleFunc("GET /api/settings/panel", a.getPanel)
+	mux.HandleFunc("PUT /api/settings/panel", a.putPanel)
 	mux.HandleFunc("GET /api/settings/appearance", a.getAppearance)
 	mux.HandleFunc("PUT /api/settings/appearance", a.putAppearance)
 	mux.HandleFunc("GET /api/settings/plan-usage", a.getPlanUsageSettings)
