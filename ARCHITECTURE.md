@@ -5177,25 +5177,33 @@ summary scrubs them; a GitHub Enterprise token check is `other host`, and the
 token and backend checks give no source; never `home`, a check's path, detail
 or fix, the environment or the issue the Report a problem dialog drafts), and
 the Settings tools below: `settings_general` with `/api/settings/appearance`,
-`settings_reviews` with `/api/settings` and `/api/settings/decisions`,
-`settings_fixes` with `/api/settings`, `settings_connections` with
-`/api/github-auth`, `settings_computer` with `/api/settings` and
-`/api/diagnostics`, and `prompts` and `prompt` with `/api/settings/prompts`.
-`/api/settings` is read whole in process and decoded into a private struct
-whose agent environment keeps only the names (`discarded` values: a value is
-never held), and no tool returns its budgets or caps. A test lists the
+`settings_reviews` and `settings_fixes` with `/api/settings`,
+`settings_connections` with `/api/github-auth`, `settings_computer` with
+`/api/settings` and `/api/diagnostics`, and `prompts` and `prompt` with
+`/api/settings/prompts`. `/api/settings` is read whole in process and decoded
+into a private struct whose agent environment keeps only the names (the
+values decode into `discarded`, which copies nothing), and no tool returns its
+budgets or caps. The raw body of a read is in memory for the call's length,
+as any read's is; it is never kept, logged or quoted in an error. A test lists the
 allowed pairs exactly and fails when any other tool declares an unreadable
 route; the reader gives a projected route only to a chat's reader, so an
 action's call is refused whatever its tool declares, and the tools are global
-besides. Two Settings routes are not exceptions either, for the same reason as
-the plan usage below: `/api/settings/plan-usage` reads the plans to work out
-the default, so `settings_general` reads `Options.PlanChoices`, wired to
-`LocalAPI.CachedPlanChoices` (the same entries, the default from the plan
-usage cache alone); and `/api/agent-hooks/codex` starts Codex when its cache
-is stale or holds a warning, so `settings_connections` reads
-`Options.CodexHooks`, wired to `uiserver.LastHookTrust`, which remembers the
-newest answer the daemon's check gave the app and never checks. Tests count
-the provider's reads and the Codex checks and find none from the tools.
+besides. Three Settings routes are not exceptions either, because reading
+them does work a tool call must not repeat: `/api/settings/plan-usage` reads
+the plans to work out the default, so `settings_general` reads
+`Options.PlanChoices`, wired to `LocalAPI.CachedPlanChoices` (the same
+entries, the default from the plan usage cache alone);
+`/api/agent-hooks/codex` starts Codex when its cache is stale or holds a
+warning, so `settings_connections` reads `Options.CodexHooks`, wired to
+`uiserver.LastHookTrust`, which remembers the newest answer the daemon's check
+gave the app and never checks; and `/api/settings/decisions` resolves an auto
+backend by running the harnesses' version checks on every read, so
+`settings_reviews` reads `Options.DecisionSettings`, wired to
+`uiserver.DecisionViews`, which answers the same body, shares one resolution
+between concurrent calls and reuses it for 45 seconds while the preferences
+(hashed whole) are unchanged; the app's route still resolves on every read.
+Tests count the provider's reads, the Codex checks and the decision
+resolutions.
 `/api/plan-usage` is not an exception: its handler fetches from
 Claude or Codex when its cache is stale, so `plan_usage` reads
 `Options.PlanUsage`, an accessor the daemon wires to the plan usage cache
@@ -5428,15 +5436,22 @@ home folder:
 | Tool | Scope | Section | Reads |
 | --- | --- | --- | --- |
 | `settings_general` | global | General | `/api/settings/appearance` (theme, key hints, page shortcut modifier) and `Options.PlanChoices` (each plan's shown, default and explicit) |
-| `settings_reviews` | global | Reviews | `/api/automatic` (enabled, `pull_requests`), the review backend, model and effort of `/api/settings`, and `/api/settings/decisions` (decision capture as chosen and as resolved; resolving an auto backend runs the harnesses' checks, as the app's section does) |
+| `settings_reviews` | global | Reviews | `/api/automatic` (enabled, `pull_requests`), the review backend, model and effort of `/api/settings`, and decision capture as chosen and as resolved from `Options.DecisionSettings` (above: one resolution of an auto backend's harness checks per 45 seconds for unchanged preferences) |
 | `settings_fixes` | global | Fixes | the fix backend, model and effort of `/api/settings`, and whether they follow the reviews' |
-| `settings_connections` | global | Connections | `/api/github-auth`: state, host (`github.com` or `other host`), login, the kind of place the token comes from (`baum`, `environment`, `config_file`), override, saved, workflow, the error code and message (scrubbed) and the organizations the sign-in cannot reach; a waiting sign-in is decoded for its presence alone, so its user code and address are never held; the read may start the background check of those organizations, as the section's does (at most every 30 seconds, from a five-minute cache). The Codex hooks state and when it was read, from `Options.CodexHooks`. The desktop app's agent panel is the desktop shell's, not the daemon's |
+| `settings_connections` | global | Connections | `/api/github-auth`: state, host (`github.com` or `other host`), login, the kind of place the token comes from (`baum`, `environment`, `config_file`), override, saved, workflow, the error code and message (scrubbed) and the organizations the sign-in cannot reach; a waiting sign-in is decoded for its presence alone, so its user code and address are never copied out of the body; the read may start the background check of those organizations, as the section's does (at most every 30 seconds, from a five-minute cache). The Codex hooks state and when it was read, from `Options.CodexHooks`. The desktop app's agent panel is the desktop shell's, not the daemon's |
 | `settings_computer` | global | This computer | `/api/settings` (job concurrency, time limits, the agent environment's names, sorted, and its source), the `settings` of `/api/agent-requests` (`codex_approvals`), and `/api/diagnostics`: the agent and harness checks (`claude`, `codex`, `cursor-agent`, `backend-auto`, `backend-configured`, `anthropic-api-key`; id, label, status, version, scrubbed as `diagnostics_summary` scrubs them, without the source) and how many problems the report has. Updates, zoom, the command line tool and agent sign-in are the desktop shell's |
 | `prompts` | global | Prompts | `/api/settings/prompts`, or with `repository` `/api/repositories/{owner}/{name}/prompts`: each entry's fields but the texts (`custom` says whether it has its own) |
 | `prompt` | global | Prompts | the same routes: one entry by `id` with every `PromptEntry` field |
 | `repository_reviews` | repository | Reviews | the repository's `settings.automatic` and `settings.decisions` from `/api/repositories`, and its status row of `/api/automatic` (effective switch, notice, pending) |
-| `repository_prompts` | repository | Prompts | `/api/repositories/{owner}/{name}/prompts`: the list as `prompts`, or with `id` one entry as `prompt` |
+| `repository_prompts` | repository | Prompts | `/api/repositories/{owner}/{name}/prompts`: the list as `prompts`, or with `id` one entry as `prompt`. An action is not given `inherited_text` (the person's global custom text, or the built-in one) nor, for a prompt whose `source` is `global`, `missing_safety_rules` (null: they describe the global text); `withheld` says so. A chat gets every field |
 | `repository_registration` | repository | Registration | the repository's `/api/repositories` row: whether it is registered, its clones as a count, how many are available, each one's id and availability, and its earlier names |
+
+`/api/repositories` lists every picked repository with each clone probed for
+availability (`Registry.Repositories`: git runs in every registered clone, and
+the clones' configuration is read for the earlier names), so
+`repository_reviews` and `repository_registration` do that local work on each
+call, for an action too, before the reader keeps the action's row; it reads
+nothing outside this computer.
 
 `prompts` and `prompt` stay global, as they read the global prompts' projected
 route; a repository's page uses `repository_prompts`, which an action may call

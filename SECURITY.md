@@ -1418,11 +1418,11 @@ none, so only a chat reads it. Responses are bounded to 8 MiB, apart from a revi
 The exception is a fixed list of tool and exact route pairs in the daemon's
 source, which a test pins: `diagnostics_summary` with `/api/diagnostics`, and
 the Settings tools with the Settings routes their sections show
-(`/api/settings`, `/api/settings/appearance`, `/api/settings/decisions`,
-`/api/settings/prompts`, `/api/github-auth` and, for This computer's agent
-setup, `/api/diagnostics`). These routes stay unreadable to every other tool,
-and every other route under `/api/settings` and `/api/github` (the sign-in's
-start, the plan usage choice) stays unreadable to all. The tools are global,
+(`/api/settings`, `/api/settings/appearance`, `/api/settings/prompts`,
+`/api/github-auth` and, for This computer's agent setup, `/api/diagnostics`).
+These routes stay unreadable to every other tool, and every other route under
+`/api/settings` and `/api/github` (the sign-in's start, the plan usage choice,
+decision capture's settings) stays unreadable to all. The tools are global,
 so an action neither lists nor calls them, and the reader refuses an action the
 routes whatever a tool declares. Each returns a typed projection filled only
 with what the app shows in that section. The diagnostics give a check's id,
@@ -1445,16 +1445,30 @@ whether the app or the config file sets them; whether the app answers Codex's
 permission requests; the agent checks' labels, statuses and versions; and the
 prompts with their texts (built-in, custom and inherited), as the Prompts
 section shows them. What they never expose: an agent environment variable's
-value (the values are not even decoded), the GitHub token, a waiting
-sign-in's user code or verification address (the waiting sign-in is decoded
-only for whether there is one), the budgets and caps, a check's folder,
-detail or fix, the configuration file's folder, an enterprise host, or the
-home folder. A repository's page tools (its review choices and automatic
-status, its prompts, its registration) are repository-scoped: an action reads
-its own repository's, through routes bound to it (the repositories and
-automatic lists are rebuilt from its row alone, without clone folders or the
-global switches, and the prompts route is bound by its path), and never a
-clone's folder.
+value (the values are not copied out of the route's answer), the GitHub
+token, a waiting sign-in's user code or verification address (the waiting
+sign-in is decoded only for whether there is one), the budgets and caps, a
+check's folder, detail or fix, the configuration file's folder, an enterprise
+host, or the home folder. The route's raw answer is in the daemon's memory for
+the length of the call, as any read's is, and is never kept, logged or quoted
+in an error.
+
+A repository's page tools (its review choices and automatic status, its
+prompts, its registration) are repository-scoped: an action reads its own
+repository's, through routes bound to it (the repositories and automatic
+lists are rebuilt from its row alone, without clone folders or the global
+switches, and the prompts route is bound by its path), and never a clone's
+folder. From a repository's prompts an action gets what is the repository's
+own: each prompt's title, group, built-in text and version, the repository's
+custom text, whether it is outdated or invalid, its safety rules, and which
+text runs (`source`: built-in, global or the repository's). It does not get
+the text the repository inherits, which is the person's global custom prompt
+from Settings, nor, for a prompt that runs the global text, the safety rules
+that text dropped; the answer says these were withheld. A chat gets them, as
+the app shows them. Listing the repositories, which the review and
+registration tools read, probes each registered clone with git on this
+computer, as the Repositories page does; an action's call does that work too,
+and reaches nothing outside.
 
 Four routes that look like candidates are not exceptions, because they reach
 outside or start programs: the plan usage route fetches from Claude or Codex
@@ -1467,8 +1481,11 @@ through accessors that cannot fetch or start anything (a call never waits for
 a fetch in progress, the picker's list says when none is loaded, and the Codex
 hooks state is the newest the app's own check returned, or says none was).
 Decision capture's settings route resolves an auto backend by running the
-harnesses' version checks on this computer, as opening the section in the app
-does; it reaches nothing outside. Reading the GitHub connection may start, as
+harnesses' version checks on this computer on every read, as opening the
+section in the app does; its tool reads an accessor instead that shares one
+resolution between concurrent calls and reuses it for 45 seconds while the
+settings are unchanged, so an agent calling it repeatedly starts those checks
+at most that often. Reading the GitHub connection may start, as
 the section does when it opens, the background check of the organizations the
 sign-in cannot reach: at most every 30 seconds, answered from a five-minute
 cache. A job's failure
