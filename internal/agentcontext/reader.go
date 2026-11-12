@@ -515,7 +515,7 @@ func (r *Reader) Get(ctx context.Context, target string) (Response, error) {
 			return Response{}, fmt.Errorf("read %s: %w", u.Path, errRefreshFlag)
 		}
 	}
-	if !readable(u.Path, r.allow) && !(r.repository == "" && slices.Contains(r.projected, u.Path)) {
+	if !readable(u.Path, r.allow) && (r.repository != "" || !slices.Contains(r.projected, u.Path)) {
 		return Response{}, fmt.Errorf("read %s: %w", u.Path, errNotReadable)
 	}
 	// A pasted image is served as it was pasted, unmasked: no tool reads one.
