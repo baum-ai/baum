@@ -227,20 +227,29 @@ func TestFeatureSyncAndIndex(t *testing.T) {
 	if head, _ := s.pathsAt(t, 7); head != "" {
 		t.Fatal("unknown paths are not retried")
 	}
-	// A window re-link after the daily one links its commits; with nothing
-	// it reads changed, the next reads no session and keeps the links. One
-	// after a session was written links again.
+	// A full pass remembers its proven inputs and commit metadata too. Both
+	// unchanged window passes read no transcripts or git commit objects.
+	// A session write still causes a new link.
 	relink := func(name string, unchanged bool) {
 		t.Helper()
 		c.now = c.now.Add(FeatureQuiet)
-		before := workstats.Take().Counters["locallink.link_commits"]
+		counters := workstats.Take().Counters
+		before := counters["locallink.link_commits"]
 		indexed, err := w.Index(ctx, linktest.Repository, f.Repo, nil, false)
 		read := workstats.Take().Counters["locallink.link_commits"] > before
 		if err != nil || indexed.Unchanged != unchanged || read == unchanged || (!unchanged && indexed.Links != 1) {
 			t.Fatalf("%s = %+v (sessions read: %t), %v", name, indexed, read, err)
 		}
+		if unchanged {
+			after := workstats.Take().Counters
+			for _, command := range []string{"git.diff-tree", "git.log", "git.cat-file"} {
+				if after[command] != counters[command] {
+					t.Fatalf("%s ran %s for unchanged commits", name, command)
+				}
+			}
+		}
 	}
-	relink("window re-link", false)
+	relink("window re-link", true)
 	relink("unchanged window re-link", true)
 	if err := s.db.QueryRow(`SELECT COUNT(*) FROM session_commit`).Scan(&linked); err != nil || linked != 1 {
 		t.Fatalf("%d links after an unchanged re-link, %v", linked, err)

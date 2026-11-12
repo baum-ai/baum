@@ -2024,6 +2024,12 @@ a process reuses what it built:
   snapshot uses small per-checkpoint facts that `sessions` remembers by
   clone and tree. A checkpoint is read whole again, through the checkpoint
   cache below, only when a session chosen from it has to be mapped.
+* **Feature linkage.** `locallink.LinkCommits` shares those compact facts and
+  skips unchanged session graphs too. The feature worker caches successful
+  recorded commit ranges by clone, base, head and shallow boundary, bounded
+  at 128 ranges and 16 MiB of estimated metadata. Full daily relinks bypass
+  range reuse, but keep their input fingerprint so a following unchanged
+  window can skip linking immediately.
 * **Closed and merged pull requests.** A refresh of a pull request that is
   closed or merged sets `EvidenceRequest.Frozen`. Its sessions are read once in
   the process, then kept for the same commits without looking at the stores
@@ -2036,7 +2042,7 @@ a process reuses what it built:
   memory, about a sixth of their transcripts' size.
 * **Growing transcripts.** A session an agent is still running changes on
   every append, so none of the above applies to it. For each Claude Code
-  transcript and Codex rollout changed in the last hour, `sessions.Map` keeps
+  transcript and Codex rollout, regardless of age, `sessions.Map` may keep
   the decoded lines and the byte offset they end at, and decodes only what was
   appended since; the mapper still runs over every line. A file that shrank,
   was replaced or had its earlier bytes rewritten is decoded whole. The lines

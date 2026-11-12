@@ -88,17 +88,14 @@ Cursor sessions arrive as generated content and are always decoded whole.
   size and modification time did not change is taken as unchanged. A read
   stops at the size the file had when it was opened. A file that could not be
   decoded loses its kept lines.
-* **What is kept:** only files changed in the last hour, since older ones are
-  unlikely to grow, within `DefaultTailCacheBytes` (64 MiB) of estimated line
-  memory (`Reading.Bytes`). Files unread for 30 minutes are released on the
-  next read of any file, so a finished session's lines do not stay resident.
-  A file read for the first time that does not fit is not kept, rather than
-  pushing out files read recently: a session tree larger than the cache, read
-  file by file on every refresh, then keeps what fits instead of pushing out
-  each file before it is read again. A kept file that grew pushes out the
-  least recently read.
-  `SetTailCacheLimit` changes the limit; zero or less turns it off, and every
-  transcript is then decoded whole each time.
+* **What is kept:** files of any age may keep their decoded lines. Age alone
+  does not force unchanged transcripts to decode again. The same byte budget
+  and idle eviction bound retention: `DefaultTailCacheBytes` (64 MiB) of
+  estimated line memory (`Reading.Bytes`). Files unread for 30 minutes are
+  released on the next read of any file. A new file that does not fit does
+  not evict recently read files, so trees larger than the budget keep what
+  fits instead of thrashing. A kept file that grows evicts the least recently
+  read. `SetTailCacheLimit` changes the limit; zero or less turns it off.
 * **Slim lines:** the kept lines leave out the copies of each record the
   mapper never reads: `Line.Raw` for Claude Code (only the shape survey reads
   it, and `Map` does not survey); for Codex `Line.Raw`, `Line.Payload` except
