@@ -62,7 +62,8 @@ func New(opts Options) *Server {
 	})
 	registry.onRevoke(s.envelope.forget)
 	pull, group, reviews, common := s.pullTools(), s.groupTools(), s.reviewTools(), s.commonTools()
-	for _, t := range slices.Concat(s.builtinTools(), pull, group, reviews, common) {
+	lists, sessions, timeline := s.listTools(), s.sessionTools(), s.timelineTools()
+	for _, t := range slices.Concat(s.builtinTools(), pull, group, reviews, common, lists, sessions, timeline) {
 		if err := t.compile(); err != nil {
 			panic(err)
 		}
@@ -90,6 +91,15 @@ func New(opts Options) *Server {
 	}
 	s.pages[PagePullRequest] = PageSpec{Name: PagePullRequest, Tools: withCommonTools(append(names(pull), names(reviews)...))}
 	s.pages[PageGroup] = PageSpec{Name: PageGroup, Tools: withCommonTools(append(forGroup, "focus"))}
+	// The Inbox lists the queue and its inboxes; Pull requests its list. The
+	// sessions pages read the sessions and what their agents wait for; the
+	// Timeline and a feature's page read its decisions and features.
+	s.pages[PageInbox] = PageSpec{Name: PageInbox, Tools: withCommonTools(names(lists[:3]))}
+	s.pages[PagePulls] = PageSpec{Name: PagePulls, Tools: withCommonTools(names(lists[3:]))}
+	s.pages[PageSessions] = PageSpec{Name: PageSessions, Tools: withCommonTools(names(sessions))}
+	s.pages[PageSession] = PageSpec{Name: PageSession, Tools: withCommonTools(names(sessions))}
+	s.pages[PageTimeline] = PageSpec{Name: PageTimeline, Tools: withCommonTools(names(timeline))}
+	s.pages[PageFeature] = PageSpec{Name: PageFeature, Tools: withCommonTools(names(timeline))}
 	return s
 }
 

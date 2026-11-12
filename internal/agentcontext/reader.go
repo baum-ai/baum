@@ -134,6 +134,64 @@ var actionRoutes = []actionRoute{
 	{pattern: "/api/groups/{id}", bind: byResponse, check: repositoryField},
 	{pattern: "/api/groups/{id}/document", bind: byLookup, params: []string{"version"}, check: repositoryField, lookup: func(v map[string]string) string { return "/api/groups/" + v["id"] }},
 	{pattern: "/api/groups/{id}/versions", bind: byLookup, check: repositoryField, lookup: func(v map[string]string) string { return "/api/groups/" + v["id"] }},
+
+	// The Timeline's lists name the repository (the handler reads every
+	// repository= value and serves only those), and its details name it in
+	// their responses. The people lists and a session's transcript are not
+	// here: the first names no repository, the second nothing that says whose
+	// it is.
+	{pattern: "/api/timeline/decisions", bind: byRepository, params: []string{"q", "who", "category", "file", "person", "superseded", "from", "to", "limit", "cursor"}},
+	{pattern: "/api/timeline/decisions/{id}", bind: byResponse, check: timelineRepositoryField},
+	{pattern: "/api/timeline/features", bind: byRepository, params: []string{"q", "status", "file", "person", "from", "to", "limit", "cursor"}},
+	{pattern: "/api/timeline/features/{id}", bind: byResponse, check: timelineRepositoryField},
+	{pattern: "/api/timeline/build", bind: byRepository},
+	{pattern: "/api/timeline/files", bind: byRepository, params: []string{"prefix", "limit"}},
+
+	// The running sessions answer for every repository: the reader keeps the
+	// action's repository's.
+	{pattern: "/api/live-sessions", bind: byFilter, filter: filterLiveSessions},
+}
+
+// filterLiveSessions keeps the sessions of repository in an
+// /api/live-sessions body.
+func filterLiveSessions(body []byte, repository string) ([]byte, error) {
+	var v struct {
+		Available *bool             `json:"available"`
+		Sessions  []json.RawMessage `json:"sessions"`
+	}
+	if err := json.Unmarshal(body, &v); err != nil {
+		return nil, err
+	}
+	if v.Available != nil && !*v.Available {
+		return nil, errUnavailable
+	}
+	kept := []json.RawMessage{}
+	for _, raw := range v.Sessions {
+		if name, err := repositoryField(raw); err != nil {
+			return nil, err
+		} else if strings.EqualFold(name, repository) {
+			kept = append(kept, raw)
+		}
+	}
+	return json.Marshal(map[string]any{"sessions": kept})
+}
+
+// timelineRepositoryField reads the repository a Timeline detail names:
+// {"repository":{"id","full_name"}}. A detail that names none (an archived
+// feature) reads as no repository, which no action's matches.
+func timelineRepositoryField(body []byte) (string, error) {
+	var v struct {
+		Repository *struct {
+			FullName string `json:"full_name"`
+		} `json:"repository"`
+	}
+	if err := json.Unmarshal(body, &v); err != nil {
+		return "", err
+	}
+	if v.Repository == nil {
+		return "", nil
+	}
+	return v.Repository.FullName, nil
 }
 
 // filterIndex keeps the entries of repository in an /api/index body; the
@@ -313,6 +371,10 @@ func (r *Reader) Get(ctx context.Context, target string) (Response, error) {
 		}
 	}
 	if !readable(u.Path, r.allow) {
+		return Response{}, fmt.Errorf("read %s: %w", u.Path, errNotReadable)
+	}
+	// A pasted image is served as it was pasted, unmasked: no tool reads one.
+	if strings.Contains(u.Path, "/transcript/images/") {
 		return Response{}, fmt.Errorf("read %s: %w", u.Path, errNotReadable)
 	}
 	var route *actionRoute
