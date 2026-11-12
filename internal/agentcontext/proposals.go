@@ -64,9 +64,9 @@ type SaveInput struct {
 
 // String, GoString and LogValue never print the value, so neither a log line
 // nor an error formatted with an input can carry it.
-func (in SaveInput) String() string           { return in.redacted() }
-func (in SaveInput) GoString() string         { return in.redacted() }
-func (in SaveInput) LogValue() slog.Value     { return slog.StringValue(in.redacted()) }
+func (in SaveInput) String() string       { return in.redacted() }
+func (in SaveInput) GoString() string     { return in.redacted() }
+func (in SaveInput) LogValue() slog.Value { return slog.StringValue(in.redacted()) }
 func (in SaveInput) redacted() string {
 	if in.Value == nil {
 		return "SaveInput{}"

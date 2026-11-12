@@ -127,9 +127,25 @@ func (p *Proposers) promptTarget(scope, id string) (*target, error) {
 			if err != nil {
 				return promptFailure(err)
 			}
+			// The app server follows a write to a repository's routes, its
+			// prompts' included, with these.
+			if scope != repos.GlobalPrompts {
+				p.repositoryChanged()
+			}
 			return nil
 		},
 	}, nil
+}
+
+// repositoryChanged is what the app server does after a write to the
+// repository routes (LocalAPI.Handler's mutate).
+func (p *Proposers) repositoryChanged() {
+	if p.API.Changed != nil {
+		p.API.Changed()
+	}
+	if p.API.DecisionsChanged != nil {
+		p.API.DecisionsChanged()
+	}
 }
 
 // repositoryTarget is a target of a repository's page: its Reviews section's
@@ -215,11 +231,7 @@ func (p *Proposers) repositorySettingsTarget(repository string) *target {
 			if err != nil {
 				return err
 			}
-			// What the app server does after a write to the repository routes.
-			if p.API.Changed != nil {
-				p.API.Changed()
-			}
-			p.API.decisionsChanged()
+			p.repositoryChanged()
 			return nil
 		},
 	}
@@ -330,6 +342,9 @@ func (p *Proposers) inboxTarget(_ agentcontext.PageContext, name string) (*targe
 			list, err := next(state, after)
 			if err != nil {
 				return err
+			}
+			if p.beforeWrite != nil {
+				p.beforeWrite()
 			}
 			// Replace compares the revision read with the stored one in the
 			// transaction that writes.
@@ -477,12 +492,12 @@ func (p *Proposers) reviewCommentTarget(page agentcontext.PageContext, name stri
 			Title string `json:"title"`
 		}
 		out := struct {
-			ID      string    `json:"id"`
-			Target  targetOf  `json:"target"`
-			Body    string    `json:"body"`
-			Place   any       `json:"place"`
-			Head    string    `json:"head"`
-			Created int64     `json:"created"`
+			ID      string   `json:"id"`
+			Target  targetOf `json:"target"`
+			Body    string   `json:"body"`
+			Place   any      `json:"place"`
+			Head    string   `json:"head"`
+			Created int64    `json:"created"`
 		}{ID: id, Target: targetOf{"general", "", "The pull request"}, Body: in.Body, Head: in.Head, Created: created}
 		if in.Target != nil {
 			out.Target = targetOf{in.Target.Kind, in.Target.ID, in.Target.Title}
@@ -568,6 +583,9 @@ func (p *Proposers) reviewCommentTarget(page agentcontext.PageContext, name stri
 			value, err := json.Marshal(fields)
 			if err != nil {
 				return err
+			}
+			if p.beforeWrite != nil {
+				p.beforeWrite()
 			}
 			// Replace compares the record's revision with the one read in the
 			// transaction that writes.

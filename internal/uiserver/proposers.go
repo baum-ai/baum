@@ -62,6 +62,11 @@ type Proposers struct {
 	// comment proposal.
 	UIState *uistate.Store
 
+	// beforeWrite, a test hook, runs where a save that reads outside its
+	// store's transaction (an inbox, a pending review) has read and not yet
+	// written, as a change landing then would.
+	beforeWrite func()
+
 	once     sync.Once
 	key      []byte
 	client   string
@@ -570,7 +575,10 @@ func (p *Proposers) timeLimitsTarget() *target {
 	return p.prefsTarget(
 		func(prefs repos.Preferences) any { review, run := inForce(prefs); return timeLimits{&review, &run} },
 		func(prefs repos.Preferences) any { return [2]int{prefs.ReviewTimeLimit, prefs.RunTimeLimit} },
-		func(after json.RawMessage, prefs repos.Preferences) error { _, _, err := limits(after, prefs); return err },
+		func(after json.RawMessage, prefs repos.Preferences) error {
+			_, _, err := limits(after, prefs)
+			return err
+		},
 		func(ctx context.Context, after json.RawMessage, check func(repos.Preferences) error) error {
 			_, err := p.API.Registry.UpdatePreferencesIf(ctx, func(prefs repos.Preferences) (repos.Preferences, error) {
 				if err := check(prefs); err != nil {
