@@ -161,7 +161,7 @@ func TestConversationRunsAndResumes(t *testing.T) {
 	f := newFixture(t, nil)
 	ctx := context.Background()
 	page := agentcontext.PageContext{Page: agentcontext.PageInbox}
-	c, err := f.service.Create(ctx, CreateRequest{Agent: AgentClaudeCode, Model: "opus", Page: &page})
+	c, err := f.service.Create(ctx, CreateRequest{Agent: AgentClaudeCode, Model: new("opus"), Page: &page})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -236,7 +236,7 @@ func TestConversationRunsAndResumes(t *testing.T) {
 func TestConversationsSurviveARestart(t *testing.T) {
 	f := newFixture(t, nil)
 	ctx := context.Background()
-	c, err := f.service.Create(ctx, CreateRequest{Agent: AgentCodex, Mode: ModeWorkspace, Model: "gpt-5"})
+	c, err := f.service.Create(ctx, CreateRequest{Agent: AgentCodex, Mode: ModeWorkspace, Model: new("gpt-5")})
 	if err != nil {
 		t.Fatal(err)
 	}

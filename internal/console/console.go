@@ -9,6 +9,7 @@ package console
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -89,8 +90,26 @@ var (
 	ErrShuttingDown = errors.New("baum is shutting down")
 )
 
-// InvalidError is a request the rules refuse.
-type InvalidError struct{ Message string }
+// InvalidError is a request the rules refuse. Code is CodeInvalidPage for a
+// page the MCP server would refuse, else CodeInvalidRequest.
+type InvalidError struct {
+	Code    string
+	Message string
+}
+
+// The codes of InvalidError.
+const (
+	CodeInvalidRequest = "invalid_request"
+	CodeInvalidPage    = "invalid_page"
+)
+
+func invalid(format string, args ...any) error {
+	return &InvalidError{Code: CodeInvalidRequest, Message: fmt.Sprintf(format, args...)}
+}
+
+func invalidPage(err error) error {
+	return &InvalidError{Code: CodeInvalidPage, Message: "page: " + err.Error()}
+}
 
 func (e *InvalidError) Error() string { return e.Message }
 
@@ -141,6 +160,12 @@ type Conversation struct {
 	CostPartial bool     `json:"cost_partial,omitempty"`
 }
 
+// Defaults are what a conversation opens with when the request leaves them
+// out: the panel's setting (repos.Preferences.ResolvePanel).
+type Defaults struct {
+	Agent, Model, Mode string
+}
+
 // Pull is what the directory choice needs to know of a pull request.
 type Pull struct {
 	HeadRef, HeadSHA string
@@ -177,6 +202,17 @@ type Options struct {
 	Backend func(agentName, model string, cfg config.Config) (agent.Converser, string, error)
 	// Publish receives the events of every change; nil drops them.
 	Publish func(Event)
+	// Defaults gives the agent, model and mode a conversation opens with
+	// when its request names none; nil is Claude Code, its own default model
+	// and full access.
+	Defaults func(ctx context.Context) (Defaults, error)
+	// Proposals holds what conversations' agents propose (the MCP server's);
+	// nil lists none.
+	Proposals *agentcontext.Proposals
+	// SSHAgent, when set, is asked before every turn for a usable SSH agent
+	// socket: it replaces a stale SSH_AUTH_SOCK in this process's environment,
+	// which the agent's environment comes from (shellenv.Agent.Socket).
+	SSHAgent func(ctx context.Context) string
 	// Price prices a turn's usage for a backend; nil prices none.
 	Price func(backend string, accounting *agent.Accounting) (*float64, string)
 	Log   *slog.Logger
@@ -206,6 +242,15 @@ type Service struct {
 	// backends are the agents built so far, by what builds them, so each
 	// checks its CLI's version once.
 	backends map[backendKey]builtBackend
+	// consumers maps each live token's consumer id to its conversation, under
+	// its own lock: the proposals' OnChange reads it, and runs while a revoke
+	// under mu is in progress.
+	cmu       sync.Mutex
+	consumers map[string]string
+	// sessions ("agent:id") and dirs (the directories baum made) map to
+	// their conversation, for Owns; under cmu too.
+	sessions map[string]string
+	dirs     map[string]string
 }
 
 // live is what a conversation holds while the daemon runs: its MCP token and
@@ -252,16 +297,33 @@ func New(opts Options) (*Service, error) {
 		return nil, err
 	}
 	base, cancel := context.WithCancel(context.Background())
-	return &Service{opts: opts, store: st, root: root, base: base, cancel: cancel, live: map[string]*live{},
-		placing: map[string]*sync.Mutex{}, backends: map[backendKey]builtBackend{}}, nil
+	s := &Service{opts: opts, store: st, root: root, base: base, cancel: cancel, live: map[string]*live{},
+		placing: map[string]*sync.Mutex{}, backends: map[backendKey]builtBackend{}, consumers: map[string]string{},
+		sessions: map[string]string{}, dirs: map[string]string{}}
+	all, err := st.list()
+	if err != nil {
+		_ = st.close()
+		cancel()
+		return nil, err
+	}
+	for _, c := range all {
+		s.index(c)
+	}
+	if opts.Proposals != nil {
+		opts.Proposals.OnChange(s.proposalsChanged)
+	}
+	return s, nil
 }
 
 // CreateRequest opens a conversation.
 type CreateRequest struct {
-	Agent string `json:"agent"`
-	Model string `json:"model"`
-	// Mode is ModeFull or ModeWorkspace; empty is ModeFull.
-	Mode string `json:"mode"`
+	// Agent, Model and Mode left out are the Defaults: a request that names
+	// no agent takes the default agent and model, one that names the default
+	// agent and no model the default model. Mode is ModeFull or
+	// ModeWorkspace.
+	Agent string  `json:"agent,omitempty"`
+	Model *string `json:"model,omitempty"`
+	Mode  string  `json:"mode,omitempty"`
 	// Page is the page the person opened it from, which decides its
 	// directory: a pull request's page gets a checkout of the pull request.
 	Page *agentcontext.PageContext `json:"page,omitempty"`
@@ -271,22 +333,39 @@ type CreateRequest struct {
 // directory, saves it idle and mints its MCP token. The agent runs on the
 // first Send.
 func (s *Service) Create(ctx context.Context, request CreateRequest) (Conversation, error) {
+	defaults := Defaults{Agent: AgentClaudeCode, Mode: ModeFull}
+	if s.opts.Defaults != nil {
+		chosen, err := s.opts.Defaults(ctx)
+		if err != nil {
+			return Conversation{}, err
+		}
+		defaults = chosen
+	}
+	model := ""
+	switch {
+	case request.Model != nil:
+		model = *request.Model
+	case request.Agent == "" || request.Agent == defaults.Agent:
+		model = defaults.Model
+	}
+	request.Agent = cmp.Or(request.Agent, defaults.Agent)
+	request.Mode = cmp.Or(request.Mode, defaults.Mode)
 	if request.Agent != AgentClaudeCode && request.Agent != AgentCodex {
-		return Conversation{}, &InvalidError{Message: fmt.Sprintf("agent must be %s or %s", AgentClaudeCode, AgentCodex)}
+		return Conversation{}, invalid("agent must be %s or %s", AgentClaudeCode, AgentCodex)
 	}
 	if request.Mode == "" {
 		request.Mode = ModeFull
 	}
 	if err := agent.Access(request.Mode).Validate(); err != nil {
-		return Conversation{}, &InvalidError{Message: fmt.Sprintf("mode must be %s or %s", ModeFull, ModeWorkspace)}
+		return Conversation{}, invalid("mode must be %s or %s", ModeFull, ModeWorkspace)
 	}
-	request.Model = strings.TrimSpace(request.Model)
-	if len(request.Model) > maxModel || strings.ContainsFunc(request.Model, unicode.IsControl) {
-		return Conversation{}, &InvalidError{Message: "the model is one line of at most 200 characters"}
+	model = strings.TrimSpace(model)
+	if len(model) > maxModel || strings.ContainsFunc(model, unicode.IsControl) {
+		return Conversation{}, invalid("the model is one line of at most 200 characters")
 	}
 	if request.Page != nil {
 		if err := request.Page.Validate(); err != nil {
-			return Conversation{}, &InvalidError{Message: "page: " + err.Error()}
+			return Conversation{}, invalidPage(err)
 		}
 	}
 	s.mu.Lock()
@@ -310,7 +389,7 @@ func (s *Service) Create(ctx context.Context, request CreateRequest) (Conversati
 		return Conversation{}, err
 	}
 	now := s.opts.Now().UTC()
-	c := Conversation{ID: id, Agent: request.Agent, Model: request.Model, Mode: request.Mode, Directory: placed.dir,
+	c := Conversation{ID: id, Agent: request.Agent, Model: model, Mode: request.Mode, Directory: placed.dir,
 		Repository: placed.repository, PullRequest: placed.number, Branch: placed.branch, CreatedWorktree: placed.created,
 		CreatedBranch: placed.newBranch, DirectoryNote: placed.note, Pages: []agentcontext.PageContext{}, CreatedAt: now, UpdatedAt: now, State: StateIdle}
 	if request.Page != nil {
@@ -319,6 +398,7 @@ func (s *Service) Create(ctx context.Context, request CreateRequest) (Conversati
 	if err := s.store.save(c); err != nil {
 		return Conversation{}, err
 	}
+	s.index(c)
 	s.mu.Lock()
 	// The person is on the page they opened the conversation from, so it is
 	// the page every token, the new one included, has open.
@@ -351,7 +431,7 @@ func (s *Service) List(context.Context) ([]Conversation, error) {
 func (s *Service) Send(_ context.Context, id, message string, page *agentcontext.PageContext) (Conversation, error) {
 	message = strings.TrimSpace(message)
 	if message == "" || len(message) > MaxMessageBytes || !utf8.ValidString(message) {
-		return Conversation{}, &InvalidError{Message: fmt.Sprintf("a message is 1 to %d bytes of text", MaxMessageBytes)}
+		return Conversation{}, invalid("a message is 1 to %d bytes of text", MaxMessageBytes)
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -369,7 +449,7 @@ func (s *Service) Send(_ context.Context, id, message string, page *agentcontext
 		return Conversation{}, ErrBusy
 	}
 	if info, err := os.Stat(c.Directory); err != nil || !info.IsDir() {
-		return Conversation{}, &InvalidError{Message: "the conversation's directory " + c.Directory + " is gone; start a new conversation"}
+		return Conversation{}, invalid("the conversation's directory %s is gone; start a new conversation", c.Directory)
 	}
 	l, err := s.liveLocked(c)
 	if err != nil {
@@ -377,7 +457,7 @@ func (s *Service) Send(_ context.Context, id, message string, page *agentcontext
 	}
 	if page != nil {
 		if err := page.Validate(); err != nil {
-			return Conversation{}, &InvalidError{Message: "page: " + err.Error()}
+			return Conversation{}, invalidPage(err)
 		}
 		s.setPageLocked(*page)
 		c.Pages = addPage(c.Pages, *page)
@@ -442,7 +522,7 @@ func (s *Service) Close(ctx context.Context, id string) (Conversation, error) {
 			l.stopped = true
 			l.cancel()
 		}
-		l.revoke()
+		s.revokeLocked(l)
 		if l.flush != nil {
 			l.flush.Stop()
 		}
@@ -534,7 +614,7 @@ func (s *Service) Shutdown() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for id, l := range s.live {
-		l.revoke()
+		s.revokeLocked(l)
 		if l.flush != nil {
 			l.flush.Stop()
 		}
@@ -574,11 +654,24 @@ func (s *Service) liveLocked(c Conversation) (*live, error) {
 // open. s.mu is held.
 func (s *Service) bindLocked(id string, l *live, token, consumer string, revoke func()) {
 	l.token, l.consumer, l.revoke, l.session = token, consumer, revoke, ""
+	s.cmu.Lock()
+	s.consumers[consumer] = id
+	s.cmu.Unlock()
 	if s.page != nil {
 		if err := s.opts.Registry.SetPage(consumer, *s.page); err != nil {
 			s.opts.Log.Warn("page not set on a conversation's token", "conversation", id, "error", err)
 		}
 	}
+}
+
+// revokeLocked revokes l's token, which drops its open proposals and
+// announces that while the token still maps to its conversation. s.mu is
+// held.
+func (s *Service) revokeLocked(l *live) {
+	l.revoke()
+	s.cmu.Lock()
+	delete(s.consumers, l.consumer)
+	s.cmu.Unlock()
 }
 
 func newID() string {

@@ -154,7 +154,7 @@ func TestBackendsAreBuiltOnce(t *testing.T) {
 			f.finished(c.ID)
 		}
 	}
-	other, err := f.service.Create(ctx, CreateRequest{Agent: AgentClaudeCode, Model: "other"})
+	other, err := f.service.Create(ctx, CreateRequest{Agent: AgentClaudeCode, Model: new("other")})
 	if err != nil {
 		t.Fatal(err)
 	}

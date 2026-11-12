@@ -128,10 +128,11 @@ func (s *Service) turn(ctx context.Context, c Conversation, message string, l *l
 	if saveErr := s.store.save(current); saveErr != nil {
 		s.opts.Log.Warn("conversation not saved after its turn", "conversation", c.ID, "error", saveErr)
 	}
+	s.index(current)
 	// A token is bound to one session, once: the new session needs a new
 	// token. A conversation that cannot get one mints it on its next turn.
 	if sessionGone && !closed && s.live[c.ID] == l {
-		l.revoke()
+		s.revokeLocked(l)
 		token, consumer, revoke, mintErr := s.opts.Registry.Mint(agentcontext.Consumer{Kind: agentcontext.Chat})
 		if mintErr != nil {
 			s.opts.Log.Warn("conversation token not minted again", "conversation", c.ID, "error", mintErr)
@@ -188,6 +189,11 @@ func (s *Service) converse(ctx context.Context, c Conversation, message string, 
 		if command, err = os.Executable(); err != nil {
 			return agent.Result{}, name, fmt.Errorf("finding baum for its MCP server: %w", err)
 		}
+	}
+	// The SSH agent socket the daemon inherited may have gone stale since:
+	// the agent then gets the login shell's, or none.
+	if s.opts.SSHAgent != nil {
+		s.opts.SSHAgent(ctx)
 	}
 	s.mu.Lock()
 	token := l.token
@@ -281,7 +287,9 @@ func (s *Service) sessionStarted(c Conversation, l *live, id string) {
 	current, err := s.store.get(c.ID)
 	if err == nil && current.Session == "" {
 		current.Session = id
-		err = s.store.save(current)
+		if err = s.store.save(current); err == nil {
+			s.index(current)
+		}
 	}
 	if err != nil {
 		s.opts.Log.Warn("conversation session not saved", "conversation", c.ID, "error", err)
