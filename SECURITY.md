@@ -1550,8 +1550,11 @@ repository's review and decision capture choices, a saved inbox, a review
 group's name and members, or a comment added to your pending review (never
 sent to GitHub: you send the review). Nothing is saved without your save, and
 your save is the page's own, with the page's checks, so a proposal cannot
-save what the page itself would refuse. An agent cannot propose to take a
-safety rule out of a prompt you use. An agent never proposes an agent
+save what the page itself would refuse. A proposed prompt, or a reset, that
+would leave out the text of a safety rule the prompt in use has is refused,
+when proposed and again when saved. That check only finds each rule's text;
+it cannot tell whether the rest of a text undercuts a rule, so read a
+prompt's diff before you save it. An agent never proposes an agent
 environment variable's value and never learns one: it may propose a
 variable's name to add or remove, the proposal holds only the name, and you
 type the value when you save it; the value goes from the app's save to the

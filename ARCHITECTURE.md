@@ -5556,11 +5556,20 @@ handler calls and does what the route does after a save: the decisions event,
 the queue's concurrency, cancelling disallowed automatic jobs, waking the
 scheduler and the automatic notice, the settings and decisions events after a
 repository's settings or prompts, and `Changed` after an inbox or group. Beyond
-the page, an agent may not take a safety rule out of a prompt: a text, or a
-reset to the inherited text, that leaves out a rule the prompt in use has is
-refused (the person can still remove one in the editor, which warns). Adding
-an agent environment variable that is set, or removing one that is not, is
-refused.
+the page, a prompt's text, or a reset to the inherited text, that leaves out
+the text of a safety rule the prompt in use has is refused, at `Propose` and
+again inside the save's transaction against the rows it reads (the person
+can still remove one in the editor, which warns). The check finds each
+rule's text only; it cannot judge wording elsewhere that undercuts a rule, so
+the person reads the diff. Adding an agent environment variable that is set,
+or removing one that is not, is refused, and so is a change after which the
+environment in force would differ from the proposed one by more than that
+name: removing the app's last variable brings back the config file's
+`agent_env`. An inbox is proposed and saved as the Inbox holds it: it folds
+every saved inbox's older fields (what, owners, risk, repositories, bots)
+into its query (`app/src/inboxes.ts`'s `folded`, here with
+`prfilter.FoldedQuery` and `prfilter.Problem`) and saves the list so, and the
+diff's `Before` is the folded inbox.
 
 A target's revision is HMAC-SHA256, under a key made per daemon, of the
 stored state its save reads: the preference fields of its route, the agent
