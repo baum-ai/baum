@@ -806,9 +806,10 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 				})
 				wg.Wait()
 			},
-			Shutdown: queue.Shutdown,
-			Drain:    queue.Drain,
-			Resume:   queue.Resume,
+			Shutdown:     queue.Shutdown,
+			Drain:        queue.Drain,
+			DrainRunning: queue.DrainRunning,
+			Resume:       queue.Resume,
 			Close: func() {
 				sample.Close()
 				api.Close()

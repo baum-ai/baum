@@ -356,6 +356,9 @@ type Queue struct {
 	released chan struct{}
 	// draining refuses new jobs while the daemon restarts.
 	draining bool
+	// held starts no queued job while a restart waits for the running ones
+	// (DrainRunning).
+	held bool
 	// gate, when set, answers whether an automatic job may run now (and
 	// under which daily cap); see SetAutomaticGate.
 	gate func(Job) Admission
@@ -747,11 +750,32 @@ func (q *Queue) Drain() bool {
 	return true
 }
 
-// Resume accepts jobs again after Drain.
-func (q *Queue) Resume() {
+// DrainRunning prepares a restart without waiting for the queued jobs: it
+// holds the queue, so no queued job starts in either lane, and reports true
+// once none is running, refusing new jobs with ErrRestarting in the same step
+// (as Drain does). Queued jobs stay journaled, and the next Open runs them.
+// While it reports false the queue stays held and still accepts jobs, which
+// queue behind the hold; Resume releases it.
+func (q *Queue) DrainRunning() bool {
 	q.mu.Lock()
 	defer q.mu.Unlock()
-	q.draining = false
+	q.held = true
+	for _, j := range q.jobs {
+		if j.State == "running" {
+			return false
+		}
+	}
+	q.draining = true
+	return true
+}
+
+// Resume accepts jobs again after Drain, and starts queued jobs again after
+// DrainRunning.
+func (q *Queue) Resume() {
+	q.mu.Lock()
+	q.draining, q.held = false, false
+	q.mu.Unlock()
+	q.signal()
 }
 func (q *Queue) List() []Job {
 	q.mu.Lock()
@@ -1386,8 +1410,9 @@ func (q *Queue) worker(chat bool) {
 				return
 			}
 			i := -1
-			// Outside the chat lane a worker takes a job only below limit.
-			if chat || q.running() < q.limit {
+			// Outside the chat lane a worker takes a job only below limit;
+			// none starts while a restart waits (DrainRunning).
+			if !q.held && !q.draining && (chat || q.running() < q.limit) {
 				i = q.next(chat)
 			}
 			if i < 0 {
