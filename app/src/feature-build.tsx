@@ -54,7 +54,8 @@ export type BuildState = {
  *  moves on; none is read without a repository. A read that fails keeps the
  *  last state. */
 export function useBuildState(repository: string | null, key: string): BuildState {
-  const [state, setState] = useState<BuildState>({
+  const [state, setState] = useState<BuildState & { repository: string | null }>({
+    repository: null,
     building: null,
     hasFeatures: false,
     currentSince: null,
@@ -73,20 +74,24 @@ export function useBuildState(repository: string | null, key: string): BuildStat
       "GET",
       abort.signal,
     )
-      .then((body) =>
+      .then((body) => {
+        if (abort.signal.aborted) return;
         setState({
+          repository,
           building: body.building ?? null,
           hasFeatures: body.has_features === true,
           currentSince: body.current_since ?? null,
           currentCoverage: body.current_coverage ?? null,
-        }),
-      )
+        });
+      })
       .catch(() => {
         // A transient failure, or an older daemon: what was shown stays.
       });
     return () => abort.abort();
   }, [repository, key]);
-  return state;
+  return state.repository === repository
+    ? state
+    : { building: null, hasFeatures: false, currentSince: null, currentCoverage: null };
 }
 
 /** Why a feature build stopped or cannot run, in its own words; see
@@ -173,11 +178,8 @@ export function BuildStatus({
       return state.currentCoverage ? (
         <section aria-label="Feature build coverage" className="local-job-outcome flex-wrap">
           <div className="min-w-0 flex-1 basis-56">
-            <p className="font-medium">
-              {state.hasFeatures
-                ? "Feature history coverage"
-                : "No substantial features found in this window"}
-            </p>
+            <p className="font-medium">Last build coverage</p>
+            {!state.hasFeatures ? <p>No substantial features found in this window</p> : null}
             <BuildCoverageSummary coverage={state.currentCoverage} />
           </div>
         </section>

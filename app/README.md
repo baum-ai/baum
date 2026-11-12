@@ -1628,7 +1628,7 @@ The existing build panel and Jobs show metadata available, evidence requested,
 selected/completed/remaining work, the updated-since horizon, listing truncation
 and committed source revision/omissions when provided. Available titles do not
 prove every title was read. A completed recent window is not called full history;
-coverage remains visible after completion, including when no substantial features
+Last build coverage remains visible after completion, including when no substantial features
 were found. A GitHub wait shows its retry time and disables an early Resume.
 Older daemon responses without these optional fields retain the prior display.
 
@@ -1651,7 +1651,8 @@ The button reads "Starting…" while the request is under way; a refused start
 says why above the page. The panel links to Jobs and keeps current features
 usable throughout. A latest job stopped before creating a version offers
 Try again until a newer version is current or the person dismisses it. A failed
-build-state read keeps the last display. Without a local clone build buttons
+build-state read keeps the last display for that repository; switching repositories
+never reuses another repository's candidate or coverage. Without a local clone build buttons
 are disabled. Decision-store and decision-capture availability retain their
 existing explanations.
 
