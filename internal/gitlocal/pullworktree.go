@@ -52,12 +52,16 @@ func PullBranch(number int) string { return fmt.Sprintf("baum/pr-%d", number) }
 // head branch, or refs/pull/<N>/head for a fork), then takes the first branch
 // name that no worktree has checked out: the head branch's own name (not for
 // a fork, whose branch name may be anything, including the base's), then
-// PullBranch, then PullBranch with opts.Suffix. A name that exists already is
-// checked out as it is, never moved, since it may hold the person's work. A
-// new one starts at the fetched head and tracks the head on the remote:
-// branch.<name>.remote and branch.<name>.merge, refs/heads/<head> or, for a
-// fork, refs/pull/<N>/head, so git pull brings the pull request's new
-// commits.
+// PullBranch, then PullBranch with opts.Suffix. A branch git refuses because
+// a worktree has it checked out (one mid-rebase or mid-bisect lists as
+// detached, so only the refusal shows it) is taken too. A name that exists
+// already is used only while it points at the fetched head, and is never
+// moved, since it may hold the person's work; one elsewhere, behind or ahead,
+// is skipped for the next name. A new one starts at the fetched head and
+// tracks the head on the remote: branch.<name>.remote and
+// branch.<name>.merge, refs/heads/<head> or, for a fork, refs/pull/<N>/head,
+// so git pull brings the pull request's new commits. A failed fetch leaves
+// nothing behind: no directory, branch or worktree.
 //
 // No other worktree's HEAD, index or files change, and no branch but the new
 // one is written. Commands run with the user's configuration, as a fetch does,
@@ -113,12 +117,20 @@ func (r *Repo) AddPullWorktree(ctx context.Context, opts PullWorktreeOptions) (P
 		if taken[name] {
 			continue
 		}
-		exists, err := r.branchExists(ctx, name)
+		at, err := r.branchCommit(ctx, name)
 		if err != nil {
 			return PullWorktree{}, err
 		}
-		if exists {
-			if err := r.inClone(ctx, "worktree", "add", "--", opts.Dir, name); err != nil {
+		if at != "" {
+			if at != head {
+				continue
+			}
+			err := r.inClone(ctx, "worktree", "add", "--", opts.Dir, name)
+			if checkedOutElsewhere(err) {
+				_ = os.Remove(opts.Dir)
+				continue
+			}
+			if err != nil {
 				return PullWorktree{}, err
 			}
 			return PullWorktree{Dir: opts.Dir, Branch: name}, nil
@@ -137,7 +149,18 @@ func (r *Repo) AddPullWorktree(ctx context.Context, opts PullWorktreeOptions) (P
 		}
 		return added, nil
 	}
-	return PullWorktree{}, errors.New("every branch name for the pull request is checked out in another worktree")
+	return PullWorktree{}, errors.New("every branch name for the pull request is checked out in another worktree or is at another commit")
+}
+
+// checkedOutElsewhere reports git refusing a branch that a worktree has
+// checked out. Git's messages are in English, since every command runs with
+// LC_ALL=C.
+func checkedOutElsewhere(err error) bool {
+	var gitErr *Error
+	if !errors.As(err, &gitErr) {
+		return false
+	}
+	return strings.Contains(gitErr.Stderr, "is already checked out at") || strings.Contains(gitErr.Stderr, "is already used by worktree at")
 }
 
 // inClone runs a command in the clone with the user's configuration and no
@@ -162,13 +185,17 @@ func (r *Repo) verifyCommit(ctx context.Context, ref string) (string, error) {
 	return oid, nil
 }
 
-// branchExists reports whether the clone has a local branch of this name.
-func (r *Repo) branchExists(ctx context.Context, name string) (bool, error) {
-	_, err := run(ctx, runSpec{dir: r.dir, env: userEnv(), limit: maxOIDOutputBytes, timeout: r.opts.CommandTimeout},
-		"rev-parse", "--verify", "--quiet", "--end-of-options", "refs/heads/"+name)
+// branchCommit returns the commit the clone's local branch of this name
+// points at, or "" when there is none.
+func (r *Repo) branchCommit(ctx context.Context, name string) (string, error) {
+	out, err := run(ctx, runSpec{dir: r.dir, env: userEnv(), limit: maxOIDOutputBytes, timeout: r.opts.CommandTimeout},
+		"rev-parse", "--verify", "--quiet", "--end-of-options", "refs/heads/"+name+"^{commit}")
 	var exit *exec.ExitError
 	if errors.As(err, &exit) && exit.ExitCode() == 1 {
-		return false, nil
+		return "", nil
 	}
-	return err == nil, err
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(out)), nil
 }
