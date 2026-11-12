@@ -98,6 +98,15 @@ import {
   type ReviewDefaults,
 } from "./settings";
 import { asksYou, SessionsPage, transcriptHref } from "./sessions";
+import { pageContextOf } from "./page-context";
+import {
+  PANEL_KEY_LABEL,
+  publishConsoleEvent,
+  publishConsoleResync,
+  sessionPanel,
+  SessionPanelHost,
+  useSessionPanel,
+} from "./session-panel";
 import { SampleGuard } from "./sample";
 import { ToastProvider } from "./toast";
 import { MenuButton, useActionsKey, useContextMenu, type MenuItem } from "./context-menu";
@@ -580,6 +589,12 @@ function Workspace({ url }: { url: UrlState }) {
     for (const kind of ["decisions", "open", "reset", "automatic"])
       source.addEventListener(kind, refreshDecisions);
     source.addEventListener("reset", refreshLive);
+    // The session panel reads its conversations on their events, and all of
+    // them again once the stream (re)connects, as it may have missed some.
+    source.addEventListener("console", (event) =>
+      publishConsoleEvent(String((event as MessageEvent).data)),
+    );
+    for (const kind of ["open", "reset"]) source.addEventListener(kind, publishConsoleResync);
     source.addEventListener("index", refresh);
     source.addEventListener("progress", refresh);
     // A running job's usage changes that job alone, unless it shows a change
@@ -1194,6 +1209,26 @@ function Workspace({ url }: { url: UrlState }) {
               page === "settings"
             ? page
             : "anywhere";
+  // What the person has open, as the session panel reports it to the daemon
+  // and names it in its bar, with its subject's name where the app has it.
+  const pageContext = useMemo(
+    () =>
+      pageContextOf(
+        url.search,
+        (id) => clones.find((clone) => clone.id === id)?.repository,
+        location.hash,
+      ),
+    [url.search, clones],
+  );
+  const pageTitle =
+    pageContext.page === "pull_request"
+      ? selectedEntry?.pull_request.title
+      : pageContext.page === "group"
+        ? groups.find((group) => group.id === pageContext.group)?.name
+        : pageContext.page === "session"
+          ? live.find((s) => `${s.agent}:${s.session_id}` === pageContext.session)?.title
+          : undefined;
+  const panel = useSessionPanel();
   const [openAgent = "", openID = ""] = openSession
     ? [
         openSession.slice(0, openSession.indexOf(":")),
@@ -1228,6 +1263,15 @@ function Workspace({ url }: { url: UrlState }) {
         href: item.href(),
       })),
       { id: "tour", kind: "Page" as const, label: "Take the tour", href: TOUR_HREF() },
+      {
+        id: "session-panel",
+        kind: "Action" as const,
+        label: panel.open ? "Hide the session panel" : "Open the session panel",
+        detail: PANEL_KEY_LABEL,
+        keywords: "agent claude codex terminal console chat",
+        href: "",
+        run: () => sessionPanel.toggle(),
+      },
       ...(inboxes.available
         ? [
             ...inboxes.inboxes.map((one) => ({
@@ -1575,6 +1619,7 @@ function Workspace({ url }: { url: UrlState }) {
               tick={liveTick}
               prHref={sessionPR}
               Link={LocalLink}
+              openInPanel={(conversation) => sessionPanel.show(conversation)}
             />
           ) : page === "analytics" ? (
             <AnalyticsPage Link={LocalLink} />
@@ -1649,6 +1694,7 @@ function Workspace({ url }: { url: UrlState }) {
                     Link={LocalLink}
                     prHref={sessionPR}
                     navigate={navigate}
+                    openInPanel={(conversation) => sessionPanel.show(conversation)}
                   />
                 </PageRead>
               </div>
@@ -2212,6 +2258,7 @@ function Workspace({ url }: { url: UrlState }) {
           ) : null}
         </main>
         <KeyBar place={shortcutsPlace} className="local-key-bar" />
+        <SessionPanelHost page={pageContext} title={pageTitle} liveTick={liveTick} go={navigate} />
       </div>
     </div>
   );

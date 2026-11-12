@@ -837,6 +837,10 @@ function shortcutGroups(
       title: "Anywhere",
       rows: [
         { keys: [`${COMMAND}K`], label: "Go to a page, pull request or session" },
+        {
+          keys: ["`"],
+          label: "Show or hide the session panel; Esc in it hides it",
+        },
         { keys: [`${COMMAND}.`], label: "Actions for the focused row, as a right click" },
         { keys: [REFRESH_KEY_LABEL], label: "Refresh the page" },
         {

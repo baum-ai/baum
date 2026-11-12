@@ -183,7 +183,7 @@ function HighlightedTextarea({
   );
 }
 
-function Diff({ before, after }: { before: string; after: string }) {
+export function Diff({ before, after }: { before: string; after: string }) {
   const lines = useMemo(() => lineDiff(before, after), [before, after]);
   if (!lines) return <p className="settings-footnote">The texts are too large to compare.</p>;
   if (lines.every((line) => line.kind === "same"))

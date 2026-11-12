@@ -96,3 +96,23 @@ it("moves through the matches with the arrows and opens one with Enter", async (
   expect(close).toHaveBeenCalled();
   expect(go).toHaveBeenCalledWith("/pr/7");
 });
+
+it("does what an action does instead of going anywhere", async () => {
+  const go = vi.fn();
+  const run = vi.fn();
+  const action: GoToItem = {
+    id: "session-panel",
+    kind: "Action",
+    label: "Open the session panel",
+    href: "",
+    run,
+  };
+  await act(async () => root.render(<GoTo items={[action, ...items]} go={go} close={() => {}} />));
+  const input = node.querySelector<HTMLInputElement>('[role="combobox"]')!;
+  expect(node.querySelector('[aria-selected="true"]')!.textContent).toContain("Action");
+  await act(async () => {
+    input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+  });
+  expect(run).toHaveBeenCalled();
+  expect(go).not.toHaveBeenCalled();
+});

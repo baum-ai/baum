@@ -1468,3 +1468,70 @@ it("links a session's pull request once its link resolves, rendering only that c
   // Only the card whose link changed rendered again.
   expect(markdownRenders.count).toBe(renders + 1);
 });
+
+it("marks the session panel's sessions and opens them in the panel instead of acting here", async () => {
+  const openInPanel = vi.fn();
+  await act(async () =>
+    root.render(
+      <ToastProvider>
+        <SessionsPage
+          sessions={[
+            // A panel session in its own empty folder: no repository, branch
+            // or title yet.
+            session({
+              session_id: "p1",
+              origin: "panel",
+              conversation: "conv1",
+              repository: "",
+              branch: undefined,
+              title: undefined,
+              link_status: "panel",
+            }),
+            session({
+              session_id: "p2",
+              state: "idle",
+              waiting_reason: "turn_finished",
+              waiting_since: ago(30),
+              origin: "panel",
+              conversation: "conv2",
+              title: "Check the migration",
+            }),
+          ]}
+          requests={requests()}
+          prHref={() => null}
+          Link={Link}
+          openInPanel={openInPanel}
+        />
+      </ToastProvider>,
+    ),
+  );
+  const running = node.querySelector('[data-row-id="claude-code:p1"]')!;
+  expect(running.querySelector(".local-session-origin")!.textContent).toBe("Panel");
+  expect(running.textContent).toContain("Own folder");
+  // Its name says what it is rather than nothing.
+  expect(running.querySelector('[aria-label^="Open transcript"]')!.getAttribute("aria-label")).toBe(
+    "Open transcript: Claude Code on Session panel",
+  );
+  // No message box for when it finishes: the panel writes to it.
+  expect(running.querySelector(".local-feed-compose")).toBeNull();
+  expect(running.textContent).toContain("Runs in the session panel");
+  await act(async () =>
+    [...running.querySelectorAll("button")].find((b) => b.textContent === "Open in panel")!.click(),
+  );
+  expect(openInPanel).toHaveBeenLastCalledWith("conv1");
+  const waiting = node.querySelector('[data-row-id="claude-code:p2"]')!;
+  expect(waiting.querySelector(".local-session-origin")).not.toBeNull();
+  await act(async () => {
+    waiting
+      .querySelector(".local-feed-open")!
+      .dispatchEvent(
+        new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 9, clientY: 9 }),
+      );
+  });
+  const items = [...node.querySelectorAll<HTMLButtonElement>('[role="menu"] [role="menuitem"]')];
+  const labels = items.map((b) => b.textContent ?? "");
+  expect(labels[0]).toBe("Open in panel");
+  expect(labels.some((t) => /^(Reply|Focus session|Show window|End session)/.test(t))).toBe(false);
+  await act(async () => items[0]!.click());
+  expect(openInPanel).toHaveBeenLastCalledWith("conv2");
+});

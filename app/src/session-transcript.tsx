@@ -15,7 +15,7 @@ import { SessionCard } from "@baum/viewer/components/session-card";
 import { SessionTranscript } from "@baum/viewer/components/transcript";
 import { Markdown } from "@baum/viewer/components/markdown";
 import { ChevronLeftIcon } from "@baum/viewer/components/icons";
-import { CloseButton } from "@baum/viewer/components/ui";
+import { Button, CloseButton } from "@baum/viewer/components/ui";
 import { parseTranscript, type LocalTranscript } from "@baum/viewer/local-transcript";
 import type { TranscriptSession, TranscriptSource } from "@baum/viewer/transcript";
 import type { ViewerLinkProps } from "@baum/viewer/navigation";
@@ -430,6 +430,7 @@ export function SessionTranscriptPage({
   tick,
   prHref,
   Link,
+  openInPanel,
 }: {
   agent: string;
   id: string;
@@ -439,8 +440,13 @@ export function SessionTranscriptPage({
   tick: number;
   prHref: (session: LiveSession) => string | null;
   Link: ComponentType<ViewerLinkProps>;
+  /** Opens a session panel conversation in the panel, by its id. */
+  openInPanel?: (conversation: string) => void;
 }) {
   const now = useNow();
+  // The session panel runs its own sessions: they open there, instead of
+  // being brought forward or written to here.
+  const conversation = session?.origin === "panel" ? session.conversation : undefined;
   const back = (
     <Link
       href={appURL("?page=sessions")}
@@ -475,7 +481,17 @@ export function SessionTranscriptPage({
           title={session?.title || `${agentName(agent)} session`}
           detail={session ? undefined : "Agent session on this computer"}
           back={back}
-          actions={session ? <FocusSession session={session} hotkey /> : null}
+          actions={
+            conversation ? (
+              openInPanel ? (
+                <Button size="compact" onClick={() => openInPanel(conversation)}>
+                  Open in panel
+                </Button>
+              ) : null
+            ) : session ? (
+              <FocusSession session={session} hotkey />
+            ) : null
+          }
         />
         {session || shown ? (
           <div className="local-session-top-body">
@@ -627,7 +643,7 @@ function shownSession(
 /** The transcript as this page reads it: the agent's compaction summary
  *  when there is one, then the conversation as a log, without the card a
  *  review draws around a linked session. */
-function TranscriptReader({
+export function TranscriptReader({
   transcript,
   version,
   summary,

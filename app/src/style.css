@@ -2678,6 +2678,17 @@ dialog.local-dialog-wide {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* A session panel's session, tagged as the panel's. */
+.local-session-origin {
+  flex: none;
+  padding: 0.05rem 0.4rem;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+  font-weight: 500;
+  white-space: nowrap;
+}
 .local-session-pr {
   color: var(--text-secondary);
   font-weight: 500;

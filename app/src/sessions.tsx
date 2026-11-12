@@ -222,7 +222,13 @@ export function SessionWhere({
           : null;
   return (
     <div className="local-session-where">
-      <span className="local-session-repo">{s.repository}</span>
+      {s.origin === "panel" ? <PanelMark /> : null}
+      {s.repository ? (
+        <span className="local-session-repo">{s.repository}</span>
+      ) : s.link_status === "panel" ? (
+        // A panel session in its own empty folder is in no repository.
+        <span className="local-session-repo">Own folder</span>
+      ) : null}
       {s.branch ? (
         <code className="local-session-branch" title={s.branch}>
           {s.branch}
@@ -490,8 +496,28 @@ function span(seconds: number): string {
 const filesTouched = (n: number) => `${n} ${n === 1 ? "file" : "files"} touched`;
 
 /** What names the session on screen: its title, else its branch or repository. */
-const sessionName = (s: Pick<LiveSession, "title" | "branch" | "repository">) =>
-  s.title ?? s.branch ?? s.repository;
+const sessionName = (
+  s: Pick<LiveSession, "title" | "branch" | "repository" | "agent" | "origin">,
+) => s.title || s.branch || s.repository || unplacedName(s);
+
+/** What names a session with no title, branch or repository: a session
+ *  panel's in its own empty folder, or one whose agent named nothing yet. */
+const unplacedName = (s: Pick<LiveSession, "agent" | "origin">) =>
+  s.origin === "panel" ? "Session panel" : `${agentName(s.agent)} session`;
+
+/** Whether the session panel runs the session: it has no end, message or
+ *  focus actions here, and opens in the panel instead. */
+export const inPanel = (s: Pick<LiveSession, "origin" | "conversation">) =>
+  s.origin === "panel" && !!s.conversation;
+
+/** The boxed tag of a session panel's session. */
+export function PanelMark() {
+  return (
+    <span className="local-session-origin" title="Runs in baum's session panel">
+      Panel
+    </span>
+  );
+}
 
 /** The label a repeated button carries for assistive technology. */
 const labelFor = (what: string, s: LiveSession) =>
@@ -1293,6 +1319,7 @@ const WaitingCard = memo(function WaitingCard({
       <div className="local-feed-head">
         <AgentMark agent={s.agent} />
         <h3 className="local-feed-name">{open(s, sessionName({ ...s, branch: undefined }))}</h3>
+        {s.origin === "panel" ? <PanelMark /> : null}
         {s.branch ? (
           <code className="local-feed-mono local-feed-branch" title={s.branch}>
             {s.branch}
@@ -1474,6 +1501,7 @@ const RunningCard = memo(function RunningCard({
   focused,
   replying,
   closeReply,
+  openInPanel,
 }: {
   session: LiveSession;
   queued?: AgentMessage;
@@ -1484,6 +1512,8 @@ const RunningCard = memo(function RunningCard({
   focused: boolean;
   replying: boolean;
   closeReply: () => void;
+  /** Opens a session panel's session in the panel. */
+  openInPanel?: (s: LiveSession) => void;
 }) {
   const running = s.state === "running";
   const steps = s.activity?.steps ?? [];
@@ -1529,7 +1559,16 @@ const RunningCard = memo(function RunningCard({
           Active <Relative iso={s.last_activity_at} interval={1000} />
         </p>
       )}
-      {running ? (
+      {inPanel(s) ? (
+        <p className="local-feed-note">
+          Runs in the session panel, which writes to it and stops it.{" "}
+          {openInPanel ? (
+            <JumpLink tone="primary" onClick={() => openInPanel(s)}>
+              Open in panel
+            </JumpLink>
+          ) : null}
+        </p>
+      ) : running ? (
         <SendWhenFinished
           session={s}
           queued={queued}
@@ -1584,6 +1623,7 @@ const EndedRow = memo(function EndedRow({
           {s.title}
         </span>
       ) : null}
+      {s.origin === "panel" ? <PanelMark /> : null}
       <span className="local-feed-sub">
         {span(seconds)}
         {files ? ` · ${filesTouched(files)}` : ""}
@@ -1679,7 +1719,8 @@ export function SessionReplyBar({
 }) {
   const notify = useSessionNotice();
   const bar = useRef<HTMLDivElement>(null);
-  const open = (s.state === "idle" && s.messageable) || s.state === "running";
+  // The panel writes to its own sessions.
+  const open = !inPanel(s) && ((s.state === "idle" && s.messageable) || s.state === "running");
   useEffect(() => {
     if (!open) return;
     const onKey = (event: KeyboardEvent) => {
@@ -1719,6 +1760,7 @@ export function SessionsPage({
   Link,
   navigate = (href) => window.location.assign(href),
   peekKey = null,
+  openInPanel,
 }: {
   /** A session's key (`peek=`) whose card opens as the page shows it. */
   peekKey?: string | null;
@@ -1728,8 +1770,16 @@ export function SessionsPage({
   Link: ComponentType<ViewerLinkProps>;
   /** Goes to a page of the app, as its links do. */
   navigate?: (href: string) => void;
+  /** Opens a session panel conversation in the panel, by its id. */
+  openInPanel?: (conversation: string) => void;
 }) {
   const notify = useSessionNotice();
+  const showInPanel = useCallback(
+    (s: LiveSession) => {
+      if (s.conversation) openInPanel?.(s.conversation);
+    },
+    [openInPanel],
+  );
   const menu = useContextMenu();
   const { waiting, asking, idle, active, ended } = useMemo(() => {
     const live = sessions.filter((s) => s.state !== "ended");
@@ -1808,7 +1858,8 @@ export function SessionsPage({
   // A waiting session takes a reply now; a working one, when it finishes,
   // unless a message for then is queued already.
   const working = (s: LiveSession) => s.state === "running" && active.includes(s);
-  const takesReply = (s: LiveSession) => s.messageable || (working(s) && !queuedFor(s));
+  const takesReply = (s: LiveSession) =>
+    !inPanel(s) && (s.messageable || (working(s) && !queuedFor(s)));
   const reply = (s: LiveSession) => {
     if (!takesReply(s)) return false;
     setReplying(sessionKey(s));
@@ -2002,10 +2053,15 @@ export function SessionsPage({
   // A right click on a session's card offers what can be done with it.
   const actionsFor = (s: LiveSession): MenuItem[] => {
     const items: MenuItem[] = [];
-    if (s.messageable) items.push({ label: "Reply", hint: "r", onSelect: () => reply(s) });
+    // The panel runs its own sessions: it writes to them, stops them and
+    // shows them, in place of the reply, focus and end a session has here.
+    if (inPanel(s) && openInPanel)
+      items.push({ label: "Open in panel", onSelect: () => showInPanel(s) });
+    if (s.messageable && !inPanel(s))
+      items.push({ label: "Reply", hint: "r", onSelect: () => reply(s) });
     else if (takesReply(s))
       items.push({ label: "Reply when it finishes", hint: "r", onSelect: () => reply(s) });
-    if (focusable(s))
+    if (focusable(s) && !inPanel(s))
       items.push({
         label: s.focus === "session" ? "Focus session" : "Show window",
         hint: "f",
@@ -2019,7 +2075,7 @@ export function SessionsPage({
         label: s.pr ? `Open pull request #${s.pr}` : "Open pull request",
         onSelect: () => navigate(pr),
       });
-    if (s.endable)
+    if (s.endable && !inPanel(s))
       items.push({
         label: "End session",
         danger: true,
@@ -2167,6 +2223,7 @@ export function SessionsPage({
                   focused={rows.focused === sessionKey(s)}
                   replying={replying === sessionKey(s)}
                   closeReply={closeReply}
+                  openInPanel={openInPanel ? showInPanel : undefined}
                 />,
                 peekRow(s),
               ])}
