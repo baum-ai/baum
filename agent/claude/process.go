@@ -83,6 +83,36 @@ func (c *Backend) fixArgs(request agent.Request) []string {
 		"--setting-sources", ""), mcpArgs(request)...)
 }
 
+// converseArgs are the flags of a turn of a person's own session
+// (Backend.Converse). Unlike every other run it loads what the person has set
+// up: no --setting-sources "", no --restricted or --tools, no system prompt
+// and no --strict-mcp-config, so their settings, hooks, CLAUDE.md files and
+// MCP servers apply, and baum's server is added next to theirs. The session
+// is always kept; a follow-up turn resumes it. access chooses the permission
+// mode, since nobody can answer a prompt in a --print run: bypassPermissions
+// for full access, acceptEdits to allow file edits only. --allowedTools
+// mcp__baum lets baum's tools run in acceptEdits as well; it adds a rule and
+// removes no tool.
+func (c *Backend) converseArgs(request agent.Request, access agent.Access) []string {
+	args := []string{"--print", "--output-format", "stream-json", "--verbose", "--include-partial-messages"}
+	if c.Model != "" {
+		args = append(args, "--model", c.Model)
+	}
+	args = append(args, c.effortArgs()...)
+	mode := "bypassPermissions"
+	if access == agent.AccessWorkspace {
+		mode = "acceptEdits"
+	}
+	args = append(args, "--permission-mode", mode)
+	if request.ResumeSession != "" {
+		args = append(args, "--resume", request.ResumeSession)
+	}
+	if request.MCP != nil {
+		args = append(args, "--mcp-config", mcpConfig(request.MCP), "--allowedTools", "mcp__baum")
+	}
+	return args
+}
+
 // noMCPConfig is the --mcp-config of a run without an MCP server.
 const noMCPConfig = `{"mcpServers":{}}`
 
@@ -104,10 +134,16 @@ func mcpArgs(request agent.Request) []string {
 	if request.MCP == nil {
 		return []string{"--strict-mcp-config", "--mcp-config", noMCPConfig}
 	}
+	return []string{"--strict-mcp-config", "--mcp-config", mcpConfig(request.MCP), "--allowedTools", "mcp__baum"}
+}
+
+// mcpConfig is the --mcp-config naming baum's own server as a stdio server.
+// It holds no token: that reaches the server through the environment.
+func mcpConfig(server *agent.MCPServer) string {
 	config, _ := json.Marshal(map[string]any{"mcpServers": map[string]any{"baum": map[string]any{
-		"type": "stdio", "command": request.MCP.Command, "args": append([]string{}, request.MCP.Args...),
+		"type": "stdio", "command": server.Command, "args": append([]string{}, server.Args...),
 	}}})
-	return []string{"--strict-mcp-config", "--mcp-config", string(config), "--allowedTools", "mcp__baum"}
+	return string(config)
 }
 
 // maxTurns adds --max-turns when the request bounds its calls; without it

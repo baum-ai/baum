@@ -7,11 +7,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
 	"os/exec"
-	"path/filepath"
 	"regexp"
-	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -90,8 +87,21 @@ func (*Backend) Name() string { return agent.BackendCodex }
 // them one at a time.
 func (c *Backend) ConcurrentCalls() bool { return c.Profile == Local }
 
+// runKind is what a run is for, which decides its arguments and what its
+// result must hold.
+type runKind int
+
+const (
+	// runReview submits a structured document.
+	runReview runKind = iota
+	// runFix edits a checkout and ends with a summary.
+	runFix
+	// runConverse is a turn of a person's own session (Converse).
+	runConverse
+)
+
 func (c *Backend) Run(ctx context.Context, request agent.Request) (agent.Result, error) {
-	return c.run(ctx, request, false, nil)
+	return c.run(ctx, request, runReview, "", nil)
 }
 
 // Fix runs Codex with write access to the request's directory, for a fix a
@@ -104,7 +114,29 @@ func (c *Backend) Fix(ctx context.Context, request agent.Request) (agent.Result,
 	if c.Profile != Local {
 		return agent.Result{}, errors.New("codex: only the Local profile runs fixes")
 	}
-	return c.run(ctx, request, true, nil)
+	return c.run(ctx, request, runFix, "", nil)
+}
+
+// Converse runs one turn of the person's own Codex session
+// (agent.Converser): Codex loads their config.toml, rules, hooks and MCP
+// servers, and request.MCP joins those (converseCommand). Full access runs
+// without approvals or sandbox; workspace access in the workspace-write
+// sandbox, with approvals never asked for since nobody could answer. The
+// session is kept, and request.ResumeSession continues it with exec resume.
+// Only the Local profile converses.
+func (c *Backend) Converse(ctx context.Context, request agent.Request, access agent.Access) (agent.Result, error) {
+	if c.Profile != Local {
+		return agent.Result{}, errors.New("codex: only the Local profile runs a person's own session")
+	}
+	if err := access.Validate(); err != nil {
+		return agent.Result{}, fmt.Errorf("codex: %w", err)
+	}
+	if request.ForkSession {
+		return agent.Result{}, errors.New("codex: a conversation continues its session and never forks it")
+	}
+	request.PersistSession = true
+	request.MaxCalls, request.MaxTokens = 0, 0
+	return c.run(ctx, request, runConverse, access, nil)
 }
 
 // reportUsage sends the run's usage so far (agent.Request.Usage). Codex
@@ -120,7 +152,8 @@ func reportUsage(request agent.Request, result agent.Result) {
 	request.Usage([]agent.UsageAttempt{{ModelSource: result.ModelSource, Model: result.Model, Usage: usage, Calls: result.Calls, ChargedTokens: result.Tokens}})
 }
 
-func (c *Backend) run(ctx context.Context, request agent.Request, fix bool, extra []string) (result agent.Result, err error) {
+func (c *Backend) run(ctx context.Context, request agent.Request, kind runKind, access agent.Access, extra []string) (result agent.Result, err error) {
+	fix := kind == runFix
 	result.Model = c.Model
 	result.ModelSource = "configured"
 	pendingTurns := 0
@@ -158,117 +191,26 @@ func (c *Backend) run(ctx context.Context, request agent.Request, fix bool, extr
 		return result, errors.New("codex: the container profile needs a provider endpoint")
 	}
 	binary := c.Binary
-	if c.Profile == Local {
+	switch {
+	case kind == runConverse:
+		if binary, err = c.converseBinary(ctx, access); err != nil {
+			return result, err
+		}
+	case c.Profile == Local:
 		if binary, err = c.localBinary(ctx); err != nil {
 			return result, err
 		}
 	}
-	var codexHome string
-	var env []string
-	var schemaDirectory string
-	sandbox := "read-only"
-	if c.Profile == Container {
-		sandbox = "danger-full-access"
-		// Codex refuses to start when CODEX_HOME does not exist.
-		codexHome = filepath.Join(request.Directory, "home", ".codex")
-		if err := os.MkdirAll(codexHome, 0700); err != nil {
-			return result, err
-		}
-		schemaDirectory = codexHome
-		env = []string{"PATH=/usr/local/bin:/usr/bin:/bin", "HOME=" + filepath.Join(request.Directory, "home"),
-			"CODEX_HOME=" + codexHome, "CODEX_API_KEY=" + endpoint.Key}
+	var args, env []string
+	if kind == runConverse {
+		args, env, err = c.converseCommand(request, access)
 	} else {
-		env = agent.WithUserEnv(agent.LocalEnvironment(os.Environ(), "CODEX_HOME"), c.Env)
-		if endpoint != nil {
-			env = append(env, "CODEX_API_KEY="+endpoint.Key)
-		}
+		var cleanup func()
+		args, env, cleanup, err = c.command(request, endpoint, fix, extra)
+		defer cleanup()
 	}
-	var fixConfig []string
-	if fix {
-		sandbox = "workspace-write"
-		fixConfig = []string{"-c", "sandbox_workspace_write.network_access=false",
-			"-c", "sandbox_workspace_write.exclude_slash_tmp=true", "-c", "sandbox_workspace_write.exclude_tmpdir_env_var=true"}
-		if request.Scratch != "" {
-			encoded, err := json.Marshal([]string{request.Scratch})
-			if err != nil {
-				return result, err
-			}
-			fixConfig = append(fixConfig, "-c", "sandbox_workspace_write.writable_roots="+string(encoded))
-			env = slices.DeleteFunc(env, func(entry string) bool { return strings.HasPrefix(entry, "TMPDIR=") })
-			env = append(env, "TMPDIR="+request.Scratch)
-		}
-	}
-	// Without session options the argv is exactly the ephemeral one. A kept
-	// session omits --ephemeral. `exec resume` and `exec fork` do not accept
-	// --sandbox, so the sandbox goes in as config there. Both subcommands
-	// postdate the version floor's release notes as far as known; a Codex too
-	// old for them fails with its own usage error.
-	args := []string{"exec"}
-	switch {
-	case request.ResumeSession != "" && request.ForkSession:
-		args = append(args, "fork")
-	case request.ResumeSession != "":
-		args = append(args, "resume")
-	}
-	args = append(args, "--json")
-	if !request.KeepsSession() {
-		args = append(args, "--ephemeral")
-	}
-	// --ignore-user-config also drops any service_tier the user configured,
-	// and no argument below sets one, so every request runs at the standard
-	// tier that standardSpeed records.
-	args = append(args, "--ignore-user-config", "--ignore-rules",
-		"--disable", "hooks", "--disable", "apps", "--disable", "multi_agent")
-	if request.ResumeSession != "" {
-		args = append(args, "-c", "sandbox_mode="+strconv.Quote(sandbox))
-	} else {
-		args = append(args, "--sandbox", sandbox)
-	}
-	args = append(args, "-c", `approval_policy="never"`, "-c", `web_search="disabled"`,
-		"--skip-git-repo-check")
-	args = append(args, fixConfig...)
-	if request.MCP != nil {
-		mcp, err := mcpConfig(request.MCP)
-		if err != nil {
-			return result, err
-		}
-		args = append(args, mcp...)
-		// Set last, so neither agent_env nor anything above replaces the token.
-		env = agent.WithMCPToken(env, request.MCP)
-	}
-	args = append(args, extra...)
-	if c.Effort != "" {
-		args = append(args, "-c", "model_reasoning_effort="+strconv.Quote(c.Effort))
-	}
-	// An empty Model leaves the flag out so Codex uses its configured default.
-	if c.Model != "" {
-		args = append(args, "--model", c.Model)
-	}
-	if endpoint != nil && endpoint.BaseURL != "" {
-		encoded, err := json.Marshal(endpoint.BaseURL)
-		if err != nil {
-			return result, err
-		}
-		args = append(args, "-c", "openai_base_url="+string(encoded))
-	}
-	if len(request.Schema) > 0 && !fix {
-		schema, err := StrictSchema(request.Schema)
-		if err != nil {
-			return result, fmt.Errorf("deriving Codex output schema: %w", err)
-		}
-		if schemaDirectory == "" {
-			// A private directory of its own: the user's CODEX_HOME holds their
-			// login and configuration and is never written to.
-			if schemaDirectory, err = os.MkdirTemp("", "baum-codex-schema-"); err != nil {
-				return result, err
-			}
-			defer os.RemoveAll(schemaDirectory)
-		}
-		schemaPath := filepath.Join(schemaDirectory, "output-schema.json")
-		if err := os.WriteFile(schemaPath, schema, 0600); err != nil {
-			return result, err
-		}
-		args = append(args, "--output-schema", schemaPath)
+	if err != nil {
+		return result, err
 	}
 	// Internal stops cancel runCtx rather than calling Cancel directly, so
 	// WaitDelay bounds them as it does an outer cancellation.
@@ -294,6 +236,14 @@ func (c *Backend) run(ctx context.Context, request agent.Request, fix bool, extr
 	cmd.Stderr = &stderr
 	if err := cmd.Start(); err != nil {
 		return result, err
+	}
+	// A person's own session may run at the service tier their config.toml
+	// chooses, which Codex's events never name, so its speed is unknown.
+	speed := func() *string {
+		if kind == runConverse {
+			return nil
+		}
+		return new(standardSpeed)
 	}
 	var document []byte
 	completed := false
@@ -356,6 +306,9 @@ func (c *Backend) run(ctx context.Context, request agent.Request, fix bool, extr
 		switch event.Type {
 		case "thread.started":
 			if event.ThreadID != "" {
+				if event.ThreadID != result.SessionID && request.SessionStarted != nil {
+					request.SessionStarted(event.ThreadID)
+				}
 				result.SessionID = event.ThreadID
 			}
 		case "error":
@@ -416,7 +369,7 @@ func (c *Backend) run(ctx context.Context, request agent.Request, fix bool, extr
 				Output:      int64(event.Usage.Output),
 				CacheRead:   int64(event.Usage.CachedInput),
 				CacheCreate: int64(event.Usage.CacheWrite),
-				Speed:       new(standardSpeed),
+				Speed:       speed(),
 			})
 			result.Events = append(result.Events, agent.Event{Kind: "model_usage", Input: event.Usage.Input, Output: event.Usage.Output,
 				CacheRead: event.Usage.CachedInput, CacheCreate: event.Usage.CacheWrite})
@@ -428,7 +381,7 @@ func (c *Backend) run(ctx context.Context, request agent.Request, fix bool, extr
 				}
 				reportedTurns++
 				result.Tokens += max(event.Usage.Input-event.Usage.CachedInput, 0) + event.Usage.Output
-				result.Usage.Add(agent.Usage{Input: int64(max(event.Usage.Input-event.Usage.CachedInput-event.Usage.CacheWrite, 0)), Output: int64(event.Usage.Output), CacheRead: int64(event.Usage.CachedInput), CacheCreate: int64(event.Usage.CacheWrite), Speed: new(standardSpeed)})
+				result.Usage.Add(agent.Usage{Input: int64(max(event.Usage.Input-event.Usage.CachedInput-event.Usage.CacheWrite, 0)), Output: int64(event.Usage.Output), CacheRead: int64(event.Usage.CachedInput), CacheCreate: int64(event.Usage.CacheWrite), Speed: speed()})
 				reportUsage(request, result)
 			} else {
 				result.Usage.Unreported = true
@@ -501,6 +454,13 @@ func (c *Backend) run(ctx context.Context, request agent.Request, fix bool, extr
 			}
 		}
 		return result, fmt.Errorf("codex failed: %w", waitErr)
+	}
+	if kind == runConverse {
+		if !completed {
+			return result, errors.New("codex ended without finishing its answer")
+		}
+		result.Document = []byte(bounded(strings.TrimSpace(string(document)), agent.MaxConverseBytes))
+		return result, nil
 	}
 	if fix {
 		if !completed {

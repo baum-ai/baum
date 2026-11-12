@@ -79,8 +79,20 @@ func (*Backend) Name() string { return agent.BackendClaude }
 // under the run directory between its calls, so it runs them one at a time.
 func (c *Backend) ConcurrentCalls() bool { return c.Profile == User }
 
+// runKind is what a run is for, which decides what its result must hold.
+type runKind int
+
+const (
+	// runReview submits a structured document.
+	runReview runKind = iota
+	// runFix edits a checkout and ends with a summary.
+	runFix
+	// runConverse is a turn of a person's own session (Converse).
+	runConverse
+)
+
 func (c *Backend) Run(ctx context.Context, request agent.Request) (agent.Result, error) {
-	return c.run(ctx, request, c.args(request), nil, false)
+	return c.run(ctx, request, c.args(request), nil, runReview)
 }
 
 // Fix runs Claude Code with write access to the request's directory, for a
@@ -93,17 +105,37 @@ func (c *Backend) Fix(ctx context.Context, request agent.Request) (agent.Result,
 	if c.Profile != User {
 		return agent.Result{}, errors.New("claude: only the User profile runs fixes")
 	}
-	return c.run(ctx, request, c.fixArgs(request), nil, true)
+	return c.run(ctx, request, c.fixArgs(request), nil, runFix)
 }
 
-func (c *Backend) run(ctx context.Context, request agent.Request, args, env []string, fix bool) (result agent.Result, err error) {
+// Converse runs one turn of the person's own Claude Code session
+// (agent.Converser): Claude Code loads their settings, hooks, CLAUDE.md files
+// and MCP servers, and request.MCP joins those. access is the permission mode
+// (converseArgs). The session is kept, and request.ResumeSession continues
+// it. Only the User profile converses.
+func (c *Backend) Converse(ctx context.Context, request agent.Request, access agent.Access) (agent.Result, error) {
+	if c.Profile != User {
+		return agent.Result{}, errors.New("claude: only the User profile runs a person's own session")
+	}
+	if err := access.Validate(); err != nil {
+		return agent.Result{}, fmt.Errorf("claude: %w", err)
+	}
+	if request.ForkSession {
+		return agent.Result{}, errors.New("claude: a conversation continues its session and never forks it")
+	}
+	request.PersistSession = true
+	request.MaxCalls, request.MaxTokens = 0, 0
+	return c.run(ctx, request, c.converseArgs(request, access), nil, runConverse)
+}
+
+func (c *Backend) run(ctx context.Context, request agent.Request, args, env []string, kind runKind) (result agent.Result, err error) {
 	if c.Profile != User && c.Profile != Isolated {
 		return result, fmt.Errorf("claude: unknown profile %d", int(c.Profile))
 	}
 	if err := request.ValidateSession(); err != nil {
 		return result, fmt.Errorf("claude: %w", err)
 	}
-	if request.WantsSession() && (c.Profile != User || fix) {
+	if request.WantsSession() && (c.Profile != User || kind == runFix) {
 		return result, errors.New("claude: only a User profile review or task can keep, resume or fork a session")
 	}
 	if request.MCP != nil {
@@ -409,6 +441,9 @@ func (c *Backend) run(ctx context.Context, request agent.Request, args, env []st
 				}
 				Delta struct {
 					StopReason string `json:"stop_reason"`
+					// Type and Text are a content_block_delta's: a
+					// text_delta carries a piece of the answer.
+					Type, Text string
 				}
 				Usage usage
 			} `json:"event"`
@@ -424,6 +459,9 @@ func (c *Backend) run(ctx context.Context, request agent.Request, args, env []st
 		// The init event's session_id wins; any other event's (the result's)
 		// fills in only while none is known.
 		if event.SessionID != "" && (event.Type == "system" && event.Subtype == "init" || result.SessionID == "") {
+			if event.SessionID != result.SessionID && request.SessionStarted != nil {
+				request.SessionStarted(event.SessionID)
+			}
 			result.SessionID = event.SessionID
 		}
 
@@ -449,6 +487,10 @@ func (c *Backend) run(ctx context.Context, request agent.Request, args, env []st
 					if event.Event.Delta.StopReason != "" {
 						calls[streaming].final = true
 					}
+				}
+			case "content_block_delta":
+				if event.Event.Delta.Type == "text_delta" && event.Event.Delta.Text != "" && request.TextDelta != nil {
+					request.TextDelta(event.Event.Delta.Text)
 				}
 			case "message_stop":
 				// A call may send several message_delta events, each
@@ -554,9 +596,13 @@ func (c *Backend) run(ctx context.Context, request agent.Request, args, env []st
 				err = agent.ProviderFailure("claude code", status, refused)
 				break
 			}
-			result.Document = bytes.TrimSpace(event.Document)
-			if fix {
+			switch kind {
+			case runReview:
+				result.Document = bytes.TrimSpace(event.Document)
+			case runFix:
 				result.Document = []byte(boundedSummary(event.Result))
+			case runConverse:
+				result.Document = []byte(boundedFinal(event.Result))
 			}
 			if len(result.Document) > 8<<20 {
 				err = errors.New("agent document exceeds output size limit")
@@ -616,10 +662,13 @@ func (c *Backend) run(ctx context.Context, request agent.Request, args, env []st
 		}
 		return result, fmt.Errorf("claude code failed: %w (%s)", waitErr, stderr.String())
 	}
-	if fix && !completed {
+	if kind == runFix && !completed {
 		return result, errors.New("claude code did not finish the fix")
 	}
-	if !fix && (!completed || len(result.Document) == 0 || bytes.Equal(result.Document, []byte("null"))) {
+	if kind == runConverse && !completed {
+		return result, errors.New("claude code ended without finishing its answer")
+	}
+	if kind == runReview && (!completed || len(result.Document) == 0 || bytes.Equal(result.Document, []byte("null"))) {
 		return result, errors.New("claude code returned no structured document")
 	}
 	return result, nil
@@ -630,6 +679,16 @@ func boundedSummary(text string) string {
 	text = strings.TrimSpace(text)
 	if len(text) > agent.MaxFixSummaryBytes {
 		text = strings.ToValidUTF8(text[:agent.MaxFixSummaryBytes], "") + "…"
+	}
+	return text
+}
+
+// boundedFinal trims a conversation turn's final message to
+// agent.MaxConverseBytes.
+func boundedFinal(text string) string {
+	text = strings.TrimSpace(text)
+	if len(text) > agent.MaxConverseBytes {
+		text = strings.ToValidUTF8(text[:agent.MaxConverseBytes], "") + "…"
 	}
 	return text
 }

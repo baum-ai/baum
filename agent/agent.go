@@ -130,6 +130,16 @@ type Request struct {
 	// as a stdio child of the agent CLI. Nil leaves the run with none, as
 	// every run has been. Only a local (User or Local profile) run supports it.
 	MCP *MCPServer
+	// SessionStarted, when set, is called with the session (Claude Code) or
+	// thread (Codex) id as soon as the CLI reports it, before the run ends,
+	// and again only if the CLI reports another one. It is called on the
+	// run's goroutine.
+	SessionStarted func(id string)
+	// TextDelta, when set, receives the agent's answer as it streams, one
+	// piece at a time, from a backend that streams it (Claude Code). The
+	// pieces of one message add up to the text its "message" transcript
+	// entry then carries. It is called on the run's goroutine.
+	TextDelta func(text string)
 }
 
 // MCPTokenEnv names the environment variable that carries an MCPServer's
