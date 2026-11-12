@@ -1173,8 +1173,9 @@ picking it would leave (`countValues`: the query and each toggled query are
 parsed once and the counts of a list found in one go, again only when the pull
 requests, the query, the operator or the list change, not as the pointer moves).
 A list of more than 100 values shows the first 100 and any the query requires,
-then "N more: type in the box above to find them" (the typed text lists
-matching values of every field). Picking a value adds it to the term of that field and
+then "N more: type in the box above to narrow the list". Such a list has a
+"Find…" box of its own that narrows its values and keeps the field and
+operator, so a value past the cap can be picked or excluded too. Picking a value adds it to the term of that field and
 operator as one more choice, or takes it out (with an `AND` beside it and
 parentheses left empty), and adds a term when there is none (around a query
 with `OR`, in parentheses); the menu stays open. Typed text also lists

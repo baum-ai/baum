@@ -234,15 +234,31 @@ export function FilterButton({
     ? (sub.field.ops ?? (["=", "!="] as Op[])).filter((one) => one !== ">" && one !== "<")
     : [];
   const subField = sub?.field;
-  const everyValue = useMemo(
+  const allValues = useMemo(
     () =>
       subField
         ? valuesOf(subField, entries, known).filter((one) => !subField.check?.(one.value, op))
         : [],
     [subField, entries, known, op],
   );
+  // A long list has a box of its own, which keeps the field and operator.
+  const longList = allValues.length > SUBMENU_VALUES;
+  const [subSearch, setSubSearch] = useState("");
+  useEffect(() => setSubSearch(""), [subField]);
+  const subWords = longList ? subSearch.trim().toLowerCase() : "";
+  const everyValue = useMemo(
+    () =>
+      subWords
+        ? allValues.filter(
+            (one) =>
+              one.value.toLowerCase().includes(subWords) ||
+              one.label.toLowerCase().includes(subWords),
+          )
+        : allValues,
+    [allValues, subWords],
+  );
   // Of a long list the first SUBMENU_VALUES show, with any the query requires;
-  // the box above finds the rest.
+  // the box above them narrows the rest.
   const values = useMemo(
     () =>
       subField && everyValue.length > SUBMENU_VALUES
@@ -378,6 +394,26 @@ export function FilterButton({
           ← {sub.field.label}
         </button>
       ) : null}
+      {longList ? (
+        <input
+          type="search"
+          className="filter-menu-sub-search"
+          aria-label={`Find a ${sub.field.label} value`}
+          placeholder="Find…"
+          value={subSearch}
+          onChange={(event) => {
+            setSubSearch(event.target.value);
+            setInSub(event.target.value.trim() ? 0 : -1);
+          }}
+          onKeyDown={(event) => {
+            // Left and right move the caret here; Escape steps back to the menu's box.
+            if (event.key === "ArrowLeft" || event.key === "ArrowRight") return;
+            onKeyDown(event);
+            if (event.key === "Escape")
+              panel.current?.querySelector<HTMLInputElement>(".filter-menu-search")?.focus();
+          }}
+        />
+      ) : null}
       <div
         role="radiogroup"
         aria-label={`How ${sub.field.label} compares`}
@@ -423,7 +459,9 @@ export function FilterButton({
       })}
       {values.length === 0 ? <p className="filter-menu-empty">Nothing to pick yet.</p> : null}
       {hidden > 0 ? (
-        <p className="filter-menu-empty">{hidden} more: type in the box above to find them.</p>
+        <p className="filter-menu-empty">
+          {hidden} more: type in the box above to narrow the list.
+        </p>
       ) : null}
     </div>
   ) : null;
