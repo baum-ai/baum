@@ -172,8 +172,8 @@ func TestEvidenceMapsOnlyTheSessionsThatChanged(t *testing.T) {
 
 // A linked session whose evidence depends on something outside its
 // transcript that changed, here a path its command names appearing in the
-// checkout, is mapped again, and only it.
-func TestEvidenceRemapsALinkedSessionWhoseSurroundingsChanged(t *testing.T) {
+// checkout, is reprojected from its basis without mapping it again.
+func TestEvidenceReprojectsALinkedSessionWhoseSurroundingsChanged(t *testing.T) {
 	useEvidenceMemo(t)
 	useSessionDigests(t)
 	f := linktest.New(t)
@@ -192,11 +192,11 @@ func TestEvidenceRemapsALinkedSessionWhoseSurroundingsChanged(t *testing.T) {
 	}
 	loads, decoded := counter("sessions.load.calls"), decodes()
 	after := rebuild(t, req)
-	if got := counter("sessions.load.calls") - loads; got != 2 {
-		t.Errorf("loads = %d, want 2: one reusing every session, one mapping the linked one", got)
+	if got := counter("sessions.load.calls") - loads; got != 1 {
+		t.Errorf("loads = %d, want 1: the new context projects from the basis", got)
 	}
-	if got := decodes() - decoded; got != 1 {
-		t.Errorf("%d transcripts decoded, want 1", got)
+	if got := decodes() - decoded; got != 0 {
+		t.Errorf("%d transcripts decoded, want 0", got)
 	}
 	sameEvidence(t, "a named path appeared", after, fullBuild(t, req))
 	if reflect.DeepEqual(before, after) {
@@ -227,7 +227,7 @@ func TestEvidenceSurvivesAnUnrelatedWorktree(t *testing.T) {
 
 // A worktree added where a linked session touched a file places that file
 // in the clone: the session's evidence is built again.
-func TestEvidenceRemapsWhenAWorktreePlacesATouchedPath(t *testing.T) {
+func TestEvidenceReprojectsWhenAWorktreePlacesATouchedPath(t *testing.T) {
 	useEvidenceMemo(t)
 	useSessionDigests(t)
 	f := linktest.New(t)
@@ -243,8 +243,8 @@ func TestEvidenceRemapsWhenAWorktreePlacesATouchedPath(t *testing.T) {
 	linktest.Git(t, f.Repo, "worktree", "add", "-q", "--detach", filepath.Join(filepath.Dir(f.Repo), "wt"))
 	decoded := decodes()
 	after := rebuild(t, req)
-	if n := decodes() - decoded; n != 1 {
-		t.Errorf("%d transcripts decoded, want 1", n)
+	if n := decodes() - decoded; n != 0 {
+		t.Errorf("%d transcripts decoded, want 0", n)
 	}
 	sameEvidence(t, "a worktree placed a touched path", after, fullBuild(t, req))
 	encoded, _ := json.Marshal(after)

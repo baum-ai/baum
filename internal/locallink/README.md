@@ -161,3 +161,18 @@ transcript is explicitly opened; a session no longer linked yields no graph.
 The viewer shares and bounds this lazy read like its other transcript builds,
 and the daemon applies its existing local-read semaphore. Default `Resolve`
 still supplies complete linked graphs for callers that need them.
+
+Digests may also keep an optional context-independent evidence basis (at most
+4 MiB per session, inside the existing 64 MiB total). It contains only fields
+read by the existing evidence projector: session/path/spawn metadata, bounded
+prompt/latest-reply text, distinct model names, execute inputs and statuses,
+and file-touch paths. Tool output, assistant content and patch hunks are not
+kept. New PR paths, checkout placement, caps and thread names are projected
+again from these inputs without decoding an unchanged source. All retained
+strings and bytes are detached from the original graph.
+
+Compact facts take priority: optional bases may shed colder optional bases to
+fit, but never evict facts for admission. Essential data can discard bases
+first under pressure. Missing, oversized or inadmissible bases retain the full
+read fallback, which may refill a hot basis. `locallink.evidence_basis` counters
+and its bytes gauge distinguish reuse, size rejection and memory pressure.

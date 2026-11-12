@@ -2024,6 +2024,16 @@ a process reuses what it built:
   snapshot uses small per-checkpoint facts that `sessions` remembers by
   clone and tree. A checkpoint is read whole again, through the checkpoint
   cache below, only when a session chosen from it has to be mapped.
+* **New evidence contexts.** A digest may retain a context-independent slim
+  evidence basis, capped at 4 MiB per session within the existing 64 MiB
+  digest budget. It keeps only the evidence projector's inputs, with bounded
+  prompt/reply text and without tool output, assistant content or patch
+  hunks. New caps, known paths, checkout placements and thread names run the
+  same projector against this basis. Optional bases are shed before compact
+  facts; admission may replace colder optional bases but cannot evict facts.
+  An absent or oversized basis preserves the full-read fallback and can be
+  refilled by that mapped read. Every retained byte/string is detached from
+  the graph; byte accounting includes the whole basis.
 * **Linked-session views.** `locallink.Resolve` uses compact facts to select
   the linked sessions, then maps only those whose graphs it must return. The
   local app uses `ResolveSummary` for lists and decision attribution: its
