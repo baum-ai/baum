@@ -58,14 +58,13 @@ import {
   LocalRequestError,
   liveFor,
   listedFor,
-  fixEligible,
   fixLabel,
   jobHref,
   navigate,
   type LiveSession,
   type Provenance,
 } from "./api";
-import { FixNotice, FixRuns, type FixState, type FixChat, useDismissedFixes } from "./fix";
+import { FixNotice, FixRuns, type FixState, useDismissedFixes } from "./fix";
 import { useArchive } from "./up-next";
 import { CloneActions } from "./repositories";
 import { useModal } from "./modal";
@@ -93,9 +92,8 @@ import {
 import { PullRequestState, pullRequestStates } from "./inbox";
 import { canRerunChecks, canUpdateBranch, RerunChecksDialog, UpdateBranchDialog } from "./unblock";
 import { Walkthrough, type WalkMode } from "./walkthrough";
-import { buildTour } from "./walkthrough-model";
-import { AnswerActions } from "./answer-actions";
-import { AskPanel } from "./chat";
+import { sessionPanel } from "./session-panel-state";
+import { EarlierQuestions, useEarlierQuestions } from "./chat";
 import { documentFilesSlot, factsFilesSlot, factsQuery, useFacts } from "./facts";
 import { liveDetailsChecks, useChecks } from "./checks";
 import { SECONDARY } from "./action-classes";
@@ -272,7 +270,6 @@ export function LocalReview({
   fix,
   fixState = { starting: false, error: "" },
   fixJob,
-  chats = [],
   fixRuns = [],
 }: {
   entry: Entry;
@@ -292,14 +289,13 @@ export function LocalReview({
   /** The review groups this pull request belongs to. */
   groups?: { id: string; name: string; stack?: boolean }[];
   /** Starts the fix at once; absent when the pull request has no clone. */
-  fix?: (chat?: FixChat) => void;
+  fix?: () => void;
   /** The fix asked for here: starting, or why it did not start. */
   fixState?: FixState;
   /** The pull request's latest fix job. */
   fixJob?: Job;
   /** Every fix job of the pull request, newest first. */
   fixRuns?: Job[];
-  chats?: Job[];
 }) {
   const pr = entry.pull_request;
   const url = useUrlState();
@@ -325,16 +321,20 @@ export function LocalReview({
       current.delete("pane");
       return current;
     });
-  // The Ask panel docks beside the review; the URL keeps it open over a reload.
-  const askOpen = url.search.get("ask") === "1";
-  const setAsk = (open: boolean) =>
+  // Ask opens the session panel on this pull request, about the part of the
+  // review picked, if any.
+  const ask = (focus: ChatFocus | null = null) =>
+    sessionPanel.ask({ repository: pr.repository, number: pr.number }, focus);
+  // The earlier questions to the review's agent, read-only, dock beside the
+  // review; the URL keeps them open over a reload.
+  const earlier = useEarlierQuestions(clone, pr.number);
+  const questionsOpen = url.search.get("questions") === "1" && !!earlier?.length;
+  const setQuestions = (open: boolean) =>
     url.update((current) => {
-      if (open) current.set("ask", "1");
-      else current.delete("ask");
+      if (open) current.set("questions", "1");
+      else current.delete("questions");
       return current;
     });
-  // The part of the review the next question is about.
-  const [askFocus, setAskFocus] = useState<ChatFocus | null>(null);
   // The pull request's description, opened from a source chip that cites it.
   const [description, setDescription] = useState<{ section?: string } | null>(null);
   // A repository file a context chip opened, with the selector and GitHub
@@ -344,23 +344,18 @@ export function LocalReview({
     source: string;
     href: string;
   } | null>(null);
-  // An answer's Open the draft asks the walkthrough for its wrap-up page.
-  const [toDraft, setToDraft] = useState(false);
-  // Below 72rem the panel overlays the review, which is then inert behind it.
+  // Below 72rem the questions overlay the review, which is then inert behind
+  // them.
   const narrow = useMedia("(width < 72rem)");
   // Docked on a window under 104rem, the review has too little width for its
   // side pane, which folds to its strip meanwhile.
   const tight = useMedia("(72rem <= width < 104rem)");
-  // Closing hands the keyboard back to the Ask button that opened it.
-  const closeAsk = () => {
-    setAsk(false);
+  // Closing hands the keyboard back to the button that opened them.
+  const closeQuestions = () => {
+    setQuestions(false);
     requestAnimationFrame(() =>
-      window.document.querySelector<HTMLElement>("[data-ask-button]")?.focus(),
+      window.document.querySelector<HTMLElement>("[data-questions-button]")?.focus(),
     );
-  };
-  const askAbout = (focus: ChatFocus) => {
-    setAskFocus(focus);
-    if (!askOpen) setAsk(true);
   };
   const fixLabelText = fixLabel(entry);
   const fixing = isActiveJob(fixJob);
@@ -433,8 +428,6 @@ export function LocalReview({
     pr.number,
     `${ended}:${doc?.review.version ?? 0}`,
   );
-  // Where an answer's comment lands when it is added to the draft.
-  const tour = useMemo(() => (doc ? buildTour(doc) : null), [doc]);
   const [failed, setFailed] = useState(false);
   const [retry, setRetry] = useState(0);
   const [provenance, setProvenance] = useState<Provenance[]>([]);
@@ -446,12 +439,12 @@ export function LocalReview({
   const steps = useRef<ReviewSteps>(null);
   useGitHubKey(pr.url || undefined);
   useShortcuts((event) => {
-    // a opens the Ask panel, or puts the cursor in its box when open; it
-    // works in the walkthrough too.
-    if (event.key === "a" && doc && !showingDraft) {
+    // a asks an agent about the pull request: the session panel opens on its
+    // conversation with the keys in its composer. It works in the
+    // walkthrough too.
+    if (event.key === "a") {
       event.preventDefault();
-      if (askOpen) window.document.getElementById("ask-question")?.focus();
-      else setAsk(true);
+      ask();
       return;
     }
     // The tour has keys of its own; the overview leaves the page's to it.
@@ -867,7 +860,7 @@ export function LocalReview({
     <ReviewBoundary key={`${clone}:${pr.number}`}>
       <AttachmentUrlProvider resolve={attachments}>
         <div className="ask-layout">
-          <div className="ask-main" inert={narrow && askOpen ? true : undefined}>
+          <div className="ask-main" inert={narrow && questionsOpen ? true : undefined}>
             {walkMode && doc && !showingDraft ? (
               // A new version starts afresh, with that version's own progress.
               <Walkthrough
@@ -880,13 +873,7 @@ export function LocalReview({
                 back={back}
                 patches={patches}
                 changed={changed}
-                ask={{
-                  open: askOpen,
-                  toggle: () => (askOpen ? closeAsk() : setAsk(true)),
-                  about: askAbout,
-                }}
-                toDraft={toDraft}
-                drafted={() => setToDraft(false)}
+                ask={ask}
                 refresh={refreshButton}
                 actions={
                   <>
@@ -1034,7 +1021,7 @@ export function LocalReview({
                     liveChecks,
                   )
                 }
-                foldSidePane={askOpen && tight}
+                foldSidePane={questionsOpen && tight}
                 header={{
                   pullRequest: {
                     number: pr.number,
@@ -1124,18 +1111,29 @@ export function LocalReview({
                           </span>
                         ) : null}
                         <div className="ml-auto flex flex-wrap items-center gap-2">
-                          {doc && !showingDraft ? (
+                          {earlier?.length ? (
                             <Button
                               variant="secondary"
                               size="compact"
-                              aria-pressed={askOpen}
-                              aria-keyshortcuts="a"
-                              data-ask-button=""
-                              onClick={() => (askOpen ? closeAsk() : setAsk(true))}
+                              aria-pressed={questionsOpen}
+                              data-questions-button=""
+                              title="Questions asked of the review's agent before the session panel, read-only"
+                              onClick={() =>
+                                questionsOpen ? closeQuestions() : setQuestions(true)
+                              }
                             >
-                              Ask
+                              Earlier questions
                             </Button>
                           ) : null}
+                          <Button
+                            variant="secondary"
+                            size="compact"
+                            aria-keyshortcuts="a"
+                            title="Ask an agent about this pull request in the session panel"
+                            onClick={() => ask()}
+                          >
+                            Ask
+                          </Button>
                           {canReview ? (
                             <ReviewButton
                               entry={entry}
@@ -1352,44 +1350,20 @@ export function LocalReview({
               />
             )}
           </div>
-          {askOpen && doc && !showingDraft ? (
+          {questionsOpen && earlier ? (
             <>
-              <div className="ask-backdrop" aria-hidden onClick={closeAsk} />
-              <AskPanel
+              <div className="ask-backdrop" aria-hidden onClick={closeQuestions} />
+              <EarlierQuestions
                 key={`${clone}:${pr.number}`}
-                clone={clone}
+                repository={pr.repository}
                 pr={pr.number}
                 pullRequestUrl={pr.url}
-                latestVersion={doc.review.version}
-                // Questions are about the version on screen, which is an older
-                // one while the viewer reads it.
-                document={!walkMode && viewedDocument ? viewedDocument : doc}
+                conversations={earlier}
+                // Citations are drawn from the version on screen, which is an
+                // older one while the viewer reads it.
+                document={showingDraft ? null : !walkMode && viewedDocument ? viewedDocument : doc}
                 patches={patches}
-                focus={askFocus}
-                clearFocus={() => setAskFocus(null)}
-                close={closeAsk}
-                jobs={chats}
-                answerActions={({ conversation, turn, answer }) =>
-                  // Only an answer about the newest review goes to its draft or
-                  // to a fix of the pull request as it is now.
-                  tour && conversation.version === doc.review.version ? (
-                    <AnswerActions
-                      conversation={conversation}
-                      turn={turn}
-                      answer={answer}
-                      document={doc}
-                      tour={tour}
-                      fix={fix && fixEligible(entry) ? fix : undefined}
-                      fixRunning={fixing || fixStarting}
-                      openDraft={() => {
-                        setWalk("tour");
-                        setToDraft(true);
-                        // The overlay would cover the draft and keep it inert.
-                        if (narrow) closeAsk();
-                      }}
-                    />
-                  ) : null
-                }
+                close={closeQuestions}
               />
             </>
           ) : null}

@@ -7,7 +7,6 @@ import { UrlStateProvider } from "@baum/viewer/navigation";
 import type { ReviewDocument } from "@baum/viewer/review-document";
 import example from "../../schema/review-example.json" with { type: "json" };
 import {
-  chatJobs,
   fixJob,
   jobName,
   reviewJob,
@@ -16,8 +15,9 @@ import {
   type Entry,
   type Job,
 } from "./api";
-import { AskPanel, focusAnchors, sectionFocus, stopFocus, turnReasonText } from "./chat";
+import { EarlierQuestions, focusAnchors, sectionFocus, stopFocus, turnReasonText } from "./chat";
 import { LocalReview } from "./review";
+import { resetSessionPanel, useSessionPanel } from "./session-panel-state";
 
 vi.mock("@baum/viewer/components/review-viewer", () => ({
   ReviewViewer: ({ document, header, renderSectionAside }: ReviewViewerProps) => (
@@ -67,20 +67,13 @@ const answered = (rest: Partial<ChatTurn> = {}) =>
 let root: Root;
 let node: HTMLDivElement;
 let conversations: ChatConversation[];
-let posted: unknown[];
-let postAnswer: () => Response;
-let cancelled: string[];
+let posted: string[];
 beforeEach(() => {
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
   history.replaceState(null, "", "/s/test-ns/");
+  resetSessionPanel();
   conversations = [];
   posted = [];
-  cancelled = [];
-  postAnswer = () =>
-    Response.json(
-      { conversation_id: "c1", turn: 1, job: {} },
-      { status: 202, headers: { "Content-Type": "application/json" } },
-    );
   node = document.createElement("div");
   document.body.append(node);
   root = createRoot(node);
@@ -88,27 +81,8 @@ beforeEach(() => {
     "fetch",
     mockStateFetch(async (path: string, init?: RequestInit) => {
       const url = new URL(path, "http://x");
-      if (url.pathname.endsWith("/api/prs/chat")) {
-        if (init?.method === "POST") {
-          posted.push(JSON.parse(String(init.body)));
-          return postAnswer();
-        }
-        return Response.json({ conversations });
-      }
-      if (url.pathname.endsWith("/cancel")) {
-        cancelled.push(url.pathname);
-        return Response.json({});
-      }
-      if (url.pathname.endsWith("/transcript"))
-        return Response.json({
-          entries: [
-            { seq: 1, time: "t", kind: "message", text: "Reading the retry code." },
-            { seq: 2, time: "t", kind: "tool", id: "t1", tool: "Read", title: "queue/retry.go" },
-          ],
-          next: 2,
-          more: false,
-          done: false,
-        });
+      if (init?.method && init.method !== "GET") posted.push(`${init.method} ${url.pathname}`);
+      if (url.pathname.endsWith("/api/prs/chat")) return Response.json({ conversations });
       if (url.pathname.endsWith("/api/document")) return Response.json(doc);
       if (url.pathname.endsWith("/api/versions")) return Response.json([]);
       return Response.json({ available: true, sessions: [], commits: [] });
@@ -119,6 +93,7 @@ afterEach(async () => {
   await act(async () => root.unmount());
   node.remove();
   vi.unstubAllGlobals();
+  resetSessionPanel();
 });
 const settle = () => act(() => new Promise((resolve) => setTimeout(resolve, 30)));
 const button = (name: string | RegExp) =>
@@ -126,68 +101,43 @@ const button = (name: string | RegExp) =>
     typeof name === "string" ? b.textContent === name : name.test(b.textContent ?? ""),
   ) as HTMLButtonElement | undefined;
 
-async function panel(extra: Partial<Parameters<typeof AskPanel>[0]> = {}) {
+/** The session panel's state, as a component on the page reads it. */
+let panelState: ReturnType<typeof useSessionPanel> | null = null;
+function PanelProbe() {
+  panelState = useSessionPanel();
+  return null;
+}
+
+async function earlier(extra: Partial<Parameters<typeof EarlierQuestions>[0]> = {}) {
   await act(async () =>
     root.render(
-      <AskPanel
-        clone="clone"
-        pr={212}
-        pullRequestUrl="https://github.com/example-org/taskline/pull/212"
-        latestVersion={doc.review.version}
-        document={doc}
-        patches={null}
-        focus={null}
-        clearFocus={() => {}}
-        close={() => {}}
-        {...extra}
-      />,
+      <>
+        <EarlierQuestions
+          repository="example-org/taskline"
+          pr={212}
+          pullRequestUrl="https://github.com/example-org/taskline/pull/212"
+          conversations={conversations}
+          document={doc}
+          patches={null}
+          close={() => {}}
+          {...extra}
+        />
+        <PanelProbe />
+      </>,
     ),
   );
   await settle();
 }
-const type = async (text: string) => {
-  const box = node.querySelector("textarea")!;
-  await act(async () => {
-    Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(box, text);
-    box.dispatchEvent(new Event("input", { bubbles: true }));
-  });
-};
 
-it("explains the agent when there are no conversations yet", async () => {
-  await panel();
-  expect(node.textContent).toContain("answers questions about the code");
-  expect(node.textContent).toContain("it changes nothing");
-  expect(button("Send")!.disabled).toBe(true);
-});
-
-it("shows a running question with its live transcript and cancels it", async () => {
-  conversations = [conversation({ turns: [turn({ state: "running" })] })];
-  await panel();
-  expect(node.textContent).toContain("Why is the delay capped?");
-  expect(node.textContent).toContain("The agent is answering");
-  expect(node.querySelector(".local-job-message")!.textContent).toBe("Reading the retry code.");
-  // Tool calls are collapsed disclosures.
-  expect(node.querySelector("details.local-job-tool")).not.toBeNull();
-  expect((node.querySelector("details.local-job-tool") as HTMLDetailsElement).open).toBe(false);
-  // The box is closed to a new question meanwhile.
-  await type("And the floor?");
-  expect(button("Send")!.disabled).toBe(true);
-  expect(node.textContent).toContain("Waiting for the answer");
-  await act(async () => button("Cancel")!.click());
-  expect(cancelled).toEqual(["/s/test-ns/api/jobs/job-1/cancel"]);
-});
-
-it("renders an answer as markdown, never raw HTML, with its citations and their lines", async () => {
+it("renders an earlier answer as markdown, never raw HTML, with its citations and their lines", async () => {
   conversations = [conversation({ turns: [answered()] })];
-  await panel();
+  await earlier();
   expect(node.querySelector(".ask-answer strong")!.textContent).toBe("retries");
   expect(node.querySelector(".ask-answer b")).toBeNull();
   expect(node.textContent).toContain("<b>raw html</b>");
   const cites = Array.from(node.querySelectorAll(".ask-cite")).map((c) => c.textContent);
   expect(cites).toEqual(["queue/retry.go:31–42", "docs/else where.md:3"]);
   expect(node.textContent).not.toContain("Cost $");
-  // The slot under the answer is there for the next step's actions.
-  expect(node.querySelector("[data-answer-actions]")).not.toBeNull();
   // A citation in one of the review's hunks opens that hunk's lines.
   await act(async () => (node.querySelectorAll(".ask-cite")[0] as HTMLElement).click());
   const evidence = node.querySelector("details")!;
@@ -203,13 +153,35 @@ it("renders an answer as markdown, never raw HTML, with its citations and their 
 
 it("leaves out the GitHub link for another host", async () => {
   conversations = [conversation({ turns: [answered()] })];
-  await panel({ pullRequestUrl: "https://ghe.example.com/example-org/taskline/pull/212" });
+  await earlier({ pullRequestUrl: "https://ghe.example.com/example-org/taskline/pull/212" });
   await act(async () => (node.querySelectorAll(".ask-cite")[1] as HTMLElement).click());
   expect(node.querySelector(".ask-cite-note")!.textContent).toContain("no excerpt to show");
   expect(node.querySelector(".ask-cite-note a")).toBeNull();
 });
 
-it("keeps questions tied to the version on screen and says which conversations are outdated", async () => {
+it("is read-only: no box, no actions, and Ask goes to the session panel", async () => {
+  conversations = [
+    conversation({
+      turns: [answered({ answer: { ...answered().answer!, suggests_fix: { summary: "Cap it" } } })],
+    }),
+  ];
+  await earlier();
+  expect(node.querySelector("textarea")).toBeNull();
+  expect(button("Send")).toBeUndefined();
+  expect(button("Fix this")).toBeUndefined();
+  expect(button("Add as comment")).toBeUndefined();
+  expect(node.textContent).toContain("Suggested change: Cap it");
+  expect(node.textContent).toContain("read-only");
+  await act(async () => button("Ask in the session panel")!.click());
+  expect(panelState?.ask).toMatchObject({
+    repository: "example-org/taskline",
+    pull_request: 212,
+    focus: null,
+  });
+  expect(posted).toEqual([]);
+});
+
+it("lists the conversations by the review version they were about", async () => {
   const shown = structuredClone(doc);
   shown.review.version = 2;
   conversations = [
@@ -217,32 +189,19 @@ it("keeps questions tied to the version on screen and says which conversations a
     conversation({ id: "now", version: 2, turns: [answered({ question: "Now question" })] }),
     conversation({ id: "old", version: 1, turns: [answered({ question: "Old question" })] }),
   ];
-  // Version 2 is on screen; version 4 is the latest review.
-  await panel({ document: shown, latestVersion: 4 });
+  await earlier({ document: shown });
   const headings = Array.from(node.querySelectorAll(".ask-convos h3")).map((h) => h.textContent);
-  expect(headings).toEqual([
-    "Review v2",
-    "Asked about review v4",
-    "Outdated: asked about review v1",
-  ]);
-  expect(node.textContent).toContain("Now question");
-  // A newer review's conversation is read-only here, and not called outdated.
-  await act(async () => button("Newer question")!.click());
-  expect(node.querySelector("textarea")).toBeNull();
-  expect(node.textContent).toContain("about a newer review, so it is read-only");
-  expect(node.textContent).not.toContain("Outdated: asked about review v4");
+  expect(headings).toEqual(["About review v4", "About this review v2", "About review v1"]);
+  // The newest opens first; another opens on a click.
+  expect(node.textContent).toContain("Newer question");
   await act(async () => button("Old question")!.click());
-  expect(node.textContent).toContain("about an older review, so it is read-only");
-  // A question goes to the version on screen.
-  await act(async () => button("Now question")!.click());
-  await type("And here?");
-  await act(async () => button("Send")!.click());
-  expect(posted).toEqual([
-    { clone: "clone", pr: 212, version: 2, conversation_id: "now", question: "And here?" },
-  ]);
+  expect(node.querySelector('[aria-current="true"]')!.textContent).toBe("Old question");
+  // Its citations are named, not drawn from the hunks of the review on screen.
+  await act(async () => (node.querySelectorAll(".ask-cite")[0] as HTMLElement).click());
+  expect(node.querySelector(".ask-cite-note")).not.toBeNull();
 });
 
-it("says in words why a question was not answered", async () => {
+it("says in words why an earlier question was not answered", async () => {
   conversations = [
     conversation({
       turns: [
@@ -253,159 +212,34 @@ it("says in words why a question was not answered", async () => {
         turn({ seq: 5, state: "failed", reason: "needs_clone" }),
         turn({ seq: 6, state: "cancelled" }),
         turn({ seq: 7, state: "interrupted", note: "The agent kept no session." }),
+        turn({ seq: 8, state: "queued" }),
       ],
     }),
   ];
-  await panel();
+  await earlier();
   const text = node.textContent!;
   expect(text).toContain("didn't pass baum's checks");
   expect(text).toContain("time or size limit");
   expect(text).toContain("provider was unavailable");
   expect(text).toContain("Something went wrong inside baum");
   expect(text).toContain("no local clone");
-  expect(text).toContain("You cancelled this question");
+  expect(text).toContain("The question was cancelled");
   expect(text).toContain("because baum stopped or restarted");
   expect(text).toContain("The agent kept no session.");
+  expect(text).toContain("Not answered");
   expect(text).not.toContain("Cost $");
   expect(turnReasonText(turn({ state: "failed", reason: "unsupported_backend" }))).toContain(
     "Claude Code or Codex",
   );
 });
 
-it("keeps older reviews' conversations read-only and starts new ones on the current review", async () => {
-  conversations = [
-    conversation({ id: "current", turns: [answered({ question: "Current question" })] }),
-    conversation({ id: "old", version: 1, turns: [answered({ question: "Old question" })] }),
-  ];
-  await panel();
-  expect(node.textContent).toContain("Review v3");
-  expect(node.textContent).toContain("Outdated: asked about review v1");
-  expect(node.querySelector("textarea")).not.toBeNull();
-  await act(async () => button("Old question")!.click());
-  expect(node.querySelector("textarea")).toBeNull();
-  expect(node.textContent).toContain("older review, so it is read-only");
-  // Its citations are named, not drawn from this review's hunks.
-  await act(async () => (node.querySelectorAll(".ask-cite")[0] as HTMLElement).click());
-  expect(node.querySelector(".ask-cite-note")).not.toBeNull();
-  await act(async () => button("New conversation")!.click());
-  expect(node.querySelector("textarea")).not.toBeNull();
-  await type("A fresh one");
-  await act(async () => button("Send")!.click());
-  expect(posted).toEqual([
-    { clone: "clone", pr: 212, version: doc.review.version, question: "A fresh one" },
-  ]);
-});
-
-it("empties the box when a question sent from an earlier composer is accepted", async () => {
-  conversations = [
-    conversation({ id: "current", turns: [answered({ question: "Current question" })] }),
-    conversation({ id: "old", version: 1, turns: [answered({ question: "Old question" })] }),
-  ];
-  let accept: () => void = () => {};
-  postAnswer = () =>
-    new Promise<Response>((resolve) => {
-      accept = () =>
-        resolve(Response.json({ conversation_id: "current", turn: 2, job: {} }, { status: 202 }));
-    }) as unknown as Response;
-  await panel();
-  await type("Pending question");
-  await act(async () => button("Send")!.click());
-  // Away to a read-only conversation and back while the question is on its way.
-  await act(async () => button("Old question")!.click());
-  await act(async () => button("Current question")!.click());
-  expect(node.querySelector("textarea")!.value).toBe("Pending question");
-  await act(async () => accept());
-  await settle();
-  expect(node.querySelector("textarea")!.value).toBe("");
-});
-
 it("notes that a seeded conversation started without the review's context", async () => {
   conversations = [
     conversation({ seeded: true, turns: [answered({ note: "Seeded from disk." })] }),
   ];
-  await panel();
+  await earlier();
   expect(node.textContent).toContain("Started without the review's own context.");
   expect(node.textContent).toContain("Seeded from disk.");
-});
-
-it("sends with Enter, keeps Shift+Enter for a new line and clears the focus it asked with", async () => {
-  conversations = [conversation({ turns: [answered()] })];
-  const cleared = vi.fn();
-  const focus = sectionFocus(doc, "sec_retry")!;
-  await panel({ focus, clearFocus: cleared });
-  expect(node.querySelector(".ask-focus")!.textContent).toContain(focus.title);
-  await type("What about jitter?");
-  const box = node.querySelector("textarea")!;
-  await act(async () => {
-    box.dispatchEvent(
-      new KeyboardEvent("keydown", { key: "Enter", shiftKey: true, bubbles: true }),
-    );
-  });
-  expect(posted).toEqual([]);
-  await act(async () => {
-    box.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
-  });
-  expect(posted).toEqual([
-    {
-      clone: "clone",
-      pr: 212,
-      version: doc.review.version,
-      conversation_id: "c1",
-      question: "What about jitter?",
-      focus,
-    },
-  ]);
-  expect(cleared).toHaveBeenCalled();
-});
-
-it("does not re-render the answers while typing a question", async () => {
-  conversations = [
-    conversation({ turns: [answered(), answered({ seq: 2, question: "And jitter?" })] }),
-  ];
-  const renders = vi.fn(() => null);
-  await panel({ answerActions: renders });
-  const before = renders.mock.calls.length;
-  expect(before).toBeGreaterThanOrEqual(2);
-  await type("What about");
-  await type("What about jitter?");
-  expect(node.querySelector("textarea")!.value).toBe("What about jitter?");
-  expect(renders.mock.calls.length).toBe(before);
-});
-
-it("shows the daemon's words when the conversation is busy", async () => {
-  conversations = [conversation({ turns: [answered()] })];
-  postAnswer = () =>
-    Response.json(
-      {
-        code: "busy",
-        message: "The agent is still answering the last question of this conversation.",
-      },
-      { status: 409 },
-    );
-  await panel();
-  await type("Another?");
-  await act(async () => button("Send")!.click());
-  await settle();
-  expect(node.querySelector('[role="alert"]')!.textContent).toContain(
-    "still answering the last question",
-  );
-  // The question stays for another try.
-  expect(node.querySelector("textarea")!.value).toBe("Another?");
-});
-
-it("says so when chat is not available", async () => {
-  // What the daemon answers without the capability.
-  vi.stubGlobal(
-    "fetch",
-    vi.fn(async () =>
-      Response.json(
-        { code: "chat_unavailable", message: "Chat is not available." },
-        { status: 503 },
-      ),
-    ),
-  );
-  await panel();
-  expect(node.textContent).toContain("not available on this computer");
 });
 
 it("builds a focus from a section and a stop with the hunks' files and lines", () => {
@@ -438,7 +272,7 @@ it("builds a focus from a section and a stop with the hunks' files and lines", (
   expect(many.length).toBeLessThanOrEqual(20);
 });
 
-it("does not take chat jobs for reviews or fixes", () => {
+it("does not take earlier chat jobs for reviews or fixes", () => {
   const entry = {
     pull_request: { repository: "Acme/Demo", number: 7 },
   } as Entry;
@@ -446,20 +280,18 @@ it("does not take chat jobs for reviews or fixes", () => {
     clone: "c",
     repository: "acme/demo",
     pr: 7,
-    phase: "answering",
+    phase: "finished",
     calls: 0,
     tokens: 0,
     repairs: 0,
     actual_cost_usd: null,
   };
-  const chat: Job = { ...base, id: "chat", state: "running", kind: "chat" };
+  const chat: Job = { ...base, id: "chat", state: "completed", kind: "chat" };
   const review: Job = { ...base, id: "review", state: "completed" };
   const fix: Job = { ...base, id: "fix", state: "completed", kind: "fix" };
-  const jobs = [review, fix, chat];
-  expect(reviewJob(entry, jobs)?.id).toBe("review");
+  expect(reviewJob(entry, [review, fix, chat])?.id).toBe("review");
   expect(reviewJob(entry, [chat])).toBeUndefined();
   expect(fixJob(entry, [chat])).toBeUndefined();
-  expect(chatJobs(entry, jobs).map((job) => job.id)).toEqual(["chat"]);
   expect(jobName(chat)).toBe("Question on #7");
 });
 
@@ -494,6 +326,7 @@ function Harness({ search }: { search: string }) {
       />
       <input aria-label="elsewhere" />
       <output data-search>{params.toString()}</output>
+      <PanelProbe />
     </UrlStateProvider>
   );
 }
@@ -502,36 +335,47 @@ const press = (target: EventTarget, key: string) =>
     target.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }));
   });
 
-it("opens the Ask panel with a, keeps it in the URL, and ignores a typed in a text field", async () => {
+it("asks in the session panel with a and the Ask button, ignoring a typed in a text field", async () => {
   await act(async () => root.render(<Harness search="" />));
   await settle();
-  expect(node.querySelector(".ask-panel")).toBeNull();
-  const field = node.querySelector("input")!;
-  await press(field, "a");
-  expect(node.querySelector(".ask-panel")).toBeNull();
+  expect(panelState?.ask).toBeNull();
+  await press(node.querySelector("input")!, "a");
+  expect(panelState?.ask).toBeNull();
   await press(document.body, "a");
-  await settle();
-  expect(node.querySelector(".ask-panel")).not.toBeNull();
-  expect(node.querySelector("[data-search]")!.textContent).toBe("ask=1");
-  // The box has the cursor, so typing an a there is typing.
-  expect(document.activeElement).toBe(node.querySelector("textarea"));
-  const before = node.querySelector(".ask-panel");
-  await press(node.querySelector("textarea")!, "a");
-  expect(node.querySelector(".ask-panel")).toBe(before);
-  // Escape in the panel closes it.
-  await press(node.querySelector("textarea")!, "Escape");
-  await settle();
+  expect(panelState?.ask).toMatchObject({
+    repository: "example-org/taskline",
+    pull_request: 212,
+    focus: null,
+    seq: 1,
+  });
+  // No panel of its own, and nothing in the address.
   expect(node.querySelector(".ask-panel")).toBeNull();
-  // The keyboard goes back to the Ask button.
-  expect(document.activeElement).toBe(node.querySelector("[data-ask-button]"));
   expect(node.querySelector("[data-search]")!.textContent).toBe("");
-  // The button does the same, and a reload with ask=1 starts open.
-  await act(async () => node.querySelector<HTMLButtonElement>("[data-ask-button]")!.click());
-  expect(node.querySelector(".ask-panel")).not.toBeNull();
+  await act(async () => button("Ask")!.click());
+  expect(panelState?.ask?.seq).toBe(2);
+  // Without earlier questions there is nothing to open them with.
+  expect(button("Earlier questions")).toBeUndefined();
+  expect(posted).toEqual([]);
 });
 
-it("starts open when the URL says ask=1", async () => {
-  await act(async () => root.render(<Harness search="walk=full&ask=1" />));
+it("opens the earlier questions read-only, keeps them in the URL and closes them with Escape", async () => {
+  conversations = [conversation({ turns: [answered()] })];
+  await act(async () => root.render(<Harness search="" />));
+  await settle();
+  await act(async () => button("Earlier questions")!.click());
+  expect(node.querySelector(".ask-panel")).not.toBeNull();
+  expect(node.querySelector("[data-search]")!.textContent).toBe("questions=1");
+  expect(node.querySelector(".ask-panel textarea")).toBeNull();
+  await press(node.querySelector(".ask-panel")!, "Escape");
+  await settle();
+  expect(node.querySelector(".ask-panel")).toBeNull();
+  expect(document.activeElement).toBe(node.querySelector("[data-questions-button]"));
+  expect(node.querySelector("[data-search]")!.textContent).toBe("");
+});
+
+it("starts with the earlier questions open when the URL says questions=1", async () => {
+  conversations = [conversation({ turns: [answered()] })];
+  await act(async () => root.render(<Harness search="walk=full&questions=1" />));
   await settle();
   expect(node.querySelector(".ask-panel")).not.toBeNull();
 });

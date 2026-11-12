@@ -2,9 +2,10 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { TranscriptSession } from "@baum/viewer/transcript";
-import type { Conversation, PanelSettings, Proposal } from "./console-api";
-import type { PageContext } from "./page-context";
+import type { Conversation, ConversationSummary, PanelSettings, Proposal } from "./console-api";
+import { withPicked, type PageContext } from "./page-context";
 import {
+  conversationFor,
   holdsMessage,
   ProposalCard,
   publishConsoleEvent,
@@ -14,6 +15,7 @@ import {
   SessionPanelButton,
   SessionPanelHost,
   shown,
+  useSessionPanel,
 } from "./session-panel";
 import { SessionPanelSection } from "./settings";
 import { ToastProvider } from "./toast";
@@ -735,4 +737,103 @@ it("saves the session panel's setting as it changes", async () => {
   await until(() => expect(puts().at(-1)!.body).toMatchObject({ position: "top" }));
   await act(async () => button("Workspace")!.click());
   await until(() => expect(puts().at(-1)!.body).toMatchObject({ mode: "workspace" }));
+});
+
+it("picks the pull request's own open conversation for an Ask, else a new one", () => {
+  const of = (id: string, over: Partial<ConversationSummary> = {}): ConversationSummary => ({
+    ...made({ id }),
+    ...over,
+  });
+  const pull = { repository: "Acme/Demo", pull_request: 7 };
+  const list = [
+    of("inbox"),
+    of("other", { repository: "acme/demo", pull_request: 8 }),
+    of("closed", { repository: "acme/demo", pull_request: 7, state: "closed" }),
+    of("newest", { repository: "acme/demo", pull_request: 7 }),
+    of("older", { repository: "acme/demo", pull_request: 7 }),
+  ];
+  // The one shown stays when it is the pull request's.
+  expect(conversationFor(list, "older", pull)).toBe("older");
+  // Another page's, another pull request's or a closed one gives way to the
+  // pull request's most recent open one.
+  for (const current of ["inbox", "other", "closed", null])
+    expect(conversationFor(list, current, pull)).toBe("newest");
+  // Without one, a new one, which the first message starts on its page.
+  expect(conversationFor(list.slice(0, 3), "inbox", pull)).toBeNull();
+});
+
+it("opens on the pull request an Ask names, with the part of the review it picked", async () => {
+  let state: ReturnType<typeof useSessionPanel> | null = null;
+  function Probe() {
+    state = useSessionPanel();
+    return null;
+  }
+  // The panel showed a conversation of another page; the pull request has one.
+  conversation = made({ repository: "acme/demo", pull_request: 7, title: "On the PR" });
+  answer = (call) =>
+    call.path === "api/console/conversations" && call.method === "GET"
+      ? Response.json({
+          conversations: [made({ id: "c0", title: "On the inbox" }), conversation],
+        })
+      : undefined;
+  const render = async (page: PageContext) =>
+    act(async () =>
+      root.render(
+        <ToastProvider>
+          <button type="button">Opener</button>
+          <div className="local-frame">
+            <SessionPanelHost page={page} liveTick={0} go={() => {}} />
+          </div>
+          <Probe />
+        </ToastProvider>,
+      ),
+    );
+  await act(async () => sessionPanel.select("c0"));
+  await render(pr);
+  const focus = { kind: "stop" as const, id: "beh_delay", title: "Delays", anchors: [] };
+  await act(async () => sessionPanel.ask({ repository: "acme/demo", number: 7 }, focus));
+  await until(() => expect(panel()).not.toBeNull());
+  expect(state!.conversation).toBe("c1");
+  expect(document.activeElement).toBe(composer());
+  // The app adds the picked part to the page's focus; the panel names it and
+  // the page reported carries it.
+  const page = withPicked({ ...pr, focus: { walk: "tour" } }, state!.ask);
+  expect(page.focus).toEqual({ walk: "tour", ...focus });
+  await render(page);
+  expect(panel()!.querySelector(".session-panel-focus")!.textContent).toContain("About Delays");
+  await until(() =>
+    expect(calls.filter((c) => c.path === "api/console/page").at(-1)?.body).toEqual(page),
+  );
+  await act(async () => button("Stop asking about Delays")!.click());
+  expect(state!.ask).toMatchObject({ pull_request: 7, focus: null });
+  expect(withPicked(pr, state!.ask)).toEqual(pr);
+  // Leaving the pull request's page forgets the Ask.
+  await render({ page: "inbox" });
+  await until(() => expect(state!.ask).toBeNull());
+});
+
+it("shows a comment confirmed for the pending review at once", async () => {
+  answer = (call) =>
+    call.path.endsWith("/confirm")
+      ? Response.json({ outcome: { status: 201, message: "Added the comment." } })
+      : undefined;
+  await card(
+    operation({
+      target: "acme/demo#7",
+      operation: {
+        name: "add_review_comment",
+        request: {},
+        revision: "r1",
+        summary: {
+          action: "Add a comment to your pending review of acme/demo#7",
+          paid: false,
+          irreversible: false,
+        },
+      },
+    }),
+  );
+  await act(async () => button("Confirm")!.click());
+  await until(() =>
+    expect(calls.some((c) => c.path === "api/ui-state/review?key=acme%2Fdemo%237")).toBe(true),
+  );
 });

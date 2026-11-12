@@ -75,7 +75,7 @@ const WALKTHROUGH_SHORTCUTS: Shortcut[] = [
   { keys: ["o"], label: "Show the behaviour's code", short: "code" },
   { keys: ["c"], label: "Comment on the behaviour", short: "comment" },
   { keys: ["v"], label: "Open the full review", short: "full review" },
-  { keys: ["a"], label: "Ask the review's agent a question", short: "ask" },
+  { keys: ["a"], label: "Ask an agent about the pull request in the session panel", short: "ask" },
 ];
 /** The keys of every other list (Sessions, Jobs, Repositories, Timeline), which
  *  `listKeys` handles. */
@@ -942,7 +942,7 @@ function shortcutGroups(
         },
         {
           keys: ["a"],
-          label: "Ask the review's agent a question; Esc in the panel closes it",
+          label: "Ask an agent about the pull request in the session panel",
           short: "ask",
         },
         {

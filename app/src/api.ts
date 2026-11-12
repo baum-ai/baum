@@ -1145,18 +1145,14 @@ export function isActiveJob(job: Job | undefined): boolean {
   return job?.state === "queued" || job?.state === "running";
 }
 /** A queue entry belongs to the PR, including its GitHub host, across clones.
- * Active work takes precedence over earlier terminal attempts. A fix and a
- * question to the review's agent are not reviews: see fixJob and chatJobs. */
+ * Active work takes precedence over earlier terminal attempts. A fix and an
+ * earlier question to the review's agent are not reviews: see fixJob. */
 export function reviewJob(entry: Entry, jobs: Job[]): Job | undefined {
   return prJob(entry, jobs, (job) => !job.kind);
 }
 /** The PR's latest retry of a review's details, an active one first. */
 export function detailsJob(entry: Entry, jobs: Job[]): Job | undefined {
   return prJob(entry, jobs, (job) => job.kind === "details");
-}
-/** The PR's questions to the review's agent, oldest first. */
-export function chatJobs(entry: Pick<Entry, "pull_request">, jobs: Job[]): Job[] {
-  return jobsOf(entry, jobs).filter((job) => job.kind === "chat");
 }
 /** The jobs by PR (repository lower-cased, with its host, and number), built
  *  once per jobs array: the workspace asks about every PR on each render, and
@@ -1300,22 +1296,9 @@ export type FixOnly = "checks";
  *  fix it will not run (a fork, no push access, nothing to fix) is refused
  *  with its reason in words, as a `LocalRequestError` whose code is the
  *  reason. `only` limits it, as Fix CI on the Inbox's failing checks does. */
-export async function startFix(
-  clone: string,
-  pr: number,
-  only?: FixOnly,
-  chat?: { conversation_id: string; turn: number },
-): Promise<Job[]> {
+export async function startFix(clone: string, pr: number, only?: FixOnly): Promise<Job[]> {
   const answer = await request<{ jobs: Job[] }>("api/jobs", {
-    items: [
-      {
-        clone,
-        pr,
-        kind: "fix",
-        ...(only ? { only } : {}),
-        ...(chat ? { fix_chat: { conversation_id: chat.conversation_id, turn: chat.turn } } : {}),
-      },
-    ],
+    items: [{ clone, pr, kind: "fix", ...(only ? { only } : {}) }],
     mode: "single",
   });
   return answer.jobs;
@@ -1350,8 +1333,9 @@ export type GitHubConnection = {
  *  usually because they restrict OAuth app access until an owner approves baum. */
 export type OrganizationAccess = { hidden: string[]; approval_url: string };
 
-/** What a question is about: a section of the review, a stop of the
- *  walkthrough, or the pull request as a whole. */
+/** What an Ask is about: a section of the review, a stop of the walkthrough,
+ *  or the pull request as a whole. The session panel carries it in the page
+ *  context's focus; an earlier question to the review's agent stored it. */
 export type ChatFocus = {
   kind: "section" | "stop" | "overview";
   id?: string;
@@ -1402,8 +1386,9 @@ export type ChatConversation = {
 /** A turn that has not settled. */
 export const chatTurnActive = (turn: ChatTurn) =>
   turn.state === "queued" || turn.state === "running";
-/** The pull request's conversations with the review's agent, newest first;
- *  null when the daemon has no chat. */
+/** The pull request's earlier conversations with the review's agent, newest
+ *  first and read-only (no new questions are asked); null when the daemon has
+ *  no chat. */
 export async function listChats(
   clone: string,
   pr: number,
@@ -1422,16 +1407,4 @@ export async function listChats(
     if (e instanceof LocalRequestError && e.code === "chat_unavailable") return null;
     throw e;
   }
-}
-/** Asks the review's agent a question; the conversation is new without an id.
- *  A refusal is a LocalRequestError whose message is the daemon's own words. */
-export function askChat(ask: {
-  clone: string;
-  pr: number;
-  version: number;
-  conversation_id?: string;
-  question: string;
-  focus?: ChatFocus;
-}) {
-  return request<{ conversation_id: string; turn: number; job: Job }>("api/prs/chat", ask);
 }

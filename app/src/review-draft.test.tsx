@@ -194,9 +194,9 @@ it("shows the draft of a pull request without a version once the job has one", a
   expect(node.textContent).toContain("Writing details…");
   expect(node.textContent).toContain("Writing context…");
   expect(node.textContent).toContain("Draft — the review is still being written.");
-  // Nothing of a version: no history, no Ask.
+  // Nothing of a version: no history and no retry. (Ask is about the pull
+  // request, in the session panel, not about a version.)
   expect(node.querySelector("[data-history=no]")).not.toBeNull();
-  expect(button("Ask")).toBeUndefined();
   expect(button("Retry")).toBeUndefined();
   // When the job ends the draft goes with it.
   await render(entry, job("completed"), undefined, 1);

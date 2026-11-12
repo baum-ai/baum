@@ -514,7 +514,7 @@ test("walks through a review, comments on a behaviour and submits the review", a
   expect(errors).toEqual([]);
 });
 
-test("asks the review's agent a question and reads the lines its answer cites", async ({
+test("Ask opens the session panel on the pull request, and a stop's Ask says what it is about", async ({
   page,
 }) => {
   const errors: string[] = [];
@@ -523,40 +523,69 @@ test("asks the review's agent a question and reads the lines its answer cites", 
     if (m.type() === "error" && !m.text().includes("Failed to load resource"))
       errors.push(m.text());
   });
+  // The page context bodies the app sends to `PUT api/console/page`.
+  const reported: Record<string, unknown>[] = [];
+  page.on("request", (request) => {
+    if (request.method() === "PUT" && request.url().endsWith("/api/console/page"))
+      reported.push(request.postDataJSON() as Record<string, unknown>);
+  });
   await page.goto(await launchURL());
   await page.getByRole("link", { name: "Pull requests", exact: true }).first().click();
   await page.getByRole("link", { name: /Reuse the existing PR page/ }).click();
   await expect(page.getByRole("button", { name: "Ask", exact: true })).toBeVisible();
-  // The key opens the panel, with the cursor in its box.
+  // The key opens the session panel on the pull request, its composer empty
+  // and taking the keys; nothing goes in the address.
   await page.keyboard.press("a");
-  const panel = page.getByRole("complementary", { name: "Ask about this review" });
+  const panel = page.locator("section.session-panel");
   await expect(panel).toBeVisible();
-  expect(page.url()).toContain("ask=1");
-  await expect(panel.getByText("answers questions about the code")).toBeVisible();
-  await page.keyboard.type("Why is the delay capped?");
-  await page.keyboard.press("Enter");
-  await expect(panel.getByLabel("Question 1").getByText("Why is the delay capped?")).toBeVisible();
-  await expect(panel.getByText("so a long outage cannot push retries out forever")).toBeVisible();
-  await expect(panel.locator("strong", { hasText: "capped" })).toBeVisible();
-  // Started from a saved review whose agent session was not kept.
-  await expect(panel.getByText("Started without the review's own context.")).toBeVisible();
-  // The citation opens the lines it names, from the review's own hunk.
-  await panel.getByRole("button", { name: "docs/guide.md:3–6" }).click();
-  await expect(panel.getByText("guide line six", { exact: true })).toBeVisible();
-  // A reload keeps the panel open and the conversation.
-  await page.reload();
-  await expect(panel.getByLabel("Question 1").getByText("Why is the delay capped?")).toBeVisible();
-  // A second question goes to the same conversation.
-  await panel.locator("textarea").click();
-  await page.keyboard.type("Is this safe on retry?");
-  await page.keyboard.press("Enter");
-  await expect(panel.getByText("Is this safe on retry?")).toBeVisible();
-  await expect(panel.locator(".ask-answer")).toHaveCount(2);
-  // Escape in the panel closes it.
-  await panel.locator("textarea").focus();
-  await page.keyboard.press("Escape");
-  await expect(panel).toBeHidden();
+  await expect(page.getByTestId("session-panel-page")).toHaveText(
+    "Reuse the existing PR page · acme/demo #7",
+  );
+  const composer = panel.getByRole("textbox", { name: "Message to the agent" });
+  await expect(composer).toBeFocused();
+  await expect(composer).toHaveValue("");
   expect(page.url()).not.toContain("ask=");
+  await composer.press("Escape");
+  await expect(panel).toHaveCount(0);
+
+  // The questions asked of the review's agent before the panel stay
+  // readable, read-only.
+  await page.getByRole("button", { name: "Earlier questions", exact: true }).click();
+  const earlier = page.getByRole("complementary", { name: "Earlier questions" });
+  await expect(
+    earlier.getByLabel("Question 1").getByText("Why is the delay capped?"),
+  ).toBeVisible();
+  await expect(earlier.locator("strong", { hasText: "capped" })).toBeVisible();
+  // The citation opens the lines it names, from the review's own hunk.
+  await earlier.getByRole("button", { name: "docs/guide.md:3–6" }).click();
+  await expect(earlier.getByText("guide line six", { exact: true })).toBeVisible();
+  await expect(earlier.locator("textarea")).toHaveCount(0);
+  await expect(earlier.getByRole("button", { name: /Fix this|Add as comment/ })).toHaveCount(0);
+  await page.getByRole("button", { name: "Earlier questions", exact: true }).click();
+  await expect(earlier).toHaveCount(0);
+
+  // In the walkthrough, a stop's Ask opens the panel about that stop: the
+  // page context the agent reads carries it.
+  await page.goto(`${page.url()}&walk=landing`);
+  const walk = page.getByRole("region", { name: "Walkthrough" });
+  await walk.getByRole("button", { name: "Start the review", exact: true }).click();
+  const stop = await walk.getByRole("article").getByRole("heading", { level: 2 }).innerText();
+  await walk.getByRole("button", { name: "Ask about this", exact: true }).click();
+  await expect(panel).toBeVisible();
+  await expect(panel.locator(".session-panel-focus")).toContainText(`About ${stop}`);
+  await expect(composer).toBeFocused();
+  await expect
+    .poll(() => reported.at(-1))
+    .toMatchObject({
+      page: "pull_request",
+      repository: "acme/demo",
+      pull_request: 7,
+      focus: { walk: "tour", kind: "stop", title: stop },
+    });
+  // Leaving it out keeps the pull request.
+  await panel.getByRole("button", { name: `Stop asking about ${stop}` }).click();
+  await expect(panel.locator(".session-panel-focus")).toHaveCount(0);
+  await expect.poll(() => reported.at(-1)?.focus).toEqual({ walk: "tour" });
   expect(errors).toEqual([]);
 });
 

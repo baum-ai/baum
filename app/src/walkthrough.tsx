@@ -74,8 +74,6 @@ export function Walkthrough({
   notices,
   refresh,
   ask,
-  toDraft = false,
-  drafted,
 }: {
   entry: Entry;
   document: ReviewDocument;
@@ -93,20 +91,17 @@ export function Walkthrough({
   notices?: ReactNode;
   /** The page's refresh button, at the head's end. */
   refresh?: ReactNode;
-  /** The Ask panel: whether it is open, toggling it, and asking about a part
-   *  of the review. Absent, the walkthrough offers no questions. */
-  ask?: { open: boolean; toggle: () => void; about: (focus: ChatFocus) => void };
-  /** Asks for the page with the draft, the wrap-up, as the Ask panel's
-   *  Open the draft does; `drafted` says it is shown. */
-  toDraft?: boolean;
-  drafted?: () => void;
+  /** Asks an agent about the pull request in the session panel, about a part
+   *  of the review when given. Absent, the walkthrough offers no Ask. */
+  ask?: (focus?: ChatFocus | null) => void;
 }) {
   const tour = useMemo(() => buildTour(document), [document]);
   const key = progressKey(document);
   const saved = useUIState(progressState(key));
   const progress = saved.value;
   const setProgress = saved.update;
-  // Keep text typed in the open editor while the Ask panel appends or undoes.
+  // Keep text typed in the open editor while the draft changes elsewhere, as
+  // in another window.
   const editingRef = useRef<string | null>(null);
   const editBase = useRef("");
   useEffect(() => {
@@ -161,16 +156,6 @@ export function Walkthrough({
       .getElementById(`walk-behaviour-${tour.stops[cur]?.id}`)
       ?.scrollIntoView?.({ block: "nearest" });
   }, [cur, page]);
-  // Opening the draft goes straight to the wrap-up, where it is; it counts
-  // nothing as looked at.
-  useEffect(() => {
-    if (!toDraft) return;
-    reveal.current = false;
-    setPage(last);
-    setEditing(null);
-    drafted?.();
-  }, [toDraft]);
-
   /** Opens a page; on a chapter, picks `at` or the chapter's first
    *  behaviour. Leaving a chapter counts all of it as looked at. */
   const open = (next: number, at?: number) => {
@@ -400,7 +385,7 @@ export function Walkthrough({
               }}
               cancelComment={() => setEditing(null)}
               removeComment={(stop) => setNote(stop, "")}
-              ask={ask ? (stop) => ask.about(stopFocus(document, stop)) : undefined}
+              ask={ask ? (stop) => ask(stopFocus(document, stop)) : undefined}
               next={() => open(page + 1)}
               back={() => open(page - 1)}
             />
@@ -445,16 +430,16 @@ function Mark({ state }: { state: "seen" | "commented" | null }) {
   );
 }
 
-/** Opens or closes the Ask panel, which hands the keyboard back to it. */
-function AskButton({ ask }: { ask: { open: boolean; toggle: () => void } }) {
+/** Asks an agent about the pull request: the session panel opens on its
+ *  conversation, with the keys in its composer. */
+function AskButton({ ask }: { ask: () => void }) {
   return (
     <button
       type="button"
       className={SECONDARY}
-      aria-pressed={ask.open}
       aria-keyshortcuts="a"
-      data-ask-button=""
-      onClick={ask.toggle}
+      title="Ask an agent about this pull request in the session panel"
+      onClick={() => ask()}
     >
       Ask
       <kbd aria-hidden>a</kbd>
@@ -600,7 +585,7 @@ function Landing({
   actions?: ReactNode;
   notices?: ReactNode;
   refresh?: ReactNode;
-  ask?: { open: boolean; toggle: () => void };
+  ask?: (focus?: ChatFocus | null) => void;
 }) {
   const pr = entry.pull_request;
   const level = tour.level;

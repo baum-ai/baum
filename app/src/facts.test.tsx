@@ -228,12 +228,8 @@ it("shows a pull request's facts beside the Generate review placeholder", async 
   expect(node.textContent).toContain("No review yet");
   expect(node.textContent).toContain("Generate review");
   expect(railGroups()).toEqual(["Changes0", "Files changed2", "Sessions1", "Commits1"]);
-  // Facts are no version: no version menu and nothing to ask.
+  // Facts are no version: no version menu.
   expect(node.textContent).not.toMatch(/Review v\d/);
-  expect([...node.querySelectorAll("button")].some((button) => button.textContent === "Ask")).toBe(
-    false,
-  );
-  expect(node.querySelector("[data-ask-button]")).toBeNull();
 
   const activity = [...node.querySelectorAll<HTMLButtonElement>('[role="tab"]')].find(
     (tab) => tab.textContent === "Activity",

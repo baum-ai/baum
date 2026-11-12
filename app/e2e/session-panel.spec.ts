@@ -192,3 +192,37 @@ test("from the top, the panel leaves the pull request's bar in view", async ({ p
     );
   }
 });
+
+test("a comment the agent proposes joins the pending review only once confirmed", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.goto(await launchURL());
+  await page.getByRole("link", { name: "Pull requests", exact: true }).first().click();
+  await page.getByRole("link", { name: /Reuse the existing PR page/ }).click();
+  await expect(page.getByRole("heading", { name: "Reuse the existing PR page" })).toBeVisible();
+  const count = page.locator("[data-review-button] .review-count");
+  const before = (await count.count()) ? Number(await count.innerText()) : 0;
+
+  // Asked for a comment, the scripted agent proposes one: an operation to
+  // confirm, which shows the comment as the agent's words.
+  await page.getByRole("button", { name: "Ask", exact: true }).click();
+  const composer = panel(page).getByRole("textbox", { name: "Message to the agent" });
+  await expect(composer).toBeFocused();
+  await composer.fill("Propose a comment about the retry cap");
+  await composer.press("Enter");
+  const proposal = panel(page).getByRole("article", { name: "Proposal" });
+  await expect(proposal).toContainText("Asks to run");
+  await expect(proposal).toContainText("Add a comment to your pending review of acme/demo#7");
+  await expect(proposal).toContainText(
+    "Cap the retry delay at five minutes, as docs/guide.md says.",
+  );
+  await expect(proposal).toContainText("written by the agent");
+  // Nothing joined the review before the confirm.
+  if (before) await expect(count).toHaveText(String(before));
+  else await expect(count).toHaveCount(0);
+  await page.screenshot({ path: "test-results/session-panel-comment.png", animations: "disabled" });
+  await proposal.getByRole("button", { name: "Confirm", exact: true }).click();
+  await expect(proposal).toHaveCount(0);
+  await expect(count).toHaveText(String(before + 1));
+});

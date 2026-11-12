@@ -1,45 +1,27 @@
-import {
-  memo,
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type ReactNode,
-  type RefObject,
-} from "react";
+import { memo, useEffect, useRef, useState, type ReactNode } from "react";
 import { HunkEvidence, HunkPatchProvider } from "@baum/viewer/components/hunk-evidence";
 import type { HunkPatchSource } from "@baum/viewer/components/hunk-evidence";
 import { Markdown } from "@baum/viewer/components/markdown";
-import { Alert, Button, CloseButton, LiveDot } from "@baum/viewer/components/ui";
+import { Button, CloseButton } from "@baum/viewer/components/ui";
 import type { Anchor, ReviewDocument } from "@baum/viewer/review-document";
 import {
-  askChat,
   chatTurnActive,
   jobReasonText,
   listChats,
-  request,
   type ChatAnchor,
   type ChatAnswer,
   type ChatCitation,
   type ChatConversation,
   type ChatFocus,
   type ChatTurn,
-  type Job,
 } from "./api";
-import { EntryView, useJobTranscript } from "./job-transcript";
-import { LoadingStatus } from "./nine-dots";
-import { useVisibleInterval } from "./visible-interval";
+import { sessionPanel } from "./session-panel-state";
 
-/** The most anchors a question's focus may carry. */
+/** The most anchors a focus may carry. */
 const MAX_ANCHORS = 20;
-const MAX_QUESTION = 4000;
-/** While a question is being answered, the list is read again this often in
- *  case an event was missed. */
-const ACTIVE_POLL_MS = 4000;
 
-/** The files and lines of the review's hunks, as a question's focus names
- *  them. A hunk anchor with lines narrows its hunk to them. */
+/** The files and lines of the review's hunks, as an Ask's focus names them. A
+ *  hunk anchor with lines narrows its hunk to them. */
 export function focusAnchors(document: ReviewDocument, anchors: Anchor[]): ChatAnchor[] {
   const hunks = new Map(document.index.hunks.map((hunk) => [hunk.id, hunk]));
   const seen = new Set<string>();
@@ -68,7 +50,7 @@ export function focusAnchors(document: ReviewDocument, anchors: Anchor[]): ChatA
   return out.slice(0, MAX_ANCHORS);
 }
 
-/** A question about one section of the review. */
+/** An Ask about one section of the review. */
 export function sectionFocus(document: ReviewDocument, id: string): ChatFocus | null {
   const section = document.sections.find((s) => s.id === id);
   if (!section) return null;
@@ -83,7 +65,7 @@ export function sectionFocus(document: ReviewDocument, id: string): ChatFocus | 
   };
 }
 
-/** A question about one stop of the walkthrough. */
+/** An Ask about one stop of the walkthrough. */
 export function stopFocus(
   document: ReviewDocument,
   stop: { id: string; title: string; anchors: Anchor[] },
@@ -97,20 +79,19 @@ export function stopFocus(
 }
 
 const chatReasons: Record<string, string> = {
-  needs_clone: "The repository has no local clone, which the agent needs to read the code.",
+  needs_clone: "The repository had no local clone, which the agent needed to read the code.",
   budget: "The agent reached its time or size limit before it could answer.",
   backend: "The agent couldn't run, or its provider was unavailable.",
-  signed_out:
-    "The agent isn't signed in, or its sign-in expired. Sign in to Claude Code with /login or to Codex with codex login in a terminal, then ask again.",
+  signed_out: "The agent wasn't signed in, or its sign-in had expired.",
   validation:
     "The agent's answer didn't pass baum's checks, such as a citation to code that isn't there, even after a repair.",
   input:
     "baum couldn't prepare the question: the review, the repository or its commits could not be read.",
   internal: "Something went wrong inside baum.",
-  cancelled: "You cancelled this question.",
+  cancelled: "The question was cancelled.",
   interrupted: "The question stopped before it was answered, because baum stopped or restarted.",
   unsupported_backend:
-    "Only a review written by Claude Code or Codex on this computer can be asked about.",
+    "Only a review written by Claude Code or Codex on this computer could be asked about.",
 };
 
 /** What a settled turn without an answer says, in a sentence. */
@@ -250,69 +231,14 @@ function Citations({
   );
 }
 
-/** What the agent is doing for a question not yet answered: its transcript,
- *  with tool calls collapsed. */
-function LiveTurn({ turn }: { turn: ChatTurn }) {
-  const state = useJobTranscript(turn.job_id);
-  const [error, setError] = useState("");
-  const [cancelling, setCancelling] = useState(false);
-  const entries = state.kind === "ready" || state.kind === "failed" ? state.entries : [];
-  return (
-    <div className="ask-live">
-      <p role="status" className="ask-live-status">
-        <LiveDot /> {turn.state === "queued" ? "Queued" : "The agent is answering"}
-      </p>
-      {state.kind === "loading" ? (
-        <LoadingStatus block>Reading the agent's transcript…</LoadingStatus>
-      ) : entries.length > 0 ? (
-        <ol aria-label="Transcript" className="ask-transcript">
-          {entries.map((entry) => (
-            <li key={entry.id ? `${entry.kind}:${entry.id}` : entry.seq}>
-              <EntryView entry={entry} />
-            </li>
-          ))}
-        </ol>
-      ) : null}
-      <div className="ask-live-actions">
-        <Button
-          variant="secondary"
-          size="compact"
-          disabled={cancelling}
-          onClick={() => {
-            setCancelling(true);
-            setError("");
-            void request(`api/jobs/${encodeURIComponent(turn.job_id)}/cancel`, {})
-              .catch(() => setError("The question could not be cancelled. Try again."))
-              .finally(() => setCancelling(false));
-          }}
-        >
-          {cancelling ? "Cancelling…" : "Cancel"}
-        </Button>
-      </div>
-      {error ? <Alert>{error}</Alert> : null}
-    </div>
-  );
-}
-
-/** What the next step adds under an answer: Add as comment, Fix this. */
-export type AnswerActions = (context: {
-  conversation: ChatConversation;
-  turn: ChatTurn;
-  answer: ChatAnswer;
-}) => ReactNode;
-
 const TurnView = memo(function TurnView({
-  conversation,
   turn,
   document,
   pullRequestUrl,
-  answerActions,
 }: {
-  conversation: ChatConversation;
   turn: ChatTurn;
   document: ReviewDocument | null;
   pullRequestUrl: string;
-  answerActions?: AnswerActions;
 }) {
   const reason = turnReasonText(turn);
   return (
@@ -321,21 +247,23 @@ const TurnView = memo(function TurnView({
         {turn.focus?.title ? <p className="ask-question-about">About {turn.focus.title}</p> : null}
         <p>{turn.question}</p>
       </div>
-      {chatTurnActive(turn) ? (
-        <LiveTurn turn={turn} />
-      ) : turn.state === "completed" && turn.answer ? (
+      {turn.state === "completed" && turn.answer ? (
         <div className="ask-answer">
           <Markdown html={false}>{turn.answer.answer_markdown}</Markdown>
           <Citations answer={turn.answer} document={document} pullRequestUrl={pullRequestUrl} />
-          {/* The slot of the actions under an answer (Add as comment, Fix
-           *  this); empty until they are given. */}
-          <div className="ask-answer-actions" data-answer-actions="">
-            {answerActions?.({ conversation, turn, answer: turn.answer })}
-          </div>
+          {turn.answer.suggests_fix?.summary ? (
+            <p className="ask-suggestion">
+              <strong>Suggested change:</strong> {turn.answer.suggests_fix.summary}
+            </p>
+          ) : null}
         </div>
       ) : (
         <div className="ask-outcome" role="status">
-          <strong>{turnTitles[turn.state] ?? `Question ${turn.state}`}</strong>
+          <strong>
+            {chatTurnActive(turn)
+              ? "Not answered"
+              : (turnTitles[turn.state] ?? `Question ${turn.state}`)}
+          </strong>
           {reason ? <p>{reason}</p> : null}
         </div>
       )}
@@ -344,298 +272,64 @@ const TurnView = memo(function TurnView({
   );
 });
 
-type Load =
-  | { state: "loading" }
-  | { state: "ready"; conversations: ChatConversation[] }
-  | { state: "unavailable" }
-  | { state: "failed" };
-
-/** The conversations just read, reusing the previous objects of those that did
- *  not change, so the poll does not re-render turns that are the same. */
-function shareUnchanged(
-  previous: ChatConversation[],
-  next: ChatConversation[],
-): ChatConversation[] {
-  const before = new Map(previous.map((c) => [c.id, c]));
-  return next.map((c) => {
-    const old = before.get(c.id);
-    if (!old) return c;
-    const turns = c.turns.map((t) => {
-      const oldTurn = old.turns.find((o) => o.seq === t.seq);
-      return oldTurn && JSON.stringify(oldTurn) === JSON.stringify(t) ? oldTurn : t;
-    });
-    const same =
-      turns.length === old.turns.length &&
-      turns.every((t, i) => t === old.turns[i]) &&
-      JSON.stringify({ ...old, turns: [] }) === JSON.stringify({ ...c, turns: [] });
-    return same ? old : { ...c, turns };
-  });
-}
-
 /** A conversation's name in the list: its first question. */
 function conversationName(conversation: ChatConversation) {
   const question = conversation.turns[0]?.question ?? "Conversation";
   return question.length > 60 ? `${question.slice(0, 57)}…` : question;
 }
 
-/** The box for the next question. It owns the draft text, so a keystroke
- *  re-renders only this and not the conversation above it. */
-function Composer({
-  input,
-  draft,
-  focus,
-  clearFocus,
-  error,
-  busy,
-  sending,
-  send,
-  sentCount,
-}: {
-  input: RefObject<HTMLTextAreaElement | null>;
-  draft: RefObject<string>;
-  focus: ChatFocus | null;
-  clearFocus: () => void;
-  error: string;
-  busy: boolean;
-  sending: boolean;
-  send: (question: string) => Promise<boolean>;
-  /** Changes when a question was sent, which empties the box. It comes from
-   *  the panel because the composer that sent it may have been unmounted
-   *  (and a new one started from the pending text) before the send finished. */
-  sentCount: number;
-}) {
-  const [question, setQuestion] = useState(draft.current);
-  const [seenSent, setSeenSent] = useState(sentCount);
-  if (seenSent !== sentCount) {
-    setSeenSent(sentCount);
-    setQuestion("");
-  }
-  const submit = () => send(question);
-  return (
-    <form
-      className="ask-composer"
-      onSubmit={(event) => {
-        event.preventDefault();
-        void submit();
-      }}
-    >
-      {focus ? (
-        <p className="ask-focus">
-          <span>
-            About <strong>{focus.title || "the pull request"}</strong>
-          </span>
-          <Button variant="secondary" size="compact" onClick={clearFocus}>
-            Remove
-          </Button>
-        </p>
-      ) : null}
-      <label htmlFor="ask-question" className="sr-only">
-        Your question
-      </label>
-      <textarea
-        id="ask-question"
-        ref={input}
-        className="ask-input"
-        rows={3}
-        maxLength={MAX_QUESTION}
-        value={question}
-        placeholder="Ask about this review's code or reasoning"
-        onChange={(event) => {
-          draft.current = event.target.value;
-          setQuestion(event.target.value);
-        }}
-        onKeyDown={(event) => {
-          if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
-            event.preventDefault();
-            void submit();
-          }
-        }}
-      />
-      {error ? <Alert>{error}</Alert> : null}
-      <div className="ask-composer-row">
-        <span className="ask-hint">
-          {busy ? "Waiting for the answer" : "Enter sends, Shift+Enter adds a line"}
-        </span>
-        <Button type="submit" size="compact" disabled={!question.trim() || busy || sending}>
-          {sending ? "Sending…" : "Send"}
-        </Button>
-      </div>
-    </form>
-  );
+/** The pull request's earlier questions to the agent that wrote its review,
+ *  newest first: an empty list when there are none, null while they are read
+ *  or when they cannot be. */
+export function useEarlierQuestions(clone: string, pr: number): ChatConversation[] | null {
+  const [conversations, setConversations] = useState<ChatConversation[] | null>(null);
+  useEffect(() => {
+    const abort = new AbortController();
+    setConversations(null);
+    listChats(clone, pr, abort.signal)
+      .then((list) => {
+        if (!abort.signal.aborted) setConversations(list);
+      })
+      .catch(() => {
+        // Nothing to show: the button that opens them stays away.
+      });
+    return () => abort.abort();
+  }, [clone, pr]);
+  return conversations;
 }
 
-/** Questions to the agent that wrote the review, docked beside it: the
- *  conversations of this pull request, the current review's first, and a box
- *  for the next question. */
-export function AskPanel({
-  clone,
+/** The pull request's earlier questions to the agent that wrote its review,
+ *  docked beside it and read-only: the Ask of earlier versions of the app.
+ *  Questions are now asked in the session panel. */
+export function EarlierQuestions({
+  repository,
   pr,
   pullRequestUrl,
-  latestVersion,
+  conversations,
   document,
   patches,
-  focus,
-  clearFocus,
   close,
-  jobs = [],
-  answerActions,
 }: {
-  clone: string;
+  repository: string;
   pr: number;
   /** The pull request's GitHub address, which decides where citations link. */
   pullRequestUrl: string;
-  /** The newest review's version: conversations of older ones are outdated. */
-  latestVersion: number;
-  /** The review on screen; questions are about its version. */
-  document: ReviewDocument;
+  /** The conversations, newest first; never empty. */
+  conversations: ChatConversation[];
+  /** The review on screen, whose hunks draw the citations of conversations
+   *  about its version. */
+  document: ReviewDocument | null;
   patches: HunkPatchSource | null;
-  /** The part of the review the next question is about. */
-  focus: ChatFocus | null;
-  clearFocus: () => void;
   close: () => void;
-  /** The pull request's chat jobs; a change in one reads the list again. */
-  jobs?: Job[];
-  /** Where the actions under an answer go. */
-  answerActions?: AnswerActions;
 }) {
-  const version = document.review.version;
-  const [load, setLoad] = useState<Load>({ state: "loading" });
-  const [tick, setTick] = useState(0);
-  const refresh = useCallback(() => setTick((n) => n + 1), []);
-  // The conversation read, "new" for a blank one, null until one is picked.
   const [choice, setChoice] = useState<string | null>(null);
-  const [sending, setSending] = useState(false);
-  const [error, setError] = useState("");
-  // The draft lives in the composer, so typing does not re-render the thread;
-  // this keeps it while the composer is swapped for the read-only note.
-  const draft = useRef("");
-  const [sentCount, setSentCount] = useState(0);
-  const input = useRef<HTMLTextAreaElement>(null);
-  const thread = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    const abort = new AbortController();
-    listChats(clone, pr, abort.signal)
-      .then((conversations) => {
-        if (!abort.signal.aborted)
-          setLoad((current) =>
-            conversations
-              ? {
-                  state: "ready",
-                  conversations:
-                    current.state === "ready"
-                      ? shareUnchanged(current.conversations, conversations)
-                      : conversations,
-                }
-              : { state: "unavailable" },
-          );
-      })
-      .catch(() => {
-        if (abort.signal.aborted) return;
-        // A failed refresh keeps what was read.
-        setLoad((current) => (current.state === "ready" ? current : { state: "failed" }));
-      });
-    return () => abort.abort();
-  }, [clone, pr, tick]);
-
-  // A question's job changing state (the app's own stream, through `jobs`)
-  // reads the list again.
-  const jobStates = jobs.map((job) => `${job.id}:${job.state}`).join(",");
-  const firstJobStates = useRef(jobStates);
-  useEffect(() => {
-    if (jobStates !== firstJobStates.current) refresh();
-  }, [jobStates, refresh]);
-
-  const conversations = useMemo(() => (load.state === "ready" ? load.conversations : []), [load]);
-  const current = conversations.filter((c) => c.version === version);
-  const activeId =
-    choice === "new"
-      ? "new"
-      : choice && conversations.some((c) => c.id === choice)
-        ? choice
-        : (current[0]?.id ?? "new");
-  const conversation = conversations.find((c) => c.id === activeId);
-  const readOnly = !!conversation && conversation.version !== version;
-  const older = !!conversation && conversation.version < latestVersion;
-  const busy = !!conversation?.turns.some(chatTurnActive);
-  const activeTurns = conversations.some((c) => c.turns.some(chatTurnActive));
-
-  useVisibleInterval(refresh, activeTurns ? ACTIVE_POLL_MS : null);
-
-  // The box takes the typing when the panel opens and when a part of the
-  // review is chosen to ask about; that part is asked about on the current
-  // review, so an outdated conversation gives way to a new one.
-  useEffect(() => {
-    input.current?.focus({ preventScroll: true });
-  }, []);
-  const readOnlyNow = useRef(readOnly);
-  readOnlyNow.current = readOnly;
-  useEffect(() => {
-    if (!focus) return;
-    if (readOnlyNow.current) setChoice("new");
-    input.current?.focus({ preventScroll: true });
-  }, [focus]);
-
-  const turnCount = conversation?.turns.length ?? 0;
-  const lastState = conversation?.turns[turnCount - 1]?.state;
-  useEffect(() => {
-    const end = thread.current?.lastElementChild;
-    end?.scrollIntoView?.({ block: "nearest" });
-  }, [turnCount, lastState, activeId]);
-
-  /** Asks the question; true once it was sent. */
-  const send = async (question: string) => {
-    const text = question.trim();
-    if (!text || busy || sending || readOnly) return false;
-    setSending(true);
-    setError("");
-    try {
-      const asked = await askChat({
-        clone,
-        pr,
-        version,
-        conversation_id: activeId === "new" ? undefined : activeId,
-        question: text,
-        focus: focus ?? undefined,
-      });
-      draft.current = "";
-      setSentCount((n) => n + 1);
-      setChoice(asked.conversation_id);
-      clearFocus();
-      refresh();
-      return true;
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "The question could not be sent.");
-      refresh();
-      return false;
-    } finally {
-      setSending(false);
-    }
-  };
-
-  const others = new Map<number, ChatConversation[]>();
-  for (const c of conversations)
-    if (c.version !== version) others.set(c.version, [...(others.get(c.version) ?? []), c]);
-  const item = (c: ChatConversation) => (
-    <li key={c.id}>
-      <button
-        type="button"
-        className="ask-convo"
-        aria-current={c.id === activeId ? "true" : undefined}
-        onClick={() => {
-          setChoice(c.id);
-          setError("");
-        }}
-      >
-        {conversationName(c)}
-        {c.turns.some(chatTurnActive) ? <LiveDot className="ml-1.5 inline-flex" /> : null}
-      </button>
-    </li>
-  );
-
+  const conversation = conversations.find((c) => c.id === choice) ?? conversations[0];
+  const version = document?.review.version ?? 0;
+  const byVersion = new Map<number, ChatConversation[]>();
+  for (const c of conversations) byVersion.set(c.version, [...(byVersion.get(c.version) ?? []), c]);
   return (
     <aside
-      aria-label="Ask about this review"
+      aria-label="Earlier questions"
       className="ask-panel"
       onKeyDown={(event) => {
         if (event.key === "Escape" && !event.defaultPrevented) {
@@ -645,48 +339,35 @@ export function AskPanel({
       }}
     >
       <header className="ask-head">
-        <h2>Ask about this review</h2>
+        <h2>Earlier questions</h2>
         <CloseButton onClick={close} aria-keyshortcuts="Escape" />
       </header>
-      {conversations.length > 0 ? (
-        <nav aria-label="Conversations" className="ask-convos">
-          <div className="ask-convos-head">
-            <h3>Review v{version}</h3>
-            <Button
-              variant="secondary"
-              size="compact"
-              aria-pressed={activeId === "new"}
-              onClick={() => {
-                setChoice("new");
-                setError("");
-                input.current?.focus({ preventScroll: true });
-              }}
-            >
-              New conversation
-            </Button>
+      <nav aria-label="Conversations" className="ask-convos">
+        {[...byVersion].map(([v, list]) => (
+          <div key={v}>
+            <h3>
+              {v === version ? "About this review" : "About review"} v{v}
+            </h3>
+            <ul>
+              {list.map((c) => (
+                <li key={c.id}>
+                  <button
+                    type="button"
+                    className="ask-convo"
+                    aria-current={c.id === conversation?.id ? "true" : undefined}
+                    onClick={() => setChoice(c.id)}
+                  >
+                    {conversationName(c)}
+                  </button>
+                </li>
+              ))}
+            </ul>
           </div>
-          {current.length > 0 ? <ul>{current.map(item)}</ul> : null}
-          {[...others].map(([other, list]) => (
-            <div key={other}>
-              <h3>
-                {other < latestVersion ? "Outdated: asked about" : "Asked about"} review v{other}
-              </h3>
-              <ul>{list.map(item)}</ul>
-            </div>
-          ))}
-        </nav>
-      ) : null}
+        ))}
+      </nav>
       <HunkPatchProvider source={patches}>
-        <div className="ask-thread" ref={thread}>
-          {load.state === "loading" ? (
-            <LoadingStatus block>Loading conversations…</LoadingStatus>
-          ) : load.state === "unavailable" ? (
-            <p className="ask-empty">Asking about a review is not available on this computer.</p>
-          ) : load.state === "failed" ? (
-            <Alert>
-              The conversations could not be read. <Button onClick={refresh}>Retry</Button>
-            </Alert>
-          ) : conversation ? (
+        <div className="ask-thread">
+          {conversation ? (
             <>
               {conversation.seeded ? (
                 <p className="ask-note">Started without the review's own context.</p>
@@ -694,54 +375,30 @@ export function AskPanel({
               {conversation.turns.map((turn) => (
                 <TurnView
                   key={turn.seq}
-                  conversation={conversation}
                   turn={turn}
                   document={conversation.version === version ? document : null}
                   pullRequestUrl={pullRequestUrl}
-                  answerActions={answerActions}
                 />
               ))}
             </>
-          ) : (
-            <p className="ask-empty">
-              The agent that wrote this review answers questions about the code and its reasoning.
-              It can only read: it changes nothing.
-            </p>
-          )}
+          ) : null}
         </div>
       </HunkPatchProvider>
-      {readOnly ? (
-        <div className="ask-composer">
-          <p className="ask-note">
-            This conversation is about {older ? "an older review" : "a newer review"}, so it is
-            read-only. Start a new one to ask about the review on this page.
-          </p>
-          <div>
-            <Button
-              variant="secondary"
-              size="compact"
-              onClick={() => {
-                setChoice("new");
-                input.current?.focus({ preventScroll: true });
-              }}
-            >
-              New conversation
-            </Button>
-          </div>
+      <div className="ask-composer">
+        <p className="ask-note">
+          These conversations are read-only. Ask an agent about this pull request in the session
+          panel, where it works in the pull request's checkout.
+        </p>
+        <div>
+          <Button
+            variant="secondary"
+            size="compact"
+            onClick={() => sessionPanel.ask({ repository, number: pr })}
+          >
+            Ask in the session panel
+          </Button>
         </div>
-      ) : (
-        <Composer
-          input={input}
-          draft={draft}
-          focus={focus}
-          clearFocus={clearFocus}
-          error={error}
-          busy={busy}
-          sending={sending}
-          send={send}
-          sentCount={sentCount}
-        />
-      )}
+      </div>
     </aside>
   );
 }

@@ -1,4 +1,4 @@
-import { agentName, appURL } from "./api";
+import { agentName, appURL, type ChatFocus } from "./api";
 import { PAGES } from "./pages";
 
 /** The pages a page context names, as the MCP server knows them
@@ -239,4 +239,49 @@ export function samePage(a: PageContext, b: PageContext): boolean {
     (a.feature ?? "") === (b.feature ?? "") &&
     (a.section ?? "") === (b.section ?? "")
   );
+}
+
+/** Whether `context` is the page of the pull request `pull` names. */
+export function onPull(
+  context: PageContext,
+  pull: { repository: string; pull_request: number },
+): boolean {
+  return (
+    context.page === "pull_request" &&
+    context.pull_request === pull.pull_request &&
+    (context.repository ?? "").toLowerCase() === pull.repository.toLowerCase()
+  );
+}
+
+/** The page context with the part of the review an Ask picked (`kind`
+ *  section, stop or overview, its `id`, `title` and `anchors`) added to its
+ *  focus, beside the address's `walk` and `anchor`, while that pull
+ *  request's page is open: the agent reads it with the MCP server's `focus`
+ *  tool. */
+export function withPicked(
+  context: PageContext,
+  picked: { repository: string; pull_request: number; focus: ChatFocus | null } | null,
+): PageContext {
+  if (!picked?.focus || !onPull(context, picked)) return context;
+  const base =
+    context.focus && typeof context.focus === "object" && !Array.isArray(context.focus)
+      ? (context.focus as Record<string, unknown>)
+      : {};
+  return { ...context, focus: { ...base, ...picked.focus } };
+}
+
+/** The part of the review a page context's focus names, as an Ask picked it;
+ *  null when there is none. */
+export function pickedFocus(context: PageContext): { kind: string; title: string } | null {
+  const focus = context.focus as { kind?: unknown; title?: unknown; id?: unknown } | undefined;
+  if (!focus || typeof focus !== "object" || typeof focus.kind !== "string") return null;
+  const title =
+    typeof focus.title === "string" && focus.title
+      ? focus.title
+      : focus.kind === "overview"
+        ? "the overview"
+        : typeof focus.id === "string"
+          ? focus.id
+          : focus.kind;
+  return { kind: focus.kind, title };
 }

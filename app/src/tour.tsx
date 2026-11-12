@@ -121,7 +121,8 @@ const STOPS: Stop[] = [
     body: (
       <>
         What the change does and its riskiest part come first, then each change, riskiest first,
-        with its lines. <B>Ask</B> about it, or <B>Merge…</B> when it's ready.
+        with its lines. <B>Ask</B> an agent about it in the session panel, or <B>Merge…</B> when
+        it's ready.
       </>
     ),
     // The whole page but the app's sidebar, the review's Details too.

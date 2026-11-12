@@ -254,6 +254,24 @@
   padding: 0.625rem 1rem 0.75rem;
   border-top: 1px solid var(--border-subtle);
 }
+/* The part of the review an Ask picked, which the agent reads as the page's
+   focus, with a way to leave it out. */
+.session-panel-focus {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
+  max-width: 52rem;
+  margin: 0 auto;
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+}
+.session-panel-focus strong {
+  color: var(--text-primary);
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
 .session-panel-compose {
   display: flex;
   align-items: flex-end;

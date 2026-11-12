@@ -98,7 +98,7 @@ import {
   type ReviewDefaults,
 } from "./settings";
 import { asksYou, SessionsPage, transcriptHref } from "./sessions";
-import { pageContextOf } from "./page-context";
+import { pageContextOf, withPicked } from "./page-context";
 import {
   PANEL_KEY_LABEL,
   publishConsoleEvent,
@@ -130,7 +130,6 @@ import {
   detailsJob,
   fixJob,
   jobName,
-  chatJobs,
   fixJobs,
   isActiveJob,
   jobHref,
@@ -163,7 +162,7 @@ import {
 import { useModal } from "./modal";
 import { PageRead, ReadFailed, readState } from "./page-state";
 import { LoadingStatus } from "./nine-dots";
-import { FixDetails, type FixChat } from "./fix";
+import { FixDetails } from "./fix";
 import { useLocation } from "./location";
 import {
   AnalyticsPage,
@@ -1039,14 +1038,14 @@ function Workspace({ url }: { url: UrlState }) {
   // A fix starts at once, from its button or key: there is no dialog and no
   // price to confirm. One the daemon will not run (a fork, no push access,
   // nothing to fix) says why where it was asked for.
-  const fix = async (entry: Entry, only?: FixOnly, chat?: FixChat) => {
+  const fix = async (entry: Entry, only?: FixOnly) => {
     const clone = cloneFor(entry);
     const key = rowKey(entry);
     if (!clone || fixStarting.has(key) || isActiveJob(fixJob(entry, jobs))) return;
     setFixError(null);
     setFixStarting((now) => new Set([...now, key]));
     try {
-      await startFix(clone, entry.pull_request.number, only, chat);
+      await startFix(clone, entry.pull_request.number, only);
       await reload();
     } catch (e) {
       setFixError({ key, number: entry.pull_request.number, text: errorText(e) });
@@ -1210,16 +1209,21 @@ function Workspace({ url }: { url: UrlState }) {
             ? page
             : "anywhere";
   // What the person has open, as the session panel reports it to the daemon
-  // and names it in its bar, with its subject's name where the app has it.
+  // and names it in its bar, with its subject's name where the app has it,
+  // and the part of a pull request's review an Ask picked.
+  const panel = useSessionPanel();
   const pageContext = useMemo(
     () =>
-      pageContextOf(
-        url.search,
-        (id) => clones.find((clone) => clone.id === id)?.repository,
-        location.hash,
+      withPicked(
+        pageContextOf(
+          url.search,
+          (id) => clones.find((clone) => clone.id === id)?.repository,
+          location.hash,
+        ),
+        panel.ask,
       ),
     // The hash is a pull request's anchor: read again whenever the page draws.
-    [url.search, clones, location.hash],
+    [url.search, clones, location.hash, panel.ask],
   );
   const pageTitle =
     pageContext.page === "pull_request"
@@ -1229,7 +1233,6 @@ function Workspace({ url }: { url: UrlState }) {
         : pageContext.page === "session"
           ? live.find((s) => `${s.agent}:${s.session_id}` === pageContext.session)?.title
           : undefined;
-  const panel = useSessionPanel();
   const [openAgent = "", openID = ""] = openSession
     ? [
         openSession.slice(0, openSession.indexOf(":")),
@@ -1850,15 +1853,10 @@ function Workspace({ url }: { url: UrlState }) {
                 )}
                 generate={() => void generate([selectedEntry], "single")}
                 starting={starting.has(rowKey(selectedEntry))}
-                fix={
-                  cloneFor(selectedEntry)
-                    ? (chat) => void fix(selectedEntry, undefined, chat)
-                    : undefined
-                }
+                fix={cloneFor(selectedEntry) ? () => void fix(selectedEntry) : undefined}
                 fixState={fixState(selectedEntry)}
                 fixJob={fixJob(selectedEntry, jobs)}
                 fixRuns={fixJobs(selectedEntry, pullRequestJobs)}
-                chats={chatJobs(selectedEntry, pullRequestJobs)}
               />
             </DecisionsRevision.Provider>
           ) : page === "inbox" && !queueInbox ? (

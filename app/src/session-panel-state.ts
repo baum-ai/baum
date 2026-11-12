@@ -1,4 +1,5 @@
 import { useSyncExternalStore } from "react";
+import type { ChatFocus } from "./api";
 
 // The session panel's own state, kept for the whole window: whether it is
 // open, the conversation it shows, its height and what is typed in it. Open,
@@ -20,6 +21,18 @@ export type PanelState = {
   draft: string;
   /** Counts the requests to put the keys in the composer. */
   focus: number;
+  /** The last Ask on a pull request's page, while that page is open. */
+  ask: PanelAsk | null;
+};
+
+/** An Ask on a pull request's page: the pull request, the part of its review
+ *  picked (a section, a stop or the overview), which the page context's
+ *  focus carries to the agent, and a count, so asking twice is two asks. */
+export type PanelAsk = {
+  repository: string;
+  pull_request: number;
+  focus: ChatFocus | null;
+  seq: number;
 };
 
 function loadState(): PanelState {
@@ -30,6 +43,7 @@ function loadState(): PanelState {
     available: null,
     draft: "",
     focus: 0,
+    ask: null,
   };
   try {
     const saved = JSON.parse(localStorage.getItem(STORE_KEY) ?? "null") as Partial<PanelState>;
@@ -65,7 +79,8 @@ function change(patch: Partial<PanelState>) {
 let returnTo: Element | null = null;
 
 /** What opens, hides and points the session panel, from anywhere in the app:
- *  its button, its key, Go to and the Sessions page's "Open in panel". */
+ *  its button, its key, Go to, the Sessions page's "Open in panel" and a pull
+ *  request's Ask. */
 export const sessionPanel = {
   /** Opens it with the keys in its composer; on `conversation` when given
    *  (null for a new one), else on the one it showed. */
@@ -95,6 +110,27 @@ export const sessionPanel = {
   },
   setDraft(draft: string) {
     change({ draft });
+  },
+  /** Opens it on a pull request, about `focus` when given: the panel's host
+   *  picks the pull request's conversation (`conversationFor`) and puts the
+   *  keys in the composer, leaving what is typed there as it was. */
+  ask(pull: { repository: string; number: number }, focus: ChatFocus | null = null) {
+    change({
+      ask: {
+        repository: pull.repository,
+        pull_request: pull.number,
+        focus,
+        seq: (state.ask?.seq ?? 0) + 1,
+      },
+    });
+  },
+  /** Leaves out the part of the review an Ask picked; the pull request stays. */
+  clearFocus() {
+    if (state.ask?.focus) change({ ask: { ...state.ask, focus: null } });
+  },
+  /** Forgets the last Ask, once its pull request's page is left. */
+  dropAsk() {
+    if (state.ask) change({ ask: null });
   },
   /** What is typed in the composer now. */
   draft() {

@@ -44,7 +44,8 @@ import { ConfirmDialog } from "./group-dialogs";
 import { modelName } from "./desktop/setup-model";
 import { useNow } from "./live";
 import { LoadingStatus, NineDots } from "./nine-dots";
-import { hrefOf, pageLabel, samePage, type PageContext } from "./page-context";
+import { hrefOf, onPull, pageLabel, pickedFocus, samePage, type PageContext } from "./page-context";
+import { pendingReviewState } from "./pending-review-model";
 import { Diff } from "./prompt-editor";
 import { POLL_RUNNING, TranscriptReader, useLiveTranscript } from "./session-transcript";
 import { isPanelKey, PANEL_KEY, PANEL_KEY_LABEL, useShortcuts } from "./shortcuts";
@@ -156,6 +157,8 @@ export function usePageReport(context: PageContext, enabled: boolean) {
 function useConversations() {
   const [list, setList] = useState<ConversationSummary[]>([]);
   const [error, setError] = useState("");
+  // Whether a read answered, or failed, at least once.
+  const [loaded, setLoaded] = useState(false);
   const read = useCoalesced(async () => {
     try {
       const answer = await listConversations();
@@ -166,13 +169,15 @@ function useConversations() {
       // A daemon too old for the panel answers 404: it has none.
       if (e instanceof LocalRequestError && e.status === 404) sessionPanel.setAvailable(false);
       setError(e instanceof Error ? e.message : "The sessions could not be read.");
+    } finally {
+      setLoaded(true);
     }
   });
   useEffect(() => read(), [read]);
   useConsoleEvents((event) => {
     if (!event || !["text", "proposals"].includes(event.kind)) read();
   });
-  return { list, error, read };
+  return { list, error, read, loaded };
 }
 
 /** The panel's setting: the agent, model and mode a new conversation opens
@@ -260,6 +265,26 @@ function useProposals(id: string | null) {
   return { proposals, read };
 }
 
+/** The conversation an Ask on a pull request's page opens: the one shown when
+ *  it is that pull request's and still open, else that pull request's most
+ *  recent open one, which works in its checkout and keeps what its agent
+ *  read, else a new one (null), started on the pull request's page by the
+ *  first message. A conversation started on another page, or another pull
+ *  request's, is never reused. `list` is newest first, as the daemon lists. */
+export function conversationFor(
+  list: ConversationSummary[],
+  current: string | null,
+  pull: { repository: string; pull_request: number },
+): string | null {
+  const ofPull = (c: ConversationSummary) =>
+    c.state !== "closed" &&
+    c.pull_request === pull.pull_request &&
+    (c.repository ?? "").toLowerCase() === pull.repository.toLowerCase();
+  const shown = list.find((c) => c.id === current);
+  if (shown && ofPull(shown)) return shown.id;
+  return list.find(ofPull)?.id ?? null;
+}
+
 /** The panel's button in the sidebar: shows or hides it, and says when the
  *  daemon runs no session panel. */
 export function SessionPanelButton() {
@@ -318,6 +343,19 @@ export function SessionPanelHost({
     event.preventDefault();
     sessionPanel.toggle();
   });
+  // An Ask on a pull request's page opens the panel on that pull request's
+  // conversation, once the conversations are known; the part of the review it
+  // picked rides in the page's focus until the person leaves the page.
+  const asked = useRef(0);
+  const ask = panel.ask;
+  useEffect(() => {
+    if (!ask || ask.seq === asked.current || !conversations.loaded) return;
+    asked.current = ask.seq;
+    sessionPanel.show(conversationFor(conversations.list, panel.conversation, ask));
+  }, [ask, conversations.loaded, conversations.list, panel.conversation]);
+  useEffect(() => {
+    if (ask && !onPull(page, ask)) sessionPanel.dropAsk();
+  }, [ask, page]);
   if (!panel.open) return null;
   return (
     <SessionPanel
@@ -557,6 +595,9 @@ function SessionPanel({
     sessionPanel.hide();
   };
   const heading = conversation?.title || (id ? "Session" : "New session");
+  // The part of the review an Ask picked, which the agent reads as the page's
+  // focus.
+  const picked = pickedFocus(page);
   const agent = conversation?.agent ?? settings?.agent ?? "claude-code";
   const model = conversation ? conversation.model || usedModel : (settings?.model ?? "");
   const directory = conversation?.directory;
@@ -736,6 +777,24 @@ function SessionPanel({
           {closed ? (
             <p className="session-panel-note">
               This session is closed. Choose New session in the panel's Sessions menu to go on.
+            </p>
+          ) : null}
+          {picked ? (
+            <p className="session-panel-focus">
+              <span>
+                About <strong>{picked.title}</strong>
+              </span>
+              <Button
+                variant="secondary"
+                size="compact"
+                aria-label={`Stop asking about ${picked.title}`}
+                onClick={() => {
+                  sessionPanel.clearFocus();
+                  composer.current?.focus({ preventScroll: true });
+                }}
+              >
+                Remove
+              </Button>
             </p>
           ) : null}
           <div className="session-panel-compose">
@@ -1211,6 +1270,17 @@ export function ProposalCard({
         toast({ title: proposal.operation?.summary.action ?? "Done", detail: outcome.message });
       }
       if (action === "save" && proposal.kind === "diff") toast({ title: "Saved the change" });
+      // A comment added to the pending review shows in the pull request's
+      // review at once.
+      const { repository, pull_request } = proposal.context;
+      if (
+        action === "save" &&
+        repository &&
+        pull_request &&
+        (proposal.operation?.name === "add_review_comment" ||
+          proposal.target.endsWith(":review_comment"))
+      )
+        void pendingReviewState({ repository, number: pull_request }).load();
       changed();
     } catch (e) {
       refused(e);
