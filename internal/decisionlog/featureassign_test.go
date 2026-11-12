@@ -110,7 +110,9 @@ func (b *scriptBackend) record(req agent.CompleteRequest) (agent.Completion, fun
 	standard, prompt := "standard", int64(1000)
 	out := agent.Completion{Model: "claude-haiku-5-5", Usage: agent.Usage{Input: 1000, Output: 100, Speed: &standard, MinPrompt: &prompt, MaxPrompt: &prompt}, Rejections: b.rejections}
 	if b.usage != nil {
-		out.Usage = *b.usage
+		// Task redaction owns its result metadata; concurrent outcomes cannot
+		// share mutable speed/cache pointers from the scripted fixture.
+		out.Usage = (&agent.Accounting{Usage: *b.usage}).Clone().Usage
 	}
 	schema, user := string(req.Schema), req.User
 	switch {
