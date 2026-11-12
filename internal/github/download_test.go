@@ -42,12 +42,38 @@ func TestDownloadTailAsksForTheEnd(t *testing.T) {
 		if r.Header.Get("Range") != "bytes=-4" {
 			t.Errorf("range %q", r.Header.Get("Range"))
 		}
-		return &http.Response{StatusCode: 206, Body: io.NopCloser(strings.NewReader(file[len(file)-4:]))}
+		return &http.Response{StatusCode: 206, Header: http.Header{"Content-Range": []string{"bytes 6-9/10"}}, Body: io.NopCloser(strings.NewReader(file[len(file)-4:]))}
 	})
 	var body strings.Builder
 	status, partial, err := reader.DownloadTail(context.Background(), "/repos/acme/app/actions/jobs/1/logs", &body, 4)
 	if err != nil || status != 200 || !partial || body.String() != "6789" {
 		t.Fatalf("status %d partial %v body %q err %v", status, partial, body.String(), err)
+	}
+}
+
+// A file no longer than the range comes whole in a 206 from byte 0: it is
+// not partial, so its first line is kept. A 206 that does not say where it
+// starts counts as cut.
+func TestDownloadTailOfAFileShorterThanTheRange(t *testing.T) {
+	for contentRange, wantPartial := range map[string]bool{
+		"bytes 0-9/10": false,
+		"bytes 0-9/*":  false,
+		"bytes 1-9/10": true,
+		"":             true,
+		"items 0-9/10": true,
+	} {
+		reader := tailReader(t, func(*http.Request) *http.Response {
+			header := http.Header{}
+			if contentRange != "" {
+				header.Set("Content-Range", contentRange)
+			}
+			return &http.Response{StatusCode: 206, Header: header, Body: io.NopCloser(strings.NewReader("one line\n"))}
+		})
+		var body strings.Builder
+		_, partial, err := reader.DownloadTail(context.Background(), "/repos/acme/app/actions/jobs/1/logs", &body, 64)
+		if err != nil || partial != wantPartial || body.String() != "one line\n" {
+			t.Errorf("%q: partial %v body %q err %v", contentRange, partial, body.String(), err)
+		}
 	}
 }
 

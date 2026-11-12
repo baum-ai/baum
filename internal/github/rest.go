@@ -179,7 +179,8 @@ func (r *RESTReader) download(ctx context.Context, path string, w io.Writer, tai
 		if _, err := io.Copy(w, io.LimitReader(response.Body, tail)); err != nil {
 			return 0, false, fmt.Errorf("GitHub download unreadable")
 		}
-		return http.StatusOK, true, nil
+		// A file no longer than the range comes whole, from its first byte.
+		return http.StatusOK, !fromFirstByte(response.Header.Get("Content-Range")), nil
 	case response.StatusCode != http.StatusOK:
 		return response.StatusCode, false, nil
 	}
@@ -198,6 +199,18 @@ func (r *RESTReader) download(ctx context.Context, path string, w io.Writer, tai
 		return 0, false, ErrDownloadTooLarge
 	}
 	return response.StatusCode, false, nil
+}
+
+// fromFirstByte reports whether a 206 answer's Content-Range ("bytes
+// first-last/size") starts at the file's first byte. A missing or unreadable
+// header counts as not, so the part is treated as cut.
+func fromFirstByte(contentRange string) bool {
+	unit, rest, ok := strings.Cut(contentRange, " ")
+	if !ok || !strings.EqualFold(unit, "bytes") {
+		return false
+	}
+	first, _, ok := strings.Cut(rest, "-")
+	return ok && first == "0"
 }
 
 // GraphQL reads one bounded operation without retries or waiting. Discovery owns
