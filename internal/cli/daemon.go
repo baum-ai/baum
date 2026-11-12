@@ -15,6 +15,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -406,9 +407,13 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 		// Every reader shares one cached index. Discovery's writes only
 		// invalidate it: the index watcher publishes if the index moved.
 		index := reviewindex.NewCache(ctx, &reviewindex.Service{Registry: registry, Discovery: discover})
-		discover.Updated = index.Invalidate
+		checkedChange := func() {
+			index.Invalidate()
+			server.CheckIndex()
+		}
+		discover.Updated = checkedChange
 		changed := indexChanged(index, server.Publish)
-		worker := &background.Service{Registry: registry, Discovery: discover, Saved: background.Saved, Budget: discover.GraphQLBudget, Refresh: background.Local{Client: github.NewFromConfig(cfg, github.Options{}), Config: cfg}.Refresh, Retain: background.Retention{Log: log}.Retain, Changed: changed}
+		worker := &background.Service{Registry: registry, Discovery: discover, Saved: background.Saved, Budget: discover.GraphQLBudget, Refresh: background.Local{Client: github.NewFromConfig(cfg, github.Options{}), Config: cfg}.Refresh, Retain: background.Retention{Log: log}.Retain, Changed: checkedChange}
 		database, err := appdb.Path()
 		if err != nil {
 			_ = registry.Close()
@@ -805,7 +810,7 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 						Fresh:       index.Fresh,
 						Snapshot: func(ctx context.Context) (any, uint64, error) {
 							snapshot, version, err := index.Current(ctx)
-							return snapshot, version, err
+							return indexWatchValue(snapshot, worker.Errors()), version, err
 						},
 					})
 				})
@@ -1021,6 +1026,20 @@ func maintainReviewRuns(ctx context.Context, log *slog.Logger) {
 		return
 	}
 	reviewruns.Maintain(ctx, root, 24*time.Hour, func(err error) { log.Warn("expiring kept review runs", "error", err) })
+}
+
+// indexWatchValue excludes a successful discovery poll's bookkeeping time.
+// The app ages applied observations by ObservedAt; an unchanged list fetch
+// changes no visible row. Keep the original snapshot intact for API readers.
+func indexWatchValue(snapshot reviewindex.Snapshot, health map[string]string) any {
+	snapshot.Entries = slices.Clone(snapshot.Entries)
+	for i := range snapshot.Entries {
+		snapshot.Entries[i].MetadataFetchedAt = ""
+	}
+	return struct {
+		Index  reviewindex.Snapshot
+		Errors map[string]string
+	}{snapshot, health}
 }
 
 // indexChanged announces a change to the review index. It invalidates the

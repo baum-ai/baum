@@ -2,6 +2,7 @@ package reviewindex
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http/httptest"
 	"os"
@@ -16,6 +17,7 @@ import (
 
 	"github.com/baum-ai/baum/internal/appdb"
 	"github.com/baum-ai/baum/internal/discovery"
+	"github.com/baum-ai/baum/internal/github"
 	"github.com/baum-ai/baum/internal/privatefs"
 	"github.com/baum-ai/baum/internal/repos"
 	"github.com/baum-ai/baum/internal/store"
@@ -318,8 +320,8 @@ func TestBuildReportsNextChange(t *testing.T) {
 		t.Fatalf("lease: next %v want %v", next, lease)
 	}
 	lease = now.Add(-time.Second)
-	if _, next, _ = s.build(context.Background(), now, nil); !next.Equal(poll) {
-		t.Fatalf("poll: next %v want %v", next, poll)
+	if _, next, _ = s.build(context.Background(), now, nil); !next.IsZero() {
+		t.Fatalf("poll deadline scheduled a change: %v", next)
 	}
 }
 
@@ -693,5 +695,41 @@ func TestCacheHandlerLeavesSharedSnapshot(t *testing.T) {
 	}
 	if builds != 1 || !entries[0].Historical || entries[1].PullRequest.Number != 2 {
 		t.Fatal("builds", builds, entries)
+	}
+}
+
+// A discovery may age Cached for live readers while keeping its index view stable.
+type stableDiscovery struct{ source }
+
+func (s stableDiscovery) Cached(ctx context.Context, r github.Repository) (discovery.Snapshot, error) {
+	v, err := s.source.Cached(ctx, r)
+	v.Stale = true
+	return v, err
+}
+func (s stableDiscovery) CachedStable(ctx context.Context, r github.Repository) (discovery.Snapshot, error) {
+	return s.source.Cached(ctx, r)
+}
+
+func TestBuildUsesStableDiscoveryFreshness(t *testing.T) {
+	now := time.Now()
+	s := &Service{
+		Registry: registry{{Repository: "acme/a"}},
+		Discovery: stableDiscovery{source{"acme/a": {
+			PullRequests: []discovery.PullRequest{{Number: 1, HeadSHA: "h", State: "OPEN"}},
+			FetchedAt:    now, NextPoll: now.Add(time.Minute),
+		}}},
+	}
+	before, _, err := s.build(context.Background(), now, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	after, next, err := s.build(context.Background(), now.Add(3*time.Minute), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, _ := json.Marshal(before)
+	b, _ := json.Marshal(after)
+	if string(a) != string(b) || len(after.Entries) != 1 || after.Entries[0].Stale || !next.IsZero() {
+		t.Fatalf("deadline changed index: before=%s after=%s next=%v", a, b, next)
 	}
 }

@@ -703,3 +703,18 @@ func TestPollTimeoutIsReportedAsATimeout(t *testing.T) {
 		t.Fatalf("state %+v", st)
 	}
 }
+
+func TestErrorsIgnoresRoutinePollState(t *testing.T) {
+	s := &Service{states: map[string]State{"acme/a": {Repository: "acme/a", LastSuccess: time.Now(), NextRefresh: time.Now().Add(time.Minute)}}}
+	if len(s.Errors()) != 0 {
+		t.Fatal(s.Errors())
+	}
+	s.states["acme/a"] = State{Repository: "acme/a", Error: "discovery_unavailable"}
+	if s.Errors()["acme/a"] != "discovery_unavailable" {
+		t.Fatal(s.Errors())
+	}
+	delete(s.states, "acme/a")
+	if len(s.Errors()) != 0 {
+		t.Fatal(s.Errors())
+	}
+}
