@@ -8,7 +8,7 @@ app and `../viewer` hot reload without rebuilding Go or Rust. See
 
 A hidden window or closed tray panel makes no requests and repaints nothing.
 Every timer that refreshes data or relative times (`useNow`, the plan usage,
-review, repository, updater, chat, transcript and GitHub connection polls and
+review, repository, updater, transcript and GitHub connection polls and
 the tray panel's refresh) runs through `useVisibleInterval` in
 `src/visible-interval.ts`: it pauses while `document.hidden` and runs once when
 the page becomes visible again. The polls that schedule each read after the last
@@ -264,16 +264,15 @@ and patches come from `api/facts/sessions`, `api/facts/commits`,
 `api/facts/commit`, `api/facts/commit-patch` and `api/facts/patch`, read
 against the facts the page was shown (each names their head, and a newer build
 answers 404). Facts are no
-version: they are never in the version menu and there is no **Ask** or
-walkthrough for them. A rate limit or a failed read says so above the page,
+version: they are never in the version menu and there is no walkthrough for
+them (**Ask** is about the pull request, so it stays). A rate limit or a failed read says so above the page,
 with **Retry**; a daemon that serves no facts shows the page as before. Once a
 review is saved the page shows it instead, as before.
 
 A pull request opens on the full review. The PR page has no **Walk through**
 button for now, while the walkthrough is unfinished; its overview still opens
-from its address (`src/walkthrough.tsx`, `?…&walk=landing`) and from an Ask
-answer's **Open the draft**: what matters about it on one page, with no list beside
-it. It shows only what says something: the GitHub states that ask for something
+from its address (`src/walkthrough.tsx`, `?…&walk=landing`): what matters
+about it on one page, with no list beside it. It shows only what says something: the GitHub states that ask for something
 (as the inbox draws them, plus failing checks behind a conflict), unresolved
 threads, lines and files changed, the review time, the summary, the review's
 attention and breaking change, the risk with its reasons, and the chapters with
@@ -377,8 +376,8 @@ line saying "The end of the log" when it is longer. A check with no log, one
 still running, one GitHub has no log for (it may not have run, or its log is older than the repository keeps) or one too long to show the end of shows that sentence
 instead; a failed read shows its reason with an **Open on GitHub** link. A
 commit status or another app's check has no **Show log** (its **Details** link
-goes to the app's own page). The Ask chat's `check_log` tool returns the same
-tail.
+goes to the app's own page). The MCP server's `check_log` tool, which the
+session panel's agent reads, returns the same tail.
 
 The conflicting files (`ConflictingFiles` in `src/conflicts.tsx`) are asked for
 with `GET api/prs/conflicts`. The daemon fetches the base branch's tip (and the
@@ -491,15 +490,12 @@ outcome with the agent's summary (`FixDetails`). `reviewJob` ignores fix jobs an
 never shows as a review being generated. The daemon polls discovery after a
 push, so the new head appears without a manual refresh.
 
-A fix can also be made from a conversation with the review’s agent.
-`startFix` sends `fix_chat: {conversation_id, turn}` with the fix item to
-`POST api/jobs`: only ids, never the question or answer. The daemon reads
-that conversation up to the selected answer from the clone’s store. It starts
-at once, like other fixes, and is named “Fix from this answer”. It is offered
-where `fixEligible` permits a fix, even when nothing is broken, and is never
-combined with conflicts, CI or review comments. Refusals such as
-`chat_unavailable`, `chat_changed` and `chat_outdated` appear beside the pull
-request. The job’s `fix.chat` is the conversation’s id.
+A fix used to be made from an answer of the earlier Ask (**Fix this**, the
+fix item's `fix_chat: {conversation_id, turn}`). The app no longer offers it:
+the session panel's agent changes the pull request's checkout itself.
+`startFix` sends no `fix_chat`. A job made so keeps its name, “Fix from this
+answer” (its `fix.chat` is the conversation's id), and its refusals
+(`chat_unavailable`, `chat_changed`, `chat_outdated`) still read in words.
 
 The Jobs page lists a repository's first feature build (`kind:
 "feature_build"`, `pr` 0) tagged "Feature build" beside its repository, with no link; it
@@ -543,115 +539,56 @@ notice and Up next link to it: **Watch** while the fix runs, **Transcript**
 after. A failure's `detail` (git's own words for the `signing` reason, which the
 daemon checks before the agent runs) shows under **What happened**.
 
-Questions to the review agent (chat). The daemon
-serves a pull request's conversations with the agent that wrote a saved review,
-by registered clone ID and pull request as for `api/versions`:
+Earlier questions to the review's agent. Before the session panel, **Ask**
+asked the agent that wrote a saved review questions in a conversation of its
+own (`internal/chat`). No new question is asked; the daemon keeps serving what
+was asked, by registered clone ID and pull request as for `api/versions`:
 
 - `GET api/prs/chat?clone=<id>&pr=<n>` returns `{conversations: [{id, version,
   backend, model, seeded, created, updated, turns: [{seq, question, focus,
   answer?, job_id, state, reason?, note?, cost_usd?, cost_reason?, created,
   finished?}]}]}`, newest first. `answer` is `{answer_markdown, citations:
   [{path, start_line, end_line}], suggests_fix: {summary} | null}`, masked for
-  secrets, its citations checked against the head. `question` is the
-  reviewer's own text as typed, not masked (it is masked only when sent to the
-  agent). A turn whose `note` says the agent kept no session answered, but the
-  next question starts without the conversation's context. `state` is `queued`,
-  `running`, `completed`, `failed`, `cancelled` or `interrupted` (a turn whose
-  job a stopped daemon left behind). A conversation whose `version` is not the
-  latest review is about an older one. `seeded` with a turn's `note` means the
-  conversation started without the review's own context.
-- `POST api/prs/chat` with `{clone, pr, version, conversation_id?, question,
-  focus?}` (question 1–4000 characters; `focus` `{kind: "section" | "stop" |
-  "overview", id?, title?, anchors?: [{path, start_line?, end_line?}]}`, at
-  most 20 anchors) starts a conversation, or asks the next question of one,
-  and answers 202 `{conversation_id, turn, job}`. Refusals are `{code,
-  message}`: `invalid_request` 400 (unknown fields included), `not_found` 404
-  (an unregistered clone or an unknown conversation), `no_review` 404 (no
-  saved review at that version), `needs_clone` 409, `busy` 409 (the
-  conversation's last question is still queued or running),
-  `unsupported_backend` 422 (the review was not written by Claude Code or
-  Codex on this computer), `restarting` 503. Without the capability both
-  answer 503 `{code: "chat_unavailable"}`.
+  secrets. `state` is `completed`, `failed`, `cancelled` or `interrupted` (a
+  turn left `queued` or `running` reads as its job ended, interrupted when
+  nothing ran it). `seeded` with a turn's `note` means the conversation started
+  without the review's own context. Without the capability it answers 503
+  `{code: "chat_unavailable"}`. There is no `POST api/prs/chat` any more.
 
-Each question is a job of `kind: "chat"` (`chat: {conversation, turn,
-version}`, the pull request in `pr`), queued at once without an estimate, which
-the app can label "Question on #<pr>". It runs beside reviews, not behind
-them, keeps a transcript (`has_transcript`, `GET api/jobs/{id}/transcript`),
-reports its phase and cost, and can be cancelled, which settles the turn as
-cancelled. A `chat` event `{conversation, repository, pr, turn, state}` goes
-out on the SSE stream when a question is queued and when it settles; the
-answer itself is read with `GET api/prs/chat`.
+Their jobs (`kind: "chat"`) stay in the Jobs list and history, called
+"Question on #<pr>" with their transcripts; `reviewJob` and `fixJob` ignore
+them.
 
-The **Ask** panel (`AskPanel` in `src/chat.tsx`) is how the app asks them. A
-boxed **Ask** button in the PR page's header and in the
-walkthrough's header, or the key `a` (ignored while typing in a text field;
-inside the panel's own box it types an a), opens it; Escape with focus in the
-panel, its **Close** button or **Ask** again closes it. It is kept in the URL
-as `ask=1`, like the walkthrough's `walk=`, so a reload keeps it. `LocalReview`
-renders it beside the review (`.ask-layout`): a 22rem right-hand column from
-72rem, where the review takes the rest and nothing is covered (under 104rem the viewer folds its side pane to its strip meanwhile, `foldSidePane`), and below that
-a modal overlay from the right edge with a backdrop (a click on it closes the
-panel) and the review inert behind it. Closing returns the keyboard to the Ask
-button. The button needs a loaded review. The PR page's sections have no Ask
-button of their own; in the walkthrough, **Ask about this** on a tour stop and
-**Ask** on an Everything row set the question's focus: a removable chip above the
-box, sent as the API's `focus`, which also opens the panel (`sectionFocus` and
-`stopFocus` turn the section's or the stop's hunks into `{path, start_line,
-end_line}` anchors, at most 20). The pull request's overview has no button of
-its own; a question without a focus is about the pull request as a whole.
+`LocalReview` reads the conversations once per pull request
+(`useEarlierQuestions` in `src/chat.tsx`) and, only when there are some, shows a
+boxed **Earlier questions** button in the PR page's header. It opens
+`EarlierQuestions`, kept in the URL as `questions=1` (an old `ask=1` is
+ignored), beside the review (`.ask-layout`): a 22rem right-hand column from
+72rem, where the review takes the rest and nothing is covered (under 104rem
+the viewer folds its side pane to its strip meanwhile, `foldSidePane`), and
+below that a modal overlay from the right edge with a backdrop (a click on it
+closes it) and the review inert behind it. Escape inside it, its **Close**
+button or the header button again closes it and returns the keyboard to the
+button. It lists the conversations by the review version they were about
+("About this review v<N>" for the version on screen, else "About review
+v<M>"), the newest first, named by their first question, and shows one
+read-only: no box, no actions. An answered turn draws `answer_markdown` with
+the viewer's `Markdown` component (raw HTML stays text), its suggested change,
+and the citations as `path:start–end` buttons. A citation inside one of the
+hunks of the review on screen opens that hunk's cited lines with
+`HunkEvidence`; any other shows its path and lines with a link to the file at
+the review's head on GitHub. A turn that was not answered says why in words
+(`turnReasonText`). **Ask in the session panel** at its foot asks about the
+pull request there.
 
-The panel lists the pull request's conversations (`GET api/prs/chat`, read
-when one of the pull request's chat jobs changes state, through the app's own
-event stream, and every 4 s while a question is being answered), named by their
-first question. Conversations belong to a review version, and the panel follows
-the version on screen: reading an older version in the viewer makes the
-questions go to that version. The version on screen is first, under "Review
-v<N>"; the others are read-only, under "Outdated: asked about review v<M>" when
-M is older than the latest review and "Asked about review v<M>" when it is newer
-than the one on screen. A read-only conversation has no box, a note, and **New
-conversation**, which starts one on the version on screen (also offered beside
-the list). A conversation
-with `seeded` shows "Started without the review's own context.", and a turn's
-`note` shows under it. The box takes Enter to send and Shift+Enter for a new
-line; **Send** reads "Sending…" at once and is disabled while a question of the
-conversation is queued or running, which the daemon also refuses as `busy`. A
-refusal's `message` shows beside the box as the daemon wrote it, and the
-question stays for another try.
-
-A queued or running turn shows its question, its status and the agent's live
-transcript (`useJobTranscript` and `EntryView` of `src/job-transcript.tsx`, tool
-calls collapsed) with **Cancel** (`POST api/jobs/{id}/cancel`). An answered turn
-draws `answer_markdown` with the viewer's `Markdown` component (raw HTML stays
-text) and the citations as `path:start–end`
-buttons. A citation inside one of the review's hunks opens that hunk's cited
-lines with `HunkEvidence` (an omitted excerpt is read through the page's patch
-source, `api/patch`); one outside the review's changes shows its path and lines
-with a link to the file at the review's head on GitHub, because the daemon
-serves no file text other than patches. A turn that failed, was cancelled or was
-interrupted says why in words (`turnReasonText`: `validation`, `budget`,
-`backend`, `input`, `internal`, `needs_clone`, `unsupported_backend`,
-`cancelled`, `interrupted`). The chat does not display costs. Each answer has a
-`data-answer-actions` slot (`AskPanel`'s `answerActions` prop) for the actions
-that follow an answer: `AnswerActions` (`src/answer-actions.tsx`), drawn only
-under answers of the newest review version. **Fix this** (boxed, emphasised
-and with the answer's `suggests_fix.summary` above it when there is one) starts
-a fix with the conversation's id and the answer's turn; it is offered
-where a fix is (`fixEligible` and a local clone) and disabled while a fix of the
-pull request runs. **Add as comment** writes the answer's markdown and one
-`path:start–end` line per citation into the walkthrough draft through
-`walkthrough-model.ts` (`appendToDraft`): after the comment of the stop the
-question's focus names (`draftTarget`), else after the review's overall comment
-(`Progress.note`). It only writes the draft, kept per review version in the
-application database, and calls no GitHub API: the draft is sent only with the
-review. The
-confirmation, "Added to your review draft", offers **Undo** (`removeFromDraft`,
-which takes back what was added while it is still at the end of the draft) and
-**Open the draft**, which opens the walkthrough's Everything view and its Submit
-panel. An open walkthrough shares the same hydrated draft record. Chat jobs
-are not reviews or fixes: `reviewJob` and
-`fixJob` ignore them, `chatJobs` lists a pull request's, and the Jobs list and
-transcript page call one "Question on #<pr>". The key `a` is in the shortcuts
-sheet for the pull request page and the walkthrough.
+**Ask** is the session panel's (see [Session panel](#session-panel)): the
+boxed **Ask** button in the PR page's header and in the walkthrough's header,
+and the key `a` (ignored while typing in a text field) call
+`sessionPanel.ask` with the pull request; **Ask about this** on a walkthrough
+stop adds the stop as its focus (`stopFocus`; `sectionFocus` builds a
+section's, the hunks turned into at most 20 `{path, start_line, end_line}`
+anchors). The key `a` is in the shortcuts sheet for the pull request page and
+the walkthrough.
 `t` opens a pull request's fix transcript wherever the pull request is in hand:
 the PR page, the focused row in Pull requests, the selected one in Up next and
 the focused job in Jobs. It opens the running fix's transcript (Watch), else
@@ -773,7 +710,7 @@ keys act. Rings show only for the keyboard (`:focus-visible`). `Esc` in a text
 field gives it up, as before. On a pull request, a group, a job's
 transcript or a session, `Esc` and `u` go back to the page it was opened from
 (an inbox, Pull requests, a group), past moves within it (a
-walkthrough step, the Ask panel): each history entry the app adds records its
+walkthrough step, the earlier questions): each history entry the app adds records its
 place and the entry it was opened from (`writeHistory`, `backToOpener`). A window
 opened on the page itself goes to its list.
 
@@ -856,7 +793,8 @@ Sessions or Jobs. Analytics has no keys of its own beyond Tab: its controls
 are native buttons (its window, chart and breakdown toggles are pressed
 buttons in a group), and its charts' bars take the focus for their tooltips.
 
-The PR page header keeps buttons at its end: **Ask**, **Approve** for an open
+The PR page header keeps buttons at its end: **Earlier questions** when the
+pull request has some, **Ask**, **Approve** for an open
 pull request (see [Your review](#your-review)) and, when it can merge,
 **Merge…**. The pull request's GitHub state beside the version is a
 menu (`StatusMenu` in `src/review.tsx`) holding what can be done about it: the
@@ -1415,7 +1353,7 @@ global jobs are `GET api/jobs` without parameters, the current jobs (every runni
 unseen failed job, and the latest of each kind for each pull request, group or repository), which
 is all `reviewJob`, `detailsJob`, `fixJob`, `groupJob`, `buildJobOf`, Up next and the tray need. The PR
 page reads its own pull request's jobs (`GET api/jobs?repository=&pr=`, again whenever the app
-reads its jobs) for `fixJobs` and `chatJobs`; Inbox and Up next find `t`'s fix transcript among the
+reads its jobs) for `fixJobs`; Inbox and Up next find `t`'s fix transcript among the
 current jobs, so there it is the latest fix's. The Jobs page lists the running jobs from the current
 jobs and finished ones a page of 50 at a time (`GET api/jobs?limit=&before=`, **Load older jobs**),
 starting again from the newest page when the jobs change more than a page since; a transcript page
@@ -1433,7 +1371,7 @@ saved version shows the draft in the viewer as soon as there is one, with
 sections still being written reading "Writing details…" and a notice that it
 is a draft; before that it keeps the facts view. A page with a saved version
 keeps showing it until the new one is saved; it offers no view of the draft.
-A draft is never a version: no version menu, Ask or
+A draft is never a version: no version menu or
 retry, and nothing is read or written under its number. A version published
 without some sections' details or without its context says so in a notice
 ("2 sections couldn't be written.", "The codebase context couldn't be
@@ -2351,7 +2289,29 @@ as baum's words; one marked `by_agent` or `multiline` is shown whole,
 scrolling in its box (which the keys reach) rather than cut. Confirm sends the summary's revision on
 screen; a `409 operation_changed` replaces it with the new summary, says
 nothing ran and asks again. A proposal made on another page says so and links
-to it, and a `not_current_page` refusal says which page to open.
+to it, and a `not_current_page` refusal says which page to open. A comment
+for the pending review (the `add_review_comment` operation, or a
+`…:review_comment` change) reads the pull request's pending review again once
+confirmed or saved, so it shows in the review at once.
+
+**Ask** on a pull request's page is the panel's: the PR page's and the
+walkthrough's **Ask** buttons and the key `a` call `sessionPanel.ask` with the
+pull request, and a walkthrough stop's **Ask about this** adds the stop as the
+focus (`{kind: "stop", id, title, anchors}`, `stopFocus` in `src/chat.tsx`).
+The panel's host then opens the panel on that pull request's conversation
+(`conversationFor`, once the conversations are read): the one it shows when it
+is that pull request's and not closed, else the pull request's most recent
+open one, else a new session, which the first message starts on the pull
+request's page in its checkout. A conversation of another page or pull request
+is never reused for it. Reusing the pull request's own keeps one session per
+pull request working in its checkout, with what its agent already read, as the
+earlier Ask opened the review's latest conversation. Nothing is typed into the
+composer, which takes the keys. The Ask stays in the panel's state (not kept
+across reloads) while the pull request's page is open, and `withPicked` adds
+its focus to the page context's (beside the address's `walk` and `anchor`), so
+the page reported and each message carry it; the agent reads it with the MCP
+server's `focus` tool. Above the composer, "About <title>" names it with
+**Remove** (`sessionPanel.clearFocus`); leaving the page forgets the Ask.
 
 The app reports the page the person has open (`PUT api/console/page`,
 `usePageReport`) a moment after each navigation settles and again once the
@@ -2435,11 +2395,12 @@ reader's review until it is sent. The key is URL encoded;
 The backend contract is in [`internal/uistate`](../internal/uistate/README.md).
 
 Each record has its own revision. The window shares a hydrated record across
-the walkthrough and Ask panel, queues changes while a read or save is in
-flight, and rebases semantic changes on a conflict. A stable client/sequence
-mutation ID makes a retry safe even when a save committed but its response was lost. An Ask
-answer appends to the current draft; Undo removes only its suffix while no
-later text follows it. Neither operation sends the draft to GitHub.
+the walkthrough's views, queues changes while a read or save is in flight, and
+rebases semantic changes on a conflict. A stable client/sequence mutation ID
+makes a retry safe even when a save committed but its response was lost. A
+comment the session panel's agent proposes for the pending review is added by
+the daemon once the person confirms it (`POST api/ui-state/review/comments`),
+and the panel reads the record again. Neither sends anything to GitHub.
 
 Sidebar folding and viewer panel/tab layout remain presentation preferences
 in browser storage. Durable inbox records and review drafts do not use or

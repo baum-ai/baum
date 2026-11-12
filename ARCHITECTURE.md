@@ -637,7 +637,7 @@ workspace-write` with `sandbox_workspace_write.network_access=false`,
 panel (see "Session panel conversations" below). Unlike every other run it
 loads what the person set up: their settings, hooks, instructions and MCP
 servers, with baum's `Request.MCP` added beside them, and it always keeps the
-session; `Request.ResumeSession` continues it and a fork is refused. The
+session; `Request.ResumeSession` continues it. The
 final message, at most `agent.MaxConverseBytes` (1 MiB), is the result's
 `Document`; there is no schema, call or token limit, and the caller's context
 bounds the turn. `agent.Access` is `full` or `workspace`. Only Claude's `User`
@@ -729,7 +729,7 @@ host sets the key from `ANTHROPIC_API_KEY`). The default model is
 A chosen effort (`Backend.Effort`) replaces both.
 
 The local app's reasoning effort is one of the preferences, per use case
-(`effort` for reviews, which chat follows, `fix_effort` with a fix agent of
+(`effort` for reviews, `fix_effort` with a fix agent of
 its own, and `decisions.effort` for data extraction): Default (empty) or
 `low`, `medium` or `high` (`config.Efforts`). It reaches the backends through
 `config.Config.Effort` and `generate.DefaultBackendsFor`: Claude Code as
@@ -942,19 +942,18 @@ and status, never its output.
 A local Claude Code or Codex call can keep its session: `Request.PersistSession`
 omits `--no-session-persistence` (Claude Code) or `--ephemeral` (Codex);
 `ResumeSession` continues an earlier session (`--resume <id>`, `codex exec
-resume <id>`) and implies persisting; `ForkSession`, with `ResumeSession`,
-continues in a new session (`--fork-session`, `codex exec fork <id>`) and
-leaves the original untouched. `Result.SessionID` is the id the CLI reported
-(Claude Code's `init` event, else its `result` event; Codex's `thread.started`
-`thread_id`), the new session's for a fork. Only the `User` and `Local`
-profiles accept these options, and only for reviews and tasks, not fixes; the
-hosted profiles, Cursor and the Anthropic backend refuse them, and a fork
-without a session to resume is an error. Without them every argv is unchanged.
-Codex's `exec resume` and `exec fork` take no `--sandbox`, so the same
-read-only sandbox is passed as `-c sandbox_mode="read-only"`. `ResumeSession`
+resume <id>`) and implies persisting. `Result.SessionID` is the id the CLI
+reported (Claude Code's `init` event, else its `result` event; Codex's
+`thread.started` `thread_id`). Only the `User` and `Local` profiles accept
+these options, and only for reviews and tasks, not fixes; the hosted profiles,
+Cursor and the Anthropic backend refuse them. No review or task sets them now
+(the session panel's turns resume through `agent.Converser`); baum never forks
+a session. Without them every argv is unchanged. Codex's `exec resume` takes
+no `--sandbox`, so the same read-only sandbox is passed as
+`-c sandbox_mode="read-only"`. `ResumeSession`
 must be a canonical UUID (both CLIs report one), which also keeps an id from
-being read as a flag. A resume or fork must run with the same `Directory` as
-the session it continues: Claude Code stores sessions per working directory
+being read as a flag. A resume must run with the same `Directory` as the
+session it continues: Claude Code stores sessions per working directory
 (`~/.claude/projects/<encoded cwd>`) and Codex filters by it too. A resumed
 Claude Code session keeps the system prompt it recorded, so per-turn framing
 belongs in the user prompt.
@@ -1361,8 +1360,9 @@ fields are optional in `review-1.json`, so the schema is unchanged.
   git gave it, before redaction, so for a path the redactor masked the
   derived fragment hashes the masked path, as the viewer's own link does.
 - A document read without the clone gets its patches back. The one such
-  reader is a seeded chat session (see "Chat with the review agent"), whose
-  `review.json` is `locallink.EmbedPatches` of the stored version: each hunk
+  reader was a seeded session of the earlier Ask (see "Earlier questions to
+  the review agent"), whose `review.json` was `locallink.EmbedPatches` of the
+  stored version: each hunk
   without a `diff` gets the hunk of its file's patch with the same new range
   and the same counts of added and removed lines, read from the clone by the
   document's own repository, head, base and merge base and masked as
@@ -2275,167 +2275,43 @@ uses `claude.User` or `codex.Local`, never `Isolated` or `Container`. The
 review timeout bounds the run and the pass timeout bounds each backend call;
 cancellation stops the backend process group and cleans up temporary files.
 
-A review the daemon runs with the local `claude` or `codex` backend keeps its
-agent session and run directory (`generate.Options.KeepSession`, set by
-`jobs.Local` for single pull requests only: not for review groups, Cursor or the
-Anthropic API backend, and not for hosted runs), so a later chat can fork the
-session in the same directory. The run directory is then made under
-`<user cache>/baum/review-runs/` (`internal/reviewruns`, the same cache base as
-fixes), mode 0700, still named `agent.RunDirPrefix+"*"`, with symlinks resolved
-because the CLIs record the resolved cwd. The loop asks every call to persist
-its session. Each call, a repair included, is a fresh session that carries the
-whole context pack (a repair resends the bundle and the rejected document), so
-`Outcome.SessionID`, the session of the last successful call, is the one that
-produced the accepted document and is self-contained. In a staged review every
-stage's calls are sessions of their own, all in `Outcome.Sessions`; the one
-kept is the details stage's first pass, which wrote most of the document and
-read the code for it, or the outline's when no section was sent to the details
-stage (`StagedOutcome.SessionID`). A run that succeeds with a
-session id records `store.Metadata.Session` (`backend`, `id`, `directory`,
-absent in older versions) and keeps the directory, after deleting the
-`rejected-*.json` files of the repairs, every stage's included (raw model
-output the chat does not need); a failed, rejected or cancelled run, a run without a session id, and a
-version the store refused remove it as before. A cache directory that cannot be
-created is a warning on the progress output, and the review then runs in a
-temporary directory without persisting anything.
+A review keeps no agent session and no run directory: the run directory is a
+temporary one, removed when the run ends, and no call persists its session.
+Earlier versions kept a local `claude` or `codex` review's session and run
+directory under `<user cache>/baum/review-runs/` so that the earlier Ask could
+fork the session, and recorded it as `store.Metadata.Session` (`backend`,
+`id`, `directory`), which older versions still carry and nothing reads. Those
+directories are left to expire: when the daemon starts and then daily
+(`maintainReviewRuns`, `reviewruns.Maintain`), any directory directly under
+that root whose name carries `agent.RunDirPrefix` and that was last modified
+more than 14 days ago is removed with every CLI session that ran in it
+(`reviewruns.RemoveSessions`: Claude's whole project directory of that
+encoded name in `$CLAUDE_CONFIG_DIR`, else `~/.claude`, and the Codex
+`rollout-*.jsonl` files in `$CODEX_HOME`, else `~/.codex`, whose first line
+records that cwd), never following a symlink and ignoring files that are
+gone. The session collector never ingested these sessions: discovery decides
+by the cwd the transcript records, which is a run directory outside every
+repository root, and review runs load no hooks.
 
-Persisting makes the CLI write transcripts that were never written before: every
-call (the first attempt, provider retries, each repair) leaves a Claude Code
-session in `$CLAUDE_CONFIG_DIR` (else `~/.claude`) `/projects/<encoded run
-dir>/<id>.jsonl`, or a Codex rollout in `$CODEX_HOME` (else `~/.codex`)
-`/sessions/YYYY/MM/DD/rollout-*-<id>.jsonl` whose `session_meta` records the run
-directory as cwd. `Outcome.Sessions` lists every id the calls reported.
-`reviewruns.RemoveSessions` deletes them: after a successful run, those of the
-calls that did not produce the accepted document (in a staged review, every
-session but the kept one: the outline's, the context's and the repairs');
-on any failure, rejection,
-missing id, refused store or interruption, all of them (Claude's whole project
-directory, which is unique to the run, and the Codex rollouts whose first line
-records that cwd); and when a kept directory is pruned, every session of it,
-chat forks made later included. It acts only on a directory directly under the
-review-runs root with the run prefix, deletes only a real Claude project
-directory of that encoded name and `rollout-*.jsonl` regular files whose cwd is
-that directory, never follows a symlink and ignores files that are gone.
-The directory itself is pruned the same way and only real directories directly
-under the root whose names carry the prefix: after a successful publish the directories of a pull request's versions
-beyond the latest two (`reviewruns.PruneVersions`), and, when the daemon starts
-and then daily, any directory last modified more than 14 days ago
-(`reviewruns.Expire`). The directory of a review still running is neither
-referenced nor old, so neither pass touches it. The session collector never
-ingests these sessions: Claude Code, Codex and Cursor discovery decide by the
-cwd the transcript records, which is a run directory (prefix, outside every
-repository root), not by the transcript's path; review runs load no hooks
-(`--setting-sources ""`, `--disable hooks`), so nothing in `livesessions` or
-`hookevents` sees them.
+#### Earlier questions to the review agent
 
-#### Chat with the review agent
-
-`internal/chat` answers a reviewer's questions about a pull request with the
-agent that wrote a saved review version, desktop and daemon only. A
-conversation belongs to one repository, pull request and review version and
-keeps one agent session; it uses the review's harness and model
-(`Metadata.Backend` and `Metadata.Model`), so only a review by the local
-`claude` (User profile) or `codex` (Local profile) backend can be asked about.
-Cursor, the Anthropic API backend and hosted reviews are refused
-(`unsupported_backend`) before anything is queued.
-
-Sessions. The first turn forks the review's kept session (`ResumeSession` the
-review's id, `ForkSession`, `PersistSession`) in the review's run directory,
-so the agent starts with everything it read and the review's session stays
-untouched; the fork's new id becomes the conversation's session. For a review
-written in stages that is the details stage's session, the one that read the
-code for the sections, or the outline's when the details stage sent nothing;
-the other stages' sessions were deleted when the version was stored, and a
-details retry keeps none, so the conversation forks the session of the run
-that wrote the version. Every later
-turn resumes the conversation's own session in the same directory, without
-forking. When the review kept no session, it is another harness's, or its run
-directory is gone, the turn seeds a new run directory under the review-runs
-root (`reviewruns.Create`): the checkout of the review's head commit exported
-from the registered clone (`head/` only, within the review's checkout limits;
-a clone that lacks the commit fails the turn with `needs_clone`), the stored,
-already-masked review as `review.json`, with its hunks' masked patch text read
-back from the clone (`locallink.EmbedPatches`, see "Hunk evidence in saved
-documents"), and the earlier answered turns as
-`conversation.json` (question, masked here, and `answer_markdown`, oldest
-first, the newest that fit in 64 KiB), and starts a new persisted session there. The
-conversation is then marked `seeded` and the turn's `note` says it started
-without the review's own context. A resume or fork whose session the CLI
-cannot find falls back the same way, once per turn: `agent.Generator.Continue`
-(the loop's provider retries, stall watchdog and budgets for one call of a
-continuing session) returns `agent.ErrSessionNotFound` at once, without
-retries. The backends report it themselves for a resume or fork: Claude Code
-ends with a failed `result` event (no turns) whose `errors` say "No
-conversation found with session ID" (on a fork its `session_id` is a fresh,
-empty one, which is dropped), and Codex exits with a line of stderr, any line
-after warnings, naming the thread or rollout it could not find ("no rollout
-found for thread id"). The loop also recognises such text in an error of a
-resumed call that made no model call. A seeded directory for which no session
-was recorded is removed. Session ids are kept only when they are UUIDs: a
-stored one that is not valid counts as gone and seeds a new session. When the
-agent reports no session for an answer, the answer stands, the turn's `note`
-says the next question starts without this conversation's context, and the
-next turn seeds a session with the earlier turns rather than forking the
-review again. Before a directory is
-used `reviewruns.Use` checks it is a real run directory directly under the
-root and sets its modification time to now, so the 14-day expiry never removes
-a directory a chat used recently. `PruneVersions` still removes the
-directories of versions beyond a pull request's latest two, which a forked
-conversation shares; a chat on such an older version falls back to a seeded
-session on its next turn. A seeded directory belongs to no version, so only the
-expiry removes it, with its CLI sessions.
-
-Turns. Every turn sends the public chat instructions
-(`agent/prompt/chat-public-v1.md`, `prompt.Chat`) as the user prompt, because
-a resumed or forked session keeps the system prompt it was recorded with: the
-review is finished, answer the question concisely, read code as needed, cite
-files and lines of the head, set `suggests_fix` only for a concrete change.
-Requests are marked as tasks (`Request.Task`), which only changes the system
-prompt of a new Claude Code session (a seeded one). The question and the focus
-(the section, stop or overview it is about, with its title and anchors) follow
-as untrusted data between `BEGIN/END UNTRUSTED DATA` markers that carry a
-random nonce, masked for secrets, and the prompt starts with
-`sessions.GenerationRunMarker` like a review's. The reply must match the
-answer schema (`chat.Schema`: `answer_markdown` up to 20000 bytes, at most 20
-`citations` of `{path, start_line, end_line}`, `suggests_fix` an object with a
-`summary` or null; strict-mode friendly for Codex). Each citation is checked
-against the run directory's `head/`: a clean, relative path that stays inside
-the checkout after symlinks are resolved, an existing regular file, and
-`1 <= start_line <= end_line <=` its line count. A reply the schema rejects, or
-with citations that fail, gets one repair that resumes the same session (never
-a fresh call, which would lose what the agent read); citations still wrong
-afterwards are dropped, so a stored answer never carries a broken one; when
-only citations were wrong and the repair breaks the schema, the first answer
-stands without them. A path that names the file only on a case-insensitive
-file system is stored as the checkout spells it. The
-answer is masked with `agent.RedactTaskOutput` before it is checked further,
-stored or returned, and the log carries sizes and counts only. The question
-itself is the reviewer's own text: it is stored and served as typed, and
-masked only where it goes to an agent (the turn's prompt and a seeded
-`conversation.json`). A turn's time limit is `run_timeout`; its call and
-token budgets are half of a review's when the config file sets them, none
-otherwise. Each backend call can contain the agent's full tool loop, so its
-pass deadline is at least the turn's `run_timeout`; the run context enforces
-the time limit chosen in Settings.
-
-Storage and jobs. Conversations and turns live in the clone's review store
-(`versions.sqlite`, tables `conversations` and `turns`, keyed by the lowercased
-repository and pull request like versions); the session id and directory never
-leave the daemon. A question is a `chat` job (`jobs.KindChat`), queued at once
-without an estimate (`Queue.Ask`), whose turn is stored in the same step: a
-conversation with a turn still queued or running refuses another with `busy`,
-checked and inserted in one SQLite transaction. Chat jobs run in their own lane
-of two workers beside the review workers, so a question never waits behind a
-review, and at most one per conversation. The job keeps the agent's transcript
-like a fix (`has_transcript`), reports phase, calls, tokens and cost
-(`pricing.BackendAccountingCost`), and fails with the generation reasons
-(`budget`, `backend`, `validation`, `interrupted`, `internal`) or
-`needs_clone`. A failed, cancelled or interrupted job settles its turn the same
-way, with the job's cost even when a next question settled the turn from
-its ended job first; a turn whose job is gone (a daemon that stopped while it
-ran) reads as interrupted and does not keep the conversation busy. A `chat` server-sent
-event (`{conversation, repository, pr, turn, state}`, never the answer) goes
-out when a question is queued and when it settles.
+`internal/chat` serves the conversations of the earlier Ask, which asked the
+agent that wrote a saved review questions about the pull request by forking
+the review's kept session. It runs no turn now: questions are asked in the
+session panel (see "Session panel conversations"), and `POST /api/prs/chat`
+is gone. Conversations and turns stay in the clone's review store
+(`versions.sqlite`, tables `conversations` and `turns`, keyed by the
+lowercased repository and pull request like versions) and are listed by
+`GET /api/prs/chat?clone=&pr=` (`Service.Conversations`, newest first, through
+`jobs.Queue.Conversations`), as the app's Earlier questions and the MCP
+server's `review_conversations` read them. A turn still marked queued or
+running reads as its `chat` job ended (`store.Ended`): the job's state, or
+interrupted when the journal no longer holds it. A `chat` job left queued
+becomes interrupted when the queue opens, as a running one does, since no
+lane runs it any more. The jobs (`jobs.KindChat`, `ChatInputs`) stay in the
+journal and history, labelled questions; answers were masked for secrets and
+their citations checked before they were stored, and questions are served as
+typed.
 
 Completion mirrors the hosted worker's `Generate` and `Complete`: after the loop,
 `agent.RedactOutput` masks the document, findings, model and diagnostics (with
@@ -3386,8 +3262,7 @@ changes none of its figures.
 until its workers stop, so two processes never run one queue; it waits up to
 10 s for a predecessor whose shutdown timed out and that is exiting.
 Reviews, fixes and feature builds share one lane, which runs up to
-`repos.MaxJobConcurrency` (4) jobs at once; questions have their
-own lane (see the chat section). A free slot takes the oldest job a person
+`repos.MaxJobConcurrency` (4) jobs at once. A free slot takes the oldest job a person
 started (everything but an automatic job) before any automatic one, so an
 automatic backlog never holds up a person's review, fix or feature build;
 it never stops a running automatic job for one. Automatic jobs follow, oldest
@@ -3444,7 +3319,7 @@ history on every refresh; each answers `{"available":true,"jobs":[…]}`:
   `feature_build`. That is what the app's global list and the desktop tray read.
 - `?repository=owner/name&pr=N`: every loaded job of that pull request, oldest
   first, without the jobs of a group (`Queue.OfPullRequest`). The PR page reads
-  its fixes and questions this way.
+  its fixes this way.
 - `?limit=N` and/or `?before=<job id>`: a page of the whole history, newest
   first (`Queue.Page`), from the newest job or just before the named one, at
   most `limit` jobs (1 to 200, 50 when only `before` is given), with
@@ -3755,8 +3630,8 @@ failed fix records a reason (`head_changed`, `threads_changed`, `no_remote`,
 `git`, `backend`, `budget`, `conflicts_remain`, `history_rewritten`,
 `workflow_changed`, `push_rejected`, `push_failed`, `signed_out`) and a
 bounded detail. `signed_out` is an agent failure whose provider refused its
-sign-in (`agent.SignInRejected`); review and chat jobs report the same reason
-in place of `backend`. A
+sign-in (`agent.SignInRejected`); review jobs (and the chat jobs of the
+earlier Ask did) report the same reason in place of `backend`. A
 `budget` detail names the limit the agent reached (its time limit, in
 minutes, or its call or token budget); a `backend` one points to the daemon
 log, where `fix.Options.Logger` (the job's logger) has the agent's own error,
@@ -3764,7 +3639,10 @@ which the job never keeps. A
 fix of review comments alone fails with `workflow_changed` when its commit
 changes a path under `.github/workflows/` or `.github/actions/`.
 
-A fix can also be made from a chat conversation. The estimate item carries
+A fix can also be made from a conversation of the earlier Ask (see "Earlier
+questions to the review agent"). The app no longer offers it (its **Fix this**
+is gone: the session panel's agent changes the checkout itself); the daemon
+still takes such an item and runs it as follows. The estimate item carries
 `fix_chat: {conversation_id, turn?}` (`jobs.FixChatRef`; `fix_chat` rather than
 `chat` because a job's own `chat` is the turn a chat job answers). The app sends
 only ids: `fixChat` (`internal/jobs/fixchat.go`) reads the conversation from the
@@ -3862,14 +3740,14 @@ from registered local clones. With no saved version, it passes the pull
 request's facts (see "Pull request facts") to the viewer's `facts` prop, whose
 Details and Activity tabs draw them with the document's parts
 (`FactsDetails`, `FactsActivity`), and fills the Sessions, Commits and Files
-changed slots from the facts' routes; the version menu, history and chat
-never see them. While a review of the pull request runs in stages, the page
+changed slots from the facts' routes; the version menu and history never
+see them. While a review of the pull request runs in stages, the page
 reads the job's draft (`GET /api/jobs/{id}/draft`, again on each change of
 its `draft` count): without a saved version it shows the draft as soon as the
 outline lands, sections still being written as "Writing details…" and the
 Summary's context as being written (`contextPending`), and the facts before
 that; with one it keeps the saved version, with the regeneration's status and
-a "View draft" toggle. A draft has no version menu, chat, walkthrough,
+a "View draft" toggle. A draft has no version menu, walkthrough,
 approvals or read ticks. A saved version published without some sections'
 details or its context says so in a short notice, and the latest version's
 failed sections offer Retry (`onRetryDetails`), which queues a details job
@@ -5076,7 +4954,7 @@ saved, in the `state/agent-requests` document in `app.sqlite`.
 
 `internal/console` runs the conversations of the desktop app's session
 panel: a real Claude Code or Codex session that the person opens from any
-page, set up as their own CLI is (`agent.Converser`), not the review chat's
+page, set up as their own CLI is (`agent.Converser`), not a review's
 locked-down agent. The daemon builds one `console.Service` beside the MCP
 server and runs it with the other background work, and the app drives it
 through the routes under `/api/console/` (`LocalAPI.Console`, listed below).
@@ -5171,8 +5049,8 @@ and revokes every token. A turn's usage is priced as the backend's
 
 The agent runs with `agent.ConverseEnvironment`: the local allowlist plus
 `SSH_AUTH_SOCK`, `GITHUB_TOKEN`, `GH_*` and `GIT_*` other than the variables
-that point at another repository, so it can push and use `gh`; review, fix and
-chat runs keep `LocalEnvironment`. Claude Code still gets the fixed
+that point at another repository, so it can push and use `gh`; review and fix
+runs keep `LocalEnvironment`. Claude Code still gets the fixed
 `DISABLE_AUTOUPDATER`, `DISABLE_TELEMETRY` and
 `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` variables every local run sets.
 `BAUM_MCP_TOKEN` is in the environment of the person's Claude Code process, so
@@ -5331,7 +5209,8 @@ building one). See
 ### MCP server for agents
 
 `internal/agentcontext` is an MCP server agents use to read what the app
-shows: the app's chat, and actions working on one pull request. The app
+shows: the session panel's conversations (a `chat` consumer each), and actions
+working on one pull request. The app
 server routes `POST /api/mcp` to it (`uiserver.Options.MCP`, set through
 `daemon.App.MCP`). It speaks JSON-RPC 2.0 by hand, MCP revision
 `2025-06-18`: `initialize`, `ping`, `tools/list` (each tool carries
@@ -5586,7 +5465,7 @@ action its pull request, and only through `CallContext.Target`:
 | `jobs` | `/api/jobs` of the pull request, less each job's accounting |
 | `job_transcript` | `/api/jobs/{id}` to check that the job is the repository's and pull request's, then its transcript; a job with none says only fix jobs keep one |
 | `sessions`, `session_transcript` | `/api/sessions` or `/api/facts/sessions`, and one session's transcript, which the viewer serves only for a session the pull request's commits link |
-| `focus` | no route: the focus of the consumer's page, or `none` |
+| `focus` | no route: the focus of the consumer's page, or `none`. On a pull request's page the app sends the walkthrough mode and anchor of its address (`walk`, `anchor`) and, after an Ask about part of the review, that part (`kind` `section`, `stop` or `overview`, `id`, `title`, `anchors` of `{path, start_line?, end_line?}`) |
 | `group`, `group_versions` | `/api/groups/{id}` and `/api/groups/{id}/versions`; a group of another repository is refused. The group defaults to the open group page's; for an action, to the one group its pull request is in (`/api/groups`), and none or several must be named |
 
 Labels, reviewer lists, check log tails and the inbox's Up next sentence are

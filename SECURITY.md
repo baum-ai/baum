@@ -278,17 +278,18 @@ as far as the tool allows:
 - `--setting-sources ""` skips the user, project and local settings files, so
   only the inline `--settings` baum passes is applied; administrator-managed
   policy settings may still apply. No MCP server is loaded
-  (`--strict-mcp-config` with an empty list) for reviews, fixes and Ask. A
-  run the chat or a quick action starts may get exactly one: baum's own,
+  (`--strict-mcp-config` with an empty list) for reviews and fixes. A
+  run a quick action starts may get exactly one: baum's own,
   named by `--mcp-config` under `--strict-mcp-config` (so the user's, a
   project's and plugins' stay out) and allowed as `mcp__baum`, with the token
   in the environment only, never in the configuration or the arguments (see
   [MCP server for agents](#mcp-server-for-agents)). No session is written
-  (`--no-session-persistence`), unless the caller asks the local run to keep,
-  resume (`--resume`) or fork (`--fork-session`) a session; the hosted profile
-  never does. `--restricted` and the tool allowlist apply on every launch,
-  resume and fork included. Callers must resume only session ids baum itself
-  recorded: an id could otherwise name any session the user's CLI stored.
+  (`--no-session-persistence`), unless the caller asks the local run to keep
+  or resume (`--resume`) a session, which no review or fix does now; the hosted
+  profile never does. `--restricted` and the tool allowlist apply on every
+  launch, a resume included. Callers must resume only session ids baum itself
+  recorded: an id could otherwise name any session the user's CLI stored. baum
+  no longer forks a session (`--fork-session`).
 - The process gets an allowlist of your environment variables. Provider
   credentials and configuration (`ANTHROPIC_*`, `OPENAI_*`, `AWS_*`,
   `GOOGLE_*`, `AZURE_*`), GitHub tokens, Git settings and the SSH agent are
@@ -320,11 +321,12 @@ Codex's own read-only sandbox:
   model can read any file your account can, such as `~/.ssh` or `~/.aws`, and
   a pull request could try to persuade it to. Baum adds no further
   restriction, and the model's answer is the only thing baum keeps.
-- `--ephemeral` writes no session (a local run that keeps, resumes or forks a
-  session omits it and runs `exec resume` or `exec fork`, with the sandbox set
-  as `-c sandbox_mode="read-only"` because those subcommands take no
-  `--sandbox`; approvals stay `-c approval_policy="never"` and the other flags
-  apply as on every launch), and the `hooks`, `apps` and `multi_agent`
+- `--ephemeral` writes no session (a local run that keeps or resumes a
+  session omits it and runs `exec resume`, with the sandbox set as
+  `-c sandbox_mode="read-only"` because that subcommand takes no `--sandbox`;
+  approvals stay `-c approval_policy="never"` and the other flags apply as on
+  every launch; no review or fix does this now, and baum never runs
+  `exec fork`), and the `hooks`, `apps` and `multi_agent`
   features are disabled. Web search is off and approvals are never requested.
 - `--ignore-rules` skips user and project execpolicy `.rules` files, and
   `--ignore-user-config` skips `$CODEX_HOME/config.toml` (auth still uses
@@ -336,7 +338,7 @@ Codex's own read-only sandbox:
   `CODEX_HOME` when you set it. `CODEX_API_KEY`, `OPENAI_*` and the other
   provider and cloud credentials are removed; `CODEX_API_KEY` and the base URL
   are set only when you configure an endpoint for baum.
-- A run with an MCP server (none does yet; the chat and quick actions will) gets
+- A run with an MCP server (none does yet; quick actions will) gets
   `-c mcp_servers.baum.command`, `.args` and `.env_vars`. `env_vars` names
   `BAUM_MCP_TOKEN` (the token, so it is never an argument) and `XDG_STATE_HOME`
   and `XDG_RUNTIME_DIR`, which `baum mcp` needs to find the daemon; Codex
@@ -370,50 +372,23 @@ What remains for `codex`:
   file. Baum does not pass the desktop session variables the keyring needs; sign
   in with `codex login` so the login is stored in `CODEX_HOME`.
 
-A review the daemon runs with `claude` or `codex` keeps its agent session and
-run directory so a chat can continue it. The kept directory holds what the
-model was given: the unpacked head and merge-base checkouts, the description
-images, `bundle.json` (already redacted) and `schema.json`. The raw model output
-of a repair (`rejected-N.json`, unredacted) is deleted before the directory is
-kept. The CLI also keeps its transcript of the kept session in its usual store
-(`$CLAUDE_CONFIG_DIR` or `~/.claude` for Claude Code, `$CODEX_HOME` or
-`~/.codex` for Codex), which holds the prompt, the bundle and the model's
-answers. Only the session that produced the saved review stays: the sessions of
-retries and repairs are deleted when the run ends, and all of them when the run
-fails, is rejected or interrupted. The directory lives under baum's user cache
-directory (`<cache>/baum/review-runs/`), not in the system temporary directory
-or your repository, with mode 0700. Baum deletes the directories of a pull
-request's versions beyond the latest two and any directory untouched for 14
-days, together with the CLI sessions that ran in them (chat forks included),
-only ever real directories with the run prefix directly under that root, Claude
-project directories named after such a directory and Codex rollouts that record
-such a directory as their cwd; it never follows a symlink. Runs for other
-backends and review groups keep nothing and are removed at once.
+A review keeps no agent session and no run directory: each runs in a
+temporary directory removed when it ends, its CLI sessions unwritten. Earlier
+versions of baum kept a local Claude Code or Codex review's session and run
+directory under baum's user cache directory (`<cache>/baum/review-runs/`, mode
+0700), with the CLI's transcript of it in its usual store, so that a question
+about the review (Ask) could fork it. The daemon still deletes those
+directories once untouched for 14 days, together with the CLI sessions that
+ran in them (forks included), only ever real directories with the run prefix
+directly under that root, Claude project directories named after such a
+directory and Codex rollouts that record such a directory as their cwd; it
+never follows a symlink.
 
-Asking the review agent a question about a pull request (chat, desktop and
-daemon only) runs the same harness with the same read-only restrictions as the
-review: Claude Code in restricted mode with Read, Glob and Grep confined to
-the run directory, Codex in its read-only sandbox (also on `exec fork` and
-`exec resume`). It never runs Cursor or the Anthropic API backend. The first
-question forks the review's kept session in the review's run directory, later
-questions resume that fork there; the CLI keeps each conversation's
-transcript in its usual store beside the review's, holding the questions, the
-files the agent read and its answers. When the review's session is gone, baum
-seeds a new run directory under the same `<cache>/baum/review-runs/` root
-(0700) with the checkout of the review's head from your clone, the saved
-review (already masked) and the earlier questions and answers (masked;
-questions are stored and shown as you typed them, and masked only where they
-go to the agent). Using
-a directory refreshes its modification time, so it expires 14 days after the
-conversation last used it; pruning a review's older versions and the expiry
-delete these directories and every CLI session in them, chat forks included,
-by the same rules as above. The question and the part of the review it is
-about are untrusted data in the prompt, between markers with a random nonce
-and with secrets masked. The answer is masked for secrets before it is
-stored or shown, and its citations are checked against the checkout (no
-absolute paths, no `..`, no symlink leaving it, only lines that exist).
-Conversations are stored in the clone's review store; the session id and run
-directory never leave the daemon, and the logs carry sizes, not text.
+Questions about a pull request are now asked in the session panel (see
+[Session panel](#session-panel)). The conversations of the earlier Ask stay in
+the clone's review store and are served read-only (`GET /api/prs/chat`): their
+answers were masked for secrets before they were stored, their questions are
+shown as you typed them, and no new question is run.
 
 The unsandboxed mode (`--sandbox danger-full-access`) exists only as the
 `Container` profile for the hosted review agent, which runs inside its own
@@ -634,8 +609,10 @@ not instructions, and to ignore requests to run commands, read or send files,
 or change credentials, secrets, CI or workflow configuration, dependencies or
 unrelated files.
 
-A fix can also be made from a conversation with the review's agent (chat), an
-answer's "Fix this". The app sends only the conversation's and the turn's ids:
+A fix could also be made from a conversation with the review's agent (the
+earlier Ask), an answer's "Fix this". The app no longer offers it; the daemon
+still takes such a fix item. The app sent only the conversation's and the
+turn's ids:
 the daemon reads the questions and answers from your review store for that
 clone and pull request, so a page or request cannot supply the text. The
 conversation is an agent's reading of the pull request plus your own questions,
@@ -1381,7 +1358,7 @@ after the user's `agent_env`, so that cannot replace or remove it. Only the
 local profiles run an MCP server; the hosted and container profiles refuse a
 request that asks for one. Claude Code runs with `--strict-mcp-config` and
 Codex with `--ignore-user-config`, so baum's server is the only one. No job
-sets it yet: the chat and quick actions will, and no other run has it.
+sets it yet: quick actions will, and no other run has it.
 
 The session panel's conversations are the exception, by design: each is your
 own Claude Code or Codex session, run as you set it up, with your settings,
@@ -1404,7 +1381,7 @@ use `gh` with your credentials. Git variables that point at another
 repository (`GIT_DIR`, `GIT_WORK_TREE`, `GIT_INDEX_FILE`,
 `GIT_OBJECT_DIRECTORY`, `GIT_ALTERNATE_OBJECT_DIRECTORIES`, `GIT_COMMON_DIR`,
 `GIT_NAMESPACE`, `GIT_PREFIX`) and provider and cloud credentials are still
-removed; reviews, fixes and the chat keep the narrower environment. Claude
+removed; reviews and fixes keep the narrower environment. Claude
 Code still gets `DISABLE_AUTOUPDATER`, `DISABLE_TELEMETRY` and
 `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC`. `BAUM_MCP_TOKEN` is in the
 environment of your Claude Code process, so your own hooks and stdio MCP
