@@ -407,7 +407,9 @@ copy:
   refresh never adds or changes it. `summary.review_exchange.summary` may be
   null, for a pull request nobody has reviewed.
 - Prose rules (`prose_rules.go`) run on newly authored documents only, and
-  their findings go back to the model through the repair loop. `ValidateStored`
+  their findings go back to the model through the repair loop. The public
+  prompts (`agent/prompt`) state the same rules up front, so a repair is the
+  exception. `ValidateStored`
   and `Refresh` never apply them, so a stored review is never rejected or
   rewritten for them. Which rules run depends on what is being prepared:
   a one-pass document (`Validate`, `Prepare`) gets all of them; a staged
@@ -895,12 +897,12 @@ and anthropic, `submit-codex.md`, and `submit-cursor.md`, which points at the
 schema the cursor-agent backend appends and lists the tools that stop a run),
 embedded with `go:embed`.
 `Prompts.Instructions` appends the backend's block under that heading, sets
-`Version` to `review-public-v6` and `Digest` to the sha256 of the composed body,
+`Version` to `review-public-v8` and `Digest` to the sha256 of the composed body,
 and fails for any other backend. A host may supply another implementation; the
 hosted service does, with its private prompts. `StaticPrompts` is a fixed
 implementation for tests and simple hosts. The prompt is per backend because
 each backend submits its result differently. `GroupPrompts` is the local
-review group's prompt (`group-review-public-v4`): the same text with
+review group's prompt (`group-review-public-v6`): the same text with
 `group-public-v1.md` inserted before the Submitting heading, which says how a
 group's bundle, per-member checkout and `members.json` differ and what a
 combined review covers (see "Review groups").
@@ -909,7 +911,7 @@ A staged review takes its instructions through `StagedPrompts`, whose
 `StagedInstructions(ctx, backend)` returns a `StagedPrompt`: `Shared` and
 one text per stage (`Outline`, `Details`, `Context`), with a `Version` and a
 `Digest` covering all four. The module's `prompt.StagedPrompts`
-(`review-staged-public-v1`) embeds `review-shared-public-v1.md` (the stages
+(`review-staged-public-v3`) embeds `review-shared-public-v1.md` (the stages
 and what each writes, so none repeats another, plus the ground rules,
 inputs, checks, anchors, writing and calibration of `review-public-v6.md`)
 and `review-outline-public-v1.md`, `review-details-public-v1.md` and

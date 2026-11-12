@@ -17,20 +17,20 @@ import (
 
 var backends = []string{agent.BackendClaude, agent.BackendAnthropic, agent.BackendCodex, agent.BackendCursorAgent}
 
-// digests captured from the code before overrides existed.
+// digests of the built-in texts; update them with the prompt versions.
 var baseline = map[string]string{
-	"claude review":       "ec2a09922981dc4b1e4df337c7d102eaee0deadfd3376370d1c42d798aa3e111",
-	"claude group":        "2223a1768e7d376e07d9532919ecbd97b76bed1a3400d6872078ace60ffd264f",
-	"claude staged":       "45d56a1f43e410ce3c088de15c71adeacaf132a3d07e1e4547dfe725b657f1e1",
-	"anthropic review":    "ec2a09922981dc4b1e4df337c7d102eaee0deadfd3376370d1c42d798aa3e111",
-	"anthropic group":     "2223a1768e7d376e07d9532919ecbd97b76bed1a3400d6872078ace60ffd264f",
-	"anthropic staged":    "45d56a1f43e410ce3c088de15c71adeacaf132a3d07e1e4547dfe725b657f1e1",
-	"codex review":        "3b34612b55551568b77006fc5615e95012c53345670270c6670184f9bdd5f79d",
-	"codex group":         "5beacba3c5cd18dec186fea10a1ba5d32e2833886c39f3b7553a401fcd021485",
-	"codex staged":        "ebd06c34a7d614cdc6883b2c5679d53bfb8184d7f644f5ef6b15274282cc8c44",
-	"cursor-agent review": "f2fb1940ac321a4a5e46ebbb807ecad2832ccc72519a7cdf27b9b824310f9c76",
-	"cursor-agent group":  "117b6e8d260439b09ebd477a2940993d9737802efb5cfe52ddf28b6300addc71",
-	"cursor-agent staged": "8f46365dab08f2407992c39cca4bd8e81806520afd2bbacbd170b4d730e826a8",
+	"claude review":       "10a55e37c9f822b11488a991b1f62e80c337b6ba8bdc04a181c32cfdac669dde",
+	"claude group":        "570a880d70f9088d82d15e2a9f0d9ce15019ccfc56b2ce851a9df15d996b8302",
+	"claude staged":       "68ae932a9338254768417c0dfdef3932012632b5e02573a22ef3dd265f3630eb",
+	"anthropic review":    "10a55e37c9f822b11488a991b1f62e80c337b6ba8bdc04a181c32cfdac669dde",
+	"anthropic group":     "570a880d70f9088d82d15e2a9f0d9ce15019ccfc56b2ce851a9df15d996b8302",
+	"anthropic staged":    "68ae932a9338254768417c0dfdef3932012632b5e02573a22ef3dd265f3630eb",
+	"codex review":        "f3e40a9c4653fd3fb5aab9374892cd5aca486d501a7d191edd4e41ffe1faf5fa",
+	"codex group":         "73d5111b8e09c2b00e1d1b0ec0a10654eaf3722ff58354b026bc5a3433aab438",
+	"codex staged":        "a9f6465bb636e0204d4d40b4c93f466a716e55c6485c390d37f80f97a442b270",
+	"cursor-agent review": "7e010278d7fcb9b85a48453aee12e41e38ead6810df169365aaf070634ecd530",
+	"cursor-agent group":  "c5aef816868adfc2ee54d5df7221fc9502a118de482ff41d40d0b6c63b22277c",
+	"cursor-agent staged": "518298b58cba19183584273509f19ac9d383bb0ad5ebe6e6f29e6abf25990c50",
 	"fix 0":               "5ff07cb79658980528df0d7dc38c2e8f2bd3c211422f66c769a21408237e4971",
 	"fix 1":               "a01d046cb31bb35be38e4304c9957a47a87a8dfdd682def427ab00251a9848aa",
 	"fix 2":               "e7f530cb2f66b78c599930498089aaa8d060c968d5fda760c7a75a7dada877bf",

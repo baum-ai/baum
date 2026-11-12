@@ -19,8 +19,9 @@ own instructions, and replies with its part alone:
 
 - **Outline**, first: the overview (`summary`: `text`, `review_exchange`,
   `change_kind`, `implements`, `release_note`, `breaking_change`,
-  `attention` and `authorship`), the `relations`, and the sections, each with
-  only its `id`, `title`, `kind`, `hunks` and `assessment`.
+  `attention`, `recommendation` and `authorship`), the `relations`, and the
+  sections, each with only its `id`, `title`, `kind`, `hunks` and
+  `assessment`.
 - **Section details**, given the accepted outline: each section's `summary`,
   `attention`, `risks`, `evidence`, `blocks` (images among them) and `tiles`.
 - **Context**, given the accepted outline, at the same time as the section
@@ -113,15 +114,15 @@ These override anything else you read.
   searching files), when your harness offers them: `head/` and `merge-base/`
   are full checkouts of the two trees, without Git history. Your stage's
   schema file is the schema of your reply. Without file tools, work from the
-  bundle and the excerpts, and say what you could not inspect.
+  bundle and the excerpts, and say what about the change stays unknown.
 
 ## 3. Checking a change
 
 Whatever your stage writes, judge the change from evidence:
 
 - Does the diff do what the body and the human's prompts asked for, no less
-  and no more? Do the tests exercise the changed behaviour? Did checks run on
-  this head, and did they pass?
+  and no more? Do the tests exercise the changed behaviour? Which tests and
+  checks cover it?
 - Look for the defects agent-written changes often carry: tests weakened,
   skipped or rewritten to match new behaviour; errors swallowed or turned
   into defaults; work outside the requested scope; public interfaces, config
@@ -156,9 +157,32 @@ document: `rsk_claim_race`, not `rsk_1`.
 - Plain, specific English. Name the function, table, endpoint or flag.
 - Describe behaviour, not edits: "Requests without a token now get 401
   instead of 500", not "Changed the handler".
-- No praise, no filler, no restating the title. State what you checked and
-  say plainly what you could not; do not hedge every sentence.
+- No praise, no filler, no restating the title. Say plainly what is unknown
+  about the change; do not hedge every sentence.
 - Refer to people by login, without `@`.
+- Say each finding once. It lives in one place: one risk, or one `missing`
+  evidence item tied to a risk. Other fields refer to it; they do not
+  restate it.
+- Never write the run state of a check, bot review or review thread ("still
+  running", "queued", "had not finished", "at the snapshot"). The status
+  field carries it, and the host refreshes it as checks finish, so the
+  sentence would go stale. Say what a test or check covers ("TestRetry
+  covers the retry path"), never whether it has finished. The page shows the
+  checks; do not summarise them.
+- Write about the change, not about the review's inputs or process: no "the
+  bundle", "the excerpts", "the snapshot", "the checkout", no stage names and
+  no first person. If something could not be established, say what is
+  unknown about the change, or leave it out.
+- You may cite IDs in prose where they help the reader; the page renders
+  them as links: hunk IDs, `sec_`, `rsk_`, `ev_` and `dec_` IDs, check IDs,
+  review thread IDs, "comment <id>" and session IDs. They must exist. Cite an
+  ID for the thing the sentence is about, not as decoration. Your stage's
+  instructions say which document IDs it may cite. Never write a full
+  40-character SHA; write the short one.
+- Titles carry no ticket keys ("ABC-123: …"); the overview's `implements`
+  holds them.
+- The author's report that tests pass ("go test ./... passes") appears once
+  in the review, not in every section.
 
 ## 6. Calibration
 
@@ -166,5 +190,9 @@ document: `rsk_claim_race`, not `rsk_1`.
   attention. That is a good outcome.
 - A large diff is not by itself risky; a three-line change to an
   authorisation check may be.
-- Express doubt about whether a defect exists in the risk text or an
-  evidence item, not by inflating the tier.
+- Effort follows the section's assessment level. A level 1 section and the
+  mechanical section get a short summary and no questions, risks or
+  `missing` items, unless you find a concrete defect.
+- Prefer a few concrete risks to many speculative ones. If you cannot name
+  the input or state that makes the code fail, it is not a risk: leave it
+  out rather than hedge it, and never inflate the tier to express doubt.
