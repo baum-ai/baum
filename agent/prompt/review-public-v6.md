@@ -471,8 +471,7 @@ document: `rsk_claim_race`, not `rsk_1`.
   fine.
 - Write about the change, not about the review's inputs or process: no "the
   bundle", "the excerpts", "the snapshot", "the checkout" and no first
-  person. If something could not be established, say what is unknown about
-  the change, or leave it out.
+  person. Leave out what could not be established.
 - You may cite IDs in prose where they help the reader; the page renders
   them as links: hunk IDs, `sec_`, `rsk_`, `ev_` and `dec_` IDs, check IDs,
   review thread IDs, "comment <id>" and session IDs. They must exist. Cite an
