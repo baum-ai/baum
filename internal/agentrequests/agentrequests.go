@@ -103,6 +103,10 @@ var (
 	// ErrNotRunning is a message for a session that is not working on a
 	// turn, so no Stop hook would take it.
 	ErrNotRunning = errors.New("the session is not running")
+	// ErrPanelSession is a message to, or an answer for, a session the app's
+	// session panel runs (Store.Panel): the panel sends to it, and a headless
+	// turn takes no answers.
+	ErrPanelSession = errors.New("the session runs in the session panel")
 )
 
 // BadRequestError is an answer or message the store refuses as given.
@@ -242,6 +246,10 @@ type Sessions interface {
 type Store struct {
 	// Sessions decides which sessions can be sent a message.
 	Sessions Sessions
+	// Panel, when set, reports a session the app's session panel runs. Its
+	// requests are never shown (a headless turn's own permission mode
+	// decides them), and it takes no queued message.
+	Panel func(agent, id string) bool
 	// Mask masks what an agent wrote, as transcripts are masked; nil keeps
 	// it.
 	Mask func(string) string
@@ -376,6 +384,9 @@ func (s *Store) Ask(ctx context.Context, ask Ask) (Decision, error) {
 		return Decision{}, err
 	}
 	if ask.Agent == AgentCodex && !s.Settings().CodexApprovals {
+		return Decision{}, nil
+	}
+	if s.panel(ask.Agent, ask.SessionID) {
 		return Decision{}, nil
 	}
 	p, ok := s.newPending(ask)
@@ -548,6 +559,10 @@ func (s *Store) Answer(id string, reply Reply) error {
 	if p == nil {
 		s.mu.Unlock()
 		return ErrGone
+	}
+	if s.panel(p.Agent, p.SessionID) {
+		s.mu.Unlock()
+		return ErrPanelSession
 	}
 	d, err := p.decide(reply)
 	if err != nil {
@@ -752,6 +767,9 @@ func (s *Store) Queue(agent, id, text string) error {
 	if strings.TrimSpace(text) == "" || !utf8.ValidString(text) || utf8.RuneCountInString(text) > MaxMessage {
 		return bad("the message is empty or too long")
 	}
+	if s.panel(agent, id) {
+		return ErrPanelSession
+	}
 	if !s.running(agent, id) {
 		return ErrNotRunning
 	}
@@ -770,6 +788,11 @@ func (s *Store) running(agent, id string) bool {
 	}
 	session, _, ok := s.Sessions.Lookup(agent, id)
 	return ok && session.State != livesessions.StateEnded && session.WaitingReason != livesessions.WaitTurnFinished
+}
+
+// panel reports a session the session panel runs.
+func (s *Store) panel(agent, id string) bool {
+	return s.Panel != nil && s.Panel(agent, id)
 }
 
 // TakeMessage removes and returns the message queued for a session.

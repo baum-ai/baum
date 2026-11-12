@@ -723,7 +723,7 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 		var conversationRoutes http.Handler
 		consoleRoutes := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if conversationRoutes == nil {
-				http.Error(w, "capability unavailable", http.StatusServiceUnavailable)
+				console.Unavailable().ServeHTTP(w, r)
 				return
 			}
 			conversationRoutes.ServeHTTP(w, r)
@@ -856,6 +856,15 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 				// Panel sessions are listed on the Sessions page, marked as
 				// the panel's, even in a conversation's empty directory.
 				live.Panel = conversations.Owns
+			}
+			if requests != nil {
+				// The panel runs its sessions headless: their requests are
+				// left to their own permission mode, and the panel, not a
+				// queued message, writes to them.
+				requests.Panel = func(agent, id string) bool {
+					_, ok := conversations.Owns(agent, id, "")
+					return ok
+				}
 			}
 		}
 		return daemon.App{

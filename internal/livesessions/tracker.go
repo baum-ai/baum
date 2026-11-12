@@ -273,7 +273,7 @@ type Tracker struct {
 	Mask func(string) string
 	// Panel, when set, names the session panel conversation a session belongs
 	// to: by the session's id once the panel knows it, or by its working
-	// directory when that is one baum made for a conversation. Such a session
+	// directory when that is a conversation's empty directory. Such a session
 	// is marked OriginPanel, and is listed even when its directory is in no
 	// registered clone (LinkPanel), where any other session is dropped. It
 	// is called with the tracker's lock held, so it must not block or call

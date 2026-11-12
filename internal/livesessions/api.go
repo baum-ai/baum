@@ -138,6 +138,10 @@ type Focuser interface {
 // was brought forward, 409 {"code":"focus_failed","message"} with why. A
 // session the tracker does not list is 404.
 func (t *Transcripts) focusHandler(w http.ResponseWriter, r *http.Request) {
+	if session, _, ok := t.Tracker.Lookup(r.PathValue("agent"), r.PathValue("id")); ok && session.Origin == OriginPanel {
+		writePanelSession(w)
+		return
+	}
 	terminal, ok := t.Tracker.Terminal(r.PathValue("agent"), r.PathValue("id"))
 	switch {
 	case !ok:
@@ -157,6 +161,16 @@ func (t *Transcripts) focusHandler(w http.ResponseWriter, r *http.Request) {
 		out["message"] = result.Message
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+// ErrPanelSession is an action on a session the app's session panel runs:
+// the panel ends, stops and sends to it, so the Sessions page offers no end,
+// message or focus for it (Listed) and its routes refuse them.
+var ErrPanelSession = errors.New("the session runs in the session panel")
+
+// writePanelSession answers an action refused with ErrPanelSession.
+func writePanelSession(w http.ResponseWriter) {
+	writeJSON(w, http.StatusConflict, map[string]any{"code": "panel_session", "message": "This session runs in baum's session panel: open it there to stop it or write to it."})
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

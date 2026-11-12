@@ -201,6 +201,21 @@ func (s *Service) Handler() http.Handler {
 	return mux
 }
 
+// Unavailable answers the panel's routes while no Service runs (its
+// conversations did not open), as the local API answers other capabilities
+// it lacks: a read is 200 {"available":false,"code":"console_unavailable"},
+// and anything else 503 with the routes' error shape and that code.
+func Unavailable() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet || r.Method == http.MethodHead {
+			writeJSON(w, http.StatusOK, map[string]any{"available": false, "code": "console_unavailable"})
+			return
+		}
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"code": "console_unavailable",
+			"message": "The session panel is unavailable: its conversations could not be opened. The daemon's log says why."})
+	})
+}
+
 // decode reads one JSON value into v; an empty body leaves v as it is, so
 // the routes that take nothing accept none. It answers 400 itself.
 func decode(w http.ResponseWriter, r *http.Request, v any) bool {

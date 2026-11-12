@@ -224,6 +224,11 @@ func (t *Transcripts) listed() []Listed {
 				l.Focus = t.Focus.Predict(s.Agent, terminal)
 			}
 		}
+		// The panel runs its sessions: the app opens them there, and offers
+		// none of the actions it has for the person's own.
+		if l.Origin == OriginPanel {
+			l.Endable, l.EndBlocked, l.Messageable, l.Focus = false, "", false, ""
+		}
 		out = append(out, l)
 	}
 	t.mu.Lock()
