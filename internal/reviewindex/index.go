@@ -383,15 +383,66 @@ func (s *Service) readPart(ctx context.Context, now time.Time, g *group) (p *par
 }
 
 // Handler serves GET /api/index. The host must apply its launch authentication
-// and Host/Origin checks before routing here. history=1 includes saved-only rows.
+// and Host/Origin checks before routing here. history=1 includes saved-only rows;
+// detail=summary leaves each entry's latest version with the fields a list reads.
 func (s *Service) Handler() http.Handler {
-	return handler(func(ctx context.Context, history bool) (etagjson.Body, error) {
+	return handler(func(ctx context.Context, v variant) (etagjson.Body, error) {
 		snapshot, err := s.Build(ctx)
 		if err != nil {
 			return etagjson.Body{}, err
 		}
-		return etagjson.Encode(withHistory(snapshot, history))
+		return v.encode(snapshot)
 	})
+}
+
+// variant is the shape of one GET /api/index answer: history=1 includes
+// saved-only rows, detail=summary trims each entry's latest version to the
+// fields a list shows (see summaryMetadata).
+type variant struct{ history, summary bool }
+
+func (v variant) encode(snapshot Snapshot) (etagjson.Body, error) {
+	snapshot = withHistory(snapshot, v.history)
+	if !v.summary {
+		return etagjson.Encode(snapshot)
+	}
+	out := struct {
+		Entries  []summaryEntry `json:"entries"`
+		Problems []Problem      `json:"problems"`
+	}{Entries: make([]summaryEntry, len(snapshot.Entries)), Problems: snapshot.Problems}
+	for i, entry := range snapshot.Entries {
+		out.Entries[i] = summaryEntry{Entry: entry, Latest: summarise(entry.Latest)}
+	}
+	return etagjson.Encode(out)
+}
+
+// summaryMetadata is the part of a saved version's metadata a list reads:
+// which version it is, when and by what it was generated, what it cost. The
+// rest (the per-attempt accounting, digests, the kept session) is several KB
+// per entry, and a version's own read still serves it in full.
+type summaryMetadata struct {
+	Version         int      `json:"version"`
+	Head            string   `json:"head"`
+	Backend         string   `json:"backend"`
+	Model           string   `json:"model"`
+	GeneratedAt     string   `json:"generated_at"`
+	Calls           int      `json:"calls"`
+	Tokens          int      `json:"tokens"`
+	RecordedCostUSD *float64 `json:"recorded_cost_usd"`
+}
+
+func summarise(m *store.Metadata) *summaryMetadata {
+	if m == nil {
+		return nil
+	}
+	return &summaryMetadata{Version: m.Version, Head: m.Head, Backend: m.Backend, Model: m.Model,
+		GeneratedAt: m.GeneratedAt, Calls: m.Calls, Tokens: m.Tokens, RecordedCostUSD: m.RecordedCostUSD}
+}
+
+// summaryEntry is an Entry whose latest is a summaryMetadata: the outer
+// field hides the embedded one in the JSON.
+type summaryEntry struct {
+	Entry
+	Latest *summaryMetadata `json:"latest"`
 }
 
 // withHistory drops saved-only rows unless history is set. It copies the
@@ -412,7 +463,7 @@ func withHistory(snapshot Snapshot, history bool) Snapshot {
 
 // handler serves the bodies body returns. The response revalidates: an
 // unchanged snapshot answers 304 to its ETag.
-func handler(body func(ctx context.Context, history bool) (etagjson.Body, error)) http.Handler {
+func handler(body func(ctx context.Context, v variant) (etagjson.Body, error)) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/index" {
 			http.NotFound(w, r)
@@ -423,7 +474,8 @@ func handler(body func(ctx context.Context, history bool) (etagjson.Body, error)
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
-		b, err := body(r.Context(), r.URL.Query().Get("history") == "1")
+		query := r.URL.Query()
+		b, err := body(r.Context(), variant{history: query.Get("history") == "1", summary: query.Get("detail") == "summary"})
 		if err != nil {
 			if !errors.Is(err, context.Canceled) {
 				http.Error(w, "index unavailable", http.StatusInternalServerError)

@@ -81,7 +81,7 @@ beforeEach(() => {
             ? { entries, problems: [] }
             : path === "/s/test-ns/api/repos" || path === "/s/test-ns/api/repositories"
               ? []
-              : path === "/s/test-ns/api/prs"
+              : path === "/s/test-ns/api/prs?view=health"
                 ? []
                 : path === "/s/test-ns/api/jobs"
                   ? { jobs: [] }
@@ -402,7 +402,7 @@ it.each([
     entries = [{ ...entry(1), stale }];
     const original = vi.mocked(fetch).getMockImplementation()!;
     vi.mocked(fetch).mockImplementation((...args) =>
-      String(args[0]) === "/s/test-ns/api/prs"
+      String(args[0]) === "/s/test-ns/api/prs?view=health"
         ? Promise.resolve(
             Response.json([
               {

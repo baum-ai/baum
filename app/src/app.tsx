@@ -525,9 +525,9 @@ function Workspace({ url }: { url: UrlState }) {
               inboxQueue,
             ] = await Promise.all([
               want.has("clones") ? get<Clone[]>("api/repos") : skip,
-              want.has("index") ? get<Snapshot>("api/index?history=1") : skip,
+              want.has("index") ? get<Snapshot>("api/index?history=1&detail=summary") : skip,
               want.has("jobs") ? get<{ jobs?: Job[] }>("api/jobs") : skip,
-              want.has("discovery") ? get<typeof rates>("api/prs") : skip,
+              want.has("discovery") ? get<typeof rates>("api/prs?view=health") : skip,
               want.has("discovery") ? get<typeof background>("api/background") : skip,
               // A daemon without automatic generation answers without repositories.
               want.has("automatic")
