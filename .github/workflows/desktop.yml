@@ -172,7 +172,8 @@ jobs:
           fi
 
       # Snapshots reuse the compiled dependencies of the last snapshot for
-      # the platform; release builds compile everything afresh.
+      # the platform and Linux build image; release builds compile everything
+      # afresh. Keep native output from the old Ubuntu 22.04 image separate.
       - name: Cache the Rust build output
         if: inputs.cli-artifact == ''
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -181,10 +182,10 @@ jobs:
             desktop/target/*/release/build
             desktop/target/*/release/deps
             desktop/target/*/release/.fingerprint
-          key: desktop-bundle-${{ matrix.platform }}-${{ hashFiles('desktop/Cargo.lock') }}
-          restore-keys: desktop-bundle-${{ matrix.platform }}-
+          key: desktop-bundle-noble-${{ matrix.platform }}-${{ hashFiles('desktop/Dockerfile') }}-${{ hashFiles('desktop/Cargo.lock') }}
+          restore-keys: desktop-bundle-noble-${{ matrix.platform }}-${{ hashFiles('desktop/Dockerfile') }}-
 
-      # Linux bundles are built on Ubuntu 22.04, the oldest supported
+      # Linux bundles are built on Ubuntu 24.04, the oldest supported
       # distribution, in the same image as `just desktop::bundle`. Snapshots
       # reuse the image's layers from the Actions cache; release builds build
       # it afresh.

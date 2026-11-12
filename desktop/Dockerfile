@@ -1,18 +1,17 @@
 # Linux build and check environment for the desktop app: Rust, the WebKitGTK
 # and GTK development packages Tauri links against, and the Tauri CLI.
-# Ubuntu 22.04 is the oldest distribution the app supports. The AppImage
-# carries this system's GTK and Pango but uses the host's HarfBuzz, glibc and
-# other libraries linuxdeploy leaves out, so it must be built against the
-# oldest of them: a Debian 12 build's Pango needs HarfBuzz 4, which Ubuntu
-# 22.04 lacks. The release workflow builds the Linux bundles in this image.
+# Ubuntu 24.04 is the oldest distribution the app supports. The AppImage
+# carries this system's WebKitGTK, GTK and Pango but uses the host's HarfBuzz,
+# glibc and other libraries linuxdeploy leaves out. The release workflow
+# builds the Linux bundles in this image.
 # jq and minisign run the updater signing and manifest tests
-# (scripts/updater-manifest-test.sh); Ubuntu 22.04 has no minisign package,
-# so the image installs the release's pinned binary. Image index digests pin
-# every architecture's image.
+# (scripts/updater-manifest-test.sh); the image installs the release's pinned
+# minisign binary. Image index digests pin every architecture's image.
 FROM rust:1.99.1-bookworm@sha256:e12566d5abc17a0da741628782cdb504b68b8961f5bfcf677936bf3e8b32de29 AS rust
 
-FROM ubuntu:22.04@sha256:076e7bf82319619f28dd0aa9c02ab34b055ad37100395b4f49a2ffba04fb5e11
+FROM ubuntu:24.04@sha256:2198e4c65076e9cb0b3d695219df667c0e3b0072da64ca3c2648aca17dcecaf5
 
+# WebKit bug 298180 leaks resource loaders in 2.50.4; fixed in 2.50.5.
 RUN apt-get update \
     && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
         build-essential \
@@ -29,6 +28,8 @@ RUN apt-get update \
         libxdo-dev \
         pkg-config \
         xdg-utils \
+    && pkg-config --atleast-version=2.50.5 webkit2gtk-4.1 \
+    && pkg-config --modversion webkit2gtk-4.1 \
     && rm -rf /var/lib/apt/lists/*
 
 # The Rust toolchain targets glibc 2.17, so the official image's runs here.
