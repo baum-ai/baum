@@ -138,8 +138,13 @@ graph and, for a linked session, the evidence built for it with what that
 evidence depended on besides the transcript. The digest is reused only when
 all of it is unchanged, so the evidence is the same as a full rebuild.
 [Local session evidence](../../ARCHITECTURE.md#local-session-evidence)
-describes the keys. `Resolve` and
-`LinkCommits` map every session.
+describes the keys. `LinkCommits` shares the same bounded compact facts cache
+and skips unchanged session graphs too, including transcripts older than an
+hour and graphs evicted from the mapping cache. It recomputes observed and
+reflog creation evidence for the current commits, so changing external evidence
+still changes the links. If facts needed for an unmapped session are missing,
+it retries with full mapping. `Resolve`, which returns session rows, still maps
+every session.
 
 Run `just oss-go test ./internal/locallink/...` from the monorepo root. The
 tests cover concurrent readers/editors, stale sessions, matching-parent false
