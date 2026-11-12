@@ -708,6 +708,7 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 			state, err := savedInboxes.Read()
 			return state.Inboxes, err
 		}}
+		inboxesAPI := &inboxes.API{Store: savedInboxes, Changed: changed}
 		var lastHookTrust uiserver.LastHookTrust
 		local := uiserver.LocalAPI{GitHubAuth: githubConnection.Handler(), Registry: registry, Config: cfg, PRs: uiserver.DiscoveryHandler(registry, discover, changed), Index: inboxQueue.CountHandler(index.Handler()), Inbox: inboxQueue.Handler(), Jobs: queue.Handler(), Chat: uiserver.ChatHandler(registry, queue), Background: worker.Handler(), Automatic: scheduler.Handler(), Live: liveAPI, AgentRequests: requestsAPI, Clones: clones.Handler(), GitHubRepositories: pickList.Handler(), CurrentName: currentName(githubClient), PlanUsage: plans.Handler(), PlanUsageCached: func() []json.RawMessage {
 			var cached []json.RawMessage
@@ -719,7 +720,7 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 			return cached
 		}, Analytics: insights.Handler(), Timeline: timeline, Merge: uiserver.MergeHandler(registry, actions.RecordMerges(githubClient), mergedPullRequest, changed), Review: uiserver.ReviewHandler(registry, githubClient, changed), Update: uiserver.UpdateHandler(registry, actions.RecordUpdates(prupdate.Service{Client: githubClient, Cache: panelCache, Counted: countedThreads, Clone: availableClone}), refreshRepository, changed), Changed: settingsChanged,
 			UIState:   uiState.Handler(),
-			Inboxes:   (&inboxes.API{Store: savedInboxes, Changed: changed}).Handler(),
+			Inboxes:   inboxesAPI.Handler(),
 			Groups:    groupsAPI.Handler(),
 			Decisions: decisionsAPI, Facts: pageFacts, Log: log,
 			DecisionsChanged:   func() { _ = server.Publish("decisions", struct{}{}) },
@@ -750,9 +751,19 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 		api := local.Handler()
 		// The tour's sample project, written when first asked for.
 		sample := &sampleapp.Workspace{Dir: filepath.Join(state, "sample"), Own: api}
+		// What a chat proposes is saved, when the person saves it, through
+		// the pages' own saves.
+		proposers := &uiserver.Proposers{API: local, Automatic: scheduler, Inboxes: inboxesAPI, Groups: groupsAPI, UIState: uiState}
+		if requests != nil {
+			proposers.CodexApprovals = func() bool { return requests.Settings().CodexApprovals }
+			proposers.SetCodexApprovals = func(on bool, check func(bool) error) error {
+				_, err := requests.SetSettingsIf(agentrequests.Settings{CodexApprovals: on}, func(current agentrequests.Settings) error { return check(current.CodexApprovals) })
+				return err
+			}
+		}
 		// Agents' MCP server; an action's reads resolve clone ids to check
 		// they stay in its repository.
-		mcp := agentcontext.New(agentcontext.Options{API: api, Version: version(), PlanUsage: local.CachedPlans, PlanChoices: local.CachedPlanChoices, CodexHooks: lastHookTrust.Get, DecisionSettings: (&uiserver.DecisionViews{API: local}).Get, PickList: func(ctx context.Context, query string) (agentcontext.PickList, error) {
+		mcp := agentcontext.New(agentcontext.Options{API: api, Version: version(), PlanUsage: local.CachedPlans, PlanChoices: local.CachedPlanChoices, CodexHooks: lastHookTrust.Get, DecisionSettings: (&uiserver.DecisionViews{API: local}).Get, Proposers: proposers.Pages(), PickList: func(ctx context.Context, query string) (agentcontext.PickList, error) {
 			listing, loaded, err := pickList.Cached(ctx, query)
 			if err != nil {
 				return agentcontext.PickList{}, err
