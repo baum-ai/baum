@@ -59,6 +59,11 @@ func TestConverseRunsThePersonsSession(t *testing.T) {
 {"type":"item.completed","item":{"type":"agent_message","text":"Done."}}
 {"type":"turn.completed","usage":{"input_tokens":10,"cached_input_tokens":4,"output_tokens":3}}`
 	script := fakeCodexSandbox(t, "codex-cli 0.167.1", "exit 1;", threadScript(events))
+	kept := []string{"SSH_AUTH_SOCK", "GH_TOKEN", "GITHUB_TOKEN", "GIT_SSH_COMMAND", "GIT_AUTHOR_NAME"}
+	stripped := []string{"GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR", "OPENAI_API_KEY", "CODEX_API_KEY", "ANTHROPIC_API_KEY"}
+	for _, name := range append(slices.Clone(kept), stripped...) {
+		t.Setenv(name, "inherited")
+	}
 	dir := t.TempDir()
 	var started, messages []string
 	request := agent.Request{Directory: dir, Prompt: "go", ResumeSession: testSession, MCP: testMCP(),
@@ -85,6 +90,28 @@ func TestConverseRunsThePersonsSession(t *testing.T) {
 	for _, flag := range []string{"--ignore-user-config", "--ignore-rules", "--ephemeral", "--disable", "--output-schema"} {
 		if slices.Contains(args, flag) {
 			t.Errorf("a conversation passed %s: %q", flag, args)
+		}
+	}
+	env := environmentOf(t, dir)
+	for _, name := range kept {
+		if env[name] != "inherited" {
+			t.Errorf("the person's session lost %s", name)
+		}
+	}
+	for _, name := range stripped {
+		if _, ok := env[name]; ok {
+			t.Errorf("the person's session got %s", name)
+		}
+	}
+	// A review's environment keeps none of what a session adds.
+	reviewDir := t.TempDir()
+	if _, err := (&Backend{Binary: fakeCodex(t, "codex-cli 0.167.1", threadScript(successEvents))}).Run(context.Background(), schemaRequest(reviewDir, nil)); err != nil {
+		t.Fatal(err)
+	}
+	env = environmentOf(t, reviewDir)
+	for _, name := range append(slices.Clone(kept), stripped...) {
+		if _, ok := env[name]; ok {
+			t.Errorf("a review got %s", name)
 		}
 	}
 	// Workspace access runs in the sandbox, so it is checked first.

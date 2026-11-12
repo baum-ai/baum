@@ -63,7 +63,9 @@ func TestConverseRunsThePersonsSession(t *testing.T) {
 		`{"type":"result","subtype":"success","result":"Hello","session_id":"` + converseSession + `","usage":{"input_tokens":3,"output_tokens":2}}`,
 	}
 	script := fakeClaude(t, "2.1.300 (Claude Code)", "cat > prompt.txt\nprintf '%s\\n' \"$@\" > arguments.txt\nenv > environment.txt\ncat <<'EVENTS'\n"+strings.Join(events, "\n")+"\nEVENTS\n")
-	t.Setenv("ANTHROPIC_API_KEY", "inherited-key")
+	for _, name := range append(slices.Clone(sessionKept), sessionStripped...) {
+		t.Setenv(name, "inherited")
+	}
 	dir := t.TempDir()
 	var started, deltas, messages []string
 	result, err := (&Backend{Binary: script}).Converse(context.Background(), agent.Request{
@@ -98,10 +100,33 @@ func TestConverseRunsThePersonsSession(t *testing.T) {
 	if env[agent.MCPTokenEnv] != mcpToken {
 		t.Errorf("the MCP token is not in the environment")
 	}
-	if _, ok := env["ANTHROPIC_API_KEY"]; ok {
-		t.Errorf("a provider key reached the person's session")
+	for _, name := range sessionKept {
+		if env[name] != "inherited" {
+			t.Errorf("the person's session lost %s", name)
+		}
+	}
+	for _, name := range sessionStripped {
+		if _, ok := env[name]; ok {
+			t.Errorf("the person's session got %s", name)
+		}
+	}
+
+	// A review's environment keeps none of what a session adds.
+	_, _ = (&Backend{Binary: script}).Run(context.Background(), agent.Request{Directory: dir, Prompt: "p", Schema: []byte(`{}`)})
+	env = environmentOf(t, dir)
+	for _, name := range append(slices.Clone(sessionKept), sessionStripped...) {
+		if _, ok := env[name]; ok {
+			t.Errorf("a review got %s", name)
+		}
 	}
 }
+
+// sessionKept are variables a person's own session keeps and a review does
+// not; sessionStripped are removed from both.
+var (
+	sessionKept     = []string{"SSH_AUTH_SOCK", "GH_TOKEN", "GITHUB_TOKEN", "GIT_SSH_COMMAND", "GIT_AUTHOR_NAME"}
+	sessionStripped = []string{"GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR", "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "AWS_SECRET_ACCESS_KEY"}
+)
 
 // A conversation never forks, and only the User profile runs one.
 func TestConverseRefusals(t *testing.T) {

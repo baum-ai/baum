@@ -144,7 +144,8 @@ func (c *Backend) command(request agent.Request, endpoint *agent.Endpoint, fix b
 // and as config on exec resume, which does not take --sandbox. Approvals are
 // never asked for in either, since nobody could answer them. baum's MCP
 // server is added next to the person's own; the token reaches it through the
-// environment only, set last.
+// environment only, set last. The environment is agent.ConverseEnvironment's,
+// so the person's SSH agent, gh and Git settings work, with their agent_env.
 func (c *Backend) converseCommand(request agent.Request, access agent.Access) (args, env []string, err error) {
 	args = []string{"exec"}
 	if request.ResumeSession != "" {
@@ -159,7 +160,7 @@ func (c *Backend) converseCommand(request agent.Request, access agent.Access) (a
 	default:
 		args = append(args, "--sandbox", "workspace-write", "-c", `approval_policy="never"`)
 	}
-	env = agent.WithUserEnv(agent.LocalEnvironment(os.Environ(), "CODEX_HOME"), c.Env)
+	env = agent.WithUserEnv(agent.ConverseEnvironment(os.Environ(), "CODEX_HOME"), c.Env)
 	if request.MCP != nil {
 		mcp, err := mcpConfig(request.MCP)
 		if err != nil {

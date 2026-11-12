@@ -194,7 +194,11 @@ func (c *Backend) run(ctx context.Context, request agent.Request, args, env []st
 	cmd := exec.CommandContext(ctx, binary, args...)
 	cmd.Dir = request.Directory
 	// A later entry of the same variable wins (exec.Cmd.Env).
-	cmd.Env = append(c.environment(request.Directory, endpoint), env...)
+	if kind == runConverse {
+		cmd.Env = append(c.converseEnvironment(), env...)
+	} else {
+		cmd.Env = append(c.environment(request.Directory, endpoint), env...)
+	}
 	// The MCP token goes last and replaces any entry of the name, so the
 	// user's agent_env cannot override or remove it.
 	cmd.Env = agent.WithMCPToken(cmd.Env, request.MCP)

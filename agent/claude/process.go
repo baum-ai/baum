@@ -197,6 +197,15 @@ func (c *Backend) environment(directory string, endpoint *agent.Endpoint) []stri
 	return env
 }
 
+// converseEnvironment is the environment of a person's own session
+// (Converse): agent.ConverseEnvironment, so their SSH agent, gh and Git
+// settings work, then their agent_env and the fixed variables. No provider
+// key or base URL is set, whatever the request or DefaultEndpoint name: the
+// session runs on the person's own login.
+func (c *Backend) converseEnvironment() []string {
+	return append(agent.WithUserEnv(agent.ConverseEnvironment(os.Environ(), "CLAUDE_CONFIG_DIR"), c.Env), fixedEnvironment(true)...)
+}
+
 // MinimumVersion is the oldest Claude Code the User profile runs: the first
 // release whose argument parser accepts every flag args and fixArgs pass.
 // Found with the agent version matrix (scripts/agent-matrix): 2.1.247 refuses
