@@ -53,6 +53,9 @@ const (
 	// run of placement and the features one run of the text stage take.
 	FeatureAssignRunLimit  = 100
 	FeatureSummaryRunLimit = 50
+	// Finish one attribution task before writing useful feature text. The next
+	// tick resumes cached progress instead of draining the backlog first.
+	FeatureAttributionRunLimit = 1
 	// FeatureSummaryConcurrency is how many feature text tasks run at once.
 	// Live summaries read PR evidence together; legacy builds may still call
 	// per-PR summaries. Each local task may start a CLI process.

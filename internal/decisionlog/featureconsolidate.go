@@ -259,6 +259,7 @@ type plannedSplit struct {
 	parts   *consolidate.Partition
 	// checked records the feature as checked: kept whole or too large.
 	checked bool
+	source  *SourceContext
 }
 
 // consolidate makes one pass over the run's version (README.md,
@@ -486,7 +487,7 @@ func (r *featureRun) consolidate(ctx context.Context, gated bool) (ConsolidateRe
 			r.w.logger().Warn("feature log: split not made", "repository", r.repository, "error", err)
 			continue
 		}
-		planned := plannedSplit{feature: f, pulls: pulls, checked: len(partition.Parts) == 1}
+		planned := plannedSplit{feature: f, pulls: pulls, checked: len(partition.Parts) == 1, source: result.Source}
 		if planned.checked {
 			report.KeptWhole++
 		} else {
@@ -531,7 +532,7 @@ ON CONFLICT(feature_id) DO UPDATE SET prompt_version=excluded.prompt_version,che
 			}
 			continue
 		}
-		created, err := s.splitFeature(write, r.version, r.repository, f.ID, planned.pulls, *planned.parts, expected, r.now)
+		created, err := s.splitFeature(write, r.version, r.repository, f.ID, planned.pulls, *planned.parts, expected, r.now, planned.source)
 		if err != nil {
 			return r.consolidationFailed(write, report, fingerprint, 0, err)
 		}
@@ -666,7 +667,7 @@ WHERE feature.id=?1 AND d.id=?2 AND d.split_at > COALESCE(feature.split_at, 0) A
 // offered again until it changes. It returns the new features, -1 when the
 // feature changed.
 func (s *Store) splitFeature(ctx context.Context, version int64, repository, id string, pulls []consolidationPull, partition consolidate.Partition,
-	expected map[string]int64, now time.Time) (int, error) {
+	expected map[string]int64, now time.Time, sources ...*SourceContext) (int, error) {
 	created := -1
 	err := s.inTx(ctx, func(tx *sql.Tx) error {
 		if live, err := writable(ctx, tx, version); err != nil || !live {
@@ -693,6 +694,12 @@ func (s *Store) splitFeature(ctx context.Context, version int64, repository, id 
 			return nil
 		}
 		ids := []string{id}
+		partIDs := make([]string, len(partition.Parts))
+		partIDs[partition.Keeper] = id
+		keeper := partition.Parts[partition.Keeper]
+		if _, err := tx.ExecContext(ctx, `UPDATE feature SET title=?,description=?,digest='',summary_input_hash='',key_decisions_json='[]' WHERE id=?`, keeper.Title, keeper.Description, id); err != nil {
+			return err
+		}
 		var moved []int
 		for i, part := range partition.Parts {
 			if i == partition.Keeper {
@@ -705,6 +712,7 @@ VALUES (?1,?2,?3,?4,?5,?6,?7,?7,?7,?7)`, newID, version, repository, part.Title,
 				return err
 			}
 			ids = append(ids, newID)
+			partIDs[i] = newID
 			for _, index := range part.PullRequests {
 				number := pulls[index].Number
 				moved = append(moved, number)
@@ -728,6 +736,13 @@ VALUES (?1,?2,?3,?4,?5,?6,?7,?7,?7,?7)`, newID, version, repository, part.Title,
 			if _, err := tx.ExecContext(ctx, `INSERT INTO feature_reconcile(feature_id,version_id,prompt_version,checked_version) SELECT id,version_id,?,membership_version FROM feature WHERE id=? ON CONFLICT(feature_id) DO UPDATE SET prompt_version=excluded.prompt_version,checked_version=excluded.checked_version`, ConsolidateVersion, part); err != nil {
 				return err
 			}
+		}
+		var source *SourceContext
+		if len(sources) > 0 {
+			source = sources[0]
+		}
+		if err := rehomeSplitScopes(ctx, tx, version, repository, id, pulls, partition, partIDs, source); err != nil {
+			return err
 		}
 		created = len(ids) - 1
 		return nil

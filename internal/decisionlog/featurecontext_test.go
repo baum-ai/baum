@@ -139,3 +139,85 @@ func TestSmallMixedFeatureRepairPreservesMembersAndDecisionLinks(t *testing.T) {
 		t.Fatalf("feature ID/link changed %+v %v", resolved, err)
 	}
 }
+
+func TestSplitRehomesSupportedScopeAndRetiresConflictingContext(t *testing.T) {
+	f := newFeatureFixture(t)
+	ctx := context.Background()
+	version := f.live()
+	f.pull(1, "Repository Settings", t0, "h1", []string{"shared.go", "settings.go"})
+	f.pull(2, "AppImage distribution", t0.Add(time.Minute), "h2", []string{"shared.go", "packaging.go"})
+	f.feature(version, "mixed", 1, 2)
+	f.exec(`UPDATE feature_pull SET assigned_paths_json='["shared.go","settings.go"]' WHERE number=1`)
+	f.exec(`UPDATE feature_pull SET assigned_paths_json='["shared.go","packaging.go"]' WHERE number=2`)
+	f.exec(`UPDATE feature SET title='AppImage distribution' WHERE id='mixed'`)
+	for _, id := range []string{"conflict", "ambiguous"} {
+		f.feature(version, id)
+		f.exec(`UPDATE feature SET merged_into='mixed' WHERE id=?`, id)
+	}
+	for id, scope := range map[string]adaptive.Scope{
+		"mixed":     {Key: "appimage", Title: "AppImage distribution", Purpose: "Ship portable Linux archives", Boundaries: "Excludes Settings", Examples: []int{2}, Paths: []string{"packaging.go"}},
+		"conflict":  {Key: "bad-example", Title: "AppImage distribution", Purpose: "Ship Linux archives", Examples: []int{1}, Paths: []string{"packaging.go"}},
+		"ambiguous": {Key: "broad", Title: "Mixed historical context", Purpose: "Unclear scope", Paths: []string{"shared.go"}},
+	} {
+		data, _ := json.Marshal(scope)
+		f.exec(`INSERT INTO feature_scope(feature_id,version_id,repository,revision,scope_json)VALUES(?,?,?,'original-map-revision',?)`, id, version, repo, string(data))
+	}
+	f.saveSession("scope-choice", "shared.go")
+	f.exec(`INSERT INTO session_commit(agent,session_id,repository,sha,method,confidence)VALUES('claude-code','scope-choice',?,'both','checkpoint',1)`, repo)
+	for _, n := range []int{1, 2} {
+		f.exec(`INSERT INTO pull_commit(repository,number,sha,committed_at)VALUES(?,?,'both',0)`, repo, n)
+	}
+	f.backend.split = func(string) (string, error) {
+		return `{"parts":[{"title":"Repository Settings","description":"Configure repository preferences.","pull_requests":["P1"]},{"title":"AppImage distribution","description":"Distribute Linux packages.","pull_requests":["P2"]}]}`, nil
+	}
+	if report := f.consolidate(FeatureOptions{Manual: true}); report.Split != 1 {
+		t.Fatalf("split %+v", report)
+	}
+	app := f.featureOf(2)
+	if app == "mixed" || f.featureOf(1) != "mixed" {
+		t.Fatal("wrong keeper")
+	}
+	candidates, err := f.store.candidateFeatures(ctx, version, repo, time.Time{}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	byID := map[string]*candidateFeature{}
+	for _, c := range candidates {
+		byID[c.ID] = c
+	}
+	if byID["mixed"].Title != "Repository Settings" || len(byID["mixed"].Scopes) != 0 {
+		t.Fatalf("keeper inherited stale AppImage purpose: %+v", byID["mixed"])
+	}
+	if len(byID[app].Scopes) != 1 || byID[app].Scopes[0].Key != "appimage" || byID[app].Scopes[0].Revision != "original-map-revision" || byID[app].Scopes[0].Boundaries != "Excludes Settings" {
+		t.Fatalf("original AppImage map lost/misplaced: %+v", byID[app])
+	}
+	if f.count(`SELECT COUNT(*) FROM feature_scope_target WHERE state='unresolved'`) != 2 {
+		t.Fatal("conflicting or ambiguous scope stayed active")
+	}
+	original, err := f.store.FeatureScopes(ctx, version, repo)
+	if err != nil || len(original) != 3 {
+		t.Fatalf("immutable definitions lost: %+v %v", original, err)
+	}
+	if i := slices.IndexFunc(original, func(s FeatureScope) bool { return s.FeatureID == "mixed" }); i < 0 || original[i].Title != "AppImage distribution" {
+		t.Fatal("original map was rewritten as Settings")
+	}
+	key := SessionKey{Agent: "claude-code", ID: "scope-choice"}
+	current, _ := f.store.currentOf(ctx, []SessionKey{key})
+	links, _ := f.store.sessionLinksOf(ctx, version, repo, []SessionKey{key})
+	input, err := f.store.attributionSet(ctx, version, repo, []SessionKey{key}, current, links)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range input.Inputs[key].Candidates {
+		if c.ID == "mixed" && (c.Title != "Repository Settings" || len(c.Scopes) != 0) {
+			t.Fatalf("attribution inherited stale scope: %+v", c)
+		}
+		if c.ID == app && len(c.Scopes) != 1 {
+			t.Fatal("attribution lost corrected AppImage scope")
+		}
+	}
+	var source string
+	if err = f.store.db.QueryRow(`SELECT source_json FROM feature_scope_target WHERE scope_id='mixed'`).Scan(&source); err != nil || !strings.Contains(source, `"revision"`) {
+		t.Fatalf("split context provenance missing %s %v", source, err)
+	}
+}

@@ -399,9 +399,11 @@ raises `membership_version` and sets `dirty_since` and `changed_at`.
 local decisions before text is written. It uses `feature-attribution-repository-v1`
 tasks with meanings, quoted extracted evidence, cited turns, linked commits/PRs,
 durable scopes and source. It never rereads complete transcripts. One task
-answers at most 40 pending decisions from one session; a pass takes at most 50
-pending session units (or its explicit limit), including unavailable-source
-attempts. Inputs over 512 KiB remain unresolved with a reason. Failures use the
+answers at most 40 pending decisions from one session; a default pass takes one pending session unit, then writes useful feature text
+before the next tick resumes the remaining backlog. This distinct small quantum
+prevents a long capture backlog from delaying all highlights; an explicit
+`AttributionLimit` overrides it independently of the feature summary limit.
+Unavailable-source attempts also consume the quantum. Inputs over 512 KiB remain unresolved with a reason. Failures use the
 same per-input backoff as placement. Every supplied ID must occur exactly once;
 only supplied eligible features/PRs may be chosen, and explicit no-match is valid.
 
@@ -437,7 +439,8 @@ session's prompts or quoted evidence) and its paths. The call also reads the
 repository's name and the feature's current title and description.
 
 Live repository summaries read PR titles, descriptions, paths, available saved
-review/generated summaries and source directly; they never fan out to a model
+review summaries, generated summaries whose current content hash still matches,
+and source directly; they never fan out to a model
 call per PR. The explicitly selected legacy full-history build retains its old
 per-PR fallback. Only semantically eligible, significant choices may be keys:
 routine agent tests, lint/build checks, PR preparation and bookkeeping are
@@ -502,6 +505,14 @@ first build's features needs the room.
   substantial outcomes. Shared paths do not force a join; stages, tests and
   follow-ups of one outcome stay together. `feature_reconcile` keys checked
   memberships by prompt version, so an old policy does not suppress repair.
+  The keeper immediately takes its corrected partition text. Original scope
+  definitions/revisions stay immutable; `feature_scope_target` separately
+  rehomes live scope context only when example/path evidence uniquely supports
+  a resulting part. Conflicting, broad or absent evidence makes that scope
+  inactive for live grouping/attribution while retaining its original definition,
+  split source manifest and reason. Merges still resolve mapped targets through
+  aliases. New parts rely on corrected text/PR/source rather than fabricated
+  source-derived exclusions.
 - **Writing.** Every call of a pass is made before anything is written. Each
   merge and split is written in its own transaction, only while its features
   are at the membership versions the pass read (as its own earlier writes
@@ -727,7 +738,8 @@ paths as a build does.
   ETag, cursor, activation, last full re-link and history listing.
 - `session_commit`: each session linked to a commit, with the method and
   confidence.
-- `feature_judgment`, `feature_decision`, `feature_reconcile`: local source/decision
+- `feature_judgment`, `feature_decision`, `feature_reconcile`,
+  `feature_scope_target`: local source/decision
   context, durable semantic answers and prompt-aware reconciliation checks.
 - `feature_version`, `feature`, `feature_pull`, `feature_session`,
   `feature_settle`, `pr_summary`, `feature_consolidation`: the tables

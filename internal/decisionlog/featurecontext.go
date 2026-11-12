@@ -20,6 +20,7 @@ const judgmentSchema = `CREATE TABLE IF NOT EXISTS feature_judgment(
  version_id INTEGER NOT NULL, repository TEXT NOT NULL, kind TEXT NOT NULL, item TEXT NOT NULL,
  context_version TEXT NOT NULL, reason TEXT NOT NULL, context_json TEXT NOT NULL,
  PRIMARY KEY(version_id,repository,kind,item));
+ CREATE TABLE IF NOT EXISTS feature_scope_target(scope_id TEXT PRIMARY KEY,version_id INTEGER NOT NULL,repository TEXT NOT NULL,target_id TEXT,state TEXT NOT NULL,reason TEXT NOT NULL,source_json TEXT NOT NULL);
  CREATE TABLE IF NOT EXISTS feature_reconcile(feature_id TEXT PRIMARY KEY,version_id INTEGER NOT NULL,prompt_version TEXT NOT NULL,checked_version INTEGER NOT NULL);`
 
 type placementContext struct {
@@ -45,21 +46,15 @@ func saveJudgment(ctx context.Context, tx *sql.Tx, version int64, repository, ki
 // resolvedScopes preserves the original map revision while following merge
 // aliases. Source-only identities remain valid targets before their first join.
 func (s *Store) resolvedScopes(ctx context.Context, version int64, repository string) ([]FeatureScope, error) {
-	scopes, err := s.FeatureScopes(ctx, version, repository)
+	records, err := resolvedScopeRecords(ctx, s.db, version, repository)
 	if err != nil {
 		return nil, err
 	}
-	for i := range scopes {
-		var id string
-		err := s.db.QueryRowContext(ctx, `SELECT COALESCE(merged_into,id) FROM feature WHERE id=? AND version_id=? AND repository=?`, scopes[i].FeatureID, version, repository).Scan(&id)
-		if err != nil && !errors.Is(err, sql.ErrNoRows) {
-			return nil, err
-		}
-		if err == nil {
-			scopes[i].FeatureID = id
-		}
+	out := make([]FeatureScope, 0, len(records))
+	for _, record := range records {
+		out = append(out, record.FeatureScope)
 	}
-	return scopes, nil
+	return out, nil
 }
 
 func (r *featureRun) itemSource(ctx context.Context, item assignItem, pull placedPull) (repositorySource, error) {

@@ -412,8 +412,16 @@ func (r *featureRun) summarize(ctx context.Context, featureID string) (Summarize
 		out.PullRequests = append(out.PullRequests, pull.Number)
 		info := summary.PullRequestInfo{Number: int32(pull.Number), State: pull.State, Title: pull.Title, Body: pull.Body,
 			Summary: r.reviewSummary(ctx, pull.Number)}
-		if info.Summary == "" {
-			info.Summary = generated[pull.Number].Summary
+		if info.Summary == "" && generated[pull.Number].Summary != "" {
+			rendered, _, err := summary.RenderPullRequest(pullSummaryInput(src, pull))
+			if err != nil {
+				return out, err
+			}
+			expected := summary.ContentHash(summary.Public.PullRequestVersion(SummaryVersion), rendered)
+			if expected == generated[pull.Number].Hash {
+				info.Summary = generated[pull.Number].Summary
+				out.PullSummariesReused++
+			}
 		}
 		if info.Summary == "" && r.opts.building && !r.opts.adaptive {
 			text, called, skip, err := r.pullSummary(ctx, src, pull, generated[pull.Number], &out)
@@ -566,15 +574,7 @@ func (r *featureRun) summarize(ctx context.Context, featureID string) (Summarize
 // is unchanged, else one call's. One with neither a description nor such a
 // decision gets none. It reports whether it called, or why it could not.
 func (r *featureRun) pullSummary(ctx context.Context, src summarySource, pull summaryPull, stored generatedSummary, out *SummarizedFeature) (string, bool, string, error) {
-	input := summary.PullRequestInput{Title: pull.Title, Body: pull.Body}
-	for _, d := range src.Decisions {
-		if !d.Superseded && slices.Contains(pull.Sessions, SessionKey{Agent: d.Agent, ID: d.SessionID}) {
-			input.Decisions = append(input.Decisions, summary.Decision{
-				Summary: d.Summary, Category: string(d.Category), Who: string(d.Who), Trigger: string(d.Trigger), Rationale: d.Rationale,
-				RejectedAlternative: d.RejectedAlternative, Files: d.Files,
-			})
-		}
-	}
+	input := pullSummaryInput(src, pull)
 	if len(input.Decisions) == 0 && pull.Body == "" {
 		return "", false, "", nil
 	}
@@ -739,4 +739,19 @@ func addCost(total, cost *float64) *float64 {
 		return new(*cost)
 	}
 	return new(*total + *cost)
+}
+
+// pullSummaryInput is shared by legacy generation and live cache verification.
+// Live misses use raw PR evidence and never generate a replacement summary.
+func pullSummaryInput(src summarySource, pull summaryPull) summary.PullRequestInput {
+	input := summary.PullRequestInput{Title: pull.Title, Body: pull.Body}
+	for _, d := range src.Decisions {
+		if !d.Superseded && slices.Contains(pull.Sessions, SessionKey{Agent: d.Agent, ID: d.SessionID}) {
+			input.Decisions = append(input.Decisions, summary.Decision{
+				Summary: d.Summary, Category: string(d.Category), Who: string(d.Who), Trigger: string(d.Trigger), Rationale: d.Rationale,
+				RejectedAlternative: d.RejectedAlternative, Files: d.Files,
+			})
+		}
+	}
+	return input
 }

@@ -44,6 +44,7 @@ const currentVersions = `(SELECT id FROM feature_version WHERE state='current')`
 // changes (the names carry a hash of their definitions).
 var timelineInputs = []revisionTrigger{
 	{table: "feature_decision", live: true, updates: []string{"input_hash", "context_version", "feature_id", "pull_number", "key_eligible", "reason"}},
+	{table: "feature_scope_target", live: true, updates: []string{"target_id", "state", "reason", "source_json"}},
 	{table: "feature_scope", live: true, updates: []string{"revision", "scope_json"}},
 	{table: "feature_version", updates: []string{"repository", "state"}},
 	{table: "feature", live: true, updates: []string{"version_id", "repository", "title", "description", "digest", "key_decisions_json",

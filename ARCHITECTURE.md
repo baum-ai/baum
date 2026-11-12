@@ -5170,7 +5170,11 @@ text and consolidation use the repository task adapter in `taskmodel.go`, with
 pinned incoming source and separately recorded map revisions. `featurecontext.go`
 keeps source-only scopes and merged aliases valid candidates. `featureattribution.go`
 stores input-hashed semantic answers and key eligibility under a repository input
-revision guard inside the transaction. Timeline and `summarySource` bulk-read the
+revision guard inside the transaction. One attribution task precedes each default
+text pass, so backlog work yields to useful summaries. `feature_scope_target`
+reconciles live scope targets after a split without rewriting original map
+definitions; unsupported/conflicting lineage is inactive. Timeline and
+`summarySource` bulk-read the
 same resolver, never call models, and accept only single-feature positive file
 support while an answer is stale. Hosted attribution stays unchanged.
 `FeatureWorker.Summarize` refreshes attribution first, then writes dirty text

@@ -648,6 +648,9 @@ type FeatureOptions struct {
 	DryRun bool
 	// Limit bounds the items or features taken; zero is the stage's limit.
 	Limit int
+	// AttributionLimit overrides the small semantic backfill quantum independently
+	// of how many feature summaries the pass may write.
+	AttributionLimit int
 	// Manual ignores the activation and the text stage's debounce.
 	Manual bool
 	// Backend and Model, when set, replace the configured ones.

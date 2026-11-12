@@ -343,9 +343,9 @@ func (w *FeatureWorker) AttributeDecisions(ctx context.Context, repository, dir 
 	if err != nil {
 		return report, err
 	}
-	limit := FeatureSummaryRunLimit
-	if o.Limit > 0 {
-		limit = o.Limit
+	limit := FeatureAttributionRunLimit
+	if o.AttributionLimit > 0 {
+		limit = o.AttributionLimit
 	}
 	settled, err := w.Store.settleRows(ctx, r.version, repository)
 	if err != nil {

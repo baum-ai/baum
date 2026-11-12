@@ -2,6 +2,8 @@ package decisionlog
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"slices"
 	"strings"
 	"sync/atomic"
@@ -9,6 +11,7 @@ import (
 	"time"
 
 	"github.com/baum-ai/baum/decisions"
+	"github.com/baum-ai/baum/features/summary"
 	"github.com/baum-ai/baum/internal/config"
 )
 
@@ -298,4 +301,109 @@ func TestFeatureTextRereadsTheGateBeforeEachCall(t *testing.T) {
 		t.Fatalf("disabled between prepare/call: %+v prepared=%d calls=%v", report, prepared, f.backend.calls)
 	}
 
+}
+
+func TestAttributionQuantumWritesTextBeforeDrainingBacklog(t *testing.T) {
+	f := newFeatureFixture(t)
+	ctx := context.Background()
+	f.clock.now = t0.Add(time.Hour)
+	f.pull(1, "Export widgets", t0, "h1", []string{"export.go"}, "Export configuration")
+	version := f.live()
+	f.feature(version, "export", 1)
+	f.exec(`INSERT INTO pull_commit(repository,number,sha,committed_at)VALUES(?,1,'shared',0)`, repo)
+	for i := 0; i < 6; i++ {
+		id := fmt.Sprintf("s%d", i)
+		f.saveSession(id, "export.go")
+		f.exec(`INSERT INTO session_commit(agent,session_id,repository,sha,method,confidence)VALUES('claude-code',?,?,'shared','checkpoint',1)`, id, repo)
+	}
+	events := []string{}
+	seen := map[string]int{}
+	f.backend.attribute = func(user string) (string, error) {
+		events = append(events, "attribute")
+		var input attributionInput
+		if err := json.Unmarshal([]byte(user), &input); err != nil {
+			return "", err
+		}
+		reply := struct {
+			Decisions []decisionResolution `json:"decisions"`
+		}{}
+		for _, d := range input.Decisions {
+			seen[d.ID]++
+			reply.Decisions = append(reply.Decisions, decisionResolution{DecisionID: d.ID, FeatureID: "export", KeyEligible: true, Reason: "Explicit export configuration choice."})
+		}
+		data, err := json.Marshal(reply)
+		return string(data), err
+	}
+	f.backend.text = func() (string, error) {
+		events = append(events, "text")
+		return `{"title":"Widget export","description":"Exports widgets.","digest":"Export controls.","key_decisions":["D1"]}`, nil
+	}
+	first, err := f.worker.Summarize(ctx, repo, "", FeatureOptions{Manual: true})
+	if err != nil || len(first.Features) != 1 {
+		t.Fatalf("first %+v %v", first, err)
+	}
+	if len(seen) != FeatureAttributionRunLimit || !slices.Equal(events, []string{"attribute", "text"}) {
+		t.Fatalf("backlog delayed first text: seen=%v events=%v", seen, events)
+	}
+	second, err := f.worker.Summarize(ctx, repo, "", FeatureOptions{Manual: true})
+	if err != nil || len(second.Features) != 1 {
+		t.Fatalf("next %+v %v", second, err)
+	}
+	if len(seen) != 2*FeatureAttributionRunLimit {
+		t.Fatalf("next quantum did not resume: %v", seen)
+	}
+	for id, count := range seen {
+		if count != 1 {
+			t.Fatalf("accepted decision %s regenerated %d times", id, count)
+		}
+	}
+	if f.backend.calls["pull"] != 0 {
+		t.Fatal("backfill generated per-PR summaries")
+	}
+}
+
+func TestLiveTextReusesOnlyCurrentGeneratedPullSummary(t *testing.T) {
+	for _, change := range []string{"title", "body", "decision"} {
+		t.Run(change, func(t *testing.T) {
+			f := newFeatureFixture(t)
+			ctx := context.Background()
+			id := f.placed()
+			if _, err := f.worker.AttributeDecisions(ctx, repo, "", FeatureOptions{Manual: true}); err != nil {
+				t.Fatal(err)
+			}
+			src, err := f.store.summarySource(ctx, f.live(), repo, id)
+			if err != nil {
+				t.Fatal(err)
+			}
+			rendered, _, err := summary.RenderPullRequest(pullSummaryInput(src, src.Pulls[0]))
+			if err != nil {
+				t.Fatal(err)
+			}
+			cacheHash := summary.ContentHash(summary.Public.PullRequestVersion(SummaryVersion), rendered)
+			const cached = "Previously generated export summary"
+			if err = f.store.storePullSummary(ctx, repo, 1, cacheHash, cached); err != nil {
+				t.Fatal(err)
+			}
+			f.summarize(FeatureOptions{Manual: true})
+			if !strings.Contains(f.backend.textInput, cached) {
+				t.Fatal("valid cached summary was not reused")
+			}
+			switch change {
+			case "title":
+				f.exec(`UPDATE pull_request SET title='New export outcome' WHERE number=1`)
+			case "body":
+				f.exec(`UPDATE pull_request SET body='New export behavior' WHERE number=1`)
+			case "decision":
+				f.exec(`UPDATE decision SET summary='Choose a different export format' WHERE decision_id='d-s1'`)
+			}
+			f.markAll(id)
+			f.summarize(FeatureOptions{Manual: true})
+			if strings.Contains(f.backend.textInput, cached) {
+				t.Fatalf("stale cached text after %s: %s", change, f.backend.textInput)
+			}
+			if f.backend.calls["pull"] != 0 {
+				t.Fatal("stale cache generated a per-PR replacement")
+			}
+		})
+	}
 }
