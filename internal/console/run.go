@@ -128,7 +128,7 @@ func (s *Service) turn(ctx context.Context, c Conversation, message string, l *l
 	if saveErr := s.store.save(current); saveErr != nil {
 		s.opts.Log.Warn("conversation not saved after its turn", "conversation", c.ID, "error", saveErr)
 	}
-	s.index(current)
+	s.indexSession(current)
 	// A token is bound to one session, once: the new session needs a new
 	// token. A conversation that cannot get one mints it on its next turn.
 	if sessionGone && !closed && s.live[c.ID] == l {
@@ -288,7 +288,7 @@ func (s *Service) sessionStarted(c Conversation, l *live, id string) {
 	if err == nil && current.Session == "" {
 		current.Session = id
 		if err = s.store.save(current); err == nil {
-			s.index(current)
+			s.indexSession(current)
 		}
 	}
 	if err != nil {

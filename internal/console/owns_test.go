@@ -57,3 +57,34 @@ func TestOwnsMatchesSessionsAndBaumsDirectories(t *testing.T) {
 		t.Errorf("after a restart, by directory: %q %v", got, ok)
 	}
 }
+
+// A worktree baum added for a conversation is the person's checkout too, and
+// stays after the conversation closes: their own sessions there are not
+// claimed, only the conversation's own session is.
+func TestOwnsMatchesACreatedWorktreeBySessionOnly(t *testing.T) {
+	r := newRepository(t)
+	f := pullFixture(t, r)
+	ctx := context.Background()
+	c, err := f.service.Create(ctx, CreateRequest{Agent: AgentClaudeCode, Page: pullPage(7)})
+	if err != nil || !c.CreatedWorktree {
+		t.Fatalf("%+v %v", c, err)
+	}
+	for _, cwd := range []string{c.Directory, filepath.Join(c.Directory, "sub")} {
+		if got, ok := f.service.Owns("claude-code", "someone", cwd); ok {
+			t.Errorf("%s: the person's own session was claimed for %s", cwd, got)
+		}
+	}
+	if _, err := f.service.Send(ctx, c.ID, "hello", nil); err != nil {
+		t.Fatal(err)
+	}
+	f.finished(c.ID)
+	if got, ok := f.service.Owns("claude-code", testSession, c.Directory); !ok || got != c.ID {
+		t.Errorf("the conversation's own session: %q %v", got, ok)
+	}
+	if _, err := f.service.Close(ctx, c.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := f.service.Owns("claude-code", "later", c.Directory); ok {
+		t.Error("a session in the kept worktree was claimed after closing")
+	}
+}

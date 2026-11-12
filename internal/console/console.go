@@ -307,7 +307,8 @@ func New(opts Options) (*Service, error) {
 		return nil, err
 	}
 	for _, c := range all {
-		s.index(c)
+		s.indexDirectory(c)
+		s.indexSession(c)
 	}
 	if opts.Proposals != nil {
 		opts.Proposals.OnChange(s.proposalsChanged)
@@ -398,7 +399,7 @@ func (s *Service) Create(ctx context.Context, request CreateRequest) (Conversati
 	if err := s.store.save(c); err != nil {
 		return Conversation{}, err
 	}
-	s.index(c)
+	s.indexDirectory(c)
 	s.mu.Lock()
 	// The person is on the page they opened the conversation from, so it is
 	// the page every token, the new one included, has open.
