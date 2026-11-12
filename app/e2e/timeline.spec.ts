@@ -184,7 +184,12 @@ test("adaptive build coverage preserves the current Timeline and new-build reque
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
     true,
   );
-  await page.screenshot({ path: "test-results/timeline-coverage-390.png", animations: "disabled" });
+  // Capture review evidence only when explicitly requested, never on normal passes.
+  if (process.env.TIMELINE_SCREENSHOTS)
+    await status.screenshot({
+      path: "test-results/timeline-coverage-panel-390.png",
+      animations: "disabled",
+    });
   const posted = page.waitForRequest(
     (request) => request.method() === "POST" && request.url().endsWith("/api/jobs"),
   );
