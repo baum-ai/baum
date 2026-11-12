@@ -5,6 +5,7 @@ import {
   useEffect,
   useId,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
   type ReactNode,
@@ -23,10 +24,10 @@ import { SMALL_PRIMARY } from "./action-classes";
 import { useDisclosure } from "@baum/viewer/components/use-disclosure";
 import type { Entry } from "./api";
 import {
+  countValues,
   fieldsFor,
   hasValue,
   OP_LABELS,
-  matchesQuery,
   queryProblem,
   queryTerms,
   withoutTerm,
@@ -53,6 +54,8 @@ type Row =
 
 /** How far a menu row's values reach beside the menu. */
 const SUBMENU_WIDTH = 256;
+/** How many of a field's values its list shows before the search box takes over. */
+const SUBMENU_VALUES = 100;
 
 /** Whether the menu's "Write a query…" asked for the query box, so a
  *  `FilterBar` in its footer shows the box even with no filter. */
@@ -190,17 +193,28 @@ export function FilterButton({
     if (writing) focusQuery();
   }, [writing]);
 
-  const fields = given ?? fieldsFor(inbox);
+  const fields = useMemo(() => given ?? fieldsFor(inbox), [given, inbox]);
   const on = (text: string, key: string, value: string, with_: Op = "=") =>
     hasValue(text, key, value, with_, given);
   const toggle = (key: string, value: string, with_: Op = "=") =>
     toggleValue(query, key, value, with_, given);
-  const passes = (text: string, entry: Entry) => matchesQuery(text, entry, kindOf?.(entry));
   const words = search.trim().toLowerCase();
-  const fits = (option: Option) =>
-    option.value.toLowerCase().includes(words) || option.label.toLowerCase().includes(words);
   // "Write a query…" only shows the box, which a query already shows below.
   const offerWrite = !query.trim() && !writing && !!footer;
+  // The values the typed words match, found again only when the words or
+  // the pull requests change, not as the pointer moves over the rows.
+  const valueRows = useMemo(() => {
+    if (!words) return [];
+    const fits = (option: Option) =>
+      option.value.toLowerCase().includes(words) || option.label.toLowerCase().includes(words);
+    return fields
+      .flatMap((field) =>
+        valuesOf(field, entries, known)
+          .filter(fits)
+          .map((option) => ({ kind: "value" as const, field, option })),
+      )
+      .slice(0, 30);
+  }, [words, fields, entries, known]);
   const rows: Row[] = !words
     ? [
         ...fields.map((field) => ({ kind: "field" as const, field })),
@@ -212,38 +226,65 @@ export function FilterButton({
             (field) => field.label.toLowerCase().includes(words) || field.key.startsWith(words),
           )
           .map((field) => ({ kind: "field" as const, field })),
-        ...fields
-          .flatMap((field) =>
-            valuesOf(field, entries, known)
-              .filter(fits)
-              .map((option) => ({ kind: "value" as const, field, option })),
-          )
-          .slice(0, 30),
+        ...valueRows,
         { kind: "add", text: search.trim() },
       ];
   // The menu offers the plain comparisons; the bar takes `>` and `<` too.
   const ops: Op[] = sub
     ? (sub.field.ops ?? (["=", "!="] as Op[])).filter((one) => one !== ">" && one !== "<")
     : [];
-  const values = sub
-    ? valuesOf(sub.field, entries, known).filter((one) => !sub.field.check?.(one.value, op))
-    : [];
-  const live = entries.filter((entry) => passes(query, entry));
+  const subField = sub?.field;
+  const everyValue = useMemo(
+    () =>
+      subField
+        ? valuesOf(subField, entries, known).filter((one) => !subField.check?.(one.value, op))
+        : [],
+    [subField, entries, known, op],
+  );
+  // Of a long list the first SUBMENU_VALUES show, with any the query requires;
+  // the box above finds the rest.
+  const values = useMemo(
+    () =>
+      subField && everyValue.length > SUBMENU_VALUES
+        ? everyValue.filter(
+            (one, index) =>
+              index < SUBMENU_VALUES || hasValue(query, subField.key, one.value, op, given),
+          )
+        : everyValue,
+    [everyValue, subField, query, op, given],
+  );
+  const hidden = everyValue.length - values.length;
   // Count matches belonging to this option, not the union of every selected
-  // value of its field. Other fields still narrow the count.
-  const count = (field: Field, option: Option, with_: Op = "=") =>
-    given
-      ? null
-      : formatCount(
-          on(query, field.key, option.value, with_)
-            ? live.filter((entry) => passes(toggleValue("", field.key, option.value, with_), entry))
-                .length
-            : entries.filter(
-                (entry) =>
-                  passes(toggle(field.key, option.value, with_), entry) &&
-                  passes(toggleValue("", field.key, option.value, with_), entry),
-              ).length,
-        );
+  // value of its field. Other fields still narrow the count. All of a list in
+  // one go, found again only when the pull requests, query or list change.
+  const kinds = useRef(kindOf);
+  kinds.current = kindOf;
+  const subCounts = useMemo(
+    () =>
+      subField && !given
+        ? countValues(query, subField.key, values, entries, op, kinds.current)
+        : null,
+    [subField, values, query, entries, op, given],
+  );
+  const searchCounts = useMemo(() => {
+    const counts = new Map<string, Map<string, number>>();
+    if (given) return counts;
+    for (const field of new Set(valueRows.map((row) => row.field)))
+      counts.set(
+        field.key,
+        countValues(
+          query,
+          field.key,
+          valueRows.filter((row) => row.field === field).map((row) => row.option),
+          entries,
+          "=",
+          kinds.current,
+        ),
+      );
+    return counts;
+  }, [valueRows, query, entries, given]);
+  const countText = (counts: Map<string, number> | null | undefined, option: Option) =>
+    counts?.has(option.value) ? formatCount(counts.get(option.value)!) : null;
   // Added only when the query still reads with it.
   const addable = (text: string) =>
     !(page ? page.problem : (one: string) => queryProblem(one, inbox))(withText(query, text));
@@ -374,11 +415,14 @@ export function FilterButton({
             {option.label !== option.value ? (
               <code className="filter-menu-key">{option.value}</code>
             ) : null}
-            <span className="filter-menu-count">{count(sub.field, option, op)}</span>
+            <span className="filter-menu-count">{countText(subCounts, option)}</span>
           </div>
         );
       })}
       {values.length === 0 ? <p className="filter-menu-empty">Nothing to pick yet.</p> : null}
+      {hidden > 0 ? (
+        <p className="filter-menu-empty">{hidden} more: type in the box above to find them.</p>
+      ) : null}
     </div>
   ) : null;
 
@@ -529,7 +573,9 @@ export function FilterButton({
                         <span className="filter-menu-label">
                           {row.field.label}: {row.option.label}
                         </span>
-                        <span className="filter-menu-count">{count(row.field, row.option)}</span>
+                        <span className="filter-menu-count">
+                          {countText(searchCounts.get(row.field.key), row.option)}
+                        </span>
                       </>
                     ) : row.kind === "add" ? (
                       <span className="filter-menu-label">
