@@ -19,7 +19,7 @@ var (
 // the feature's current text.
 var Public = Prompts{
 	PublicVersion:     {Feature: publicFeaturePrompt, PullRequest: publicPullRequestPrompt, CurrentText: true},
-	RepositoryVersion: {Feature: publicFeaturePrompt + repositoryNote, PullRequestVersion: PublicVersion, CurrentText: true},
+	RepositoryVersion: {Feature: publicFeaturePrompt + repositoryNote, PullRequestVersion: PublicVersion, PullRequest: publicPullRequestPrompt, CurrentText: true},
 }
 
 const repositoryNote = `

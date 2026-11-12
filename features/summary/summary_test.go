@@ -324,3 +324,20 @@ func TestWithCurrentAppendsTheBoundedCurrentText(t *testing.T) {
 		}
 	}
 }
+
+func TestRepositoryVersionRetainsLegacyPullRequestPrompt(t *testing.T) {
+	request, err := Public.Request(RepositoryVersion, PullRequest, `{"title":"Export widgets"}`, MaxOutputTokens)
+	if err != nil {
+		t.Fatal(err)
+	}
+	original, err := Public.Request(PublicVersion, PullRequest, `{"title":"Export widgets"}`, MaxOutputTokens)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if request.System == "" || request.System != original.System {
+		t.Fatalf("legacy PR summary lost its public system prompt: %q", request.System)
+	}
+	if Public.PullRequestVersion(RepositoryVersion) != PublicVersion {
+		t.Fatal("unchanged public PR prompt lost cache ownership")
+	}
+}
