@@ -260,7 +260,8 @@ func (a LocalAPI) Handler() *LocalHandler {
 		}
 		fixBackend, fixModel, fixEffort := "", "", ""
 		concurrency := repos.MaxJobConcurrency
-		if prefs, err := a.Registry.Preferences(r.Context()); err == nil {
+		prefs, prefsErr := a.Registry.Preferences(r.Context())
+		if prefsErr == nil {
 			concurrency = prefs.Concurrency()
 			cfg = prefs.Resolve(cfg)
 			if prefs.FixBackend != nil {
@@ -291,8 +292,12 @@ func (a LocalAPI) Handler() *LocalHandler {
 			// The time limits in force, in whole minutes.
 			ReviewTimeLimit int `json:"review_time_limit_minutes"`
 			RunTimeLimit    int `json:"run_time_limit_minutes"`
+			// The app's saved choices could not be read, so the answer is
+			// the config file's alone: not what a run started now would use
+			// once they can be read again.
+			PreferencesUnavailable bool `json:"preferences_unavailable,omitempty"`
 		}{cfg.Backend, cfg.Model, cfg.Budgets, cfg.Caps, cfg.AgentEnv, source, fixBackend, fixModel, cfg.Effort, fixEffort, concurrency,
-			minutes(cfg.Budgets.ReviewTimeout), minutes(cfg.Budgets.RunTimeout)})
+			minutes(cfg.Budgets.ReviewTimeout), minutes(cfg.Budgets.RunTimeout), prefsErr != nil})
 	})
 	// The time limits apply to runs that start after the change.
 	mux.HandleFunc("PUT /api/settings/time-limits", func(w http.ResponseWriter, r *http.Request) {

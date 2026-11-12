@@ -440,11 +440,12 @@ func activeJob(ctx context.Context, c OperationContext, repository string, numbe
 // settings (a projected read: the person reads it, the agent never does).
 //
 // A paid run is never proposed, or confirmed, without them: when the
-// settings cannot be read, the operation is refused rather than shown with
-// a guess.
+// settings cannot be read, or the route could read only the config file and
+// not the app's saved choices, the operation is refused rather than shown
+// with a guess the run itself might not use.
 func runChoice(ctx context.Context, c OperationContext, fix bool) (backend, model, effort string, err error) {
 	settings, err := readSettings(ctx, c.callContext())
-	if err != nil {
+	if err != nil || settings.PreferencesUnavailable {
 		return "", "", "", errors.New("the harness, model and effort this run would use cannot be read now, so it is not proposed")
 	}
 	backend, model, effort = settings.Backend, settings.Model, settings.Effort

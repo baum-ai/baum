@@ -91,6 +91,9 @@ type appSettings struct {
 	RunTimeLimit    int                  `json:"run_time_limit_minutes"`
 	AgentEnv        map[string]discarded `json:"agent_env"`
 	AgentEnvSource  string               `json:"agent_env_source"`
+	// PreferencesUnavailable is set when the app's saved choices could not
+	// be read and the route answered with the config file's alone.
+	PreferencesUnavailable bool `json:"preferences_unavailable"`
 }
 
 // readSettings reads /api/settings, a projected route. What went wrong is

@@ -212,16 +212,18 @@ func (f *opFocus) Focus(_ context.Context, agent, id string, _ *hookevents.Termi
 type opFixture struct {
 	t        *testing.T
 	registry *repos.Registry
-	clone    repos.Clone
-	home     string
-	log      *writeLog
-	mcp      *agentcontext.Server
-	reads    *readFixture
-	github   *opGitHub
-	queue    *jobs.Queue
-	requests *agentrequests.Store
-	groups   *reviewgroups.Store
-	group    string
+	// registryPath is the registry's database, for a test that damages it.
+	registryPath string
+	clone        repos.Clone
+	home         string
+	log          *writeLog
+	mcp          *agentcontext.Server
+	reads        *readFixture
+	github       *opGitHub
+	queue        *jobs.Queue
+	requests     *agentrequests.Store
+	groups       *reviewgroups.Store
+	group        string
 	// sent, ended and focused are what the live sessions' agents were
 	// asked; cloned the clones started.
 	sent, ended, cloned record
@@ -237,7 +239,8 @@ type opFixture struct {
 func newOpFixture(t *testing.T) *opFixture {
 	t.Helper()
 	ctx := context.Background()
-	registry, clone := readRegistry(t)
+	registryPath := filepath.Join(appdbtest.TempDir(t), "repos.sqlite")
+	registry, clone := readRegistryAt(t, registryPath)
 	if _, err := registry.Pick(ctx, "owner/repo", nil); err != nil {
 		t.Fatal(err)
 	}
@@ -246,7 +249,7 @@ func newOpFixture(t *testing.T) *opFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	f := &opFixture{t: t, registry: registry, clone: clone, home: home, github: &opGitHub{}, focus: &opFocus{}}
+	f := &opFixture{t: t, registry: registry, registryPath: registryPath, clone: clone, home: home, github: &opGitHub{}, focus: &opFocus{}}
 
 	// The review index: two pull requests of owner/repo, the first asked of
 	// the person, and one of a repository with no clone.

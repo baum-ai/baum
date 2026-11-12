@@ -5641,8 +5641,10 @@ check (`validRepository`, `validSegment`, a hex head, a known merge method or
 job kind); otherwise the sentence names it generically ("a pull request", "an
 agent session") and the value is a quoted field. `refresh` and
 `register_repository` send, and name, the registry's spelling of the
-repository, not the agent's. A paid run whose settings cannot be read is
-refused, at `Propose` and at `Confirm`, rather than shown with a guess.
+repository, not the agent's. A paid run is refused, at `Propose` and at
+`Confirm`, rather than shown with a guess when its settings cannot be read,
+or when `GET /api/settings` could read only the config file and not the
+saved preferences (it then answers `preferences_unavailable`).
 
 `ProposeOperation(ctx, consumer, name, args)` refuses any consumer but a
 chat, a page that does not offer the operation, and a target `Build` or
