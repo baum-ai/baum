@@ -1,4 +1,4 @@
-import { useEffect, useId, useState } from "react";
+import { useEffect, useId, useMemo, useState } from "react";
 import { ChevronRightIcon } from "@baum/viewer/components/icons";
 import { request } from "./api";
 import { githubToast } from "./github-toast";
@@ -7,6 +7,7 @@ import { LoadingStatus } from "./nine-dots";
 import { SMALL } from "./action-classes";
 import { cn } from "@baum/viewer/components/classnames";
 import { Markdown } from "@baum/viewer/components/markdown";
+import type { LiveThreads } from "@baum/viewer/review-document";
 
 /** A comment of a review thread: the reviewer's text, untrusted. `markdown`
  *  is rendered as GitHub renders it, raw HTML sanitised (`Markdown`); without
@@ -236,5 +237,58 @@ function Thread({
         </button>
       ) : null}
     </li>
+  );
+}
+
+/** The pull request's review threads as GitHub has them now, for a review
+ *  page to read over its review's snapshot (`withLiveThreads`). `unresolved`
+ *  is discovery's count, null when unknown: with none unresolved every
+ *  thread is resolved and nothing is asked; otherwise the daemon lists the
+ *  unresolved ones, from its cache while the count matches, and the list is
+ *  asked for again when the count changes. Null until read, and after a read
+ *  that failed, so the snapshot stands. */
+export function useLiveThreads(
+  repository: string,
+  number: number,
+  unresolved: number | null,
+  capped: boolean,
+): LiveThreads | null {
+  const known = unresolved === 0 && !capped;
+  // A read stands for its pull request until the next one answers, so a
+  // changed count does not fall back to the snapshot meanwhile.
+  const pull = `${repository}#${number}`;
+  const [read, setRead] = useState<{ pull: string; live: LiveThreads } | null>(null);
+  useEffect(() => {
+    if (known) return;
+    const abort = new AbortController();
+    request<{ threads: ReviewThread[]; capped: boolean }>(
+      `api/prs/review-threads?repository=${encodeURIComponent(repository)}&pr=${number}&unresolved=${unresolved ?? -1}`,
+      undefined,
+      "GET",
+      abort.signal,
+    )
+      .then((answer) =>
+        setRead({
+          pull,
+          live: {
+            unresolved: new Set((answer.threads ?? []).map((thread) => thread.id)),
+            complete: !answer.capped,
+          },
+        }),
+      )
+      .catch(() => {
+        // The snapshot stands; the next count asks again.
+        if (!abort.signal.aborted) setRead(null);
+      });
+    return () => abort.abort();
+  }, [known, pull, repository, number, unresolved]);
+  return useMemo(
+    () =>
+      known
+        ? { unresolved: new Set<string>(), complete: true }
+        : read?.pull === pull
+          ? read.live
+          : null,
+    [known, read, pull],
   );
 }
