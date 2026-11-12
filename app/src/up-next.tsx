@@ -247,23 +247,21 @@ function memberLabel(kind: UpNextKind, entry: Entry): string {
 const METADATA_MAX_AGE_MS = 2 * 60_000;
 
 /** Whether what the index says of an entry may be behind GitHub: its
- *  repository's list is stale, or its metadata was fetched over two minutes
- *  before `now`. The daemon does not count the age, so the index does not
- *  change with time alone. */
-export function metadataStale(
-  entry: Pick<Entry, "stale" | "metadata_fetched_at">,
-  now: number,
-): boolean {
+ *  repository's list is stale, or the observation applied to it was fetched
+ *  over two minutes before `now`. An entry without an observation does not age.
+ *  The daemon does not count the age, so the index does not change with time
+ *  alone. */
+export function metadataStale(entry: Pick<Entry, "stale" | "observed_at">, now: number): boolean {
   if (entry.stale) return true;
-  const fetched = entry.metadata_fetched_at ? Date.parse(entry.metadata_fetched_at) : NaN;
-  return !Number.isNaN(fetched) && now - fetched > METADATA_MAX_AGE_MS;
+  const observed = entry.observed_at ? Date.parse(entry.observed_at) : NaN;
+  return !Number.isNaN(observed) && now - observed > METADATA_MAX_AGE_MS;
 }
 
 /** The instant `metadataStale` turns true for an entry by age, or null. */
 function staleAt(entry: Entry): number | null {
-  if (entry.stale || !entry.metadata_fetched_at) return null;
-  const fetched = Date.parse(entry.metadata_fetched_at);
-  return Number.isNaN(fetched) ? null : fetched + METADATA_MAX_AGE_MS + 1;
+  if (entry.stale || !entry.observed_at) return null;
+  const observed = Date.parse(entry.observed_at);
+  return Number.isNaN(observed) ? null : observed + METADATA_MAX_AGE_MS + 1;
 }
 
 function why(kind: UpNextKind, entry: Entry, working: number, now: number): string {

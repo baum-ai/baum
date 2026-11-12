@@ -74,6 +74,10 @@ type Entry struct {
 	ReviewMinutes     *int   `json:"review_minutes"`
 	Checks            string `json:"checks"`
 	MetadataFetchedAt string `json:"metadata_fetched_at,omitempty"`
+	// ObservedAt is when the observation applied to the entry was fetched, and
+	// is empty without one. The app counts its age; the index does not, so it
+	// does not change with time alone.
+	ObservedAt string `json:"observed_at,omitempty"`
 }
 type Problem struct {
 	CloneID string `json:"clone_id"`
@@ -363,6 +367,7 @@ func (s *Service) readPart(ctx context.Context, now time.Time, g *group) (p *par
 			entry.PullRequest.Review, entry.PullRequest.Checks, entry.PullRequest.Merge = entry.Review, entry.Checks, entry.Merge
 			entry.PullRequest.Unresolved, entry.PullRequest.UnresolvedCapped = entry.Unresolved, entry.UnresolvedCapped
 			entry.MetadataFetchedAt = value.FetchedAt.UTC().Format(time.RFC3339Nano)
+			entry.ObservedAt = entry.MetadataFetchedAt
 			if entry.Latest != nil && (entry.Status == "unknown" || entry.Status == "current" || entry.Status == "outdated") {
 				entry.Status = "outdated"
 				if entry.Latest.Head == value.HeadSHA {

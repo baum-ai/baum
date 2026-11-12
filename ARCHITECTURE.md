@@ -3014,9 +3014,11 @@ publishes if the index moved. A write of the credential's budget record alone
 panicking build is an error for its readers and is not kept. A
 kept snapshot expires at the earliest instant at which building again could
 differ with nothing written: a `generating` run's lease end (it then reads as
-interrupted), a fresh discovery snapshot's next poll, or an applied
-observation turning stale two minutes after it was fetched; and at the latest
-after `reviewindex.MaxAge` (2 minutes), for what nothing models (below).
+interrupted) or a fresh discovery snapshot's next poll; and at the latest
+after `reviewindex.MaxAge` (2 minutes), for what nothing models (below). An
+applied observation's age does not count: the entry carries `observed_at` and
+the app shows it as stale two minutes later, so the index does not change with
+time alone.
 Nothing is persisted: a restarted daemon builds on first read.
 
 A build after an invalidation reads again only the repositories whose inputs

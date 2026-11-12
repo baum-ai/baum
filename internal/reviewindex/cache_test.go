@@ -351,11 +351,36 @@ func TestBuildDoesNotChangeWithObservationAge(t *testing.T) {
 	if !reflect.DeepEqual(first, later) {
 		t.Fatalf("snapshot changed with time alone:\n%+v\n%+v", first, later)
 	}
-	if first.Entries[0].Stale || first.Entries[0].MetadataFetchedAt == "" {
-		t.Fatalf("entry %+v: want fresh with its fetch time", first.Entries[0])
+	if first.Entries[0].Stale || first.Entries[0].ObservedAt != fetched.UTC().Format(time.RFC3339Nano) {
+		t.Fatalf("entry %+v: want fresh with its observation's fetch time", first.Entries[0])
 	}
 	if next.Equal(fetched.Add(2*time.Minute)) || next.Equal(fetched.Add(2*time.Minute+time.Nanosecond)) {
 		t.Fatalf("next change %v follows the observation's age", next)
+	}
+}
+
+// Without an applied observation, an entry carries discovery's fetch time but
+// no observation time, so the app does not age it.
+func TestBuildLeavesObservedAtEmptyWithoutObservation(t *testing.T) {
+	now := time.Now()
+	fetched := now.Add(-time.Hour)
+	s := &Service{
+		Registry: registry{{ID: "c", Repository: "acme/a", CommonDir: "/c", Available: true}},
+		Discovery: source{"acme/a": {
+			PullRequests: []discovery.PullRequest{{Number: 1, HeadSHA: "h", State: "OPEN"}},
+			FetchedAt:    fetched,
+			NextPoll:     now.Add(time.Hour),
+		}},
+		OpenStore: func(string) (Reader, error) {
+			return readerFunc(func(context.Context) ([]store.Summary, error) { return nil, nil }), nil
+		},
+	}
+	out, _, err := s.build(context.Background(), now, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if e := out.Entries[0]; e.ObservedAt != "" || e.MetadataFetchedAt == "" || e.Stale {
+		t.Fatalf("entry %+v: want discovery's fetch time, no observation time, not stale", e)
 	}
 }
 
