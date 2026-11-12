@@ -47,11 +47,12 @@ section you are not asked for. Do not write a section's `title`, `kind`,
 - `risks`, `evidence`, `attention`, `blocks` and `tiles`: below.
 - Size the details to the section's assessment level. A level 1 section
   and the mechanical section get a one- or two-sentence summary and no
-  `question`, risks or `missing` items, unless you find a concrete defect.
+  `question`, risks or `missing` items, unless you find a concrete defect
+  (a `prompt_injection` risk always applies).
 - The mechanical section's risks are at most `low`, and its `groups` block
   explains what each group is and the rule that produced it.
-- Textless and omitted hunks: say what is known about their change and what
-  is not.
+- Textless and omitted hunks: say what is known about their change, and
+  leave out the rest.
 - Prose may cite this section's own risk, evidence and decision IDs, and
   any section ID of the outline.
 - **Regeneration.** If `previous` holds the section, update its content to
@@ -71,8 +72,9 @@ weigh. It is not a style preference or a general remark about the code.
   wrong and the consequence, in one to three sentences. "If two workers
   claim the same job, both run it, because the claim no longer checks the
   row version" is a risk. "Concurrency may be an issue" is not. No hedged
-  risks ("not shown", "may", "a doubt, not a defect"), and none that the
-  text itself refutes: if you cannot say how it fails, leave it out.
+  risks ("may be an issue", "not shown", "a doubt, not a defect"), and
+  none that the text itself refutes: if you cannot say how it fails, leave
+  it out.
 - `anchors`: at least one hunk anchor at the lines responsible, plus any
   supporting anchors (a thread that raised it, a check that shows it).
 - `tier`:
@@ -97,9 +99,10 @@ weigh. It is not a style preference or a general remark about the code.
 - Prefer a few concrete, well-located risks to many speculative or
   overlapping ones. If you found nothing worth raising, a section has no
   risks; do not invent one.
-- No `test_gap` risk in a section of tests, docs or mechanical changes. A
-  missing test of risky behaviour is the section's `missing` evidence item,
-  tied to the risk it would settle, not a second risk.
+- A missing test is never a risk of its own: it is the section's `missing`
+  item, tied to the risk it would settle. Use `test_gap` only when the diff
+  weakens, skips or deletes an existing test, and never in a section of
+  tests, docs or mechanical changes.
 
 ### Evidence
 
@@ -144,14 +147,14 @@ lose nothing.
   `reported`.
 - The author's report that tests pass is one `reported` item, in the
   section whose tests it names. A general report ("all tests pass") goes
-  only in the outline's first logical section, and nowhere else.
+  only in the first logical section of the outline, and nowhere else.
 
 ### Attention
 
 A section's `attention` is null, or `{text, refs}` where every ref is the ID
 of a risk, evidence or decision item in the same section (never a hunk ID).
 It names the one or two items a reviewer of this section must look at and
-refers to them; it never restates them. It never covers checks, and is
+refers to them; it never restates them. It never mentions checks, and is
 never process advice ("confirm checks pass before approving", "judge
 whether…"). Null when nothing needs singling out.
 
@@ -192,6 +195,7 @@ has at most one of each of `intent`, `behavior`, `groups`, `decisions`,
   `agent_proposed_human_approved` to `by: "agent"` with
   `approved_by_human: true`. Copy `rationale`, `trigger`, `evidence` (the
   verbatim quote) and the rejected alternative (`rejected`) when given.
+  Drop ticket keys from a decision's title; shorten any full SHA.
   Anchor each to the session's prompts at its turns, the evidence turn first.
   Leave out superseded decisions unless the reversal matters to the
   reviewer; then say it was reversed. Only decisions relevant to this
@@ -230,7 +234,8 @@ it lists. Otherwise leave `tiles` out.
 
 - There is one item for each section asked, with its `id` as the outline
   gives it.
-- Every ID you cite exists in the bundle.
+- Every ID you cite exists in the bundle, in this section or among the
+  outline's sections.
 - No risk above `low` in the mechanical section.
 - Every risk has a hunk anchor; every behaviour step has a hunk anchor.
 - Every logical section with hunks has a `behavior` block; every step has a
@@ -240,12 +245,15 @@ it lists. Otherwise leave `tiles` out.
 - No `ci` evidence; at most one `missing` item per section, tied to a risk;
   the author's test report appears once.
 - Every risk names a concrete failing input or state; none is hedged or
-  refuted by its own text; no `test_gap` risk on tests, docs or mechanical
-  changes; no previous active risk is dropped.
-- Every attention ref names an item in its own section; attention refers to
-  them without restating them, and never covers checks or process.
+  refuted by its own text; `test_gap` only for a weakened, skipped or
+  deleted test, never on tests, docs or mechanical changes; no previous
+  active risk is dropped.
+- Every ref of a section's attention names an item in its own section; a
+  section's attention refers to them without restating them, and never
+  mentions checks or process.
 - Level 1 and mechanical sections are short, without questions, risks or
-  `missing` items unless there is a concrete defect.
+  `missing` items unless there is a concrete defect (a `prompt_injection`
+  risk always applies).
 - No run state of checks, bots or threads; no talk about the bundle,
   excerpts, snapshot, checkout, stages or yourself; no ticket key in a
   title; no full SHA.

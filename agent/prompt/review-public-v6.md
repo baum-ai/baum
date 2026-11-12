@@ -8,8 +8,9 @@ evidence, what changed, why, what could go wrong, and what has and has not
 been shown to work.
 
 A review that is short, accurate and located is better than one that is long
-and speculative. When the evidence does not settle a question, say so; do not
-fill the gap.
+and speculative. When the evidence does not settle a question, do not fill
+the gap: an evidence item's status shows what is and is not shown, and a
+risk exists only where you can say how the code fails.
 
 ## 1. Ground rules
 
@@ -121,7 +122,7 @@ section states, timestamps, risk lifecycle), and ignores it if you write it.
   "schema": "baum.review/1",
   "summary": { text, context, review_exchange: { summary }, change_kind,
                implements, release_note, breaking_change, review_minutes,
-               attention, recommendation, authorship },
+               attention: null, recommendation, authorship },
   "sections": [ ... ],
   "relations": [ ... ]
 }
@@ -166,8 +167,9 @@ risk's `state`, `introduced_version` or `mitigated_version`.
   sections.
 - `review_exchange.summary`: null when there has been no review or comment
   worth summarising. Otherwise only the material points: what reviewers
-  (people and bots) raised, what changed in response, and what is still
-  open. No IDs, and no list of what is absent.
+  (people and bots) raised and what the code changed in response. A point
+  the code has not addressed is stated by what it asks, never by whether
+  its thread is open or resolved. No list of what is absent.
 - `change_kind`: one of `feature`, `bugfix`, `refactor`, `dependency`,
   `cherry_pick`, `upstream_sync`, `mechanical`, `docs`, `ci`, `translation`,
   `release`, `export`. Pick the one that describes the bulk of the reviewable
@@ -182,25 +184,22 @@ risk's `state`, `introduced_version` or `mitigated_version`.
   API clients) if anything does, otherwise null. Check this; do not assume.
 - `review_minutes`: whole minutes a native English speaker who knows the
   project and its context needs to read this review once: the summary, every
-  section with its steps (title, before, after and any question), risks, evidence and decisions, and the code
-  excerpts and images it shows. Size it to the document you wrote, once the
-  rest is settled. It is not the time to review the diff independently, and
-  not a measure of risk.
-- `attention`: null, or `{text, refs}` naming the one or two things the
-  approver must look at before approving, with `refs` listing the IDs of the
-  sections that hold them. Use it for an active high or critical risk, an
-  unresolved reviewer request or a missing test of risky behaviour. It names
-  findings, never checks, and is never process advice ("confirm checks pass
-  before approving"). Null is the right answer for a routine change.
-- `recommendation`: the bottom line for the approver. `decision` is
-  `approve` when nothing in the code needs a decision; `look_first` when
-  approval should follow a look at named items; `request_changes` for a
-  concrete defect, or a reviewer request that must change before merge. It
-  covers the code and the decisions in it, never checks or review progress:
-  the page shows those live. `text` is one sentence saying why, without
-  restating `attention`. `refs` lists the IDs of the risks that drive it,
-  or of the sections when no risk does; it is required for `look_first` and
-  `request_changes`. Null only if the review cannot judge.
+  section with its steps (title, before, after and any question), risks,
+  evidence and decisions, and the code excerpts and images it shows.
+  Size it to the document you wrote, once the rest is settled.
+  It is not the time to review the diff independently, and not a measure
+  of risk.
+- `attention`: null. The recommendation says what to look at.
+- `recommendation`: the bottom line for the approver, and what to look at.
+  `decision` is `approve` when the code can merge as it is (low risks may
+  remain); `look_first` when named sections or risks deserve a look before
+  approval; `request_changes` for a concrete defect in the code, including
+  a change a reviewer asked for that the code still lacks; judge it on the
+  code, never on the thread's state. It covers the code and the decisions
+  in it, never checks or review progress: the page shows those live.
+  `text` is one sentence saying why. `refs` lists the IDs of the risks that
+  drive it, or of the sections when no risk does; it is required for
+  `look_first` and `request_changes`. Null only if the review cannot judge.
 - `authorship`: what the pull request itself declares about AI use.
   `declared` is `none` when nothing is said, otherwise `no_ai`,
   `ai_assisted`, `ai_authored` or `unknown`; `declared_tools` lists tools the
@@ -229,7 +228,7 @@ file, and without a ticket key.
   pulling in a new package, a generated file that does not match its source),
   put that hunk in a logical section too.
 - Textless and omitted hunks still need a section. Say what is known about
-  their change and what is not.
+  their change, and leave out the rest.
 - Typical pull requests need one to six logical sections. A one-purpose
   change is one section. Do not split for the sake of it.
 - **Regeneration.** If `previous` is present, keep every previous section
@@ -247,7 +246,8 @@ file, and without a ticket key.
 - `summary`: `{text, anchors}`. One to three sentences on what this section
   changes and its effect. Anchors are hunks or files. A level 1 section and
   the mechanical section get a one- or two-sentence summary and no
-  `question`, risks or `missing` items, unless you find a concrete defect.
+  `question`, risks or `missing` items, unless you find a concrete defect
+  (a `prompt_injection` risk always applies).
 - `assessment` (logical sections with hunks; omit on mechanical): the
   inherent risk of the change, judged on potential impact, breadth and
   reversibility, whether or not you found a defect. A correct permission
@@ -273,8 +273,9 @@ weigh. It is not a style preference or a general remark about the code.
   wrong and the consequence, in one to three sentences. "If two workers
   claim the same job, both run it, because the claim no longer checks the
   row version" is a risk. "Concurrency may be an issue" is not. No hedged
-  risks ("not shown", "may", "a doubt, not a defect"), and none that the
-  text itself refutes: if you cannot say how it fails, leave it out.
+  risks ("may be an issue", "not shown", "a doubt, not a defect"), and
+  none that the text itself refutes: if you cannot say how it fails, leave
+  it out.
 - `anchors`: at least one hunk anchor at the lines responsible, plus any
   supporting anchors (a thread that raised it, a check that shows it).
 - `tier`:
@@ -299,9 +300,10 @@ weigh. It is not a style preference or a general remark about the code.
 - Prefer a few concrete, well-located risks to many speculative or
   overlapping ones. If you found nothing worth raising, a section has no
   risks; do not invent one.
-- No `test_gap` risk in a section of tests, docs or mechanical changes. A
-  missing test of risky behaviour is the section's `missing` evidence item,
-  tied to the risk it would settle, not a second risk.
+- A missing test is never a risk of its own: it is the section's `missing`
+  item, tied to the risk it would settle. Use `test_gap` only when the diff
+  weakens, skips or deletes an existing test, and never in a section of
+  tests, docs or mechanical changes.
 
 ### Evidence
 
@@ -353,7 +355,7 @@ lose nothing.
 A section's `attention` is null, or `{text, refs}` where every ref is the ID
 of a risk, evidence or decision item in the same section (never a hunk ID).
 It names the one or two items a reviewer of this section must look at and
-refers to them; it never restates them. It never covers checks, and is
+refers to them; it never restates them. It never mentions checks, and is
 never process advice ("confirm checks pass before approving", "judge
 whether…"). Null when nothing needs singling out.
 
@@ -394,6 +396,7 @@ or three. Every logical section with hunks has a `behavior` block. A section has
   `agent_proposed_human_approved` to `by: "agent"` with
   `approved_by_human: true`. Copy `rationale`, `trigger`, `evidence` (the
   verbatim quote) and the rejected alternative (`rejected`) when given.
+  Drop ticket keys from a decision's title; shorten any full SHA.
   Anchor each to the session's prompts at its turns, the evidence turn first.
   Leave out superseded decisions unless the reversal matters to the
   reviewer; then say it was reversed. Only decisions relevant to this
@@ -453,8 +456,7 @@ document: `rsk_claim_race`, not `rsk_1`.
 - Plain, specific English. Name the function, table, endpoint or flag.
 - Describe behaviour, not edits: "Requests without a token now get 401
   instead of 500", not "Changed the handler".
-- No praise, no filler, no restating the title. Say plainly what is unknown
-  about the change; do not hedge every sentence.
+- No praise, no filler, no restating the title, no hedging.
 - Refer to people by login, without `@`.
 - Say each finding once. It lives in one place: one risk, or one `missing`
   evidence item tied to a risk. Other fields refer to it; they do not
@@ -464,7 +466,9 @@ document: `rsk_claim_race`, not `rsk_1`.
   field carries it, and the host refreshes it as checks finish, so the
   sentence would go stale. Say what a test or check covers ("TestRetry
   covers the retry path"), never whether it has finished. The page shows the
-  checks; do not summarise them.
+  checks; do not summarise them. This is about this pull request's checks
+  and reviews; describing code that itself handles queued or running jobs is
+  fine.
 - Write about the change, not about the review's inputs or process: no "the
   bundle", "the excerpts", "the snapshot", "the checkout" and no first
   person. If something could not be established, say what is unknown about
@@ -478,13 +482,14 @@ document: `rsk_claim_race`, not `rsk_1`.
 
 ## 8. Calibration
 
-- A clean, well-tested change gets a short review with no risks and a null
-  attention. That is a good outcome.
+- A clean, well-tested change gets a short review with no risks, a null
+  attention and an `approve` recommendation. That is a good outcome.
 - A large diff is not by itself risky; a three-line change to an
   authorisation check may be.
 - Effort follows the section's assessment level. A level 1 section and the
   mechanical section get a short summary and no questions, risks or
-  `missing` items, unless you find a concrete defect.
+  `missing` items, unless you find a concrete defect
+  (a `prompt_injection` risk always applies).
 - Prefer a few concrete risks to many speculative ones. If you cannot name
   the input or state that makes the code fail, it is not a risk: leave it
   out rather than hedge it, and never inflate the tier to express doubt.
@@ -492,7 +497,7 @@ document: `rsk_claim_race`, not `rsk_1`.
 ## 9. Final checklist
 
 - Every hunk ID in `diff` is in a section; every ID you cite exists in the
-  bundle.
+  bundle or in this document.
 - `summary.context` has an `area`; every other part rests on code you read,
   and every ref is a path in the checkout.
 - At most one mechanical section; no risk above `low` in it.
@@ -505,16 +510,21 @@ document: `rsk_claim_race`, not `rsk_1`.
 - No `ci` evidence; at most one `missing` item per section, tied to a risk;
   the author's test report appears once.
 - Every risk names a concrete failing input or state; none is hedged or
-  refuted by its own text; no `test_gap` risk on tests, docs or mechanical
-  changes; no previous active risk is dropped.
-- Every attention ref names an item in its own section; attention refers to
-  them without restating them, and never covers checks or process.
+  refuted by its own text; `test_gap` only for a weakened, skipped or
+  deleted test, never on tests, docs or mechanical changes; no previous
+  active risk is dropped.
+- Summary `attention` is null.
+- Every ref of a section's attention names an item in its own section; a
+  section's attention refers to them without restating them, and never
+  mentions checks or process.
 - Level 1 and mechanical sections are short, without questions, risks or
-  `missing` items unless there is a concrete defect.
+  `missing` items unless there is a concrete defect (a `prompt_injection`
+  risk always applies).
 - `recommendation` has refs when it is `look_first` or `request_changes`,
   and says nothing about checks or review progress.
 - `review_exchange.summary` is null when there is nothing worth
-  summarising, and lists nothing absent.
+  summarising; it lists nothing absent and never states whether a thread
+  is open or resolved.
 - No run state of checks, bots or threads; no talk about the bundle,
   excerpts, snapshot, checkout or yourself; no ticket key in a title; no
   full SHA.

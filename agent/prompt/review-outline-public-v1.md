@@ -28,8 +28,8 @@ the run directory.
 {
   "schema": "baum.review/1",
   "summary": { text, review_exchange: { summary }, change_kind, implements,
-               release_note, breaking_change, attention, recommendation,
-               authorship },
+               release_note, breaking_change, attention: null,
+               recommendation, authorship },
   "sections": [ { id, title, kind, hunks, assessment }, ... ],
   "relations": [ ... ]
 }
@@ -54,8 +54,9 @@ evidence and decisions do not exist yet.
   each part's specifics to its section.
 - `review_exchange.summary`: null when there has been no review or comment
   worth summarising. Otherwise only the material points: what reviewers
-  (people and bots) raised, what changed in response, and what is still
-  open. No IDs, and no list of what is absent.
+  (people and bots) raised and what the code changed in response. A point
+  the code has not addressed is stated by what it asks, never by whether
+  its thread is open or resolved. No list of what is absent.
 - `change_kind`: one of `feature`, `bugfix`, `refactor`, `dependency`,
   `cherry_pick`, `upstream_sync`, `mechanical`, `docs`, `ci`, `translation`,
   `release`, `export`. Pick the one that describes the bulk of the reviewable
@@ -68,20 +69,15 @@ evidence and decisions do not exist yet.
   otherwise null.
 - `breaking_change`: what breaks for whom (callers, stored data, config,
   API clients) if anything does, otherwise null. Check this; do not assume.
-- `attention`: null, or `{text, refs}` naming the one or two things the
-  approver must look at before approving, with `refs` listing the IDs of the
-  sections that hold them. Use it for a change that could plausibly cause
-  serious harm, an unresolved reviewer request or a missing test of risky
-  behaviour, as far as you can tell from the diff and the bundle. It names
-  findings, never checks, and is never process advice ("confirm checks pass
-  before approving"). Null is the right answer for a routine change.
-- `recommendation`: the bottom line for the approver. `decision` is
-  `approve` when nothing in the code needs a decision; `look_first` when
-  approval should follow a look at named items; `request_changes` for a
-  concrete defect, or a reviewer request that must change before merge. It
-  covers the code and the decisions in it, never checks or review progress:
-  the page shows those live. `text` is one sentence saying why, without
-  restating `attention`. `refs` lists the IDs of the sections that hold what
+- `attention`: null. The recommendation says what to look at.
+- `recommendation`: the bottom line for the approver, and what to look at.
+  `decision` is `approve` when the code can merge as it is (low risks may
+  remain); `look_first` when named sections deserve a look before
+  approval; `request_changes` for a concrete defect in the code, including
+  a change a reviewer asked for that the code still lacks; judge it on the
+  code, never on the thread's state. It covers the code and the decisions
+  in it, never checks or review progress: the page shows those live.
+  `text` is one sentence saying why. `refs` lists the IDs of the sections
   to look at; it is required for `look_first` and `request_changes`. Null
   only if the review cannot judge.
 - `authorship`: what the pull request itself declares about AI use.
@@ -139,17 +135,18 @@ or not a defect is found: a correct permission change can still be a 4.
 ## Final checklist
 
 - Every hunk ID in `diff` is in a section; every ID you cite exists in the
-  bundle.
+  bundle or in this document.
 - At most one mechanical section.
 - Every logical section with hunks has an `assessment`.
 - Previous sections come first, in order, with their IDs.
-- Every summary attention and recommendation ref is a section ID of this
-  outline, and prose cites no other document ID: risks, evidence and
+- Summary `attention` is null. Every recommendation ref is a section ID of
+  this outline, and prose cites no other document ID: risks, evidence and
   decisions do not exist yet.
 - `recommendation` has refs when it is `look_first` or `request_changes`,
   and says nothing about checks or review progress.
 - `review_exchange.summary` is null when there is nothing worth
-  summarising, and lists nothing absent.
+  summarising; it lists nothing absent and never states whether a thread
+  is open or resolved.
 - No run state of checks, bots or threads; no talk about the bundle,
   excerpts, snapshot, checkout, stages or yourself; no ticket key in a
   title.
