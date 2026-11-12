@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -221,8 +222,8 @@ func (x *Index) save() error {
 	err := write(x.Path, b)
 	if err != nil {
 		x.mu.Lock()
-		// Entries changed since are pending already; a reset since (other
-		// thresholds) is still set and deletes these rows anyway.
+		// Only the refresh that called save changes entries, so nothing was
+		// marked since the swap: the batch's paths and reset go back as they were.
 		x.reset = x.reset || b.reset
 		for p := range pending {
 			x.pending[p] = true
@@ -331,7 +332,8 @@ func (x *Index) Refresh(ctx context.Context) error {
 
 	for i, f := range todo {
 		if err := ctx.Err(); err != nil {
-			return err
+			// Stopping: keep what was read since the last save.
+			return errors.Join(err, x.save())
 		}
 		entry := x.read(ctx, f)
 		x.mu.Lock()

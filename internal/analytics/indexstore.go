@@ -56,7 +56,12 @@ type indexBatch struct {
 // reads the rows. The move and the document's removal are one transaction:
 // a failure leaves the document as it was. A legacy document of another
 // version or thresholds is deleted unread, as it would have been ignored.
+// The write transaction is taken only when there is something to create or
+// move, so a load behind another writer does not wait for it.
 func loadIndex(path string, bands []int64) (storedIndex, error) {
+	if migrated(path) {
+		return readIndex(path, bands)
+	}
 	db, release, err := appdb.Acquire(path, false)
 	if err != nil {
 		return storedIndex{}, err
@@ -69,6 +74,20 @@ func loadIndex(path string, bands []int64) (storedIndex, error) {
 		return storedIndex{}, err
 	}
 	return readIndex(path, bands)
+}
+
+// migrated says the tables exist and no legacy document is left; any failure
+// to tell (a missing database included) says no.
+func migrated(path string) bool {
+	db, release, err := appdb.Acquire(path, true)
+	if err != nil {
+		return false
+	}
+	defer release()
+	var ok bool
+	err = db.QueryRow(`SELECT (SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name IN ('analytics_sessions', 'analytics_index')) = 2
+AND NOT EXISTS(SELECT 1 FROM app_documents WHERE bucket = ? AND key = ?)`, legacyBucket, legacyKey).Scan(&ok)
+	return err == nil && ok
 }
 
 func migrateIndex(conn *sql.Conn, bands []int64) error {

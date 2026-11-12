@@ -43,8 +43,8 @@ prompt, message, tool input or output, or file path is stored.
 - A save writes only the rows of entries added, replaced or dropped since the
   last one, in one transaction, so a refresh that changed nothing writes
   nothing and a failed save is retried whole on the next refresh. A first build
-  saves after every 25 sessions read, so a restart resumes from the last save
-  instead of starting over. The one-row `analytics_index` table holds the
+  saves after every 25 sessions read, and a stopping daemon saves what it read,
+  so a restart resumes from the last save instead of starting over. The one-row `analytics_index` table holds the
   index format version and the price list's long-prompt thresholds the entries
   were summed with; rows stored under others are ignored and deleted with the
   next save. Refreshes run one at a time. An older baum kept the whole index in

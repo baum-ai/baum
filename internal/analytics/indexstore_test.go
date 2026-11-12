@@ -10,6 +10,7 @@ import (
 	"os"
 	"reflect"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 
@@ -58,19 +59,26 @@ func execDB(t *testing.T, path, statement string, args ...any) {
 	}
 }
 
-// byPath keys a snapshot by session file path.
+// byPath decodes the stored rows, by session file path, and fails unless
+// they are exactly the snapshot's entries.
 func byPath(entries []Entry, rows map[string]string, t *testing.T) map[string]Entry {
 	t.Helper()
 	out := map[string]Entry{}
+	var decoded []Entry
 	for p, raw := range rows {
 		var e Entry
 		if err := json.Unmarshal([]byte(raw), &e); err != nil {
 			t.Fatal(err)
 		}
 		out[p] = e
+		decoded = append(decoded, e)
 	}
-	if len(out) != len(entries) {
-		t.Fatalf("%d rows for %d entries", len(out), len(entries))
+	bySession := func(a, b Entry) int { return strings.Compare(a.SessionID, b.SessionID) }
+	snapshot := slices.Clone(entries)
+	slices.SortFunc(snapshot, bySession)
+	slices.SortFunc(decoded, bySession)
+	if len(decoded) != len(snapshot) || (len(decoded) > 0 && !reflect.DeepEqual(decoded, snapshot)) {
+		t.Fatalf("stored rows differ from the snapshot:\n%+v\nwant\n%+v", decoded, snapshot)
 	}
 	return out
 }
@@ -147,6 +155,49 @@ func TestIndexMovesTheDocumentIntoRows(t *testing.T) {
 	}
 	if rows := storedRows(t, f.index.Path); len(rows) != len(ids) || rows["/gone"] != "" {
 		t.Fatalf("rows after a stale document: %v", rows)
+	}
+}
+
+func TestIndexDocumentReplacesRowsAfterADowngrade(t *testing.T) {
+	f := newFixture(t)
+	ids := sessionIDs(2)
+	for _, id := range ids {
+		f.write(t, f.repo, id, claudeTranscript(f.repo, id))
+	}
+	ctx := context.Background()
+	if err := f.index.Refresh(ctx); err != nil {
+		t.Fatal(err)
+	}
+	entries, _ := f.index.Snapshot()
+	built := byPath(entries, storedRows(t, f.index.Path), t)
+	// An older baum, run after the rows were written, saved only one entry
+	// in its document.
+	kept := map[string]Entry{}
+	for p, e := range built {
+		if e.SessionID == ids[0] {
+			kept[p] = e
+		}
+	}
+	raw, _ := json.Marshal(indexFile{Version: indexVersion, Bands: pricing.Active().PromptBands(), Entries: kept})
+	if err := appdb.Write(f.index.Path, "cache", "analytics-index", raw); err != nil {
+		t.Fatal(err)
+	}
+	x := f.reopen()
+	got, _ := x.Snapshot()
+	if moved := byPath(got, storedRows(t, f.index.Path), t); !reflect.DeepEqual(moved, kept) {
+		t.Fatalf("after the move: %+v, want the document's %+v", moved, kept)
+	}
+	// The session the document lacked is read again, the other is not.
+	mapped := *f.mapped
+	if err := x.Refresh(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if *f.mapped-mapped != 1 {
+		t.Fatalf("read %d sessions again, want 1", *f.mapped-mapped)
+	}
+	entries, _ = x.Snapshot()
+	if final := byPath(entries, storedRows(t, f.index.Path), t); len(final) != 2 {
+		t.Fatalf("rows = %+v", final)
 	}
 }
 
@@ -256,21 +307,22 @@ func TestIndexInterruptedBuildLeavesAUsableIndex(t *testing.T) {
 	if err := f.index.Refresh(ctx); !errors.Is(err, context.Canceled) {
 		t.Fatalf("refresh = %v, want it cancelled", err)
 	}
-	if rows := storedRows(t, f.index.Path); len(rows) != saveEvery {
-		t.Fatalf("stored %d rows, want the first save's %d", len(rows), saveEvery)
+	// Stopping saves what was read since the first save.
+	if rows := storedRows(t, f.index.Path); len(rows) != saveEvery+2 {
+		t.Fatalf("stored %d rows, want the %d read", len(rows), saveEvery+2)
 	}
 
 	// The next daemon starts from the saved rows and reads only the rest.
 	next := f.reopen()
-	if got, _ := next.Snapshot(); len(got) != saveEvery {
-		t.Fatalf("restart sees %d entries, want %d", len(got), saveEvery)
+	if got, _ := next.Snapshot(); len(got) != saveEvery+2 {
+		t.Fatalf("restart sees %d entries, want %d", len(got), saveEvery+2)
 	}
 	before := reads
 	if err := next.Refresh(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if read := reads - before; read != total-saveEvery {
-		t.Fatalf("restart read %d sessions, want %d", read, total-saveEvery)
+	if read := reads - before; read != total-saveEvery-2 {
+		t.Fatalf("restart read %d sessions, want %d", read, total-saveEvery-2)
 	}
 	rows := storedRows(t, f.index.Path)
 	entries, progress := next.Snapshot()
@@ -285,8 +337,8 @@ func TestIndexInterruptedBuildLeavesAUsableIndex(t *testing.T) {
 		seen[e.SessionID] = true
 	}
 
-	// A save that fails mid-build loses nothing stored: the rows are those of
-	// the saves before it.
+	// A process killed mid-build, here every save after the first failing,
+	// keeps the rows of the saves before it, and the next resumes from them.
 	g := newFixture(t)
 	for _, id := range sessionIDs(total) {
 		g.write(t, g.repo, id, claudeTranscript(g.repo, id))
@@ -294,8 +346,8 @@ func TestIndexInterruptedBuildLeavesAUsableIndex(t *testing.T) {
 	saves := 0
 	g.index.write = func(path string, b indexBatch) error {
 		saves++
-		if saves == 2 {
-			return errors.New("disk full")
+		if saves >= 2 {
+			return errors.New("killed")
 		}
 		return writeIndex(path, b)
 	}
@@ -305,10 +357,41 @@ func TestIndexInterruptedBuildLeavesAUsableIndex(t *testing.T) {
 	if rows := storedRows(t, g.index.Path); len(rows) != saveEvery {
 		t.Fatalf("after a failed save: %d rows, want %d", len(rows), saveEvery)
 	}
-	if err := g.index.Refresh(context.Background()); err != nil {
+	restarted := g.reopen()
+	if got, _ := restarted.Snapshot(); len(got) != saveEvery {
+		t.Fatalf("restart sees %d entries, want %d", len(got), saveEvery)
+	}
+	mapped := *g.mapped
+	if err := restarted.Refresh(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if rows := storedRows(t, g.index.Path); len(rows) != total {
+	if read := *g.mapped - mapped; read != total-saveEvery {
+		t.Fatalf("restart read %d sessions, want %d", read, total-saveEvery)
+	}
+	entries, _ = restarted.Snapshot()
+	if got := byPath(entries, storedRows(t, g.index.Path), t); len(got) != total {
+		t.Fatalf("after the restart: %d rows, want %d", len(got), total)
+	}
+	// The same process retrying its failed save stores the rest too.
+	h := newFixture(t)
+	for _, id := range sessionIDs(total) {
+		h.write(t, h.repo, id, claudeTranscript(h.repo, id))
+	}
+	fail := true
+	h.index.write = func(path string, b indexBatch) error {
+		if fail && len(b.upsert) < saveEvery {
+			return errors.New("disk full")
+		}
+		return writeIndex(path, b)
+	}
+	if err := h.index.Refresh(context.Background()); err == nil {
+		t.Fatal("the failed save was not reported")
+	}
+	fail = false
+	if err := h.index.Refresh(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if rows := storedRows(t, h.index.Path); len(rows) != total {
 		t.Fatalf("the retried save stored %d rows, want %d", len(rows), total)
 	}
 }
