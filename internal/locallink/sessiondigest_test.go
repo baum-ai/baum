@@ -490,3 +490,73 @@ func TestResolveRecoversWhenCompactFactsGoMissing(t *testing.T) {
 		t.Fatal("full fallback changed results")
 	}
 }
+
+func TestResolveSummaryReusesLinkedRowsWithoutFullGraphs(t *testing.T) {
+	useSessionDigests(t)
+	sessions.SetTailCacheLimit(0)
+	t.Cleanup(func() { sessions.SetTailCacheLimit(sessions.DefaultTailCacheBytes) })
+	f := linktest.New(t)
+	const promoted = "bbbbbbbb-0000-4000-8000-000000000001"
+	f.AddEditor(t, promoted, "08", "unrelated.txt")
+	req := request(f)
+	summary := func(want int64) Result {
+		t.Helper()
+		settle(t, EvidenceRequest{Sessions: f.Store})
+		before := decodes()
+		got, err := ResolveSummary(context.Background(), req)
+		if err != nil || !got.Available {
+			t.Fatalf("summary %+v %v", got, err)
+		}
+		if n := decodes() - before; n != want {
+			t.Fatalf("summary decoded %d sessions want %d", n, want)
+		}
+		if len(got.Graphs) != 0 || got.LoadGraph == nil {
+			t.Fatal("summary retained full graphs or lacks on-demand reader")
+		}
+		full := resolve(t, req)
+		a, _ := json.Marshal(got)
+		b, _ := json.Marshal(full)
+		if string(a) != string(b) {
+			t.Fatal("summary JSON differs from full Resolve")
+		}
+		return got
+	}
+	cold := summary(2)
+	warm := summary(0)
+	if warm.Sessions[0].StartedAt != nil {
+		at := *warm.Sessions[0].StartedAt
+		*warm.Sessions[0].StartedAt = at.Add(time.Hour)
+		if again := summary(0); again.Sessions[0].StartedAt == nil || !again.Sessions[0].StartedAt.Equal(at) {
+			t.Fatal("caller mutation changed cached summary facts")
+		}
+	}
+	before := decodes()
+	loaded, err := warm.LoadGraph(context.Background(), linktest.SessionID)
+	graph := loaded.Graphs[linktest.SessionID]
+	if err != nil || graph == nil || decodes()-before != 1 {
+		t.Fatalf("explicit graph read: %v", err)
+	}
+	full := resolve(t, req)
+	if !reflect.DeepEqual(graph, full.Graphs[linktest.SessionID]) {
+		t.Fatal("lazy graph differs from full Resolve")
+	}
+	// Actual contribution changes alter metadata without retaining a graph.
+	f.AddEditor(t, linktest.SessionID, "08", "unrelated-original.txt")
+	f.AddSession(t, promoted, f.Repo, "new creator")
+	changed := summary(2)
+	if len(changed.Sessions) != 1 || changed.Sessions[0].ID != promoted {
+		t.Fatal("summary missed changed contributor")
+	}
+	if loaded, err := cold.LoadGraph(context.Background(), linktest.SessionID); err != nil || loaded.Graphs[linktest.SessionID] != nil {
+		t.Fatal("stale summary exposed a session no longer linked")
+	}
+	retitle(t, transcriptOf(f, promoted), promoted, "latest linked title")
+	titled := summary(1)
+	if titled.Sessions[0].Title != "latest linked title" {
+		t.Fatal("summary row title stale")
+	}
+	summary(0)
+	if sessionDigests.held > sessionDigests.limit {
+		t.Fatal("compact summary memory exceeds existing budget")
+	}
+}

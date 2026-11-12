@@ -101,6 +101,10 @@ type Result struct {
 	// for a caller that shows a session's transcript; RedactGraph redacts
 	// one. They are never part of the JSON.
 	Graphs map[string]*session.Graph
+	// LoadGraph is set by ResolveSummary. It obtains a graph only for an
+	// explicit transcript read with its current linked metadata, rechecking that it is still linked
+	// to this request's pinned commits. It is never part of the JSON.
+	LoadGraph func(context.Context, string) (Result, error)
 }
 
 // Session is a linked session. All text is redacted.
@@ -181,6 +185,34 @@ const maxSubject = 200
 // Result, not an error; an error is a failure to read something that should
 // have been readable.
 func Resolve(ctx context.Context, req Request) (Result, error) {
+	workstats.Inc("locallink.resolve.full")
+	return resolveRequest(ctx, req, true)
+}
+
+// ResolveSummary returns exactly Resolve's JSON without retaining full graphs.
+// Compact row facts outlive graph-cache eviction; transcript readers may call
+// LoadGraph to revalidate linkage and obtain the graph on demand.
+func ResolveSummary(ctx context.Context, req Request) (Result, error) {
+	workstats.Inc("locallink.resolve.summary")
+	result, err := resolveRequest(ctx, req, false)
+	if err == nil && result.Available {
+		result.LoadGraph = func(ctx context.Context, id string) (Result, error) {
+			full, err := Resolve(ctx, req)
+			if err != nil {
+				return Result{}, err
+			}
+			for _, linked := range full.Sessions {
+				if linked.ID == id {
+					return full, nil
+				}
+			}
+			return Result{Available: true}, nil
+		}
+	}
+	return result, err
+}
+
+func resolveRequest(ctx context.Context, req Request, graphs bool) (Result, error) {
 	if req.Repository == "" || req.Head == "" || (req.Base == "" && req.MergeBase == "") {
 		return Unavailable(CodeNoHead, "the document does not name its repository and head and base commits"), nil
 	}
@@ -254,6 +286,7 @@ func Resolve(ctx context.Context, req Request) (Result, error) {
 			if book.refusingAll {
 				return Result{}, errors.New("resolving sessions: a session was not mapped though every one was refused")
 			}
+			workstats.Inc("locallink.resolve.fallback.missing")
 			book.missing = false
 			book.refuseAll()
 			continue
@@ -262,19 +295,21 @@ func Resolve(ctx context.Context, req Request) (Result, error) {
 		// transcript access. Other candidates compete through compact facts.
 		var unmapped []string
 		for _, edge := range edges {
-			if s := latest[edge.RunID].session; s.Unmapped {
+			if s := latest[edge.RunID].session; graphs && s.Unmapped {
 				unmapped = append(unmapped, s.Key)
 			}
 		}
 		if len(unmapped) == 0 {
-			return matchedResult(engine, ids, latest, edges, commits, associations)
+			return matchedResult(engine, ids, latest, edges, commits, associations, graphs)
 		}
 		if book.refusingAll {
 			return Result{}, errors.New("resolving sessions: linked sessions still unmapped after a full read")
 		}
+		workstats.Inc("locallink.resolve.graph_remaps")
 		if attempt == 0 {
 			book.refuse(unmapped...)
 		} else {
+			workstats.Inc("locallink.resolve.fallback.selection")
 			book.refuseAll()
 		}
 	}
@@ -348,11 +383,11 @@ func match(ctx context.Context, engine *redact.Engine, found []sessions.Session,
 	if err != nil {
 		return Result{}, err
 	}
-	return matchedResult(engine, ids, latest, edges, commits, associations)
+	return matchedResult(engine, ids, latest, edges, commits, associations, true)
 }
 
-// matchedResult formats only the linked sessions, which Resolve has mapped.
-func matchedResult(engine *redact.Engine, ids []string, latest map[string]snapshot, edges []linkage.Edge, commits []gitlocal.Commit, associations map[string][]string) (Result, error) {
+// matchedResult formats linked rows from compact facts and optionally includes graphs.
+func matchedResult(engine *redact.Engine, ids []string, latest map[string]snapshot, edges []linkage.Edge, commits []gitlocal.Commit, associations map[string][]string, graphs bool) (Result, error) {
 	links := map[string][]Link{}
 	linked := map[string]bool{}
 	for _, edge := range edges {
@@ -371,11 +406,11 @@ func matchedResult(engine *redact.Engine, ids []string, latest map[string]snapsh
 			continue
 		}
 		snap := latest[id]
-		row, err := rowOf(engine, snap.session, snap.facts.correlated)
+		row, err := rowOfFacts(engine, snap.session, snap.facts)
 		if err != nil {
 			return Result{}, err
 		}
-		if graph := latest[id].session.Graph; graph != nil {
+		if graph := latest[id].session.Graph; graphs && graph != nil {
 			result.Graphs[id] = graph
 		}
 		result.Sessions = append(result.Sessions, Session{

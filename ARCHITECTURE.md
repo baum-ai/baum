@@ -2025,10 +2025,16 @@ a process reuses what it built:
   clone and tree. A checkpoint is read whole again, through the checkpoint
   cache below, only when a session chosen from it has to be mapped.
 * **Linked-session views.** `locallink.Resolve` uses compact facts to select
-  the linked sessions, then maps only those whose graphs it must return for
-  rows and transcript access. Its retry follows the evidence build's fallback
-  when remapping changes the selection or facts go missing. Unchanged unlinked
-  candidates are never mapped just to refresh an open review page.
+  the linked sessions, then maps only those whose graphs it must return. The
+  local app uses `ResolveSummary` for lists and decision attribution: its
+  compact facts include titles and outcomes, so even a linked graph evicted
+  from the mapping cache is not decoded merely to list its metadata. The
+  summary returns the same JSON and a lazy graph reader bound to the pinned
+  request. Opening a transcript rechecks that it is still linked and reads its
+  graph then, under the daemon's local-read semaphore and the viewer's shared
+  transcript job, lifetime and timeout. Default `Resolve` still returns full
+  linked graphs. Missing facts and changed selection retain the full-read
+  fallback.
 * **Feature linkage.** `locallink.LinkCommits` shares those compact facts and
   skips unchanged session graphs too. The feature worker caches successful
   recorded commit ranges by clone, base, head and shallow boundary, bounded
@@ -2076,8 +2082,13 @@ place. A reused answer prints no warnings.
 `/api/sessions` answer lists, and only those: it reads that answer from the
 same cache, computing it through the same single-flight path when it is not
 there yet, and any other id, a session read but not linked, or an unavailable
-answer is 404. The answer keeps the linked sessions' graphs for this
-(`Result.Graphs`, never part of its JSON).
+answer is 404. A full linkage answer may keep its linked graphs
+(`Result.Graphs`, never part of its JSON). The daemon's metadata-only answer
+instead supplies a lazy reader: an explicit transcript request revalidates
+linkage to the pinned document commits, under the same local-read semaphore,
+and shares one graph read and render for that session. A no-longer-linked or
+unreadable graph is not served. The lazy read has the viewer's lifetime and a
+two-minute bound; failed builds are retried on the next request.
 
 The transcript is shaped and bounded first, from the graph as read, and
 redacted after, so nothing past the limits below is ever redacted or held

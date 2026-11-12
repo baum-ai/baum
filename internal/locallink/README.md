@@ -152,3 +152,12 @@ Run `just oss-go test ./internal/locallink/...` from the monorepo root. The
 tests cover concurrent readers/editors, stale sessions, matching-parent false
 positives, ambiguous edits, outside contributors, checkpoint discovery and
 offline behavior.
+
+`ResolveSummary` returns the same redacted session/commit JSON from compact
+facts, including title, outcome and edited-file count, without retaining linked
+graphs. The local app uses this for lists and decision attribution. Its lazy
+`LoadGraph` reader rechecks linkage against the same pinned commits when a
+transcript is explicitly opened; a session no longer linked yields no graph.
+The viewer shares and bounds this lazy read like its other transcript builds,
+and the daemon applies its existing local-read semaphore. Default `Resolve`
+still supplies complete linked graphs for callers that need them.

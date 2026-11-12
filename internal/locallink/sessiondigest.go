@@ -15,6 +15,7 @@ import (
 	"github.com/baum-ai/baum/linkage/sessioncorrelate"
 	"github.com/baum-ai/baum/sessions"
 	"github.com/baum-ai/baum/sessions/codextranscript"
+	"github.com/baum-ai/baum/sessions/session"
 )
 
 // DefaultDigestBytes bounds the memory the session digests take, roughly
@@ -62,6 +63,8 @@ type sessionFacts struct {
 	root               bool
 	startedAt, endedAt *time.Time
 	gitBranch          *string
+	title              *string
+	outcome            session.Outcome
 	correlated         sessioncorrelate.Result
 	// writes are the session's Git-writing shell calls (gitWrites), which
 	// the reflog matcher places in the clone's working trees.
@@ -79,6 +82,7 @@ func graphFacts(s sessions.Session) sessionFacts {
 	if root := s.Root(); root != nil {
 		facts.root = true
 		facts.startedAt, facts.endedAt, facts.gitBranch = root.StartedAt, root.EndedAt, root.GitBranch
+		facts.title, facts.outcome = root.Title, root.Outcome
 	}
 	return facts
 }
@@ -98,6 +102,10 @@ func (f sessionFacts) detached() sessionFacts {
 	if f.gitBranch != nil {
 		branch := strings.Clone(*f.gitBranch)
 		out.gitBranch = &branch
+	}
+	if f.title != nil {
+		title := strings.Clone(*f.title)
+		out.title = &title
 	}
 	out.correlated = detach(f.correlated)
 	out.writes = make([]gitWrite, len(f.writes))
