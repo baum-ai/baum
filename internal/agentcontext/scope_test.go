@@ -79,7 +79,7 @@ func TestRevokeDuringACallLeavesNothing(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	token, id, r := mint(t, s, Consumer{Kind: Chat})
+	token, _, r := mint(t, s, Consumer{Kind: Chat})
 	revoke = r
 	reply := rpc(t, s, token, `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"long"}}`)
 	if reply.Error == nil {
@@ -91,7 +91,7 @@ func TestRevokeDuringACallLeavesNothing(t *testing.T) {
 
 	// The proposer's validation runs after Propose's first check; a revoke
 	// then must still keep the proposal from being stored.
-	token, id, r = mint(t, s, Consumer{Kind: Chat})
+	token, id, r := mint(t, s, Consumer{Kind: Chat})
 	if err := s.Registry.SetPage(id, PageContext{Page: PageSettings}); err != nil {
 		t.Fatal(err)
 	}
