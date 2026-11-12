@@ -110,22 +110,45 @@ func cloneValues(v url.Values) url.Values {
 }
 
 // OperationSummary is what the person reads before confirming: what will
-// happen (Action), on what (Details: the pull request's title and number,
-// the job, the agent and what it asked), and the operation's flags. For a
-// paid run it names the model and effort the run will use when the app shows
-// them. It is never sent to the agent.
+// happen, on what, and the operation's flags. Action is baum's own sentence,
+// naming things only by identifiers (a repository and number, an agent and
+// session id, a job id); everything else is a field (Details), and text that
+// is not baum's (a title, what a tool asked, what the agent wrote) is a
+// quoted field, shown in full and never written into the sentence. For a
+// paid run it names the harness, model and effort from the settings. It is
+// never sent to the agent.
 type OperationSummary struct {
-	Action       string   `json:"action"`
-	Details      []string `json:"details,omitempty"`
-	Model        string   `json:"model,omitempty"`
-	Effort       string   `json:"effort,omitempty"`
-	Paid         bool     `json:"paid"`
-	Irreversible bool     `json:"irreversible"`
+	Action       string         `json:"action"`
+	Details      []SummaryField `json:"details,omitempty"`
+	Model        string         `json:"model,omitempty"`
+	Effort       string         `json:"effort,omitempty"`
+	Paid         bool           `json:"paid"`
+	Irreversible bool           `json:"irreversible"`
+}
+
+// SummaryField is one labelled part of a summary. Quoted marks text that is
+// not baum's: read from a route (made plain: no control, format or
+// bidirectional characters, one line unless Multiline) or, with ByAgent,
+// written by the agent and sent as it is (the agent's text is refused when it
+// holds such characters, so the field is exactly what runs). The app shows a
+// quoted field as data, apart from baum's words.
+type SummaryField struct {
+	Label     string `json:"label"`
+	Value     string `json:"value"`
+	Quoted    bool   `json:"quoted,omitempty"`
+	Multiline bool   `json:"multiline,omitempty"`
+	ByAgent   bool   `json:"by_agent,omitempty"`
 }
 
 func (s OperationSummary) clone() OperationSummary {
 	s.Details = slices.Clone(s.Details)
 	return s
+}
+
+// equal reports whether two summaries say the same.
+func (s OperationSummary) equal(o OperationSummary) bool {
+	return s.Action == o.Action && s.Model == o.Model && s.Effort == o.Effort && s.Paid == o.Paid &&
+		s.Irreversible == o.Irreversible && slices.Equal(s.Details, o.Details)
 }
 
 // OperationProposal is what an operation proposal holds: the operation's
@@ -164,6 +187,13 @@ var (
 	errOwnRequest = errors.New("a chat cannot answer its own session's requests: the person answers them")
 	// errOtherRoute is a request that is not the operation's own route.
 	errOtherRoute = errors.New("not the operation's route")
+	// ErrOperationChanged is a confirm of an operation whose summary reads
+	// differently from the one the person read: nothing ran, and the
+	// proposal now holds the new summary.
+	ErrOperationChanged = errors.New("what the operation would do changed since it was shown: nothing ran; read it again and confirm")
+	// errNoSession is a chat whose agent session is not known, which may not
+	// answer requests: it could be answering its own.
+	errNoSession = errors.New("this chat's own session is not known, so it cannot answer agents' requests: the person answers them in the app")
 )
 
 // operationMethods are the methods an operation may send.
@@ -435,7 +465,11 @@ func (p *Proposals) ProposeOperation(ctx context.Context, consumer, name string,
 // Confirm runs an operation proposal the person confirmed, when the consumer
 // is live, the person still has the page it was made on open, showing the
 // same thing, and its target still belongs to that page (Describe again,
-// against the page as it is now). A proposal refused so stays open.
+// against the page as it is now). A proposal refused so stays open. The new
+// summary must read as the stored one, which the person read: when it does
+// not (another title, harness, model or effort), nothing runs, Confirm
+// returns ErrOperationChanged and the proposal stays open holding the new
+// summary, for the person to read and confirm again.
 //
 // The proposal is then taken out of the store, under the lock a revoke and
 // every other Confirm take, before anything runs: of two Confirms only one
@@ -465,13 +499,28 @@ func (p *Proposals) Confirm(ctx context.Context, consumer, id string) (Operation
 		return OperationOutcome{}, ErrNotCurrentPage
 	}
 	req := proposal.Operation.Request
-	if _, err := op.Describe(ctx, OperationContext{Page: page, Consumer: c, Reader: p.readerFor(op)}, req); err != nil {
+	summary, err := op.Describe(ctx, OperationContext{Page: page, Consumer: c, Reader: p.readerFor(op)}, req)
+	if err != nil {
 		return OperationOutcome{}, err
 	}
+	summary.Paid, summary.Irreversible = op.Paid, op.Irreversible
 	p.mu.Lock()
 	if !p.registry.live(consumer) {
 		p.mu.Unlock()
 		return OperationOutcome{}, ErrUnknownConsumer
+	}
+	// What the person read must be what runs: a summary that reads
+	// differently now (another title, model or effort) refuses the confirm.
+	// The proposal stays open with the new summary, for the person to read
+	// and confirm again.
+	if !summary.equal(proposal.Operation.Summary) {
+		for i := range p.open[consumer] {
+			if open := &p.open[consumer][i]; open.ID == id && open.Operation != nil {
+				open.Operation.Summary = summary.clone()
+			}
+		}
+		p.mu.Unlock()
+		return OperationOutcome{}, ErrOperationChanged
 	}
 	taken := p.removeLocked(consumer, id)
 	p.mu.Unlock()

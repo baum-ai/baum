@@ -222,6 +222,9 @@ type opFixture struct {
 	token, id           string
 	revoke              func()
 	request             string
+	// index is the review index the routes serve; setTitle changes it.
+	indexMu sync.Mutex
+	index   reviewindex.Snapshot
 }
 
 func newOpFixture(t *testing.T) *opFixture {
@@ -240,12 +243,16 @@ func newOpFixture(t *testing.T) *opFixture {
 
 	// The review index: two pull requests of owner/repo, the first asked of
 	// the person, and one of a repository with no clone.
-	index := reviewindex.Snapshot{Entries: []reviewindex.Entry{
+	f.index = reviewindex.Snapshot{Entries: []reviewindex.Entry{
 		{PullRequest: discovery.PullRequest{Repository: "owner/repo", Number: 7, HeadSHA: "abc", Title: "Add search", Author: "ada", ReviewRequestedFromMe: true}, CloneID: clone.ID, Status: "none"},
 		{PullRequest: discovery.PullRequest{Repository: "owner/repo", Number: 8, HeadSHA: "abc", Title: "Fork change", Author: "eve", ReviewRequestedFromMe: true}, CloneID: clone.ID, Status: "none"},
 		{PullRequest: discovery.PullRequest{Repository: "other/repo", Number: 9, HeadSHA: "def", Title: "Elsewhere", ReviewRequestedFromMe: true}, NeedsClone: true, Status: "none"},
 	}}
-	snapshot := func(context.Context) (reviewindex.Snapshot, error) { return index, nil }
+	snapshot := func(context.Context) (reviewindex.Snapshot, error) {
+		f.indexMu.Lock()
+		defer f.indexMu.Unlock()
+		return f.index, nil
+	}
 
 	f.groups, err = reviewgroups.Open(filepath.Join(dir, "app.sqlite"))
 	if err != nil {
@@ -312,7 +319,7 @@ func newOpFixture(t *testing.T) *opFixture {
 	go func() {
 		defer close(done)
 		_, _ = f.requests.Ask(askCtx, agentrequests.Ask{Agent: "claude-code", SessionID: "s1", Kind: agentrequests.KindPermission, Tool: "Bash",
-			StartedAt: time.Now().Add(-time.Second), Input: []agentrequests.Row{{Label: "Command", Value: "go test ./...", Code: true}}, Suggestions: []string{"Always allow go test"}})
+			StartedAt: time.Now().Add(-time.Second), Input: []agentrequests.Row{{Label: "Command", Value: longCommand, Code: true}}, Suggestions: []string{"Always allow go test"}})
 	}()
 	t.Cleanup(func() { cancel(); <-done })
 	for deadline := time.Now().Add(5 * time.Second); ; {
@@ -332,7 +339,10 @@ func newOpFixture(t *testing.T) *opFixture {
 			f.cloned.add(opts.Dir)
 			return errors.New("no network in tests")
 		}}
-	api := uiserver.LocalAPI{Registry: registry, Config: config.Default(), Index: readJSONHandler(index), Inbox: inbox.Handler(),
+	api := uiserver.LocalAPI{Registry: registry, Config: config.Default(), Index: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		index, _ := snapshot(r.Context())
+		readJSONHandler(index).ServeHTTP(w, r)
+	}), Inbox: inbox.Handler(),
 		Merge:  uiserver.MergeHandler(registry, f.github, nil, nil),
 		Update: uiserver.UpdateHandler(registry, f.github, nil, nil),
 		PRs:    uiserver.DiscoveryHandler(registry, f.github, nil),
@@ -348,6 +358,21 @@ func newOpFixture(t *testing.T) *opFixture {
 	}
 	t.Cleanup(f.revoke)
 	return f
+}
+
+// longCommand is the pending request's input value: as long as the store
+// keeps (4,000 characters, most of them two bytes), with a tail of its own.
+var longCommand = "go test " + strings.Repeat("ü", 4000-8-len("TAIL-END")) + "TAIL-END"
+
+// setTitle changes a pull request's title in the review index.
+func (f *opFixture) setTitle(number int, title string) {
+	f.indexMu.Lock()
+	defer f.indexMu.Unlock()
+	for i := range f.index.Entries {
+		if f.index.Entries[i].PullRequest.Repository == "owner/repo" && f.index.Entries[i].PullRequest.Number == number {
+			f.index.Entries[i].PullRequest.Title = title
+		}
+	}
 }
 
 func (f *opFixture) page(p agentcontext.PageContext) {
@@ -420,11 +445,11 @@ func opCases(f *opFixture) []opCase {
 		}
 	}
 	return []opCase{
-		{op: "merge", page: pullPage, args: map[string]any{}, action: "Merge owner/repo#7 “Add search” on GitHub", effect: calls("merge owner/repo#7 SQUASH abc")},
+		{op: "merge", page: pullPage, args: map[string]any{}, action: "Merge owner/repo#7 on GitHub", effect: calls("merge owner/repo#7 SQUASH abc")},
 		{op: "merge", page: pullPage, args: map[string]any{"method": "MERGE"}, action: "Merge owner/repo#7", effect: calls("merge owner/repo#7 MERGE abc")},
 		{op: "update_branch", page: pullPage, args: map[string]any{}, action: "Update the branch of owner/repo#7", effect: calls("update owner/repo#7 abc")},
 		{op: "rerun_checks", page: pullPage, args: map[string]any{}, action: "Re-run the failed checks of owner/repo#7", effect: calls("rerun checks owner/repo#7 abc")},
-		{op: "rerun_failed_job", page: pullPage, args: map[string]any{"job_id": 21}, action: "Re-run the failed check “test”", effect: calls("rerun job owner/repo#7 abc 21")},
+		{op: "rerun_failed_job", page: pullPage, args: map[string]any{"job_id": 21}, action: "Re-run one failed check of owner/repo#7", effect: calls("rerun job owner/repo#7 abc 21")},
 		{op: "resolve_thread", page: pullPage, args: map[string]any{"thread": "RT_1"}, action: "Resolve a review thread of owner/repo#7", effect: calls("resolve owner/repo#7 RT_1")},
 		{op: "fix", page: pullPage, args: map[string]any{"only": "checks"}, action: "Start a fix of the failing checks of owner/repo#7", effect: func(t *testing.T, f *opFixture) {
 			if js := f.queue.OfPullRequest("owner/repo", 7); len(js) != 1 || js[0].Kind != "fix" || js[0].Only != "checks" || js[0].Clone != f.clone.ID {
@@ -437,7 +462,7 @@ func opCases(f *opFixture) []opCase {
 			}
 		}},
 		{op: "refresh", page: agentcontext.PageContext{Page: agentcontext.PageInbox}, args: map[string]any{"repository": "Owner/Repo"}, action: "Read the pull requests of owner/repo", effect: calls("poll owner/repo")},
-		{op: "answer_request", page: sessions, args: map[string]any{"id": f.request, "behavior": "allow", "suggestion": "0"}, action: "Allow claude-code session s1 to use Bash", effect: func(t *testing.T, f *opFixture) {
+		{op: "answer_request", page: sessions, args: map[string]any{"id": f.request, "behavior": "allow"}, action: "Allow the tool use claude-code session s1 asks for", effect: func(t *testing.T, f *opFixture) {
 			if pending, _ := f.requests.List(); len(pending) != 0 {
 				t.Errorf("the request is still pending: %+v", pending)
 			}
@@ -483,13 +508,13 @@ func opCases(f *opFixture) []opCase {
 				t.Error("the fix still runs")
 			}
 		}},
-		{op: "create_group", page: agentcontext.PageContext{Page: agentcontext.PagePulls}, args: map[string]any{"name": "Pair", "repository": "owner/repo", "numbers": []int{8, 7}}, action: "Create the review group “Pair”", effect: func(t *testing.T, f *opFixture) {
+		{op: "create_group", page: agentcontext.PageContext{Page: agentcontext.PagePulls}, args: map[string]any{"name": "Pair", "repository": "owner/repo", "numbers": []int{8, 7}}, action: "Create a review group of 2 pull requests", effect: func(t *testing.T, f *opFixture) {
 			list, _ := f.groups.List(context.Background())
 			if !slices.ContainsFunc(list, func(g reviewgroups.Group) bool { return g.Name == "Pair" }) {
 				t.Errorf("groups %+v", list)
 			}
 		}},
-		{op: "delete_group", page: agentcontext.PageContext{Page: agentcontext.PageGroup, Group: f.group}, args: map[string]any{}, action: "Delete the review group “Search”", effect: func(t *testing.T, f *opFixture) {
+		{op: "delete_group", page: agentcontext.PageContext{Page: agentcontext.PageGroup, Group: f.group}, args: map[string]any{}, action: "Delete a review group of owner/repo", effect: func(t *testing.T, f *opFixture) {
 			if f.groupExists(f.group) {
 				t.Error("the group was not deleted")
 			}
@@ -500,7 +525,7 @@ func opCases(f *opFixture) []opCase {
 				t.Errorf("repositories %+v", list)
 			}
 		}},
-		{op: "clone_repository", page: repositories, args: map[string]any{"repository": "acme/web"}, action: "Clone acme/web from GitHub into " + "", effect: func(t *testing.T, f *opFixture) {
+		{op: "clone_repository", page: repositories, args: map[string]any{"repository": "acme/web"}, action: "Clone acme/web from GitHub", effect: func(t *testing.T, f *opFixture) {
 			deadline := time.Now().Add(5 * time.Second)
 			for f.cloned.count() == 0 && time.Now().Before(deadline) {
 				time.Sleep(5 * time.Millisecond)
@@ -509,7 +534,7 @@ func opCases(f *opFixture) []opCase {
 				t.Errorf("cloned into %v", got)
 			}
 		}},
-		{op: "remove_clone", page: ownRepository, args: map[string]any{"clone": f.clone.ID}, action: "Unregister the clone of owner/repo", effect: func(t *testing.T, f *opFixture) {
+		{op: "remove_clone", page: ownRepository, args: map[string]any{"clone": f.clone.ID}, action: "Unregister a clone of owner/repo", effect: func(t *testing.T, f *opFixture) {
 			if clones, _ := f.registry.List(context.Background()); slices.ContainsFunc(clones, func(c repos.Clone) bool { return c.ID == f.clone.ID }) {
 				t.Error("the clone is still registered")
 			}
@@ -563,7 +588,16 @@ func TestEachOperationRunsItsRouteOnConfirm(t *testing.T) {
 			t.Errorf("%s: summary %+v", tt.op, p.Operation.Summary)
 		}
 		raw, _ := json.Marshal(receipt)
-		for _, detail := range append([]string{p.Operation.Summary.Action}, p.Operation.Summary.Details...) {
+		shown := []string{p.Operation.Summary.Action}
+		// The fields that could only come from the summary: quoted text of
+		// some length (a short fact, such as a count, can occur in a random
+		// id).
+		for _, d := range p.Operation.Summary.Details {
+			if d.Quoted && len(d.Value) >= 6 {
+				shown = append(shown, d.Value)
+			}
+		}
+		for _, detail := range shown {
 			if strings.Contains(string(raw), detail) {
 				t.Errorf("%s: the receipt holds the summary %q", tt.op, detail)
 			}
@@ -618,13 +652,8 @@ func TestTheRoutesOwnValidationApplies(t *testing.T) {
 	if got := f.github.take(); len(got) != 0 {
 		t.Fatalf("merged: %v", got)
 	}
-	// A suggestion the request does not offer.
-	refused(agentcontext.PageContext{Page: agentcontext.PageSessions}, "propose_answer_request", map[string]any{"id": f.request, "behavior": "allow", "suggestion": "9"}, http.StatusBadRequest)
-	if pending, _ := f.requests.List(); len(pending) != 1 {
-		t.Fatal("a refused answer answered the request")
-	}
-	// A group name with a control character.
-	refused(agentcontext.PageContext{Page: agentcontext.PagePulls}, "propose_create_group", map[string]any{"name": "bad\x01name", "repository": "owner/repo", "numbers": []int{7, 8}}, http.StatusBadRequest)
+	// A group that holds a pull request twice.
+	refused(agentcontext.PageContext{Page: agentcontext.PagePulls}, "propose_create_group", map[string]any{"name": "Twice", "repository": "owner/repo", "numbers": []int{7, 7}}, http.StatusBadRequest)
 	if list, _ := f.groups.List(ctx); len(list) != 1 {
 		t.Fatalf("groups %+v", list)
 	}

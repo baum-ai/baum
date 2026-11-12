@@ -36,9 +36,11 @@ type Consumer struct {
 	Repository  string `json:"repository,omitempty"`
 	PullRequest int    `json:"pull_request,omitempty"`
 	// Session is the agent session a chat runs in, as "agent:id" (the
-	// agent, such as claude or codex, and its session id), when the panel
-	// that minted the token knows it. A chat may never propose answering a
-	// request of its own session (approving its own tool call).
+	// agent, such as claude-code or codex, and its session id), set at Mint
+	// or once later (Registry.SetSession). A chat never proposes answering a
+	// request of its own session (approving its own tool call), and while its
+	// session is unknown it answers none; nor does it message, end or bring
+	// forward its own session.
 	Session string `json:"session,omitempty"`
 }
 
@@ -266,6 +268,37 @@ func (r *Registry) Consumer(id string) (Consumer, bool) {
 		return Consumer{}, false
 	}
 	return h.consumer, true
+}
+
+// SetSession records the agent session ("agent:id") the chat with this id
+// runs in, for a panel that learns it after minting the token (Codex reports
+// its session id late). It is set once: setting the same session again is
+// accepted, another one refused, so a chat's session cannot be swapped for
+// the one whose requests it would answer.
+func (r *Registry) SetSession(id, session string) error {
+	if session == "" {
+		return errors.New(`a chat's session is "agent:id"`)
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	h, ok := r.byID[id]
+	switch {
+	case !ok:
+		return ErrUnknownConsumer
+	case h.consumer.Kind != Chat:
+		return errors.New("only a chat runs in a session")
+	case h.consumer.Session == session:
+		return nil
+	case h.consumer.Session != "":
+		return errors.New("the chat's session is set already")
+	}
+	c := h.consumer
+	c.Session = session
+	if err := c.validate(); err != nil {
+		return err
+	}
+	h.consumer = c
+	return nil
 }
 
 // SetPage records the page the consumer with this id has open. An action's

@@ -418,4 +418,29 @@ func TestAChatsSessionIsChecked(t *testing.T) {
 	} else {
 		revoke()
 	}
+	// A session set later: well formed, a chat's, and once.
+	_, chat, revokeChat, _ := r.Mint(Consumer{Kind: Chat})
+	defer revokeChat()
+	_, action, revokeAction, _ := r.Mint(Consumer{Kind: Action, Repository: "acme/web", PullRequest: 1})
+	defer revokeAction()
+	for _, bad := range []string{"", "claude", "claude:"} {
+		if err := r.SetSession(chat, bad); err == nil {
+			t.Errorf("session %q was set", bad)
+		}
+	}
+	if err := r.SetSession(action, "claude:s1"); err == nil {
+		t.Error("an action's session was set")
+	}
+	if err := r.SetSession(chat, "claude:s1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.SetSession(chat, "claude:s1"); err != nil {
+		t.Fatal("setting the same session again:", err)
+	}
+	if err := r.SetSession(chat, "claude:s2"); err == nil {
+		t.Error("the session was swapped")
+	}
+	if c, _ := r.Consumer(chat); c.Session != "claude:s1" {
+		t.Errorf("session %q", c.Session)
+	}
 }

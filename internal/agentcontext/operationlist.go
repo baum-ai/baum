@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/baum-ai/baum/internal/reviewindex"
@@ -52,17 +53,90 @@ func (c OperationContext) get(ctx context.Context, path string, query url.Values
 	return c.callContext().get(ctx, path, query)
 }
 
-// clip keeps at most n bytes of text for a summary, on a rune boundary.
-func clip(text string, n int) string {
-	text = strings.TrimSpace(text)
-	if len(text) <= n {
-		return text
+// A summary is baum's own sentence (Action) and fields. Text that is not
+// baum's (what a pull request, session, thread or tool says, and what the
+// agent wrote) is never written into the sentence: it is a quoted field of
+// its own, shown in full. Text read from the daemon's routes is made plain
+// for display (plain); text the agent wrote is refused at Build when it
+// holds anything plain would change (checkAgentText), so the field shows
+// exactly what will be sent.
+
+// hidden reports whether r is a character a summary must not carry: a
+// control character (newline and tab apart, where text is multi-line), a
+// format character (bidirectional overrides and isolates, zero-width
+// characters), or a line or paragraph separator outside multi-line text.
+func hidden(r rune, multiline bool) bool {
+	switch {
+	case multiline && (r == '\n' || r == '\t'):
+		return false
+	case unicode.IsControl(r), unicode.Is(unicode.Cf, r), r == utf8.RuneError:
+		return true
+	case unicode.Is(unicode.Zl, r), unicode.Is(unicode.Zp, r):
+		return !multiline
 	}
-	for n > 0 && !utf8.RuneStart(text[n]) {
-		n--
-	}
-	return text[:n] + "…"
+	return false
 }
+
+// plain is untrusted text as a summary shows it: valid UTF-8, with each
+// hidden character replaced (a line break by a space in one-line text, the
+// rest dropped), and carriage returns of multi-line text turned into line
+// breaks.
+func plain(text string, multiline bool) string {
+	text = strings.ToValidUTF8(text, "�")
+	if multiline {
+		text = strings.ReplaceAll(strings.ReplaceAll(text, "\r\n", "\n"), "\r", "\n")
+	}
+	var b strings.Builder
+	for _, r := range text {
+		switch {
+		case !hidden(r, multiline):
+			b.WriteRune(r)
+		case r == '\n' || r == '\r' || r == '\t' || unicode.Is(unicode.Zl, r) || unicode.Is(unicode.Zp, r):
+			b.WriteByte(' ')
+		}
+	}
+	return strings.TrimSpace(b.String())
+}
+
+// checkAgentText refuses text the agent wrote that a summary could not show
+// as it is: invalid UTF-8, control characters (a line break or tab apart in
+// multi-line text) or format characters such as bidirectional overrides.
+func checkAgentText(what, text string, multiline bool) error {
+	if !utf8.ValidString(text) {
+		return fmt.Errorf("the %s is not valid UTF-8", what)
+	}
+	if strings.ContainsRune(text, '\r') {
+		return fmt.Errorf("the %s holds a carriage return: use line breaks (\\n)", what)
+	}
+	for _, r := range text {
+		if hidden(r, multiline) {
+			return fmt.Errorf("the %s holds a control or invisible formatting character (%U), which the person could not see", what, r)
+		}
+	}
+	return nil
+}
+
+// fact is a field in baum's own words.
+func fact(label, value string) SummaryField { return SummaryField{Label: label, Value: value} }
+
+// quoted is a field of untrusted text read from a route, made plain and
+// shown in full; empty text is no field.
+func quoted(fields []SummaryField, label, value string, multiline bool) []SummaryField {
+	if value = plain(value, multiline); value == "" {
+		return fields
+	}
+	return append(fields, SummaryField{Label: label, Value: value, Quoted: true, Multiline: multiline})
+}
+
+// agentWrote is a field of text the agent wrote, already checked at Build
+// (checkAgentText): shown in full, exactly as it will be sent.
+func agentWrote(label, value string, multiline bool) SummaryField {
+	return SummaryField{Label: label, Value: value, Quoted: true, Multiline: multiline, ByAgent: true}
+}
+
+// ident is an identifier (a repository, a number, an agent, an id) as the
+// sentence names it: one plain line.
+func ident(s string) string { return plain(s, false) }
 
 func pullKey(repository string, number int) string {
 	return strings.ToLower(repository) + "#" + strconv.Itoa(number)
@@ -148,13 +222,15 @@ func (e reviewEntry) repository() string {
 	return pr.Repository
 }
 
-// label names a pull request for the person: owner/name#N "title".
+// label names a pull request in baum's sentence: owner/name#N. Its title is
+// a field (fields).
 func (e reviewEntry) label() string {
-	label := e.repository() + "#" + strconv.Itoa(e.Number)
-	if t := clip(e.title(), 200); t != "" {
-		label += " “" + t + "”"
-	}
-	return label
+	return ident(e.repository()) + "#" + strconv.Itoa(e.Number)
+}
+
+// fields are what the summary quotes of a pull request: its title.
+func (e reviewEntry) fields(fields []SummaryField) []SummaryField {
+	return quoted(fields, "Pull request title", e.title(), false)
 }
 
 // shortSHA is a head as the app shows it.
@@ -412,7 +488,7 @@ func pullOperations() []Operation {
 			}
 			_ = json.Unmarshal(req.Body, &b)
 			return OperationSummary{Action: "Merge " + e.label() + " on GitHub",
-				Details: []string{"Method: " + strings.ToLower(b.Method), "At head " + shortSHA(b.HeadSHA)}}, nil
+				Details: e.fields([]SummaryField{fact("Method", strings.ToLower(ident(b.Method))), fact("At head", ident(shortSHA(b.HeadSHA)))})}, nil
 		},
 	}, pullWrite("update_branch", "/api/prs/update-branch", "/api/prs/update-branch-options",
 		"Proposes updating the pull request's branch with its base on GitHub, as the Update branch dialog does, at the head the page shows. The person must have the pull request's page open.",
@@ -506,7 +582,8 @@ func pullOperations() []Operation {
 				if i < 0 {
 					return OperationSummary{}, errors.New("that job is not one of the pull request's failing checks")
 				}
-				return OperationSummary{Action: "Re-run the failed check “" + clip(checks.Checks[i].Name, 200) + "” of " + e.label() + " on GitHub"}, nil
+				return OperationSummary{Action: "Re-run one failed check of " + e.label() + " on GitHub",
+					Details: e.fields(quoted([]SummaryField{fact("GitHub Actions job", strconv.FormatInt(b.JobID, 10))}, "Check", checks.Checks[i].Name, false))}, nil
 			},
 		}, {
 			Name:        "resolve_thread",
@@ -573,8 +650,11 @@ func pullOperations() []Operation {
 					if t.Line > 0 {
 						where += ":" + strconv.Itoa(t.Line)
 					}
-					return OperationSummary{Action: "Resolve a review thread of " + e.label() + " on GitHub",
-						Details: []string{"On " + where, "By " + t.Author + ": " + clip(t.Excerpt, 300)}}, nil
+					fields := e.fields(nil)
+					fields = quoted(fields, "On", where, false)
+					fields = quoted(fields, "By", t.Author, false)
+					fields = quoted(fields, "Thread", t.Excerpt, true)
+					return OperationSummary{Action: "Resolve a review thread of " + e.label() + " on GitHub", Details: fields}, nil
 				}
 				return OperationSummary{}, errors.New("that thread is not one of the pull request's unresolved threads")
 			},
@@ -618,15 +698,15 @@ func pullOperations() []Operation {
 				}
 				backend, model, effort := runChoice(ctx, c, true)
 				action := "Start a fix of " + e.label()
-				details := []string{"An agent pushes to the pull request's branch and answers its review threads"}
+				details := []SummaryField{fact("What runs", "An agent pushes to the pull request's branch and answers its review threads")}
 				if item.Only == "checks" {
 					action = "Start a fix of the failing checks of " + e.label()
-					details = []string{"An agent pushes to the pull request's branch"}
+					details = []SummaryField{fact("What runs", "An agent pushes to the pull request's branch")}
 				}
 				if backend != "" {
-					details = append(details, "Harness: "+backend)
+					details = append(details, fact("Harness", ident(backend)))
 				}
-				return OperationSummary{Action: action, Details: details, Model: model, Effort: effort}, nil
+				return OperationSummary{Action: action, Details: e.fields(details), Model: ident(model), Effort: ident(effort)}, nil
 			},
 		}, {
 			Name:        "review",
@@ -672,11 +752,11 @@ func pullOperations() []Operation {
 				if e.VersionCount > 0 {
 					action = "Start a new review of " + e.label()
 				}
-				var details []string
+				details := []SummaryField{fact("What runs", "An agent reviews the pull request")}
 				if backend != "" {
-					details = append(details, "Harness: "+backend)
+					details = append(details, fact("Harness", ident(backend)))
 				}
-				return OperationSummary{Action: action, Details: details, Model: model, Effort: effort}, nil
+				return OperationSummary{Action: action, Details: e.fields(details), Model: ident(model), Effort: ident(effort)}, nil
 			},
 		}, {
 			Name:        "refresh",
@@ -736,7 +816,7 @@ func pullOperations() []Operation {
 				if repository == "" || !strings.EqualFold(repository, req.Target) {
 					return OperationSummary{}, errors.New("the repository is no longer registered")
 				}
-				return OperationSummary{Action: "Read the pull requests of " + req.Target + " from GitHub now"}, nil
+				return OperationSummary{Action: "Read the pull requests of " + ident(req.Target) + " from GitHub now"}, nil
 			},
 		}}
 }
@@ -784,7 +864,7 @@ func pullWrite(name, route, optionsRoute, description string, check func(options
 			}
 			var b pullBody
 			_ = json.Unmarshal(req.Body, &b)
-			return OperationSummary{Action: action(e), Details: []string{"At head " + shortSHA(b.HeadSHA)}}, nil
+			return OperationSummary{Action: action(e), Details: e.fields([]SummaryField{fact("At head", ident(shortSHA(b.HeadSHA)))})}, nil
 		},
 	}
 }
@@ -849,21 +929,38 @@ type liveSession struct {
 
 func (s liveSession) key() string { return SessionKey(s.Agent, s.SessionID) }
 
-// label names a session for the person.
+// label names a session in baum's sentence: its agent and id. Its title and
+// repository are fields (fields).
 func (s liveSession) label() string {
-	label := s.Agent + " session " + s.SessionID
-	if t := clip(s.Title, 200); t != "" {
-		label += " “" + t + "”"
-	}
-	if s.Repository != "" {
-		label += " in " + s.Repository
-	}
-	return label
+	return ident(s.Agent) + " session " + ident(s.SessionID)
 }
 
+// fields are what the summary quotes of a session: its title and
+// repository.
+func (s liveSession) fields(fields []SummaryField) []SummaryField {
+	fields = quoted(fields, "Session title", s.Title, false)
+	return quoted(fields, "Repository", s.Repository, false)
+}
+
+// errOwnSession is an operation on the chat's own session.
+var errOwnSession = errors.New("a chat cannot message, end or bring forward its own session: the person does that in the app")
+
 // sessionOnPage finds the session an operation acts on: a session's page
-// shows its own (one named must be it), the Sessions page any it lists.
+// shows its own (one named must be it), the Sessions page any it lists. The
+// chat's own session is refused.
 func sessionOnPage(ctx context.Context, c OperationContext, named string) (liveSession, error) {
+	s, err := listedSession(ctx, c, named)
+	if err != nil {
+		return liveSession{}, err
+	}
+	if c.Consumer.Session != "" && s.key() == c.Consumer.Session {
+		return liveSession{}, errOwnSession
+	}
+	return s, nil
+}
+
+// listedSession is sessionOnPage without the own-session check.
+func listedSession(ctx context.Context, c OperationContext, named string) (liveSession, error) {
 	named = strings.TrimSpace(named)
 	switch c.Page.Page {
 	case PageSession:
@@ -928,21 +1025,23 @@ type agentRequest struct {
 		Label string `json:"label"`
 		Value string `json:"value"`
 	} `json:"input"`
-	Suggestions []struct {
-		ID    string `json:"id"`
-		Label string `json:"label"`
-	} `json:"suggestions"`
-	Questions []struct {
-		Question string `json:"question"`
-	} `json:"questions"`
+	Questions []requestQuestion `json:"questions"`
+}
+
+type requestQuestion struct {
+	Question string `json:"question"`
 }
 
 // requestOnPage finds a pending request the open page lists: the Sessions
 // page lists every session's, a session's page its own. A request of the
-// chat's own session is refused: the chat never answers its own.
+// chat's own session is refused, and so is every request when the chat's
+// session is not known: it could be its own.
 func requestOnPage(ctx context.Context, c OperationContext, id string) (agentRequest, error) {
 	if c.Page.Page != PageSessions && (c.Page.Page != PageSession || c.Page.Session == "") {
 		return agentRequest{}, ErrNotCurrentPage
+	}
+	if c.Consumer.Session == "" {
+		return agentRequest{}, errNoSession
 	}
 	requests, _, err := c.callContext().agentRequestsBody(ctx)
 	if err != nil {
@@ -957,7 +1056,7 @@ func requestOnPage(ctx context.Context, c OperationContext, id string) (agentReq
 			continue
 		}
 		key := SessionKey(r.Agent, r.SessionID)
-		if c.Consumer.Session != "" && key == c.Consumer.Session {
+		if key == c.Consumer.Session {
 			return agentRequest{}, errOwnRequest
 		}
 		if c.Page.Page == PageSession && key != c.Page.Session {
@@ -968,11 +1067,34 @@ func requestOnPage(ctx context.Context, c OperationContext, id string) (agentReq
 	return agentRequest{}, errors.New("that request is not pending on the page the person has open")
 }
 
-// answerBody is POST /api/agent-requests/{id}/answer's body.
+// answerBody is POST /api/agent-requests/{id}/answer's body, without the
+// route's suggestion: a permission suggestion can change the agent's
+// permissions for good (a mode, a rule in the user's settings), which only
+// the person applies, in the app.
 type answerBody struct {
-	Behavior   string            `json:"behavior"`
-	Suggestion string            `json:"suggestion,omitempty"`
-	Answers    map[string]string `json:"answers,omitempty"`
+	Behavior string            `json:"behavior"`
+	Answers  map[string]string `json:"answers,omitempty"`
+}
+
+// requestSession is the summary's fields of the session a request is of:
+// its title and repository when the session is listed.
+func requestSession(ctx context.Context, c OperationContext, r agentRequest) []SummaryField {
+	body, _, err := c.get(ctx, "/api/live-sessions", nil)
+	if err != nil {
+		return nil
+	}
+	var list struct {
+		Sessions []liveSession `json:"sessions"`
+	}
+	if disabled(body) || json.Unmarshal(body, &list) != nil {
+		return nil
+	}
+	for _, s := range list.Sessions {
+		if s.key() == SessionKey(r.Agent, r.SessionID) {
+			return s.fields(nil)
+		}
+	}
+	return nil
 }
 
 func sessionOperations() []Operation {
@@ -980,18 +1102,17 @@ func sessionOperations() []Operation {
 	sessionArg := `"session":{"type":"string","maxLength":600,"description":"The session as agent:id: on a session's page, only to check it is the page's."}`
 	return []Operation{{
 		Name: "answer_request",
-		Description: "Proposes answering an agent's pending request (see agent_requests), as the Sessions pages do: allow or deny a permission request (optionally with one of its suggestions, by id), or answer a question (answers keyed by each question's text). Only a request the open page lists: the Sessions page lists every session's, a session's page its own. " +
-			"You can never answer a request of your own session.",
+		Description: "Proposes answering an agent's pending request (see agent_requests), as the Sessions pages do: allow or deny a permission request, or answer a question (answers keyed by each question's text). A permission's suggestions (allow always, a mode) are the person's to apply in the app: you cannot propose one. Only a request the open page lists: the Sessions page lists every session's, a session's page its own. " +
+			"You can never answer a request of your own session, nor any when the app has not told baum which session you run in.",
 		Pages:  sessionPages,
 		Method: http.MethodPost,
 		Route:  "/api/agent-requests/{id}/answer",
 		InputSchema: json.RawMessage(`{"type":"object","properties":{` +
 			`"id":{"type":"string","minLength":1,"maxLength":200},` +
 			`"behavior":{"type":"string","enum":["allow","deny"]},` +
-			`"suggestion":{"type":"string","maxLength":16},` +
-			`"answers":{"type":"object","maxProperties":16,"additionalProperties":{"type":"string","maxLength":1000}}},` +
+			`"answers":{"type":"object","maxProperties":16,"additionalProperties":{"type":"string","minLength":1,"maxLength":1000}}},` +
 			`"required":["id","behavior"],"additionalProperties":false}`),
-		Reads: []string{"/api/agent-requests"},
+		Reads: []string{"/api/agent-requests", "/api/live-sessions"},
 		Build: func(ctx context.Context, c OperationContext, args json.RawMessage) (OperationRequest, error) {
 			var a struct {
 				ID string `json:"id"`
@@ -1004,6 +1125,17 @@ func sessionOperations() []Operation {
 			if err != nil {
 				return OperationRequest{}, err
 			}
+			if len(a.Answers) > 0 && (a.Behavior != "allow" || r.Kind != "question") {
+				return OperationRequest{}, errors.New("answers go only with allow, to a question")
+			}
+			for question, answer := range a.Answers {
+				if !slices.ContainsFunc(r.Questions, func(q requestQuestion) bool { return q.Question == question }) {
+					return OperationRequest{}, errors.New("the answers name a question the request does not ask")
+				}
+				if err := checkAgentText("answer", answer, true); err != nil {
+					return OperationRequest{}, err
+				}
+			}
 			body, err := json.Marshal(a.answerBody)
 			return OperationRequest{Target: "request:" + r.ID, Vars: map[string]string{"id": r.ID}, Body: body}, err
 		},
@@ -1014,32 +1146,30 @@ func sessionOperations() []Operation {
 			}
 			var b answerBody
 			_ = json.Unmarshal(req.Body, &b)
-			who := r.Agent + " session " + r.SessionID
-			var s OperationSummary
+			who := ident(r.Agent) + " session " + ident(r.SessionID)
+			s := OperationSummary{Details: requestSession(ctx, c, r)}
 			if r.Kind == "question" {
-				s.Action = "Answer the question of " + who
+				s.Action = "Answer the questions " + who + " asks"
 				if b.Behavior == "deny" {
-					s.Action = "Decline the question of " + who
+					s.Action = "Decline the questions " + who + " asks"
 				}
+				// Every question in full, each with the answer the agent
+				// wrote, exactly as it is sent.
 				for _, q := range r.Questions {
-					line := "Asked: " + clip(q.Question, 300)
+					s.Details = quoted(s.Details, "Question", q.Question, true)
 					if answer, ok := b.Answers[q.Question]; ok {
-						line += " — answer: " + clip(answer, 300)
+						s.Details = append(s.Details, agentWrote("Answer", answer, true))
 					}
-					s.Details = append(s.Details, line)
 				}
 			} else {
-				s.Action = "Allow " + who + " to use " + r.Tool
+				s.Action = "Allow the tool use " + who + " asks for"
 				if b.Behavior == "deny" {
-					s.Action = "Deny " + who + " the use of " + r.Tool
+					s.Action = "Deny the tool use " + who + " asks for"
 				}
+				s.Details = quoted(s.Details, "Tool", r.Tool, false)
+				// Every input value in full: the store bounds them.
 				for _, row := range r.Input {
-					s.Details = append(s.Details, clip(row.Label, 80)+": "+clip(row.Value, 500))
-				}
-				for _, suggestion := range r.Suggestions {
-					if b.Suggestion != "" && suggestion.ID == b.Suggestion {
-						s.Details = append(s.Details, "And: "+clip(suggestion.Label, 300))
-					}
+					s.Details = quoted(s.Details, "Input: "+ident(row.Label), row.Value, true)
 				}
 			}
 			return s, nil
@@ -1067,6 +1197,9 @@ func sessionOperations() []Operation {
 			if !s.Messageable {
 				return OperationRequest{}, errors.New("that session is not waiting at its prompt: a running one takes a queued message (queue_message)")
 			}
+			if err := checkAgentText("message", a.Text, true); err != nil {
+				return OperationRequest{}, err
+			}
 			body, err := json.Marshal(struct {
 				Text string `json:"text"`
 			}{a.Text})
@@ -1081,7 +1214,7 @@ func sessionOperations() []Operation {
 				Text string `json:"text"`
 			}
 			_ = json.Unmarshal(req.Body, &b)
-			return OperationSummary{Action: "Send a message to " + s.label(), Details: []string{"Message: " + clip(b.Text, 2000)}}, nil
+			return OperationSummary{Action: "Send a message to " + s.label(), Details: append(s.fields(nil), agentWrote("Message", b.Text, true))}, nil
 		},
 	}, {
 		Name:        "queue_message",
@@ -1106,6 +1239,9 @@ func sessionOperations() []Operation {
 			if s.State != "running" {
 				return OperationRequest{}, errors.New("that session is not running: one waiting at its prompt takes a message (send_message)")
 			}
+			if err := checkAgentText("message", a.Text, true); err != nil {
+				return OperationRequest{}, err
+			}
 			body, err := json.Marshal(struct {
 				Agent     string `json:"agent"`
 				SessionID string `json:"session_id"`
@@ -1127,7 +1263,7 @@ func sessionOperations() []Operation {
 			if s.key() != req.Target {
 				return OperationSummary{}, ErrNotCurrentPage
 			}
-			return OperationSummary{Action: "Queue a message for " + s.label() + ", for when its turn ends", Details: []string{"Message: " + clip(b.Text, 2000)}}, nil
+			return OperationSummary{Action: "Queue a message for " + s.label() + ", for when its turn ends", Details: append(s.fields(nil), agentWrote("Message", b.Text, true))}, nil
 		},
 	}, sessionAction("end_session", "end", true,
 		"Proposes ending an agent session that waits on the person or went quiet (endable), as the Sessions pages' End session does: baum stops its agent. On the Sessions page name the session; on a session's page it is the page's.",
@@ -1139,7 +1275,7 @@ func sessionOperations() []Operation {
 				return errors.New("baum cannot end that session now")
 			}
 			return nil
-		}, func(s liveSession) string { return "End " + s.label() + ": baum stops its agent" }),
+		}, func(s liveSession) string { return "End " + s.label() + " (baum stops its agent)" }),
 		sessionAction("focus_session", "focus", false,
 			"Proposes bringing an agent session's terminal forward, as the Sessions pages' Focus does. On the Sessions page name the session; on a session's page it is the page's.",
 			func(s liveSession) error {
@@ -1184,13 +1320,14 @@ func sessionAction(name, verb string, irreversible bool, description string, che
 			if err != nil {
 				return OperationSummary{}, err
 			}
-			return OperationSummary{Action: action(s)}, nil
+			return OperationSummary{Action: action(s), Details: s.fields(nil)}, nil
 		},
 	}
 }
 
 // jobOnPage reads a job the open page shows: a job's page its own (one
-// named must be it), the Jobs page any.
+// named must be it), the Jobs page one of the jobs it lists as queued or
+// running (GET /api/jobs, the jobs the app keeps current).
 func jobOnPage(ctx context.Context, c OperationContext, id string) (map[string]json.RawMessage, error) {
 	id = strings.TrimSpace(id)
 	switch c.Page.Page {
@@ -1202,6 +1339,27 @@ func jobOnPage(ctx context.Context, c OperationContext, id string) (map[string]j
 	case PageJobs:
 		if id == "" {
 			return nil, errors.New("name the job by its id")
+		}
+		body, _, err := c.get(ctx, "/api/jobs", nil)
+		if err != nil {
+			return nil, errors.New("the jobs are unavailable now")
+		}
+		var list struct {
+			Jobs []struct {
+				ID    string `json:"id"`
+				State string `json:"state"`
+			} `json:"jobs"`
+		}
+		if json.Unmarshal(body, &list) != nil {
+			return nil, errors.New("the jobs are not readable")
+		}
+		if !slices.ContainsFunc(list.Jobs, func(j struct {
+			ID    string `json:"id"`
+			State string `json:"state"`
+		}) bool {
+			return j.ID == id && (j.State == "queued" || j.State == "running")
+		}) {
+			return nil, fmt.Errorf("job %s is not one the Jobs page lists as queued or running", id)
 		}
 	default:
 		return nil, ErrNotCurrentPage
@@ -1236,8 +1394,8 @@ func jobLabel(job map[string]json.RawMessage) string {
 	if jobField(job, "group") != "" {
 		what = "group review"
 	}
-	label := what + " job " + jobField(job, "id")
-	repository := jobField(job, "repository")
+	label := ident(what) + " job " + ident(jobField(job, "id"))
+	repository := ident(jobField(job, "repository"))
 	var pr int
 	_ = json.Unmarshal(job["pr"], &pr)
 	switch {
@@ -1280,7 +1438,7 @@ func jobOperations() []Operation {
 			if err != nil {
 				return OperationSummary{}, err
 			}
-			return OperationSummary{Action: "Cancel the " + jobLabel(job), Details: []string{"State: " + jobField(job, "state")}}, nil
+			return OperationSummary{Action: "Cancel the " + jobLabel(job)}, nil
 		},
 	}}
 }
@@ -1318,6 +1476,9 @@ func groupOperations() []Operation {
 			if err := strictArgs(args, &a); err != nil {
 				return OperationRequest{}, err
 			}
+			if err := checkAgentText("name", a.Name, false); err != nil {
+				return OperationRequest{}, err
+			}
 			body := groupBody{Name: a.Name}
 			for _, n := range a.Numbers {
 				e, err := pullOnPage(ctx, c, a.Repository, n)
@@ -1334,13 +1495,13 @@ func groupOperations() []Operation {
 			if json.Unmarshal(req.Body, &b) != nil {
 				return OperationSummary{}, ErrNotCurrentPage
 			}
-			s := OperationSummary{Action: "Create the review group “" + clip(b.Name, 80) + "”"}
+			s := OperationSummary{Action: "Create a review group of " + strconv.Itoa(len(b.Members)) + " pull requests", Details: []SummaryField{agentWrote("Name", b.Name, false)}}
 			for _, m := range b.Members {
 				e, err := pullOnPage(ctx, c, m.Repository, m.Number)
 				if err != nil {
 					return OperationSummary{}, err
 				}
-				s.Details = append(s.Details, e.label())
+				s.Details = quoted(append(s.Details, fact("Pull request", e.label())), "Title", e.title(), false)
 			}
 			return s, nil
 		},
@@ -1383,8 +1544,8 @@ func groupOperations() []Operation {
 			for _, n := range g.Members {
 				members = append(members, "#"+strconv.Itoa(n))
 			}
-			return OperationSummary{Action: "Delete the review group “" + clip(g.Name, 80) + "” of " + g.Repository,
-				Details: []string{"Pull requests " + strings.Join(members, ", ") + " and their saved reviews are kept"}}, nil
+			return OperationSummary{Action: "Delete a review group of " + ident(g.Repository),
+				Details: quoted([]SummaryField{fact("Kept", "Pull requests "+strings.Join(members, ", ")+" and their saved reviews")}, "Group name", g.Name, false)}, nil
 		},
 	}}
 }
@@ -1467,7 +1628,7 @@ func repositoryOperations() []Operation {
 			if c.Page.Repository != "" && !strings.EqualFold(c.Page.Repository, req.Target) {
 				return OperationSummary{}, ErrNotCurrentPage
 			}
-			return OperationSummary{Action: "Add " + req.Target + " to the repositories baum watches", Details: []string{"Nothing is cloned"}}, nil
+			return OperationSummary{Action: "Add " + ident(req.Target) + " to the repositories baum watches", Details: []SummaryField{fact("Cloned", "Nothing")}}, nil
 		},
 	}, {
 		Name:         "remove_repository",
@@ -1496,8 +1657,8 @@ func repositoryOperations() []Operation {
 			if err != nil {
 				return OperationSummary{}, err
 			}
-			return OperationSummary{Action: "Stop watching " + r.Repository,
-				Details: []string{fmt.Sprintf("Its %d registered clone(s) are unregistered; their folders and saved reviews stay on disk", len(r.Clones))}}, nil
+			return OperationSummary{Action: "Stop watching " + ident(r.Repository),
+				Details: []SummaryField{fact("Clones unregistered", strconv.Itoa(len(r.Clones))), fact("Kept", "Their folders and saved reviews stay on disk")}}, nil
 		},
 	}, {
 		Name:         "remove_clone",
@@ -1526,8 +1687,8 @@ func repositoryOperations() []Operation {
 			if err != nil {
 				return OperationSummary{}, err
 			}
-			return OperationSummary{Action: "Unregister the clone of " + clone.Repository + " at " + clone.Path,
-				Details: []string{"The folder and its saved reviews stay on disk"}}, nil
+			return OperationSummary{Action: "Unregister a clone of " + ident(clone.Repository),
+				Details: quoted([]SummaryField{fact("Kept", "The folder and its saved reviews stay on disk")}, "Folder", clone.Path, false)}, nil
 		},
 	}, {
 		Name: "clone_repository",
@@ -1566,6 +1727,11 @@ func repositoryOperations() []Operation {
 			if json.Unmarshal(body, &target) != nil || target.Dir == "" {
 				return OperationRequest{}, errors.New("the clone target is unavailable now")
 			}
+			// The summary shows the folder as it is sent; one it could not
+			// show so is the person's to clone into from the app.
+			if plain(target.Dir, false) != target.Dir {
+				return OperationRequest{}, errors.New("the clone target holds characters the summary cannot show: the person clones it from the app")
+			}
 			raw, err := json.Marshal(target)
 			return OperationRequest{Target: strings.ToLower(r.Repository), Vars: vars, Body: raw}, err
 		},
@@ -1578,8 +1744,8 @@ func repositoryOperations() []Operation {
 				Dir string `json:"dir"`
 			}
 			_ = json.Unmarshal(req.Body, &b)
-			return OperationSummary{Action: "Clone " + r.Repository + " from GitHub into " + b.Dir,
-				Details: []string{"The clone is registered with baum when it finishes"}}, nil
+			return OperationSummary{Action: "Clone " + ident(r.Repository) + " from GitHub",
+				Details: quoted([]SummaryField{fact("Then", "The clone is registered with baum when it finishes")}, "Into folder", b.Dir, false)}, nil
 		},
 	}}
 }
