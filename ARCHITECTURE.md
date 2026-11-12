@@ -633,6 +633,32 @@ workspace-write` with `sandbox_workspace_write.network_access=false`,
 `prompt.Fix` (`fix-public-v1.md` with `fix-conflicts.md`, `fix-checks.md` and
 `fix-threads.md`).
 
+`agent.Converser` runs one turn of a person's own session, for the session
+panel (see "Session panel conversations" below). Unlike every other run it
+loads what the person set up: their settings, hooks, instructions and MCP
+servers, with baum's `Request.MCP` added beside them, and it always keeps the
+session; `Request.ResumeSession` continues it and a fork is refused. The
+final message, at most `agent.MaxConverseBytes` (1 MiB), is the result's
+`Document`; there is no schema, call or token limit, and the caller's context
+bounds the turn. `agent.Access` is `full` or `workspace`. Only Claude's `User`
+and Codex's `Local` profile converse. `claude` runs `--print --output-format
+stream-json --verbose --include-partial-messages [--model M]
+--permission-mode bypassPermissions` (full) or `acceptEdits` (workspace),
+`--resume <id>` on a follow-up and `--mcp-config <baum> --allowedTools
+mcp__baum`, with none of `--setting-sources ""`, `--restricted`, `--tools`,
+`--system-prompt` or `--strict-mcp-config`. `codex` runs `exec [resume] --json
+--skip-git-repo-check` with `--dangerously-bypass-approvals-and-sandbox`
+(full) or, for workspace, `--sandbox workspace-write` (on `exec resume`, which
+takes no `--sandbox`, `-c sandbox_mode="workspace-write"`) and `-c
+approval_policy="never"`, then the `mcp_servers.baum` config and `[--model
+M]`, with none of `--ignore-user-config`, `--ignore-rules`, `--disable` or
+`--ephemeral`; it checks the sandbox before a workspace turn only, and records
+no speed, since the person's `config.toml` may choose a service tier. Both
+keep the environment of every local run (`LocalEnvironment`, `agent_env`, the
+token last). Any run may set `Request.SessionStarted`, called as soon as the
+CLI names its session (Claude's `init` event, Codex's `thread.started`), and
+`Request.TextDelta`, which gets Claude's streamed `text_delta` pieces.
+
 `agent/cursor` runs the Cursor Agent CLI under the user's own login; it has
 one profile and refuses a request with an `Endpoint`. Before its first run a
 `Backend` resolves the executable (`Binary`, else `cursor-agent` on `PATH`,
@@ -2639,7 +2665,8 @@ push, without the variables that would redirect git.
 [`internal/appdb`](internal/appdb/README.md) owns the shared per-user
 `$XDG_STATE_HOME/baum/app.sqlite` (default `~/.local/state/baum/app.sqlite`).
 Repository settings, groups, decisions/features, jobs, scheduler state, inboxes,
-analytics/history and persistent discovery/pricing caches share it. Small JSON
+session panel conversations, analytics/history and persistent
+discovery/pricing caches share it. Small JSON
 state documents use bucket/key rows; read-modify-write operations use SQLite
 transactions. Version 1 is the first release baseline; newer and unrecognized
 schemas are refused and pre-release files are not imported. The package README
@@ -5021,6 +5048,79 @@ saved, in the `state/agent-requests` document in `app.sqlite`.
   idempotent. Every change publishes `live`, which the app already rereads
   the sessions on.
 
+### Session panel conversations
+
+`internal/console` runs the conversations of the desktop app's session
+panel: a real Claude Code or Codex session that the person opens from any
+page, set up as their own CLI is (`agent.Converser`), not the review chat's
+locked-down agent. The daemon builds one `console.Service` beside the MCP
+server and runs it with the other background work; it has no routes of its
+own yet.
+
+A conversation is a row of `console_conversations` in `<state>/app.sqlite`:
+its id (32 hex characters), agent (`claude-code` or `codex`), model (empty for
+the agent's default), mode (`full` or `workspace`, the `agent.Access`; `full`
+by default), directory, the repository, pull request and branch it is a
+checkout of and whether baum created that worktree, the agent's session id,
+the pages it was opened and sent from (at most 20, no repeat in a row), its
+title (the first message's first line, at most 80 characters), created and
+updated times, state (`idle`, `running`, `failed` or `closed`), why the last
+turn failed or stopped, and the cost of its priced turns (`cost_partial` when
+a turn that started a session could not be priced, so the cost is a lower
+bound). New columns are added as the other relational stores add theirs. When
+the service opens, a conversation a stopped daemon left `running` becomes
+`failed` with the reason that baum stopped while the agent answered.
+
+`Create` chooses the directory. On a `pull_request` page of a repository
+with an available registered clone it is a worktree with the pull request's
+head checked out, read from `git worktree list` of every clone of the
+repository, main checkouts included: one on the head branch (a fork's only
+while at the head commit discovery saw, since a fork's branch may be named
+anything, the base's included) or on a `baum/pr-<N>` branch. Without one,
+`gitlocal.AddPullWorktree` adds a worktree to the first clone at
+`<cache>/baum/console/worktrees/<id>/<name>` (`os.UserCacheDir`): it fetches
+the head into `refs/baum/pull/<N>/head` (from the head branch, or
+`refs/pull/<N>/head` for a fork or a head whose name discovery has not kept),
+then checks out the first of the head branch's name (not for a fork),
+`baum/pr-<N>` and `baum/pr-<N>-<first 8 of the id>` that no worktree has
+checked out. An existing branch is checked out as it is, never moved; a new
+one starts at the head and tracks it (`branch.<name>.remote`, `.merge`). No
+hook runs (`core.hooksPath` names nothing) and no other worktree's HEAD,
+index or files change. Every other page, a pull request discovery has not
+seen, and a repository with no clone get a new private, empty directory,
+`<cache>/baum/console/sessions/<id>`. These directories are actual working
+directories, so they live on disk, not in the database, and stay when a
+conversation closes, since a worktree may hold the agent's work. Their names
+never start with `agent.RunDirPrefix`: the agents' hooks report these
+sessions, and they show on the Sessions page like any other.
+
+Each conversation holds one `chat` MCP token, minted by the MCP server's
+`Registry` when it is created or, after a restart, on its next turn, bound
+to its session (`SetSession`, with `SessionKey(agent, id)`) as soon as the
+agent names it, and revoked when it is closed and when the daemon stops.
+`SetPage` sets the page the person has open on every open conversation's
+token and the ones minted later, so `current_page` and proposals follow the
+person; changes to baum's own state still go through proposals the person
+saves. `Send` starts a turn in the background and answers at once: it
+refuses a conversation that is running (`ErrBusy`) or closed, or whose
+directory is gone, saves the page it came from, and runs the agent in the
+directory with the message as the prompt, the conversation's session
+resumed and `baum mcp` (this executable) as its MCP server. The run time
+limit (`run_timeout`, as Settings resolves it; 30 minutes by default) bounds
+each turn. `Stop` cancels it, which kills the agent's whole process group on
+Unix, and the conversation goes back to `idle` with the reason; a turn over
+the limit fails naming it; the daemon stopping fails running turns with the
+reason and revokes every token. A turn's usage is priced as the backend's
+(`BackendAccountingCost`).
+
+Progress is published as `console` events, `{"conversation","kind","state"}`
+with the kind `created`, `state`, `session` (the agent named its session),
+`text` (at most every 250 ms while the answer grows) or `finished` (with
+`cost_usd` when the turn could be priced); they never carry text. `Progress`
+holds, in memory, a turn's answer so far (its finished messages, then
+Claude's streaming one, and after the turn its final message), the tool it
+runs and its session.
+
 ### Decision capture
 
 `internal/decisionlog` extracts the decisions of the tracked sessions (see
@@ -5143,7 +5243,10 @@ an MCP server only a default environment; the names that are set are
 forwarded, so `baum mcp` finds the same daemon) under `--ignore-user-config`. Both put `BAUM_MCP_TOKEN` last in the child's
 environment, after `agent_env`. Only the Claude `User` and Codex `Local`
 profiles accept it; the others return an error. With no `MCP` the arguments
-are what they always were. No job sets it yet.
+are what they always were. No job sets it yet; the session panel's
+conversations do, through `agent.Converser`, which adds `baum` beside the
+person's own servers instead of in place of them (see "Session panel
+conversations").
 
 The route takes only an MCP token as `Authorization: Bearer`. The app
 server checks the exact Host, asks the MCP server whether the token is live,

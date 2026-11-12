@@ -1383,6 +1383,21 @@ request that asks for one. Claude Code runs with `--strict-mcp-config` and
 Codex with `--ignore-user-config`, so baum's server is the only one. No job
 sets it yet: the chat and quick actions will, and no other run has it.
 
+The session panel's conversations are the exception, by design: each is your
+own Claude Code or Codex session, run as you set it up, with your settings,
+hooks, instructions and MCP servers, and baum's server added beside yours.
+It runs with full access unless you choose workspace access: Claude Code's
+`bypassPermissions` mode and Codex without approvals or sandbox, or
+`acceptEdits` and Codex's `workspace-write` sandbox. That is what running the
+agent yourself with every prompt approved would allow, in a directory baum
+chose: a worktree of the pull request you opened it from (yours, or one baum
+adds without changing your other checkouts and without running hooks) or an
+empty directory of its own. Each conversation holds a `chat` token of its own,
+bound to its session once the agent names it and revoked when you close it or
+the daemon stops; through it the agent can propose changes to baum's state,
+which change nothing until you save them, like any chat's. The agent's
+environment is filtered as for every local run.
+
 The application server also serves `POST /api/mcp`, an MCP server that lets
 an agent read what the app shows. It takes only an MCP token, sent as
 `Authorization: Bearer`. The launch capability and the session cookie are
