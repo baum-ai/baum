@@ -205,12 +205,14 @@ func (c *Cache) storeAllChecks(key string, gen uint64, checks CheckList) {
 }
 
 // readLog runs read for the log under key, once for however many callers
-// ask while it runs; the others wait for its answer.
-func (c *Cache) readLog(key string, read func() (CheckLog, error)) (CheckLog, error) {
+// ask while it runs; the others wait for its answer. Only callers that
+// began under the same account generation (gen) share a read: one that
+// began after an account change never gets the previous account's answer.
+func (c *Cache) readLog(key string, gen uint64, read func() (CheckLog, error)) (CheckLog, error) {
 	if c == nil {
 		return read()
 	}
-	v, err, _ := c.flights.Do(key, func() (any, error) { return read() })
+	v, err, _ := c.flights.Do(fmt.Sprintf("%d:%s", gen, key), func() (any, error) { return read() })
 	log, _ := v.(CheckLog)
 	return log, err
 }

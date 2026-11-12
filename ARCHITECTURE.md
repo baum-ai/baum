@@ -3222,7 +3222,8 @@ one redirect to a signed https URL is followed and the token goes to the API
 host alone). After the redirect it asks the download host, by a suffix `Range`
 request, for the last 8 MiB only, so the end of a log of any length is read
 without downloading the rest, and drops the first line of that part, which the
-range may have cut. A host that ignores the range sends the whole file, which
+range may have cut, unless its `Content-Range` says it starts at the file's
+first byte (a log shorter than the range comes whole). A host that ignores the range sends the whole file, which
 is read when it is within 64 MiB; over that the answer is `too_long` and the
 log is never passed off from its middle. The read is streamed through a tail
 writer that keeps the last 200 lines (each up to 16 KiB, so a secret near the
@@ -3231,7 +3232,8 @@ redactor failure refuses the log), and only then is each cut to 2 KiB and the
 last whole lines kept within 64 KiB. Timestamps, terminal escapes, control
 characters and invisible format characters (bidirectional overrides and
 isolates, zero-width characters, variation selectors) are dropped.
-Concurrent opens of one log download it once. It answers `{id, name,
+Concurrent opens of one log under the same GitHub account download it once;
+an open that begins after the account changed reads the log itself. It answers `{id, name,
 available, reason, message, log, truncated, url}`: `available` with `log` (and
 `truncated` whenever it is not the whole log), or not with `reason` `no_log`
 (another app's check run, a commit status or a job that did not run), `running`

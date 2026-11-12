@@ -327,6 +327,67 @@ func TestCheckLogReadsOnceForConcurrentOpens(t *testing.T) {
 	}
 }
 
+// An open that begins after the account changed never gets the answer of a
+// download the previous account began: it reads the log itself.
+func TestCheckLogReadsAreNotSharedAcrossAnAccountChange(t *testing.T) {
+	release := make(chan struct{})
+	var mu sync.Mutex
+	started := 0
+	fake := fakeGitHub{head: "abc", checks: logChecks(), logs: map[int]string{21: ""}, logHost: func(*http.Request) *http.Response {
+		mu.Lock()
+		started++
+		n := started
+		mu.Unlock()
+		if n == 1 {
+			<-release
+			return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader("old account\n"))}
+		}
+		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader("new account\n"))}
+	}}
+	s := Service{Client: fake.client(), Cache: &Cache{}}
+	first := make(chan CheckLog, 1)
+	go func() {
+		got, err := s.CheckLog(context.Background(), repo, 7, 21)
+		if err != nil {
+			t.Error(err)
+		}
+		first <- got
+	}()
+	for {
+		mu.Lock()
+		n := started
+		mu.Unlock()
+		if n == 1 {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	s.Cache.ResetIdentity()
+	second := make(chan CheckLog, 1)
+	go func() {
+		got, _ := s.CheckLog(context.Background(), repo, 7, 21)
+		second <- got
+	}()
+	select {
+	case got := <-second:
+		if got.Log != "new account" {
+			t.Fatalf("the open after the change got %+v", got)
+		}
+	case <-time.After(10 * time.Second):
+		// It joined the first account's download, which waits.
+		close(release)
+		t.Fatalf("the open after the change waited for the earlier account's read: %+v", <-second)
+	}
+	close(release)
+	if got := <-first; got.Log != "old account" {
+		t.Fatalf("the first open got %+v", got)
+	}
+	// The earlier account's answer was not kept for the new one.
+	if got, err := s.CheckLog(context.Background(), repo, 7, 21); err != nil || got.Log != "new account" {
+		t.Fatalf("after both: %+v, %v", got, err)
+	}
+}
+
 func TestCheckLogGitHubRefusals(t *testing.T) {
 	for status, wantCode := range map[int]string{401: Forbidden, 403: Failed, 429: Failed, 500: Failed} {
 		fake := fakeGitHub{head: "abc", checks: logChecks(), logStatus: map[int]int{21: status}}

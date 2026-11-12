@@ -196,6 +196,10 @@ func shape(lines []string, truncated bool) (string, bool) {
 // reads a log in the background. GitHub masks the secrets it knows; the tail
 // is redacted as all text baum shows is.
 func (s Service) CheckLog(ctx context.Context, repository github.Repository, number int, check int64) (CheckLog, error) {
+	// The account generation is taken before the account's reader is: a
+	// change of account after this keeps the read from being stored or
+	// shared with a read under the new account.
+	gen := s.Cache.generation()
 	read, err := s.open(ctx, repository, number)
 	if err != nil {
 		return CheckLog{}, err
@@ -223,12 +227,13 @@ func (s Service) CheckLog(ctx context.Context, repository github.Repository, num
 		out.Reason, out.Message = LogRunning, "This check has not finished, so its log is not shown yet."
 		return out, nil
 	}
-	key, gen := logKey(repository, check), s.Cache.generation()
+	key := logKey(repository, check)
 	if cached, ok := s.Cache.cachedLog(key); ok {
 		return cached, nil
 	}
-	// Opening the same log twice at once downloads it once.
-	return s.Cache.readLog(key, func() (CheckLog, error) {
+	// Opening the same log twice at once, under the same account, downloads
+	// it once.
+	return s.Cache.readLog(key, gen, func() (CheckLog, error) {
 		var tail logTail
 		status, partial, err := read.reader.DownloadTail(ctx, fmt.Sprintf("%s/actions/jobs/%d/logs", repositoryPath(repository), check), &tail, maxTailRead)
 		switch {
