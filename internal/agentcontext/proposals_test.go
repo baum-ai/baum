@@ -66,7 +66,7 @@ func (f *fakeProposer) Validate(_ context.Context, _ PageContext, _ Proposal) er
 	return f.invalid
 }
 
-func (f *fakeProposer) Apply(_ context.Context, page PageContext, p Proposal, revision string) error {
+func (f *fakeProposer) Apply(_ context.Context, page PageContext, p Proposal, revision string, _ SaveInput) error {
 	if err := f.belongs(page, p.Target); err != nil {
 		return err
 	}
@@ -145,10 +145,10 @@ func TestProposalsChangeNothingUntilSaved(t *testing.T) {
 	if prompts.value("review") != "old" || len(s.Proposals.List(id)) != 2 {
 		t.Fatal("a proposal changed the target")
 	}
-	if err := s.Proposals.Save(ctx, "someone-else", first.ID); !errors.Is(err, ErrUnknownProposal) {
+	if err := s.Proposals.Save(ctx, "someone-else", first.ID, SaveInput{}); !errors.Is(err, ErrUnknownProposal) {
 		t.Fatal("another consumer saved the proposal:", err)
 	}
-	if err := s.Proposals.Save(ctx, id, first.ID); err != nil {
+	if err := s.Proposals.Save(ctx, id, first.ID, SaveInput{}); err != nil {
 		t.Fatal(err)
 	}
 	if prompts.value("review") != "new" || len(s.Proposals.List(id)) != 1 {
@@ -156,7 +156,7 @@ func TestProposalsChangeNothingUntilSaved(t *testing.T) {
 	}
 	// The second proposal was read at revision 0; the save moved it on.
 	prompts.set("review", "edited by hand")
-	if err := s.Proposals.Save(ctx, id, second.ID); !errors.Is(err, ErrStale) {
+	if err := s.Proposals.Save(ctx, id, second.ID, SaveInput{}); !errors.Is(err, ErrStale) {
 		t.Fatal("a stale proposal was saved:", err)
 	}
 	if prompts.value("review") != "edited by hand" || len(s.Proposals.List(id)) != 1 {
@@ -198,7 +198,7 @@ func TestProposalRevisionComesFromTheServer(t *testing.T) {
 		t.Fatalf("recorded revision %q before %s", p.Revision, p.Before)
 	}
 	prompts.set("review", "newest")
-	if err := s.Proposals.Save(ctx, id, p.ID); !errors.Is(err, ErrStale) || prompts.value("review") != "newest" {
+	if err := s.Proposals.Save(ctx, id, p.ID, SaveInput{}); !errors.Is(err, ErrStale) || prompts.value("review") != "newest" {
 		t.Fatal("a proposal was saved over a newer edit:", err)
 	}
 }
@@ -220,7 +220,7 @@ func TestSaveRefusesAnEditThatLandsDuringTheWrite(t *testing.T) {
 	}
 	// Save's own read sees revision 0; the edit lands before Apply writes.
 	prompts.beforeWrite = func() { prompts.set("review", "concurrent") }
-	if err := s.Proposals.Save(ctx, id, p.ID); !errors.Is(err, ErrStale) {
+	if err := s.Proposals.Save(ctx, id, p.ID, SaveInput{}); !errors.Is(err, ErrStale) {
 		t.Fatal(err)
 	}
 	if prompts.value("review") != "concurrent" || len(s.Proposals.List(id)) != 1 {
@@ -250,7 +250,7 @@ func TestProposalsBelongToWhatThePageShows(t *testing.T) {
 	}
 	// The target left the page before the user saved.
 	threads.gone["acme/web#12:thread-1"] = true
-	if err := s.Proposals.Save(ctx, id, p.ID); !errors.Is(err, errNotOnPage) || threads.value("acme/web#12:thread-1") != "open" {
+	if err := s.Proposals.Save(ctx, id, p.ID, SaveInput{}); !errors.Is(err, errNotOnPage) || threads.value("acme/web#12:thread-1") != "open" {
 		t.Fatal(err)
 	}
 }
@@ -259,7 +259,7 @@ func TestProposeThroughATool(t *testing.T) {
 	ctx := context.Background()
 	s := newServer(t)
 	prompts := newFake("review", "current-secret-value")
-	if err := s.RegisterTool(Tool{Name: "propose_prompt", Description: "Proposes a prompt.", Scope: ScopeRepository,
+	if err := s.RegisterTool(Tool{Name: "propose_test_prompt", Description: "Proposes a prompt.", Scope: ScopeRepository,
 		InputSchema: json.RawMessage(`{"type":"object","properties":{"before":{"type":"string"}}}`),
 		Call: func(ctx context.Context, c CallContext, args json.RawMessage) (string, error) {
 			var a struct{ Before *string }
@@ -277,14 +277,14 @@ func TestProposeThroughATool(t *testing.T) {
 		}}); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.RegisterPage(PageSpec{Name: PageSettings, Tools: []string{"propose_prompt"}, Proposer: prompts}); err != nil {
+	if err := s.RegisterPage(PageSpec{Name: PageSettings, Tools: []string{"propose_test_prompt"}, Proposer: prompts}); err != nil {
 		t.Fatal(err)
 	}
 	token, id, revoke := mint(t, s, Consumer{Kind: Chat})
 	if err := s.Registry.SetPage(id, PageContext{Page: PageSettings}); err != nil {
 		t.Fatal(err)
 	}
-	result := call(t, s, token, "propose_prompt", nil)
+	result := call(t, s, token, "propose_test_prompt", nil)
 	data, _ := unwrap(t, result.Content[0].Text)
 	var receipt Receipt
 	if err := json.Unmarshal([]byte(data), &receipt); err != nil {
@@ -299,21 +299,21 @@ func TestProposeThroughATool(t *testing.T) {
 	if string(s.Proposals.List(id)[0].Before) != `"current-secret-value"` || strings.Contains(result.Content[0].Text, "current-secret-value") {
 		t.Fatalf("the current value reached the agent: %s", result.Content[0].Text)
 	}
-	if r := call(t, s, token, "propose_prompt", map[string]string{"before": "a guess"}); !r.IsError || strings.Contains(r.Content[0].Text, "current-secret-value") || !strings.Contains(r.Content[0].Text, ErrNotRecorded.Error()) {
+	if r := call(t, s, token, "propose_test_prompt", map[string]string{"before": "a guess"}); !r.IsError || strings.Contains(r.Content[0].Text, "current-secret-value") || !strings.Contains(r.Content[0].Text, ErrNotRecorded.Error()) {
 		t.Fatalf("a wrong guess: %+v", r)
 	}
 	// The tool is repository-scoped, so an action may call it; Propose
 	// still refuses an action.
 	actionToken, _, revokeAction := mint(t, s, Consumer{Kind: Action, Repository: "acme/web", PullRequest: 1})
 	defer revokeAction()
-	if r := call(t, s, actionToken, "propose_prompt", nil); !r.IsError || !strings.Contains(r.Content[0].Text, "only reads") {
+	if r := call(t, s, actionToken, "propose_test_prompt", nil); !r.IsError || !strings.Contains(r.Content[0].Text, "only reads") {
 		t.Fatal("an action proposed a change")
 	}
 	revoke()
 	if len(s.Proposals.List(id)) != 0 {
 		t.Fatal("a revoked consumer's proposals were kept")
 	}
-	if err := s.Proposals.Save(ctx, id, proposalID); !errors.Is(err, ErrUnknownProposal) || prompts.value("review") != "current-secret-value" {
+	if err := s.Proposals.Save(ctx, id, proposalID, SaveInput{}); !errors.Is(err, ErrUnknownProposal) || prompts.value("review") != "current-secret-value" {
 		t.Fatal(err)
 	}
 }
@@ -361,7 +361,7 @@ func TestSaveRacingARevoke(t *testing.T) {
 	}
 	// The token is revoked after Save found the proposal, before it writes.
 	prompts.onCurrent = revoke
-	if err := s.Proposals.Save(ctx, id, p.ID); !errors.Is(err, ErrUnknownConsumer) || prompts.value("review") != "old" {
+	if err := s.Proposals.Save(ctx, id, p.ID, SaveInput{}); !errors.Is(err, ErrUnknownConsumer) || prompts.value("review") != "old" {
 		t.Fatal("a revoked consumer's proposal was saved:", err)
 	}
 }

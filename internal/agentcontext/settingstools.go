@@ -48,19 +48,21 @@ func repositoryPageTools() []string {
 	var out []string
 	for _, section := range repositorySections {
 		out = append(out, repositorySectionTools[section]...)
+		out = append(out, repositorySectionProposals[section]...)
 	}
 	return out
 }
 
-// sectionTools are the tools of the page's open section, if it has one.
+// sectionTools are the tools of the page's open section, if it has one: the
+// tools that read it, then those that propose changes to it.
 func sectionTools(p PageContext) []string {
 	switch {
 	case p.Section == "":
 		return nil
 	case p.Page == PageSettings:
-		return settingsSectionTools[p.Section]
+		return slices.Concat(settingsSectionTools[p.Section], settingsSectionProposals[p.Section])
 	case p.Page == PageRepositories && p.Repository != "":
-		return repositorySectionTools[p.Section]
+		return slices.Concat(repositorySectionTools[p.Section], repositorySectionProposals[p.Section])
 	}
 	return nil
 }

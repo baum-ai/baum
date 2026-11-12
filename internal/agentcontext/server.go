@@ -66,6 +66,10 @@ type Options struct {
 	// settings rather than run them on every tool call. Nil has the tool
 	// report decision capture unavailable.
 	DecisionSettings func(ctx context.Context) (json.RawMessage, error)
+	// Proposers take the changes a chat proposes, by page name: the save of
+	// each is the same change the page's own save makes (see proposetools.go
+	// for the tools and their targets). A page without one takes none.
+	Proposers map[string]Proposer
 }
 
 // Server is the MCP server. Register tools and pages before serving.
@@ -98,7 +102,8 @@ func New(opts Options) *Server {
 	lists, sessions, timeline := s.listTools(), s.sessionTools(), s.timelineTools()
 	extras, analytics, repositories := s.pullExtraTools(), s.analyticsTools(), s.repositoryTools()
 	settings, repositoryPage := s.settingsTools(), repositoryPageToolList()
-	for _, t := range slices.Concat(s.builtinTools(), pull, group, reviews, common, lists, sessions, timeline, extras, analytics, repositories, settings, repositoryPage) {
+	proposing := proposeTools()
+	for _, t := range slices.Concat(s.builtinTools(), pull, group, reviews, common, lists, sessions, timeline, extras, analytics, repositories, settings, repositoryPage, proposing) {
 		if err := t.compile(); err != nil {
 			panic(err)
 		}
@@ -162,6 +167,19 @@ func New(opts Options) *Server {
 	s.pages[PageSettings] = PageSpec{Name: PageSettings, Tools: withCommonTools(slices.Concat(names(settings), byName(repositories, "diagnostics_summary")))}
 	s.pages[PageTimeline] = PageSpec{Name: PageTimeline, Tools: withCommonTools(names(timeline))}
 	s.pages[PageFeature] = PageSpec{Name: PageFeature, Tools: withCommonTools(names(timeline))}
+	// The pages that save something list their propose_* tools, and take
+	// proposals through the proposer given for them.
+	for page, tools := range proposePageTools {
+		spec := s.pages[page]
+		spec.Tools = append(spec.Tools, tools...)
+		s.pages[page] = spec
+	}
+	for page, proposer := range opts.Proposers {
+		if spec, ok := s.pages[page]; ok {
+			spec.Proposer = proposer
+			s.pages[page] = spec
+		}
+	}
 	return s
 }
 

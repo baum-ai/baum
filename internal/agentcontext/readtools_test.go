@@ -168,7 +168,7 @@ func numbers(rows []inboxRow) []int {
 func TestTheNewPagesListTheirTools(t *testing.T) {
 	s, _, token, id := readServer(t)
 	want := map[string][]string{
-		PageInbox:    {"inbox", "inboxes", "test_query"},
+		PageInbox:    {"inbox", "inboxes", "test_query", "propose_inbox"},
 		PagePulls:    {"pull_requests"},
 		PageSessions: {"live_sessions", "live_session_transcript", "agent_requests", "agent_messages"},
 		PageSession:  {"live_sessions", "live_session_transcript", "agent_requests", "agent_messages"},

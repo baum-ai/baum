@@ -498,16 +498,16 @@ func TestToolsReadOnlyKnownRoutes(t *testing.T) {
 			}
 		}
 	}
-	for name := range reads {
-		if strings.Contains(name, "propose") {
-			t.Errorf("%s proposes", name)
-		}
-	}
+	// Only the propose_* tools propose; they read nothing and an action
+	// never sees them.
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	for _, tool := range s.tools {
-		if tool.Proposes {
-			t.Errorf("%s proposes", tool.Name)
+		if tool.Proposes != strings.HasPrefix(tool.Name, "propose_") {
+			t.Errorf("%s: proposes %v", tool.Name, tool.Proposes)
+		}
+		if tool.Proposes && (len(tool.Reads) > 0 || len(tool.Projected) > 0 || tool.Scope != ScopeGlobal) {
+			t.Errorf("%s proposes and reads %v %v, or is not global", tool.Name, tool.Reads, tool.Projected)
 		}
 	}
 }

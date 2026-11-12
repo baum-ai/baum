@@ -3,6 +3,7 @@ package agentcontext
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -31,7 +32,7 @@ func TestToolsListAnnotatesEveryTool(t *testing.T) {
 			t.Errorf("%s: annotations %v", tool.Name, a)
 			continue
 		}
-		if tool.Name == "propose_thing" {
+		if strings.HasPrefix(tool.Name, "propose_") {
 			if a["readOnlyHint"] != false || a["destructiveHint"] != false {
 				t.Errorf("%s: annotations %v", tool.Name, a)
 			}
