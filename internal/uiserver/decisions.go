@@ -161,13 +161,56 @@ func decisionSettingsOf(p repos.Preferences) decisionSettings {
 // putDecisionSettings serves PUT /api/settings/decisions, which replaces the
 // whole decision capture preferences, except that a missing backend or
 // effort keeps the saved one, as an app from before them sends neither.
-func (a LocalAPI) putDecisionSettings(w http.ResponseWriter, r *http.Request) {
-	var input struct {
-		Enabled *bool   `json:"enabled"`
-		Backend *string `json:"backend"`
-		Model   *string `json:"model"`
-		Effort  *string `json:"effort"`
+// decisionsInput is the body of PUT /api/settings/decisions. Enabled is
+// required; a nil backend or effort keeps the saved one.
+type decisionsInput struct {
+	Enabled *bool   `json:"enabled"`
+	Backend *string `json:"backend,omitempty"`
+	Model   *string `json:"model,omitempty"`
+	Effort  *string `json:"effort,omitempty"`
+}
+
+// edit is the route's change of the saved preferences p, or the reason it
+// refuses it (400) and p is kept.
+func (input decisionsInput) edit(p repos.Preferences) (repos.Preferences, error) {
+	if input.Enabled == nil {
+		return p, errors.New("enabled is required")
 	}
+	next := p
+	next.Decisions = repos.DecisionPreferences{Backend: p.Decisions.Backend, Effort: p.Decisions.Effort}
+	if !*input.Enabled {
+		next.Decisions.Enabled = new(false)
+	}
+	if input.Backend != nil {
+		next.Decisions.Backend = nil
+		if *input.Backend != "" {
+			next.Decisions.Backend = new(config.Backend(*input.Backend))
+		}
+	}
+	if input.Model != nil && strings.TrimSpace(*input.Model) != "" {
+		next.Decisions.Model = new(strings.TrimSpace(*input.Model))
+	}
+	if input.Effort != nil {
+		var err error
+		if next.Decisions.Effort, err = config.ParseEffort(*input.Effort); err != nil {
+			return p, err
+		}
+	}
+	if err := next.ValidateChange(p); err != nil {
+		return p, err
+	}
+	return next, nil
+}
+
+// decisionsChanged follows a saved change of the decision capture settings.
+func (a LocalAPI) decisionsChanged() {
+	if a.DecisionsChanged != nil {
+		a.DecisionsChanged()
+	}
+}
+
+func (a LocalAPI) putDecisionSettings(w http.ResponseWriter, r *http.Request) {
+	var input decisionsInput
 	r.Body = http.MaxBytesReader(w, r.Body, 4<<10)
 	d := json.NewDecoder(r.Body)
 	d.DisallowUnknownFields()
@@ -177,26 +220,8 @@ func (a LocalAPI) putDecisionSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	var invalid error
 	prefs, err := a.Registry.UpdatePreferences(r.Context(), func(p repos.Preferences) repos.Preferences {
-		next := p
-		next.Decisions = repos.DecisionPreferences{Backend: p.Decisions.Backend, Effort: p.Decisions.Effort}
-		if !*input.Enabled {
-			next.Decisions.Enabled = new(false)
-		}
-		if input.Backend != nil {
-			next.Decisions.Backend = nil
-			if *input.Backend != "" {
-				next.Decisions.Backend = new(config.Backend(*input.Backend))
-			}
-		}
-		if input.Model != nil && strings.TrimSpace(*input.Model) != "" {
-			next.Decisions.Model = new(strings.TrimSpace(*input.Model))
-		}
-		if input.Effort != nil {
-			if next.Decisions.Effort, invalid = config.ParseEffort(*input.Effort); invalid != nil {
-				return p
-			}
-		}
-		if invalid = next.ValidateChange(p); invalid != nil {
+		var next repos.Preferences
+		if next, invalid = input.edit(p); invalid != nil {
 			return p
 		}
 		return next
@@ -209,8 +234,6 @@ func (a LocalAPI) putDecisionSettings(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, invalid.Error(), http.StatusBadRequest)
 		return
 	}
-	if a.DecisionsChanged != nil {
-		a.DecisionsChanged()
-	}
+	a.decisionsChanged()
 	writeJSON(w, map[string]decisionView{"decisions": a.decisionView(r.Context(), prefs)})
 }

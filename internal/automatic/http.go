@@ -12,6 +12,114 @@ import (
 	"github.com/baum-ai/baum/internal/repos"
 )
 
+// PreferencesInput is the body of PUT /api/automatic: each field set is a
+// change, each nil one keeps the saved choice.
+type PreferencesInput struct {
+	Enabled      *bool   `json:"enabled,omitempty"`
+	Backend      *string `json:"backend,omitempty"`
+	Model        *string `json:"model,omitempty"`
+	FixBackend   *string `json:"fix_backend,omitempty"`
+	FixModel     *string `json:"fix_model,omitempty"`
+	Effort       *string `json:"effort,omitempty"`
+	FixEffort    *string `json:"fix_effort,omitempty"`
+	PullRequests *string `json:"pull_requests,omitempty"`
+}
+
+// EditPreferences is the change PUT /api/automatic makes of the saved
+// preferences p, or the reason the route refuses it (400) and p is kept.
+func EditPreferences(p repos.Preferences, input PreferencesInput) (repos.Preferences, error) {
+	next := p
+	if input.Enabled != nil {
+		next.Automatic = *input.Enabled
+	}
+	if input.Backend != nil {
+		backend, err := config.ParseBackend(*input.Backend)
+		if err != nil {
+			return p, err
+		}
+		next.Backend = &backend
+	}
+	if input.Model != nil {
+		model := strings.TrimSpace(*input.Model)
+		next.Model = &model
+	}
+	if input.FixBackend != nil {
+		if strings.TrimSpace(*input.FixBackend) == "" {
+			// Back to the same agent as reviews.
+			next.FixBackend, next.FixModel, next.FixEffort = nil, nil, nil
+		} else {
+			backend, err := config.ParseBackend(*input.FixBackend)
+			if err != nil {
+				return p, err
+			}
+			next.FixBackend = &backend
+		}
+	}
+	if input.FixModel != nil {
+		model := strings.TrimSpace(*input.FixModel)
+		next.FixModel = &model
+		// Following reviews again sends an empty model, which is no choice.
+		if model == "" && next.FixBackend == nil {
+			next.FixModel = nil
+		}
+	}
+	for _, e := range []struct{ input, target **string }{{&input.Effort, &next.Effort}, {&input.FixEffort, &next.FixEffort}} {
+		if *e.input == nil {
+			continue
+		}
+		var err error
+		if *e.target, err = config.ParseEffort(**e.input); err != nil {
+			return p, err
+		}
+	}
+	if input.PullRequests != nil {
+		next.PullRequests = *input.PullRequests
+		if next.PullRequests == "both" {
+			next.PullRequests = ""
+		}
+	}
+	if err := next.ValidateChange(p); err != nil {
+		return p, err
+	}
+	return next, nil
+}
+
+// SavePreferences saves input as PUT /api/automatic does, when check (if set)
+// accepts the preferences it is saved over: check runs in the writing
+// transaction, so it and the write are one step. An error of check or of
+// EditPreferences saves nothing and is returned as it is. After a save it
+// does what the route does after one: cancels queued automatic jobs that are
+// no longer allowed, wakes the scheduler and tells the app.
+func (s *Scheduler) SavePreferences(ctx context.Context, input PreferencesInput, check func(repos.Preferences) error) error {
+	_, err := s.Registry.UpdatePreferencesIf(ctx, func(p repos.Preferences) (repos.Preferences, error) {
+		if check != nil {
+			if err := check(p); err != nil {
+				return p, err
+			}
+		}
+		return EditPreferences(p, input)
+	})
+	if err != nil {
+		return err
+	}
+	s.preferencesChanged(ctx)
+	return nil
+}
+
+// preferencesChanged follows a saved change of the automatic preferences.
+func (s *Scheduler) preferencesChanged(ctx context.Context) {
+	// Turning off (the tray's pause included) cancels queued automatic
+	// jobs before answering; running ones finish.
+	if s.Queue != nil {
+		s.Queue.CancelDisallowedAutomatic()
+	}
+	s.Wake()
+	// Other windows and the desktop app learn of the change.
+	if o, err := s.Overview(ctx); err == nil {
+		s.notify(o.Repositories)
+	}
+}
+
 // Handler serves GET and PUT /api/automatic and POST
 // /api/automatic/catch-up (CatchUp). Like the registry handler it
 // does not authenticate: mount it only behind the daemon's authenticated,
@@ -30,16 +138,7 @@ func (s *Scheduler) Handler() http.Handler {
 	}
 	mux.HandleFunc("GET /api/automatic", write)
 	mux.HandleFunc("PUT /api/automatic", func(w http.ResponseWriter, r *http.Request) {
-		var input struct {
-			Enabled      *bool   `json:"enabled"`
-			Backend      *string `json:"backend"`
-			Model        *string `json:"model"`
-			FixBackend   *string `json:"fix_backend"`
-			FixModel     *string `json:"fix_model"`
-			Effort       *string `json:"effort"`
-			FixEffort    *string `json:"fix_effort"`
-			PullRequests *string `json:"pull_requests"`
-		}
+		var input PreferencesInput
 		r.Body = http.MaxBytesReader(w, r.Body, 4<<10)
 		d := json.NewDecoder(r.Body)
 		d.DisallowUnknownFields()
@@ -49,58 +148,8 @@ func (s *Scheduler) Handler() http.Handler {
 		}
 		var invalid error
 		_, err := s.Registry.UpdatePreferences(r.Context(), func(p repos.Preferences) repos.Preferences {
-			next := p
-			if input.Enabled != nil {
-				next.Automatic = *input.Enabled
-			}
-			if input.Backend != nil {
-				backend, err := config.ParseBackend(*input.Backend)
-				if err != nil {
-					invalid = err
-					return p
-				}
-				next.Backend = &backend
-			}
-			if input.Model != nil {
-				model := strings.TrimSpace(*input.Model)
-				next.Model = &model
-			}
-			if input.FixBackend != nil {
-				if strings.TrimSpace(*input.FixBackend) == "" {
-					// Back to the same agent as reviews.
-					next.FixBackend, next.FixModel, next.FixEffort = nil, nil, nil
-				} else {
-					backend, err := config.ParseBackend(*input.FixBackend)
-					if err != nil {
-						invalid = err
-						return p
-					}
-					next.FixBackend = &backend
-				}
-			}
-			if input.FixModel != nil {
-				model := strings.TrimSpace(*input.FixModel)
-				next.FixModel = &model
-				// Following reviews again sends an empty model, which is no choice.
-				if model == "" && next.FixBackend == nil {
-					next.FixModel = nil
-				}
-			}
-			for _, e := range []struct{ input, target **string }{{&input.Effort, &next.Effort}, {&input.FixEffort, &next.FixEffort}} {
-				if *e.input == nil {
-					continue
-				}
-				if *e.target, invalid = config.ParseEffort(**e.input); invalid != nil {
-					return p
-				}
-			}
-			if input.PullRequests != nil {
-				next.PullRequests = *input.PullRequests
-				if next.PullRequests == "both" {
-					next.PullRequests = ""
-				}
-			}
-			if invalid = next.ValidateChange(p); invalid != nil {
+			var next repos.Preferences
+			if next, invalid = EditPreferences(p, input); invalid != nil {
 				return p
 			}
 			return next
@@ -113,16 +162,7 @@ func (s *Scheduler) Handler() http.Handler {
 			http.Error(w, invalid.Error(), http.StatusBadRequest)
 			return
 		}
-		// Turning off (the tray's pause included) cancels queued automatic
-		// jobs before answering; running ones finish.
-		if s.Queue != nil {
-			s.Queue.CancelDisallowedAutomatic()
-		}
-		s.Wake()
-		// Other windows and the desktop app learn of the change.
-		if o, err := s.Overview(r.Context()); err == nil {
-			s.notify(o.Repositories)
-		}
+		s.preferencesChanged(r.Context())
 		write(w, r)
 	})
 	// Desktop setup asks for this once, when it finishes. The polls can take

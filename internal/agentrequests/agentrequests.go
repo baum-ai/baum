@@ -262,7 +262,11 @@ type Store struct {
 	Now func() time.Time
 	Log *slog.Logger
 
-	once     sync.Once
+	once sync.Once
+	// saving makes each change of the settings, its write to the database
+	// and to memory, one step: SetSettingsIf's check and its write are not
+	// split by another save.
+	saving   sync.Mutex
 	mu       sync.Mutex
 	pending  map[string]*pending
 	messages map[key]Message
@@ -834,7 +838,22 @@ func (s *Store) Settings() Settings {
 // SetSettings saves new settings. Turning Codex approvals off withdraws the
 // Codex requests waiting, which then fall back to Codex's own prompt.
 func (s *Store) SetSettings(settings Settings) (Settings, error) {
+	return s.SetSettingsIf(settings, nil)
+}
+
+// SetSettingsIf is SetSettings when check, if set, accepts the settings in
+// force: the check and the save are one step, so another save cannot land
+// between them. An error check returns saves nothing and is returned as it
+// is.
+func (s *Store) SetSettingsIf(settings Settings, check func(current Settings) error) (Settings, error) {
 	s.init()
+	s.saving.Lock()
+	defer s.saving.Unlock()
+	if check != nil {
+		if err := check(s.Settings()); err != nil {
+			return Settings{}, err
+		}
+	}
 	if s.Database != "" {
 		data, err := json.Marshal(settings)
 		if err != nil {

@@ -2,6 +2,7 @@ package uiserver
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 
@@ -35,12 +36,42 @@ func (a LocalAPI) getAppearance(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, appearanceOf(prefs))
 }
 
-func (a LocalAPI) putAppearance(w http.ResponseWriter, r *http.Request) {
-	var input struct {
-		Theme        *string `json:"theme"`
-		KeyHints     *bool   `json:"key_hints"`
-		PageModifier *string `json:"page_modifier"`
+// appearanceInput is the body of PUT /api/settings/appearance: each field set
+// is a change.
+type appearanceInput struct {
+	Theme        *string `json:"theme,omitempty"`
+	KeyHints     *bool   `json:"key_hints,omitempty"`
+	PageModifier *string `json:"page_modifier,omitempty"`
+}
+
+// check refuses what the route refuses (400).
+func (in appearanceInput) check() error {
+	if in.Theme != nil && *in.Theme != "system" && *in.Theme != "light" && *in.Theme != "dark" {
+		return errors.New("theme must be system, light or dark")
 	}
+	if in.PageModifier != nil && *in.PageModifier != "" && *in.PageModifier != "meta" &&
+		*in.PageModifier != "ctrl" && *in.PageModifier != "alt" {
+		return errors.New("page_modifier must be empty, meta, ctrl or alt")
+	}
+	return nil
+}
+
+// edit is the route's change of the saved preferences.
+func (in appearanceInput) edit(p repos.Preferences) repos.Preferences {
+	if in.Theme != nil {
+		p.Appearance.Theme = *in.Theme
+	}
+	if in.KeyHints != nil {
+		p.Appearance.KeyHints = in.KeyHints
+	}
+	if in.PageModifier != nil {
+		p.Appearance.PageModifier = *in.PageModifier
+	}
+	return p
+}
+
+func (a LocalAPI) putAppearance(w http.ResponseWriter, r *http.Request) {
+	var input appearanceInput
 	r.Body = http.MaxBytesReader(w, r.Body, 4096)
 	d := json.NewDecoder(r.Body)
 	d.DisallowUnknownFields()
@@ -48,27 +79,11 @@ func (a LocalAPI) putAppearance(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid JSON request", http.StatusBadRequest)
 		return
 	}
-	if input.Theme != nil && *input.Theme != "system" && *input.Theme != "light" && *input.Theme != "dark" {
-		http.Error(w, "theme must be system, light or dark", http.StatusBadRequest)
+	if err := input.check(); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	if input.PageModifier != nil && *input.PageModifier != "" && *input.PageModifier != "meta" &&
-		*input.PageModifier != "ctrl" && *input.PageModifier != "alt" {
-		http.Error(w, "page_modifier must be empty, meta, ctrl or alt", http.StatusBadRequest)
-		return
-	}
-	prefs, err := a.Registry.UpdatePreferences(r.Context(), func(p repos.Preferences) repos.Preferences {
-		if input.Theme != nil {
-			p.Appearance.Theme = *input.Theme
-		}
-		if input.KeyHints != nil {
-			p.Appearance.KeyHints = input.KeyHints
-		}
-		if input.PageModifier != nil {
-			p.Appearance.PageModifier = *input.PageModifier
-		}
-		return p
-	})
+	prefs, err := a.updatePreferences(r.Context(), nil, input.edit)
 	if err != nil {
 		http.Error(w, "Could not save appearance settings", http.StatusInternalServerError)
 		return
