@@ -127,10 +127,16 @@ func (w *FeatureWorker) buildAdaptive(ctx context.Context, repository, dir strin
 		err = &adaptiveWaitError{At: a.RetryAt}
 		return report, err
 	}
-	if len(a.Windows) == 0 {
+	if len(a.Windows) == 0 && a.Pending == nil {
 		since := w.now().AddDate(0, -1, 0).UTC().Format(time.DateOnly)
 		request := adaptive.Reply{Action: "catalog", Since: since, Reason: "Initial recent metadata and open work"}
 		if err = b.request(ctx, request); err != nil {
+			return report, err
+		}
+	}
+	if a.Pending != nil {
+		pending := *a.Pending
+		if err = b.request(ctx, pending); err != nil {
 			return report, err
 		}
 	}
@@ -141,12 +147,6 @@ func (w *FeatureWorker) buildAdaptive(ctx context.Context, repository, dir strin
 	if a.Source.Revision == "" {
 		a.Source = b.source.Context
 		if err = w.Store.saveAdaptive(ctx, r.version, repository, a, false, w.now()); err != nil {
-			return report, err
-		}
-	}
-	if a.Pending != nil {
-		pending := *a.Pending
-		if err = b.request(ctx, pending); err != nil {
 			return report, err
 		}
 	}
@@ -236,7 +236,7 @@ type adaptiveCatalogRow struct {
 	Merged  *time.Time `json:"merged"`
 }
 
-func (b *adaptiveRun) taskInput(details, code map[int]string) any {
+func (b *adaptiveRun) taskInput(details, code, decisions map[int]string) any {
 	a := b.state
 	catalog := make([]adaptiveCatalogRow, 0, len(a.Catalog))
 	weeks := map[string]int{}
@@ -247,6 +247,7 @@ func (b *adaptiveRun) taskInput(details, code map[int]string) any {
 		weeks[fmt.Sprintf("%d-W%02d", y, w)]++
 	}
 	return struct {
+		Decisions         map[int]string              `json:"decisions"`
 		Coverage          *BuildCoverage              `json:"coverage"`
 		Catalog           []adaptiveCatalogRow        `json:"catalog"`
 		Weeks             map[string]int              `json:"counts_by_week"`
@@ -257,15 +258,15 @@ func (b *adaptiveRun) taskInput(details, code map[int]string) any {
 		Assignments       map[int]adaptive.Assignment `json:"assignments"`
 		ExplorationClosed bool                        `json:"exploration_closed"`
 		Feedback          string                      `json:"feedback"`
-	}{a.coverage(), catalog, weeks, details, code, a.Selected, a.Scopes, a.Assignments, a.ExplorationClosed, a.Feedback}
+	}{decisions, a.coverage(), catalog, weeks, details, code, a.Selected, a.Scopes, a.Assignments, a.ExplorationClosed, a.Feedback}
 }
 
 func (b *adaptiveRun) step(ctx context.Context) (adaptive.Reply, error) {
-	details, code, err := b.evidenceFiles(ctx)
+	details, code, decisions, err := b.evidenceFiles(ctx)
 	if err != nil {
 		return adaptive.Reply{}, err
 	}
-	data, err := json.MarshalIndent(b.taskInput(details, code), "", "  ")
+	data, err := json.MarshalIndent(b.taskInput(details, code, decisions), "", "  ")
 	if err != nil {
 		return adaptive.Reply{}, err
 	}
@@ -394,19 +395,19 @@ func (b *adaptiveRun) validate(reply adaptive.Reply) error {
 		if err != nil || since.After(b.w.now()) {
 			return errors.New("catalog since must be a past YYYY-MM-DD date")
 		}
-	case "details", "code":
+	case "details", "code", "decisions":
 		if len(reply.Numbers) == 0 {
 			return errors.New("an evidence request needs PR numbers")
 		}
 		for _, n := range reply.Numbers {
-			if _, ok := a.Catalog[n]; !ok && reply.Action == "code" {
+			if _, ok := a.Catalog[n]; !ok && reply.Action != "details" {
 				return fmt.Errorf("PR %d is not catalogued", n)
 			}
 			if n < 1 {
 				return errors.New("PR numbers must be positive")
 			}
-			if reply.Action == "code" && !selected[n] {
-				return fmt.Errorf("code request PR %d must be selected first", n)
+			if reply.Action != "details" && !selected[n] {
+				return fmt.Errorf("evidence request PR %d must be selected first", n)
 			}
 		}
 	case "finish":
@@ -448,6 +449,7 @@ func (b *adaptiveRun) apply(ctx context.Context, reply adaptive.Reply) (bool, er
 		b.notify(BuildPlacing)
 		return changed, nil
 	}
+	oldDecisions := len(a.Decisions)
 	oldDetails, oldCode, oldCatalog := len(a.Details), len(a.Code), len(a.Catalog)
 	oldPatches := 0
 	for _, c := range a.Code {
@@ -460,7 +462,7 @@ func (b *adaptiveRun) apply(ctx context.Context, reply adaptive.Reply) (bool, er
 	for _, c := range a.Code {
 		patches += len(c.Patches)
 	}
-	return changed || oldDetails != len(a.Details) || oldCode != len(a.Code) || oldCatalog != len(a.Catalog) || patches != oldPatches, nil
+	return changed || oldDecisions != len(a.Decisions) || oldDetails != len(a.Details) || oldCode != len(a.Code) || oldCatalog != len(a.Catalog) || patches != oldPatches, nil
 }
 
 func (b *adaptiveRun) notify(phase string) {
@@ -488,6 +490,8 @@ func (b *adaptiveRun) request(ctx context.Context, reply adaptive.Reply) error {
 			err = b.details(operation, reply.Numbers)
 		case "code":
 			err = b.code(operation, reply.Numbers, reply.Paths)
+		case "decisions":
+			err = b.decisions(operation, reply.Numbers)
 		}
 		cancel()
 		if _, wait := errors.AsType[*adaptiveWaitError](err); err == nil || ctx.Err() != nil || wait {
@@ -555,9 +559,6 @@ func (b *adaptiveRun) catalog(ctx context.Context, sinceText string) error {
 			a.Catalog[p.Number] = p
 		}
 	}
-	if err := b.w.Store.savePulls(ctx, b.repository, rows, true, func(*sql.Tx) error { return nil }); err != nil {
-		return err
-	}
 	a.Truncated = a.Truncated || list.Truncated || open.Truncated
 	a.Windows[sinceText] = true
 	if a.Since == "" || sinceText < a.Since {
@@ -574,6 +575,9 @@ func (b *adaptiveRun) code(ctx context.Context, numbers []int, paths []string) e
 	defer func() { _ = clone.Close() }()
 	for _, n := range numbers {
 		p := b.state.Catalog[n]
+		if err := b.w.Store.savePulls(ctx, b.repository, []github.ListedPull{p}, true, func(*sql.Tx) error { return nil }); err != nil {
+			return err
+		}
 		known, ok := b.state.Code[n]
 		if !ok {
 			if err := clone.FetchPulls(ctx, remote, []gitlocal.PullRequest{{Number: n, HeadSHA: p.HeadSHA, BaseSHA: p.BaseSHA, BaseRef: p.BaseRef}}); err != nil {
@@ -699,9 +703,6 @@ func (b *adaptiveRun) details(ctx context.Context, numbers []int) error {
 			if p.Bot || (p.State != "open" && p.MergedAt == nil) {
 				return fmt.Errorf("PR %d is not eligible open or merged work", n)
 			}
-			if err := b.w.Store.savePulls(ctx, b.repository, []github.ListedPull{p}, true, func(*sql.Tx) error { return nil }); err != nil {
-				return err
-			}
 			b.state.Catalog[n] = p
 		}
 		b.state.Details[n] = true
@@ -712,8 +713,8 @@ func (b *adaptiveRun) details(ctx context.Context, numbers []int) error {
 // Evidence stays addressable without embedding every accumulated patch into the
 // next task input. Hash names are immutable within a source export and safe on
 // platforms which prohibit replacing read-only files.
-func (b *adaptiveRun) evidenceFiles(ctx context.Context) (map[int]string, map[int]string, error) {
-	details, code := map[int]string{}, map[int]string{}
+func (b *adaptiveRun) evidenceFiles(ctx context.Context) (map[int]string, map[int]string, map[int]string, error) {
+	details, code, decisions := map[int]string{}, map[int]string{}, map[int]string{}
 	write := func(kind string, number int, value any) (string, error) {
 		data, err := json.MarshalIndent(value, "", "  ")
 		if err != nil {
@@ -739,18 +740,25 @@ func (b *adaptiveRun) evidenceFiles(ctx context.Context) (map[int]string, map[in
 	for n := range b.state.Details {
 		name, err := write("details", n, b.state.Catalog[n].Body)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 		details[n] = name
 	}
 	for n, value := range b.state.Code {
 		name, err := write("code", n, value)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 		code[n] = name
 	}
-	return details, code, nil
+	for n, value := range b.state.Decisions {
+		name, err := write("decisions", n, value)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		decisions[n] = name
+	}
+	return details, code, decisions, nil
 }
 
 // Narrative edits remain durable but cannot keep a run alive indefinitely.

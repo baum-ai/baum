@@ -6,7 +6,7 @@ import (
 )
 
 func TestProtocolValidWorkAndPaths(t *testing.T) {
-	for _, action := range []string{"catalog", "details", "code", "checkpoint", "finish"} {
+	for _, action := range []string{"catalog", "details", "code", "decisions", "checkpoint", "finish"} {
 		data, _ := json.Marshal(Reply{Action: action, Reason: "A valid next step"})
 		if _, err := Parse(data); err != nil {
 			t.Fatalf("%s: %v", action, err)

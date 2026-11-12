@@ -475,8 +475,17 @@ regardless of age. There is no PR-count selection default. The agent chooses
 whether to widen the history and which descriptions or code it needs. `catalog`
 requests expand a date window, `details` supplies pinned descriptions or resolves a specific older PR reference, and
 `code` reads commits/paths and optional focused file patches only for explicitly
-selected PRs. Catalog listing and descriptions never require a Git ref fetch or
-session-link pass. Repeated windows and evidence reads are cached. Patches use
+selected PRs. `decisions` supplies captured decisions linked to pinned commits
+for selected PRs, including extracted quotes, turn citations, session identities
+and recorded source provenance. It reads no complete transcripts; at most 50
+linked sessions and 200 decisions are snapshotted per PR, with explicit
+truncation and missing-link limitations. There is no decision-tail pagination:
+repeating a request cannot fetch beyond those bounds. This is available
+evidence, not a claim of complete decision coverage. Subsequent steps reuse that exact
+snapshot even if live extraction changes. Catalog listing and descriptions stay
+in the companion checkpoint and never populate the live sync queue. Only accepted placements/skips and explicitly
+requested selected code enter the shared PR cache. Catalog listing and
+descriptions never require a Git ref fetch or session-link pass. Repeated windows and evidence reads are cached. Patches use
 the PR's merge base and are bounded to 64 KiB per requested file; an unavailable
 request stops with the exact request pending for a resume.
 
@@ -526,7 +535,7 @@ the legacy full-history workflow below for operator/internal callers.
 `GET /api/timeline/build` exposes `building.workflow`, optional
 `building.coverage`, and `current_coverage` after promotion, including an empty
 result. Coverage distinguishes metadata `catalogued`, unique PRs whose
-`details` or `code` were requested (`inspected`), `selected`, `completed` and
+`details`, `code` or `decisions` were requested (`inspected`), `selected`, `completed` and
 `remaining`, the catalog update-date horizon and listing truncation. It does not
 claim that catalog availability proves every title was read. Old read-only
 stores without the adaptive tables expose no coverage.

@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/baum-ai/baum/agent"
+	"github.com/baum-ai/baum/decisions"
 	"github.com/baum-ai/baum/features/adaptive"
 	"github.com/baum-ai/baum/internal/github"
 	"github.com/baum-ai/baum/internal/locallink/linktest"
@@ -252,7 +253,7 @@ func TestAdaptiveCheckpointSurvivesReopenAndPinsSourceAndPR(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer reopened.Close()
+	defer func() { _ = reopened.Close() }()
 	f.store = reopened
 	f.worker.Store = reopened
 	oldReads := len(reader.paths)
@@ -560,7 +561,7 @@ func TestAdaptiveReadOnlyOldSchemaHasNoCoverage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer reader.Close()
+	defer func() { _ = reader.Close() }()
 	if coverage, err := reader.FeatureCoverage(ctx, repo, VersionCurrent); err != nil || coverage != nil {
 		t.Fatalf("legacy coverage %+v %v", coverage, err)
 	}
@@ -646,10 +647,10 @@ func TestAdaptiveRateLimitCheckpointsWaitWithoutImmediateRetry(t *testing.T) {
 	if err == nil || second.Stopped != "rate_limited" || len(reader.paths) != 1 {
 		t.Fatalf("early retry %+v %v reads%d", second, err, len(reader.paths))
 	}
-	f.clock.now = f.clock.now.Add(121 * time.Second)
+	f.clock.now = f.clock.now.Add(48 * time.Hour)
 	reader.status = 0
 	third, err := f.worker.Build(context.Background(), repo, dir, BuildOptions{Adaptive: true})
-	if err != nil || !third.Current || third.Version != first.Version || third.Coverage.RetryAt != nil {
+	if err != nil || !third.Current || third.Version != first.Version || third.Coverage.RetryAt != nil || third.Coverage.Since != f.clock.now.Add(-48*time.Hour).AddDate(0, -1, 0).Format(time.DateOnly) {
 		t.Fatalf("resume %+v %v", third, err)
 	}
 }
@@ -683,5 +684,89 @@ func TestAdaptiveNarrativeOnlyCheckpointsDoNotKeepRunAlive(t *testing.T) {
 	report, err := f.worker.Build(context.Background(), repo, dir, BuildOptions{Adaptive: true})
 	if err == nil || report.Stopped != ReasonBuildNoProgress || report.Current || calls != 4 {
 		t.Fatalf("narrative loop %+v %v calls%d", report, err, calls)
+	}
+}
+
+func TestAdaptiveCatalogDoesNotScheduleUnselectedHistoryInBackgroundSync(t *testing.T) {
+	f, dir, reader := adaptiveFixture(t)
+	for _, n := range []int{1, 2} {
+		reader.rows[n]["updated_at"] = f.clock.now.AddDate(-2, 0, 0).Format(time.RFC3339)
+		reader.rows[n]["head"].(map[string]any)["sha"] = strings.Repeat("e", 40)
+	}
+	calls := 0
+	f.backend.task = func(agent.Request) (agent.Result, error) {
+		calls++
+		if calls == 1 {
+			return adaptiveTaskReply(t, adaptive.Reply{Action: "catalog", Since: f.clock.now.AddDate(-3, 0, 0).Format(time.DateOnly)}), nil
+		}
+		return adaptiveTaskReply(t, adaptive.Reply{Action: "finish", Selected: []int{1}, Scopes: []adaptive.Scope{widgetScope()}, Assignments: []adaptive.Assignment{{Number: 1, Scope: "widgets", Reason: "Search outcome"}}}), nil
+	}
+	report, err := f.worker.Build(context.Background(), repo, dir, BuildOptions{Adaptive: true})
+	if err != nil || !report.Current || report.Coverage.Catalogued != 3 {
+		t.Fatalf("build %+v %v", report, err)
+	}
+	if f.count(`SELECT count(*) FROM pull_request WHERE number!=1`) != 0 {
+		t.Fatal("catalog-only rows leaked into live cache")
+	}
+	synced, err := f.worker.Sync(context.Background(), repo, dir)
+	if err != nil || synced.PathsRead != 1 || synced.PathsFailed != 0 {
+		t.Fatalf("background sync %+v %v", synced, err)
+	}
+	if f.count(`SELECT count(*) FROM pull_request WHERE number!=1`) != 0 {
+		t.Fatal("unselected history entered live queue")
+	}
+}
+
+func TestAdaptiveRequestedDecisionEvidencePinsQuotesCitationsAndSourceAcrossResume(t *testing.T) {
+	f, dir, reader := adaptiveFixture(t)
+	head := reader.rows[0]["head"].(map[string]any)["sha"].(string)
+	d := decisions.Decision{ID: "decision-search", Summary: "Index search results", Evidence: "Use indexed search", EvidenceTurn: 3, Turns: []int{3}, Files: []string{"src/search/a.go"}, Category: decisions.CategoryImplementation, Who: decisions.WhoHuman}
+	source := &SourceContext{Version: "repository-context-v1", Revision: head, Repository: repo, References: []string{"src/search/a.go"}}
+	if err := f.store.Save(context.Background(), Extraction{Meta: Meta{Agent: "claude-code", ID: "search-session", Repository: repo}, ContentHash: "captured-search", Decisions: []decisions.Decision{d}, Source: source}); err != nil {
+		t.Fatal(err)
+	}
+	f.exec(`INSERT INTO session_commit(agent,session_id,repository,sha,method,confidence) VALUES ('claude-code','search-session',?,?,'entire',1)`, repo, head)
+	f.saveSession("unrelated", "src/search/other.go")
+	resuming := false
+	calls := 0
+	f.backend.task = func(req agent.Request) (agent.Result, error) {
+		calls++
+		if !resuming {
+			if calls == 1 {
+				return adaptiveTaskReply(t, adaptive.Reply{Action: "decisions", Selected: []int{1}, Numbers: []int{1}}), nil
+			}
+			return agent.Result{}, errors.New("interrupt after decision evidence")
+		}
+		in := adaptiveInput(t, req)
+		text := adaptiveEvidence(t, req, in["decisions"])
+		for _, want := range []string{"Use indexed search", "decision-search", "search-session", head} {
+			if !strings.Contains(text, want) {
+				t.Fatalf("missing %s in evidence %s", want, text)
+			}
+		}
+		var snapshot adaptiveDecisionEvidence
+		if err := json.Unmarshal([]byte(text), &snapshot); err != nil {
+			t.Fatal(err)
+		}
+		if len(snapshot.Decisions) != 1 || !slices.Equal(snapshot.Decisions[0].Turns, []int{3}) {
+			t.Fatalf("lost cited turns: %+v", snapshot)
+		}
+		if strings.Contains(text, "Replaced mutable evidence") || strings.Contains(text, "unrelated") {
+			t.Fatal("snapshot refreshed or unrelated decisions leaked")
+		}
+		return adaptiveTaskReply(t, adaptive.Reply{Action: "finish", Scopes: []adaptive.Scope{widgetScope()}, Assignments: []adaptive.Assignment{{Number: 1, Scope: "widgets", Reason: "Captured search decision explains this outcome"}}}), nil
+	}
+	first, err := f.worker.Build(context.Background(), repo, dir, BuildOptions{Adaptive: true})
+	if err == nil || first.Current {
+		t.Fatal("expected task interruption")
+	}
+	f.exec(`UPDATE decision SET evidence='Replaced mutable evidence' WHERE decision_id='decision-search'`)
+	resuming = true
+	resumed, err := f.worker.Build(context.Background(), repo, dir, BuildOptions{Adaptive: true})
+	if err != nil || !resumed.Current || resumed.Version != first.Version || resumed.Coverage.Inspected != 1 {
+		t.Fatalf("decision resume %+v %v", resumed, err)
+	}
+	if f.count(`SELECT count(*) FROM pull_commit`) != 0 {
+		t.Fatal("decision evidence fetched code without a request")
 	}
 }

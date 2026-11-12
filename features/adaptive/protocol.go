@@ -68,7 +68,7 @@ func Parse(data []byte) (Reply, error) {
 		return r, errors.New("expected one reply document")
 	}
 	switch r.Action {
-	case "catalog", "details", "code", "checkpoint", "finish":
+	case "catalog", "details", "code", "decisions", "checkpoint", "finish":
 	default:
 		return r, errors.New("unknown feature-build action")
 	}
@@ -114,4 +114,4 @@ func ValidPath(p string) bool {
 }
 
 // Schema is flat: the CLI returns one next step rather than an entire history.
-var Schema = json.RawMessage(`{"type":"object","additionalProperties":false,"required":["action","since","numbers","paths","selected","scopes","assignments","reason"],"properties":{"action":{"type":"string","enum":["catalog","details","code","checkpoint","finish"]},"since":{"type":"string"},"numbers":{"type":"array","items":{"type":"integer"}},"paths":{"type":"array","items":{"type":"string"}},"selected":{"type":"array","items":{"type":"integer"}},"scopes":{"type":"array","items":{"type":"object","additionalProperties":false,"required":["key","title","purpose","boundaries","paths","examples","digest"],"properties":{"key":{"type":"string"},"title":{"type":"string"},"purpose":{"type":"string"},"boundaries":{"type":"string"},"paths":{"type":"array","items":{"type":"string"}},"examples":{"type":"array","items":{"type":"integer"}},"digest":{"type":"string"}}}},"assignments":{"type":"array","items":{"type":"object","additionalProperties":false,"required":["number","scope","reason"],"properties":{"number":{"type":"integer"},"scope":{"type":"string"},"reason":{"type":"string"}}}},"reason":{"type":"string"}}}`)
+var Schema = json.RawMessage(`{"type":"object","additionalProperties":false,"required":["action","since","numbers","paths","selected","scopes","assignments","reason"],"properties":{"action":{"type":"string","enum":["catalog","details","code","decisions","checkpoint","finish"]},"since":{"type":"string"},"numbers":{"type":"array","items":{"type":"integer"}},"paths":{"type":"array","items":{"type":"string"}},"selected":{"type":"array","items":{"type":"integer"}},"scopes":{"type":"array","items":{"type":"object","additionalProperties":false,"required":["key","title","purpose","boundaries","paths","examples","digest"],"properties":{"key":{"type":"string"},"title":{"type":"string"},"purpose":{"type":"string"},"boundaries":{"type":"string"},"paths":{"type":"array","items":{"type":"string"}},"examples":{"type":"array","items":{"type":"integer"}},"digest":{"type":"string"}}}},"assignments":{"type":"array","items":{"type":"object","additionalProperties":false,"required":["number","scope","reason"],"properties":{"number":{"type":"integer"},"scope":{"type":"string"},"reason":{"type":"string"}}}},"reason":{"type":"string"}}}`)

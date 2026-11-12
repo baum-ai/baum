@@ -10,9 +10,10 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/baum-ai/baum/features/adaptive"
 	"github.com/baum-ai/baum/internal/github"
-	"github.com/google/uuid"
 )
 
 const adaptiveSchema = `
@@ -59,36 +60,40 @@ type adaptiveCode struct {
 }
 
 type adaptiveState struct {
-	Protocol          string                      `json:"protocol"`
-	Source            SourceContext               `json:"source"`
-	Catalog           map[int]github.ListedPull   `json:"catalog"`
-	Details           map[int]bool                `json:"details"`
-	Code              map[int]adaptiveCode        `json:"code"`
-	Selected          map[int]bool                `json:"selected"`
-	Scopes            map[string]adaptive.Scope   `json:"scopes"`
-	IDs               map[string]string           `json:"scope_ids"`
-	Assignments       map[int]adaptive.Assignment `json:"assignments"`
-	Windows           map[string]bool             `json:"catalog_windows"`
-	Pending           *adaptive.Reply             `json:"pending_request,omitempty"`
-	Since             string                      `json:"since"`
-	Truncated         bool                        `json:"truncated"`
-	Step              int                         `json:"step"`
-	NoProgress        int                         `json:"no_progress"`
-	Failures          int                         `json:"failures"`
-	ExplorationClosed bool                        `json:"exploration_closed"`
-	Complete          bool                        `json:"complete"`
-	Feedback          string                      `json:"feedback"`
-	Sequence          int64                       `json:"-"`
-	RetryAt           time.Time                   `json:"retry_at,omitempty"`
+	Protocol          string                           `json:"protocol"`
+	Source            SourceContext                    `json:"source"`
+	Catalog           map[int]github.ListedPull        `json:"catalog"`
+	Details           map[int]bool                     `json:"details"`
+	Decisions         map[int]adaptiveDecisionEvidence `json:"decisions"`
+	Code              map[int]adaptiveCode             `json:"code"`
+	Selected          map[int]bool                     `json:"selected"`
+	Scopes            map[string]adaptive.Scope        `json:"scopes"`
+	IDs               map[string]string                `json:"scope_ids"`
+	Assignments       map[int]adaptive.Assignment      `json:"assignments"`
+	Windows           map[string]bool                  `json:"catalog_windows"`
+	Pending           *adaptive.Reply                  `json:"pending_request,omitempty"`
+	Since             string                           `json:"since"`
+	Truncated         bool                             `json:"truncated"`
+	Step              int                              `json:"step"`
+	NoProgress        int                              `json:"no_progress"`
+	Failures          int                              `json:"failures"`
+	ExplorationClosed bool                             `json:"exploration_closed"`
+	Complete          bool                             `json:"complete"`
+	Feedback          string                           `json:"feedback"`
+	Sequence          int64                            `json:"-"`
+	RetryAt           time.Time                        `json:"retry_at,omitempty"`
 }
 
 func newAdaptiveState() *adaptiveState {
-	return &adaptiveState{Protocol: adaptive.Version, Catalog: map[int]github.ListedPull{}, Details: map[int]bool{}, Code: map[int]adaptiveCode{}, Selected: map[int]bool{}, Scopes: map[string]adaptive.Scope{}, IDs: map[string]string{}, Assignments: map[int]adaptive.Assignment{}, Windows: map[string]bool{}}
+	return &adaptiveState{Protocol: adaptive.Version, Decisions: map[int]adaptiveDecisionEvidence{}, Catalog: map[int]github.ListedPull{}, Details: map[int]bool{}, Code: map[int]adaptiveCode{}, Selected: map[int]bool{}, Scopes: map[string]adaptive.Scope{}, IDs: map[string]string{}, Assignments: map[int]adaptive.Assignment{}, Windows: map[string]bool{}}
 }
 
 func (a *adaptiveState) coverage() *BuildCoverage {
 	seen := map[int]bool{}
 	for n := range a.Details {
+		seen[n] = true
+	}
+	for n := range a.Decisions {
 		seen[n] = true
 	}
 	for n := range a.Code {
@@ -198,6 +203,15 @@ func (s *Store) saveAdaptive(ctx context.Context, version int64, repository stri
 			if n, _ := result.RowsAffected(); n != 1 {
 				return errBuildConcurrent
 			}
+		}
+		// Catalog-only metadata stays out of the live sync queue. Only accepted
+		// memberships/skips enter its shared cache, after this checkpoint wins CAS.
+		pulls := make([]github.ListedPull, 0, len(a.Assignments))
+		for number := range a.Assignments {
+			pulls = append(pulls, a.Catalog[number])
+		}
+		if err := s.upsertPulls(ctx, tx, repository, pulls, true); err != nil {
+			return err
 		}
 		for key, scope := range a.Scopes {
 			encoded, err := json.Marshal(scope)

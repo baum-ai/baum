@@ -269,41 +269,49 @@ func (s *Store) SaveHistoryPulls(ctx context.Context, repository string, pulls [
 // savePulls upserts pulls and then runs after, in one transaction; with
 // keepNewer, one stored with a later update is left as it is.
 func (s *Store) savePulls(ctx context.Context, repository string, pulls []github.ListedPull, keepNewer bool, after func(*sql.Tx) error) error {
-	now := s.now()
 	return s.inTx(ctx, func(tx *sql.Tx) error {
-		for _, p := range pulls {
-			if keepNewer {
-				var newer bool
-				err := tx.QueryRowContext(ctx, `SELECT updated_at > ? FROM pull_request WHERE repository=? AND number=?`,
-					p.UpdatedAt.UnixMilli(), repository, p.Number).Scan(&newer)
-				if err != nil && !errors.Is(err, sql.ErrNoRows) {
-					return err
-				}
-				if newer {
-					continue
-				}
+		if err := s.upsertPulls(ctx, tx, repository, pulls, keepNewer); err != nil {
+			return err
+		}
+		return after(tx)
+	})
+}
+
+func (s *Store) upsertPulls(ctx context.Context, tx *sql.Tx, repository string, pulls []github.ListedPull, keepNewer bool) error {
+	now := s.now()
+	for _, p := range pulls {
+		if keepNewer {
+			var newer bool
+			err := tx.QueryRowContext(ctx, `SELECT updated_at > ? FROM pull_request WHERE repository=? AND number=?`,
+				p.UpdatedAt.UnixMilli(), repository, p.Number).Scan(&newer)
+			if err != nil && !errors.Is(err, sql.ErrNoRows) {
+				return err
 			}
-			// A feature's text reads its pull requests' title, description
-			// and state: the current version's and a building one's.
-			changed, err := collect(scanString)(tx.QueryContext(ctx, `SELECT fp.feature_id FROM pull_request p
+			if newer {
+				continue
+			}
+		}
+		// A feature's text reads its pull requests' title, description
+		// and state: the current version's and a building one's.
+		changed, err := collect(scanString)(tx.QueryContext(ctx, `SELECT fp.feature_id FROM pull_request p
 JOIN feature_pull fp ON fp.repository=p.repository AND fp.number=p.number
 JOIN feature_version v ON v.id=fp.version_id AND v.state IN (?1, ?2)
 WHERE p.repository=?3 AND p.number=?4 AND (p.title != ?5 OR p.body != ?6 OR p.state != ?7 OR (p.merged_at IS NOT NULL) != ?8)`,
-				VersionCurrent, VersionBuilding, repository, p.Number, p.Title, p.Body, p.State, p.MergedAt != nil))
-			if err != nil {
-				return err
-			}
-			if err := markFeatures(ctx, tx, changed, now); err != nil {
-				return err
-			}
-			var merged, closed any
-			if p.MergedAt != nil {
-				merged = p.MergedAt.UnixMilli()
-			}
-			if p.ClosedAt != nil {
-				closed = p.ClosedAt.UnixMilli()
-			}
-			if _, err := tx.ExecContext(ctx, `INSERT INTO pull_request(repository, number, title, body, state, draft, author, bot,
+			VersionCurrent, VersionBuilding, repository, p.Number, p.Title, p.Body, p.State, p.MergedAt != nil))
+		if err != nil {
+			return err
+		}
+		if err := markFeatures(ctx, tx, changed, now); err != nil {
+			return err
+		}
+		var merged, closed any
+		if p.MergedAt != nil {
+			merged = p.MergedAt.UnixMilli()
+		}
+		if p.ClosedAt != nil {
+			closed = p.ClosedAt.UnixMilli()
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO pull_request(repository, number, title, body, state, draft, author, bot,
 head_ref, head_sha, base_ref, base_sha, merge_commit_sha, created_at, updated_at, merged_at, closed_at, cross_repository, default_branch)
 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(repository, number) DO UPDATE SET
 cross_repository=excluded.cross_repository, default_branch=excluded.default_branch,
@@ -313,13 +321,12 @@ paths_retry_at=CASE WHEN head_sha=excluded.head_sha AND base_sha=excluded.base_s
 state=excluded.state, draft=excluded.draft, author=excluded.author, bot=excluded.bot, head_ref=excluded.head_ref, head_sha=excluded.head_sha,
 base_ref=excluded.base_ref, base_sha=excluded.base_sha, merge_commit_sha=excluded.merge_commit_sha, created_at=excluded.created_at,
 updated_at=excluded.updated_at, merged_at=excluded.merged_at, closed_at=excluded.closed_at`,
-				repository, p.Number, p.Title, p.Body, p.State, p.Draft, p.Author, p.Bot, p.HeadRef, p.HeadSHA, p.BaseRef, p.BaseSHA,
-				p.MergeCommitSHA, p.CreatedAt.UnixMilli(), p.UpdatedAt.UnixMilli(), merged, closed, p.CrossRepository, p.DefaultBranch); err != nil {
-				return err
-			}
+			repository, p.Number, p.Title, p.Body, p.State, p.Draft, p.Author, p.Bot, p.HeadRef, p.HeadSHA, p.BaseRef, p.BaseSHA,
+			p.MergeCommitSHA, p.CreatedAt.UnixMilli(), p.UpdatedAt.UnixMilli(), merged, closed, p.CrossRepository, p.DefaultBranch); err != nil {
+			return err
 		}
-		return after(tx)
-	})
+	}
+	return nil
 }
 
 // StoredPull is a pull request whose paths are to be read.
