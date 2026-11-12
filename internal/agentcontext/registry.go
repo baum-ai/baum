@@ -97,7 +97,7 @@ func (p PageContext) validate() error {
 			return errors.New("page field too long")
 		}
 	}
-	if err := checkSection(p.Page, strings.TrimSpace(p.Repository), p.Section); err != nil {
+	if err := checkSection(p.Page, p.Repository, p.Section); err != nil {
 		return err
 	}
 	for key, value := range p.Filters {
@@ -254,10 +254,12 @@ func (r *Registry) Consumer(id string) (Consumer, bool) {
 // SetPage records the page the consumer with this id has open. An action's
 // page cannot change.
 func (r *Registry) SetPage(id string, p PageContext) error {
+	// The repository is trimmed first, so the section is checked against the
+	// value kept and a blank one is no repository everywhere.
+	p.Repository = strings.TrimSpace(p.Repository)
 	if err := p.validate(); err != nil {
 		return err
 	}
-	p.Repository = strings.TrimSpace(p.Repository)
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	h, ok := r.byID[id]

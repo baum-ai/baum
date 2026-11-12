@@ -67,7 +67,9 @@ func sectionTools(p PageContext) []string {
 
 // discarded decodes any JSON value and keeps none of it, so a value that must
 // never be passed on (an agent environment variable's, a sign-in's code) is
-// not even held.
+// not copied into the decoded struct. The route's raw body is in memory for
+// the call's length, as any read's is; it is never kept, logged or quoted in
+// an error.
 type discarded struct{}
 
 func (*discarded) UnmarshalJSON([]byte) error { return nil }
@@ -118,11 +120,11 @@ func (s *Server) settingsTools() []Tool {
 	}, {
 		Name: "settings_reviews",
 		Description: "What the Settings page's Reviews section shows: whether automatic reviews are on and for which pull requests (pull_requests: both, authored, requested or all), the harness reviews use (backend), its model and effort, and decision capture: on or off, its backend, model and effort as chosen (empty follows the reviews'), and what capture resolves them to (effective_backend, effective_model, whether the backend could not be determined in time, whether the model is ignored). " +
-			"Resolving an auto backend runs the harnesses' checks, as opening the section in the app does.",
+			"Resolving an auto backend runs the harnesses' version checks on this computer, as opening the section in the app does; the answer is reused for a short while (45 seconds in the daemon) while the settings are unchanged.",
 		Scope:     ScopeGlobal,
 		Reads:     []string{"/api/automatic"},
-		Projected: []string{"/api/settings", "/api/settings/decisions"},
-		Call:      callSettingsReviews,
+		Projected: []string{"/api/settings"},
+		Call:      s.callSettingsReviews,
 	}, {
 		Name:        "settings_fixes",
 		Description: "What the Settings page's Fixes section shows: the harness fixes use (backend), its model and effort; an empty backend is the same as reviews' (same_as_reviews), whose model and effort then apply.",
@@ -183,6 +185,7 @@ func repositoryPageToolList() []Tool {
 	}, {
 		Name: "repository_prompts",
 		Description: "The prompts of a repository page's Prompts section: without id, each prompt as prompts lists it (no texts); with id, that prompt with every field as prompt gives it, including the repository's custom text, the text it inherits and which text runs (source). " +
+			"An agent working on a pull request is not given the inherited text, nor the safety rules a global text dropped: those are the person's global Settings (withheld says so). " +
 			"Defaults to the open page's repository.",
 		InputSchema: json.RawMessage(`{"type":"object","properties":{` + repository + `,` +
 			`"id":{"type":"string","minLength":1,"maxLength":64,"description":"One prompt's id, for all its fields and texts."}},"additionalProperties":false}`),
@@ -245,7 +248,7 @@ func (s *Server) callSettingsGeneral(ctx context.Context, c CallContext, _ json.
 	return compactJSON(out)
 }
 
-func callSettingsReviews(ctx context.Context, c CallContext, _ json.RawMessage) (string, error) {
+func (s *Server) callSettingsReviews(ctx context.Context, c CallContext, _ json.RawMessage) (string, error) {
 	settings, err := readSettings(ctx, c)
 	if err != nil {
 		return "", err
@@ -281,10 +284,16 @@ func callSettingsReviews(ctx context.Context, c CallContext, _ json.RawMessage) 
 	if out.Automatic == nil {
 		out.Unavailable = append(out.Unavailable, "automatic")
 	}
-	// The route resolves an auto backend by running the harnesses' checks,
-	// which is slow but reads nothing beyond this computer; the app does the
-	// same when the section opens.
-	if body, _, err := c.get(ctx, "/api/settings/decisions", nil); err == nil {
+	// Decision capture, as /api/settings/decisions answers it, from the
+	// accessor: resolving an auto backend runs the harnesses' version checks,
+	// which the accessor does at most once per short while for the same
+	// preferences, however often the tool is called.
+	var body json.RawMessage
+	err = errors.New("unavailable")
+	if s.decisionSettings != nil {
+		body, err = s.decisionSettings(ctx)
+	}
+	if err == nil {
 		var d struct {
 			Decisions *capture `json:"decisions"`
 		}
@@ -353,7 +362,8 @@ func (s *Server) callSettingsConnections(ctx context.Context, c CallContext, _ j
 	// The connection, as the section reads it (a read may start the
 	// manager's background check of the organizations, as opening the
 	// section does). The pending sign-in is decoded only for whether there is
-	// one: its code and address are never held.
+	// one: its code and address are not decoded, and the raw body is never
+	// kept or quoted.
 	if body, _, err := c.get(ctx, "/api/github-auth", nil); err == nil && !disabled(body) {
 		var conn struct {
 			State              string     `json:"state"`
@@ -497,6 +507,29 @@ type promptEntry struct {
 	MissingSafetyRules []string     `json:"missing_safety_rules"`
 	Source             string       `json:"source,omitempty"`
 	InheritedText      *string      `json:"inherited_text,omitempty"`
+	// Withheld says what an action was not given (withheldFromActions).
+	Withheld string `json:"withheld,omitempty"`
+}
+
+// withheldNote is what an action is told of the fields it does not get.
+const withheldNote = "inherited_text, and missing_safety_rules where the global text runs, describe the person's global Settings, which an action does not read"
+
+// withheldFromActions is entries as an action may read them: a repository's
+// prompts carry the person's global custom text as inherited_text, and for a
+// prompt that runs the global text (source global) the safety rules that text
+// dropped. Those are Settings, which an action never reads, so they are left
+// out (missing_safety_rules is null, not empty, so it does not read as none
+// missing).
+func withheldFromActions(entries []promptEntry) []promptEntry {
+	out := make([]promptEntry, 0, len(entries))
+	for _, e := range entries {
+		e.InheritedText, e.Withheld = nil, withheldNote
+		if e.Source == "global" {
+			e.MissingSafetyRules = nil
+		}
+		out = append(out, e)
+	}
+	return out
 }
 
 // promptSummary is a prompt as prompts lists it: no texts.
@@ -514,17 +547,15 @@ type promptSummary struct {
 	SafetyRules        []promptRule `json:"safety_rules"`
 	MissingSafetyRules []string     `json:"missing_safety_rules"`
 	Source             string       `json:"source,omitempty"`
+	Withheld           string       `json:"withheld,omitempty"`
 }
 
 func (e promptEntry) summary() promptSummary {
 	out := promptSummary{ID: e.ID, Title: e.Title, Group: e.Group, UsedBy: e.UsedBy, DefaultVersion: e.DefaultVersion, Custom: e.CustomText != nil,
 		BasedOn: e.BasedOn, Outdated: e.Outdated, Invalid: e.Invalid, InvalidReason: e.InvalidReason, SafetyRules: []promptRule{},
-		MissingSafetyRules: e.MissingSafetyRules, Source: e.Source}
+		MissingSafetyRules: e.MissingSafetyRules, Source: e.Source, Withheld: e.Withheld}
 	for _, r := range e.SafetyRules {
 		out.SafetyRules = append(out.SafetyRules, promptRule{ID: r.ID, Label: r.Label})
-	}
-	if out.MissingSafetyRules == nil {
-		out.MissingSafetyRules = []string{}
 	}
 	return out
 }
@@ -554,6 +585,14 @@ func readPrompts(ctx context.Context, c CallContext, repository string) ([]promp
 	if json.Unmarshal(body, &answer) != nil {
 		return nil, errors.New("the prompts are not readable")
 	}
+	for i, e := range answer.Prompts {
+		if e.MissingSafetyRules == nil {
+			answer.Prompts[i].MissingSafetyRules = []string{}
+		}
+		if e.SafetyRules == nil {
+			answer.Prompts[i].SafetyRules = []promptRule{}
+		}
+	}
 	return answer.Prompts, nil
 }
 
@@ -569,12 +608,6 @@ func onePrompt(entries []promptEntry, id string) (string, error) {
 	var ids []string
 	for _, e := range entries {
 		if e.ID == id {
-			if e.MissingSafetyRules == nil {
-				e.MissingSafetyRules = []string{}
-			}
-			if e.SafetyRules == nil {
-				e.SafetyRules = []promptRule{}
-			}
 			return compactJSON(e)
 		}
 		ids = append(ids, e.ID)
@@ -626,6 +659,9 @@ func callRepositoryPrompts(ctx context.Context, c CallContext, args json.RawMess
 	entries, err := readPrompts(ctx, c, repository)
 	if err != nil {
 		return "", err
+	}
+	if c.Consumer.Kind == Action {
+		entries = withheldFromActions(entries)
 	}
 	if a.ID != "" {
 		return onePrompt(entries, a.ID)

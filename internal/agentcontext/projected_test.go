@@ -19,7 +19,7 @@ import (
 var allowedProjectedReads = map[string][]string{
 	"diagnostics_summary":  {"/api/diagnostics"},
 	"settings_general":     {"/api/settings/appearance"},
-	"settings_reviews":     {"/api/settings", "/api/settings/decisions"},
+	"settings_reviews":     {"/api/settings"},
 	"settings_fixes":       {"/api/settings"},
 	"settings_connections": {"/api/github-auth"},
 	"settings_computer":    {"/api/settings", "/api/diagnostics"},
@@ -85,6 +85,7 @@ func TestOnlyTheNamedToolMayDeclareAProjectedRoute(t *testing.T) {
 		{"the connection among reads", Tool{Name: "github_repositories", Scope: ScopeGlobal, Reads: []string{"/api/github-auth"}, Call: call}},
 		{"another settings route", Tool{Name: "settings_general", Scope: ScopeGlobal, Projected: []string{"/api/settings"}, Call: call}},
 		{"a settings route below its own", Tool{Name: "prompts", Scope: ScopeGlobal, Projected: []string{"/api/settings/prompts/fix"}, Call: call}},
+		{"the decision capture route, which runs checks", Tool{Name: "settings_reviews", Scope: ScopeGlobal, Projected: []string{"/api/settings/decisions"}, Call: call}},
 		{"the plan usage choices route", Tool{Name: "settings_general", Scope: ScopeGlobal, Projected: []string{"/api/settings/plan-usage"}, Call: call}},
 		{"a sign-in route", Tool{Name: "settings_connections", Scope: ScopeGlobal, Projected: []string{"/api/github-auth/start"}, Call: call}},
 		{"a repository-scoped settings tool", Tool{Name: "settings_fixes", Scope: ScopeRepository, Projected: []string{"/api/settings"}, Call: call}},

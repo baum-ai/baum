@@ -57,6 +57,11 @@ func (d *settingsDaemon) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if source != "" {
 			e["source"], e["inherited_text"] = source, inherited
 		}
+		// A prompt that runs the global text: the rules it lacks are the
+		// global text's.
+		if source == "global" {
+			e["missing_safety_rules"] = []string{"GLOBAL_DROPPED_RULE"}
+		}
 		b, _ := json.Marshal(e)
 		return string(b)
 	}
@@ -67,8 +72,6 @@ func (d *settingsDaemon) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 "fix_backend":"codex","fix_model":"gpt-5","effort":"high","fix_effort":"low","job_concurrency":3,"review_time_limit_minutes":20,"run_time_limit_minutes":45}`, sentinelEnv, sentinelToken, sentinelHome)
 	case "/api/settings/appearance":
 		reply(`{"theme":"dark","key_hints":false,"page_modifier":"alt","extra":"SENTINEL_APPEARANCE"}`)
-	case "/api/settings/decisions":
-		reply(`{"decisions":{"enabled":true,"backend":"","model":"","effort":"","effective_backend":"claude","backend_undetermined":false,"effective_model":"haiku","model_ignored":false,"extra":"SENTINEL_DECISIONS"}}`)
 	case "/api/automatic":
 		reply(`{"enabled":true,"pull_requests":"authored","repositories":[{"repository":"acme/web","enabled":true,"notice":"unavailable","pending":2},{"repository":"other/api","enabled":false,"notice":"OTHER_NOTICE","pending":5}]}`)
 	case "/api/agent-requests":
@@ -93,7 +96,8 @@ func (d *settingsDaemon) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case "/api/settings/prompts":
 		reply(`{"prompts":[%s,%s]}`, entry("fix", "GLOBAL CUSTOM TEXT", "", ""), entry("review-group", "", "", ""))
 	case "/api/repositories/acme/web/prompts":
-		reply(`{"prompts":[%s,%s]}`, entry("fix", "REPOSITORY CUSTOM TEXT", "repository", "INHERITED TEXT"), entry("review-group", "", "default", "DEFAULT TEXT OF review-group"))
+		reply(`{"prompts":[%s,%s,%s]}`, entry("fix", "REPOSITORY CUSTOM TEXT", "repository", "INHERITED TEXT"), entry("review-group", "", "default", "DEFAULT TEXT OF review-group"),
+			entry("fix-checks", "", "global", "GLOBAL_INHERITED_TEXT"))
 	case "/api/repositories/other/api/prompts":
 		reply(`{"prompts":[%s]}`, entry("fix", "FOREIGN_PROMPT", "repository", "FOREIGN_INHERITED"))
 	case "/api/repositories":
@@ -125,6 +129,9 @@ func settingsServer(t *testing.T) (*Server, *settingsDaemon) {
 		},
 		CodexHooks: func() (string, time.Time, bool) {
 			return "untrusted", time.Date(2026, 11, 12, 9, 30, 0, 0, time.UTC), true
+		},
+		DecisionSettings: func(context.Context) (json.RawMessage, error) {
+			return json.RawMessage(`{"decisions":{"enabled":true,"backend":"","model":"","effort":"","effective_backend":"claude","backend_undetermined":false,"effective_model":"haiku","model_ignored":false,"extra":"SENTINEL_DECISIONS"}}`), nil
 		}})
 	was := homeDirectory
 	homeDirectory = func() (string, error) { return sentinelHome, nil }
@@ -213,7 +220,7 @@ func TestSettingsToolsCarryNoSecret(t *testing.T) {
 	// through the plan usage, Codex hooks or sign-in routes that would fetch,
 	// start Codex or act.
 	for _, r := range d.requests() {
-		for _, never := range []string{"plan-usage", "agent-hooks", "/api/github-auth/", "refresh"} {
+		for _, never := range []string{"plan-usage", "agent-hooks", "settings/decisions", "/api/github-auth/", "refresh"} {
 			if strings.Contains(r, never) {
 				t.Errorf("a tool read %s", r)
 			}
@@ -290,7 +297,9 @@ func TestSettingsAndRepositoryToolsForActions(t *testing.T) {
 			t.Errorf("%s is not repository-scoped", tool)
 		}
 	}
-	foreign := []string{"other/api", "OTHER_NOTICE", "FOREIGN_PROMPT", "FOREIGN_INHERITED", "FOREIGN_CLONE", "FOREIGN_NAME", "c9"}
+	// Another repository's, and the person's global Settings a repository's prompts
+	// carry (the inherited text, the rules a running global text dropped).
+	foreign := []string{"other/api", "OTHER_NOTICE", "FOREIGN_PROMPT", "FOREIGN_INHERITED", "FOREIGN_CLONE", "FOREIGN_NAME", "c9", "INHERITED TEXT", "GLOBAL_INHERITED_TEXT", "GLOBAL_DROPPED_RULE"}
 	// Its own repository, by default and by name.
 	for _, tt := range []struct {
 		tool string
@@ -513,5 +522,78 @@ func TestEverySettingsSectionHasItsTools(t *testing.T) {
 				t.Errorf("the %s page has no section %q", tt.page, section)
 			}
 		}
+	}
+}
+
+// A repository's prompts carry the person's global custom text (inherited)
+// and, where it runs, the safety rules it dropped. A chat reads them, as the
+// app shows them; an action, which never reads Settings, does not.
+func TestRepositoryPromptsWithholdTheGlobalTextFromActions(t *testing.T) {
+	s, _ := settingsServer(t)
+	type entry struct {
+		ID                 string    `json:"id"`
+		Source             string    `json:"source"`
+		CustomText         *string   `json:"custom_text"`
+		InheritedText      *string   `json:"inherited_text"`
+		MissingSafetyRules *[]string `json:"missing_safety_rules"`
+		Withheld           string    `json:"withheld"`
+	}
+	read := func(consumer Consumer, id string) entry {
+		t.Helper()
+		text, err := runDirect(t, s, consumer, nil, "repository_prompts", map[string]any{"repository": "acme/web", "id": id})
+		var e entry
+		if err != nil || json.Unmarshal([]byte(text), &e) != nil {
+			t.Fatalf("%s %s: %v %s", consumer.Kind, id, err, text)
+		}
+		return e
+	}
+	chat, action := Consumer{Kind: Chat}, Consumer{Kind: Action, Repository: "acme/web", PullRequest: 7}
+	if e := read(chat, "fix-checks"); e.InheritedText == nil || *e.InheritedText != "GLOBAL_INHERITED_TEXT" || e.MissingSafetyRules == nil || len(*e.MissingSafetyRules) != 1 || e.Withheld != "" {
+		t.Errorf("a chat's global-sourced prompt: %+v", e)
+	}
+	if e := read(chat, "fix"); e.InheritedText == nil || *e.InheritedText != "INHERITED TEXT" {
+		t.Errorf("a chat's repository prompt: %+v", e)
+	}
+	// The action keeps the repository's own: its custom text, which text runs
+	// and the rules its own text dropped.
+	if e := read(action, "fix-checks"); e.Source != "global" || e.InheritedText != nil || e.MissingSafetyRules != nil || e.Withheld == "" {
+		t.Errorf("an action's global-sourced prompt: %+v", e)
+	}
+	if e := read(action, "fix"); e.Source != "repository" || e.CustomText == nil || *e.CustomText != "REPOSITORY CUSTOM TEXT" || e.InheritedText != nil ||
+		e.MissingSafetyRules == nil || len(*e.MissingSafetyRules) != 1 || e.Withheld == "" {
+		t.Errorf("an action's repository prompt: %+v", e)
+	}
+	text, err := runDirect(t, s, action, nil, "repository_prompts", map[string]any{"repository": "acme/web"})
+	if err != nil || !strings.Contains(text, `"id":"fix-checks"`) || !strings.Contains(text, `"missing_safety_rules":null`) || strings.Contains(text, "GLOBAL_DROPPED_RULE") {
+		t.Errorf("an action's prompt list: %v %s", err, text)
+	}
+}
+
+// A blank repository is no repository: the page keeps it trimmed, refuses a
+// section with it, and lists no repository page tool.
+func TestABlankRepositoryIsNoRepository(t *testing.T) {
+	s, _ := settingsServer(t)
+	token, id := chat(t, s)
+	if err := s.Registry.SetPage(id, PageContext{Page: PageRepositories, Repository: " \t ", Section: "prompts"}); err == nil {
+		t.Error("a section with a blank repository was accepted")
+	}
+	setPage(t, s, id, PageContext{Page: PageRepositories, Repository: "  "})
+	if page, _ := s.Registry.Page(id); page.Repository != "" {
+		t.Errorf("the page keeps %q", page.Repository)
+	}
+	var page struct {
+		Tools        []string `json:"tools"`
+		SectionTools []string `json:"section_tools"`
+	}
+	out(t, s, token, "current_page", nil, &page)
+	for _, tool := range repositoryToolNames {
+		if slices.Contains(page.Tools, tool) {
+			t.Errorf("a blank repository lists %s: %v", tool, page.Tools)
+		}
+	}
+	setPage(t, s, id, PageContext{Page: PageRepositories, Repository: " acme/web ", Section: "prompts"})
+	out(t, s, token, "current_page", nil, &page)
+	if p, _ := s.Registry.Page(id); p.Repository != "acme/web" || !slices.Equal(page.SectionTools, []string{"repository_prompts"}) {
+		t.Errorf("a padded repository: %q %+v", p.Repository, page)
 	}
 }

@@ -12,6 +12,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/baum-ai/baum/internal/agentcontext"
 	"github.com/baum-ai/baum/internal/agentplugins"
@@ -42,6 +43,8 @@ type settingsFixture struct {
 	clonePath string
 	fetches   *atomic.Int32
 	hookReads *atomic.Int32
+	// resolutions counts the decision model's resolutions.
+	resolutions *atomic.Int32
 }
 
 const (
@@ -104,7 +107,7 @@ func newSettingsFixture(t *testing.T) *settingsFixture {
 
 	fetches := new(atomic.Int32)
 	plans := &planusage.Service{Sources: []planusage.Source{countingPlanSource{fetches}}}
-	hookReads := new(atomic.Int32)
+	hookReads, resolutions := new(atomic.Int32), new(atomic.Int32)
 	var hooks uiserver.LastHookTrust
 	report := doctor.Report{Status: doctor.StatusProblem, Checks: []doctor.Check{
 		{ID: "claude", Label: "claude", Status: doctor.StatusOK, Detail: "DETAIL SENTINEL", Path: home + "/bin/claude", Version: "2.1.0", Source: "PATH", Fix: "FIX SENTINEL"},
@@ -124,7 +127,11 @@ func newSettingsFixture(t *testing.T) *settingsFixture {
 			}
 			return out
 		},
+		// Each resolution is counted, and takes a while, as running the
+		// harnesses' version checks does.
 		DecisionModel: func(context.Context, repos.Preferences) uiserver.DecisionModel {
+			resolutions.Add(1)
+			time.Sleep(20 * time.Millisecond)
 			return uiserver.DecisionModel{Backend: "claude", Model: "haiku"}
 		},
 		HookTrust: hooks.Wrap(func(context.Context) agentplugins.HookTrust {
@@ -137,10 +144,11 @@ func newSettingsFixture(t *testing.T) *settingsFixture {
 	api := local.Handler()
 	t.Cleanup(api.Close)
 	mcp := agentcontext.New(agentcontext.Options{API: api, Version: "test", PlanChoices: local.CachedPlanChoices, CodexHooks: hooks.Get,
+		DecisionSettings: (&uiserver.DecisionViews{API: local}).Get,
 		Clone: func(ctx context.Context, id string) (string, error) {
 			return uiserver.RegisteredRepository(ctx, registry, id)
 		}})
-	f := &settingsFixture{readFixture: &readFixture{api: api, mcp: mcp}, home: home, clonePath: clone.Path, fetches: fetches, hookReads: hookReads}
+	f := &settingsFixture{readFixture: &readFixture{api: api, mcp: mcp}, home: home, clonePath: clone.Path, fetches: fetches, hookReads: hookReads, resolutions: resolutions}
 
 	// What the person set, through the app's own routes.
 	for _, put := range []struct{ method, path, body string }{
@@ -151,6 +159,7 @@ func newSettingsFixture(t *testing.T) *settingsFixture {
 		{"PUT", "/api/automatic", `{"enabled":true,"pull_requests":"authored","fix_backend":"codex","fix_model":"gpt-5"}`},
 		{"PUT", "/api/agent-requests/settings", `{"codex_approvals":true}`},
 		{"PUT", "/api/settings/prompts/fix", `{"text":"Global custom fix prompt."}`},
+		{"PUT", "/api/settings/prompts/fix-checks", `{"text":"Global custom checks prompt."}`},
 		{"PUT", "/api/repositories/owner/repo/prompts/fix", `{"text":"Repository custom fix prompt."}`},
 		{"PUT", "/api/repositories/other/repo/prompts/fix", `{"text":"FOREIGN repository prompt."}`},
 		{"PUT", "/api/repositories/owner/repo/settings", `{"automatic":true,"decisions":false}`},
@@ -289,14 +298,35 @@ func TestSettingsToolsReadTheRealRoutesAndNoSecret(t *testing.T) {
 		Prompts []map[string]json.RawMessage `json:"prompts"`
 	}
 	_ = json.Unmarshal(f.route(t, "/api/repositories/owner/repo/prompts"), &own)
-	for _, token := range []string{chat, action} {
-		text = call(token, "repository_prompts", map[string]any{"repository": "owner/repo", "id": "fix"})
-		for _, entry := range own.Prompts {
-			if string(entry["id"]) == `"fix"` {
-				readSameJSON(t, "repository_prompts", json.RawMessage(text), mustJSON(t, entry))
+	// A chat reads a repository's prompt as the route gives it, with the
+	// global custom text it inherits; an action reads it without that, nor
+	// the safety rules a running global text dropped.
+	for name, token := range map[string]string{"chat": chat, "action": action} {
+		for _, id := range []string{"fix", "fix-checks"} {
+			text = call(token, "repository_prompts", map[string]any{"repository": "owner/repo", "id": id})
+			for _, entry := range own.Prompts {
+				if string(entry["id"]) != `"`+id+`"` {
+					continue
+				}
+				if name == "action" {
+					if string(entry["source"]) == `"global"` {
+						entry["missing_safety_rules"] = json.RawMessage("null")
+					}
+					delete(entry, "inherited_text")
+					entry["withheld"] = readField(t, text, "withheld")
+				}
+				readSameJSON(t, name+" repository_prompts "+id, json.RawMessage(text), mustJSON(t, entry))
+			}
+			noLeak("repository_prompts", text, "FOREIGN")
+			if name == "action" {
+				noLeak("an action's repository_prompts", text, "Global custom", `"inherited_text"`)
+			} else if !strings.Contains(text, "Global custom") {
+				t.Errorf("a chat's repository prompt %s lacks the inherited text: %s", id, text)
 			}
 		}
-		noLeak("repository_prompts", text, "FOREIGN")
+	}
+	if text = call(action, "repository_prompts", map[string]any{"repository": "owner/repo", "id": "fix-checks"}); !strings.Contains(text, `"source":"global"`) || !strings.Contains(text, `"missing_safety_rules":null`) {
+		t.Errorf("an action's global-sourced prompt: %s", text)
 	}
 	if text = call(chat, "prompt", map[string]any{"id": "fix", "repository": "other/repo"}); !strings.Contains(text, "FOREIGN repository prompt.") {
 		t.Errorf("a chat's prompt of another repository: %s", text)
@@ -331,6 +361,143 @@ func TestSettingsToolsReadTheRealRoutesAndNoSecret(t *testing.T) {
 			t.Errorf("an action called %s: %s", tool, w.Body.String())
 		}
 	}
+}
+
+// settings_reviews resolves decision capture's model through DecisionViews:
+// however many calls arrive together or in a row, one resolution (which runs
+// the harnesses' version checks) serves them while the settings are
+// unchanged, and a change resolves again. The app's route still resolves on
+// every read.
+func TestSettingsReviewsShareOneDecisionResolution(t *testing.T) {
+	f := newSettingsFixture(t)
+	chat, _ := f.tokens(t)
+	f.resolutions.Store(0)
+	var wg sync.WaitGroup
+	for range 8 {
+		wg.Go(func() {
+			if text, failed := f.callTool(t, chat, "settings_reviews", nil); failed || !strings.Contains(text, `"effective_model":"haiku"`) {
+				t.Errorf("settings_reviews: %v %s", failed, text)
+			}
+		})
+	}
+	wg.Wait()
+	for range 5 {
+		f.callTool(t, chat, "settings_reviews", nil)
+	}
+	if n := f.resolutions.Load(); n != 1 {
+		t.Errorf("13 calls resolved the decision model %d times", n)
+	}
+	// A change to the settings is seen at once, with one more resolution.
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest("PUT", "http://local/api/settings/decisions", strings.NewReader(`{"enabled":false}`))
+	r.Header.Set("Content-Type", "application/json")
+	f.api.ServeHTTP(w, r)
+	if w.Code != 200 {
+		t.Fatalf("PUT decisions: %d %s", w.Code, w.Body.String())
+	}
+	f.resolutions.Store(0)
+	for range 3 {
+		if text, _ := f.callTool(t, chat, "settings_reviews", nil); !strings.Contains(text, `"decision_capture":{"enabled":false`) {
+			t.Errorf("settings_reviews after the change: %s", text)
+		}
+	}
+	if n := f.resolutions.Load(); n != 1 {
+		t.Errorf("the changed settings resolved %d times", n)
+	}
+	// The app's route is unchanged.
+	f.route(t, "/api/settings/decisions")
+	f.route(t, "/api/settings/decisions")
+	if n := f.resolutions.Load(); n != 3 {
+		t.Errorf("the route resolved %d times in two reads", n-1)
+	}
+}
+
+// The GitHub connection's token, whether from the environment or the app's
+// own sign-in, never reaches the Settings tools; the sign-in's organizations
+// check, which uses it, runs and its answer is shown without it.
+func TestSettingsConnectionsCarryNoGitHubToken(t *testing.T) {
+	const envToken, savedToken = "SENTINEL_ENV_GITHUB_TOKEN_VALUE", "SENTINEL_SAVED_GITHUB_TOKEN_VALUE"
+	connect := func(t *testing.T, store *credentials) (*readFixture, *atomic.Int32) {
+		t.Helper()
+		ctx, cancel := context.WithCancel(context.Background())
+		t.Cleanup(cancel)
+		registry, _ := readRegistry(t)
+		t.Setenv("HOME", t.TempDir())
+		authorized := new(atomic.Int32)
+		manager := githubauth.NewWithOptions(store, githubauth.Options{Transport: githubTransport(func(r *http.Request) (*http.Response, error) {
+			if strings.Contains(r.Header.Get("Authorization"), savedToken) {
+				authorized.Add(1)
+			}
+			body := `[]`
+			switch r.URL.Path {
+			case "/user/memberships/orgs":
+				body = `[{"organization":{"login":"acme-corp"}},{"organization":{"login":"locked-org"}}]`
+			case "/user/orgs":
+				body = `[{"login":"acme-corp"}]`
+			case "/user":
+				body = `{"login":"octo","id":1}`
+			}
+			return &http.Response{StatusCode: 200, Header: http.Header{"X-Oauth-Scopes": {"repo, read:org"}}, Body: io.NopCloser(strings.NewReader(body)), Request: r}, nil
+		})})
+		connection := uiserver.NewGitHubAuthentication(ctx, manager, config.Config{}, nil)
+		connection.Organizations = func(ctx context.Context, refresh bool) (githubauth.OrganizationAccess, error) {
+			c, err := store.Load(ctx)
+			if err != nil {
+				return githubauth.OrganizationAccess{}, err
+			}
+			return manager.Organizations(ctx, c.AccessToken, refresh)
+		}
+		api := uiserver.LocalAPI{Registry: registry, Config: config.Default(), GitHubAuth: connection.Handler()}.Handler()
+		t.Cleanup(api.Close)
+		return &readFixture{api: api, mcp: agentcontext.New(agentcontext.Options{API: api, Version: "test"})}, authorized
+	}
+	noToken := func(t *testing.T, what, text string) {
+		t.Helper()
+		for _, leak := range []string{"SENTINEL", envToken, savedToken, "GITHUB_TOKEN", "access_token"} {
+			if strings.Contains(text, leak) {
+				t.Errorf("%s carries %q: %s", what, leak, text)
+			}
+		}
+	}
+	await := func(t *testing.T, f *readFixture, chat, want string) string {
+		t.Helper()
+		var text string
+		for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); time.Sleep(10 * time.Millisecond) {
+			text, _ = f.callTool(t, chat, "settings_connections", nil)
+			noToken(t, "settings_connections", text)
+			if strings.Contains(text, want) {
+				return text
+			}
+		}
+		t.Fatalf("settings_connections never showed %s: %s", want, text)
+		return ""
+	}
+
+	t.Run("environment", func(t *testing.T) {
+		t.Setenv("GITHUB_TOKEN", envToken)
+		t.Setenv("GH_TOKEN", "")
+		f, _ := connect(t, &credentials{})
+		if body := string(f.route(t, "/api/github-auth")); !strings.Contains(body, "environment variable GITHUB_TOKEN") {
+			t.Fatalf("the route does not name the environment: %s", body)
+		}
+		chat, _ := f.tokens(t)
+		await(t, f, chat, `"source":"environment","override":true`)
+	})
+
+	t.Run("saved sign-in", func(t *testing.T) {
+		t.Setenv("GITHUB_TOKEN", "")
+		t.Setenv("GH_TOKEN", "")
+		f, authorized := connect(t, &credentials{c: githubauth.Credential{AccessToken: savedToken, Login: "octo", ID: 1}})
+		chat, _ := f.tokens(t)
+		text := await(t, f, chat, `"organizations_not_reachable":["locked-org"]`)
+		if !strings.Contains(text, `"state":"connected"`) || !strings.Contains(text, `"login":"octo"`) || !strings.Contains(text, `"source":"baum"`) || !strings.Contains(text, `"saved":true`) {
+			t.Errorf("settings_connections: %s", text)
+		}
+		// The organizations check ran with the saved token.
+		if authorized.Load() == 0 {
+			t.Error("the organizations check never used the saved sign-in")
+		}
+	})
 }
 
 func mustJSON(t *testing.T, v any) json.RawMessage {

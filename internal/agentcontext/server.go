@@ -60,28 +60,35 @@ type Options struct {
 	// which a tool call must never do. ok is false when none was read. Nil
 	// has the tool report none.
 	CodexHooks func() (state string, at time.Time, ok bool)
+	// DecisionSettings returns what GET /api/settings/decisions answers
+	// ({"decisions": ...}). Resolving an auto backend runs the harnesses'
+	// version checks, so it must share and reuse a resolution for unchanged
+	// settings rather than run them on every tool call. Nil has the tool
+	// report decision capture unavailable.
+	DecisionSettings func(ctx context.Context) (json.RawMessage, error)
 }
 
 // Server is the MCP server. Register tools and pages before serving.
 type Server struct {
-	Registry    *Registry
-	Proposals   *Proposals
-	reader      *Reader
-	envelope    *envelope
-	version     string
-	planUsage   func(ctx context.Context) ([]json.RawMessage, error)
-	pickList    func(ctx context.Context, query string) (PickList, error)
-	planChoices func(ctx context.Context) ([]json.RawMessage, error)
-	codexHooks  func() (string, time.Time, bool)
-	mu          sync.RWMutex
-	tools       []Tool
-	pages       map[string]PageSpec
+	Registry         *Registry
+	Proposals        *Proposals
+	reader           *Reader
+	envelope         *envelope
+	version          string
+	planUsage        func(ctx context.Context) ([]json.RawMessage, error)
+	pickList         func(ctx context.Context, query string) (PickList, error)
+	planChoices      func(ctx context.Context) ([]json.RawMessage, error)
+	codexHooks       func() (string, time.Time, bool)
+	decisionSettings func(ctx context.Context) (json.RawMessage, error)
+	mu               sync.RWMutex
+	tools            []Tool
+	pages            map[string]PageSpec
 }
 
 func New(opts Options) *Server {
 	registry := NewRegistry()
 	s := &Server{Registry: registry, reader: NewReader(opts.API, opts.Clone), envelope: newEnvelope(registry.live), version: opts.Version, planUsage: opts.PlanUsage, pickList: opts.PickList,
-		planChoices: opts.PlanChoices, codexHooks: opts.CodexHooks, pages: map[string]PageSpec{}}
+		planChoices: opts.PlanChoices, codexHooks: opts.CodexHooks, decisionSettings: opts.DecisionSettings, pages: map[string]PageSpec{}}
 	s.Proposals = newProposals(registry, func(page string) Proposer {
 		spec, _ := s.page(page)
 		return spec.Proposer
