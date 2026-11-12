@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"maps"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 )
@@ -43,6 +44,10 @@ type Consumer struct {
 	// forward its own session.
 	Session string `json:"session,omitempty"`
 }
+
+// sessionAgents are the agents a chat runs in, as livesessions and
+// agentrequests name them.
+var sessionAgents = []string{"claude-code", "codex"}
 
 // SessionKey is the Consumer.Session of an agent's session.
 func SessionKey(agent, id string) string { return agent + ":" + id }
@@ -176,9 +181,12 @@ func (c Consumer) validate() error {
 			return errors.New("a chat is bound to no repository or pull request")
 		}
 		if c.Session != "" {
+			// The agent is named as the live sessions and agent requests
+			// name it, so a session spelled otherwise can never fail to
+			// match the chat's own requests.
 			agent, id, ok := strings.Cut(c.Session, ":")
-			if !ok || agent == "" || id == "" || len(c.Session) > maxPageText {
-				return errors.New(`a chat's session is "agent:id"`)
+			if !ok || !slices.Contains(sessionAgents, agent) || !validSegment(id) {
+				return fmt.Errorf(`a chat's session is "agent:id", the agent one of %s`, strings.Join(sessionAgents, ", "))
 			}
 		}
 	case Action:

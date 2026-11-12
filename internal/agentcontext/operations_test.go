@@ -94,6 +94,18 @@ func cancelOperation() Operation {
 	}
 }
 
+// confirm confirms a proposal as the app would: with the revision of the
+// summary it lists.
+func confirm(ctx context.Context, s *Server, consumer, id string) (OperationOutcome, error) {
+	seen := ""
+	for _, p := range s.Proposals.List(consumer) {
+		if p.ID == id && p.Operation != nil {
+			seen = p.Operation.Revision
+		}
+	}
+	return s.Proposals.Confirm(ctx, consumer, id, seen)
+}
+
 func operationServer(t *testing.T) (*Server, *countingAPI) {
 	t.Helper()
 	api := &countingAPI{jobs: map[string]string{"j1": "running", "j2": "running"}}
@@ -135,14 +147,14 @@ func TestOperationsRunOnlyOnConfirmAndOnce(t *testing.T) {
 	if err := s.Proposals.Save(ctx, id, p.ID, SaveInput{}); !errors.Is(err, ErrNotADiff) || api.runs.Load() != 0 {
 		t.Fatal("an operation was saved as a diff:", err)
 	}
-	if _, err := s.Proposals.Confirm(ctx, "someone-else", p.ID); !errors.Is(err, ErrUnknownProposal) || api.runs.Load() != 0 {
+	if _, err := confirm(ctx, s, "someone-else", p.ID); !errors.Is(err, ErrUnknownProposal) || api.runs.Load() != 0 {
 		t.Fatal("another consumer confirmed the operation:", err)
 	}
-	outcome, err := s.Proposals.Confirm(ctx, id, p.ID)
+	outcome, err := confirm(ctx, s, id, p.ID)
 	if err != nil || !outcome.OK() || outcome.Message != "OK" || api.runs.Load() != 1 || api.bodies[0] != `{"reason":"stuck"}` {
 		t.Fatal(outcome, err, api.bodies)
 	}
-	if _, err := s.Proposals.Confirm(ctx, id, p.ID); !errors.Is(err, ErrUnknownProposal) || api.runs.Load() != 1 {
+	if _, err := confirm(ctx, s, id, p.ID); !errors.Is(err, ErrUnknownProposal) || api.runs.Load() != 1 {
 		t.Fatal("a confirmed operation ran twice:", err)
 	}
 	if len(s.Proposals.List(id)) != 0 {
@@ -163,7 +175,7 @@ func TestConcurrentConfirmsRunOnce(t *testing.T) {
 	var ran atomic.Int32
 	for range 16 {
 		wg.Go(func() {
-			if _, err := s.Proposals.Confirm(ctx, id, p.ID); err == nil {
+			if _, err := confirm(ctx, s, id, p.ID); err == nil {
 				ran.Add(1)
 			} else if !errors.Is(err, ErrUnknownProposal) {
 				t.Error(err)
@@ -188,7 +200,7 @@ func TestDismissedOperationsNeverRun(t *testing.T) {
 	if err := s.Proposals.Dismiss(id, p.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.Proposals.Confirm(ctx, id, p.ID); !errors.Is(err, ErrUnknownProposal) || api.runs.Load() != 0 {
+	if _, err := confirm(ctx, s, id, p.ID); !errors.Is(err, ErrUnknownProposal) || api.runs.Load() != 0 {
 		t.Fatal("a dismissed operation ran:", err)
 	}
 }
@@ -206,7 +218,7 @@ func TestConfirmNeedsTheSamePageAndALiveToken(t *testing.T) {
 	// proposed on.
 	for _, page := range []PageContext{{Page: PageJob, Job: "j2"}, {Page: PageJobs}} {
 		setPage(t, s, id, page)
-		if _, err := s.Proposals.Confirm(ctx, id, p.ID); !errors.Is(err, ErrNotCurrentPage) || api.runs.Load() != 0 {
+		if _, err := confirm(ctx, s, id, p.ID); !errors.Is(err, ErrNotCurrentPage) || api.runs.Load() != 0 {
 			t.Fatalf("%+v: %v", page, err)
 		}
 	}
@@ -216,14 +228,14 @@ func TestConfirmNeedsTheSamePageAndALiveToken(t *testing.T) {
 	api.mu.Lock()
 	api.jobs["j1"] = "done"
 	api.mu.Unlock()
-	if _, err := s.Proposals.Confirm(ctx, id, p.ID); err == nil || api.runs.Load() != 0 || len(s.Proposals.List(id)) != 1 {
+	if _, err := confirm(ctx, s, id, p.ID); err == nil || api.runs.Load() != 0 || len(s.Proposals.List(id)) != 1 {
 		t.Fatal("an operation on a target that left the page ran:", err)
 	}
 	api.mu.Lock()
 	api.jobs["j1"] = "running"
 	api.mu.Unlock()
 	revoke()
-	if _, err := s.Proposals.Confirm(ctx, id, p.ID); err == nil || api.runs.Load() != 0 {
+	if _, err := confirm(ctx, s, id, p.ID); err == nil || api.runs.Load() != 0 {
 		t.Fatal("a revoked consumer's operation ran:", err)
 	}
 }
@@ -254,7 +266,7 @@ func TestConfirmRacingARevoke(t *testing.T) {
 		t.Fatal(err)
 	}
 	confirming.Store(true)
-	if _, err := s.Proposals.Confirm(ctx, id, p.ID); !errors.Is(err, ErrUnknownConsumer) || api.runs.Load() != 0 {
+	if _, err := confirm(ctx, s, id, p.ID); !errors.Is(err, ErrUnknownConsumer) || api.runs.Load() != 0 {
 		t.Fatal("an operation ran after its consumer was revoked:", err)
 	}
 }
@@ -311,7 +323,7 @@ func TestOperationsOnlyOnTheirPagesAndOnlyForChats(t *testing.T) {
 	if err != nil || diff.Kind != ProposalDiff {
 		t.Fatal(diff, err)
 	}
-	if _, err := s.Proposals.Confirm(ctx, id, diff.ID); !errors.Is(err, ErrNotAnOperation) {
+	if _, err := confirm(ctx, s, id, diff.ID); !errors.Is(err, ErrNotAnOperation) {
 		t.Fatal(err)
 	}
 }
@@ -341,7 +353,7 @@ func TestARefusedOperationReturnsTheRoutesAnswer(t *testing.T) {
 		t.Fatal(err)
 	}
 	api.status.Store(http.StatusConflict)
-	outcome, err := s.Proposals.Confirm(ctx, id, p.ID)
+	outcome, err := confirm(ctx, s, id, p.ID)
 	if err != nil || outcome.OK() || outcome.Status != http.StatusConflict || outcome.Message != "the job already finished" {
 		t.Fatal(outcome, err)
 	}
@@ -407,13 +419,15 @@ func TestAChatsSessionIsChecked(t *testing.T) {
 		{Kind: Chat, Session: "claude"},
 		{Kind: Chat, Session: ":id"},
 		{Kind: Chat, Session: "claude:"},
-		{Kind: Action, Repository: "acme/web", PullRequest: 1, Session: "claude:s1"},
+		{Kind: Chat, Session: "claude:s1"},
+		{Kind: Chat, Session: "claude-code:a/b"},
+		{Kind: Action, Repository: "acme/web", PullRequest: 1, Session: "claude-code:s1"},
 	} {
 		if _, _, _, err := r.Mint(c); err == nil {
 			t.Errorf("%+v was minted", c)
 		}
 	}
-	if _, _, revoke, err := r.Mint(Consumer{Kind: Chat, Session: SessionKey("claude", "s1")}); err != nil {
+	if _, _, revoke, err := r.Mint(Consumer{Kind: Chat, Session: SessionKey("claude-code", "s1")}); err != nil {
 		t.Fatal(err)
 	} else {
 		revoke()
@@ -423,24 +437,24 @@ func TestAChatsSessionIsChecked(t *testing.T) {
 	defer revokeChat()
 	_, action, revokeAction, _ := r.Mint(Consumer{Kind: Action, Repository: "acme/web", PullRequest: 1})
 	defer revokeAction()
-	for _, bad := range []string{"", "claude", "claude:"} {
+	for _, bad := range []string{"", "claude", "claude:", "claude:s1", "cursor:s1", "claude-code:a/b", "claude-code:.."} {
 		if err := r.SetSession(chat, bad); err == nil {
 			t.Errorf("session %q was set", bad)
 		}
 	}
-	if err := r.SetSession(action, "claude:s1"); err == nil {
+	if err := r.SetSession(action, "claude-code:s1"); err == nil {
 		t.Error("an action's session was set")
 	}
-	if err := r.SetSession(chat, "claude:s1"); err != nil {
+	if err := r.SetSession(chat, "claude-code:s1"); err != nil {
 		t.Fatal(err)
 	}
-	if err := r.SetSession(chat, "claude:s1"); err != nil {
+	if err := r.SetSession(chat, "claude-code:s1"); err != nil {
 		t.Fatal("setting the same session again:", err)
 	}
-	if err := r.SetSession(chat, "claude:s2"); err == nil {
+	if err := r.SetSession(chat, "claude-code:s2"); err == nil {
 		t.Error("the session was swapped")
 	}
-	if c, _ := r.Consumer(chat); c.Session != "claude:s1" {
+	if c, _ := r.Consumer(chat); c.Session != "claude-code:s1" {
 		t.Errorf("session %q", c.Session)
 	}
 }

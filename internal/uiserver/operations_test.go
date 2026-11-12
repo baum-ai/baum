@@ -12,6 +12,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -53,9 +54,15 @@ type writeLog struct {
 	mu     sync.Mutex
 	writes []string
 	raw    []string
+	// failSettings fails GET /api/settings, as a settings read that errs.
+	failSettings atomic.Bool
 }
 
 func (l *writeLog) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodGet && r.URL.Path == "/api/settings" && l.failSettings.Load() {
+		http.Error(w, "unavailable", http.StatusInternalServerError)
+		return
+	}
 	if r.Method != http.MethodGet {
 		l.mu.Lock()
 		l.writes = append(l.writes, r.Method+" "+r.URL.Path)
@@ -312,25 +319,12 @@ func newOpFixture(t *testing.T) *opFixture {
 		Focus: f.focus,
 	}
 
-	// One pending permission request, of s1.
-	f.requests = &agentrequests.Store{Sessions: tracker, Database: filepath.Join(dir, "requests.sqlite")}
-	askCtx, cancel := context.WithCancel(ctx)
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		_, _ = f.requests.Ask(askCtx, agentrequests.Ask{Agent: "claude-code", SessionID: "s1", Kind: agentrequests.KindPermission, Tool: "Bash",
-			StartedAt: time.Now().Add(-time.Second), Input: []agentrequests.Row{{Label: "Command", Value: longCommand, Code: true}}, Suggestions: []string{"Always allow go test"}})
-	}()
-	t.Cleanup(func() { cancel(); <-done })
-	for deadline := time.Now().Add(5 * time.Second); ; {
-		if pending, _ := f.requests.List(); len(pending) > 0 {
-			f.request = pending[0].ID
-			break
-		} else if time.Now().After(deadline) {
-			t.Fatal("the request was not asked")
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
+	// One pending permission request, of s1. The store masks a planted
+	// secret, as it masks what agents write.
+	f.requests = &agentrequests.Store{Sessions: tracker, Database: filepath.Join(dir, "requests.sqlite"),
+		Mask: func(text string) string { return strings.ReplaceAll(text, "SECRET-TOKEN", "[masked]") }}
+	f.request = f.ask(agentrequests.Ask{Agent: "claude-code", SessionID: "s1", Kind: agentrequests.KindPermission, Tool: "Bash",
+		Input: []agentrequests.Row{{Label: "Command", Value: longCommand, Code: true}}, Suggestions: []string{"Always allow go test"}})
 
 	inbox := &inboxqueue.Service{Index: snapshot, Jobs: func() []jobs.Job { return nil }, Groups: f.groups.List,
 		Snoozes: func() (json.RawMessage, error) { return nil, nil }}
@@ -395,6 +389,43 @@ func (f *opFixture) propose(tool string, args any) (map[string]any, string) {
 		f.t.Fatalf("%s answered %s", tool, text)
 	}
 	return receipt, ""
+}
+
+// ask has an agent ask a request, held until the test ends, and returns its
+// id once it is pending.
+func (f *opFixture) ask(a agentrequests.Ask) string {
+	f.t.Helper()
+	before, _ := f.requests.List()
+	a.StartedAt = time.Now().Add(-time.Second)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_, _ = f.requests.Ask(ctx, a)
+	}()
+	f.t.Cleanup(func() { cancel(); <-done })
+	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); time.Sleep(5 * time.Millisecond) {
+		pending, _ := f.requests.List()
+		for _, r := range pending {
+			if !slices.ContainsFunc(before, func(b agentrequests.Request) bool { return b.ID == r.ID }) {
+				return r.ID
+			}
+		}
+	}
+	f.t.Fatal("the request was not asked")
+	return ""
+}
+
+// confirm confirms a proposal as the app would: with the revision of the
+// summary it lists.
+func (f *opFixture) confirm(ctx context.Context, id string) (agentcontext.OperationOutcome, error) {
+	seen := ""
+	for _, p := range f.mcp.Proposals.List(f.id) {
+		if p.ID == id && p.Operation != nil {
+			seen = p.Operation.Revision
+		}
+	}
+	return f.mcp.Proposals.Confirm(ctx, f.id, id, seen)
 }
 
 func (f *opFixture) proposal(id string) agentcontext.Proposal {
@@ -602,7 +633,7 @@ func TestEachOperationRunsItsRouteOnConfirm(t *testing.T) {
 				t.Errorf("%s: the receipt holds the summary %q", tt.op, detail)
 			}
 		}
-		outcome, err := f.mcp.Proposals.Confirm(ctx, f.id, p.ID)
+		outcome, err := f.confirm(ctx, p.ID)
 		if err != nil || !outcome.OK() {
 			t.Errorf("%s: %+v %v", tt.op, outcome, err)
 			continue
@@ -613,7 +644,7 @@ func TestEachOperationRunsItsRouteOnConfirm(t *testing.T) {
 			t.Errorf("%s ran %v, its route is %s %s", tt.op, writes, op.Method, op.Route)
 		}
 		tt.effect(t, f)
-		if _, err := f.mcp.Proposals.Confirm(ctx, f.id, p.ID); !errors.Is(err, agentcontext.ErrUnknownProposal) || len(f.log.take()) != 0 {
+		if _, err := f.confirm(ctx, p.ID); !errors.Is(err, agentcontext.ErrUnknownProposal) || len(f.log.take()) != 0 {
 			t.Errorf("%s ran twice: %v", tt.op, err)
 		}
 	}
@@ -636,7 +667,7 @@ func TestTheRoutesOwnValidationApplies(t *testing.T) {
 		if failed != "" {
 			t.Fatalf("%s: %s", tool, failed)
 		}
-		outcome, err := f.mcp.Proposals.Confirm(ctx, f.id, receipt["id"].(string))
+		outcome, err := f.confirm(ctx, receipt["id"].(string))
 		if err != nil || outcome.Status != status || outcome.Message == "" {
 			t.Fatalf("%s: %+v %v", tool, outcome, err)
 		}
@@ -705,7 +736,7 @@ func TestAChatNeverAnswersItsOwnRequests(t *testing.T) {
 	if err := f.requests.Answer(f.request, agentrequests.Reply{Behavior: "allow"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.mcp.Proposals.Confirm(ctx, f.id, receipt["id"].(string)); err == nil || len(f.log.take()) != 0 {
+	if _, err := f.confirm(ctx, receipt["id"].(string)); err == nil || len(f.log.take()) != 0 {
 		t.Fatal("an answered request was answered again:", err)
 	}
 	if len(f.mcp.Proposals.List(id)) != 0 {
@@ -726,13 +757,13 @@ func TestConfirmAfterNavigationOrRevokeRunsNothing(t *testing.T) {
 	id := receipt["id"].(string)
 	for _, page := range []agentcontext.PageContext{forkPullPage, {Page: agentcontext.PageInbox}} {
 		f.page(page)
-		if _, err := f.mcp.Proposals.Confirm(ctx, f.id, id); !errors.Is(err, agentcontext.ErrNotCurrentPage) {
+		if _, err := f.confirm(ctx, id); !errors.Is(err, agentcontext.ErrNotCurrentPage) {
 			t.Fatal(err)
 		}
 	}
 	f.page(pullPage)
 	f.revoke()
-	if _, err := f.mcp.Proposals.Confirm(ctx, f.id, id); err == nil {
+	if _, err := f.confirm(ctx, id); err == nil {
 		t.Fatal("a revoked chat's operation was confirmed")
 	}
 	if writes, merged := f.log.take(), f.github.take(); len(writes) != 0 || len(merged) != 0 {
@@ -780,7 +811,7 @@ func TestOperationsCallOnlyTheirOwnRoute(t *testing.T) {
 			if failed != "" {
 				continue
 			}
-			_, _ = f.mcp.Proposals.Confirm(ctx, f.id, receipt["id"].(string))
+			_, _ = f.confirm(ctx, receipt["id"].(string))
 		}
 		for _, write := range f.log.take() {
 			method, path, _ := strings.Cut(write, " ")

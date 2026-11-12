@@ -3,6 +3,8 @@ package agentcontext
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -146,9 +148,15 @@ func (s OperationSummary) clone() OperationSummary {
 }
 
 // equal reports whether two summaries say the same.
-func (s OperationSummary) equal(o OperationSummary) bool {
-	return s.Action == o.Action && s.Model == o.Model && s.Effort == o.Effort && s.Paid == o.Paid &&
-		s.Irreversible == o.Irreversible && slices.Equal(s.Details, o.Details)
+// revision identifies what a summary says: the hex SHA-256 of its JSON. The
+// app shows a summary with its revision and confirms with it.
+func (s OperationSummary) revision() string {
+	raw, err := json.Marshal(s)
+	if err != nil {
+		return ""
+	}
+	sum := sha256.Sum256(raw)
+	return hex.EncodeToString(sum[:])
 }
 
 // OperationProposal is what an operation proposal holds: the operation's
@@ -157,13 +165,16 @@ type OperationProposal struct {
 	Name    string           `json:"name"`
 	Request OperationRequest `json:"request"`
 	Summary OperationSummary `json:"summary"`
+	// Revision is the summary's revision, which Confirm takes back: the
+	// app confirms the summary it showed, and nothing else.
+	Revision string `json:"revision"`
 }
 
 func (o *OperationProposal) clone() *OperationProposal {
 	if o == nil {
 		return nil
 	}
-	return &OperationProposal{Name: o.Name, Request: o.Request.clone(), Summary: o.Summary.clone()}
+	return &OperationProposal{Name: o.Name, Request: o.Request.clone(), Summary: o.Summary.clone(), Revision: o.Revision}
 }
 
 // OperationOutcome is what a confirmed operation's route answered: its
@@ -193,7 +204,7 @@ var (
 	ErrOperationChanged = errors.New("what the operation would do changed since it was shown: nothing ran; read it again and confirm")
 	// errNoSession is a chat whose agent session is not known, which may not
 	// answer requests: it could be answering its own.
-	errNoSession = errors.New("this chat's own session is not known, so it cannot answer agents' requests: the person answers them in the app")
+	errNoSession = errors.New("this chat's own session is not known, so it cannot answer agents' requests or act on sessions: the person does that in the app")
 )
 
 // operationMethods are the methods an operation may send.
@@ -449,7 +460,7 @@ func (p *Proposals) ProposeOperation(ctx context.Context, consumer, name string,
 	}
 	summary.Paid, summary.Irreversible = op.Paid, op.Irreversible
 	proposal := Proposal{ID: random(), Kind: ProposalOperation, Page: page.Page, Target: req.Target, Context: page,
-		Operation: &OperationProposal{Name: op.Name, Request: req.clone(), Summary: summary}}
+		Operation: &OperationProposal{Name: op.Name, Request: req.clone(), Summary: summary, Revision: summary.revision()}}
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if !p.registry.live(consumer) {
@@ -465,11 +476,14 @@ func (p *Proposals) ProposeOperation(ctx context.Context, consumer, name string,
 // Confirm runs an operation proposal the person confirmed, when the consumer
 // is live, the person still has the page it was made on open, showing the
 // same thing, and its target still belongs to that page (Describe again,
-// against the page as it is now). A proposal refused so stays open. The new
-// summary must read as the stored one, which the person read: when it does
-// not (another title, harness, model or effort), nothing runs, Confirm
+// against the page as it is now). A proposal refused so stays open. seen is
+// the revision of the summary the app showed the person
+// (OperationProposal.Revision): under the store's lock it must be the stored
+// summary's revision, and that must be the revision of the summary Describe
+// just wrote. When either differs (another title, harness, model or effort,
+// or a summary another Confirm replaced meanwhile), nothing runs, Confirm
 // returns ErrOperationChanged and the proposal stays open holding the new
-// summary, for the person to read and confirm again.
+// summary and its revision, for the person to read and confirm again.
 //
 // The proposal is then taken out of the store, under the lock a revoke and
 // every other Confirm take, before anything runs: of two Confirms only one
@@ -478,7 +492,7 @@ func (p *Proposals) ProposeOperation(ctx context.Context, consumer, name string,
 // operation's own route, with the route's own validation; Confirm returns
 // what the route answered. An error means nothing ran; an outcome whose
 // status is not 2xx is the route's own refusal.
-func (p *Proposals) Confirm(ctx context.Context, consumer, id string) (OperationOutcome, error) {
+func (p *Proposals) Confirm(ctx context.Context, consumer, id, seen string) (OperationOutcome, error) {
 	proposal, ok := p.find(consumer, id)
 	if !ok {
 		return OperationOutcome{}, ErrUnknownProposal
@@ -509,24 +523,24 @@ func (p *Proposals) Confirm(ctx context.Context, consumer, id string) (Operation
 		p.mu.Unlock()
 		return OperationOutcome{}, ErrUnknownConsumer
 	}
-	// What the person read must be what runs: a summary that reads
-	// differently now (another title, model or effort) refuses the confirm.
-	// The proposal stays open with the new summary, for the person to read
-	// and confirm again.
-	if !summary.equal(proposal.Operation.Summary) {
-		for i := range p.open[consumer] {
-			if open := &p.open[consumer][i]; open.ID == id && open.Operation != nil {
-				open.Operation.Summary = summary.clone()
-			}
-		}
+	i := slices.IndexFunc(p.open[consumer], func(open Proposal) bool { return open.ID == id && open.Operation != nil })
+	if i < 0 {
+		p.mu.Unlock()
+		return OperationOutcome{}, ErrUnknownProposal
+	}
+	// What the person read must be what runs: the summary the app showed
+	// (seen) must be the one stored now, which another Confirm may have
+	// replaced, and the one Describe just wrote. Otherwise nothing runs, and
+	// the proposal stays open holding the new summary, for the person to
+	// read and confirm again.
+	stored := p.open[consumer][i].Operation
+	if fresh := summary.revision(); seen == "" || seen != stored.Revision || fresh != stored.Revision {
+		stored.Summary, stored.Revision = summary.clone(), fresh
 		p.mu.Unlock()
 		return OperationOutcome{}, ErrOperationChanged
 	}
-	taken := p.removeLocked(consumer, id)
+	p.removeLocked(consumer, id)
 	p.mu.Unlock()
-	if !taken {
-		return OperationOutcome{}, ErrUnknownProposal
-	}
 	// Taken, it runs to the end: the person confirmed it, and a run cut off
 	// halfway would leave its outcome unknown.
 	return p.writer.run(context.WithoutCancel(ctx), op, req)

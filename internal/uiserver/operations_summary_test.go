@@ -63,7 +63,7 @@ func TestTheAgentsTextIsShownInFull(t *testing.T) {
 		if err := f.mcp.Proposals.Dismiss(f.id, p.ID); err != nil {
 			t.Fatal(err)
 		}
-		for _, hidden := range []string{"hi ‮evil", "a⁦b", "zero​width", "bell\a", "carriage\rreturn"} {
+		for _, hidden := range []string{"hi \u202eevil", "a\u2066b", "zero\u200bwidth", "bell\a", "carriage\rreturn"} {
 			tt.args["text"] = hidden
 			if _, failed := f.propose(tt.tool, tt.args); !strings.Contains(failed, "character") && !strings.Contains(failed, "carriage") {
 				t.Errorf("%s: %q was proposed: %s", tt.tool, hidden, failed)
@@ -81,7 +81,7 @@ func TestTheAgentsTextIsShownInFull(t *testing.T) {
 	if got, _ := field(f.proposal(receipt["id"].(string)), "Name"); got.Value != name || !got.ByAgent {
 		t.Fatalf("the name shows as %q", got.Value)
 	}
-	for _, bad := range []string{name + "ü", "Pair‮"} {
+	for _, bad := range []string{name + "ü", "Pair\u202e"} {
 		if _, failed := f.propose("propose_create_group", map[string]any{"name": bad, "repository": "owner/repo", "numbers": []int{7, 8}}); failed == "" {
 			t.Errorf("%q was proposed", bad)
 		}
@@ -108,7 +108,10 @@ func TestAnApprovalShowsWhatWasAsked(t *testing.T) {
 		t.Fatal(failed)
 	}
 	p := f.proposal(receipt["id"].(string))
-	if input, _ := field(p, "Input: Command"); input.Value != longCommand || !input.Quoted {
+	if name, _ := field(p, "Input name"); name.Value != "Command" || !name.Quoted {
+		t.Fatalf("input name %+v", name)
+	}
+	if input, _ := field(p, "Input value"); input.Value != longCommand || !input.Quoted {
 		t.Fatalf("the input shows as %d characters, ending %q", len([]rune(input.Value)), input.Value[max(0, len(input.Value)-12):])
 	}
 	if len([]rune(longCommand)) != 4000 {
@@ -133,7 +136,7 @@ func TestAnApprovalShowsWhatWasAsked(t *testing.T) {
 // no line break in a one-line field.
 func TestUntrustedTextIsShownPlain(t *testing.T) {
 	f := newOpFixture(t)
-	f.setTitle(7, "Add ‮search\nnow​\a")
+	f.setTitle(7, "Add \u202esearch\nnow\u200b\a")
 	f.page(pullPage)
 	receipt, failed := f.propose("propose_merge", map[string]any{})
 	if failed != "" {
@@ -143,7 +146,7 @@ func TestUntrustedTextIsShownPlain(t *testing.T) {
 	if title, _ := field(p, "Pull request title"); title.Value != "Add search now" || !title.Quoted || title.Multiline || title.ByAgent {
 		t.Fatalf("the title shows as %q", title.Value)
 	}
-	if strings.ContainsAny(p.Operation.Summary.Action, "‮\n") || strings.Contains(p.Operation.Summary.Action, "search") {
+	if strings.ContainsAny(p.Operation.Summary.Action, "\u202e\n") || strings.Contains(p.Operation.Summary.Action, "search") {
 		t.Fatalf("the sentence holds the title: %q", p.Operation.Summary.Action)
 	}
 }
@@ -161,7 +164,7 @@ func TestAChangedSummaryRefusesTheConfirm(t *testing.T) {
 	}
 	id := receipt["id"].(string)
 	f.setTitle(7, "Delete everything")
-	if _, err := f.mcp.Proposals.Confirm(ctx, f.id, id); !errors.Is(err, agentcontext.ErrOperationChanged) {
+	if _, err := f.confirm(ctx, id); !errors.Is(err, agentcontext.ErrOperationChanged) {
 		t.Fatal(err)
 	}
 	if writes, merged := f.log.take(), f.github.take(); len(writes) != 0 || len(merged) != 0 {
@@ -170,7 +173,7 @@ func TestAChangedSummaryRefusesTheConfirm(t *testing.T) {
 	if title, _ := field(f.proposal(id), "Pull request title"); title.Value != "Delete everything" {
 		t.Fatalf("the proposal shows %q", title.Value)
 	}
-	if outcome, err := f.mcp.Proposals.Confirm(ctx, f.id, id); err != nil || !outcome.OK() {
+	if outcome, err := f.confirm(ctx, id); err != nil || !outcome.OK() {
 		t.Fatal(outcome, err)
 	}
 	if merged := f.github.take(); len(merged) != 1 {
@@ -288,7 +291,7 @@ func TestOperationsKeepToThePagesTarget(t *testing.T) {
 	if failed != "" {
 		t.Fatal(failed)
 	}
-	if _, err := f.mcp.Proposals.Confirm(ctx, f.id, receipt["id"].(string)); err != nil {
+	if _, err := f.confirm(ctx, receipt["id"].(string)); err != nil {
 		t.Fatal(err)
 	}
 	fix := f.queue.OfPullRequest("owner/repo", 7)[0]
