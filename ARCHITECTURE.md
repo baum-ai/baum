@@ -5166,12 +5166,13 @@ the action's repository inside the reader, so the rest never reaches the agent
 (`byFilter`). Any other route, and any parameter its entry does not list, is
 refused. The table holds:
 
-- by `repository` (parameters `pr`, and as listed): `GET /api/timeline/decisions`
+- by `repository` (only the parameters listed, no `pr`): `GET /api/timeline/decisions`
   (`q`, `who`, `category`, `file`, `person`, `superseded`, `from`, `to`, `limit`,
   `cursor`), `/api/timeline/features` (`q`, `status`, `file`, `person`, `from`,
   `to`, `limit`, `cursor`), `/api/timeline/build` and `/api/timeline/files`
   (`prefix`, `limit`), whose handler reads every `repository` value and serves
-  only those, and exactly one value is allowed; `GET /api/jobs`,
+  only those, and exactly one value is allowed;
+- by `repository` (parameters `pr`, and as listed): `GET /api/jobs`,
   `/api/prs/description`, `/api/prs/checks` (`head_sha`),
   `/api/prs/failing-checks` (`head_sha`), `/api/prs/review-threads`
   (`unresolved`), `/api/prs/conflicts`, `/api/prs/merge-options`,
@@ -5273,7 +5274,9 @@ pages `inbox`, `pulls`, `sessions`, `session`, `timeline` and `feature` list
 them first, then the common four). A tool's default comes from its page's
 `Filters`, the page's own address and saved filters, which an argument
 replaces. Lists are bounded (`limit`, 50 by default and 200 at most; the
-Timeline's 25 and 100) and say how many more there are. The tools marked
+Timeline's 25 and 100, `file_history`'s 20 and 50, `test_query`'s 100 matches)
+and say how many more there are. A transcript tool returns at most `limit`
+prompts (20 by default, 100 at most) with only their turns' activity. The tools marked
 global read across repositories or the person's own state, so an action
 neither lists nor calls them; the repository-scoped ones read one repository,
 which for an action is always its own, and every route they read has an entry in
@@ -5284,7 +5287,7 @@ and avatar.
 | --- | --- | --- |
 | `inbox` | global | `/api/inbox` and `/api/index`: the pull requests the Inbox lists, as the queue holds them: `kind` (review, clone, fix, merge, update, other, waiting), whether an agent is fixing it, snoozed or archived, the saved inboxes holding it, the risk score and the review, merge and check state. Defaults to the page's `inbox` filter, else the queue waiting on the person; `query` keeps what `/api/inbox?query=` says an inbox filter holds |
 | `inboxes` | global | `/api/inboxes` (id, name, colour, what, owners, risk, repositories, query, bots, badge, revision) with each inbox's own count and folded filter from `/api/inbox` |
-| `test_query` | global | `/api/inbox?query=`: the daemon's draft of a query (the matches over the queue, with the kind each waits for) joined with `/api/index`; at most 100 matches and how many more. A query `prfilter.Problem` refuses is returned as `valid: false` with its message, without reading the daemon |
+| `test_query` | global | `/api/inbox?query=`: the daemon's draft of a query (the matches over the queue, with the kind each waits for) joined with `/api/index`, keeping the listed items as the app's preview does (the queue and others' pull requests, neither snoozed nor archived, so the total is what a saved inbox would count); at most 100 matches and how many more. A query `prfilter.Problem` refuses is returned as `valid: false` with its message, without reading the daemon |
 | `pull_requests` | global | `/api/index?history=1`, filtered by view (open or closed), saved tab and filter query with `prfilter.Compile`, as the page does; the tab and the page's draft filter come from `/api/ui-state/filters`, the page's `filter` filter names the tab |
 | `live_sessions` | repository | `/api/live-sessions`: state, what it waits for and since when, its latest steps and message, repository, branch and pull request; not the head, upstream or the hooks' record. An action's list is its repository's by the filter above |
 | `live_session_transcript` | global | `/api/live-sessions/{agent}/{id}/transcript`: the prompts from `from_turn`, `limit` at a time, with the next turn named; no images (the answer's `images`, and any key beginning `image`, are dropped, and `/transcript/images/` is never readable by any reader), no working directory and no address |

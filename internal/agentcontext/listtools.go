@@ -48,7 +48,7 @@ func (s *Server) listTools() []Tool {
 			"Defaults to the inbox the page has selected; with none, the queue waiting on the person. Pass limit for more (at most 200).",
 		InputSchema: json.RawMessage(`{"type":"object","properties":{` +
 			`"inbox":{"type":"string","description":"A saved inbox's id (see inboxes). Default: the page's selected inbox, else the whole queue."},` +
-			`"kind":{"type":"string","enum":["review","clone","fix","merge","update","other","waiting"],"description":"Only pull requests waiting for this."},` +
+			`"kind":{"type":"string","enum":["review","clone","fix","merge","update","other","waiting"],"description":"Only pull requests of this kind. other (someone else's that wait on nothing from the person) and waiting (their own that wait on others) are not in the queue, so asking for one lists them from every open pull request."},` +
 			`"query":{"type":"string","maxLength":1000,"description":"Only those an inbox filter query holds, as test_query reads it."},` +
 			`"hidden":{"type":"boolean","description":"Include the snoozed and archived ones. Default false."},` +
 			`"limit":{"type":"integer","minimum":1,"maximum":200,"description":"The most to return. Default 50."}},"additionalProperties":false}`),
@@ -283,7 +283,8 @@ func callInbox(ctx context.Context, c CallContext, args json.RawMessage) (string
 		// An inbox lists what the queue holds and others' pull requests; the
 		// queue itself only what waits on the person.
 		case a.Inbox != "" && !item.queued() && item.Kind != inboxqueue.Other:
-		case a.Inbox == "" && !item.queued():
+		// Asking for a kind (other, waiting) looks beyond the queue.
+		case a.Inbox == "" && a.Kind == "" && !item.queued():
 		case !a.Hidden && item.hidden():
 		case a.Kind != "" && kindName(item.Kind) != a.Kind:
 		case matching != nil && !matching[item.Key]:
@@ -418,7 +419,9 @@ func callTestQuery(ctx context.Context, c CallContext, args json.RawMessage) (st
 	}
 	var items []queueItem
 	for _, item := range q.Items {
-		if held[item.Key] {
+		// The app's preview matches the listed items: those in the queue and
+		// others' pull requests, neither snoozed nor archived.
+		if held[item.Key] && !item.hidden() && (item.queued() || item.Kind == inboxqueue.Other) {
 			items = append(items, item)
 		}
 	}

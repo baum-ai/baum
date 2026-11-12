@@ -76,6 +76,15 @@ func New(opts Options) *Server {
 		}
 		return out
 	}
+	byName := func(tools []Tool, want ...string) []string {
+		var out []string
+		for _, t := range tools {
+			if slices.Contains(want, t.Name) {
+				out = append(out, t.Name)
+			}
+		}
+		return out
+	}
 	// "focus" is the page's own. A group page has no pull request, so the tools
 	// that need one are not its tools.
 	forGroup := names(group)
@@ -94,8 +103,8 @@ func New(opts Options) *Server {
 	// The Inbox lists the queue and its inboxes; Pull requests its list. The
 	// sessions pages read the sessions and what their agents wait for; the
 	// Timeline and a feature's page read its decisions and features.
-	s.pages[PageInbox] = PageSpec{Name: PageInbox, Tools: withCommonTools(names(lists[:3]))}
-	s.pages[PagePulls] = PageSpec{Name: PagePulls, Tools: withCommonTools(names(lists[3:]))}
+	s.pages[PageInbox] = PageSpec{Name: PageInbox, Tools: withCommonTools(byName(lists, "inbox", "inboxes", "test_query"))}
+	s.pages[PagePulls] = PageSpec{Name: PagePulls, Tools: withCommonTools(byName(lists, "pull_requests"))}
 	s.pages[PageSessions] = PageSpec{Name: PageSessions, Tools: withCommonTools(names(sessions))}
 	s.pages[PageSession] = PageSpec{Name: PageSession, Tools: withCommonTools(names(sessions))}
 	s.pages[PageTimeline] = PageSpec{Name: PageTimeline, Tools: withCommonTools(names(timeline))}

@@ -65,7 +65,7 @@ func (d *readDaemon) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				_, _ = fmt.Fprint(w, `{"query":"(","problem":"Unclosed (","matches":[]}`)
 				return
 			}
-			_, _ = fmt.Fprint(w, `{"query":`+jsonString(q.Get("query"))+`,"problem":"","matches":["acme/web#1","acme/web#3"]}`)
+			_, _ = fmt.Fprint(w, `{"query":`+jsonString(q.Get("query"))+`,"problem":"","matches":["acme/web#1","acme/web#3","acme/web#4","acme/web#5","acme/web#2"]}`)
 			return
 		}
 		_, _ = fmt.Fprint(w, `{"count":2,"items":[`+
@@ -86,7 +86,7 @@ func (d *readDaemon) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			`{"agent":"claude-code","session_id":"s-1","state":"idle","started_at":"2026-11-12T09:00:00Z","last_activity_at":"2026-11-12T10:00:00Z","waiting_reason":"permission","waiting_since":"2026-11-12T10:00:00Z","waiting_message":"Claude needs your permission to use Bash","repository":"acme/web","branch":"fix","pr":7,"pr_state":"OPEN","head_sha":"deadbeef","upstream":"origin/fix","title":"Fix the thing","activity":{"steps":[{"tool":"Bash","target":"go test"}],"last_message":"Done."},"endable":true},`+
 			`{"agent":"codex","session_id":"s-2","state":"running","started_at":"2026-11-12T08:00:00Z","last_activity_at":"2026-11-12T09:30:00Z","repository":"other/api","branch":"main","title":"Other repository"}]}`)
 	case "/api/live-sessions/claude-code/s-1/transcript":
-		_, _ = fmt.Fprint(w, `{"available":true,"version":"v3","live":true,"summary":"Earlier work","images":{"t1":["image/png"]},"transcript":{"session":{"title":"Fix the thing","working_dir":"/home/dev/web","user_email":"dana@example.com","turn_count":3,"prompts":[`+
+		_, _ = fmt.Fprint(w, `{"available":true,"version":"v3","live":true,"summary":"Earlier work","images":{"t1":["image/png"]},"transcript":{"activity":{"t1":{"messages":[{"text":"One"}],"tool_calls":[{"name":"Bash","input":"go test"}]},"t2":{"messages":[{"text":"Two"}],"tool_calls":[{"name":"Bash","input":"go vet"}]},"t3":{"messages":[{"text":"Three"}],"tool_calls":[]}},"session":{"title":"Fix the thing","working_dir":"/home/dev/web","user_email":"dana@example.com","turn_count":3,"prompts":[`+
 			`{"turn_id":"t1","ordinal":1,"text":"First","images":[{"src":"/api/live-sessions/claude-code/s-1/transcript/images/t1/0","media_type":"image/png"}],"replies":[{"text":"One"}]},`+
 			`{"turn_id":"t2","ordinal":2,"text":"Second","replies":[]},`+
 			`{"turn_id":"t3","ordinal":3,"text":"Third","replies":[]}],"prompts_total":3}}}`)
@@ -116,7 +116,7 @@ func (d *readDaemon) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case "/api/timeline/files":
 		_, _ = fmt.Fprint(w, `{"files":[{"path":"a.go","kind":"file","decision_count":2}]}`)
 	case "/api/timeline/sessions/claude-code:s-1/transcript":
-		_, _ = fmt.Fprint(w, `{"available":true,"version":"v1","live":false,"transcript":{"session":{"title":"Old","working_dir":"/home/dev/web","prompts":[{"ordinal":1,"text":"Ask"}]}}}`)
+		_, _ = fmt.Fprint(w, `{"available":true,"version":"v1","live":false,"transcript":{"activity":{"t1":{"tool_calls":[{"name":"Bash","input":"first"}]},"t2":{"tool_calls":[{"name":"Bash","input":"second"}]}},"session":{"title":"Old","working_dir":"/home/dev/web","prompts":[{"turn_id":"t1","ordinal":1,"text":"Ask"},{"turn_id":"t2","ordinal":2,"text":"Again"}]}}}`)
 	default:
 		http.NotFound(w, r)
 	}
@@ -222,10 +222,14 @@ func TestInboxTool(t *testing.T) {
 	if !slices.Equal(numbers(got.Items), []int{1, 3, 4}) || !got.Items[2].Snoozed {
 		t.Errorf("hidden: %+v", got)
 	}
-	out(t, s, token, "inbox", map[string]any{"kind": "waiting", "hidden": true}, &got)
-	if len(got.Items) != 0 {
-		// The queue holds only what waits on the person.
-		t.Errorf("waiting in the queue: %+v", got)
+	// Kinds outside the queue are listed when asked for.
+	out(t, s, token, "inbox", map[string]any{"kind": "waiting"}, &got)
+	if !slices.Equal(numbers(got.Items), []int{5}) || got.Items[0].Kind != "waiting" {
+		t.Errorf("waiting: %+v", got)
+	}
+	out(t, s, token, "inbox", map[string]any{"kind": "other"}, &got)
+	if !slices.Equal(numbers(got.Items), []int{3}) {
+		t.Errorf("other without an inbox: %+v", got)
 	}
 	out(t, s, token, "inbox", map[string]any{"inbox": "i1", "kind": "other"}, &got)
 	if !slices.Equal(numbers(got.Items), []int{3}) {
@@ -237,7 +241,7 @@ func TestInboxTool(t *testing.T) {
 	}
 	// An extra filter query keeps what the daemon says it holds.
 	out(t, s, token, "inbox", map[string]any{"query": "waiting=review"}, &got)
-	if !slices.Equal(numbers(got.Items), []int{1}) || !d.saw("/api/inbox?query=waiting%3Dreview") {
+	if !slices.Equal(numbers(got.Items), []int{1, 2}) || !d.saw("/api/inbox?query=waiting%3Dreview") {
 		t.Errorf("query: %+v", got)
 	}
 	// The page's selected inbox is the default.
@@ -291,7 +295,9 @@ func TestTestQueryTool(t *testing.T) {
 		Matches []inboxRow `json:"matches"`
 	}
 	out(t, s, token, "test_query", map[string]any{"query": "waiting=review"}, &got)
-	if !got.Valid || got.Total != 2 || !slices.Equal(numbers(got.Matches), []int{1, 3}) || got.Matches[0].Kind != "review" || got.Matches[1].Kind != "other" {
+	// The daemon also matches the snoozed, waiting and being-fixed items; the
+	// preview counts the listed ones, as a saved inbox would.
+	if !got.Valid || got.Total != 3 || !slices.Equal(numbers(got.Matches), []int{1, 2, 3}) || got.Matches[0].Kind != "review" || got.Matches[2].Kind != "other" {
 		t.Errorf("matches: %+v", got)
 	}
 	// A query that does not read is told why, and holds nothing.
@@ -444,6 +450,15 @@ func TestSessionTranscriptTools(t *testing.T) {
 	setPage(t, s, id, PageContext{Page: PageSession, Session: "claude-code:s-1"})
 	if text, failed := data(t, s, token, "live_session_transcript", nil); failed || !strings.Contains(text, "First") {
 		t.Errorf("the page's session: %v %s", failed, text)
+	}
+	// The agent's activity is paged with the prompts: only the kept ones'.
+	text = out(t, s, token, "live_session_transcript", map[string]any{"session": "claude-code:s-1", "limit": 1}, &got)
+	if !strings.Contains(text, "go test") || strings.Contains(text, "go vet") || strings.Contains(text, "Three") {
+		t.Errorf("activity of a page: %s", text)
+	}
+	text = out(t, s, token, "timeline_transcript", map[string]any{"session": "claude-code:s-1", "limit": 1}, &got)
+	if !strings.Contains(text, "first") || strings.Contains(text, "second") || !strings.Contains(text, `"next_turn":2`) {
+		t.Errorf("timeline activity of a page: %s", text)
 	}
 	// No image route is ever read.
 	if d.saw("/images/") {

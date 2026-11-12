@@ -245,6 +245,23 @@ func transcriptText(body json.RawMessage, from, limit int) (string, error) {
 		if next > 0 {
 			session["next_turn"] = next
 		}
+		// What the agent did (its messages and tool calls) is keyed by the
+		// prompt's turn id: only the kept prompts' stays.
+		if activity, ok := transcript["activity"].(map[string]any); ok {
+			turns := map[string]bool{}
+			for _, p := range kept {
+				if prompt, ok := p.(map[string]any); ok {
+					if id, ok := prompt["turn_id"].(string); ok {
+						turns[id] = true
+					}
+				}
+			}
+			for id := range activity {
+				if !turns[id] {
+					delete(activity, id)
+				}
+			}
+		}
 	}
 	scrub(answer, func(key string) bool { return strings.HasPrefix(key, "image") })
 	return compactJSON(answer)

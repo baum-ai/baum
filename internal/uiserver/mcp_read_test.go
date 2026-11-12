@@ -814,6 +814,46 @@ func TestTimelineToolsReadTheRealRoutes(t *testing.T) {
 			t.Errorf("timeline transcript carries %q", leak)
 		}
 	}
+	// It is the route's transcript, less what the tool leaves out: the same
+	// prompts and the same activity by turn.
+	routeTimeline := f.route(t, "/api/timeline/sessions/claude-code:s1/transcript")
+	type turnPrompt struct {
+		TurnID  string `json:"turn_id"`
+		Ordinal int    `json:"ordinal"`
+	}
+	type transcriptView struct {
+		Version    string `json:"version"`
+		Transcript struct {
+			Activity map[string]json.RawMessage `json:"activity"`
+			Session  struct {
+				Prompts  []turnPrompt `json:"prompts"`
+				NextTurn int          `json:"next_turn"`
+			} `json:"session"`
+		} `json:"transcript"`
+	}
+	var viaRoute, viaTool transcriptView
+	if err := json.Unmarshal(routeTimeline, &viaRoute); err != nil || len(viaRoute.Transcript.Session.Prompts) != 2 || len(viaRoute.Transcript.Activity) != 2 {
+		t.Fatalf("the route's transcript: %v %s", err, routeTimeline)
+	}
+	if err := json.Unmarshal([]byte(text), &viaTool); err != nil {
+		t.Fatal(err)
+	}
+	if viaTool.Version != viaRoute.Version || !reflect.DeepEqual(viaTool.Transcript.Session.Prompts, viaRoute.Transcript.Session.Prompts) || len(viaTool.Transcript.Activity) != 2 {
+		t.Errorf("timeline transcript %s, the route's %s", text, routeTimeline)
+	}
+	// One prompt per page, and its activity alone.
+	for _, tool := range []string{"timeline_transcript", "live_session_transcript"} {
+		page, failed := f.call(t, chat, tool, map[string]any{"session": "claude-code:s1", "limit": 1})
+		var one transcriptView
+		if err := json.Unmarshal([]byte(page), &one); failed || err != nil || len(one.Transcript.Session.Prompts) != 1 ||
+			len(one.Transcript.Activity) != 1 || one.Transcript.Session.NextTurn != 2 {
+			t.Errorf("%s of one prompt: %v %s", tool, failed, page)
+			continue
+		}
+		if _, ok := one.Transcript.Activity[one.Transcript.Session.Prompts[0].TurnID]; !ok {
+			t.Errorf("%s: the activity is not the prompt's: %s", tool, page)
+		}
+	}
 
 	// An action reads its own repository's Timeline and no other.
 	refused := func(what, text string, failed bool) {
