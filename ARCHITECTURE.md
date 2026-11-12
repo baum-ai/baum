@@ -2977,7 +2977,7 @@ Once `Store.Put` commits a version, generation succeeds: failing to record the
 run's outcome afterwards is only a warning, and the lease later expires.
 
 `GET /api/index` and `GET /api/prs` revalidate: the JSON of a cached snapshot is
-encoded once per cache version and `history` flag (`/api/prs`: once per
+encoded once per cache version and variant (`/api/prs`: once per
 discovery `Revision` of the picked repositories, until a snapshot reaches its
 next poll), answered with a strong `ETag` (digest of the bytes), `Cache-Control:
 no-cache` and 304 for a matching `If-None-Match`. The app fetches them with
