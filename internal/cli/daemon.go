@@ -578,6 +578,7 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 		// derived, redacted decisions in the daemon's state.
 		var capture *decisionlog.Scheduler
 		var decisionStore *decisionlog.Store
+		var decisionRelevance *decisionlog.Relevance
 		var timeline http.Handler
 		// The GitHub connection's login, once it exists below.
 		var connectionLogin func() string
@@ -586,9 +587,10 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 				log.Warn("decision capture is off: its store did not open", "error", err)
 			} else {
 				decisionStore.Changed = func() { _ = server.Publish("decisions", struct{}{}) }
+				decisionRelevance = &decisionlog.Relevance{Store: decisionStore, Registry: registry, Config: cfg, Patch: decisionlog.LocalRelevancePatch(registry), Log: log}
 				capture = &decisionlog.Scheduler{Tracker: live, Source: events.service.Store, Log: log, Changed: timelineChanged,
 					Worker: &decisionlog.Capturer{Store: decisionStore, Registry: registry, Config: cfg, Log: log, Changed: timelineChanged}}
-				featureLog = &decisionlog.FeatureWorker{Store: decisionStore, Registry: registry, GitHub: githubReaders(cfg), Config: cfg, Log: log, Changed: timelineChanged}
+				featureLog = &decisionlog.FeatureWorker{Store: decisionStore, Registry: registry, GitHub: githubReaders(cfg), Config: cfg, Log: log, Changed: func() { timelineChanged(); decisionStore.Changed() }}
 				builds.worker.Store(featureLog)
 				timeline = (&decisionlog.Timeline{Store: decisionStore, Registry: registry, Clone: decisionlog.LocalClones(registry), Transcripts: transcripts,
 					Login: func(ctx context.Context) string { return viewerLogin(ctx, registry, discover.Cached, connectionLogin) }}).Handler()
@@ -679,7 +681,7 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 			insights.Pulls = decisionStore.PullFlow
 			insights.Login = func(ctx context.Context) string { return viewerLogin(ctx, registry, discover.Cached, connectionLogin) }
 			decisionsAPI = func(linked uiserver.LinkedSessions) http.Handler {
-				return (&decisionlog.API{Store: decisionStore, Registry: registry, Live: live.Sessions, Linked: linked, Log: log}).Handler()
+				return (&decisionlog.API{Store: decisionStore, Registry: registry, Live: live.Sessions, Linked: linked, Relevance: decisionRelevance, Log: log}).Handler()
 			}
 		}
 		// A pull request with no saved review shows its facts, read when its
@@ -776,6 +778,7 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 					wg.Go(func() { transcripts.Watch(ctx, func() { _ = server.Publish("live", struct{}{}) }) })
 				}
 				if capture != nil {
+					wg.Go(func() { decisionRelevance.Run(ctx) })
 					wg.Go(func() { capture.Run(ctx) })
 					wg.Go(func() { featureLog.Run(ctx) })
 				}

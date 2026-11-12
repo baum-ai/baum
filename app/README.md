@@ -1823,13 +1823,22 @@ followed by why capture will not run again (paused, off, off for the
 repository, or not a picked repository; `capture_off`).
 The PR page's review rail has a **Decisions** row above Sessions and
 Commits, with the count (the viewer's `decisions` slot, `?pane=decisions`):
-its pane lists, session by session as cards, the decisions of every session
-of the pull request, in progress or linked by the saved review, marking those
+its pane lists, session by session as cards, only decisions assessed as relevant
+to the PR's changes from its sessions, in progress or linked by the saved review, marking those
 made after that review was generated "Provisional", ended sessions the
 tracker still holds included (`usePullRequestDecisions`,
 `PullRequestDecisionsPane`). A session's decisions are split into **Decided by
 you** (the person's own, and those the agent proposed and they approved) and
 **Decided by the agent**, each with its count; an empty group is left out.
+The daemon checks relevance asynchronously and caches it per PR revision and
+decision content. Pending checks, failures, unavailable context and uncertain
+relevance have their own status text, distinct from no relevant decisions.
+The page sends its current head with the read, so cached decisions from an
+older head are withheld. Live session disclosures on a PR reuse this filtered
+answer, with no additional full-session decision requests. Session-only views
+and Timeline retain the full history. The walkthrough reuses the page's read;
+stack panes union the member PRs' relevant decisions by ID and keep their
+filtering status counts.
 Each decision is one row to scan: its title, its
 category as a pill and the time it was made, with its summary cut to a line
 under it; the row opens to the whole summary, **Why** (its rationale) and its

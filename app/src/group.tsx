@@ -203,6 +203,12 @@ export function GroupPage({
     repository: group.repository,
     members: railMembers,
     numbers: group.members,
+    heads: Object.fromEntries(
+      [...landed, ...members].map(({ number, entry }) => [
+        number,
+        entry?.pull_request.head_sha ?? "",
+      ]),
+    ),
     listed: listedForGroup(live, group.repository, group.members),
     document: doc,
     revision: `${group.version_count}:${group.updated_at}:${revision}`,

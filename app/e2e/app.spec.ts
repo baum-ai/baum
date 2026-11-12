@@ -27,6 +27,51 @@ async function launchURL(): Promise<string> {
   throw new Error("the daemon did not publish its credential");
 }
 
+test("PR decisions share filtered results and distinguish pending relevance from an empty result", async ({
+  page,
+}) => {
+  const unrestricted: string[] = [];
+  let pending = true;
+  await page.route("**/api/decisions?*", (route) => {
+    const url = new URL(route.request().url());
+    const session = {
+      agent: "claude-code",
+      session_id: "live-e2e",
+      title: "Implement the PR",
+      live: true,
+      coverage: "extracted",
+      updated_at: new Date().toISOString(),
+      capturing: false,
+      decisions: [],
+      relevance: {
+        pending: pending ? 2 : 0,
+        unrelated: pending ? 0 : 2,
+        uncertain: 0,
+        unavailable: 0,
+        failed: 0,
+      },
+    };
+    if (url.searchParams.has("agent")) unrestricted.push(url.search);
+    return route.fulfill({ json: { sessions: [session], review_generated_at: null } });
+  });
+  await page.goto(await launchURL());
+  await page.getByRole("link", { name: "Pull requests", exact: true }).first().click();
+  await page.getByRole("link", { name: /Reuse the existing PR page/ }).click();
+  await page.getByRole("button", { name: /^Decisions/ }).click();
+  await expect(page.locator(".local-decisions")).toContainText("Checking 2 for relevance…");
+  await expect(page.locator(".local-decisions li.local-decision")).toHaveCount(0);
+  pending = false;
+  await page.reload();
+  await expect(page.locator(".local-decisions")).toContainText(
+    "No decisions relate to these changes.",
+  );
+  await expect(page.locator(".local-decisions li.local-decision")).toHaveCount(0);
+  // Opening a live session on this PR reuses its decision answer. It must
+  // not fetch the full session's decisions through the unrestricted route.
+  await page.getByRole("button", { name: /^Sessions/ }).click();
+  await expect.poll(() => unrestricted.length).toBe(0);
+});
+
 test("daemon bootstrap keeps credentials private and opens saved review versions", async ({
   page,
   browser,

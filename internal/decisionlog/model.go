@@ -283,6 +283,8 @@ type caller struct {
 	begun func()
 	// timeout bounds each call; zero is CallTimeout.
 	timeout time.Duration
+	// check validates host-specific reply references before settling a call.
+	check func([]byte) error
 }
 
 // buildSpend is a first build's run's calls and known spend, which are also
@@ -451,6 +453,9 @@ func (c caller) complete(ctx context.Context, backend, model string, a Attempt, 
 		return callResult{Skip: skip}, err
 	}
 	response, callErr := m.Complete(ctx, req)
+	if callErr == nil && c.check != nil {
+		callErr = c.check(response.JSON)
+	}
 	// The ledger outlives a cancelled call: it may be paid for.
 	_, spent, _, err := c.finish(context.WithoutCancel(ctx), id, m, callErr, ctx.Err() != nil)
 	result := callResult{JSON: response.JSON, Called: m.called, Cost: spent}

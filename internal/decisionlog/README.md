@@ -189,6 +189,88 @@ summary, category, who, rationale, rejected alternative, superseded, files
 and date; evidence, turns and branch are not served, nor a session's
 repository.
 
+### PR relevance
+
+The daemon's `Relevance` service filters the PR answer after session linkage.
+Session membership only identifies candidates; the decision must have shaped
+the PR's actual changes. The complete session endpoint and Timeline are not
+filtered. Provisional marks remain relative to the saved review's time and
+apply only to the decisions that pass the filter.
+
+A read uses cached PR metadata (`pull_request`, including the base and head),
+the captured decisions and indexed relevance rows. It never starts a model,
+reads transcripts or generates a diff for relevance. The optional `head=`
+parameter is the head the page shows: if it differs from the cached metadata,
+old classifications are withheld until the normal feature sync catches up.
+Without cached PR metadata, relevance is unavailable, including before the
+first sync; a saved review is not required. Feature sync changes publish a
+`decisions` event as well as a Timeline event.
+
+The worker sleeps until a PR read requests missing classifications. There is
+one worker, no periodic repository/session scan, and at most 32 outstanding
+PRs, including the one in progress. Queue entries contain repository/PR/head
+and at most 128 session keys, never transcript contents or diffs. A PR with
+more sessions, or a full queue, reports unavailable relevance rather than
+growing the queue. A queued/running PR is deduplicated; its latest session
+keys replace the pending ones. Batches of at most 24 decisions take turns
+between PRs.
+
+The worker reads a complete diff directly from the registered clone, using
+the base/head merge base, with rename detection. It reuses the clone's
+objects and fetches missing PR commits as other local readers do. Unlike
+review assembly it does not compute per-file statistics or patch hashes,
+scan agent stores or build a bundle. Diff output is capped at 192 KiB;
+oversized diffs are not truncated and classified. The redacted diff is
+persisted in `pr_relevance_patch`, once per base/head pair, with only the
+latest pair kept for each PR. Missing decisions reuse it without another Git
+read. Oversized failures are remembered for that revision; transient diff
+failures back off for 15 minutes.
+
+The structured call receives the PR title/description, complete redacted
+diff and each decision's title, summary, rationale, stored evidence, files
+and superseded flag. It reads no full session transcript. File overlap,
+branch, date and session membership alone cannot establish relevance;
+file-less human decisions remain eligible. Input is capped at 384 KiB and
+output at 4,096 tokens. A batch has three minutes including Git reads, and
+the model call has two. It uses the configured extraction backend/model and
+gate, with no hosted-service dependency. One validated result per supplied
+decision ID is required: `relevant`, `unrelated` or `uncertain`, with a short
+supporting reason. Invalid/duplicate/unknown IDs fail the batch and ledger
+attempt. Only relevant decisions are returned; uncertainty stays hidden and
+is counted separately.
+
+`pr_decision_relevance` stores the latest classification per repository, PR
+and stable decision ID, plus context/decision fingerprints and retry state.
+The context fingerprint covers base/head/title/body and the relevance
+prompt version and extraction configuration. The decision fingerprint covers
+its content, files, cited turns and stored evidence, so revising a decision
+without changing its ID invalidates its classification. No other revision's
+positive result is used while a check is pending. A single decision can be
+relevant to several PRs; stack views union their results by ID. Decisions
+from another repository are excluded even if their session moved to this
+one. Obsolete decisions' classifications are removed when that PR's cache
+is written.
+
+Each PR session includes `relevance` counts (`pending`, `unrelated`,
+`uncertain`, `unavailable`, `failed`), separate from extraction coverage.
+Queue capacity and disabled/missing context/backend have an unavailable
+state. Provider/validation failures back off for 15 minutes and stop the
+remaining batches of that PR; an in-memory cooldown, bounded to 32 PRs,
+also prevents retries when the cache could not be written. Deterministic
+oversized input remains uncertain until its inputs change. Completed batches
+publish a `decisions` event. Calls are accounted for in `capture_attempt`
+under `decision_relevance`, included with extraction spend in Analytics.
+
+`Store.Sessions` batches capture metadata, pending-state and current-decision
+reads across sessions. It does not also decode `decisions_json` from each
+capture row. This avoids reading the same decision content twice per PR read.
+The scoped reader first selects compact decision IDs and fingerprints; only
+relevant decisions' full text, turns and files are then loaded. Fingerprints
+in `decision_relevance_input` are updated atomically with capture. Older
+captures receive them lazily in the worker's result transaction, at most one
+batch at a time, with no startup backfill. A detail whose fingerprint changed
+between the two reads is withheld and queued again.
+
 `Store.Changed` is called after every write the app shows (a skip, a cover,
 a save, an attempt beginning or settling; the beginning is what shows
 "Capturing…", and the settling ends it when no save or skip follows); the
