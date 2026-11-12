@@ -35,13 +35,12 @@ func TestSessionArgumentsAndThreadID(t *testing.T) {
 		{"ephemeral default", agent.Request{}, []string{"exec", "--json", "--ephemeral"}, []string{"--sandbox", "read-only"}},
 		{"persist", agent.Request{PersistSession: true}, []string{"exec", "--json"}, []string{"--sandbox", "read-only"}},
 		{"resume", agent.Request{ResumeSession: testSession}, []string{"exec", "resume", "--json"}, []string{"-c", `sandbox_mode="read-only"`}},
-		{"fork", agent.Request{ResumeSession: testSession, ForkSession: true}, []string{"exec", "fork", "--json"}, []string{"-c", `sandbox_mode="read-only"`}},
 	}
 	var defaultEnv map[string]string
 	for _, c := range cases {
 		dir := t.TempDir()
 		r := schemaRequest(dir, nil)
-		r.PersistSession, r.ResumeSession, r.ForkSession = c.request.PersistSession, c.request.ResumeSession, c.request.ForkSession
+		r.PersistSession, r.ResumeSession = c.request.PersistSession, c.request.ResumeSession
 		script := fakeCodex(t, "codex-cli 0.165.0", threadScript(withThread))
 		got, err := (&Backend{Binary: script, Model: "m"}).Run(context.Background(), r)
 		if err != nil {
@@ -89,9 +88,9 @@ func TestSessionArgumentsAndThreadID(t *testing.T) {
 func TestSessionUnknownOptionDoesNotBlameTheVersionFloor(t *testing.T) {
 	script := fakeCodex(t, "codex-cli 0.162.1", "cat >/dev/null\necho \"error: unexpected argument '--output-schema' found\" >&2\nexit 2\n")
 	r := schemaRequest(t.TempDir(), nil)
-	r.ResumeSession, r.ForkSession = testSession, true
+	r.ResumeSession = testSession
 	_, err := (&Backend{Binary: script}).Run(context.Background(), r)
-	if err == nil || !strings.Contains(err.Error(), "does not support exec resume/fork") || strings.Contains(err.Error(), MinimumVersion) {
+	if err == nil || !strings.Contains(err.Error(), "does not support exec resume") || strings.Contains(err.Error(), MinimumVersion) {
 		t.Fatalf("error %v", err)
 	}
 }
@@ -116,7 +115,6 @@ func TestSessionOptionsAreRefused(t *testing.T) {
 	}{
 		{"container persist", &Backend{Binary: script, Profile: Container}, agent.Request{PersistSession: true, Endpoint: endpoint}, false, "only a Local profile"},
 		{"container resume", &Backend{Binary: script, Profile: Container}, agent.Request{ResumeSession: testSession, Endpoint: endpoint}, false, "only a Local profile"},
-		{"fork without resume", &Backend{Binary: script}, agent.Request{ForkSession: true}, false, "fork needs a session"},
 		{"leading dash", &Backend{Binary: script}, agent.Request{ResumeSession: "--last"}, false, "must be a UUID"},
 		{"name, not UUID", &Backend{Binary: script}, agent.Request{ResumeSession: "my-thread"}, false, "must be a UUID"},
 		{"fix", &Backend{Binary: script}, agent.Request{PersistSession: true}, true, "only a Local profile"},

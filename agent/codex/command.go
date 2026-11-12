@@ -60,15 +60,12 @@ func (c *Backend) command(request agent.Request, endpoint *agent.Endpoint, fix b
 		}
 	}
 	// Without session options the argv is exactly the ephemeral one. A kept
-	// session omits --ephemeral. `exec resume` and `exec fork` do not accept
-	// --sandbox, so the sandbox goes in as config there. Both subcommands
-	// postdate the version floor's release notes as far as known; a Codex too
-	// old for them fails with its own usage error.
+	// session omits --ephemeral. `exec resume` does not accept --sandbox, so
+	// the sandbox goes in as config there. The subcommand postdates the
+	// version floor's release notes as far as known; a Codex too old for it
+	// fails with its own usage error.
 	args = []string{"exec"}
-	switch {
-	case request.ResumeSession != "" && request.ForkSession:
-		args = append(args, "fork")
-	case request.ResumeSession != "":
+	if request.ResumeSession != "" {
 		args = append(args, "resume")
 	}
 	args = append(args, "--json")

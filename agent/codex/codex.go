@@ -131,9 +131,6 @@ func (c *Backend) Converse(ctx context.Context, request agent.Request, access ag
 	if err := access.Validate(); err != nil {
 		return agent.Result{}, fmt.Errorf("codex: %w", err)
 	}
-	if request.ForkSession {
-		return agent.Result{}, errors.New("codex: a conversation continues its session and never forks it")
-	}
 	request.PersistSession = true
 	request.MaxCalls, request.MaxTokens = 0, 0
 	return c.run(ctx, request, runConverse, access, nil)
@@ -169,8 +166,8 @@ func (c *Backend) run(ctx context.Context, request agent.Request, kind runKind, 
 	if err := request.ValidateSession(); err != nil {
 		return result, fmt.Errorf("codex: %w", err)
 	}
-	if request.WantsSession() && (c.Profile != Local || fix) {
-		return result, errors.New("codex: only a Local profile review or task can keep, resume or fork a session")
+	if request.KeepsSession() && (c.Profile != Local || fix) {
+		return result, errors.New("codex: only a Local profile review or task can keep or resume a session")
 	}
 	if request.MCP != nil {
 		if c.Profile != Local {
@@ -425,7 +422,7 @@ func (c *Backend) run(ctx context.Context, request agent.Request, kind runKind, 
 		return result, err
 	}
 	if waitErr != nil {
-		// A resume or fork of a thread Codex cannot find exits before any
+		// A resume of a thread Codex cannot find exits before any
 		// turn, naming it on some line of stderr (warnings may come first).
 		if line, missing := agent.MissingSession(stderr.String()); missing && c.Profile == Local && request.ResumeSession != "" && result.Calls == 0 {
 			return result, agent.SessionNotFound("codex", line)
@@ -442,8 +439,8 @@ func (c *Backend) run(ctx context.Context, request agent.Request, kind runKind, 
 		}
 		if c.Profile == Local {
 			if line, found := unknownOption(stderr.String()); found {
-				if request.WantsSession() {
-					return result, fmt.Errorf("this Codex does not support exec resume/fork or the options baum passes with them (%s); upgrade Codex", line)
+				if request.KeepsSession() {
+					return result, fmt.Errorf("this Codex does not support exec resume or the options baum passes with them (%s); upgrade Codex", line)
 				}
 				return result, fmt.Errorf("codex does not accept the options baum needs (%s); upgrade Codex to %s or newer", line, MinimumVersion)
 			}

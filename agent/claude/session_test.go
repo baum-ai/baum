@@ -53,11 +53,9 @@ func TestSessionArguments(t *testing.T) {
 		request agent.Request
 		persist bool
 		resume  string
-		fork    bool
 	}{
-		{"persist", agent.Request{PersistSession: true}, true, "", false},
-		{"resume", agent.Request{ResumeSession: testSession}, true, testSession, false},
-		{"fork", agent.Request{ResumeSession: testSession, ForkSession: true}, true, testSession, true},
+		{"persist", agent.Request{PersistSession: true}, true, ""},
+		{"resume", agent.Request{ResumeSession: testSession}, true, testSession},
 	}
 	for _, c := range cases {
 		c.request.MaxCalls, c.request.Schema = 7, schema
@@ -69,24 +67,15 @@ func TestSessionArguments(t *testing.T) {
 		if (i >= 0) != (c.resume != "") || (i >= 0 && got[i+1] != c.resume) {
 			t.Errorf("%s: --resume wrong: %q", c.name, got)
 		}
-		if slices.Contains(got, "--fork-session") != c.fork {
-			t.Errorf("%s: --fork-session wrong: %q", c.name, got)
-		}
 		// Every other flag is the same as without session options.
 		other := slices.Clone(got)
 		if i >= 0 {
 			other = slices.Delete(other, i, i+2)
 		}
-		other = slices.DeleteFunc(other, func(a string) bool { return a == "--fork-session" })
 		want := slices.DeleteFunc(slices.Clone(base), func(a string) bool { return a == "--no-session-persistence" })
 		if !slices.Equal(other, want) {
 			t.Errorf("%s: other flags changed\n got %q\nwant %q", c.name, flagsOf(other), flagsOf(want))
 		}
-	}
-	fork := backend.args(agent.Request{MaxCalls: 7, Schema: schema, ResumeSession: testSession, ForkSession: true})
-	i := slices.Index(fork, "--resume")
-	if fork[i+1] != testSession || fork[i+2] != "--fork-session" {
-		t.Errorf("fork args = %q", fork)
 	}
 }
 
@@ -122,7 +111,7 @@ func TestSessionRunPassesFlagsAndKeepsEnvironment(t *testing.T) {
 	}
 	dir := t.TempDir()
 	r := request(dir, nil)
-	r.ResumeSession, r.ForkSession = testSession, true
+	r.ResumeSession = testSession
 	if _, err := (&Backend{Binary: script}).Run(context.Background(), r); err != nil {
 		t.Fatal(err)
 	}
@@ -137,7 +126,7 @@ func TestSessionRunPassesFlagsAndKeepsEnvironment(t *testing.T) {
 		t.Errorf("environment changed\n got %v\nwant %v", got, want)
 	}
 	args := strings.Split(strings.TrimSpace(readTestFile(t, dir, "arguments.txt")), "\n")
-	if slices.Contains(args, "--no-session-persistence") || !slices.Contains(args, "--resume") || !slices.Contains(args, "--fork-session") || !slices.Contains(args, testSession) || !slices.Contains(args, "--restricted") {
+	if slices.Contains(args, "--no-session-persistence") || !slices.Contains(args, "--resume") || !slices.Contains(args, testSession) || !slices.Contains(args, "--restricted") {
 		t.Errorf("args = %q", args)
 	}
 }
@@ -162,7 +151,6 @@ func TestSessionOptionsAreRefused(t *testing.T) {
 	}{
 		{"isolated persist", &Backend{Binary: script, Profile: Isolated, DefaultEndpoint: testEndpoint}, agent.Request{PersistSession: true}, false, "only a User profile"},
 		{"isolated resume", &Backend{Binary: script, Profile: Isolated, DefaultEndpoint: testEndpoint}, agent.Request{ResumeSession: testSession}, false, "only a User profile"},
-		{"fork without resume", &Backend{Binary: script}, agent.Request{ForkSession: true}, false, "fork needs a session"},
 		{"leading dash", &Backend{Binary: script}, agent.Request{ResumeSession: "--help"}, false, "must be a UUID"},
 		{"name, not UUID", &Backend{Binary: script}, agent.Request{ResumeSession: "my-session"}, false, "must be a UUID"},
 		{"fix", &Backend{Binary: script}, agent.Request{PersistSession: true}, true, "only a User profile"},

@@ -122,10 +122,6 @@ type Request struct {
 	// resumed Claude Code session keeps the system prompt it recorded, so put
 	// per-turn framing in the user prompt.
 	ResumeSession string
-	// ForkSession, with ResumeSession, continues in a new session and leaves
-	// the original untouched; Result.SessionID is then the new one. Without
-	// ResumeSession it is an error.
-	ForkSession bool
 	// MCP, when set, gives the run exactly one MCP server: baum's own, started
 	// as a stdio child of the agent CLI. Nil leaves the run with none, as
 	// every run has been. Only a local (User or Local profile) run supports it.
@@ -170,24 +166,16 @@ func (m *MCPServer) Validate() error {
 	return nil
 }
 
-// WantsSession reports whether the request uses any session option.
-func (r Request) WantsSession() bool {
-	return r.PersistSession || r.ResumeSession != "" || r.ForkSession
-}
-
-// KeepsSession reports whether the CLI must keep its session: a persisted,
-// resumed or forked run.
+// KeepsSession reports whether the request uses a session option, so the CLI
+// must keep its session: a persisted or resumed run.
 func (r Request) KeepsSession() bool {
 	return r.PersistSession || r.ResumeSession != ""
 }
 
 var sessionID = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
 
-// ValidateSession rejects an inconsistent combination of session options.
+// ValidateSession rejects a session to resume that is not a session id.
 func (r Request) ValidateSession() error {
-	if r.ForkSession && r.ResumeSession == "" {
-		return errors.New("fork needs a session to resume")
-	}
 	if r.ResumeSession != "" && !sessionID.MatchString(r.ResumeSession) {
 		return errors.New("the session to resume must be a UUID")
 	}
@@ -244,8 +232,7 @@ type Result struct {
 	// describes the document's shape, not repository content.
 	LastRejection string
 	// SessionID is the session (Claude Code) or thread (Codex) id the CLI
-	// reported for this call; with Request.ForkSession, the new session's id.
-	// Empty when the CLI reported none.
+	// reported for this call. Empty when the CLI reported none.
 	SessionID string
 }
 

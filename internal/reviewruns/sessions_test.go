@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/baum-ai/baum/agent"
-	"github.com/baum-ai/baum/internal/store"
 	"github.com/baum-ai/baum/sessions/collector/claudecode"
 )
 
@@ -149,29 +148,24 @@ func TestRemoveSessionsIgnoresMissingStores(t *testing.T) {
 	}
 }
 
-func TestPruningAlsoRemovesTheRunsSessions(t *testing.T) {
+func TestExpiryAlsoRemovesTheRunsSessions(t *testing.T) {
 	h := fakeHomes(t)
 	root := t.TempDir()
 	resolved := resolvedRoot(root)
-	oldest := makeRun(t, resolved, agent.RunDirPrefix+"0")
-	newer := makeRun(t, resolved, agent.RunDirPrefix+"1")
 	expired := makeRun(t, resolved, agent.RunDirPrefix+"2")
 	fresh := makeRun(t, resolved, agent.RunDirPrefix+"3")
 	files := map[string][]string{}
-	for _, dir := range []string{oldest, newer, expired, fresh} {
+	for _, dir := range []string{expired, fresh} {
 		files[dir] = []string{h.claudeSession(t, dir, "c-"+filepath.Base(dir)), h.codexSession(t, dir, "x-"+filepath.Base(dir))}
 	}
 	long := time.Now().Add(-15 * 24 * time.Hour)
 	if err := os.Chtimes(expired, long, long); err != nil {
 		t.Fatal(err)
 	}
-	if err := PruneVersions(root, []store.Metadata{session(newer), session(newer), session(oldest)}); err != nil {
-		t.Fatal(err)
-	}
 	if err := Expire(root, time.Now(), MaxAge); err != nil {
 		t.Fatal(err)
 	}
-	for dir, want := range map[string]bool{oldest: false, newer: true, expired: false, fresh: true} {
+	for dir, want := range map[string]bool{expired: false, fresh: true} {
 		for _, path := range files[dir] {
 			if exists(path) != want {
 				t.Errorf("%s exists = %v, want %v", path, !want, want)

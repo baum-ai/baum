@@ -1141,8 +1141,9 @@ func gitHooks(registry *repos.Registry, log *slog.Logger) *githooks.Service {
 	return service
 }
 
-// maintainReviewRuns expires the run directories of reviews that kept their
-// agent session, at start and then daily.
+// maintainReviewRuns expires the run directories, and their agent sessions,
+// that reviews of earlier versions kept, at start and then daily. Reviews keep
+// none any more, so this only clears what is left.
 func maintainReviewRuns(ctx context.Context, log *slog.Logger) {
 	root, err := reviewruns.DefaultRoot()
 	if err != nil {

@@ -29,7 +29,6 @@ import (
 	"github.com/baum-ai/baum/internal/repos"
 	"github.com/baum-ai/baum/internal/reviewgroups"
 	"github.com/baum-ai/baum/internal/reviewrefs"
-	"github.com/baum-ai/baum/internal/reviewruns"
 	"github.com/baum-ai/baum/internal/store"
 	"github.com/baum-ai/baum/review"
 )
@@ -46,18 +45,9 @@ type Local struct {
 	FixDirectory string
 	// Features builds feature histories; nil refuses feature builds.
 	Features FeatureBuilder
-	// ReviewRuns holds the run directories of reviews that keep their agent
-	// session; empty is reviewruns.DefaultRoot.
-	ReviewRuns string
 	// Log receives what a job's agent reports and keeps out of the job, such
 	// as a fix agent's provider error; nil logs nothing.
 	Log *slog.Logger
-}
-
-// keepsSession reports whether a review by the named backend keeps its agent
-// session: only a local Claude Code or Codex session can be resumed.
-func keepsSession(backend string) bool {
-	return backend == string(config.BackendClaude) || backend == string(config.BackendCodex)
 }
 
 type identityVersions struct {
@@ -454,7 +444,7 @@ func (l *Local) Execute(ctx context.Context, p Prepared, progress func(Progress)
 	if p.Kind == KindDetails {
 		result, e = l.completeDetails(ctx, versions, manager, key, p, options)
 	} else {
-		result, e = l.publish(ctx, published, versions, key, name, options, func(r generate.Result) *float64 {
+		result, e = generate.Publish(ctx, published, key, options, func(r generate.Result) *float64 {
 			return list.BackendOutcomeCost(name, r.Outcome.Model, r.Outcome)
 		})
 	}
@@ -538,19 +528,6 @@ func (l *Local) completeDetails(ctx context.Context, versions *store.Store, mana
 		}
 	}
 	return result, ErrSuperseded
-}
-
-// publish generates and stores a review. A single pull request reviewed by a
-// local Claude Code or Codex keeps its agent session and run directory, and
-// the directories of its older versions are pruned once the new one is stored.
-func (l *Local) publish(ctx context.Context, published generate.Versions, versions *store.Store, key store.Key, backend string, o generate.Options, cost func(generate.Result) *float64) (generate.Result, error) {
-	o.KeepSession = o.Group == nil && keepsSession(backend)
-	o.SessionRoot = l.ReviewRuns
-	result, e := generate.Publish(ctx, published, key, o, cost)
-	if e == nil && result.Metadata.Session != nil {
-		l.pruneReviewRuns(ctx, versions, key)
-	}
-	return result, e
 }
 
 // trackedBackend reports a job's calls, tokens, repairs, usage and drafts as
@@ -829,22 +806,6 @@ func (l *Local) executeFeatureBuild(ctx context.Context, p Prepared, progress fu
 	}
 	spent, e := l.Features.BuildFeatures(ctx, c.Repository, c.Path, progress)
 	return &spent, e
-}
-
-// pruneReviewRuns removes the kept run directories of the pull request's
-// versions beyond the latest two. A failure only leaves them for the daily
-// expiry.
-func (l *Local) pruneReviewRuns(ctx context.Context, versions *store.Store, key store.Key) {
-	root := l.ReviewRuns
-	if root == "" {
-		var e error
-		if root, e = reviewruns.DefaultRoot(); e != nil {
-			return
-		}
-	}
-	if all, e := versions.Versions(ctx, key); e == nil {
-		_ = reviewruns.PruneVersions(root, all)
-	}
 }
 
 // promptSourceOf is store.Metadata's PromptSource for a run that used ids:

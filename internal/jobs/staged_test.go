@@ -182,9 +182,7 @@ func detailsFixture(t *testing.T) (generate.Options, *store.Store, store.Key, *f
 		t.Fatal(err)
 	}
 	key := store.Key{Repository: assembletest.Repository.String(), Number: assembletest.Number}
-	local := &Local{ReviewRuns: filepath.Join(t.TempDir(), "review-runs")}
-	t.Cleanup(func() { chmodTree(local.ReviewRuns) })
-	result, err := local.publish(ctx, versions, versions, key, agent.BackendCursorAgent, o, nil)
+	result, err := generate.Publish(ctx, versions, key, o, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

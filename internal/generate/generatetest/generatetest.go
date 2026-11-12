@@ -62,34 +62,7 @@ func (b *Backend) Run(ctx context.Context, request agent.Request) (agent.Result,
 	if err != nil {
 		return agent.Result{}, err
 	}
-	result := agent.Result{Document: ForStage(request, document), Model: "stub-model", Calls: 1, Tokens: 100, Usage: agent.Usage{Input: 60, Output: 40}}
-	if request.PersistSession {
-		result.SessionID = StageSessionID(request)
-	}
-	return result, nil
-}
-
-// SessionID is the session the default Run reports when asked to persist one
-// for a review in one pass or a staged review's details; StageSessionID
-// names the others.
-const SessionID = "11111111-2222-4333-8444-555555555555"
-
-// The sessions the default Run reports for the outline and context stages
-// of a staged review.
-const (
-	OutlineSessionID = "11111111-2222-4333-8444-000000000001"
-	ContextSessionID = "11111111-2222-4333-8444-000000000003"
-)
-
-// StageSessionID is the session the default Run reports for a request.
-func StageSessionID(request agent.Request) string {
-	switch Stage(request) {
-	case agent.StageOutline:
-		return OutlineSessionID
-	case agent.StageContext:
-		return ContextSessionID
-	}
-	return SessionID
+	return agent.Result{Document: ForStage(request, document), Model: "stub-model", Calls: 1, Tokens: 100, Usage: agent.Usage{Input: 60, Output: 40}}, nil
 }
 
 // Stage names the stage of a staged review a request is for, by the title of
@@ -269,11 +242,7 @@ func StagedReplies(answer Answer) func(context.Context, agent.Request, int) (age
 			}
 		}
 		document, err := Document(request.Directory, TwoSections)
-		result := agent.Result{Document: ForStage(request, document), Model: "stub-model", Calls: 1, Tokens: 100}
-		if request.PersistSession {
-			result.SessionID = StageSessionID(request)
-		}
-		return result, err
+		return agent.Result{Document: ForStage(request, document), Model: "stub-model", Calls: 1, Tokens: 100}, err
 	}
 }
 

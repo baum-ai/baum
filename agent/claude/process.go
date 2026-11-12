@@ -29,9 +29,8 @@ const submitPrompt = "Submit the finished document by calling the StructuredOutp
 // leaves the flag out so Claude Code uses its own default model.
 //
 // Unless the request keeps its session (agent.Request.KeepsSession),
-// --no-session-persistence discards it. ResumeSession adds --resume and
-// ForkSession --fork-session; resuming implies persisting, so a resumed or
-// forked session can be resumed again.
+// --no-session-persistence discards it. ResumeSession adds --resume;
+// resuming implies persisting, so a resumed session can be resumed again.
 func (c *Backend) args(request agent.Request) []string {
 	args := []string{"--print", "--output-format", "stream-json", "--verbose", "--include-partial-messages"}
 	if c.Model != "" {
@@ -54,9 +53,6 @@ func (c *Backend) args(request agent.Request) []string {
 	}
 	if request.ResumeSession != "" {
 		args = append(args, "--resume", request.ResumeSession)
-		if request.ForkSession {
-			args = append(args, "--fork-session")
-		}
 	}
 	return append(append(args, "--settings", `{"permissions":{"blockReadsOutsideWorkingDirectories":true}}`,
 		"--setting-sources", ""), mcpArgs(request)...)
@@ -210,7 +206,7 @@ func (c *Backend) converseEnvironment() []string {
 // release whose argument parser accepts every flag args and fixArgs pass.
 // Found with the agent version matrix (scripts/agent-matrix): 2.1.247 refuses
 // --restricted ("unknown option") and 2.1.248 accepts every argument of a
-// review, a resumed or forked session, a fix and a completion. Older 2.1
+// review, a resumed session, a fix and a completion. Older 2.1
 // releases lack --effort (2.1.0 to 2.1.32 at least) or --restricted.
 const MinimumVersion = "2.1.248"
 

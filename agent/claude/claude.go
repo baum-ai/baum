@@ -120,9 +120,6 @@ func (c *Backend) Converse(ctx context.Context, request agent.Request, access ag
 	if err := access.Validate(); err != nil {
 		return agent.Result{}, fmt.Errorf("claude: %w", err)
 	}
-	if request.ForkSession {
-		return agent.Result{}, errors.New("claude: a conversation continues its session and never forks it")
-	}
 	request.PersistSession = true
 	request.MaxCalls, request.MaxTokens = 0, 0
 	return c.run(ctx, request, c.converseArgs(request, access), nil, runConverse)
@@ -135,8 +132,8 @@ func (c *Backend) run(ctx context.Context, request agent.Request, args, env []st
 	if err := request.ValidateSession(); err != nil {
 		return result, fmt.Errorf("claude: %w", err)
 	}
-	if request.WantsSession() && (c.Profile != User || kind == runFix) {
-		return result, errors.New("claude: only a User profile review or task can keep, resume or fork a session")
+	if request.KeepsSession() && (c.Profile != User || kind == runFix) {
+		return result, errors.New("claude: only a User profile review or task can keep or resume a session")
 	}
 	if request.MCP != nil {
 		if c.Profile != User {
@@ -571,9 +568,9 @@ func (c *Backend) run(ctx context.Context, request agent.Request, args, env []st
 				break
 			}
 			if event.IsError || event.Subtype != "success" {
-				// A resume or fork of a session Claude Code cannot find ends
-				// at once with a failed result naming it; on a fork the
-				// result carries a fresh session id that holds nothing.
+				// A resume of a session Claude Code cannot find ends at once
+				// with a failed result naming it, which may carry a fresh
+				// session id that holds nothing.
 				if line, missing := agent.MissingSession(strings.Join(event.Errors, "\n")); missing && request.ResumeSession != "" && event.NumTurns == 0 {
 					record(agent.Event{Kind: "error", Status: "session_not_found"})
 					result.SessionID = ""

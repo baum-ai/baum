@@ -36,7 +36,7 @@ func (a Access) Validate() error {
 // person's message. The session is always kept, so Result.SessionID can be
 // resumed with Request.ResumeSession for the next turn. The turn's final
 // message, bounded to MaxConverseBytes, is Result.Document. Request.Schema,
-// Task, ForkSession and the call and token limits are not used: the caller's
+// Task and the call and token limits are not used: the caller's
 // context bounds the turn. Only the claude and codex backends implement it,
 // in their local profiles.
 type Converser interface {

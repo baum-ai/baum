@@ -128,14 +128,11 @@ var (
 	sessionStripped = []string{"GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR", "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "AWS_SECRET_ACCESS_KEY"}
 )
 
-// A conversation never forks, and only the User profile runs one.
+// Only the User profile runs a conversation, with a known access.
 func TestConverseRefusals(t *testing.T) {
 	ctx := context.Background()
 	if _, err := (&Backend{Profile: Isolated}).Converse(ctx, agent.Request{}, agent.AccessFull); err == nil {
 		t.Error("the Isolated profile ran a conversation")
-	}
-	if _, err := (&Backend{}).Converse(ctx, agent.Request{ResumeSession: converseSession, ForkSession: true}, agent.AccessFull); err == nil {
-		t.Error("a conversation forked its session")
 	}
 	if _, err := (&Backend{}).Converse(ctx, agent.Request{}, agent.Access("everything")); err == nil {
 		t.Error("an unknown access was accepted")

@@ -42,7 +42,7 @@ with `npm view <package> time`, and update the file and the floors together.
 | `version` | the executable reports the requested release |
 | `doctor` | `baum internal doctor` accepts a supported release and refuses one below the floor with an upgrade message |
 | `sandbox` | Codex's read-only sandbox, which baum requires, starts (skipped where the container forbids user namespaces) |
-| `flags` | baum's backends build the arguments of a review, a review keeping its session, a resume, a fork, a fix and a completion, and the release's own argument parser accepts each list, run with no login and no network. A release below the floor must be refused by baum instead |
+| `flags` | baum's backends build the arguments of a review, a review keeping its session, a resume, a fix and a completion, and the release's own argument parser accepts each list, run with no login and no network. A release below the floor must be refused by baum instead |
 | `events` | every hook event baum registers for the agent appears in the installed package, so the hook can fire |
 | `plugin` | the plugin installs from this checkout through the agent's native commands, is read back installed and enabled by baum, uninstalls, and leaves the user's own configuration intact (what the agent adds is listed) |
 | `trust` | Codex loads every baum hook and reports them untrusted until reviewed (`hooks/list`, offline); Claude Code has no trust step |

@@ -39,8 +39,8 @@ func codexSessions() (string, bool) {
 	return filepath.Join(home, ".codex", "sessions"), err == nil
 }
 
-// resolvedRoot is root with symlinks resolved, as the run directories Create
-// returns are spelled.
+// resolvedRoot is root with symlinks resolved, as the run directories kept
+// by earlier versions are spelled.
 func resolvedRoot(root string) string {
 	if resolved, err := filepath.EvalSymlinks(root); err == nil {
 		root = resolved
@@ -49,8 +49,8 @@ func resolvedRoot(root string) string {
 }
 
 // underRoot resolves the parent of dir so aliases such as /var on macOS
-// and short Windows paths compare like the paths returned by Create. It
-// leaves dir itself unresolved so candidates can reject a final symlink.
+// and short Windows paths compare like the resolved paths of kept run
+// directories. It leaves dir itself unresolved.
 func underRoot(root, dir string) bool {
 	dir = filepath.Clean(dir)
 	return resolvedRoot(filepath.Dir(dir)) == resolvedRoot(root) && strings.HasPrefix(filepath.Base(dir), agent.RunDirPrefix)
@@ -61,8 +61,8 @@ func underRoot(root, dir string) bool {
 // root (anything else is ignored). With ids it deletes those sessions only:
 // Claude Code's <id>.jsonl and <id>/ in the directory's project directory, and
 // Codex's rollout files ending in -<id>.jsonl whose recorded cwd is dir.
-// Without ids it deletes every session of the directory, chat forks made later
-// included: Claude Code's whole project directory and every Codex rollout
+// Without ids it deletes every session of the directory, those of the
+// questions that continued it included: Claude Code's whole project directory and every Codex rollout
 // recording dir as its cwd. Symlinks are never followed and missing files are
 // not an error.
 func RemoveSessions(root, dir string, ids ...string) error {

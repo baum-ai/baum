@@ -41,23 +41,21 @@ func (b *scriptedBackend) Run(context.Context, Request) (Result, error) {
 	return Result{}, b.err
 }
 
-// Continue fails a missing session at once instead of retrying it as a
+// A model call fails a missing session at once instead of retrying it as a
 // provider failure.
-func TestContinueDoesNotRetryAMissingSession(t *testing.T) {
+func TestCallDoesNotRetryAMissingSession(t *testing.T) {
 	budgets := Budgets{MaxCalls: 5, MaxTokens: 100, MaxProviderAttempts: 3}
 	backend := &scriptedBackend{err: errors.New("claude code failed: exit status 1 (No conversation found with session ID: x)")}
 	g := Generator{Backend: backend, RetryDelay: func(int) time.Duration { return 0 }}
 	var outcome Outcome
-	_, err := g.Continue(context.Background(), budgets, Request{ResumeSession: "00000000-0000-4000-8000-000000000001"}, &outcome)
+	stalls := 0
+	_, err := g.call(context.Background(), budgets, Request{ResumeSession: "00000000-0000-4000-8000-000000000001"}, &outcome, &stalls)
 	if !errors.Is(err, ErrSessionNotFound) || backend.calls != 1 {
 		t.Errorf("err %v after %d calls", err, backend.calls)
 	}
 	backend.calls = 0
-	_, err = g.Continue(context.Background(), budgets, Request{}, &outcome)
+	_, err = g.call(context.Background(), budgets, Request{}, &outcome, &stalls)
 	if err == nil || errors.Is(err, ErrSessionNotFound) || backend.calls != 3 {
 		t.Errorf("a fresh call: err %v after %d calls", err, backend.calls)
-	}
-	if _, err := g.Continue(context.Background(), budgets, Request{ForkSession: true}, &outcome); err == nil {
-		t.Error("a fork without a session was accepted")
 	}
 }
