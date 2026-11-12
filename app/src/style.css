@@ -5888,14 +5888,14 @@ a.upnext-done-text:hover {
   padding: 0;
   border: 0;
   background: transparent;
-  color: var(--text-secondary);
+  color: var(--text-tertiary);
   font: inherit;
   font-size: var(--text-xs);
   line-height: 1.45;
   text-align: left;
 }
 .upnext-checks .upnext-log-toggle:hover {
-  color: var(--text-link-hover);
+  color: var(--text-secondary);
   text-decoration: underline;
 }
 .upnext-check-log-panel {

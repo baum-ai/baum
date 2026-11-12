@@ -108,6 +108,7 @@ it("shows a failing check's log tail only when asked, collapsed by default", asy
     await render([failing()]);
     const show = button("Show log")!;
     expect(show.getAttribute("aria-expanded")).toBe("false");
+    expect(show.hasAttribute("aria-controls")).toBe(false);
     expect(node.querySelector("pre")).toBeNull();
     expect(fetchMock).not.toHaveBeenCalled();
 
@@ -124,6 +125,11 @@ it("shows a failing check's log tail only when asked, collapsed by default", asy
     expect(node.textContent).toContain("The end of the log");
     expect(button("Hide log")!.getAttribute("aria-expanded")).toBe("true");
     expect(button("Copy")).toBeDefined();
+    // The copy status is for screen readers only (the PR page loads no
+    // desktop stylesheet that hides `visually-hidden`).
+    expect(node.querySelector("[role=status].sr-only")).not.toBeNull();
+    expect(node.querySelector(".visually-hidden")).toBeNull();
+    expect(button("Hide log")!.getAttribute("aria-controls")).toBe(log.closest("div[id]")!.id);
 
     await act(async () => button("Hide log")!.click());
     expect(node.querySelector("pre")).toBeNull();

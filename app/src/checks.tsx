@@ -252,7 +252,7 @@ function CheckLog({
         >
           {copied || "Copy"}
         </button>
-        <span className="visually-hidden" role="status">
+        <span className="sr-only" role="status">
           {copied}
         </span>
       </div>
@@ -395,7 +395,7 @@ export function PullRequestChecks({
                     type="button"
                     className="upnext-log-toggle"
                     aria-expanded={logOpen}
-                    aria-controls={`${logPanel}-${logId}`}
+                    aria-controls={logOpen ? `${logPanel}-${logId}` : undefined}
                     onClick={() => toggleLog(logId)}
                   >
                     <ChevronRightIcon size={12} className="upnext-chevron" />

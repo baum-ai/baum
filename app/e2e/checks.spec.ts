@@ -131,6 +131,34 @@ test("a failing check shows the end of its log, folded until asked for", async (
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(1440);
   await page.screenshot({ path: "test-results/check-log.png" });
 
+  // Copy sits at the right end of the log's footer, and its status text is
+  // not drawn: "Copied" shows once, on the button.
+  const copyAligned = async () => {
+    const copy = page.getByRole("button", { name: "Copy the log of CI / Platform" });
+    const [copyBox, logBox] = await Promise.all([copy.boundingBox(), log.boundingBox()]);
+    expect(Math.abs(copyBox!.x + copyBox!.width - (logBox!.x + logBox!.width))).toBeLessThanOrEqual(
+      2,
+    );
+  };
+  await copyAligned();
+  await page
+    .context()
+    .grantPermissions(["clipboard-read", "clipboard-write"])
+    .catch(() => {});
+  await page.getByRole("button", { name: "Copy the log of CI / Platform" }).click();
+  await expect(page.getByRole("button", { name: "Copy the log of CI / Platform" })).toContainText(
+    "Copied",
+  );
+  await expect(page.locator("[role=status].sr-only")).toHaveCSS("position", "absolute");
+
+  // The same at a narrow width.
+  await page.setViewportSize({ width: 390, height: 1000 });
+  await page.keyboard.press("]");
+  await expect(log).toBeVisible();
+  await copyAligned();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
+  await page.screenshot({ path: "test-results/check-log-390.png" });
+
   await page.getByRole("button", { name: "Hide log", exact: true }).click();
   await expect(log).toHaveCount(0);
 });
