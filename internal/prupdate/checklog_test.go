@@ -271,7 +271,7 @@ func (zeroLines) Read(p []byte) (int, error) {
 }
 
 func TestCheckLogDropsInvisibleFormatCharacters(t *testing.T) {
-	raw := "a‮b​c⁦d‎️e f\n"
+	raw := "a\u202eb\u200bc\u2066d\u200e\ufe0fe\u2028f\n"
 	fake := fakeGitHub{head: "abc", checks: logChecks(), logs: map[int]string{21: raw}}
 	got, err := Service{Client: fake.client()}.CheckLog(context.Background(), repo, 7, 21)
 	if err != nil || got.Log != "abcdef" {
