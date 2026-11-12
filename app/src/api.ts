@@ -919,17 +919,58 @@ export function backTo(search: URLSearchParams): { href: string; label: string; 
   return { href: appURL(`?${back}`), label: "Pull requests", prefix: "page=pulls&" };
 }
 /** The daemon answers these with an ETag and 304 for an unchanged snapshot.
- *  `no-cache` lets the webview store the answer and revalidate it on every
- *  request; `no-store` would resend the whole body each time. */
+ *  The app revalidates them itself (see `request`); no answer goes through the
+ *  webview's HTTP cache, which leaks memory in WebKitGTK 2.50. */
 function revalidated(path: string): boolean {
   const [pathname] = path.split("?");
   return pathname === "api/index" || pathname === "api/prs";
 }
 
-/** Requests `path`, relative to the namespace, as `api/repos`. `cache` is
- *  "no-cache" only for an answer the daemon tags with an ETag, which the
- *  browser then revalidates instead of downloading again; `api/index` and
- *  `api/prs` always are. */
+/** The last answer of each revalidated path, query included, with its ETag.
+ *  The paths are few and fixed, so this stays small. */
+const kept = new Map<string, { etag: string; value: unknown }>();
+
+/** Forgets every kept answer. For tests. */
+export function resetRevalidation(): void {
+  kept.clear();
+}
+
+async function failure(response: Response): Promise<LocalRequestError> {
+  const text = await response.text();
+  let body: {
+    code?: string;
+    message?: string;
+    needs_clone?: boolean;
+    blocked_reason?: string;
+    isolation_required?: boolean;
+  } = {};
+  try {
+    body = JSON.parse(text);
+  } catch {
+    /* The daemon also returns plain text. */
+  }
+  // A run the daemon will not start (a fix of a fork, with nothing to
+  // fix…) names its reason, which is said in words.
+  return new LocalRequestError(
+    body.needs_clone
+      ? "Needs a local clone"
+      : body.blocked_reason
+        ? jobReasonText(body.blocked_reason)
+        : (body.message ?? `Local request failed (${response.status}): ${text.slice(0, 240)}`),
+    body.needs_clone
+      ? "needs_clone"
+      : body.isolation_required
+        ? "isolation_required"
+        : (body.blocked_reason ?? body.code),
+    response.status,
+  );
+}
+
+/** Requests `path`, relative to the namespace, as `api/repos`. `cache` applies
+ *  to every request but a GET of `api/index` or `api/prs`: those are always
+ *  `no-store`, and the app sends `If-None-Match` with the ETag of the answer it
+ *  kept. A 304 returns that same value object, so callers can tell it did not
+ *  change. */
 export async function request<T>(
   path: string,
   body?: unknown,
@@ -937,46 +978,33 @@ export async function request<T>(
   signal?: AbortSignal,
   cache: RequestCache = "no-store",
 ): Promise<T> {
-  const response = await fetch(appURL(path), {
-    method,
-    signal,
-    cache: method === "GET" && revalidated(path) ? "no-cache" : cache,
-    ...(body === undefined
-      ? {}
-      : { headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }),
-  });
-  if (!response.ok) {
-    const text = await response.text();
-    let body: {
-      code?: string;
-      message?: string;
-      needs_clone?: boolean;
-      blocked_reason?: string;
-      isolation_required?: boolean;
-    } = {};
-    try {
-      body = JSON.parse(text);
-    } catch {
-      /* The daemon also returns plain text. */
-    }
-    // A run the daemon will not start (a fix of a fork, with nothing to
-    // fix…) names its reason, which is said in words.
-    throw new LocalRequestError(
-      body.needs_clone
-        ? "Needs a local clone"
-        : body.blocked_reason
-          ? jobReasonText(body.blocked_reason)
-          : (body.message ?? `Local request failed (${response.status}): ${text.slice(0, 240)}`),
-      body.needs_clone
-        ? "needs_clone"
-        : body.isolation_required
-          ? "isolation_required"
-          : (body.blocked_reason ?? body.code),
-      response.status,
-    );
+  const conditional = method === "GET" && revalidated(path);
+  const send = (etag?: string) =>
+    fetch(appURL(path), {
+      method,
+      signal,
+      cache: conditional ? "no-store" : cache,
+      ...(etag ? { headers: { "If-None-Match": etag } } : {}),
+      ...(body === undefined
+        ? {}
+        : { headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }),
+    });
+  const entry = conditional ? kept.get(path) : undefined;
+  let response = await send(entry?.etag);
+  if (response.status === 304) {
+    if (entry) return entry.value as T;
+    // Nothing kept to answer with: ask again without the condition.
+    response = await send();
   }
+  if (!response.ok) throw await failure(response);
   if (response.status === 204) return undefined as T;
-  return response.json();
+  const value = await response.json();
+  if (conditional) {
+    const etag = response.headers.get("ETag");
+    if (etag) kept.set(path, { etag, value });
+    else kept.delete(path);
+  }
+  return value;
 }
 /** The jobs a page of `api/jobs?limit=` holds, newest first, and the id to
  *  pass as `before` for the next older page; absent when there is none. */

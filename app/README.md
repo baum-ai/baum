@@ -19,6 +19,12 @@ measure uses `visibleInterval`, from the same file. The entry points call `track
 `data-hidden` on `<html>` while hidden; the viewer stylesheet pauses every
 animation then.
 
+`api/index` and `api/prs` carry an ETag. The app keeps the last answer of each
+(`request` in `src/api.ts`) and asks again with `If-None-Match`; a 304 returns
+the kept object itself, so an unchanged snapshot sets no new state. Every daemon
+answer is `no-store`, so none goes through the webview's HTTP cache: WebKitGTK
+2.50's cache path leaks memory in its network process.
+
 The desktop app's own screens are React too: `setup.html` mounts
 `src/desktop/setup.tsx` and `connecting.html` mounts `src/desktop/connecting.tsx`,
 with typed native IPC and the same Vite, TypeScript, lint and test pipeline. Setup,
