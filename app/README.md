@@ -355,6 +355,9 @@ icon, its name (a GitHub Actions job's after its workflow, as GitHub lists it:
 and a **Details** link (`url`). While any check fails, only the failing ones
 (and any retried from the list) show, the rest behind **Show N other checks**,
 which **Hide other checks** folds again; with none failing every check shows.
+The daemon lists at most 100, failing first, then running (`capped`, `total`
+in its answer); when GitHub reports more, the panel adds "Showing 100 of 130
+checks, failing and running first" with a **See all on GitHub** link.
 The same bordered rows align the icon, name and status, and actions in the
 review's Activity pane, independently of the Up next panel.
 The row's title carries a pill counting them out of them all (`checksCount`):
