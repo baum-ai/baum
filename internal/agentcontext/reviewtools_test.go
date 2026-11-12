@@ -246,10 +246,9 @@ func TestReviewToolsReturnOnePartPerCall(t *testing.T) {
 // A document the tools cannot read is an error that quotes nothing of it, so
 // a projection never falls back to the raw document.
 func TestReviewToolsNeverEchoAnUnreadableDocument(t *testing.T) {
-	s, _ := reviewServer(t)
 	// A pull request whose stored document is no object: every tool fails
 	// without quoting it.
-	s = New(Options{API: documentOverride(&reviewDaemon{}, `["CANARY-RAW"]`)})
+	s := New(Options{API: documentOverride(&reviewDaemon{}, `["CANARY-RAW"]`)})
 	for _, tool := range []string{"review_outline", "review_section", "review_context"} {
 		text, err := direct(t, s, tool, map[string]any{"repository": "acme/web", "pr": 13, "id": "sec_1"})
 		if err == nil || strings.Contains(text+err.Error(), "CANARY-RAW") {
@@ -605,8 +604,8 @@ func TestReviewDraftReportsUnavailableJobs(t *testing.T) {
 // A group's versions route failing is said as it is.
 func TestReviewVersionsPassOnErrors(t *testing.T) {
 	failing := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case r.URL.Path == "/api/groups/g-web":
+		switch r.URL.Path {
+		case "/api/groups/g-web":
 			_, _ = w.Write([]byte(`{"id":"g-web","repository":"acme/web"}`))
 		default:
 			http.Error(w, "boom", http.StatusInternalServerError)
