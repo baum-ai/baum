@@ -1270,15 +1270,15 @@ export function ProposalCard({
         toast({ title: proposal.operation?.summary.action ?? "Done", detail: outcome.message });
       }
       if (action === "save" && proposal.kind === "diff") toast({ title: "Saved the change" });
-      // A comment added to the pending review shows in the pull request's
-      // review at once.
+      // A comment saved to the pending review (propose_review_comment) shows
+      // in the pull request's review at once.
       const { repository, pull_request } = proposal.context;
       if (
         action === "save" &&
+        proposal.kind === "diff" &&
         repository &&
         pull_request &&
-        (proposal.operation?.name === "add_review_comment" ||
-          proposal.target.endsWith(":review_comment"))
+        proposal.target.endsWith(":review_comment")
       )
         void pendingReviewState({ repository, number: pull_request }).load();
       changed();

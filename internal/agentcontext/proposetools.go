@@ -7,8 +7,6 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
-
-	"github.com/baum-ai/baum/internal/uistate"
 )
 
 // The propose_* tools: a chat suggests a change to what the open page edits,
@@ -493,8 +491,13 @@ func proposeTools() []Tool {
 		Name: "propose_review_comment",
 		Description: "Proposes a comment for the person's own pending review of the pull request the page shows, which they send from the app: its body, what it is about (target: general, or a section, risk or file of the review by id, with a title), and optionally the diff line it is placed on (path, line, side RIGHT or LEFT, optional start_line) at the commit head. Saving adds it to the review's comments and keeps the person's other drafts. " +
 			"The person must have the pull request's page open. Nothing changes until the person saves the proposal.",
-		InputSchema: reviewCommentSchema,
-		Proposes:    true,
+		InputSchema: json.RawMessage(`{"type":"object","properties":{` +
+			`"body":{"type":"string","minLength":1,"maxLength":65536},` +
+			`"target":{"type":"object","properties":{"kind":{"type":"string","maxLength":16,"description":"general, section, risk or file."},"id":{"type":"string","maxLength":4096},"title":{"type":"string","maxLength":1024}},"required":["kind","id","title"],"additionalProperties":false,"description":"Default: the pull request in general."},` +
+			`"place":{"type":"object","properties":{"path":{"type":"string","minLength":1,"maxLength":4096},"line":{"type":"integer"},"side":{"type":"string","maxLength":8,"description":"RIGHT or LEFT."},"start_line":{"type":"integer"}},"required":["path","line","side"],"additionalProperties":false},` +
+			`"head":{"type":"string","maxLength":64,"description":"The commit the place is on, as hex; empty when there is no place."}},` +
+			`"required":["body"],"additionalProperties":false}`),
+		Proposes: true,
 		Call: func(ctx context.Context, c CallContext, args json.RawMessage) (string, error) {
 			var a ReviewCommentChange
 			if err := strictArgs(args, &a); err != nil {
@@ -554,52 +557,4 @@ type ReviewCommentChange struct {
 		StartLine *int   `json:"start_line,omitempty"`
 	} `json:"place,omitempty"`
 	Head string `json:"head,omitempty"`
-}
-
-// reviewCommentSchema is the arguments of a pending review comment
-// (ReviewCommentChange), proposed as a change or as an operation.
-var reviewCommentSchema = json.RawMessage(`{"type":"object","properties":{` +
-	`"body":{"type":"string","minLength":1,"maxLength":65536},` +
-	`"target":{"type":"object","properties":{"kind":{"type":"string","maxLength":16,"description":"general, section, risk or file."},"id":{"type":"string","maxLength":4096},"title":{"type":"string","maxLength":1024}},"required":["kind","id","title"],"additionalProperties":false,"description":"Default: the pull request in general."},` +
-	`"place":{"type":"object","properties":{"path":{"type":"string","minLength":1,"maxLength":4096},"line":{"type":"integer"},"side":{"type":"string","maxLength":8,"description":"RIGHT or LEFT."},"start_line":{"type":"integer"}},"required":["path","line","side"],"additionalProperties":false},` +
-	`"head":{"type":"string","maxLength":64,"description":"The commit the place is on, as hex; empty when there is no place."}},` +
-	`"required":["body"],"additionalProperties":false}`)
-
-// pendingComment is the comment an add_review_comment operation adds, as
-// the route takes it. The agent's text is refused when a summary could not
-// show it as it is, and the comment when a pending review would not hold it
-// (uistate.CheckReviewComment, which the route applies again on Confirm).
-func pendingComment(a ReviewCommentChange) (uistate.ReviewComment, error) {
-	comment := uistate.ReviewComment{Body: a.Body, Head: a.Head}
-	checked := []struct{ what, text string }{{"comment", a.Body}}
-	target := uistate.CommentTarget{Kind: "general", Title: "The pull request"}
-	if a.Target != nil {
-		target = uistate.CommentTarget{Kind: a.Target.Kind, ID: a.Target.ID, Title: a.Target.Title}
-		comment.Target = &target
-		checked = append(checked, struct{ what, text string }{"comment's target id", a.Target.ID}, struct{ what, text string }{"comment's target title", a.Target.Title})
-	}
-	if a.Place != nil {
-		comment.Place = &uistate.CommentPlace{Path: a.Place.Path, Line: a.Place.Line, Side: a.Place.Side, StartLine: a.Place.StartLine}
-		checked = append(checked, struct{ what, text string }{"comment's file path", a.Place.Path})
-	}
-	for i, c := range checked {
-		if err := checkAgentText(c.what, c.text, i == 0); err != nil {
-			return uistate.ReviewComment{}, err
-		}
-	}
-	raw, err := json.Marshal(struct {
-		ID      string                `json:"id"`
-		Target  uistate.CommentTarget `json:"target"`
-		Body    string                `json:"body"`
-		Place   *uistate.CommentPlace `json:"place"`
-		Head    string                `json:"head"`
-		Created int64                 `json:"created"`
-	}{"proposal", target, comment.Body, comment.Place, comment.Head, 0})
-	if err != nil {
-		return uistate.ReviewComment{}, err
-	}
-	if err := uistate.CheckReviewComment(raw); err != nil {
-		return uistate.ReviewComment{}, errors.New(strings.TrimPrefix(err.Error(), uistate.ErrInvalid.Error()+": "))
-	}
-	return comment, nil
 }

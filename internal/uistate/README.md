@@ -39,6 +39,12 @@ with an `https://` URL, `event` `APPROVE`, `COMMENT` or `REQUEST_CHANGES`, and
 at most 100 `{title, where, body}` comments.
 The save timestamp is advanced monotonically within the transaction so an
 unchanged or backwards wall clock cannot prune the draft just saved.
+The session panel uses the MCP `propose_review_comment` diff proposal. Only
+the person's Save appends it through `uiserver.Proposers`, using `Replace`
+with the pending review's revision and keeping its other comments, note and
+sent reviews. A changed revision refuses the save. The panel reloads the
+shared review record after Save so the comment appears at once; nothing is
+sent to GitHub until the person sends their review.
 Inbox rollover/clearing semantics remain in the frontend queue model, which
 knows whether its GitHub index read is complete and which actions clear work.
 
@@ -57,15 +63,6 @@ JSON-content checks. These routes grant no filesystem access.
 - `PUT /api/ui-state/walkthrough?key=<URL-encoded review key>`
 - `GET /api/ui-state/review?key=<URL-encoded pull request key>`
 - `PUT /api/ui-state/review?key=<URL-encoded pull request key>`
-- `POST /api/ui-state/review/comments` with `{repository, pr, body, target?,
-  place?, head?}`: appends one comment to that pull request's review
-  (`AddReviewComment`), with a new random id and the time now, keeping its
-  other comments, note and sent reviews; the target defaults to the pull
-  request in general. It answers 201 `{id, revision, message}`, never the
-  record; a comment the record would not hold, or a review already holding
-  100, is 400 with the reason. A review saved meanwhile is read again. This is
-  the route of the session panel's `add_review_comment` operation, which runs
-  only once the person confirms it.
 
 Reads return `{revision, value}`; an absent record is `{revision: 0, value:
 null}`. Reads never create a database. Writes require `{revision, mutation_id,

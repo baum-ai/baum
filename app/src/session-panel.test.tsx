@@ -812,28 +812,22 @@ it("opens on the pull request an Ask names, with the part of the review it picke
   await until(() => expect(state!.ask).toBeNull());
 });
 
-it("shows a comment confirmed for the pending review at once", async () => {
-  answer = (call) =>
-    call.path.endsWith("/confirm")
-      ? Response.json({ outcome: { status: 201, message: "Added the comment." } })
-      : undefined;
-  await card(
-    operation({
-      target: "acme/demo#7",
-      operation: {
-        name: "add_review_comment",
-        request: {},
-        revision: "r1",
-        summary: {
-          action: "Add a comment to your pending review of acme/demo#7",
-          paid: false,
-          irreversible: false,
-        },
-      },
-    }),
-  );
-  await act(async () => button("Confirm")!.click());
-  await until(() =>
-    expect(calls.some((c) => c.path === "api/ui-state/review?key=acme%2Fdemo%237")).toBe(true),
-  );
+it("shows a comment saved to the pending review at once", async () => {
+  const review = () => calls.filter((c) => c.path === "api/ui-state/review?key=acme%2Fdemo%237");
+  const comment: Proposal = {
+    id: "p3",
+    kind: "diff",
+    page: "pull_request",
+    target: "acme/demo#7:review_comment",
+    after: { body: "Cap the retry delay." },
+    revision: "r1",
+    context: pr,
+  };
+  await card(comment);
+  expect(node.textContent).toContain("Proposes a change");
+  // Nothing is read again before the save.
+  expect(review()).toHaveLength(0);
+  await act(async () => button("Save")!.click());
+  await until(() => expect(calls.some((c) => c.path.endsWith("/proposals/p3/save"))).toBe(true));
+  await until(() => expect(review().length).toBeGreaterThan(0));
 });

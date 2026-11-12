@@ -5703,7 +5703,7 @@ their tools, and `current_page` lists a section's with its `section_tools`.
 | `repositories` with a repository (`prompts`) | `propose_prompt`, `propose_prompt_reset` | `<owner/name>:prompt/<id>` | `PUT /api/repositories/{owner}/{name}/prompts/{id}` |
 | `inbox` | `propose_inbox` | `inbox:new` or `inbox:<id>` | `PUT /api/inboxes` (`inboxes.API.Save`) of the list with the inbox added at the end or changed: name, colour, query, badge |
 | `group` | `propose_group` | `group:<id>`, the page's group | `PATCH /api/groups/{id}` (`reviewgroups.API.Update`): name, members added and removed |
-| `pull_request` | `propose_review_comment` | `<owner/name>#<n>:review_comment`, the page's pull request | `PUT /api/ui-state/review?key=` of the pending review with the comment appended, the other comments, note and sent reviews kept |
+| `pull_request` | `propose_review_comment` | `<owner/name>#<n>:review_comment`, the page's pull request | Save appends the comment through `uistate.Store.Replace`, as `PUT /api/ui-state/review?key=` saves the pending review; other comments, note and sent reviews are kept. The panel reloads that record after Save. Nothing is sent to GitHub. |
 
 A target of another section than the open one (General when none is named;
 Reviews on a repository's page), another repository, group or pull request is
@@ -5862,7 +5862,6 @@ app or the terminal. Denying it may be proposed.
 | `rerun_checks` | `pull_request` | `POST /api/prs/rerun-checks` | | |
 | `rerun_failed_job` (a failing check's `job_id`) | `pull_request` | `POST /api/prs/rerun-job` | | |
 | `resolve_thread` (an unresolved thread the account can resolve) | `pull_request` | `POST /api/prs/resolve-thread` | | |
-| `add_review_comment` (a comment for the person's pending review, at most 100; body, target title and place shown as the agent's) | `pull_request` | `POST /api/ui-state/review/comments` | | |
 | `fix` (`only: checks` for Fix CI) | `pull_request` | `POST /api/jobs` (`kind: fix`, mode `single`) | yes | |
 | `review` (no isolation confirmation: the route refuses a fork's and the person starts it in the app) | `pull_request`, `inbox`, `pulls` | `POST /api/jobs` (a review item, mode `single`) | yes | |
 | `refresh` (by repository, else a registered clone of it) | `inbox`, `pulls` | `POST /api/prs/refresh` | | |

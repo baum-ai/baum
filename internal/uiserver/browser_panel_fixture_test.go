@@ -23,8 +23,8 @@ import (
 // transcript and hook events as Claude Code and its hooks do, so the panel
 // and the Sessions page show it as they show a real session. A message that
 // mentions a comment has it propose one for the person's pending review
-// (add_review_comment) through baum's MCP server, as the agent would call
-// the tool, before it answers.
+// (propose_review_comment) through baum's MCP server, as the agent would
+// call the tool, before it answers.
 type panelAgent struct {
 	events *hookevents.Store
 	home   string
@@ -105,26 +105,32 @@ func (a *panelAgent) Converse(ctx context.Context, r agent.Request, _ agent.Acce
 const panelComment = "Cap the retry delay at five minutes, as docs/guide.md says."
 
 // proposeComment proposes panelComment for the pending review of the pull
-// request the panel's page shows, as the agent's add_review_comment tool
-// call would. A refusal, such as from a page that shows no pull request, is
-// recorded in the transcript as the tool's failure.
+// request the panel's page shows, as the agent's propose_review_comment
+// tool call would: a change the person saves. A refusal, such as from a page
+// that shows no pull request, is recorded in the transcript as the tool's
+// failure.
 func (a *panelAgent) proposeComment(ctx context.Context, r agent.Request) {
-	status, text := "completed", "Proposed the comment; the person confirms it in the panel."
+	status, text := "completed", "Proposed the comment; the person saves it in the panel."
 	err := errors.New("the turn has no MCP server")
 	if a.mcp != nil && r.MCP != nil {
 		consumer, ok := a.mcp.Registry.Authenticate(r.MCP.Token)
-		if !ok {
+		page, open := a.mcp.Registry.Page(consumer.ID)
+		switch {
+		case !ok:
 			err = errors.New("the turn's MCP token is not known")
-		} else {
-			args, _ := json.Marshal(map[string]string{"body": panelComment})
-			_, err = a.mcp.Proposals.ProposeOperation(ctx, consumer.ID, "add_review_comment", args)
+		case !open || page.Page != agentcontext.PagePullRequest:
+			err = agentcontext.ErrNotCurrentPage
+		default:
+			after, _ := json.Marshal(agentcontext.ReviewCommentChange{Body: panelComment})
+			_, err = a.mcp.Proposals.Propose(ctx, consumer.ID, agentcontext.Proposal{Page: agentcontext.PagePullRequest,
+				Target: agentcontext.PullRequestTarget(page.Repository, page.PullRequest), After: after})
 		}
 	}
 	if err != nil {
 		status, text = "failed", err.Error()
 	}
 	if r.Transcript != nil {
-		r.Transcript(agent.TranscriptEntry{Kind: "tool", ID: "toolu_comment", Tool: "mcp__baum__propose_add_review_comment", Title: "propose_add_review_comment", Status: status, Text: text})
+		r.Transcript(agent.TranscriptEntry{Kind: "tool", ID: "toolu_comment", Tool: "mcp__baum__propose_review_comment", Title: "propose_review_comment", Status: status, Text: text})
 	}
 }
 

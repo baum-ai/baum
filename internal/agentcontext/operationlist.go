@@ -14,7 +14,6 @@ import (
 	"unicode/utf8"
 
 	"github.com/baum-ai/baum/internal/reviewindex"
-	"github.com/baum-ai/baum/internal/uistate"
 )
 
 // The operations a chat may propose, each on the pages whose buttons do it,
@@ -726,76 +725,6 @@ func pullOperations() []Operation {
 					return OperationSummary{Action: "Resolve a review thread of " + e.label() + " on GitHub", Details: fields}, nil
 				}
 				return OperationSummary{}, errors.New("that thread is not one of the pull request's unresolved threads")
-			},
-		}, {
-			Name: "add_review_comment",
-			Description: "Proposes adding a comment to the person's own pending review of the pull request the page shows, which they send from the app with the rest of their review: its body (Markdown), what it is about (target: general, or a section, risk or file of the review by id, with a title), and optionally the diff line it is placed on (path, line, side RIGHT or LEFT, optional start_line) at the commit head. Nothing goes to GitHub until the person sends their review. " +
-				"The person must have the pull request's page open.",
-			Pages:       prPage,
-			Method:      http.MethodPost,
-			Route:       "/api/ui-state/review/comments",
-			InputSchema: reviewCommentSchema,
-			Reads:       []string{"/api/index", "/api/ui-state/review"},
-			Build: func(ctx context.Context, c OperationContext, args json.RawMessage) (OperationRequest, error) {
-				var a ReviewCommentChange
-				if err := strictArgs(args, &a); err != nil {
-					return OperationRequest{}, err
-				}
-				e, err := pullOnPage(ctx, c, "", 0)
-				if err != nil {
-					return OperationRequest{}, err
-				}
-				comment, err := pendingComment(a)
-				if err != nil {
-					return OperationRequest{}, err
-				}
-				body, err := json.Marshal(struct {
-					Repository string `json:"repository"`
-					PR         int    `json:"pr"`
-					uistate.ReviewComment
-				}{e.repository(), e.Number, comment})
-				return OperationRequest{Target: pullKey(e.repository(), e.Number), Body: body}, err
-			},
-			Describe: func(ctx context.Context, c OperationContext, req OperationRequest) (OperationSummary, error) {
-				e, err := ownPullDescribed(ctx, c, req)
-				if err != nil {
-					return OperationSummary{}, err
-				}
-				var b uistate.ReviewComment
-				_ = json.Unmarshal(req.Body, &b)
-				raw, _, err := c.get(ctx, "/api/ui-state/review", url.Values{"key": {uistate.ReviewKey(e.repository(), e.Number)}})
-				if err != nil {
-					return OperationSummary{}, err
-				}
-				var review struct {
-					Value struct {
-						Comments []json.RawMessage `json:"comments"`
-					} `json:"value"`
-				}
-				_ = json.Unmarshal(raw, &review)
-				if len(review.Value.Comments) >= uistate.MaxReviewComments {
-					return OperationSummary{}, fmt.Errorf("the person's pending review holds %d comments, the most it takes", uistate.MaxReviewComments)
-				}
-				fields := e.fields(nil)
-				if b.Target != nil && b.Target.Kind != "general" {
-					about := b.Target.Title
-					if about == "" {
-						about = b.Target.ID
-					}
-					fields = append(fields, agentWrote("About the "+b.Target.Kind, about, false))
-				}
-				if b.Place != nil {
-					where := b.Place.Path + ":" + strconv.Itoa(b.Place.Line)
-					if b.Place.StartLine != nil {
-						where = b.Place.Path + ":" + strconv.Itoa(*b.Place.StartLine) + "-" + strconv.Itoa(b.Place.Line)
-					}
-					fields = append(fields, agentWrote("On", where, false))
-					if b.Head != "" {
-						fields = headField(fields, b.Head)
-					}
-				}
-				fields = append(fields, agentWrote("Comment", b.Body, true), fact("Sent to GitHub", "With your review, when you send it"))
-				return OperationSummary{Action: "Add a comment to your pending review of " + e.label(), Details: fields}, nil
 			},
 		}, {
 			Name:        "fix",

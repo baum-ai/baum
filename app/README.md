@@ -2290,9 +2290,9 @@ scrolling in its box (which the keys reach) rather than cut. Confirm sends the s
 screen; a `409 operation_changed` replaces it with the new summary, says
 nothing ran and asks again. A proposal made on another page says so and links
 to it, and a `not_current_page` refusal says which page to open. A comment
-for the pending review (the `add_review_comment` operation, or a
-`…:review_comment` change) reads the pull request's pending review again once
-confirmed or saved, so it shows in the review at once.
+for the pending review (`propose_review_comment`, a `…:review_comment` change,
+which replaces the earlier Ask's Add as comment) reads the pull request's
+pending review again once saved, so it shows in the review at once.
 
 **Ask** on a pull request's page is the panel's: the PR page's and the
 walkthrough's **Ask** buttons and the key `a` call `sessionPanel.ask` with the
@@ -2399,8 +2399,8 @@ the walkthrough's views, queues changes while a read or save is in flight, and
 rebases semantic changes on a conflict. A stable client/sequence mutation ID
 makes a retry safe even when a save committed but its response was lost. A
 comment the session panel's agent proposes for the pending review is added by
-the daemon once the person confirms it (`POST api/ui-state/review/comments`),
-and the panel reads the record again. Neither sends anything to GitHub.
+the daemon when the person saves the proposal, and the panel reads the record
+again. Neither sends anything to GitHub.
 
 Sidebar folding and viewer panel/tab layout remain presentation preferences
 in browser storage. Durable inbox records and review drafts do not use or

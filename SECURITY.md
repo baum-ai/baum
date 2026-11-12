@@ -1598,9 +1598,10 @@ Settings page (appearance, plan usage, automatic reviews, decision capture,
 the harnesses for reviews and fixes, time limits, job concurrency, whether
 the app answers Codex's permission requests), a custom prompt or its reset, a
 repository's review and decision capture choices, a saved inbox, a review
-group's name and members, or a comment added to your pending review (never
-sent to GitHub: you send the review). Nothing is saved without your save, and
-your save is the page's own, with the page's checks, so a proposal cannot
+group's name and members, or a comment added to your pending review through
+`propose_review_comment` (Save in the panel, never sent to GitHub: you send
+the review). Nothing is saved without your save, and your save is the page's
+own, with the page's checks, so a proposal cannot
 save what the page itself would refuse. A proposed prompt, or a reset, that
 would leave out the text of a safety rule the prompt in use has is refused,
 when proposed and again when saved. That check only finds each rule's text;
@@ -1661,10 +1662,8 @@ not proposed or confirmed at all.
 
 What you can be asked to confirm: on a pull request's page, a merge (with a
 method GitHub allows, at the head the page showed), a branch update, a re-run
-of the failed checks or of one failed job, resolving one review thread,
-adding a comment to your pending review (never sent to GitHub: you send the
-review; its text, what it is about and its line are shown as the agent's), a
-fix and a new review; on the Inbox and Pull requests, a review, a refresh from
+of the failed checks or of one failed job, resolving one review thread, a fix
+and a new review; on the Inbox and Pull requests, a review, a refresh from
 GitHub and (Pull requests) a new review group; on the sessions pages,
 answering an agent's pending request, a message to a session, ending a
 session and bringing it forward; on the jobs pages, cancelling a job the
