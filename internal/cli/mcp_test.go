@@ -145,8 +145,8 @@ func (p *bridgeProcess) next(t *testing.T) map[string]json.RawMessage {
 	return message
 }
 
-// finish closes stdin and returns the exit error and every stdout line left.
-func (p *bridgeProcess) finish(t *testing.T) (error, []string) {
+// finish closes stdin and returns every stdout line left and the exit error.
+func (p *bridgeProcess) finish(t *testing.T) ([]string, error) {
 	t.Helper()
 	_ = p.stdin.Close()
 	var rest []string
@@ -155,7 +155,7 @@ func (p *bridgeProcess) finish(t *testing.T) (error, []string) {
 	}
 	select {
 	case err := <-p.done:
-		return err, rest
+		return rest, err
 	case <-time.After(10 * time.Second):
 		t.Fatal("baum mcp did not exit when stdin closed")
 		return nil, nil
@@ -196,7 +196,7 @@ func TestMCPBridgeRelaysAnAgentSession(t *testing.T) {
 	if string(third["id"]) != `"three"` || third["error"] != nil || !strings.Contains(string(third["result"]), `inbox`) {
 		t.Errorf("tools/call response %v", third)
 	}
-	err, rest := p.finish(t)
+	rest, err := p.finish(t)
 	if err != nil {
 		t.Errorf("exit on EOF: %v", err)
 	}
@@ -228,7 +228,7 @@ func TestMCPBridgeAnswersRevokedTokenPerRequest(t *testing.T) {
 			t.Errorf("reply for %s: %v", want, reply)
 		}
 	}
-	err, rest := p.finish(t)
+	rest, err := p.finish(t)
 	if err != nil || len(rest) != 0 {
 		t.Errorf("exit %v with extra lines %q", err, rest)
 	}
@@ -263,7 +263,7 @@ func TestMCPBridgeSurvivesAnUnreachableDaemonAndFindsItAgain(t *testing.T) {
 	if reply := p.next(t); string(reply["id"]) != "2" || reply["error"] != nil || !strings.Contains(string(reply["result"]), "current_page") {
 		t.Errorf("after the daemon came back: %v", reply)
 	}
-	err, rest := p.finish(t)
+	rest, err := p.finish(t)
 	if err != nil || len(rest) != 0 {
 		t.Errorf("exit %v with extra lines %q", err, rest)
 	}
@@ -287,7 +287,7 @@ func TestMCPBridgeRefusesOversizedAndKeepsGoing(t *testing.T) {
 	if reply := p.next(t); string(reply["id"]) != "2" || reply["error"] != nil {
 		t.Errorf("after the oversized line: %v", reply)
 	}
-	if err, _ := p.finish(t); err != nil {
+	if _, err := p.finish(t); err != nil {
 		t.Error(err)
 	}
 }
@@ -320,7 +320,7 @@ func TestMCPBridgePostDoesNotRetryAfterTheRequestWasSent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer listener.Close()
+	defer func() { _ = listener.Close() }()
 	var accepted atomic.Int32
 	go func() {
 		for {

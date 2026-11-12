@@ -107,6 +107,9 @@ func (p *Proposals) Propose(ctx context.Context, consumer string, proposal Propo
 	if proposer == nil {
 		return Proposal{}, ErrNoProposer
 	}
+	// The store keeps its own copies: a caller that reuses its buffers after
+	// this returns cannot change what was validated, listed or saved.
+	proposal = proposal.clone()
 	if !json.Valid(proposal.After) || (len(proposal.Before) > 0 && !json.Valid(proposal.Before)) {
 		return Proposal{}, errors.New("before and after must be JSON")
 	}
@@ -117,7 +120,7 @@ func (p *Proposals) Propose(ctx context.Context, consumer string, proposal Propo
 	if len(proposal.Before) > 0 && !sameJSON(proposal.Before, value) {
 		return Proposal{}, ErrNotRecorded
 	}
-	proposal.Before, proposal.Revision, proposal.Context = value, revision, page
+	proposal.Before, proposal.Revision, proposal.Context = bytes.Clone(value), revision, page.clone()
 	if err := proposer.Validate(ctx, page, proposal); err != nil {
 		return Proposal{}, err
 	}
