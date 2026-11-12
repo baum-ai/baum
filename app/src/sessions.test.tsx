@@ -1435,10 +1435,11 @@ it("keeps counting a waiting card's wait without rendering the card again", asyn
 
 it("links a session's pull request once its link resolves, rendering only that card again", async () => {
   const said = { steps: [], last_message: "Working on it." };
+  const started_at = ago(7 * 60);
   // The same session objects throughout: only what the resolver answers changes.
   const sessions = [
-    session({ session_id: "a", pr: 5, pr_state: "OPEN", activity: said }),
-    session({ session_id: "b", pr: 6, pr_state: "OPEN", activity: said }),
+    session({ session_id: "a", pr: 5, pr_state: "OPEN", activity: said, started_at }),
+    session({ session_id: "b", pr: 6, pr_state: "OPEN", activity: said, started_at }),
   ];
   const draw = (links: Record<number, string>) =>
     act(async () =>
