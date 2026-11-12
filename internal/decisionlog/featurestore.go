@@ -87,9 +87,10 @@ CREATE TABLE IF NOT EXISTS feature_seed(
 
 // Feature version states.
 const (
-	VersionBuilding = "building"
-	VersionCurrent  = "current"
-	VersionRetired  = "retired"
+	VersionBuilding         = "building"
+	VersionAdaptiveBuilding = "building_adaptive"
+	VersionCurrent          = "current"
+	VersionRetired          = "retired"
 )
 
 // searchSchema is the Timeline's keyword index (timeline.go): FTS5 tables

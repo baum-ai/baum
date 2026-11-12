@@ -42,7 +42,9 @@ func (b *featureBuilder) BuildFeatures(ctx context.Context, repository, dir stri
 	if w == nil {
 		return 0, errFeatureLogOff
 	}
-	report, err := w.Build(ctx, repository, dir, decisionlog.BuildOptions{Gated: true, Progress: func(p decisionlog.BuildProgress) {
+	workflow,err:=w.Store.FeatureBuildWorkflow(ctx,repository)
+ if err!=nil{return 0,err}
+ report, err := w.Build(ctx, repository, dir, decisionlog.BuildOptions{Adaptive: workflow!="legacy", Gated: true, Progress: func(p decisionlog.BuildProgress) {
 		progress(jobs.Progress{Phase: p.Phase, Calls: p.Calls, CostReason: unpricedReason(p.Unpriced)})
 	}})
 	if report.UnpricedCalls > 0 {

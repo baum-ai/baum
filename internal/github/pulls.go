@@ -82,11 +82,20 @@ func SetMaxPulls(n int) (restore func()) {
 // only for a first page read at the default size. A listing that
 // reaches maxPulls with more still to list stops there and is Truncated.
 func ListPullRequests(ctx context.Context, reader Reader, repository Repository, etag string, since time.Time) (PullList, error) {
+	return listPullRequests(ctx, reader, repository, etag, since, "all")
+}
+
+// ListOpenPullRequests reads open work independently of its age.
+func ListOpenPullRequests(ctx context.Context, reader Reader, repository Repository) (PullList, error) {
+	return listPullRequests(ctx, reader, repository, "", time.Time{}, "open")
+}
+
+func listPullRequests(ctx context.Context, reader Reader, repository Repository, etag string, since time.Time, state string) (PullList, error) {
 	var list PullList
 	perPage := pullsPerPage
 	for offset := 0; ; {
-		path := fmt.Sprintf("/repos/%s/%s/pulls?state=all&sort=updated&direction=desc&per_page=%d&page=%d",
-			url.PathEscape(repository.Owner), url.PathEscape(repository.Name), perPage, offset/perPage+1)
+		path := fmt.Sprintf("/repos/%s/%s/pulls?state=%s&sort=updated&direction=desc&per_page=%d&page=%d",
+			url.PathEscape(repository.Owner), url.PathEscape(repository.Name), state, perPage, offset/perPage+1)
 		send := ""
 		if offset == 0 && perPage == pullsPerPage {
 			send = etag
@@ -174,4 +183,34 @@ func ListPullRequests(ctx context.Context, reader Reader, repository Repository,
 		}
 		offset += perPage
 	}
+}
+
+// ReadPullRequest reads a specific older reference without listing its history.
+// It shares the list decoder so dates, author and repository metadata agree.
+func ReadPullRequest(ctx context.Context, reader Reader, repository Repository, number int) (ListedPull, error) {
+	if number < 1 {
+		return ListedPull{}, errors.New("pull request number must be positive")
+	}
+	path := fmt.Sprintf("/repos/%s/%s/pulls/%d", url.PathEscape(repository.Owner), url.PathEscape(repository.Name), number)
+	list, err := ListPullRequests(ctx, singlePullReader{Reader: reader, path: path}, repository, "", time.Time{})
+	if err != nil {
+		return ListedPull{}, err
+	}
+	if len(list.Pulls) != 1 || list.Pulls[0].Number != number {
+		return ListedPull{}, errors.New("GitHub returned a different pull request")
+	}
+	return list.Pulls[0], nil
+}
+
+type singlePullReader struct {
+	Reader
+	path string
+}
+
+func (r singlePullReader) Read(ctx context.Context, _, etag string) (int, http.Header, []byte, error) {
+	status, header, body, err := r.Reader.Read(ctx, r.path, etag)
+	if err == nil && status == http.StatusOK {
+		body = append(append([]byte{'['}, body...), ']')
+	}
+	return status, header, body, err
 }

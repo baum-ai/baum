@@ -82,6 +82,21 @@ a pull request by its path score (`PathScores`): over the item's distinct
 paths under a seed's prefixes (`Under`), one over the number of seeds holding
 the path.
 
+## Adaptive local builds
+
+`adaptive` defines the published `feature-build-public-v1` agent protocol for
+local requested builds. The host supplies a pinned browsable checkout and a
+cheap PR catalog. Valid task replies request catalog expansion, descriptions or
+selected code; checkpoint persistent scopes and memberships; or finish the
+selected work. Ordinary work steps are not structured-output repairs. There is
+no fixed PR-count default. Scopes keep purpose, boundaries, source paths,
+examples and concise text independently of their members. An empty finished
+result is valid. The host validates references, checkpoints transactionally,
+recovers pending requests and promotes only fully settled selected work. See
+[the local workflow](../internal/decisionlog/README.md#adaptive-requested-build)
+for persistence, recovery and coverage. Published prompts are never edited after
+release; changes use a new protocol version.
+
 ## Decision attribution
 
 `SessionLinks.Attributor` gives each current decision of a session exactly

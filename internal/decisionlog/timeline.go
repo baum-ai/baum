@@ -293,7 +293,12 @@ func (t *Timeline) Handler() http.Handler {
 			timelineError(w, err)
 			return
 		}
-		writeTimeline(w, map[string]any{"building": building, "has_features": features, "current_since": since})
+		coverage, err := t.Store.FeatureCoverage(r.Context(), repository, VersionCurrent)
+		if err != nil {
+			timelineError(w, err)
+			return
+		}
+		writeTimeline(w, map[string]any{"building": building, "has_features": features, "current_since": since, "current_coverage": coverage})
 	})
 	mux.HandleFunc("GET /api/timeline/decisions", func(w http.ResponseWriter, r *http.Request) {
 		repositories, page, ok := t.listQuery(w, r)
@@ -1605,6 +1610,10 @@ func (c *localClone) Review(ctx context.Context, number int, head string) (strin
 // placed of the total, why it stopped ("" while it may go on) and what it
 // spent over all its runs.
 type timelineBuild struct {
+	Workflow string `json:"workflow"`
+
+	Coverage *BuildCoverage `json:"coverage,omitempty"`
+
 	Placed   int     `json:"placed"`
 	Total    int     `json:"total"`
 	Stopped  string  `json:"stopped"`
@@ -1614,10 +1623,16 @@ type timelineBuild struct {
 // build is the repository's building version, nil without one.
 func (t *Timeline) build(ctx context.Context, repository string) (*timelineBuild, error) {
 	var b timelineBuild
-	err := t.Store.db.QueryRowContext(ctx, `SELECT placed, total, stopped, spent_usd FROM feature_version WHERE repository=? AND state=?`,
-		repository, VersionBuilding).Scan(&b.Placed, &b.Total, &b.Stopped, &b.SpentUSD)
+	err := t.Store.db.QueryRowContext(ctx, `SELECT placed, total, stopped, spent_usd FROM feature_version WHERE repository=? AND state IN (?,?)`,
+		repository, VersionBuilding, VersionAdaptiveBuilding).Scan(&b.Placed, &b.Total, &b.Stopped, &b.SpentUSD)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
+	}
+	if err == nil {
+		b.Coverage, err = t.Store.FeatureCoverage(ctx, repository, VersionBuilding)
+		if err == nil {
+			b.Workflow, err = t.Store.FeatureBuildWorkflow(ctx, repository)
+		}
 	}
 	return &b, err
 }

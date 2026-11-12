@@ -119,7 +119,7 @@ func Open(path string, o OpenOptions) (*Store, error) {
 		return nil, err
 	}
 	s := &Store{db: db, now: time.Now}
-	_, err = db.Exec(schema + sourceSchema + featureSchema + indexSchema + timelineRevisionTable)
+	_, err = db.Exec(schema + sourceSchema + featureSchema + adaptiveSchema + indexSchema + timelineRevisionTable)
 	if err == nil {
 		err = installTimelineRevision(context.Background(), db)
 	}
@@ -156,7 +156,7 @@ func openReadOnly(path string) (*Store, error) {
 		return nil, err
 	}
 	db.SetMaxOpenConns(1)
-	_, err = db.Exec(schema + sourceSchema + featureSchema + indexSchema + timelineRevisionTable)
+	_, err = db.Exec(schema + sourceSchema + featureSchema + adaptiveSchema + indexSchema + timelineRevisionTable)
 	if err == nil {
 		err = installTimelineRevision(context.Background(), db)
 	}

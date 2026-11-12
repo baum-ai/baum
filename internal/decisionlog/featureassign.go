@@ -190,7 +190,7 @@ AND NOT EXISTS (SELECT 1 FROM feature_pull fp WHERE fp.version_id=?4 AND fp.repo
 		return item, rows.Scan(&item.Number, &item.at)
 	})(s.db.QueryContext(ctx, `SELECT p.number, p.merged_at FROM feature_pull fp
 JOIN pull_request p ON p.repository=fp.repository AND p.number=fp.number
-WHERE fp.version_id=?1 AND fp.repository=?2 AND fp.assigned_by=?3 AND fp.assigned_merged=0 AND p.merged_at IS NOT NULL`,
+WHERE fp.version_id=?1 AND fp.repository=?2 AND fp.assigned_by IN (?3,'adaptive') AND fp.assigned_merged=0 AND p.merged_at IS NOT NULL`,
 		version, r.repository, assignedByAssigner))
 	if err != nil {
 		return nil, 0, err
@@ -728,7 +728,16 @@ VALUES (?,?,?,?,?,?,?,?)`, id, version, repository, t.Title, t.Description, now.
 	var id string
 	err := tx.QueryRowContext(ctx, `SELECT COALESCE(merged_into, id) FROM feature WHERE id=? AND version_id=?`, t.FeatureID, version).Scan(&id)
 	if errors.Is(err, sql.ErrNoRows) {
-		return "", fmt.Errorf("feature %s is not in the repository's feature version", t.FeatureID)
+		var data string
+		if err := tx.QueryRowContext(ctx, `SELECT scope_json FROM feature_scope WHERE feature_id=? AND version_id=? AND repository=?`, t.FeatureID, version, repository).Scan(&data); err != nil {
+			return "", fmt.Errorf("feature %s is not in the repository's feature version", t.FeatureID)
+		}
+		var scope FeatureScope
+		if err := json.Unmarshal([]byte(data), &scope.Scope); err != nil {
+			return "", err
+		}
+		_, err := tx.ExecContext(ctx, `INSERT INTO feature(id,version_id,repository,title,description,digest,changed_at,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?)`, t.FeatureID, version, repository, scope.Title, scope.Purpose, scope.Digest, now.UnixMilli(), now.UnixMilli(), now.UnixMilli())
+		return t.FeatureID, err
 	}
 	return id, err
 }

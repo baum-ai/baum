@@ -246,15 +246,16 @@ minutes.
   so an unchanged repository costs one conditional request. The cursor moves
   to the latest update listed, or to the start of the window when none was.
   A listing stops at about 10,000 pull requests; older ones still due are
-  skipped and logged. A first build lists the whole history once besides
-  (see "First build").
+  skipped and logged. The explicit legacy full-history build lists all history once; the
+  requested adaptive build chooses its own metadata windows.
 - Only pull requests that can be placed in a feature are read from the
   clone: open or merged ones not opened by a bot. Each pass fetches what
   its due pull requests lack, as a review fetches a missing pull request
   commit: a head from `refs/pull/<N>/head` into `refs/baum/pull/<N>/head`
   and a base by its id into `refs/baum/pull/<N>/base`, both force-updated,
   100 refspecs to a `git fetch`. So each such pull request of the 180 days
-  before activation (of the whole history after a first build), and every
+  before activation (of the chosen window after an adaptive build, or the
+  whole history after a legacy build), and every
   one after, gets refs in the clone; they are
   kept, not pruned, as they may back saved reviews. Each pull request's
   commits, from its base to its head, are then read from the clone's own
@@ -457,7 +458,80 @@ first build's features needs the room.
   and unchecked. A call that cannot be made (a backend reason)
   also writes nothing; the pass is made again on the next run.
 
-### First build
+### Adaptive requested build
+
+Adaptive task inputs reference immutable per-PR evidence files, so later steps
+can read selected descriptions and patches without embedding all accumulated
+evidence in every state input. Durable evidence remains pinned in the checkpoint.
+
+New builds requested from the desktop Timeline use `BuildOptions.Adaptive` and
+`features/adaptive`'s published `feature-build-public-v1` protocol. A code-capable
+Claude Code/Codex task reads a pinned, read-only `head/` checkout, `source.json`
+and `state.json`. It can inspect source itself; host-mediated evidence requests
+are valid task replies, separate from structured-output validation repairs.
+
+The host initially lists metadata updated in the last month and all open PRs
+regardless of age. There is no PR-count selection default. The agent chooses
+whether to widen the history and which descriptions or code it needs. `catalog`
+requests expand a date window, `details` supplies pinned descriptions or resolves a specific older PR reference, and
+`code` reads commits/paths and optional focused file patches only for explicitly
+selected PRs. Catalog listing and descriptions never require a Git ref fetch or
+session-link pass. Repeated windows and evidence reads are cached. Patches use
+the PR's merge base and are bounded to 64 KiB per requested file; an unavailable
+request stops with the exact request pending for a resume.
+
+`checkpoint` replies add selected work, scopes and assignments. A scope retains
+its purpose, boundaries, paths, examples and source revision after membership;
+paths must exist in the source checkout or explicitly requested pinned PR code.
+An empty assignment scope is an explicit small-change skip with a reason.
+Source-only scopes reserve a stable identity without creating visible feature
+rows; the first membership materializes that identity transactionally. Scope
+text includes a concise digest, so the build does not fan out to a summary call
+per PR or repeatedly summarize growing groups.
+
+Each accepted checkpoint persists the pinned catalog (including head IDs),
+source revision, requested evidence, scopes, selected work, assignments and
+remaining request. Memberships and concise feature text are saved with it in one
+transaction. A sequence compare-and-swap refuses competing workers or clones.
+`finish` requires every selected PR to have an assignment or explicit skip and
+every populated scope to have a digest. It validates and switches the candidate
+to current atomically; zero substantial outcomes can finish with zero features.
+The old Timeline stays current while any selected work is incomplete. Resuming
+reuses accepted results and the pinned source/catalog; it does not reselect
+history from mutable live metadata.
+
+There is no outer performance deadline. After twelve successful work steps or
+five minutes, the host signals `exploration_closed` as convergence guidance; necessary older-reference evidence and catalog
+windows remain fetchable while selected work is finished. Each
+model work unit has the configured pass timeout (ten minutes by default),
+provider/context protections and stall/tool guards. Schema errors get at most
+two repairs. Evidence failures retry once after a one-second backoff and then preserve their
+pending request. GitHub rate-limit responses record Retry-After/reset timing as
+a durable wait, with no immediate retry; early resumes preserve that wait. Three steps with no new evidence or changed accepted scope,
+selection or assignment stop as `no_progress`; a changing narrative does not
+count. Cancellation or failure keeps the candidate resumable. Prices report
+cost, including failed task attempts and unpriced usage, without a spend cap.
+
+Adaptive candidates use `feature_version.state=building_adaptive`. The unique
+`feature_version_active_building` index spans legacy `building` and adaptive
+candidates, so an older binary cannot insert a legacy build beside an adaptive
+one or discover its ID as legacy work. Existing stopped legacy candidates retain
+their original workflow when the user chooses Resume; they are never silently
+converted. `FeatureBuildWorkflow` names it as `legacy` in the build API.
+`ArchiveFeatureBuild` is the explicit replacement operation: it retires only the
+candidate and leaves the current Timeline intact. A subsequent requested build
+starts a fresh adaptive candidate. Explicit `BuildOptions{Adaptive:false}` keeps
+the legacy full-history workflow below for operator/internal callers.
+
+`GET /api/timeline/build` exposes `building.workflow`, optional
+`building.coverage`, and `current_coverage` after promotion, including an empty
+result. Coverage distinguishes metadata `catalogued`, unique PRs whose
+`details` or `code` were requested (`inspected`), `selected`, `completed` and
+`remaining`, the catalog update-date horizon and listing truncation. It does not
+claim that catalog availability proves every title was read. Old read-only
+stores without the adaptive tables expose no coverage.
+
+### Legacy full-history build
 
 The live placement places only work opened since the feature log was
 activated. A repository's history is placed when the user asks for it, as a
@@ -588,6 +662,11 @@ paths as a build does.
 - `feature_version`, `feature`, `feature_pull`, `feature_session`,
   `feature_settle`, `pr_summary`, `feature_consolidation`: the tables
   placement, text, consolidation and a build write.
+- `feature_build_state`: adaptive protocol/version, sequence and durable pinned
+  catalog, source context, evidence, scopes, selections, assignments and pending
+  request. `feature_scope`: stable scope identities and definitions retained
+  after membership. These companion tables are additive and tolerate older
+  read-only stores that have not been upgraded.
 - `feature_taxonomy`, `feature_seed`: discovery's taxonomies and the seeds
   of the versions built from them (`feature_version.taxonomy_id`). A repository has at
   most one `current` and one `building` version; `featureVersion` is the one
