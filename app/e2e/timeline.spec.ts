@@ -170,6 +170,8 @@ test("adaptive build coverage preserves the current Timeline and new-build reque
     }),
   );
   await page.goto(await launchURL());
+  // Bootstrap first exchanges the launch capability and enters the namespace.
+  await expect(page.getByRole("link", { name: "Timeline", exact: true })).toBeVisible();
   const base = page.url().split("?")[0]!;
   await page.goto(`${base}?page=timeline&repo=acme%2Fdemo`);
   const status = page.getByRole("region", { name: "Feature build", exact: true });
@@ -182,6 +184,7 @@ test("adaptive build coverage preserves the current Timeline and new-build reque
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
     true,
   );
+  await page.screenshot({ path: "test-results/timeline-coverage-390.png", animations: "disabled" });
   const posted = page.waitForRequest(
     (request) => request.method() === "POST" && request.url().endsWith("/api/jobs"),
   );
@@ -218,6 +221,8 @@ test("a completed empty window keeps its coverage after reopening", async ({ pag
     route.fulfill({ json: { features: [], next_cursor: null } }),
   );
   await page.goto(await launchURL());
+  // Bootstrap first exchanges the launch capability and enters the namespace.
+  await expect(page.getByRole("link", { name: "Timeline", exact: true })).toBeVisible();
   const base = page.url().split("?")[0]!;
   await page.goto(`${base}?page=timeline&repo=acme%2Fdemo`);
   await expect(page.getByRole("region", { name: "Feature build coverage" })).toContainText(

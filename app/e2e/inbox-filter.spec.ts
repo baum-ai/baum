@@ -132,6 +132,8 @@ test("filters the Inbox from the menu and as typed, saves an inbox, and edits a 
   await expect(conflicted).toHaveCount(1);
 
   // Create inbox makes an inbox with the same query.
+  const sourceInbox = new URL(page.url()).searchParams.get("inbox");
+  expect(sourceInbox).not.toBeNull();
   await bar.press("Control+Enter");
   await expect(page).toHaveURL(/page=inbox-edit&inbox=[0-9a-f]{32}/);
   const name = page.getByLabel("Name", { exact: true });
@@ -139,6 +141,19 @@ test("filters the Inbox from the menu and as typed, saves an inbox, and edits a 
   await expect(name).toHaveValue("Default 2");
   await expect(name).toBeFocused();
   await name.fill("Filtered");
+  // The filter resets optimistically; wait for its durable acknowledgement
+  // before the reload below can discard a pending reset behind another write.
+  const resetSaved = page.waitForResponse((response) => {
+    const request = response.request();
+    if (
+      request.method() !== "PUT" ||
+      !request.url().endsWith("/api/ui-state/filters") ||
+      !response.ok()
+    )
+      return false;
+    const body = request.postDataJSON() as { value?: { pages?: Record<string, string> } };
+    return !!body.value?.pages && !Object.hasOwn(body.value.pages, `inbox:${sourceInbox}`);
+  });
   await name.press("Control+Enter");
   await expect(page).toHaveURL(/\?inbox=[0-9a-f]{32}/);
   await expect(page.locator(".upnext-list-title h1")).toHaveText("Filtered");
@@ -151,6 +166,7 @@ test("filters the Inbox from the menu and as typed, saves an inbox, and edits a 
   // The draft went into the new inbox: Default is back to its own query.
   const own = /^Filter: author=@me OR assignee=@me OR review-requested=@me \(/;
   await expect(filter).toHaveAttribute("title", own);
+  await resetSaved;
   await page.reload();
   await expect(filter).toHaveAttribute("title", own);
   await sidebar.getByRole("link", { name: /^Filtered/ }).click();
