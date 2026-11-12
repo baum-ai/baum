@@ -61,8 +61,8 @@ func New(opts Options) *Server {
 		return spec.Proposer
 	})
 	registry.onRevoke(s.envelope.forget)
-	pull, group, reviews := s.pullTools(), s.groupTools(), s.reviewTools()
-	for _, t := range slices.Concat(s.builtinTools(), pull, group, reviews) {
+	pull, group, reviews, common := s.pullTools(), s.groupTools(), s.reviewTools(), s.commonTools()
+	for _, t := range slices.Concat(s.builtinTools(), pull, group, reviews, common) {
 		if err := t.compile(); err != nil {
 			panic(err)
 		}
@@ -83,8 +83,13 @@ func New(opts Options) *Server {
 			forGroup = append(forGroup, name)
 		}
 	}
-	s.pages[PagePullRequest] = PageSpec{Name: PagePullRequest, Tools: append(names(pull), names(reviews)...)}
-	s.pages[PageGroup] = PageSpec{Name: PageGroup, Tools: append(forGroup, "focus")}
+	// Every page lists the common tools; the pages with tools of their own
+	// list those first.
+	for name := range pageNames {
+		s.pages[name] = PageSpec{Name: name, Tools: withCommonTools(nil)}
+	}
+	s.pages[PagePullRequest] = PageSpec{Name: PagePullRequest, Tools: withCommonTools(append(names(pull), names(reviews)...))}
+	s.pages[PageGroup] = PageSpec{Name: PageGroup, Tools: withCommonTools(append(forGroup, "focus"))}
 	return s
 }
 
@@ -115,7 +120,8 @@ func (s *Server) RegisterTool(t Tool) error {
 }
 
 // RegisterPage says which tools read a page and which proposer takes its
-// changes.
+// changes. The common tools (commonToolNames) are the tools of every page, so
+// they are added to p's.
 func (s *Server) RegisterPage(p PageSpec) error {
 	if !pageNames[p.Name] {
 		return fmt.Errorf("unknown page %q", p.Name)
@@ -127,6 +133,7 @@ func (s *Server) RegisterPage(p PageSpec) error {
 			return fmt.Errorf("page %s: no tool %s", p.Name, name)
 		}
 	}
+	p.Tools = withCommonTools(p.Tools)
 	s.pages[p.Name] = p
 	return nil
 }

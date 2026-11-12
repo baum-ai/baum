@@ -5245,6 +5245,20 @@ bound, like the documents.
 | `review_versions` | `/api/versions` or the group's versions: version, heads, `generated_at`, backend, model and recorded cost, never the session, accounting, digests or policy |
 | `review_conversations` | `/api/prs/chat`: a list (id, version, times, turn count, the first question cut at 200 characters), or with an `id` that conversation's turns (question, focus, answer, citations, state, reason, note), never cost or job ids |
 
+Four tools work on every page, and are in the tools every page lists in
+`current_page` (`commonToolNames`: `New` gives each page them, and
+`RegisterPage` adds them to the tools of a page it registers). `search` and
+`daemon_status` are global, so an action neither lists nor calls them; `link`
+and `app_help` read nothing, so an action may use them, and `link` refuses
+another repository to an action through `CallContext.Target`.
+
+| Tool | Reads |
+| --- | --- |
+| `search` | words (`query`, `kinds`, `limit` 1 to 50, default 20) over pull requests (`/api/index`, which Go to lists), review groups (`/api/groups`), running sessions (`/api/live-sessions`), repositories (`/api/repositories`) and, only while the hits so far leave room, features and decisions (`/api/timeline/features` and `/api/timeline/decisions`, matched by the daemon). Every word must be in a title, repository, kind or keyword, ignoring case; titles starting with the words rank first, as in Go to. Each hit has its kind, title, detail and the page it opens (the `PageContext` fields). A route that cannot be read is named in `unavailable`; all of them failing is an error |
+| `link` | no route: the app's address for a page and its subject, the query strings of `app/src/pages.ts` and the detail pages' hrefs (`?page=pulls`, `?repository=owner/name&pr=7`, `?group=id`, `?page=sessions&session=agent:id`, `?page=jobs&job=id`, `?page=timeline&feature=id`, a settings or repository section), relative so the chat panel makes it a link. Unknown pages, missing subjects, a field the page does not take and unknown sections are refused |
+| `app_help` | no route: the embedded `help.md`: each page, the words the app uses and its keyboard shortcuts; `topic` returns one section or word. A test reads `pages.ts` and `shortcuts.tsx` and fails when a page has no section or `link` mapping, or a key is not in the help |
+| `daemon_status` | `/api/background` (each repository's last and next refresh, failure count, whether the latest refresh failed and its problem count, never the error text) and `/api/jobs` (jobs queued and running), with the daemon's version. `/api/health` is answered by the app server before the API the tools read through, so `health` is `ok` when the call is answered. No paths, environment, diagnostics or tokens |
+
 Every result goes through one envelope. It masks the text with
 `bundle.NewRedactor`, cuts it at most 64 KiB in at a UTF-8 boundary, and
 places the part between `BEGIN UNTRUSTED DATA <tag>` and

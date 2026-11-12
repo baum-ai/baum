@@ -17,6 +17,7 @@ import (
 
 	"github.com/baum-ai/baum/internal/agentcontext"
 	"github.com/baum-ai/baum/internal/appdb/appdbtest"
+	"github.com/baum-ai/baum/internal/background"
 	"github.com/baum-ai/baum/internal/chat"
 	"github.com/baum-ai/baum/internal/config"
 	"github.com/baum-ai/baum/internal/discovery"
@@ -98,13 +99,14 @@ func newPullFixture(t *testing.T) *pullFixture {
 		Snoozes: func() (json.RawMessage, error) { return nil, nil }}
 	api := LocalAPI{
 		Registry: registry, Config: config.Default(), Facts: facts,
-		Update: UpdateHandler(registry, updater, nil, nil),
-		Merge:  MergeHandler(registry, merger, nil, nil),
-		Index:  jsonHandler(index),
-		Inbox:  inbox.Handler(),
-		Jobs:   fakeJobs(clone.ID),
-		Chat:   ChatHandler(registry, fakeChatQueue{}),
-		Groups: groupsHandler,
+		Update:     UpdateHandler(registry, updater, nil, nil),
+		Merge:      MergeHandler(registry, merger, nil, nil),
+		Index:      jsonHandler(index),
+		Inbox:      inbox.Handler(),
+		Jobs:       fakeJobs(clone.ID),
+		Chat:       ChatHandler(registry, fakeChatQueue{}),
+		Groups:     groupsHandler,
+		Background: (&background.Service{}).Handler(), Live: fakeLive(), Timeline: fakeTimeline(),
 	}.Handler()
 	t.Cleanup(api.Close)
 	graph := &session.Graph{
@@ -164,7 +166,10 @@ func fakeJobs(cloneID string) http.Handler {
 		q := r.URL.Query()
 		var list []jobs.Job
 		for _, job := range []jobs.Job{fix, review, foreign, running, foreignRunning} {
-			if job.Repository == q.Get("repository") && q.Get("pr") == fmt.Sprint(job.PR) {
+			// The queue's current jobs, as the daemon's status reads them.
+			if !q.Has("repository") && !q.Has("pr") {
+				list = append(list, job)
+			} else if job.Repository == q.Get("repository") && q.Get("pr") == fmt.Sprint(job.PR) {
 				list = append(list, job)
 			}
 		}
@@ -496,7 +501,7 @@ func TestNoToolReadsAWriteRoute(t *testing.T) {
 	reads := f.mcp.ToolReads()
 	var prefixes []string
 	for tool, tp := range reads {
-		if len(tp) == 0 && tool != "focus" && tool != "current_page" && tool != "read_more" {
+		if len(tp) == 0 && tool != "focus" && tool != "current_page" && tool != "read_more" && tool != "link" && tool != "app_help" {
 			t.Errorf("%s declares no route", tool)
 		}
 		prefixes = append(prefixes, tp...)
@@ -510,7 +515,7 @@ func TestNoToolReadsAWriteRoute(t *testing.T) {
 		return false
 	}
 	var sources []string
-	for _, pattern := range []string{"*.go", "../jobs/*.go", "../reviewgroups/*.go", "../repos/*.go", "../inboxqueue/*.go", "../reviewindex/*.go"} {
+	for _, pattern := range []string{"*.go", "../jobs/*.go", "../reviewgroups/*.go", "../repos/*.go", "../livesessions/*.go", "../decisionlog/*.go", "../background/*.go", "../inboxqueue/*.go", "../reviewindex/*.go"} {
 		matches, err := filepath.Glob(pattern)
 		if err != nil {
 			t.Fatal(err)
