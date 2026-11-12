@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io/fs"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -304,7 +305,7 @@ func (s *Service) store(key string, cache diskCache, deferTimes bool) error {
 				s.set(key, newDocument(old.raw, old.stamp, &saved, &unsaved))
 				s.docsMu.Unlock()
 				s.wrote(key)
-				s.updated()
+				s.updatedBy(key)
 				return nil
 			}
 		}
@@ -336,8 +337,17 @@ func (s *Service) store(key string, cache diskCache, deferTimes bool) error {
 	if err != nil {
 		return err
 	}
-	s.updated()
+	s.updatedBy(key)
 	return nil
+}
+
+// updatedBy reports a write of the document under key, unless it is a
+// credential's budget record, which Cached does not read: polls and probes
+// save it on their own, and the review index must not rebuild for it.
+func (s *Service) updatedBy(key string) {
+	if !strings.HasSuffix(key, budgetSuffix) {
+		s.updated()
+	}
 }
 
 func (s *Service) wrote(key string) {

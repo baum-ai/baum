@@ -272,8 +272,10 @@ type Service struct {
 	active map[uint64]context.CancelFunc
 	nextID uint64
 	// Updated, when set before use, is called after anything Cached reads
-	// changes: a cache write, or live freshness. It may run with the
-	// service's locks held, so it must not call the service.
+	// changes: a repository's cache write, an identity reset, or live
+	// freshness. A write of the credential's budget record alone, which
+	// Cached does not read, is not reported. It may run with the service's
+	// locks held, so it must not call the service.
 	Updated func()
 }
 
@@ -676,7 +678,7 @@ func (s *Service) poll(ctx context.Context, repository github.Repository, force 
 	if err != nil {
 		return Snapshot{}, err
 	}
-	budgetPath += ".budget"
+	budgetPath += budgetSuffix
 	budget, err := s.ledger(budgetPath)
 	if err != nil {
 		return Snapshot{}, err

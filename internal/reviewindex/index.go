@@ -6,7 +6,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"maps"
 	"net/http"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -28,12 +30,25 @@ type Reader interface {
 	Snapshot(context.Context) ([]store.Summary, error)
 }
 
+// Revisions is a Discovery that stamps what Cached reads without reading it
+// (discovery.Revision). A Cache keeps a repository's rows only while its
+// revision holds, so without it every build reads every repository.
+type Revisions interface {
+	Revision(context.Context, github.Repository) (discovery.Revision, error)
+}
+
 type Service struct {
 	Registry  Registry
 	Discovery Discovery
 	// OpenStore may resolve an explicit --store registration in a future host.
 	// The default uses the same common-dir/XDG selection as the generation pipeline.
 	OpenStore func(commonDir string) (Reader, error)
+	// StoreStamp stamps what OpenStore's reader of commonDir reads, without
+	// opening it; ok is false when it cannot vouch for it. Two equal stamps
+	// must read the same summaries. The default, for the default OpenStore,
+	// stats versions.sqlite and its write-ahead log under both store roots.
+	// With another OpenStore and no StoreStamp, every build reads every store.
+	StoreStamp func(commonDir string) (stamp string, ok bool)
 }
 
 type Entry struct {
@@ -70,97 +85,176 @@ type Snapshot struct {
 }
 
 func (s *Service) Build(ctx context.Context) (Snapshot, error) {
-	out, _, err := s.build(ctx, time.Now())
+	out, _, err := s.build(ctx, time.Now(), nil)
 	return out, err
 }
 
 // build also returns the earliest instant after now at which building again
 // could give another snapshot with nothing written: a run lease expiring, a
 // discovery snapshot reaching its next poll, or an observation turning stale.
-// It is zero when there is none.
-func (s *Service) build(ctx context.Context, now time.Time) (Snapshot, time.Time, error) {
+// It is zero when there is none. With kept, a repository whose inputs did not
+// change since kept read it is not read again (parts.go).
+func (s *Service) build(ctx context.Context, now time.Time, kept *parts) (Snapshot, time.Time, error) {
 	var next time.Time
 	changeAt := func(t time.Time) {
 		if t.After(now) && (next.IsZero() || t.Before(next)) {
 			next = t
 		}
 	}
-	out, err := s.assemble(ctx, changeAt)
+	out, err := s.assemble(ctx, now, kept, changeAt)
 	return out, next, err
 }
 
-func (s *Service) assemble(ctx context.Context, changeAt func(time.Time)) (Snapshot, error) {
+func (s *Service) assemble(ctx context.Context, now time.Time, kept *parts, changeAt func(time.Time)) (Snapshot, error) {
 	out := Snapshot{Entries: []Entry{}, Problems: []Problem{}}
 	picked, err := s.Registry.Repositories(ctx)
 	if err != nil {
 		return out, err
 	}
-	var clones []repos.Clone
-	hasClone := map[string]bool{}
-	for _, repository := range picked {
-		for _, clone := range repository.Clones {
-			clones = append(clones, clone)
-			if clone.Available {
-				hasClone[strings.ToLower(repository.Repository)] = true
-			}
-		}
+	groups := groupRepositories(picked)
+	reuse, full := kept.reusable(now)
+	if reuse {
+		changeAt(full)
 	}
-	discovered := map[store.Key]discovery.PullRequest{}
-	stale := map[string]bool{}
-	seenRepo := map[string]bool{}
-	observations := map[store.Key]discovery.Observation{}
-	discoveryFetched := map[string]time.Time{}
-	for _, pick := range picked {
-		repository := strings.ToLower(pick.Repository)
-		if seenRepo[repository] {
-			continue
-		}
-		seenRepo[repository] = true
-		if s.Discovery == nil {
-			stale[repository] = true
-			continue
-		}
-		parsed, err := github.ParseRepository(repository)
+	byIdentity := make(map[string]*part, len(groups))
+	for _, g := range groups {
+		p, err := s.repositoryPart(ctx, now, g, kept, reuse)
 		if err != nil {
 			return out, err
 		}
-		snapshot, err := s.Discovery.Cached(ctx, parsed)
-		stale[repository] = err != nil || snapshot.Stale
-		if !stale[repository] {
-			changeAt(snapshot.NextPoll)
+		changeAt(p.next)
+		byIdentity[g.identity] = p
+		out.Problems = append(out.Problems, p.problems...)
+	}
+	kept.finish(now, !reuse, byIdentity)
+	// Each part holds one repository's rows, sorted: in repository order
+	// they are the whole snapshot's order.
+	total := 0
+	for _, p := range byIdentity {
+		total += len(p.entries)
+	}
+	out.Entries = make([]Entry, 0, total)
+	for _, identity := range slices.Sorted(maps.Keys(byIdentity)) {
+		out.Entries = append(out.Entries, byIdentity[identity].entries...)
+	}
+	return out, nil
+}
+
+// group is one repository's share of the registry: whether it is picked,
+// how many of its picks have no clone, whether any of its picks has an
+// available clone, and its clones in registry order.
+type group struct {
+	identity string
+	picked   bool
+	bare     int
+	hasClone bool
+	clones   []groupClone
+}
+
+// groupClone is a clone and whether its rows come from it. Distinct stores
+// of one repository can hold independent histories, so each store gives a
+// row per pull request with its clone_id rather than one arbitrary winner;
+// a store several clones share (worktrees) is read for the first only.
+type groupClone struct {
+	clone repos.Clone
+	owned bool
+}
+
+func groupRepositories(picked []repos.Repository) []*group {
+	var groups []*group
+	byIdentity := map[string]*group{}
+	get := func(identity string) *group {
+		g := byIdentity[identity]
+		if g == nil {
+			g = &group{identity: identity}
+			byIdentity[identity] = g
+			groups = append(groups, g)
 		}
-		discoveryFetched[repository] = snapshot.FetchedAt
-		if err != nil && ctx.Err() != nil {
-			return out, ctx.Err()
+		return g
+	}
+	for _, pick := range picked {
+		g := get(strings.ToLower(pick.Repository))
+		g.picked = true
+		if len(pick.Clones) == 0 {
+			g.bare++
 		}
-		for _, value := range snapshot.Observations {
-			observations[store.Key{Repository: repository, Number: value.Number}] = value
-		}
-		for _, pr := range snapshot.PullRequests {
-			pr.Repository = repository
-			discovered[store.Key{Repository: repository, Number: pr.Number}] = pr
+		for _, clone := range pick.Clones {
+			if clone.Available {
+				g.hasClone = true
+			}
 		}
 	}
-	// Distinct stores of one repository can hold independent histories; expose a
-	// row per store, with clone_id, rather than arbitrarily choosing a winner.
 	seenStore := map[string]bool{}
+	for _, pick := range picked {
+		for _, clone := range pick.Clones {
+			g := get(strings.ToLower(clone.Repository))
+			g.clones = append(g.clones, groupClone{clone: clone, owned: !seenStore[clone.CommonDir]})
+			seenStore[clone.CommonDir] = true
+		}
+	}
+	return groups
+}
+
+// readPart reads one repository's rows from its discovery cache and stores.
+// cacheable is false when a read failed, so that it is tried again.
+func (s *Service) readPart(ctx context.Context, now time.Time, g *group) (p *part, cacheable bool, err error) {
+	p = &part{read: now, entries: []Entry{}, problems: []Problem{}}
+	changeAt := func(t time.Time) {
+		if t.After(now) && (p.next.IsZero() || t.Before(p.next)) {
+			p.next = t
+		}
+	}
+	cacheable = true
+	identity := g.identity
+	stale := false
+	discovered := map[int]discovery.PullRequest{}
+	observations := map[int]discovery.Observation{}
+	var fetched time.Time
+	if g.picked {
+		if s.Discovery == nil {
+			stale = true
+		} else {
+			parsed, err := github.ParseRepository(identity)
+			if err != nil {
+				return nil, false, err
+			}
+			snapshot, err := s.Discovery.Cached(ctx, parsed)
+			stale = err != nil || snapshot.Stale
+			if !stale {
+				changeAt(snapshot.NextPoll)
+			}
+			fetched = snapshot.FetchedAt
+			if err != nil {
+				if ctx.Err() != nil {
+					return nil, false, ctx.Err()
+				}
+				cacheable = false
+			}
+			for _, value := range snapshot.Observations {
+				observations[value.Number] = value
+			}
+			for _, pr := range snapshot.PullRequests {
+				pr.Repository = identity
+				discovered[pr.Number] = pr
+			}
+		}
+	}
 	open := s.OpenStore
 	if open == nil {
 		open = func(common string) (Reader, error) { return store.Open(common, "", false) }
 	}
-	for _, clone := range clones {
-		identity := strings.ToLower(clone.Repository)
-		if seenStore[clone.CommonDir] {
+	for _, c := range g.clones {
+		if !c.owned {
 			continue
 		}
-		seenStore[clone.CommonDir] = true
+		clone := c.clone
 		if !clone.Available {
-			out.Problems = append(out.Problems, Problem{clone.ID, "clone_unavailable"})
-			stale[identity] = true
+			p.problems = append(p.problems, Problem{clone.ID, "clone_unavailable"})
+			stale = true
 		}
 		// Coverage is per store: a review in one clone must not hide the missing
 		// review in another clone's independent history.
-		covered := map[store.Key]bool{}
+		covered := map[int]bool{}
 		reader, err := open(clone.CommonDir)
 		var summaries []store.Summary
 		if err == nil {
@@ -168,13 +262,12 @@ func (s *Service) assemble(ctx context.Context, changeAt func(time.Time)) (Snaps
 		}
 		if err != nil {
 			if ctx.Err() != nil {
-				return out, ctx.Err()
+				return nil, false, ctx.Err()
 			}
-			out.Problems = append(out.Problems, Problem{clone.ID, "store_unreadable"})
-			for key, pr := range discovered {
-				if key.Repository == identity {
-					out.Entries = append(out.Entries, Entry{PullRequest: pr, CloneID: clone.ID, Status: "unknown", Stale: stale[identity], StoreError: "store_unreadable"})
-				}
+			cacheable = false
+			p.problems = append(p.problems, Problem{clone.ID, "store_unreadable"})
+			for _, pr := range discovered {
+				p.entries = append(p.entries, Entry{PullRequest: pr, CloneID: clone.ID, Status: "unknown", Stale: stale, StoreError: "store_unreadable"})
 			}
 			continue
 		}
@@ -182,8 +275,8 @@ func (s *Service) assemble(ctx context.Context, changeAt func(time.Time)) (Snaps
 			if summary.Key.Repository != identity {
 				continue
 			}
-			pr, found := discovered[summary.Key]
-			covered[summary.Key] = true
+			pr, found := discovered[summary.Key.Number]
+			covered[summary.Key.Number] = true
 			if !found {
 				state := strings.ToUpper(summary.PRState)
 				if state != "CLOSED" && state != "MERGED" {
@@ -191,7 +284,7 @@ func (s *Service) assemble(ctx context.Context, changeAt func(time.Time)) (Snaps
 				}
 				pr = discovery.PullRequest{Repository: identity, Number: summary.Key.Number, Title: summary.Title, State: state}
 			}
-			entry := Entry{PullRequest: pr, CloneID: clone.ID, Status: "no_review", VersionCount: summary.VersionCount, Latest: summary.Latest, RiskScore: summary.RiskScore, ReviewMinutes: summary.ReviewMinutes, Historical: !found, Stale: stale[identity] || !found}
+			entry := Entry{PullRequest: pr, CloneID: clone.ID, Status: "no_review", VersionCount: summary.VersionCount, Latest: summary.Latest, RiskScore: summary.RiskScore, ReviewMinutes: summary.ReviewMinutes, Historical: !found, Stale: stale || !found}
 			if summary.Latest != nil {
 				entry.Status = "outdated"
 				if !found || pr.HeadSHA == "" {
@@ -210,40 +303,33 @@ func (s *Service) assemble(ctx context.Context, changeAt func(time.Time)) (Snaps
 					entry.FailureReason = summary.Run.Reason
 				}
 			}
-			out.Entries = append(out.Entries, entry)
+			p.entries = append(p.entries, entry)
 		}
-		for key, pr := range discovered {
-			if key.Repository == identity && !covered[key] {
-				out.Entries = append(out.Entries, Entry{PullRequest: pr, CloneID: clone.ID, Status: "no_review", Stale: stale[identity]})
+		for number, pr := range discovered {
+			if !covered[number] {
+				p.entries = append(p.entries, Entry{PullRequest: pr, CloneID: clone.ID, Status: "no_review", Stale: stale})
 			}
 		}
 	}
 	// A repository without a clone has no store: list its discovered pull
 	// requests so they can be seen, without a clone ID to generate with.
-	for _, pick := range picked {
-		identity := strings.ToLower(pick.Repository)
-		if len(pick.Clones) > 0 {
-			continue
-		}
-		for key, pr := range discovered {
-			if key.Repository == identity {
-				out.Entries = append(out.Entries, Entry{PullRequest: pr, Status: "no_review", Stale: stale[identity]})
-			}
+	for range g.bare {
+		for _, pr := range discovered {
+			p.entries = append(p.entries, Entry{PullRequest: pr, Status: "no_review", Stale: stale})
 		}
 	}
-	for i := range out.Entries {
-		entry := &out.Entries[i]
-		key := store.Key{Repository: entry.PullRequest.Repository, Number: entry.PullRequest.Number}
-		entry.NeedsClone = !hasClone[key.Repository]
+	for i := range p.entries {
+		entry := &p.entries[i]
+		entry.NeedsClone = !g.hasClone
 		entry.Review, entry.Checks, entry.Merge = entry.PullRequest.Review, entry.PullRequest.Checks, entry.PullRequest.Merge
 		entry.Unresolved, entry.UnresolvedCapped = entry.PullRequest.Unresolved, entry.PullRequest.UnresolvedCapped
-		if fetched := discoveryFetched[key.Repository]; !fetched.IsZero() && !entry.Historical {
+		if !fetched.IsZero() && !entry.Historical {
 			entry.MetadataFetchedAt = fetched.UTC().Format(time.RFC3339Nano)
 		}
-		if value, ok := observations[key]; ok {
+		if value, ok := observations[entry.PullRequest.Number]; ok {
 			// A newer discovery head wins over a previous metadata fetch. Never
 			// label old-head checks as checks on the current revision.
-			if !entry.Historical && value.FetchedAt.Before(discoveryFetched[key.Repository]) {
+			if !entry.Historical && value.FetchedAt.Before(fetched) {
 				continue
 			}
 			if value.HeadSHA != entry.PullRequest.HeadSHA {
@@ -260,7 +346,7 @@ func (s *Service) assemble(ctx context.Context, changeAt func(time.Time)) (Snaps
 			entry.PullRequest.Title = value.Title
 			entry.PullRequest.State = value.State
 			entry.PullRequest.Draft = value.Draft
-			entry.Stale = stale[key.Repository] || time.Since(value.FetchedAt) > 2*time.Minute
+			entry.Stale = stale || time.Since(value.FetchedAt) > 2*time.Minute
 			// Stale once strictly more than two minutes have passed.
 			changeAt(value.FetchedAt.Add(2*time.Minute + time.Nanosecond))
 			switch value.Checks {
@@ -286,17 +372,14 @@ func (s *Service) assemble(ctx context.Context, changeAt func(time.Time)) (Snaps
 			}
 		}
 	}
-	sort.Slice(out.Entries, func(i, j int) bool {
-		a, b := out.Entries[i], out.Entries[j]
-		if a.PullRequest.Repository != b.PullRequest.Repository {
-			return a.PullRequest.Repository < b.PullRequest.Repository
-		}
+	sort.Slice(p.entries, func(i, j int) bool {
+		a, b := p.entries[i], p.entries[j]
 		if a.PullRequest.Number != b.PullRequest.Number {
 			return a.PullRequest.Number < b.PullRequest.Number
 		}
 		return a.CloneID < b.CloneID
 	})
-	return out, nil
+	return p, cacheable, nil
 }
 
 // Handler serves GET /api/index. The host must apply its launch authentication

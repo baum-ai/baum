@@ -6,6 +6,10 @@ import (
 	"github.com/baum-ai/baum/internal/github"
 )
 
+// budgetSuffix ends the cache key of a credential's budget record (ledger),
+// which every repository of the credential shares and Cached never reads.
+const budgetSuffix = ".budget"
+
 // GraphQLBudget is the credential's GraphQL points budget as discovery last
 // read it, for another reader of the same token, such as the background
 // refresh, to leave discovery its share. It makes no request. Remaining is
@@ -20,7 +24,7 @@ func (s *Service) GraphQLBudget(ctx context.Context, repository github.Repositor
 	if err != nil {
 		return RateLimit{}, err
 	}
-	budget, err := s.ledger(path + ".budget")
+	budget, err := s.ledger(path + budgetSuffix)
 	if err != nil {
 		return RateLimit{}, err
 	}
