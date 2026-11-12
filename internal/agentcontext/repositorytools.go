@@ -255,7 +255,7 @@ func (s *Server) callPickList(ctx context.Context, _ CallContext, args json.RawM
 		if len(items) == limit {
 			break
 		}
-		items = append(items, item{r.Repository, r.Private, r.Fork, r.Description, r.PushedAt, r.Picked, r.Cloned})
+		items = append(items, item(r))
 	}
 	out := struct {
 		Repositories []item `json:"repositories"`

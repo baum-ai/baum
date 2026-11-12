@@ -904,7 +904,13 @@ func TestTimelineToolsReadTheRealRoutes(t *testing.T) {
 // readRegistry is a registry with one clone of owner/repo.
 func readRegistry(t *testing.T) (*repos.Registry, repos.Clone) {
 	t.Helper()
-	registry, err := repos.Open(filepath.Join(appdbtest.TempDir(t), "repos.sqlite"))
+	return readRegistryAt(t, filepath.Join(appdbtest.TempDir(t), "repos.sqlite"))
+}
+
+// readRegistryAt is readRegistry with its database at path.
+func readRegistryAt(t *testing.T, path string) (*repos.Registry, repos.Clone) {
+	t.Helper()
+	registry, err := repos.Open(path)
 	if err != nil {
 		t.Fatal(err)
 	}

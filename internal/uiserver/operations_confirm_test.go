@@ -9,6 +9,7 @@ import (
 
 	"github.com/baum-ai/baum/internal/agentcontext"
 	"github.com/baum-ai/baum/internal/agentrequests"
+	"github.com/baum-ai/baum/internal/appdb"
 	"github.com/baum-ai/baum/internal/repos"
 )
 
@@ -150,6 +151,30 @@ func TestAPaidRunConfirmsItsSettings(t *testing.T) {
 		t.Fatal("a fix was proposed without its settings:", failed)
 	}
 	if writes := f.log.take(); len(writes) != 0 {
+		t.Fatalf("ran %v", writes)
+	}
+
+	// The settings route still answers when the saved choices cannot be
+	// read, with the config file's alone: a run is not shown with those.
+	f.log.failSettings.Store(false)
+	db, err := appdb.Open(f.registryPath, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = db.Close() }()
+	if _, err := db.ExecContext(ctx, `UPDATE preferences SET value='{' WHERE key='automatic'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.registry.Preferences(ctx); err == nil {
+		t.Fatal("the preferences were still readable")
+	}
+	if _, err := f.confirm(ctx, id); err == nil || !strings.Contains(err.Error(), "cannot be read") {
+		t.Fatal("a review was confirmed with the config file's settings:", err)
+	}
+	if _, failed := f.propose("propose_review", map[string]any{}); !strings.Contains(failed, "cannot be read") {
+		t.Fatal("a review was proposed with the config file's settings:", failed)
+	}
+	if writes := f.log.take(); len(writes) != 0 || len(f.queue.OfPullRequest("owner/repo", 7)) != 0 {
 		t.Fatalf("ran %v", writes)
 	}
 }

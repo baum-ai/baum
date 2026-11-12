@@ -328,10 +328,12 @@ func TestListedProposalsAreCopies(t *testing.T) {
 	if err := s.Registry.SetPage(id, PageContext{Page: PageSettings, Filters: map[string]string{"tab": "prompts"}, Focus: json.RawMessage(`{"k":1}`)}); err != nil {
 		t.Fatal(err)
 	}
-	returned, err := s.Proposals.Propose(ctx, id, Proposal{Page: PageSettings, Target: "review", After: json.RawMessage(`"new"`)})
+	after := json.RawMessage(`"new"`)
+	returned, err := s.Proposals.Propose(ctx, id, Proposal{Page: PageSettings, Target: "review", After: after})
 	if err != nil {
 		t.Fatal(err)
 	}
+	after[1] = 'X' // the caller reuses its buffer
 	for _, p := range []Proposal{returned, s.Proposals.List(id)[0]} {
 		p.Context.Filters["tab"] = "changed"
 		p.Context.Focus[1] = 'X'

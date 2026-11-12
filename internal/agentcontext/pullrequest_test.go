@@ -87,10 +87,15 @@ func (d *fakeDaemon) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			http.NotFound(w, r)
 			return
 		}
-		reply(`{"review":{"head":%q,"clone":%q},"index":{"hunks":[
+		// A saved review's document names its version; the facts have none.
+		version := 0
+		if p == "/api/document" {
+			version = 3
+		}
+		reply(`{"review":{"head":%q,"clone":%q,"version":%d},"index":{"hunks":[
 		 {"path":"a.go","change":"modified","additions":3,"deletions":1},
 		 {"path":"a.go","change":"modified","additions":2,"deletions":0},
-		 {"path":"b.go","old_path":"old.go","change":"renamed","additions":0,"deletions":0}]}}`, head, clone)
+		 {"path":"b.go","old_path":"old.go","change":"renamed","additions":0,"deletions":0}]}}`, head, clone, version)
 	case p == "/api/patch" || p == "/api/facts/patch":
 		clone, pr := clonePR()
 		reply(`{"patch":"@@ %s %s %s %s"}`, p, clone, pr, q.Get("path"))
@@ -244,6 +249,46 @@ func TestPullRequestToolsReadThePageRoutes(t *testing.T) {
 	}
 	if text, failed := data(t, s, token, "pull_request", map[string]any{"pr": 99}); !failed || !strings.Contains(text, "not in the review index") {
 		t.Errorf("an unknown pull request: %s", text)
+	}
+}
+
+// The diff of a saved review reads every patch from the version its
+// document is, so a version saved meanwhile cannot mix in.
+func TestDiffReadsPatchesFromTheDocumentsVersion(t *testing.T) {
+	s, d := fakeServer(t)
+	token, id := chat(t, s)
+	if err := s.Registry.SetPage(id, PageContext{Page: PagePullRequest, Repository: "acme/web", PullRequest: 13}); err != nil {
+		t.Fatal(err)
+	}
+	d.reset()
+	if text, failed := data(t, s, token, "diff", nil); failed {
+		t.Fatal(text)
+	}
+	patches := 0
+	for _, request := range d.requests() {
+		if !strings.HasPrefix(request, "GET /api/patch?") {
+			continue
+		}
+		patches++
+		if !strings.Contains(request, "version=3") {
+			t.Errorf("a patch was read without the document's version: %s", request)
+		}
+	}
+	if patches != 2 {
+		t.Fatalf("read %d patches, want 2: %v", patches, d.requests())
+	}
+	// The facts have no version to pin.
+	if err := s.Registry.SetPage(id, PageContext{Page: PagePullRequest, Repository: "acme/web", PullRequest: 12}); err != nil {
+		t.Fatal(err)
+	}
+	d.reset()
+	if text, failed := data(t, s, token, "diff", nil); failed {
+		t.Fatal(text)
+	}
+	for _, request := range d.requests() {
+		if strings.Contains(request, "version=") {
+			t.Errorf("a facts read named a version: %s", request)
+		}
 	}
 }
 

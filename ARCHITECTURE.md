@@ -5395,7 +5395,7 @@ another repository to an action through `CallContext.Target`.
 | Tool | Reads |
 | --- | --- |
 | `search` | words (`query`, `kinds`, `limit` 1 to 50, default 20) over pull requests (`/api/index`, which Go to lists), review groups (`/api/groups`), running sessions (`/api/live-sessions`), repositories (`/api/repositories`) and, only while the hits so far leave room, features and decisions (`/api/timeline/features` and `/api/timeline/decisions`, matched by the daemon). Every word must be in a title, repository, kind or keyword, ignoring case; titles starting with the words rank first, as in Go to. Each hit has its kind, title, detail and the page it opens (the `PageContext` fields). A route that cannot be read, or answers `{"available":false}`, is named in `unavailable`; all of them failing is an error |
-| `link` | no route: the app's address for a page and its subject, the query strings of `app/src/pages.ts` and the detail pages' hrefs (`?page=pulls`, `?repository=owner%2Fname&pr=7`, escaped as the app's `encodeURIComponent` does, `?group=id`, `?page=sessions&session=agent:id`, `?page=jobs&job=id`, `?page=timeline&feature=id`, a settings or repository section), relative so the chat panel makes it a link. `repository` is also accepted, unused, on group, session, job and feature so a `search` hit's page fields feed `link`. Filters are list pages' own parameters: ones that name a page or subject (`repository`, `pr`, `group`, `section`, `inbox`...) are refused, and a `repo` filter for an action goes through `Target`. Unknown pages, missing subjects, a field the page does not take and unknown sections are refused |
+| `link` | no route: the app's address for a page and its subject, the query strings of `app/src/pages.ts` and the detail pages' hrefs (`?page=pulls`, `?repository=owner%2Fname&pr=7`, escaped as the app's `encodeURIComponent` does, `?group=id`, `?page=sessions&session=agent:id`, `?page=jobs&job=id`, `?page=timeline&feature=id`, `?page=inbox&inbox=id` for a saved inbox (its own `inbox` argument, in the store's id shape), a settings or repository section), relative so the chat panel makes it a link. `repository` is also accepted, unused, on group, session, job and feature so a `search` hit's page fields feed `link`. Filters are list pages' own parameters: ones that name a page or subject (`repository`, `pr`, `group`, `section`, `inbox`...) are refused, and a `repo` filter for an action goes through `Target`. Unknown pages, missing subjects, a field the page does not take and unknown sections are refused |
 | `app_help` | no route: the embedded `help.md`: each page, the words the app uses and its keyboard shortcuts; `topic` returns one section or word. A test reads `pages.ts` and `shortcuts.tsx` and fails when a page has no section or `link` mapping, or a key is not in the help |
 | `daemon_status` | `/api/background` (each repository's last and next refresh, failure count, whether the latest refresh failed and its problem count, never the error text) and `/api/jobs` (jobs queued and running), with the daemon's version. `/api/health` is answered by the app server before the API the tools read through, so `health` is `ok` when the call is answered. No paths, environment, diagnostics or tokens |
 
@@ -5680,8 +5680,10 @@ check (`validRepository`, `validSegment`, a hex head, a known merge method or
 job kind); otherwise the sentence names it generically ("a pull request", "an
 agent session") and the value is a quoted field. `refresh` and
 `register_repository` send, and name, the registry's spelling of the
-repository, not the agent's. A paid run whose settings cannot be read is
-refused, at `Propose` and at `Confirm`, rather than shown with a guess.
+repository, not the agent's. A paid run is refused, at `Propose` and at
+`Confirm`, rather than shown with a guess when its settings cannot be read,
+or when `GET /api/settings` could read only the config file and not the
+saved preferences (it then answers `preferences_unavailable`).
 
 `ProposeOperation(ctx, consumer, name, args)` refuses any consumer but a
 chat, a page that does not offer the operation, and a target `Build` or
