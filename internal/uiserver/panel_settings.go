@@ -15,8 +15,8 @@ import (
 const maxPanelModel = 200
 
 // panelInput is the body of PUT /api/settings/panel: each field present is a
-// change. An empty agent goes back to following the fix agent, and drops a
-// chosen model with it.
+// change. An empty agent goes back to following the fix agent; any change of
+// agent drops a chosen model unless the same request sets one.
 type panelInput struct {
 	Agent    *string `json:"agent,omitempty"`
 	Model    *string `json:"model,omitempty"`
@@ -43,11 +43,13 @@ func (in panelInput) check() error {
 
 // edit is the route's change of the saved preferences.
 func (in panelInput) edit(p repos.Preferences) repos.Preferences {
+	// A model names one agent's model: another agent, or following the fix
+	// agent again, drops a chosen model unless the same change sets one.
 	if in.Agent != nil {
-		p.Panel.Agent = *in.Agent
-		if *in.Agent == "" {
+		if *in.Agent != p.Panel.Agent || *in.Agent == "" {
 			p.Panel.Model = nil
 		}
+		p.Panel.Agent = *in.Agent
 	}
 	if in.Model != nil {
 		model := strings.TrimSpace(*in.Model)

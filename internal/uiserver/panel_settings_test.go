@@ -69,6 +69,17 @@ func TestPanelSettingsRoundTrip(t *testing.T) {
 		t.Fatalf("another agent: %#v", got)
 	}
 	call(server, "PUT", `{"model":"opus"}`, 200)
+	// Another agent drops the model chosen for the first, unless the same
+	// change sets one.
+	if got := call(server, "PUT", `{"agent":"codex"}`, 200); got.Agent != "codex" || got.Model != "gpt-5" || got.ModelSource != "fix" {
+		t.Fatalf("another agent kept the model: %#v", got)
+	}
+	if got := call(server, "PUT", `{"agent":"claude-code","model":"opus"}`, 200); got.Model != "opus" {
+		t.Fatalf("agent and model together: %#v", got)
+	}
+	if got := call(server, "PUT", `{"agent":"claude-code"}`, 200); got.Model != "opus" {
+		t.Fatalf("the same agent dropped its model: %#v", got)
+	}
 	for _, invalid := range []string{`{"agent":"cursor"}`, `{"mode":"partial"}`, `{"position":"left"}`, `{"model":"a\nb"}`, `{"extra":1}`, `{} {}`} {
 		call(server, "PUT", invalid, 400)
 	}
