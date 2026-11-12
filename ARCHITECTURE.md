@@ -2794,7 +2794,7 @@ keeps 90 days of changed figures in the `state/plan-usage-history` document in `
 (`uiserver.LocalAPI.Analytics`) for the app's Analytics page. Its parts, all
 started in `localApplication`:
 
-- `Index` keeps per-session aggregates in the `cache/analytics-index` document in `app.sqlite` in the state
+- `Index` keeps per-session aggregates, one `analytics_sessions` row per session file, in `app.sqlite` in the state
   directory, for sessions whose working directory is inside a registered clone
   (`sessions/collector.FindSessions` per clone with its worktrees, then
   `sessions.Map` and a reduction that keeps no text). Entries are keyed by the
