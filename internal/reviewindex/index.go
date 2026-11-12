@@ -90,10 +90,11 @@ func (s *Service) Build(ctx context.Context) (Snapshot, error) {
 }
 
 // build also returns the earliest instant after now at which building again
-// could give another snapshot with nothing written: a run lease expiring, a
-// discovery snapshot reaching its next poll,.
-// It is zero when there is none. With kept, a repository whose inputs did not
-// change since kept read it is not read again (parts.go).
+// could give another snapshot with nothing written: a run lease expiring or a
+// discovery snapshot reaching its next poll. The age of fetched metadata does
+// not count: the app works that out itself. It is zero when there is none.
+// With kept, a repository whose inputs did not change since kept read it is
+// not read again (parts.go).
 func (s *Service) build(ctx context.Context, now time.Time, kept *parts) (Snapshot, time.Time, error) {
 	var next time.Time
 	changeAt := func(t time.Time) {
