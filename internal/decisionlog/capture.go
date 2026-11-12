@@ -36,11 +36,12 @@ const (
 	ReasonOverTokenCap  = "over_token_cap"
 	ReasonFailed        = "extraction_failed"
 	// Transient.
-	ReasonUnsupported = "backend_unsupported"
-	ReasonUnavailable = "backend_unavailable"
+	ReasonUnsupported       = "backend_unsupported"
+	ReasonUnavailable       = "backend_unavailable"
+	ReasonSourceUnavailable = "source_unavailable"
 )
 
-var transient = map[string]bool{ReasonUnsupported: true, ReasonUnavailable: true}
+var transient = map[string]bool{ReasonUnsupported: true, ReasonUnavailable: true, ReasonSourceUnavailable: true}
 
 // Outcomes of a capture.
 const (
@@ -107,6 +108,7 @@ type Capturer struct {
 
 	// locate is livesessions.Locate unless a test replaces it.
 	locate func(home, cursorStore, agent, id, path string) (livesessions.Location, error)
+	source func(context.Context, Target) (repositorySource, error)
 
 	extractorsMu sync.Mutex
 	extractors   map[string]*decisions.Extractor
@@ -122,6 +124,8 @@ type Target struct {
 	// Path is the transcript path the session's hooks named, if any.
 	Path               string
 	Repository, Branch string
+	// HeadSHA is a commit observed for this session, when one is known.
+	HeadSHA string
 	// Ended is a session that sent its end event: the daily attempt limit
 	// does not hold it back.
 	Ended bool
@@ -152,11 +156,12 @@ type Report struct {
 	Model   string `json:"model,omitempty"`
 	Turns   int    `json:"turns"`
 	// Tokens is the estimated prompt, MaxTokens the bound reserved for.
-	Tokens    int64    `json:"estimated_tokens"`
-	MaxTokens int64    `json:"max_tokens"`
-	Reserved  float64  `json:"reserved_usd"`
-	Cost      *float64 `json:"cost_usd,omitempty"`
-	Decisions int      `json:"decisions"`
+	Tokens    int64          `json:"estimated_tokens"`
+	MaxTokens int64          `json:"max_tokens"`
+	Reserved  float64        `json:"reserved_usd"`
+	Cost      *float64       `json:"cost_usd,omitempty"`
+	Decisions int            `json:"decisions"`
+	Source    *SourceContext `json:"source,omitempty"`
 }
 
 func (c *Capturer) now() time.Time {
@@ -297,6 +302,7 @@ func (c *Capturer) Capture(ctx context.Context, t Target, o Options) (Report, er
 	if err != nil {
 		return report, err
 	}
+	contextCurrent := sourceCovered(head) && head.Repository == t.Repository
 	// A session whose hooks named no transcript (a Codex one is then looked up
 	// by id, a scan of its whole store) is read from the path the last capture
 	// confirmed, checked again; when that path no longer holds it, it is
@@ -335,7 +341,7 @@ func (c *Capturer) Capture(ctx context.Context, t Target, o Options) (Report, er
 		if size > MaxTranscriptBytes {
 			return skip(ReasonTooLarge)
 		}
-		if found && !o.Force && covered(head, meta.Fingerprint, day) {
+		if found && !o.Force && (head.Coverage != CoverageExtracted || contextCurrent) && covered(head, meta.Fingerprint, day) {
 			// The file the head covers, found again by the hooks' path after
 			// the stored one failed: the path the fingerprint names is
 			// repaired.
@@ -374,7 +380,7 @@ func (c *Capturer) Capture(ctx context.Context, t Target, o Options) (Report, er
 	options := decisions.ExtractOptions{MaxInputTokens: MaxInputTokens, MaxOutputTokens: MaxOutputTokens}
 	report.Mode = "full"
 	if found && head.ContentHash != "" {
-		if head.ContentHash == hash {
+		if head.ContentHash == hash && contextCurrent {
 			report.Outcome, report.Decisions = OutcomeHit, len(head.Decisions)
 			if o.DryRun {
 				return report, nil
@@ -422,7 +428,21 @@ func (c *Capturer) Capture(ctx context.Context, t Target, o Options) (Report, er
 		return report, nil
 	}
 
-	model, attempt, reason, err := calls.begin(ctx, planned, Attempt{Agent: t.Agent, ID: t.ID, Repository: t.Repository, Mode: report.Mode})
+	sourceTarget := t
+	if sourceTarget.HeadSHA == "" && head.Source != nil && head.Repository == t.Repository && head.ContentHash == hash {
+		sourceTarget.HeadSHA = head.Source.Revision
+	}
+	source, err := c.repositorySource(ctx, sourceTarget)
+	if err != nil {
+		if errors.Is(err, errSourceUnavailable) {
+			return skip(ReasonSourceUnavailable)
+		}
+		return report, err
+	}
+	defer source.close()
+	report.Source = &source.Context
+	extraction.PromptVersion += "+" + sourceContextVersion
+	model, attempt, reason, err := calls.beginTask(ctx, planned, Attempt{Agent: t.Agent, ID: t.ID, Repository: t.Repository, Mode: report.Mode}, source)
 	if err != nil {
 		return report, err
 	}
@@ -430,6 +450,8 @@ func (c *Capturer) Capture(ctx context.Context, t Target, o Options) (Report, er
 		return skip(reason)
 	}
 	result, callErr := extractor.Extract(ctx, model, rendered, options)
+	extraction.Source = &model.source.Context
+	report.Source = extraction.Source
 	if model.called {
 		_ = debugFile(o.DebugDir, "user.txt", []byte(model.user))
 		_ = debugFile(o.DebugDir, "reply.json", model.raw)
