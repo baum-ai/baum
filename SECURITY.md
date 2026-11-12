@@ -1406,7 +1406,7 @@ another method, and refuses the `refresh` and `more` parameters, which make
 some `GET` routes fetch from GitHub or rebuild a cache. Each tool reads only
 the route prefixes it declares, and no tool can read settings, GitHub
 authentication, GitHub listings, diagnostics, debugging, plan usage, the
-event stream or `/api/mcp`, with two narrow exceptions below. No reader reads a pasted image of a session's
+event stream or `/api/mcp`, with one narrow exception below. No reader reads a pasted image of a session's
 transcript (`/transcript/images/`), which is served unmasked, and the
 transcript tools drop the image fields, the session's working directory and
 the person's address. The agents' requests are read without the person's
@@ -1415,21 +1415,24 @@ repository only in the response, which an action's reader checks (an archived
 feature names none and is never read); a session's Timeline transcript names
 none, so only a chat reads it. Responses are bounded to 8 MiB, apart from a review document and the facts, which are read up to the 32 MiB the daemon serves.
 
-The exceptions are a fixed list of tool and exact route pairs in the daemon's
-source, `diagnostics_summary` with `/api/diagnostics` and `github_repositories`
-with `/api/github/repositories`, which a test pins. Those two tools are global,
-so an action neither lists nor calls them, and the reader refuses an action
-their routes whatever a tool declares. Each returns a typed projection that is
-filled only with what the app shows on that page: diagnostics give a check's
-id, label, status, version and where it was found (with the home folder written
-`~`), never the home folder, a check's path, detail or suggested fix, the
-environment or the issue the Report a problem dialog drafts; the repository
-picker gives owner/name, whether it is private or a fork, its description, last
-push and whether it is picked or cloned, never anything about the GitHub
-connection (not its failures, its organisations or its token). The plan usage
-route is not an exception, since it fetches from Claude or Codex when its cache
-is stale: the plan usage tool reads the cache the daemon already holds, through
-an accessor that cannot fetch. The repositories tools never return a folder: a
+The exception is a fixed list of tool and exact route pairs in the daemon's
+source, today `diagnostics_summary` with `/api/diagnostics`, which a test pins.
+The tool is global, so an action neither lists nor calls it, and the reader
+refuses an action the route whatever a tool declares. It returns a typed
+projection filled only with what the app shows on that page: a check's id,
+label, status, version and where it was found, scrubbed as the public issue
+summary is (home folder and account names, secrets and addresses removed; a
+GitHub Enterprise host is `other host`; token and backend checks name no
+source), never the home folder, a check's path, detail or suggested fix, the
+environment or the issue the Report a problem dialog drafts. Two routes that
+look like candidates are not exceptions, because they reach outside: the plan
+usage route fetches from Claude or Codex when its cache is stale, and the
+picker's list contacts GitHub (a new query starts a search that spends the
+account's rate limit). Their tools read the caches the daemon already holds,
+through accessors that cannot fetch (a call never waits for a fetch in
+progress, and the picker's list says when none is loaded). A job's failure
+text, which can quote git's output and so the home folder, is scrubbed the same
+way in every job tool. The repositories tools never return a folder: a
 clone is a count, an availability and an id, and the suggested clone folder is
 written from the home folder (`~/...`).
 

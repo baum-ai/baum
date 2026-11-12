@@ -48,7 +48,6 @@ var unreadable = []string{"/api/settings", "/api/debug", "/api/github", "/api/di
 // whatever a tool declares. A test lists these pairs exactly.
 var projectedReads = map[string][]string{
 	"diagnostics_summary": {"/api/diagnostics"},
-	"github_repositories": {"/api/github/repositories"},
 }
 
 // checkProjected refuses a tool a projected route it was not allowed.

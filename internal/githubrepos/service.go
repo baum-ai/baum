@@ -537,6 +537,58 @@ func (s *Service) Listing(ctx context.Context, query string, refresh, more bool)
 	return out, nil
 }
 
+// Cached is the picker's list from what the service already holds: the top
+// repositories it last loaded, narrowed by the words of query. It asks GitHub
+// for nothing (no search, no reload when the cache has expired, no lister
+// call at all), so a caller that must not cause a GitHub request can use it.
+// loaded is false until a listing was loaded.
+func (s *Service) Cached(ctx context.Context, query string) (listing Listing, loaded bool, err error) {
+	query = strings.Join(strings.Fields(strings.ToLower(query)), " ")
+	s.mu.Lock()
+	if s.cache == nil {
+		s.mu.Unlock()
+		return Listing{}, false, nil
+	}
+	top, at := *s.cache, s.cached
+	s.mu.Unlock()
+	picked, err := s.Registry.Repositories(ctx)
+	if err != nil {
+		return Listing{}, true, fmt.Errorf("%w: %w", errRegistry, err)
+	}
+	pickedSet := map[string]bool{}
+	registered := map[string]string{}
+	for _, p := range picked {
+		name := strings.ToLower(p.Repository)
+		pickedSet[name] = true
+		for _, c := range p.Clones {
+			if c.Available && registered[name] == "" {
+				registered[name] = c.Path
+			}
+		}
+	}
+	terms := strings.Fields(query)
+	out := Listing{FetchedAt: at, Repositories: []Item{}, HasMore: top.NextCursor != nil}
+	for _, r := range top.Repositories {
+		if !matches(r.Repository, terms) {
+			continue
+		}
+		item := Item{Repository: r.Repository, Private: r.Private, Top: true, Fork: r.Fork, Description: r.Description, Picked: pickedSet[r.Repository], Clone: registered[r.Repository]}
+		if !r.PushedAt.IsZero() {
+			pushed := r.PushedAt
+			item.PushedAt = &pushed
+		}
+		out.Repositories = append(out.Repositories, item)
+	}
+	out.TotalCount = len(out.Repositories)
+	if query == "" && top.TotalCount > 0 {
+		out.TotalCount = top.TotalCount
+	}
+	if query != "" {
+		sort.SliceStable(out.Repositories, func(i, j int) bool { return repositoryBefore(out.Repositories[i], out.Repositories[j], query) })
+	}
+	return out, true, nil
+}
+
 func repositoryBefore(a, b Item, query string) bool {
 	exact := func(r Item) bool {
 		_, name, _ := strings.Cut(r.Repository, "/")

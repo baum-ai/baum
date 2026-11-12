@@ -18,7 +18,6 @@ import (
 // only as a typed projection.
 var allowedProjectedReads = map[string][]string{
 	"diagnostics_summary": {"/api/diagnostics"},
-	"github_repositories": {"/api/github/repositories"},
 }
 
 func TestProjectedReadsAreExactlyTheAllowedPairs(t *testing.T) {
@@ -75,6 +74,7 @@ func TestOnlyTheNamedToolMayDeclareAProjectedRoute(t *testing.T) {
 		{"its route among its reads", Tool{Name: "diagnostics_summary", Scope: ScopeGlobal, Reads: []string{"/api/diagnostics"}, Call: call}},
 		{"plan usage among reads", Tool{Name: "plan_usage", Scope: ScopeGlobal, Reads: []string{"/api/plan-usage"}, Call: call}},
 		{"github among reads", Tool{Name: "github_repositories", Scope: ScopeGlobal, Reads: []string{"/api/github/repositories"}, Call: call}},
+		{"github as a projected route", Tool{Name: "github_repositories", Scope: ScopeGlobal, Projected: []string{"/api/github/repositories"}, Call: call}},
 		{"the connection among reads", Tool{Name: "github_repositories", Scope: ScopeGlobal, Reads: []string{"/api/github-auth"}, Call: call}},
 	} {
 		if err := tt.tool.compile(); err == nil {
@@ -157,15 +157,20 @@ func TestEveryAppPageHasItsOwnTools(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	app, err := os.ReadFile("../../app/src/app.tsx")
-	if err != nil {
-		t.Fatal(err)
+	// The address parameters the app reads, from the files that read the
+	// address (app.tsx routes the pages, location.ts and timeline-filter.ts
+	// read it). Each must be a parameter that opens a page (below, mapped to
+	// the page it opens) or one that is known not to: a new parameter fails
+	// this test until someone decides which, and so adds a page context for
+	// a page it opens.
+	var sources []byte
+	for _, file := range []string{"app.tsx", "location.ts", "timeline-filter.ts"} {
+		body, err := os.ReadFile("../../app/src/" + file)
+		if err != nil {
+			t.Fatal(err)
+		}
+		sources = append(sources, body...)
 	}
-	filter, err := os.ReadFile("../../app/src/timeline-filter.ts")
-	if err != nil {
-		t.Fatal(err)
-	}
-	sources := slices.Concat(app, filter)
 	want := map[string]string{}
 	for _, m := range regexp.MustCompile(`\bpage:\s*"([a-z]+)"`).FindAllStringSubmatch(string(pages), -1) {
 		want[m[1]] = "the sidebar page " + m[1]
@@ -173,14 +178,22 @@ func TestEveryAppPageHasItsOwnTools(t *testing.T) {
 	if len(want) < 8 {
 		t.Fatalf("only %d sidebar pages found in pages.ts: the scan is broken", len(want))
 	}
-	// The pages that show one thing, by the address parameter that opens
-	// each: a pull request (pr, with its repository), a review group, a
-	// session, a job and a feature. A repository's page is the Repositories
-	// page with a repository open.
-	for param, page := range map[string]string{"pr": PagePullRequest, "group": PageGroup, "session": PageSession, "job": PageJob, "feature": PageFeature, "repository": PageRepositories} {
-		// A feature is opened in the Timeline, whose filter code names it.
-		if !regexp.MustCompile(`\.(get|delete)\("` + param + `"\)`).Match(sources) {
-			t.Errorf("the app no longer reads the %q address parameter: update this list", param)
+	opensPage := map[string]string{"pr": PagePullRequest, "group": PageGroup, "session": PageSession, "job": PageJob, "feature": PageFeature, "repository": PageRepositories}
+	// Parameters that narrow or open part of a page, not a page: the page
+	// itself, its filters and sections, the saved-inbox and tour state.
+	notPages := map[string]bool{"page": true, "clone": true, "filter": true, "inbox": true, "open": true, "peek": true, "repo": true, "section": true, "tour": true, "walk": true}
+	read := map[string]bool{}
+	for _, m := range regexp.MustCompile(`\.(?:get|has|getAll|delete|set)\("([A-Za-z_]+)"\)`).FindAllSubmatch(sources, -1) {
+		read[string(m[1])] = true
+	}
+	for param := range read {
+		if _, ok := opensPage[param]; !ok && !notPages[param] {
+			t.Errorf("the app reads the address parameter %q, which this test does not know: if it opens a page, map it to that page in opensPage and give the page its tools in agentcontext; if not, add it to notPages", param)
+		}
+	}
+	for param, page := range opensPage {
+		if !read[param] {
+			t.Errorf("the app no longer reads the %q address parameter: update opensPage", param)
 		}
 		want[page] = "the page opened by " + param
 	}

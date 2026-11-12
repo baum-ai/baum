@@ -43,6 +43,11 @@ type Options struct {
 	// alone: it must never read a provider, so a tool call can never cause a
 	// fetch from Claude or Codex. Nil has the plan usage tool report none.
 	PlanUsage func(ctx context.Context) ([]json.RawMessage, error)
+	// PickList returns the repositories the picker lists, narrowed by the
+	// words of query, from what the daemon already holds: it must never ask
+	// GitHub (no search, no reload), so a tool call cannot use up the
+	// account's rate limit. Nil has the tool report none.
+	PickList func(ctx context.Context, query string) (PickList, error)
 }
 
 // Server is the MCP server. Register tools and pages before serving.
@@ -53,6 +58,7 @@ type Server struct {
 	envelope  *envelope
 	version   string
 	planUsage func(ctx context.Context) ([]json.RawMessage, error)
+	pickList  func(ctx context.Context, query string) (PickList, error)
 	mu        sync.RWMutex
 	tools     []Tool
 	pages     map[string]PageSpec
@@ -60,7 +66,7 @@ type Server struct {
 
 func New(opts Options) *Server {
 	registry := NewRegistry()
-	s := &Server{Registry: registry, reader: NewReader(opts.API, opts.Clone), envelope: newEnvelope(registry.live), version: opts.Version, planUsage: opts.PlanUsage, pages: map[string]PageSpec{}}
+	s := &Server{Registry: registry, reader: NewReader(opts.API, opts.Clone), envelope: newEnvelope(registry.live), version: opts.Version, planUsage: opts.PlanUsage, pickList: opts.PickList, pages: map[string]PageSpec{}}
 	s.Proposals = newProposals(registry, func(page string) Proposer {
 		spec, _ := s.page(page)
 		return spec.Proposer

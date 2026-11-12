@@ -750,7 +750,18 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 		sample := &sampleapp.Workspace{Dir: filepath.Join(state, "sample"), Own: api}
 		// Agents' MCP server; an action's reads resolve clone ids to check
 		// they stay in its repository.
-		mcp := agentcontext.New(agentcontext.Options{API: api, Version: version(), PlanUsage: local.CachedPlans, Clone: func(ctx context.Context, id string) (string, error) {
+		mcp := agentcontext.New(agentcontext.Options{API: api, Version: version(), PlanUsage: local.CachedPlans, PickList: func(ctx context.Context, query string) (agentcontext.PickList, error) {
+			listing, loaded, err := pickList.Cached(ctx, query)
+			if err != nil {
+				return agentcontext.PickList{}, err
+			}
+			out := agentcontext.PickList{Loaded: loaded, Total: listing.TotalCount, More: listing.HasMore}
+			for _, r := range listing.Repositories {
+				out.Repositories = append(out.Repositories, agentcontext.PickRepository{Repository: r.Repository, Private: r.Private, Fork: r.Fork,
+					Description: r.Description, PushedAt: r.PushedAt, Picked: r.Picked, Cloned: r.Clone != ""})
+			}
+			return out, nil
+		}, Clone: func(ctx context.Context, id string) (string, error) {
 			clones, err := registry.CloneRows(ctx)
 			if err != nil {
 				return "", err

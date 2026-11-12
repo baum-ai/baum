@@ -541,6 +541,11 @@ func callJobs(ctx context.Context, c CallContext, args json.RawMessage) (string,
 				job[field] = v
 			}
 		}
+		// The failure's words can quote git's output, with folders of this machine.
+		var detail string
+		if json.Unmarshal(job["detail"], &detail) == nil && detail != "" {
+			job["detail"], _ = json.Marshal(scrubText(detail))
+		}
 		jobs = append(jobs, job)
 	}
 	return compactJSON(map[string]any{"repository": repository, "number": number, "jobs": jobs})

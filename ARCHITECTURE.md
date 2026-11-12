@@ -5152,7 +5152,7 @@ unreadable ones (`/api/settings`, `/api/debug`, `/api/github` and
 keeps the two equal); a tool projects what it needs, so its result is bounded
 as before.
 
-The unreadable routes have one narrow exception, `projectedReads`
+The unreadable routes have one narrow exception (one pair today), `projectedReads`
 (`reader.go`): a fixed map from a tool's name to the exact routes it may read
 though they are unreadable. `Tool.Projected` declares them and `compile`
 refuses a name or route the map does not give that tool, a route that is not
@@ -5160,13 +5160,12 @@ whole (`/api/diagnostics/x` is not `/api/diagnostics`) and a tool that is not
 `ScopeGlobal`; declaring an unreadable route in `Reads` stays refused for
 everyone. Such a tool returns a typed Go projection of the answer, never the
 answer: a struct of the fields the app shows on that page, filled from a
-decoded copy, so a field the route adds later is not passed on. The pairs are
+decoded copy, so a field the route adds later is not passed on. The pair is
 `diagnostics_summary` with `/api/diagnostics` (check id, label, status,
-version and source; never `home`, a check's path, detail or fix, the
-environment or the issue the Report a problem dialog drafts) and
-`github_repositories` with `/api/github/repositories` (owner/name, private,
-fork, description, last push, whether picked and cloned; never the connection's
-state, a failure's message or an organisation's access). A test lists the
+version and source, each scrubbed with `doctor.Scrub` as the public issue
+summary scrubs them; a GitHub Enterprise token check is `other host`, and the
+token and backend checks give no source; never `home`, a check's path, detail
+or fix, the environment or the issue the Report a problem dialog drafts). A test lists the
 allowed pairs exactly and fails when any other tool declares an unreadable
 route; the reader gives a projected route only to a chat's reader, so an
 action's call is refused whatever its tool declares, and the tools are global
@@ -5174,7 +5173,14 @@ besides. `/api/plan-usage` is not an exception: its handler fetches from
 Claude or Codex when its cache is stale, so `plan_usage` reads
 `Options.PlanUsage`, an accessor the daemon wires to the plan usage cache
 (`planusage.Service.Cached`, filtered by the plans the person shows), which
-cannot read a provider; a test counts the provider's reads and finds none.
+cannot read a provider; a test counts the provider's reads and finds none, and
+`Cached` never waits for a read in progress (the snapshot has its own lock).
+The picker's list is not an exception either: `/api/github/repositories`
+contacts GitHub (a new query starts a search, an expired cache reloads), so
+`github_repositories` reads `Options.PickList`, wired to
+`githubrepos.Service.Cached`, which narrows the top list the service already
+holds by the query's words and calls no lister; when no list is loaded yet the
+result says so. A test counts the lister's calls and finds none from the tool.
 
 An action's reader also reads only the routes in `actionRoutes`
 (`reader.go`). Each entry is a path pattern, the query parameters it allows
@@ -5368,18 +5374,20 @@ a binding by response:
 | `plan_usage` | global | no route: `Options.PlanUsage`, the daemon's cached plans (name, windows with percent used and reset, `fetched_at`), never a fetch |
 | `job_list` | global | `/api/jobs?limit=&before=`, newest first, narrowed by `state` and `repository` while reading older pages (at most 10 per call), each job as the page shows it (type, state, phase, repository, pull request or group, reason, who started it, backend, model, tokens, cost, times), never its accounting or digests; `next` is the cursor for older jobs. `jobs` lists one pull request's |
 | `job` | repository | `/api/jobs/{id}`, the open job page's by default; an action's job must be its repository's |
-| `job_failure` | repository | `/api/jobs/{id}` of a failed, cancelled or interrupted job: the reason code and failure in words, the sections or context a review was published without, the backend and model; the effort and time limits are settings, not the job's |
+| `job_failure` | repository | `/api/jobs/{id}` of a failed, cancelled or interrupted job: the reason code and failure in words, the sections or context a review was published without, the backend, model and the most tokens and calls it was allowed (`max_tokens`, `max_calls`); the effort and time limits are settings, not the job's. A failure's words (here, in `job`, `job_list` and `jobs`) go through `doctor.Scrub`, since git's output can quote the home folder |
 | `repositories` | global | `/api/repositories`: each repository's automatic choice, decision capture choice, earlier names and its clones as a count, how many are available and each clone's id and availability, never a clone's folder or git directory |
 | `clones_found` | global | `/api/clones/found`: per repository how many clones were found, their sources and last activity, the repositories attached automatically and when the search ran, never a folder |
-| `github_repositories` | global | `/api/github/repositories` (projected, see above) |
+| `github_repositories` | global | no route: `Options.PickList`, the picker's list as the daemon already holds it (never a GitHub call; `query` narrows it by name, it does not search), with a note when no list is loaded |
 | `clone_target` | global | `/api/repositories/{owner}/{name}/clone-target`: the suggested folder written `~/...` (a folder outside home is only its last folder's name) |
 | `diagnostics_summary` | global | `/api/diagnostics` (projected, see above); listed by the Settings page |
 
 Every page a consumer can be on has a page context here that lists the common
-tools and at least one of its own. A test reads `app/src/pages.ts` and the
-address parameters `app.tsx` opens detail pages by (pull request, group,
-session, job, feature, repository) and fails when one has no registered page
-with a tool of its own, or when a page is registered that the app lacks.
+tools and at least one of its own. A test reads `app/src/pages.ts` and every address parameter
+`app.tsx`, `location.ts` and `timeline-filter.ts` read, and fails when a
+parameter is neither mapped to the page it opens (pull request, group,
+session, job, feature, repository) nor listed as not opening one, when a
+mapped page has no registered page with a tool of its own, or when a page is
+registered that the app lacks.
 
 Every result goes through one envelope. It masks the text with
 `bundle.NewRedactor`, cuts it at most 64 KiB in at a UTF-8 boundary, and

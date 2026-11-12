@@ -41,7 +41,10 @@ type reportFixture struct {
 	// clonePath is the registered clone's folder, which no tool may return.
 	clonePath string
 	plans     *planusage.Service
-	fetches   *atomic.Int32
+	picker    *githubrepos.Service
+	// listerCalls counts the calls the picker made to GitHub.
+	listerCalls *atomic.Int32
+	fetches     *atomic.Int32
 }
 
 type countingPlanSource struct{ n *atomic.Int32 }
@@ -52,16 +55,19 @@ func (c countingPlanSource) Read(context.Context) planusage.Plan {
 	return planusage.Plan{Provider: "claude", Available: true, Plan: "Max 5x", Windows: []planusage.Window{{Name: "5-hour", UsedPercent: &used}}, FetchedAt: time.Date(2026, 11, 12, 9, 0, 0, 0, time.UTC)}
 }
 
-type fixedLister struct{}
+// fixedLister answers a fixed list and counts every call to GitHub.
+type fixedLister struct{ calls *atomic.Int32 }
 
-func (fixedLister) ViewerRepositories(context.Context, string, int, *string) (github.ViewerRepositoryList, error) {
+func (l fixedLister) ViewerRepositories(context.Context, string, int, *string) (github.ViewerRepositoryList, error) {
+	l.calls.Add(1)
 	return github.ViewerRepositoryList{TotalCount: 2, Repositories: []github.ViewerRepository{
 		{Repository: "owner/repo", Private: true, Description: "The repo", PushedAt: time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC)},
 		{Repository: "owner/lib", Fork: true},
 	}}, nil
 }
 
-func (fixedLister) SearchRepositories(context.Context, string, string, github.SearchScope, *string) (github.ViewerRepositoryList, error) {
+func (l fixedLister) SearchRepositories(context.Context, string, string, github.SearchScope, *string) (github.ViewerRepositoryList, error) {
+	l.calls.Add(1)
 	return github.ViewerRepositoryList{}, nil
 }
 
@@ -109,7 +115,8 @@ func newReportFixture(t *testing.T) *reportFixture {
 	fetches := new(atomic.Int32)
 	plans := &planusage.Service{Sources: []planusage.Source{countingPlanSource{fetches}}}
 	index := reviewindex.Snapshot{Entries: []reviewindex.Entry{{PullRequest: discovery.PullRequest{Repository: "owner/repo", Number: 7, HeadSHA: "aaaaaaaa", Title: "Add search"}, CloneID: clone.ID, Status: "none"}}}
-	picker := &githubrepos.Service{Lister: fixedLister{}, Registry: registry, Home: home}
+	listerCalls := new(atomic.Int32)
+	picker := &githubrepos.Service{Lister: fixedLister{listerCalls}, Registry: registry, Home: home}
 	finder := &clonefind.Service{Registry: registry}
 	report := doctor.Report{Status: doctor.StatusWarning, Checks: []doctor.Check{
 		{ID: "claude", Label: "Claude Code", Status: doctor.StatusOK, Detail: "DETAIL " + reportEnv, Path: reportHome + "/bin/claude", Version: "2.1.0", Source: "PATH", Fix: "FIX " + reportEnv},
@@ -134,10 +141,21 @@ func newReportFixture(t *testing.T) *reportFixture {
 	}
 	api := local.Handler()
 	t.Cleanup(api.Close)
-	mcp := agentcontext.New(agentcontext.Options{API: api, Version: "test", PlanUsage: local.CachedPlans, Clone: func(ctx context.Context, id string) (string, error) {
+	mcp := agentcontext.New(agentcontext.Options{API: api, Version: "test", PlanUsage: local.CachedPlans, PickList: func(ctx context.Context, query string) (agentcontext.PickList, error) {
+		listing, loaded, err := picker.Cached(ctx, query)
+		if err != nil {
+			return agentcontext.PickList{}, err
+		}
+		out := agentcontext.PickList{Loaded: loaded, Total: listing.TotalCount, More: listing.HasMore}
+		for _, r := range listing.Repositories {
+			out.Repositories = append(out.Repositories, agentcontext.PickRepository{Repository: r.Repository, Private: r.Private, Fork: r.Fork,
+				Description: r.Description, PushedAt: r.PushedAt, Picked: r.Picked, Cloned: r.Clone != ""})
+		}
+		return out, nil
+	}, Clone: func(ctx context.Context, id string) (string, error) {
 		return uiserver.RegisteredRepository(ctx, registry, id)
 	}})
-	return &reportFixture{readFixture: &readFixture{api: api, mcp: mcp}, ui: ui, home: home, clone: clone.ID, clonePath: clone.Path, plans: plans, fetches: fetches}
+	return &reportFixture{readFixture: &readFixture{api: api, mcp: mcp}, ui: ui, home: home, clone: clone.ID, clonePath: clone.Path, plans: plans, fetches: fetches, picker: picker, listerCalls: listerCalls}
 }
 
 func TestKeptStateAndDecisionsToolsReadTheRealRoutes(t *testing.T) {
@@ -282,17 +300,46 @@ func TestRepositoryAndReportToolsCarryNoPathOrEnvironment(t *testing.T) {
 	}
 	noPaths("clones_found", text)
 
-	// The picker's list, through the exception: the route is the account's
-	// own list, which only the tool's projection reaches.
+	// The picker's list reads only what the daemon already loaded and never
+	// calls GitHub: nothing is loaded yet, so the tool says so and no call is made.
 	text, failed = f.callTool(t, chat, "github_repositories", nil)
-	if failed {
-		t.Fatalf("github_repositories: %s", text)
+	if failed || !strings.Contains(text, `"repositories":[]`) || !strings.Contains(text, "not loaded the repository list") || f.listerCalls.Load() != 0 {
+		t.Errorf("an unloaded list: %v %s after %d calls", failed, text, f.listerCalls.Load())
 	}
-	noPaths("github_repositories", text)
-	for _, want := range []string{`"repository":"owner/repo","private":true`, `"description":"The repo"`, `"picked":true,"cloned":true`, `"repository":"owner/lib"`, `"fork":true`} {
-		if !strings.Contains(text, want) {
-			t.Errorf("github_repositories lacks %s: %s", want, text)
+	// The app loads it (as the picker does), and the tool shows that list.
+	f.route(t, "/api/github/repositories")
+	loaded := f.listerCalls.Load()
+	if loaded == 0 {
+		t.Fatal("the route did not load the list")
+	}
+	// A cache older than its lifetime is not reloaded either, and a query
+	// narrows the loaded list instead of searching GitHub.
+	f.picker.Now = func() time.Time { return time.Now().Add(24 * time.Hour) }
+	for _, args := range []map[string]any{nil, {"query": "lib"}, {"query": "nothing-like-it"}, {"query": "owner repo"}} {
+		text, failed = f.callTool(t, chat, "github_repositories", args)
+		if failed {
+			t.Fatalf("github_repositories %v: %s", args, text)
 		}
+		noPaths("github_repositories", text)
+		switch args["query"] {
+		case nil:
+			for _, want := range []string{`"repository":"owner/repo","private":true`, `"description":"The repo"`, `"picked":true,"cloned":true`, `"repository":"owner/lib"`, `"fork":true`} {
+				if !strings.Contains(text, want) {
+					t.Errorf("github_repositories lacks %s: %s", want, text)
+				}
+			}
+		case "lib":
+			if strings.Contains(text, "owner/repo") || !strings.Contains(text, "owner/lib") {
+				t.Errorf("a query: %s", text)
+			}
+		case "nothing-like-it":
+			if !strings.Contains(text, `"repositories":[]`) {
+				t.Errorf("a query with no match: %s", text)
+			}
+		}
+	}
+	if f.listerCalls.Load() != loaded {
+		t.Errorf("the tool made %d calls to GitHub", f.listerCalls.Load()-loaded)
 	}
 
 	// The clone target, from the real service: written from home.

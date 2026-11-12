@@ -57,7 +57,7 @@ func (s *Server) analyticsTools() []Tool {
 	}, {
 		Name: "job_failure",
 		Description: "Why a failed, cancelled or interrupted job ended, as the job page says it: the reason code and the failure in words, the sections or context a review was published without, and the backend and model it ran with. " +
-			"The effort and time limits it ran under are settings, not part of the job. Defaults to the open job page's.",
+			"The most tokens and calls it was allowed (max_tokens, max_calls) come from the job; the effort and time limits it ran under are settings, not part of the job. Defaults to the open job page's.",
 		InputSchema: jobSchema(""),
 		Scope:       ScopeRepository,
 		Reads:       []string{"/api/jobs"},
@@ -240,6 +240,8 @@ type jobView struct {
 	Repairs        int        `json:"repairs,omitempty"`
 	CostUSD        *float64   `json:"cost_usd"`
 	CostReason     string     `json:"cost_reason,omitempty"`
+	MaxTokens      int        `json:"max_tokens,omitempty"`
+	MaxCalls       int        `json:"max_calls,omitempty"`
 	FailedSections []string   `json:"failed_sections,omitempty"`
 	ContextFailed  bool       `json:"context_failed,omitempty"`
 	Commit         string     `json:"commit,omitempty"`
@@ -272,6 +274,8 @@ type rawJob struct {
 	Repairs        int        `json:"repairs"`
 	ActualCostUSD  *float64   `json:"actual_cost_usd"`
 	CostReason     string     `json:"cost_reason"`
+	MaxTokens      int        `json:"max_tokens"`
+	MaxCalls       int        `json:"max_calls"`
 	FailedSections []string   `json:"failed_sections"`
 	ContextFailed  bool       `json:"context_failed"`
 	Commit         string     `json:"commit"`
@@ -295,7 +299,7 @@ func (j rawJob) view() jobView {
 		}
 	}
 	return jobView{ID: j.ID, Type: kind, State: j.State, Phase: j.Phase, Repository: j.Repository, PullRequest: j.PR, Group: j.Group,
-		GroupName: j.GroupName, Automatic: j.Automatic, Trigger: j.Trigger, Reason: j.Reason, Detail: j.Detail, Backend: j.Backend,
+		GroupName: j.GroupName, Automatic: j.Automatic, Trigger: j.Trigger, Reason: j.Reason, Detail: scrubText(j.Detail), MaxTokens: j.MaxTokens, MaxCalls: j.MaxCalls, Backend: j.Backend,
 		Model: j.Model, Calls: j.Calls, Tokens: j.Tokens, Repairs: j.Repairs, CostUSD: j.ActualCostUSD, CostReason: j.CostReason,
 		FailedSections: j.FailedSections, ContextFailed: j.ContextFailed, Commit: j.Commit, CommitURL: j.CommitURL, Summary: j.Summary,
 		HasTranscript: j.HasTranscript, CreatedAt: j.CreatedAt, StartedAt: j.StartedAt, UpdatedAt: j.UpdatedAt}
@@ -438,8 +442,10 @@ func callJob(failure bool) func(context.Context, CallContext, json.RawMessage) (
 			ContextFailed  bool     `json:"context_failed,omitempty"`
 			Backend        string   `json:"backend,omitempty"`
 			Model          string   `json:"model,omitempty"`
+			MaxTokens      int      `json:"max_tokens,omitempty"`
+			MaxCalls       int      `json:"max_calls,omitempty"`
 			Automatic      bool     `json:"automatic,omitempty"`
 			Trigger        string   `json:"trigger,omitempty"`
-		}{view.ID, view.Type, view.State, view.Phase, view.Reason, view.Detail, view.FailedSections, view.ContextFailed, view.Backend, view.Model, view.Automatic, view.Trigger})
+		}{view.ID, view.Type, view.State, view.Phase, view.Reason, view.Detail, view.FailedSections, view.ContextFailed, view.Backend, view.Model, view.MaxTokens, view.MaxCalls, view.Automatic, view.Trigger})
 	}
 }

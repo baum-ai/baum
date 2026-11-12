@@ -39,7 +39,7 @@ func (d *sentinelDaemon) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	q, p := r.URL.Query(), r.URL.Path
 	reply := func(format string, args ...any) { _, _ = fmt.Fprintf(w, format, args...) }
 	job := func(id, repository, state string, extra string) string {
-		return fmt.Sprintf(`{"id":%q,"clone":"c1","repository":%q,"pr":7,"state":%q,"phase":"done","calls":3,"tokens":120,"repairs":0,"actual_cost_usd":0.25,"backend":"claude","model":"opus","config_digest":%q,"price_version":"pv","head_sha":"h","accounting":{"secret":%q},"created_at":"2026-11-12T09:00:00Z","updated_at":"2026-11-12T09:05:00Z"%s}`,
+		return fmt.Sprintf(`{"id":%q,"clone":"c1","repository":%q,"pr":7,"state":%q,"phase":"done","calls":3,"tokens":120,"repairs":0,"actual_cost_usd":0.25,"backend":"claude","model":"opus","config_digest":%q,"price_version":"pv","max_tokens":5000,"max_calls":9,"head_sha":"h","accounting":{"secret":%q},"created_at":"2026-11-12T09:00:00Z","updated_at":"2026-11-12T09:05:00Z"%s}`,
 			id, repository, state, sentinelEnv, sentinelEnv, extra)
 	}
 	switch {
@@ -52,7 +52,7 @@ func (d *sentinelDaemon) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case p == "/api/jobs" && q.Get("before") == "":
 		reply(`{"available":true,"jobs":[%s,%s,%s],"next":"j-old"}`,
 			job("j-new", "acme/web", "running", ""),
-			job("j-fail", "acme/web", "failed", `,"reason":"agent_failed","detail":"The agent stopped: `+sentinelToken+`","failed_sections":["sec_1"],"context_failed":true`),
+			job("j-fail", "acme/web", "failed", `,"reason":"agent_failed","detail":"The agent stopped in `+sentinelHome+`/work: `+sentinelToken+`","failed_sections":["sec_1"],"context_failed":true`),
 			job("j-other", "other/api", "failed", `,"reason":"timeout"`))
 	case p == "/api/jobs" && q.Get("before") == "j-old":
 		reply(`{"available":true,"jobs":[%s]}`, job("j-last", "acme/web", "failed", `,"reason":"cancelled"`))
@@ -61,7 +61,7 @@ func (d *sentinelDaemon) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case p == "/api/jobs" && q.Get("before") == "j-fail":
 		reply(`{"available":true,"jobs":[]}`)
 	case p == "/api/jobs/j-fail":
-		reply("%s", job("j-fail", "acme/web", "failed", `,"reason":"agent_failed","detail":"The agent stopped: `+sentinelToken+`","failed_sections":["sec_1"],"context_failed":true,"fix":{"head_ref":"`+sentinelEnv+`"}`))
+		reply("%s", job("j-fail", "acme/web", "failed", `,"reason":"agent_failed","detail":"The agent stopped in `+sentinelHome+`/work: `+sentinelToken+`","failed_sections":["sec_1"],"context_failed":true,"fix":{"head_ref":"`+sentinelEnv+`"}`))
 	case p == "/api/jobs/j-new":
 		reply("%s", job("j-new", "acme/web", "running", `,"started_at":"2026-11-12T09:01:00Z"`))
 	case p == "/api/jobs/j-other":
@@ -81,7 +81,10 @@ func (d *sentinelDaemon) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case p == "/api/diagnostics":
 		reply(`{"local":true,"generation_runner":true,"discovery":true,"index":true,"home":%q,"report":{"status":"warning","checks":[
 {"id":"claude","label":"Claude Code","status":"ok","detail":"DETAIL-%s","path":%q,"version":"2.1.0","source":"PATH","fix":"FIX-%s"},
-{"id":"git","label":"git at %s/bin","status":"warning","detail":"DETAIL-%s","path":%q,"version":"git %s/v","fix":"FIX"}]},
+{"id":"git","label":"git at %s/bin","status":"warning","detail":"DETAIL-%s","path":%q,"version":"git %s/v","fix":"FIX"},
+{"id":"codex","label":"codex","status":"ok","version":"1.0 C:\\Users\\Jane Doe\\bin","source":"backend_paths.codex in /etc/baum-config/config.toml"},
+{"id":"github-token-ghe.corp-sentinel.example","label":"GitHub token: ghe.corp-sentinel.example","status":"ok","source":"environment variable SENTINEL_TOKEN_VAR"},
+{"id":"github-token-github.com","label":"GitHub token: github.com","status":"ok","source":"environment variable GH_TOKEN_SENTINEL_NAME"}]},
 "report_issue_url":"https://github.com/new?body=%s","report_issue":{"version":"v","os":"linux","diagnostics":"%s"}}`,
 			sentinelHome, sentinelEnv, sentinelHome+"/bin/claude", sentinelEnv, sentinelHome, sentinelToken, sentinelHome+"/bin/git", sentinelHome, sentinelEnv, sentinelToken)
 	default:
@@ -107,7 +110,7 @@ func noSentinel(t *testing.T, what, text string, extra ...string) {
 }
 
 func TestRepositoryToolsCarryNoPathTokenOrEnvironment(t *testing.T) {
-	s, _, token := sentinelServer(t, nil)
+	s, d, token := sentinelServer(t, nil)
 	text, failed := data(t, s, token, "repositories", nil)
 	if failed {
 		t.Fatalf("repositories: %s", text)
@@ -145,6 +148,23 @@ func TestRepositoryToolsCarryNoPathTokenOrEnvironment(t *testing.T) {
 		}
 	}
 
+	// The picker's list comes from the accessor, never a route: the daemon is
+	// not asked, and a list not loaded yet is said.
+	if text, failed = data(t, s, token, "github_repositories", nil); !failed || !strings.Contains(text, "unavailable") {
+		t.Errorf("no accessor: %v %s", failed, text)
+	}
+	s.pickList = func(_ context.Context, query string) (PickList, error) {
+		if query == "boom" {
+			return PickList{}, errors.New("not connected: " + sentinelToken)
+		}
+		return PickList{Loaded: true, Total: 2, More: true, Repositories: []PickRepository{
+			{Repository: "acme/web", Private: true, Description: "The web app", Picked: true, Cloned: true},
+			{Repository: "acme/lib", Fork: true},
+		}}, nil
+	}
+	if text, failed = data(t, s, token, "github_repositories", map[string]any{"query": "boom"}); !failed || strings.Contains(text, "connected") || strings.Contains(text, sentinelToken) {
+		t.Errorf("a failing accessor: %v %s", failed, text)
+	}
 	text, failed = data(t, s, token, "github_repositories", map[string]any{"query": "acme"})
 	if failed {
 		t.Fatalf("github_repositories: %s", text)
@@ -157,6 +177,16 @@ func TestRepositoryToolsCarryNoPathTokenOrEnvironment(t *testing.T) {
 	}
 	if text, _ = data(t, s, token, "github_repositories", map[string]any{"limit": 1}); strings.Contains(text, "acme/lib") || !strings.Contains(text, `"more":true`) {
 		t.Errorf("a limit: %s", text)
+	}
+	s.pickList = func(context.Context, string) (PickList, error) { return PickList{}, nil }
+	if text, _ = data(t, s, token, "github_repositories", nil); !strings.Contains(text, "not loaded the repository list") {
+		t.Errorf("an unloaded list: %s", text)
+	}
+	// Nothing in the daemon was read for any of it.
+	for _, r := range d.requests() {
+		if strings.Contains(r, "github") {
+			t.Errorf("the tool read %s", r)
+		}
 	}
 
 	// The folder is written from home: ~/src/web, never the home itself.
@@ -184,6 +214,16 @@ func TestDiagnosticsSummaryProjectsEveryCheck(t *testing.T) {
 	}
 	noSentinel(t, "diagnostics_summary", text, `"home"`, `"path"`, `"detail"`, `"fix"`, "github.com/new", "report_issue")
 	for _, want := range []string{`"status":"warning"`, `{"id":"claude","label":"Claude Code","status":"ok","version":"2.1.0","source":"PATH"}`, `"label":"git at ~/bin"`, `"version":"git ~/v"`} {
+		if !strings.Contains(text, want) {
+			t.Errorf("diagnostics_summary lacks %s: %s", want, text)
+		}
+	}
+	for _, leak := range []string{"corp-sentinel", "SENTINEL_TOKEN_VAR", "GH_TOKEN_SENTINEL_NAME", "/etc/baum-config", "Jane Doe", `Users\\`, "backend_paths"} {
+		if strings.Contains(text, leak) {
+			t.Errorf("diagnostics_summary carries %q: %s", leak, text)
+		}
+	}
+	for _, want := range []string{`"id":"github-token-other-host","label":"GitHub token: other host","status":"ok"}`, `"id":"github-token-github.com","label":"GitHub token: github.com","status":"ok"}`, `{"id":"codex","label":"codex","status":"ok","version":"1.0 ~\\bin"}`} {
 		if !strings.Contains(text, want) {
 			t.Errorf("diagnostics_summary lacks %s: %s", want, text)
 		}
@@ -282,12 +322,17 @@ func TestJobTools(t *testing.T) {
 		t.Errorf("a bad cursor: %s", text)
 	}
 
+	// The per-pull-request list scrubs the failure's words too.
+	text, failed = data(t, s, token, "jobs", map[string]any{"repository": "acme/web", "pr": 7})
+	if failed || strings.Contains(text, sentinelHome) || !strings.Contains(text, "The agent stopped in ~") {
+		t.Errorf("jobs: %v %s", failed, text)
+	}
 	text, failed = data(t, s, token, "job", map[string]any{"id": "j-fail"})
 	if failed {
 		t.Fatalf("job: %s", text)
 	}
 	noSentinel(t, "job", text, "accounting", "head_sha", "fix", "price_version")
-	for _, want := range []string{`"type":"review"`, `"reason":"agent_failed"`, `"failed_sections":["sec_1"]`, `"context_failed":true`, `"backend":"claude"`} {
+	for _, want := range []string{`"type":"review"`, `"reason":"agent_failed"`, `"failed_sections":["sec_1"]`, `"context_failed":true`, `"backend":"claude"`, `"max_tokens":5000`, `"max_calls":9`} {
 		if !strings.Contains(text, want) {
 			t.Errorf("job lacks %s: %s", want, text)
 		}
@@ -301,8 +346,8 @@ func TestJobTools(t *testing.T) {
 	if strings.Contains(text, sentinelToken) {
 		t.Errorf("the failure carries a token: %s", text)
 	}
-	noSentinel(t, "job_failure", text, "accounting", "cost", "calls", "tokens", "fix", "created_at")
-	for _, want := range []string{`"reason":"agent_failed"`, `"detail":"The agent stopped:`, `"failed_sections":["sec_1"]`, `"backend":"claude"`, `"model":"opus"`} {
+	noSentinel(t, "job_failure", text, "accounting", "cost", `"calls"`, `"tokens"`, "fix", "created_at")
+	for _, want := range []string{`"reason":"agent_failed"`, `"detail":"The agent stopped in ~`, `"failed_sections":["sec_1"]`, `"backend":"claude"`, `"model":"opus"`, `"max_tokens":5000`, `"max_calls":9`} {
 		if !strings.Contains(text, want) {
 			t.Errorf("job_failure lacks %s: %s", want, text)
 		}

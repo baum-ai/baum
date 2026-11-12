@@ -55,6 +55,11 @@ type Service struct {
 	mu     sync.Mutex
 	plans  []Plan
 	loaded time.Time
+
+	// snapMu guards snapshot, the plans last read, apart from mu, which a
+	// reading holds while it asks the providers: Cached never waits for one.
+	snapMu   sync.RWMutex
+	snapshot []Plan
 }
 
 // NewService reads Claude Code's usage endpoint and Codex's session files.
@@ -84,16 +89,19 @@ func (s *Service) Plans(ctx context.Context, refresh bool) []Plan {
 		plans = append(plans, source.Read(ctx))
 	}
 	s.plans, s.loaded = plans, s.now()
+	s.snapMu.Lock()
+	s.snapshot = plans
+	s.snapMu.Unlock()
 	return plans
 }
 
 // Cached returns the plans last read, however old, without reading again; nil
 // when none was read yet. It never asks a provider, so it is safe for a caller
-// that must not cause a fetch.
+// that must not cause a fetch, and it never waits for a read in progress.
 func (s *Service) Cached() []Plan {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return append([]Plan(nil), s.plans...)
+	s.snapMu.RLock()
+	defer s.snapMu.RUnlock()
+	return append([]Plan(nil), s.snapshot...)
 }
 
 // Handler serves GET /api/plan-usage; ?refresh=1 asks for a newer reading,

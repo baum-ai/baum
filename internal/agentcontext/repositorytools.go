@@ -10,6 +10,8 @@ import (
 	"slices"
 	"strings"
 	"time"
+
+	"github.com/baum-ai/baum/internal/doctor"
 )
 
 // The tools of the Repositories page, its repository pages and the Report a
@@ -35,13 +37,12 @@ func (s *Server) repositoryTools() []Tool {
 	}, {
 		Name: "github_repositories",
 		Description: "The repositories the person can pick on the Repositories page, as its picker lists them: owner/name, whether it is private or a fork, its description, when it was last pushed to, whether it is picked already and whether it has a local clone. " +
-			"Pass query to search by name. Nothing about the GitHub connection itself.",
+			"It reads only the list the app has already loaded and never asks GitHub, so a repository the app's list does not hold yet is not here, and query narrows that list by name (it does not search GitHub); the result says when no list is loaded yet. Nothing about the GitHub connection itself.",
 		InputSchema: json.RawMessage(`{"type":"object","properties":{` +
 			`"query":{"type":"string","maxLength":200,"description":"Words to search the repositories' names for, as the picker's search box does."},` +
 			`"limit":{"type":"integer","minimum":1,"maximum":200,"description":"The most to return. Default 50."}},"additionalProperties":false}`),
-		Scope:     ScopeGlobal,
-		Projected: []string{"/api/github/repositories"},
-		Call:      callGitHubRepositories,
+		Scope: ScopeGlobal,
+		Call:  s.callPickList,
 	}, {
 		Name:        "clone_target",
 		Description: "The folder the Repositories page suggests cloning a repository into, written from the home folder as ~/...",
@@ -200,7 +201,28 @@ func callClonesFound(ctx context.Context, c CallContext, _ json.RawMessage) (str
 	return compactJSON(out)
 }
 
-func callGitHubRepositories(ctx context.Context, c CallContext, args json.RawMessage) (string, error) {
+// PickRepository is a repository of the picker's list, as the app shows it.
+type PickRepository struct {
+	Repository  string
+	Private     bool
+	Fork        bool
+	Description string
+	PushedAt    *time.Time
+	Picked      bool
+	Cloned      bool
+}
+
+// PickList is the picker's list from the daemon's cache. Loaded is false until
+// a list was loaded; Total is how many repositories the list holds and More
+// that GitHub has pages the daemon has not loaded.
+type PickList struct {
+	Loaded       bool
+	Total        int
+	More         bool
+	Repositories []PickRepository
+}
+
+func (s *Server) callPickList(ctx context.Context, _ CallContext, args json.RawMessage) (string, error) {
 	var a struct {
 		Query string `json:"query"`
 		Limit int    `json:"limit"`
@@ -208,29 +230,15 @@ func callGitHubRepositories(ctx context.Context, c CallContext, args json.RawMes
 	if err := json.Unmarshal(args, &a); err != nil {
 		return "", err
 	}
-	// Whatever went wrong, the answer says only that the list is
-	// unavailable: why is about the GitHub connection, which is not shared.
-	unavailable := errors.New("the repository list is unavailable now: the app's picker shows why")
-	body, _, err := c.get(ctx, "/api/github/repositories", url.Values{"query": {a.Query}})
-	if err != nil || disabled(body) {
-		return "", unavailable
+	if s.pickList == nil {
+		return "", errors.New("the repository list is unavailable: the daemon does not keep one")
 	}
-	var listing struct {
-		TotalCount   int `json:"total_count"`
-		Repositories []struct {
-			Repository  string     `json:"repository"`
-			Private     bool       `json:"private"`
-			Fork        bool       `json:"fork"`
-			PushedAt    *time.Time `json:"pushed_at"`
-			Description string     `json:"description"`
-			Picked      bool       `json:"picked"`
-			Clone       string     `json:"clone"`
-		} `json:"repositories"`
-		Searching bool `json:"searching"`
-		HasMore   bool `json:"has_more"`
-	}
-	if json.Unmarshal(body, &listing) != nil {
-		return "", unavailable
+	// The accessor reads what the daemon holds and never asks GitHub. Whatever
+	// went wrong, the answer says only that the list is unavailable: why is
+	// about the GitHub connection, which is not shared.
+	list, err := s.pickList(ctx, a.Query)
+	if err != nil {
+		return "", errors.New("the repository list is unavailable now: the app's picker shows why")
 	}
 	type item struct {
 		Repository  string     `json:"repository"`
@@ -243,18 +251,24 @@ func callGitHubRepositories(ctx context.Context, c CallContext, args json.RawMes
 	}
 	limit := boundRows(a.Limit, defaultRows, maxRows)
 	items := []item{}
-	for _, r := range listing.Repositories {
+	for _, r := range list.Repositories {
 		if len(items) == limit {
 			break
 		}
-		items = append(items, item{r.Repository, r.Private, r.Fork, r.Description, r.PushedAt, r.Picked, r.Clone != ""})
+		items = append(items, item{r.Repository, r.Private, r.Fork, r.Description, r.PushedAt, r.Picked, r.Cloned})
 	}
-	return compactJSON(struct {
+	out := struct {
 		Repositories []item `json:"repositories"`
 		Total        int    `json:"total"`
-		Searching    bool   `json:"searching,omitempty"`
 		More         bool   `json:"more,omitempty"`
-	}{items, max(listing.TotalCount, len(listing.Repositories)), listing.Searching, listing.HasMore || len(listing.Repositories) > len(items)})
+		Note         string `json:"note,omitempty"`
+	}{Repositories: items, Total: max(list.Total, len(list.Repositories)), More: list.More || len(list.Repositories) > len(items)}
+	if !list.Loaded {
+		out.Note = "The app has not loaded the repository list yet: open the Repositories page (the tool never asks GitHub itself)."
+	} else if out.More {
+		out.Note = "This is the list the app has loaded; GitHub has more that it has not."
+	}
+	return compactJSON(out)
 }
 
 // homeDirectory is the home folder a path is written relative to.
@@ -274,6 +288,20 @@ func tildePath(path string) string {
 		}
 	}
 	return ".../" + filepath.Base(path)
+}
+
+// scrubText is free text from the daemon (a job's failure, git's output) with
+// the home folder and account names, secrets and addresses removed, as the
+// public issue summary does (doctor.Scrub).
+func scrubText(text string) string {
+	if text == "" {
+		return ""
+	}
+	home, _ := homeDirectory()
+	if home != "" {
+		text = strings.ReplaceAll(text, realPath(home), "~")
+	}
+	return doctor.Scrub(text, home)
 }
 
 func realPath(p string) string {
@@ -346,20 +374,41 @@ func callDiagnosticsSummary(ctx context.Context, c CallContext, _ json.RawMessag
 	if answer.Report == nil {
 		return "", errors.New("the daemon has run no diagnostics")
 	}
-	// A label, version or source is words, but one could quote a folder: the
-	// home folder is written ~ in them, as the app writes it.
-	home := func(text string) string {
-		if answer.Home != "" {
-			text = strings.ReplaceAll(text, answer.Home, "~")
+	// A label, version or source is words, but one could quote a folder, an
+	// account name or a secret: each is scrubbed as the public issue summary
+	// scrubs it (doctor.Scrub). A GitHub Enterprise host or tenant names the
+	// person's employer, so its token check is "other host"; where a token or
+	// a backend was found names environment variables and the configuration
+	// file's folder, so those checks give no source.
+	scrub := func(text string) string {
+		return doctor.Scrub(strings.Join(strings.Fields(text), " "), answer.Home)
+	}
+	// A label is fixed text, as PublicSummary treats it: "GitHub token:
+	// github.com" would read as an assignment, so only what follows its
+	// first colon is scrubbed.
+	scrubLabel := func(text string) string {
+		head, rest, found := strings.Cut(text, ": ")
+		if !found {
+			return scrub(text)
 		}
-		return text
+		return head + ": " + scrub(rest)
 	}
 	out := struct {
 		Status string            `json:"status"`
 		Checks []diagnosticCheck `json:"checks"`
 	}{Status: answer.Report.Status, Checks: []diagnosticCheck{}}
 	for _, k := range answer.Report.Checks {
-		out.Checks = append(out.Checks, diagnosticCheck{k.ID, home(k.Label), k.Status, home(k.Version), home(k.Source)})
+		id, label, source := k.ID, k.Label, k.Source
+		if strings.HasPrefix(k.ID, "github-token-") {
+			source = ""
+			if k.ID != "github-token-github.com" {
+				id, label = "github-token-other-host", "GitHub token: other host"
+			}
+		}
+		if strings.HasPrefix(source, "backend_paths.") {
+			source = ""
+		}
+		out.Checks = append(out.Checks, diagnosticCheck{id, scrubLabel(label), k.Status, scrub(k.Version), scrub(source)})
 	}
 	return compactJSON(out)
 }
