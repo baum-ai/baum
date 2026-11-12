@@ -122,23 +122,56 @@ type Proposals struct {
 	writer    writer
 	mu        sync.Mutex
 	open      map[string][]Proposal
+	// notify are the OnChange functions.
+	notify []func(consumer string)
 }
 
 func newProposals(registry *Registry, proposers func(string) Proposer, operation func(string) *Operation, reader *Reader, api http.Handler) *Proposals {
 	p := &Proposals{registry: registry, proposers: proposers, operation: operation, reader: reader, writer: writer{api}, open: map[string][]Proposal{}}
 	registry.onRevoke(func(id string) {
 		p.mu.Lock()
+		had := len(p.open[id]) > 0
 		delete(p.open, id)
 		p.mu.Unlock()
+		if had {
+			p.changed(id)
+		}
 	})
 	return p
+}
+
+// OnChange registers f, called with a consumer's id after its open proposals
+// changed: one was proposed, saved, confirmed or dismissed, an operation's
+// summary was replaced by Confirm, or the consumer was revoked with
+// proposals open. It is called without the proposals' lock, after the
+// change, and must not block.
+func (p *Proposals) OnChange(f func(consumer string)) {
+	p.mu.Lock()
+	p.notify = append(p.notify, f)
+	p.mu.Unlock()
+}
+
+// changed calls the OnChange functions. p.mu must not be held.
+func (p *Proposals) changed(consumer string) {
+	p.mu.Lock()
+	notify := slices.Clone(p.notify)
+	p.mu.Unlock()
+	for _, f := range notify {
+		f(consumer)
+	}
 }
 
 // Propose records a proposal for the consumer with this id. Only a chat may
 // propose, and only for the page it has open. The target's current value and
 // revision are read from the proposer, not taken from the agent: a Before the
 // agent sent must match the current value.
-func (p *Proposals) Propose(ctx context.Context, consumer string, proposal Proposal) (Proposal, error) {
+func (p *Proposals) Propose(ctx context.Context, consumer string, proposal Proposal) (_ Proposal, err error) {
+	// Registered first, so it runs after the lock is released.
+	defer func() {
+		if err == nil {
+			p.changed(consumer)
+		}
+	}()
 	c, ok := p.registry.Consumer(consumer)
 	if !ok {
 		return Proposal{}, ErrUnknownConsumer
@@ -234,7 +267,12 @@ func (p *Proposals) find(consumer, id string) (Proposal, bool) {
 // write runs under the lock a revoke takes to drop proposals, after checking
 // the consumer is still live and the proposal still open: a revoke either
 // comes first and the save fails, or waits for the write.
-func (p *Proposals) Save(ctx context.Context, consumer, id string, input SaveInput) error {
+func (p *Proposals) Save(ctx context.Context, consumer, id string, input SaveInput) (err error) {
+	defer func() {
+		if err == nil {
+			p.changed(consumer)
+		}
+	}()
 	proposal, ok := p.find(consumer, id)
 	if !ok {
 		return ErrUnknownProposal
@@ -288,6 +326,7 @@ func (p *Proposals) Dismiss(consumer, id string) error {
 	if !p.remove(consumer, id) {
 		return ErrUnknownProposal
 	}
+	p.changed(consumer)
 	return nil
 }
 
