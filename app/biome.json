@@ -6,14 +6,7 @@
     "useIgnoreFile": true
   },
   "files": {
-    "includes": [
-      "**",
-      "!!coverage",
-      "!!e2e-dist",
-      "!!playwright-report",
-      "!!test-results",
-      "!!src/precompiled"
-    ]
+    "includes": ["**", "!!coverage", "!!e2e-dist", "!!playwright-report", "!!test-results"]
   },
   "formatter": {
     "enabled": true,
