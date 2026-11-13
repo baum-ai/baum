@@ -24,6 +24,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/baum-ai/baum/agent"
 	"github.com/baum-ai/baum/agent/claude"
 	"github.com/baum-ai/baum/agent/codex"
 	"github.com/baum-ai/baum/internal/agentcli"
@@ -39,6 +40,7 @@ import (
 	"github.com/baum-ai/baum/internal/clonefind"
 	"github.com/baum-ai/baum/internal/commitattribution"
 	"github.com/baum-ai/baum/internal/config"
+	"github.com/baum-ai/baum/internal/console"
 	"github.com/baum-ai/baum/internal/daemon"
 	"github.com/baum-ai/baum/internal/decisionlog"
 	"github.com/baum-ai/baum/internal/discovery"
@@ -293,7 +295,7 @@ func runDaemonRun(cmd *cobra.Command, _ []string) error {
 			})
 			// Nobody answers prompts in the daemon: fetches over SSH run in
 			// batch mode with an agent socket that still exists.
-			gitlocal.SetBackground(&gitlocal.Background{SSHAgent: sshAgent().Socket})
+			gitlocal.SetBackground(&gitlocal.Background{SSHAgent: daemonSSHAgent().Socket})
 			return nil
 		},
 		Start: func(ctx context.Context, server *uiserver.Server) (daemon.App, error) {
@@ -336,6 +338,10 @@ var resolveShell = shellenv.Resolve
 // recordedAgentsInterval is how often the daemon checks whether `baum
 // desktop-setup` recorded the coding agents again.
 const recordedAgentsInterval = 15 * time.Second
+
+// daemonSSHAgent is the daemon's one sshAgent, which fetches and the
+// session panel's turns share.
+var daemonSSHAgent = sync.OnceValue(sshAgent)
 
 // sshAgent replaces a stale SSH agent socket with the login shell's. The
 // shell is not given the stale socket, so it reports the one its own startup
@@ -750,7 +756,19 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 		}}
 		inboxesAPI := &inboxes.API{Store: savedInboxes, Changed: changed}
 		var lastHookTrust uiserver.LastHookTrust
-		local := uiserver.LocalAPI{GitHubAuth: githubConnection.Handler(), Registry: registry, Config: cfg, PRs: uiserver.DiscoveryHandler(registry, askedRefresh{discover, worker.Asked}, changed), Index: inboxQueue.CountHandler(index.Handler()), Inbox: inboxQueue.Handler(), Jobs: queue.Handler(), Chat: uiserver.ChatHandler(registry, queue), Background: worker.Handler(), Automatic: scheduler.Handler(), Live: liveAPI, AgentRequests: requestsAPI, Clones: clones.Handler(), GitHubRepositories: pickList.Handler(), CurrentName: currentName(githubClient), PlanUsage: plans.Handler(), PlanUsageCached: func() []json.RawMessage {
+		// The session panel's service needs the MCP server, which reads
+		// through this API, so its routes find it once it is built below,
+		// before the server serves.
+		var conversations *console.Service
+		var conversationRoutes http.Handler
+		consoleRoutes := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if conversationRoutes == nil {
+				console.Unavailable().ServeHTTP(w, r)
+				return
+			}
+			conversationRoutes.ServeHTTP(w, r)
+		})
+		local := uiserver.LocalAPI{Console: consoleRoutes, GitHubAuth: githubConnection.Handler(), Registry: registry, Config: cfg, PRs: uiserver.DiscoveryHandler(registry, askedRefresh{discover, worker.Asked}, changed), Index: inboxQueue.CountHandler(index.Handler()), Inbox: inboxQueue.Handler(), Jobs: queue.Handler(), Chat: uiserver.ChatHandler(registry, queue), Background: worker.Handler(), Automatic: scheduler.Handler(), Live: liveAPI, AgentRequests: requestsAPI, Clones: clones.Handler(), GitHubRepositories: pickList.Handler(), CurrentName: currentName(githubClient), PlanUsage: plans.Handler(), PlanUsageCached: func() []json.RawMessage {
 			var cached []json.RawMessage
 			for _, plan := range plans.Cached() {
 				if raw, err := json.Marshal(plan); err == nil {
@@ -826,6 +844,77 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 			}
 			return "", errors.New("unknown clone")
 		}})
+		// The session panel's conversations run the person's own agent CLI
+		// with baum's MCP server; each holds a chat token of this server.
+		// A store that does not open leaves the panel off, not the daemon.
+		conversations, err = console.New(console.Options{Database: database, Registry: mcp.Registry, Proposals: mcp.Proposals, Clones: registry.List, Log: log,
+			// Before each turn a stale SSH agent socket is replaced, as
+			// before a fetch.
+			SSHAgent: daemonSSHAgent().Socket,
+			// The app server listens after Start returns, so its origin is
+			// read at each turn.
+			MCPURL: func() string {
+				if origin := server.Origin(); origin != "" {
+					return origin + "/api/mcp"
+				}
+				return ""
+			},
+			Defaults: func(ctx context.Context) (console.Defaults, error) {
+				prefs, err := registry.Preferences(ctx)
+				if err != nil {
+					return console.Defaults{}, err
+				}
+				panel := prefs.ResolvePanel(prefs.Resolve(cfg))
+				return console.Defaults{Agent: panel.Agent, Model: panel.Model, Mode: panel.Mode}, nil
+			},
+			Pull: func(ctx context.Context, repository string, number int) (console.Pull, error) {
+				repo, err := github.ParseRepository(repository)
+				if err != nil {
+					return console.Pull{}, err
+				}
+				snapshot, err := discover.Cached(ctx, repo)
+				if err != nil {
+					return console.Pull{}, err
+				}
+				for _, pr := range snapshot.PullRequests {
+					if pr.Number == number {
+						return console.Pull{HeadRef: pr.HeadRef, HeadSHA: pr.HeadSHA, Fork: pr.Fork}, nil
+					}
+				}
+				return console.Pull{}, fmt.Errorf("pull request %d of %s is not among the discovered ones", number, repository)
+			},
+			Config: func(ctx context.Context) (config.Config, error) {
+				prefs, err := registry.Preferences(ctx)
+				if err != nil {
+					return config.Config{}, err
+				}
+				return prefs.Resolve(cfg), nil
+			},
+			Price: func(backend string, accounting *agent.Accounting) (*float64, string) {
+				return pricing.Active().BackendAccountingCost(backend, accounting)
+			},
+			Publish: func(event console.Event) { _ = server.Publish("console", event) },
+		})
+		if err != nil {
+			log.Warn("the session panel is off: its conversations did not open", "error", err)
+			conversations = nil
+		} else {
+			conversationRoutes = conversations.Handler()
+			if live != nil {
+				// Panel sessions are listed on the Sessions page, marked as
+				// the panel's, even in a conversation's empty directory.
+				live.Panel = conversations.Owns
+			}
+			if requests != nil {
+				// The panel runs its sessions headless: their requests are
+				// left to their own permission mode, and the panel, not a
+				// queued message, writes to them.
+				requests.Panel = func(agent, id string) bool {
+					_, ok := conversations.Owns(agent, id, "")
+					return ok
+				}
+			}
+		}
 		// Everything the journaled jobs need is wired: start them.
 		queue.Resume()
 		return daemon.App{
@@ -869,6 +958,11 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 				wg.Go(func() { hooks.Run(ctx) })
 				wg.Go(func() { planHistory.Run(ctx) })
 				wg.Go(func() { delivery.Run(ctx) })
+				if conversations != nil {
+					// Stopping ends every running turn and revokes the
+					// conversations' tokens.
+					wg.Go(func() { conversations.Run(ctx) })
+				}
 				if endedSessions != nil {
 					wg.Go(func() {
 						for {
@@ -913,6 +1007,9 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 				events.Close()
 				if decisionStore != nil {
 					_ = decisionStore.Close()
+				}
+				if conversations != nil {
+					_ = conversations.CloseStore()
 				}
 				_ = groups.Close()
 				_ = registry.Close()

@@ -50,6 +50,6 @@ func (c *Backend) Complete(ctx context.Context, request agent.CompleteRequest) (
 		"-c", "model_instructions_file=" + string(path)}
 	run := agent.Request{Directory: work, Prompt: sessions.GenerationRunMarker + "\n" + request.User, Schema: request.Schema,
 		MaxCalls: completeMaxTurns, MaxTokens: 1 << 30}
-	result, err := c.run(ctx, run, false, extra)
+	result, err := c.run(ctx, run, runReview, "", extra)
 	return agent.Completion{Document: result.Document, Model: result.Model, Usage: result.Usage}, err
 }

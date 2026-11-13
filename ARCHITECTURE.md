@@ -728,6 +728,39 @@ workspace-write` with `sandbox_workspace_write.network_access=false`,
 `prompt.Fix` (`fix-public-v1.md` with `fix-conflicts.md`, `fix-checks.md` and
 `fix-threads.md`).
 
+`agent.Converser` runs one turn of a person's own session, for the session
+panel (see "Session panel conversations" below). Unlike every other run it
+loads what the person set up: their settings, hooks, instructions and MCP
+servers, with baum's `Request.MCP` added beside them, and it always keeps the
+session; `Request.ResumeSession` continues it and a fork is refused. The
+final message, at most `agent.MaxConverseBytes` (1 MiB), is the result's
+`Document`; there is no schema, call or token limit, and the caller's context
+bounds the turn. `agent.Access` is `auto`, `full` or `workspace`. Only
+Claude's `User` and Codex's `Local` profile converse. `claude` runs `--print
+--output-format stream-json --verbose --include-partial-messages [--model M]
+--permission-mode auto` (auto), `bypassPermissions` (full) or `acceptEdits`
+(workspace), `--resume <id>` on a follow-up and `--mcp-config <baum>
+--allowedTools mcp__baum`, with none of `--setting-sources ""`, `--restricted`,
+`--tools`, `--system-prompt` or `--strict-mcp-config`. `codex` runs `exec
+[resume] --json --skip-git-repo-check` with
+`--dangerously-bypass-approvals-and-sandbox` (full) or, for auto and
+workspace, `--sandbox workspace-write` (on `exec resume`, which takes no
+`--sandbox`, `-c sandbox_mode="workspace-write"`) and, for auto, `-c
+approval_policy="on-request" -c approvals_reviewer="auto_review"` (what
+`--approve-for-me` sets, which `exec resume` does not take either: Codex's
+reviewer answers each request to leave the sandbox) or, for workspace, `-c
+approval_policy="never"`, then the `mcp_servers.baum` config and `[--model
+M]`, with none of `--ignore-user-config`, `--ignore-rules`, `--disable` or
+`--ephemeral`. The version floors (Claude Code 2.1.248, Codex 0.156.1) both
+take these. It checks the sandbox before an auto or workspace turn only, and records
+no speed, since the person's `config.toml` may choose a service tier. Both
+run with `agent.ConverseEnvironment` (`LocalEnvironment` plus the SSH agent,
+`GITHUB_TOKEN`, `GH_*` and `GIT_*` but the repository-location Git
+variables), then `agent_env` and the token last; no provider key or base URL
+is set. Any run may set `Request.SessionStarted`, called as soon as the
+CLI names its session (Claude's `init` event, Codex's `thread.started`), and
+`Request.TextDelta`, which gets Claude's streamed `text_delta` pieces.
+
 `agent/cursor` runs the Cursor Agent CLI under the user's own login; it has
 one profile and refuses a request with an `Endpoint`. Before its first run a
 `Backend` resolves the executable (`Binary`, else `cursor-agent` on `PATH`,
@@ -2826,7 +2859,8 @@ terminal).
 [`internal/appdb`](internal/appdb/README.md) owns the shared per-user
 `$XDG_STATE_HOME/baum/app.sqlite` (default `~/.local/state/baum/app.sqlite`).
 Repository settings, groups, decisions/features, jobs, scheduler state, inboxes,
-analytics/history and persistent discovery/pricing caches share it. Small JSON
+session panel conversations, analytics/history and persistent
+discovery/pricing caches share it. Small JSON
 state documents use bucket/key rows; read-modify-write operations use SQLite
 transactions. Version 1 is the first release baseline; newer and unrecognized
 schemas are refused and pre-release files are not imported. The package README
@@ -4751,7 +4785,8 @@ replace it.
 - **Missed events.** `Store.Add` drops an event for a subscriber whose buffer
   is full. The event loop therefore never waits for git: it applies the event
   at once, and a new session is hidden until a background worker looks up its
-  link (`ResolvePending`; a directory in no registered clone is dropped then).
+  link (`ResolvePending`; a directory in no registered clone is dropped then,
+  unless `Tracker.Panel` claims the session, see below).
   Each sweep (30 s) checks the subscription's drop count
   (`Store.SubscribeCounted`) and, only when it missed events since the last
   reconcile, runs `Reconcile`, which rereads `Store.Recent` and applies the
@@ -4898,7 +4933,26 @@ replace it.
   `gitlocal.Open` (so a subdirectory or a linked worktree is its clone), whose
   git directory is matched against the registered clones' `common_dir`;
   a directory in no registered clone, or one whose clone is unavailable, is
-  not tracked at all. The branch is `Repo.CurrentBranch` (empty when
+  not tracked at all, except a session panel conversation's: `Tracker.Panel`
+  (the console's `Owns`) names the conversation of a session by its id, or by
+  a conversation's empty directory, and such a session is listed
+  with no repository and `link_status` `panel` when its directory is in no
+  clone. Every live session answer (`GET /api/live-sessions`, which the
+  Sessions page reads) marks a panel session, in its empty directory or a
+  pull request worktree, with `origin` `panel` and `conversation`, its
+  conversation's id; other sessions carry neither. A panel session has
+  `endable`, `messageable` and `focus` unset, and its end, message and focus
+  routes answer 409 `panel_session`: the panel runs and stops it. The agent
+  requests store's `Panel` (the same `Owns`, by session id) leaves a panel
+  session's permission requests to its own permission mode, so none is
+  shown, and refuses a queued message or an answer for it with 409
+  `panel_session`. A panel session in an
+  empty directory has no repository, so decision capture, which needs one,
+  skips it, and `live-sessions.json` does not keep it across a restart (it
+  drops entries without a repository): once it ends it stays listed for
+  `EndedFor` while the daemon runs, comes back after a restart only while
+  its hook events are still in the record, and is in no pull request's
+  linked sessions. The branch is `Repo.CurrentBranch` (empty when
   detached). The pull request (`prlink.Find`, shared with refresh on hook
   events) is the open one in the discovery cache
   (`Discovery.Cached`, never GitHub) whose head branch (`head_ref`, new in the
@@ -5332,6 +5386,182 @@ saved, in the `state/agent-requests` document in `app.sqlite`.
   idempotent. Every change publishes `live`, which the app already rereads
   the sessions on.
 
+### Session panel conversations
+
+`internal/console` runs the conversations of the desktop app's session
+panel: a real Claude Code or Codex session that the person opens from any
+page, set up as their own CLI is (`agent.Converser`), not the review chat's
+locked-down agent. The daemon builds one `console.Service` beside the MCP
+server and runs it with the other background work, and the app drives it
+through the routes under `/api/console/` (`LocalAPI.Console`, listed below).
+
+A conversation is a row of `console_conversations` in `<state>/app.sqlite`:
+its id (32 hex characters), agent (`claude-code` or `codex`), model (empty for
+the agent's default), mode (`auto`, `full` or `workspace`, the `agent.Access`;
+`auto` by default), directory, the repository, pull request and branch it is a
+checkout of, whether baum created that worktree (`created_worktree`) and,
+separately, whether baum created its branch (`created_branch`; a branch baum
+did not create is the person's, and nothing baum cleans up may ever delete
+it), why a pull request's conversation got an empty directory instead
+(`directory_note`), the agent's session id,
+the pages it was opened and sent from (at most 20, no repeat in a row), its
+title (the first message's first line, at most 80 characters), created and
+updated times, state (`idle`, `running`, `failed` or `closed`), why the last
+turn failed or stopped, and the cost of its priced turns (`cost_partial` when
+a turn that started a session could not be priced, so the cost is a lower
+bound). Columns added later are added as the other relational stores add
+theirs (`created_branch` and `directory_note` already are). When
+the service opens, a conversation a stopped daemon left `running` becomes
+`failed` with the reason that baum stopped while the agent answered.
+
+`Create` refuses a page the MCP server would refuse
+(`PageContext.Validate`) and chooses the directory. On a `pull_request` page
+of a repository with an available registered clone it is a worktree with the
+pull request's head checked out, read from `git worktree list` of every clone
+of the repository, main checkouts included: one on the head branch (a fork's
+only while at the head commit discovery saw, since a fork's branch may be
+named anything, the base's included) or on a `baum/pr-<N>` branch. Without
+one, `gitlocal.AddPullWorktree` adds a worktree to the first clone at
+`<cache>/baum/console/worktrees/<id>/<name>` (`os.UserCacheDir`): it fetches
+the head into `refs/baum/pull/<N>/head` (from the head branch, or
+`refs/pull/<N>/head` for a fork or a head whose name discovery has not kept),
+then checks out the first of the head branch's name (not for a fork),
+`baum/pr-<N>` and `baum/pr-<N>-<first 8 of the id>` that no worktree has
+checked out; a branch git refuses because a worktree has it checked out (one
+mid-rebase or mid-bisect lists as detached) counts as taken. An existing
+branch is used only while it points at the fetched head, and is never moved:
+one at another commit is skipped for the next name, so the agent never starts
+on stale code. A new one starts at the head and tracks it
+(`branch.<name>.remote`, `.merge`). No hook runs (`core.hooksPath` names
+nothing) and no other worktree's HEAD, index or files change. Placement on one
+repository runs one conversation at a time, so two opened together on one pull
+request share the worktree the first adds. When the head branch cannot be
+fetched or checked out (deleted, offline, expired credentials), a second try
+uses `refs/pull/<N>/head`; when that fails too, the conversation's
+`worktrees/<id>` directory is removed and it gets an empty directory with the
+reason in `directory_note`, as it does for a repository with no clone. Every
+other page and a pull request discovery has not seen get a new private, empty
+directory, `<cache>/baum/console/sessions/<id>`. These directories are actual
+working directories, so they live on disk, not in the database, and stay when
+a conversation closes, since a worktree may hold the agent's work. Their names
+never start with `agent.RunDirPrefix`, so the agents' hooks report these
+sessions, and they show on the Sessions page like any other, those in an
+empty directory included, marked as the panel's (`origin` `panel`, see "Live
+sessions"). `Owns` claims a session by the agent session id a conversation
+recorded, or by a conversation's empty directory (its subdirectories
+included; an exact-path map, walked up from the session's directory, whose
+links were resolved when the conversation was indexed). A conversation in a
+pull request worktree, the person's or one baum added, is claimed by session
+id only: the worktree is a checkout the person works in too, and stays after
+the conversation closes, so their own sessions there stay theirs.
+
+Each conversation holds one `chat` MCP token, minted by the MCP server's
+`Registry` when it is created or, after a restart, on its next turn, bound
+to its session (`SetSession`, with `SessionKey(agent, id)`) as soon as the
+agent names it, and revoked when it is closed and when the daemon stops.
+The page the person has open is the service's, not stamped per token:
+`SetPage`, `Create` (with the page it was opened from) and `Send` (with the
+page it was sent from) set it on every open conversation's token and the ones
+minted later, so `current_page` and proposals follow the person; changes to
+baum's own state still go through proposals the person saves. `Send` starts a
+turn in the background and answers at once: it refuses a conversation that is
+running (`ErrBusy`) or closed, or whose directory is gone, saves the page it
+came from, and runs the agent in the directory with the message as the
+prompt, the conversation's session resumed and the daemon's `/api/mcp` as its
+MCP server (`Options.MCPURL`, read at each turn, since the app server listens
+only after the daemon's application starts). The agent backend is built once per agent, model,
+executable and agent environment, so its version check runs once. The run
+time limit (`run_timeout`, as Settings resolves it; 30 minutes by default)
+bounds each turn. `Stop` cancels it, which kills the agent's whole process
+group on Unix, and the conversation goes back to `idle` with the reason; a
+turn over the limit fails naming it. When the agent cannot find the session
+to resume (`agent.ErrSessionNotFound`), the turn fails saying so, the stored
+session is cleared and the token is replaced by a new one bound to no session
+(a token binds to one session, once), so the next turn starts a new session
+in the same directory. Once shutdown begins, `Create` and `Send` are refused
+(`ErrShuttingDown`); shutdown waits for a `Create` in flight (a fetch it runs
+is cancelled, giving an empty directory), fails running turns with the reason
+and revokes every token. A turn's usage is priced as the backend's
+(`BackendAccountingCost`).
+
+The agent runs with `agent.ConverseEnvironment`: the local allowlist plus
+`SSH_AUTH_SOCK`, `GITHUB_TOKEN`, `GH_*` and `GIT_*` other than the variables
+that point at another repository, so it can push and use `gh`; review, fix and
+chat runs keep `LocalEnvironment`. Claude Code still gets the fixed
+`DISABLE_AUTOUPDATER`, `DISABLE_TELEMETRY` and
+`CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` variables every local run sets.
+`BAUM_MCP_TOKEN` is in the environment of the person's Claude Code process, so
+their own hooks and stdio MCP servers can read it; that gives them nothing
+they lack, since they run as the person, who can open the app. Codex reads it
+itself, as baum's server's `bearer_token_env_var`, and forwards it to no MCP
+server; what its commands and hooks inherit follows the person's own
+`shell_environment_policy`.
+
+Progress is published as `console` events, `{"conversation","kind","state"}`
+with the kind `created`, `state`, `session` (the agent named its session),
+`text` (at most once a second per conversation while the answer grows, since
+the event stream replays only its last 128 events), `finished` (with
+`cost_usd` when the turn could be priced) or `proposals` (the conversation's
+open proposals changed, from `Proposals.OnChange`: one was proposed, saved,
+confirmed, dismissed, had its summary replaced, or its token was revoked);
+they never carry text. `Progress`
+holds, in memory, a turn's answer so far (its finished messages, then
+Claude's streaming one, and after the turn its final message; at most
+`agent.MaxConverseBytes`, keeping the end), the tool it runs and its session.
+
+Before each turn `SSHAgent` (the daemon's `shellenv.Agent`, which fetches
+share) replaces a stale `SSH_AUTH_SOCK` in the daemon's environment with the
+login shell's, or removes it, so the agent gets a socket that works or none.
+
+A conversation that names no agent, model or mode opens with the panel's
+setting, a global preference in `app.sqlite` (`repos.PanelPreferences`,
+`ResolvePanel`): agent (`claude-code` or `codex`), model, mode (`auto`, the
+default, `full` or `workspace`) and where the panel opens (`bottom`, the default, or
+`top`). An unset agent follows the fix agent (Codex when the fix backend is
+`codex`, Claude Code otherwise) and its model (only a Claude Code or Codex
+fix model counts); an unset model with a chosen agent is that agent's own
+default unless it is the fix agent. `GET /api/settings/panel` answers
+`{"agent","model","mode","position","agent_source","model_source"}`, the
+sources `fix` or `panel`; `PUT /api/settings/panel` takes any of `agent`
+(empty follows the fix agent again; any change of agent drops a chosen model
+unless the same request sets one), `model` (one line of at
+most 200 characters), `mode` and `position`, answers the same, and refuses
+anything else with 400.
+
+The routes are under `/api/console/`, behind the app server's launch
+capability or cookie, Host check and same-origin JSON check for changes, as
+every other route; an empty body is accepted where a route takes none.
+Errors are `{"code","message"}`: 400 `invalid_request` or `invalid_page` (a
+page the MCP server would refuse), 404 `conversation_not_found` or
+`proposal_not_found`, 409 `busy`, `closed`, `not_current_page`, `stale`,
+`not_offered` or `conversation_closed`, 400 `wrong_kind` (confirming a change
+or saving an operation), 422 `refused` (the page's own refusal of a saved
+value or the operation route's), 503 `shutting_down`. A body over the bound
+(the message's 64 KiB and 64 KiB more) is 400 `invalid_request`, as the other
+routes refuse one. Without the service (its conversations did not open) the
+routes answer as the local API does for a capability it lacks: a read with
+200 `{"available":false,"code":"console_unavailable"}`, anything else with
+503 `{"code":"console_unavailable","message"}` (`console.Unavailable`).
+
+| Route | Does |
+| --- | --- |
+| `GET /api/console/conversations` | `{"conversations":[...]}`, newest first: `id`, `title`, `agent`, `model`, `mode`, `state`, `directory`, `directory_note`, `repository`, `pull_request`, `updated_at` and `session` (`agent:id`, once known) |
+| `POST /api/console/conversations` | opens one from `{"agent","model","mode","page"}`, each optional (the panel's setting); 201 with the conversation |
+| `GET /api/console/conversations/{id}` | every field of the conversation, its pages included, `session_key`, and `progress` (the running or last turn since the daemon started: `text`, `tool`, `session`, `state`, `cost_usd`) or null |
+| `POST /api/console/conversations/{id}/messages` | sends `{"text","page"}` (the page optional) as a turn; 202 with the conversation, running |
+| `POST /api/console/conversations/{id}/cancel` | stops the running turn (none running is no error) and answers the conversation |
+| `POST /api/console/conversations/{id}/close` | closes it: stops its turn, revokes its token, drops its proposals |
+| `PUT /api/console/page` | the page context the person has open (`SetPage`), for every open conversation's token |
+| `GET /api/console/conversations/{id}/proposals` | `{"proposals":[...]}`: each `agentcontext.Proposal` as the MCP server keeps it: `id`, `kind` (`diff` or `operation`), `page`, `target`, a change's `before`, `after` and `revision`, an operation's `operation` (`name`, `request`, `summary` with `action`, `details` and their `quoted`, `multiline` and `by_agent` markers, `model`, `effort`, `paid`, `irreversible`, and the summary's `revision`), and `context` |
+| `POST .../proposals/{proposal}/save` | saves a change with `{"value"}`, what the person typed (an agent environment variable's value), never the agent |
+| `POST .../proposals/{proposal}/confirm` | runs an operation at `{"revision"}`, the summary's revision the panel showed; 200 `{"outcome":{"status","message"}}` (the operation route's answer), or 409 `operation_changed` with `proposal` holding the new summary, nothing run, for the person to read and confirm again |
+| `POST .../proposals/{proposal}/dismiss` | closes it without saving or running it |
+
+A proposal is saved or run only while the person has open the page it was
+made on (`ErrNotCurrentPage`, 409 `not_current_page`): the rule is the MCP
+server's, applied by `Proposals.Save` and `Confirm` against the page `SetPage`,
+`Create` and `Send` last set.
+
 ### Decision capture
 
 `internal/decisionlog` extracts the decisions of the tracked sessions (see
@@ -5440,7 +5670,9 @@ tools and a `--print` run cannot ask permission. Codex adds
 environment, after `agent_env`, so the token is in no argument or
 configuration. Only the Claude `User` and Codex `Local` profiles accept it;
 the others return an error. With no `MCP` the arguments are what they always
-were. No job sets it yet.
+were. No job sets it yet; the session panel's conversations do, through
+`agent.Converser`, which adds `baum` beside the person's own servers instead
+of in place of them (see "Session panel conversations").
 
 What the CLIs send (checked by `internal/agentcontext/livecheck` against the
 latest and floor releases): Claude Code asks `initialize` for a newer revision

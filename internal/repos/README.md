@@ -50,7 +50,10 @@ its HTTP handler uses.
   `review_time_limit_minutes` and `run_time_limit_minutes`, when set (1 to
   `MaxTimeLimit`, 240), replace the config file's `review_timeout` and
   `run_timeout` in `Preferences.Resolve`; a value out of range keeps the
-  file's and does not block saving other preferences.
+  file's and does not block saving other preferences. Its `panel` object
+  (`agent`, `model`, `mode`, `position`) is the session panel's defaults;
+  `ResolvePanel` fills what is unset from the fix agent, `auto` and `bottom`
+  (see "Session panel conversations" in `ARCHITECTURE.md`).
   `UpdatePreferences` edits them in one transaction that holds the write lock
   from its start; `UpdatePreferencesIf` is the same with an edit that may
   refuse, rolling back and writing nothing. A chat's proposal of a setting is

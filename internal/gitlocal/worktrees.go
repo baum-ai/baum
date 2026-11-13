@@ -22,6 +22,10 @@ type Worktree struct {
 	// Prunable is a linked worktree whose directory is gone; git still
 	// remembers it until the next prune.
 	Prunable bool
+	// Branch is the branch checked out there, without refs/heads/; empty
+	// when its HEAD is detached. Head is the commit HEAD was at, when git
+	// reported one. Both are git's bookkeeping when the list was read.
+	Branch, Head string
 }
 
 // Worktrees lists every working tree of the clone containing dir, the main
@@ -242,6 +246,14 @@ func parseWorktrees(out []byte) []Worktree {
 		case "prunable":
 			if current != nil {
 				current.Prunable = true
+			}
+		case "HEAD":
+			if current != nil {
+				current.Head = value
+			}
+		case "branch":
+			if current != nil {
+				current.Branch = strings.TrimPrefix(value, "refs/heads/")
 			}
 		}
 	}

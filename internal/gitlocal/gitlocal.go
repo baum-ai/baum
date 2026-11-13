@@ -26,7 +26,9 @@
 // environment, no hooks and no reflog (UpdateRetained). The clone's branches, HEAD,
 // index, working tree, configuration and worktree registrations are never
 // changed, except by a Fix: the temporary worktree, refs and push of a fix a
-// person confirmed (see Fix). An export is the hosted mirror's own git archive command run in
+// person confirmed (see Fix), and by AddPullWorktree: the worktree, branch
+// and its upstream configuration of a pull request a person opened a
+// session on, which leave every other worktree as it was. An export is the hosted mirror's own git archive command run in
 // the private repository, so it is byte for byte the archive the hosted
 // service produces, including whatever attributes that archive applies: it
 // still applies working-tree-encoding from the tree.

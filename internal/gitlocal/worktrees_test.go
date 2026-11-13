@@ -28,11 +28,13 @@ func TestWorktreesFromEveryCheckout(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	head := git(t, main, "rev-parse", "HEAD")
+	branch := git(t, main, "symbolic-ref", "--short", "HEAD")
 	want := []Worktree{
-		{Path: main, Main: true},
-		{Path: nested},
-		{Path: sibling},
-		{Path: gone, Prunable: true},
+		{Path: main, Main: true, Branch: branch, Head: head},
+		{Path: nested, Branch: "nested", Head: head},
+		{Path: sibling, Branch: "sibling", Head: head},
+		{Path: gone, Prunable: true, Branch: "gone", Head: head},
 	}
 	for _, from := range []string{main, nested, sibling, filepath.Join(main, ".agents")} {
 		got, err := Worktrees(context.Background(), from)
@@ -76,8 +78,8 @@ func TestParseWorktrees(t *testing.T) {
 		"worktree /srv/locked\x00locked\x00\x00"
 	got := parseWorktrees([]byte(out))
 	want := []Worktree{
-		{Path: filepath.FromSlash("/srv/wt")},
-		{Path: filepath.FromSlash("/srv/gone"), Prunable: true},
+		{Path: filepath.FromSlash("/srv/wt"), Branch: "a", Head: "1111111111111111111111111111111111111111"},
+		{Path: filepath.FromSlash("/srv/gone"), Prunable: true, Head: "2222222222222222222222222222222222222222"},
 		{Path: filepath.FromSlash("/srv/locked")},
 	}
 	if !slices.Equal(got, want) {

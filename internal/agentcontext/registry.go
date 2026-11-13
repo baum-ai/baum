@@ -100,6 +100,12 @@ const (
 	maxFocus    = 16 << 10
 )
 
+// Validate refuses a page SetPage would refuse, with the same error.
+func (p PageContext) Validate() error {
+	p.Repository = strings.TrimSpace(p.Repository)
+	return p.validate()
+}
+
 func (p PageContext) validate() error {
 	if !pageNames[p.Page] {
 		return fmt.Errorf("unknown page %q", p.Page)
