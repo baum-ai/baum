@@ -57,6 +57,7 @@ import {
   CommentsIcon,
   CommitIcon,
   FilesIcon,
+  type IconProps,
   LightbulbIcon,
   RiskIcon,
   SectionIcon,
@@ -241,6 +242,111 @@ export type ReviewCommentsSlot = {
   render: (context: ReviewConversationContext) => ReactNode;
 };
 
+/** The selection kinds a host's `places` own: the ones that make up the
+ *  review's own part of the rail and pane. */
+const PLACE_KINDS: ReadonlySet<Selection["kind"]> = new Set([
+  "summary",
+  "changes",
+  "risks",
+  "section",
+  "risk",
+  "tile",
+]);
+
+/** A row of the rail a host draws, as the host's keys step through it. */
+export type ReviewRailRow = ReviewStep & { key: string };
+
+/** What a host's places are given by the viewer: where the reader is and how
+ *  to move, and what a pane of the review needs from the workspace around it. */
+export type ReviewPlaceContext = {
+  selection: Selection;
+  /** Goes to a place, writing it to the URL as the rail's own rows do. */
+  select: (selection: Selection) => void;
+  /** The document being read: the earlier version when one is read alone,
+   *  else the current one. */
+  document: ReviewDocument | null;
+  /** The earlier version on screen, alone or compared, once loaded. */
+  historicalDocument: ReviewDocument | null;
+  /** An earlier version is on screen, alone or compared. */
+  historical: boolean;
+  /** Two versions are on screen side by side. */
+  comparing: boolean;
+  /** The earlier version the reader chose, if one. */
+  version?: number;
+  /** Starts comparing the current version with an earlier one. */
+  compareWith: (version: number) => void;
+  /** The current review's earlier versions, newest first. */
+  versions: number[];
+  /** Loads one earlier version, as the host passed it. */
+  loadVersion: LoadReviewVersion;
+  /** The review versions in which each section had hunks, once known. */
+  sectionHistory: { active: Map<string, number[]> } | null;
+  /** Loads the patch of cited code whose excerpt the document omitted; null
+   *  while two versions are compared, as the viewer's own panes read it. A
+   *  host pane wraps what cites code in a `HunkPatchProvider` with it. */
+  hunkPatches: HunkPatchSource | null;
+  /** Asks the host to write a section's details again. A pane offers it only
+   *  for the current version. */
+  onRetryDetails?: (sectionId: string) => void | Promise<unknown>;
+  /** The current document is a draft whose context is still being written. A
+   *  pane says so only for the current version. */
+  contextPending: boolean;
+};
+
+/** What the navigator bar, the pane's foot and the host's keys know of the
+ *  place a host owns. */
+export type ReviewPlaceSteps = {
+  /** The place's name, in the navigator bar and as the pane's label. */
+  label: string;
+  icon: (props: IconProps) => ReactNode;
+  /** "2 of 6". */
+  position?: string;
+  previous: ReviewStep | null;
+  next: ReviewStep | null;
+  /** The key, in `railRows`, of the rail row the place sits on. */
+  railKey: string;
+  /** The section the place is about, for the side pane's context and
+   *  `renderSectionAside`, when the place is one section's. */
+  sectionId?: string;
+  /** The host's read mark or approval for the place, in the navigator bar. */
+  check?: ReactNode;
+  /** Opens or closes the rail group the place is on, for the host's key. */
+  toggleGroup?: () => void;
+};
+
+/** What a host supplies in place of the review's own Summary, Changes and
+ *  Risks, section and risk places, and adds a place of its own, the tile.
+ *  Absent, the viewer draws all of them itself. */
+export type ReviewPlaces = {
+  /** The rail's rows for the Summary and the Changes, with the toggle of
+   *  obsolete changes, which replace the viewer's own. The Files, Decisions,
+   *  Sessions and Commits rows stay. A host's notice, `checks.notice`, follows
+   *  these rows. */
+  renderRail: (context: ReviewPlaceContext) => ReactNode;
+  /** The same rows in the order the rail shows them, for the keys that step
+   *  through the rail; the viewer follows them with its own rows. */
+  railRows: (context: ReviewPlaceContext) => ReviewRailRow[];
+  /** The stepping model of a selection, for the summary, changes, risks,
+   *  section, risk and tile selections; null falls back to the viewer's own. */
+  steps: (selection: Selection, context: ReviewPlaceContext) => ReviewPlaceSteps | null;
+  /** The pane for those selections in one snapshot of the review. Called
+   *  inside the version history, once for the current version and once for
+   *  an earlier one read alone or compared, so those keep working. */
+  renderPane: (
+    snapshot: ReviewDocument,
+    historical: boolean,
+    context: ReviewPlaceContext,
+  ) => ReactNode;
+  /** Where a reference chip in prose to a section, or to an item of one (a
+   *  risk, evidence or a decision), takes the reader; null leaves it to the
+   *  viewer, which opens the section. */
+  jump?: (section: string, item?: string) => Selection | null;
+  /** Whether the rail starts folded to a strip for a selection, once wide. The
+   *  answer is applied whenever it changes, as the reader moves between
+   *  places; the reader can unfold or fold the rail in between. */
+  railFolded?: (selection: Selection) => boolean;
+};
+
 export type ReviewViewerProps<F extends ReviewFile = ReviewFile> = {
   /** The current review. Null while a host has none to show; `placeholder`
    *  then fills the pane. */
@@ -341,6 +447,9 @@ export type ReviewViewerProps<F extends ReviewFile = ReviewFile> = {
    *  review's own file view) and drop their leaving mark when it is given.
    *  Return false when not handled and the chip opens GitHub. */
   openRepositoryFile?: (reference: ReviewContextRef) => boolean;
+  /** The host's own Summary, Changes and detail places, with a rail, stepping
+   *  and panes of its own. See `ReviewPlaces`. Absent, the viewer's are used. */
+  places?: ReviewPlaces;
 };
 
 /** The places either side of the one being read, in reading order, and the
@@ -475,6 +584,13 @@ function RailNote({ children, busy = false }: { children: string; busy?: boolean
   );
 }
 
+/** The rail's rows, which a host's places can fold away to a strip once wide.
+ *  Without `fold` (no places) the rows sit in the rail as they always have. */
+function RailBody({ fold, children }: { fold?: boolean; children: ReactNode }) {
+  if (fold === undefined) return <>{children}</>;
+  return <div className={fold ? "contents wide:hidden" : "contents"}>{children}</div>;
+}
+
 /** The pane's content for one selection. Keyed by the caller on what is
  *  selected, so a change of selection replays the arrival and a re-render of
  *  the same selection does not. A flex column, because what it wraps is a
@@ -522,6 +638,7 @@ function ReviewWorkspace<F extends ReviewFile>({
   contextPending = false,
   openSource,
   openRepositoryFile,
+  places,
 }: ReviewViewerProps<F> & { view: HistoryView }) {
   const [requested, setSelection] = useReviewSelection();
   // A place whose group the host has not supplied reads as the Summary. The
@@ -532,15 +649,17 @@ function ReviewWorkspace<F extends ReviewFile>({
   const hasCommits = Boolean(commits);
   const hasDecisions = Boolean(decisions);
   const hasFiles = Boolean(filesSlot);
+  const hasPlaces = Boolean(places);
   const selection = useMemo<Selection>(
     () =>
+      (requested.kind === "tile" && !hasPlaces) ||
       ((requested.kind === "sessions" || requested.kind === "session") && !hasSessions) ||
       ((requested.kind === "commits" || requested.kind === "commit") && !hasCommits) ||
       (requested.kind === "decisions" && !hasDecisions) ||
       ((requested.kind === "files" || requested.kind === "file") && !hasFiles)
         ? { kind: "summary" }
         : requested,
-    [requested, hasSessions, hasCommits, hasDecisions, hasFiles],
+    [requested, hasPlaces, hasSessions, hasCommits, hasDecisions, hasFiles],
   );
   // Tiles are not ready for readers yet, so they stay hidden unless the URL
   // asks for them with `?tiles=1`, which keeps them reachable while built.
@@ -599,6 +718,11 @@ function ReviewWorkspace<F extends ReviewFile>({
     if (pane && !pane.contains(window.document.activeElement)) pane.focus({ preventScroll: true });
   }, [asideKeys]);
   const chatCollapsed = chosenCollapsed || foldSidePane;
+  // A host's places can start the rail folded to a strip, as on a landing page
+  // whose own grid is the way in. The host's answer is applied when it
+  // changes, as the reader moves between places; the reader's fold or unfold
+  // holds until then. Without places the rail never folds.
+  const [railChoice, setRailChoice] = useState<boolean | null>(null);
   const paneChoice = useRef({ chosenCollapsed, foldSidePane, sheet });
   paneChoice.current = { chosenCollapsed, foldSidePane, sheet };
   useEffect(() => {
@@ -868,6 +992,27 @@ function ReviewWorkspace<F extends ReviewFile>({
     select: setSelection,
     openFile: (id) => openFile(id),
   };
+  const hostContext: ReviewPlaceContext = {
+    selection,
+    select: setSelection,
+    document: navigationDocument,
+    historicalDocument,
+    historical: Boolean(historyView.selection),
+    comparing,
+    version: fileVersion,
+    compareWith: (version) => historyView.setSelection({ version, compare: true }),
+    versions,
+    loadVersion,
+    sectionHistory,
+    hunkPatches: comparing ? null : hunkPatches,
+    onRetryDetails,
+    contextPending,
+  };
+  const hostSteps =
+    places && PLACE_KINDS.has(selection.kind) ? places.steps(selection, hostContext) : null;
+  const hostFolds = places?.railFolded?.(selection) ?? false;
+  useEffect(() => setRailChoice(null), [hostFolds]);
+  const railFolded = Boolean(places) && (railChoice ?? hostFolds);
   /** The Summary's "view all" links: each opens the pane the rail row of the
    *  same name would; Team unfolds the side pane and puts the cursor in its
    *  text box. */
@@ -894,11 +1039,12 @@ function ReviewWorkspace<F extends ReviewFile>({
   // A risk is read inside its own section, so both the side pane and the
   // section's aside follow that section while the risk is open.
   const sectionId =
-    selection.kind === "section"
+    hostSteps?.sectionId ??
+    (selection.kind === "section"
       ? selection.id
       : selection.kind === "risk"
         ? selection.section
-        : null;
+        : null);
   const viewedId = sections.some((section) => section.id === sectionId) ? sectionId : null;
   const selected = sections.find((section) => section.id === viewedId);
   // Named straight from the sections of either compared document, whatever
@@ -945,8 +1091,9 @@ function ReviewWorkspace<F extends ReviewFile>({
     historyView.selection || !checks ? null : checks.renderSection({ id, label });
   const changesRead = currentSections.filter((section) => sectionRead(section.id)).length;
   const tracked = Boolean(checks) && !historyView.selection;
-  const paneLabel =
-    selection.kind === "changes" || selection.kind === "risks"
+  const paneLabel = hostSteps
+    ? hostSteps.label
+    : selection.kind === "changes" || selection.kind === "risks"
       ? "Changes"
       : selection.kind === "sessions" || selection.kind === "session"
         ? "Sessions"
@@ -1084,8 +1231,16 @@ function ReviewWorkspace<F extends ReviewFile>({
         : viewedId
           ? steps.findIndex((step) => step.key === viewedId)
           : -1;
-  const previousStep = stepAt < 0 ? null : (steps[Math.ceil(stepAt) - 1] ?? null);
-  const nextStep = stepAt < 0 ? null : (steps[Math.floor(stepAt) + 1] ?? null);
+  const previousStep = hostSteps
+    ? hostSteps.previous
+    : stepAt < 0
+      ? null
+      : (steps[Math.ceil(stepAt) - 1] ?? null);
+  const nextStep = hostSteps
+    ? hostSteps.next
+    : stepAt < 0
+      ? null
+      : (steps[Math.floor(stepAt) + 1] ?? null);
   // The blocks of the place being read (its attention, each behavior, risk
   // or finding, a commit's or a session's card), which the keys move through:
   // the next one is brought into view, marked and given the focus. A new place
@@ -1121,15 +1276,19 @@ function ReviewWorkspace<F extends ReviewFile>({
   // (Shift+J and Shift+K in the app): a folded group is one row, an open one
   // is followed by each of its rows.
   const railRows: (ReviewStep & { key: string })[] = [
-    { key: "summary", label: "Summary", go: () => setSelection({ kind: "summary" }) },
-    { key: "changes", label: "Changes", go: () => setSelection({ kind: "changes" }) },
-    ...(open.changes
-      ? visibleSections.map((section) => ({
-          key: `section:${section.id}`,
-          label: section.label,
-          go: () => selectSection(section.id),
-        }))
-      : []),
+    ...(places
+      ? places.railRows(hostContext)
+      : [
+          { key: "summary", label: "Summary", go: () => setSelection({ kind: "summary" }) },
+          { key: "changes", label: "Changes", go: () => setSelection({ kind: "changes" }) },
+          ...(open.changes
+            ? visibleSections.map((section) => ({
+                key: `section:${section.id}`,
+                label: section.label,
+                go: () => selectSection(section.id),
+              }))
+            : []),
+        ]),
     ...(filesSlot && !comparing
       ? [
           { key: "files", label: "Files changed", go: () => setSelection({ kind: "files" }) },
@@ -1170,8 +1329,9 @@ function ReviewWorkspace<F extends ReviewFile>({
         ]
       : []),
   ];
-  const railKey =
-    selection.kind === "summary"
+  const railKey = hostSteps
+    ? hostSteps.railKey
+    : selection.kind === "summary"
       ? "summary"
       : selection.kind === "changes" || selection.kind === "risks"
         ? "changes"
@@ -1186,11 +1346,12 @@ function ReviewWorkspace<F extends ReviewFile>({
                 : selection.kind;
   const railAt = railRows.findIndex((row) => row.key === railKey);
   // Space on a selected group opens or closes it in the rail.
-  const foldable =
-    selection.kind === "changes" ||
-    selection.kind === "files" ||
-    selection.kind === "sessions" ||
-    selection.kind === "commits"
+  const foldable = hostSteps
+    ? null
+    : selection.kind === "changes" ||
+        selection.kind === "files" ||
+        selection.kind === "sessions" ||
+        selection.kind === "commits"
       ? selection.kind
       : null;
   if (stepsRef)
@@ -1202,12 +1363,15 @@ function ReviewWorkspace<F extends ReviewFile>({
         previous: railAt > 0 ? railRows[railAt - 1]! : null,
         next: railAt >= 0 ? (railRows[railAt + 1] ?? null) : null,
       },
-      toggleGroup: foldable
-        ? () => setFolded((current) => ({ ...current, [foldable]: !current[foldable] }))
-        : undefined,
+      toggleGroup: hostSteps
+        ? hostSteps.toggleGroup
+        : foldable
+          ? () => setFolded((current) => ({ ...current, [foldable]: !current[foldable] }))
+          : undefined,
     };
-  const navigatorIcon =
-    selection.kind === "risk" || selection.kind === "risks"
+  const navigatorIcon = hostSteps
+    ? hostSteps.icon
+    : selection.kind === "risk" || selection.kind === "risks"
       ? RiskIcon
       : selection.kind === "section" || selection.kind === "changes"
         ? SectionIcon
@@ -1220,9 +1384,8 @@ function ReviewWorkspace<F extends ReviewFile>({
               : selection.kind === "decisions"
                 ? LightbulbIcon
                 : SummaryIcon;
-  const sectionIndex = viewedId
-    ? visibleSections.findIndex((section) => section.id === viewedId)
-    : -1;
+  const sectionIndex =
+    viewedId && !hostSteps ? visibleSections.findIndex((section) => section.id === viewedId) : -1;
   const findFile = useMemo(() => (fileList ? firstByPath(fileList) : () => undefined), [fileList]);
   const revealLine = (path: string, side: "LEFT" | "RIGHT", line: number) => {
     const file = findFile(path);
@@ -1276,8 +1439,15 @@ function ReviewWorkspace<F extends ReviewFile>({
     openRepositoryFile,
   };
   // What a chip for an item or a session in the review's prose opens.
+  // A host's places can send such a chip to a place of their own.
+  const hostJump = (id: string, item: string | undefined, version?: number) => {
+    const target = places?.jump?.(id, item);
+    if (!target) return selectSection(id, item, version);
+    setDecisionFocus(null);
+    setSelection(target);
+  };
   const reviewJump: ReviewJump = {
-    item: selectSection,
+    item: places?.jump ? hostJump : selectSection,
     session: sessions
       ? (id) => {
           setFolded((current) => ({ ...current, sessions: false }));
@@ -1459,9 +1629,14 @@ function ReviewWorkspace<F extends ReviewFile>({
 
   // The panes' columns: the rail, the review pane, and the side pane or the
   // strip it folds to.
-  const columns = chatCollapsed
-    ? "wide:grid-cols-[var(--rail-width)_minmax(0,1fr)_3rem]"
-    : "wide:grid-cols-[var(--rail-width)_minmax(0,1fr)_10px_var(--conversation-width)]";
+  // Whole class names, so the stylesheet's scan finds each of them.
+  const columns = railFolded
+    ? chatCollapsed
+      ? "wide:grid-cols-[3rem_minmax(0,1fr)_3rem]"
+      : "wide:grid-cols-[3rem_minmax(0,1fr)_10px_var(--conversation-width)]"
+    : chatCollapsed
+      ? "wide:grid-cols-[var(--rail-width)_minmax(0,1fr)_3rem]"
+      : "wide:grid-cols-[var(--rail-width)_minmax(0,1fr)_10px_var(--conversation-width)]";
   const columnStyle = {
     "--rail-width": `${rail.width}px`,
     "--conversation-width": `${split.width}px`,
@@ -1553,12 +1728,18 @@ function ReviewWorkspace<F extends ReviewFile>({
                   label={paneLabel}
                   icon={navigatorIcon}
                   position={
-                    sectionIndex >= 0
-                      ? `${sectionIndex + 1} of ${visibleSections.length}`
-                      : undefined
+                    hostSteps
+                      ? hostSteps.position
+                      : sectionIndex >= 0
+                        ? `${sectionIndex + 1} of ${visibleSections.length}`
+                        : undefined
                   }
                   check={
-                    selected && !selected.stale ? sectionCheck(selected.id, selected.label) : null
+                    hostSteps
+                      ? (hostSteps.check ?? null)
+                      : selected && !selected.stale
+                        ? sectionCheck(selected.id, selected.label)
+                        : null
                   }
                   previous={previousStep}
                   next={nextStep}
@@ -1591,306 +1772,356 @@ function ReviewWorkspace<F extends ReviewFile>({
                   // column beside the pane, under the head's bar.
                   className={cn(
                     "fixed inset-x-0 bottom-0 z-(--z-sheet) max-h-[80dvh] min-w-0 overflow-x-hidden overflow-y-auto border-t border-default bg-surface-card px-4 pt-4 pb-[max(1rem,env(safe-area-inset-bottom))] shadow-overlay",
-                    "wide:sticky wide:inset-x-auto wide:top-12 wide:bottom-auto wide:z-auto wide:block wide:h-[calc(100cqh-3rem)] wide:max-h-none wide:self-start wide:border-t-0 wide:bg-transparent wide:p-4 wide:shadow-none",
+                    "wide:sticky wide:inset-x-auto wide:top-12 wide:bottom-auto wide:z-auto wide:h-[calc(100cqh-3rem)] wide:max-h-none wide:self-start wide:border-t-0 wide:bg-transparent wide:shadow-none",
+                    railFolded
+                      ? "wide:flex wide:flex-col wide:items-center wide:px-0 wide:py-2"
+                      : "wide:block wide:p-4",
                     sheetOpen ? "block" : "hidden",
                   )}
                 >
-                  <div className="absolute top-1 right-2 wide:hidden">
-                    <CloseButton
-                      label="Close sections"
-                      className="h-10 w-10"
-                      onClick={closeSheet}
-                    />
-                  </div>
-                  <SideNavGroup label="Review">
-                    <SideNavButton
-                      label={conversation ? "Summary / General" : "Summary"}
-                      icon={SummaryIcon}
-                      tint="accent"
-                      active={selection.kind === "summary"}
-                      controls="review-section"
-                      onSelect={() => setSelection({ kind: "summary" })}
-                    />
+                  {/* Folded to a strip, once wide: a way back. Where the panes
+                stack the rail is a sheet, and keeps its rows. */}
+                  {railFolded ? (
+                    <IconButton
+                      label="Expand sections"
+                      title="Expand sections"
+                      className="hidden h-9 w-9 text-secondary wide:flex"
+                      onClick={() => setRailChoice(false)}
+                    >
+                      <ChevronRightIcon />
+                    </IconButton>
+                  ) : null}
+                  <RailBody fold={places ? railFolded : undefined}>
+                    <div className="absolute top-1 right-2 wide:hidden">
+                      <CloseButton
+                        label="Close sections"
+                        className="h-10 w-10"
+                        onClick={closeSheet}
+                      />
+                    </div>
+                    {places ? (
+                      <div className="mb-1 hidden justify-end wide:flex">
+                        <IconButton
+                          label="Collapse sections"
+                          title="Collapse sections"
+                          className="h-8 w-8 text-secondary"
+                          onClick={() => setRailChoice(true)}
+                        >
+                          <ChevronLeftIcon />
+                        </IconButton>
+                      </div>
+                    ) : null}
+                    <SideNavGroup label="Review">
+                      {places ? (
+                        <>
+                          {places.renderRail(hostContext)}
+                          {checks?.notice && !historyView.selection ? checks.notice : null}
+                        </>
+                      ) : (
+                        <>
+                          <SideNavButton
+                            label={conversation ? "Summary / General" : "Summary"}
+                            icon={SummaryIcon}
+                            tint="accent"
+                            active={selection.kind === "summary"}
+                            controls="review-section"
+                            onSelect={() => setSelection({ kind: "summary" })}
+                          />
 
-                    {checks?.notice && !historyView.selection ? checks.notice : null}
-                    <SideNavDisclosure
-                      label="Changes"
-                      icon={SectionIcon}
-                      tint="accent"
-                      expanded={open.changes}
-                      active={selection.kind === "changes"}
-                      count={currentSections.length}
-                      // The count is about the rows in front of the reader, whatever
-                      // supplied them: without a document those are the sections the
-                      // host knows, and reading one of those is progress through the
-                      // rail as it stands.
-                      progress={
-                        tracked && currentSections.length > 0 && !checks?.hideSectionProgress
-                          ? `${changesRead} of ${currentSections.length}`
-                          : undefined
-                      }
-                      read={
-                        tracked ? { done: changesRead, total: currentSections.length } : undefined
-                      }
-                      list="review-changes"
-                      controls="review-section"
-                      onSelect={(expanded) => selectGroup("changes", expanded)}
-                    />
-                    {open.changes && (
-                      <SideNavNest id="review-changes">
-                        {visibleSections.length === 0 ? (
-                          <RailNote>
-                            {obsoleteCount > 0 ? "No current changes." : "No sections yet."}
-                          </RailNote>
-                        ) : (
-                          visibleSections.map((section) => (
-                            <div
-                              key={section.id}
-                              className={cn(
-                                "flex min-w-0 items-center gap-1 rounded-sm transition-colors duration-300",
-                                section.stale && "opacity-60 grayscale",
-                                !section.stale &&
-                                  sectionRead(section.id) &&
-                                  "bg-status-positive-bg/60",
-                              )}
-                            >
-                              <div className="min-w-0 flex-1">
-                                {/* Section titles are sentences: the row drops the
+                          {checks?.notice && !historyView.selection ? checks.notice : null}
+                          <SideNavDisclosure
+                            label="Changes"
+                            icon={SectionIcon}
+                            tint="accent"
+                            expanded={open.changes}
+                            active={selection.kind === "changes"}
+                            count={currentSections.length}
+                            // The count is about the rows in front of the reader, whatever
+                            // supplied them: without a document those are the sections the
+                            // host knows, and reading one of those is progress through the
+                            // rail as it stands.
+                            progress={
+                              tracked && currentSections.length > 0 && !checks?.hideSectionProgress
+                                ? `${changesRead} of ${currentSections.length}`
+                                : undefined
+                            }
+                            read={
+                              tracked
+                                ? { done: changesRead, total: currentSections.length }
+                                : undefined
+                            }
+                            list="review-changes"
+                            controls="review-section"
+                            onSelect={(expanded) => selectGroup("changes", expanded)}
+                          />
+                          {open.changes && (
+                            <SideNavNest id="review-changes">
+                              {visibleSections.length === 0 ? (
+                                <RailNote>
+                                  {obsoleteCount > 0 ? "No current changes." : "No sections yet."}
+                                </RailNote>
+                              ) : (
+                                visibleSections.map((section) => (
+                                  <div
+                                    key={section.id}
+                                    className={cn(
+                                      "flex min-w-0 items-center gap-1 rounded-sm transition-colors duration-300",
+                                      section.stale && "opacity-60 grayscale",
+                                      !section.stale &&
+                                        sectionRead(section.id) &&
+                                        "bg-status-positive-bg/60",
+                                    )}
+                                  >
+                                    <div className="min-w-0 flex-1">
+                                      {/* Section titles are sentences: the row drops the
                               glyph its Changes parent already shows and takes
                               a second line, so the title reads rather than
                               stopping after two words. */}
-                                <SideNavButton
-                                  label={section.label}
-                                  wrap
-                                  depth={1}
-                                  active={
-                                    (selection.kind === "section" || selection.kind === "risk") &&
-                                    viewedId === section.id
-                                  }
-                                  controls="review-section"
-                                  description={
-                                    section.score === undefined
-                                      ? undefined
-                                      : `Review score ${section.score} of 5: ${RISK_SCORE_MEANING[section.score]}`
-                                  }
-                                  aside={
-                                    <>
-                                      {risks.some((risk) => risk.section === section.id) && (
-                                        <span
-                                          role="img"
-                                          aria-label="High or critical risks"
-                                          title="High or critical risks"
-                                          className="mr-2 flex-none text-status-critical"
-                                        >
-                                          <RiskIcon size={14} />
-                                        </span>
-                                      )}
-                                      {section.score !== undefined && (
-                                        <ReviewScoreBadge score={section.score} size="compact" />
-                                      )}
-                                      {changes?.sections.has(section.id) && (
-                                        <Badge size="compact" tone="info">
-                                          New
-                                        </Badge>
-                                      )}
-                                      {comparing &&
-                                        !document?.sections.some(
-                                          (item) => item.id === section.id,
-                                        ) && (
-                                          <Badge size="compact">
-                                            Only v{historyView.selection?.version}
-                                          </Badge>
-                                        )}
-                                    </>
-                                  }
-                                  onSelect={() => selectSection(section.id)}
-                                />
-                              </div>
-                              {!section.stale && sectionCheck(section.id, section.label)}
-                            </div>
-                          ))
-                        )}
-                        {obsoleteCount > 0 && (
-                          <button
-                            type="button"
-                            aria-expanded={showObsolete}
-                            onClick={toggleObsolete}
-                            className={cn(
-                              "mx-2.5 mt-2 cursor-pointer rounded-sm py-1 text-left text-xs text-tertiary hover:text-primary",
-                              FOCUS_RING,
-                            )}
-                          >
-                            {showObsolete
-                              ? "Hide obsolete changes"
-                              : `View obsolete changes (${obsoleteCount})`}
-                          </button>
-                        )}
-                      </SideNavNest>
-                    )}
+                                      <SideNavButton
+                                        label={section.label}
+                                        wrap
+                                        depth={1}
+                                        active={
+                                          (selection.kind === "section" ||
+                                            selection.kind === "risk") &&
+                                          viewedId === section.id
+                                        }
+                                        controls="review-section"
+                                        description={
+                                          section.score === undefined
+                                            ? undefined
+                                            : `Review score ${section.score} of 5: ${RISK_SCORE_MEANING[section.score]}`
+                                        }
+                                        aside={
+                                          <>
+                                            {risks.some((risk) => risk.section === section.id) && (
+                                              <span
+                                                role="img"
+                                                aria-label="High or critical risks"
+                                                title="High or critical risks"
+                                                className="mr-2 flex-none text-status-critical"
+                                              >
+                                                <RiskIcon size={14} />
+                                              </span>
+                                            )}
+                                            {section.score !== undefined && (
+                                              <ReviewScoreBadge
+                                                score={section.score}
+                                                size="compact"
+                                              />
+                                            )}
+                                            {changes?.sections.has(section.id) && (
+                                              <Badge size="compact" tone="info">
+                                                New
+                                              </Badge>
+                                            )}
+                                            {comparing &&
+                                              !document?.sections.some(
+                                                (item) => item.id === section.id,
+                                              ) && (
+                                                <Badge size="compact">
+                                                  Only v{historyView.selection?.version}
+                                                </Badge>
+                                              )}
+                                          </>
+                                        }
+                                        onSelect={() => selectSection(section.id)}
+                                      />
+                                    </div>
+                                    {!section.stale && sectionCheck(section.id, section.label)}
+                                  </div>
+                                ))
+                              )}
+                              {obsoleteCount > 0 && (
+                                <button
+                                  type="button"
+                                  aria-expanded={showObsolete}
+                                  onClick={toggleObsolete}
+                                  className={cn(
+                                    "mx-2.5 mt-2 cursor-pointer rounded-sm py-1 text-left text-xs text-tertiary hover:text-primary",
+                                    FOCUS_RING,
+                                  )}
+                                >
+                                  {showObsolete
+                                    ? "Hide obsolete changes"
+                                    : `View obsolete changes (${obsoleteCount})`}
+                                </button>
+                              )}
+                            </SideNavNest>
+                          )}
+                        </>
+                      )}
 
-                    {filesSlot ? (
-                      <>
-                        <SideNavDisclosure
-                          label="Files changed"
-                          icon={SectionIcon}
-                          busy={!comparing && filesSlot.loading && Boolean(fileList)}
-                          expanded={open.files}
-                          active={filesSelected}
-                          progress={
-                            fileProgress && fileProgress.total > 0
-                              ? `${fileProgress.done} of ${fileProgress.total}`
-                              : undefined
-                          }
-                          read={fileProgress}
-                          // Counted even when the host keeps no viewed marks.
-                          count={!comparing && fileList ? fileList.length : undefined}
-                          list="review-files"
+                      {filesSlot ? (
+                        <>
+                          <SideNavDisclosure
+                            label="Files changed"
+                            icon={SectionIcon}
+                            busy={!comparing && filesSlot.loading && Boolean(fileList)}
+                            expanded={open.files}
+                            active={filesSelected}
+                            progress={
+                              fileProgress && fileProgress.total > 0
+                                ? `${fileProgress.done} of ${fileProgress.total}`
+                                : undefined
+                            }
+                            read={fileProgress}
+                            // Counted even when the host keeps no viewed marks.
+                            count={!comparing && fileList ? fileList.length : undefined}
+                            list="review-files"
+                            controls="review-section"
+                            onSelect={(expanded) => {
+                              setFolded((current) => ({ ...current, files: !expanded }));
+                              if (!comparing && expanded && !filesSelected)
+                                setSelection({ kind: "files" });
+                            }}
+                          />
+                          {open.files && (
+                            <SideNavNest id="review-files">
+                              {comparing ? (
+                                <RailNote>Files are unavailable while comparing versions.</RailNote>
+                              ) : filesSlot.loading && !fileList ? (
+                                <RailNote busy>Loading changed files…</RailNote>
+                              ) : filesSlot.failed && !fileList ? (
+                                <RailNote>Changed files could not be loaded.</RailNote>
+                              ) : fileList?.length ? (
+                                filesSlot.renderTree({
+                                  files: fileList,
+                                  selected: selection.kind === "file" ? selection.id : null,
+                                  onSelect: selectFile,
+                                })
+                              ) : (
+                                <RailNote>No changed files.</RailNote>
+                              )}
+                            </SideNavNest>
+                          )}
+                        </>
+                      ) : null}
+
+                      {decisions ? (
+                        <SideNavButton
+                          label="Decisions"
+                          icon={LightbulbIcon}
+                          active={selection.kind === "decisions"}
                           controls="review-section"
-                          onSelect={(expanded) => {
-                            setFolded((current) => ({ ...current, files: !expanded }));
-                            if (!comparing && expanded && !filesSelected)
-                              setSelection({ kind: "files" });
-                          }}
-                        />
-                        {open.files && (
-                          <SideNavNest id="review-files">
-                            {comparing ? (
-                              <RailNote>Files are unavailable while comparing versions.</RailNote>
-                            ) : filesSlot.loading && !fileList ? (
-                              <RailNote busy>Loading changed files…</RailNote>
-                            ) : filesSlot.failed && !fileList ? (
-                              <RailNote>Changed files could not be loaded.</RailNote>
-                            ) : fileList?.length ? (
-                              filesSlot.renderTree({
-                                files: fileList,
-                                selected: selection.kind === "file" ? selection.id : null,
-                                onSelect: selectFile,
-                              })
-                            ) : (
-                              <RailNote>No changed files.</RailNote>
-                            )}
-                          </SideNavNest>
-                        )}
-                      </>
-                    ) : null}
-
-                    {decisions ? (
-                      <SideNavButton
-                        label="Decisions"
-                        icon={LightbulbIcon}
-                        active={selection.kind === "decisions"}
-                        controls="review-section"
-                        aside={
-                          decisions.count === undefined ? undefined : (
-                            <span className="text-xs tabular-nums text-tertiary">
-                              {decisions.count}
-                            </span>
-                          )
-                        }
-                        description={
-                          decisions.count === undefined ? undefined : `${decisions.count} decisions`
-                        }
-                        onSelect={() => setSelection({ kind: "decisions" })}
-                      />
-                    ) : null}
-
-                    {sessionState ? (
-                      <>
-                        <SideNavDisclosure
-                          label="Sessions"
-                          icon={SessionsIcon}
-                          tint="teal"
-                          busy={sessionState.status === "loading"}
-                          indicator={sessions?.indicator}
-                          expanded={open.sessions}
-                          active={selection.kind === "sessions"}
-                          count={
-                            sessionState.status === "ready" ? sessionState.items.length : undefined
+                          aside={
+                            decisions.count === undefined ? undefined : (
+                              <span className="text-xs tabular-nums text-tertiary">
+                                {decisions.count}
+                              </span>
+                            )
                           }
-                          list="review-sessions"
-                          controls="review-section"
-                          onSelect={(expanded) => {
-                            setFolded((current) => ({ ...current, sessions: !expanded }));
-                            setSelection({ kind: "sessions" });
-                          }}
-                        />
-                        {open.sessions && (
-                          <SideNavNest id="review-sessions">
-                            {sessionState.status === "loading" ? (
-                              <RailNote busy>Loading linked sessions…</RailNote>
-                            ) : sessionState.status === "failed" ? (
-                              <RailNote>Linked sessions could not be loaded.</RailNote>
-                            ) : sessionState.items.length === 0 ? (
-                              <RailNote>No sessions.</RailNote>
-                            ) : (
-                              sessionState.items.map((item) => (
-                                <SideNavButton
-                                  key={item.id}
-                                  label={item.label}
-                                  icon={SessionsIcon}
-                                  tint="teal"
-                                  depth={1}
-                                  active={selection.kind === "session" && selection.id === item.id}
-                                  aside={
-                                    item.indicator ? (
-                                      <RowIndicator indicator={item.indicator} />
-                                    ) : undefined
-                                  }
-                                  controls="review-section"
-                                  onSelect={() => setSelection({ kind: "session", id: item.id })}
-                                />
-                              ))
-                            )}
-                          </SideNavNest>
-                        )}
-                      </>
-                    ) : null}
-
-                    {commitState ? (
-                      <>
-                        <SideNavDisclosure
-                          label="Commits"
-                          icon={CommitIcon}
-                          busy={commitState.status === "loading"}
-                          expanded={open.commits}
-                          active={selection.kind === "commits"}
-                          count={
-                            commitState.status === "ready" ? commitState.items.length : undefined
+                          description={
+                            decisions.count === undefined
+                              ? undefined
+                              : `${decisions.count} decisions`
                           }
-                          list="review-commits"
-                          controls="review-section"
-                          onSelect={(expanded) => {
-                            setFolded((current) => ({ ...current, commits: !expanded }));
-                            setSelection({ kind: "commits" });
-                          }}
+                          onSelect={() => setSelection({ kind: "decisions" })}
                         />
-                        {open.commits && (
-                          <SideNavNest id="review-commits">
-                            {commitState.status === "loading" ? (
-                              <RailNote busy>Loading commits…</RailNote>
-                            ) : commitState.status === "failed" ? (
-                              <RailNote>Commits could not be loaded.</RailNote>
-                            ) : commitState.items.length === 0 ? (
-                              <RailNote>No commits synced.</RailNote>
-                            ) : (
-                              commitState.items.map((item) => (
-                                <SideNavButton
-                                  key={item.id}
-                                  label={item.label}
-                                  icon={CommitIcon}
-                                  depth={1}
-                                  active={selection.kind === "commit" && selection.id === item.id}
-                                  controls="review-section"
-                                  onSelect={() => setSelection({ kind: "commit", id: item.id })}
-                                />
-                              ))
-                            )}
-                          </SideNavNest>
-                        )}
-                      </>
-                    ) : null}
-                  </SideNavGroup>
-                  {checks?.footer ?? null}
+                      ) : null}
+
+                      {sessionState ? (
+                        <>
+                          <SideNavDisclosure
+                            label="Sessions"
+                            icon={SessionsIcon}
+                            tint="teal"
+                            busy={sessionState.status === "loading"}
+                            indicator={sessions?.indicator}
+                            expanded={open.sessions}
+                            active={selection.kind === "sessions"}
+                            count={
+                              sessionState.status === "ready"
+                                ? sessionState.items.length
+                                : undefined
+                            }
+                            list="review-sessions"
+                            controls="review-section"
+                            onSelect={(expanded) => {
+                              setFolded((current) => ({ ...current, sessions: !expanded }));
+                              setSelection({ kind: "sessions" });
+                            }}
+                          />
+                          {open.sessions && (
+                            <SideNavNest id="review-sessions">
+                              {sessionState.status === "loading" ? (
+                                <RailNote busy>Loading linked sessions…</RailNote>
+                              ) : sessionState.status === "failed" ? (
+                                <RailNote>Linked sessions could not be loaded.</RailNote>
+                              ) : sessionState.items.length === 0 ? (
+                                <RailNote>No sessions.</RailNote>
+                              ) : (
+                                sessionState.items.map((item) => (
+                                  <SideNavButton
+                                    key={item.id}
+                                    label={item.label}
+                                    icon={SessionsIcon}
+                                    tint="teal"
+                                    depth={1}
+                                    active={
+                                      selection.kind === "session" && selection.id === item.id
+                                    }
+                                    aside={
+                                      item.indicator ? (
+                                        <RowIndicator indicator={item.indicator} />
+                                      ) : undefined
+                                    }
+                                    controls="review-section"
+                                    onSelect={() => setSelection({ kind: "session", id: item.id })}
+                                  />
+                                ))
+                              )}
+                            </SideNavNest>
+                          )}
+                        </>
+                      ) : null}
+
+                      {commitState ? (
+                        <>
+                          <SideNavDisclosure
+                            label="Commits"
+                            icon={CommitIcon}
+                            busy={commitState.status === "loading"}
+                            expanded={open.commits}
+                            active={selection.kind === "commits"}
+                            count={
+                              commitState.status === "ready" ? commitState.items.length : undefined
+                            }
+                            list="review-commits"
+                            controls="review-section"
+                            onSelect={(expanded) => {
+                              setFolded((current) => ({ ...current, commits: !expanded }));
+                              setSelection({ kind: "commits" });
+                            }}
+                          />
+                          {open.commits && (
+                            <SideNavNest id="review-commits">
+                              {commitState.status === "loading" ? (
+                                <RailNote busy>Loading commits…</RailNote>
+                              ) : commitState.status === "failed" ? (
+                                <RailNote>Commits could not be loaded.</RailNote>
+                              ) : commitState.items.length === 0 ? (
+                                <RailNote>No commits synced.</RailNote>
+                              ) : (
+                                commitState.items.map((item) => (
+                                  <SideNavButton
+                                    key={item.id}
+                                    label={item.label}
+                                    icon={CommitIcon}
+                                    depth={1}
+                                    active={selection.kind === "commit" && selection.id === item.id}
+                                    controls="review-section"
+                                    onSelect={() => setSelection({ kind: "commit", id: item.id })}
+                                  />
+                                ))
+                              )}
+                            </SideNavNest>
+                          )}
+                        </>
+                      ) : null}
+                    </SideNavGroup>
+                    {checks?.footer ?? null}
+                  </RailBody>
                 </nav>
 
                 <section
@@ -1901,17 +2132,19 @@ function ReviewWorkspace<F extends ReviewFile>({
                 >
                   {/* Laid over the pane's left border rather than given a column, so
               the rail and the pane keep their places and only gain a grip. */}
-                  <PaneDivider
-                    width={rail.width}
-                    onWidth={rail.choose}
-                    onPreview={previewWidth("--rail-width")}
-                    reviewRef={reviewPane}
-                    paneRef={railPane}
-                    limits={RAIL_LIMITS}
-                    side="before"
-                    label="Resize the section rail"
-                    className="absolute inset-y-0 -left-[5px] z-10 w-[10px]"
-                  />
+                  {railFolded ? null : (
+                    <PaneDivider
+                      width={rail.width}
+                      onWidth={rail.choose}
+                      onPreview={previewWidth("--rail-width")}
+                      reviewRef={reviewPane}
+                      paneRef={railPane}
+                      limits={RAIL_LIMITS}
+                      side="before"
+                      label="Resize the section rail"
+                      className="absolute inset-y-0 -left-[5px] z-10 w-[10px]"
+                    />
+                  )}
                   <div className={cn("flex min-h-0 flex-1 flex-col", PANE_WIDTH)}>
                     {sectionAside}
                     {document && versionsFailed && (
@@ -1979,8 +2212,7 @@ function ReviewWorkspace<F extends ReviewFile>({
                             <ReviewJumpContext.Provider
                               value={{
                                 ...reviewJump,
-                                item: (id, item) =>
-                                  selectSection(id, item, snapshot.review.version),
+                                item: (id, item) => hostJump(id, item, snapshot.review.version),
                               }}
                             >
                               <PaneIn key={selectionKey}>{renderPane(snapshot, historical)}</PaneIn>
@@ -2186,6 +2418,7 @@ function ReviewWorkspace<F extends ReviewFile>({
   /** What the pane shows for the current selection in one snapshot of the
    *  review, current or historical. */
   function renderPane(snapshot: ReviewDocument, historical: boolean) {
+    if (places) return places.renderPane(snapshot, historical, hostContext);
     const selectSnapshotSection = (id: string, item?: string) =>
       selectSection(id, item, snapshot.review.version);
     if (selection.kind === "changes" || selection.kind === "risks")

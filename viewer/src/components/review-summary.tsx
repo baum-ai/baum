@@ -206,7 +206,7 @@ export function ReviewSummary({
  *  speaks of the code and the decisions in it, never of CI, which the Details
  *  tab reports live. A document without one (older, or one the review could
  *  not give) shows nothing in its place. */
-function RecommendationPart({
+export function RecommendationPart({
   document,
   onSelectSection,
 }: {
@@ -312,7 +312,7 @@ function RiskMeter({
  *  their sections. A score that incomplete input may understate says so and
  *  says what was missing. It leads the risk parts, whose Risks part below carries
  *  the way to every risk, so it carries none of its own. */
-function RiskScorePart({
+export function RiskScorePart({
   document,
   onSelectSection,
 }: {

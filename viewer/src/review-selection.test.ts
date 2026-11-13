@@ -77,11 +77,23 @@ describe("withSelection", () => {
       { kind: "commits" as const },
       { kind: "commit" as const, id: "abc123" },
       { kind: "decisions" as const },
+      { kind: "tile" as const, id: "overview" },
+      { kind: "tile" as const, id: "sec_a", item: "rsk_1" },
     ]) {
       const written = withSelection(base, selection);
       expect(written.get("repo")).toBe("widgets");
       expect(readSelection(written)).toEqual(selection);
     }
+  });
+
+  it("writes a tile as pane, tile and item", () => {
+    expect(
+      withSelection(new URLSearchParams(), { kind: "tile", id: "risks", item: "rsk_1" }).toString(),
+    ).toBe("pane=tile&tile=risks&item=rsk_1");
+    expect(readSelection(new URLSearchParams("pane=tile"))).toEqual({ kind: "summary" });
+    expect(withoutSelection(new URLSearchParams("pane=tile&tile=a&item=b&x=1")).toString()).toBe(
+      "x=1",
+    );
   });
 
   it("replaces an existing selection rather than accumulating params", () => {

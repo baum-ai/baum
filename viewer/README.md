@@ -158,6 +158,7 @@ A host connects it through props and context:
 | repository file opener | no | `openRepositoryFile({ path, symbol })` on `ReviewViewer`, carried with the source opener in `ReviewSourcesProvider` (`useReviewSources().openRepositoryFile`): called when a Summary context chip for a file is clicked, whether or not the pull request changes it; return true when handled, false to open GitHub instead. Given, those chips are buttons without the leaving mark. Without it, a changed file opens the review's file view; a directory keeps its GitHub link. The viewer never reads the file; the host does |
 | source opener | no | `openSource(anchor, resolved)` on `ReviewViewer`: called when a source chip for the pull request's description (`pr_body`) or another pull request (`pr`) is clicked; return true when handled and the viewer cancels the link to GitHub. Those chips then read as in-app links without the leaving mark. The viewer never fetches the description or builds a route; the host does. A commit chip needs no hook: when the commit is in the Commits group (matched by full sha or prefix) it selects it there, otherwise it links to GitHub. Comment, thread and check chips keep going to GitHub |
 | row actions | no | `checks` on `ReviewViewer`, or `renderCheck` on `ChangesOverview` and `RisksOverview`, puts a host's read mark or approval beside each row |
+| host places | no | `places` on `ReviewViewer` (`ReviewPlaces`): the host's own rail rows, stepping, panes and reference-chip targets for the Summary, Changes, risk and section places, and a `tile` place of its own. Absent, the viewer draws all of them itself (see [Host places](#host-places)) |
 | side pane, header slots and other features | no | the `ReviewViewer` slots below |
 | decision log links and sessions | for the decision log components | `pullRequestHref` and `openSession` props (see [Decision log](#decision-log)) |
 | decision log page | for `TimelinePage` | its lists, the reads of details and authors, and the host's filter bar and wording (see [Decision log](#decision-log)), under the `UrlStateProvider` |
@@ -236,7 +237,37 @@ left out rather than shown empty or failed:
 | `hunkPatches` | the hunk patch source for the section and risk panes |
 | `onVersionsShown` | called with the versions whose documents are on screen whenever that set changes, for example to record that a version was read |
 | `onRetryDetails` | a Retry beside "Details unavailable" on a section of the current version whose `details` is `failed` (below), called with the section's ID; the button reads "Retrying…" and is disabled from the click until a returned promise settles |
+| `places` | the host's own Summary, Changes and detail places and a `tile` selection (`?pane=tile&tile=<id>&item=<id>`): rail rows, stepping, panes, chip targets and how the rail starts (see [Host places](#host-places)). Absent, a `tile` selection reads as the Summary |
 | `contextPending` | the current document is a draft whose context the host is still writing: while it has no `summary.context`, the Summary's Context part says "Writing context…" in its place |
+
+### Host places
+
+`places` (`ReviewPlaces`) lets a host replace the review's own places, the
+Summary, the Changes overview, the Risks overview, one section and one risk,
+and add a `tile` place of its own (`{ kind: "tile", id, item? }`, kept in the
+URL as `?pane=tile&tile=<id>&item=<id>`). Everything else stays the viewer's:
+the head, the version menu and compare, the side pane and the Files,
+Decisions, Sessions and Commits groups. Without `places` nothing changes, and
+a `tile` selection in the URL reads as the Summary. The host supplies:
+
+| Member | What it does |
+| --- | --- |
+| `renderRail(context)` | the rail's rows that stand in for the Summary row, the Changes group and its obsolete toggle; `checks.notice` follows them |
+| `railRows(context)` | the same rows as keyed steps (`ReviewRailRow`), in the order the rail shows them, so the host's keys step through the rail with the viewer's own rows after them |
+| `steps(selection, context)` | for the summary, changes, risks, section, risk and tile selections: the label and icon the navigator bar and the pane use, the position ("2 of 6"), the previous and next place, the key of the rail row it sits on, optionally the section it is about and its read mark, and a group toggle; null leaves the viewer's own model |
+| `renderPane(snapshot, historical, context)` | the pane for those selections. The viewer calls it inside the version history, once for the current version and again for an earlier version read alone or compared, so both keep working for the host's panes |
+| `jump(section, item)` | where a reference chip in prose to a section, or to a risk, evidence or decision of one, goes; a selection redirects it, null leaves it to the viewer |
+| `railFolded(selection)` | whether the rail starts folded to a strip beside the pane for that selection, once the page is wide. The answer applies whenever it changes, as the reader moves between places. The reader can unfold the rail, or fold it again, with the button on it, and that choice holds until the answer changes. Where the panes stack the rail is a sheet and does not fold. Without `places` the rail has no fold |
+
+`ReviewPlaceContext` is passed to each of them: the `selection` and a `select`
+function that writes the URL; the `document` being read, the `historicalDocument`
+and whether the reader is `comparing`; `compareWith(version)`, `versions` and
+`loadVersion`; `sectionHistory`; `hunkPatches` (null while comparing, for a
+`HunkPatchProvider` around cited code); `onRetryDetails`; and `contextPending`.
+A pane offers a retry and says a context is being written only for the current
+version. `RecommendationPart` and `RiskScorePart`, exported from
+`components/review-summary`, draw the recommendation and the risk score for a
+host that composes its own strip from them.
 
 CI uses the optional `review.checks_head`, falling back to `review.head` for
 older documents. Refreshing the current document can show latest-head checks
