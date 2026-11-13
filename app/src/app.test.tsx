@@ -1053,6 +1053,98 @@ it("chooses a separate agent and model for fixes", async () => {
   await choose(agent, "");
   expect(puts.at(-1)!.body).toEqual({ fix_backend: "", fix_model: "", fix_effort: "" });
 });
+it("chooses the Claude Code configuration directory of reviews under Advanced", async () => {
+  history.replaceState(null, "", "/s/test-ns/?page=settings&section=reviews");
+  stubDiagnostics(async () => Response.json({ local: true, report: diagnosticsReport }));
+  const puts = stubAutomatic(demoClone, automaticOverview, {
+    backend: "claude",
+    model: "claude-haiku-5-5",
+    default_claude_config_dir: "/home/dev/.claude",
+    claude_config_dirs: ["/home/dev/.claude", "/home/dev/.claude.personal"],
+    home: "/home/dev",
+  });
+  await act(async () => root.render(<App />));
+  // Closed until asked for, and it names what the default is.
+  const advanced = node.querySelector<HTMLDetailsElement>(
+    '[aria-labelledby="settings-reviews-heading"] details.settings-advanced',
+  )!;
+  expect(advanced.open).toBe(false);
+  expect(advanced.querySelector("summary")!.textContent).toBe("Advanced");
+  const select = () => node.querySelector<HTMLSelectElement>("#review-claude-config-dir")!;
+  expect(select().value).toBe("");
+  // Paths are written with ~, and the default is listed once, by name.
+  expect([...select().options].map((o) => o.textContent)).toEqual([
+    "Default",
+    "~/.claude.personal",
+    "Another directory…",
+  ]);
+  expect(advanced.textContent).toContain("Default is ~/.claude.");
+  // Another setting's save does not send the directory.
+  await choose(node.querySelector<HTMLSelectElement>("#review-model")!, "claude-opus-5-5");
+  expect(puts.at(-1)!.body).not.toHaveProperty("claude_config_dir");
+  await choose(select(), "/home/dev/.claude.personal");
+  expect(puts.at(-1)).toMatchObject({
+    path: "/s/test-ns/api/automatic",
+    body: { backend: "claude", claude_config_dir: "/home/dev/.claude.personal" },
+  });
+  // A typed path saves once the field is left, not on every key.
+  await choose(select(), "\u0000custom");
+  const count = puts.length;
+  const path = node.querySelector<HTMLInputElement>(
+    'input[aria-label="Claude Code configuration directory path"]',
+  )!;
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(
+      path,
+      "~/.claude-work",
+    );
+    path.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  expect(puts.length).toBe(count);
+  await act(async () => path.dispatchEvent(new FocusEvent("focusout", { bubbles: true })));
+  expect(puts.at(-1)!.body).toMatchObject({ claude_config_dir: "~/.claude-work" });
+  // Only Claude Code has one.
+  await choose(node.querySelector<HTMLSelectElement>("#review-agent")!, "codex");
+  expect(node.querySelector("#review-claude-config-dir")).toBeNull();
+  expect(node.querySelector("details.settings-advanced")).toBeNull();
+});
+it("shows a chosen Claude Code configuration directory and goes back to the default", async () => {
+  history.replaceState(null, "", "/s/test-ns/?page=settings&section=fixes");
+  stubDiagnostics(async () => Response.json({ local: true, report: diagnosticsReport }));
+  const puts = stubAutomatic(demoClone, automaticOverview, {
+    backend: "codex",
+    model: "gpt-6-luna",
+    fix_backend: "claude",
+    fix_model: "claude-opus-5-5",
+    // One baum no longer lists is still shown as chosen.
+    // No `home`, as from an older daemon: the default directory gives it.
+    fix_claude_config_dir: "/home/dev/.claude-old",
+    default_claude_config_dir: "/home/dev/.claude",
+    claude_config_dirs: ["/home/dev/.claude"],
+  });
+  await act(async () => root.render(<App />));
+  const advanced = node.querySelector<HTMLDetailsElement>(
+    '[aria-labelledby="settings-fixes-heading"] details.settings-advanced',
+  )!;
+  expect(advanced.open).toBe(true);
+  const select = node.querySelector<HTMLSelectElement>("#fix-claude-config-dir")!;
+  expect(select.value).toBe("/home/dev/.claude-old");
+  expect(select.selectedOptions[0]!.textContent).toBe("~/.claude-old");
+  expect(advanced.textContent).toContain("Default is ~/.claude.");
+  await choose(node.querySelector<HTMLSelectElement>("#fix-model")!, "claude-haiku-5-5");
+  expect(puts.at(-1)!.body).not.toHaveProperty("fix_claude_config_dir");
+  await choose(select, "");
+  expect(puts.at(-1)!.body).toEqual({
+    fix_backend: "claude",
+    fix_model: "claude-haiku-5-5",
+    fix_effort: "",
+    fix_claude_config_dir: "",
+  });
+  // Fixes that follow reviews have no directory of their own to choose.
+  await choose(node.querySelector<HTMLSelectElement>("#fix-agent")!, "");
+  expect(puts.at(-1)!.body).toEqual({ fix_backend: "", fix_model: "", fix_effort: "" });
+  expect(node.querySelector("#fix-claude-config-dir")).toBeNull();
+});
 it("saves one change at a time and only the newest of those made meanwhile", async () => {
   history.replaceState(null, "", "/s/test-ns/?page=settings&section=fixes");
   stubDiagnostics(async () => Response.json({ local: true, report: diagnosticsReport }));
@@ -1464,6 +1556,46 @@ it("chooses the data extraction agent apart from the reviews'", async () => {
   expect(section.querySelector<HTMLSelectElement>("#decisions-model")!.value).toBe(
     "claude-haiku-5-5",
   );
+});
+it("chooses a Claude Code configuration directory for extraction with its own agent", async () => {
+  history.replaceState(null, "", "/s/test-ns/?page=settings&section=reviews");
+  stubDiagnostics(async () => Response.json({ local: true, report: diagnosticsReport }));
+  const puts = stubAutomatic(demoClone, automaticOverview, {
+    backend: "codex",
+    model: "gpt-6.1-sol",
+    default_claude_config_dir: "/home/dev/.claude",
+    claude_config_dirs: ["/home/dev/.claude", "/home/dev/.claude.personal"],
+    home: "/home/dev",
+    decisions: { enabled: true, backend: "", model: "", effective_backend: "codex" },
+  });
+  await act(async () => root.render(<App />));
+  const section = node.querySelector('[aria-labelledby="decisions-heading"]')!;
+  // While extraction follows the reviews' agent, it follows their directory.
+  expect(section.querySelector("#decisions-claude-config-dir")).toBeNull();
+  await choose(section.querySelector<HTMLSelectElement>("#decisions-agent")!, "claude");
+  expect(puts.at(-1)!.body).not.toHaveProperty("claude_config_dir");
+  const advanced = section.querySelector<HTMLDetailsElement>("details.settings-advanced")!;
+  expect(advanced.open).toBe(false);
+  const select = section.querySelector<HTMLSelectElement>("#decisions-claude-config-dir")!;
+  expect([...select.options].map((o) => o.textContent)).toEqual([
+    "Default",
+    "~/.claude.personal",
+    "Another directory…",
+  ]);
+  await choose(select, "/home/dev/.claude.personal");
+  expect(puts.at(-1)).toEqual({
+    path: "/s/test-ns/api/settings/decisions",
+    body: {
+      enabled: true,
+      backend: "claude",
+      model: "",
+      effort: "",
+      claude_config_dir: "/home/dev/.claude.personal",
+    },
+  });
+  // Codex has no such directory.
+  await choose(section.querySelector<HTMLSelectElement>("#decisions-agent")!, "codex");
+  expect(section.querySelector("#decisions-claude-config-dir")).toBeNull();
 });
 it("goes back to the reviews' agent from a chosen one", async () => {
   history.replaceState(null, "", "/s/test-ns/?page=settings&section=reviews");

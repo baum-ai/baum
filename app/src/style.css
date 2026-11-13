@@ -381,6 +381,38 @@ body {
   font-weight: 400;
   color: var(--text-tertiary);
 }
+/* The directory of a second plan of the same agent, on a line of its own so
+   a long path is cut rather than pushing the name. */
+.plan-rail-dir {
+  display: block;
+  overflow: hidden;
+  font-size: var(--text-xs);
+  font-weight: 400;
+  color: var(--text-tertiary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* One sign-in among several of the same agent: its directory and plan on a
+   line, then its windows, set off from the next by a little more room. */
+.plan-rail-account {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+.plan-rail-account + .plan-rail-account {
+  margin-top: 0.6rem;
+}
+.plan-rail-account-head {
+  gap: 0.5rem;
+}
+.plan-rail-account-dir {
+  min-width: 0;
+  overflow: hidden;
+  font-weight: 500;
+  color: var(--text-secondary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .plan-rail-window {
   display: flex;
   flex-direction: column;
@@ -2363,6 +2395,122 @@ dialog.local-dialog-wide {
 .settings-model {
   display: grid;
   gap: 0.5rem;
+}
+/* Rows of choices (agent, model and effort, which pull requests, a
+   directory): the name and its control share a line, the control on the right
+   at the same width in every such row so they line up section after section,
+   and the sentence about it runs underneath at full width. When the panel is
+   too narrow for both, the control drops below the name and fills it. */
+.settings-list {
+  container-type: inline-size;
+}
+.settings-row-pick {
+  display: grid;
+  grid-template-columns: auto minmax(0, 26rem);
+  justify-content: space-between;
+  grid-template-areas:
+    "label control"
+    "detail detail";
+  gap: 0.35rem 1.5rem;
+  align-items: center;
+}
+.settings-row-pick > .settings-row-text {
+  display: contents;
+}
+.settings-row-pick .settings-row-label {
+  grid-area: label;
+  white-space: nowrap;
+}
+.settings-row-pick .settings-row-detail {
+  grid-area: detail;
+}
+.settings-row-pick > .settings-row-control {
+  grid-area: control;
+  justify-content: flex-end;
+}
+.settings-row-pick > .settings-row-control,
+.settings-row-pick > .settings-row-control > .settings-select,
+.settings-row-pick > .settings-row-control > .settings-model,
+.settings-pick {
+  width: 100%;
+}
+.settings-pick {
+  display: flex;
+  gap: 0.5rem;
+  align-items: flex-start;
+}
+.settings-pick > .settings-model {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+/* A select fills its room in these rows, so each ends at the right edge. */
+.settings-row-pick .settings-select {
+  width: 100%;
+}
+.settings-row-pick .settings-pick > .settings-effort {
+  flex: none;
+  width: 9.5rem;
+}
+@container (max-width: 40rem) {
+  .settings-row-pick {
+    grid-template-columns: minmax(0, 1fr);
+    justify-content: stretch;
+    grid-template-areas:
+      "label"
+      "detail"
+      "control";
+  }
+  .settings-row-pick > .settings-row-control {
+    justify-content: flex-start;
+  }
+  .settings-row-pick .settings-row-label {
+    white-space: normal;
+  }
+}
+/* Settings few people need: closed until asked for, or until one is set. */
+.settings-advanced {
+  border-top: 1px solid var(--border-subtle);
+}
+/* It opens from a chevron, as the app's other folds do, not the browser's
+   triangle. */
+.settings-advanced > summary {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  width: fit-content;
+  padding: 0.75rem 1.25rem;
+  font-size: var(--text-xs);
+  font-weight: 500;
+  color: var(--text-secondary);
+  cursor: pointer;
+  list-style: none;
+}
+.settings-advanced > summary::-webkit-details-marker {
+  display: none;
+}
+.settings-advanced > summary::before {
+  width: 5px;
+  height: 5px;
+  flex: none;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transform: rotate(-45deg);
+  transition: transform 0.15s ease-out;
+  content: "";
+}
+.settings-advanced[open] > summary::before {
+  transform: rotate(45deg);
+}
+.settings-advanced > summary:hover {
+  color: var(--text-primary);
+}
+.settings-advanced > .settings-row {
+  border-top: 1px solid var(--border-subtle);
+}
+@media (prefers-reduced-motion: reduce) {
+  .settings-advanced > summary::before {
+    transition: none;
+  }
 }
 .settings-caution {
   color: var(--status-caution);

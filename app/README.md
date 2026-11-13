@@ -1718,7 +1718,25 @@ default) or Claude Code
 or Codex with a model and a reasoning effort, sent as `fix_backend`,
 `fix_model` and `fix_effort` (`""` returns to the reviews', effort included)
 and reported by `GET api/settings`. A chosen fix agent applies
-in every repository. In the desktop app, the agent selects of Reviews, Fixes
+in every repository. While the agent of Reviews, Fixes or (its own) Data
+extraction is Claude Code, a
+closed **Advanced** disclosure at the end of the section (`ClaudeConfigDirAdvanced`,
+open when a directory is chosen) holds **Configuration directory**:
+Default (the environment's, named in the row from `default_claude_config_dir`), the
+other directories baum knows (`claude_config_dirs`, home written as `~` from `home`), or another path typed and saved
+when its field is left or Enter is pressed. It is sent as `claude_config_dir`
+or `fix_claude_config_dir` (`PUT api/automatic`), or as `claude_config_dir`
+with `PUT api/settings/decisions`, only when it changes (`""` returns to the default;
+fixes that follow reviews have none of their own), and the daemon refuses a
+path that is not an existing directory or that Claude Code is signed out
+with, saying how to sign in; the section shows the refusal and puts the
+control back. The sidebar's plan usage and the tray then show that
+directory's Claude plan too. The sidebar puts an agent's plans under one heading, each on a line naming its directory ("Default" for the daemon's own) and plan; the tray names it after the agent with the directory
+(`config_dir`, `planName`). `GET api/settings` reports all four. The daemon
+takes Codex homes the same way: `codex_home` and `fix_codex_home` (`PUT
+api/automatic`), `codex_home` (`PUT api/settings/decisions`), and `GET
+api/settings` reports `codex_home`, `fix_codex_home`, `default_codex_home`
+and `codex_homes`. In the desktop app, the agent selects of Reviews, Fixes
 and Data extraction label a CLI that reports no sign-in "(not signed in)",
 and while the agent a section uses is one, its row says that section's jobs
 will fail and how to sign in. **Connections** holds the GitHub connection and, in the

@@ -24,7 +24,10 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/baum-ai/baum/agent/claude"
+	"github.com/baum-ai/baum/agent/codex"
 	"github.com/baum-ai/baum/internal/agentcli"
+	"github.com/baum-ai/baum/internal/agentdirs"
 	"github.com/baum-ai/baum/internal/agentplugins"
 	"github.com/baum-ai/baum/internal/agentrequests"
 	"github.com/baum-ai/baum/internal/analytics"
@@ -437,6 +440,8 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 		// refresh: discovery hands it snapshots, and it queues through the
 		// same runner as confirmed jobs.
 		scheduler := &automatic.Scheduler{Registry: registry, Path: database, Discover: discover.PollNow, Groups: groups, Log: log,
+			ClaudeSignedIn: claude.SignedInWithConfigDir(cfg.BackendPaths[config.BackendClaude]),
+			CodexSignedIn:  codex.SignedInWithHome(cfg.BackendPaths[config.BackendCodex]),
 			Hold: func() bool {
 				status, ok := daemon.Self()
 				return ok && (status.Stopping || status.RestartPending)
@@ -669,6 +674,31 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 		// of the sessions in registered clones, the merges, branch updates
 		// and re-runs made from the app, and plan usage samples.
 		plans := planusage.NewService()
+		// The plans of the Claude Code configuration directories and Codex
+		// homes Settings chose for runs show beside the daemon's own.
+		plans.Others = func(ctx context.Context) []planusage.Other {
+			prefs, err := registry.Preferences(ctx)
+			if err != nil {
+				return nil
+			}
+			var others []planusage.Other
+			for _, use := range []struct {
+				provider string
+				agent    agentdirs.Agent
+				dirs     []string
+			}{
+				{"claude", agentdirs.Claude, prefs.ClaudeConfigDirs(cfg)},
+				{"codex", agentdirs.Codex, prefs.CodexHomes(cfg)},
+			} {
+				own := use.agent.Current()
+				for _, dir := range use.dirs {
+					if dir != own {
+						others = append(others, planusage.Other{Provider: use.provider, Dir: dir})
+					}
+				}
+			}
+			return others
+		}
 		planHistory := &planusage.History{Path: database, Service: plans}
 		actions := &analytics.Actions{Path: database}
 		sessionIndex := &analytics.Index{Path: database, Clones: registry, Log: log}
