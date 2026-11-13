@@ -360,3 +360,103 @@ func TestShutdownClosesEventStreams(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+type countingMCP struct{ calls *int }
+
+func (m countingMCP) Authenticate(token string) bool { return token == "mcp-token" }
+func (m countingMCP) ServeHTTP(w http.ResponseWriter, _ *http.Request) {
+	*m.calls++
+	writeJSON(w, map[string]string{"ok": "mcp"})
+}
+
+func TestFetchMetadataRefusesCrossSiteRequests(t *testing.T) {
+	var api, app, mcp int
+	count := func(n *int) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			*n++
+			writeJSON(w, map[string]string{"path": r.URL.Path})
+		})
+	}
+	s, err := New(Options{API: count(&api), App: count(&app), MCP: countingMCP{&mcp}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.Listen(0); err != nil {
+		t.Fatal(err)
+	}
+	ctx, stop := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- s.Serve(ctx) }()
+	t.Cleanup(func() {
+		stop()
+		if err := <-done; err != nil {
+			t.Error(err)
+		}
+	})
+	cookie := &http.Cookie{Name: sessionCookie, Value: s.session}
+	exchange := fmt.Sprintf(`{"token":%q}`, s.launch)
+	routes := []struct {
+		name, method, path, body string
+		mutation, withCookie     bool
+		auth                     string
+	}{
+		{name: "bootstrap", method: "GET", path: "/"},
+		{name: "launch script", method: "GET", path: "/launch.js"},
+		{name: "auth exchange", method: "POST", path: "/api/auth/exchange", body: exchange, mutation: true},
+		{name: "api", method: "GET", path: s.appPath() + "api/repos", withCookie: true},
+		{name: "mcp", method: "POST", path: "/api/mcp", body: `{}`, auth: "Bearer mcp-token"},
+		{name: "static asset", method: "GET", path: s.appPath() + "app.js", withCookie: true},
+	}
+	for _, site := range []struct {
+		value   string
+		refused bool
+	}{
+		{"", false}, {"none", false}, {"same-origin", false},
+		{"same-site", true}, {"cross-site", true}, {"unknown", false},
+	} {
+		for _, route := range routes {
+			t.Run(route.name+"/"+site.value, func(t *testing.T) {
+				before := api + app + mcp
+				r := httptest.NewRequest(route.method, s.origin+route.path, strings.NewReader(route.body))
+				if site.value != "" {
+					r.Header.Set("Sec-Fetch-Site", site.value)
+				}
+				if route.mutation {
+					r.Header.Set("Origin", s.origin)
+				}
+				if route.mutation || route.auth != "" {
+					r.Header.Set("Content-Type", "application/json")
+				}
+				if route.auth != "" {
+					r.Header.Set("Authorization", route.auth)
+				}
+				if route.withCookie {
+					r.AddCookie(cookie)
+				}
+				w := httptest.NewRecorder()
+				s.Handler().ServeHTTP(w, r)
+				if site.refused {
+					if w.Code != 403 || strings.TrimSpace(w.Body.String()) != "cross-site request refused" {
+						t.Fatalf("%d: %s", w.Code, w.Body.String())
+					}
+					if api+app+mcp != before || len(w.Result().Cookies()) != 0 {
+						t.Fatal("a refused request had an effect")
+					}
+					return
+				}
+				if w.Code != 200 {
+					t.Fatalf("%d: %s", w.Code, w.Body.String())
+				}
+			})
+		}
+	}
+}
+
+func TestContentSecurityPolicyNamesFrameSource(t *testing.T) {
+	s := testServer(t)
+	w := request(t, s, "GET", "/", "", "", "", "", "")
+	csp := w.Header().Get("Content-Security-Policy")
+	if !strings.Contains(csp, "frame-src 'self';") || strings.Contains(csp, "blob:") {
+		t.Fatal(csp)
+	}
+}

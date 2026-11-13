@@ -179,12 +179,21 @@ func (s *Server) scoped(path string) (string, bool) {
 func (s *Server) Handler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h := w.Header()
-		h.Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://github.com https://avatars.githubusercontent.com; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; object-src 'none'")
+		h.Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://github.com https://avatars.githubusercontent.com; base-uri 'none'; form-action 'none'; frame-src 'self'; frame-ancestors 'none'; object-src 'none'")
 		h.Set("X-Content-Type-Options", "nosniff")
 		h.Set("Referrer-Policy", "no-referrer")
 		h.Set("Cache-Control", "no-store")
 		if s.origin == "" || r.Host != strings.TrimPrefix(s.origin, "http://") {
 			http.Error(w, "forbidden host", http.StatusForbidden)
+			return
+		}
+		// Browsers label every request with where it came from. The app's own
+		// requests are same-origin and a typed or native navigation is none;
+		// anything a page or frame from another origin sends, even with the
+		// session cookie attached, is refused before any route sees it. Clients
+		// that are not browsers send no label.
+		if site := r.Header.Get("Sec-Fetch-Site"); site == "cross-site" || site == "same-site" {
+			http.Error(w, "cross-site request refused", http.StatusForbidden)
 			return
 		}
 		if r.URL.Path == mcpPath {

@@ -2885,7 +2885,8 @@ Drafts remain local until the person explicitly submits a GitHub review.
 ## Authenticated local application host
 
 `internal/uiserver` binds only IPv4 loopback and owns launch-token exchange,
-HttpOnly strict session cookies, exact Host and mutation Origin/JSON checks.
+HttpOnly strict session cookies, exact Host and mutation Origin/JSON checks, and a
+403 for any request whose `Sec-Fetch-Site` is `cross-site` or `same-site`.
 Cookies are host-scoped across ports, so the browser application, its API and
 its cookie live under a secret `/s/<namespace>/` path returned by the exchange;
 the server strips that prefix before routing to providers and to `Options.App`.

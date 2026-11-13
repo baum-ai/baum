@@ -1234,7 +1234,20 @@ that path. All mutations require the
 exact local Origin and JSON content type, including requests using Bearer
 authentication; `POST /api/mcp` requires the JSON content type but no Origin,
 and refuses a foreign one (see [MCP server for agents](#mcp-server-for-agents)).
-No route enables CORS. The capability is the daemon's app
+No route enables CORS. Right after the Host check, before any route, the
+server refuses with 403 every request whose `Sec-Fetch-Site` header is
+`cross-site` or `same-site`, on every path. Browsers set that header on every
+request and a page cannot change it, so a page from another origin, a
+sandboxed frame or a service on another loopback port cannot make the daemon
+answer, even where the browser would attach the session cookie to a `GET`.
+The header is absent from agent CLIs calling the MCP endpoint, the hook
+command, the desktop shell's own client, health checks and test clients, and
+those pass; the browser app's own requests are `same-origin`, and opening the
+launch URL from the desktop shell or by typing it is `none`; all of these pass.
+Following a link to the launch URL from another web page is refused, and no
+flow of the application depends on one. The page's
+Content-Security-Policy names `frame-src 'self'` explicitly, and the app embeds
+no frame. The capability is the daemon's app
 credential: it is written to `credential.json` (mode 0600) in the daemon's
 state directory, where the desktop app reads it, stays valid for repeated
 exchanges while that daemon runs, and is replaced when a new daemon starts.
