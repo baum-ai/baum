@@ -52,7 +52,7 @@ import { MenuButton, useContextMenu, type MenuItem } from "./context-menu";
 import { ListHeading, type ListTone } from "./list";
 import { useNow } from "./live";
 import { useToast } from "./toast";
-import { LiveSessionDecisions } from "./decisions";
+import { LiveSessionDecisions, type PullRequestDecisionsRead } from "./decisions";
 import { listKeys, useRowFocus, useShortcuts } from "./shortcuts";
 import { SMALL } from "./action-classes";
 import { cn } from "@baum/viewer/components/classnames";
@@ -366,9 +366,11 @@ function WaitingFor({ reason }: { reason: WaitingReason }) {
 export function LiveSessions({
   sessions,
   Link,
+  decisions,
 }: {
   sessions: LiveSession[];
   Link: ComponentType<ViewerLinkProps>;
+  decisions?: PullRequestDecisionsRead | null;
 }) {
   if (sessions.length === 0) return null;
   return (
@@ -377,7 +379,7 @@ export function LiveSessions({
       <ul>
         {sessions.map((s) => (
           <li key={sessionKey(s)}>
-            <LiveSessionCard session={s} Link={Link} />
+            <LiveSessionCard session={s} Link={Link} decisions={decisions} />
           </li>
         ))}
       </ul>
@@ -399,12 +401,14 @@ export function LiveSessionCard({
   open,
   titled = true,
   Link,
+  decisions,
 }: {
   session: LiveSession;
   open?: () => void;
   /** False under a pane already headed by the session's title. */
   titled?: boolean;
   Link: ComponentType<ViewerLinkProps>;
+  decisions?: PullRequestDecisionsRead | null;
 }) {
   const now = useNow();
   return (
@@ -446,7 +450,7 @@ export function LiveSessionCard({
           Open transcript
         </Link>
       </span>
-      <LiveSessionDecisions session={s} />
+      <LiveSessionDecisions session={s} read={decisions} />
     </div>
   );
 }

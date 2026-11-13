@@ -78,6 +78,7 @@ import {
   PullRequestDecisionsList,
   PullRequestDecisionsPane,
   usePullRequestDecisions,
+  type PullRequestDecisionsRead,
 } from "./decisions";
 import { LoadingStatus } from "./nine-dots";
 import { DescriptionDialog } from "./description";
@@ -188,10 +189,11 @@ export function pullRequestSessions(
   linked: SessionListState,
   listed: LiveSession[],
   renderSession: (session: SessionView, focusTurn?: number) => ReactNode,
+  decisions?: PullRequestDecisionsRead | null,
 ): ReviewListSlot {
   return sessionsSlot(linked, {
     renderSession,
-    hosted: listedSessionRows(listed, linked),
+    hosted: listedSessionRows(listed, linked, decisions),
     empty:
       "Sessions on this computer show here while they work on this pull request, and once one of their commits is in it.",
   });
@@ -202,6 +204,7 @@ export function pullRequestSessions(
 export function listedSessionRows(
   listed: LiveSession[],
   linked: SessionListState,
+  decisions?: PullRequestDecisionsRead | null,
 ): HostSessionView[] {
   const linkedIds = new Set(
     linked.status === "ready" ? linked.sessions.map((session) => session.id) : [],
@@ -217,11 +220,13 @@ export function listedSessionRows(
           : s.state !== "running" && s.waiting_reason
             ? "attention"
             : "live",
-      renderCard: (open) => <LiveSessionCard session={s} open={open} Link={ViewerLink} />,
+      renderCard: (open) => (
+        <LiveSessionCard session={s} open={open} Link={ViewerLink} decisions={decisions} />
+      ),
       renderPane: () => (
         <>
           <div className="pb-3">
-            <LiveSessionCard session={s} titled={false} Link={ViewerLink} />
+            <LiveSessionCard session={s} titled={false} Link={ViewerLink} decisions={decisions} />
           </div>
           <EmbeddedLiveTranscript session={s} />
         </>
@@ -419,6 +424,7 @@ export function LocalReview({
     pr.repository,
     pr.number,
     `${ended}:${doc?.review.version ?? 0}`,
+    pr.head_sha,
   );
   // Where an answer's comment lands when it is added to the draft.
   const tour = useMemo(() => (doc ? buildTour(doc) : null), [doc]);
@@ -947,8 +953,9 @@ export function LocalReview({
                       number={pr.number}
                       live={running}
                       revision={`${ended}:${doc.review.version}`}
+                      read={decisions}
                     />
-                    <LiveSessions sessions={running} Link={ViewerLink} />
+                    <LiveSessions sessions={running} Link={ViewerLink} decisions={decisions} />
                     {gaps}
                     {retryNotices}
                     {failed ? (
@@ -1295,6 +1302,7 @@ export function LocalReview({
                               focusTurn={focusTurn}
                             />
                           ),
+                        decisions,
                       )
                     : undefined
                 }

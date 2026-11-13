@@ -774,6 +774,14 @@ export type CapturedDecision = {
 };
 /** What decision capture holds of one session. */
 export type SessionDecisions = {
+  /** Filtering state for a PR; absent on a full session read. */
+  relevance?: {
+    pending: number;
+    unrelated: number;
+    uncertain: number;
+    unavailable: number;
+    failed: number;
+  };
   agent: string;
   session_id: string;
   /** Why capture does not run for the session now: "paused", "off",
