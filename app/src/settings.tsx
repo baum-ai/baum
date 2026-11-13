@@ -54,7 +54,7 @@ import {
   type PanelMode,
   type PanelSettings,
 } from "./console-api";
-import { panelSettingsChanged } from "./session-panel";
+import { onPanelSettingsChanged, panelSettingsChanged } from "./session-panel";
 import {
   RepositoryPicker,
   CloneActions,
@@ -949,9 +949,11 @@ export function SessionPanelSection({ signedOut = [] }: { signedOut?: readonly s
   const [saved, setSaved] = useState<PanelSettings | null>(null);
   const [loadError, setLoadError] = useState("");
   const load = () => readPanelSettings().then(setSaved);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: read once; saves read again
+  // biome-ignore lint/correctness/useExhaustiveDependencies: read once, and again when it changes
   useEffect(() => {
     load().catch((e: unknown) => setLoadError(errorText(e)));
+    // A change to the fix or review agent changes what an unchosen agent follows.
+    return onPanelSettingsChanged(() => void load().catch(() => {}));
   }, []);
   const { save, error, status, failures } = useAutoSave(async () => {
     await load();
@@ -1484,6 +1486,9 @@ export function SettingsPage({
   const gh = githubHealth(github);
   const hooks = setup.desktop ? hooksHealth(setup.view) : null;
   const fix = defaults ? fixSummary(defaults) : null;
+  // The session panel's agent follows the fix agent, and through it the
+  // review agent, unless chosen: it reads its setting again after either.
+  const agentsChanged = () => changed().finally(panelSettingsChanged);
   const connectionTone: Tone =
     gh.tone === "critical"
       ? "critical"
@@ -1665,7 +1670,7 @@ export function SettingsPage({
                 <ReviewsSection
                   automatic={automatic}
                   defaults={defaults}
-                  changed={changed}
+                  changed={agentsChanged}
                   available={
                     setup.desktop && setup.view && !setup.view.hooks.error
                       ? detectedHarnesses(setup.view.hooks.agents)
@@ -1686,7 +1691,7 @@ export function SettingsPage({
           ) : section === "fixes" ? (
             defaults ? (
               <>
-                <FixesSection defaults={defaults} changed={changed} signedOut={signedOut} />
+                <FixesSection defaults={defaults} changed={agentsChanged} signedOut={signedOut} />
                 {/* The panel's agent follows the fix agent unless chosen. */}
                 <SessionPanelSection signedOut={signedOut} />
               </>
