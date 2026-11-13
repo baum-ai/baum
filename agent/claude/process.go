@@ -85,18 +85,22 @@ func (c *Backend) fixArgs(request agent.Request) []string {
 // and no --strict-mcp-config, so their settings, hooks, CLAUDE.md files and
 // MCP servers apply, and baum's server is added next to theirs. The session
 // is always kept; a follow-up turn resumes it. access chooses the permission
-// mode, since nobody can answer a prompt in a --print run: bypassPermissions
-// for full access, acceptEdits to allow file edits only. --allowedTools
-// mcp__baum lets baum's tools run in acceptEdits as well; it adds a rule and
-// removes no tool.
+// mode, since nobody can answer a prompt in a --print run: auto, whose
+// classifier decides each action, for auto access, bypassPermissions for full
+// access, acceptEdits to allow file edits only. --allowedTools mcp__baum lets
+// baum's tools run in auto and acceptEdits as well; it adds a rule and removes
+// no tool.
 func (c *Backend) converseArgs(request agent.Request, access agent.Access) []string {
 	args := []string{"--print", "--output-format", "stream-json", "--verbose", "--include-partial-messages"}
 	if c.Model != "" {
 		args = append(args, "--model", c.Model)
 	}
 	args = append(args, c.effortArgs()...)
-	mode := "bypassPermissions"
-	if access == agent.AccessWorkspace {
+	mode := "auto"
+	switch access {
+	case agent.AccessFull:
+		mode = "bypassPermissions"
+	case agent.AccessWorkspace:
 		mode = "acceptEdits"
 	}
 	args = append(args, "--permission-mode", mode)

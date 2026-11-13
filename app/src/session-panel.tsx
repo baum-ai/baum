@@ -376,11 +376,19 @@ export function SessionPanelHost({
 }
 
 const MODES: { value: PanelMode; label: string }[] = [
+  { value: "auto", label: "Auto" },
   { value: "full", label: "Full access" },
   { value: "workspace", label: "Workspace" },
 ];
+/** How the empty panel says the agent will work, by mode. */
+const modeWorks: Record<PanelMode, string> = {
+  auto: "with its own reviewer approving each action",
+  full: "with your full access",
+  workspace: "in its folder",
+};
 const modeLabel = (mode: string) => MODES.find((m) => m.value === mode)?.label ?? mode;
 const modeDetail: Record<PanelMode, string> = {
+  auto: "Your agent's own reviewer approves each action or blocks the risky ones.",
   full: "Runs your agent as you would with every prompt approved.",
   workspace: "Edits files in its directory; what it would have to ask for is refused.",
 };
@@ -415,7 +423,7 @@ function SessionPanel({
   const { conversation, error: readError, update } = useConversation(id);
   const { proposals, read: readProposals } = useProposals(id);
   const [mode, setMode] = useState<PanelMode | null>(null);
-  const chosenMode = mode ?? settings?.mode ?? "full";
+  const chosenMode = mode ?? settings?.mode ?? "auto";
   // The turn sent from this window: its text and how many prompts the
   // transcript had then, so the prompt shows at once and until the
   // transcript has it.
@@ -741,8 +749,7 @@ function SessionPanel({
           <div className="local-empty session-panel-empty">
             <h3>Start a session</h3>
             <p>
-              {agentName(agent)} works{" "}
-              {chosenMode === "full" ? "with your full access" : "in its folder"}{" "}
+              {agentName(agent)} works {modeWorks[chosenMode]}{" "}
               {page.page === "pull_request"
                 ? "in a checkout of this pull request"
                 : "in a new empty folder"}

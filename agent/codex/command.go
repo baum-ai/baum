@@ -137,9 +137,12 @@ func (c *Backend) command(request agent.Request, endpoint *agent.Endpoint, fix b
 // --ignore-rules or disabled features, no --ephemeral, and no web search,
 // service tier or effort chosen for them. Full access is
 // --dangerously-bypass-approvals-and-sandbox, which exec resume accepts too.
-// Workspace access is the workspace-write sandbox: --sandbox on a first turn,
-// and as config on exec resume, which does not take --sandbox. Approvals are
-// never asked for in either, since nobody could answer them. baum's MCP
+// Auto and workspace access run in the workspace-write sandbox: --sandbox on
+// a first turn, and as config on exec resume, which does not take --sandbox.
+// Auto access lets the agent ask to leave the sandbox and Codex's automatic
+// reviewer answer, as --approve-for-me sets up (exec resume does not take that
+// flag either, so it is config on both turns). Workspace access never asks,
+// since nobody could answer. baum's MCP
 // server is added next to the person's own; the token reaches it through the
 // environment only, set last. The environment is agent.ConverseEnvironment's,
 // so the person's SSH agent, gh and Git settings work, with their agent_env.
@@ -153,9 +156,15 @@ func (c *Backend) converseCommand(request agent.Request, access agent.Access) (a
 	case access == agent.AccessFull:
 		args = append(args, "--dangerously-bypass-approvals-and-sandbox")
 	case request.ResumeSession != "":
-		args = append(args, "-c", `sandbox_mode="workspace-write"`, "-c", `approval_policy="never"`)
+		args = append(args, "-c", `sandbox_mode="workspace-write"`)
 	default:
-		args = append(args, "--sandbox", "workspace-write", "-c", `approval_policy="never"`)
+		args = append(args, "--sandbox", "workspace-write")
+	}
+	switch access {
+	case agent.AccessAuto:
+		args = append(args, "-c", `approval_policy="on-request"`, "-c", `approvals_reviewer="auto_review"`)
+	case agent.AccessWorkspace:
+		args = append(args, "-c", `approval_policy="never"`)
 	}
 	env = agent.WithUserEnv(agent.ConverseEnvironment(os.Environ(), "CODEX_HOME"), c.Env)
 	if request.MCP != nil {
@@ -173,11 +182,11 @@ func (c *Backend) converseCommand(request agent.Request, access agent.Access) (a
 }
 
 // converseBinary resolves the executable and checks its version once per
-// Backend, as localBinary does. Only workspace access runs in Codex's
-// sandbox, so only it needs the sandbox check as well; full access runs
-// without one, on machines where it cannot start too.
+// Backend, as localBinary does. Auto and workspace access run in Codex's
+// sandbox, so they need the sandbox check as well; full access runs without
+// one, on machines where it cannot start too.
 func (c *Backend) converseBinary(ctx context.Context, access agent.Access) (string, error) {
-	if access == agent.AccessWorkspace {
+	if access != agent.AccessFull {
 		return c.localBinary(ctx)
 	}
 	binary, err := exec.LookPath(cmp.Or(c.Binary, "codex"))

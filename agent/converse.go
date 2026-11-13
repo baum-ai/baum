@@ -11,6 +11,12 @@ import (
 type Access string
 
 const (
+	// AccessAuto, the default, leaves what the agent may do without asking to
+	// the agent's own reviewer: Claude Code's auto mode, whose classifier
+	// approves or blocks each action, and Codex's workspace-write sandbox with
+	// its automatic reviewer (approvals_reviewer auto_review) answering each
+	// request to leave it. What the reviewer refuses is refused.
+	AccessAuto Access = "auto"
 	// AccessFull runs the agent as the person would with every prompt
 	// approved: Claude Code's bypassPermissions mode, Codex without approvals
 	// or sandbox.
@@ -23,7 +29,7 @@ const (
 
 // Validate rejects an access level no backend knows.
 func (a Access) Validate() error {
-	if a != AccessFull && a != AccessWorkspace {
+	if a != AccessAuto && a != AccessFull && a != AccessWorkspace {
 		return fmt.Errorf("unknown access %q", string(a))
 	}
 	return nil

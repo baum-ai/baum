@@ -1158,6 +1158,7 @@ const panelAgentOf = (harness: string): PanelAgent | "" =>
   harness === "claude" ? "claude-code" : harness === "codex" ? "codex" : "";
 
 const panelModes: { value: PanelMode; label: string }[] = [
+  { value: "auto", label: "Auto" },
   { value: "full", label: "Full access" },
   { value: "workspace", label: "Workspace" },
 ];
@@ -1256,9 +1257,11 @@ export function SessionPanelSection({ signedOut = [] }: { signedOut?: readonly s
         <SettingRow
           label="Access of a new session"
           detail={
-            draft.mode === "full"
-              ? "Full access runs your agent as you would with every prompt approved: it can push and use gh."
-              : "Workspace lets it edit files in its folder; what it would have to ask for is refused."
+            draft.mode === "auto"
+              ? "Auto lets your agent's own reviewer approve each action or block the risky ones: Claude Code's auto mode, Codex's automatic review."
+              : draft.mode === "full"
+                ? "Full access runs your agent as you would with every prompt approved: it can push and use gh."
+                : "Workspace lets it edit files in its folder; what it would have to ask for is refused."
           }
         >
           <SegmentedControl

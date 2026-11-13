@@ -666,19 +666,24 @@ servers, with baum's `Request.MCP` added beside them, and it always keeps the
 session; `Request.ResumeSession` continues it. The
 final message, at most `agent.MaxConverseBytes` (1 MiB), is the result's
 `Document`; there is no schema, call or token limit, and the caller's context
-bounds the turn. `agent.Access` is `full` or `workspace`. Only Claude's `User`
-and Codex's `Local` profile converse. `claude` runs `--print --output-format
-stream-json --verbose --include-partial-messages [--model M]
---permission-mode bypassPermissions` (full) or `acceptEdits` (workspace),
-`--resume <id>` on a follow-up and `--mcp-config <baum> --allowedTools
-mcp__baum`, with none of `--setting-sources ""`, `--restricted`, `--tools`,
-`--system-prompt` or `--strict-mcp-config`. `codex` runs `exec [resume] --json
---skip-git-repo-check` with `--dangerously-bypass-approvals-and-sandbox`
-(full) or, for workspace, `--sandbox workspace-write` (on `exec resume`, which
-takes no `--sandbox`, `-c sandbox_mode="workspace-write"`) and `-c
+bounds the turn. `agent.Access` is `auto`, `full` or `workspace`. Only
+Claude's `User` and Codex's `Local` profile converse. `claude` runs `--print
+--output-format stream-json --verbose --include-partial-messages [--model M]
+--permission-mode auto` (auto), `bypassPermissions` (full) or `acceptEdits`
+(workspace), `--resume <id>` on a follow-up and `--mcp-config <baum>
+--allowedTools mcp__baum`, with none of `--setting-sources ""`, `--restricted`,
+`--tools`, `--system-prompt` or `--strict-mcp-config`. `codex` runs `exec
+[resume] --json --skip-git-repo-check` with
+`--dangerously-bypass-approvals-and-sandbox` (full) or, for auto and
+workspace, `--sandbox workspace-write` (on `exec resume`, which takes no
+`--sandbox`, `-c sandbox_mode="workspace-write"`) and, for auto, `-c
+approval_policy="on-request" -c approvals_reviewer="auto_review"` (what
+`--approve-for-me` sets, which `exec resume` does not take either: Codex's
+reviewer answers each request to leave the sandbox) or, for workspace, `-c
 approval_policy="never"`, then the `mcp_servers.baum` config and `[--model
 M]`, with none of `--ignore-user-config`, `--ignore-rules`, `--disable` or
-`--ephemeral`; it checks the sandbox before a workspace turn only, and records
+`--ephemeral`. The version floors (Claude Code 2.1.248, Codex 0.156.1) both
+take these. It checks the sandbox before an auto or workspace turn only, and records
 no speed, since the person's `config.toml` may choose a service tier. Both
 run with `agent.ConverseEnvironment` (`LocalEnvironment` plus the SSH agent,
 `GITHUB_TOKEN`, `GH_*` and `GIT_*` but the repository-location Git
@@ -5157,8 +5162,8 @@ through the routes under `/api/console/` (`LocalAPI.Console`, listed below).
 
 A conversation is a row of `console_conversations` in `<state>/app.sqlite`:
 its id (32 hex characters), agent (`claude-code` or `codex`), model (empty for
-the agent's default), mode (`full` or `workspace`, the `agent.Access`; `full`
-by default), directory, the repository, pull request and branch it is a
+the agent's default), mode (`auto`, `full` or `workspace`, the `agent.Access`;
+`auto` by default), directory, the repository, pull request and branch it is a
 checkout of, whether baum created that worktree (`created_worktree`) and,
 separately, whether baum created its branch (`created_branch`; a branch baum
 did not create is the person's, and nothing baum cleans up may ever delete
@@ -5278,8 +5283,8 @@ login shell's, or removes it, so the agent gets a socket that works or none.
 
 A conversation that names no agent, model or mode opens with the panel's
 setting, a global preference in `app.sqlite` (`repos.PanelPreferences`,
-`ResolvePanel`): agent (`claude-code` or `codex`), model, mode (`full`, the
-default, or `workspace`) and where the panel opens (`bottom`, the default, or
+`ResolvePanel`): agent (`claude-code` or `codex`), model, mode (`auto`, the
+default, `full` or `workspace`) and where the panel opens (`bottom`, the default, or
 `top`). An unset agent follows the fix agent (Codex when the fix backend is
 `codex`, Claude Code otherwise) and its model (only a Claude Code or Codex
 fix model counts); an unset model with a chosen agent is that agent's own

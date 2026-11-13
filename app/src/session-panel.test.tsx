@@ -53,7 +53,7 @@ let transcriptTurns: { prompt: string; replies: string[] }[] | null;
 const settings: PanelSettings = {
   agent: "claude-code",
   model: "",
-  mode: "full",
+  mode: "auto",
   position: "bottom",
   agent_source: "fix",
   model_source: "fix",
@@ -65,7 +65,7 @@ const made = (over: Partial<Conversation> = {}): Conversation => ({
   title: "",
   agent: "claude-code",
   model: "",
-  mode: "full",
+  mode: "auto",
   state: "idle",
   directory: "/cache/baum/console/sessions/c1",
   updated_at: new Date().toISOString(),
@@ -758,7 +758,7 @@ it("saves the session panel's setting as it changes", async () => {
   expect(puts().at(-1)!.body).toEqual({
     agent: "codex",
     model: "gpt-6-luna",
-    mode: "full",
+    mode: "auto",
     position: "bottom",
   });
   await act(async () => button("Top")!.click());
