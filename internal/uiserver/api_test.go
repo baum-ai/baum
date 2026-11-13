@@ -67,6 +67,7 @@ func TestLocalAPIRoutesPullRequestDetailsToUpdate(t *testing.T) {
 		"/api/prs/review-threads",
 		"/api/prs/failing-checks",
 		"/api/prs/checks",
+		"/api/prs/check-log",
 		"/api/prs/conflicts",
 		"/api/prs/description",
 	}

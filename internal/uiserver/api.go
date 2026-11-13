@@ -213,6 +213,7 @@ func (a LocalAPI) Handler() *LocalHandler {
 	mux.Handle("POST /api/prs/resolve-thread", update)
 	mux.Handle("GET /api/prs/failing-checks", update)
 	mux.Handle("GET /api/prs/checks", update)
+	mux.Handle("GET /api/prs/check-log", update)
 	mux.Handle("GET /api/prs/description", update)
 	mux.Handle("GET /api/prs/conflicts", update)
 	mux.Handle("POST /api/prs/rerun-job", update)

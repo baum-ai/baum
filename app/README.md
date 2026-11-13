@@ -393,6 +393,22 @@ tooltip. A failing check with a
 then shows "Re-running on GitHub"; a refusal is shown under the check. The
 Checks failing row has no fix of its own: the panel's fix covers the checks.
 
+A failing check that GitHub keeps a log for (`has_log`: a completed GitHub
+Actions run, with its check run `id`) has **Show log** under its status line, a
+chevron toggle (`aria-expanded`) that is folded by default. Nothing reads a log
+until it is opened: opening reads `GET api/prs/check-log` (`CheckLog` in
+`src/checks.tsx`), showing "Reading the log from GitHub…" meanwhile. The log is
+the check's last lines, at most 200 lines and 64 KiB with GitHub's timestamps
+and terminal colours removed, in a monospace block at most 20 rem tall that
+scrolls inside itself, opens scrolled to its end and can be reached with the
+keyboard (`tabIndex` 0, labelled "Log of <check>"), with a **Copy** button and a
+line saying "The end of the log" when it is longer. A check with no log, one
+still running, one GitHub has no log for (it may not have run, or its log is older than the repository keeps) or one too long to show the end of shows that sentence
+instead; a failed read shows its reason with an **Open on GitHub** link. A
+commit status or another app's check has no **Show log** (its **Details** link
+goes to the app's own page). The Ask chat's `check_log` tool returns the same
+tail.
+
 The conflicting files (`ConflictingFiles` in `src/conflicts.tsx`) are asked for
 with `GET api/prs/conflicts`. The daemon fetches the base branch's tip (and the
 head when missing) into the clone's `refs/baum/pull/<N>/` and merges them in

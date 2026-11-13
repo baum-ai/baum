@@ -149,6 +149,7 @@ var actionRoutes = []actionRoute{
 	{pattern: "/api/prs/description", bind: byRepository, params: []string{"pr"}},
 	{pattern: "/api/prs/checks", bind: byRepository, params: []string{"pr", "head_sha"}},
 	{pattern: "/api/prs/failing-checks", bind: byRepository, params: []string{"pr", "head_sha"}},
+	{pattern: "/api/prs/check-log", bind: byRepository, params: []string{"pr", "check"}},
 	{pattern: "/api/prs/review-threads", bind: byRepository, params: []string{"pr", "unresolved"}},
 	{pattern: "/api/prs/conflicts", bind: byRepository, params: []string{"pr"}},
 	{pattern: "/api/prs/merge-options", bind: byRepository, params: []string{"pr"}},

@@ -51,6 +51,14 @@ func (s *Server) pullExtraTools() []Tool {
 		Reads:       []string{"/api/decisions"},
 		Call:        callPullDecisions,
 	}, {
+		Name: "check_log",
+		Description: "The last lines of a failing check's log, as the pull request page shows them under the check (at most 200 lines and 64 KiB, with timestamps and colours removed, cut with truncated set), read from GitHub when asked: only a completed GitHub Actions check has a log, and GitHub drops old ones. " +
+			"The check is one of the pull request's current checks (checks), named by its name or its id.",
+		InputSchema: targetSchema(`"check":{"type":["string","integer"],"minLength":1,"maxLength":300,"description":"The check's name, or its id, as checks lists them."}`, "check"),
+		Scope:       ScopeRepository,
+		Reads:       []string{"/api/index", "/api/prs/checks", "/api/prs/check-log"},
+		Call:        callCheckLog,
+	}, {
 		Name:        "update_branch_options",
 		Description: "What the app offers about bringing the pull request's branch up to date: whether it is behind or conflicts and which update methods apply. Nothing is changed.",
 		InputSchema: targetSchema(""),
@@ -221,6 +229,95 @@ func callPullOption(path string) func(context.Context, CallContext, json.RawMess
 		}
 		return string(body), nil
 	}
+}
+
+// callCheckLog reads the log tail of one of the pull request's checks, as the
+// page does: the checks are read first, as the page lists them, so the check
+// named is one of the pull request's, and the log route is asked only for a
+// check run the list has.
+func callCheckLog(ctx context.Context, c CallContext, args json.RawMessage) (string, error) {
+	repository, number, err := c.pullTarget(args)
+	if err != nil {
+		return "", err
+	}
+	var a struct {
+		Check json.RawMessage `json:"check"`
+	}
+	if err := json.Unmarshal(args, &a); err != nil {
+		return "", err
+	}
+	var name string
+	var id int64
+	if json.Unmarshal(a.Check, &name) != nil {
+		var n json.Number
+		if err := json.Unmarshal(a.Check, &n); err != nil {
+			return "", errors.New("name a check")
+		}
+		if id, err = n.Int64(); err != nil || id < 1 {
+			return "", errors.New("check is not a check id")
+		}
+	} else if name = strings.TrimSpace(name); name == "" {
+		return "", errors.New("name a check")
+	}
+	e, err := c.entry(ctx, repository, number)
+	if err != nil {
+		return "", err
+	}
+	query := pullQuery(repository, number)
+	query.Set("head_sha", e.HeadSHA)
+	body, missing, err := c.get(ctx, "/api/prs/checks", query)
+	if err != nil {
+		return "", err
+	}
+	if missing {
+		return "", errors.New("the pull request's checks are not available")
+	}
+	var list struct {
+		Checks []struct {
+			ID   int64  `json:"id"`
+			Name string `json:"name"`
+		} `json:"checks"`
+	}
+	if err := json.Unmarshal(body, &list); err != nil {
+		return "", errors.New("the checks are not readable")
+	}
+	var matches []int
+	for i, check := range list.Checks {
+		if (id > 0 && check.ID == id) || (id == 0 && check.Name == name) {
+			matches = append(matches, i)
+		}
+	}
+	// An id given as text (a model's habit) is an id when no check has that
+	// name.
+	if n, err := strconv.ParseInt(name, 10, 64); len(matches) == 0 && id == 0 && err == nil && n > 0 {
+		for i, check := range list.Checks {
+			if check.ID == n {
+				matches = append(matches, i)
+			}
+		}
+	}
+	switch {
+	case len(matches) == 0:
+		return "", errors.New("that is not one of the pull request's checks: name or number one that checks lists")
+	case len(matches) > 1:
+		return "", errors.New("several checks have that name: give the check's id")
+	}
+	check := list.Checks[matches[0]]
+	if check.ID == 0 {
+		// A commit status: GitHub keeps no log, and the route names check runs.
+		return compactJSON(map[string]any{"name": check.Name, "available": false, "reason": "no_log",
+			"message": "GitHub keeps no log for this check: it is a commit status, not a GitHub Actions run."})
+	}
+	query.Del("head_sha")
+	query.Set("check", strconv.FormatInt(check.ID, 10))
+	body, missing, err = c.get(ctx, "/api/prs/check-log", query)
+	if err != nil {
+		return "", err
+	}
+	if missing {
+		return "", errors.New("the check's log is not available")
+	}
+	return string(body), nil
 }
 
 // reviewKey is the key the app keeps a pull request's draft review under

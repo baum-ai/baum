@@ -61,7 +61,7 @@ export function TerminalCommand({ command }: { command: string }) {
           {copied || "Copy"}
         </button>
       </div>
-      <span className="visually-hidden" role="status">
+      <span className="visually-hidden sr-only" role="status">
         {copied}
       </span>
     </>

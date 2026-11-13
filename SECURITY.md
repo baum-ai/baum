@@ -1636,12 +1636,39 @@ file the review cites at the review's head (text cut at 512 KiB), the commits
 and commit patches its pull request's commits link, the decisions captured
 from the sessions of its pull requests, the group patches and files its groups'
 reviews cite, and what the app offers about a branch and the failed checks.
+It may also read the last lines of a failing check's log for any check of its
+repository's pull requests (`check_log`; see below).
 It may read the person's own draft review comments and walkthrough place only
 for its own pull request: those are kept by a key that names the repository
 and pull request, the handler cannot tell whose a key is, so the reader refuses
 any key but the action's own pull request's (and any other kind of saved state),
 whatever the repository. A chat reads them for any pull request, as it reads
 the page the person has open.
+
+A failing check's log tail is the one place the pull request page reads a
+check's own output from GitHub beyond its title. It is fetched only when a
+person opens **Show log** or an agent calls `check_log`, never in the
+background and never to fill a list. The daemon reads it with your GitHub
+credentials (`GET /repos/{owner}/{repo}/actions/jobs/{id}/logs`, which answers
+with a redirect to a signed download address: the redirect is followed once,
+only to https, and the token is sent to the API host alone). It first checks
+that the check run is one of the pull request's current checks, so a request
+cannot name another run. It asks the download host for the last 8 MiB of the
+log only (a range request) and streams it, keeping only the last 200 lines and
+64 KiB (timestamps, terminal escapes, control and invisible format characters
+dropped) rather than holding the log; a log too long to read the end of, from a
+host that ignores the range, is answered as too long, never from its middle.
+GitHub masks the secrets it knows in a job log; baum runs the same redactor it
+uses for all text it shows on the tail as well, over each whole line before it
+is cut, and refuses the log if that fails. The tail is held in the daemon's memory only, per
+check run (at most 64, the least recently used going first), is emptied when
+the GitHub account changes or a check is re-run, and is never written to disk.
+A log is the check's own output and so untrusted text, like any CI output: the
+app shows it as plain text, and a tool's answer carries it inside the usual
+untrusted-data fence. An action reads it through `/api/prs/check-log`, a route
+bound to its repository by the `repository` parameter; it can read the tail of
+any check run of its repository's pull requests, not only its own pull
+request's, as it can read their other checks.
 
 A chat's token may also propose a change to the page the user has open, and
 only to something that page shows (on a pull request's page, only that pull

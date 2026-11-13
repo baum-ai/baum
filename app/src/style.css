@@ -6076,6 +6076,54 @@ a.upnext-done-text:hover {
   flex: none;
   gap: 6px;
 }
+/* A failing check's log opens under its row, across the row's width. */
+.upnext-checks > ul > li.upnext-check-row {
+  flex-wrap: wrap;
+}
+/* Show log, under a failing check's status line. */
+.upnext-checks .upnext-log-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  align-self: flex-start;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-tertiary);
+  font: inherit;
+  font-size: var(--text-xs);
+  line-height: 1.45;
+  text-align: left;
+}
+.upnext-checks .upnext-log-toggle:hover {
+  color: var(--text-secondary);
+  text-decoration: underline;
+}
+.upnext-check-log-panel {
+  flex-basis: 100%;
+  min-width: 0;
+}
+.upnext-check-log-text {
+  max-height: 20rem;
+  margin: 0;
+  padding: 8px 10px;
+  overflow: auto;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--surface-wash);
+  color: var(--text-secondary);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: var(--text-xs);
+  line-height: 1.5;
+  white-space: pre;
+}
+.upnext-check-log-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 6px;
+}
 .upnext-page .upnext-thread-resolve:disabled {
   cursor: progress;
 }

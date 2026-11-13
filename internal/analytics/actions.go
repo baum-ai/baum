@@ -119,6 +119,7 @@ type Updater interface {
 	FailingChecks(ctx context.Context, repository github.Repository, number int, head string) (prupdate.Checks, error)
 	RerunJob(ctx context.Context, repository github.Repository, number int, expectedHead string, job int64) error
 	AllChecks(ctx context.Context, repository github.Repository, number int, head string) (prupdate.CheckList, error)
+	CheckLog(ctx context.Context, repository github.Repository, number int, check int64) (prupdate.CheckLog, error)
 	Conflicts(ctx context.Context, repository github.Repository, number int) (prupdate.ConflictFiles, error)
 	Description(ctx context.Context, repository github.Repository, number int) (prupdate.Description, error)
 }
