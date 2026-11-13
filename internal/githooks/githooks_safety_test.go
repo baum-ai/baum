@@ -98,7 +98,7 @@ func TestEnsureLeavesEntireManagedHooksAlone(t *testing.T) {
 	entire := "#!/bin/sh\n# Entire CLI hooks\n# entire hooks git post-commit\n\"$(dirname \"$0\")/post-commit.pre-entire\" \"$@\"\n"
 	writeExecutable(t, filepath.Join(hooks, "post-commit"), entire)
 	report := ensure(t, repo)
-	if outcomes(report)["post-commit"] != Unclaimed || report.Hooks[0].Reason != "managed by Entire" {
+	if outcomes(report)["post-commit"] != Unclaimed {
 		t.Fatalf("report = %+v", report)
 	}
 	if read(t, filepath.Join(hooks, "post-commit")) != entire {

@@ -72,14 +72,15 @@ false there (one `git config` call, bounded to a second), which silences a
 dispatcher the daemon could not take out. The older `hooks git --check HOOK` always declines, so
 dispatchers of earlier versions keep running their own fallback, until the
 daemon repairs those it recognises as baum's (the repaired dispatcher no longer
-falls back to `entire`). A hook Entire manages is left as it is. In a repository
-that uses Entire (its `.entire/settings.json` is in the default branch's tree (origin's, `main`, `master`, `init.defaultBranch`)
-or in a checked-out branch's, or
-checked out in a working tree, or git cannot say) legacy dispatchers that run
-Entire's hooks are all left in place. Elsewhere the daemon also retires the
-legacy `commit-msg` and `prepare-commit-msg` dispatchers, restoring the hook
-they replaced or removing them. Dispatchers it does not recognise can be removed
-by their owner; preserve independent hooks and checkpoint refs.
+falls back to `entire`). Whether a repository uses Entire does not change what
+is installed: an existing hook, Entire's included, is chained like any other.
+A legacy dispatcher that ran Entire's hook itself is replaced, and that call is
+kept as the `<hook>.pre-baum` backup the new dispatcher runs. The legacy
+`commit-msg` and `prepare-commit-msg` dispatchers, which baum no longer
+installs, are retired (the hook they replaced comes back, or they go) unless
+they run Entire's hook; those are left, as are legacy dispatchers that run
+Entire's hook in a clone that opted out. Dispatchers it does not recognise can
+be removed by their owner; preserve independent hooks and checkpoint refs.
 
 The dispatchers guard against loops: one that finds its own hook already running
 (`BAUM_GIT_HOOK_ACTIVE`) does nothing, and none runs a backup that is itself a
