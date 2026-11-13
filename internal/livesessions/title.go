@@ -504,35 +504,18 @@ func (t *Transcripts) describeFiles(k key, path string) (describeSource, error) 
 	src := describeSource{agent: k.agent}
 	switch k.agent {
 	case AgentClaudeCode:
-		root := filepath.Join(home, ".claude", "projects")
-		if path == "" {
-			found, ok := claudeTranscriptByID(root, k.id)
-			if !ok {
-				return src, errors.New("no transcript")
-			}
-			path, src.found = found, found
-		}
-		main, err := inStore(root, path, func(name string) bool { return strings.HasSuffix(name, ".jsonl") })
+		main, _, found, err := claudeTranscript(home, k.id, path)
 		if err != nil {
 			return src, err
 		}
-		src.transcript = main
+		src.transcript, src.found = main, found
 	case AgentCodex:
-		codexHome := filepath.Join(home, ".codex")
-		if path == "" {
-			found, err := findRollout(codexHome, k.id)
-			if err != nil {
-				return src, err
-			}
-			path, src.found = found, found
-		}
-		main, err := inStore(filepath.Join(codexHome, "sessions"), compressedSince(path), func(name string) bool {
-			return codextranscript.IsRolloutName(name)
-		})
+		main, codexHome, found, err := codexRollout(home, k.id, path)
 		if err != nil {
 			return src, err
 		}
-		src.transcript = main
+		src.transcript, src.found = main, found
+		// The thread names of the home the rollout is in.
 		if index, err := inStore(codexHome, filepath.Join(codexHome, "session_index.jsonl"), func(name string) bool {
 			return name == "session_index.jsonl"
 		}); err == nil {

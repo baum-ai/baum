@@ -8,6 +8,8 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"net"
+	"net/url"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -122,9 +124,10 @@ type Request struct {
 	// resumed Claude Code session keeps the system prompt it recorded, so put
 	// per-turn framing in the user prompt.
 	ResumeSession string
-	// MCP, when set, gives the run exactly one MCP server: baum's own, started
-	// as a stdio child of the agent CLI. Nil leaves the run with none, as
-	// every run has been. Only a local (User or Local profile) run supports it.
+	// MCP, when set, gives the run exactly one MCP server: baum's own, the
+	// daemon's /api/mcp route, which the agent CLI reaches over HTTP. Nil
+	// leaves the run with none, as every run has been. Only a local (User or
+	// Local profile) run supports it.
 	MCP *MCPServer
 	// SessionStarted, when set, is called with the session (Claude Code) or
 	// thread (Codex) id as soon as the CLI reports it, before the run ends,
@@ -139,31 +142,41 @@ type Request struct {
 }
 
 // MCPTokenEnv names the environment variable that carries an MCPServer's
-// token to the agent CLI and from it to the server's process. The token is
-// never an argument.
+// token to the agent CLI, which sends it as the bearer token of each request.
+// The token is never an argument or written to the CLI's configuration: the
+// configuration names the variable.
 const MCPTokenEnv = "BAUM_MCP_TOKEN"
 
-// MCPServer is the stdio MCP server a run may start (Request.MCP): Command
-// with Args is what the agent CLI executes, normally the absolute path of the
-// running baum executable with ["mcp"]. Token authenticates the server to the
-// local daemon and reaches it through MCPTokenEnv only.
+// MCPServer is the MCP server a run may reach (Request.MCP): URL is the
+// daemon's MCP route on its loopback app server, such as
+// http://127.0.0.1:43123/api/mcp. Token authenticates the agent to it and
+// reaches the CLI through MCPTokenEnv only.
 type MCPServer struct {
-	Command string
-	Args    []string
-	Token   string
+	URL   string
+	Token string
 }
 
-// Validate rejects a server the CLI could not start or could not authenticate.
+// Validate rejects a server the CLI could not reach or authenticate to. The
+// URL must be plain HTTP on a loopback address, the only place the daemon
+// serves, so the token is never sent anywhere else.
 func (m *MCPServer) Validate() error {
+	u, err := url.Parse(m.URL)
 	switch {
-	case !filepath.IsAbs(m.Command):
-		return errors.New("the MCP server needs the absolute path of its command")
+	case err != nil || u.Scheme != "http" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || u.Port() == "":
+		return errors.New("the MCP server needs an http URL with a port, and no credentials, query or fragment")
+	case !isLoopback(u.Hostname()):
+		return errors.New("the MCP server must be on a loopback address")
 	case m.Token == "":
 		return errors.New("the MCP server needs a token")
 	case strings.ContainsAny(m.Token, "\r\n\x00"):
 		return errors.New("the MCP token is not a single line")
 	}
 	return nil
+}
+
+func isLoopback(host string) bool {
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 // KeepsSession reports whether the request uses a session option, so the CLI

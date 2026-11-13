@@ -17,7 +17,7 @@ const converseSession = "6c2a4f1e-0b7d-4c55-9a7e-2f3b1d0c8e91"
 // confine every other run, the permission mode its access asks for, the
 // session resumed on a follow-up, and baum's server beside the person's own.
 func TestConverseArguments(t *testing.T) {
-	config := `{"mcpServers":{"baum":{"args":["mcp"],"command":"/opt/baum/bin/baum","type":"stdio"}}}`
+	config := `{"mcpServers":{"baum":{"headers":{"Authorization":"Bearer ${BAUM_MCP_TOKEN}"},"type":"http","url":"http://127.0.0.1:43123/api/mcp"}}}`
 	for _, c := range []struct {
 		name   string
 		access agent.Access

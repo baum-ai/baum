@@ -17,8 +17,17 @@ type Preferences = {
   theme: "system" | "light" | "dark";
   key_hints: boolean;
   page_modifier: PageModifier;
+  /** Whether the sidebar stays open beside the page or folds to its glyphs,
+   *  opening over the page under the pointer. */
+  sidebar: SidebarChoice;
 };
-const defaults: Preferences = { theme: "system", key_hints: true, page_modifier: "" };
+export type SidebarChoice = "pinned" | "folded";
+const defaults: Preferences = {
+  theme: "system",
+  key_hints: true,
+  page_modifier: "",
+  sidebar: "pinned",
+};
 const PreferencesContext = createContext({
   preferences: defaults,
   ready: false,
@@ -38,11 +47,17 @@ function normalize(saved: Partial<Preferences>): Preferences {
       saved.page_modifier === "alt"
         ? saved.page_modifier
         : "",
+    sidebar: saved.sidebar === "folded" ? "folded" : "pinned",
   };
 }
 
 function samePreferences(a: Preferences, b: Preferences) {
-  return a.theme === b.theme && a.key_hints === b.key_hints && a.page_modifier === b.page_modifier;
+  return (
+    a.theme === b.theme &&
+    a.key_hints === b.key_hints &&
+    a.page_modifier === b.page_modifier &&
+    a.sidebar === b.sidebar
+  );
 }
 
 export function PreferencesProvider({ children }: { children: ReactNode }) {

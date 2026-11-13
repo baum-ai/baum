@@ -2,7 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import {
   capital,
   leftOf,
-  providerName,
+  planKey,
+  planName,
   readablePlans,
   span,
   tone,
@@ -136,11 +137,10 @@ export function TrayPanelView({
                 const left = typeof win.used_percent === "number" ? leftOf(win.used_percent) : null;
                 const resets = win.resets_at ? Date.parse(win.resets_at) : Number.NaN;
                 return (
-                  <div key={`${plan.provider}:${win.name}`} className="tray-meter">
+                  <div key={`${planKey(plan)}:${win.name}`} className="tray-meter">
                     <div className="tray-meter-line">
                       <span>
-                        <strong>{providerName[plan.provider] ?? plan.provider}</strong> ·{" "}
-                        {capital(win.name)}
+                        <strong>{planName(plan)}</strong> · {capital(win.name)}
                       </span>
                       <span className="tray-muted">
                         {left === null
@@ -151,7 +151,7 @@ export function TrayPanelView({
                     <div
                       className="tray-track"
                       role="meter"
-                      aria-label={`${providerName[plan.provider] ?? plan.provider} ${win.name} left`}
+                      aria-label={`${planName(plan)} ${win.name} left`}
                       aria-valuemin={0}
                       aria-valuemax={100}
                       aria-valuenow={left ?? undefined}

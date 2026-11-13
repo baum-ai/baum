@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/baum-ai/baum/agent"
+	"github.com/baum-ai/baum/internal/agentdirs"
 	"github.com/baum-ai/baum/sessions/collector/claudecode"
 )
 
@@ -19,23 +20,17 @@ var maxRollouts = 50000
 var sessionName = regexp.MustCompile(`^[0-9A-Za-z-]+$`)
 
 // claudeProjects is where Claude Code keeps its sessions: the projects
-// directory of $CLAUDE_CONFIG_DIR, else of ~/.claude.
-func claudeProjects() (string, bool) {
-	if dir := os.Getenv("CLAUDE_CONFIG_DIR"); dir != "" {
-		return filepath.Join(dir, "projects"), true
-	}
-	home, err := os.UserHomeDir()
-	return filepath.Join(home, ".claude", "projects"), err == nil
+// directory of every configuration directory baum knows (agentdirs.Claude.All).
+// A run's agent writes to the one its environment names, which the app's
+// settings can choose, so each is looked in.
+func claudeProjects() []string {
+	return agentdirs.Claude.Under("", "projects")
 }
 
 // codexSessions is where Codex keeps its rollouts: the sessions directory of
-// $CODEX_HOME, else of ~/.codex.
-func codexSessions() (string, bool) {
-	if dir := os.Getenv("CODEX_HOME"); dir != "" {
-		return filepath.Join(dir, "sessions"), true
-	}
-	home, err := os.UserHomeDir()
-	return filepath.Join(home, ".codex", "sessions"), err == nil
+// every Codex home baum knows (agentdirs.Codex.All), as for Claude Code.
+func codexSessions() []string {
+	return agentdirs.Codex.Under("", "sessions")
 }
 
 // resolvedRoot is root with symlinks resolved, as the run directories kept
@@ -98,10 +93,14 @@ func RemoveSessions(root, dir string, ids ...string) error {
 }
 
 func removeClaude(dir string, ids []string) error {
-	projects, ok := claudeProjects()
-	if !ok {
-		return nil
+	var errs []error
+	for _, projects := range claudeProjects() {
+		errs = append(errs, removeClaudeIn(projects, dir, ids))
 	}
+	return errors.Join(errs...)
+}
+
+func removeClaudeIn(projects, dir string, ids []string) error {
 	project := filepath.Join(projects, claudecode.EncodeProjectDir(dir))
 	if filepath.Dir(project) != filepath.Clean(projects) {
 		return nil

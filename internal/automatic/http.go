@@ -8,6 +8,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/baum-ai/baum/agent/claude"
+	"github.com/baum-ai/baum/agent/codex"
+	"github.com/baum-ai/baum/internal/agentdirs"
 	"github.com/baum-ai/baum/internal/config"
 	"github.com/baum-ai/baum/internal/repos"
 )
@@ -23,6 +26,14 @@ type PreferencesInput struct {
 	Effort       *string `json:"effort,omitempty"`
 	FixEffort    *string `json:"fix_effort,omitempty"`
 	PullRequests *string `json:"pull_requests,omitempty"`
+	// The Claude Code configuration directories of reviews and fixes; empty
+	// goes back to the environment's. The route checks each with
+	// agentdirs.Agent.Choose before the save.
+	ClaudeConfigDir    *string `json:"claude_config_dir,omitempty"`
+	FixClaudeConfigDir *string `json:"fix_claude_config_dir,omitempty"`
+	// The Codex homes of reviews and fixes, likewise.
+	CodexHome    *string `json:"codex_home,omitempty"`
+	FixCodexHome *string `json:"fix_codex_home,omitempty"`
 }
 
 // EditPreferences is the change PUT /api/automatic makes of the saved
@@ -47,6 +58,7 @@ func EditPreferences(p repos.Preferences, input PreferencesInput) (repos.Prefere
 		if strings.TrimSpace(*input.FixBackend) == "" {
 			// Back to the same agent as reviews.
 			next.FixBackend, next.FixModel, next.FixEffort = nil, nil, nil
+			next.FixClaudeConfigDir, next.FixCodexHome = nil, nil
 		} else {
 			backend, err := config.ParseBackend(*input.FixBackend)
 			if err != nil {
@@ -72,6 +84,20 @@ func EditPreferences(p repos.Preferences, input PreferencesInput) (repos.Prefere
 			return p, err
 		}
 	}
+	if input.ClaudeConfigDir != nil {
+		next.ClaudeConfigDir = nonEmpty(*input.ClaudeConfigDir)
+	}
+	// Following reviews again sends an empty directory, which is no choice;
+	// one without a fix agent is refused below.
+	if input.FixClaudeConfigDir != nil {
+		next.FixClaudeConfigDir = nonEmpty(*input.FixClaudeConfigDir)
+	}
+	if input.CodexHome != nil {
+		next.CodexHome = nonEmpty(*input.CodexHome)
+	}
+	if input.FixCodexHome != nil {
+		next.FixCodexHome = nonEmpty(*input.FixCodexHome)
+	}
 	if input.PullRequests != nil {
 		next.PullRequests = *input.PullRequests
 		if next.PullRequests == "both" {
@@ -89,7 +115,9 @@ func EditPreferences(p repos.Preferences, input PreferencesInput) (repos.Prefere
 // transaction, so it and the write are one step. An error of check or of
 // EditPreferences saves nothing and is returned as it is. After a save it
 // does what the route does after one: cancels queued automatic jobs that are
-// no longer allowed, wakes the scheduler and tells the app.
+// no longer allowed, wakes the scheduler and tells the app. It does not check
+// configuration directories as the route does (agentdirs.Agent.Choose), so a
+// caller sets none.
 func (s *Scheduler) SavePreferences(ctx context.Context, input PreferencesInput, check func(repos.Preferences) error) error {
 	_, err := s.Registry.UpdatePreferencesIf(ctx, func(p repos.Preferences) (repos.Preferences, error) {
 		if check != nil {
@@ -120,6 +148,14 @@ func (s *Scheduler) preferencesChanged(ctx context.Context) {
 	}
 }
 
+// nonEmpty is a pointer to s, or nil when it is empty.
+func nonEmpty(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return &s
+}
+
 // Handler serves GET and PUT /api/automatic and POST
 // /api/automatic/catch-up (CatchUp). Like the registry handler it
 // does not authenticate: mount it only behind the daemon's authenticated,
@@ -147,6 +183,35 @@ func (s *Scheduler) Handler() http.Handler {
 			return
 		}
 		var invalid error
+		// The directories are checked, and remembered for reading their
+		// sessions, before the choice is stored.
+		claudeSignedIn, codexSignedIn := s.ClaudeSignedIn, s.CodexSignedIn
+		if claudeSignedIn == nil {
+			claudeSignedIn = claude.SignedInWithConfigDir(s.ClaudeBinary)
+		}
+		if codexSignedIn == nil {
+			codexSignedIn = codex.SignedInWithHome(s.CodexBinary)
+		}
+		for _, choice := range []struct {
+			agent    agentdirs.Agent
+			given    *string
+			signedIn agentdirs.SignedIn
+		}{
+			{agentdirs.Claude, input.ClaudeConfigDir, claudeSignedIn},
+			{agentdirs.Claude, input.FixClaudeConfigDir, claudeSignedIn},
+			{agentdirs.Codex, input.CodexHome, codexSignedIn},
+			{agentdirs.Codex, input.FixCodexHome, codexSignedIn},
+		} {
+			if choice.given == nil {
+				continue
+			}
+			dir, err := choice.agent.Choose(r.Context(), *choice.given, choice.signedIn)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			*choice.given = dir
+		}
 		_, err := s.Registry.UpdatePreferences(r.Context(), func(p repos.Preferences) repos.Preferences {
 			var next repos.Preferences
 			if next, invalid = EditPreferences(p, input); invalid != nil {

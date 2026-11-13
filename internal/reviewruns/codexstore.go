@@ -52,24 +52,24 @@ func datedDirs(sessions string, since time.Time) []string {
 	return days
 }
 
-// removeCodex deletes the rollouts of dir's sessions from Codex's store. It
-// lists only the day folders from since on, newest first. A rollout whose
+// removeCodex deletes the rollouts of dir's sessions from Codex's stores (the
+// sessions folder of every Codex home baum knows). It lists only the day folders from since on, newest first. A rollout whose
 // name ends in -<id>.jsonl for one of ids is removed when its recorded cwd is
 // dir. With walk it also reads the first record of the other rollouts (at
-// most maxRollouts) and removes those recording dir as their cwd; that is the
+// most maxRollouts in all) and removes those recording dir as their cwd; that is the
 // fallback for runs with no complete record of their sessions. Nothing else
 // is removed: the cwd of every candidate is checked first.
 func removeCodex(dir string, ids []string, since time.Time, walk bool) error {
 	if len(ids) == 0 && !walk {
 		return nil
 	}
-	sessions, ok := codexSessions()
-	if !ok {
-		return nil
-	}
 	var errs []error
 	scanned := 0
-	for _, day := range datedDirs(sessions, since) {
+	var days []string
+	for _, sessions := range codexSessions() {
+		days = append(days, datedDirs(sessions, since)...)
+	}
+	for _, day := range days {
 		entries, err := os.ReadDir(day)
 		if err != nil {
 			continue

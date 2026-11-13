@@ -15,11 +15,20 @@ export type PlanUsageEntry = {
   plan?: string;
   windows: PlanWindow[];
   fetched_at: string;
+  /** Set on a second Claude plan: the Claude Code configuration directory
+   *  whose sign-in it is, home written as ~. */
+  config_dir?: string;
 };
 
 /** "weekly" reads "Weekly", "pro" reads "Pro". */
 export const capital = (text: string) => text.charAt(0).toUpperCase() + text.slice(1);
 export const providerName = { claude: "Claude Code", codex: "Codex" } as const;
+/** A plan's name where it stands alone: its agent, and the configuration
+ *  directory of a second plan of the same agent. */
+export const planName = (plan: PlanUsageEntry) =>
+  `${providerName[plan.provider] ?? plan.provider}${plan.config_dir ? ` (${plan.config_dir})` : ""}`;
+/** What tells a plan from the others in a list. */
+export const planKey = (plan: PlanUsageEntry) => `${plan.provider}:${plan.config_dir ?? ""}`;
 /** The daemon caches for five minutes, so asking more often only repeats its answer. */
 export const PLAN_USAGE_REFRESH_MS = 5 * 60 * 1000;
 /** How often "resets in" is worked out again between readings. */
@@ -151,6 +160,47 @@ export function PlanUsageRailView({ plans, now }: { plans: PlanUsageEntry[]; now
   const figures = lines.flatMap((line) => (line.left === null ? [] : [line.left]));
   const lowest = figures.length ? Math.min(...figures) : null;
   const name = (plan: PlanUsageEntry) => providerName[plan.provider] ?? plan.provider;
+  const signedInAt = (plan: PlanUsageEntry) => `${name(plan)} signed in at ${plan.config_dir}`;
+  // The plans of one agent together, in the order the agents first appear.
+  const groups: PlanUsageEntry[][] = [];
+  for (const plan of plans) {
+    const group = groups.find((g) => g[0]!.provider === plan.provider);
+    if (group) group.push(plan);
+    else groups.push([plan]);
+  }
+  const windows = (plan: PlanUsageEntry) =>
+    lines
+      .filter((line) => line.plan === plan)
+      .map(({ win, left, reset, at }) => (
+        <div key={win.name} className="plan-rail-window" data-window={win.name}>
+          <span className="plan-rail-line">
+            <span>
+              {capital(win.name)}
+              {left === null ? null : (
+                <>
+                  {" · "}
+                  <span className="plan-rail-left" style={{ color: tone(left) }}>
+                    {left}%
+                  </span>
+                </>
+              )}
+            </span>
+            <span className="plan-rail-reset" title={at}>
+              {reset}
+            </span>
+          </span>
+          <span
+            className="plan-rail-track"
+            role="meter"
+            aria-label={`${planName(plan)} ${win.name} left`}
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-valuenow={left ?? undefined}
+          >
+            {left === null ? null : <span style={{ width: `${left}%`, background: tone(left) }} />}
+          </span>
+        </div>
+      ));
   return (
     // Not a named region: its own heading says what it is, and the Analytics
     // page's "Plan usage" card is the region of that name.
@@ -159,46 +209,43 @@ export function PlanUsageRailView({ plans, now }: { plans: PlanUsageEntry[]; now
         <span>Plan usage</span>
         {age ? <span className="plan-rail-age">{age}</span> : null}
       </div>
-      {plans.map((plan) => (
-        <div key={plan.provider} className="plan-rail-plan" data-provider={plan.provider}>
+      {groups.map((group) => (
+        <div key={group[0]!.provider} className="plan-rail-plan" data-provider={group[0]!.provider}>
           <span className="plan-rail-name">
-            {name(plan)}
-            {plan.plan ? <span className="plan-rail-tier">{capital(plan.plan)}</span> : null}
+            {name(group[0]!)}
+            {group.length === 1 && group[0]!.plan ? (
+              <span className="plan-rail-tier">{capital(group[0]!.plan)}</span>
+            ) : null}
+            {group.length === 1 && group[0]!.config_dir ? (
+              <span className="plan-rail-dir" title={signedInAt(group[0]!)}>
+                {group[0]!.config_dir}
+              </span>
+            ) : null}
           </span>
-          {lines
-            .filter((line) => line.plan === plan)
-            .map(({ win, left, reset, at }) => (
-              <div key={win.name} className="plan-rail-window" data-window={win.name}>
-                <span className="plan-rail-line">
-                  <span>
-                    {capital(win.name)}
-                    {left === null ? null : (
-                      <>
-                        {" · "}
-                        <span className="plan-rail-left" style={{ color: tone(left) }}>
-                          {left}%
-                        </span>
-                      </>
-                    )}
-                  </span>
-                  <span className="plan-rail-reset" title={at}>
-                    {reset}
-                  </span>
-                </span>
-                <span
-                  className="plan-rail-track"
-                  role="meter"
-                  aria-label={`${name(plan)} ${win.name} left`}
-                  aria-valuemin={0}
-                  aria-valuemax={100}
-                  aria-valuenow={left ?? undefined}
+          {group.length === 1
+            ? windows(group[0]!)
+            : group.map((plan) => (
+                // Several sign-ins of one agent: each under a line naming its
+                // configuration directory and plan.
+                <div
+                  key={planKey(plan)}
+                  className="plan-rail-account"
+                  data-config-dir={plan.config_dir ?? ""}
                 >
-                  {left === null ? null : (
-                    <span style={{ width: `${left}%`, background: tone(left) }} />
-                  )}
-                </span>
-              </div>
-            ))}
+                  <span className="plan-rail-line plan-rail-account-head">
+                    <span
+                      className="plan-rail-account-dir"
+                      title={plan.config_dir ? signedInAt(plan) : undefined}
+                    >
+                      {plan.config_dir ?? "Default"}
+                    </span>
+                    {plan.plan ? (
+                      <span className="plan-rail-reset">{capital(plan.plan)}</span>
+                    ) : null}
+                  </span>
+                  {windows(plan)}
+                </div>
+              ))}
         </div>
       ))}
       <span

@@ -171,7 +171,7 @@ func (c *Backend) run(ctx context.Context, request agent.Request, kind runKind, 
 	}
 	if request.MCP != nil {
 		if c.Profile != Local {
-			return result, errors.New("codex: only the Local profile can start an MCP server")
+			return result, errors.New("codex: only the Local profile can use an MCP server")
 		}
 		if err := request.MCP.Validate(); err != nil {
 			return result, fmt.Errorf("codex: %w", err)
@@ -563,30 +563,19 @@ func (b *limitedBuffer) Write(p []byte) (int, error) {
 	return n, nil
 }
 
-// mcpEnvVars are the variables Codex forwards to baum's MCP server.
-var mcpEnvVars = []string{agent.MCPTokenEnv, "XDG_STATE_HOME", "XDG_RUNTIME_DIR"}
-
 // mcpConfig configures baum's own MCP server, the only one a run has:
-// --ignore-user-config already keeps the user's servers out. The token is not
-// in it. Codex starts an MCP server with only a default set of variables, so
-// env_vars names the ones to forward from its own environment, which keeps the
-// token out of every argument. They are the token and what baum mcp needs to
-// find the daemon: daemon.DefaultPaths reads XDG_STATE_HOME and XDG_RUNTIME_DIR
-// (and HOME or USERPROFILE, which Codex's default set already carries).
-// Names that are unset are skipped.
+// --ignore-user-config already keeps the user's servers out. Codex reaches it
+// over HTTP and reads the bearer token from the variable that
+// bearer_token_env_var names in its own environment, so the token is in no
+// argument.
 func mcpConfig(server *agent.MCPServer) ([]string, error) {
-	command, err := json.Marshal(server.Command)
+	url, err := json.Marshal(server.URL)
 	if err != nil {
 		return nil, err
 	}
-	args, err := json.Marshal(append([]string{}, server.Args...))
+	name, err := json.Marshal(agent.MCPTokenEnv)
 	if err != nil {
 		return nil, err
 	}
-	names, err := json.Marshal(mcpEnvVars)
-	if err != nil {
-		return nil, err
-	}
-	return []string{"-c", "mcp_servers.baum.command=" + string(command), "-c", "mcp_servers.baum.args=" + string(args),
-		"-c", "mcp_servers.baum.env_vars=" + string(names)}, nil
+	return []string{"-c", "mcp_servers.baum.url=" + string(url), "-c", "mcp_servers.baum.bearer_token_env_var=" + string(name)}, nil
 }
