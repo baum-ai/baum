@@ -2447,8 +2447,9 @@ dialog.local-dialog-wide {
 }
 .settings-row-pick {
   display: grid;
-  grid-template-columns: auto minmax(0, 26rem);
-  justify-content: space-between;
+  /* The same column in every row, whatever the title's length, so the
+     controls line up. */
+  grid-template-columns: minmax(0, 1fr) min(26rem, 60%);
   grid-template-areas:
     "label control"
     "detail detail";
@@ -2495,7 +2496,6 @@ dialog.local-dialog-wide {
 @container (max-width: 40rem) {
   .settings-row-pick {
     grid-template-columns: minmax(0, 1fr);
-    justify-content: stretch;
     grid-template-areas:
       "label"
       "detail"
