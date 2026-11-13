@@ -251,11 +251,14 @@ func SessionWorkingDir(path string) (string, bool, error) {
 	return filepath.Clean(entry.Meta.CWD), true, nil
 }
 
+// softIndex is the partial index of sessionsDir used when a full scan of the
+// store fails. It reads first records through cache but never ends its scan:
+// it does not walk archived_sessions, so ending it would evict the archived
+// entries and the next full scan would read them all again.
 func softIndex(sessionsDir string, cache *Cache) ([]Entry, model.ScanReport) {
 	var index []Entry
 	var report model.ScanReport
 	scan := cache.beginScan(filepath.Dir(sessionsDir))
-	defer scan.end()
 	_ = filepath.WalkDir(sessionsDir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			if path == sessionsDir {

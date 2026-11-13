@@ -169,11 +169,15 @@ func TestPartialIndexReadsThroughTheCache(t *testing.T) {
 	day := filepath.Join(s.dir, "2026", "08", "01")
 	// Two rollouts claiming one thread id fail the full scan.
 	writeFile(t, filepath.Join(day, "rollout-dup.jsonl"), s.root("root"))
+	// The partial index does not walk archived rollouts; the full scan that
+	// failed before it did, and they stay cached.
+	writeFile(t, filepath.Join(filepath.Dir(s.dir), "archived_sessions", "rollout-archived.jsonl"), s.root("archived"))
 	cache := &Cache{}
 	first, firstReport, err := FindSessionsCached(s.dir, []string{s.repo}, cache)
 	if err != nil {
 		t.Fatal(err)
 	}
+	reads := cache.Reads()
 	if len(first) == 0 || !strings.Contains(strings.Join(first[0].Warnings, "\n"), "partial index") {
 		t.Fatalf("sessions = %+v, want the partial index warning", first)
 	}
@@ -196,6 +200,9 @@ func TestPartialIndexReadsThroughTheCache(t *testing.T) {
 	}
 	if !reflect.DeepEqual(second, first) || !reflect.DeepEqual(secondReport, firstReport) {
 		t.Fatalf("second scan differs:\ngot  %+v %+v\nwant %+v %+v", second, secondReport, first, firstReport)
+	}
+	if got := cache.Reads(); got != reads {
+		t.Fatalf("second scan read %d first records from disk, want none", got-reads)
 	}
 }
 
