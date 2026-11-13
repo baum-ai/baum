@@ -51,7 +51,7 @@ export function HistoryMenu({
         aria-controls={id}
         popoverTarget={id}
         className={cn(
-          "inline-flex h-8 max-w-full items-center gap-2 rounded-(--radius-sm) border border-default bg-surface-card px-2 text-base text-primary",
+          "inline-flex h-8 max-w-full items-center gap-2 rounded-sm border border-default bg-surface-card px-2 text-base text-primary",
           FOCUS_RING,
         )}
         onClick={() => {
@@ -82,13 +82,13 @@ export function HistoryMenu({
         role="group"
         aria-label={`${label} options`}
         onToggle={(event) => setOpen(event.newState === "open")}
-        className="fixed m-0 w-60 max-w-[calc(100vw-1rem)] overflow-y-auto rounded-(--radius-md) border border-default bg-surface-card p-1 text-base text-primary shadow-overlay"
+        className="fixed m-0 w-60 max-w-[calc(100vw-1rem)] overflow-y-auto rounded-md border border-default bg-surface-card p-1 text-base text-primary shadow-overlay"
       >
         <button
           type="button"
           aria-pressed={value === null}
           className={cn(
-            "flex w-full items-center gap-2 rounded-(--radius-sm) px-2 py-2 text-left hover:bg-surface-hover",
+            "flex w-full items-center gap-2 rounded-sm px-2 py-2 text-left hover:bg-surface-hover",
             FOCUS_RING,
           )}
           onClick={() => choose(null)}
@@ -97,16 +97,13 @@ export function HistoryMenu({
           Current · v{currentVersion}
         </button>
         {versions.map((version) => (
-          <div
-            key={version}
-            className="flex items-center rounded-(--radius-sm) hover:bg-surface-hover"
-          >
+          <div key={version} className="flex items-center rounded-sm hover:bg-surface-hover">
             <button
               type="button"
               aria-label={`View v${version}`}
               aria-pressed={value?.version === version && !value.compare}
               className={cn(
-                "flex min-w-0 flex-1 items-center gap-2 rounded-(--radius-sm) px-2 py-2 text-left",
+                "flex min-w-0 flex-1 items-center gap-2 rounded-sm px-2 py-2 text-left",
                 FOCUS_RING,
               )}
               onClick={() => choose({ version, compare: false })}
@@ -133,7 +130,7 @@ export function HistoryMenu({
                 type="button"
                 disabled={action.disabled}
                 className={cn(
-                  "flex w-full items-center gap-2 rounded-(--radius-sm) px-2 py-2 text-left hover:bg-surface-hover disabled:cursor-default disabled:text-tertiary disabled:hover:bg-transparent",
+                  "flex w-full items-center gap-2 rounded-sm px-2 py-2 text-left hover:bg-surface-hover disabled:cursor-default disabled:text-tertiary disabled:hover:bg-transparent",
                   FOCUS_RING,
                 )}
                 onClick={() => {

@@ -427,7 +427,7 @@ function TableCard({ table, changes }: { table: SchemaTable; changes: TableChang
     <article
       aria-label={`${table.name} table${isNew ? " · new table" : " · existing table"}`}
       className={cn(
-        "overflow-hidden rounded-(--radius-sm) border bg-surface-card",
+        "overflow-hidden rounded-sm border bg-surface-card",
         isContext ? "border-subtle" : "border-default",
       )}
     >
@@ -634,7 +634,7 @@ function SchemaMap({
       {unplaced.length > 0 && (
         <section
           aria-label="Other schema changes"
-          className="mt-3 overflow-hidden rounded-(--radius-sm) border border-default bg-surface-card"
+          className="mt-3 overflow-hidden rounded-sm border border-default bg-surface-card"
         >
           <h6 className="border-b border-subtle bg-surface-wash px-3 py-2 text-xs font-semibold tracking-[0.12em] uppercase text-tertiary">
             Other changes
@@ -665,7 +665,7 @@ function SchemaMap({
             {relationshipEnds.map(({ relationship, marks }, index) => (
               <li
                 key={`${index}:${relationship.from}:${relationship.to}`}
-                className="min-w-0 rounded-(--radius-sm) border border-default bg-surface-card p-3"
+                className="min-w-0 rounded-sm border border-default bg-surface-card p-3"
               >
                 <RelationshipDiagram
                   relationship={relationship}
@@ -749,7 +749,7 @@ function EntityBox({
   const key = keyMark ?? (listed?.key === "primary" ? "PK" : undefined);
 
   return (
-    <div className="min-w-0 overflow-hidden rounded-(--radius-sm) border border-default bg-surface-card">
+    <div className="min-w-0 overflow-hidden rounded-sm border border-default bg-surface-card">
       <div className="flex flex-wrap items-center gap-1.5 border-b border-default bg-surface-wash px-2 py-1.5">
         <span className="min-w-0 font-mono text-xs font-semibold text-primary [overflow-wrap:anywhere]">
           {name}

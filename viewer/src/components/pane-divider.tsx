@@ -109,7 +109,7 @@ export function PaneDivider({
       aria-valuemax={clamp(limits.max)}
       tabIndex={0}
       className={cn(
-        "group hidden cursor-col-resize touch-none items-stretch justify-center rounded-(--radius-sm) wide:flex",
+        "group hidden cursor-col-resize touch-none items-stretch justify-center rounded-sm wide:flex",
         FOCUS_RING,
         className,
       )}

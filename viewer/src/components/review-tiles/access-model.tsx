@@ -227,7 +227,7 @@ function ChangedCapability({
   return (
     <article
       aria-label={capability.label}
-      className="overflow-hidden rounded-(--radius-sm) border border-default bg-surface-card"
+      className="overflow-hidden rounded-sm border border-default bg-surface-card"
     >
       <div className="flex flex-wrap items-center gap-2 border-b border-subtle bg-surface-wash px-3 py-2">
         <h6 className="min-w-0 text-base font-semibold text-primary">{capability.label}</h6>
@@ -402,7 +402,7 @@ function ActorChip({ actor, mark }: { actor: AccessActor; mark?: ActorMark }) {
   return (
     <li
       className={cn(
-        "inline-flex items-center gap-1.5 rounded-(--radius-sm) border border-default bg-surface-wash px-2 py-0.5 text-xs",
+        "inline-flex items-center gap-1.5 rounded-sm border border-default bg-surface-wash px-2 py-0.5 text-xs",
         mark ? "text-primary" : "text-secondary",
       )}
     >
@@ -447,7 +447,7 @@ function EffectiveAccess({ change }: { change: AccessModelChange }) {
                     <span
                       key={capability.id}
                       className={cn(
-                        "inline-flex items-center gap-1.5 rounded-(--radius-sm) border border-default bg-surface-wash px-2 py-0.5 text-xs",
+                        "inline-flex items-center gap-1.5 rounded-sm border border-default bg-surface-wash px-2 py-0.5 text-xs",
                         capability.granted?.includes(actor.id) ? "text-primary" : "text-secondary",
                       )}
                     >

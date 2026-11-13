@@ -29,7 +29,7 @@ import { useDisclosure } from "./use-disclosure";
  *  and authors load; these only show them and report changes. */
 
 const FIELD = cn(
-  "rounded-(--radius-sm) border border-default bg-surface-card px-2 py-1 text-base text-primary",
+  "rounded-sm border border-default bg-surface-card px-2 py-1 text-base text-primary",
   FOCUS_RING,
 );
 
@@ -127,7 +127,7 @@ export function DecisionFilterControls({
       <details {...filtersPopover.detailsProps} className="group relative">
         <summary
           className={cn(
-            "flex cursor-pointer list-none items-center gap-1.5 rounded-(--radius-sm) border border-default bg-surface-card px-2.5 py-1 text-base text-secondary group-open:bg-surface-pressed group-open:text-primary hover:bg-surface-hover hover:text-primary [&::-webkit-details-marker]:hidden",
+            "flex cursor-pointer list-none items-center gap-1.5 rounded-sm border border-default bg-surface-card px-2.5 py-1 text-base text-secondary group-open:bg-surface-pressed group-open:text-primary hover:bg-surface-hover hover:text-primary [&::-webkit-details-marker]:hidden",
             FOCUS_RING,
           )}
         >
@@ -144,7 +144,7 @@ export function DecisionFilterControls({
           />
         </summary>
         {/* Kept mounted while closed, so a half-typed path survives. */}
-        <div className="absolute left-0 z-20 mt-1 grid w-[min(34rem,calc(100vw-2rem))] grid-cols-[auto_minmax(0,1fr)] items-center gap-x-4 gap-y-3 rounded-(--radius-md) border border-default bg-surface-card p-4 shadow-overlay">
+        <div className="absolute left-0 z-20 mt-1 grid w-[min(34rem,calc(100vw-2rem))] grid-cols-[auto_minmax(0,1fr)] items-center gap-x-4 gap-y-3 rounded-md border border-default bg-surface-card p-4 shadow-overlay">
           <FilterRowLabel>File</FilterRowLabel>
           <FileFilter files={files} value={shown.file} onChange={(file) => change({ file })} />
           <FilterRowLabel>Author</FilterRowLabel>
@@ -551,7 +551,7 @@ function CategoryPicker({
     <details {...detailsProps} className="group relative">
       <summary
         className={cn(
-          "flex cursor-pointer list-none items-center gap-1.5 rounded-(--radius-sm) border px-2.5 py-1 text-base [&::-webkit-details-marker]:hidden",
+          "flex cursor-pointer list-none items-center gap-1.5 rounded-sm border px-2.5 py-1 text-base [&::-webkit-details-marker]:hidden",
           FOCUS_RING,
           selected.length === 0
             ? "border-default bg-surface-card text-secondary hover:bg-surface-hover"
@@ -565,12 +565,12 @@ function CategoryPicker({
           className="flex-none text-tertiary transition-transform duration-150 group-open:rotate-180"
         />
       </summary>
-      <fieldset className="absolute left-0 z-20 mt-1 w-56 rounded-(--radius-md) border border-default bg-surface-card p-1 shadow-overlay">
+      <fieldset className="absolute left-0 z-20 mt-1 w-56 rounded-md border border-default bg-surface-card p-1 shadow-overlay">
         <legend className="sr-only">Categories</legend>
         {CATEGORIES.map((category) => (
           <label
             key={category}
-            className="flex cursor-pointer items-center gap-2 rounded-(--radius-sm) px-2 py-1.5 text-base hover:bg-surface-hover"
+            className="flex cursor-pointer items-center gap-2 rounded-sm px-2 py-1.5 text-base hover:bg-surface-hover"
           >
             <input
               type="checkbox"

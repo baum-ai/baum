@@ -82,16 +82,16 @@ describe("Markdown output", () => {
       <p>quote</p>
       </blockquote>
       <hr class="border-subtle"/>
-      <p><del>gone</del> and <code class="rounded-(--radius-sm) bg-code-fill px-1 py-0.5 text-base">code</code> and <strong>bold</strong></p></div>",
+      <p><del>gone</del> and <code class="rounded-sm bg-code-fill px-1 py-0.5 text-base">code</code> and <strong>bold</strong></p></div>",
         "comment": "<div class="space-y-2"><p>visible  text</p></div>",
-        "details": "<div class="space-y-2"><details class="rounded-(--radius-sm) border border-subtle p-2"><summary class="cursor-pointer font-medium">More</summary>
+        "details": "<div class="space-y-2"><details class="rounded-sm border border-subtle p-2"><summary class="cursor-pointer font-medium">More</summary>
       <p>hidden <strong>bold</strong></p>
       </details></div>",
-        "fence": "<div class="space-y-2"><pre class="overflow-x-auto rounded-(--radius-sm) bg-code-fill p-2 text-base"><code class="language-ts">const x = 1 &lt; 2;
+        "fence": "<div class="space-y-2"><pre class="overflow-x-auto rounded-sm bg-code-fill p-2 text-base"><code class="language-ts">const x = 1 &lt; 2;
       </code></pre>
-      <pre class="overflow-x-auto rounded-(--radius-sm) bg-code-fill p-2 text-base"><code>plain &lt;b&gt;fence&lt;/b&gt;
+      <pre class="overflow-x-auto rounded-sm bg-code-fill p-2 text-base"><code>plain &lt;b&gt;fence&lt;/b&gt;
       </code></pre></div>",
-        "img": "<div class="space-y-2"><p>before <span class="inline-block rounded-(--radius-sm) border border-subtle px-2 py-1 text-tertiary italic">shot</span> after</p></div>",
+        "img": "<div class="space-y-2"><p>before <span class="inline-block rounded-sm border border-subtle px-2 py-1 text-tertiary italic">shot</span> after</p></div>",
         "kbd": "<div class="space-y-2"><p>Press <kbd>Ctrl</kbd> + <kbd>C</kbd></p></div>",
         "lessThan": "<div class="space-y-2"><p>a &lt; b and c &gt; d</p></div>",
         "plain": "<div class="space-y-2"><p>Just some text.<br/>
@@ -114,7 +114,7 @@ describe("Markdown output", () => {
       <li><input type="checkbox" disabled="" checked=""/> done</li>
       <li><input type="checkbox" disabled=""/> todo</li>
       </ul></div>",
-        "xss": "<div class="space-y-2"><span class="inline-block rounded-(--radius-sm) border border-subtle px-2 py-1 text-tertiary italic">Image</span><a target="_blank" rel="noreferrer" class="text-link underline">x</a></div>",
+        "xss": "<div class="space-y-2"><span class="inline-block rounded-sm border border-subtle px-2 py-1 text-tertiary italic">Image</span><a target="_blank" rel="noreferrer" class="text-link underline">x</a></div>",
       }
     `);
   });
@@ -140,14 +140,14 @@ describe("Markdown output", () => {
       <p>quote</p>
       </blockquote>
       <hr class="border-subtle"/>
-      <p><del>gone</del> and <code class="rounded-(--radius-sm) bg-code-fill px-1 py-0.5 text-base">code</code> and <strong>bold</strong></p></div>",
+      <p><del>gone</del> and <code class="rounded-sm bg-code-fill px-1 py-0.5 text-base">code</code> and <strong>bold</strong></p></div>",
         "comment": "<div class="space-y-2"><p>visible &lt;!-- hidden marker --&gt; text</p></div>",
         "details": "<div class="space-y-2">&lt;details&gt;&lt;summary&gt;More&lt;/summary&gt;
       <p>hidden <strong>bold</strong></p>
       &lt;/details&gt;</div>",
-        "fence": "<div class="space-y-2"><pre class="overflow-x-auto rounded-(--radius-sm) bg-code-fill p-2 text-base"><code class="language-ts">const x = 1 &lt; 2;
+        "fence": "<div class="space-y-2"><pre class="overflow-x-auto rounded-sm bg-code-fill p-2 text-base"><code class="language-ts">const x = 1 &lt; 2;
       </code></pre>
-      <pre class="overflow-x-auto rounded-(--radius-sm) bg-code-fill p-2 text-base"><code>plain &lt;b&gt;fence&lt;/b&gt;
+      <pre class="overflow-x-auto rounded-sm bg-code-fill p-2 text-base"><code>plain &lt;b&gt;fence&lt;/b&gt;
       </code></pre></div>",
         "img": "<div class="space-y-2"><p>before &lt;img src=&quot;https://example.com/x.png&quot; alt=&quot;shot&quot;&gt; after</p></div>",
         "kbd": "<div class="space-y-2"><p>Press &lt;kbd&gt;Ctrl&lt;/kbd&gt; + &lt;kbd&gt;C&lt;/kbd&gt;</p></div>",
@@ -185,16 +185,16 @@ describe("Markdown output", () => {
       <p>quote</p>
       </blockquote>
       <hr class="border-subtle"/>
-      <p><del>gone</del> and <code class="rounded-(--radius-xs) bg-code-fill px-1 py-px font-mono text-base text-primary">code</code> and <strong>bold</strong></p></div>",
+      <p><del>gone</del> and <code class="rounded-xs bg-code-fill px-1 py-px font-mono text-base text-primary">code</code> and <strong>bold</strong></p></div>",
         "comment": "<div class="space-y-3"><p>visible  text</p></div>",
-        "details": "<div class="space-y-3"><details class="rounded-(--radius-sm) border border-subtle p-2"><summary class="cursor-pointer font-medium">More</summary>
+        "details": "<div class="space-y-3"><details class="rounded-sm border border-subtle p-2"><summary class="cursor-pointer font-medium">More</summary>
       <p>hidden <strong>bold</strong></p>
       </details></div>",
-        "fence": "<div class="space-y-3"><pre class="overflow-x-auto rounded-(--radius-sm) bg-code-fill p-2 text-base"><code class="language-ts">const x = 1 &lt; 2;
+        "fence": "<div class="space-y-3"><pre class="overflow-x-auto rounded-sm bg-code-fill p-2 text-base"><code class="language-ts">const x = 1 &lt; 2;
       </code></pre>
-      <pre class="overflow-x-auto rounded-(--radius-sm) bg-code-fill p-2 text-base"><code>plain &lt;b&gt;fence&lt;/b&gt;
+      <pre class="overflow-x-auto rounded-sm bg-code-fill p-2 text-base"><code>plain &lt;b&gt;fence&lt;/b&gt;
       </code></pre></div>",
-        "img": "<div class="space-y-3"><p>before <span class="inline-block rounded-(--radius-sm) border border-subtle px-2 py-1 text-tertiary italic">shot</span> after</p></div>",
+        "img": "<div class="space-y-3"><p>before <span class="inline-block rounded-sm border border-subtle px-2 py-1 text-tertiary italic">shot</span> after</p></div>",
         "kbd": "<div class="space-y-3"><p>Press <kbd>Ctrl</kbd> + <kbd>C</kbd></p></div>",
         "lessThan": "<div class="space-y-3"><p>a &lt; b and c &gt; d</p></div>",
         "plain": "<div class="space-y-3"><p>Just some text.<br/>
@@ -217,7 +217,7 @@ describe("Markdown output", () => {
       <li><input type="checkbox" disabled="" checked=""/> done</li>
       <li><input type="checkbox" disabled=""/> todo</li>
       </ul></div>",
-        "xss": "<div class="space-y-3"><span class="inline-block rounded-(--radius-sm) border border-subtle px-2 py-1 text-tertiary italic">Image</span><a target="_blank" rel="noreferrer" class="text-link underline">x</a></div>",
+        "xss": "<div class="space-y-3"><span class="inline-block rounded-sm border border-subtle px-2 py-1 text-tertiary italic">Image</span><a target="_blank" rel="noreferrer" class="text-link underline">x</a></div>",
       }
     `);
   });
@@ -230,7 +230,7 @@ describe("Markdown output", () => {
         </InlineMarkdown>,
       ),
     ).toMatchInlineSnapshot(`
-      "<span class="x"><strong>b</strong> <code class="rounded-(--radius-sm) bg-code-fill px-1 py-0.5">c</code> l &lt;i&gt;t&lt;/i&gt; 
+      "<span class="x"><strong>b</strong> <code class="rounded-sm bg-code-fill px-1 py-0.5">c</code> l &lt;i&gt;t&lt;/i&gt; 
       h</span>"
     `);
   });

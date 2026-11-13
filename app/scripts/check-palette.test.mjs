@@ -27,10 +27,14 @@ test("names the palette utility that replaces an arbitrary palette value", () =>
     ["shadow-(--shadow-overlay)", "shadow-overlay"],
     ["divide-(--border-subtle)", "divide-subtle"],
   ]);
+  assert.deepEqual(found('"rounded-(--radius-sm) sm:rounded-tl-(--radius-lg)"'), [
+    ["rounded-(--radius-sm)", "rounded-sm"],
+    ["rounded-tl-(--radius-lg)", "rounded-tl-lg"],
+  ]);
   // Tokens without a utility for that property, and non-palette variables.
   assert.deepEqual(
     found(
-      '"bg-(--brand-forest) bg-(--border-subtle) outline-(--border-focus) shadow-(--action-shadow) rounded-(--radius-sm) text-(--site-ink)"',
+      '"bg-(--brand-forest) bg-(--border-subtle) outline-(--border-focus) shadow-(--action-shadow) rounded-(--panel-radius) rounded-(--radius-full) text-(--site-ink)"',
     ),
     [],
   );

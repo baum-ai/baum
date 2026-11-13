@@ -305,7 +305,7 @@ export function HunkEvidence({
       <summary
         aria-label={`Code evidence: ${summary}`}
         className={cn(
-          "inline-flex cursor-pointer list-none items-center gap-1 rounded-(--radius-sm) text-xs text-tertiary hover:text-secondary marker:hidden [&::-webkit-details-marker]:hidden",
+          "inline-flex cursor-pointer list-none items-center gap-1 rounded-sm text-xs text-tertiary hover:text-secondary marker:hidden [&::-webkit-details-marker]:hidden",
           FOCUS_RING,
         )}
       >

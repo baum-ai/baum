@@ -1647,7 +1647,7 @@ function ReviewWorkspace<F extends ReviewFile>({
                             <div
                               key={section.id}
                               className={cn(
-                                "flex min-w-0 items-center gap-1 rounded-(--radius-sm) transition-colors duration-300",
+                                "flex min-w-0 items-center gap-1 rounded-sm transition-colors duration-300",
                                 section.stale && "opacity-60 grayscale",
                                 !section.stale &&
                                   sectionRead(section.id) &&

@@ -179,7 +179,7 @@ class TileBoundary extends Component<
 
 function UnavailableTile({ kind }: { kind?: string }) {
   return (
-    <details className="rounded-(--radius-md) border border-default p-3">
+    <details className="rounded-md border border-default p-3">
       <summary className="cursor-pointer text-base">
         Tile unavailable{kind ? ` (${kind})` : ""}
       </summary>

@@ -549,7 +549,7 @@ function AttentionCallout({
     <section
       aria-label="Attention"
       data-review-block=""
-      className="min-w-0 rounded-r-(--radius-sm) border-l-2 border-status-caution py-1 pl-4 outline-none data-[review-block-active]:bg-surface-wash"
+      className="min-w-0 rounded-r-sm border-l-2 border-status-caution py-1 pl-4 outline-none data-[review-block-active]:bg-surface-wash"
     >
       <div className="mb-2 flex items-center gap-2">
         <span aria-hidden className="flex text-status-critical">
@@ -675,7 +675,7 @@ function EntityGroupFrame({ group, children }: { group: EntityContentGroup; chil
     <section
       aria-label={name}
       data-entity-group={group.kind}
-      className="min-w-0 space-y-4 rounded-(--radius-lg) border p-5 shadow-card"
+      className="min-w-0 space-y-4 rounded-lg border p-5 shadow-card"
       style={{
         background: entityGroupWash(group.color),
         borderColor: entityGroupStroke(group.color),
@@ -832,7 +832,7 @@ function BlockView({
                     <li
                       key={decision.id}
                       id={itemId(decision.id)}
-                      className="rounded-(--radius-sm) py-3 first:pt-0 last:pb-0"
+                      className="rounded-sm py-3 first:pt-0 last:pb-0"
                     >
                       <DecisionDisclosure
                         single={decisions.items.length === 1}
@@ -939,7 +939,7 @@ function BlockView({
         content.kind === "code" ? (content as Extract<Block, { kind: "code" }>).caption : undefined;
       return (
         <Part label={label}>
-          <pre className="overflow-x-auto rounded-(--radius-md) bg-code-fill p-3 font-mono text-base leading-[1.5] text-primary">
+          <pre className="overflow-x-auto rounded-md bg-code-fill p-3 font-mono text-base leading-[1.5] text-primary">
             <code>{content.content}</code>
           </pre>
           {caption && <p className="mt-1.5 text-base text-tertiary">{caption}</p>}
@@ -1011,7 +1011,7 @@ function BlockView({
     default:
       return (
         <Part label="Unsupported content">
-          <details className="rounded-(--radius-md) border border-dashed border-default px-3 py-2 text-base text-tertiary">
+          <details className="rounded-md border border-dashed border-default px-3 py-2 text-base text-tertiary">
             <summary className="cursor-pointer">
               This review uses a “{humanize(block.kind)}” block this page cannot render yet.
             </summary>

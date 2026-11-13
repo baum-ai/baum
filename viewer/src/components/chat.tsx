@@ -185,7 +185,7 @@ function PromptImages({ images }: { images: TranscriptImage[] }) {
               type="button"
               onClick={() => setOpen(image)}
               className={cn(
-                "block cursor-zoom-in overflow-hidden rounded-(--radius-md) border border-subtle bg-surface-sunken transition-colors hover:border-strong",
+                "block cursor-zoom-in overflow-hidden rounded-md border border-subtle bg-surface-sunken transition-colors hover:border-strong",
                 FOCUS_RING,
               )}
             >
@@ -219,7 +219,7 @@ function PromptImages({ images }: { images: TranscriptImage[] }) {
             <img
               src={open.src}
               alt={open.alt}
-              className="block max-h-[90vh] max-w-[90vw] rounded-(--radius-md) object-contain shadow-lg"
+              className="block max-h-[90vh] max-w-[90vw] rounded-md object-contain shadow-lg"
             />
           </button>
         ) : null}
@@ -593,7 +593,7 @@ function CollapsibleText({
             aria-controls={bodyId}
             onClick={toggle}
             className={cn(
-              "cursor-pointer rounded-(--radius-xs) text-xs text-link hover:underline",
+              "cursor-pointer rounded-xs text-xs text-link hover:underline",
               FOCUS_RING,
             )}
           >

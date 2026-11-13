@@ -34,7 +34,7 @@ export function TileShell({
   return (
     <section
       aria-label={title}
-      className="min-w-0 rounded-(--radius-md) border border-default bg-surface-sunken p-4 [overflow-wrap:anywhere]"
+      className="min-w-0 rounded-md border border-default bg-surface-sunken p-4 [overflow-wrap:anywhere]"
     >
       <h4 className="text-base font-medium tracking-[-0.01em] text-primary">{title}</h4>
       {children}
@@ -62,7 +62,7 @@ export function TileGlance({
   return (
     <section
       aria-label={label}
-      className="mt-4 overflow-hidden rounded-(--radius-md) border border-default bg-surface-card"
+      className="mt-4 overflow-hidden rounded-md border border-default bg-surface-card"
     >
       <div className="px-4 py-3.5">
         <p className="text-xs font-semibold tracking-[0.12em] uppercase text-tertiary">
@@ -93,7 +93,7 @@ export function TileDisclosure({
 }) {
   return (
     <details
-      className="group mt-3 rounded-(--radius-sm) border border-default bg-surface-card"
+      className="group mt-3 rounded-sm border border-default bg-surface-card"
       onToggle={(event) => onToggle?.(event.currentTarget.open)}
     >
       <summary

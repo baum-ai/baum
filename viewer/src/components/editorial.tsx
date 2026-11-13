@@ -151,7 +151,7 @@ export function StatusBlock({
     <div
       className={cn(
         boxed
-          ? cn("rounded-(--radius-md) border px-3 py-2.5", STATUS_BOXES[tone])
+          ? cn("rounded-md border px-3 py-2.5", STATUS_BOXES[tone])
           : cn("border-t pt-3.5", STATUS_RULES[tone]),
         className,
       )}
@@ -166,12 +166,7 @@ export function StatusBlock({
 
 export function Panel({ children, className }: { children: ReactNode; className?: string }) {
   return (
-    <div
-      className={cn(
-        "rounded-(--radius-lg) border border-default bg-surface-card shadow-card",
-        className,
-      )}
-    >
+    <div className={cn("rounded-lg border border-default bg-surface-card shadow-card", className)}>
       {children}
     </div>
   );

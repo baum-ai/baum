@@ -146,7 +146,7 @@ export function CodeDiff({
             <article
               key={key}
               aria-label={`${file.path} diff`}
-              className="min-w-0 overflow-hidden rounded-(--radius-sm) border border-default bg-surface-card"
+              className="min-w-0 overflow-hidden rounded-sm border border-default bg-surface-card"
             >
               <header
                 className={cn(
@@ -164,7 +164,7 @@ export function CodeDiff({
                     aria-controls={body}
                     onClick={toggle}
                     className={cn(
-                      "flex-none cursor-pointer rounded-(--radius-sm) -m-1 p-1.5 text-tertiary hover:text-secondary",
+                      "flex-none cursor-pointer rounded-sm -m-1 p-1.5 text-tertiary hover:text-secondary",
                       FOCUS_RING,
                     )}
                   >

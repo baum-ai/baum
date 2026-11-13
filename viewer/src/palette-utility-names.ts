@@ -1,7 +1,8 @@
 /** The palette utilities `palette-utilities.css` declares, as a rewrite from
  *  the arbitrary value they replace: `text-(--text-secondary)` is
  *  `text-secondary`, `border-b-(--border-strong)` is `border-b-strong`,
- *  `bg-(--surface-card)` is `bg-surface-card`. The local app's palette lint
+ *  `bg-(--surface-card)` is `bg-surface-card`; and the radius steps:
+ *  `rounded-(--radius-sm)` is `rounded-sm`. The local app's palette lint
  *  and the hosted app's tests use it to reject an arbitrary value written
  *  where a utility exists. Pure, so it runs in Node and in Vitest alike. */
 
@@ -34,6 +35,19 @@ const colorUtilities = [
   "to",
 ];
 
+/** Corner utilities. Tailwind's `rounded-<step>` reads `--radius-<step>`,
+ *  and the palette sets those four steps over Tailwind's defaults, so
+ *  `rounded-sm` already is `rounded-(--radius-sm)` (`palette-utilities.test.ts`
+ *  holds that). `rounded-full` is not among them: Tailwind's is a fixed
+ *  value, not `--radius-full`. */
+const radiusUtilities = [
+  "rounded",
+  ...["s", "e", "t", "r", "b", "l", "ss", "se", "ee", "es", "tl", "tr", "br", "bl"].map(
+    (side) => `rounded-${side}`,
+  ),
+];
+export const radiusSteps = ["xs", "sm", "md", "lg"];
+
 /** A function from `<utility>`, `<token>` (without `--`) to the palette
  *  utility, or null when the token has none for that utility. */
 export function paletteUtilityNames(css: string) {
@@ -54,11 +68,18 @@ export function paletteUtilityNames(css: string) {
       return `${utility}-${token.slice("border-".length)}`;
     if (colorUtilities.includes(utility) && color.has(token)) return `${utility}-${token}`;
     if (utility === "shadow" && shadow.has(token)) return `shadow-${token.slice("shadow-".length)}`;
+    const step = token.slice("radius-".length);
+    if (
+      radiusUtilities.includes(utility) &&
+      token.startsWith("radius-") &&
+      radiusSteps.includes(step)
+    )
+      return `${utility}-${step}`;
     return null;
   };
 }
 
-const utilities = [...new Set([...colorUtilities, "shadow"])].toSorted(
+const utilities = [...new Set([...colorUtilities, ...radiusUtilities, "shadow"])].toSorted(
   (a, b) => b.length - a.length,
 );
 const arbitrary = new RegExp(

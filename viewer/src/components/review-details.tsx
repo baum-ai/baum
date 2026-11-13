@@ -566,7 +566,7 @@ function Figures({ items }: { items: { label: string; value: ReactNode }[] }) {
   return (
     <dl className="grid grid-cols-2 gap-2 @xl:grid-cols-4">
       {items.map((item) => (
-        <div key={item.label} className="rounded-(--radius-md) bg-surface-sunken px-3 py-2">
+        <div key={item.label} className="rounded-md bg-surface-sunken px-3 py-2">
           <dt className="truncate text-xs text-tertiary">{item.label}</dt>
           <dd className="text-lg font-medium tabular-nums">{item.value}</dd>
         </div>

@@ -438,7 +438,7 @@ export function TimelinePage<S>({
                 <h2 className="mb-2 text-xs tracking-[0.08em] text-tertiary uppercase">
                   {section.heading}
                 </h2>
-                <ol className="rounded-(--radius-md) border border-subtle">
+                <ol className="rounded-md border border-subtle">
                   {section.decisions.map((decision) => {
                     const key = decision.id;
                     return (

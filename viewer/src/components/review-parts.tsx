@@ -129,7 +129,7 @@ export function RiskCategoryTag({ category }: { category?: string | null }) {
   const label = riskCategory({ category }, "");
   if (!label) return null;
   return (
-    <span className="inline-flex items-center rounded-(--radius-sm) border border-default bg-surface-sunken px-1.5 py-0.5 text-xs font-semibold whitespace-nowrap text-primary">
+    <span className="inline-flex items-center rounded-sm border border-default bg-surface-sunken px-1.5 py-0.5 text-xs font-semibold whitespace-nowrap text-primary">
       {label}
     </span>
   );
@@ -299,7 +299,7 @@ export const PROSE = "max-w-[90ch] text-base leading-[1.7] text-primary";
  *  itself a statement — an empty risk list means none were identified. */
 export function None({ children }: { children: ReactNode }) {
   return (
-    <p className="rounded-(--radius-md) border border-dashed border-default px-3 py-2.5 text-base text-tertiary">
+    <p className="rounded-md border border-dashed border-default px-3 py-2.5 text-base text-tertiary">
       {children}
     </p>
   );
@@ -494,7 +494,7 @@ export function Item({
       // the one.
       data-review-block=""
       className={cn(
-        "rounded-(--radius-md) border border-subtle bg-surface-card px-3 text-base scroll-mt-4 outline-none target:border-focus data-[review-block-active]:bg-surface-wash",
+        "rounded-md border border-subtle bg-surface-card px-3 text-base scroll-mt-4 outline-none target:border-focus data-[review-block-active]:bg-surface-wash",
         compact ? "py-2" : "py-2.5",
         className,
       )}
@@ -552,7 +552,7 @@ export function JumpLink({
       data-block-open=""
       onClick={onClick}
       className={cn(
-        "cursor-pointer rounded-(--radius-sm) text-left hover:underline",
+        "cursor-pointer rounded-sm text-left hover:underline",
         JUMP_LINK_TONE[tone],
         FOCUS_RING,
         className,

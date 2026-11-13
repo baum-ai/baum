@@ -345,7 +345,7 @@ function Turn({
         <details open={focused || undefined} data-system-turn="" className="min-w-0">
           <summary
             className={cn(
-              "w-fit cursor-pointer rounded-(--radius-sm) text-xs text-tertiary hover:text-primary",
+              "w-fit cursor-pointer rounded-sm text-xs text-tertiary hover:text-primary",
               FOCUS_RING,
             )}
           >
@@ -524,7 +524,7 @@ function AgentReplies({
         <details className="group flex flex-col">
           <summary
             className={cn(
-              "flex w-fit cursor-pointer list-none items-center gap-1 rounded-(--radius-xs) text-xs font-medium text-secondary hover:text-primary [&::-webkit-details-marker]:hidden",
+              "flex w-fit cursor-pointer list-none items-center gap-1 rounded-xs text-xs font-medium text-secondary hover:text-primary [&::-webkit-details-marker]:hidden",
               FOCUS_RING,
             )}
           >
@@ -590,7 +590,7 @@ function TurnFooter({
           aria-label={`Agent activity for prompt ${prompt.ordinal}`}
           onClick={onToggleActivity}
           className={cn(
-            "flex cursor-pointer items-center gap-1 self-center rounded-(--radius-xs) text-xs font-medium text-secondary hover:text-primary",
+            "flex cursor-pointer items-center gap-1 self-center rounded-xs text-xs font-medium text-secondary hover:text-primary",
             FOCUS_RING,
           )}
         >
@@ -901,7 +901,7 @@ function SubagentCard({ subagent }: { subagent: TranscriptSubagent }) {
         aria-expanded={open}
         onClick={toggle}
         className={cn(
-          "flex w-full cursor-pointer items-center gap-2 rounded-t-(--radius-lg) border-b border-subtle px-3 py-2 text-left transition-colors duration-150 hover:bg-surface-hover",
+          "flex w-full cursor-pointer items-center gap-2 rounded-t-lg border-b border-subtle px-3 py-2 text-left transition-colors duration-150 hover:bg-surface-hover",
           FOCUS_RING,
         )}
       >
@@ -940,7 +940,7 @@ function SubagentCard({ subagent }: { subagent: TranscriptSubagent }) {
       </div>
 
       {open ? (
-        <div className="flex flex-col gap-1.5 rounded-b-(--radius-lg) border-t border-subtle bg-surface-sunken px-2 py-3 sm:px-3">
+        <div className="flex flex-col gap-1.5 rounded-b-lg border-t border-subtle bg-surface-sunken px-2 py-3 sm:px-3">
           {linked ? (
             <SubagentConversation detail={detail} onRetry={load} />
           ) : (

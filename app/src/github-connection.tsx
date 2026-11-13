@@ -160,7 +160,7 @@ export function GitHubConnectionSection({ onChanged }: { onChanged?: () => void 
           ) : null}
           {pending ? (
             <div className="space-y-4">
-              <div className="rounded-(--radius-md) border border-default bg-surface-wash px-4 py-4">
+              <div className="rounded-md border border-default bg-surface-wash px-4 py-4">
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <p
                     className="font-mono text-2xl font-semibold tracking-[0.2em] select-all break-all"
@@ -257,7 +257,7 @@ function Detail({ label, children }: { label: string; children: ReactNode }) {
 
 function Callout({ children }: { children: ReactNode }) {
   return (
-    <p role="status" className="rounded-(--radius-sm) bg-status-info-bg px-3 py-2 text-status-info">
+    <p role="status" className="rounded-sm bg-status-info-bg px-3 py-2 text-status-info">
       {children}
     </p>
   );

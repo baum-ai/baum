@@ -52,7 +52,7 @@ export function ApiContractTile({ operation }: { operation: ApiOperation }) {
     >
       <section
         aria-label="API call flow"
-        className="mt-4 overflow-hidden rounded-(--radius-sm) border border-default bg-surface-card"
+        className="mt-4 overflow-hidden rounded-sm border border-default bg-surface-card"
       >
         <div className="flex flex-wrap items-center justify-between gap-2 border-b border-subtle bg-surface-wash px-3 py-2">
           <div className="flex min-w-0 flex-wrap items-center gap-2">
@@ -99,7 +99,7 @@ function ApiShape({
   status?: string;
 }) {
   return (
-    <article className="overflow-hidden rounded-(--radius-sm) border border-default bg-surface-card">
+    <article className="overflow-hidden rounded-sm border border-default bg-surface-card">
       <h5 className="border-b border-subtle bg-surface-wash px-3 py-2 text-xs font-semibold tracking-[0.12em] uppercase text-tertiary">
         {label}
       </h5>

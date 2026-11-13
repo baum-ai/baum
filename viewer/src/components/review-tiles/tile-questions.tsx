@@ -35,7 +35,7 @@ function Point({ text }: { text: string }) {
   return (
     <span className="flex min-w-0 items-baseline gap-2">
       {status ? (
-        <code className="flex-none rounded-(--radius-sm) border border-default bg-surface-wash px-1.5 font-mono text-xs text-primary">
+        <code className="flex-none rounded-sm border border-default bg-surface-wash px-1.5 font-mono text-xs text-primary">
           {status[1]}
         </code>
       ) : null}
@@ -66,7 +66,7 @@ export function TileQuestions({ title, rows }: { title: string; rows: readonly T
   return (
     <section
       aria-label={title}
-      className="mt-4 overflow-hidden rounded-(--radius-sm) border border-default bg-surface-card"
+      className="mt-4 overflow-hidden rounded-sm border border-default bg-surface-card"
     >
       <h5 className="border-b border-subtle bg-surface-wash px-3 py-2 text-xs font-semibold tracking-[0.12em] uppercase text-tertiary">
         {title}

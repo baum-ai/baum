@@ -82,7 +82,7 @@ export function ReviewSummary({
           )}
           <div
             data-review-block=""
-            className="space-y-3 rounded-(--radius-sm) outline-none data-[review-block-active]:bg-surface-wash"
+            className="space-y-3 rounded-sm outline-none data-[review-block-active]:bg-surface-wash"
           >
             <Markdown className={PROSE}>{summary.text}</Markdown>
             {summary.breaking_change && (
@@ -106,7 +106,7 @@ export function ReviewSummary({
           {(document.summary.context || contextPending) && (
             <div
               data-review-block=""
-              className="rounded-(--radius-sm) outline-none data-[review-block-active]:bg-surface-wash"
+              className="rounded-sm outline-none data-[review-block-active]:bg-surface-wash"
             >
               <ContextPart document={document} pending={contextPending} />
             </div>
@@ -229,7 +229,7 @@ function RecommendationPart({
     <section
       aria-label="Recommendation"
       data-review-block=""
-      className="rounded-(--radius-md) outline-none data-[review-block-active]:bg-surface-wash"
+      className="rounded-md outline-none data-[review-block-active]:bg-surface-wash"
     >
       <Part label={RECOMMENDATION_LABEL[recommendation.decision]}>
         <Markdown className="max-w-[90ch] text-base leading-[1.5] text-primary [overflow-wrap:anywhere]">
@@ -323,7 +323,7 @@ function RiskScorePart({
   return (
     <div
       data-review-block=""
-      className="rounded-(--radius-sm) outline-none data-[review-block-active]:bg-surface-wash"
+      className="rounded-sm outline-none data-[review-block-active]:bg-surface-wash"
     >
       <Part label="Risk score">
         {view.assessed ? (
@@ -392,7 +392,7 @@ function IntentRow({
   return (
     <li
       data-review-block=""
-      className="flex gap-2.5 rounded-(--radius-sm) outline-none data-[review-block-active]:bg-surface-wash"
+      className="flex gap-2.5 rounded-sm outline-none data-[review-block-active]:bg-surface-wash"
     >
       <span
         aria-hidden

@@ -57,7 +57,7 @@ export function DataMigrationTile({ change }: { change: DataMigrationChange }) {
           <Arrow />
           <RecordCard label="After" name={change.target} values={change.transform} added />
         </div>
-        <div className="mt-3 rounded-(--radius-sm) bg-surface-wash px-3 py-2 text-xs text-secondary">
+        <div className="mt-3 rounded-sm bg-surface-wash px-3 py-2 text-xs text-secondary">
           <span className="font-semibold text-primary">{change.records}</span> records to transform
         </div>
       </Frame>
@@ -74,7 +74,7 @@ export function SearchSchemaTile({ change }: { change: SearchSchemaChange }) {
       codeDiff={change.codeDiff}
     >
       <Frame label="Index and query">
-        <div className="rounded-(--radius-sm) border border-subtle bg-surface-wash px-3 py-2">
+        <div className="rounded-sm border border-subtle bg-surface-wash px-3 py-2">
           <span className="font-mono text-xs font-semibold text-primary">{change.index}</span>
           <div className="mt-2 flex flex-wrap gap-1.5">
             {change.fields.map((field, index) => (
@@ -107,12 +107,12 @@ export function ExternalIntegrationTile({ change }: { change: ExternalIntegratio
       codeDiff={change.codeDiff}
     >
       <Frame label="Runtime sequence">
-        <div className="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-x-3 gap-y-2 rounded-(--radius-sm) border border-subtle px-3 py-2 text-xs font-semibold tracking-[0.08em] uppercase text-tertiary">
+        <div className="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-x-3 gap-y-2 rounded-sm border border-subtle px-3 py-2 text-xs font-semibold tracking-[0.08em] uppercase text-tertiary">
           <span className="truncate text-right">{change.source}</span>
           <span aria-hidden>↔</span>
           <span className="truncate">{change.provider}</span>
         </div>
-        <ol className="mt-2 overflow-hidden rounded-(--radius-sm) border border-subtle">
+        <ol className="mt-2 overflow-hidden rounded-sm border border-subtle">
           <SequenceStep from={change.source} to={change.provider} message={change.request} added />
           <SequenceStep from={change.provider} to={change.source} message={change.response} />
           <SequenceStep
@@ -143,10 +143,7 @@ function Tile({
 
 function Frame({ label, children }: { label: string; children: ReactNode }) {
   return (
-    <section
-      aria-label={label}
-      className="rounded-(--radius-sm) border border-default bg-surface-card p-3"
-    >
+    <section aria-label={label} className="rounded-sm border border-default bg-surface-card p-3">
       <h5 className="mb-2 text-xs font-semibold tracking-[0.12em] uppercase text-tertiary">
         {label}
       </h5>
@@ -167,7 +164,7 @@ function RecordCard({
   added?: boolean;
 }) {
   return (
-    <section className="rounded-(--radius-sm) border border-default bg-surface-wash p-3">
+    <section className="rounded-sm border border-default bg-surface-wash p-3">
       <span className="text-3xs font-semibold tracking-[0.1em] uppercase text-tertiary">
         {label}
       </span>
@@ -190,7 +187,7 @@ function RecordCard({
 
 function Query({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-(--radius-sm) border border-default bg-surface-wash px-3 py-2">
+    <div className="rounded-sm border border-default bg-surface-wash px-3 py-2">
       <span className="text-3xs font-semibold tracking-[0.1em] uppercase text-tertiary">
         {label}
       </span>

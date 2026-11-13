@@ -313,7 +313,7 @@ function ContainerDiagram({
       <h5 className="text-xs font-semibold tracking-[0.12em] uppercase text-tertiary">
         Components and connections
       </h5>
-      <div className="mt-2 overflow-x-auto rounded-(--radius-sm) border border-default bg-surface-card">
+      <div className="mt-2 overflow-x-auto rounded-sm border border-default bg-surface-card">
         <svg
           role="img"
           aria-label={`${plural(nodes.length, "component")} and ${plural(edges.length, "connection")}`}
@@ -368,7 +368,7 @@ function ContainerDiagram({
         </svg>
       </div>
       {edges.length > 0 ? (
-        <ol className="mt-2 divide-y divide-subtle rounded-(--radius-sm) border border-default bg-surface-card">
+        <ol className="mt-2 divide-y divide-subtle rounded-sm border border-default bg-surface-card">
           {edges.map((edge, index) => (
             <li
               key={`${index}:${edge.from}:${edge.to}`}
@@ -415,7 +415,7 @@ function NodeBox({ node }: { node: ArchitectureNode }) {
     <div
       title={node.label}
       className={cn(
-        "flex h-full flex-col justify-center gap-0.5 rounded-(--radius-sm) border px-2.5 py-1.5",
+        "flex h-full flex-col justify-center gap-0.5 rounded-sm border px-2.5 py-1.5",
         node.change === "add"
           ? "border-status-positive"
           : node.change === "remove"
@@ -474,7 +474,7 @@ function SequenceDiagram({ sequence }: { sequence: ArchitectureSequence }) {
         </h5>
         <span className="text-xs text-secondary">{sequence.title}</span>
       </div>
-      <div className="mt-2 overflow-x-auto rounded-(--radius-sm) border border-default bg-surface-card">
+      <div className="mt-2 overflow-x-auto rounded-sm border border-default bg-surface-card">
         <svg
           role="img"
           aria-label={`${sequence.title}: ${plural(sequence.steps.length, "step")}`}
@@ -505,7 +505,7 @@ function SequenceDiagram({ sequence }: { sequence: ArchitectureSequence }) {
               >
                 <div
                   title={name}
-                  className="flex h-full items-center justify-center rounded-(--radius-sm) border border-default bg-surface-wash px-2 text-center"
+                  className="flex h-full items-center justify-center rounded-sm border border-default bg-surface-wash px-2 text-center"
                 >
                   <span className="line-clamp-2 text-xs font-medium leading-[1.25] text-primary">
                     {name}
@@ -614,7 +614,7 @@ function DanglingEdges({
   return (
     <section
       aria-label="Connections not drawn"
-      className="mt-2 rounded-(--radius-sm) border border-default bg-surface-card px-3 py-2 text-xs leading-[1.45]"
+      className="mt-2 rounded-sm border border-default bg-surface-card px-3 py-2 text-xs leading-[1.45]"
     >
       <p className="text-secondary">
         {plural(edges.length, "connection")} {edges.length === 1 ? "names" : "name"} a component
