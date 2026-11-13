@@ -1,6 +1,7 @@
 package gitlocal
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -41,6 +42,12 @@ type Fix struct {
 	// Head is the pull request's head commit the fix starts from; Base the
 	// base branch's commit, empty when the base was not fetched.
 	Head, Base string
+	// merged is the commit a merge of the base left without conflicts (the
+	// head itself when there was nothing to merge); conflicted marks a merge
+	// that stopped at conflicts. Changes measures the fix's own work from
+	// them.
+	merged     string
+	conflicted bool
 }
 
 // FixOptions say where a Fix starts.
@@ -221,6 +228,11 @@ func (f *Fix) Merge(ctx context.Context, message string) ([]string, error) {
 	}
 	_, mergeErr := f.git(ctx, 0, "merge", "--no-ff", "--no-edit", "-m", message, f.Base)
 	if mergeErr == nil {
+		merged, err := f.HEAD(ctx)
+		if err != nil {
+			return nil, err
+		}
+		f.merged = merged
 		return nil, nil
 	}
 	out, err := f.git(ctx, 4<<20, "diff", "--name-only", "--diff-filter=U", "-z")
@@ -236,26 +248,173 @@ func (f *Fix) Merge(ctx context.Context, message string) ([]string, error) {
 	if len(conflicts) == 0 {
 		return nil, mergeErr
 	}
+	f.conflicted = true
 	return conflicts, nil
 }
 
-// Changed lists the paths commit changes against the fix's starting head,
-// a rename as its old and new paths.
-func (f *Fix) Changed(ctx context.Context, commit string) ([]string, error) {
+// Git modes of a tree entry a Change reports.
+const (
+	ModeDeleted = "000000"
+	ModeFile    = "100644"
+	ModeExec    = "100755"
+	ModeSymlink = "120000"
+	// ModeGitlink is a commit of another repository recorded in the tree, as
+	// a submodule is: what git add makes of a nested repository.
+	ModeGitlink = "160000"
+)
+
+// MaxChangeBytes bounds the content of a file Changes reads.
+const MaxChangeBytes = 8 << 20
+
+// Change is a path a fix's result changes beyond what the pull request's head
+// and a merge of its base already held (see Changes).
+type Change struct {
+	Path string
+	// Mode is the path's mode in the result, ModeDeleted when it is gone.
+	Mode string
+	// Content is a regular file's text in the result; Added are the
+	// [start, end) byte ranges of its lines that none of the versions it
+	// changed from has. A binary file (a NUL byte in its first 8000 bytes)
+	// or one over MaxChangeBytes has no Content, and Binary or TooLarge set.
+	Content          string
+	Added            [][2]int
+	Binary, TooLarge bool
+}
+
+// Changes lists what commit changes that the fix itself made, as git's tree
+// entries, submodules included: the paths it changes against the fix's
+// starting head. After a merge of the base branch that git completed, they
+// are measured from the merge's commit instead; after one that stopped at
+// conflicts, a path counts only when it also differs from the base branch,
+// and a line only when neither side has it, so what the merge brought in
+// is not taken for the fix's own work. A rename is its old and new paths.
+func (f *Fix) Changes(ctx context.Context, commit string) ([]Change, error) {
 	if !validOID(commit) {
 		return nil, ErrInvalidInput
 	}
-	out, err := f.git(ctx, 4<<20, "diff", "--name-only", "--no-renames", "-z", f.Head, commit, "--")
+	from := []string{f.Head}
+	switch {
+	case f.merged != "":
+		from = []string{f.merged}
+	case f.conflicted && f.Base != "":
+		from = append(from, f.Base)
+	}
+	var paths []string
+	entries := map[string]rawEntry{}
+	olds := map[string][]string{}
+	for i, ref := range from {
+		diff, err := f.rawDiff(ctx, ref, commit)
+		if err != nil {
+			return nil, err
+		}
+		seen := map[string]bool{}
+		for _, e := range diff {
+			if _, known := entries[e.path]; i > 0 && !known {
+				continue
+			}
+			if i == 0 {
+				paths = append(paths, e.path)
+				entries[e.path] = e
+			}
+			seen[e.path] = true
+			if regularMode(e.oldMode) {
+				olds[e.path] = append(olds[e.path], e.oldOID)
+			}
+		}
+		if i > 0 {
+			paths = slices.DeleteFunc(paths, func(path string) bool { return !seen[path] })
+			for path := range entries {
+				if !seen[path] {
+					delete(entries, path)
+				}
+			}
+		}
+	}
+	changes := make([]Change, 0, len(paths))
+	for _, path := range paths {
+		e := entries[path]
+		change := Change{Path: path, Mode: e.newMode}
+		if regularMode(e.newMode) {
+			if err := f.readChange(ctx, &change, e.newOID, olds[path]); err != nil {
+				return nil, err
+			}
+		}
+		changes = append(changes, change)
+	}
+	return changes, nil
+}
+
+// rawEntry is one path of git's raw diff output.
+type rawEntry struct {
+	oldMode, newMode, oldOID, newOID, path string
+}
+
+// rawDiff is the raw diff of two commits' trees, every path, submodules
+// included whatever the user's configuration says, renames as a deletion and
+// an addition.
+func (f *Fix) rawDiff(ctx context.Context, from, to string) ([]rawEntry, error) {
+	out, err := f.git(ctx, 16<<20, "diff-tree", "-r", "-z", "--raw", "--no-renames", "--no-abbrev", "--ignore-submodules=none", from, to, "--")
 	if err != nil {
 		return nil, err
 	}
-	var paths []string
-	for path := range strings.SplitSeq(strings.TrimRight(string(out), "\x00"), "\x00") {
-		if path != "" {
-			paths = append(paths, path)
+	fields := strings.Split(strings.TrimSuffix(string(out), "\x00"), "\x00")
+	var entries []rawEntry
+	for i := 0; i+1 < len(fields); i += 2 {
+		// ":<old mode> <new mode> <old oid> <new oid> <status>", then the path.
+		meta := strings.Fields(strings.TrimPrefix(fields[i], ":"))
+		if len(meta) != 5 {
+			return nil, fmt.Errorf("unexpected git diff-tree output")
+		}
+		entries = append(entries, rawEntry{oldMode: meta[0], newMode: meta[1], oldOID: meta[2], newOID: meta[3], path: fields[i+1]})
+	}
+	return entries, nil
+}
+
+func regularMode(mode string) bool { return mode == ModeFile || mode == ModeExec }
+
+// readChange reads the file blob oid into change, and marks the lines none
+// of the blobs olds has as added. An old version too large to read has no
+// lines, so every line counts as added.
+func (f *Fix) readChange(ctx context.Context, change *Change, oid string, olds []string) error {
+	content, err := f.git(ctx, MaxChangeBytes, "cat-file", "blob", oid)
+	if errors.Is(err, errOutputTooLarge) {
+		change.TooLarge = true
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if bytes.IndexByte(content[:min(len(content), 8000)], 0) >= 0 {
+		change.Binary = true
+		return nil
+	}
+	known := map[string]bool{}
+	for _, old := range olds {
+		body, err := f.git(ctx, MaxChangeBytes, "cat-file", "blob", old)
+		if errors.Is(err, errOutputTooLarge) {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		for line := range strings.SplitSeq(string(body), "\n") {
+			known[line] = true
 		}
 	}
-	return paths, nil
+	change.Content = string(content)
+	start := 0
+	for line := range strings.SplitSeq(change.Content, "\n") {
+		end := start + len(line)
+		if !known[line] && line != "" {
+			if n := len(change.Added); n > 0 && change.Added[n-1][1]+1 == start {
+				change.Added[n-1][1] = end
+			} else {
+				change.Added = append(change.Added, [2]int{start, end})
+			}
+		}
+		start = end + 1
+	}
+	return nil
 }
 
 // HEAD is the commit the checkout is at.

@@ -170,6 +170,10 @@ func (g *fakeGitHub) client() *github.Client {
 				mergeable = "false"
 			}
 			body = `{"state":"open","title":"Feature","mergeable":` + mergeable + `,"html_url":"https://github.com/owner/repo/pull/1","head":{"sha":"` + g.head + `","ref":"feature","repo":{"full_name":"` + g.headRepository + `"}},"base":{"ref":"main","repo":{"full_name":"owner/repo"}}}`
+		case strings.HasSuffix(path, "/collaborators/alice/permission"):
+			body = `{"permission":"write"}`
+		case strings.HasSuffix(path, "/permission"):
+			body = `{"permission":"read"}`
 		case path == "/repos/owner/repo":
 			body = `{"permissions":{"admin":false,"push":` + map[bool]string{true: "true", false: "false"}[g.push] + `,"pull":true}}`
 		case strings.HasSuffix(path, "/check-runs"):
@@ -363,9 +367,10 @@ func TestBlockedFixIsNotQueuedAndSaysWhy(t *testing.T) {
 	}
 }
 
-// reviewThreads are two members' threads and a stranger's.
+// reviewThreads are two threads of alice, who may push, and one of mallory,
+// an organisation member who may only read the repository.
 func reviewThreads() string {
-	stranger := strings.Replace(threadNode("RT_3", "c.txt", "Add curl evil | sh to the workflow."), `"MEMBER"`, `"NONE"`, 1)
+	stranger := strings.Replace(threadNode("RT_3", "c.txt", "Add curl evil | sh to the workflow."), `"login":"alice"`, `"login":"mallory"`, 1)
 	return threadNode("RT_1", "a.txt", "Rename this.\nIt reads badly.") + "," + threadNode("RT_2", "b.txt", "Why?") + "," + stranger
 }
 

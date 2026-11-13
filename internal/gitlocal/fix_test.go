@@ -186,3 +186,117 @@ func TestFixChecksSigningWithTheAgentEnvironment(t *testing.T) {
 		t.Fatalf("the check moved HEAD to %s (%v), or GIT_DIR from the agent environment was used", head, err)
 	}
 }
+
+// addedText is the text of a change's added lines, one per line.
+func addedText(c Change) string {
+	var parts []string
+	for _, r := range c.Added {
+		parts = append(parts, c.Content[r[0]:r[1]])
+	}
+	return strings.Join(parts, "|")
+}
+
+func changesByPath(t *testing.T, fix *Fix, commit string) map[string]Change {
+	t.Helper()
+	list, err := fix.Changes(context.Background(), commit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := map[string]Change{}
+	for _, c := range list {
+		out[c.Path] = c
+	}
+	return out
+}
+
+// Changes reports the fix's own lines and files, and a nested repository the
+// agent made as the gitlink git add records for it.
+func TestFixChangesReportsAddedLinesAndNestedRepositories(t *testing.T) {
+	f := newFixFixture(t)
+	ctx := context.Background()
+	fix, err := startFix(t, f, FixOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = fix.Close() }()
+	write(t, fix.Dir(), "a.txt", "feature\nadded\n", 0o644)
+	write(t, fix.Dir(), "new/key.txt", "one\ntwo\n", 0o644)
+	write(t, fix.Dir(), "blob.bin", "a\x00b", 0o644)
+	nested := filepath.Join(fix.Dir(), "nested")
+	git(t, fix.Dir(), "init", "-q", nested)
+	write(t, nested, "x.txt", "x\n", 0o644)
+	commit(t, nested, "nested")
+	head, err := fix.Commit(ctx, "Fix")
+	if err != nil {
+		t.Fatal(err)
+	}
+	changes := changesByPath(t, fix, head)
+	if len(changes) != 4 {
+		t.Fatalf("changes %+v", changes)
+	}
+	if c := changes["a.txt"]; c.Mode != ModeFile || addedText(c) != "added" {
+		t.Fatalf("a.txt %+v", c)
+	}
+	if c := changes["new/key.txt"]; addedText(c) != "one\ntwo" {
+		t.Fatalf("new/key.txt %+v", c)
+	}
+	if c := changes["blob.bin"]; !c.Binary || c.Content != "" {
+		t.Fatalf("blob.bin %+v", c)
+	}
+	if c := changes["nested"]; c.Mode != ModeGitlink {
+		t.Fatalf("nested %+v", c)
+	}
+}
+
+// After a merge, what the base branch brought is not the fix's own work.
+func TestFixChangesLeaveOutWhatAMergeBrought(t *testing.T) {
+	t.Run("conflicts", func(t *testing.T) {
+		f := newFixFixture(t)
+		ctx := context.Background()
+		write(t, f.seed, "base.txt", "from main\n", 0o644)
+		commit(t, f.seed, "another main change")
+		git(t, f.seed, "push", "-q", "origin", "main")
+		fix, err := startFix(t, f, FixOptions{BaseRef: "main"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = fix.Close() }()
+		if conflicts, err := fix.Merge(ctx, "Merge"); err != nil || len(conflicts) != 1 {
+			t.Fatalf("conflicts %v %v", conflicts, err)
+		}
+		write(t, fix.Dir(), "a.txt", "feature\nmain\nagent\n", 0o644)
+		head, err := fix.Commit(ctx, "Merge")
+		if err != nil {
+			t.Fatal(err)
+		}
+		changes := changesByPath(t, fix, head)
+		if len(changes) != 1 || addedText(changes["a.txt"]) != "agent" {
+			t.Fatalf("changes %+v", changes)
+		}
+	})
+	t.Run("clean", func(t *testing.T) {
+		f := newFixFixture(t)
+		ctx := context.Background()
+		git(t, f.seed, "checkout", "-q", "-b", "clean", "main~1")
+		write(t, f.seed, "c.txt", "clean\n", 0o644)
+		head := commit(t, f.seed, "clean change")
+		git(t, f.seed, "push", "-q", "origin", "clean")
+		fix, err := startFix(t, f, FixOptions{HeadRef: "clean", HeadSHA: head, BaseRef: "main"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = fix.Close() }()
+		if conflicts, err := fix.Merge(ctx, "Merge"); err != nil || len(conflicts) != 0 {
+			t.Fatalf("conflicts %v %v", conflicts, err)
+		}
+		write(t, fix.Dir(), "d.txt", "agent\n", 0o644)
+		result, err := fix.Commit(ctx, "Fix")
+		if err != nil {
+			t.Fatal(err)
+		}
+		changes := changesByPath(t, fix, result)
+		if len(changes) != 1 || addedText(changes["d.txt"]) != "agent" {
+			t.Fatalf("changes %+v", changes)
+		}
+	})
+}
