@@ -63,6 +63,36 @@ func TestDiscoveryHandlerServesRepositoriesWithoutClones(t *testing.T) {
 	}
 }
 
+func TestDiscoveryHealthViewOmitsPullRequests(t *testing.T) {
+	registry, err := repos.Open(filepath.Join(appdbtest.TempDir(t), "repos.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = registry.Close() }()
+	if _, err := registry.Pick(context.Background(), "Acme/Bare", nil); err != nil {
+		t.Fatal(err)
+	}
+	h := DiscoveryHandler(registry, &fakePRs{}, nil)
+	get := func(target string) *httptest.ResponseRecorder {
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, httptest.NewRequest("GET", "http://local"+target, nil))
+		return w
+	}
+	w := get("/api/prs?view=health")
+	body := w.Body.String()
+	if w.Code != 200 || !strings.Contains(body, `"acme/bare"`) || !strings.Contains(body, `"stale"`) || !strings.Contains(body, `"rate"`) ||
+		strings.Contains(body, "pull_requests") || strings.Contains(body, `"number":7`) {
+		t.Fatalf("health: %d %s", w.Code, body)
+	}
+	// The full answer is unchanged and is not served from the health memo.
+	if full := get("/api/prs"); !strings.Contains(full.Body.String(), `"number":7`) {
+		t.Fatalf("full: %s", full.Body.String())
+	}
+	if w := get("/api/prs?view=nope"); w.Code != 400 {
+		t.Fatalf("unknown view: %d", w.Code)
+	}
+}
+
 type stalledPRs struct{ fakePRs }
 
 func (*stalledPRs) PollNow(ctx context.Context, _ github.Repository) (discovery.Snapshot, error) {

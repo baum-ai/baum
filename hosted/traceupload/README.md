@@ -13,7 +13,11 @@ API change. The protocol headers are described in
   guarantee that all sensitive content is gone. Repository and worktree roots
   are sent verbatim, because attribution needs them.
 - Each session has exactly one root transcript and unique non-empty file names.
-  NUL bytes fail the bundle; binary content is not supported. Member paths are
+  NUL bytes fail the bundle; binary content is not supported. A compressed
+  Codex rollout (`.jsonl.zst`) is staged as the bytes it decodes to, under its
+  plain name, so the archive is the one the plain rollout gives. A file that
+  does not decompress fails the bundle instead of uploading a truncated one,
+  and one that decodes to more than `MaxUnpackedBytes` fails as well. Member paths are
   opaque and hide the local directory layout. Staging uses private files.
 - The first regular tar member is `manifest.json`, at most `MaxManifestBytes`.
   It lists every file with its redacted size and SHA-256 and records the

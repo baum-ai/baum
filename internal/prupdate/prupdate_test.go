@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"reflect"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -133,7 +134,7 @@ func (f *fakeGitHub) client() *github.Client {
 			if r.URL.Query().Get("head_sha") != f.head {
 				return answer(200, `{"workflow_runs":[]}`)
 			}
-			return answer(200, `{"workflow_runs":[`+strings.Join(f.runs, ",")+`]}`)
+			return answer(200, `{"workflow_runs":[`+strings.Join(pageOf(f.runs, r), ",")+`]}`)
 		case strings.Contains(path, "/actions/jobs/") && strings.HasSuffix(path, "/logs"):
 			var id int
 			_, _ = fmt.Sscanf(path[strings.Index(path, "/jobs/"):], "/jobs/%d/logs", &id)
@@ -145,12 +146,20 @@ func (f *fakeGitHub) client() *github.Client {
 			}
 			return answer(200, f.logs[id])
 		case strings.HasSuffix(path, "/check-runs"):
-			return answer(200, `{"check_runs":[`+strings.Join(f.checks, ",")+`]}`)
+			return answer(200, fmt.Sprintf(`{"total_count":%d,"check_runs":[%s]}`, len(f.checks), strings.Join(pageOf(f.checks, r), ",")))
 		case strings.HasSuffix(path, "/status"):
-			return answer(200, `{"statuses":[`+strings.Join(f.statuses, ",")+`]}`)
+			return answer(200, fmt.Sprintf(`{"total_count":%d,"statuses":[%s]}`, len(f.statuses), strings.Join(pageOf(f.statuses, r), ",")))
 		}
 		return answer(404, `{"message":"Not Found"}`)
 	})})
+}
+
+// pageOf is the page of items the request asks for, 100 to a page as GitHub
+// lists them.
+func pageOf(items []string, r *http.Request) []string {
+	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
+	start := min(max(page-1, 0)*100, len(items))
+	return items[start:min(start+100, len(items))]
 }
 
 var repo = github.Repository{Host: "github.com", Owner: "acme", Name: "app"}
@@ -587,7 +596,7 @@ func TestAllChecks(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := CheckList{HeadSHA: "abc", Checks: []CheckStatus{
+	want := CheckList{HeadSHA: "abc", Total: 9, Checks: []CheckStatus{
 		{Name: "ci/circle", Status: "completed", Conclusion: "timed_out", ID: 25},
 		{Name: "ci/jenkins", Status: "completed", Conclusion: "error", Title: "Crashed"},
 		{Name: "test", Status: "completed", Conclusion: "failure", Title: "2 tests failed", URL: "https://github.com/acme/app/runs/21", JobID: 21, ID: 21, HasLog: true},
@@ -625,6 +634,75 @@ func TestAllChecks(t *testing.T) {
 	before := reads()
 	if _, err := s.AllChecks(ctx, repo, 7, "abc"); err != nil || reads() != before+1 {
 		t.Fatalf("checks kept after a re-run: %d reads, %v", reads()-before, err)
+	}
+}
+
+// A head with more checks than the app lists keeps its failing checks and
+// its commit statuses, however late GitHub lists them, and says how many
+// there are.
+func TestAllChecksCapsAfterSorting(t *testing.T) {
+	var checks, statuses []string
+	for i := range 150 {
+		conclusion := "success"
+		if i >= 145 {
+			conclusion = "failure"
+		}
+		checks = append(checks, fmt.Sprintf(`{"id":%d,"name":"job %03d","status":"completed","conclusion":%q,"app":{"slug":"circleci"},"output":{}}`, i+1, i, conclusion))
+	}
+	for i := range 5 {
+		statuses = append(statuses, fmt.Sprintf(`{"context":"ci/status %d","state":"error"}`, i))
+	}
+	fake := fakeGitHub{head: "abc", checks: checks, statuses: statuses}
+	s := Service{Client: fake.client()}
+	got, err := s.AllChecks(context.Background(), repo, 7, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Total != 155 || !got.Capped || len(got.Checks) != 100 {
+		t.Fatalf("total %d capped %v listed %d, want 155 true 100", got.Total, got.Capped, len(got.Checks))
+	}
+	for i, check := range got.Checks[:10] {
+		if check.Conclusion != "failure" && check.Conclusion != "error" {
+			t.Fatalf("check %d is %+v, want the 10 failing ones first", i, check)
+		}
+	}
+	names := map[string]bool{}
+	for _, check := range got.Checks {
+		names[check.Name] = true
+	}
+	for i := range 5 {
+		if !names[fmt.Sprintf("ci/status %d", i)] || !names[fmt.Sprintf("job %03d", 145+i)] {
+			t.Fatalf("a failing check or status %d is missing from %v", i, names)
+		}
+	}
+	// Under the cap nothing is reported as left out.
+	small := fakeGitHub{head: "abc", checks: checks[:3], statuses: statuses[:1]}
+	got, err = Service{Client: small.client()}.AllChecks(context.Background(), repo, 7, "")
+	if err != nil || got.Total != 4 || got.Capped || len(got.Checks) != 4 {
+		t.Fatalf("small list %+v, %v, want total 4 uncapped", got, err)
+	}
+}
+
+// Paging is bounded: a head with more checks than five pages hold reads five
+// pages and reports GitHub's total.
+func TestAllChecksPagingIsBounded(t *testing.T) {
+	var checks []string
+	for i := range 650 {
+		checks = append(checks, fmt.Sprintf(`{"id":%d,"name":"job %03d","status":"completed","conclusion":"success","app":{"slug":"circleci"},"output":{}}`, i+1, i))
+	}
+	fake := fakeGitHub{head: "abc", checks: checks}
+	got, err := Service{Client: fake.client()}.AllChecks(context.Background(), repo, 7, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	reads := 0
+	for _, path := range fake.gets {
+		if strings.HasSuffix(path, "/check-runs") {
+			reads++
+		}
+	}
+	if reads != 5 || got.Total != 650 || !got.Capped || len(got.Checks) != 100 {
+		t.Fatalf("%d reads, total %d capped %v listed %d, want 5, 650, true, 100", reads, got.Total, got.Capped, len(got.Checks))
 	}
 }
 

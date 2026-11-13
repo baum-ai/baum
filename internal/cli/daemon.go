@@ -15,6 +15,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -413,9 +414,13 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 		// Every reader shares one cached index. Discovery's writes only
 		// invalidate it: the index watcher publishes if the index moved.
 		index := reviewindex.NewCache(ctx, &reviewindex.Service{Registry: registry, Discovery: discover})
-		discover.Updated = index.Invalidate
+		checkedChange := func() {
+			index.Invalidate()
+			server.CheckIndex()
+		}
+		discover.Updated = checkedChange
 		changed := indexChanged(index, server.Publish)
-		worker := &background.Service{Registry: registry, Discovery: discover, Saved: background.Saved, Refresh: background.Local{Client: github.NewFromConfig(cfg, github.Options{}), Config: cfg}.Refresh, Retain: background.Retention{Log: log}.Retain, Changed: changed}
+		worker := &background.Service{Registry: registry, Discovery: discover, Saved: background.Saved, Budget: discover.GraphQLBudget, Refresh: background.Local{Client: github.NewFromConfig(cfg, github.Options{}), Config: cfg}.Refresh, Retain: background.Retention{Log: log}.Retain, Changed: checkedChange}
 		database, err := appdb.Path()
 		if err != nil {
 			_ = registry.Close()
@@ -471,7 +476,10 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 		// Feature builds run on the feature worker made below.
 		builds := &featureBuilder{}
 		prefs, _ := registry.Preferences(ctx)
-		queue, err := jobs.Open(database, &jobs.Local{Registry: registry, Groups: groups, Config: cfg, Client: github.NewFromConfig(cfg, github.Options{}), Features: builds, Chat: chats, Log: log}, prefs.Concurrency(), func(job jobs.Job) {
+		// Held until the application is wired below: a journaled feature
+		// build needs the feature log, and the queue's logger, usage events
+		// and chat service are set after it opens.
+		queue, err := jobs.OpenHeld(database, &jobs.Local{Registry: registry, Groups: groups, Config: cfg, Client: github.NewFromConfig(cfg, github.Options{}), Features: builds, Chat: chats, Log: log}, prefs.Concurrency(), func(job jobs.Job) {
 			_ = server.PublishProgress(job)
 			if event, ok := jobs.ChatEvent(job); ok {
 				_ = server.Publish("chat", event)
@@ -605,7 +613,7 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 		// The delivery figures' searches, cached per repository, and the
 		// review threads and failing checks the Inbox lists; an account
 		// change forgets both.
-		delivery := &analytics.Delivery{Search: github.NewFromConfig(cfg, github.Options{})}
+		delivery := &analytics.Delivery{Search: github.NewFromConfig(cfg, github.Options{}), Paused: worker.Paused, Limited: worker.Limited}
 		panelCache := &prupdate.Cache{}
 		beginIdentityChange := func() func(bool) {
 			if token, _ := cfg.ExplicitGitHubTokenSource("github.com"); token != "" {
@@ -728,7 +736,7 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 			}
 			conversationRoutes.ServeHTTP(w, r)
 		})
-		local := uiserver.LocalAPI{Console: consoleRoutes, GitHubAuth: githubConnection.Handler(), Registry: registry, Config: cfg, PRs: uiserver.DiscoveryHandler(registry, discover, changed), Index: inboxQueue.CountHandler(index.Handler()), Inbox: inboxQueue.Handler(), Jobs: queue.Handler(), Chat: uiserver.ChatHandler(registry, queue), Background: worker.Handler(), Automatic: scheduler.Handler(), Live: liveAPI, AgentRequests: requestsAPI, Clones: clones.Handler(), GitHubRepositories: pickList.Handler(), CurrentName: currentName(githubClient), PlanUsage: plans.Handler(), PlanUsageCached: func() []json.RawMessage {
+		local := uiserver.LocalAPI{Console: consoleRoutes, GitHubAuth: githubConnection.Handler(), Registry: registry, Config: cfg, PRs: uiserver.DiscoveryHandler(registry, askedRefresh{discover, worker.Asked}, changed), Index: inboxQueue.CountHandler(index.Handler()), Inbox: inboxQueue.Handler(), Jobs: queue.Handler(), Chat: uiserver.ChatHandler(registry, queue), Background: worker.Handler(), Automatic: scheduler.Handler(), Live: liveAPI, AgentRequests: requestsAPI, Clones: clones.Handler(), GitHubRepositories: pickList.Handler(), CurrentName: currentName(githubClient), PlanUsage: plans.Handler(), PlanUsageCached: func() []json.RawMessage {
 			var cached []json.RawMessage
 			for _, plan := range plans.Cached() {
 				if raw, err := json.Marshal(plan); err == nil {
@@ -868,6 +876,8 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 				}
 			}
 		}
+		// Everything the journaled jobs need is wired: start them.
+		queue.Resume()
 		return daemon.App{
 			API:     api,
 			Assets:  localapp.Handler(),
@@ -936,15 +946,16 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 						Fresh:       index.Fresh,
 						Snapshot: func(ctx context.Context) (any, uint64, error) {
 							snapshot, version, err := index.Current(ctx)
-							return snapshot, version, err
+							return indexWatchValue(snapshot, worker.Errors()), version, err
 						},
 					})
 				})
 				wg.Wait()
 			},
-			Shutdown: queue.Shutdown,
-			Drain:    queue.Drain,
-			Resume:   queue.Resume,
+			Shutdown:     queue.Shutdown,
+			Drain:        queue.Drain,
+			DrainRunning: queue.DrainRunning,
+			Resume:       queue.Resume,
 			Close: func() {
 				sample.Close()
 				api.Close()
@@ -965,6 +976,21 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 			},
 		}, nil
 	}
+}
+
+// askedRefresh is discovery as the app's refresh button reaches it: a
+// refresh the person asks for also has the background refresh read the
+// repository's open saved reviews once more, and again those whose reads
+// failed, including those it stopped reading until their pull request
+// changes (background.Service.Asked).
+type askedRefresh struct {
+	*discovery.Service
+	asked func(repository string)
+}
+
+func (a askedRefresh) PollNow(ctx context.Context, repo github.Repository) (discovery.Snapshot, error) {
+	a.asked(repo.String())
+	return a.Service.PollNow(ctx, repo)
 }
 
 // hookEvents is the daemon's record of hook events, or nothing when it cannot
@@ -1152,6 +1178,20 @@ func maintainReviewRuns(ctx context.Context, log *slog.Logger) {
 		return
 	}
 	reviewruns.Maintain(ctx, root, 24*time.Hour, func(err error) { log.Warn("expiring kept review runs", "error", err) })
+}
+
+// indexWatchValue excludes a successful discovery poll's bookkeeping time.
+// The app ages applied observations by ObservedAt; an unchanged list fetch
+// changes no visible row. Keep the original snapshot intact for API readers.
+func indexWatchValue(snapshot reviewindex.Snapshot, health map[string]string) any {
+	snapshot.Entries = slices.Clone(snapshot.Entries)
+	for i := range snapshot.Entries {
+		snapshot.Entries[i].MetadataFetchedAt = ""
+	}
+	return struct {
+		Index  reviewindex.Snapshot
+		Errors map[string]string
+	}{snapshot, health}
 }
 
 // indexChanged announces a change to the review index. It invalidates the

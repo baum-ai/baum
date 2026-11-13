@@ -15,7 +15,9 @@ import { useUrlState } from "../navigation";
 import {
   checkStatus,
   type LoadReviewVersion,
+  type LiveThreads,
   type ReviewDocument,
+  type ReviewEvidence,
   type ReviewFacts,
   type Anchor,
   RISK_SCORE_MEANING,
@@ -23,6 +25,7 @@ import {
   type ReviewContextRef,
   reviewThreadStatus,
   reviewGeneration,
+  withLiveThreads,
   type Section,
   sectionBadgeState,
   sectionsInReviewOrder,
@@ -294,6 +297,11 @@ export type ReviewViewerProps<F extends ReviewFile = ReviewFile> = {
   /** A stack's member reviews for the Activity tab to gather, for the
    *  document it describes, in place of the document's own activity. */
   activityMembers?: (document: ReviewDocument) => ActivityMembers;
+  /** The review threads of the pull request a document describes, as GitHub
+   *  has them now, or null while unknown. The Activity tab and its badge
+   *  read them over the review's snapshot, for the current version and the
+   *  pull request's facts; an earlier version keeps its own. */
+  liveThreads?: (document: ReviewEvidence) => LiveThreads | null;
   /** Leaves out the side pane's Activity tab. */
   hideActivity?: boolean;
   /** Puts the cursor in the conversation's text box once the side pane has
@@ -485,6 +493,7 @@ function ReviewWorkspace<F extends ReviewFile>({
   detailsChecks,
   detailsFooter,
   activityMembers,
+  liveThreads,
   hideActivity = false,
   focusConversation,
   hunkPatches = null,
@@ -1217,20 +1226,33 @@ function ReviewWorkspace<F extends ReviewFile>({
   };
   // The document the Details and Activity tabs describe: the version being
   // read, or the current one while two are compared.
-  const barDocument = navigationDocument;
   const barHistorical = historicalOnly;
+  const live = <D extends ReviewEvidence>(shown: D): D =>
+    liveThreads ? withLiveThreads(shown, liveThreads(shown)) : shown;
+  const barDocument =
+    navigationDocument && !barHistorical ? live(navigationDocument) : navigationDocument;
   const barChecks = barDocument && detailsChecks ? detailsChecks(barDocument) : null;
   // CI leads the Activity tab, with the review threads: what still needs the
   // author. Without that tab it stays at the head of Details.
   // Facts stand in for a document only while there is none.
-  const barFacts = barDocument ? null : facts;
+  const barFacts = barDocument || !facts ? null : live(facts);
   const checksFailing = barChecks
     ? barChecks.failing
     : Boolean(
         (barDocument && checkStatus(barDocument).state === "failing") ||
           (barFacts && checkStatus(barFacts).state === "failing"),
       );
-  const barMembers = barDocument && activityMembers ? activityMembers(barDocument) : undefined;
+  const listedMembers = barDocument && activityMembers ? activityMembers(barDocument) : undefined;
+  const barMembers =
+    listedMembers && liveThreads && !barHistorical
+      ? {
+          ...listedMembers,
+          members: listedMembers.members.map((member) => ({
+            ...member,
+            document: live(member.document),
+          })),
+        }
+      : listedMembers;
   const threadsOpen = (
     barMembers
       ? barMembers.members.map((member) => member.document)

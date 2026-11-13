@@ -30,8 +30,9 @@ func diskBytes(t testing.TB, s *Service, key string) []byte {
 	return raw
 }
 
-// setModified moves app.sqlite's modification time, so the service trusts
-// (in the past) or never trusts (in the future) what it kept.
+// setModified moves the modification time of app.sqlite and of its
+// write-ahead log, so the service trusts (in the past) or never trusts (in
+// the future) what it kept.
 func setModified(t testing.TB, s *Service, at time.Time) {
 	t.Helper()
 	path, err := s.databasePath()
@@ -40,6 +41,62 @@ func setModified(t testing.TB, s *Service, at time.Time) {
 	}
 	if err := os.Chtimes(path, at, at); err != nil {
 		t.Fatal(err)
+	}
+	if err := os.Chtimes(path+"-wal", at, at); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		t.Fatal(err)
+	}
+}
+
+// A commit by another connection lands in the write-ahead log and leaves
+// app.sqlite itself as it was until a checkpoint: the kept copy is read again
+// all the same.
+func TestAnotherWriterIsSeenThroughTheLog(t *testing.T) {
+	h := newHub()
+	h.add("acme/app", &hubPR{number: 1, updated: minutes(-10)})
+	s, _ := hubService(t, h)
+	ctx := context.Background()
+	if _, err := s.PollNow(ctx, appRepo); err != nil {
+		t.Fatal(err)
+	}
+	key := repositoryKey(t, s, appRepo)
+	path, err := s.databasePath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A connection left open, as the daemon's are, keeps the last writer to
+	// close from checkpointing the log into app.sqlite.
+	holder, err := appdb.Open(path, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = holder.Close() }()
+	var documents int
+	if err := holder.QueryRow("SELECT count(*) FROM app_documents").Scan(&documents); err != nil {
+		t.Fatal(err)
+	}
+	setModified(t, s, time.Now().Add(-time.Hour))
+	if _, err := s.Cached(ctx, appRepo); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	other := New(s.client, s.directory)
+	other.now = s.now
+	cache, err := other.load(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cache.Snapshot.PullRequests[0].Title = "Written to the log"
+	if err := other.save(key, cache); err != nil {
+		t.Fatal(err)
+	}
+	if after, err := os.Stat(path); err != nil || !after.ModTime().Equal(before.ModTime()) || after.Size() != before.Size() {
+		t.Fatalf("the write reached app.sqlite itself, not only its log: %v", err)
+	}
+	if got, err := s.Cached(ctx, appRepo); err != nil || got.PullRequests[0].Title != "Written to the log" {
+		t.Fatalf("a write in the log not seen: %+v %v", got, err)
 	}
 }
 

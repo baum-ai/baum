@@ -57,6 +57,9 @@ func (q *Queue) archiveLoop() {
 func (q *Queue) archive() error {
 	q.mu.Lock()
 	defer q.mu.Unlock()
+	// A progress save writing outside mu holds rows whose marks it cleared:
+	// archive only once it has committed (or marked them again).
+	q.waitFlush()
 	cutoff := q.clock0().Add(-ArchiveAfter)
 	candidates := map[string]bool{}
 	encoded := map[string][]byte{}

@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/baum-ai/baum/internal/benchcorpus"
 	"github.com/baum-ai/baum/internal/discovery"
@@ -177,6 +178,55 @@ func BenchmarkCachedBuild(b *testing.B) {
 				reads++
 			}
 			b.ReportMetric(float64(cache.buildCount()-warm)/float64(reads), "builds/op")
+		})
+	}
+}
+
+// BenchmarkRebuildOneRepositoryChanged compares, over n repositories of 50
+// open pull requests each (half reviewed), a full build with a Cache rebuild
+// after a discovery write for one repository, which reads only that one.
+func BenchmarkRebuildOneRepositoryChanged(b *testing.B) {
+	for _, n := range []int{10, 100} {
+		discovered, stores := newRevisedSource(), newFakeStores()
+		clones := registry{}
+		for i := range n {
+			repository := fmt.Sprintf("acme/r%d", i)
+			numbers := make([]int, 50)
+			var summaries []store.Summary
+			for j := range numbers {
+				numbers[j] = j + 1
+				if j%2 == 0 {
+					summaries = append(summaries, reviewed(repository, j+1, fmt.Sprintf("head%d", j+1)))
+				}
+			}
+			discovered.set(repository, discovery.Snapshot{PullRequests: openPRs(numbers...), NextPoll: time.Now().Add(time.Hour)})
+			stores.set("/"+repository, summaries...)
+			clones = append(clones, repos.Clone{ID: repository, Repository: repository, CommonDir: "/" + repository, Available: true})
+		}
+		service := &Service{Registry: clones, Discovery: discovered, OpenStore: stores.open, StoreStamp: stores.stamp}
+		ctx := context.Background()
+		b.Run(fmt.Sprintf("repositories=%d/full", n), func(b *testing.B) {
+			b.ReportAllocs()
+			for b.Loop() {
+				if _, err := service.Build(ctx); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+		b.Run(fmt.Sprintf("repositories=%d/one-changed", n), func(b *testing.B) {
+			cache := NewCache(ctx, service)
+			if _, err := cache.Snapshot(ctx); err != nil {
+				b.Fatal(err)
+			}
+			changed := discovered.copySnapshot("acme/r0")
+			b.ReportAllocs()
+			for b.Loop() {
+				discovered.set("acme/r0", changed)
+				cache.Invalidate()
+				if _, err := cache.Snapshot(ctx); err != nil {
+					b.Fatal(err)
+				}
+			}
 		})
 	}
 }

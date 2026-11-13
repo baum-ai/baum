@@ -107,11 +107,11 @@ func (s *Store) CreateConversation(ctx context.Context, k Key, c Conversation, f
 	if !k.valid() || c.ID == "" || c.Version <= 0 || first.Seq != 1 {
 		return errors.New("invalid conversation")
 	}
-	db, err := s.database(true)
+	db, release, err := s.acquire(true)
 	if err != nil {
 		return err
 	}
-	defer db.Close()
+	defer release()
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -147,11 +147,11 @@ func (s *Store) AppendTurn(ctx context.Context, k Key, id string, t Turn, ended 
 	if !k.valid() || id == "" {
 		return Conversation{}, 0, errors.New("invalid conversation")
 	}
-	db, err := s.database(true)
+	db, release, err := s.acquire(true)
 	if err != nil {
 		return Conversation{}, 0, err
 	}
-	defer db.Close()
+	defer release()
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return Conversation{}, 0, err
@@ -201,14 +201,14 @@ func (s *Store) Conversation(ctx context.Context, k Key, id string) (Conversatio
 	if !k.valid() {
 		return Conversation{}, errors.New("invalid repository or pull request")
 	}
-	db, err := s.database(false)
+	db, release, err := s.acquire(false)
 	if errors.Is(err, ErrNotFound) {
 		return Conversation{}, ErrConversationNotFound
 	}
 	if err != nil {
 		return Conversation{}, err
 	}
-	defer db.Close()
+	defer release()
 	c, err := conversation(ctx, db, k, id)
 	if missingTable(err) {
 		return Conversation{}, ErrConversationNotFound
@@ -234,14 +234,14 @@ func (s *Store) Conversations(ctx context.Context, k Key) ([]Conversation, error
 	if !k.valid() {
 		return nil, errors.New("invalid repository or pull request")
 	}
-	db, err := s.database(false)
+	db, release, err := s.acquire(false)
 	if errors.Is(err, ErrNotFound) {
 		return []Conversation{}, nil
 	}
 	if err != nil {
 		return nil, err
 	}
-	defer db.Close()
+	defer release()
 	list, err := conversations(ctx, db, k, "")
 	if missingTable(err) {
 		return []Conversation{}, nil
@@ -374,11 +374,11 @@ func (s *Store) updateTurn(ctx context.Context, k Key, id string, seq int, state
 	if !k.valid() || id == "" || seq < 1 {
 		return false, errors.New("invalid turn")
 	}
-	db, err := s.database(true)
+	db, release, err := s.acquire(true)
 	if err != nil {
 		return false, err
 	}
-	defer db.Close()
+	defer release()
 	if err := owned(ctx, db, k, id); err != nil {
 		return false, err
 	}
@@ -406,11 +406,11 @@ func (s *Store) SetConversationSession(ctx context.Context, k Key, id, session, 
 	if !k.valid() || id == "" {
 		return errors.New("invalid conversation")
 	}
-	db, err := s.database(true)
+	db, release, err := s.acquire(true)
 	if err != nil {
 		return err
 	}
-	defer db.Close()
+	defer release()
 	result, err := db.ExecContext(ctx, `UPDATE conversations SET session_id=?, directory=?, seeded=?, updated=? WHERE id=? AND repository=? AND pr=?`, session, directory, seeded, millis(at), id, k.repository(), k.Number)
 	if err != nil {
 		return err

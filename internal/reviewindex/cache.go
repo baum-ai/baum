@@ -40,7 +40,9 @@ type Cache struct {
 	current    *cached
 	flight     *flight
 	builds     uint64
-	bodies     map[bool]encodedBody
+	bodies     map[variant]encodedBody
+	// parts are each repository's rows as the last builds read them.
+	parts parts
 }
 
 type cached struct {
@@ -58,9 +60,15 @@ type flight struct {
 	err        error
 }
 
-// NewCache caches s's snapshots. Builds stop when ctx ends.
+// NewCache caches s's snapshots. Builds stop when ctx ends. A build after an
+// invalidation reads again only the repositories whose discovery cache,
+// clones or stores changed (parts.go).
 func NewCache(ctx context.Context, s *Service) *Cache {
-	return &Cache{life: ctx, build: s.build, now: time.Now}
+	c := &Cache{life: ctx, now: time.Now}
+	c.build = func(ctx context.Context, now time.Time) (Snapshot, time.Time, error) {
+		return s.build(ctx, now, &c.parts)
+	}
+	return c
 }
 
 // Invalidate makes the next reader build again. A build already running
@@ -155,38 +163,38 @@ func (c *Cache) recovered(ctx context.Context, started time.Time) (snapshot Snap
 // Handler serves GET /api/index as Service.Handler does, from the cache.
 func (c *Cache) Handler() http.Handler { return handler(c.encoded) }
 
-// encodedBody is a version's JSON for one history flag.
+// encodedBody is a version JSON for one variant.
 type encodedBody struct {
 	version uint64
 	body    etagjson.Body
 }
 
 // encoded is the JSON of the current snapshot, encoded once per cached
-// version and history flag. A snapshot an invalidation kept out of the cache
+// version and variant. A snapshot an invalidation kept out of the cache
 // (version 0) has no identity to key on, so it is encoded each time.
-func (c *Cache) encoded(ctx context.Context, history bool) (etagjson.Body, error) {
+func (c *Cache) encoded(ctx context.Context, v variant) (etagjson.Body, error) {
 	snapshot, version, err := c.Current(ctx)
 	if err != nil {
 		return etagjson.Body{}, err
 	}
 	if version != 0 {
 		c.mu.Lock()
-		e, ok := c.bodies[history]
+		e, ok := c.bodies[v]
 		c.mu.Unlock()
 		if ok && e.version == version {
 			return e.body, nil
 		}
 	}
-	body, err := etagjson.Encode(withHistory(snapshot, history))
+	body, err := v.encode(snapshot)
 	if err != nil || version == 0 {
 		return body, err
 	}
 	c.mu.Lock()
-	if e, ok := c.bodies[history]; !ok || e.version < version {
+	if e, ok := c.bodies[v]; !ok || e.version < version {
 		if c.bodies == nil {
-			c.bodies = map[bool]encodedBody{}
+			c.bodies = map[variant]encodedBody{}
 		}
-		c.bodies[history] = encodedBody{version: version, body: body}
+		c.bodies[v] = encodedBody{version: version, body: body}
 	}
 	c.mu.Unlock()
 	return body, nil
@@ -211,11 +219,21 @@ func Fingerprint(rows func(context.Context) ([]repos.Repository, error), identit
 			case err != nil:
 				_, _ = fmt.Fprintf(h, "%q -\n", path)
 			case times:
-				stamp := store.SeenThroughHeartbeats(path, store.FileStamp{Size: info.Size(), ModTime: info.ModTime().UnixNano()})
-				_, _ = fmt.Fprintf(h, "%q %d %d %v\n", path, stamp.Size, stamp.ModTime, info.Mode())
+				_, _ = fmt.Fprintf(h, "%q %d %d %v\n", path, info.Size(), info.ModTime().UnixNano(), info.Mode())
 			default:
 				_, _ = fmt.Fprintf(h, "%q %v\n", path, info.Mode().Type())
 			}
+		}
+		// A store's commits land in its write-ahead log first.
+		statStore := func(path string) {
+			info, err := os.Stat(path)
+			stamp, stampErr := store.StampOf(path)
+			if err != nil || stampErr != nil {
+				_, _ = fmt.Fprintf(h, "%q -\n", path)
+				return
+			}
+			stamp = store.SeenThroughHeartbeats(path, stamp)
+			_, _ = fmt.Fprintf(h, "%q %d %d %d %d %v\n", path, stamp.Size, stamp.ModTime, stamp.WALSize, stamp.WALModTime, info.Mode())
 		}
 		if identity != nil {
 			_, _ = fmt.Fprintf(h, "identity %q\n", identity())
@@ -237,7 +255,7 @@ func Fingerprint(rows func(context.Context) ([]repos.Repository, error), identit
 					continue
 				}
 				for _, root := range roots {
-					stat(filepath.Join(root, "versions.sqlite"), true)
+					statStore(filepath.Join(root, "versions.sqlite"))
 				}
 			}
 		}
