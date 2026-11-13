@@ -1107,8 +1107,8 @@ port changes; `localStorage` keeps a copy so a reload draws the sidebar as it
 was before the preferences arrive. A window narrower than 64rem always folds
 the sidebar, opens it the same way, and hides the pin button.
 
-A Help button at the right of the sidebar's baum title (under it when the
-sidebar is folded) opens a help menu (`HelpButton` in `src/shell.tsx`):
+A Help button at the right of the sidebar's baum title opens a help menu
+(`HelpButton` in `src/shell.tsx`):
 **Show shortcuts** opens the shortcuts sheet, **Report a problem** opens the
 Report a problem dialog (`src/report-problem.tsx`, also Diagnostics' button:
 what happened, what to attach with a preview, then **Open issue**, which opens
@@ -1117,8 +1117,9 @@ a new issue in baum-ai/baum on GitHub; see the
 window (the desktop app hands it to the browser). The `?` key opens the same
 menu with the keys on Show shortcuts, so `?` then Enter shows the sheet; with
 the sheet open `?` hides it. Opened by the key, the menu gives the keys back to
-where they were rather than to the button. With the glyph-only rail the button
-sits under the Settings glyph.
+where they were rather than to the button. The folded sidebar hides Help
+until it opens over the page; while it is hidden `?` shows the shortcuts sheet
+directly.
 
 In the sidebar Inbox is a heading, not a link: it has no address, is never the
 current page and shows the total of what waits (and, for screen readers, ", N
