@@ -27,13 +27,15 @@ func (s Size) Units() int {
 }
 
 // Arrange orders a document's layout for its landing page and sets Landing.
-// Pinned entries move to the front; so does the risks tile when it ranks an
-// active critical or high risk and would otherwise not be on the landing
-// page. Both moves are stable. A converted document pins nothing and places
-// the risks tile second, where it is always on the landing page, so its order
-// is unchanged.
+// A custom tile's entry of a size its definition does not declare gets the
+// first size it declares. Pinned entries move to the front; so does the
+// risks tile when it ranks an active critical or high risk and would
+// otherwise not be on the landing page. Both moves are stable. A converted
+// document pins nothing and places the risks tile second, where it is always
+// on the landing page, so its order is unchanged.
 func Arrange(doc *Document) {
 	layout := doc.Layout
+	layout.Entries = declaredSizes(doc, layout.Entries)
 	front := func(entry Entry) bool { return entry.Pin }
 	layout.Entries = frontFirst(layout.Entries, front)
 	layout.Landing = Landing(layout)
@@ -47,6 +49,30 @@ func Arrange(doc *Document) {
 		}
 	}
 	doc.Layout = layout
+}
+
+// declaredSizes returns the entries with each custom tile's size one its
+// definition declares.
+func declaredSizes(doc *Document, entries []Entry) []Entry {
+	var sizes map[string][]Size
+	for _, tile := range doc.Tiles {
+		if tile.Type == TypeCustom {
+			if sizes == nil {
+				sizes = map[string][]Size{}
+			}
+			sizes[tile.ID] = definitionSizes(tile.Definition)
+		}
+	}
+	if sizes == nil {
+		return entries
+	}
+	entries = slices.Clone(entries)
+	for i, entry := range entries {
+		if declared := sizes[entry.Tile]; len(declared) > 0 && !slices.Contains(declared, entry.Size) {
+			entries[i].Size = declared[0]
+		}
+	}
+	return entries
 }
 
 func frontFirst(entries []Entry, front func(Entry) bool) []Entry {

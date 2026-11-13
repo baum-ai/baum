@@ -1,6 +1,8 @@
 // Package tiles holds the baum.tiles/1 tile document: its types, a validator,
-// the catalogue of built-in tile types and a lossless conversion from and to
-// a stored baum.review/1 document.
+// the catalogue of built-in tile types, the contract of custom tile types
+// (TypeDefinition, the data schema dialect CheckDataSchema checks, the digest
+// and citations) and a lossless conversion from and to a stored
+// baum.review/1 document.
 //
 // A tile document is a substrate, the parts of a review that are scored,
 // refreshed and cited (the review header, host facts, the change outline,

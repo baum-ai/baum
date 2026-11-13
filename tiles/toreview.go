@@ -14,14 +14,20 @@ import (
 // IDs back, and so do the references FromReview rewrote. It reads the
 // substrate and the tiles that hold review content (overview, change,
 // intent, decisions, context, media and everything_else); the risks and
-// evidence tiles and the layout only present the substrate.
+// evidence tiles and the layout only present the substrate. baum.review/1
+// has no place for custom tiles, or for the prose, table, diagram and code
+// tiles, so the review it returns leaves them out.
 func ToReview(doc *Document) ([]byte, error) {
 	if doc.Schema != Name {
 		return nil, fmt.Errorf("tiles: the document's schema is %q, not %q", doc.Schema, Name)
 	}
 	byID := make(map[string]*Tile, len(doc.Tiles))
 	for i := range doc.Tiles {
-		byID[doc.Tiles[i].ID] = &doc.Tiles[i]
+		// A custom tile may have any ID, including a built-in single tile's
+		// the document does not use; it holds no review content.
+		if doc.Tiles[i].Type != TypeCustom {
+			byID[doc.Tiles[i].ID] = &doc.Tiles[i]
+		}
 	}
 	overviewTile := byID[TypeOverview]
 	if overviewTile == nil || overviewTile.Type != TypeOverview {

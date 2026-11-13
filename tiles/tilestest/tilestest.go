@@ -1,6 +1,7 @@
 // Package tilestest checks conversions between baum.review/1 and
-// baum.tiles/1 documents, for tests and for runs over real review stores. It
-// uses only the tiles package's public API.
+// baum.tiles/1 documents, for tests and for runs over real review stores,
+// and builds custom tiles for tests. It uses only the tiles package's public
+// API.
 package tilestest
 
 import (
@@ -533,4 +534,30 @@ func jsonEqual(a, b json.RawMessage) bool {
 		return false
 	}
 	return reflect.DeepEqual(x, y)
+}
+
+// SealDefinition encodes a custom tile type definition with its digest
+// written, as the host writes it. It panics on a definition that cannot be
+// encoded, which only a test can build.
+func SealDefinition(def tiles.TypeDefinition) json.RawMessage {
+	def.Digest = ""
+	encoded, err := json.Marshal(def)
+	if err != nil {
+		panic(err)
+	}
+	digest, err := tiles.DefinitionDigest(encoded)
+	if err != nil {
+		panic(err)
+	}
+	def.Digest = digest
+	encoded, err = json.Marshal(def)
+	if err != nil {
+		panic(err)
+	}
+	return encoded
+}
+
+// CustomTile returns a ready custom tile with a sealed definition.
+func CustomTile(id, title string, def tiles.TypeDefinition, data json.RawMessage) tiles.Tile {
+	return tiles.Tile{ID: id, Type: tiles.TypeCustom, Title: title, Data: data, State: tiles.StateReady, Definition: SealDefinition(def)}
 }

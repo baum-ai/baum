@@ -163,7 +163,7 @@ func TestValidateMarksTilesUnavailable(t *testing.T) {
 		{"an unknown type", "sparkline", `tile type "sparkline" is unknown`, func(doc *tiles.Document) {
 			addTile(doc, tiles.Tile{ID: "sparkline", Type: "sparkline", Title: "Trend", Data: json.RawMessage(`{}`), State: tiles.StateReady})
 		}},
-		{"a custom tile", "custom_chart", "Custom tiles aren't supported in this version", func(doc *tiles.Document) {
+		{"a custom tile without its kit and sizes", "custom_chart", `the definition is not valid: at the top level: lacks the required property "kit"`, func(doc *tiles.Document) {
 			addTile(doc, tiles.Tile{ID: "custom_chart", Type: tiles.TypeCustom, Title: "Chart", Data: json.RawMessage(`{}`), State: tiles.StateReady, Definition: customDefinition()})
 		}},
 		{"a single tile under another ID", "proof", `a evidence tile's ID must be "evidence"`, func(doc *tiles.Document) {

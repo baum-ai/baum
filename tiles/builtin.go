@@ -30,8 +30,8 @@ const (
 	TypeCode           = "code"
 )
 
-// TypeCustom is reserved for a tile that embeds its own type definition. This
-// version accepts its shape but never renders one: it is always unavailable.
+// TypeCustom is the type of a tile that embeds its own type definition
+// (TypeDefinition): a component, the schema of its data and how to fill it.
 const TypeCustom = "custom"
 
 // Builtins lists the built-in tile types in catalogue order.

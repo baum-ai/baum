@@ -25,8 +25,9 @@ import (
 //     problems: a single tile not under its type's ID, data that does not
 //     have its type's shape (only a draft's pending context tile may have
 //     empty data), references in the data that do not resolve, a decision ID
-//     repeated in the decisions tile, an unknown type, and every custom
-//     tile, which this version does not render.
+//     repeated in the decisions tile, an unknown type, and a custom tile
+//     whose definition, data or citations fail (see CheckDefinition and
+//     CheckData), which also gets its covers: the hunks its data cites.
 //
 // A host serving documents it converted runs only the cheap tile-level checks
 // (CheckTiles); Validate runs everything. A Validator is safe for concurrent
@@ -34,6 +35,11 @@ import (
 type Validator struct {
 	document func() (*jsonschema.Resolved, error)
 	data     func() (map[string]*jsonschema.Resolved, error)
+	// definitions caches checked custom tile definitions by the SHA-256 of
+	// their encoding, and schemas their compiled data schemas by digest: a
+	// saved review embeds a definition in every tile of its type.
+	definitions *lru[[32]byte, *checkedDefinition]
+	schemas     *lru[string, *compiledSchema]
 }
 
 // NewValidator returns a Validator. The schemas are compiled on first use.
@@ -51,6 +57,8 @@ func NewValidator() *Validator {
 			}
 			return data, nil
 		}),
+		definitions: newLRU[[32]byte, *checkedDefinition](definitionCacheSize),
+		schemas:     newLRU[string, *compiledSchema](schemaCacheSize),
 	}
 }
 
@@ -257,8 +265,8 @@ func currentChange(change Change) bool {
 }
 
 // CheckTiles applies the tile-level checks and marks every tile that fails
-// one unavailable, with its problems. It fails only when the schemas cannot
-// be compiled.
+// one unavailable, with its problems. It sets each custom tile's covers. It
+// fails only when the schemas cannot be compiled.
 func (v *Validator) CheckTiles(doc *Document) error {
 	data, err := v.data()
 	if err != nil {
@@ -266,9 +274,14 @@ func (v *Validator) CheckTiles(doc *Document) error {
 	}
 	refs := newTileRefs(doc)
 	for i := range doc.Tiles {
-		if problems := tileProblems(data, refs, &doc.Tiles[i]); len(problems) > 0 {
-			doc.Tiles[i].State = StateUnavailable
-			doc.Tiles[i].Problems = problems
+		tile := &doc.Tiles[i]
+		problems, covers := v.tileProblems(data, refs, tile)
+		if tile.Type == TypeCustom {
+			tile.Covers = covers
+		}
+		if len(problems) > 0 {
+			tile.State = StateUnavailable
+			tile.Problems = problems
 		}
 	}
 	return nil
@@ -281,7 +294,8 @@ func (v *Validator) TileProblems(doc *Document, tile *Tile) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	return tileProblems(data, newTileRefs(doc), tile), nil
+	problems, _ := v.tileProblems(data, newTileRefs(doc), tile)
+	return problems, nil
 }
 
 // tileRefs is what a tile's data may refer to.
@@ -291,10 +305,21 @@ type tileRefs struct {
 	risks   map[string]Risk
 	// everythingElse is the change the everything_else tile shows.
 	everythingElse string
+	doc            *Document
+	// custom is what custom tiles' citations resolve to, built when the
+	// first custom tile needs it.
+	custom *customRefs
 }
 
-func newTileRefs(doc *Document) tileRefs {
-	refs := tileRefs{changes: map[string]Change{}, current: map[string]bool{}, risks: map[string]Risk{}}
+func (refs *tileRefs) customRefs() *customRefs {
+	if refs.custom == nil {
+		refs.custom = newCustomRefs(refs.doc)
+	}
+	return refs.custom
+}
+
+func newTileRefs(doc *Document) *tileRefs {
+	refs := &tileRefs{changes: map[string]Change{}, current: map[string]bool{}, risks: map[string]Risk{}, doc: doc}
 	for _, tile := range doc.Tiles {
 		if tile.Type == TypeEverythingElse {
 			var value EverythingElseData
@@ -313,13 +338,16 @@ func newTileRefs(doc *Document) tileRefs {
 	return refs
 }
 
-// unsupportedCustom is the problem every custom tile has in this version.
-const unsupportedCustom = "Custom tiles aren't supported in this version"
-
-func tileProblems(data map[string]*jsonschema.Resolved, refs tileRefs, tile *Tile) []string {
+// tileProblems returns a tile's problems and, for a custom tile without
+// any, the hunks it covers.
+func (v *Validator) tileProblems(data map[string]*jsonschema.Resolved, refs *tileRefs, tile *Tile) ([]string, []string) {
 	if tile.Type == TypeCustom {
-		return []string{unsupportedCustom}
+		return v.customProblems(refs, tile)
 	}
+	return builtinProblems(data, refs, tile), nil
+}
+
+func builtinProblems(data map[string]*jsonschema.Resolved, refs *tileRefs, tile *Tile) []string {
 	builtin, ok := Builtin(tile.Type)
 	if !ok {
 		return []string{fmt.Sprintf("tile type %q is unknown", tile.Type)}
