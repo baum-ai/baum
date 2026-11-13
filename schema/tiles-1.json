@@ -172,7 +172,10 @@
         "covers": { "type": "array", "items": { "$ref": "#/$defs/hunkId" } },
         "state": { "enum": ["ready", "pending", "failed", "unavailable"] },
         "problems": { "type": "array", "items": { "type": "string" } },
-        "definition": { "$ref": "#/$defs/tileTypeDefinition" }
+        "definition": {
+          "description": "A custom tile's definition, of the shape $defs/tileTypeDefinition gives; a validator checks that per tile.",
+          "type": "object"
+        }
       },
       "additionalProperties": false,
       "required": ["id", "type", "title", "data", "state"],
@@ -182,13 +185,21 @@
     },
     "tileTypeDefinition": {
       "type": "object",
-      "description": "Reserved: the embedded definition of a custom tile, so a stored review renders without a library lookup.",
+      "description": "The definition a custom tile was made with, embedded in the tile so a stored review renders without a library lookup. A validator checks it per tile, and a definition that fails marks its tile unavailable. name must not be custom or a built-in type's. data_schema is in the restricted dialect the tiles package checks (CheckDataSchema), at most 32 KiB encoded. kit is the major version of the tile kit the component was written for. sizes are the layout sizes the glance was made for, in order of preference; a layout entry of another size gets the first. digest is written by the host: sha256 over the RFC 8785 canonical JSON of the definition without its digest.",
       "properties": {
         "name": { "type": "string", "pattern": "^[a-z][a-z0-9_]{0,63}$" },
         "title": { "type": "string", "minLength": 1, "maxLength": 160 },
-        "use_when": { "type": "string", "maxLength": 200 },
-        "fill": { "type": "string", "maxLength": 4000 },
+        "use_when": { "type": "string", "maxLength": 200, "pattern": "^[^\\n\\r]*$" },
+        "fill": { "type": "string", "maxLength": 8000 },
         "data_schema": { "type": "object" },
+        "kit": { "type": "integer", "minimum": 1 },
+        "sizes": {
+          "type": "array",
+          "items": { "enum": ["full", "half", "third"] },
+          "minItems": 1,
+          "maxItems": 3,
+          "uniqueItems": true
+        },
         "source": {
           "type": "object",
           "properties": {
@@ -201,7 +212,45 @@
         "digest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" }
       },
       "additionalProperties": false,
-      "required": ["name", "title", "use_when", "fill", "data_schema", "source", "digest"]
+      "required": ["name", "title", "use_when", "fill", "data_schema", "kit", "sizes", "source", "digest"]
+    },
+    "citation": {
+      "description": "A reference from a custom tile's data to the review: a baum.review/1 anchor, or a risk, evidence item, change or tile of this document. A data schema declares a citation with {\"$ref\": \"#/$defs/citation\"}. Any object of a tile's data that has this shape is a citation, and the hunk, check, review thread, session, risk, evidence item, change or tile it names must be in the document.",
+      "oneOf": [{ "$ref": "#/$defs/anchor" }, { "$ref": "#/$defs/itemRef" }]
+    },
+    "itemRef": {
+      "description": "A reference to an item of this document by its ID. The risk and evidence ID patterns are the review schema's.",
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": { "type": { "const": "risk" }, "id": { "type": "string", "pattern": "^rsk_[a-z0-9_]+$", "maxLength": 128 } },
+          "additionalProperties": false,
+          "required": ["type", "id"]
+        },
+        {
+          "type": "object",
+          "properties": { "type": { "const": "evidence" }, "id": { "type": "string", "pattern": "^ev_[a-z0-9_]+$", "maxLength": 128 } },
+          "additionalProperties": false,
+          "required": ["type", "id"]
+        },
+        {
+          "type": "object",
+          "properties": { "type": { "const": "change" }, "id": { "$ref": "#/$defs/sectionId" } },
+          "additionalProperties": false,
+          "required": ["type", "id"]
+        },
+        {
+          "type": "object",
+          "properties": { "type": { "const": "tile" }, "id": { "$ref": "#/$defs/tileId" } },
+          "additionalProperties": false,
+          "required": ["type", "id"]
+        }
+      ]
+    },
+    "markdown": {
+      "type": "string",
+      "maxLength": 4000,
+      "description": "Text in the Markdown subset the tile kit renders."
     },
     "layout": {
       "type": "object",

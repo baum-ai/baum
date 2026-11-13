@@ -2,6 +2,7 @@ package schema
 
 import (
 	"encoding/json"
+	"maps"
 	"slices"
 	"strings"
 	"testing"
@@ -136,4 +137,81 @@ func TestTileItemsExtendTheReviewItems(t *testing.T) {
 			t.Errorf("%s has no rules; the test no longer checks them", tc.review)
 		}
 	}
+}
+
+// A custom tile's citation is a review anchor or a reference to an item of
+// the document. The references' ID shapes are the review schema's, written
+// out so a data schema can use them without the review item's other parts;
+// they must not drift from it. The definitions compile on their own.
+func TestCitationDefinitions(t *testing.T) {
+	merged, err := MergedTiles()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var root struct {
+		Defs map[string]json.RawMessage `json:"$defs"`
+	}
+	if err := json.Unmarshal(merged, &root); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"citation", "itemRef", "markdown", "tileTypeDefinition"} {
+		if _, err := CompileTilesDefinition(name); err != nil {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+	var itemRef struct {
+		OneOf []struct {
+			Properties struct {
+				Type struct {
+					Const string `json:"const"`
+				} `json:"type"`
+				ID json.RawMessage `json:"id"`
+			} `json:"properties"`
+		} `json:"oneOf"`
+	}
+	if err := json.Unmarshal(root.Defs["itemRef"], &itemRef); err != nil {
+		t.Fatal(err)
+	}
+	var reviewRisk, reviewEvidence struct {
+		Properties struct {
+			ID json.RawMessage `json:"id"`
+		} `json:"properties"`
+	}
+	if err := json.Unmarshal(root.Defs["reviewRisk"], &reviewRisk); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(root.Defs["reviewEvidence"], &reviewEvidence); err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]string{
+		"risk":     compact(t, reviewRisk.Properties.ID),
+		"evidence": compact(t, reviewEvidence.Properties.ID),
+		"change":   `{"$ref":"#/$defs/sectionId"}`,
+		"tile":     `{"$ref":"#/$defs/tileId"}`,
+	}
+	got := map[string]string{}
+	for _, option := range itemRef.OneOf {
+		got[option.Properties.Type.Const] = compact(t, option.Properties.ID)
+	}
+	for kind, id := range want {
+		if got[kind] != id {
+			t.Errorf("itemRef %s ID is %s, want %s", kind, got[kind], id)
+		}
+	}
+	if len(got) != len(want) {
+		t.Errorf("itemRef has the kinds %v, want %v", slices.Collect(maps.Keys(got)), slices.Collect(maps.Keys(want)))
+	}
+}
+
+func compact(t *testing.T, raw json.RawMessage) string {
+	t.Helper()
+	var value any
+	if err := json.Unmarshal(raw, &value); err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(encoded)
 }
