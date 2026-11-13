@@ -15,8 +15,9 @@ import (
 
 // A conversation turn keeps the person's own configuration: none of the flags
 // that confine every other run, the access it asks for (as config on exec
-// resume, which takes no --sandbox), approvals never asked for, and baum's
-// server beside the person's own.
+// resume, which takes no --sandbox), approvals answered by Codex's reviewer
+// in auto access and never asked for in workspace access, and baum's server
+// beside the person's own.
 func TestConverseArguments(t *testing.T) {
 	mcp := []string{"-c", `mcp_servers.baum.url="http://127.0.0.1:43123/api/mcp"`, "-c", `mcp_servers.baum.bearer_token_env_var="BAUM_MCP_TOKEN"`}
 	for _, c := range []struct {
@@ -25,6 +26,8 @@ func TestConverseArguments(t *testing.T) {
 		resume string
 		want   []string
 	}{
+		{"auto, first turn", agent.AccessAuto, "", []string{"exec", "--json", "--skip-git-repo-check", "--sandbox", "workspace-write", "-c", `approval_policy="on-request"`, "-c", `approvals_reviewer="auto_review"`}},
+		{"auto, follow-up", agent.AccessAuto, testSession, []string{"exec", "resume", "--json", "--skip-git-repo-check", "-c", `sandbox_mode="workspace-write"`, "-c", `approval_policy="on-request"`, "-c", `approvals_reviewer="auto_review"`}},
 		{"full, first turn", agent.AccessFull, "", []string{"exec", "--json", "--skip-git-repo-check", "--dangerously-bypass-approvals-and-sandbox"}},
 		{"full, follow-up", agent.AccessFull, testSession, []string{"exec", "resume", "--json", "--skip-git-repo-check", "--dangerously-bypass-approvals-and-sandbox"}},
 		{"workspace, first turn", agent.AccessWorkspace, "", []string{"exec", "--json", "--skip-git-repo-check", "--sandbox", "workspace-write", "-c", `approval_policy="never"`}},
@@ -113,9 +116,11 @@ func TestConverseRunsThePersonsSession(t *testing.T) {
 			t.Errorf("a review got %s", name)
 		}
 	}
-	// Workspace access runs in the sandbox, so it is checked first.
-	if _, err := (&Backend{Binary: script}).Converse(context.Background(), agent.Request{Directory: t.TempDir(), Prompt: "go"}, agent.AccessWorkspace); err == nil || !strings.Contains(err.Error(), "sandbox") {
-		t.Fatalf("workspace access without a working sandbox: %v", err)
+	// Auto and workspace access run in the sandbox, so it is checked first.
+	for _, access := range []agent.Access{agent.AccessAuto, agent.AccessWorkspace} {
+		if _, err := (&Backend{Binary: script}).Converse(context.Background(), agent.Request{Directory: t.TempDir(), Prompt: "go"}, access); err == nil || !strings.Contains(err.Error(), "sandbox") {
+			t.Fatalf("%s access without a working sandbox: %v", access, err)
+		}
 	}
 	if _, err := os.Stat(filepath.Join(dir, "schema-path.txt")); err == nil {
 		t.Fatal("a conversation wrote an output schema")

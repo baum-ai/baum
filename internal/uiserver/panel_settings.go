@@ -32,8 +32,8 @@ func (in panelInput) check() error {
 	if in.Model != nil && (len(strings.TrimSpace(*in.Model)) > maxPanelModel || strings.ContainsFunc(*in.Model, unicode.IsControl)) {
 		return errors.New("model must be one line of at most 200 characters")
 	}
-	if in.Mode != nil && *in.Mode != repos.PanelModeFull && *in.Mode != repos.PanelModeWorkspace {
-		return errors.New("mode must be full or workspace")
+	if in.Mode != nil && *in.Mode != repos.PanelModeAuto && *in.Mode != repos.PanelModeFull && *in.Mode != repos.PanelModeWorkspace {
+		return errors.New("mode must be auto, full or workspace")
 	}
 	if in.Position != nil && *in.Position != repos.PanelBottom && *in.Position != repos.PanelTop {
 		return errors.New("position must be bottom or top")

@@ -24,6 +24,8 @@ func TestConverseArguments(t *testing.T) {
 		resume string
 		mode   string
 	}{
+		{"auto, first turn", agent.AccessAuto, "", "auto"},
+		{"auto, follow-up", agent.AccessAuto, converseSession, "auto"},
 		{"full, first turn", agent.AccessFull, "", "bypassPermissions"},
 		{"full, follow-up", agent.AccessFull, converseSession, "bypassPermissions"},
 		{"workspace, first turn", agent.AccessWorkspace, "", "acceptEdits"},

@@ -170,7 +170,7 @@ type Preferences struct {
 // PanelPreferences are the session panel's defaults. An empty Agent follows
 // the fix agent, model included; a nil Model is the fix agent's model when
 // Agent is that agent, else the agent's own default. An empty Mode is
-// PanelModeFull and an empty Position PanelBottom.
+// PanelModeAuto and an empty Position PanelBottom.
 type PanelPreferences struct {
 	Agent    string  `json:"agent,omitempty"`
 	Model    *string `json:"model,omitempty"`
@@ -183,6 +183,7 @@ type PanelPreferences struct {
 const (
 	PanelAgentClaudeCode = "claude-code"
 	PanelAgentCodex      = "codex"
+	PanelModeAuto        = "auto"
 	PanelModeFull        = "full"
 	PanelModeWorkspace   = "workspace"
 	PanelBottom          = "bottom"
@@ -215,7 +216,7 @@ func (p Preferences) ResolvePanel(review config.Config) Panel {
 	case config.BackendClaude:
 		fixModel = fix.Model
 	}
-	out := Panel{Agent: fixAgent, Model: fixModel, Mode: cmp.Or(p.Panel.Mode, PanelModeFull), Position: cmp.Or(p.Panel.Position, PanelBottom),
+	out := Panel{Agent: fixAgent, Model: fixModel, Mode: cmp.Or(p.Panel.Mode, PanelModeAuto), Position: cmp.Or(p.Panel.Position, PanelBottom),
 		AgentSource: "fix", ModelSource: "fix"}
 	if p.Panel.Agent != "" {
 		out.Agent, out.AgentSource = p.Panel.Agent, "panel"

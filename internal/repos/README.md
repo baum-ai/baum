@@ -52,7 +52,7 @@ its HTTP handler uses.
   `run_timeout` in `Preferences.Resolve`; a value out of range keeps the
   file's and does not block saving other preferences. Its `panel` object
   (`agent`, `model`, `mode`, `position`) is the session panel's defaults;
-  `ResolvePanel` fills what is unset from the fix agent, `full` and `bottom`
+  `ResolvePanel` fills what is unset from the fix agent, `auto` and `bottom`
   (see "Session panel conversations" in `ARCHITECTURE.md`).
   `UpdatePreferences` edits them in one transaction that holds the write lock
   from its start; `UpdatePreferencesIf` is the same with an edit that may

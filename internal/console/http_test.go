@@ -144,7 +144,7 @@ func TestConversationRoutes(t *testing.T) {
 	inbox := map[string]any{"page": agentcontext.PageInbox}
 	created := r.call(t, "POST", "/api/console/conversations", map[string]any{"page": inbox}, http.StatusCreated)
 	id, _ := created["id"].(string)
-	if id == "" || created["agent"] != AgentClaudeCode || created["mode"] != ModeFull || created["state"] != StateIdle || created["progress"] != nil {
+	if id == "" || created["agent"] != AgentClaudeCode || created["mode"] != ModeAuto || created["state"] != StateIdle || created["progress"] != nil {
 		t.Fatalf("created %v", created)
 	}
 	if answer := r.call(t, "POST", "/api/console/conversations", map[string]any{"page": map[string]any{"page": "nowhere"}}, http.StatusBadRequest); code(answer) != CodeInvalidPage {
