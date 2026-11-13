@@ -590,7 +590,7 @@ test("Ask opens the session panel on the pull request, and a stop's Ask says wha
   await expect(composer).toBeFocused();
   await expect(composer).toHaveValue("");
   expect(page.url()).not.toContain("ask=");
-  await composer.press("Escape");
+  await composer.press("Control+`");
   await expect(panel).toHaveCount(0);
 
   // The questions asked of the review's agent before the panel stay

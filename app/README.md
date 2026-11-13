@@ -711,8 +711,8 @@ Inbox page to go to, as no page shows the whole queue: every word typed must mat
 query ranks first, `↑` and `↓` move, `Enter` opens and `Esc` closes; it also
 offers **Open the session panel**. The sidebar
 draws each page's key while Alt is held and names it in the link's tooltip and
-`aria-keyshortcuts`. The backtick (`` ` ``) shows or hides the session panel
-anywhere but in a text field (see "Session panel").
+`aria-keyshortcuts`. Ctrl with the backtick (`` Ctrl+` ``) shows the session
+panel, or hides it from its composer, anywhere (see "Session panel").
 
 Tab (`useTabStops`) reaches every control without leaving the keys' model
 behind. On a page it moves by place: the sidebar is one stop, on the current
@@ -2326,14 +2326,36 @@ Settings), as wide as the page, and is resized by dragging its grip or with
 `↑` and `↓` on it. It stays open across navigation; whether it is open, its
 height and the conversation it shows are kept in this window's storage
 (`baum.session-panel.v1`, `src/session-panel-state.ts`, which any page can
-open it through), as the sidebar's fold is. The sidebar's **Session** button,
-the backtick key (`PANEL_KEY` in `src/shortcuts.tsx`: `` ` ``, or the key in
-its place on a layout where it is a dead key; anywhere but in a text field;
-under Escape, where a drop-down terminal's key is, and taken by nothing else)
-and **Open the session panel** in Go to (⌘K) show or hide it. Escape in it
-hides it; in a field with something typed, the first Escape gives the keys to
-the panel instead and the next hides it, and the page under it never gets
-either (a pull request's page would go back to its list). Opened, its composer
+open it through), as the sidebar's fold is. The sidebar's **Session** button
+and **Open the session panel** in Go to (⌘K) show or hide it. Its key
+(`PANEL_KEY` in `src/shortcuts.tsx`: `` Ctrl+` ``, Ctrl on a Mac too, or Ctrl
+with the key in the backtick's place on a layout where it is a dead key) works
+anywhere, a text field included, but not under a dialog: with the panel
+hidden it shows it, with the panel open and the keys elsewhere it puts them
+in the composer, and from the composer it hides the panel. Escape in a field
+of the panel, the composer included, empty or not, gives the keys to the
+panel, and Escape anywhere else in the panel gives them back to the page (to
+what had them before the panel took them), the panel staying open; the page
+under it never gets either (a pull request's page would go back to its list). While
+the panel has the keys and none of its fields does, which its edge shows in
+the focus colour, the keys read its session and the page under it gets no
+key that types a character, but for `?`: `j` and `k` go a message at a time,
+marking it as the transcript page marks its own, `g` and `G` go to the
+session's start and end, `↑`, `↓`, Page Up and Page Down scroll it, `Space`
+shows all of the marked message or less again, `a` opens or closes its
+turn's agent activity, `i` or `Enter` go back to the composer, and `q` hides
+the panel. Page Up
+and Page Down scroll the session from the composer too. A click in the page
+gives the page its keys back. The sheet lists them under "Session panel",
+and while Alt is held (with the app's other hints) a line at the panel's foot
+names the ones that work where the keys are: the reading keys, or in a field
+`Esc`, Page Up and Down and the panel's key; the page's own key bar gives way
+while the keys are the panel's. The composer reads as the session's last
+line: taking the keys, the panel marks the latest message in view; `↑` with
+the caret at the composer's very start leaves it for the session as `Esc`
+does, and `j` past the last message, or `↓` at the session's end, goes back
+to it.
+Opened, its composer
 takes the keys; hidden, they go back to what had them before. The daemon's
 routes are under `/api/console/` (see "Session panel conversations" in
 `oss/ARCHITECTURE.md`; `src/console-api.ts`).

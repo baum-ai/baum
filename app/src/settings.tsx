@@ -30,6 +30,7 @@ import {
   agentName,
   appURL,
   automaticNotice,
+  homePath,
   isActiveJob,
   navigate,
   sameRepository,
@@ -2927,9 +2928,6 @@ function repositoryActivity(repository: string, entries: Entry[], jobs: Job[]): 
     ).length,
   };
 }
-
-/** A clone's path with the home folder written as `~`. */
-const homePath = (path: string) => path.replace(/^\/(?:Users|home)\/[^/]+(?=\/|$)/, "~");
 
 /** One registered repository: what it does at a glance; its name opens its
  *  page. */

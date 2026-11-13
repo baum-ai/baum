@@ -75,8 +75,8 @@ function change(patch: Partial<PanelState>) {
   for (const listener of listeners) listener();
 }
 
-/** What had the keys before the panel opened, where they go back when it
- *  hides. */
+/** What had the keys before the panel took them, where they go back when it
+ *  gives them up or hides. */
 let returnTo: Element | null = null;
 
 /** What opens, hides and points the session panel, from anywhere in the app:
@@ -86,7 +86,9 @@ export const sessionPanel = {
   /** Opens it with the keys in its composer; on `conversation` when given
    *  (null for a new one), else on the one it showed. */
   show(conversation?: string | null) {
-    if (!state.open) returnTo = document.activeElement;
+    // What has the keys now gets them back, unless the panel already does.
+    if (!state.open || !document.activeElement?.closest(".session-panel"))
+      returnTo = document.activeElement;
     change({
       open: true,
       focus: state.focus + 1,

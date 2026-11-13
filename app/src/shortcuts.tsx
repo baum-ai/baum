@@ -116,6 +116,7 @@ export type ShortcutsPlace =
   | "repositories"
   | "timeline"
   | "settings"
+  | "panel"
   | "page"
   | "walkthrough";
 const KEY_NAMES: Record<string, string> = {
@@ -126,24 +127,20 @@ const KEY_NAMES: Record<string, string> = {
   Escape: "Esc",
   " ": "Space",
 };
-/** The key that shows or hides the session panel anywhere but in a text
- *  field: the backtick, under Escape, where a drop-down terminal's is. */
-export const PANEL_KEY = "`";
-export const PANEL_KEY_LABEL = "`";
+/** The session panel's key, anywhere, a text field included: Ctrl with the
+ *  backtick, as an editor's terminal has it (Ctrl on a Mac too, where ⌘`
+ *  is the system's). As `aria-keyshortcuts` writes it, and as drawn. */
+export const PANEL_KEY = "Control+`";
+export const PANEL_KEY_LABEL = MAC ? "⌃`" : "Ctrl+`";
 
-/** Whether a keydown is the session panel's key: the backtick, or the key in
- *  its place on a layout where it types something else or is a dead key. */
+/** Whether a keydown is the session panel's key: Ctrl with the backtick, or
+ *  with the key in its place on a layout where it types something else or
+ *  is a dead key. */
 export function isPanelKey(
   event: Pick<KeyboardEvent, "key" | "code" | "ctrlKey" | "metaKey" | "altKey" | "shiftKey">,
 ) {
-  if (event.key === PANEL_KEY) return true;
-  return (
-    event.code === "Backquote" &&
-    !event.ctrlKey &&
-    !event.metaKey &&
-    !event.altKey &&
-    !event.shiftKey
-  );
+  if (!event.ctrlKey || event.metaKey || event.altKey || event.shiftKey) return false;
+  return event.key === "`" || event.code === "Backquote";
 }
 
 /** The app's command modifier as drawn: ⌘ on a Mac, Ctrl elsewhere. */
@@ -869,7 +866,7 @@ function shortcutGroups(
         { keys: [`${COMMAND}K`], label: "Go to a page, pull request or session" },
         {
           keys: [PANEL_KEY_LABEL],
-          label: "Show or hide the session panel; Esc in it hides it",
+          label: "Show the session panel or write in it; from its composer, hide it",
         },
         { keys: [`${COMMAND}.`], label: "Actions for the focused row, as a right click" },
         { keys: [REFRESH_KEY_LABEL], label: "Refresh the page" },
@@ -1026,6 +1023,38 @@ function shortcutGroups(
       ],
     },
     { place: "settings", title: "Settings", rows: SETTINGS_SHORTCUTS },
+    {
+      // While the panel has the keys, the page under it gets none of these.
+      place: "panel",
+      title: "Session panel",
+      rows: [
+        {
+          keys: [PANEL_KEY_LABEL],
+          label: "Show the panel, or write in it; from its composer, hide it",
+        },
+        {
+          keys: ["↑"],
+          label: "At the composer's start: leave it for the session, on its latest message",
+        },
+        { keys: ["j"], label: "Next message; past the last, back to the composer", short: "next" },
+        { keys: ["k"], label: "Previous message", short: "previous" },
+        { keys: ["g"], label: "The session's start", short: "start" },
+        { keys: ["G"], label: "The session's end", short: "end" },
+        { keys: [" "], label: "Show all of the message, or less again", short: "show all" },
+        { keys: ["a"], label: "Open or close the message's agent activity", short: "activity" },
+        { keys: ["Enter", "i"], label: "Back to the composer", short: "write" },
+        {
+          keys: ["Esc"],
+          label: "Leave the composer for the session; then give the keys back to the page",
+          short: "back to the page",
+        },
+        { keys: ["q"], label: "Hide the panel, out of its composer", short: "hide" },
+        {
+          keys: ["PageUp", "PageDown"],
+          label: "Scroll the session, from the composer too",
+        },
+      ],
+    },
     {
       place: "page",
       title: "A session or job transcript",

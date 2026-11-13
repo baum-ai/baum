@@ -509,12 +509,13 @@ it("lists exactly the keys that work in the sheet", async () => {
     "Repositories",
     "Timeline",
     "Settings",
+    "Session panel",
     "A session or job transcript",
   ]);
   // jsdom is not a Mac: Ctrl, and Alt with the arrows for back and forward.
   expect(listed("Anywhere")).toEqual([
     "Ctrl+K",
-    "`",
+    "Ctrl+`",
     "Ctrl+.",
     "Ctrl+R",
     "Ctrl+N",
@@ -646,6 +647,7 @@ it("lists the keys of where the sheet was opened first", async () => {
     "Repositories",
     "Timeline",
     "Settings",
+    "Session panel",
     "A session or job transcript",
   ]);
 });
