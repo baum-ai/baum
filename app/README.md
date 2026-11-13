@@ -1608,7 +1608,8 @@ themes, the modifier held with `1` to `8` for the sidebar's pages, and whether
 holding Option (Alt elsewhere) shows keyboard shortcut hints; each names only
 the platform's key. Preferences
 are read and saved through `GET`/`PUT api/settings/appearance` (`theme`,
-`key_hints`, `page_modifier`, and the sidebar's `sidebar`), in the daemon’s SQLite registry, so they survive daemon restarts
+`key_hints`, `page_modifier`, the sidebar's `sidebar` and `review_page`, which is
+`full` (the default) or `tiles`), in the daemon’s SQLite registry, so they survive daemon restarts
 and loopback port changes. **Plan usage** below them has a switch per plan
 (Claude Code, Codex) for whether it shows in the sidebar and the desktop tray.
 With no choice a plan shows when one of the backends baum uses is its own: the

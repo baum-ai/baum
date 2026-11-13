@@ -780,6 +780,42 @@ The goldens in `tiles/testdata` cover each shape the conversion handles, and
 `internal/tilescorpus` runs every check over a directory of real review
 stores when `BAUM_TILES_CORPUS` names one, logging only counts.
 
+**Serving.** The desktop daemon converts a review each time it answers for
+one; nothing about the tile document is stored.
+
+- `GET /api/tiles?clone=&pr=[&version=N]` takes the selector of
+  `GET /api/document` and answers
+  `{"document": <baum.review/1>, "tiles": <baum.tiles/1> | null, "problem"?: string}`,
+  with the same 400, 404 and 413 answers. `document` is the stored document
+  after the stored-document rules (`review.NormalizeStored`) and the derived
+  hunk URLs, and `tiles` is converted from exactly those bytes, so the page's
+  chrome and its tiles read one review. Only the tile-level checks run
+  (`Validator.CheckTiles`), so a tile that fails one is `unavailable` in a
+  response that is still served; the full schema is checked in tests. A
+  document the converter cannot split gives `tiles: null` and a short
+  `problem` that never quotes the document, and the page shows the full
+  review. The answer is `no-store` with a strong `ETag` of the body (a
+  matching `If-None-Match` is a 304), and the daemon keeps up to 16 encoded
+  answers, 64 MiB in all, by store revision as it does for viewers, so an
+  unchanged version is neither read nor converted again.
+- `GET /api/jobs/{id}/draft?tiles=1` answers the same shape for the running
+  review's draft, plus the draft's `draft` count, converted with
+  `Options.Draft` so a context not yet written is a pending context tile.
+  Without `tiles=1` the answer is the draft alone, as before.
+- `GET /api/groups/{id}/tiles[?version=N]` answers the same shape for a
+  review group's version, with the selectors and errors of
+  `GET /api/groups/{id}/document`.
+
+The `review_page` appearance preference (`full`, the default, or `tiles`; see
+`GET`/`PUT /api/settings/appearance`) chooses which page a review opens on,
+and the settings chat reads and proposes it with the other appearance
+settings. A pending review comment may target a tile (`kind` `tile`, `id` the
+tile's ID); a comment on a section keeps its `section` target. After a
+rollback to a release without `tile` targets, a daemon finds a saved review
+record that holds one invalid and reads the whole saved-reviews document
+(`ui/review`, every pull request's) as unreadable until a release that knows
+`tile` returns; the inbox, filters and tour documents are unaffected.
+
 ### Tiles
 
 The tile catalogue (`catalogue.json`) and the tile guidance are public and
@@ -3782,7 +3818,8 @@ version would be, with the sections not yet written `pending` and no context
 until the context stage lands. The queue keeps only the latest draft of each
 running job, in memory, counts them in the job's `draft` field (each draft is a
 `progress` event) and serves it at `GET /api/jobs/{id}/draft` as
-`{"draft": <count>, "document": …}`, under the same authentication as the rest
+`{"draft": <count>, "document": …}` (with `?tiles=1`, the tile view of the
+draft, see "Tile documents"), under the same authentication as the rest
 of `/api/jobs`; a job without one, or ended, is `404`. A draft is never a
 version: it is not stored, listed or read through the document routes, and it
 goes with the job when the job ends, the `draft` count back to zero. A daemon
@@ -5853,7 +5890,7 @@ refused. The table holds:
   (`unresolved`), `/api/prs/conflicts`, `/api/prs/merge-options`,
   `/api/prs/update-branch-options` and `/api/prs/rerun-checks-options`;
 - by `clone` (parameter `pr`, and as listed): `GET /api/versions`,
-  `/api/prs/chat`, `/api/document` and `/api/commits` (`version`), `/api/patch` (`version`,
+  `/api/prs/chat`, `/api/document`, `/api/tiles` and `/api/commits` (`version`), `/api/patch` (`version`,
   `path`), `/api/sessions` and `/api/sessions/{id}` (`version`), `/api/facts`,
   `/api/facts/commits`, `/api/facts/sessions` and `/api/facts/sessions/{id}`
   (`head`), `/api/facts/patch` (`head`, `path`), `/api/facts/commit` (`head`,
@@ -5875,7 +5912,7 @@ refused. The table holds:
   detail names (an archived feature names none, so no action reads it);
 - by lookup: `GET /api/jobs/{id}/transcript` (`after`) and
   `/api/jobs/{id}/draft`, after `/api/jobs/{id}`, and `/api/groups/{id}/document`
-  (`version`), `/api/groups/{id}/versions`, `/api/groups/{id}/patch` (`version`,
+  and `/api/groups/{id}/tiles` (`version`), `/api/groups/{id}/versions`, `/api/groups/{id}/patch` (`version`,
   `path`, `hunk`) and `/api/groups/{id}/file` (`version`, `path`), after
   `/api/groups/{id}`;
 - by filter: `GET /api/index` (`history`), which keeps the entries of the
@@ -6041,7 +6078,7 @@ home folder:
 
 | Tool | Scope | Section | Reads |
 | --- | --- | --- | --- |
-| `settings_general` | global | General | `/api/settings/appearance` (theme, key hints, page shortcut modifier) and `Options.PlanChoices` (each plan's shown, default and explicit) |
+| `settings_general` | global | General | `/api/settings/appearance` (theme, key hints, page shortcut modifier, review page) and `Options.PlanChoices` (each plan's shown, default and explicit) |
 | `settings_reviews` | global | Reviews | `/api/automatic` (enabled, `pull_requests`), the review backend, model and effort of `/api/settings`, and decision capture as chosen and as resolved from `Options.DecisionSettings` (above: one resolution of an auto backend's harness checks per 45 seconds for unchanged preferences) |
 | `settings_fixes` | global | Fixes | the fix backend, model and effort of `/api/settings`, and whether they follow the reviews' |
 | `settings_connections` | global | Connections | `/api/github-auth`: state, host (`github.com` or `other host`), login, the kind of place the token comes from (`baum`, `environment`, `config_file`), override, saved, workflow, the error code and message (scrubbed) and the organizations the sign-in cannot reach; a waiting sign-in is decoded for its presence alone, so its user code and address are never copied out of the body; the read may start the background check of those organizations, as the section's does (at most every 30 seconds, from a five-minute cache). The Codex hooks state and when it was read, from `Options.CodexHooks`. The desktop app's agent panel is the desktop shell's, not the daemon's |
@@ -6139,7 +6176,7 @@ their tools, and `current_page` lists a section's with its `section_tools`.
 
 | Page (section) | Tool | Target | Saved as |
 | --- | --- | --- | --- |
-| `settings` (`general`; also an unnamed section) | `propose_appearance` | `appearance` | `PUT /api/settings/appearance` (theme, key hints, page modifier) |
+| `settings` (`general`; also an unnamed section) | `propose_appearance` | `appearance` | `PUT /api/settings/appearance` (theme, key hints, page modifier, review page) |
 | `settings` (`general`) | `propose_plan_usage` | `plan_usage/<provider>` | `PUT /api/settings/plan-usage` |
 | `settings` (`reviews`) | `propose_reviews` | `reviews` | `PUT /api/automatic` (`automatic.Scheduler.SavePreferences`): enabled, pull requests, backend, model, effort |
 | `settings` (`reviews`) | `propose_decision_capture` | `decisions` | `PUT /api/settings/decisions`, the fields left out as the section shows them |
