@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/baum-ai/baum/sessions"
+	"github.com/baum-ai/baum/sessions/codextranscript"
 	"github.com/baum-ai/baum/sessions/session"
 	"github.com/baum-ai/baum/sessions/vendors"
 )
@@ -254,8 +255,9 @@ func sourceLocation(ref string) (string, int) {
 // are searched; image paths recorded in transcript content are never followed.
 func (r *reader) paths(s sessions.Session, names []string) map[string]string {
 	r.storeBase = filepath.Dir(s.Path)
-	found := map[string]string{filepath.Base(s.Path): s.Path}
-	if len(names) == 0 || (len(names) == 1 && names[0] == filepath.Base(s.Path)) {
+	ownName := codextranscript.PlainName(filepath.Base(s.Path))
+	found := map[string]string{ownName: s.Path}
+	if len(names) == 0 || (len(names) == 1 && names[0] == ownName) {
 		return found
 	}
 	if s.Source == vendors.ClaudeCode {
@@ -298,11 +300,18 @@ func (r *reader) paths(s sessions.Session, names []string) map[string]string {
 		if d.Type()&os.ModeSymlink != 0 {
 			return nil
 		}
-		if !d.IsDir() && wanted[d.Name()] {
-			if prior, ok := found[d.Name()]; ok && prior != path {
-				found[d.Name()] = ""
+		name := codextranscript.PlainName(d.Name())
+		if !d.IsDir() && wanted[name] {
+			if name != d.Name() && s.Source == vendors.Codex {
+				// A compressed rollout is read only when Codex kept no plain one.
+				if _, err := os.Stat(codextranscript.PlainPath(path)); err == nil {
+					return nil
+				}
+			}
+			if prior, ok := found[name]; ok && prior != path {
+				found[name] = ""
 			} else {
-				found[d.Name()] = path
+				found[name] = path
 			}
 		}
 		return nil
@@ -340,7 +349,17 @@ func (r *reader) readFile(path string, index *fileIndex, vendor vendors.Slug) {
 		r.note("native transcript unavailable")
 		return
 	}
-	scan := bufio.NewReaderSize(f, 64<<10)
+	var src io.Reader = f
+	if codextranscript.Compressed(path) {
+		rc, err := codextranscript.Decompress(f)
+		if err != nil {
+			r.note("native transcript unavailable")
+			return
+		}
+		defer func() { _ = rc.Close() }()
+		src = rc
+	}
+	scan := bufio.NewReaderSize(src, 64<<10)
 	turns := map[string]entity{}
 	var activeTurn codexTurn
 	var waiting []pendingCodex

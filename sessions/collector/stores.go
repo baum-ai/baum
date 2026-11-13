@@ -7,9 +7,9 @@ import (
 	"path/filepath"
 	"slices"
 	"sort"
-	"strings"
 	"time"
 
+	"github.com/baum-ai/baum/sessions/codextranscript"
 	"github.com/baum-ai/baum/sessions/collector/cursor"
 	"github.com/baum-ai/baum/sessions/vendors"
 )
@@ -165,8 +165,13 @@ func codexStores(sessionsDir string) ([]Store, error) {
 				}
 				return nil
 			}
-			if d.IsDir() || !strings.HasPrefix(d.Name(), "rollout-") || filepath.Ext(d.Name()) != ".jsonl" {
+			if d.IsDir() || !codextranscript.IsRolloutName(d.Name()) {
 				return nil
+			}
+			if codextranscript.Compressed(path) {
+				if _, err := os.Stat(codextranscript.PlainPath(path)); err == nil {
+					return nil
+				}
 			}
 			info, err := d.Info()
 			if err != nil {

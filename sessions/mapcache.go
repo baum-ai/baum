@@ -10,6 +10,7 @@ import (
 	"sync"
 
 	"github.com/baum-ai/baum/internal/workstats"
+	"github.com/baum-ai/baum/sessions/codextranscript"
 	"github.com/baum-ai/baum/sessions/collector"
 	"github.com/baum-ai/baum/sessions/session"
 )
@@ -144,7 +145,7 @@ func mapKey(s collector.Session) (key string, cost int64, ok bool) {
 			return "", 0, false
 		}
 		fmt.Fprintf(&b, "file:%s\x00%d\x00%d", f.Path, info.Size(), info.ModTime().UnixNano())
-		cost += info.Size()
+		cost += codextranscript.DecodedSize(f.Path, info)
 	}
 	return b.String(), cost, true
 }

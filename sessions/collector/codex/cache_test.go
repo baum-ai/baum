@@ -1,7 +1,11 @@
 package codex
 
 import (
+	"bytes"
+	"slices"
+
 	"fmt"
+	"github.com/klauspost/compress/zstd"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -132,33 +136,96 @@ func TestPassScansTheStoreOnce(t *testing.T) {
 	}
 }
 
+// zstdOf compresses data the way Codex compresses an old rollout.
+func zstdOf(t *testing.T, data string) string {
+	t.Helper()
+	var buf bytes.Buffer
+	w, err := zstd.NewWriter(&buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.Write([]byte(data)); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return buf.String()
+}
+
 // Codex compresses old rollouts to .jsonl.zst and removes the plain file. The
-// scan leaves those out and indexes the rest of the store, instead of failing
-// and falling back to the partial index.
-func TestScanLeavesOutCompressedRollouts(t *testing.T) {
+// scan indexes them like plain ones, under their plain name; a plain rollout
+// beside a compressed copy wins.
+func TestScanIndexesCompressedRollouts(t *testing.T) {
 	s := newStore(t)
 	day := filepath.Join(s.dir, "2026", "08", "01")
 	compressed := filepath.Join(day, "rollout-old.jsonl.zst")
-	writeFile(t, compressed, "\x28\xb5\x2f\xfd")
-	// A compressed rollout whose plain copy is still there is read as plain.
-	writeFile(t, filepath.Join(day, "rollout-root.jsonl.zst"), "\x28\xb5\x2f\xfd")
+	writeFile(t, compressed, zstdOf(t, s.root("old")))
+	// A compressed rollout whose plain copy is still there is not read.
+	writeFile(t, filepath.Join(day, "rollout-root.jsonl.zst"), "not zstd")
 
-	entries, report, err := ScanStore(filepath.Dir(s.dir))
+	entries, _, err := ScanStore(filepath.Dir(s.dir))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 4 {
+		t.Fatalf("entries = %d, want the 3 plain rollouts and the compressed one", len(entries))
+	}
+	found := slices.IndexFunc(entries, func(e Entry) bool { return e.Path == compressed })
+	if found < 0 || entries[found].Meta.ID != "old" {
+		t.Fatalf("entries = %+v, want %s indexed", entries, compressed)
+	}
+	sessions, scanReport, err := FindSessionsCached(s.dir, []string{s.repo}, &Cache{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sessions) != 2 || len(scanReport.Skipped) != 0 {
+		t.Fatalf("sessions = %+v, report = %+v; want root and old sessions", sessions, scanReport)
+	}
+	for _, session := range sessions {
+		if session.SessionID == "old" {
+			if session.Path != compressed || session.Files[0].Path != compressed || session.Files[0].Name != "rollout-old.jsonl" {
+				t.Fatalf("session = %+v, want the compressed path under the plain name", session)
+			}
+		}
+	}
+	s.sameSessions(t, &Cache{})
+}
+
+// A compressed rollout that cannot be decompressed is skipped with its own
+// reason; the rest of the store is indexed and the scan does not fail.
+func TestScanSkipsCorruptCompressedRollouts(t *testing.T) {
+	s := newStore(t)
+	day := filepath.Join(s.dir, "2026", "08", "01")
+	corrupt := filepath.Join(day, "rollout-bad.jsonl.zst")
+	writeFile(t, corrupt, "\x28\xb5\x2f\xfd garbage")
+	truncated := filepath.Join(day, "rollout-cut.jsonl.zst")
+	whole := zstdOf(t, s.root("cut"))
+	writeFile(t, truncated, whole[:len(whole)/2])
+
+	entries, scan, err := ScanStore(filepath.Dir(s.dir))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(entries) != 3 {
 		t.Fatalf("entries = %d, want the 3 plain rollouts", len(entries))
 	}
-	if !reflect.DeepEqual(report.CompressedPaths, []string{compressed}) {
-		t.Fatalf("compressed = %v, want %v", report.CompressedPaths, compressed)
+	want := []string{corrupt, truncated}
+	slices.Sort(scan.UnreadablePaths)
+	if !slices.Equal(scan.UnreadablePaths, want) || scan.SkippedFiles != 2 {
+		t.Fatalf("report = %+v, want %v skipped as unreadable", scan, want)
 	}
-	sessions, scanReport, err := FindSessionsCached(s.dir, []string{s.repo}, &Cache{})
+	sessions, report, err := FindSessionsCached(s.dir, []string{s.repo}, &Cache{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(sessions) != 1 || len(sessions[0].Warnings) != 0 || len(scanReport.Skipped) != 0 {
-		t.Fatalf("sessions = %+v, report = %+v; want the root session without warnings", sessions, scanReport)
+	if len(sessions) != 1 || len(sessions[0].Warnings) != 0 || len(report.Skipped) != 2 {
+		t.Fatalf("sessions = %+v, report = %+v; want the root session and two skips", sessions, report)
+	}
+	for _, skipped := range report.Skipped {
+		if !strings.Contains(skipped.Reason, "corrupt or truncated") {
+			t.Fatalf("skip reason %q", skipped.Reason)
+		}
 	}
 }
 

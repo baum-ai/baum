@@ -11,6 +11,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/klauspost/compress/zstd"
+
 	"github.com/baum-ai/baum/sessions"
 	"github.com/baum-ai/baum/sessions/claudesession"
 	"github.com/baum-ai/baum/sessions/claudetranscript"
@@ -395,4 +397,56 @@ func ExampleRead() {
 	result := Read(context.Background(), sessions.Session{ID: "checkpoint", Source: sessions.Entire}, Limits{})
 	fmt.Println(len(result.Images), result.Diagnostics[0].Reason)
 	// Output: 0 native image source unsupported
+}
+
+func writeZstd(t *testing.T, path, text string) {
+	t.Helper()
+	var buf bytes.Buffer
+	w, err := zstd.NewWriter(&buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.Write([]byte(text)); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	write(t, path, buf.String())
+}
+
+// Codex compresses old rollouts; the refs in the graph name the plain file,
+// and the images are read from the compressed one, the root's included.
+func TestCodexImagesAreReadFromCompressedRollouts(t *testing.T) {
+	s := fixture(t, vendors.Codex, `{}`)
+	root := filepath.Join(t.TempDir(), "sessions", "2026", "11", "06", "rollout-root.jsonl.zst")
+	writeZstd(t, root, `{"type":"response_item","payload":{"type":"custom_tool_call_output","call_id":"call","output":[{"type":"image","mimeType":"image/png","data":"`+png+`"}]}}`)
+	s.Path = root
+	s.Graph.VendorIDs[0].SourceRef = ptr("rollout-root.jsonl#1")
+	s.Graph.VendorIDs[1].SourceRef = ptr("rollout-root.jsonl#1")
+	s.Graph.Sessions = append(s.Graph.Sessions, session.Session{ID: "child", ParentSessionID: ptr("graph-root"), SpawnedByToolUseID: ptr("tool")})
+	s.Graph.UserInputs = append(s.Graph.UserInputs, session.UserInput{ID: "child-prompt", SessionID: "child", Origin: session.OriginAgent})
+	s.Graph.ToolUses = append(s.Graph.ToolUses, session.ToolUse{ID: "child-tool", SessionID: "child", UserInputID: "child-prompt", Name: "view_image"})
+	s.Graph.VendorIDs = append(s.Graph.VendorIDs,
+		session.VendorID{OurID: "child-prompt", OurType: session.EntityUserInput, SessionID: "child", VendorIDKind: "rollout.line", VendorID: "thread:1", SourceRef: ptr("rollout-child.jsonl#1")},
+		session.VendorID{OurID: "child-tool", OurType: session.EntityToolUse, SessionID: "child", VendorIDKind: "call_id", VendorID: "child-call", SourceRef: ptr("rollout-child.jsonl#2")},
+	)
+	store := filepath.Dir(filepath.Dir(filepath.Dir(filepath.Dir(root))))
+	child := filepath.Join(store, "2026", "11", "05", "rollout-child.jsonl")
+	childImage := `{"type":"response_item","payload":{"type":"custom_tool_call_output","call_id":"child-call","output":[{"type":"image","mimeType":"image/png","data":"` + png + `"}]}}`
+	writeZstd(t, child+".zst", childImage)
+
+	got := Read(context.Background(), s, Limits{})
+	if len(got.Images) != 2 {
+		t.Fatalf("images %d diagnostics %v", len(got.Images), got.Diagnostics)
+	}
+
+	// With a plain copy beside it the child is read from that one, and a
+	// corrupt compressed copy is not looked at.
+	write(t, child+".zst", "not zstd")
+	write(t, child, childImage)
+	got = Read(context.Background(), s, Limits{})
+	if len(got.Images) != 2 {
+		t.Fatalf("with a plain copy: images %d diagnostics %v", len(got.Images), got.Diagnostics)
+	}
 }

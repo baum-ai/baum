@@ -9,7 +9,6 @@ import (
 	"runtime"
 	"slices"
 	"sort"
-	"strings"
 	"time"
 
 	"golang.org/x/sync/errgroup"
@@ -28,10 +27,9 @@ type Entry struct {
 type ScanReport struct {
 	SkippedFiles int      `json:"skipped_files"`
 	SkippedPaths []string `json:"skipped_paths,omitempty"`
-	// CompressedPaths are the rollouts Codex compressed (.jsonl.zst) without
-	// keeping a plain copy. baum cannot read them, so the scan leaves them out
-	// and indexes the rest of the store.
-	CompressedPaths []string `json:"compressed_paths,omitempty"`
+	// UnreadablePaths are the compressed rollouts (.jsonl.zst) whose zstd data
+	// is corrupt or truncated. They are skipped too, and listed here as well.
+	UnreadablePaths []string `json:"unreadable_paths,omitempty"`
 }
 
 type Files = model.Files
@@ -39,7 +37,7 @@ type Files = model.Files
 // RootFile is the root-only file list used when a damaged store index cannot
 // resolve the rest of a tree.
 func RootFile(path string) Files {
-	return Files{{Path: path, Name: filepath.Base(path), Kind: model.KindTranscript}}
+	return Files{{Path: path, Name: codextranscript.PlainName(filepath.Base(path)), Kind: model.KindTranscript}}
 }
 
 type candidate struct {
@@ -102,8 +100,16 @@ func loadEntries(sessionsDir string, cache *Cache) ([]Entry, model.ScanReport, s
 	index, scan, err := scanStore(filepath.Dir(sessionsDir), cache)
 	if err == nil {
 		var report model.ScanReport
+		unreadable := map[string]bool{}
+		for _, path := range scan.UnreadablePaths {
+			unreadable[path] = true
+		}
 		for _, path := range scan.SkippedPaths {
-			report.Add(path, "first record absent or incomplete")
+			if unreadable[path] {
+				report.Add(path, "compressed rollout is corrupt or truncated")
+			} else {
+				report.Add(path, "first record absent or incomplete")
+			}
 		}
 		return index, report, ""
 	}
@@ -167,14 +173,8 @@ func scanStore(codexHome string, cache *Cache) ([]Entry, ScanReport, error) {
 			if entry.IsDir() {
 				return nil
 			}
-			name := entry.Name()
-			switch {
-			case strings.HasPrefix(name, "rollout-") && strings.HasSuffix(name, ".jsonl"):
+			if wanted(path, entry.Name()) {
 				paths = append(paths, path)
-			case strings.HasPrefix(name, "rollout-") && strings.HasSuffix(name, ".jsonl.zst"):
-				if _, statErr := os.Stat(strings.TrimSuffix(path, ".zst")); statErr != nil {
-					report.CompressedPaths = append(report.CompressedPaths, path)
-				}
 			}
 			return nil
 		})
@@ -204,9 +204,12 @@ func scanStore(codexHome string, cache *Cache) ([]Entry, ScanReport, error) {
 	seen := map[string]string{}
 	for i, path := range paths {
 		entry, err := read[i].entry, read[i].err
-		if errors.Is(err, codextranscript.ErrIncompleteFirstLine) || errors.Is(err, os.ErrNotExist) {
+		if errors.Is(err, codextranscript.ErrIncompleteFirstLine) || errors.Is(err, os.ErrNotExist) || errors.Is(err, errUnreadableCompressed) {
 			report.SkippedFiles++
 			report.SkippedPaths = append(report.SkippedPaths, path)
+			if errors.Is(err, errUnreadableCompressed) {
+				report.UnreadablePaths = append(report.UnreadablePaths, path)
+			}
 			continue
 		}
 		if err != nil {
@@ -221,14 +224,34 @@ func scanStore(codexHome string, cache *Cache) ([]Entry, ScanReport, error) {
 	return entries, report, nil
 }
 
+// errUnreadableCompressed marks a compressed rollout whose zstd data cannot be
+// decompressed. The rollout is skipped, not an error for the whole scan.
+var errUnreadableCompressed = errors.New("compressed rollout is unreadable")
+
+// wanted reports whether the file at path is a rollout to index: a plain one,
+// or a compressed one without a plain copy beside it.
+func wanted(path, name string) bool {
+	if !codextranscript.IsRolloutName(name) {
+		return false
+	}
+	if !codextranscript.Compressed(path) {
+		return true
+	}
+	_, err := os.Stat(codextranscript.PlainPath(path))
+	return err != nil
+}
+
 func readEntry(path string) (Entry, error) {
-	handle, err := os.Open(path)
+	handle, err := codextranscript.OpenRollout(path)
 	if err != nil {
 		return Entry{}, fmt.Errorf("opening rollout %s: %w", path, err)
 	}
 	defer handle.Close()
 	line, err := codextranscript.DecodeFirst(handle)
 	if err != nil {
+		if errors.Is(err, codextranscript.ErrDecompress) {
+			err = fmt.Errorf("%w: %w", errUnreadableCompressed, err)
+		}
 		return Entry{}, fmt.Errorf("reading rollout %s: %w", path, err)
 	}
 	class, err := codextranscript.ClassifyThread([]codextranscript.Line{line})
@@ -269,7 +292,7 @@ func softIndex(sessionsDir string, cache *Cache) ([]Entry, model.ScanReport) {
 			}
 			return nil
 		}
-		if d.IsDir() || !strings.HasPrefix(d.Name(), "rollout-") || filepath.Ext(d.Name()) != ".jsonl" {
+		if d.IsDir() || !wanted(path, d.Name()) {
 			return nil
 		}
 		entry, err := scan.read(path)
@@ -381,12 +404,12 @@ func (t *Tree) Find(rootEntry Entry) (Files, error) {
 	}
 	sort.Slice(children, func(i, j int) bool { return children[i].Meta.ID < children[j].Meta.ID })
 
-	files := Files{{Path: root.Path, Name: filepath.Base(root.Path), Kind: model.KindTranscript}}
+	files := Files{{Path: root.Path, Name: codextranscript.PlainName(filepath.Base(root.Path)), Kind: model.KindTranscript}}
 	seen := map[string]bool{filepath.Clean(root.Path): true}
 	for _, child := range children {
 		cleaned := filepath.Clean(child.Path)
 		if !seen[cleaned] {
-			files = append(files, model.SessionFile{Path: child.Path, Name: filepath.Base(child.Path), Kind: model.KindSubTranscript})
+			files = append(files, model.SessionFile{Path: child.Path, Name: codextranscript.PlainName(filepath.Base(child.Path)), Kind: model.KindSubTranscript})
 			seen[cleaned] = true
 		}
 		if child.Meta.SubagentHistoryStartOrdinal != nil || child.Meta.ForkedFromID == "" {
@@ -397,7 +420,7 @@ func (t *Tree) Find(rootEntry Entry) (Files, error) {
 			return nil, fmt.Errorf("child rollout %s names missing fork source %s and has no subagent_history_start_ordinal", child.Path, child.Meta.ForkedFromID)
 		}
 		if cleaned := filepath.Clean(fork.Path); !seen[cleaned] {
-			files = append(files, model.SessionFile{Path: fork.Path, Name: filepath.Base(fork.Path), Kind: model.KindForkSource})
+			files = append(files, model.SessionFile{Path: fork.Path, Name: codextranscript.PlainName(filepath.Base(fork.Path)), Kind: model.KindForkSource})
 			seen[cleaned] = true
 		}
 	}
