@@ -85,10 +85,21 @@ const LIST_SHORTCUTS: Shortcut[] = [
   { keys: ["Enter", "o"], label: "Open the row", short: "open" },
   { keys: ["Escape"], label: "Clear the row focus" },
 ];
+export const MAC = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
 /** Settings' keys, which `SettingsPage` handles itself. */
 const SETTINGS_SHORTCUTS: Shortcut[] = [
-  { keys: ["j", "ArrowDown"], label: "Next section, or next control in one", short: "move" },
-  { keys: ["k", "ArrowUp"], label: "Previous section, or previous control in one", short: "move" },
+  { keys: ["j", "ArrowDown"], label: "Next control in the section", short: "move" },
+  { keys: ["k", "ArrowUp"], label: "Previous control in the section", short: "move" },
+  {
+    keys: MAC ? ["⇧J", "⇧↓"] : ["Shift+J", "Shift+↓"],
+    label: "Next section",
+    short: "sections",
+  },
+  {
+    keys: MAC ? ["⇧K", "⇧↑"] : ["Shift+K", "Shift+↑"],
+    label: "Previous section",
+    short: "sections",
+  },
   { keys: ["1–6"], label: "Go to a section", short: "section" },
   { keys: ["Enter", "l", "ArrowRight"], label: "Go into the section", short: "go in" },
   { keys: ["Space", "Enter"], label: "Change or press the focused control" },
@@ -107,7 +118,6 @@ export type ShortcutsPlace =
   | "settings"
   | "page"
   | "walkthrough";
-export const MAC = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
 const KEY_NAMES: Record<string, string> = {
   ArrowDown: "↓",
   ArrowUp: "↑",

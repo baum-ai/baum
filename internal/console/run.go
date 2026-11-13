@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"strings"
 	"time"
 
@@ -188,11 +187,12 @@ func (s *Service) converse(ctx context.Context, c Conversation, message string, 
 	if err != nil {
 		return agent.Result{}, "", err
 	}
-	command := s.opts.MCPCommand
-	if command == "" {
-		if command, err = os.Executable(); err != nil {
-			return agent.Result{}, name, fmt.Errorf("finding baum for its MCP server: %w", err)
-		}
+	var mcpURL string
+	if s.opts.MCPURL != nil {
+		mcpURL = s.opts.MCPURL()
+	}
+	if mcpURL == "" {
+		return agent.Result{}, name, errors.New("baum's MCP server is not serving yet")
 	}
 	// The SSH agent socket the daemon inherited may have gone stale since:
 	// the agent then gets the login shell's, or none.
@@ -204,7 +204,7 @@ func (s *Service) converse(ctx context.Context, c Conversation, message string, 
 	s.mu.Unlock()
 	request := agent.Request{
 		Directory: c.Directory, Prompt: message, ResumeSession: c.Session,
-		MCP:            &agent.MCPServer{Command: command, Args: []string{"mcp"}, Token: token},
+		MCP:            &agent.MCPServer{URL: mcpURL, Token: token},
 		SessionStarted: func(id string) { s.sessionStarted(c, l, id) },
 		TextDelta:      func(text string) { s.textDelta(c.ID, l, text) },
 		Transcript:     func(entry agent.TranscriptEntry) { s.transcript(c.ID, l, entry) },

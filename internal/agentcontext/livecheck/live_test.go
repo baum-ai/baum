@@ -1,33 +1,38 @@
 //go:build live
 
 // Package livecheck runs the real Claude Code and Codex CLIs against baum's
-// MCP server, to check what the argument tests cannot: that each CLI starts
-// "baum mcp", forwards BAUM_MCP_TOKEN to it, sees the tools through
-// --strict-mcp-config / --ignore-user-config, and is allowed to call them in a
-// non-interactive run. It needs the CLIs installed and signed in on the host,
-// spends a few model calls, and is excluded from every normal test run.
+// MCP server, to check what the argument tests cannot: that each CLI reaches
+// the daemon's /api/mcp over HTTP with the token from BAUM_MCP_TOKEN (Claude
+// Code expanding it in the header, Codex through bearer_token_env_var), sees
+// the tools through --strict-mcp-config / --ignore-user-config, is allowed to
+// call them in a non-interactive run, never shows the token in a command line
+// or writes it to its configuration, and finishes without baum's tools, rather
+// than hanging or starting an OAuth flow, when the token was revoked. It needs
+// the CLIs installed and signed in on the host, spends a few model calls, and
+// is excluded from every normal test run.
 //
 // Run: cd oss && go test -tags live -run TestLive ./internal/agentcontext/livecheck/ -v
 //
-// Optional environment: BAUM_LIVE_BAUM (path of a built baum binary; default:
-// built from ./cmd/baum), BAUM_LIVE_CLAUDE_MODEL and BAUM_LIVE_CODEX_MODEL (a
-// cheap model for each CLI), BAUM_LIVE_SKIP_CLAUDE / BAUM_LIVE_SKIP_CODEX.
+// Optional environment: BAUM_LIVE_CLAUDE_BIN and BAUM_LIVE_CODEX_BIN (an
+// executable to test instead of the one on PATH, such as a floor release),
+// BAUM_LIVE_CLAUDE_MODEL and BAUM_LIVE_CODEX_MODEL (a cheap model for each
+// CLI), BAUM_LIVE_SKIP_CLAUDE / BAUM_LIVE_SKIP_CODEX.
 package livecheck
 
 import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
+	"net"
 	"net/http"
-	"os"
-	"os/exec"
-	"path/filepath"
-	"strings"
+	"net/http/httptest"
+	"net/http/httputil"
+	"net/url"
 	"sync"
 	"testing"
 
-	"github.com/baum-ai/baum/agent"
 	"github.com/baum-ai/baum/internal/agentcontext"
 	"github.com/baum-ai/baum/internal/uiserver"
 )
@@ -86,14 +91,43 @@ func (r *recorder) reset() {
 	r.mu.Unlock()
 }
 
-// fixture starts the app server on a loopback port with an MCP server, writes
-// a daemon state directory whose credential points at it, and points the
-// environment's XDG_STATE_HOME there so "baum mcp" finds it rather than the
-// real daemon's credential. baum's allowlist lets XDG_STATE_HOME reach the agent
-// CLI; Codex then forwards it to the MCP server only because the backend names
-// it in mcp_servers.baum.env_vars, and Claude Code is expected to give its stdio
-// servers its own environment (what this check also verifies).
-func fixture(t *testing.T) (*recorder, agent.MCPServer, string) {
+// wire is a proxy in front of the app server that notes every request a CLI
+// sends, whatever its path or credential, so a check sees requests the MCP
+// server never gets: refused ones and any OAuth discovery.
+type wire struct {
+	mu       sync.Mutex
+	requests []request
+	token    string // the token the current attempt was given
+}
+
+// request is one request the proxy saw.
+type request struct {
+	Method, Path, RPC string
+	Status            int
+	// Auth is "token" when the Authorization header carried the attempt's
+	// token, "none" without one, and the header as sent otherwise.
+	Auth string
+}
+
+func (r request) String() string {
+	return fmt.Sprintf("%s %s %s -> %d (auth %s)", r.Method, r.Path, r.RPC, r.Status, r.Auth)
+}
+
+func (w *wire) expect(token string) {
+	w.mu.Lock()
+	w.requests, w.token = nil, token
+	w.mu.Unlock()
+}
+
+func (w *wire) seen() []request {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return append([]request(nil), w.requests...)
+}
+
+// fixture starts the app server on a loopback port with an MCP server and
+// the recording proxy in front of it, and returns the URL a run reaches.
+func fixture(t *testing.T) (*recorder, *wire, string) {
 	t.Helper()
 	api := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = io.WriteString(w, `{}`) })
 	mcp := &recorder{Server: agentcontext.New(agentcontext.Options{API: api, Version: "live"})}
@@ -112,43 +146,50 @@ func fixture(t *testing.T) (*recorder, agent.MCPServer, string) {
 		<-done
 	})
 
-	state := t.TempDir()
-	daemonDir := filepath.Join(state, "baum", "daemon")
-	if err := os.MkdirAll(daemonDir, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	// The token half of the credential is never used by the bridge.
-	credential, _ := json.Marshal(map[string]string{"url": app.Origin() + "/#token=" + strings.Repeat("d", 43)})
-	if err := os.WriteFile(filepath.Join(daemonDir, "credential.json"), credential, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("XDG_STATE_HOME", state)
-
-	token, id, revoke, err := mcp.Registry.Mint(agentcontext.Consumer{Kind: agentcontext.Chat})
+	target, err := url.Parse(app.Origin())
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(revoke)
-	if err := mcp.Registry.SetPage(id, agentcontext.PageContext{Page: agentcontext.PageSettings}); err != nil {
+	// SetURL also sets Host to the app server's, which it checks exactly.
+	proxy := &httputil.ReverseProxy{Rewrite: func(r *httputil.ProxyRequest) { r.SetURL(target) }}
+	w := &wire{}
+	front := httptest.NewUnstartedServer(http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		r.Body = io.NopCloser(bytes.NewReader(body))
+		var message struct {
+			Method string `json:"method"`
+		}
+		_ = json.Unmarshal(body, &message)
+		status := &statusWriter{ResponseWriter: rw, status: http.StatusOK}
+		proxy.ServeHTTP(status, r)
+		w.mu.Lock()
+		auth := r.Header.Get("Authorization")
+		switch {
+		case auth == "":
+			auth = "none"
+		case w.token != "" && auth == "Bearer "+w.token:
+			auth = "token"
+		}
+		w.requests = append(w.requests, request{Method: r.Method, Path: r.URL.Path, RPC: message.Method, Status: status.status, Auth: auth})
+		w.mu.Unlock()
+	}))
+	front.Listener, err = net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
 		t.Fatal(err)
 	}
-	return mcp, agent.MCPServer{Command: baumBinary(t), Args: []string{"mcp"}, Token: token}, agentcontext.PageSettings
+	front.Start()
+	t.Cleanup(front.Close)
+	return mcp, w, front.URL + "/api/mcp"
 }
 
-// baumBinary is BAUM_LIVE_BAUM or a build of ./cmd/baum.
-func baumBinary(t *testing.T) string {
-	t.Helper()
-	if path := os.Getenv("BAUM_LIVE_BAUM"); path != "" {
-		abs, err := filepath.Abs(path)
-		if err != nil {
-			t.Fatal(err)
-		}
-		return abs
-	}
-	out := filepath.Join(t.TempDir(), "baum")
-	build := exec.Command("go", "build", "-o", out, "github.com/baum-ai/baum/cmd/baum")
-	if output, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("building baum: %v\n%s", err, output)
-	}
-	return out
+type statusWriter struct {
+	http.ResponseWriter
+	status int
 }
+
+func (s *statusWriter) WriteHeader(status int) {
+	s.status = status
+	s.ResponseWriter.WriteHeader(status)
+}
+
+func (s *statusWriter) Unwrap() http.ResponseWriter { return s.ResponseWriter }

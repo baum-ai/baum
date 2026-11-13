@@ -7,6 +7,22 @@ The JSON status shape is the desktop onboarding contract. Agent definitions
 live in [agenthookdefs](../agenthookdefs); native operations and trust checks
 live in [agentplugins](../agentplugins/README.md).
 
+Claude Code keeps its plugins per configuration directory. The four `--user`
+commands take `--claude-config-dir DIR` (`~` expanded, absolute), which they
+set as `CLAUDE_CONFIG_DIR` for the `claude` they run and the settings they
+read; without it they follow the inherited `CLAUDE_CONFIG_DIR`, else
+`~/.claude`. For a directory other than `~/.claude`, messages and the text
+status name it, the JSON status carries it as `config_dir`, and a successful
+install records it ([agentdirs](../agentdirs/README.md)) so baum reads its
+sessions. Uninstall keeps the record: the sessions are still there.
+
+Codex keeps its plugins in its home, so the same commands take `--codex-home
+DIR`, set as `CODEX_HOME` for the `codex` they run, for the app-server the
+trust check starts and for the terminal-title setup (`codexconfig`), else
+`CODEX_HOME`, else `~/.codex`. A home other than `~/.codex` is named, reported
+as the codex entry's `config_dir` and recorded on install the same way. Hook
+trust is per home: approve baum's hooks with `/hooks` in a Codex run with it.
+
 Plugin callbacks keep their existing command strings:
 `hooks agent --check --user AGENT EVENT`, then `hooks agent --user AGENT EVENT`.
 The check succeeds only in a Git worktree after the local daemon has run.
@@ -16,6 +32,12 @@ daemon installs chain the hook a clone already had.
 Legacy repository agent checks without `--user` and the legacy Git
 `--check` always decline, leaving the repository dispatcher free to run its own
 independent hook fallback.
+
+A Claude Code callback that locates the terminal (session start and prompts)
+also records its session's `CLAUDE_CONFIG_DIR`, when that is not `~/.claude`,
+in the same record: a directory the plugin was installed into by hand is then
+read too. A Codex callback does the same with the `CODEX_HOME` it inherits from
+its session, when that is not `~/.codex`. It never fails the hook.
 
 Agent callbacks record bounded session identifiers, terminal location and
 notification metadata locally. The daemon event sender retains its bounded

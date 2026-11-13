@@ -76,10 +76,10 @@ func newFixture(t *testing.T, change func(*Options)) *fixture {
 		t.Fatal(err)
 	}
 	f.opts = Options{
-		Database:   filepath.Join(appdbtest.TempDir(t), "app.sqlite"),
-		Root:       t.TempDir(),
-		Registry:   agentcontext.NewRegistry(),
-		MCPCommand: "/opt/baum/bin/baum",
+		Database: filepath.Join(appdbtest.TempDir(t), "app.sqlite"),
+		Root:     t.TempDir(),
+		Registry: agentcontext.NewRegistry(),
+		MCPURL:   func() string { return "http://127.0.0.1:43123/api/mcp" },
 		Config: func(context.Context) (config.Config, error) {
 			var cfg config.Config
 			cfg.BackendPaths = map[config.Backend]string{config.BackendClaude: script}

@@ -701,7 +701,7 @@ func TestLocalAppBrowserFixture(t *testing.T) {
 		mcp := agentcontext.New(agentcontext.Options{API: api, Version: "fixture"})
 		panel := &panelAgent{events: events, home: home}
 		conversations, err := console.New(console.Options{Database: filepath.Join(home, "app.sqlite"), Root: filepath.Join(home, "console"),
-			Registry: mcp.Registry, Proposals: mcp.Proposals, MCPCommand: filepath.Join(home, "baum"),
+			Registry: mcp.Registry, Proposals: mcp.Proposals, MCPURL: func() string { return server.Origin() + "/api/mcp" },
 			Backend: func(string, string, config.Config) (agent.Converser, string, error) {
 				return panel, agent.BackendClaude, nil
 			},

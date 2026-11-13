@@ -13,7 +13,7 @@ import {
   type RefObject,
 } from "react";
 import { Wordmark } from "@baum/viewer/components/editorial";
-import { ChevronDownIcon, HelpIcon, RefreshIcon } from "@baum/viewer/components/icons";
+import { ChevronDownIcon, HelpIcon, RefreshIcon, SidebarIcon } from "@baum/viewer/components/icons";
 import { Stumpy } from "@baum/viewer/components/stumpy";
 import type { ViewerLinkProps } from "@baum/viewer/navigation";
 import { appURL } from "./api";
@@ -21,7 +21,8 @@ import { useContextMenu, type MenuItem } from "./context-menu";
 import type { Inbox } from "./inboxes";
 import { PAGES, type Page } from "./pages";
 import { PlanUsageRail } from "./plan-usage";
-import { usePreferences } from "./preferences";
+import { useMedia } from "./media";
+import { usePreferences, type SidebarChoice } from "./preferences";
 import { NineDots } from "./nine-dots";
 import { SessionPanelButton } from "./session-panel";
 import {
@@ -65,11 +66,83 @@ function folded() {
   }
 }
 
+/** The last sidebar choice this window saw, so a reload draws the sidebar as
+ *  it was before the saved preferences arrive rather than folding it after. */
+const SIDEBAR_KEY = "baum.sidebar.v1";
+function cachedSidebar(): SidebarChoice {
+  try {
+    return localStorage.getItem(SIDEBAR_KEY) === "folded" ? "folded" : "pinned";
+  } catch {
+    return "pinned";
+  }
+}
+
+/** How long a pointer rests on the folded sidebar before it opens, and how
+ *  long it may wander off before it folds. Opening at once would flash the
+ *  sidebar open under every pointer on its way across the window. */
+const OPEN_DELAY_MS = 120;
+const CLOSE_DELAY_MS = 200;
+
+/** Whether the folded sidebar is open over the page under a mouse, with the
+ *  handlers that open and fold it. The pointer is followed while the sidebar
+ *  is pinned too (`folded` false), so it is known on unpinning. */
+function usePeek(folded: boolean) {
+  const [peeking, setPeeking] = useState(false);
+  const timer = useRef<ReturnType<typeof setTimeout>>(undefined);
+  // Whether a mouse is over the sidebar, and whether the sidebar stays folded
+  // under it until it leaves: after a click on a link or the pin button
+  // folds it, so it does not open again at the next nudge.
+  const inside = useRef(false);
+  const held = useRef(false);
+  const cancel = () => {
+    clearTimeout(timer.current);
+    timer.current = undefined;
+  };
+  const after = (next: boolean, delay: number) => {
+    cancel();
+    timer.current = setTimeout(() => {
+      timer.current = undefined;
+      setPeeking(next);
+    }, delay);
+  };
+  useEffect(() => () => clearTimeout(timer.current), []);
+  // A mouse only: a touch has no hover to leave, so a tap would open the
+  // sidebar over the page and leave it there. Movement opens it as well as
+  // entering: a pointer already resting on it when the app loads entered
+  // before React was listening.
+  const over = (event: React.PointerEvent) => {
+    if (event.pointerType !== "mouse") return;
+    inside.current = true;
+    if (!folded || held.current) return;
+    if (peeking) cancel();
+    else if (timer.current === undefined) after(true, OPEN_DELAY_MS);
+  };
+  const leave = (event: React.PointerEvent) => {
+    if (event.pointerType !== "mouse") return;
+    inside.current = false;
+    held.current = false;
+    if (peeking) after(false, CLOSE_DELAY_MS);
+    else cancel();
+  };
+  /** Folds it now, and keeps it folded under the pointer until it leaves. */
+  const fold = () => {
+    cancel();
+    setPeeking(false);
+    held.current = inside.current;
+  };
+  return { peeking, over, leave, fold };
+}
+
 /** The application chrome, after the hosted sidebar: the mark, the sections
  *  and where the work happens, standing on the sand canvas beside the page's
- *  panel, with what is left of the agents' plans above the foot. Below `lg`
- *  it folds to its glyphs. Each section's key shows beside it while Alt is
- *  held, like every key hint. */
+ *  panel, with what is left of the agents' plans above the foot. Each
+ *  section's key shows beside it while Alt is held, like every key hint.
+ *
+ *  The button beside Help folds it to its glyphs, so the page gets the width,
+ *  and pins it open again; the choice is saved with the appearance
+ *  preferences. Folded, resting the mouse on it or moving keyboard focus into
+ *  it opens it over the page, and a link chosen there folds it again. Below
+ *  `lg` it is always folded, and the button is gone. */
 export function Sidebar({
   page,
   inbox,
@@ -102,7 +175,20 @@ export function Sidebar({
   Link: ComponentType<ViewerLinkProps>;
 }) {
   const [fold, setFold] = useState(folded);
-  const modifier = usePreferences().preferences.page_modifier;
+  const { preferences, ready, update: savePreferences } = usePreferences();
+  const modifier = preferences.page_modifier;
+  const narrow = useMedia("(width < 64rem)");
+  const choice = ready ? preferences.sidebar : cachedSidebar();
+  useEffect(() => {
+    if (!ready) return;
+    try {
+      localStorage.setItem(SIDEBAR_KEY, preferences.sidebar);
+    } catch {
+      // The next load draws it pinned until the preferences arrive.
+    }
+  }, [ready, preferences.sidebar]);
+  const pinned = choice === "pinned" && !narrow;
+  const peek = usePeek(!pinned);
   const nested = inboxes && inboxes.list.length > 0;
   // A right click on Inbox makes or manages inboxes.
   const inboxMenu = useContextMenu();
@@ -186,57 +272,87 @@ export function Sidebar({
     );
   };
   return (
-    <aside data-tab-region="" className="local-rail">
-      {inboxMenu.menu}
-      {helpMenu.menu}
-      <div className="local-rail-head">
-        <Link href={appURL()} className="local-rail-mark" title="Inbox">
-          <Stumpy size={28} className="flex-none" />
-          <Wordmark size="sidebar" className="local-rail-label" />
-        </Link>
-        <HelpButton help={help} menu={helpMenu} />
-      </div>
-      <nav aria-label="Main" className="local-rail-nav local-rail-main">
-        {PAGES.filter((item) => !item.foot).map((item) =>
-          item.page === "inbox" && inboxes && nested ? (
-            <div key="inbox">
-              <div className="local-rail-row">
-                {link(item)}
-                <button
-                  type="button"
-                  className="local-rail-fold"
-                  aria-expanded={!fold}
-                  aria-controls="local-rail-inboxes"
-                  aria-label="Inboxes"
-                  onClick={() => {
-                    setFold(!fold);
-                    try {
-                      localStorage.setItem(FOLD_KEY, fold ? "0" : "1");
-                    } catch {
-                      // Not remembered across reloads.
-                    }
-                  }}
-                >
-                  <ChevronDownIcon size={14} />
-                </button>
+    <div
+      className="local-rail-lane"
+      data-rail={pinned ? "pinned" : peek.peeking ? "open" : "folded"}
+      onPointerEnter={peek.over}
+      onPointerMove={peek.over}
+      onPointerLeave={peek.leave}
+      onClick={(event) => {
+        // A place chosen from the open sidebar is where the person wants to
+        // look: the sidebar no longer covers it.
+        if (!pinned && (event.target as Element).closest("a")) peek.fold();
+      }}
+    >
+      <aside data-tab-region="" className="local-rail">
+        {inboxMenu.menu}
+        {helpMenu.menu}
+        <div className="local-rail-head">
+          <Link href={appURL()} className="local-rail-mark" title="Inbox">
+            <Stumpy size={28} className="flex-none" />
+            <Wordmark size="sidebar" className="local-rail-label" />
+          </Link>
+          <HelpButton help={help} menu={helpMenu} />
+          <button
+            type="button"
+            className="local-rail-pin"
+            aria-label="Pin sidebar"
+            aria-pressed={choice === "pinned"}
+            title={choice === "pinned" ? "Fold the sidebar to its glyphs" : "Pin the sidebar open"}
+            disabled={!ready}
+            onClick={() => {
+              const next = choice === "pinned" ? "folded" : "pinned";
+              // Either way it is not open over the page: unpinned under the
+              // pointer, it stays folded until the pointer leaves.
+              peek.fold();
+              savePreferences({ sidebar: next });
+            }}
+          >
+            <SidebarIcon size={16} />
+          </button>
+        </div>
+        <nav aria-label="Main" className="local-rail-nav local-rail-main">
+          {PAGES.filter((item) => !item.foot).map((item) =>
+            item.page === "inbox" && inboxes && nested ? (
+              <div key="inbox">
+                <div className="local-rail-row">
+                  {link(item)}
+                  <button
+                    type="button"
+                    className="local-rail-fold"
+                    aria-expanded={!fold}
+                    aria-controls="local-rail-inboxes"
+                    aria-label="Inboxes"
+                    onClick={() => {
+                      setFold(!fold);
+                      try {
+                        localStorage.setItem(FOLD_KEY, fold ? "0" : "1");
+                      } catch {
+                        // Not remembered across reloads.
+                      }
+                    }}
+                  >
+                    <ChevronDownIcon size={14} />
+                  </button>
+                </div>
+                <div id="local-rail-inboxes" hidden={fold}>
+                  {fold ? null : <InboxRows inboxes={inboxes} Link={Link} />}
+                </div>
               </div>
-              <div id="local-rail-inboxes" hidden={fold}>
-                {fold ? null : <InboxRows inboxes={inboxes} Link={Link} />}
-              </div>
-            </div>
-          ) : (
-            link(item)
-          ),
-        )}
-      </nav>
-      <div className="local-rail-foot">
-        <PlanUsageRail />
-        <nav aria-label="More" className="local-rail-nav">
-          <SessionPanelButton />
-          {PAGES.filter((item) => item.foot).map(link)}
+            ) : (
+              link(item)
+            ),
+          )}
         </nav>
-      </div>
-    </aside>
+        <div className="local-rail-foot">
+          <PlanUsageRail />
+          <nav aria-label="More" className="local-rail-nav">
+            <SessionPanelButton />
+            {PAGES.filter((item) => item.foot).map(link)}
+          </nav>
+        </div>
+      </aside>
+    </div>
   );
 }
 

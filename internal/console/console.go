@@ -186,9 +186,10 @@ type Options struct {
 	Root string
 	// Registry mints each conversation's MCP token.
 	Registry *agentcontext.Registry
-	// MCPCommand is the absolute path of the baum the agents start as
-	// `baum mcp`; empty is this executable.
-	MCPCommand string
+	// MCPURL is the daemon's MCP route the agents reach over HTTP, read at
+	// each turn because the app server's port is known only once it listens.
+	// Nil or empty refuses the turn.
+	MCPURL func() string
 	// Clones lists the registered clones; Pull reads a pull request's head
 	// as discovery last saw it. Without either, every conversation gets an
 	// empty directory.
