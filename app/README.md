@@ -1093,6 +1093,18 @@ the pull request is also in. A pull request or group opened from an inbox keeps
 inbox. Colours are six palette names (`--inbox-*` in `src/style.css`, with
 dark variants).
 
+The sidebar is pinned open beside the page by default. The button at the
+right of its baum title, after Help, folds it to a rail of glyphs (56px) so
+the page gets the width, and pins it open again (`Sidebar` in
+`src/shell.tsx`). Folded, resting the mouse on the rail for a moment opens it
+over the page, which does not move, and it folds again shortly after the
+pointer leaves or when a link in it is chosen; keyboard focus in the rail
+opens it too. The choice is the `sidebar` appearance preference (`pinned` or
+`folded`), saved by the daemon like the theme, so it survives restarts and
+port changes; `localStorage` keeps a copy so a reload draws the sidebar as it
+was before the preferences arrive. A window narrower than 64rem always folds
+the sidebar, opens it the same way, and hides the pin button.
+
 A Help button at the right of the sidebar's baum title (under it when the
 sidebar is folded) opens a help menu (`HelpButton` in `src/shell.tsx`):
 **Show shortcuts** opens the shortcuts sheet, **Report a problem** opens the
@@ -1683,7 +1695,7 @@ themes, the modifier held with `1` to `8` for the sidebar's pages, and whether
 holding Option (Alt elsewhere) shows keyboard shortcut hints; each names only
 the platform's key. Preferences
 are read and saved through `GET`/`PUT api/settings/appearance` (`theme`,
-`key_hints`, `page_modifier`), in the daemon’s SQLite registry, so they survive daemon restarts
+`key_hints`, `page_modifier`, and the sidebar's `sidebar`), in the daemon’s SQLite registry, so they survive daemon restarts
 and loopback port changes. **Plan usage** below them has a switch per plan
 (Claude Code, Codex) for whether it shows in the sidebar and the desktop tray.
 With no choice a plan shows when one of the backends baum uses is its own: the
