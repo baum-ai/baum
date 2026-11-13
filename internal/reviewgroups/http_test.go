@@ -14,6 +14,7 @@ import (
 	"github.com/baum-ai/baum/internal/repos"
 	"github.com/baum-ai/baum/internal/reviewindex"
 	"github.com/baum-ai/baum/internal/store"
+	"github.com/baum-ai/baum/internal/tileview"
 	"github.com/baum-ai/baum/internal/tileview/tileviewtest"
 	"github.com/baum-ai/baum/tiles"
 )
@@ -314,5 +315,52 @@ func TestTilesServeAGroupReviewVersions(t *testing.T) {
 	}
 	if status, raw := f.do(t, "GET", "/api/groups/"+id+"/tiles?version=x", ""); status != http.StatusBadRequest || code(raw) != CodeInvalid {
 		t.Fatalf("a bad version: %d %s", status, raw)
+	}
+}
+
+// A group version asked for again is answered from the kept answer; a new
+// version is converted, and so is a rewrite of the same number.
+func TestTilesConvertsAnUnchangedGroupVersionOnce(t *testing.T) {
+	f := newAPI(t)
+	_, raw := f.do(t, "POST", "/api/groups", `{"name":"Release train","members":[{"repository":"acme/demo","number":8},{"repository":"acme/demo","number":7}]}`)
+	var created View
+	if err := json.Unmarshal(raw, &created); err != nil {
+		t.Fatal(err)
+	}
+	put := func(previous int, title string) {
+		t.Helper()
+		doc := tileviewtest.Base(t)
+		doc["review"].(map[string]any)["version"] = previous + 1
+		doc["review"].(map[string]any)["repository"] = "acme/demo"
+		doc["summary"].(map[string]any)["title"] = title
+		doc["stack"] = map[string]any{"title": "Release train", "members": []any{
+			map[string]any{"number": 7, "head_sha": "aaaaaaa", "review_version": 1},
+			map[string]any{"number": 8, "head_sha": "bbbbbbb", "review_version": 1},
+		}}
+		version := store.Version{Metadata: store.Metadata{Version: previous + 1, Model: "stub-model"}, Document: tileviewtest.Encode(t, doc)}
+		if err := f.store.Put(context.Background(), created.ID, previous, version); err != nil {
+			t.Fatal(err)
+		}
+	}
+	put(0, "One")
+	before := tileview.Builds.Load()
+	for range 3 {
+		if status, _ := f.do(t, "GET", "/api/groups/"+created.ID+"/tiles", ""); status != 200 {
+			t.Fatal(status)
+		}
+		f.do(t, "GET", "/api/groups/"+created.ID+"/tiles?version=1", "")
+	}
+	if got := tileview.Builds.Load() - before; got != 1 {
+		t.Fatalf("%d conversions of an unchanged version", got)
+	}
+	put(1, "Two")
+	f.do(t, "GET", "/api/groups/"+created.ID+"/tiles", "")
+	f.do(t, "GET", "/api/groups/"+created.ID+"/tiles", "")
+	if got := tileview.Builds.Load() - before; got != 2 {
+		t.Fatalf("%d conversions after a new version", got)
+	}
+	f.do(t, "GET", "/api/groups/"+created.ID+"/tiles?version=1", "")
+	if got := tileview.Builds.Load() - before; got != 2 {
+		t.Fatalf("an older version was converted again: %d", got)
 	}
 }

@@ -2,10 +2,13 @@ package tileview
 
 import (
 	"encoding/json"
+	"os"
+	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/baum-ai/baum/internal/tileview/tileviewtest"
+	"github.com/baum-ai/baum/review"
 	"github.com/baum-ai/baum/tiles"
 	"github.com/baum-ai/baum/tiles/tilestest"
 )
@@ -112,5 +115,37 @@ func TestWarm(t *testing.T) {
 	}
 	if r := Build(tileviewtest.Encode(t, tileviewtest.Base(t)), tiles.Options{}); r.Tiles == nil {
 		t.Fatal(r.Problem)
+	}
+}
+
+// The helper's draft converts as the tiles package's draft-outline golden does.
+func TestDraftOutlineMatchesTheGolden(t *testing.T) {
+	// The golden is converted from the normalised review, without the hunk
+	// URLs Build derives.
+	normalized, err := review.NormalizeStored(tileviewtest.Encode(t, tileviewtest.DraftOutline(t)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	converted, err := tiles.FromReview(normalized, tiles.Options{Draft: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	golden, err := os.ReadFile("../../tiles/testdata/draft-outline.tiles.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var want, got any
+	if err := json.Unmarshal(golden, &want); err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := json.Marshal(converted)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(encoded, &got); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(want, got) {
+		t.Fatal("the draft helper no longer converts to the draft-outline golden")
 	}
 }

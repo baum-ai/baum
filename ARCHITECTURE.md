@@ -783,10 +783,15 @@ stores when `BAUM_TILES_CORPUS` names one, logging only counts.
 **Serving.** The desktop daemon converts a review each time it answers for
 one; nothing about the tile document is stored. All three routes answer
 `{"document": <baum.review/1>, "tiles": <baum.tiles/1> | null, "problem"?: string}`.
-`document` is always the normalised review, never the raw stored bytes: the
-stored-document rules (`review.NormalizeStored`) and the derived hunk URLs are
-applied, and `tiles` is converted from exactly those bytes, so the page's
-chrome and its tiles read one review. This holds for a group review too,
+`tiles` is converted from exactly the bytes `document` holds. `document` is the
+normalised review when normalisation succeeds (the stored-document rules,
+`review.NormalizeStored`, then the derived hunk URLs) and the stored review
+otherwise, with `tiles: null`. The plain routes serve the stored bytes (with
+hunk URLs), so the two differ where a rule applies: an identifier longer than
+128 characters is shortened and a blank section title is labelled on the tile
+routes only. A draft comment or a URL made on one page for such an item
+therefore does not carry to the other until the version is refreshed; the
+tiles page reads only the tile routes. This holds for a group review too,
 whose plain `/document` route serves the stored bytes as they are. Only the
 tile-level checks run (`Validator.CheckTiles`), so a tile that fails one is
 `unavailable` in a response that is still served; the full schema is checked
@@ -794,20 +799,26 @@ in tests. A review the converter cannot split gives `tiles: null` and a short
 `problem` that never quotes the document, and the page shows the full review.
 One validator, kept by `internal/tileview`, serves all three routes; the
 daemon compiles its schemas in the background at start-up (`tileview.Warm`,
-about 0.4 s), so the first review opened does not wait for them.
+about 0.4 s, logging a warning if it fails), so the first review opened does
+not wait for them. Each route keeps its encoded answers, so an unchanged
+document is not converted again: up to 16 answers per cache, and when they
+together pass 64 MiB the least recently used go first, the newest staying
+whatever its size.
 
 - `GET /api/tiles?clone=&pr=[&version=N]` takes the selector of
   `GET /api/document`, with the same 400, 404 and 413 answers. The answer is
   `no-store` with a strong `ETag` of the body (a matching `If-None-Match` is a
-  304), and the daemon keeps up to 16 encoded answers, 64 MiB in all, by store
-  revision as it does for viewers, so an unchanged version is neither read nor
-  converted again.
+  304), kept by store revision as the viewers are.
 - `GET /api/jobs/{id}/draft?tiles=1` answers the running review's draft in
   that shape, plus the draft's `draft` count, converted with `Options.Draft`
-  so a context not yet written is a pending context tile. Without `tiles=1`
-  the answer is the draft alone, as before.
+  so a context not yet written is a pending context tile. Only the exact value
+  `1` selects tiles; without it, or with any other value (`true`, empty), the
+  answer is the draft alone, as before. The converted answer is kept per job
+  by the draft's count, so the app's polling converts each draft once, and is
+  dropped when the job has no draft any more.
 - `GET /api/groups/{id}/tiles[?version=N]` answers a review group's version,
-  with the selectors and errors of `GET /api/groups/{id}/document`.
+  with the selectors and errors of `GET /api/groups/{id}/document`; its
+  answers are kept by group, version and the document's digest.
 
 The `review_page` appearance preference (`full`, the default, or `tiles`; see
 `GET`/`PUT /api/settings/appearance`) chooses which page a review opens on,

@@ -2,8 +2,10 @@ package reviewgroups
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"regexp"
@@ -43,6 +45,8 @@ type API struct {
 	File func(context.Context, locallink.FileRequest) (locallink.FileResult, error)
 
 	patches chan struct{}
+	// tiles keeps the encoded answers of the tiles route.
+	tileAnswers tileview.Cache
 	// patcher is the Patcher Handler made when Patch was nil; Close closes it.
 	patcher *locallink.Patcher
 }
@@ -362,14 +366,22 @@ func (h *API) document(w http.ResponseWriter, r *http.Request) {
 // from it, for the version the request names, as GET /api/tiles does for a
 // pull request's.
 func (h *API) tiles(w http.ResponseWriter, r *http.Request) {
-	_, version, ok := h.version(w, r)
+	g, version, ok := h.version(w, r)
 	if !ok {
 		return
 	}
-	body, err := tileview.Encode(tileview.Build(version.Document, tiles.Options{}))
-	if err != nil {
-		fail(w, err)
-		return
+	// A version is immutable, but its bytes name the answer as well as its
+	// number does, so a rewrite is never answered from the old one.
+	sum := sha256.Sum256(version.Document)
+	key := fmt.Sprintf("%s\x00%d\x00%x", g.ID, version.Metadata.Version, sum)
+	body, found := h.tileAnswers.Get(key)
+	if !found {
+		var err error
+		if body, err = tileview.Encode(tileview.Build(version.Document, tiles.Options{})); err != nil {
+			fail(w, err)
+			return
+		}
+		h.tileAnswers.Put(key, body)
 	}
 	etagjson.Serve(w, r, body)
 }

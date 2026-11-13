@@ -4,6 +4,7 @@ package tileview
 
 import (
 	"encoding/json"
+	"sync/atomic"
 
 	"github.com/baum-ai/baum/internal/etagjson"
 	"github.com/baum-ai/baum/review"
@@ -30,11 +31,15 @@ var validator = tiles.NewValidator()
 // so the first review a person opens does not wait for it.
 func Warm() error { return validator.CheckTiles(&tiles.Document{}) }
 
+// Builds counts the conversions Build has run, for tests.
+var Builds atomic.Int64
+
 // Build converts a stored or draft review document. A tile that fails its
 // checks is marked unavailable in the result; a conversion failure leaves the
 // tile document nil. Build runs only the tile-level checks, not the full
 // schema, which the tests cover.
 func Build(document []byte, opts tiles.Options) Response {
+	Builds.Add(1)
 	normalized, err := review.NormalizeStored(document)
 	if err != nil {
 		return Response{Document: raw(document), Problem: "The review could not be read as a review document."}

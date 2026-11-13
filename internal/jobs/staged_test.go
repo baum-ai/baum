@@ -17,6 +17,7 @@ import (
 	"github.com/baum-ai/baum/internal/generate"
 	"github.com/baum-ai/baum/internal/generate/generatetest"
 	"github.com/baum-ai/baum/internal/store"
+	"github.com/baum-ai/baum/internal/tileview"
 	"github.com/baum-ai/baum/internal/tileview/tileviewtest"
 	"github.com/baum-ai/baum/tiles"
 )
@@ -191,10 +192,32 @@ func TestQueueServesTheDraftAsTiles(t *testing.T) {
 	if got := tileStates(withTiles.Tiles, "change"); got != "pending" {
 		t.Fatalf("change tiles of an outline draft are %q", got)
 	}
-	if code, _ := get("?tiles=0"); code != 200 {
-		t.Fatalf("tiles=0: %d", code)
+	// Only the exact value 1 selects tiles.
+	for _, query := range []string{"?tiles=0", "?tiles=true", "?tiles=", "?tiles=1x"} {
+		if code, body := get(query); code != 200 || !bytes.Equal(body, plain) {
+			t.Fatalf("%s: %d, not the plain draft: %.120s", query, code, body)
+		}
+	}
+	// An unchanged draft is converted once, however often it is polled.
+	built := tileview.Builds.Load()
+	for range 3 {
+		if code, body := get("?tiles=1"); code != 200 || !bytes.Equal(body, tiled) {
+			t.Fatalf("a poll of the same draft: %d", code)
+		}
+	}
+	if tileview.Builds.Load() != built {
+		t.Fatalf("%d conversions of an unchanged draft", tileview.Builds.Load()-built)
 	}
 	d.step <- struct{}{}
+	for range 3000 {
+		if _, body := get(""); bytes.Contains(body, []byte(`"draft":2`)) {
+			break
+		}
+		waitState(t, q, id, "running")
+	}
+	if code, body := get("?tiles=1"); code != 200 || bytes.Equal(body, tiled) || tileview.Builds.Load() != built+1 {
+		t.Fatalf("a new draft: %d, %d conversions", code, tileview.Builds.Load()-built)
+	}
 	d.step <- struct{}{}
 	d.step <- struct{}{}
 	waitState(t, q, id, "completed")

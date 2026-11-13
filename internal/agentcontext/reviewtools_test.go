@@ -85,6 +85,12 @@ func (d *reviewDaemon) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		default:
 			http.NotFound(w, r)
 		}
+	case p == "/api/tiles":
+		if q.Get("clone") == "c-evil" {
+			reply(`{"document":{"summary":{"text":"FOREIGN-OVERVIEW"}},"tiles":null}`)
+		} else {
+			reply(`{"document":{"review":{"head":"h13"}},"tiles":null,"problem":"p"}`)
+		}
 	case p == "/api/versions":
 		reply(`[{"version":2,"head":"h13","base":"b13","merge_base":"m13","generated_at":"2026-11-01T10:00:00Z","backend":"claude","model":"opus","recorded_cost_usd":0.5,"session":{"id":"SECRET-SESSION"},"accounting":{"usage":1},"bundle_digest":"DIGEST","prompt_digest":"PD","policy":"POLICY"},{"version":1,"head":"h13a","base":"b13","model":"sonnet","recorded_cost_usd":null}]`)
 	case p == "/api/prs/chat":
@@ -139,6 +145,10 @@ func (d *reviewDaemon) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				version = "1"
 			}
 			reply(`{"review":{"version":%s,"head":"gh","base":"gb"},"summary":{"text":"GROUP-OVERVIEW","context":{"text":"GROUP-CONTEXT"}},"sections":[{"id":"gsec_1","title":"Group one","kind":"logic","hunks":[],"assessment":"x","summary":{"text":"GROUP-DETAILS"},"risks":[]}],"relations":[],"index":{"hunks":[]}}`, version)
+		case rest == "tiles" && id == "g-web":
+			reply(`{"document":{"review":{"head":"gh"}},"tiles":null,"problem":"p"}`)
+		case rest == "tiles":
+			reply(`{"document":{"summary":{"text":"FOREIGN-GROUP-REVIEW"}},"tiles":null}`)
 		case rest == "document":
 			reply(`{"summary":{"text":"FOREIGN-GROUP-REVIEW"},"sections":[]}`)
 		case rest == "versions":
@@ -523,14 +533,15 @@ func TestReviewToolsAreBoundForActions(t *testing.T) {
 	reader := s.reader.within([]string{"/api"}, "acme/web")
 	for _, path := range []string{
 		"/api/document?clone=c-evil&pr=1", "/api/versions?clone=c-evil&pr=1", "/api/facts?clone=c-evil&pr=1", "/api/prs/chat?clone=c-evil&pr=1",
-		"/api/jobs/j-evil/draft", "/api/groups/g-evil/document", "/api/groups/g-evil/document?version=1", "/api/groups/g-evil/versions",
+		"/api/jobs/j-evil/draft", "/api/jobs/j-evil/draft?tiles=1", "/api/tiles?clone=c-evil&pr=1", "/api/tiles?clone=c-evil&pr=1&version=1",
+		"/api/groups/g-evil/tiles", "/api/groups/g-evil/tiles?version=1", "/api/groups/g-evil/document", "/api/groups/g-evil/document?version=1", "/api/groups/g-evil/versions",
 	} {
 		d.reset()
 		if response, err := reader.Get(context.Background(), path); err == nil {
 			t.Errorf("%s was read: %s", path, response.Body)
 		}
 		for _, r := range d.requests() {
-			if strings.Contains(r, "/draft") || strings.HasSuffix(strings.Split(r, "?")[0], "/document") || strings.HasSuffix(strings.Split(r, "?")[0], "/versions") {
+			if strings.Contains(r, "/draft") || strings.HasSuffix(strings.Split(r, "?")[0], "/document") || strings.HasSuffix(strings.Split(r, "?")[0], "/tiles") || strings.HasSuffix(strings.Split(r, "?")[0], "/versions") {
 				if strings.Contains(r, "g-evil") || strings.Contains(r, "j-evil") {
 					t.Errorf("%s reached %s", path, r)
 				}
@@ -538,13 +549,15 @@ func TestReviewToolsAreBoundForActions(t *testing.T) {
 		}
 	}
 	// What an action may read of its own.
-	for _, path := range []string{"/api/jobs/j-run/draft", "/api/jobs/j-run/draft?tiles=1", "/api/groups/g-web/document?version=1", "/api/prs/chat?clone=c-web&pr=13", "/api/versions?clone=c-web&pr=13"} {
+	for _, path := range []string{"/api/jobs/j-run/draft", "/api/jobs/j-run/draft?tiles=1", "/api/groups/g-web/document?version=1", "/api/groups/g-web/tiles", "/api/groups/g-web/tiles?version=1", "/api/tiles?clone=c-web&pr=13", "/api/tiles?clone=c-web&pr=13&version=2", "/api/prs/chat?clone=c-web&pr=13", "/api/versions?clone=c-web&pr=13"} {
 		if _, err := reader.Get(context.Background(), path); err != nil {
 			t.Errorf("%s: %v", path, err)
 		}
 	}
-	if _, err := reader.Get(context.Background(), "/api/groups/g-web/document?version=1&extra=1"); err == nil {
-		t.Error("an unlisted parameter was read")
+	for _, path := range []string{"/api/groups/g-web/document?version=1&extra=1", "/api/groups/g-web/tiles?extra=1", "/api/jobs/j-run/draft?tiles=1&extra=1", "/api/tiles?clone=c-web&pr=13&extra=1"} {
+		if _, err := reader.Get(context.Background(), path); err == nil {
+			t.Errorf("%s: an unlisted parameter was read", path)
+		}
 	}
 }
 

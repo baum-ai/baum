@@ -768,7 +768,11 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 		})
 		// The tile checks compile their schemas on first use; do it now, off
 		// the request path, so the first review opened does not wait.
-		go func() { _ = tileview.Warm() }()
+		go func() {
+			if err := tileview.Warm(); err != nil {
+				log.Warn("the tile checks could not be prepared", "error", err.Error())
+			}
+		}()
 		local := uiserver.LocalAPI{Console: consoleRoutes, GitHubAuth: githubConnection.Handler(), Registry: registry, Config: cfg, PRs: uiserver.DiscoveryHandler(registry, askedRefresh{discover, worker.Asked}, changed), Index: inboxQueue.CountHandler(index.Handler()), Inbox: inboxQueue.Handler(), Jobs: queue.Handler(), Chat: uiserver.ChatHandler(registry, queue), Background: worker.Handler(), Automatic: scheduler.Handler(), Live: liveAPI, AgentRequests: requestsAPI, Clones: clones.Handler(), GitHubRepositories: pickList.Handler(), CurrentName: currentName(githubClient), PlanUsage: plans.Handler(), PlanUsageCached: func() []json.RawMessage {
 			var cached []json.RawMessage
 			for _, plan := range plans.Cached() {

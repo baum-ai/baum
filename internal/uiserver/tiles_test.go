@@ -6,14 +6,15 @@ import (
 	"net/http/httptest"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/baum-ai/baum/internal/appdb/appdbtest"
 	"github.com/baum-ai/baum/internal/config"
-	"github.com/baum-ai/baum/internal/etagjson"
 	"github.com/baum-ai/baum/internal/repos"
 	"github.com/baum-ai/baum/internal/store"
+	"github.com/baum-ai/baum/internal/tileview"
 	"github.com/baum-ai/baum/internal/tileview/tileviewtest"
 	"github.com/baum-ai/baum/tiles"
 )
@@ -278,24 +279,85 @@ func TestTilesAnswersConditionalRequestsAndFollowsRewrites(t *testing.T) {
 	}
 }
 
-func TestTileCacheKeepsTheLeastRecentlyUsedOut(t *testing.T) {
-	var c tileCache
-	for i := range maxTileAnswers + 3 {
-		c.put(string(rune('a'+i)), etagjsonBody("x"))
+// A stored-document rule changes the document beside the tiles: an identifier
+// longer than 128 characters is shortened and a blank section title is
+// labelled there, while /api/document serves the stored bytes (with hunk URLs).
+func TestTilesDocumentIsNormalisedWhereDocumentIsNot(t *testing.T) {
+	f := newTilesFixture(t)
+	long := "sec_" + strings.Repeat("a", 140)
+	raw := strings.ReplaceAll(string(tileviewtest.Encode(t, tileviewtest.Base(t))), "sec_config_flag", long)
+	var doc map[string]any
+	if err := json.Unmarshal([]byte(raw), &doc); err != nil {
+		t.Fatal(err)
 	}
-	if _, ok := c.get("a"); ok {
-		t.Error("the oldest answer was kept")
+	for _, s := range doc["sections"].([]any) {
+		if s := s.(map[string]any); s["id"] == long {
+			s["title"] = "  "
+		}
 	}
-	if _, ok := c.get(string(rune('a' + maxTileAnswers + 2))); !ok {
-		t.Error("the newest answer was dropped")
+	f.put(t, tileviewtest.Encode(t, doc))
+
+	sectionIDs := func(document map[string]any) (ids []string, blank int) {
+		for _, s := range document["sections"].([]any) {
+			s := s.(map[string]any)
+			ids = append(ids, s["id"].(string))
+			if strings.TrimSpace(s["title"].(string)) == "" {
+				blank++
+			}
+		}
+		return ids, blank
 	}
-	if _, ok := c.get(""); ok {
-		t.Error("an answer without a revision was kept")
+	var plain map[string]any
+	if err := json.Unmarshal(f.get("/api/document", "", "").Body.Bytes(), &plain); err != nil {
+		t.Fatal(err)
 	}
-	c.put("", etagjsonBody("x"))
-	if len(c.answers) != maxTileAnswers {
-		t.Errorf("%d answers", len(c.answers))
+	plainIDs, plainBlank := sectionIDs(plain)
+	body := decodeTiles(t, f.get("/api/tiles", "", ""))
+	tileIDs, tileBlank := sectionIDs(body.Document)
+	if !slices.Contains(plainIDs, long) || plainBlank != 1 {
+		t.Fatalf("the plain route changed the stored document: %v, %d blank", plainIDs, plainBlank)
+	}
+	if slices.Contains(tileIDs, long) || tileBlank != 0 {
+		t.Fatalf("the tiles route's document is not normalised: %v, %d blank", tileIDs, tileBlank)
+	}
+	for _, id := range tileIDs {
+		if len(id) > 128 {
+			t.Errorf("identifier of %d characters", len(id))
+		}
+	}
+	if body.Tiles == nil || body.Problem != "" {
+		t.Fatalf("tiles %v, problem %q", body.Tiles != nil, body.Problem)
 	}
 }
 
-func etagjsonBody(s string) etagjson.Body { return etagjson.Body{Data: []byte(s), ETag: `"` + s + `"`} }
+// A version asked for again is answered from the kept answer, not converted
+// again; a rewrite of it is converted.
+func TestTilesConvertsAnUnchangedVersionOnce(t *testing.T) {
+	ctx := context.Background()
+	f := newTilesFixture(t)
+	f.put(t, titled(t, "Once"))
+	before := tileview.Builds.Load()
+	for range 3 {
+		if w := f.get("/api/tiles", "", ""); w.Code != 200 {
+			t.Fatal(w.Code)
+		}
+	}
+	if got := tileview.Builds.Load() - before; got != 1 {
+		t.Fatalf("%d conversions of an unchanged version", got)
+	}
+	previous, err := f.versions.Latest(ctx, f.key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rewritten := tileviewtest.Base(t)
+	rewritten["summary"].(map[string]any)["title"] = "Rewritten"
+	if err := f.versions.RefreshCurrent(ctx, f.key, previous, withVersion(t, tileviewtest.Encode(t, rewritten), 1)); err != nil {
+		t.Fatal(err)
+	}
+	f.get("/api/tiles", "", "")
+	f.put(t, titled(t, "Twice"))
+	f.get("/api/tiles", "", "")
+	if got := tileview.Builds.Load() - before; got != 3 {
+		t.Fatalf("%d conversions after a rewrite and a new version", got)
+	}
+}
