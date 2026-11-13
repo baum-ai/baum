@@ -28,6 +28,10 @@ type Entry struct {
 type ScanReport struct {
 	SkippedFiles int      `json:"skipped_files"`
 	SkippedPaths []string `json:"skipped_paths,omitempty"`
+	// CompressedPaths are the rollouts Codex compressed (.jsonl.zst) without
+	// keeping a plain copy. baum cannot read them, so the scan leaves them out
+	// and indexes the rest of the store.
+	CompressedPaths []string `json:"compressed_paths,omitempty"`
 }
 
 type Files = model.Files
@@ -103,7 +107,7 @@ func loadEntries(sessionsDir string, cache *Cache) ([]Entry, model.ScanReport, s
 		}
 		return index, report, ""
 	}
-	index, report := softIndex(sessionsDir)
+	index, report := softIndex(sessionsDir, cache)
 	return index, report, fmt.Sprintf("Codex store scan fell back to a partial index: %v", err)
 }
 
@@ -169,7 +173,7 @@ func scanStore(codexHome string, cache *Cache) ([]Entry, ScanReport, error) {
 				paths = append(paths, path)
 			case strings.HasPrefix(name, "rollout-") && strings.HasSuffix(name, ".jsonl.zst"):
 				if _, statErr := os.Stat(strings.TrimSuffix(path, ".zst")); statErr != nil {
-					return fmt.Errorf("compressed rollout %s has no plain twin; .zst decoding is unsupported", path)
+					report.CompressedPaths = append(report.CompressedPaths, path)
 				}
 			}
 			return nil
@@ -247,9 +251,11 @@ func SessionWorkingDir(path string) (string, bool, error) {
 	return filepath.Clean(entry.Meta.CWD), true, nil
 }
 
-func softIndex(sessionsDir string) ([]Entry, model.ScanReport) {
+func softIndex(sessionsDir string, cache *Cache) ([]Entry, model.ScanReport) {
 	var index []Entry
 	var report model.ScanReport
+	scan := cache.beginScan(filepath.Dir(sessionsDir))
+	defer scan.end()
 	_ = filepath.WalkDir(sessionsDir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			if path == sessionsDir {
@@ -263,7 +269,7 @@ func softIndex(sessionsDir string) ([]Entry, model.ScanReport) {
 		if d.IsDir() || !strings.HasPrefix(d.Name(), "rollout-") || filepath.Ext(d.Name()) != ".jsonl" {
 			return nil
 		}
-		entry, err := readEntry(path)
+		entry, err := scan.read(path)
 		if err != nil {
 			report.Add(path, err.Error())
 		} else {

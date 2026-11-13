@@ -190,6 +190,11 @@ same sessions with or without it. Within a `Cache.BeginPass`/`EndPass` pair
 the store is scanned once however many clones look it up, and so does not see a
 rollout added during the pass. The parent and child lookups are built once per
 scan, not once per session.
+Codex compresses old rollouts to `.jsonl.zst` and removes the plain file.
+baum does not read those: the scan lists them in `ScanReport.CompressedPaths`
+and indexes the rest of the store, and their sessions are not discovered. If a
+scan does fail, discovery falls back to a partial index of `sessions/`, read
+through the same cache.
 Cursor is the exception to "never a transcript": it keeps every conversation
 in one database, so discovery reads the store's conversation index and builds
 the tree of each repository conversation for its payload. `Options.Since` bounds that: a conversation last updated

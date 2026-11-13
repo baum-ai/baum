@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 )
@@ -128,6 +129,73 @@ func TestPassScansTheStoreOnce(t *testing.T) {
 	after, _, _ := FindSessionsCached(s.dir, []string{s.repo}, cache)
 	if len(after) != 2 {
 		t.Fatalf("sessions after the pass = %d, want 2", len(after))
+	}
+}
+
+// Codex compresses old rollouts to .jsonl.zst and removes the plain file. The
+// scan leaves those out and indexes the rest of the store, instead of failing
+// and falling back to the partial index.
+func TestScanLeavesOutCompressedRollouts(t *testing.T) {
+	s := newStore(t)
+	day := filepath.Join(s.dir, "2026", "08", "01")
+	compressed := filepath.Join(day, "rollout-old.jsonl.zst")
+	writeFile(t, compressed, "\x28\xb5\x2f\xfd")
+	// A compressed rollout whose plain copy is still there is read as plain.
+	writeFile(t, filepath.Join(day, "rollout-root.jsonl.zst"), "\x28\xb5\x2f\xfd")
+
+	entries, report, err := ScanStore(filepath.Dir(s.dir))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 3 {
+		t.Fatalf("entries = %d, want the 3 plain rollouts", len(entries))
+	}
+	if !reflect.DeepEqual(report.CompressedPaths, []string{compressed}) {
+		t.Fatalf("compressed = %v, want %v", report.CompressedPaths, compressed)
+	}
+	sessions, scanReport, err := FindSessionsCached(s.dir, []string{s.repo}, &Cache{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sessions) != 1 || len(sessions[0].Warnings) != 0 || len(scanReport.Skipped) != 0 {
+		t.Fatalf("sessions = %+v, report = %+v; want the root session without warnings", sessions, scanReport)
+	}
+}
+
+// When the full scan fails, the partial index still reads first records
+// through the cache: an unchanged rollout is not opened again.
+func TestPartialIndexReadsThroughTheCache(t *testing.T) {
+	s := newStore(t)
+	day := filepath.Join(s.dir, "2026", "08", "01")
+	// Two rollouts claiming one thread id fail the full scan.
+	writeFile(t, filepath.Join(day, "rollout-dup.jsonl"), s.root("root"))
+	cache := &Cache{}
+	first, firstReport, err := FindSessionsCached(s.dir, []string{s.repo}, cache)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(first) == 0 || !strings.Contains(strings.Join(first[0].Warnings, "\n"), "partial index") {
+		t.Fatalf("sessions = %+v, want the partial index warning", first)
+	}
+
+	// Garble a rollout without changing its size or time. Only a read from
+	// disk would notice.
+	path := filepath.Join(day, "rollout-other.jsonl")
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, path, strings.Repeat("x", int(info.Size())))
+	if err := os.Chtimes(path, info.ModTime(), info.ModTime()); err != nil {
+		t.Fatal(err)
+	}
+
+	second, secondReport, err := FindSessionsCached(s.dir, []string{s.repo}, cache)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(second, first) || !reflect.DeepEqual(secondReport, firstReport) {
+		t.Fatalf("second scan differs:\ngot  %+v %+v\nwant %+v %+v", second, secondReport, first, firstReport)
 	}
 }
 
