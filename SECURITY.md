@@ -1014,28 +1014,47 @@ about your folders anywhere. It reads: the working directories recorded in the
 hook event record and in the Claude Code (`~/.claude/projects`, and the same
 folder of the other configuration directories baum knows), Codex
 (`~/.codex/sessions`, `~/.codex/archived_sessions`, and the same folders of the
-other homes baum knows) and Cursor (`state.vscdb`)
-session stores, without parsing the transcripts; the folders `~/code`, `~/src`,
-`~/dev`, `~/projects`, `~/workspace`, `~/repos`, `~/git` and
-`~/go/src/github.com`, to four levels deep, without following symlinks; the
-folders that contain the clones agents worked in, when they are below your home
-directory; and, in each candidate clone, the remote URLs of its git
-configuration, through `git rev-parse` and `git config`. A directory an agent
-worked in is stat'ed, with its parents up to your home directory, and git runs
-in the clone containing it, wherever it is (git may also follow an
-`include.path` in that clone's configuration). To register what it found it
-runs the registry's local checks, which may resolve an SSH alias with
-`ssh -G`; that contacts nothing. On macOS it reads none of `~/Documents`,
-`~/Desktop`, `~/Downloads`, `~/Library/Mobile Documents` or
-`~/Library/CloudStorage`, not even a directory an agent worked in, because
-macOS would ask you for permission; `~/Documents` is read only in the single
-scan you ask for. On Linux and Windows it also walks `~/Documents` like those folders. It never walks `Desktop`,
-`Downloads`, `Pictures`, `Movies`, `Music`, `Public`, `iCloud Drive`, Google
-Drive, Dropbox or OneDrive folders, hidden folders, dependency or build
-folders, your home directory itself, or the filesystem root. The paths it
-finds are served only by `GET /api/clones/found`, behind the daemon's
-authenticated Host/Origin boundary, and registered only for repositories you
-picked.
+other homes baum knows) and Cursor (`state.vscdb`) session stores, without parsing the transcripts; your home directory, walked
+breadth first to five levels deep without following symlinks, stopping at
+each repository it finds and never entering hidden entries, dependency,
+virtual environment or build folders (`node_modules`, `vendor`, `venv`,
+`target`, `build`, `dist`, `Pods`, `DerivedData` and the like), or the folders
+`Desktop`, `Downloads`, `Pictures`, `Movies`, `Music`, `Public`, `Library`,
+`Applications`, `iCloud Drive`, Google Drive, Dropbox or OneDrive (on macOS
+nor `Documents`, unless you ask for one scan that includes it; on Windows nor
+`AppData`); and, in each candidate clone, the
+remote URLs of its git configuration, through `git rev-parse` and `git config`.
+A directory an agent worked in is stat'ed, with its parents up to your home
+directory, and git runs in the clone containing it, wherever it is (git may
+also follow an `include.path` in that clone's configuration). To register what
+it found it runs the registry's local checks, which may resolve an SSH alias
+with `ssh -G`; that contacts nothing. On macOS it reads no path whose first
+read makes macOS ask you for permission (`~/Desktop`, `~/Downloads`,
+`~/Pictures`, `~/Movies`, `~/Music`, anything in `~/Library`, including
+`Containers` and `Group Containers`, iCloud Drive and cloud-drive folders,
+anything under `/Volumes`, and `~/Documents` except in the single scan you ask
+for), not even a directory an agent worked in there. The paths it finds are served
+only by `GET /api/clones/found`, behind the daemon's authenticated Host/Origin
+boundary, and registered only for repositories you picked.
+
+A clone it finds is registered without asking, and from then on the daemon
+runs git there (fetches for reviews, the inbox and fixes) with your
+credentials and SSH agent, outside any agent's sandbox. Git runs commands the
+clone's own configuration names (`core.sshCommand`, `core.fsmonitor`, URL
+rewrites, filters). A sandboxed agent decides where it works, so it could
+create a repository whose remote names a repository you picked and whose
+configuration runs a program, and its working directory would lead the
+daemon there. The common case is mitigated: agent sandboxes let an agent
+write in its project and in temporary directories, and a directory an agent
+worked in is never registered when it, or its clone's repository, lies in a
+temporary directory (`/tmp`, `/var/tmp`, `$TMPDIR` and the system's temporary
+directory, macOS's `/private/var/folders`), below an agent `scratchpad`
+folder, or in `~/Downloads`. The remaining risk is accepted: an agent that can
+write a folder that is not temporary can still plant a repository there that
+is registered and later fetched. Asking you to confirm every clone found
+would close it, but would make ordinary use worse to protect against an
+unusual case. Finding a candidate runs only `git rev-parse` and
+`git config --get-regexp` in it, which run nothing its configuration names.
 
 ## Reporting a vulnerability
 
@@ -1371,11 +1390,15 @@ Origin and Host checks as every application route. How it works:
   Claude Code's own suggestions for "always allow" are listed, and only the
   one you pick is applied; a question shows its options. Every string is
   cleaned and masked as transcripts are (secrets and e-mail addresses
-  masked, your home directory as `~`) and cut (4000 characters for a value),
-  so what you approve can differ from the real input only where a secret
-  was masked or a long value cut. When masking fails, or a question's
-  answers could not be told apart, the request is not shown and the agent
-  asks in its terminal. The hook keeps the agent's own payload and builds
+  masked, your home directory as `~`), so what you approve can differ from
+  the real input only where a secret was masked. Values and suggestions are
+  shown whole, however long (a long one scrolls in place), because approving
+  applies to the whole input. A request too large to reach the app whole
+  (over the 56 KiB a request may take once encoded) is not shown, and the
+  agent asks in its terminal; so is one whose tool name would be cut. A
+  question's text may be cut, since an answer is only the option's label.
+  When masking fails, or a question's answers could not be told apart, the
+  request is not shown either. The hook keeps the agent's own payload and builds
   the answer from it; the daemon never hands tool input back to an agent.
 - To notice an answer given in the terminal, the `post-tool-use` and
   `post-tool-use-failure` hook events carry a SHA-256 digest of the tool's

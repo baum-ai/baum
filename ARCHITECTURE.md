@@ -2877,11 +2877,13 @@ handler behind that middleware. The existing document viewer does not mount it.
 prompting, so a picked repository gets a clone attached and the setup screens
 can pre-select repositories already on the machine. `Find` collects directories
 from agent hook events and the Claude Code, Codex and Cursor session stores
-(cheap working-directory probes, no transcript parsing), resolves each to its
+(cheap working-directory probes, no transcript parsing), leaving out those in a
+temporary directory, an agent scratchpad or Downloads, resolves each to its
 working tree with `gitlocal.Probe` (two read-only git commands; `Open` would
-create a private mirror per candidate), then walks the usual code folders and
-the folders around the clones agents used, to four levels, using exclusions
-defined by `internal/scanskip`. Candidates are grouped by the
+create a private mirror per candidate), then walks the home directory breadth
+first, to five levels, stopping at a repository and using the exclusions
+defined by `internal/scanskip` (hidden, dependency and build folders, and
+personal folders, including every one macOS guards with a privacy prompt). Candidates are grouped by the
 lowercase `owner/name` of every github.com remote, linked worktrees collapsing
 into their main clone. The daemon's `Service` keeps the result in memory,
 rescans at start, hourly while a picked repository has no available clone, and
@@ -2891,8 +2893,10 @@ the last scan was under a minute ago), attaches the best candidate with
 any remote names it; a path or repository directory registered to another
 repository is never moved, and an unpicked repository is never picked again),
 and attaches the clone of an agent event's directory at once, after a registry
-query that runs no git. On macOS it reads none of the protected folders
-(Documents, Desktop, Downloads, iCloud Drive, CloudStorage). `GET /api/clones/found` and
+query that runs no git. On macOS one rule (`finder.protected`) keeps the walk
+and agent folders out of every path that would make macOS ask (Desktop,
+Downloads, Pictures, Movies, Music, all of Library, cloud drives, `/Volumes`,
+and Documents unless one scan is asked to include it). `GET /api/clones/found` and
 `POST /api/clones/found/refresh` serve it. It makes no network request. See
 its [README](internal/clonefind/README.md).
 
@@ -5193,14 +5197,19 @@ saved, in the `state/agent-requests` document in `app.sqlite`.
   builds the agent's answer from it; the daemon answers a `Decision`
   (behaviour, suggestion index, option indexes or the user's own text per
   question), or nothing. `Store.Ask` cleans, masks (the tracker's `Mask`) and
-  cuts every string (values keep newlines, 4000 characters; others one line),
-  holds at most 64 requests, and waits for an answer, a withdrawal, the
+  bounds every string: values (which keep newlines) and suggestion labels to
+  the 64 KiB line that carries the request, so they are shown whole, and other
+  labels and question texts to one cut line. The hook sends a permission
+  request's values and suggestions whole, and sends nothing (the agent asks in
+  its terminal) when the request would not fit 56 KiB without shortening.
+  It holds at most 64 requests, and waits for an answer, a withdrawal, the
   client's disconnect or, for Codex, `CodexWait` (25 s); a Codex request
   answers nothing at once while `codex_approvals` is off (checked again under
   the lock it is inserted under), and turning it off withdraws the waiting
   ones. A request is refused, answering nothing at once, when the mask turned
   non-empty text into "" (the redaction failed: nothing unmasked is shown),
-  or when its answers could not be told apart once cleaned and cut: two
+  when a permission request's tool, row or suggestion would be cut (approving
+  covers the whole input), or when its answers could not be told apart once cleaned and cut: two
   equal questions, two equal options of one question, or a label containing
   ", " in a multi-select question.
 - **Withdrawal.** `Store.Run` follows the record's agent events

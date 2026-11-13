@@ -68,8 +68,11 @@ const (
 
 // Bounds, in characters unless named otherwise.
 const (
-	// MaxValue bounds a row's value, which may keep its newlines.
-	MaxValue = 4000
+	// MaxValue bounds a row's value, which may keep its newlines, and a
+	// suggestion's label. It is the control protocol's line, which carries
+	// the whole request, so a value is shown whole: approving applies to all
+	// of the input, and the app must show what it approves.
+	MaxValue = 64 << 10
 	// MaxMessage bounds a queued message.
 	MaxMessage   = 4000
 	maxLabel     = 300
@@ -444,20 +447,24 @@ func (a Ask) check() error {
 // newPending is the request as the app is shown it: every string the agent
 // wrote cleaned, masked and bounded. It is refused (false), so the agent asks
 // in its terminal, when masking failed (it turned text into nothing: the app
-// must never show what it could not mask), or when a question's answers
+// must never show what it could not mask), when a permission request's tool,
+// rows or suggestions had to be cut (approving applies to the whole input, so
+// the app must show all of it; values and suggestions are bounded only by the
+// request's own size, so this guards the tool name and labels), or when a
+// question's answers
 // could not be told apart as the app gives them back: two questions, or two
 // options of one question, that read the same once cleaned and cut, or a
 // label containing ", " in a question that takes several.
 func (s *Store) newPending(ask Ask) (*pending, bool) {
-	masked := true
+	masked, whole := true, true
 	line := func(text string, limit int) string {
-		out, ok := s.line(text, limit)
-		masked = masked && ok
+		out, ok, cut := s.line(text, limit)
+		masked, whole = masked && ok, whole && !cut
 		return out
 	}
 	block := func(text string, limit int) string {
-		out, ok := s.block(text, limit)
-		masked = masked && ok
+		out, ok, cut := s.block(text, limit)
+		masked, whole = masked && ok, whole && !cut
 		return out
 	}
 	r := Request{
@@ -469,7 +476,11 @@ func (s *Store) newPending(ask Ask) (*pending, bool) {
 		r.Input = append(r.Input, Row{Label: line(row.Label, maxLabel), Value: block(row.Value, MaxValue), Code: row.Code})
 	}
 	for i, label := range ask.Suggestions {
-		r.Suggestions = append(r.Suggestions, Suggestion{ID: strconv.Itoa(i), Label: line(label, maxLabel)})
+		r.Suggestions = append(r.Suggestions, Suggestion{ID: strconv.Itoa(i), Label: line(label, MaxValue)})
+	}
+	if !whole {
+		s.logger().Warn("an agent request was not shown: a label was too long to show in full")
+		return nil, false
 	}
 	questions := map[string]bool{}
 	for _, q := range ask.Questions {
@@ -816,7 +827,7 @@ func (s *Store) List() ([]Request, []Message) {
 		}
 		// A message whose text could not be masked is not shown.
 		var ok bool
-		if m.Text, ok = s.block(m.Text, MaxMessage); ok {
+		if m.Text, ok, _ = s.block(m.Text, MaxMessage); ok {
 			shown = append(shown, m)
 		}
 	}
@@ -885,7 +896,7 @@ func (s *Store) loadSettings() Settings {
 // line is text an agent wrote as one line: format characters dropped,
 // control characters and runs of spaces made one space, masked before it is
 // cut, so a secret is never cut where the mask cannot see it.
-func (s *Store) line(text string, limit int) (string, bool) {
+func (s *Store) line(text string, limit int) (out string, masked, cut bool) {
 	text = strings.Map(func(r rune) rune {
 		switch {
 		case unicode.Is(unicode.Cf, r):
@@ -899,7 +910,7 @@ func (s *Store) line(text string, limit int) (string, bool) {
 }
 
 // block is line for a value that keeps its line breaks and tabs.
-func (s *Store) block(text string, limit int) (string, bool) {
+func (s *Store) block(text string, limit int) (out string, masked, cut bool) {
 	text = strings.ReplaceAll(strings.ToValidUTF8(text, "�"), "\r\n", "\n")
 	text = strings.Map(func(r rune) rune {
 		switch {
@@ -915,18 +926,19 @@ func (s *Store) block(text string, limit int) (string, bool) {
 	return s.finish(strings.TrimRight(text, " \t\n"), limit)
 }
 
-// finish masks text and cuts it. It reports false when the mask turned text
-// into nothing, which a mask does only when it failed.
-func (s *Store) finish(text string, limit int) (string, bool) {
+// finish masks text and cuts it. masked is false when the mask turned text
+// into nothing, which a mask does only when it failed; cut reports that the
+// text was longer than limit.
+func (s *Store) finish(text string, limit int) (out string, masked, cut bool) {
 	if text != "" && s.Mask != nil {
 		if text = s.Mask(text); text == "" {
-			return "", false
+			return "", false, false
 		}
 	}
 	if utf8.RuneCountInString(text) <= limit {
-		return text, true
+		return text, true, false
 	}
-	return string([]rune(text)[:limit-1]) + "…", true
+	return string([]rune(text)[:limit-1]) + "…", true, true
 }
 
 // Digest identifies a tool call by its tool's name and input, so a request

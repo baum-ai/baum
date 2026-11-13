@@ -43,10 +43,11 @@ const (
 	// maxAskBytes keeps an encoded request well inside the control
 	// protocol's 64 KiB line.
 	maxAskBytes = 56 << 10
-	// maxAskValue and maxAskLabel bound what a hook sends before the
-	// daemon masks it and cuts it to what the app shows, so the mask sees
-	// past the cut.
-	maxAskValue = agentrequests.MaxValue + 2000
+	// maxAskLabel bounds a question's texts before the daemon masks and
+	// cuts them, so the mask sees past the cut. A permission request's values
+	// and suggestions are sent whole, since approving applies to all of the
+	// input; one that does not fit maxAskBytes is not sent, and the agent
+	// asks in its terminal.
 	maxAskLabel = 600
 	// maxShownEdits is how many of a MultiEdit's edits get rows of their
 	// own; the rest are shown as JSON.
@@ -246,10 +247,18 @@ func parsePermissionRequest(agent string, payload []byte) (*permissionPrompt, bo
 	if agent == agentrequests.AgentClaudeCode {
 		p.suggestions = request.Suggestions[:min(len(request.Suggestions), agentrequests.MaxSuggestions)]
 		for _, suggestion := range p.suggestions {
-			p.ask.Suggestions = append(p.ask.Suggestions, cutText(suggestionLabel(suggestion), maxAskLabel))
+			label := suggestionLabel(suggestion)
+			if p.ask.Kind == agentrequests.KindQuestion {
+				label = cutText(label, maxAskLabel)
+			}
+			p.ask.Suggestions = append(p.ask.Suggestions, label)
 		}
 	}
-	boundAsk(&p.ask)
+	// A permission request too long for the daemon's line is never sent
+	// shortened.
+	if !boundAsk(&p.ask) && p.ask.Kind == agentrequests.KindPermission {
+		return nil, false
+	}
 	return p, true
 }
 
@@ -446,9 +455,6 @@ func inputRows(agent, tool string, input map[string]json.RawMessage, raw json.Ra
 			}
 		}
 	}
-	for i := range rows {
-		rows[i].Value = cutText(rows[i].Value, maxAskValue)
-	}
 	return rows
 }
 
@@ -544,12 +550,14 @@ func suggestionLabel(raw json.RawMessage) string {
 }
 
 // boundAsk halves the longest string of a request until it encodes within
-// maxAskBytes; escaping can make a string several times its length.
-func boundAsk(ask *agentrequests.Ask) {
+// maxAskBytes; escaping can make a string several times its length. It
+// reports whether the request was left whole.
+func boundAsk(ask *agentrequests.Ask) bool {
+	whole := true
 	for range 64 {
 		data, err := json.Marshal(ask)
 		if err != nil || len(data) <= maxAskBytes {
-			return
+			return whole
 		}
 		var longest *string
 		consider := func(s *string) {
@@ -572,10 +580,12 @@ func boundAsk(ask *agentrequests.Ask) {
 			}
 		}
 		if longest == nil || *longest == "" {
-			return
+			return whole
 		}
 		*longest = cutText(*longest, utf8.RuneCountInString(*longest)/2)
+		whole = false
 	}
+	return whole
 }
 
 // cutText cuts text to limit characters, marking the cut.

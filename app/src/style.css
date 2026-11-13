@@ -3687,6 +3687,14 @@ a.local-session-pr:hover {
   color: var(--text-secondary);
   font-size: var(--text-xs);
 }
+/* A long value (a prompt, a plan) is shown whole, scrolling in place like a
+   code row: the approval covers all of it. */
+.local-feed-inputs > .local-feed-row {
+  max-height: 12rem;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
 .local-feed-row span {
   margin-right: 0.35rem;
   color: var(--text-tertiary);
