@@ -121,24 +121,48 @@ var decoders = sync.Pool{New: func() any {
 }}
 
 // decompress streams the zstd data in r. Errors from the stream wrap
-// ErrDecompress. Closing the result does not close r.
+// ErrDecompress; an error reading r itself is returned as it is, so that a
+// failed read is not taken for a corrupt rollout. Closing the result does not
+// close r.
 func decompress(r io.Reader) (io.ReadCloser, error) {
 	d, _ := decoders.Get().(*zstd.Decoder)
 	if d == nil {
 		return nil, fmt.Errorf("%w: no decoder", ErrDecompress)
 	}
-	if err := d.Reset(r); err != nil {
+	src := &compressedSource{r: r}
+	if err := d.Reset(src); err != nil {
 		d.Close()
 		return nil, fmt.Errorf("%w: %w", ErrDecompress, err)
 	}
-	return &decoded{d: d}, nil
+	return &decoded{d: d, src: src}, nil
 }
 
-type decoded struct{ d *zstd.Decoder }
+// compressedSource remembers the error reading the compressed bytes failed with.
+type compressedSource struct {
+	r   io.Reader
+	err error
+}
+
+func (s *compressedSource) Read(p []byte) (int, error) {
+	n, err := s.r.Read(p)
+	if err != nil && err != io.EOF {
+		s.err = err
+	}
+	return n, err
+}
+
+type decoded struct {
+	d   *zstd.Decoder
+	src *compressedSource
+}
 
 func (r *decoded) Read(p []byte) (int, error) {
 	n, err := r.d.Read(p)
-	if err != nil && err != io.EOF {
+	switch {
+	case err == nil || err == io.EOF:
+	case r.src.err != nil:
+		err = r.src.err
+	default:
 		err = fmt.Errorf("%w: %w", ErrDecompress, err)
 	}
 	return n, err

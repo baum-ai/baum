@@ -256,12 +256,20 @@ func chooseRollouts(found []string) (paths []string, siblings map[string]string)
 	return paths, siblings
 }
 
-// readOrSibling reads the rollout at path, or its compressed copy from
-// siblings when the plain file is gone.
+// readOrSibling reads the rollout at path, or its compressed copy when the
+// plain file is gone: Codex may have compressed it since the walk, whether or
+// not the walk saw the compressed copy.
 func (s *scan) readOrSibling(path string, siblings map[string]string) (Entry, error) {
 	entry, err := s.read(path)
-	if compressed, ok := siblings[path]; ok && errors.Is(err, os.ErrNotExist) {
-		return s.read(compressed)
+	if !errors.Is(err, os.ErrNotExist) || codextranscript.Compressed(path) {
+		return entry, err
+	}
+	compressed, ok := siblings[path]
+	if !ok {
+		compressed = path + ".zst"
+	}
+	if sibling, siblingErr := s.read(compressed); siblingErr == nil {
+		return sibling, nil
 	}
 	return entry, err
 }

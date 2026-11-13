@@ -29,6 +29,15 @@ func TestScanReadsTheCompressedCopyOfARolloutDeletedAfterTheWalk(t *testing.T) {
 	if err != nil || entry.Path != packed || entry.Meta.ID != "root" {
 		t.Fatalf("entry %+v, %v; want the compressed copy", entry, err)
 	}
+	// The walk may not have seen the copy, written after it listed the plain
+	// rollout.
+	entry, err = scan.readOrSibling(plain, nil)
+	if err != nil || entry.Path != packed {
+		t.Fatalf("copy the walk did not list: entry %+v, %v", entry, err)
+	}
+	if err := os.Remove(packed); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := scan.readOrSibling(plain, nil); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("without a copy: %v", err)
 	}

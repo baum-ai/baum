@@ -64,6 +64,28 @@ func TestOversizedCompressedFrameIsUnreadable(t *testing.T) {
 }
 
 // Whole reads see a stream that fails part way as a file cut off there.
+// An error reading the compressed file is not a corrupt stream: it is
+// returned as it is, never cut to an end of data that would be cached.
+func TestDecompressReturnsReadErrors(t *testing.T) {
+	data := make([]byte, 1<<20)
+	rand.New(rand.NewSource(2)).Read(data)
+	good := zstdBytes(t, data)
+	failed := errors.New("input/output error")
+	for name, open := range map[string]func(io.Reader) (io.ReadCloser, error){
+		"strict": decompress, "whole": decompressWhole,
+	} {
+		r, err := open(errAfter{r: bytes.NewReader(good[:len(good)/2]), err: failed})
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = io.ReadAll(r)
+		_ = r.Close()
+		if !errors.Is(err, failed) || errors.Is(err, ErrDecompress) {
+			t.Fatalf("%s: err = %v, want the read error itself", name, err)
+		}
+	}
+}
+
 func TestDecompressEndsAtAFailedStream(t *testing.T) {
 	data := make([]byte, 1<<20)
 	rand.New(rand.NewSource(1)).Read(data)
