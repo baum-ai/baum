@@ -70,8 +70,6 @@ export type TileType = {
     tile: Tile,
     item?: string,
   ) => Anchor[];
-  /** A tile whose glance is drawn taller, such as Risks while it holds must-read risks. */
-  tall?: (tile: Tile, doc: TileDocument) => boolean;
 };
 
 export const isRecord = (value: unknown): value is Record<string, unknown> =>

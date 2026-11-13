@@ -45,13 +45,30 @@ const URGENT: RiskTier[] = ["critical", "high"];
 function RisksGlance({ tile, ctx }: TileFaceProps) {
   const risks = ranked(ctx, tile.data);
   const pending = changesInState(ctx.doc, "pending").length;
-  if (risks.length === 0)
+  if (risks.length === 0) {
+    // What the risk score rests on, as far as the row has room.
+    const reasons = ctx.doc.risk_score?.reasons ?? [];
     return (
-      <div className="space-y-2">
+      <div className="flex min-h-0 grow flex-col gap-2.5">
         <AllClear>No open risks</AllClear>
+        {reasons.length > 0 ? (
+          <Fill>
+            <p className="text-xs font-medium tracking-[0.06em] text-tertiary uppercase">
+              Why the score
+            </p>
+            <ul className="mt-1 space-y-1.5">
+              {reasons.map((reason, position) => (
+                <li key={position} className="text-base text-secondary">
+                  {plainText(reason.text, ctx.labels)}
+                </li>
+              ))}
+            </ul>
+          </Fill>
+        ) : null}
         <StillWriting count={pending} />
       </div>
     );
+  }
   const tiers = TIER_ORDER.filter((tier): tier is RiskTier => tier !== "unrated").flatMap(
     (tier) => {
       const count = risks.filter((risk) => risk.tier === tier).length;
@@ -233,8 +250,4 @@ export const risksTile: TileType = {
     const change = changeById(ctx.doc, risk.change);
     return (change?.hunks ?? []).slice(0, 1).map((id) => ({ type: "hunk" as const, id }));
   },
-  // Two or more must-read risks take more than a card's height to show in
-  // full; the card grows instead of fading them out.
-  tall: (tile, doc) =>
-    ranked({ doc }, tile.data).filter((risk) => URGENT.includes(risk.tier)).length > 1,
 };

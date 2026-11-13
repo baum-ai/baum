@@ -165,7 +165,7 @@ function RiskScore({ ctx }: { ctx: TileContext }) {
         {view.score}
         <span className="font-normal text-tertiary">/5</span>
       </span>
-      <span className="min-w-0 shrink truncate text-secondary">
+      <span className="min-w-0 shrink truncate text-secondary @min-[36rem]/tiles:flex-none">
         {view.lowerBound ? "at least; input was incomplete" : view.meaning}
       </span>
       {reason && target ? (

@@ -16,10 +16,6 @@ export const SPAN: Record<TileSize, string> = {
   third: "@min-[52rem]/tiles:col-span-2",
 };
 
-/** The most a card takes, beyond which what it holds fades; a Risks card
- *  holding must-read risks has no cap. */
-const CARD_CAP = "max-h-[22rem]";
-
 /** A tile on the landing page: its kind, its title and its glance face, the
  *  whole card one link into its detail, with a menu of what else to do. */
 export function GlanceCard({
@@ -43,7 +39,6 @@ export function GlanceCard({
   const Icon = type?.icon ?? GridIcon;
   const urgent =
     tile.type === "change" && mustShowRisks(ctx.doc).some((risk) => risk.change === tile.id);
-  const tall = face.kind === "ready" && face.type.tall?.(tile, ctx.doc);
   const added = ctx.compare?.added.has(tile.id);
   const changed = ctx.compare?.changed.has(tile.id);
   return (
@@ -58,7 +53,6 @@ export function GlanceCard({
         "data-[review-block-active]:border-focus data-[review-block-active]:shadow-card",
         urgent ? "border-status-critical/40" : "border-default",
         face.kind === "unavailable" && "border-dashed",
-        tall ? undefined : CARD_CAP,
         SPAN[size],
       )}
     >
