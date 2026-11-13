@@ -1,4 +1,4 @@
-package tiles
+package tiles_test
 
 import (
 	"encoding/json"
@@ -6,40 +6,44 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/baum-ai/baum/tiles"
 )
 
 // golden reads a tile document the converter writes for a fixture
 // (testdata/<name>.tiles.json).
-func golden(t *testing.T, name string) *Document {
+func golden(t *testing.T, name string) *tiles.Document {
 	t.Helper()
 	raw, err := os.ReadFile("testdata/" + name + ".tiles.json")
 	if err != nil {
 		t.Fatal(err)
 	}
-	var doc Document
+	var doc tiles.Document
 	if err := json.Unmarshal(raw, &doc); err != nil {
 		t.Fatal(err)
 	}
 	return &doc
 }
 
-func validDocument(t *testing.T) *Document {
+var validator = tiles.NewValidator()
+
+func validDocument(t *testing.T) *tiles.Document {
 	t.Helper()
 	return golden(t, "base")
 }
 
-func validate(t *testing.T, doc *Document) (*Document, error) {
+func validate(t *testing.T, doc *tiles.Document) (*tiles.Document, error) {
 	t.Helper()
 	encoded, err := json.Marshal(doc)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return defaultValidator.Validate(encoded)
+	return validator.Validate(encoded)
 }
 
-func addTile(doc *Document, tile Tile) {
+func addTile(doc *tiles.Document, tile tiles.Tile) {
 	doc.Tiles = append(doc.Tiles, tile)
-	doc.Layout.Entries = append(doc.Layout.Entries, Entry{Tile: tile.ID, Size: SizeThird})
+	doc.Layout.Entries = append(doc.Layout.Entries, tiles.Entry{Tile: tile.ID, Size: tiles.SizeThird})
 }
 
 func TestValidateAcceptsConvertedDocument(t *testing.T) {
@@ -48,7 +52,7 @@ func TestValidateAcceptsConvertedDocument(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, tile := range doc.Tiles {
-		if tile.State != StateReady {
+		if tile.State != tiles.StateReady {
 			t.Errorf("tile %s is %s: %v", tile.ID, tile.State, tile.Problems)
 		}
 	}
@@ -58,66 +62,66 @@ func TestValidateRejectsDocuments(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
 		want   string
-		mutate func(doc *Document)
+		mutate func(doc *tiles.Document)
 	}{
-		{"another schema", "", func(doc *Document) { doc.Schema = "baum.tiles/2" }},
-		{"no origin kind", "", func(doc *Document) { doc.Origin = Origin{} }},
-		{"a substrate risk without its change", "", func(doc *Document) { doc.Risks[0].Change = "" }},
-		{"a malformed review header", "", func(doc *Document) { doc.Review = json.RawMessage(`{"repository":"acme/widgets"}`) }},
-		{"a tile ID with capitals", "", func(doc *Document) {
+		{"another schema", "", func(doc *tiles.Document) { doc.Schema = "baum.tiles/2" }},
+		{"no origin kind", "", func(doc *tiles.Document) { doc.Origin = tiles.Origin{} }},
+		{"a substrate risk without its change", "", func(doc *tiles.Document) { doc.Risks[0].Change = "" }},
+		{"a malformed review header", "", func(doc *tiles.Document) { doc.Review = json.RawMessage(`{"repository":"acme/widgets"}`) }},
+		{"a tile ID with capitals", "", func(doc *tiles.Document) {
 			doc.Tiles[0].ID = "Overview"
 			doc.Layout.Entries[0].Tile = "Overview"
 		}},
-		{"a tile without a title", "", func(doc *Document) { doc.Tiles[0].Title = "" }},
-		{"a headline on two lines", "", func(doc *Document) { doc.Tiles[0].Headline = "One\nTwo" }},
-		{"a custom tile without its definition", "", func(doc *Document) {
-			addTile(doc, Tile{ID: "custom_chart", Type: TypeCustom, Title: "Chart", Data: json.RawMessage(`{}`), State: StateReady})
+		{"a tile without a title", "", func(doc *tiles.Document) { doc.Tiles[0].Title = "" }},
+		{"a headline on two lines", "", func(doc *tiles.Document) { doc.Tiles[0].Headline = "One\nTwo" }},
+		{"a custom tile without its definition", "", func(doc *tiles.Document) {
+			addTile(doc, tiles.Tile{ID: "custom_chart", Type: tiles.TypeCustom, Title: "Chart", Data: json.RawMessage(`{}`), State: tiles.StateReady})
 		}},
-		{"a built-in tile with a definition", "", func(doc *Document) { doc.Tiles[0].Definition = customDefinition() }},
-		{"an unknown tile state", "", func(doc *Document) { doc.Tiles[0].State = "hidden" }},
-		{"a repeated change", "change sec_retry_policy is not unique", func(doc *Document) {
+		{"a built-in tile with a definition", "", func(doc *tiles.Document) { doc.Tiles[0].Definition = customDefinition() }},
+		{"an unknown tile state", "", func(doc *tiles.Document) { doc.Tiles[0].State = "hidden" }},
+		{"a repeated change", "change sec_retry_policy is not unique", func(doc *tiles.Document) {
 			doc.Changes = append(doc.Changes, doc.Changes[0])
 		}},
-		{"a repeated risk", "risk rsk_retry_storm is not unique", func(doc *Document) {
+		{"a repeated risk", "risk rsk_retry_storm is not unique", func(doc *tiles.Document) {
 			doc.Risks = append(doc.Risks, doc.Risks[0])
 		}},
-		{"a repeated evidence item", "evidence ev_retry_test is not unique", func(doc *Document) {
+		{"a repeated evidence item", "evidence ev_retry_test is not unique", func(doc *tiles.Document) {
 			doc.Evidence = append(doc.Evidence, doc.Evidence[0])
 		}},
-		{"a repeated tile", "tile evidence is not unique", func(doc *Document) {
-			doc.Tiles = append(doc.Tiles, *tileOf(doc, TypeEvidence))
+		{"a repeated tile", "tile evidence is not unique", func(doc *tiles.Document) {
+			doc.Tiles = append(doc.Tiles, *tileOf(doc, tiles.TypeEvidence))
 		}},
-		{"a repeated group", "group changes is not unique", func(doc *Document) {
+		{"a repeated group", "group changes is not unique", func(doc *tiles.Document) {
 			doc.Layout.Groups = append(doc.Layout.Groups, doc.Layout.Groups[0])
 		}},
-		{"a risk of an unknown change", "names change sec_gone", func(doc *Document) { doc.Risks[0].Change = "sec_gone" }},
-		{"evidence of an unknown change", "names change sec_gone", func(doc *Document) { doc.Evidence[0].Change = "sec_gone" }},
-		{"a current hunk the index lacks", "which the index does not list", func(doc *Document) {
+		{"a risk of an unknown change", "names change sec_gone", func(doc *tiles.Document) { doc.Risks[0].Change = "sec_gone" }},
+		{"evidence of an unknown change", "names change sec_gone", func(doc *tiles.Document) { doc.Evidence[0].Change = "sec_gone" }},
+		{"a current hunk the index lacks", "which the index does not list", func(doc *tiles.Document) {
 			doc.Changes[0].Hunks = append(doc.Changes[0].Hunks, "h_00000000ffff")
 		}},
-		{"an entry for an unknown tile", "places tile ghost", func(doc *Document) {
-			doc.Layout.Entries = append(doc.Layout.Entries, Entry{Tile: "ghost", Size: SizeThird})
+		{"an entry for an unknown tile", "places tile ghost", func(doc *tiles.Document) {
+			doc.Layout.Entries = append(doc.Layout.Entries, tiles.Entry{Tile: "ghost", Size: tiles.SizeThird})
 		}},
-		{"an unplaced tile", "does not place tile evidence", func(doc *Document) {
-			doc.Layout.Entries = removeEntry(doc.Layout.Entries, TypeEvidence)
+		{"an unplaced tile", "does not place tile evidence", func(doc *tiles.Document) {
+			doc.Layout.Entries = removeEntry(doc.Layout.Entries, tiles.TypeEvidence)
 		}},
-		{"a tile placed twice", "places tile evidence more than once", func(doc *Document) {
-			doc.Layout.Entries = append(doc.Layout.Entries, Entry{Tile: TypeEvidence, Size: SizeThird})
+		{"a tile placed twice", "places tile evidence more than once", func(doc *tiles.Document) {
+			doc.Layout.Entries = append(doc.Layout.Entries, tiles.Entry{Tile: tiles.TypeEvidence, Size: tiles.SizeThird})
 		}},
-		{"an unknown group", "names group extra", func(doc *Document) { doc.Layout.Entries[0].Group = "extra" }},
-		{"a split group", "group changes are not contiguous", func(doc *Document) {
-			doc.Layout.Entries[len(doc.Layout.Entries)-1].Group = GroupChanges
+		{"an unknown group", "names group extra", func(doc *tiles.Document) { doc.Layout.Entries[0].Group = "extra" }},
+		{"a split group", "group changes are not contiguous", func(doc *tiles.Document) {
+			doc.Layout.Entries[len(doc.Layout.Entries)-1].Group = tiles.GroupChanges
 		}},
-		{"landing past the entries", "landing 11 is past the 10 entries", func(doc *Document) { doc.Layout.Landing = 11 }},
-		{"two tiles of a single type", "more than one evidence tile", func(doc *Document) {
-			addTile(doc, Tile{ID: "evidence_more", Type: TypeEvidence, Title: "More evidence", Data: json.RawMessage(`{}`), State: StateReady})
+		{"landing past the entries", "landing 11 is past the 10 entries", func(doc *tiles.Document) { doc.Layout.Landing = 11 }},
+		{"two tiles of a single type", "more than one evidence tile", func(doc *tiles.Document) {
+			addTile(doc, tiles.Tile{ID: "evidence_more", Type: tiles.TypeEvidence, Title: "More evidence", Data: json.RawMessage(`{}`), State: tiles.StateReady})
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			doc := validDocument(t)
 			tc.mutate(doc)
 			_, err := validate(t, doc)
-			var invalid *DocumentError
+			var invalid *tiles.DocumentError
 			if !errors.As(err, &invalid) {
 				t.Fatalf("err = %v, want a document error", err)
 			}
@@ -128,8 +132,8 @@ func TestValidateRejectsDocuments(t *testing.T) {
 	}
 }
 
-func removeEntry(entries []Entry, tile string) []Entry {
-	var kept []Entry
+func removeEntry(entries []tiles.Entry, tile string) []tiles.Entry {
+	var kept []tiles.Entry
 	for _, entry := range entries {
 		if entry.Tile != tile {
 			kept = append(kept, entry)
@@ -148,65 +152,72 @@ func TestValidateMarksTilesUnavailable(t *testing.T) {
 		name   string
 		tile   string
 		want   string
-		mutate func(doc *Document)
+		mutate func(doc *tiles.Document)
 	}{
-		{"data of another shape", TypeEvidence, "data does not have the evidence tile's shape", func(doc *Document) {
-			tileOf(doc, TypeEvidence).Data = json.RawMessage(`{"items":[]}`)
+		{"data of another shape", tiles.TypeEvidence, "data does not have the evidence tile's shape", func(doc *tiles.Document) {
+			tileOf(doc, tiles.TypeEvidence).Data = json.RawMessage(`{"items":[]}`)
 		}},
-		{"a change tile without its blocks", "sec_retry_policy", "data does not have the change tile's shape", func(doc *Document) {
+		{"a change tile without its blocks", "sec_retry_policy", "data does not have the change tile's shape", func(doc *tiles.Document) {
 			setData(doc, "sec_retry_policy", map[string]any{"change": "sec_retry_policy", "attention": nil})
 		}},
-		{"an unknown type", "sparkline", `tile type "sparkline" is unknown`, func(doc *Document) {
-			addTile(doc, Tile{ID: "sparkline", Type: "sparkline", Title: "Trend", Data: json.RawMessage(`{}`), State: StateReady})
+		{"an unknown type", "sparkline", `tile type "sparkline" is unknown`, func(doc *tiles.Document) {
+			addTile(doc, tiles.Tile{ID: "sparkline", Type: "sparkline", Title: "Trend", Data: json.RawMessage(`{}`), State: tiles.StateReady})
 		}},
-		{"a custom tile", "custom_chart", unsupportedCustom, func(doc *Document) {
-			addTile(doc, Tile{ID: "custom_chart", Type: TypeCustom, Title: "Chart", Data: json.RawMessage(`{}`), State: StateReady, Definition: customDefinition()})
+		{"a custom tile", "custom_chart", "Custom tiles aren't supported in this version", func(doc *tiles.Document) {
+			addTile(doc, tiles.Tile{ID: "custom_chart", Type: tiles.TypeCustom, Title: "Chart", Data: json.RawMessage(`{}`), State: tiles.StateReady, Definition: customDefinition()})
 		}},
-		{"a single tile under another ID", "proof", `a evidence tile's ID must be "evidence"`, func(doc *Document) {
-			tile := tileOf(doc, TypeEvidence)
+		{"a single tile under another ID", "proof", `a evidence tile's ID must be "evidence"`, func(doc *tiles.Document) {
+			tile := tileOf(doc, tiles.TypeEvidence)
 			tile.ID = "proof"
 			for i := range doc.Layout.Entries {
-				if doc.Layout.Entries[i].Tile == TypeEvidence {
+				if doc.Layout.Entries[i].Tile == tiles.TypeEvidence {
 					doc.Layout.Entries[i].Tile = "proof"
 				}
 			}
 		}},
-		{"a change tile under another ID", "sec_retry_policy", "a change tile's ID must be its change's", func(doc *Document) {
-			var data ChangeData
+		{"a change tile under another ID", "sec_retry_policy", "a change tile's ID must be its change's", func(doc *tiles.Document) {
+			var data tiles.ChangeData
 			_ = json.Unmarshal(tileOf(doc, "sec_retry_policy").Data, &data)
 			data.Change = "sec_config_flag"
 			setData(doc, "sec_retry_policy", data)
 		}},
-		{"a change tile of an unknown change", "sec_gone", "names change sec_gone", func(doc *Document) {
-			addTile(doc, Tile{ID: "sec_gone", Type: TypeChange, Title: "Gone", Data: json.RawMessage(`{"change":"sec_gone","attention":null,"blocks":[]}`), State: StateReady})
+		{"a change tile of an unknown change", "sec_gone", "names change sec_gone", func(doc *tiles.Document) {
+			addTile(doc, tiles.Tile{ID: "sec_gone", Type: tiles.TypeChange, Title: "Gone", Data: json.RawMessage(`{"change":"sec_gone","attention":null,"blocks":[]}`), State: tiles.StateReady})
 		}},
-		{"a change tile of the current mechanical change", "sec_generated_client", "everything_else shows it", func(doc *Document) {
-			addTile(doc, Tile{ID: "sec_generated_client", Type: TypeChange, Title: "Client", Data: json.RawMessage(`{"change":"sec_generated_client","attention":null,"blocks":[]}`), State: StateReady})
+		{"a change tile of the current mechanical change", "sec_generated_client", "which everything_else shows", func(doc *tiles.Document) {
+			addTile(doc, tiles.Tile{ID: "sec_generated_client", Type: tiles.TypeChange, Title: "Client", Data: json.RawMessage(`{"change":"sec_generated_client","attention":null,"blocks":[]}`), State: tiles.StateReady})
 		}},
-		{"everything_else showing a logical change", TypeEverythingElse, "not the current mechanical change", func(doc *Document) {
-			setData(doc, TypeEverythingElse, map[string]any{"change": "sec_config_flag", "unassigned": []string{}, "attention": nil, "blocks": []any{}})
+		{"everything_else showing a logical change", tiles.TypeEverythingElse, "not the current mechanical change", func(doc *tiles.Document) {
+			for i, tile := range doc.Tiles {
+				if tile.ID == "sec_config_flag" {
+					doc.Tiles = append(doc.Tiles[:i], doc.Tiles[i+1:]...)
+					break
+				}
+			}
+			doc.Layout.Entries = removeEntry(doc.Layout.Entries, "sec_config_flag")
+			setData(doc, tiles.TypeEverythingElse, map[string]any{"change": "sec_config_flag", "unassigned": []string{}, "attention": nil, "blocks": []any{}})
 		}},
-		{"an unknown ranked risk", TypeRisks, "ranked risk rsk_gone is not in the document", func(doc *Document) {
-			setData(doc, TypeRisks, RisksData{Ranked: []string{"rsk_gone"}})
+		{"an unknown ranked risk", tiles.TypeRisks, "ranked risk rsk_gone is not in the document", func(doc *tiles.Document) {
+			setData(doc, tiles.TypeRisks, tiles.RisksData{Ranked: []string{"rsk_gone"}})
 		}},
-		{"a mitigated ranked risk", TypeRisks, "ranked risk rsk_old_backoff is not active", func(doc *Document) {
-			setData(doc, TypeRisks, RisksData{Ranked: []string{"rsk_old_backoff"}})
+		{"a mitigated ranked risk", tiles.TypeRisks, "ranked risk rsk_old_backoff is not active", func(doc *tiles.Document) {
+			setData(doc, tiles.TypeRisks, tiles.RisksData{Ranked: []string{"rsk_old_backoff"}})
 		}},
-		{"a ranked risk of an obsolete change", TypeRisks, "belongs to an obsolete change", func(doc *Document) {
+		{"a ranked risk of an obsolete change", tiles.TypeRisks, "belongs to an obsolete change", func(doc *tiles.Document) {
 			doc.Changes[1].Derived = json.RawMessage(`{"state":"stale","risk_tier":"low","additions":0,"deletions":0,"role_loc":{},"reviewers":[],"evidence_summary":{},"open_findings":0}`)
-			setData(doc, TypeRisks, RisksData{Ranked: []string{"rsk_flag_default"}})
+			setData(doc, tiles.TypeRisks, tiles.RisksData{Ranked: []string{"rsk_flag_default"}})
 		}},
-		{"an intent line of an unknown change", TypeIntent, "an intent line origin names change sec_gone", func(doc *Document) {
-			setData(doc, TypeIntent, IntentData{Implements: json.RawMessage(`[]`), Lines: []IntentLine{{Text: "Why.", Anchors: json.RawMessage(`[]`), Origin: &BlockOrigin{Change: "sec_gone"}}}})
+		{"an intent line of an unknown change", tiles.TypeIntent, "an intent line origin names change sec_gone", func(doc *tiles.Document) {
+			setData(doc, tiles.TypeIntent, tiles.IntentData{Implements: json.RawMessage(`[]`), Lines: []tiles.IntentLine{{Text: "Why.", Anchors: json.RawMessage(`[]`), Origin: &tiles.BlockOrigin{Change: "sec_gone"}}}})
 		}},
-		{"a decision of an unknown change", TypeDecisions, "a decision names change sec_gone", func(doc *Document) {
-			setData(doc, TypeDecisions, DecisionsData{Items: []json.RawMessage{json.RawMessage(`{"id":"dec_x","by":"agent","text":"T.","anchors":[{"type":"file","path":"a.go"}],"change":"sec_gone"}`)}})
+		{"a decision of an unknown change", tiles.TypeDecisions, "a decision names change sec_gone", func(doc *tiles.Document) {
+			setData(doc, tiles.TypeDecisions, tiles.DecisionsData{Items: []json.RawMessage{json.RawMessage(`{"id":"dec_x","by":"agent","text":"T.","anchors":[{"type":"file","path":"a.go"}],"change":"sec_gone"}`)}})
 		}},
-		{"media of an unknown change", TypeMedia, "a media item origin names change sec_gone", func(doc *Document) {
-			var data MediaData
-			_ = json.Unmarshal(tileOf(doc, TypeMedia).Data, &data)
+		{"media of an unknown change", tiles.TypeMedia, "a media item origin names change sec_gone", func(doc *tiles.Document) {
+			var data tiles.MediaData
+			_ = json.Unmarshal(tileOf(doc, tiles.TypeMedia).Data, &data)
 			data.Items[0].Origin.Change = "sec_gone"
-			setData(doc, TypeMedia, data)
+			setData(doc, tiles.TypeMedia, data)
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -218,12 +229,12 @@ func TestValidateMarksTilesUnavailable(t *testing.T) {
 			}
 			for _, tile := range validated.Tiles {
 				if tile.ID != tc.tile {
-					if tile.State == StateUnavailable {
+					if tile.State == tiles.StateUnavailable {
 						t.Errorf("tile %s is unavailable too: %v", tile.ID, tile.Problems)
 					}
 					continue
 				}
-				if tile.State != StateUnavailable {
+				if tile.State != tiles.StateUnavailable {
 					t.Fatalf("tile %s is %s, want unavailable", tile.ID, tile.State)
 				}
 				if !strings.Contains(strings.Join(tile.Problems, "; "), tc.want) {
@@ -241,15 +252,15 @@ func TestValidatePendingTiles(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if tile := tileOf(validated, TypeContext); tile.State != StatePending {
+	if tile := tileOf(validated, tiles.TypeContext); tile.State != tiles.StatePending {
 		t.Errorf("context is %s: %v", tile.State, tile.Problems)
 	}
-	tileOf(doc, TypeContext).Data = json.RawMessage(`{"area":{}}`)
+	tileOf(doc, tiles.TypeContext).Data = json.RawMessage(`{"area":{}}`)
 	validated, err = validate(t, doc)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if tile := tileOf(validated, TypeContext); tile.State != StateUnavailable {
+	if tile := tileOf(validated, tiles.TypeContext); tile.State != tiles.StateUnavailable {
 		t.Errorf("context with malformed data is %s", tile.State)
 	}
 }
@@ -258,23 +269,23 @@ func TestValidatePendingTiles(t *testing.T) {
 // built itself, without the document schema.
 func TestCheckTiles(t *testing.T) {
 	doc := validDocument(t)
-	tileOf(doc, TypeEvidence).Data = json.RawMessage(`{"items":[]}`)
-	if err := defaultValidator.CheckTiles(doc); err != nil {
+	tileOf(doc, tiles.TypeEvidence).Data = json.RawMessage(`{"items":[]}`)
+	if err := validator.CheckTiles(doc); err != nil {
 		t.Fatal(err)
 	}
-	if tile := tileOf(doc, TypeEvidence); tile.State != StateUnavailable || len(tile.Problems) == 0 {
+	if tile := tileOf(doc, tiles.TypeEvidence); tile.State != tiles.StateUnavailable || len(tile.Problems) == 0 {
 		t.Errorf("evidence = %s %v", tile.State, tile.Problems)
 	}
-	if tile := tileOf(doc, TypeOverview); tile.State != StateReady {
+	if tile := tileOf(doc, tiles.TypeOverview); tile.State != tiles.StateReady {
 		t.Errorf("overview = %s", tile.State)
 	}
-	problems, err := defaultValidator.TileProblems(doc, tileOf(doc, TypeOverview))
+	problems, err := validator.TileProblems(doc, tileOf(doc, tiles.TypeOverview))
 	if err != nil || len(problems) != 0 {
 		t.Errorf("problems = %v, err %v", problems, err)
 	}
 }
 
-func tileOf(doc *Document, id string) *Tile {
+func tileOf(doc *tiles.Document, id string) *tiles.Tile {
 	for i := range doc.Tiles {
 		if doc.Tiles[i].ID == id {
 			return &doc.Tiles[i]
@@ -283,7 +294,7 @@ func tileOf(doc *Document, id string) *Tile {
 	panic("no tile " + id)
 }
 
-func setData(doc *Document, id string, data any) {
+func setData(doc *tiles.Document, id string, data any) {
 	encoded, err := json.Marshal(data)
 	if err != nil {
 		panic(err)

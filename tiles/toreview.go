@@ -76,7 +76,8 @@ func ToReview(doc *Document) ([]byte, error) {
 			}
 		}
 	}
-	if tile := byID[TypeContext]; tile != nil && tile.State != StatePending {
+	// A context tile without data is a draft's context still being written.
+	if tile := byID[TypeContext]; tile != nil && len(tile.Data) > 0 && !isEmptyObject(tile.Data) {
 		summary.Context = tile.Data
 	}
 	if tile := byID[TypeMedia]; tile != nil {

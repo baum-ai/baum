@@ -22,9 +22,11 @@ import (
 //     exactly once with known and contiguous groups, landing within the
 //     entries, and at most one tile of each single type.
 //   - A tile-level failure marks only that tile unavailable, with its
-//     problems: data that does not have its type's shape, references in the
-//     data that do not resolve, an unknown type, and every custom tile, which
-//     this version does not render.
+//     problems: a single tile not under its type's ID, data that does not
+//     have its type's shape (only a draft's pending context tile may have
+//     empty data), references in the data that do not resolve, a decision ID
+//     repeated in the decisions tile, an unknown type, and every custom
+//     tile, which this version does not render.
 //
 // A host serving documents it converted runs only the cheap tile-level checks
 // (CheckTiles); Validate runs everything. A Validator is safe for concurrent
@@ -289,10 +291,20 @@ type tileRefs struct {
 	changes map[string]Change
 	current map[string]bool
 	risks   map[string]Risk
+	// everythingElse is the change the everything_else tile shows.
+	everythingElse string
 }
 
 func newTileRefs(doc *Document) tileRefs {
 	refs := tileRefs{changes: map[string]Change{}, current: map[string]bool{}, risks: map[string]Risk{}}
+	for _, tile := range doc.Tiles {
+		if tile.Type == TypeEverythingElse {
+			var value EverythingElseData
+			if json.Unmarshal(tile.Data, &value) == nil && value.Change != nil {
+				refs.everythingElse = *value.Change
+			}
+		}
+	}
 	for _, change := range doc.Changes {
 		refs.changes[change.ID] = change
 		refs.current[change.ID] = currentChange(change)
@@ -314,20 +326,22 @@ func tileProblems(data map[string]*jsonschema.Resolved, refs tileRefs, tile *Til
 	if !ok {
 		return []string{fmt.Sprintf("tile type %q is unknown", tile.Type)}
 	}
-	if tile.State == StatePending && isEmptyObject(tile.Data) {
-		return nil
-	}
-	var instance any
-	if err := json.Unmarshal(tile.Data, &instance); err != nil {
-		return []string{"data is not valid JSON"}
-	}
-	if err := data[tile.Type].Validate(instance); err != nil {
-		return []string{fmt.Sprintf("data does not have the %s tile's shape: %s", tile.Type, conciseError(err))}
-	}
 	var problems []string
 	add := func(format string, args ...any) { problems = append(problems, fmt.Sprintf(format, args...)) }
 	if builtin.Single && tile.ID != tile.Type {
 		add("a %s tile's ID must be %q", tile.Type, tile.Type)
+	}
+	// A draft's context tile is pending before the context is written, and
+	// has no data yet; every other tile has its data.
+	if tile.Type == TypeContext && tile.State == StatePending && isEmptyObject(tile.Data) {
+		return problems
+	}
+	var instance any
+	if err := json.Unmarshal(tile.Data, &instance); err != nil {
+		return append(problems, "data is not valid JSON")
+	}
+	if err := data[tile.Type].Validate(instance); err != nil {
+		return append(problems, fmt.Sprintf("data does not have the %s tile's shape: %s", tile.Type, conciseError(err)))
 	}
 	change := func(id, what string) {
 		if _, ok := refs.changes[id]; !ok {
@@ -351,8 +365,8 @@ func tileProblems(data map[string]*jsonschema.Resolved, refs tileRefs, tile *Til
 		}
 		if c, ok := refs.changes[value.Change]; !ok {
 			change(value.Change, "the tile")
-		} else if c.Kind != KindLogical && refs.current[c.ID] {
-			add("a change tile shows a current %s change; everything_else shows it", c.Kind)
+		} else if c.ID == refs.everythingElse {
+			add("a change tile shows change %s, which everything_else shows", c.ID)
 		}
 	case TypeEverythingElse:
 		var value EverythingElseData
@@ -391,8 +405,13 @@ func tileProblems(data map[string]*jsonschema.Resolved, refs tileRefs, tile *Til
 			Items []itemPlace `json:"items"`
 		}
 		_ = json.Unmarshal(tile.Data, &value)
+		ids := map[string]bool{}
 		for _, item := range value.Items {
 			origin(item, "a decision")
+			if ids[item.ID] {
+				add("decision %s is not unique", item.ID)
+			}
+			ids[item.ID] = true
 		}
 	case TypeMedia:
 		var value struct {
@@ -408,6 +427,7 @@ func tileProblems(data map[string]*jsonschema.Resolved, refs tileRefs, tile *Til
 
 // itemPlace is where an item of an aggregate tile belongs.
 type itemPlace struct {
+	ID     string       `json:"id"`
 	Change string       `json:"change"`
 	Origin *BlockOrigin `json:"origin"`
 }

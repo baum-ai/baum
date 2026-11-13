@@ -1,4 +1,4 @@
-package tiles
+package tiles_test
 
 import (
 	"encoding/json"
@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/baum-ai/baum/schema"
+	"github.com/baum-ai/baum/tiles"
 )
 
 // fixture is a synthetic baum.review/1 input for one shape the converter must
@@ -15,7 +16,7 @@ import (
 // testdata/<name>.tiles.json.
 type fixture struct {
 	name string
-	opts Options
+	opts tiles.Options
 	// invalid marks an input the stored review schema rejects but the viewer
 	// still reads, such as a shape older documents kept.
 	invalid bool
@@ -29,7 +30,7 @@ var fixtures = []fixture{
 	{name: "context-missing", mutate: func(doc map[string]any) {
 		delete(object(doc, "summary"), "context")
 	}},
-	{name: "draft-context-missing", opts: Options{Draft: true}, mutate: func(doc map[string]any) {
+	{name: "draft-context-missing", opts: tiles.Options{Draft: true}, mutate: func(doc map[string]any) {
 		delete(object(doc, "summary"), "context")
 	}},
 	{name: "recommendation-null", mutate: func(doc map[string]any) {
@@ -135,6 +136,59 @@ var fixtures = []fixture{
 		doc["unassigned_hunks"] = []any{"h_000000000007"}
 		reasons := array(object(doc, "summary", "risk_score"), "reasons")
 		object(doc, "summary", "risk_score")["reasons"] = append(reasons, map[string]any{"section": "sec_queue_limits", "risk": "rsk_retry_storm", "text": "The queue can fill."})
+	}},
+	{name: "obsolete-duplicate-decision", mutate: func(doc map[string]any) {
+		// An obsolete section repeats a current decision's ID and cites it.
+		// Its blocks stay in its own tile, so its decision keeps the ID.
+		stale := staleSection("sec_old_approach", "logical")
+		decisions := array(stale, "blocks")[1].(map[string]any)
+		array(decisions, "items")[0].(map[string]any)["id"] = "dec_doubling_delay"
+		object(stale, "summary")["text"] = "The old approach (dec_doubling_delay) is dropped."
+		doc["sections"] = append(array(doc, "sections"), stale)
+	}},
+	{name: "duplicate-ids-verbatim", mutate: func(doc map[string]any) {
+		// A later section repeats a risk ID and cites it in prose, in an
+		// inline code span, in a URL and in verbatim quotes; only the prose
+		// citation is rewritten.
+		flag := sectionOf(doc, "sec_config_flag")
+		risk := clone(array(sectionOf(doc, "sec_retry_policy"), "risks")[0]).(map[string]any)
+		risk["text"] = "Flag flips cause bursts too."
+		risk["anchors"] = []any{map[string]any{"type": "prompt", "session": "11111111-2222-4333-8444-555555555555", "index": 1, "input": "please avoid rsk_retry_storm"}}
+		flag["risks"] = append(array(flag, "risks"), risk)
+		object(flag, "summary")["text"] = "See rsk_retry_storm, `rsk_retry_storm` and https://example.com/rsk_retry_storm/notes."
+		flag["blocks"] = append(array(flag, "blocks"), map[string]any{"kind": "decisions", "items": []any{map[string]any{
+			"id": "dec_flag_default", "by": "agent", "text": "Default to on despite rsk_retry_storm.",
+			"rejected": "Off by default, as rsk_retry_storm suggested.", "evidence": "The prompt said rsk_retry_storm.",
+			"anchors": []any{map[string]any{"type": "hunk", "id": "h_000000000003"}},
+		}}})
+	}},
+	{name: "two-mechanical", mutate: func(doc map[string]any) {
+		second := clone(sectionOf(doc, "sec_generated_client")).(map[string]any)
+		second["id"] = "sec_vendored_client"
+		second["title"] = "Update the vendored client"
+		second["hunks"] = []any{"h_000000000006"}
+		second["risks"] = []any{}
+		doc["sections"] = append(array(doc, "sections"), second)
+		doc["unassigned_hunks"] = []any{"h_000000000007"}
+	}},
+	{name: "draft-outline", opts: tiles.Options{Draft: true}, mutate: func(doc map[string]any) {
+		// A live draft as a staged review serves it before any details are
+		// written: every section is its outline with pending details, and
+		// the summary has no context or reading time yet.
+		summary := object(doc, "summary")
+		delete(summary, "context")
+		delete(summary, "review_minutes")
+		summary["recommendation"] = nil
+		summary["attention"] = nil
+		object(summary, "risk_score")["reasons"] = []any{}
+		for _, raw := range array(doc, "sections") {
+			s := raw.(map[string]any)
+			s["details"] = "pending"
+			s["summary"] = nil
+			s["attention"] = nil
+			s["risks"], s["evidence"], s["blocks"] = []any{}, []any{}, []any{}
+			delete(object(s, "derived"), "review_reason")
+		}
 	}},
 	{name: "within-section-duplicate", invalid: true, mutate: func(doc map[string]any) {
 		flag := sectionOf(doc, "sec_config_flag")

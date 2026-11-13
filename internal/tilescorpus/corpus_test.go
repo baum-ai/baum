@@ -24,6 +24,7 @@ import (
 
 	"github.com/baum-ai/baum/review"
 	"github.com/baum-ai/baum/tiles"
+	"github.com/baum-ai/baum/tiles/tilestest"
 )
 
 // Env names the directory to search for *.versions.sqlite stores. They are
@@ -73,7 +74,7 @@ func TestCorpus(t *testing.T) {
 			doc := check(stats, validator, v)
 			if doc != nil && previous != nil && previousPR == v.pullRequest {
 				stats.pairs++
-				for _, failure := range tiles.CheckStability(previous, doc) {
+				for _, failure := range tilestest.CheckStability(previous, doc) {
 					stats.fail(invariantOf(failure))
 				}
 			}
@@ -138,7 +139,7 @@ func check(stats *tally, validator *tiles.Validator, v version) *tiles.Document 
 			ok = false
 		}
 	}
-	for _, failure := range tiles.CheckConversion(normalized, doc) {
+	for _, failure := range tilestest.CheckConversion(normalized, doc) {
 		stats.fail(invariantOf(failure))
 		ok = false
 	}
@@ -282,7 +283,7 @@ func findStores(t *testing.T, dir string) []string {
 		return nil
 	})
 	if err != nil {
-		t.Fatalf("searching %s: %v", Env, err)
+		t.Fatalf("searching the %s directory failed", Env)
 	}
 	slices.Sort(stores)
 	return stores
@@ -301,20 +302,20 @@ func readStore(t *testing.T, n int, path string) []version {
 			continue
 		}
 		if err != nil {
-			t.Fatalf("store %d: %v", n, err)
+			t.Fatalf("store %d: %s", n, anonymous(err, path, dir))
 		}
 		if err := os.WriteFile(copied+suffix, raw, 0o600); err != nil {
-			t.Fatal(err)
+			t.Fatalf("store %d: %s", n, anonymous(err, path, dir))
 		}
 	}
 	db, err := sql.Open("sqlite", (&url.URL{Scheme: "file", Path: filepath.ToSlash(copied)}).String()+"?mode=ro")
 	if err != nil {
-		t.Fatalf("store %d: %v", n, err)
+		t.Fatalf("store %d: %s", n, anonymous(err, path, dir))
 	}
 	defer db.Close()
 	rows, err := db.Query(`SELECT repository, pr, version, document FROM versions ORDER BY repository, pr, version`)
 	if err != nil {
-		t.Fatalf("store %d: %v", n, err)
+		t.Fatalf("store %d: %s", n, anonymous(err, path, dir))
 	}
 	defer rows.Close()
 	var versions []version
@@ -323,13 +324,23 @@ func readStore(t *testing.T, n int, path string) []version {
 		var pr int
 		v := version{store: n}
 		if err := rows.Scan(&repository, &pr, &v.number, &v.document); err != nil {
-			t.Fatalf("store %d: %v", n, err)
+			t.Fatalf("store %d: %s", n, anonymous(err, path, dir))
 		}
 		v.pullRequest = fmt.Sprintf("%s#%d", repository, pr)
 		versions = append(versions, v)
 	}
 	if err := rows.Err(); err != nil {
-		t.Fatalf("store %d: %v", n, err)
+		t.Fatalf("store %d: %s", n, anonymous(err, path, dir))
 	}
 	return versions
+}
+
+// anonymous returns an error's text without the store's path or its copy's,
+// since a store's file name can carry a repository's name.
+func anonymous(err error, paths ...string) string {
+	text := err.Error()
+	for _, path := range paths {
+		text = strings.ReplaceAll(text, path, "<store>")
+	}
+	return text
 }

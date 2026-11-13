@@ -148,11 +148,14 @@ func (s *section) current() bool { return s.derived.State != stateStale }
 // nothing: ToReview of the result is JSON-equal to the input without the
 // retired per-section and per-risk tiles. It fails only when the input is not
 // a baum.review/1 document it can split: invalid JSON, another schema, a field
-// the review schema does not define, a repeated section ID or more than one
-// current mechanical section.
+// the review schema does not define (matched by its exact name) or a repeated
+// section ID.
 func FromReview(normalized []byte, opts Options) (*Document, error) {
 	var source reviewDocument
 	if err := decodeStrict(normalized, &source); err != nil {
+		return nil, fmt.Errorf("tiles: decoding the review: %w", err)
+	}
+	if err := checkKeyCase(normalized); err != nil {
 		return nil, fmt.Errorf("tiles: decoding the review: %w", err)
 	}
 	if source.Schema != reviewschema.Name {
@@ -183,7 +186,6 @@ type converter struct {
 // conversion relies on, and renames repeated item IDs.
 func (c *converter) prepare() error {
 	ids := map[string]bool{}
-	mechanical := 0
 	var riskIDs, evidenceIDs, decisionIDs []string
 	for i := range c.source.Sections {
 		s := &section{reviewSection: c.source.Sections[i], index: i}
@@ -193,11 +195,6 @@ func (c *converter) prepare() error {
 		ids[s.ID] = true
 		if err := json.Unmarshal(s.Derived, &s.derived); err != nil {
 			return fmt.Errorf("tiles: section %d: derived: %w", i+1, err)
-		}
-		if s.Kind == KindMechanical && s.current() {
-			if mechanical++; mechanical > 1 {
-				return errors.New("tiles: the review has more than one current mechanical section")
-			}
 		}
 		s.risks = make([]reviewRisk, len(s.Risks))
 		for j, raw := range s.Risks {
@@ -218,6 +215,9 @@ func (c *converter) prepare() error {
 		riskIDs = append(riskIDs, s.ids.risks...)
 		evidenceIDs = append(evidenceIDs, s.ids.evidence...)
 		decisions, err := decisionIDsOf(s.Blocks)
+		if !s.current() {
+			decisions = nil
+		}
 		if err != nil {
 			return fmt.Errorf("tiles: section %d: %w", i+1, err)
 		}
@@ -278,9 +278,10 @@ type renamed struct {
 }
 
 func (c *converter) rename(riskIDs, evidenceIDs, decisionIDs []string) error {
-	risks := newRenamer(c.raw, riskIDs)
-	evidence := newRenamer(c.raw, evidenceIDs)
-	decisions := newRenamer(c.raw, decisionIDs)
+	source := &sourceText{raw: c.raw}
+	risks := newRenamer(source, riskIDs)
+	evidence := newRenamer(source, evidenceIDs)
+	decisions := newRenamer(source, decisionIDs)
 	c.renamed.risks = make([][]string, len(c.sections))
 	c.renamed.evidence = make([][]string, len(c.sections))
 	c.renamed.decisions = make([]map[[2]int]string, len(c.sections))
@@ -313,7 +314,10 @@ func (c *converter) rename(riskIDs, evidenceIDs, decisionIDs []string) error {
 				if err := json.Unmarshal(item, &decision); err != nil {
 					return err
 				}
-				next := decisions.next(decision.ID, s.ID)
+				next := decision.ID
+				if s.current() {
+					next = decisions.next(decision.ID, s.ID)
+				}
 				if next != decision.ID {
 					c.renamed.decisions[i][[2]int{b, j}] = next
 				}
@@ -398,7 +402,8 @@ func (c *converter) convert() (*Document, error) {
 		return nil, err
 	}
 	c.doc.Tiles = tiles
-	c.doc.Layout = Arrange(Layout{Entries: entries, Groups: groupsOf(entries)})
+	c.doc.Layout = Layout{Entries: entries, Groups: groupsOf(entries)}
+	Arrange(c.doc)
 	return c.doc, nil
 }
 
@@ -576,7 +581,10 @@ func (c *converter) tiles() ([]Tile, []Entry, error) {
 		if err != nil {
 			return nil, nil, err
 		}
-		if s.Kind == KindMechanical {
+		// The schema allows one mechanical section; should a review hold
+		// more, the first is everything else and the others are shown as
+		// changes.
+		if s.Kind == KindMechanical && mechanical == nil {
 			mechanical = s
 			s.Blocks = blocks
 			continue

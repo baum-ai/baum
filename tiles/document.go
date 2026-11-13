@@ -129,6 +129,28 @@ type Evidence struct {
 	Origin *RenameOrigin `json:"origin,omitempty"`
 }
 
+// RiskIn returns the risk a reference that names a change and a risk ID
+// there means, or nil. References kept from baum.review/1 with the original
+// ID resolve this way: the risk score's reasons (risk_score.reasons[].risk
+// with .section) and a change's derived review reason
+// (changes[].derived.review_reason.risk). A renamed risk matches by its
+// origin; any other by its ID and change.
+func (d *Document) RiskIn(change, id string) *Risk {
+	for i := range d.Risks {
+		risk := &d.Risks[i]
+		if risk.Origin != nil {
+			if *risk.Origin == (RenameOrigin{Change: change, ID: id}) {
+				return risk
+			}
+			continue
+		}
+		if risk.ID == id && risk.Change == change {
+			return risk
+		}
+	}
+	return nil
+}
+
 // RenameOrigin records a renamed item's change and its ID there.
 type RenameOrigin struct {
 	Change string `json:"change"`

@@ -1,4 +1,4 @@
-package tiles
+package tiles_test
 
 import (
 	"bytes"
@@ -9,17 +9,19 @@ import (
 
 	"github.com/baum-ai/baum/internal/goldentest"
 	"github.com/baum-ai/baum/review"
+	"github.com/baum-ai/baum/tiles"
+	"github.com/baum-ai/baum/tiles/tilestest"
 )
 
 // convert normalizes a fixture's input as a reader of a stored document does
 // and converts it.
-func convert(t *testing.T, f fixture) ([]byte, *Document) {
+func convert(t *testing.T, f fixture) ([]byte, *tiles.Document) {
 	t.Helper()
 	normalized, err := review.NormalizeStored(f.input(t))
 	if err != nil {
 		t.Fatal(err)
 	}
-	doc, err := FromReview(normalized, f.opts)
+	doc, err := tiles.FromReview(normalized, f.opts)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -63,12 +65,12 @@ func TestFixturesAreStoredReviews(t *testing.T) {
 // Every fixture converts to its golden tile document, which passes the
 // schema and every invariant, and converts back to the input.
 func TestConvertFixtures(t *testing.T) {
-	validator := NewValidator()
+	validator := tiles.NewValidator()
 	for _, f := range fixtures {
 		t.Run(f.name, func(t *testing.T) {
 			normalized, doc := convert(t, f)
 			goldentest.Golden(t, "testdata/"+f.name+".tiles.json", doc)
-			for _, failure := range CheckConversion(normalized, doc) {
+			for _, failure := range tilestest.CheckConversion(normalized, doc) {
 				t.Error(failure)
 			}
 			encoded, err := json.Marshal(doc)
@@ -80,24 +82,24 @@ func TestConvertFixtures(t *testing.T) {
 				t.Fatal(err)
 			}
 			for _, tile := range validated.Tiles {
-				if tile.State == StateUnavailable {
+				if tile.State == tiles.StateUnavailable {
 					t.Errorf("tile %s is unavailable: %v", tile.ID, tile.Problems)
 				}
 			}
-			back, err := ToReview(doc)
+			back, err := tiles.ToReview(doc)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if equal, err := RoundTripEqual(normalized, back); err != nil || !equal {
+			if equal, err := tilestest.RoundTripEqual(normalized, back); err != nil || !equal {
 				t.Fatalf("the round trip differs (err %v)", err)
 			}
 			// The decoded golden converts back the same way, so a consumer
 			// that reads a stored tile document gets the review.
-			var decoded Document
+			var decoded tiles.Document
 			if err := json.Unmarshal(encoded, &decoded); err != nil {
 				t.Fatal(err)
 			}
-			again, err := ToReview(&decoded)
+			again, err := tiles.ToReview(&decoded)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -117,7 +119,7 @@ func TestConversionIsDeterministic(t *testing.T) {
 				t.Fatal(err)
 			}
 			for range 3 {
-				again, err := FromReview(normalized, f.opts)
+				again, err := tiles.FromReview(normalized, f.opts)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -128,11 +130,11 @@ func TestConversionIsDeterministic(t *testing.T) {
 				if !bytes.Equal(first, encoded) {
 					t.Fatal("converting the same review twice gave different bytes")
 				}
-				back, err := ToReview(again)
+				back, err := tiles.ToReview(again)
 				if err != nil {
 					t.Fatal(err)
 				}
-				backAgain, err := ToReview(doc)
+				backAgain, err := tiles.ToReview(doc)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -144,7 +146,7 @@ func TestConversionIsDeterministic(t *testing.T) {
 	}
 }
 
-func tileByID(t *testing.T, doc *Document, id string) Tile {
+func tileByID(t *testing.T, doc *tiles.Document, id string) tiles.Tile {
 	t.Helper()
 	for _, tile := range doc.Tiles {
 		if tile.ID == id {
@@ -152,14 +154,14 @@ func tileByID(t *testing.T, doc *Document, id string) Tile {
 		}
 	}
 	t.Fatalf("no tile %s", id)
-	return Tile{}
+	return tiles.Tile{}
 }
 
-func hasTile(doc *Document, id string) bool {
-	return slices.ContainsFunc(doc.Tiles, func(tile Tile) bool { return tile.ID == id })
+func hasTile(doc *tiles.Document, id string) bool {
+	return slices.ContainsFunc(doc.Tiles, func(tile tiles.Tile) bool { return tile.ID == id })
 }
 
-func entryOrder(doc *Document) []string {
+func entryOrder(doc *tiles.Document) []string {
 	var order []string
 	for _, entry := range doc.Layout.Entries {
 		order = append(order, entry.Tile)
@@ -177,7 +179,7 @@ func TestDefaultLayout(t *testing.T) {
 		t.Errorf("landing = %d, want 8 (two halves, then two rows of thirds)", doc.Layout.Landing)
 	}
 	data := tileByID(t, doc, "sec_retry_policy").Data
-	var change ChangeData
+	var change tiles.ChangeData
 	if err := json.Unmarshal(data, &change); err != nil {
 		t.Fatal(err)
 	}
@@ -190,7 +192,7 @@ func TestDefaultLayout(t *testing.T) {
 	if got := order[len(order)-2:]; !slices.Equal(got, []string{"sec_old_approach", "sec_old_formatting"}) {
 		t.Errorf("the layout ends with %v, want the obsolete changes", got)
 	}
-	var obsolete ChangeData
+	var obsolete tiles.ChangeData
 	if err := json.Unmarshal(tileByID(t, stale, "sec_old_approach").Data, &obsolete); err != nil {
 		t.Fatal(err)
 	}
@@ -204,7 +206,7 @@ func TestDefaultLayout(t *testing.T) {
 	_, many := convert(t, fixtureNamed(t, "many-changes"))
 	var changes []string
 	for _, entry := range many.Layout.Entries {
-		if entry.Group == GroupChanges {
+		if entry.Group == tiles.GroupChanges {
 			changes = append(changes, entry.Tile)
 		}
 	}
@@ -214,10 +216,10 @@ func TestDefaultLayout(t *testing.T) {
 	if !slices.Equal(changes, wantChanges) {
 		t.Errorf("changes = %v, want %v", changes, wantChanges)
 	}
-	visible := Visible(many.Layout)
+	visible := tiles.Visible(many.Layout)
 	shown := 0
 	for i, entry := range many.Layout.Entries {
-		if entry.Group == GroupChanges && visible[i] {
+		if entry.Group == tiles.GroupChanges && visible[i] {
 			shown++
 		}
 	}
@@ -237,9 +239,9 @@ func TestOptionalTiles(t *testing.T) {
 		present map[string]bool
 		state   string
 	}{
-		{"base", map[string]bool{"context": true, "everything_else": true, "media": true, "decisions": true, "intent": true}, StateReady},
+		{"base", map[string]bool{"context": true, "everything_else": true, "media": true, "decisions": true, "intent": true}, tiles.StateReady},
 		{"context-missing", map[string]bool{"context": false}, ""},
-		{"draft-context-missing", map[string]bool{"context": true}, StatePending},
+		{"draft-context-missing", map[string]bool{"context": true}, tiles.StatePending},
 		{"no-mechanical", map[string]bool{"everything_else": true}, ""},
 		{"no-everything-else", map[string]bool{"everything_else": false}, ""},
 		{"no-current-logical", map[string]bool{"everything_else": true, "media": false, "decisions": false, "risks": true}, ""},
@@ -261,11 +263,11 @@ func TestOptionalTiles(t *testing.T) {
 func TestDetailsStates(t *testing.T) {
 	_, doc := convert(t, fixtureNamed(t, "details-states"))
 	for id, want := range map[string]string{
-		"sec_retry_policy":    StatePending,
-		"sec_config_flag":     StateFailed,
-		"sec_dropped_pending": StateFailed,
-		"sec_dropped_failed":  StateFailed,
-		"everything_else":     StateReady,
+		"sec_retry_policy":    tiles.StatePending,
+		"sec_config_flag":     tiles.StateFailed,
+		"sec_dropped_pending": tiles.StateFailed,
+		"sec_dropped_failed":  tiles.StateFailed,
+		"everything_else":     tiles.StateReady,
 	} {
 		if got := tileByID(t, doc, id).State; got != want {
 			t.Errorf("%s state = %s, want %s", id, got, want)
@@ -275,7 +277,7 @@ func TestDetailsStates(t *testing.T) {
 
 func TestRiskRanking(t *testing.T) {
 	_, doc := convert(t, fixtureNamed(t, "critical-risks"))
-	var data RisksData
+	var data tiles.RisksData
 	if err := json.Unmarshal(tileByID(t, doc, "risks").Data, &data); err != nil {
 		t.Fatal(err)
 	}
@@ -297,7 +299,7 @@ func TestRiskRanking(t *testing.T) {
 
 func TestDuplicateIDsAreRenamed(t *testing.T) {
 	_, doc := convert(t, fixtureNamed(t, "duplicate-ids"))
-	risks := map[string]Risk{}
+	risks := map[string]tiles.Risk{}
 	for _, risk := range doc.Risks {
 		risks[risk.ID] = risk
 	}
@@ -313,7 +315,7 @@ func TestDuplicateIDsAreRenamed(t *testing.T) {
 			}
 		}))
 	}
-	if renamed.Origin == nil || *renamed.Origin != (RenameOrigin{Change: "sec_queue_limits", ID: "rsk_retry_storm"}) {
+	if renamed.Origin == nil || *renamed.Origin != (tiles.RenameOrigin{Change: "sec_queue_limits", ID: "rsk_retry_storm"}) {
 		t.Errorf("origin = %+v", renamed.Origin)
 	}
 	if risks["rsk_retry_storm"].Origin != nil || risks["rsk_retry_storm"].Change != "sec_retry_policy" {
@@ -323,7 +325,7 @@ func TestDuplicateIDsAreRenamed(t *testing.T) {
 		t.Errorf("the renamed risk's text still cites the earlier section's evidence: %q", renamed.Text)
 	}
 
-	var queue ChangeData
+	var queue tiles.ChangeData
 	if err := json.Unmarshal(tileByID(t, doc, "sec_queue_limits").Data, &queue); err != nil {
 		t.Fatal(err)
 	}
@@ -340,7 +342,7 @@ func TestDuplicateIDsAreRenamed(t *testing.T) {
 	if !bytes.Contains(queue.Blocks[0], []byte(`"evidence":["ev_retry_test_queue_limits"]`)) {
 		t.Errorf("a behaviour step still cites the earlier section's evidence: %s", queue.Blocks[0])
 	}
-	var decisions DecisionsData
+	var decisions tiles.DecisionsData
 	if err := json.Unmarshal(tileByID(t, doc, "decisions").Data, &decisions); err != nil {
 		t.Fatal(err)
 	}
@@ -349,7 +351,7 @@ func TestDuplicateIDsAreRenamed(t *testing.T) {
 	}
 
 	// The earlier section, the overview and the risk score are untouched.
-	var retry ChangeData
+	var retry tiles.ChangeData
 	if err := json.Unmarshal(tileByID(t, doc, "sec_retry_policy").Data, &retry); err != nil {
 		t.Fatal(err)
 	}
@@ -387,24 +389,6 @@ func TestWithinSectionDuplicateKeepsReferences(t *testing.T) {
 	}
 }
 
-func TestHeadline(t *testing.T) {
-	for _, tc := range []struct{ in, want string }{
-		{"", ""},
-		{"One sentence.", "One sentence"},
-		{"First one. Second one.", "First one"},
-		{"Version 1.2 is out. Then more.", "Version 1.2 is out"},
-		{"A clause; then more. Next.", "A clause"},
-		{"No end", "No end"},
-		{"First line\nSecond line.", "First line"},
-		{"Why? Because.", "Why"},
-		{strings.Repeat("x", 400), strings.Repeat("x", 299) + "…"},
-	} {
-		if got := headline(tc.in); got != tc.want {
-			t.Errorf("headline(%q) = %q, want %q", tc.in, got, tc.want)
-		}
-	}
-}
-
 func TestFromReviewRejects(t *testing.T) {
 	base := func(t *testing.T) map[string]any {
 		var doc map[string]any
@@ -427,8 +411,19 @@ func TestFromReviewRejects(t *testing.T) {
 			array(sectionOf(doc, "sec_config_flag"), "evidence")[0].(map[string]any)["extra"] = 1
 		}},
 		{"a repeated section ID", func(doc map[string]any) { sectionOf(doc, "sec_config_flag")["id"] = "sec_retry_policy" }},
-		{"two current mechanical sections", func(doc map[string]any) {
-			sectionOf(doc, "sec_config_flag")["kind"] = "mechanical"
+		{"a top-level key in another case", func(doc map[string]any) {
+			doc["Summary"] = doc["summary"]
+			delete(doc, "summary")
+		}},
+		{"a section key in another case", func(doc map[string]any) {
+			s := sectionOf(doc, "sec_config_flag")
+			s["Title"] = s["title"]
+			delete(s, "title")
+		}},
+		{"a risk key in another case", func(doc map[string]any) {
+			risk := array(sectionOf(doc, "sec_config_flag"), "risks")[0].(map[string]any)
+			risk["TEXT"] = risk["text"]
+			delete(risk, "text")
 		}},
 		{"implements that is not an array", func(doc map[string]any) { object(doc, "summary")["implements"] = nil }},
 	} {
@@ -439,12 +434,12 @@ func TestFromReviewRejects(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if _, err := FromReview(encoded, Options{}); err == nil {
+			if _, err := tiles.FromReview(encoded, tiles.Options{}); err == nil {
 				t.Fatal("FromReview accepted the document")
 			}
 		})
 	}
-	if _, err := FromReview([]byte(`{"schema":`), Options{}); err == nil {
+	if _, err := tiles.FromReview([]byte(`{"schema":`), tiles.Options{}); err == nil {
 		t.Error("FromReview accepted invalid JSON")
 	}
 }
@@ -454,47 +449,47 @@ func TestCheckConversionDetectsLoss(t *testing.T) {
 	for _, tc := range []struct {
 		name      string
 		invariant string
-		mutate    func(doc *Document)
+		mutate    func(doc *tiles.Document)
 	}{
-		{"an uncovered hunk", "invariant 1", func(doc *Document) {
+		{"an uncovered hunk", "invariant 1", func(doc *tiles.Document) {
 			for i := range doc.Tiles {
-				if doc.Tiles[i].ID == TypeEverythingElse {
+				if doc.Tiles[i].ID == tiles.TypeEverythingElse {
 					doc.Tiles[i].Covers = doc.Tiles[i].Covers[1:]
 				}
 			}
 		}},
-		{"a dropped risk", "invariant 2", func(doc *Document) { doc.Risks = doc.Risks[1:] }},
-		{"an unranked active risk", "invariant 2", func(doc *Document) {
-			setData(doc, TypeRisks, RisksData{Ranked: []string{"rsk_retry_storm"}})
+		{"a dropped risk", "invariant 2", func(doc *tiles.Document) { doc.Risks = doc.Risks[1:] }},
+		{"an unranked active risk", "invariant 2", func(doc *tiles.Document) {
+			setData(doc, tiles.TypeRisks, tiles.RisksData{Ranked: []string{"rsk_retry_storm"}})
 		}},
-		{"a dropped evidence item", "invariant 3", func(doc *Document) { doc.Evidence = doc.Evidence[:len(doc.Evidence)-1] }},
-		{"a dropped block", "invariant 4", func(doc *Document) {
-			var data ChangeData
+		{"a dropped evidence item", "invariant 3", func(doc *tiles.Document) { doc.Evidence = doc.Evidence[:len(doc.Evidence)-1] }},
+		{"a dropped block", "invariant 4", func(doc *tiles.Document) {
+			var data tiles.ChangeData
 			_ = json.Unmarshal(tileOf(doc, "sec_retry_policy").Data, &data)
 			data.Blocks = nil
 			setData(doc, "sec_retry_policy", data)
 		}},
-		{"a changed risk score", "invariant 5", func(doc *Document) { doc.RiskScore = json.RawMessage(`{"rubric":"risk-v1"}`) }},
-		{"a recommendation that appeared", "invariant 5", func(doc *Document) { doc.Recommendation = json.RawMessage(`null`) }},
-		{"risks past the landing page", "invariant 6", func(doc *Document) {
+		{"a changed risk score", "invariant 5", func(doc *tiles.Document) { doc.RiskScore = json.RawMessage(`{"rubric":"risk-v1"}`) }},
+		{"a recommendation that appeared", "invariant 5", func(doc *tiles.Document) { doc.Recommendation = json.RawMessage(`null`) }},
+		{"risks past the landing page", "invariant 6", func(doc *tiles.Document) {
 			entries := doc.Layout.Entries
 			risks := entries[1]
-			doc.Layout.Entries = append(append([]Entry{entries[0]}, entries[2:]...), risks)
-			doc.Layout.Landing = Landing(doc.Layout)
+			doc.Layout.Entries = append(append([]tiles.Entry{entries[0]}, entries[2:]...), risks)
+			doc.Layout.Landing = tiles.Landing(doc.Layout)
 		}},
-		{"a tile placed twice", "invariant 7", func(doc *Document) {
+		{"a tile placed twice", "invariant 7", func(doc *tiles.Document) {
 			doc.Layout.Entries = append(doc.Layout.Entries, doc.Layout.Entries[0])
 		}},
-		{"a stale landing count", "invariant 7", func(doc *Document) { doc.Layout.Landing = 2 }},
-		{"an unavailable tile", "invariant 8", func(doc *Document) { tileOf(doc, TypeEvidence).State = StateUnavailable }},
-		{"a tile with bad data", "invariant 8", func(doc *Document) { tileOf(doc, TypeEvidence).Data = json.RawMessage(`{"x":1}`) }},
-		{"changed text", "invariant 9", func(doc *Document) { doc.Risks[0].Text += " Changed." }},
-		{"a changed change title", "invariant 9", func(doc *Document) { doc.Changes[0].Title = "Another title" }},
+		{"a stale landing count", "invariant 7", func(doc *tiles.Document) { doc.Layout.Landing = 2 }},
+		{"an unavailable tile", "invariant 8", func(doc *tiles.Document) { tileOf(doc, tiles.TypeEvidence).State = tiles.StateUnavailable }},
+		{"a tile with bad data", "invariant 8", func(doc *tiles.Document) { tileOf(doc, tiles.TypeEvidence).Data = json.RawMessage(`{"x":1}`) }},
+		{"changed text", "invariant 9", func(doc *tiles.Document) { doc.Risks[0].Text += " Changed." }},
+		{"a changed change title", "invariant 9", func(doc *tiles.Document) { doc.Changes[0].Title = "Another title" }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			normalized, doc := convert(t, fixtureNamed(t, "base"))
 			tc.mutate(doc)
-			failures := CheckConversion(normalized, doc)
+			failures := tilestest.CheckConversion(normalized, doc)
 			if !slices.ContainsFunc(failures, func(failure string) bool { return strings.HasPrefix(failure, tc.invariant+":") }) {
 				t.Errorf("failures = %v, want one of %s", failures, tc.invariant)
 			}
@@ -505,11 +500,71 @@ func TestCheckConversionDetectsLoss(t *testing.T) {
 func TestCheckStability(t *testing.T) {
 	_, previous := convert(t, fixtureNamed(t, "base"))
 	_, next := convert(t, fixtureNamed(t, "duplicate-ids"))
-	if failures := CheckStability(previous, next); len(failures) > 0 {
+	if failures := tilestest.CheckStability(previous, next); len(failures) > 0 {
 		t.Errorf("failures = %v", failures)
 	}
-	tileOf(next, "sec_config_flag").Type = TypeProse
-	if failures := CheckStability(previous, next); len(failures) == 0 {
+	// A change that was mechanical and is logical now moves from
+	// everything_else to a change tile of its own; a logical change does not
+	// move.
+	_, unchanged := convert(t, fixtureNamed(t, "base"))
+	mechanical := unchanged.Changes[2]
+	mechanical.Kind = tiles.KindLogical
+	for i := range unchanged.Tiles {
+		if unchanged.Tiles[i].Type == tiles.TypeEverythingElse {
+			unchanged.Tiles[i].Data = []byte(`{"change":null,"unassigned":[]}`)
+		}
+	}
+	unchanged.Changes[2] = mechanical
+	unchanged.Tiles = append(unchanged.Tiles, tiles.Tile{ID: mechanical.ID, Type: tiles.TypeChange, Title: "Client", Data: []byte(`{}`), State: tiles.StateReady})
+	if failures := tilestest.CheckStability(previous, unchanged); len(failures) > 0 {
+		t.Errorf("a change that became logical: %v", failures)
+	}
+	moved := tileOf(next, "sec_config_flag")
+	moved.ID = "sec_config_flag_moved"
+	if failures := tilestest.CheckStability(previous, next); len(failures) == 0 {
+		t.Error("a logical change whose tile changed passed")
+	}
+	moved.ID = "sec_config_flag"
+	tileOf(next, "sec_config_flag").Type = tiles.TypeProse
+	if failures := tilestest.CheckStability(previous, next); len(failures) == 0 {
 		t.Error("a tile that changed type passed")
+	}
+}
+
+// An obsolete section's blocks stay in its own tile, so a decision there that
+// repeats a current decision's ID keeps it, and so do its references.
+func TestObsoleteDecisionsKeepTheirIDs(t *testing.T) {
+	_, doc := convert(t, fixtureNamed(t, "obsolete-duplicate-decision"))
+	var old tiles.ChangeData
+	if err := json.Unmarshal(tileByID(t, doc, "sec_old_approach").Data, &old); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(old.Summary, []byte("(dec_doubling_delay)")) || !bytes.Contains(old.Blocks[1], []byte(`"id":"dec_doubling_delay"`)) {
+		t.Errorf("the obsolete change was rewritten: %s %s", old.Summary, old.Blocks[1])
+	}
+	var decisions tiles.DecisionsData
+	if err := json.Unmarshal(tileByID(t, doc, "decisions").Data, &decisions); err != nil {
+		t.Fatal(err)
+	}
+	if len(decisions.Items) != 1 {
+		t.Errorf("the decisions tile holds %d items, want the current one", len(decisions.Items))
+	}
+}
+
+func TestRiskIn(t *testing.T) {
+	_, doc := convert(t, fixtureNamed(t, "duplicate-ids"))
+	for _, tc := range []struct{ change, id, want string }{
+		{"sec_retry_policy", "rsk_retry_storm", "rsk_retry_storm"},
+		{"sec_queue_limits", "rsk_retry_storm", "rsk_retry_storm_queue_limits_2"},
+		{"sec_config_flag", "rsk_retry_storm", ""},
+		{"sec_queue_limits", "rsk_retry_storm_queue_limits_2", ""},
+	} {
+		got := ""
+		if risk := doc.RiskIn(tc.change, tc.id); risk != nil {
+			got = risk.ID
+		}
+		if got != tc.want {
+			t.Errorf("RiskIn(%s, %s) = %q, want %q", tc.change, tc.id, got, tc.want)
+		}
 	}
 }
