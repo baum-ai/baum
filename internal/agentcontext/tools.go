@@ -110,11 +110,17 @@ func (c CallContext) Target(repository string, number int) (string, int, error) 
 }
 
 // Receipt is what an agent learns of a proposal it made: never the target's
-// current value, which only the person sees.
+// current value, which only the person sees, and never what an operation
+// would do or, once confirmed, what it answered.
 type Receipt struct {
-	ID     string `json:"id"`
-	Page   string `json:"page"`
-	Target string `json:"target"`
+	ID     string       `json:"id"`
+	Page   string       `json:"page"`
+	Target string       `json:"target"`
+	Kind   ProposalKind `json:"kind"`
+}
+
+func receipt(p Proposal) Receipt {
+	return Receipt{ID: p.ID, Page: p.Page, Target: p.Target, Kind: p.Kind}
 }
 
 // Propose records a change for the user to save or dismiss.
@@ -123,7 +129,16 @@ func (c CallContext) Propose(ctx context.Context, p Proposal) (Receipt, error) {
 	if err != nil {
 		return Receipt{}, err
 	}
-	return Receipt{ID: recorded.ID, Page: recorded.Page, Target: recorded.Target}, nil
+	return receipt(recorded), nil
+}
+
+// ProposeOperation records an operation for the user to confirm or dismiss.
+func (c CallContext) ProposeOperation(ctx context.Context, name string, args json.RawMessage) (Receipt, error) {
+	recorded, err := c.proposals.ProposeOperation(ctx, c.Consumer.ID, name, args)
+	if err != nil {
+		return Receipt{}, err
+	}
+	return receipt(recorded), nil
 }
 
 func (t *Tool) compile() error {

@@ -1133,6 +1133,16 @@ func (r *Registry) Preferences(ctx context.Context) (Preferences, error) {
 // UpdatePreferences atomically edits the global preferences. The edit runs
 // under the writer transaction and must not call back into the registry.
 func (r *Registry) UpdatePreferences(ctx context.Context, edit func(Preferences) Preferences) (Preferences, error) {
+	return r.UpdatePreferencesIf(ctx, func(p Preferences) (Preferences, error) { return edit(p), nil })
+}
+
+// UpdatePreferencesIf is UpdatePreferences with an edit that may refuse: an
+// error it returns rolls the transaction back, writes nothing and is
+// returned as it is. The transaction holds the write lock from its start
+// (appdb's immediate transactions), so a check the edit makes of the
+// preferences it is given, such as the revision a proposal was read at, and
+// the write are one step.
+func (r *Registry) UpdatePreferencesIf(ctx context.Context, edit func(Preferences) (Preferences, error)) (Preferences, error) {
 	tx, e := r.db.BeginTx(ctx, nil)
 	if e != nil {
 		return Preferences{}, e
@@ -1150,7 +1160,9 @@ func (r *Registry) UpdatePreferences(ctx context.Context, edit func(Preferences)
 	if e = json.Unmarshal([]byte(raw), &p); e != nil {
 		return Preferences{}, e
 	}
-	p = edit(p)
+	if p, e = edit(p); e != nil {
+		return Preferences{}, e
+	}
 	if _, e = tx.ExecContext(ctx, "UPDATE preferences SET value=? WHERE key=?", mustJSON(p), automaticPreferences); e != nil {
 		return Preferences{}, e
 	}
@@ -1336,6 +1348,40 @@ func usedEarlierNames(repository string, clones []Clone) []string {
 	}
 	slices.Sort(names)
 	return names
+}
+
+// UpdateRepositoryIf replaces a picked repository's shared settings with what
+// edit makes of the stored ones, read and written in one immediate
+// transaction: an error edit returns, such as a revision a proposal was read
+// at that no longer holds, writes nothing and is returned as it is. An
+// unpicked repository is ErrNotFound, as with UpdateRepository.
+func (r *Registry) UpdateRepositoryIf(ctx context.Context, repository string, edit func(Settings) (Settings, error)) (Settings, error) {
+	tx, e := r.db.BeginTx(ctx, nil)
+	if e != nil {
+		return Settings{}, e
+	}
+	defer func() { _ = tx.Rollback() }()
+	identity := strings.ToLower(repository)
+	var raw string
+	e = tx.QueryRowContext(ctx, `SELECT r.settings FROM repositories r WHERE r.identity=? AND (`+r.pickedSQL()+`)`, identity).Scan(&raw)
+	if errors.Is(e, sql.ErrNoRows) {
+		return Settings{}, ErrNotFound
+	}
+	if e != nil {
+		return Settings{}, e
+	}
+	var current Settings
+	if e = json.Unmarshal([]byte(raw), &current); e != nil {
+		return Settings{}, e
+	}
+	next, e := edit(current)
+	if e != nil {
+		return Settings{}, e
+	}
+	if _, e = tx.ExecContext(ctx, `UPDATE repositories SET settings=? WHERE identity=?`, mustJSON(next), identity); e != nil {
+		return Settings{}, e
+	}
+	return next, tx.Commit()
 }
 
 // UpdateRepository replaces a picked repository's shared settings by identity.

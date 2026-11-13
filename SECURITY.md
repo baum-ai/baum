@@ -807,8 +807,10 @@ What remains:
 ## Writes to GitHub
 
 The local application writes to GitHub only when you click and confirm, one
-pull request at a time, with the credential you saved for baum. There are seven
-writes and no others:
+pull request at a time, with the credential you saved for baum. An agent may
+propose a merge, a branch update, a re-run, resolving a thread or a fix, but it
+runs only when you confirm it in the app, through the same route the button
+calls (see "MCP server for agents"). There are seven writes and no others:
 
 - **Merge** (`internal/github/merge.go`): GraphQL `mergePullRequest` with
   `expectedHeadOid` set to the head you saw.
@@ -1648,11 +1650,108 @@ app. The value and revision it is compared against are read by the daemon
 when the proposal is recorded, never taken from the agent; a value the agent
 says it read must match the current one, and a mismatch is refused with an
 error that says nothing more. The current value is shown to you, never
-returned to the agent. Saving checks that the target still belongs to the
-page and that the agent's token is still live, and the page compares the
-revision and writes in one step, so a target changed by anyone since the
-proposal was made is refused and nothing is saved. A token revoked while a
-save is writing takes effect once the write ends.
+returned to the agent: a proposal tool answers only the proposal's id, page,
+target and kind. Saving checks that you still have the page open, showing the
+same repository, pull request or group, that the target still belongs to the
+section you see and that the agent's token is still live, and the page
+compares the revision and writes in one step, so a target changed by anyone
+since the proposal was made is refused and nothing is saved. A token revoked
+while a save is writing takes effect once the write ends.
+
+What an agent can cause is a proposal for you to look at: a setting of the
+Settings page (appearance, plan usage, automatic reviews, decision capture,
+the harnesses for reviews and fixes, time limits, job concurrency, whether
+the app answers Codex's permission requests), a custom prompt or its reset, a
+repository's review and decision capture choices, a saved inbox, a review
+group's name and members, or a comment added to your pending review (never
+sent to GitHub: you send the review). Nothing is saved without your save, and
+your save is the page's own, with the page's checks, so a proposal cannot
+save what the page itself would refuse. A proposed prompt, or a reset, that
+would leave out the text of a safety rule the prompt in use has is refused,
+when proposed and again when saved. That check only finds each rule's text;
+it cannot tell whether the rest of a text undercuts a rule, so read a
+prompt's diff before you save it. An agent never proposes an agent
+environment variable's value and never learns one: it may propose a
+variable's name to add or remove, the proposal holds only the name, and you
+type the value when you save it; the value goes from the app's save to the
+setting and is never stored in the proposal, returned to the agent, printed
+or logged. Nothing outside that list can be changed through a saved
+proposal: not your GitHub connection, a repository's registration or clones,
+nor any GitHub write.
+
+A chat may also propose an operation: one of the buttons of the page you
+have open, for something that page shows. The agent never runs anything.
+Nothing runs until you confirm it in the app, and then the daemon runs the
+same route the button calls, with that route's own checks, once: the
+proposal is taken out before it runs, so a second confirm, or two at once,
+runs nothing more. Confirming checks that you still have the page the
+proposal was made on open, showing the same thing, that its target is still
+on it (a request still pending, a job still queued or running) and that the
+agent's token is still live; a token revoked before your confirm took the
+proposal runs nothing. Each operation sends one fixed method to one fixed
+route: the values an agent's arguments put in the path must each be one
+plain segment, and the request is checked to be that route before it is
+sent, so no argument can reach another route. The agent's answer is the
+proposal's id, page, target and kind, never what will run or what the route
+answered. You read what will happen and on what before you confirm: the
+pull request's number and title and the head, the job, the session's agent,
+id, title and repository, or for an agent's request the requesting agent, its
+session and exactly what it asked (the tool and every input value, or every
+question, in full). The app stores a request as it shows it: a value cut at
+its bound (4,000 characters for an input value, 1,000 for a question),
+cleaned of control or formatting characters, or with a secret masked is not
+exactly what the agent will run, so such a request can be denied from a
+proposal but never allowed or answered: you answer it in the app or the
+terminal. The summary's sentence is baum's own and names things only by
+identifiers that pass their own check (a repository spelled as GitHub spells
+one, an id that is one plain path segment); anything else, and any text that
+is not baum's (a title, a thread, what a tool asked, what the agent wrote),
+is a separate quoted field, never part of the sentence or a field's label.
+Text read from the daemon is shown plain: control characters, invalid UTF-8
+and invisible characters (bidirectional overrides and isolates, zero-width
+characters, the soft hyphen, tags, variation selectors, Hangul fillers and
+the other default-ignorable characters) are removed, and line breaks are kept
+only in fields that are meant to be multi-line. What the agent wrote (a
+message, an answer, a group's name) is shown in full, exactly as it will be
+sent: it is never cut, text longer than the operation takes is refused, and
+text with control, invisible or line-separator characters is refused rather
+than cleaned. A repository is sent and named as baum's registry spells it.
+The app confirms with the revision of the summary it showed you: confirming
+reads the summary again, and when it reads differently from the one you saw
+(another title, harness, model or effort), or the app sends the revision of
+an older summary (a second click after the summary changed), nothing runs
+and the proposal shows the new summary for you to confirm again. A fix or a
+review whose harness, model and effort cannot be read from your settings is
+not proposed or confirmed at all.
+
+What you can be asked to confirm: on a pull request's page, a merge (with a
+method GitHub allows, at the head the page showed), a branch update, a re-run
+of the failed checks or of one failed job, resolving one review thread, a fix
+and a new review; on the Inbox and Pull requests, a review, a refresh from
+GitHub and (Pull requests) a new review group; on the sessions pages,
+answering an agent's pending request, a message to a session, ending a
+session and bringing it forward; on the jobs pages, cancelling a job the
+page lists as queued or running (on a job's page, that job); on a
+group's page, deleting it; on the Repositories page, registering a
+repository, removing one or a clone's registration, and cloning a registered
+repository into the folder the app would choose by default, which the summary
+names (an agent cannot choose the folder). A fix and a review start a paid
+agent run: the summary says so and names the harness, model and effort from
+your settings. A merge, ending a session, deleting a group and removing a
+repository or a clone are marked as not undoable. An agent's request is
+answered only from a page that lists it (the Sessions page, or that
+session's page for its own), only with allow, deny or answers to its
+questions: a permission's suggestions (always allow, a permission mode), which
+can change the agent's permissions for good, are yours to apply in the app
+and cannot be proposed. A chat's token names the agent session the chat runs
+in (Claude Code or Codex), set when the token is minted or once afterwards
+(it cannot be changed); a chat never answers a request of its own session,
+so it cannot approve its own tool calls, and never messages, ends or brings
+forward its own session. While its session is not known, it can propose
+none of these for any session: no answer, message, end or focus at all. A
+review of a pull request from a fork or an
+untrusted author is refused by the route without your isolation
+confirmation, which an agent cannot give; you start it from the app.
 
 Every tool result is masked with the same redaction as prompts, cut to at
 most 64 KiB, and placed between `BEGIN UNTRUSTED DATA` and

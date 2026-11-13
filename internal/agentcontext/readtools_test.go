@@ -168,10 +168,10 @@ func numbers(rows []inboxRow) []int {
 func TestTheNewPagesListTheirTools(t *testing.T) {
 	s, _, token, id := readServer(t)
 	want := map[string][]string{
-		PageInbox:    {"inbox", "inboxes", "test_query"},
-		PagePulls:    {"pull_requests"},
-		PageSessions: {"live_sessions", "live_session_transcript", "agent_requests", "agent_messages"},
-		PageSession:  {"live_sessions", "live_session_transcript", "agent_requests", "agent_messages"},
+		PageInbox:    {"inbox", "inboxes", "test_query", "propose_inbox", "propose_review", "propose_refresh"},
+		PagePulls:    {"pull_requests", "propose_review", "propose_refresh", "propose_create_group"},
+		PageSessions: {"live_sessions", "live_session_transcript", "agent_requests", "agent_messages", "propose_answer_request", "propose_send_message", "propose_queue_message", "propose_end_session", "propose_focus_session"},
+		PageSession:  {"live_sessions", "live_session_transcript", "agent_requests", "agent_messages", "propose_answer_request", "propose_send_message", "propose_queue_message", "propose_end_session", "propose_focus_session"},
 		PageTimeline: {"decisions", "decision", "features", "feature", "feature_build", "file_history", "timeline_transcript"},
 		PageFeature:  {"decisions", "decision", "features", "feature", "feature_build", "file_history", "timeline_transcript"},
 	}

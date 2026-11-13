@@ -5272,8 +5272,12 @@ saved, in the `state/agent-requests` document in `app.sqlite`.
 - **API.** `LocalAPI.AgentRequests` mounts `Store.Handler` behind the same
   authentication as every route (without a record:
   `agent_requests_unavailable`). `GET /api/agent-requests` answers
-  `{"requests":[{"id","agent","session_id","kind","tool","created_at","input":[{"label","value","code"?}],"suggestions":[{"id","label"}],"questions":[{"question","header"?,"multi_select","options":[{"label","description"?}]}]}],"messages":[{"agent","session_id","text","queued_at"}],"settings":{"codex_approvals"}}`,
-  oldest request first, message text masked. `POST
+  `{"requests":[{"id","agent","session_id","kind","tool","created_at","input":[{"label","value","code"?}],"suggestions":[{"id","label"}],"questions":[{"question","header"?,"multi_select","options":[{"label","description"?}]}],"altered"?}],"messages":[{"agent","session_id","text","queued_at"}],"settings":{"codex_approvals"}}`,
+  oldest request first, message text masked. `altered` is true when the
+  request's tool, input, questions or options are not shown exactly as the
+  agent sent them (a value cut at its bound, cleaned of control or format
+  characters or folded blanks, or with a secret masked); the MCP server's
+  `answer_request` then never proposes allowing it. `POST
   /api/agent-requests/{id}/answer` takes
   `{"behavior","suggestion"?,"answers"?}` (answers keyed by the question and
   option labels shown, several labels joined by ", ") and answers
@@ -5788,24 +5792,263 @@ Revoking a token drops its cursors and proposals, and a call still running
 then keeps neither: both are stored only after checking, under their lock,
 that the consumer is live.
 
-`Proposals` hold changes a chat proposes: page, target, the value before and
+`Proposals` hold what a chat proposes, of two kinds (`Proposal.Kind`): a
+`diff`, a change to something the page edits, which the person saves; and an
+`operation`, something the page does with a button (merge, cancel a job,
+answer an agent's request), which the person confirms (see "Operations"
+below). Both kinds are held per consumer in memory, share the limit of 32
+open proposals, are listed and dismissed the same way and are dropped when
+the token is revoked; `Save` refuses an operation and `Confirm` a diff, and
+`Propose` records only diffs. A diff holds page, target, the value before and
 after, the target's revision and the page context it was made on. A
 `Proposer` reads a target (`Current`), validates a change (`Validate`) and
-saves it (`Apply`), each given that page context so it refuses a target the
+saves it (`Apply`), each given the page context so it refuses a target the
 page does not show. `Propose` refuses an action, a page other than the open
 one and a page with no proposer; it reads the target's value and revision
 itself, ignoring the agent's revision, refuses with the bare
 `ErrNotRecorded` a `Before` the agent sent that no longer matches, and
 records the proposal; nothing changes. A tool gets only a `Receipt` (id,
-page, target): the current value is for the person, through the Go API,
-never for the agent. `List` returns deep copies. `Save` reads the target
-again, which refuses one that left the page and a changed revision; then,
+page, target, kind): the current value is for the person, through the Go API,
+never for the agent. `List` returns deep copies. `Save(ctx, consumer, id,
+input)` first checks that the person still has the page the proposal was
+made on open, showing the same repository, pull request, group, session, job
+and feature (`ErrNotCurrentPage` once they navigated away); it reads the
+target again against the page as it is now, which refuses a target of
+another section, one that left the page and a changed revision; then,
 under the lock a revoke takes to drop proposals, it checks that the
 consumer is live and the proposal open and calls `Apply` with the recorded
-revision. The proposer compares and writes in one transaction, as
-`appdb.Update` does, and returns `ErrStale` without writing when the target
-moved meanwhile. `Dismiss` drops a proposal. No page has a proposer yet, and the app reaches proposals only
-through the Go API.
+revision and the `SaveInput`. The proposer compares and writes in one
+transaction, as `appdb.Update` does, and returns `ErrStale` without writing
+when the target moved meanwhile. `Dismiss` drops a proposal. The app reaches
+proposals only through the Go API for now.
+
+`SaveInput` is what the person adds when saving, from the app's own save and
+never through an agent: the value of an agent environment variable the agent
+proposed adding. It goes to `Apply` alone, is never kept in the proposal, and
+prints and logs as withheld. Every proposer but the agent environment's
+refuses one.
+
+The `propose_*` tools record proposals. Each is global (an action neither
+lists nor calls one), reads nothing, names its page and target, passes the
+change asked for as `After`, and answers the receipt and a fixed status. A
+tool's schema bounds types and sizes only, so a value the page refuses
+reaches the proposer and is refused with the page's own words. Pages list
+their tools, and `current_page` lists a section's with its `section_tools`.
+`Options.Proposers` gives each page its proposer; the daemon passes
+`uiserver.Proposers.Pages()`:
+
+| Page (section) | Tool | Target | Saved as |
+| --- | --- | --- | --- |
+| `settings` (`general`; also an unnamed section) | `propose_appearance` | `appearance` | `PUT /api/settings/appearance` (theme, key hints, page modifier) |
+| `settings` (`general`) | `propose_plan_usage` | `plan_usage/<provider>` | `PUT /api/settings/plan-usage` |
+| `settings` (`reviews`) | `propose_reviews` | `reviews` | `PUT /api/automatic` (`automatic.Scheduler.SavePreferences`): enabled, pull requests, backend, model, effort |
+| `settings` (`reviews`) | `propose_decision_capture` | `decisions` | `PUT /api/settings/decisions`, the fields left out as the section shows them |
+| `settings` (`fixes`) | `propose_fixes` | `fixes` | `PUT /api/automatic`: fix backend, model, effort |
+| `settings` (`computer`) | `propose_time_limits` | `time_limits` | `PUT /api/settings/time-limits`, a limit left out as the section shows it |
+| `settings` (`computer`) | `propose_job_concurrency` | `job_concurrency` | `PUT /api/settings/job-concurrency`, then the queue's concurrency |
+| `settings` (`computer`) | `propose_codex_approvals` | `codex_approvals` | `PUT /api/agent-requests/settings` (`agentrequests.Store.SetSettingsIf`) |
+| `settings` (`computer`) | `propose_agent_env` | `agent_env/<NAME>` | `PUT /api/settings/agent-env` of the environment in force with the name added (the value from `SaveInput`) or removed |
+| `settings` (`prompts`) | `propose_prompt`, `propose_prompt_reset` | `prompt/<id>` | `PUT /api/settings/prompts/{id}` |
+| `repositories` with a repository (`reviews`) | `propose_repository_settings` | `<owner/name>:settings` | `PUT /api/repositories/{owner}/{name}/settings`, the field left out kept |
+| `repositories` with a repository (`prompts`) | `propose_prompt`, `propose_prompt_reset` | `<owner/name>:prompt/<id>` | `PUT /api/repositories/{owner}/{name}/prompts/{id}` |
+| `inbox` | `propose_inbox` | `inbox:new` or `inbox:<id>` | `PUT /api/inboxes` (`inboxes.API.Save`) of the list with the inbox added at the end or changed: name, colour, query, badge |
+| `group` | `propose_group` | `group:<id>`, the page's group | `PATCH /api/groups/{id}` (`reviewgroups.API.Update`): name, members added and removed |
+| `pull_request` | `propose_review_comment` | `<owner/name>#<n>:review_comment`, the page's pull request | `PUT /api/ui-state/review?key=` of the pending review with the comment appended, the other comments, note and sent reviews kept |
+
+A target of another section than the open one (General when none is named;
+Reviews on a repository's page), another repository, group or pull request is
+refused, at `Propose` and again at `Save`. Each proposer validates as the
+page's route does, with the same functions: `repos.ValidateTimeLimit`,
+`config.ParseBackend`, `config.ParseEffort`, `Preferences.ValidateChange`
+(through `automatic.EditPreferences` and the decisions route's edit),
+`config.ValidateAgentEnv`, the concurrency bound, the appearance and plan
+checks, `prompt.Validate`, `inboxes` normalisation (`State.Check`) and the
+app's query check (`prfilter.Problem`), `reviewgroups.CheckUpdate` and
+`uistate.CheckReviewComment`. Each saves through the function the route's
+handler calls and does what the route does after a save: the decisions event,
+the queue's concurrency, cancelling disallowed automatic jobs, waking the
+scheduler and the automatic notice, the settings and decisions events after a
+repository's settings or prompts, and `Changed` after an inbox or group. Beyond
+the page, a prompt's text, or a reset to the inherited text, that leaves out
+the text of a safety rule the prompt in use has is refused, at `Propose` and
+again inside the save's transaction against the rows it reads (the person
+can still remove one in the editor, which warns). The check finds each
+rule's text only; it cannot judge wording elsewhere that undercuts a rule, so
+the person reads the diff. Adding an agent environment variable that is set,
+or removing one that is not, is refused, and so is a change after which the
+environment in force would differ from the proposed one by more than that
+name: removing the app's last variable brings back the config file's
+`agent_env`. An inbox is proposed and saved as the Inbox holds it: it folds
+every saved inbox's older fields (what, owners, risk, repositories, bots)
+into its query (`app/src/inboxes.ts`'s `folded`, here with
+`prfilter.FoldedQuery` and `prfilter.Problem`) and saves the list so, and the
+diff's `Before` is the folded inbox.
+
+A target's revision is HMAC-SHA256, under a key made per daemon, of the
+stored state its save reads: the preference fields of its route, the agent
+environment in force (values included, which the key keeps from being
+guessed from the hash) and whether the app sets it, the Codex setting, a
+prompt's own and global rows, a repository's settings, a group's name,
+members, stack flag and landed members. Saved inboxes and pending reviews use
+their store's own revision. `Apply` checks the revision inside the writing
+transaction: `repos.Registry.UpdatePreferencesIf`, `UpdateRepositoryIf` and
+`PutPromptOverrideIf`, `reviewgroups.Store.UpdateWith` and
+`agentrequests.Store.SetSettingsIf` hand the check the state as the
+transaction (or the settings' save lock) reads it, and an error from it
+writes nothing. Saved inboxes and pending reviews are read before the write
+and saved with `inboxes.Store.Replace` and `uistate.Store.Replace`, which
+compare the revision read in their own transaction. Tests save each proposal
+and send the page's request to a twin fixture and compare the stores and
+what followed each save, and change each target through its route before the
+save, and after `Save` checked the revision, to see the save refused.
+
+#### Operations
+
+An operation proposal (`agentcontext.Operation`, `operations.go`, the list in
+`operationlist.go`) is a button of a page an agent suggests the person press.
+The agent never runs anything: nothing runs before the person confirms, and
+on `Confirm` the daemon runs, in process, the route the app's button calls,
+with that route's own validation and status. Each operation names the pages
+that offer it, a fixed method (`POST` or `DELETE`) and route template
+(`{name}` is one whole segment), an input schema, the GET routes it reads
+(`Reads`, and `Projected` for the paid runs' model and effort from
+`/api/settings`, a `projectedReads` pair), `Build`, which turns the agent's
+arguments and the page into the request (the `{name}` values, the query and
+the JSON body, as the button's code builds them) and names the target, and
+`Describe`, which checks the target belongs to the page and writes the
+summary the person reads (`OperationSummary`: what will happen, on what, and
+for a paid run the harness, model and effort; the app computes no cost
+estimate before a run, so none is shown). `Paid` marks an operation that
+starts an agent run, `Irreversible` one that cannot be undone.
+
+A summary's `Action` is baum's own sentence, naming things only by
+identifiers (a repository and number, an agent and session id, a job id). All
+else is a `SummaryField` in `Details`: baum's own facts, or `Quoted` text
+that is not baum's, shown in full and never cut. Quoted text read from a
+route (a title, a thread, a tool's input, a question) is made plain (`plain`:
+control characters (C0, C1, DEL), invalid UTF-8 and the default-ignorable
+characters (format characters such as bidirectional overrides and isolates,
+zero-width characters, the soft hyphen and tags; variation selectors; the
+other default-ignorables, the Hangul fillers and U+034F, U+17B4 and U+17B5
+among them) are dropped, and line breaks, tabs and the line and paragraph
+separators become spaces unless the field is `Multiline`, which keeps line
+breaks and tabs). Text the agent wrote (a message, an answer, a group's name;
+`ByAgent`) is sent as it is, so `Build` refuses it when it holds any such
+character, a carriage return or a line or paragraph separator
+(`checkAgentText`), and its schema's `maxLength` (in characters) refuses one
+longer than the route takes: the field is exactly what runs. A clone's target
+folder that `plain` would change is refused the same way. An identifier is
+named in the sentence, or in a field's label, only when it passes its own
+check (`validRepository`, `validSegment`, a hex head, a known merge method or
+job kind); otherwise the sentence names it generically ("a pull request", "an
+agent session") and the value is a quoted field. `refresh` and
+`register_repository` send, and name, the registry's spelling of the
+repository, not the agent's. A paid run is refused, at `Propose` and at
+`Confirm`, rather than shown with a guess when its settings cannot be read,
+or when `GET /api/settings` could read only the config file and not the
+saved preferences (it then answers `preferences_unavailable`).
+
+`ProposeOperation(ctx, consumer, name, args)` refuses any consumer but a
+chat, a page that does not offer the operation, and a target `Build` or
+`Describe` refuses (another page's pull request, a session, request, job,
+group or repository the page does not list); `Build` also refuses what the
+button's own code refuses (a draft or closed pull request, a head that moved
+since the page loaded, a merge method GitHub does not allow, a fork's branch
+update, a review or fix already running, a session that is not at its
+prompt). It records the operation, its request and its summary; nothing
+runs. Each operation has a `propose_<name>` tool, global (an action neither
+lists nor calls it), listed on the pages that offer it, whose answer is the
+`Receipt` (`{id, page, target, kind}`) and a fixed status, never the summary,
+the request or anything a route answered.
+
+`Confirm(ctx, consumer, id, seen)` checks that the consumer is live, the person
+still has the page the proposal was made on open, showing the same thing (as
+`Save` does), and runs `Describe` again against the page as it is now (the
+request still pending on the page, the job still on it, the clone still
+registered); a refusal leaves the proposal open. Each operation proposal
+holds its summary's revision (`OperationProposal.Revision`, the SHA-256 of
+the summary's JSON), which `List` returns and the app sends back as `seen`:
+under the store's lock, `seen` must be the stored summary's revision and that
+must be the revision of the summary `Describe` just wrote. When either
+differs (another title, harness, model or effort; or a summary that another
+`Confirm` replaced meanwhile, as a double click's second confirm finds),
+nothing runs, `Confirm` returns `ErrOperationChanged` and the proposal stays
+open holding the new summary and revision, for the person to read and confirm
+again. It then takes the proposal
+out of the store under the lock a revoke and every other `Confirm` take, so
+of two confirms only one runs it and a revoke either comes first and nothing
+runs or comes after the person's confirm took it; and runs its request once,
+through the writer, with a context that the caller leaving does not cancel.
+The writer is the GET `Reader`'s counterpart: it sends only the operation's
+own method to the path its route template makes from the `{name}` values,
+each a plain segment (`[A-Za-z0-9._~@+:-]`, not `.` or `..`, no `/`, `%`,
+`?` or `#`), checks that the request's method and path are those and that
+nothing was escaped, and keeps at most 1 MiB of the answer. `Confirm` returns
+an `OperationOutcome` (the route's status and a short message from its body)
+to the app; an error means nothing ran, and a status other than 2xx is the
+route's own refusal. There is no app route for listing or confirming
+proposals yet.
+
+The chat's `Consumer.Session` (`agent:id`, the agent `claude-code` or
+`codex` as the live sessions and agent requests name them, the id one plain
+segment) is the agent session it runs in, set at `Mint` or once afterwards
+with `Registry.SetSession` (Codex reports its session id late); setting
+another session after one is refused, so no proposal can come to target the
+chat's own session after it was made. A chat never proposes answering a
+request of its own session, nor messaging, queuing for, ending or bringing
+forward its own session; while its session is unknown it proposes none of
+these for any session (fail closed). These are checked at `Propose` and at
+`Confirm`. `answer_request` carries only allow or deny and a question's
+answers: a permission's suggestions (always allow, a permission mode) can
+change the agent's permissions for good, so only the person applies them, in
+the app. Allowing (or answering) a request the store marks `altered`, or one
+holding text `plain` would change, is refused: the person answers it in the
+app or the terminal. Denying it may be proposed.
+
+| Operation (tool `propose_<name>`) | Pages | Route | Paid | Irreversible |
+| --- | --- | --- | --- | --- |
+| `merge` (method from `/api/prs/merge-options`, default GitHub's) | `pull_request` | `POST /api/prs/merge` | | yes |
+| `update_branch` | `pull_request` | `POST /api/prs/update-branch` | | |
+| `rerun_checks` | `pull_request` | `POST /api/prs/rerun-checks` | | |
+| `rerun_failed_job` (a failing check's `job_id`) | `pull_request` | `POST /api/prs/rerun-job` | | |
+| `resolve_thread` (an unresolved thread the account can resolve) | `pull_request` | `POST /api/prs/resolve-thread` | | |
+| `fix` (`only: checks` for Fix CI) | `pull_request` | `POST /api/jobs` (`kind: fix`, mode `single`) | yes | |
+| `review` (no isolation confirmation: the route refuses a fork's and the person starts it in the app) | `pull_request`, `inbox`, `pulls` | `POST /api/jobs` (a review item, mode `single`) | yes | |
+| `refresh` (by repository, else a registered clone of it) | `inbox`, `pulls` | `POST /api/prs/refresh` | | |
+| `answer_request` (allow or deny, a question's answers; no suggestion) | `sessions`, `session` (its own requests) | `POST /api/agent-requests/{id}/answer` | | |
+| `send_message` (a session at its prompt) | `sessions`, `session` | `POST /api/live-sessions/{agent}/{id}/message` | | |
+| `queue_message` (a running session) | `sessions`, `session` | `POST /api/agent-messages` | | |
+| `end_session` (an endable session) | `sessions`, `session` | `POST /api/live-sessions/{agent}/{id}/end` | | yes |
+| `focus_session` | `sessions`, `session` | `POST /api/live-sessions/{agent}/{id}/focus` | | |
+| `cancel_job` (one `GET /api/jobs` lists as queued or running) | `jobs`, `job` (its own) | `POST /api/jobs/{id}/cancel` | | |
+| `create_group` (2 to 8 pull requests of one repository the list shows) | `pulls` | `POST /api/groups` | | |
+| `delete_group` | `group` (its own) | `DELETE /api/groups/{id}` | | yes |
+| `register_repository` | `repositories` | `POST /api/repositories` | | |
+| `remove_repository` | `repositories` (a repository's page: its own) | `DELETE /api/repositories/{owner}/{name}` | | yes |
+| `remove_clone` | `repositories` (a repository's page: its clones) | `DELETE /api/repos/{id}` | | yes |
+| `clone_repository` (into the app's default target) | `repositories` (a repository's page: its own) | `POST /api/repositories/{owner}/{name}/clone` | | |
+
+A clone goes where the app's Clone dialog would put it by default: `Build`
+reads `GET /api/repositories/{owner}/{name}/clone-target` and sends that folder,
+which the summary names, so the clone goes where the person saw. The agent
+cannot name a folder; to clone elsewhere the person uses the app's dialog.
+Not offered, because the app has no such button or route: marking a pull
+request seen in the Inbox (the Inbox's seen state is the app's own UI state,
+`PUT /api/ui-state/inbox`; `POST /api/jobs/{id}/seen` is the tray's), rerunning
+or starting a job from the Jobs pages (reviews and fixes start from the pages
+above), registering a local folder (the person's file picker), and running a
+review with a draft prompt (no route takes draft prompt text).
+
+Tests run each operation against the daemon's real routes
+(`uiserver/operations_test.go`): the registry, review groups, jobs queue (an
+executor that runs nothing), agent requests and live sessions (recording
+senders, enders and focuser) are real; the merge, update, rerun, thread and
+refresh handlers are real over a recording GitHub fake, and the clone route
+over a recording clone function. They check nothing is written before
+`Confirm`, one write of the operation's own method and route after it, its
+effect, that a second `Confirm` runs nothing, that a route's refusal comes back
+and changes nothing, and that crafted arguments (traversal, encoded slashes,
+ids with `/`, queries) never reach another route.
 
 ### Transports and control protocol
 

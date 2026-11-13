@@ -3,6 +3,7 @@ package uiserver
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -204,6 +205,36 @@ func (a LocalAPI) getPlanUsageSettings(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{"plans": planEntries(prefs, a.Config, a.plansFromHandler(r))})
 }
 
+// checkPlanProvider refuses a provider the plan usage choice does not list,
+// as PUT /api/settings/plan-usage does (400).
+func checkPlanProvider(provider string) error {
+	for _, p := range planProviders {
+		if p.Provider == provider {
+			return nil
+		}
+	}
+	return errors.New("provider must be claude or codex")
+}
+
+// setPlanShown is PUT /api/settings/plan-usage's change: provider's plan
+// shown or hidden, or with nil following baum's backends again.
+func setPlanShown(p repos.Preferences, provider string, shown *bool) repos.Preferences {
+	show := map[string]bool{}
+	for k, v := range p.PlanUsage.Show {
+		show[k] = v
+	}
+	if shown == nil {
+		delete(show, provider)
+	} else {
+		show[provider] = *shown
+	}
+	p.PlanUsage.Show = nil
+	if len(show) > 0 {
+		p.PlanUsage.Show = show
+	}
+	return p
+}
+
 // putPlanUsageSettings sets one plan's choice: shown true or false, or null to
 // follow baum's backends again. Other plans keep theirs.
 func (a LocalAPI) putPlanUsageSettings(w http.ResponseWriter, r *http.Request) {
@@ -218,29 +249,12 @@ func (a LocalAPI) putPlanUsageSettings(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid JSON request", http.StatusBadRequest)
 		return
 	}
-	known := false
-	for _, p := range planProviders {
-		known = known || p.Provider == input.Provider
-	}
-	if !known {
-		http.Error(w, "provider must be claude or codex", http.StatusBadRequest)
+	if err := checkPlanProvider(input.Provider); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	prefs, err := a.Registry.UpdatePreferences(r.Context(), func(p repos.Preferences) repos.Preferences {
-		show := map[string]bool{}
-		for k, v := range p.PlanUsage.Show {
-			show[k] = v
-		}
-		if input.Shown == nil {
-			delete(show, input.Provider)
-		} else {
-			show[input.Provider] = *input.Shown
-		}
-		p.PlanUsage.Show = nil
-		if len(show) > 0 {
-			p.PlanUsage.Show = show
-		}
-		return p
+	prefs, err := a.updatePreferences(r.Context(), nil, func(p repos.Preferences) repos.Preferences {
+		return setPlanShown(p, input.Provider, input.Shown)
 	})
 	if err != nil {
 		http.Error(w, "Could not save plan usage settings", http.StatusInternalServerError)

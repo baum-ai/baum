@@ -435,20 +435,21 @@ func TestCurrentPageNamesTheSectionsTools(t *testing.T) {
 	}
 	setPage(t, s, id, PageContext{Page: PageSettings, Section: "computer"})
 	out(t, s, token, "current_page", nil, &page)
-	if page.Section != "computer" || !slices.Equal(page.SectionTools, []string{"settings_computer", "diagnostics_summary"}) {
+	if page.Section != "computer" || !slices.Equal(page.SectionTools, []string{"settings_computer", "diagnostics_summary", "propose_time_limits", "propose_job_concurrency", "propose_codex_approvals", "propose_agent_env"}) {
 		t.Errorf("settings: %+v", page)
 	}
-	for _, tool := range append(slices.Clone(settingsToolNames), commonToolNames...) {
+	settingsPage := slices.Concat(settingsToolNames, commonToolNames, proposePageTools[PageSettings])
+	for _, tool := range settingsPage {
 		if !slices.Contains(page.Tools, tool) {
 			t.Errorf("settings lacks %s: %v", tool, page.Tools)
 		}
 	}
-	if len(page.Tools) != len(settingsToolNames)+len(commonToolNames) {
+	if len(page.Tools) != len(settingsPage) {
 		t.Errorf("settings lists %v", page.Tools)
 	}
 	setPage(t, s, id, PageContext{Page: PageSettings})
 	out(t, s, token, "current_page", nil, &page)
-	if len(page.SectionTools) != 0 || len(page.Tools) != len(settingsToolNames)+len(commonToolNames) {
+	if len(page.SectionTools) != 0 || len(page.Tools) != len(settingsPage) {
 		t.Errorf("settings without a section: %+v", page)
 	}
 	// The Repositories page lists a repository's tools only with a repository.
@@ -466,7 +467,7 @@ func TestCurrentPageNamesTheSectionsTools(t *testing.T) {
 			t.Errorf("a repository's page lacks %s: %v", tool, page.Tools)
 		}
 	}
-	if !slices.Equal(page.SectionTools, []string{"repository_prompts"}) {
+	if !slices.Equal(page.SectionTools, []string{"repository_prompts", "propose_prompt", "propose_prompt_reset"}) {
 		t.Errorf("a repository's prompts section: %+v", page)
 	}
 }
@@ -593,7 +594,7 @@ func TestABlankRepositoryIsNoRepository(t *testing.T) {
 	}
 	setPage(t, s, id, PageContext{Page: PageRepositories, Repository: " acme/web ", Section: "prompts"})
 	out(t, s, token, "current_page", nil, &page)
-	if p, _ := s.Registry.Page(id); p.Repository != "acme/web" || !slices.Equal(page.SectionTools, []string{"repository_prompts"}) {
+	if p, _ := s.Registry.Page(id); p.Repository != "acme/web" || !slices.Equal(page.SectionTools, []string{"repository_prompts", "propose_prompt", "propose_prompt_reset"}) {
 		t.Errorf("a padded repository: %q %+v", p.Repository, page)
 	}
 }

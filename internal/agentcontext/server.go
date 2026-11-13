@@ -66,6 +66,10 @@ type Options struct {
 	// settings rather than run them on every tool call. Nil has the tool
 	// report decision capture unavailable.
 	DecisionSettings func(ctx context.Context) (json.RawMessage, error)
+	// Proposers take the changes a chat proposes, by page name: the save of
+	// each is the same change the page's own save makes (see proposetools.go
+	// for the tools and their targets). A page without one takes none.
+	Proposers map[string]Proposer
 }
 
 // Server is the MCP server. Register tools and pages before serving.
@@ -83,22 +87,24 @@ type Server struct {
 	mu               sync.RWMutex
 	tools            []Tool
 	pages            map[string]PageSpec
+	operations       map[string]*Operation
 }
 
 func New(opts Options) *Server {
 	registry := NewRegistry()
 	s := &Server{Registry: registry, reader: NewReader(opts.API, opts.Clone), envelope: newEnvelope(registry.live), version: opts.Version, planUsage: opts.PlanUsage, pickList: opts.PickList,
-		planChoices: opts.PlanChoices, codexHooks: opts.CodexHooks, decisionSettings: opts.DecisionSettings, pages: map[string]PageSpec{}}
+		planChoices: opts.PlanChoices, codexHooks: opts.CodexHooks, decisionSettings: opts.DecisionSettings, pages: map[string]PageSpec{}, operations: map[string]*Operation{}}
 	s.Proposals = newProposals(registry, func(page string) Proposer {
 		spec, _ := s.page(page)
 		return spec.Proposer
-	})
+	}, s.operation, s.reader, opts.API)
 	registry.onRevoke(s.envelope.forget)
 	pull, group, reviews, common := s.pullTools(), s.groupTools(), s.reviewTools(), s.commonTools()
 	lists, sessions, timeline := s.listTools(), s.sessionTools(), s.timelineTools()
 	extras, analytics, repositories := s.pullExtraTools(), s.analyticsTools(), s.repositoryTools()
 	settings, repositoryPage := s.settingsTools(), repositoryPageToolList()
-	for _, t := range slices.Concat(s.builtinTools(), pull, group, reviews, common, lists, sessions, timeline, extras, analytics, repositories, settings, repositoryPage) {
+	proposing := proposeTools()
+	for _, t := range slices.Concat(s.builtinTools(), pull, group, reviews, common, lists, sessions, timeline, extras, analytics, repositories, settings, repositoryPage, proposing) {
 		if err := t.compile(); err != nil {
 			panic(err)
 		}
@@ -162,7 +168,78 @@ func New(opts Options) *Server {
 	s.pages[PageSettings] = PageSpec{Name: PageSettings, Tools: withCommonTools(slices.Concat(names(settings), byName(repositories, "diagnostics_summary")))}
 	s.pages[PageTimeline] = PageSpec{Name: PageTimeline, Tools: withCommonTools(names(timeline))}
 	s.pages[PageFeature] = PageSpec{Name: PageFeature, Tools: withCommonTools(names(timeline))}
+	// The pages that save something list their propose_* tools, and take
+	// proposals through the proposer given for them.
+	for page, tools := range proposePageTools {
+		spec := s.pages[page]
+		spec.Tools = append(spec.Tools, tools...)
+		s.pages[page] = spec
+	}
+	for page, proposer := range opts.Proposers {
+		if spec, ok := s.pages[page]; ok {
+			spec.Proposer = proposer
+			s.pages[page] = spec
+		}
+	}
+	// The operations a chat proposes and the person confirms, each with its
+	// propose_* tool, listed on the pages that offer it.
+	for _, op := range operations() {
+		if err := s.RegisterOperation(op); err != nil {
+			panic(err)
+		}
+	}
 	return s
+}
+
+// RegisterOperation adds an operation and its propose_* tool, and lists the
+// tool on the pages that offer it. Names are unique.
+func (s *Server) RegisterOperation(op Operation) error {
+	if err := op.compile(); err != nil {
+		return err
+	}
+	tool := operationTool(&op)
+	if err := tool.compile(); err != nil {
+		return err
+	}
+	op.schema = tool.schema
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.operations[op.Name]; ok {
+		return fmt.Errorf("operation %s registered twice", op.Name)
+	}
+	if _, ok := s.tool(tool.Name); ok {
+		return fmt.Errorf("tool %s registered twice", tool.Name)
+	}
+	s.operations[op.Name] = &op
+	s.tools = append(s.tools, tool)
+	for _, page := range op.Pages {
+		spec := s.pages[page]
+		spec.Name = page
+		if !slices.Contains(spec.Tools, tool.Name) {
+			spec.Tools = append(spec.Tools, tool.Name)
+		}
+		s.pages[page] = spec
+	}
+	return nil
+}
+
+// operation finds a registered operation by name.
+func (s *Server) operation(name string) *Operation {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.operations[name]
+}
+
+// Operations are the registered operations, by name, so a test can check
+// each one's route, pages and flags.
+func (s *Server) Operations() map[string]Operation {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	out := map[string]Operation{}
+	for name, op := range s.operations {
+		out[name] = *op
+	}
+	return out
 }
 
 // ToolReads are the route prefixes each registered tool may read, by tool
@@ -178,8 +255,9 @@ func (s *Server) ToolReads() map[string][]string {
 }
 
 // ToolProjected are the exact otherwise-unreadable routes each registered
-// tool may read in process (projectedReads), by tool name; a tool with none is
-// not listed.
+// tool may read in process (projectedReads), by tool name, with an
+// operation's under its propose_* tool's name; a tool with none is not
+// listed.
 func (s *Server) ToolProjected() map[string][]string {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -187,6 +265,11 @@ func (s *Server) ToolProjected() map[string][]string {
 	for _, t := range s.tools {
 		if len(t.Projected) > 0 {
 			out[t.Name] = slices.Clone(t.Projected)
+		}
+	}
+	for _, op := range s.operations {
+		if len(op.Projected) > 0 {
+			out["propose_"+op.Name] = slices.Clone(op.Projected)
 		}
 	}
 	return out

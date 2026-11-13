@@ -30,7 +30,10 @@ each `{id, target: {kind, id, title}, body, place, head, created}` with a
 unique `id` (1–64 of `A-Za-z0-9_-`), `kind` `general`, `section`, `risk` or
 `file` (all but `general` with an `id`), a non-blank body, `place` null or
 `{path, line, side, start_line?}` (side `RIGHT` or `LEFT`, `start_line`
-before `line`), and `head` empty or the hex commit the place is on. An optional `sent` holds
+before `line`), and `head` empty or the hex commit the place is on;
+`CheckReviewComment` applies these rules to one comment and says which it
+breaks (a chat's proposed comment is checked with it, then appended with
+`Replace` at the revision it was read at). An optional `sent` holds
 at most 20 reviews sent from the app, each `{url, event, at, note, comments}`
 with an `https://` URL, `event` `APPROVE`, `COMMENT` or `REQUEST_CHANGES`, and
 at most 100 `{title, where, body}` comments.

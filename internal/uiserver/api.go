@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -13,7 +12,6 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"golang.org/x/sync/singleflight"
@@ -270,7 +268,8 @@ func (a LocalAPI) Handler() *LocalHandler {
 		}
 		fixBackend, fixModel, fixEffort, fixClaudeDir, fixCodexHome := "", "", "", "", ""
 		concurrency := repos.MaxJobConcurrency
-		if prefs, err := a.Registry.Preferences(r.Context()); err == nil {
+		prefs, prefsErr := a.Registry.Preferences(r.Context())
+		if prefsErr == nil {
 			concurrency = prefs.Concurrency()
 			cfg = prefs.Resolve(cfg)
 			if prefs.FixBackend != nil {
@@ -322,10 +321,14 @@ func (a LocalAPI) Handler() *LocalHandler {
 			// Home is the user's home directory, which the app writes as ~
 			// in those paths.
 			Home string `json:"home"`
+			// The app's saved choices could not be read, so the answer is
+			// the config file's alone: not what a run started now would use
+			// once they can be read again.
+			PreferencesUnavailable bool `json:"preferences_unavailable,omitempty"`
 		}{cfg.Backend, cfg.Model, cfg.Budgets, cfg.Caps, cfg.AgentEnv, source, fixBackend, fixModel, cfg.Effort, fixEffort, concurrency,
 			minutes(cfg.Budgets.ReviewTimeout), minutes(cfg.Budgets.RunTimeout),
 			cfg.ClaudeConfigDir, fixClaudeDir, defaultAgentDir(cfg, agentdirs.Claude), agentdirs.Claude.All(""),
-			cfg.CodexHome, fixCodexHome, defaultAgentDir(cfg, agentdirs.Codex), agentdirs.Codex.All(""), userHome()})
+			cfg.CodexHome, fixCodexHome, defaultAgentDir(cfg, agentdirs.Codex), agentdirs.Codex.All(""), userHome(), prefsErr != nil})
 	})
 	// The time limits apply to runs that start after the change.
 	mux.HandleFunc("PUT /api/settings/time-limits", func(w http.ResponseWriter, r *http.Request) {
@@ -340,13 +343,12 @@ func (a LocalAPI) Handler() *LocalHandler {
 			http.Error(w, "invalid JSON request", http.StatusBadRequest)
 			return
 		}
-		if input.ReviewTimeLimit < 1 || input.RunTimeLimit < 1 || repos.ValidateTimeLimit(input.ReviewTimeLimit) != nil || repos.ValidateTimeLimit(input.RunTimeLimit) != nil {
-			http.Error(w, fmt.Sprintf("time limits must be between 1 and %d minutes", repos.MaxTimeLimit), http.StatusBadRequest)
+		if err := checkTimeLimits(input.ReviewTimeLimit, input.RunTimeLimit); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		prefs, err := a.Registry.UpdatePreferences(r.Context(), func(p repos.Preferences) repos.Preferences {
-			p.ReviewTimeLimit, p.RunTimeLimit = input.ReviewTimeLimit, input.RunTimeLimit
-			return p
+		prefs, err := a.updatePreferences(r.Context(), nil, func(p repos.Preferences) repos.Preferences {
+			return setTimeLimits(p, input.ReviewTimeLimit, input.RunTimeLimit)
 		})
 		if err != nil {
 			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
@@ -386,12 +388,8 @@ func (a LocalAPI) Handler() *LocalHandler {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		if len(input.AgentEnv) == 0 {
-			input.AgentEnv = nil
-		}
-		prefs, err := a.Registry.UpdatePreferences(r.Context(), func(p repos.Preferences) repos.Preferences {
-			p.AgentEnv = input.AgentEnv
-			return p
+		prefs, err := a.updatePreferences(r.Context(), nil, func(p repos.Preferences) repos.Preferences {
+			return setAgentEnv(p, input.AgentEnv)
 		})
 		if err != nil {
 			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
@@ -399,9 +397,8 @@ func (a LocalAPI) Handler() *LocalHandler {
 		}
 		writeJSON(w, map[string]map[string]string{"agent_env": prefs.Resolve(a.Config).AgentEnv})
 	})
-	// How many jobs run at once applies to the running queue at once; one
-	// change at a time, so the queue ends with the saved value.
-	var concurrencyMu sync.Mutex
+	// How many jobs run at once applies to the running queue at once
+	// (saveJobConcurrency).
 	mux.HandleFunc("PUT /api/settings/job-concurrency", func(w http.ResponseWriter, r *http.Request) {
 		var input struct {
 			JobConcurrency int `json:"job_concurrency"`
@@ -413,22 +410,14 @@ func (a LocalAPI) Handler() *LocalHandler {
 			http.Error(w, "invalid JSON request", http.StatusBadRequest)
 			return
 		}
-		if input.JobConcurrency < 1 || input.JobConcurrency > repos.MaxJobConcurrency {
-			http.Error(w, fmt.Sprintf("job_concurrency must be between 1 and %d", repos.MaxJobConcurrency), http.StatusBadRequest)
+		if err := checkJobConcurrency(input.JobConcurrency); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		concurrencyMu.Lock()
-		defer concurrencyMu.Unlock()
-		prefs, err := a.Registry.UpdatePreferences(r.Context(), func(p repos.Preferences) repos.Preferences {
-			p.JobConcurrency = input.JobConcurrency
-			return p
-		})
+		prefs, err := a.saveJobConcurrency(r.Context(), input.JobConcurrency, nil)
 		if err != nil {
 			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 			return
-		}
-		if a.ConcurrencyChanged != nil {
-			a.ConcurrencyChanged(prefs.Concurrency())
 		}
 		writeJSON(w, map[string]int{"job_concurrency": prefs.Concurrency()})
 	})

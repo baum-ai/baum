@@ -264,18 +264,28 @@ func (h *API) update(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &request) {
 		return
 	}
-	g, err := h.Store.Update(r.Context(), r.PathValue("id"), request.Name, request.Members)
+	g, err := h.Update(r.Context(), r.PathValue("id"), func(Group) (*string, []int, error) { return request.Name, request.Members, nil })
 	if err != nil {
 		fail(w, err)
 		return
 	}
-	h.changed()
 	v, err := h.view(r.Context(), g, h.heads(r.Context()))
 	if err != nil {
 		fail(w, err)
 		return
 	}
 	respond(w, http.StatusOK, v)
+}
+
+// Update is what PATCH /api/groups/{id} does: Store.UpdateWith, then
+// Changed after a save. A proposal's save goes through it too.
+func (h *API) Update(ctx context.Context, id string, edit func(Group) (name *string, members []int, err error)) (Group, error) {
+	g, err := h.Store.UpdateWith(ctx, id, edit)
+	if err != nil {
+		return Group{}, err
+	}
+	h.changed()
+	return g, nil
 }
 
 func (h *API) remove(w http.ResponseWriter, r *http.Request) {

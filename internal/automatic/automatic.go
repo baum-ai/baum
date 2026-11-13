@@ -52,6 +52,9 @@ type Registry interface {
 	Repositories(context.Context) ([]repos.Repository, error)
 	Preferences(context.Context) (repos.Preferences, error)
 	UpdatePreferences(context.Context, func(repos.Preferences) repos.Preferences) (repos.Preferences, error)
+	// UpdatePreferencesIf is UpdatePreferences with an edit that may refuse,
+	// writing nothing (SavePreferences).
+	UpdatePreferencesIf(context.Context, func(repos.Preferences) (repos.Preferences, error)) (repos.Preferences, error)
 	RepositorySettings(ctx context.Context, repository string) (repos.Settings, bool, error)
 }
 

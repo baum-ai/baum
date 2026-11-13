@@ -172,20 +172,84 @@ func decisionSettingsOf(p repos.Preferences) decisionSettings {
 	return out
 }
 
+// decisionsInput is the body of PUT /api/settings/decisions. Enabled is
+// required; a nil backend or effort keeps the saved one.
+type decisionsInput struct {
+	Enabled *bool   `json:"enabled"`
+	Backend *string `json:"backend,omitempty"`
+	Model   *string `json:"model,omitempty"`
+	Effort  *string `json:"effort,omitempty"`
+	// The route checks each directory with agentdirs.Agent.Choose before the
+	// save; a proposal sets neither.
+	ClaudeConfigDir *string `json:"claude_config_dir,omitempty"`
+	CodexHome       *string `json:"codex_home,omitempty"`
+}
+
+// edit is the route's change of the saved preferences p, or the reason it
+// refuses it (400) and p is kept.
+func (input decisionsInput) edit(p repos.Preferences) (repos.Preferences, error) {
+	if input.Enabled == nil {
+		return p, errors.New("enabled is required")
+	}
+	next := p
+	next.Decisions = repos.DecisionPreferences{Backend: p.Decisions.Backend, Effort: p.Decisions.Effort,
+		ClaudeConfigDir: p.Decisions.ClaudeConfigDir, CodexHome: p.Decisions.CodexHome}
+	if !*input.Enabled {
+		next.Decisions.Enabled = new(false)
+	}
+	if input.Backend != nil {
+		next.Decisions.Backend = nil
+		if *input.Backend != "" {
+			next.Decisions.Backend = new(config.Backend(*input.Backend))
+		}
+	}
+	if input.ClaudeConfigDir != nil {
+		next.Decisions.ClaudeConfigDir = nil
+		if *input.ClaudeConfigDir != "" {
+			next.Decisions.ClaudeConfigDir = input.ClaudeConfigDir
+		}
+	}
+	if input.CodexHome != nil {
+		next.Decisions.CodexHome = nil
+		if *input.CodexHome != "" {
+			next.Decisions.CodexHome = input.CodexHome
+		}
+	}
+	if next.Decisions.Backend == nil && (input.ClaudeConfigDir == nil || *input.ClaudeConfigDir == "") {
+		next.Decisions.ClaudeConfigDir = nil
+	}
+	if next.Decisions.Backend == nil && (input.CodexHome == nil || *input.CodexHome == "") {
+		next.Decisions.CodexHome = nil
+	}
+	if input.Model != nil && strings.TrimSpace(*input.Model) != "" {
+		next.Decisions.Model = new(strings.TrimSpace(*input.Model))
+	}
+	if input.Effort != nil {
+		var err error
+		if next.Decisions.Effort, err = config.ParseEffort(*input.Effort); err != nil {
+			return p, err
+		}
+	}
+	if err := next.ValidateChange(p); err != nil {
+		return p, err
+	}
+	return next, nil
+}
+
+// decisionsChanged follows a saved change of the decision capture settings.
+func (a LocalAPI) decisionsChanged() {
+	if a.DecisionsChanged != nil {
+		a.DecisionsChanged()
+	}
+}
+
 // putDecisionSettings serves PUT /api/settings/decisions, which replaces the
 // whole decision capture preferences, except that a missing backend, effort,
 // Claude Code configuration directory or Codex home keeps the saved one, as
 // an app from before them sends none. Following the reviews' agent again (""
 // backend) drops the directories, which then follow the reviews' too.
 func (a LocalAPI) putDecisionSettings(w http.ResponseWriter, r *http.Request) {
-	var input struct {
-		Enabled         *bool   `json:"enabled"`
-		Backend         *string `json:"backend"`
-		Model           *string `json:"model"`
-		Effort          *string `json:"effort"`
-		ClaudeConfigDir *string `json:"claude_config_dir"`
-		CodexHome       *string `json:"codex_home"`
-	}
+	var input decisionsInput
 	r.Body = http.MaxBytesReader(w, r.Body, 4<<10)
 	d := json.NewDecoder(r.Body)
 	d.DisallowUnknownFields()
@@ -221,45 +285,8 @@ func (a LocalAPI) putDecisionSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	var invalid error
 	prefs, err := a.Registry.UpdatePreferences(r.Context(), func(p repos.Preferences) repos.Preferences {
-		next := p
-		next.Decisions = repos.DecisionPreferences{Backend: p.Decisions.Backend, Effort: p.Decisions.Effort,
-			ClaudeConfigDir: p.Decisions.ClaudeConfigDir, CodexHome: p.Decisions.CodexHome}
-		if !*input.Enabled {
-			next.Decisions.Enabled = new(false)
-		}
-		if input.Backend != nil {
-			next.Decisions.Backend = nil
-			if *input.Backend != "" {
-				next.Decisions.Backend = new(config.Backend(*input.Backend))
-			}
-		}
-		if input.ClaudeConfigDir != nil {
-			next.Decisions.ClaudeConfigDir = nil
-			if *input.ClaudeConfigDir != "" {
-				next.Decisions.ClaudeConfigDir = input.ClaudeConfigDir
-			}
-		}
-		if input.CodexHome != nil {
-			next.Decisions.CodexHome = nil
-			if *input.CodexHome != "" {
-				next.Decisions.CodexHome = input.CodexHome
-			}
-		}
-		if next.Decisions.Backend == nil && (input.ClaudeConfigDir == nil || *input.ClaudeConfigDir == "") {
-			next.Decisions.ClaudeConfigDir = nil
-		}
-		if next.Decisions.Backend == nil && (input.CodexHome == nil || *input.CodexHome == "") {
-			next.Decisions.CodexHome = nil
-		}
-		if input.Model != nil && strings.TrimSpace(*input.Model) != "" {
-			next.Decisions.Model = new(strings.TrimSpace(*input.Model))
-		}
-		if input.Effort != nil {
-			if next.Decisions.Effort, invalid = config.ParseEffort(*input.Effort); invalid != nil {
-				return p
-			}
-		}
-		if invalid = next.ValidateChange(p); invalid != nil {
+		var next repos.Preferences
+		if next, invalid = input.edit(p); invalid != nil {
 			return p
 		}
 		return next
@@ -272,8 +299,6 @@ func (a LocalAPI) putDecisionSettings(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, invalid.Error(), http.StatusBadRequest)
 		return
 	}
-	if a.DecisionsChanged != nil {
-		a.DecisionsChanged()
-	}
+	a.decisionsChanged()
 	writeJSON(w, map[string]decisionView{"decisions": a.decisionView(r.Context(), prefs)})
 }

@@ -51,6 +51,13 @@ its HTTP handler uses.
   `MaxTimeLimit`, 240), replace the config file's `review_timeout` and
   `run_timeout` in `Preferences.Resolve`; a value out of range keeps the
   file's and does not block saving other preferences.
+  `UpdatePreferences` edits them in one transaction that holds the write lock
+  from its start; `UpdatePreferencesIf` is the same with an edit that may
+  refuse, rolling back and writing nothing. A chat's proposal of a setting is
+  saved through it, its revision compared with the preferences the
+  transaction reads. `UpdateRepositoryIf` is `UpdateRepository` the same way:
+  the edit gets a picked repository's stored settings in the writing
+  transaction.
 
 - `prompt_overrides(repository, prompt_id, text, based_on, updated_at)`:
   custom review, fix and extraction prompts (ids from `agent/prompt`). They
@@ -64,6 +71,11 @@ its HTTP handler uses.
     repository (`ErrNotPicked`, checked in the transaction); the global scope
     needs none. `DeletePromptOverride` fails with `ErrInvalidPrompt` for an
     unknown id; deleting a missing row is no error.
+  - `PutPromptOverrideIf` is what `PUT .../prompts/{id}` does (a text set,
+    nil or `""` deleted) when a check accepts the prompt's rows
+    (`PromptState`: the scope's own and, for a repository, the global one) as
+    the writing transaction reads them; the route passes no check, a chat's
+    proposal its revision. `PromptState` reads those rows.
   - `ResolvePrompts` picks per prompt id the repository's text, else the
     global one, else the built-in (absent from the returned
     `prompt.Overrides`), and reports a `PromptSource` for every id. A

@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"maps"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 )
@@ -35,7 +36,21 @@ type Consumer struct {
 	// Repository ("owner/name") and PullRequest bind an Action.
 	Repository  string `json:"repository,omitempty"`
 	PullRequest int    `json:"pull_request,omitempty"`
+	// Session is the agent session a chat runs in, as "agent:id" (the
+	// agent, such as claude-code or codex, and its session id), set at Mint
+	// or once later (Registry.SetSession). A chat never proposes answering a
+	// request of its own session (approving its own tool call), and while its
+	// session is unknown it answers none; nor does it message, end or bring
+	// forward its own session.
+	Session string `json:"session,omitempty"`
 }
+
+// sessionAgents are the agents a chat runs in, as livesessions and
+// agentrequests name them.
+var sessionAgents = []string{"claude-code", "codex"}
+
+// SessionKey is the Consumer.Session of an agent's session.
+func SessionKey(agent, id string) string { return agent + ":" + id }
 
 // The pages a consumer can be on: the app's sidebar pages, then the pages
 // that show one thing.
@@ -165,9 +180,21 @@ func (c Consumer) validate() error {
 		if c.Repository != "" || c.PullRequest != 0 {
 			return errors.New("a chat is bound to no repository or pull request")
 		}
+		if c.Session != "" {
+			// The agent is named as the live sessions and agent requests
+			// name it, so a session spelled otherwise can never fail to
+			// match the chat's own requests.
+			agent, id, ok := strings.Cut(c.Session, ":")
+			if !ok || !slices.Contains(sessionAgents, agent) || !validSegment(id) {
+				return fmt.Errorf(`a chat's session is "agent:id", the agent one of %s`, strings.Join(sessionAgents, ", "))
+			}
+		}
 	case Action:
 		if !validRepository(c.Repository) || c.PullRequest <= 0 {
 			return errors.New("an action needs an owner/name repository and a pull request number")
+		}
+		if c.Session != "" {
+			return errors.New("an action names no session: it proposes nothing")
 		}
 	default:
 		return fmt.Errorf("unknown consumer kind %q", c.Kind)
@@ -249,6 +276,37 @@ func (r *Registry) Consumer(id string) (Consumer, bool) {
 		return Consumer{}, false
 	}
 	return h.consumer, true
+}
+
+// SetSession records the agent session ("agent:id") the chat with this id
+// runs in, for a panel that learns it after minting the token (Codex reports
+// its session id late). It is set once: setting the same session again is
+// accepted, another one refused, so a chat's session cannot be swapped for
+// the one whose requests it would answer.
+func (r *Registry) SetSession(id, session string) error {
+	if session == "" {
+		return errors.New(`a chat's session is "agent:id"`)
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	h, ok := r.byID[id]
+	switch {
+	case !ok:
+		return ErrUnknownConsumer
+	case h.consumer.Kind != Chat:
+		return errors.New("only a chat runs in a session")
+	case h.consumer.Session == session:
+		return nil
+	case h.consumer.Session != "":
+		return errors.New("the chat's session is set already")
+	}
+	c := h.consumer
+	c.Session = session
+	if err := c.validate(); err != nil {
+		return err
+	}
+	h.consumer = c
+	return nil
 }
 
 // SetPage records the page the consumer with this id has open. An action's

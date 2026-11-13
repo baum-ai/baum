@@ -59,6 +59,11 @@ var projectedReads = map[string][]string{
 	"settings_computer":    {"/api/settings", "/api/diagnostics"},
 	"prompts":              {"/api/settings/prompts"},
 	"prompt":               {"/api/settings/prompts"},
+	// The operations that start a paid run read the harness, model and
+	// effort it will use, for the summary the person confirms; the agent
+	// gets a receipt.
+	"propose_review": {"/api/settings"},
+	"propose_fix":    {"/api/settings"},
 }
 
 // checkProjected refuses a tool a projected route it was not allowed.

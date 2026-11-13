@@ -197,6 +197,13 @@ type Request struct {
 	Input       []Row        `json:"input"`
 	Suggestions []Suggestion `json:"suggestions"`
 	Questions   []Question   `json:"questions"`
+	// Altered marks a request whose tool, input or questions are not shown
+	// exactly as the agent sent them: a value was cut at its bound, cleaned
+	// (control or format characters, invalid UTF-8, blanks folded or
+	// trimmed) or had a secret masked. The app still shows it; an agent
+	// helping the person cannot have it allowed (only the person, who can
+	// read it in the terminal, does).
+	Altered bool `json:"altered,omitempty"`
 }
 
 // Suggestion is a permission suggestion; its ID is its index.
@@ -265,7 +272,11 @@ type Store struct {
 	Now func() time.Time
 	Log *slog.Logger
 
-	once     sync.Once
+	once sync.Once
+	// saving makes each change of the settings, its write to the database
+	// and to memory, one step: SetSettingsIf's check and its write are not
+	// split by another save.
+	saving   sync.Mutex
 	mu       sync.Mutex
 	pending  map[string]*pending
 	messages map[key]Message
@@ -467,13 +478,20 @@ func (s *Store) newPending(ask Ask) (*pending, bool) {
 		masked, whole = masked && ok, whole && !cut
 		return out
 	}
+	// exact keeps what is shown of what the request asks, and records when
+	// it is not what the agent sent (Request.Altered).
+	altered := false
+	exact := func(shown, sent string) string {
+		altered = altered || shown != sent
+		return shown
+	}
 	r := Request{
 		ID: newID(), Agent: ask.Agent, SessionID: ask.SessionID, Kind: ask.Kind,
-		Tool: line(ask.Tool, maxLabel), CreatedAt: s.now(),
+		Tool: exact(line(ask.Tool, maxLabel), ask.Tool), CreatedAt: s.now(),
 		Input: []Row{}, Suggestions: []Suggestion{}, Questions: []Question{},
 	}
 	for _, row := range ask.Input {
-		r.Input = append(r.Input, Row{Label: line(row.Label, maxLabel), Value: block(row.Value, MaxValue), Code: row.Code})
+		r.Input = append(r.Input, Row{Label: exact(line(row.Label, maxLabel), row.Label), Value: exact(block(row.Value, MaxValue), row.Value), Code: row.Code})
 	}
 	for i, label := range ask.Suggestions {
 		r.Suggestions = append(r.Suggestions, Suggestion{ID: strconv.Itoa(i), Label: line(label, MaxValue)})
@@ -484,14 +502,14 @@ func (s *Store) newPending(ask Ask) (*pending, bool) {
 	}
 	questions := map[string]bool{}
 	for _, q := range ask.Questions {
-		shown := Question{Question: line(q.Question, maxText), Header: line(q.Header, maxLabel), MultiSelect: q.MultiSelect, Options: []Option{}}
+		shown := Question{Question: exact(line(q.Question, maxText), q.Question), Header: exact(line(q.Header, maxLabel), q.Header), MultiSelect: q.MultiSelect, Options: []Option{}}
 		if questions[shown.Question] {
 			return nil, false
 		}
 		questions[shown.Question] = true
 		labels := map[string]bool{}
 		for _, o := range q.Options {
-			option := Option{Label: line(o.Label, maxLabel), Description: line(o.Description, maxText)}
+			option := Option{Label: exact(line(o.Label, maxLabel), o.Label), Description: exact(line(o.Description, maxText), o.Description)}
 			if labels[option.Label] || (q.MultiSelect && strings.Contains(option.Label, ", ")) {
 				return nil, false
 			}
@@ -500,6 +518,7 @@ func (s *Store) newPending(ask Ask) (*pending, bool) {
 		}
 		r.Questions = append(r.Questions, shown)
 	}
+	r.Altered = altered
 	if !masked {
 		s.logger().Warn("an agent request was not shown: its text could not be masked")
 		return nil, false
@@ -845,7 +864,22 @@ func (s *Store) Settings() Settings {
 // SetSettings saves new settings. Turning Codex approvals off withdraws the
 // Codex requests waiting, which then fall back to Codex's own prompt.
 func (s *Store) SetSettings(settings Settings) (Settings, error) {
+	return s.SetSettingsIf(settings, nil)
+}
+
+// SetSettingsIf is SetSettings when check, if set, accepts the settings in
+// force: the check and the save are one step, so another save cannot land
+// between them. An error check returns saves nothing and is returned as it
+// is.
+func (s *Store) SetSettingsIf(settings Settings, check func(current Settings) error) (Settings, error) {
 	s.init()
+	s.saving.Lock()
+	defer s.saving.Unlock()
+	if check != nil {
+		if err := check(s.Settings()); err != nil {
+			return Settings{}, err
+		}
+	}
 	if s.Database != "" {
 		data, err := json.Marshal(settings)
 		if err != nil {

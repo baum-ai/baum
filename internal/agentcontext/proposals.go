@@ -6,14 +6,32 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
+	"net/http"
 	"slices"
+	"strings"
 	"sync"
 )
 
-// Proposal is a change an agent suggests to something a page edits. Nothing
-// changes until the user saves it.
+// ProposalKind is what a proposal asks of the person.
+type ProposalKind string
+
+const (
+	// ProposalDiff is a change to something a page edits, which the person
+	// saves (Save) or dismisses.
+	ProposalDiff ProposalKind = "diff"
+	// ProposalOperation is something the page does with a button (merge,
+	// cancel, answer), which the person confirms (Confirm) or dismisses; see
+	// Operation.
+	ProposalOperation ProposalKind = "operation"
+)
+
+// Proposal is a change an agent suggests to something a page edits, or an
+// operation it suggests the person runs. Nothing changes until the user
+// saves or confirms it.
 type Proposal struct {
-	ID string `json:"id"`
+	ID   string       `json:"id"`
+	Kind ProposalKind `json:"kind"`
 	// Page is the page whose state it changes, Target what on that page
 	// (a page's own name for it, such as a prompt's key).
 	Page   string `json:"page"`
@@ -31,6 +49,9 @@ type Proposal struct {
 	// Context is the page the consumer had open when it proposed, which the
 	// target must still belong to when the user saves.
 	Context PageContext `json:"context"`
+	// Operation is an operation proposal's operation, request and summary;
+	// nil for a diff, which uses Before, After and Revision instead.
+	Operation *OperationProposal `json:"operation,omitempty"`
 }
 
 // Proposer is how one page takes proposals. Every method gets the page
@@ -46,9 +67,30 @@ type Proposer interface {
 	// Apply saves p.After when the target is still at revision, comparing
 	// and writing in one transaction (as appdb.Update does with its
 	// revision); otherwise it changes nothing and returns ErrStale. It is the
-	// same change the page's own save makes. It runs under the proposals'
-	// lock and must not call back into Proposals.
-	Apply(ctx context.Context, page PageContext, p Proposal, revision string) error
+	// same change the page's own save makes. input is what the person added
+	// when saving; a proposer that takes none refuses any. It runs under the
+	// proposals' lock and must not call back into Proposals.
+	Apply(ctx context.Context, page PageContext, p Proposal, revision string, input SaveInput) error
+}
+
+// SaveInput is what the person adds to a proposal when saving it, from the
+// app's own save and never through an agent: the value of an agent
+// environment variable the agent proposed adding, which the agent never
+// learns. It is passed to Apply alone and never kept in the proposal.
+type SaveInput struct {
+	Value *string `json:"value,omitempty"`
+}
+
+// String, GoString and LogValue never print the value, so neither a log line
+// nor an error formatted with an input can carry it.
+func (in SaveInput) String() string       { return in.redacted() }
+func (in SaveInput) GoString() string     { return in.redacted() }
+func (in SaveInput) LogValue() slog.Value { return slog.StringValue(in.redacted()) }
+func (in SaveInput) redacted() string {
+	if in.Value == nil {
+		return "SaveInput{}"
+	}
+	return "SaveInput{Value: [withheld]}"
 }
 
 // A consumer holds at most maxProposals proposals; a new one past that is
@@ -73,12 +115,17 @@ var (
 type Proposals struct {
 	registry  *Registry
 	proposers func(page string) Proposer
+	// operation finds an operation by name; reader reads what operations
+	// read, and writer runs a confirmed one.
+	operation func(name string) *Operation
+	reader    *Reader
+	writer    writer
 	mu        sync.Mutex
 	open      map[string][]Proposal
 }
 
-func newProposals(registry *Registry, proposers func(string) Proposer) *Proposals {
-	p := &Proposals{registry: registry, proposers: proposers, open: map[string][]Proposal{}}
+func newProposals(registry *Registry, proposers func(string) Proposer, operation func(string) *Operation, reader *Reader, api http.Handler) *Proposals {
+	p := &Proposals{registry: registry, proposers: proposers, operation: operation, reader: reader, writer: writer{api}, open: map[string][]Proposal{}}
 	registry.onRevoke(func(id string) {
 		p.mu.Lock()
 		delete(p.open, id)
@@ -99,6 +146,11 @@ func (p *Proposals) Propose(ctx context.Context, consumer string, proposal Propo
 	if c.Kind != Chat {
 		return Proposal{}, ErrReadOnly
 	}
+	// An operation is proposed only through ProposeOperation.
+	if (proposal.Kind != "" && proposal.Kind != ProposalDiff) || proposal.Operation != nil {
+		return Proposal{}, ErrNotADiff
+	}
+	proposal.Kind = ProposalDiff
 	page, ok := p.registry.Page(consumer)
 	if !ok || page.Page != proposal.Page {
 		return Proposal{}, ErrNotCurrentPage
@@ -142,6 +194,7 @@ func (p *Proposals) Propose(ctx context.Context, consumer string, proposal Propo
 // clone copies p with nothing shared with the stored proposal.
 func (p Proposal) clone() Proposal {
 	p.Before, p.After, p.Context = bytes.Clone(p.Before), bytes.Clone(p.After), p.Context.clone()
+	p.Operation = p.Operation.clone()
 	return p
 }
 
@@ -172,24 +225,36 @@ func (p *Proposals) find(consumer, id string) (Proposal, bool) {
 	return Proposal{}, false
 }
 
-// Save applies a proposal when its target still belongs to the page it was
-// made on and is still at the revision it was read at. The proposer compares
-// and writes in one step, so an edit that lands meanwhile makes the save fail
+// Save applies a proposal, with what the person added (SaveInput), when the
+// person still has open the page it was made on, showing the same thing,
+// when its target still belongs to that page as it is now, and when the
+// target is still at the revision it was read at. The proposer compares and
+// writes in one step, so an edit that lands meanwhile makes the save fail
 // with ErrStale. A refused proposal stays open; a saved one is closed. The
 // write runs under the lock a revoke takes to drop proposals, after checking
 // the consumer is still live and the proposal still open: a revoke either
 // comes first and the save fails, or waits for the write.
-func (p *Proposals) Save(ctx context.Context, consumer, id string) error {
+func (p *Proposals) Save(ctx context.Context, consumer, id string, input SaveInput) error {
 	proposal, ok := p.find(consumer, id)
 	if !ok {
 		return ErrUnknownProposal
+	}
+	if proposal.Kind != ProposalDiff {
+		return ErrNotADiff
 	}
 	proposer := p.proposers(proposal.Page)
 	if proposer == nil {
 		return ErrNoProposer
 	}
-	// Current refuses a target that no longer belongs to the page.
-	if _, revision, err := proposer.Current(ctx, proposal.Context, proposal.Target); err != nil {
+	// The person may have navigated since: the page must still be the one
+	// the proposal was made on, showing the same thing.
+	page, ok := p.registry.Page(consumer)
+	if !ok || !samePage(page, proposal.Context) {
+		return ErrNotCurrentPage
+	}
+	// Current refuses a target that does not belong to the page as it is
+	// now (another section, or a target that left the page).
+	if _, revision, err := proposer.Current(ctx, page, proposal.Target); err != nil {
 		return err
 	} else if revision != proposal.Revision {
 		return ErrStale
@@ -202,14 +267,23 @@ func (p *Proposals) Save(ctx context.Context, consumer, id string) error {
 	if !slices.ContainsFunc(p.open[consumer], func(open Proposal) bool { return open.ID == id }) {
 		return ErrUnknownProposal
 	}
-	if err := proposer.Apply(ctx, proposal.Context, proposal, proposal.Revision); err != nil {
+	if err := proposer.Apply(ctx, page, proposal, proposal.Revision, input); err != nil {
 		return err
 	}
 	p.removeLocked(consumer, id)
 	return nil
 }
 
-// Dismiss closes a proposal without applying it.
+// samePage reports whether two contexts are the same page showing the same
+// thing: the same repository, pull request, group, session, job and feature.
+// Sections, filters and focus may differ; a proposer refuses a target of
+// another section.
+func samePage(a, b PageContext) bool {
+	return a.Page == b.Page && strings.EqualFold(a.Repository, b.Repository) && a.PullRequest == b.PullRequest &&
+		a.Group == b.Group && a.Session == b.Session && a.Job == b.Job && a.Feature == b.Feature
+}
+
+// Dismiss closes a proposal without applying or running it.
 func (p *Proposals) Dismiss(consumer, id string) error {
 	if !p.remove(consumer, id) {
 		return ErrUnknownProposal

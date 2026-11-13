@@ -25,6 +25,8 @@ var allowedProjectedReads = map[string][]string{
 	"settings_computer":    {"/api/settings", "/api/diagnostics"},
 	"prompts":              {"/api/settings/prompts"},
 	"prompt":               {"/api/settings/prompts"},
+	"propose_review":       {"/api/settings"},
+	"propose_fix":          {"/api/settings"},
 }
 
 func TestProjectedReadsAreExactlyTheAllowedPairs(t *testing.T) {

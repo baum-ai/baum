@@ -48,19 +48,21 @@ func repositoryPageTools() []string {
 	var out []string
 	for _, section := range repositorySections {
 		out = append(out, repositorySectionTools[section]...)
+		out = append(out, repositorySectionProposals[section]...)
 	}
 	return out
 }
 
-// sectionTools are the tools of the page's open section, if it has one.
+// sectionTools are the tools of the page's open section, if it has one: the
+// tools that read it, then those that propose changes to it.
 func sectionTools(p PageContext) []string {
 	switch {
 	case p.Section == "":
 		return nil
 	case p.Page == PageSettings:
-		return settingsSectionTools[p.Section]
+		return slices.Concat(settingsSectionTools[p.Section], settingsSectionProposals[p.Section])
 	case p.Page == PageRepositories && p.Repository != "":
-		return repositorySectionTools[p.Section]
+		return slices.Concat(repositorySectionTools[p.Section], repositorySectionProposals[p.Section])
 	}
 	return nil
 }
@@ -89,6 +91,9 @@ type appSettings struct {
 	RunTimeLimit    int                  `json:"run_time_limit_minutes"`
 	AgentEnv        map[string]discarded `json:"agent_env"`
 	AgentEnvSource  string               `json:"agent_env_source"`
+	// PreferencesUnavailable is set when the app's saved choices could not
+	// be read and the route answered with the config file's alone.
+	PreferencesUnavailable bool `json:"preferences_unavailable"`
 }
 
 // readSettings reads /api/settings, a projected route. What went wrong is

@@ -179,6 +179,22 @@ func cleanMembers(members []int) ([]int, error) {
 	return sorted, nil
 }
 
+// CheckUpdate refuses what Update would refuse of a new name or members (nil
+// leaves either as it is), with the same InvalidError, and writes nothing.
+func CheckUpdate(name *string, members []int) error {
+	if name != nil {
+		if _, err := cleanName(*name); err != nil {
+			return err
+		}
+	}
+	if members != nil {
+		if _, err := cleanMembers(members); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // Create stores a new group of members of repository.
 func (s *Store) Create(ctx context.Context, repository, name string, members []int) (Group, error) {
 	repository = strings.ToLower(strings.TrimSpace(repository))
@@ -257,6 +273,15 @@ func (s *Store) Get(ctx context.Context, id string) (Group, error) {
 // Update renames the group when name is not nil and replaces its members
 // when members is not nil. Either makes a stack group the person's own.
 func (s *Store) Update(ctx context.Context, id string, name *string, members []int) (Group, error) {
+	return s.UpdateWith(ctx, id, func(Group) (*string, []int, error) { return name, members, nil })
+}
+
+// UpdateWith is Update with the name and members edit chooses from the
+// group as the writing transaction reads it. The transaction holds the write
+// lock from its start, so a check edit makes (the revision a proposal was
+// read at) and the write are one step; an error edit returns writes nothing
+// and is returned as it is.
+func (s *Store) UpdateWith(ctx context.Context, id string, edit func(Group) (name *string, members []int, err error)) (Group, error) {
 	// One transaction, so a concurrent SyncStacks cannot be written over.
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -267,6 +292,10 @@ func (s *Store) Update(ctx context.Context, id string, name *string, members []i
 	if errors.Is(err, sql.ErrNoRows) {
 		return Group{}, ErrNotFound
 	}
+	if err != nil {
+		return Group{}, err
+	}
+	name, members, err := edit(g)
 	if err != nil {
 		return Group{}, err
 	}
