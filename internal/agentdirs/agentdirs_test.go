@@ -7,8 +7,40 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 )
+
+// Several processes may record a directory at once (the hooks of two
+// sessions, the daemon): each keeps the others', as every change holds the
+// record's lock from its read to its write.
+func TestConcurrentRemembersKeepEveryDirectory(t *testing.T) {
+	home := isolate(t)
+	const n = 12
+	dirs := make([]string, n)
+	for i := range dirs {
+		dirs[i] = mkdir(t, filepath.Join(home, fmt.Sprintf(".claude-%02d", i)))
+	}
+	var wg sync.WaitGroup
+	errs := make(chan error, n)
+	for _, dir := range dirs {
+		wg.Go(func() {
+			if _, err := Claude.Remember(dir); err != nil {
+				errs <- err
+			}
+		})
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Fatal(err)
+	}
+	got := Claude.Recorded()
+	slices.Sort(got)
+	if !slices.Equal(got, dirs) {
+		t.Fatalf("Recorded = %v, want all %d", got, n)
+	}
+}
 
 // isolate gives the test its own home, configuration folder and no
 // CLAUDE_CONFIG_DIR, and returns the home.

@@ -35,7 +35,10 @@ adds one and `Forget` removes one. A directory is stored absolute and clean
 when it is remembered, and is never the default, which is always read. A
 record keeps at most `MaxRecorded` (16) directories and drops the oldest
 beyond that. A record that cannot be read counts as empty and is replaced by
-the next `Remember`.
+the next `Remember`. Each change holds an inter-process lock beside the record
+(`<record>.lock`, [filelock](../filelock), waiting up to 5 seconds) from its
+read to its write, so the hooks of two sessions and the daemon recording at
+once each keep the others' directories.
 
 It is written by:
 

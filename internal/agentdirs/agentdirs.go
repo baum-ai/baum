@@ -18,6 +18,7 @@
 package agentdirs
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -25,8 +26,10 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/baum-ai/baum/internal/config"
+	"github.com/baum-ai/baum/internal/filelock"
 )
 
 // Agent describes where one coding agent keeps its configuration directory.
@@ -212,20 +215,16 @@ func (a Agent) RememberIn(path, dir string) (bool, error) {
 	if info, err := os.Stat(dir); err != nil || !info.IsDir() {
 		return false, fmt.Errorf("%s is not a directory", dir)
 	}
-	dirs, err := Load(path)
-	if err != nil {
-		// A record that cannot be read is replaced rather than left to
-		// block every later one.
-		dirs = nil
-	}
-	if slices.Contains(dirs, dir) {
-		return false, nil
-	}
-	dirs = append(dirs, dir)
-	if len(dirs) > MaxRecorded {
-		dirs = dirs[len(dirs)-MaxRecorded:]
-	}
-	return true, save(path, dirs)
+	return update(path, func(dirs []string) ([]string, bool) {
+		if slices.Contains(dirs, dir) {
+			return dirs, false
+		}
+		dirs = append(dirs, dir)
+		if len(dirs) > MaxRecorded {
+			dirs = dirs[len(dirs)-MaxRecorded:]
+		}
+		return dirs, true
+	}, true)
 }
 
 // Forget removes dir from the user's record and reports whether it was there.
@@ -243,15 +242,42 @@ func ForgetIn(path, dir string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	dirs, err := Load(path)
-	if err != nil {
+	return update(path, func(dirs []string) ([]string, bool) {
+		kept := slices.DeleteFunc(slices.Clone(dirs), func(d string) bool { return d == dir })
+		return kept, len(kept) != len(dirs)
+	}, false)
+}
+
+// lockWait bounds the wait for another process changing the record.
+const lockWait = 5 * time.Second
+
+// update changes the record at path with change, which returns the new list
+// and whether it differs, holding a lock beside it (path + ".lock") from the
+// read to the write: hooks of several sessions and the daemon may record a
+// directory at the same moment, and each must see the others' before adding
+// its own. A record that cannot be read counts as empty when replaceUnread,
+// rather than blocking every later change; otherwise it is an error.
+func update(path string, change func([]string) ([]string, bool), replaceUnread bool) (bool, error) {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return false, err
 	}
-	kept := slices.DeleteFunc(slices.Clone(dirs), func(d string) bool { return d == dir })
-	if len(kept) == len(dirs) {
+	lock, err := filelock.Wait(context.Background(), path+".lock", lockWait)
+	if err != nil {
+		return false, fmt.Errorf("locking %s: %w", path, err)
+	}
+	defer func() { _ = lock.Release() }()
+	dirs, err := Load(path)
+	if err != nil {
+		if !replaceUnread {
+			return false, err
+		}
+		dirs = nil
+	}
+	next, changed := change(dirs)
+	if !changed {
 		return false, nil
 	}
-	return true, save(path, kept)
+	return true, save(path, next)
 }
 
 // All are the directories baum reads the agent's files from, once each: the
