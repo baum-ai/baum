@@ -410,8 +410,35 @@ func entireCall(contents, hook string) string {
 
 // entireHook is a hook that runs what an earlier dispatcher ran of Entire's.
 // It holds no marker of baum's, so the new dispatcher runs it as a backup.
+// Like that dispatcher it then runs <hook>.pre-entire, the hook the dispatcher
+// replaced, so the hook keeps running when an opt-out restores this one in the
+// dispatcher's place; it skips it while the dispatcher at <hook> is running,
+// which runs that hook itself. Hooks whose input Git feeds on standard input
+// buffer it, so both read all of it.
 func entireHook(contents, hook string) string {
-	return "#!/bin/sh\n" + entireMarker + "\n# Kept from an earlier baum dispatcher.\nif command -v entire >/dev/null 2>&1; then\n  " + entireCall(contents, hook) + "\nfi\n"
+	buffer := ""
+	if hook == "post-rewrite" || hook == "pre-push" {
+		buffer = fmt.Sprintf(`if hook_stdin=$(mktemp "${TMPDIR:-/tmp}/entire-%s.XXXXXX" 2>/dev/null); then
+  trap 'rm -f "$hook_stdin"' EXIT
+  trap 'exit 1' INT TERM HUP
+  cat > "$hook_stdin" 2>/dev/null || hook_stdin=
+fi
+`, hook)
+	}
+	return fmt.Sprintf(`#!/bin/sh
+%[1]s
+# Kept from an earlier baum dispatcher.
+hook_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+hook_stdin=
+%[2]srun() { if [ -n "$hook_stdin" ]; then "$@" < "$hook_stdin"; else "$@"; fi; }
+if command -v entire >/dev/null 2>&1; then
+  run %[3]s
+fi
+case ":${%[4]s-}:" in *":$hook_dir/%[5]s:"*) exit 0 ;; esac
+if [ -x "$hook_dir/%[5]s%[6]s" ]; then
+  run "$hook_dir/%[5]s%[6]s" "$@"
+fi
+`, entireMarker, buffer, entireCall(contents, hook), activeEnv, hook, legacySuffix)
 }
 
 // retireLegacy takes out the dispatchers earlier versions of baum put in place

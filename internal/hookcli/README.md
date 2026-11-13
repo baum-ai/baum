@@ -75,7 +75,8 @@ daemon repairs those it recognises as baum's (the repaired dispatcher no longer
 falls back to `entire`). Whether a repository uses Entire does not change what
 is installed: an existing hook, Entire's included, is chained like any other.
 A legacy dispatcher that ran Entire's hook itself is replaced, and that call is
-kept as the `<hook>.pre-baum` backup the new dispatcher runs. The legacy
+kept as the `<hook>.pre-baum` backup the new dispatcher runs; restored by an
+opt-out, that backup also runs the hook the earlier dispatcher replaced. The legacy
 `commit-msg` and `prepare-commit-msg` dispatchers, which baum no longer
 installs, are retired (the hook they replaced comes back, or they go) unless
 they run Entire's hook; those are left, as are legacy dispatchers that run

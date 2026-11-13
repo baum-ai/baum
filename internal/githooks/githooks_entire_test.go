@@ -4,6 +4,7 @@ package githooks
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -153,6 +154,62 @@ func TestOptOutAfterTheRepairRestoresEntiresHook(t *testing.T) {
 	}
 	if got := read(t, filepath.Join(hooks, "post-commit")); !strings.Contains(got, "entire hooks git post-commit") || ours(got) {
 		t.Fatalf("post-commit = %q", got)
+	}
+}
+
+// The hook a legacy dispatcher replaced runs once per commit after the repair,
+// and still runs once Entire's hook is restored by an opt-out.
+func TestTheHookALegacyDispatcherReplacedKeepsRunning(t *testing.T) {
+	repo, hooks := legacyClone(t)
+	git(t, repo, "commit", "-q", "--allow-empty", "-m", "init")
+	stubBaum(t)
+	entireLog := stubEntire(t)
+	mine := filepath.Join(t.TempDir(), "mine.log")
+	writeExecutable(t, filepath.Join(hooks, "post-commit.pre-entire"), "#!/bin/sh\necho ran >> '"+mine+"'\n")
+	countLines := func(path string) int {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return strings.Count(string(data), "\n")
+	}
+	ensure(t, repo)
+	commitWithHooks(t, repo)
+	if n := countLines(mine); n != 1 {
+		t.Fatalf("with the dispatcher the replaced hook ran %d times", n)
+	}
+	git(t, repo, "config", "baum.hooks", "false")
+	if report := ensure(t, repo); outcomes(report)["post-commit"] != Restored {
+		t.Fatalf("report = %+v", report)
+	}
+	commitWithHooks(t, repo)
+	if n := countLines(mine); n != 2 {
+		t.Fatalf("after the opt-out the replaced hook ran %d times in all", n)
+	}
+	if data, _ := os.ReadFile(entireLog); strings.Count(string(data), "hooks git post-commit") != 2 {
+		t.Fatalf("Entire's post-commit ran: %q", data)
+	}
+}
+
+// Both Entire and the replaced pre-push hook read all of the push's input.
+func TestKeptPrePushHookFeedsItsInputToBoth(t *testing.T) {
+	repo, hooks := legacyClone(t)
+	dir := t.TempDir()
+	writeExecutable(t, filepath.Join(dir, "entire"), "#!/bin/sh\ncat > '"+filepath.Join(dir, "entire.in")+"'\n")
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	writeExecutable(t, filepath.Join(hooks, "pre-push.pre-entire"), "#!/bin/sh\ncat > '"+filepath.Join(dir, "mine.in")+"'\n")
+	ensure(t, repo)
+	git(t, repo, "config", "baum.hooks", "false")
+	ensure(t, repo)
+	cmd := exec.Command(filepath.Join(hooks, "pre-push"), "origin", "url")
+	cmd.Stdin = strings.NewReader("refs/heads/a 1 refs/heads/a 2\n")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("%v: %s", err, out)
+	}
+	for _, name := range []string{"entire.in", "mine.in"} {
+		if got := read(t, filepath.Join(dir, name)); got != "refs/heads/a 1 refs/heads/a 2\n" {
+			t.Errorf("%s = %q", name, got)
+		}
 	}
 }
 
