@@ -159,11 +159,8 @@ it("lists a pull request's decisions by session and marks the provisional ones",
     ],
   };
   await act(async () => root.render(<PullRequestDecisions live={[live]} />));
-  const section = node;
-  expect(section.textContent).toContain(
-    "One decision was made after the saved review was generated",
-  );
-  const sessions = section.querySelectorAll(".local-decisions-session");
+  expect(node.textContent).toContain("One decision was made after the saved review was generated");
+  const sessions = node.querySelectorAll(".local-decisions-session");
   // A session never captured and without decisions is left out.
   expect(sessions).toHaveLength(2);
   expect(sessions[0]!.querySelector("h3")!.textContent).toBe(
@@ -195,9 +192,8 @@ it("shows a session whose first capture is in flight on the pull request", async
     ],
   };
   await act(async () => root.render(<PullRequestDecisions live={[live]} />));
-  const section = node;
-  expect(section.textContent).toContain("Add a retry budget");
-  expect(section.textContent).toContain("Capturing…");
+  expect(node.textContent).toContain("Add a retry budget");
+  expect(node.textContent).toContain("Capturing…");
 });
 
 it("puts where a capture stands in words", () => {

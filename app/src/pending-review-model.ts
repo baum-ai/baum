@@ -28,9 +28,8 @@ export type ReviewSubmission = {
   comments: (CommentPlace & { body: string })[];
 };
 
-/** A headline for a step written before steps had titles: its first
- *  sentence, cut at its first clause when the sentence strings several
- *  together with semicolons. */
+/** A headline taken from a longer text: its first sentence, cut at its
+ *  first clause when the sentence strings several together with semicolons. */
 export function firstSentence(value: string): string {
   const match = /^(.+?[.!?])(\s|$)/.exec(value);
   const sentence = (match ? match[1]! : value).replace(/[.!?]$/, "");

@@ -518,6 +518,16 @@ test("comments on a review, keeps the draft in the daemon and submits the review
   }
   await page.reload();
   await expect(count).toHaveText("1");
+  // A comment on a section goes on the first line its summary cites.
+  await page.goto(`${page.url()}&pane=section&section=sec_retry`);
+  await expect(
+    page.getByRole("heading", { name: "Retry policy and backoff" }).first(),
+  ).toBeVisible();
+  await page.keyboard.press("c");
+  await expect(page.getByLabel("Comment on Retry policy and backoff")).toBeFocused();
+  await page.keyboard.type("Why a fixed jitter?");
+  await page.keyboard.press("Control+Enter");
+  await expect(count).toHaveText("2");
   await page.keyboard.press("v");
   await page.getByRole("menuitem", { name: "Request changes", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: /Review pull request #7/ });
@@ -529,9 +539,16 @@ test("comments on a review, keeps the draft in the daemon and submits the review
       repository: "acme/demo",
       pr: 7,
       event: "REQUEST_CHANGES",
-      // A comment on the pull request as a whole has no line, so it goes in the body.
+      // The comment on the pull request as a whole has no line, so it goes in the body.
       body: "Trusts a client-supplied header",
-      comments: [],
+      comments: [
+        {
+          body: "Why a fixed jitter?",
+          path: "queue/retry.go",
+          line: expect.any(Number),
+          side: "RIGHT",
+        },
+      ],
     }),
   ]);
   // Narrow: no sideways scroll.
