@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://static.usebaum.com/schemas/tiles/1.json",
   "title": "baum tile review document",
-  "description": "One review of a pull request as tiles: the substrate a review is scored and refreshed on (the same shapes as baum.review/1), the tiles that present it and their layout. A reference to #/$defs/<name> that this file does not define names a definition of review-1.json, or one of the parts of review-1.json the schema package copies into $defs under a fixed name (reviewHeader, reviewSummary, reviewRisk and the others it lists).",
+  "description": "One review of a pull request as tiles: the substrate a review is scored and refreshed on (the same shapes as baum.review/1), the tiles that present it and their layout. A reference to #/$defs/<name> that this file does not define names a definition of review-1.json, or one of the parts of review-1.json the schema package copies into $defs under a fixed name (reviewHeader, reviewSummary, reviewRisk, reviewRiskRules and the others it lists).",
   "type": "object",
   "additionalProperties": false,
   "required": ["schema", "origin", "review", "facts", "stats", "index", "agent_reviews", "unassigned_hunks", "changes", "risks", "evidence", "tiles", "layout"],
@@ -137,7 +137,7 @@
       },
       "additionalProperties": false,
       "required": ["id", "tier", "category", "source", "text", "anchors", "state", "introduced_version", "mitigated_version", "change"],
-      "allOf": [{ "$ref": "#/$defs/reviewRisk/allOf/0" }, { "$ref": "#/$defs/reviewRisk/allOf/1" }]
+      "allOf": [{ "$ref": "#/$defs/reviewRiskRules" }]
     },
     "evidence": {
       "type": "object",
@@ -157,13 +157,7 @@
       },
       "additionalProperties": false,
       "required": ["id", "kind", "claim", "status", "source", "anchors", "change"],
-      "allOf": [
-        { "$ref": "#/$defs/reviewEvidence/allOf/0" },
-        { "$ref": "#/$defs/reviewEvidence/allOf/1" },
-        { "$ref": "#/$defs/reviewEvidence/allOf/2" },
-        { "$ref": "#/$defs/reviewEvidence/allOf/3" },
-        { "$ref": "#/$defs/reviewEvidence/allOf/4" }
-      ]
+      "allOf": [{ "$ref": "#/$defs/reviewEvidenceRules" }]
     },
     "tileId": { "type": "string", "pattern": "^[a-z][a-z0-9_]{0,127}$" },
     "documentTile": {
@@ -331,7 +325,7 @@
             },
             "additionalProperties": false,
             "required": ["id", "by", "text", "anchors"],
-            "allOf": [{ "if": { "$ref": "#/$defs/reviewDecision/if" }, "then": { "$ref": "#/$defs/reviewDecision/then" } }]
+            "allOf": [{ "$ref": "#/$defs/reviewDecisionRules" }]
           }
         }
       },

@@ -26,12 +26,16 @@ var Tiles []byte
 
 // reviewParts are the parts of the review schema that are not definitions of
 // their own, which the tile schema reuses under these fixed names. A block
-// part is the branch of $defs/block whose kind is the given one.
+// part is the branch of $defs/block whose kind is the given one. A rules part
+// is only the conditional keywords (allOf, if, then, else) of its part: the
+// tile schema's risk, evidence and decision items list the review item's
+// properties, adding their own, and apply its rules through it.
 var reviewParts = []struct {
 	name    string
 	path    []string
 	block   string
 	subpath []string
+	rules   bool
 }{
 	{name: "reviewHeader", path: []string{"properties", "review"}},
 	{name: "reviewSummary", path: []string{"properties", "summary"}},
@@ -41,6 +45,9 @@ var reviewParts = []struct {
 	{name: "reviewStack", path: []string{"properties", "stack"}},
 	{name: "reviewRisk", path: []string{"$defs", "section", "properties", "risks", "items"}},
 	{name: "reviewEvidence", path: []string{"$defs", "section", "properties", "evidence", "items"}},
+	{name: "reviewRiskRules", path: []string{"$defs", "section", "properties", "risks", "items"}, rules: true},
+	{name: "reviewEvidenceRules", path: []string{"$defs", "section", "properties", "evidence", "items"}, rules: true},
+	{name: "reviewDecisionRules", block: "decisions", subpath: []string{"properties", "items", "items"}, rules: true},
 	{name: "reviewIntentBlock", block: "intent"},
 	{name: "reviewDecision", block: "decisions", subpath: []string{"properties", "items", "items"}},
 	{name: "reviewImagesBlock", block: "images"},
@@ -99,11 +106,29 @@ func mergeTiles(tiles, review []byte) ([]byte, error) {
 		} else {
 			definition = lookup(reviewRoot, part.path)
 		}
+		if part.rules {
+			definition = conditionalRules(definition)
+		}
 		if err := add(part.name, definition); err != nil {
 			return nil, err
 		}
 	}
 	return json.Marshal(root)
+}
+
+// conditionalRules returns the conditional keywords of a schema object.
+func conditionalRules(definition any) any {
+	object, ok := definition.(map[string]any)
+	if !ok {
+		return nil
+	}
+	rules := map[string]any{}
+	for _, key := range []string{"allOf", "if", "then", "else"} {
+		if value, ok := object[key]; ok {
+			rules[key] = value
+		}
+	}
+	return rules
 }
 
 // blockBranch returns the branch of the review schema's $defs/block whose
