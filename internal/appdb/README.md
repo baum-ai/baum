@@ -21,9 +21,15 @@ configuration is still read from `config.toml`.
 | `state/plan-usage-history` | `planusage`: plan-window samples, retained 90 days |
 | `ui/inbox`, `ui/walkthrough`, `ui/review` | `uistate`: inbox day/snoozes, per-version walkthrough drafts and per-PR pending review comments, with revisions and retry receipts |
 | `state/agent-requests` | `agentrequests`: Codex approval preference |
-| `cache/analytics-index` | `analytics`: derived per-session statistics without conversation text |
+| `analytics_sessions`, `analytics_index` | `analytics`: derived per-session statistics without conversation text, one row per session file, and the index's format version and price thresholds. They replace the `cache/analytics-index` document, which the index moves into them on first open |
 | `cache/discovery/<hash>` | `discovery`: snapshots, GitHub's pull request rows, the incremental cursor, conditional responses and author permissions, partitioned by host, credential identity and repository; the credential's API budgets and team memberships under `<hash>.budget` |
 | `cache/pricing` | `pricing`: signed public pricing list, reverified before use |
+
+Automatic scheduling snapshots its state under its state mutex, then releases
+that mutex before saving. A separate mutation mutex stays held through the
+save, so writes cannot overtake one another and the automatic overview can
+read the in-memory state while SQLite is busy. Mutating calls finish their
+save attempt before returning.
 
 Small documents are JSON-encoded values in `app_documents(bucket,key,value)`,
 not separate JSON files. `Read` reads through a read-only handle and returns
@@ -99,6 +105,11 @@ Native shell preferences are managed by the desktop shell.
 ## Database baseline and release readiness
 
 The first baseline has `application_id = 0x6261756d` and `user_version = 1`.
+The current schema is version 2: a writable open upgrades version 1 in one
+transaction, adding the groups repository lookup index when the group tables
+exist. A group store opened later creates that index with its tables.
+Read-only opens refuse an older schema until a writable open upgrades it;
+older binaries refuse version 2 rather than opening a schema they do not know.
 New empty files are initialized transactionally. Unrecognized nonempty
 unversioned schemas and newer versions are refused; no downgrade or silent
 replacement is attempted. Pre-release databases/JSON files are not imported.

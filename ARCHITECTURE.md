@@ -2093,6 +2093,33 @@ a process reuses what it built:
   snapshot uses small per-checkpoint facts that `sessions` remembers by
   clone and tree. A checkpoint is read whole again, through the checkpoint
   cache below, only when a session chosen from it has to be mapped.
+* **New evidence contexts.** A digest may retain a context-independent slim
+  evidence basis, capped at 4 MiB per session within the existing 64 MiB
+  digest budget. It keeps only the evidence projector's inputs, with bounded
+  prompt/reply text and without tool output, assistant content or patch
+  hunks. New caps, known paths, checkout placements and thread names run the
+  same projector against this basis. Optional bases are shed before compact
+  facts; admission may replace colder optional bases but cannot evict facts.
+  An absent or oversized basis preserves the full-read fallback and can be
+  refilled by that mapped read. Every retained byte/string is detached from
+  the graph; byte accounting includes the whole basis.
+* **Linked-session views.** `locallink.Resolve` uses compact facts to select
+  the linked sessions, then maps only those whose graphs it must return. The
+  local app uses `ResolveSummary` for lists and decision attribution: its
+  compact facts include titles and outcomes, so even a linked graph evicted
+  from the mapping cache is not decoded merely to list its metadata. The
+  summary returns the same JSON and a lazy graph reader bound to the pinned
+  request. Opening a transcript rechecks that it is still linked and reads its
+  graph then, under the daemon's local-read semaphore and the viewer's shared
+  transcript job, lifetime and timeout. Default `Resolve` still returns full
+  linked graphs. Missing facts and changed selection retain the full-read
+  fallback.
+* **Feature linkage.** `locallink.LinkCommits` shares those compact facts and
+  skips unchanged session graphs too. The feature worker caches successful
+  recorded commit ranges by clone, base, head and shallow boundary, bounded
+  at 128 ranges and 16 MiB of estimated metadata. Full daily relinks bypass
+  range reuse, but keep their input fingerprint so a following unchanged
+  window can skip linking immediately.
 * **Closed and merged pull requests.** A refresh of a pull request that is
   closed or merged sets `EvidenceRequest.Frozen`. Its sessions are read once in
   the process, then kept for the same commits without looking at the stores
@@ -2105,7 +2132,7 @@ a process reuses what it built:
   memory, about a sixth of their transcripts' size.
 * **Growing transcripts.** A session an agent is still running changes on
   every append, so none of the above applies to it. For each Claude Code
-  transcript and Codex rollout changed in the last hour, `sessions.Map` keeps
+  transcript and Codex rollout, regardless of age, `sessions.Map` may keep
   the decoded lines and the byte offset they end at, and decodes only what was
   appended since; the mapper still runs over every line. A file that shrank,
   was replaced or had its earlier bytes rewritten is decoded whole. The lines
@@ -2134,8 +2161,13 @@ place. A reused answer prints no warnings.
 `/api/sessions` answer lists, and only those: it reads that answer from the
 same cache, computing it through the same single-flight path when it is not
 there yet, and any other id, a session read but not linked, or an unavailable
-answer is 404. The answer keeps the linked sessions' graphs for this
-(`Result.Graphs`, never part of its JSON).
+answer is 404. A full linkage answer may keep its linked graphs
+(`Result.Graphs`, never part of its JSON). The daemon's metadata-only answer
+instead supplies a lazy reader: an explicit transcript request revalidates
+linkage to the pinned document commits, under the same local-read semaphore,
+and shares one graph read and render for that session. A no-longer-linked or
+unreadable graph is not served. The lazy read has the viewer's lifetime and a
+two-minute bound; failed builds are retried on the next request.
 
 The transcript is shaped and bounded first, from the graph as read, and
 redacted after, so nothing past the limits below is ever redacted or held
@@ -2743,6 +2775,46 @@ variables, so it may name a `GIT_` variable the allowlist drops. A fix passes
 it to `gitlocal.FixOptions.Env` for every git command in the checkout and the
 push, without the variables that would redirect git.
 
+`config.Config.ClaudeConfigDir` (never in the file) is the Claude Code
+configuration directory the app chose for a run: `repos.Preferences`'
+`ClaudeConfigDir` for reviews and extraction (`Resolve`), and
+`FixClaudeConfigDir` for a fix with its own agent (`ResolveFix`; a fix that
+follows reviews takes theirs), and `Decisions.ClaudeConfigDir` for extraction
+with its own agent (`ResolveExtraction`, set with `PUT
+/api/settings/decisions`). All three are checked by `agentdirs.Claude.Choose`. `DefaultBackendsFor` gives it to the `claude`
+backend alone as `CLAUDE_CONFIG_DIR`, set over `agent_env`'s. `PUT
+/api/automatic` takes `claude_config_dir` and `fix_claude_config_dir` (`~`
+expanded, stored absolute, an existing directory, `""` for the
+environment's), refuses one `claude auth status --json` reports signed out
+with that directory (`Scheduler.ClaudeSignedIn`, `claude.SignedInWith`; an
+answer it cannot read does not refuse), and records the directory with
+`agentdirs.Claude.Remember`. `planusage.Service.Others` reads the plan of each
+directory chosen for a run that uses Claude Code
+(`Preferences.ClaudeConfigDirs`) and serves it with `config_dir`.
+
+`config.Config.CodexHome` is the same for Codex: `Preferences.CodexHome`,
+`FixCodexHome` and `Decisions.CodexHome` under the same rules,
+`DefaultBackendsFor` gives it to the `codex` backend alone as `CODEX_HOME`,
+`PUT /api/automatic` takes `codex_home` and `fix_codex_home` and `PUT
+/api/settings/decisions` `codex_home`, checked by `agentdirs.Codex.Choose`
+with `codex login status` (`codex.SignedInWithHome`). The plans of
+`Preferences.CodexHomes` (runs whose backend is `codex`) are read with
+`planusage.Codex{Home: dir}`.
+
+`internal/agentdirs` is the one place that says which agent directories baum
+reads. `agentdirs.Claude` and `agentdirs.Codex` each have `All(home)`: the
+default (`~/.claude`, `~/.codex`), the process's variable (`CLAUDE_CONFIG_DIR`,
+`CODEX_HOME`) and a record beside `config.toml` (`claude-dirs.json`,
+`codex-dirs.json`; `Remember`, at most 16). Session discovery
+(`collector.FindSessions`, `FindStores`, with `ClaudeProjectsDir` and
+`CodexSessionsDir` still overrides), clone finding, the live transcript store
+checks (`livesessions.claudeTranscript`, `codexRollout`), the running-session
+registry (`readClaudeRegistry`) and review-run cleanup
+(`reviewruns.RemoveSessions`) all read each directory. `baum hooks install
+--user` records the directory it installed into, and an agent hook the one its
+session runs with (`hookcli.rememberSessionDir`, on the events that locate the
+terminal).
+
 ## Local application persistence
 
 [`internal/appdb`](internal/appdb/README.md) owns the shared per-user
@@ -2863,7 +2935,7 @@ keeps 90 days of changed figures in the `state/plan-usage-history` document in `
 (`uiserver.LocalAPI.Analytics`) for the app's Analytics page. Its parts, all
 started in `localApplication`:
 
-- `Index` keeps per-session aggregates in the `cache/analytics-index` document in `app.sqlite` in the state
+- `Index` keeps per-session aggregates, one `analytics_sessions` row per session file, in `app.sqlite` in the state
   directory, for sessions whose working directory is inside a registered clone
   (`sessions/collector.FindSessions` per clone with its worktrees, then
   `sessions.Map` and a reduction that keeps no text). Entries are keyed by the
@@ -3046,12 +3118,22 @@ Once `Store.Put` commits a version, generation succeeds: failing to record the
 run's outcome afterwards is only a warning, and the lease later expires.
 
 `GET /api/index` and `GET /api/prs` revalidate: the JSON of a cached snapshot is
-encoded once per cache version and `history` flag (`/api/prs`: once per
+encoded once per cache version and variant (`/api/prs`: once per
 discovery `Revision` of the picked repositories, until a snapshot reaches its
 next poll), answered with a strong `ETag` (digest of the bytes), `Cache-Control:
 no-cache` and 304 for a matching `If-None-Match`. The app fetches them with
 `cache: "no-cache"` so the webview sends the validator; every other endpoint
 stays `no-store`.
+
+The app asks for the trimmed forms: `GET /api/index?history=1&detail=summary`
+leaves each entry's `latest` with `version`, `head`, `backend`, `model`,
+`generated_at`, `calls`, `tokens` and `recorded_cost_usd` (no `accounting`
+attempts, digests, policy or kept session, several KB per entry; a version's own
+read serves them), and `GET /api/prs?view=health` answers one
+`{repository, stale, fetched_at, next_poll, rate, error?, settling?}` per picked
+repository, without the pull requests and observations (the index lists those).
+Both are encoded and tagged once per version like the full forms, which stay the
+default for other clients; an unknown `/api/prs` view is `400`.
 
 `Service.Build` is uncached: each call probes every clone with git, reads the
 discovery cache and opens every store. The daemon reads it through one
@@ -3066,15 +3148,54 @@ group and GitHub-account changes all go through) calls `Invalidate` first, so
 a client reading after the event gets a new build, and a build that started
 before an invalidation still answers its waiting readers but is not kept.
 Discovery, which only the daemon runs, invalidates through
-`discovery.Service.Updated` after each cache write and each change to its live
-freshness, without an event of its own: the watcher below publishes if the
-index moved. A panicking build is an error for its readers and is not kept. A
+`discovery.Service.Updated` after each write of a repository's cache and each
+change to its live freshness. It wakes the watcher below, which publishes
+only if the index moved. Background pass callbacks use the same path instead
+of publishing directly at both the poll and read boundaries. The watcher also
+compares the background repository errors the app displays, so a refresh
+failure or recovery is announced even when the index rows stayed the same.
+Routine background success times and retry counts do not trigger an event.
+The watcher's comparison also omits `metadata_fetched_at`: an unchanged
+successful discovery poll advances that bookkeeping timestamp, but changes no
+visible row. Applied observations still carry `observed_at`, which the app ages,
+and all actual PR fields participate. The API snapshot retains its timestamps;
+the watcher copies entries before dropping the field from its comparison. A write of the credential's budget record alone
+(a probe saves only that), which `Cached` does not read, does not invalidate. A
+panicking build is an error for its readers and is not kept. A
 kept snapshot expires at the earliest instant at which building again could
 differ with nothing written: a `generating` run's lease end (it then reads as
-interrupted), a fresh discovery snapshot's next poll, or an applied
-observation turning stale two minutes after it was fetched; and at the latest
-after `reviewindex.MaxAge` (2 minutes), for what nothing models (below).
+interrupted); and at the latest after `reviewindex.MaxAge` (2 minutes), for what nothing models (below). An
+applied observation's age does not count: the entry carries `observed_at` and
+the app shows it as stale two minutes later, so the index does not change with
+time alone. The index reads discovery through `CachedStable`, which keeps
+failed or not-yet-validated data stale but does not age it at `NextPoll`. Other
+discovery readers retain the deadline-based `Cached` answer.
 Nothing is persisted: a restarted daemon builds on first read.
+
+A build after an invalidation reads again only the repositories whose inputs
+moved. The cache keeps each repository's rows, problems and next change (a
+part), keyed on the repository's `discovery.Revision`, its clones as the
+registry lists them (ID, common directory, availability, which clone reads a
+shared store). For each store it reads, the key also holds the size,
+modification time, mode and file identity of `versions.sqlite` and its
+write-ahead log under both roots. Unlike the fingerprint, it does not look
+through lease renewals: renewing a lease that had already lapsed makes an
+interrupted run read as generating again. The registry is listed on every
+build. The key is taken before the repository is read, so a write landing
+during the read moves the key and the next build reads again. A part is read
+again when its key moved or its own next change passed. It is also read again
+when it came from a failed read, or when its key cannot vouch for it: a
+discovery without `Revision`, a store file modified within the last three
+seconds, a failed stat, or a custom `OpenStore` without a `StoreStamp`. Every
+repository is read again once `MaxAge` has passed since the build that last
+read them all, and no part is used once `MaxAge` has passed since it was read,
+so `MaxAge` still bounds what no key covers. Merged in repository order, the
+parts give the same snapshot a full build does. A write for one repository
+therefore costs a read of that repository's discovery cache and stores, one
+`Revision` (an in-memory stamp that resolves the credential) and the store
+stats of each other repository, and one registry listing. It also re-encodes
+the merged snapshot once for `/api/index` and once for the watcher's hash.
+`Service.Build` keeps nothing and reads everything.
 
 `uiserver.Server.WatchIndex` catches changes made outside the daemon
 (another process editing the registry) and those that
@@ -3308,7 +3429,11 @@ head, and is emptied with the threads on an account change.
 
 `GET /api/prs/checks?repository=&pr=&head_sha=` lists every check of
 `head_sha` (`fix.AllChecks`: check runs of their latest attempt and commit
-statuses, at most 100). It answers `{head_sha, checks}`, each check's `name`,
+statuses). It reads up to 5 pages of check runs and 3 of statuses (and 3 of
+workflow runs to name Actions jobs), sorts, then keeps at most 100, so
+failing checks and commit statuses are never what is cut. It answers
+`{head_sha, checks, total, capped}` (`total` is how many GitHub reports,
+`capped` is true when `checks` lists fewer), each check's `name`,
 `status` (`queued`, `in_progress` or `completed`; a pending commit status is
 `in_progress`), `conclusion` (the run's conclusion or the status's state, empty
 until completed), `title`, `url` and `job_id` (only for a failing GitHub
@@ -3466,12 +3591,23 @@ no limit, unless the config file sets them; `agent.Exceeds` and the backends
 treat a zero call or token budget as none, and Claude Code gets `--max-turns`
 only with a call budget.
 `Queue.Drain` refuses new jobs and reports true only when none is queued or
-running, under the mutex `Submit` checks, so a restart never cuts a started
-job short: one started during it gets `503` with `Retry-After` and is started
-again against the new daemon. Workers use the same `generate.Publish`
+running, under the mutex `Submit` checks. A restart into a newer version uses
+`Queue.DrainRunning` instead, which waits only for running jobs: it holds the
+queue, so no queued job starts in either lane, and once none runs it refuses
+new jobs in the same step, so a restart never cuts a started job short. A job
+started while the restart waits is accepted and queued behind the hold; one
+started after it drained gets `503` with `Retry-After` and is started again
+against the new daemon. It does not drain while a person's group generation
+queues its members' reviews and then its own job, so a group is accepted or
+refused whole. Queued jobs stay journaled, and the new daemon runs
+them in the usual order (`Queue.next`); `Resume` releases the hold when the
+restart fails. Workers use the same `generate.Publish`
 entry point as the terminal: previous-version lookup, run lease, generation and
 strict validation, then atomic version publication. Running journal entries are
 interrupted on restart; queued entries retain their confirmed input fingerprint.
+The daemon opens the queue held (`jobs.OpenHeld`) and resumes it once the
+application is wired, so a journaled feature build or chat job never starts
+before the feature log or the chat service exists.
 `GET /api/jobs` reads the queue in three forms, so no client reads the whole
 history on every refresh; each answers `{"available":true,"jobs":[…]}`:
 
@@ -4049,9 +4185,11 @@ protocol but an older version (an older release by semver; a development
 build is older than any release, and two development builds are left alone)
 is kept and sent `stop` with `{"when_idle":true,"executable":<the client's
 baum>}`: an idle daemon stops at once and the client starts its own version;
-a busy one answers with `restart_pending` and, once `Drain` succeeds, starts
+a busy one (a job queued or running) answers with `restart_pending`, starts
+no further queued job, and once `DrainRunning` finds none running starts
 that executable detached on the same port and stops, so no confirmed run is
-interrupted. Of racing clients the newest version is the one it restarts
+interrupted and a queued backlog does not hold the update back: the new
+daemon runs it. Of racing clients the newest version is the one it restarts
 as, and a client tells its user about the deferred restart only when it
 first schedules it. Because a client may be a sandboxed agent's hook and the
 executable runs unsandboxed with the daemon's environment, the daemon
@@ -4251,13 +4389,13 @@ it and `Queue.SubmitAutomatic` decides each job.
   request in a stack group counts with its group as one, and the group's
   eligible members are made pending together, so the group's review follows
   theirs. The pass submits them like any other pending head: a head already
-  reviewed is skipped, the switches and Drain apply, and an interrupted run
+  reviewed is skipped, the switches and a restart's drain apply, and an interrupted run
   is retried once. A repository whose poll fails is left out.
 - **Interrupted runs.** Each pass asks `Queue.Interrupted` for automatic jobs
   a daemon stop or restart cut short that are the only job for their head; if
   the PR is still open at that head and eligible, the head is pending again
   with trigger `retry`, once (`retried` records it). The retry goes through
-  the same pass, so Drain and the switches apply. Failed and
+  the same pass, so a restart's drain and the switches apply. Failed and
   cancelled runs are never retried; the next push triggers as usual. A run
   interrupted before a repository's baseline (turned off, then on again) is not
   retried: the baseline marks its heads as already retried.
@@ -4301,7 +4439,7 @@ it and `Queue.SubmitAutomatic` decides each job.
   when settings change and when a job finishes. A pass submits due pending
   heads, the PRs that have waited longest first across repositories (then by
   repository and number), unless the daemon is stopping or has a restart
-  pending (`daemon.Self`), so the queue can drain. It leaves at most two
+  pending (`daemon.Self`); the new daemon's passes submit those heads. It leaves at most two
   automatic jobs waiting in the queue for each job the queue runs at once
   (`job_concurrency`, so 8 by default); further heads stay pending for a
   later pass, where a newer push simply replaces the pending head. A head
@@ -4402,7 +4540,7 @@ report to the daemon; the hook side is in `internal/hookcli` (see its
   answer in time, answers an error, or does not know `event` gets the event
   through the spool; one older than the hook's baum is sent `stop` with
   `when_idle`, as `Ensure` sends it: an idle one stops and the next hook starts
-  the newer version, a busy one restarts as it when its jobs finish. A daemon
+  the newer version, a busy one restarts as it when its running jobs finish. A daemon
   holding the socket but not answering is never replaced by a hook.
 - **Spool.** `<state>/spool/`, 0700, one 0600 file per event named by the
   nanosecond it was spooled, written to a temporary file and renamed.
@@ -4585,10 +4723,11 @@ replace it.
   left, or used only to resume another; Claude Code writes no transcript until
   then) and is left out of the list (`empty`). Since agents report few
   events during a turn, `Transcripts.Watch` builds the list every second
-  while a session is running (every 5 seconds while sessions are listed but
-  none runs, and every 15 when none is live, so an idle daemon does not wake
-  every second), reading a working session's transcript (one neither ended nor waiting)
-  when it grew and the others' every 5 seconds, only what they appended, and
+  while a session is running and every 15 seconds otherwise. Applied hook
+  events and app-driven resume or end changes wake the watcher to shorten
+  its wait when a session starts running; repeated events never postpone a
+  scheduled read. It reads a working session's transcript (one neither ended nor waiting)
+  when it grew and the others' no more often than every 5 seconds, only what they appended, and
   publishes `live` when it differs from the last one: a running session's
   steps, files and message, and a session settling, reach the app without a
   hook event, what an agent says within a couple of seconds.
@@ -4922,16 +5061,18 @@ replace it.
   hooks last reported (kept in the tracker's entry, never served, and not in
   `live-sessions.json`), read only when, its symbolic links resolved
   (`filepath.EvalSymlinks`, the store's root resolved too), it is a regular
-  file strictly inside the agent's own store under the home directory, the
-  one discovery reads (`~/.claude/projects` for Claude Code, a `.jsonl`;
-  `~/.codex/sessions` for Codex, a `rollout-*.jsonl`). A Claude Code
+  file strictly inside the agent's own store, the one discovery reads
+  (`~/.claude/projects` under the home directory or the `projects` folder of
+  another directory of `agentdirs.Claude.All` for Claude Code, a `.jsonl`;
+  `~/.codex/sessions` or the `sessions` folder of another home of
+  `agentdirs.Codex.All` for Codex, a `rollout-*.jsonl`). A Claude Code
   subagent transcript beside it that resolves outside the store is left out.
-  Without a path a Codex session is looked up by id (`findRollout`, once per
+  Without a path a Codex session is looked up by id in each home (`findRollout`, once per
   session): the `rollout-*-<id>.jsonl` under `~/.codex/sessions` whose first
   line names that thread as a root. Only names are walked, so the rollouts
   Codex compresses as they age (`.jsonl.zst`, which a store scan rejects) do
   not stop it; a Claude Code one is found by its id in the project folders
-  under `~/.claude/projects` (`<folder>/<id>.jsonl`), as a session read back
+  of each store (`<folder>/<id>.jsonl`), as a session read back
   from `live-sessions.json` has no path. A Cursor session is read from Cursor's own database
   (`cursortranscript.DefaultStorePath`, a regular file) by its conversation
   id, since Cursor keeps no transcript file baum reads. The files are mapped
@@ -5245,8 +5386,8 @@ and two files:
    one), waits until it serves, and prints one JSON line on stdout:
    `{"protocol":1,"version":"v0.3.0","pid":4242,"started_at":"2026-10-19T16:00:00Z","app":"http://127.0.0.1:53124","socket":"/run/user/1000/baum/daemon.sock","state":"/home/user/.local/state/baum/daemon"}`.
    `stopping` appears only while it shuts down, and `restart_pending` when an
-   older daemon was kept because it is running jobs and will restart as this
-   version once they finish (see Lifecycle). On failure it exits non-zero
+   older daemon was kept because it has jobs queued or running and will
+   restart as this version once the running ones finish (see Lifecycle). On failure it exits non-zero
    with the reason on stderr. `--port` applies only when it starts the daemon.
 2. `<state>/credential.json`, mode 0600 (Windows: current-user DACL), holds
    `{"url":"http://127.0.0.1:PORT/#token=<43 characters>"}`, the launch URL.

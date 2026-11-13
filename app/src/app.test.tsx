@@ -81,7 +81,7 @@ beforeEach(() => {
             ? { entries, problems: [] }
             : path === "/s/test-ns/api/repos" || path === "/s/test-ns/api/repositories"
               ? []
-              : path === "/s/test-ns/api/prs"
+              : path === "/s/test-ns/api/prs?view=health"
                 ? []
                 : path === "/s/test-ns/api/jobs"
                   ? { jobs: [] }
@@ -402,7 +402,7 @@ it.each([
     entries = [{ ...entry(1), stale }];
     const original = vi.mocked(fetch).getMockImplementation()!;
     vi.mocked(fetch).mockImplementation((...args) =>
-      String(args[0]) === "/s/test-ns/api/prs"
+      String(args[0]) === "/s/test-ns/api/prs?view=health"
         ? Promise.resolve(
             Response.json([
               {
@@ -977,8 +977,7 @@ it("saves each review setting as it changes", async () => {
   const global = node.querySelector<HTMLInputElement>("#review-automatic")!;
   expect(global.checked).toBe(true);
   expect(node.querySelector("#review-all-note")).toBeNull();
-  const all = [...section().querySelectorAll("button")].find((b) => b.textContent === "All")!;
-  await act(async () => all.click());
+  await choose(node.querySelector<HTMLSelectElement>("#review-pull-requests")!, "all");
   expect(node.querySelector("#review-all-note")).not.toBeNull();
   expect(puts.at(-1)).toEqual({
     path: "/s/test-ns/api/automatic",
@@ -1033,7 +1032,7 @@ it("chooses a separate agent and model for fixes", async () => {
   const section = () => node.querySelector('[aria-labelledby="settings-fixes-heading"]')!;
   const agent = node.querySelector<HTMLSelectElement>("#fix-agent")!;
   expect([...agent.options].map((o) => o.textContent)).toEqual([
-    "Same as reviews",
+    "Same as reviews (Cursor Agent · composer-2.5)",
     "Claude Code",
     "Codex",
   ]);
@@ -1052,6 +1051,161 @@ it("chooses a separate agent and model for fixes", async () => {
   });
   await choose(agent, "");
   expect(puts.at(-1)!.body).toEqual({ fix_backend: "", fix_model: "", fix_effort: "" });
+});
+it("chooses the Claude Code configuration directory of reviews under Advanced", async () => {
+  history.replaceState(null, "", "/s/test-ns/?page=settings&section=reviews");
+  stubDiagnostics(async () => Response.json({ local: true, report: diagnosticsReport }));
+  const puts = stubAutomatic(demoClone, automaticOverview, {
+    backend: "claude",
+    model: "claude-haiku-5-5",
+    default_claude_config_dir: "/home/dev/.claude",
+    claude_config_dirs: ["/home/dev/.claude", "/home/dev/.claude.personal"],
+    home: "/home/dev",
+  });
+  await act(async () => root.render(<App />));
+  // Closed until asked for, and it names what the default is.
+  const advanced = node.querySelector<HTMLDetailsElement>(
+    '[aria-labelledby="settings-reviews-heading"] details.settings-advanced',
+  )!;
+  expect(advanced.open).toBe(false);
+  expect(advanced.querySelector("summary")!.textContent).toBe("Advanced");
+  const select = () => node.querySelector<HTMLSelectElement>("#review-claude-config-dir")!;
+  expect(select().value).toBe("");
+  // Paths are written with ~, and the default is listed once, by name.
+  expect([...select().options].map((o) => o.textContent)).toEqual([
+    "Default",
+    "~/.claude.personal",
+    "Another directory…",
+  ]);
+  expect(advanced.textContent).toContain("instead of ~/.claude.");
+  // Another setting's save does not send the directory.
+  await choose(node.querySelector<HTMLSelectElement>("#review-model")!, "claude-opus-5-5");
+  expect(puts.at(-1)!.body).not.toHaveProperty("claude_config_dir");
+  await choose(select(), "/home/dev/.claude.personal");
+  expect(puts.at(-1)).toMatchObject({
+    path: "/s/test-ns/api/automatic",
+    body: { backend: "claude", claude_config_dir: "/home/dev/.claude.personal" },
+  });
+  // A typed path saves once the field is left, not on every key.
+  await choose(select(), "\u0000custom");
+  const count = puts.length;
+  const path = node.querySelector<HTMLInputElement>(
+    'input[aria-label="Claude Code account folder"]',
+  )!;
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(
+      path,
+      "~/.claude-work",
+    );
+    path.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  expect(puts.length).toBe(count);
+  await act(async () => path.dispatchEvent(new FocusEvent("focusout", { bubbles: true })));
+  expect(puts.at(-1)!.body).toMatchObject({ claude_config_dir: "~/.claude-work" });
+  // Codex has its own, listed apart.
+  await choose(node.querySelector<HTMLSelectElement>("#review-agent")!, "codex");
+  expect(node.querySelector("#review-claude-config-dir")).toBeNull();
+  expect(node.querySelector("#review-codex-home")).not.toBeNull();
+});
+it("chooses a Codex account for reviews", async () => {
+  history.replaceState(null, "", "/s/test-ns/?page=settings&section=reviews");
+  stubDiagnostics(async () => Response.json({ local: true, report: diagnosticsReport }));
+  const puts = stubAutomatic(demoClone, automaticOverview, {
+    backend: "codex",
+    model: "gpt-6.1-sol",
+    fix_backend: "codex",
+    fix_model: "gpt-6-luna",
+    default_codex_home: "/home/dev/.codex",
+    codex_homes: ["/home/dev/.codex", "/home/dev/.codex-work"],
+    default_claude_config_dir: "/home/dev/.claude",
+    claude_config_dirs: ["/home/dev/.claude", "/home/dev/.claude.personal"],
+    home: "/home/dev",
+  });
+  await act(async () => root.render(<App />));
+  const reviews = node.querySelector('[aria-labelledby="settings-reviews-heading"]')!;
+  // Codex lists its own homes, not Claude Code's folders.
+  expect(reviews.querySelector("#review-claude-config-dir")).toBeNull();
+  const home = reviews.querySelector<HTMLSelectElement>("#review-codex-home")!;
+  expect(reviews.querySelector("details.settings-advanced")!.textContent).toContain(
+    "Codex account",
+  );
+  expect([...home.options].map((o) => o.textContent)).toEqual([
+    "Default",
+    "~/.codex-work",
+    "Another directory…",
+  ]);
+  await choose(home, "/home/dev/.codex-work");
+  expect(puts.at(-1)!.body).toMatchObject({
+    backend: "codex",
+    codex_home: "/home/dev/.codex-work",
+  });
+  expect(puts.at(-1)!.body).not.toHaveProperty("claude_config_dir");
+});
+it("chooses a Codex account for fixes and drops it with the agent", async () => {
+  history.replaceState(null, "", "/s/test-ns/?page=settings&section=fixes");
+  stubDiagnostics(async () => Response.json({ local: true, report: diagnosticsReport }));
+  const puts = stubAutomatic(demoClone, automaticOverview, {
+    backend: "codex",
+    model: "gpt-6.1-sol",
+    fix_backend: "codex",
+    fix_model: "gpt-6-luna",
+    default_codex_home: "/home/dev/.codex",
+    codex_homes: ["/home/dev/.codex", "/home/dev/.codex-work"],
+    home: "/home/dev",
+  });
+  await act(async () => root.render(<App />));
+  const fixes = node.querySelector('[aria-labelledby="settings-fixes-heading"]')!;
+  await choose(fixes.querySelector<HTMLSelectElement>("#fix-codex-home")!, "/home/dev/.codex-work");
+  expect(puts.at(-1)!.body).toEqual({
+    fix_backend: "codex",
+    fix_model: "gpt-6-luna",
+    fix_effort: "",
+    fix_codex_home: "/home/dev/.codex-work",
+  });
+  // Another agent drops the Codex home with the agent.
+  await choose(fixes.querySelector<HTMLSelectElement>("#fix-agent")!, "claude");
+  const body = puts.at(-1)!.body as Record<string, unknown>;
+  expect(body.fix_backend).toBe("claude");
+  expect(body.fix_codex_home ?? "").toBe("");
+  expect(fixes.querySelector("#fix-codex-home")).toBeNull();
+  expect(fixes.querySelector("#fix-claude-config-dir")).not.toBeNull();
+});
+it("shows a chosen Claude Code configuration directory and goes back to the default", async () => {
+  history.replaceState(null, "", "/s/test-ns/?page=settings&section=fixes");
+  stubDiagnostics(async () => Response.json({ local: true, report: diagnosticsReport }));
+  const puts = stubAutomatic(demoClone, automaticOverview, {
+    backend: "codex",
+    model: "gpt-6-luna",
+    fix_backend: "claude",
+    fix_model: "claude-opus-5-5",
+    // One baum no longer lists is still shown as chosen.
+    // No `home`, as from an older daemon: the default directory gives it.
+    fix_claude_config_dir: "/home/dev/.claude-old",
+    default_claude_config_dir: "/home/dev/.claude",
+    claude_config_dirs: ["/home/dev/.claude"],
+  });
+  await act(async () => root.render(<App />));
+  const advanced = node.querySelector<HTMLDetailsElement>(
+    '[aria-labelledby="settings-fixes-heading"] details.settings-advanced',
+  )!;
+  expect(advanced.open).toBe(true);
+  const select = node.querySelector<HTMLSelectElement>("#fix-claude-config-dir")!;
+  expect(select.value).toBe("/home/dev/.claude-old");
+  expect(select.selectedOptions[0]!.textContent).toBe("~/.claude-old");
+  expect(advanced.textContent).toContain("instead of ~/.claude.");
+  await choose(node.querySelector<HTMLSelectElement>("#fix-model")!, "claude-haiku-5-5");
+  expect(puts.at(-1)!.body).not.toHaveProperty("fix_claude_config_dir");
+  await choose(select, "");
+  expect(puts.at(-1)!.body).toEqual({
+    fix_backend: "claude",
+    fix_model: "claude-haiku-5-5",
+    fix_effort: "",
+    fix_claude_config_dir: "",
+  });
+  // Fixes that follow reviews have no directory of their own to choose.
+  await choose(node.querySelector<HTMLSelectElement>("#fix-agent")!, "");
+  expect(puts.at(-1)!.body).toEqual({ fix_backend: "", fix_model: "", fix_effort: "" });
+  expect(node.querySelector("#fix-claude-config-dir")).toBeNull();
 });
 it("saves one change at a time and only the newest of those made meanwhile", async () => {
   history.replaceState(null, "", "/s/test-ns/?page=settings&section=fixes");
@@ -1171,28 +1325,29 @@ it("moves through Settings' sections and their controls from the keyboard", asyn
   const current = () =>
     node.querySelector<HTMLElement>('nav[aria-label="Settings sections"] [aria-current="page"]')!;
   // Keys pressed where the focus is, as a person's would be.
-  const key = (name: string) =>
+  const key = (name: string, shiftKey = false) =>
     act(async () => {
       (document.activeElement ?? document.body).dispatchEvent(
-        new KeyboardEvent("keydown", { key: name, bubbles: true, cancelable: true }),
+        new KeyboardEvent("keydown", { key: name, shiftKey, bubbles: true, cancelable: true }),
       );
     });
-  await key("j");
+  // Shift+J and Shift+K move through the sections.
+  await key("J", true);
   expect(location.search).toBe("?page=settings&section=reviews");
   expect(document.activeElement).toBe(current());
   await key("4");
   expect(location.search).toBe("?page=settings&section=connections");
-  await key("k");
-  await key("k");
+  await key("K", true);
+  await key("ArrowUp", true);
   expect(location.search).toBe("?page=settings&section=reviews");
-  // Enter goes into the section, where j and k step through its controls.
-  await key("Enter");
+  // j goes into the section, where j and k step through its controls.
+  await key("j");
   const automatic = node.querySelector<HTMLInputElement>("#review-automatic")!;
   expect(document.activeElement).toBe(automatic);
   await key("j");
-  expect(document.activeElement!.textContent).toBe("All");
-  await key("k");
-  expect(document.activeElement).toBe(automatic);
+  expect(document.activeElement).toBe(node.querySelector("#review-pull-requests"));
+  // In a select, letters pick an option rather than move.
+  automatic.focus();
   // Enter changes a switch as Space does; with automatic reviews off, the
   // next control is the agent.
   await key("Enter");
@@ -1200,12 +1355,20 @@ it("moves through Settings' sections and their controls from the keyboard", asyn
   await key("j");
   expect(document.activeElement).toBe(node.querySelector("#review-agent"));
   automatic.focus();
-  // Escape goes back to the list, where j moves the section again.
+  // Shift+J moves the section from inside one too.
+  await key("J", true);
+  expect(location.search).toBe("?page=settings&section=fixes");
+  expect(document.activeElement).toBe(current());
+  await key("K", true);
+  // Escape goes back to the list; Enter goes in again.
+  const again = node.querySelector<HTMLInputElement>("#review-automatic")!;
+  again.focus();
   await key("Escape");
   expect(document.activeElement).toBe(current());
   expect(current().textContent).toContain("Reviews");
-  await key("j");
-  expect(location.search).toBe("?page=settings&section=fixes");
+  expect(location.search).toBe("?page=settings&section=reviews");
+  await key("Enter");
+  expect(document.activeElement).toBe(again);
 });
 it("edits the environment agents run with and shows server errors inline", async () => {
   history.replaceState(null, "", "/s/test-ns/?page=settings&section=computer");
@@ -1452,8 +1615,7 @@ it("chooses the data extraction agent apart from the reviews'", async () => {
   await act(async () => root.render(<App />));
   const section = node.querySelector('[aria-labelledby="decisions-heading"]')!;
   const agent = section.querySelector<HTMLSelectElement>("#decisions-agent")!;
-  expect(agent.selectedOptions[0]!.textContent).toBe("Same as reviews");
-  expect(section.textContent).toContain("Now Codex.");
+  expect(agent.selectedOptions[0]!.textContent).toBe("Same as reviews (Codex)");
   expect([...agent.options].map((o) => o.value)).toEqual(["", "claude", "codex"]);
   // A new agent starts over at its default model, which is saved as none.
   await choose(agent, "claude");
@@ -1464,6 +1626,46 @@ it("chooses the data extraction agent apart from the reviews'", async () => {
   expect(section.querySelector<HTMLSelectElement>("#decisions-model")!.value).toBe(
     "claude-haiku-5-5",
   );
+});
+it("chooses a Claude Code configuration directory for extraction with its own agent", async () => {
+  history.replaceState(null, "", "/s/test-ns/?page=settings&section=reviews");
+  stubDiagnostics(async () => Response.json({ local: true, report: diagnosticsReport }));
+  const puts = stubAutomatic(demoClone, automaticOverview, {
+    backend: "codex",
+    model: "gpt-6.1-sol",
+    default_claude_config_dir: "/home/dev/.claude",
+    claude_config_dirs: ["/home/dev/.claude", "/home/dev/.claude.personal"],
+    home: "/home/dev",
+    decisions: { enabled: true, backend: "", model: "", effective_backend: "codex" },
+  });
+  await act(async () => root.render(<App />));
+  const section = node.querySelector('[aria-labelledby="decisions-heading"]')!;
+  // While extraction follows the reviews' agent, it follows their directory.
+  expect(section.querySelector("#decisions-claude-config-dir")).toBeNull();
+  await choose(section.querySelector<HTMLSelectElement>("#decisions-agent")!, "claude");
+  expect(puts.at(-1)!.body).not.toHaveProperty("claude_config_dir");
+  const advanced = section.querySelector<HTMLDetailsElement>("details.settings-advanced")!;
+  expect(advanced.open).toBe(false);
+  const select = section.querySelector<HTMLSelectElement>("#decisions-claude-config-dir")!;
+  expect([...select.options].map((o) => o.textContent)).toEqual([
+    "Default",
+    "~/.claude.personal",
+    "Another directory…",
+  ]);
+  await choose(select, "/home/dev/.claude.personal");
+  expect(puts.at(-1)).toEqual({
+    path: "/s/test-ns/api/settings/decisions",
+    body: {
+      enabled: true,
+      backend: "claude",
+      model: "",
+      effort: "",
+      claude_config_dir: "/home/dev/.claude.personal",
+    },
+  });
+  // Codex has no such directory.
+  await choose(section.querySelector<HTMLSelectElement>("#decisions-agent")!, "codex");
+  expect(section.querySelector("#decisions-claude-config-dir")).toBeNull();
 });
 it("goes back to the reviews' agent from a chosen one", async () => {
   history.replaceState(null, "", "/s/test-ns/?page=settings&section=reviews");
@@ -1495,23 +1697,19 @@ it("saves a reasoning effort per use case", async () => {
     decisions: { enabled: true, backend: "", model: "", effective_backend: "codex" },
   });
   await act(async () => root.render(<App />));
-  expect(node.querySelector('[aria-label="Review reasoning effort"]')!.textContent).toContain(
-    "Max",
-  );
-  const pick = async (group: string, label: string) => {
-    const control = node.querySelector(`[aria-label="${group}"]`)!;
-    await act(async () =>
-      [...control.querySelectorAll("button")].find((b) => b.textContent === label)!.click(),
-    );
-  };
-  await pick("Review reasoning effort", "High");
+  const effort = (label: string) =>
+    node.querySelector<HTMLSelectElement>(`select[aria-label="${label}"]`)!;
+  // A saved level the list doesn't offer still shows as chosen.
+  expect(effort("Review reasoning effort").selectedOptions[0]!.textContent).toBe("Max effort");
+  const pick = (label: string, value: string) => choose(effort(label), value);
+  await pick("Review reasoning effort", "high");
   expect(puts.at(-1)!.body).toMatchObject({ backend: "codex", effort: "high" });
-  await pick("Extraction reasoning effort", "Low");
+  await pick("Extraction reasoning effort", "low");
   expect(puts.at(-1)).toEqual({
     path: "/s/test-ns/api/settings/decisions",
     body: { enabled: true, backend: "", model: "", effort: "low" },
   });
-  await pick("Review reasoning effort", "Default");
+  await pick("Review reasoning effort", "");
   expect(puts.at(-1)!.body).toMatchObject({ effort: "" });
   // Only Claude Code and Codex can be chosen for reviews.
   expect(
@@ -1525,9 +1723,9 @@ it("offers a fix effort only with a fix agent of its own", async () => {
   await act(async () => root.render(<App />));
   expect(node.querySelector('[aria-label="Fix reasoning effort"]')).toBeNull();
   await choose(node.querySelector<HTMLSelectElement>("#fix-agent")!, "codex");
-  const control = node.querySelector('[aria-label="Fix reasoning effort"]')!;
-  await act(async () =>
-    [...control.querySelectorAll("button")].find((b) => b.textContent === "Medium")!.click(),
+  await choose(
+    node.querySelector<HTMLSelectElement>('select[aria-label="Fix reasoning effort"]')!,
+    "medium",
   );
   expect(puts.at(-1)!.body).toEqual({
     fix_backend: "codex",

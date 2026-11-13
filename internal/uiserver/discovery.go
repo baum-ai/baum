@@ -45,11 +45,38 @@ type listing struct {
 	until time.Time
 }
 
+// repositoryHealth is one repository's entry in GET /api/prs?view=health:
+// what the app shows of discovery (a stale or failed refresh, an exhausted
+// rate limit) without the pull requests, which /api/index lists.
+type repositoryHealth struct {
+	Repository string              `json:"repository"`
+	Stale      bool                `json:"stale"`
+	FetchedAt  time.Time           `json:"fetched_at"`
+	NextPoll   time.Time           `json:"next_poll"`
+	Rate       discovery.RateLimit `json:"rate"`
+	Error      string              `json:"error,omitempty"`
+	Settling   bool                `json:"settling,omitempty"`
+}
+
+func healthOf(snapshots []discovery.Snapshot) []repositoryHealth {
+	out := make([]repositoryHealth, len(snapshots))
+	for i, s := range snapshots {
+		out[i] = repositoryHealth{Repository: s.Repository, Stale: s.Stale, FetchedAt: s.FetchedAt,
+			NextPoll: s.NextPoll, Rate: s.Rate, Error: s.Error, Settling: s.Settling}
+	}
+	return out
+}
+
 func DiscoveryHandler(registry *repos.Registry, service DiscoveryCache, changed func()) http.Handler {
 	mux := http.NewServeMux()
 	var mu sync.Mutex
-	var last *listing
+	last := map[string]*listing{}
 	mux.HandleFunc("GET /api/prs", func(w http.ResponseWriter, r *http.Request) {
+		view := r.URL.Query().Get("view")
+		if view != "" && view != "health" {
+			http.Error(w, "unknown view", http.StatusBadRequest)
+			return
+		}
 		list, err := registry.RepositoryRows(r.Context())
 		if err != nil {
 			apiError(w, err)
@@ -87,7 +114,7 @@ func DiscoveryHandler(registry *repos.Registry, service DiscoveryCache, changed 
 		}
 		if keyed {
 			mu.Lock()
-			hit := last
+			hit := last[view]
 			mu.Unlock()
 			if hit != nil && hit.key == key && (hit.until.IsZero() || time.Now().Before(hit.until)) {
 				etagjson.Serve(w, r, hit.body)
@@ -108,14 +135,19 @@ func DiscoveryHandler(registry *repos.Registry, service DiscoveryCache, changed 
 			}
 			out = append(out, snapshot)
 		}
-		body, err := etagjson.Encode(out)
+		var body etagjson.Body
+		if view == "health" {
+			body, err = etagjson.Encode(healthOf(out))
+		} else {
+			body, err = etagjson.Encode(out)
+		}
 		if err != nil {
 			apiError(w, err)
 			return
 		}
 		if keyed {
 			mu.Lock()
-			last = &listing{key: key, body: body, until: until}
+			last[view] = &listing{key: key, body: body, until: until}
 			mu.Unlock()
 		}
 		etagjson.Serve(w, r, body)

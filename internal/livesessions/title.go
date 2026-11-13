@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"maps"
+	"math"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -166,44 +167,49 @@ var safeID = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
 // (only what they appended) and the others' no more often than describe
 // allows.
 //
-// It looks every WorkingRecheckEvery only while a session is running, every
-// TitleRecheckEvery while sessions are listed but none runs, and every
-// QuietRecheckEvery when none is live, so an idle daemon does not wake every
-// second.
+// It looks every WorkingRecheckEvery only while a session is running, and
+// every QuietRecheckEvery otherwise. Tracker changes wake it to shorten the
+// wait when a session resumes, without postponing an already scheduled read.
 func (t *Transcripts) Watch(ctx context.Context, notify func()) {
+	t.Tracker.init()
 	var last []byte
-	timer := time.NewTimer(WorkingRecheckEvery)
+	t.moved(&last)
+	every := t.recheckEvery()
+	next := time.Now().Add(every)
+	timer := time.NewTimer(every)
 	defer timer.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
+		case <-t.Tracker.watch:
+			if every := t.recheckEvery(); every < time.Until(next) {
+				next = time.Now().Add(every)
+				timer.Reset(every)
+			}
 		case <-timer.C:
 			if t.moved(&last) {
 				notify()
 			}
-			timer.Reset(t.recheckEvery())
+			every := t.recheckEvery()
+			next = time.Now().Add(every)
+			timer.Reset(every)
 		}
 	}
 }
 
-// QuietRecheckEvery is how often Watch looks while no session is live; a
-// hook event announces a new session without it.
+// QuietRecheckEvery is how often Watch looks while no session is running;
+// hook events wake it when a session starts or resumes.
 const QuietRecheckEvery = 15 * time.Second
 
 // recheckEvery is how long Watch waits before its next look.
 func (t *Transcripts) recheckEvery() time.Duration {
-	every := QuietRecheckEvery
 	for _, s := range t.Tracker.Sessions() {
-		switch s.State {
-		case StateRunning:
+		if s.State == StateRunning {
 			return WorkingRecheckEvery
-		case StateEnded:
-		default:
-			every = TitleRecheckEvery
 		}
 	}
-	return every
+	return QuietRecheckEvery
 }
 
 // moved reports whether the list differs from last, which it then holds. The
@@ -328,7 +334,10 @@ func (t *Transcripts) describe(k key, path string, working bool, endedAt time.Ti
 		t.logger().Debug("live session title not read", "agent", k.agent, "error", err)
 		return e.title, e.excerpt, e.summary, e.activity
 	}
-	caught := e.scan.offset >= src.size
+	// A compressed rollout is read whole in one pass and never grows, so a
+	// read of it is caught up even when its size was an estimate or its last
+	// line ended without a newline.
+	caught := e.scan.offset >= src.size || codextranscript.Compressed(src.transcript)
 	if !caught && k.agent == AgentClaudeCode {
 		// Not caught up: the tail names the session meanwhile.
 		var tail scanState
@@ -487,35 +496,18 @@ func (t *Transcripts) describeFiles(k key, path string) (describeSource, error) 
 	src := describeSource{agent: k.agent}
 	switch k.agent {
 	case AgentClaudeCode:
-		root := filepath.Join(home, ".claude", "projects")
-		if path == "" {
-			found, ok := claudeTranscriptByID(root, k.id)
-			if !ok {
-				return src, errors.New("no transcript")
-			}
-			path, src.found = found, found
-		}
-		main, err := inStore(root, path, func(name string) bool { return strings.HasSuffix(name, ".jsonl") })
+		main, _, found, err := claudeTranscript(home, k.id, path)
 		if err != nil {
 			return src, err
 		}
-		src.transcript = main
+		src.transcript, src.found = main, found
 	case AgentCodex:
-		codexHome := filepath.Join(home, ".codex")
-		if path == "" {
-			found, err := findRollout(codexHome, k.id)
-			if err != nil {
-				return src, err
-			}
-			path, src.found = found, found
-		}
-		main, err := inStore(filepath.Join(codexHome, "sessions"), path, func(name string) bool {
-			return strings.HasPrefix(name, "rollout-") && strings.HasSuffix(name, ".jsonl")
-		})
+		main, codexHome, found, err := codexRollout(home, k.id, path)
 		if err != nil {
 			return src, err
 		}
-		src.transcript = main
+		src.transcript, src.found = main, found
+		// The thread names of the home the rollout is in.
 		if index, err := inStore(codexHome, filepath.Join(codexHome, "session_index.jsonl"), func(name string) bool {
 			return name == "session_index.jsonl"
 		}); err == nil {
@@ -536,7 +528,7 @@ func (t *Transcripts) describeFiles(k key, path string) (describeSource, error) 
 		if err != nil {
 			return src, err
 		}
-		src.size = info.Size()
+		src.size = codextranscript.DecodedSize(src.transcript, info)
 	}
 	return src, nil
 }
@@ -545,7 +537,8 @@ func (t *Transcripts) describeFiles(k key, path string) (describeSource, error) 
 // the last read stopped (from the start when it is another file or shrank),
 // and the names kept outside it.
 func (s *describeSource) read(id string, scan *scanState) error {
-	if s.transcript != "" && (scan.path != s.transcript || s.size < scan.offset) {
+	compressed := codextranscript.Compressed(s.transcript)
+	if s.transcript != "" && (compressed || scan.path != s.transcript || s.size < scan.offset) {
 		*scan = scanState{path: s.transcript}
 	}
 	switch s.agent {
@@ -556,6 +549,12 @@ func (s *describeSource) read(id string, scan *scanState) error {
 			if name, err := codextranscript.ThreadName(s.index, id); err == nil {
 				s.name = name
 			}
+		}
+		if compressed {
+			// A compressed rollout never grows and is decompressed from its
+			// start wherever a read begins, so it is read whole, to its end:
+			// its size may be an estimate.
+			return readCodex(s.transcript, 0, math.MaxInt64, scan)
 		}
 		return readCodex(s.transcript, scan.offset, min(s.size, scan.offset+scanPass), scan)
 	case AgentCursor:
@@ -903,12 +902,31 @@ func codexCompaction(line []byte) string {
 // longer than maxLine is passed as its first maxLine bytes, with whole false.
 // A line cut by to, or still being written, is read again next time.
 func eachLine(path string, from, to int64, scan *scanState, fn func(line []byte, whole bool)) error {
-	f, err := os.Open(path)
-	if err != nil {
-		return err
+	var src io.Reader
+	if codextranscript.Compressed(path) {
+		if from >= to {
+			scan.offset = from
+			return nil
+		}
+		rc, err := openTranscript(path)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = rc.Close() }()
+		if n, err := io.CopyN(io.Discard, rc, from); n < from || err != nil {
+			scan.offset = from
+			return nil
+		}
+		src = io.LimitReader(rc, to-from)
+	} else {
+		f, err := os.Open(path)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = f.Close() }()
+		src = io.NewSectionReader(f, from, to-from)
 	}
-	defer func() { _ = f.Close() }()
-	r := bufio.NewReaderSize(io.NewSectionReader(f, from, to-from), maxLine)
+	r := bufio.NewReaderSize(src, maxLine)
 	offset := from
 	for {
 		line, err := r.ReadSlice('\n')

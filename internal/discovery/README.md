@@ -2,7 +2,7 @@
 
 Keeps a private cache of each picked repository's open pull requests (the
 local app's inbox), read from GitHub with the user's token. It makes no git
-fetch, no generation and no write to GitHub. `Cached` never makes a request;
+fetch, no generation and no write to GitHub. `Cached` and `CachedStable` never make a request;
 `Poll`, `PollNow` and `Probe` do, on the credential's shared budget.
 
 The cache lives in `app.sqlite` under `cache/discovery/<hash>`, partitioned by
@@ -41,7 +41,17 @@ how many times this service changed it. Two equal revisions read the same
 snapshot, except that `Stale` turns true once `NextPoll` passes. The count
 lives in memory, so it holds only because the daemon's service is the cache's
 one writer: the daemon runs once, and nothing else writes `cache/discovery`.
-Live sessions use it to decode a cache again only after it changed.
+Live sessions and the review index use it to read a cache again only after it
+changed. `Updated`, when set, is called after each write of a repository's
+cache, an identity reset and each change to live freshness. A write of the
+budget record alone (a probe saves only that) is not reported, since `Cached`
+does not read it.
+
+`CachedStable` returns the same data without making it stale merely because
+`NextPoll` passed. The review index uses this form: an error or a cache not yet
+validated in this process remains stale, but waiting for the next poll does
+not change every row. `Cached` retains deadline-based staleness for readers
+that use it to decide whether to fetch fresh data.
 
 ## A poll
 

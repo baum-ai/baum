@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/baum-ai/baum/internal/agentdirs"
 	"github.com/baum-ai/baum/internal/transcript"
 	"github.com/baum-ai/baum/internal/workstats"
 	"github.com/baum-ai/baum/sessions"
@@ -66,8 +67,10 @@ func unavailable(reason string) error { return &Unavailable{Reason: reason} }
 // session's hooks reported, and it is read only when, its symbolic links
 // resolved, it is a regular file inside that agent's own session store under
 // the home directory (~/.claude/projects for Claude Code, ~/.codex/sessions
-// for Codex). A Codex session whose hooks named no path is looked up in that
-// store by its id; a Cursor session is read from Cursor's own database by its
+// for Codex), or under the same folder of another Claude Code configuration
+// directory or Codex home baum knows (agentdirs.Claude.All,
+// agentdirs.Codex.All). A Codex session whose hooks named no path is looked
+// up in those stores by its id; a Cursor session is read from Cursor's own database by its
 // conversation id, since Cursor keeps no transcript file baum reads.
 type Transcripts struct {
 	Tracker *Tracker
@@ -326,7 +329,8 @@ type Location struct {
 // conversation.
 func (s Location) Path() string { return s.main }
 
-// Size is the total size of the session's own files; zero for a Cursor
+// Size is the total size of the session's own files, a compressed rollout by
+// its decoded size; zero for a Cursor
 // conversation, which shares one database with every other.
 func (s Location) Size() (int64, error) {
 	var total int64
@@ -335,7 +339,7 @@ func (s Location) Size() (int64, error) {
 		if err != nil {
 			return 0, err
 		}
-		total += info.Size()
+		total += codextranscript.DecodedSize(f.Path, info)
 	}
 	return total, nil
 }
@@ -398,17 +402,10 @@ func (t *Transcripts) locate(agent, id, path string, c *cached) (Location, error
 func Locate(home, cursorStore, agent, id, path string) (Location, error) {
 	switch agent {
 	case AgentClaudeCode:
-		root := filepath.Join(home, ".claude", "projects")
-		if path == "" {
-			// A session read back from StateFile keeps no path; its
-			// transcript is found by its id.
-			found, ok := claudeTranscriptByID(root, id)
-			if !ok {
-				return Location{}, unavailable("Claude Code did not say where this session's transcript is.")
-			}
-			path = found
+		main, root, _, err := claudeTranscript(home, id, path)
+		if errors.Is(err, errNoClaudeTranscript) {
+			return Location{}, unavailable("Claude Code did not say where this session's transcript is.")
 		}
-		main, err := inStore(root, path, func(name string) bool { return strings.HasSuffix(name, ".jsonl") })
 		if err != nil {
 			return Location{}, err
 		}
@@ -426,18 +423,7 @@ func Locate(home, cursorStore, agent, id, path string) (Location, error) {
 		}
 		return Location{Vendor: vendors.ClaudeCode, ID: id, files: files, main: main}, nil
 	case AgentCodex:
-		root := filepath.Join(home, ".codex", "sessions")
-		rollout := func(name string) bool {
-			return strings.HasPrefix(name, "rollout-") && strings.HasSuffix(name, ".jsonl")
-		}
-		if path == "" {
-			found, err := findRollout(filepath.Join(home, ".codex"), id)
-			if err != nil {
-				return Location{}, err
-			}
-			path = found
-		}
-		main, err := inStore(root, path, rollout)
+		main, _, _, err := codexRollout(home, id, path)
 		if err != nil {
 			return Location{}, err
 		}
@@ -459,6 +445,100 @@ func Locate(home, cursorStore, agent, id, path string) (Location, error) {
 	return Location{}, unavailable(fmt.Sprintf("baum cannot read the transcripts of %s sessions.", agent))
 }
 
+// errNoStore is inStore's error for a session store that is not there.
+var errNoStore error = unavailable("The agent's session folder was not found on this computer.")
+
+// errNoClaudeTranscript is claudeTranscript's error for a session whose hooks
+// named no transcript and that no store holds one of.
+var errNoClaudeTranscript = errors.New("no transcript")
+
+// claudeTranscript finds the transcript of Claude Code session id, whose
+// hooks named path (empty when none did, such as a session read back from
+// StateFile, which is then looked up by its id), and checks that it is inside
+// one of the session stores of the Claude Code configuration directories baum
+// knows (agentdirs.Claude.Under(home, "projects")): ~/.claude under home, the daemon's own
+// CLAUDE_CONFIG_DIR and the recorded ones. It returns the transcript with its
+// symbolic links resolved, the store it is in, and the path when it was
+// looked up by id.
+func claudeTranscript(home, id, path string) (main, root, found string, err error) {
+	roots := agentdirs.Claude.Under(home, "projects")
+	if path == "" {
+		for _, root := range roots {
+			if match, ok := claudeTranscriptByID(root, id); ok {
+				path, found = match, match
+				break
+			}
+		}
+		if path == "" {
+			return "", "", "", errNoClaudeTranscript
+		}
+	}
+	// Every store that exists refuses a path for the same reason, so the
+	// last such reason is the one to give; a store that is not there says
+	// nothing about the path.
+	err = errNoStore
+	for _, root := range roots {
+		main, storeErr := inStore(root, path, func(name string) bool { return strings.HasSuffix(name, ".jsonl") })
+		if storeErr == nil {
+			return main, root, found, nil
+		}
+		if storeErr != errNoStore {
+			err = storeErr
+		}
+	}
+	return "", "", "", err
+}
+
+// codexRollout finds the rollout of Codex session id, whose hooks named path
+// (empty when none did, which is then looked up by its id), and checks that it
+// is inside the sessions folder of one of the Codex homes baum knows
+// (agentdirs.Codex.All): ~/.codex under home, the daemon's own CODEX_HOME and
+// the recorded ones. It returns the rollout with its symbolic links resolved,
+// the home it is in, and the path when it was looked up by id.
+func codexRollout(home, id, path string) (main, codexHome, found string, err error) {
+	homes := agentdirs.Codex.All(home)
+	if path == "" {
+		err = unavailable("Codex has no transcript of this session on this computer.")
+		for _, h := range homes {
+			if match, findErr := findRollout(h, id); findErr == nil {
+				path, found = match, match
+				break
+			}
+		}
+		if path == "" {
+			return "", "", "", err
+		}
+	}
+	// As for Claude Code: the last refusal of a store that exists is the
+	// reason given.
+	err = errNoStore
+	for _, h := range homes {
+		main, storeErr := inStore(filepath.Join(h, "sessions"), compressedSince(path), codextranscript.IsRolloutName)
+		if storeErr == nil {
+			return main, h, found, nil
+		}
+		if storeErr != errNoStore {
+			err = storeErr
+		}
+	}
+	return "", "", "", err
+}
+
+// compressedSince is the rollout at path, or its compressed copy when Codex
+// compressed it after the path was recorded and the plain file is gone.
+func compressedSince(path string) string {
+	if codextranscript.Compressed(path) {
+		return path
+	}
+	if _, err := os.Lstat(path); !errors.Is(err, fs.ErrNotExist) {
+		return path
+	}
+	if _, err := os.Lstat(path + ".zst"); err == nil {
+		return path + ".zst"
+	}
+	return path
+}
+
 // inStore resolves path and reports it when it is a regular file inside the
 // store root, whose name named accepts; otherwise the transcript is
 // unavailable.
@@ -469,7 +549,7 @@ func inStore(root, path string, named func(string) bool) (string, error) {
 	}
 	realRoot, err := filepath.EvalSymlinks(root)
 	if err != nil {
-		return "", unavailable("The agent's session folder was not found on this computer.")
+		return "", errNoStore
 	}
 	resolved, err := filepath.EvalSymlinks(path)
 	if errors.Is(err, os.ErrNotExist) {
@@ -488,9 +568,9 @@ func inStore(root, path string, named func(string) bool) (string, error) {
 // findRollout looks a Codex session up by its id, for a session whose hooks
 // named no path (one restored from StateFile): Codex names each rollout
 // after its thread, so it is the one rollout under sessions whose name ends in
-// the id and whose first line says it is that thread's root. Only names are
-// walked, not the store's other rollouts, which Codex compresses as they age
-// (.jsonl.zst, which baum does not read).
+// the id (plain, or compressed as Codex does as they age) and whose first line
+// says it is that thread's root. Only names are walked, not the store's other
+// rollouts. A plain rollout is preferred to a compressed copy beside it.
 func findRollout(codexHome, id string) (string, error) {
 	if !safeID.MatchString(id) {
 		return "", unavailable("Codex has no transcript of this session on this computer.")
@@ -500,8 +580,16 @@ func findRollout(codexHome, id string) (string, error) {
 		if err != nil || entry.IsDir() {
 			return nil
 		}
-		name := entry.Name()
-		if !strings.HasPrefix(name, "rollout-") || !strings.HasSuffix(name, "-"+id+".jsonl") || !rootOf(path, id) {
+		name := codextranscript.PlainName(entry.Name())
+		if !codextranscript.IsRolloutName(name) || !strings.HasSuffix(name, "-"+id+".jsonl") {
+			return nil
+		}
+		if codextranscript.Compressed(path) {
+			if _, err := os.Stat(codextranscript.PlainPath(path)); err == nil {
+				path = codextranscript.PlainPath(path)
+			}
+		}
+		if !rootOf(path, id) {
 			return nil
 		}
 		found = path
@@ -515,7 +603,7 @@ func findRollout(codexHome, id string) (string, error) {
 
 // rootOf reports whether the rollout at path starts thread id's root.
 func rootOf(path, id string) bool {
-	f, err := os.Open(path)
+	f, err := codextranscript.OpenRollout(path)
 	if err != nil {
 		return false
 	}

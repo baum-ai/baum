@@ -99,6 +99,10 @@ any one clone.
 | `groups(id, repository, name, members, stack, chain, created, updated, deleted)` | definitions; `members` is a JSON array of numbers; `stack` marks a stack group; `chain` is a stack group's saved placements (parent, branches, author, merged flag) for every member, merged ones included; `deleted` is a soft-delete time, 0 while live |
 | `versions(group_id, version, metadata, members, document)` | immutable combined reviews keyed by group ID and version; `metadata` is `store.Metadata`; `members` is the reviewed `stack.members` copied out of the document for listing |
 
+The group list reads version counts and latest summaries in one query for
+all live groups. The `groups(repository, deleted, created, id)` index bounds
+stack synchronization reads to the repository being synchronized.
+
 Group versions are keyed by group ID, never by `{repository, number}`, so
 they never collide with a member's own versions in the clone's
 `versions.sqlite`. `Store.Versions(id)` adapts a group to the

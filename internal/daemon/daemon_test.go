@@ -72,7 +72,7 @@ func TestDaemonHelper(t *testing.T) {
 				return App{}, err
 			}
 			<-executor.started
-			return App{Shutdown: queue.Shutdown, Drain: queue.Drain, Resume: queue.Resume}, nil
+			return App{Shutdown: queue.Shutdown, Drain: queue.Drain, DrainRunning: queue.DrainRunning, Resume: queue.Resume}, nil
 		},
 		Respawn: func(executable string, _ Status) error {
 			cmd := exec.Command(executable, "-test.run=^TestDaemonHelper$")
@@ -1118,6 +1118,67 @@ func TestIdleRestartMarksStoppingWhileDraining(t *testing.T) {
 	}
 	if status := <-seen; !status.Stopping {
 		t.Fatalf("a hello during the drain saw %+v", status)
+	}
+}
+
+// A restart waits only for running jobs (DrainRunning): queued ones stay for
+// the new daemon. A stop asked to wait for idle still stops at once only when
+// nothing is queued either, and otherwise leaves the restart to the loop.
+func TestRestartWaitsOnlyForRunningJobs(t *testing.T) {
+	var running atomic.Bool
+	running.Store(true)
+	held := make(chan struct{}, 16)
+	c := &controller{status: Status{Version: "v1.0.0"}, log: slog.New(slog.DiscardHandler)}
+	// A queued job is always pending.
+	c.drain = func() bool { return false }
+	c.drainRunning = func() bool {
+		select {
+		case held <- struct{}{}:
+		default:
+		}
+		return !running.Load()
+	}
+	c.resume = func() { t.Error("resumed") }
+	c.trust = func(path string) (string, error) { return path, nil }
+	respawned := make(chan string, 1)
+	c.respawn = func(executable string, _ Status) error { respawned <- executable; return nil }
+	stopped := make(chan struct{})
+	c.stop = func() { close(stopped) }
+	response, stop := c.dispatch([]byte(`{"method":"stop","client":"v2.0.0","params":{"when_idle":true,"executable":"/opt/baum-next"}}`))
+	if stop || !response.OK || response.Status == nil || response.Status.Stopping || !response.Status.RestartPending {
+		t.Fatalf("%+v %v", response, stop)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	done := make(chan struct{})
+	go func() { c.restartWhenIdle(ctx); close(done) }()
+	select {
+	case <-held:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the restart never held the queue")
+	}
+	select {
+	case <-respawned:
+		t.Fatal("restarted while a job runs")
+	case <-time.After(2 * restartPoll):
+	}
+	running.Store(false)
+	select {
+	case exe := <-respawned:
+		if exe != "/opt/baum-next" {
+			t.Fatalf("restarted as %s", exe)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("never restarted with only queued jobs left")
+	}
+	<-done
+	select {
+	case <-stopped:
+	default:
+		t.Fatal("did not stop")
+	}
+	if !c.current().Stopping {
+		t.Fatal("not marked stopping")
 	}
 }
 

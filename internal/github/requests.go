@@ -57,6 +57,23 @@ func CountRequests(ctx context.Context) (context.Context, func() int) {
 	return context.WithValue(ctx, requestCountKey{}, count), func() int { return int(count.n.Load()) }
 }
 
+type requestPacerKey struct{}
+
+// WithRequestPacer makes every GraphQL request made with ctx, each retry
+// included, call pace first, which may wait or refuse; a refusal ends the
+// read with that error. It lets a caller hold a read to a rate it chose.
+func WithRequestPacer(ctx context.Context, pace func(context.Context) error) context.Context {
+	return context.WithValue(ctx, requestPacerKey{}, pace)
+}
+
+// PaceRequest runs the pacer ctx carries, if any, before a request is sent.
+func PaceRequest(ctx context.Context) error {
+	if pace, ok := ctx.Value(requestPacerKey{}).(func(context.Context) error); ok && pace != nil {
+		return pace(ctx)
+	}
+	return nil
+}
+
 func countRequest(ctx context.Context) {
 	for count, _ := ctx.Value(requestCountKey{}).(*requestCount); count != nil; count = count.parent {
 		count.n.Add(1)

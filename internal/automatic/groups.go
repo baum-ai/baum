@@ -79,7 +79,7 @@ func (s *Scheduler) passGroups(ctx context.Context, v view, interrupted, refused
 		s.log().Warn("automatic group reviews skipped", "error", err)
 		return
 	}
-	s.mu.Lock()
+	s.lockState()
 	state := s.load()
 	changed := false
 	stateOf := func(j jobs.Job) *groupState {
@@ -152,7 +152,7 @@ func (s *Scheduler) passGroups(ctx context.Context, v view, interrupted, refused
 	if changed {
 		s.save()
 	}
-	s.mu.Unlock()
+	s.unlockState()
 	for _, w := range due {
 		if ctx.Err() != nil || (s.Hold != nil && s.Hold()) {
 			return
@@ -187,7 +187,7 @@ func (s *Scheduler) submitGroup(ctx context.Context, w groupWork, now time.Time)
 		}
 		job, err = s.Queue.SubmitAutomatic(ctx, jobs.AutomaticRequest{Item: jobs.Item{Clone: w.repo.clone.ID, Group: w.group.ID}, Repository: w.repo.clone.Repository, Head: w.key, Trigger: w.trigger})
 	}
-	s.mu.Lock()
+	s.lockState()
 	rs := s.load().Repositories[w.name]
 	var gs *groupState
 	if rs != nil {
@@ -195,7 +195,7 @@ func (s *Scheduler) submitGroup(ctx context.Context, w groupWork, now time.Time)
 	}
 	if gs == nil {
 		// Disabled or dissolved while this was submitted.
-		s.mu.Unlock()
+		s.unlockState()
 		return carryOn
 	}
 	result := carryOn
@@ -243,7 +243,7 @@ func (s *Scheduler) submitGroup(ctx context.Context, w groupWork, now time.Time)
 	rs.Notice = notice
 	s.save()
 	status := s.status(w.name, w.repo, rs)
-	s.mu.Unlock()
+	s.unlockState()
 	if announce {
 		s.notify([]Status{status})
 	}

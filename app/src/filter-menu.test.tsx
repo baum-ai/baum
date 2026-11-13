@@ -106,6 +106,68 @@ it("counts each organisation's matches rather than the combined selection", asyn
   node.remove();
 });
 
+it("caps a long list of values, keeping those the query requires", async () => {
+  const node = document.createElement("div");
+  document.body.append(node);
+  const root = createRoot(node);
+  const entries = Array.from(
+    { length: 130 },
+    (_, i) => ({ pull_request: { repository: `acme/r${String(i).padStart(3, "0")}` } }) as Entry,
+  );
+  await act(async () =>
+    root.render(<FilterButton query="repo=acme/r129" onChange={vi.fn()} entries={entries} />),
+  );
+  await act(async () => node.querySelector<HTMLElement>("summary")!.click());
+  const repo = Array.from(node.querySelectorAll<HTMLElement>("[data-filter-row]")).find((row) =>
+    row.textContent?.includes("Repository"),
+  )!;
+  await act(async () => repo.click());
+  const options = Array.from(node.querySelectorAll('[aria-label="Repository"] [role="option"]'));
+  expect(options).toHaveLength(101);
+  expect(options.at(-1)?.textContent).toContain("acme/r129");
+  expect(options.at(-1)?.querySelector(".filter-menu-count")?.textContent).toBe("1");
+  expect(options[0]?.querySelector(".filter-menu-count")?.textContent).toBe("1");
+  expect(node.textContent).toContain("29 more");
+  await act(async () => root.unmount());
+  node.remove();
+});
+
+it("excludes a value past the cap through the list's own box", async () => {
+  const node = document.createElement("div");
+  document.body.append(node);
+  const root = createRoot(node);
+  const onChange = vi.fn();
+  const entries = Array.from(
+    { length: 130 },
+    (_, i) => ({ pull_request: { repository: `acme/r${String(i).padStart(3, "0")}` } }) as Entry,
+  );
+  await act(async () =>
+    root.render(<FilterButton query="" onChange={onChange} entries={entries} />),
+  );
+  await act(async () => node.querySelector<HTMLElement>("summary")!.click());
+  const repo = Array.from(node.querySelectorAll<HTMLElement>("[data-filter-row]")).find((row) =>
+    row.textContent?.includes("Repository"),
+  )!;
+  await act(async () => repo.click());
+  const box = node.querySelector<HTMLInputElement>(".filter-menu-sub-search")!;
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(box, "r125");
+    box.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  const not = Array.from(node.querySelectorAll<HTMLElement>('[role="radio"]')).find((one) =>
+    one.textContent?.includes("is not"),
+  )!;
+  await act(async () => not.click());
+  const options = Array.from(
+    node.querySelectorAll<HTMLElement>('[aria-label="Repository"] [role="option"]'),
+  );
+  expect(options).toHaveLength(1);
+  await act(async () => options[0]!.click());
+  expect(onChange).toHaveBeenCalledWith("repo!=acme/r125");
+  await act(async () => root.unmount());
+  node.remove();
+});
+
 it("offers Write a query… only while no query shows its box", async () => {
   const node = document.createElement("div");
   document.body.append(node);

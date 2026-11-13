@@ -603,3 +603,124 @@ func TestSharedHandleSeesOtherWritersAndFollowsTheFile(t *testing.T) {
 		t.Fatal("old handle kept for a new file")
 	}
 }
+
+func TestVersionOneUpgradeAddsGroupRepositoryIndex(t *testing.T) {
+	for _, withGroups := range []bool{false, true} {
+		t.Run(strconv.FormatBool(withGroups), func(t *testing.T) {
+			path := filepath.Join(appdbtest.TempDir(t), "app.sqlite")
+			if err := appdb.Write(path, "state", "kept", []byte("value")); err != nil {
+				t.Fatal(err)
+			}
+			if withGroups {
+				groups, err := reviewgroups.Open(path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if _, err = groups.Create(context.Background(), "org/repo", "Pair", []int{1, 2}); err != nil {
+					t.Fatal(err)
+				}
+				_ = groups.Close()
+			}
+			db, err := sql.Open("sqlite", path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err = db.Exec("DROP INDEX IF EXISTS groups_repository; PRAGMA user_version=1"); err != nil {
+				t.Fatal(err)
+			}
+			_ = db.Close()
+			if db, err := appdb.Open(path, true); err == nil {
+				_ = db.Close()
+				t.Fatal("read-only open silently upgraded the schema")
+			}
+			db, err = appdb.Open(path, false)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var version, indices int
+			if err = db.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != appdb.Version {
+				t.Fatalf("version %d %v", version, err)
+			}
+			if err = db.QueryRow("SELECT count(*) FROM sqlite_master WHERE name='groups_repository'").Scan(&indices); err != nil {
+				t.Fatal(err)
+			}
+			if withGroups && indices != 1 || !withGroups && indices != 0 {
+				t.Fatalf("indices %d", indices)
+			}
+			_ = db.Close()
+			if raw, err := appdb.Read(path, "state", "kept"); err != nil || string(raw) != "value" {
+				t.Fatalf("document %s %v", raw, err)
+			}
+			groups, err := reviewgroups.Open(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() { _ = groups.Close() }()
+			listed, err := groups.List(context.Background())
+			if err != nil || withGroups && len(listed) != 1 || !withGroups && len(listed) != 0 {
+				t.Fatalf("groups %+v %v", listed, err)
+			}
+			// Every stack lookup must search the repository index rather than scan
+			// all repositories while its immediate transaction holds the writer.
+			db, err = appdb.Open(path, true)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() { _ = db.Close() }()
+			rows, err := db.Query("EXPLAIN QUERY PLAN SELECT id FROM groups WHERE repository=? AND deleted=0 ORDER BY created,id", "org/repo")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer rows.Close()
+			used := false
+			for rows.Next() {
+				var id, parent, unused int
+				var detail string
+				if err := rows.Scan(&id, &parent, &unused, &detail); err != nil {
+					t.Fatal(err)
+				}
+				used = used || strings.Contains(detail, "SEARCH groups USING") && strings.Contains(detail, "groups_repository")
+			}
+			if err := rows.Err(); err != nil {
+				t.Fatal(err)
+			}
+			if !used {
+				t.Fatal("repository lookup did not use its index")
+			}
+		})
+	}
+}
+
+func TestFailedVersionOneUpgradeRollsBack(t *testing.T) {
+	path := filepath.Join(appdbtest.TempDir(t), "app.sqlite")
+	if err := appdb.Write(path, "state", "kept", []byte("value")); err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A malformed group table makes creating the index fail. The migration
+	// must leave the schema version and existing records alone.
+	if _, err = db.Exec("CREATE TABLE groups(id TEXT); PRAGMA user_version=1"); err != nil {
+		t.Fatal(err)
+	}
+	_ = db.Close()
+	if opened, err := appdb.Open(path, false); err == nil {
+		_ = opened.Close()
+		t.Fatal("upgrade accepted a malformed group table")
+	}
+	db, err = sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = db.Close() }()
+	var version int
+	if err = db.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != 1 {
+		t.Fatalf("version %d %v", version, err)
+	}
+	var raw string
+	if err = db.QueryRow("SELECT value FROM app_documents WHERE bucket='state' AND key='kept'").Scan(&raw); err != nil || raw != "value" {
+		t.Fatalf("document %s %v", raw, err)
+	}
+}

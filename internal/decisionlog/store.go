@@ -67,6 +67,14 @@ CREATE TABLE IF NOT EXISTS capture_attempt(
 CREATE INDEX IF NOT EXISTS capture_attempt_session ON capture_attempt(agent, session_id, started_at);
 CREATE INDEX IF NOT EXISTS capture_attempt_started ON capture_attempt(started_at);`
 
+// indexSchema indexes capture_session by repository, which the decisions
+// page, its coverage counts, the people count and the feature assigner
+// filter on: each reached every session through a scan. The decisions are
+// reached through their session (decision_session), so decision needs none:
+// an index on its own repository column goes unused, since every query
+// filters on the session's.
+const indexSchema = `CREATE INDEX IF NOT EXISTS capture_session_repository ON capture_session(repository, extracted_at);`
+
 // Store keeps the sessions' coverage and head extraction, the
 // decision log and the ledger of model calls.
 type Store struct {
@@ -106,7 +114,10 @@ func Open(path string, o OpenOptions) (*Store, error) {
 		return nil, err
 	}
 	s := &Store{db: db, now: time.Now}
-	_, err = db.Exec(schema + featureSchema)
+	_, err = db.Exec(schema + featureSchema + indexSchema + timelineRevisionTable)
+	if err == nil {
+		err = installTimelineRevision(context.Background(), db)
+	}
 	if err == nil {
 		err = migrateSearch(context.Background(), db)
 	}
@@ -140,7 +151,10 @@ func openReadOnly(path string) (*Store, error) {
 		return nil, err
 	}
 	db.SetMaxOpenConns(1)
-	_, err = db.Exec(schema + featureSchema)
+	_, err = db.Exec(schema + featureSchema + indexSchema + timelineRevisionTable)
+	if err == nil {
+		err = installTimelineRevision(context.Background(), db)
+	}
 	if err == nil {
 		err = migrateSearch(context.Background(), db)
 	}

@@ -19,6 +19,13 @@ measure uses `visibleInterval`, from the same file. The entry points call `track
 `data-hidden` on `<html>` while hidden; the viewer stylesheet pauses every
 animation then.
 
+`api/index`, `api/prs` and `api/document` carry an ETag. The app keeps the
+last answer of each path, up to 16 in all (`request` in `src/api.ts`), and asks
+again with `If-None-Match`; a 304 returns the kept object itself, so an
+unchanged snapshot sets no new state. Every daemon answer the app polls is
+`no-store`, so none goes through the webview's HTTP cache: WebKitGTK 2.50's
+cache path leaks memory in its network process.
+
 The desktop app's own screens are React too: `setup.html` mounts
 `src/desktop/setup.tsx` and `connecting.html` mounts `src/desktop/connecting.tsx`,
 with typed native IPC and the same Vite, TypeScript, lint and test pipeline. Setup,
@@ -137,8 +144,8 @@ A repository's name in the list opens its page
 (`?page=repositories&repository=<owner/name>&section=`, `RepositoryPage` in
 `src/settings.tsx`), drawn as Settings is: its sections in a sand list down the
 left, each with a line under its name, and the chosen one on the warm panel, with
-the same keys (`useSettingsKeys`: j/k, 1 to 3, Enter into a section, Esc back to
-the list). Esc on the list, `u`, or the back link return to Repositories. The
+the same keys (`useSettingsKeys`: Shift+J/K between sections, 1 to 3, j/k
+through the section's controls, Esc back to the list). Esc on the list, `u`, or the back link return to Repositories. The
 sections are **Reviews** (automatic reviews for this repository and decision
 capture, setting rows saved as they change with "Saved" by the heading, as
 Settings' sections are), **Prompts** (below; its line counts the custom ones and
@@ -344,6 +351,19 @@ a comment over 16,000 characters, or one from an older daemon, which sends no
 once, without a dialog, reads **Resolving…** meanwhile, and removes the thread
 from the list once GitHub confirms; a refusal is shown under the thread.
 
+A review's own thread index is a snapshot from when it was generated, so a
+thread resolved after that would still read as unresolved. The review page
+reads the same list (`useLiveThreads` in `src/threads.tsx`) and hands it to the
+viewer as `liveThreads`, which the Activity tab, its badge and the findings
+those threads carry read over the snapshot (`withLiveThreads`). A thread in the
+list is open, one missing from a complete list is resolved, and one missing
+from a list cut short keeps its stored state. With discovery counting none
+unresolved, nothing is asked. An earlier version, a read not back yet and a
+read that failed keep the snapshot. A group's review holds its members'
+threads, landed members included, so the group page reads each member's list
+(`useLiveThreadsOf`) and hands the viewer them as one: complete only when
+every member's is, and the snapshot until every member's has answered.
+
 The checks (`useChecks` and `PullRequestChecks` in `src/checks.tsx`) are asked
 for by their row as soon as the panel shows it, open or not, with `GET
 api/prs/checks` and the head commit the panel shows (`head_sha`), again when
@@ -355,6 +375,9 @@ icon, its name (a GitHub Actions job's after its workflow, as GitHub lists it:
 and a **Details** link (`url`). While any check fails, only the failing ones
 (and any retried from the list) show, the rest behind **Show N other checks**,
 which **Hide other checks** folds again; with none failing every check shows.
+The daemon lists at most 100, failing first, then running (`capped`, `total`
+in its answer); when GitHub reports more, the panel adds "Showing 100 of 130
+checks, failing and running first" with a **See all on GitHub** link.
 The same bordered rows align the icon, name and status, and actions in the
 review's Activity pane, independently of the Up next panel.
 The row's title carries a pill counting them out of them all (`checksCount`):
@@ -795,12 +818,14 @@ transcript (Watch while a fix runs); on Repositories `a` opens or closes the
 picker and `/` searches it (the search takes the focus when the picker opens,
 and `Esc` in an empty search leaves it); on the Timeline `Enter` or `o` opens or
 closes the feature or decision, an open feature's side panel follows the
-focus, and `/` focuses the search box (its hint shows inside the box). Settings' section list is its
-selection, as Up next's list is: `j`/`↓` and `k`/`↑` move it, `1` to `6` jump
-to a section, and `Enter`, `l` or `→` go into the shown section, where `j` and
-`k` step through its controls, `Space` or `Enter` changes the focused one and
-`Esc`, `h` or `←` go back to the list (`Esc` in a text field or select gives
-it up first, and `j` and `k` go on from it). On a pull request or group page `j`
+focus, and `/` focuses the search box (its hint shows inside the box). In Settings, as on a
+review page, `Shift+J`/`Shift+↓` and `Shift+K`/`Shift+↑` move to the next or
+previous section from anywhere, and `1` to `6` jump to one. `j`/`↓` and `k`/`↑`
+step through the shown section's controls; from the section list `j` goes to
+the first control and `k` to the last, as `Enter`, `l` or `→` go to the first.
+`Space` or `Enter` changes the focused control and `Esc`, `h` or `←` go back to
+the list (`Esc` in a text field or select gives it up first, and `j` and `k` go
+on from it). On a pull request or group page `j`
 and `k` step to the next and previous place in reading order, as the
 navigator's arrows do (`ReviewViewer`'s `steps` ref), `m` and `f`
 merge and fix where the header offers them, and `t`
@@ -1070,6 +1095,18 @@ the pull request is also in. A pull request or group opened from an inbox keeps
 inbox. Colours are six palette names (`--inbox-*` in `src/style.css`, with
 dark variants).
 
+The sidebar is pinned open beside the page by default. The button at the
+right of its baum title, after Help, folds it to a rail of glyphs (56px) so
+the page gets the width, and pins it open again (`Sidebar` in
+`src/shell.tsx`). Folded, resting the mouse on the rail for a moment opens it
+over the page, which does not move, and it folds again shortly after the
+pointer leaves or when a link in it is chosen; keyboard focus in the rail
+opens it too. The choice is the `sidebar` appearance preference (`pinned` or
+`folded`), saved by the daemon like the theme, so it survives restarts and
+port changes; `localStorage` keeps a copy so a reload draws the sidebar as it
+was before the preferences arrive. A window narrower than 64rem always folds
+the sidebar, opens it the same way, and hides the pin button.
+
 A Help button at the right of the sidebar's baum title (under it when the
 sidebar is folded) opens a help menu (`HelpButton` in `src/shell.tsx`):
 **Show shortcuts** opens the shortcuts sheet, **Report a problem** opens the
@@ -1169,7 +1206,13 @@ request read, their owners, and the authors and base branches of every pull
 request read (`Known`, `valuesOf` in `src/pr-filter.ts`); one with nothing on
 the page counts 0. Each value is ticked while the query requires
 it with that operator and counted by how many of the page's pull requests
-picking it would leave. Picking a value adds it to the term of that field and
+picking it would leave (`countValues`: the query and each toggled query are
+parsed once and the counts of a list found in one go, again only when the pull
+requests, the query, the operator or the list change, not as the pointer moves).
+A list of more than 100 values shows the first 100 and any the query requires,
+then "N more: type in the box above to narrow the list". Such a list has a
+"Find…" box of its own that narrows its values and keeps the field and
+operator, so a value past the cap can be picked or excluded too. Picking a value adds it to the term of that field and
 operator as one more choice, or takes it out (with an `AND` beside it and
 parentheses left empty), and adds a term when there is none (around a query
 with `OR`, in parentheses); the menu stays open. Typed text also lists
@@ -1654,7 +1697,7 @@ themes, the modifier held with `1` to `8` for the sidebar's pages, and whether
 holding Option (Alt elsewhere) shows keyboard shortcut hints; each names only
 the platform's key. Preferences
 are read and saved through `GET`/`PUT api/settings/appearance` (`theme`,
-`key_hints`, `page_modifier`), in the daemon’s SQLite registry, so they survive daemon restarts
+`key_hints`, `page_modifier`, and the sidebar's `sidebar`), in the daemon’s SQLite registry, so they survive daemon restarts
 and loopback port changes. **Plan usage** below them has a switch per plan
 (Claude Code, Codex) for whether it shows in the sidebar and the desktop tray.
 With no choice a plan shows when one of the backends baum uses is its own: the
@@ -1670,11 +1713,16 @@ returning to a window rereads the saved preferences. Orange or red markers
 beside section names identify issues needing attention. Fixes needs attention when it follows reviews whose
 harness cannot fix. **Reviews** holds
 the global review settings, one per row: whether reviews run automatically,
-for which pull requests (authored, requested, both, or all open pull requests
-in the repository), the harness and its model (a listed model or a custom
-name, saved when its field is left or Enter is pressed) and the reasoning
-effort (Default, which leaves it to the agent, Low, Medium or High; higher levels
-selected in onboarding remain visible). The harness is Claude Code or Codex
+for which pull requests (a select of authored, requested, both, or all open
+pull requests in the repository), the **Agent** (Claude Code or Codex) and the
+**Model**, a select of the agent's models with a custom name (saved when its
+field is left or Enter is pressed) beside the reasoning effort ("Default
+effort", which leaves it to the agent, then Low, Medium or High; a higher level
+selected in onboarding stays visible). The rows of choices (`SettingRow`'s
+`pick`) put the name and control on one line, every control at the same width
+on the right, with the row's sentence under both; when the panel is narrower
+than 40rem (a container query) the control drops below and fills it. The
+harness is Claude Code or Codex
 only: the daemon refuses `cursor-agent` and `anthropic` (400 when saving, a
 failed job for one already in `config.toml`), and when neither is installed
 the section says so. Each change is saved
@@ -1684,12 +1732,37 @@ keeps as app preferences over the config file; `GET api/settings` reports the
 effective harness, model and effort. Each section sends all its choices and runs one
 save at a time; changes made while one runs are sent together afterwards, so
 an older choice never lands after a newer one. A failed save shows the error
-and puts the control back. **Fixes** chooses the agent that fixes: "Same as reviews" (the
-default) or Claude Code
-or Codex with a model and a reasoning effort, sent as `fix_backend`,
-`fix_model` and `fix_effort` (`""` returns to the reviews', effort included)
-and reported by `GET api/settings`. A chosen fix agent applies
-in every repository. In the desktop app, the agent selects of Reviews, Fixes
+and puts the control back. **Fixes** chooses the agent that fixes: "Same as
+reviews (agent · model)" (the default) or Claude Code or Codex, then a model
+and a reasoning effort, sent as `fix_backend`, `fix_model` and `fix_effort`
+(`""` returns to the reviews', effort included) and reported by `GET
+api/settings`. A chosen fix agent applies in every repository. **Data
+extraction** has the same Agent and Model rows, its agent "Same as reviews
+(agent)" by default.
+
+While the agent of Reviews, Fixes or (its own) Data extraction is Claude Code
+or Codex, a closed **Advanced** disclosure at the end of the section
+(`AccountAdvanced`, open when a folder is chosen) holds **Claude Code
+account** or **Codex account**: Default (the environment's, named in the
+row's sentence), the other folders baum knows, written with `~`, or another
+path typed and saved when its field is left or Enter is pressed. For Claude
+Code it is sent as `claude_config_dir` or `fix_claude_config_dir` (`PUT
+api/automatic`), or `claude_config_dir` (`PUT api/settings/decisions`); for
+Codex as `codex_home`, `fix_codex_home` or `codex_home`. Each is sent only
+when it changes (`""` returns to the default; fixes and extraction that follow
+the reviews' agent have none of their own), and changing the agent clears the
+other agent's. The daemon refuses a path that is not an existing directory or
+that the agent is signed out with, saying how to sign in; the section shows
+the refusal and puts the control back. `GET api/settings` reports
+`claude_config_dir`, `fix_claude_config_dir`, `default_claude_config_dir`,
+`claude_config_dirs`, `codex_home`, `fix_codex_home`, `default_codex_home`,
+`codex_homes` and `home`. The sidebar's plan usage and the tray then show the
+chosen account's plan too: the sidebar puts an agent's plans under one
+heading, each on a line naming its folder ("Default" for the daemon's own) and
+plan; the tray names it after the agent with the folder (`config_dir`,
+`planName`). The capture note under Data extraction (`DecisionsDisclosure`)
+says in two sentences what is sent, what never is, and that it needs the
+hooks. In the desktop app, the agent selects of Reviews, Fixes
 and Data extraction label a CLI that reports no sign-in "(not signed in)",
 and while the agent a section uses is one, its row says that section's jobs
 will fail and how to sign in. **Connections** holds the GitHub connection and, in the

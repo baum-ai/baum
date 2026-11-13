@@ -18,6 +18,7 @@ import (
 
 	"golang.org/x/sync/singleflight"
 
+	"github.com/baum-ai/baum/internal/agentdirs"
 	"github.com/baum-ai/baum/internal/agentplugins"
 	"github.com/baum-ai/baum/internal/config"
 	"github.com/baum-ai/baum/internal/doctor"
@@ -105,6 +106,13 @@ type LocalAPI struct {
 	// DecisionModel resolves the decision model capture uses with the given
 	// preferences, for GET and PUT /api/settings/decisions; nil reports none.
 	DecisionModel func(context.Context, repos.Preferences) DecisionModel
+	// ClaudeSignedIn checks a Claude Code configuration directory chosen
+	// for data extraction (agentdirs.Claude.Choose); nil asks the claude the
+	// config file names, else the one on PATH.
+	ClaudeSignedIn agentdirs.SignedIn
+	// CodexSignedIn is the same for a Codex home (agentdirs.Codex.Choose);
+	// nil asks the codex the config file names, else the one on PATH.
+	CodexSignedIn agentdirs.SignedIn
 	// DecisionsChanged, when set, is called after a change to what decision
 	// capture does: its settings or a repository's. The daemon publishes the
 	// app's decisions event with it.
@@ -256,7 +264,7 @@ func (a LocalAPI) Handler() *LocalHandler {
 		if len(cfg.AgentEnv) > 0 {
 			source = "file"
 		}
-		fixBackend, fixModel, fixEffort := "", "", ""
+		fixBackend, fixModel, fixEffort, fixClaudeDir, fixCodexHome := "", "", "", "", ""
 		concurrency := repos.MaxJobConcurrency
 		if prefs, err := a.Registry.Preferences(r.Context()); err == nil {
 			concurrency = prefs.Concurrency()
@@ -269,6 +277,12 @@ func (a LocalAPI) Handler() *LocalHandler {
 			}
 			if prefs.FixEffort != nil {
 				fixEffort = *prefs.FixEffort
+			}
+			if prefs.FixBackend != nil && prefs.FixClaudeConfigDir != nil {
+				fixClaudeDir = *prefs.FixClaudeConfigDir
+			}
+			if prefs.FixBackend != nil && prefs.FixCodexHome != nil {
+				fixCodexHome = *prefs.FixCodexHome
 			}
 			if len(prefs.AgentEnv) > 0 {
 				source = "app"
@@ -289,8 +303,25 @@ func (a LocalAPI) Handler() *LocalHandler {
 			// The time limits in force, in whole minutes.
 			ReviewTimeLimit int `json:"review_time_limit_minutes"`
 			RunTimeLimit    int `json:"run_time_limit_minutes"`
+			// The Claude Code configuration directories chosen for reviews
+			// and fixes, empty for the environment's; the one the
+			// environment gives, and every one baum knows, to choose from.
+			ClaudeConfigDir        string   `json:"claude_config_dir"`
+			FixClaudeConfigDir     string   `json:"fix_claude_config_dir"`
+			DefaultClaudeConfigDir string   `json:"default_claude_config_dir"`
+			ClaudeConfigDirs       []string `json:"claude_config_dirs"`
+			// The same for Codex homes.
+			CodexHome        string   `json:"codex_home"`
+			FixCodexHome     string   `json:"fix_codex_home"`
+			DefaultCodexHome string   `json:"default_codex_home"`
+			CodexHomes       []string `json:"codex_homes"`
+			// Home is the user's home directory, which the app writes as ~
+			// in those paths.
+			Home string `json:"home"`
 		}{cfg.Backend, cfg.Model, cfg.Budgets, cfg.Caps, cfg.AgentEnv, source, fixBackend, fixModel, cfg.Effort, fixEffort, concurrency,
-			minutes(cfg.Budgets.ReviewTimeout), minutes(cfg.Budgets.RunTimeout)})
+			minutes(cfg.Budgets.ReviewTimeout), minutes(cfg.Budgets.RunTimeout),
+			cfg.ClaudeConfigDir, fixClaudeDir, defaultAgentDir(cfg, agentdirs.Claude), agentdirs.Claude.All(""),
+			cfg.CodexHome, fixCodexHome, defaultAgentDir(cfg, agentdirs.Codex), agentdirs.Codex.All(""), userHome()})
 	})
 	// The time limits apply to runs that start after the change.
 	mux.HandleFunc("PUT /api/settings/time-limits", func(w http.ResponseWriter, r *http.Request) {
@@ -531,6 +562,12 @@ func (a LocalAPI) Handler() *LocalHandler {
 		query := routed.URL.Query()
 		query.Del("version")
 		routed.URL.RawQuery = query.Encode()
+		// The viewer tags the document for a client that stores and revalidates
+		// it. The app keeps the ETag itself and no answer goes through the
+		// webview's HTTP cache, so /api/document is no-store.
+		if r.URL.Path == "/api/document" {
+			w = noStore{w}
+		}
 		viewer.Mux().ServeHTTP(w, routed)
 	}
 	mux.HandleFunc("GET /api/document", document)
@@ -598,6 +635,24 @@ func apiError(w http.ResponseWriter, err error) {
 	http.Error(w, http.StatusText(status), status)
 }
 
+// defaultAgentDir is the directory of agent a run gets when the app chose
+// none: agent_env's variable (CLAUDE_CONFIG_DIR, CODEX_HOME), else the
+// daemon's own, else the default (~/.claude, ~/.codex).
+func defaultAgentDir(cfg config.Config, agent agentdirs.Agent) string {
+	for _, entry := range cfg.AgentEnviron() {
+		if value, ok := strings.CutPrefix(entry, agent.Env+"="); ok && value != "" {
+			return value
+		}
+	}
+	return agent.Current()
+}
+
+// userHome is the user's home directory, or "" when it is not known.
+func userHome() string {
+	home, _ := os.UserHomeDir()
+	return home
+}
+
 // minutes is a time limit in whole minutes, rounded up.
 func minutes(d config.Duration) int {
 	return int((time.Duration(d) + time.Minute - 1) / time.Minute)
@@ -632,3 +687,20 @@ func pickedRepository(ctx context.Context, registry *repos.Registry, name string
 	}
 	return "", repos.ErrNotFound
 }
+
+// noStore forces Cache-Control: no-store on the response it wraps, keeping the
+// ETag and status the handler chose. The header is set when the status is
+// written, after the handler's own.
+type noStore struct{ http.ResponseWriter }
+
+func (w noStore) WriteHeader(code int) {
+	w.Header().Set("Cache-Control", "no-store")
+	w.ResponseWriter.WriteHeader(code)
+}
+
+func (w noStore) Write(b []byte) (int, error) {
+	w.Header().Set("Cache-Control", "no-store")
+	return w.ResponseWriter.Write(b)
+}
+
+func (w noStore) Unwrap() http.ResponseWriter { return w.ResponseWriter }

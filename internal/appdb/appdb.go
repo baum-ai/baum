@@ -23,8 +23,8 @@ import (
 	"github.com/baum-ai/baum/internal/sqlitepool"
 )
 
-// Version is the first public application database baseline.
-const Version = 1
+// Version is the current application database schema.
+const Version = 2
 const applicationID = 0x6261756d
 
 // Directory is the application data directory, beside daemon runtime state.
@@ -218,6 +218,20 @@ func initialize(db *sql.DB, readOnly bool, dir string) (err error) {
 		}
 	} else if id != applicationID {
 		return errors.New("unsupported application database baseline")
+	}
+	if version == 1 {
+		var groups int
+		if err = conn.QueryRowContext(ctx, "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='groups'").Scan(&groups); err != nil {
+			return err
+		}
+		if groups > 0 {
+			if _, err = conn.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS groups_repository ON groups(repository,deleted,created,id)`); err != nil {
+				return err
+			}
+		}
+		if _, err = conn.ExecContext(ctx, "PRAGMA user_version=2"); err != nil {
+			return err
+		}
 	}
 	rows, err := conn.QueryContext(ctx, "SELECT bucket,key,value FROM app_documents LIMIT 0")
 	if err != nil {

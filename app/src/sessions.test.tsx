@@ -535,7 +535,7 @@ it("keeps the page working, with no requests, when api/agent-requests fails", as
             ? Response.json({ jobs: [] })
             : path.endsWith("api/repos") || path.endsWith("api/repositories")
               ? Response.json([])
-              : path.endsWith("api/prs") || path.endsWith("api/background")
+              : path.endsWith("api/prs?view=health") || path.endsWith("api/background")
                 ? Response.json([])
                 : new Response("missing", { status: 404 });
   await act(async () => root.render(<App />));
@@ -1435,11 +1435,12 @@ it("keeps counting a waiting card's wait without rendering the card again", asyn
 
 it("links a session's pull request once its link resolves, rendering only that card again", async () => {
   const said = { steps: [], last_message: "Working on it." };
-  const started_at = ago(7 * 60);
   // The same session objects throughout: only what the resolver answers changes.
+  // Running now lists the newest first, so "a" starts later to be the first card;
+  // two `ago` calls with the same age can fall a millisecond apart and swap them.
   const sessions = [
-    session({ session_id: "a", pr: 5, pr_state: "OPEN", activity: said, started_at }),
-    session({ session_id: "b", pr: 6, pr_state: "OPEN", activity: said, started_at }),
+    session({ session_id: "a", pr: 5, pr_state: "OPEN", activity: said, started_at: ago(6 * 60) }),
+    session({ session_id: "b", pr: 6, pr_state: "OPEN", activity: said, started_at: ago(7 * 60) }),
   ];
   const draw = (links: Record<number, string>) =>
     act(async () =>

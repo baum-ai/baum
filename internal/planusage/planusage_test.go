@@ -8,6 +8,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -229,8 +231,8 @@ func TestClaudeParsesWindowsLeniently(t *testing.T) {
 	srv := claudeServer(t, 200, `{"five_hour":{"utilization":62.5,"resets_at":"2026-10-26T15:00:00Z"},
 		"seven_day":{"utilization":10,"resets_at":null},"seven_day_opus":null,
 		"seven_day_sonnet":{"utilization":"bad"},"extra_usage":{"x":1},"future":5}`, &seen)
-	p := claudeRead(srv.URL, Credential{Token: secret, ExpiresAt: clock.Add(time.Hour), Plan: "Max 5x"})
-	if !p.Available || p.Plan != "Max 5x" || len(p.Windows) != 2 || p.Windows[0].Name != "5-hour" || *p.Windows[0].UsedPercent != 62.5 || p.Windows[1].Name != "weekly" {
+	p := claudeRead(srv.URL, Credential{Token: secret, ExpiresAt: clock.Add(time.Hour), Plan: "Ultra"})
+	if !p.Available || p.Plan != "Ultra" || len(p.Windows) != 2 || p.Windows[0].Name != "5-hour" || *p.Windows[0].UsedPercent != 62.5 || p.Windows[1].Name != "weekly" {
 		t.Fatalf("%+v", p)
 	}
 	if p.Windows[1].ResetsAt != nil || !p.Windows[0].ResetsAt.Equal(time.Date(2026, 10, 26, 15, 0, 0, 0, time.UTC)) {
@@ -480,8 +482,8 @@ func TestCodexPlanNamesAreCodexs(t *testing.T) {
 func TestClaudePlanNamesAreAnthropics(t *testing.T) {
 	for _, c := range []struct{ subscription, tier, want string }{
 		{"pro", "default_claude_ai", "Pro"},
-		{"max", "default_claude_max_5x", "Max 5x"},
-		{"max", "default_claude_max_20x", "Max 20x"},
+		{"max", "default_claude_max_5x", "Max"},
+		{"max", "default_claude_max_20x", "Ultra"},
 		{"max", "", "Max"},
 		{"team", "default_claude_max_5x", "Team Premium"},
 		{"team", "default_claude_ai", "Team Standard"},
@@ -493,5 +495,124 @@ func TestClaudePlanNamesAreAnthropics(t *testing.T) {
 		if got := claudePlanName(c.subscription, c.tier); got != c.want {
 			t.Errorf("claudePlanName(%q, %q) = %q, want %q", c.subscription, c.tier, got, c.want)
 		}
+	}
+}
+
+type sourceFunc func(context.Context) Plan
+
+func (f sourceFunc) Read(ctx context.Context) Plan { return f(ctx) }
+
+func TestRefreshDoesNotBlockCachedReadersOrCancelledWaiters(t *testing.T) {
+	started, release := make(chan struct{}), make(chan struct{})
+	var reads atomic.Int32
+	src := sourceFunc(func(context.Context) Plan {
+		reads.Add(1)
+		close(started)
+		<-release
+		return Plan{Provider: "new"}
+	})
+	s := &Service{Sources: []Source{src}, Now: func() time.Time { return clock }, plans: []Plan{{Provider: "old"}}, loaded: clock.Add(-2 * time.Minute)}
+	done := make(chan []Plan, 1)
+	go func() { done <- s.Plans(context.Background(), true) }()
+	<-started
+	var once sync.Once
+	unblock := func() { once.Do(func() { close(release) }) }
+	defer unblock()
+	cached := make(chan []Plan, 1)
+	go func() { cached <- s.Plans(context.Background(), false) }()
+	select {
+	case plans := <-cached:
+		if plans[0].Provider != "old" {
+			t.Fatal(plans)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("cached reader blocked behind provider")
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	waiter := make(chan []Plan, 1)
+	go func() { waiter <- s.Plans(ctx, true) }()
+	cancel()
+	select {
+	case plans := <-waiter:
+		if plans[0].Provider != "old" {
+			t.Fatal(plans)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("cancelled waiter blocked behind provider")
+	}
+	const waiters = 8
+	joined := make(chan []Plan, waiters)
+	for range waiters {
+		go func() { joined <- s.Plans(context.Background(), true) }()
+	}
+	unblock()
+	if plans := <-done; plans[0].Provider != "new" {
+		t.Fatal(plans)
+	}
+	for range waiters {
+		if plans := <-joined; plans[0].Provider != "new" {
+			t.Fatal(plans)
+		}
+	}
+	if reads.Load() != 1 {
+		t.Fatalf("concurrent refreshes made %d reads", reads.Load())
+	}
+}
+
+func TestCancelledRefreshDoesNotPoisonTheCache(t *testing.T) {
+	started := make(chan struct{})
+	var reads atomic.Int32
+	src := sourceFunc(func(ctx context.Context) Plan {
+		if reads.Add(1) == 1 {
+			close(started)
+			<-ctx.Done()
+			return Plan{Provider: "cancelled"}
+		}
+		return Plan{Provider: "new"}
+	})
+	s := &Service{Sources: []Source{src}, Now: func() time.Time { return clock }, plans: []Plan{{Provider: "old"}}, loaded: clock.Add(-CacheTTL)}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	first, second := make(chan []Plan, 1), make(chan []Plan, 1)
+	go func() { first <- s.Plans(ctx, false) }()
+	<-started
+	go func() { second <- s.Plans(context.Background(), false) }()
+	cancel()
+	if plans := <-first; plans[0].Provider != "old" {
+		t.Fatal(plans)
+	}
+	if plans := <-second; plans[0].Provider != "new" {
+		t.Fatal(plans)
+	}
+	if reads.Load() != 2 {
+		t.Fatalf("reads %d", reads.Load())
+	}
+}
+
+func TestProviderPanicDoesNotBlockLaterRefreshes(t *testing.T) {
+	var reads atomic.Int32
+	s := &Service{Sources: []Source{sourceFunc(func(context.Context) Plan {
+		if reads.Add(1) == 1 {
+			panic("provider failed")
+		}
+		return Plan{Provider: "new"}
+	})}}
+	func() {
+		defer func() {
+			if recover() == nil {
+				t.Error("provider panic was swallowed")
+			}
+		}()
+		s.Plans(context.Background(), false)
+	}()
+	done := make(chan []Plan, 1)
+	go func() { done <- s.Plans(context.Background(), false) }()
+	select {
+	case plans := <-done:
+		if len(plans) != 1 || plans[0].Provider != "new" {
+			t.Fatal(plans)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("provider panic stranded the next reader")
 	}
 }

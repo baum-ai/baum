@@ -15,6 +15,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -23,7 +24,10 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/baum-ai/baum/agent/claude"
+	"github.com/baum-ai/baum/agent/codex"
 	"github.com/baum-ai/baum/internal/agentcli"
+	"github.com/baum-ai/baum/internal/agentdirs"
 	"github.com/baum-ai/baum/internal/agentplugins"
 	"github.com/baum-ai/baum/internal/agentrequests"
 	"github.com/baum-ai/baum/internal/analytics"
@@ -406,9 +410,13 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 		// Every reader shares one cached index. Discovery's writes only
 		// invalidate it: the index watcher publishes if the index moved.
 		index := reviewindex.NewCache(ctx, &reviewindex.Service{Registry: registry, Discovery: discover})
-		discover.Updated = index.Invalidate
+		checkedChange := func() {
+			index.Invalidate()
+			server.CheckIndex()
+		}
+		discover.Updated = checkedChange
 		changed := indexChanged(index, server.Publish)
-		worker := &background.Service{Registry: registry, Discovery: discover, Saved: background.Saved, Budget: discover.GraphQLBudget, Refresh: background.Local{Client: github.NewFromConfig(cfg, github.Options{}), Config: cfg}.Refresh, Retain: background.Retention{Log: log}.Retain, Changed: changed}
+		worker := &background.Service{Registry: registry, Discovery: discover, Saved: background.Saved, Budget: discover.GraphQLBudget, Refresh: background.Local{Client: github.NewFromConfig(cfg, github.Options{}), Config: cfg}.Refresh, Retain: background.Retention{Log: log}.Retain, Changed: checkedChange}
 		database, err := appdb.Path()
 		if err != nil {
 			_ = registry.Close()
@@ -432,6 +440,8 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 		// refresh: discovery hands it snapshots, and it queues through the
 		// same runner as confirmed jobs.
 		scheduler := &automatic.Scheduler{Registry: registry, Path: database, Discover: discover.PollNow, Groups: groups, Log: log,
+			ClaudeSignedIn: claude.SignedInWithConfigDir(cfg.BackendPaths[config.BackendClaude]),
+			CodexSignedIn:  codex.SignedInWithHome(cfg.BackendPaths[config.BackendCodex]),
 			Hold: func() bool {
 				status, ok := daemon.Self()
 				return ok && (status.Stopping || status.RestartPending)
@@ -464,7 +474,10 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 		// Feature builds run on the feature worker made below.
 		builds := &featureBuilder{}
 		prefs, _ := registry.Preferences(ctx)
-		queue, err := jobs.Open(database, &jobs.Local{Registry: registry, Groups: groups, Config: cfg, Client: github.NewFromConfig(cfg, github.Options{}), Features: builds, Chat: chats, Log: log}, prefs.Concurrency(), func(job jobs.Job) {
+		// Held until the application is wired below: a journaled feature
+		// build needs the feature log, and the queue's logger, usage events
+		// and chat service are set after it opens.
+		queue, err := jobs.OpenHeld(database, &jobs.Local{Registry: registry, Groups: groups, Config: cfg, Client: github.NewFromConfig(cfg, github.Options{}), Features: builds, Chat: chats, Log: log}, prefs.Concurrency(), func(job jobs.Job) {
 			_ = server.PublishProgress(job)
 			if event, ok := jobs.ChatEvent(job); ok {
 				_ = server.Publish("chat", event)
@@ -598,7 +611,7 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 		// The delivery figures' searches, cached per repository, and the
 		// review threads and failing checks the Inbox lists; an account
 		// change forgets both.
-		delivery := &analytics.Delivery{Search: github.NewFromConfig(cfg, github.Options{})}
+		delivery := &analytics.Delivery{Search: github.NewFromConfig(cfg, github.Options{}), Paused: worker.Paused, Limited: worker.Limited}
 		panelCache := &prupdate.Cache{}
 		beginIdentityChange := func() func(bool) {
 			if token, _ := cfg.ExplicitGitHubTokenSource("github.com"); token != "" {
@@ -661,6 +674,31 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 		// of the sessions in registered clones, the merges, branch updates
 		// and re-runs made from the app, and plan usage samples.
 		plans := planusage.NewService()
+		// The plans of the Claude Code configuration directories and Codex
+		// homes Settings chose for runs show beside the daemon's own.
+		plans.Others = func(ctx context.Context) []planusage.Other {
+			prefs, err := registry.Preferences(ctx)
+			if err != nil {
+				return nil
+			}
+			var others []planusage.Other
+			for _, use := range []struct {
+				provider string
+				agent    agentdirs.Agent
+				dirs     []string
+			}{
+				{"claude", agentdirs.Claude, prefs.ClaudeConfigDirs(cfg)},
+				{"codex", agentdirs.Codex, prefs.CodexHomes(cfg)},
+			} {
+				own := use.agent.Current()
+				for _, dir := range use.dirs {
+					if dir != own {
+						others = append(others, planusage.Other{Provider: use.provider, Dir: dir})
+					}
+				}
+			}
+			return others
+		}
 		planHistory := &planusage.History{Path: database, Service: plans}
 		actions := &analytics.Actions{Path: database}
 		sessionIndex := &analytics.Index{Path: database, Clones: registry, Log: log}
@@ -738,6 +776,8 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 			Diagnostics: uiDiagnostics, Version: version()}.Handler()
 		// The tour's sample project, written when first asked for.
 		sample := &sampleapp.Workspace{Dir: filepath.Join(state, "sample"), Own: api}
+		// Everything the journaled jobs need is wired: start them.
+		queue.Resume()
 		return daemon.App{
 			API:     api,
 			Assets:  localapp.Handler(),
@@ -800,15 +840,16 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 						Fresh:       index.Fresh,
 						Snapshot: func(ctx context.Context) (any, uint64, error) {
 							snapshot, version, err := index.Current(ctx)
-							return snapshot, version, err
+							return indexWatchValue(snapshot, worker.Errors()), version, err
 						},
 					})
 				})
 				wg.Wait()
 			},
-			Shutdown: queue.Shutdown,
-			Drain:    queue.Drain,
-			Resume:   queue.Resume,
+			Shutdown:     queue.Shutdown,
+			Drain:        queue.Drain,
+			DrainRunning: queue.DrainRunning,
+			Resume:       queue.Resume,
 			Close: func() {
 				sample.Close()
 				api.Close()
@@ -1015,6 +1056,20 @@ func maintainReviewRuns(ctx context.Context, log *slog.Logger) {
 		return
 	}
 	reviewruns.Maintain(ctx, root, 24*time.Hour, func(err error) { log.Warn("expiring kept review runs", "error", err) })
+}
+
+// indexWatchValue excludes a successful discovery poll's bookkeeping time.
+// The app ages applied observations by ObservedAt; an unchanged list fetch
+// changes no visible row. Keep the original snapshot intact for API readers.
+func indexWatchValue(snapshot reviewindex.Snapshot, health map[string]string) any {
+	snapshot.Entries = slices.Clone(snapshot.Entries)
+	for i := range snapshot.Entries {
+		snapshot.Entries[i].MetadataFetchedAt = ""
+	}
+	return struct {
+		Index  reviewindex.Snapshot
+		Errors map[string]string
+	}{snapshot, health}
 }
 
 // indexChanged announces a change to the review index. It invalidates the

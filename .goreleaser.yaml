@@ -57,7 +57,9 @@ snapshot:
   version_template: "{{ incpatch .Version }}-dev+{{ .ShortCommit }}"
 
 # Commit subjects are not release notes (and may name internal tracking
-# identifiers); a person writes the notes on the draft release.
+# identifiers). The release workflow passes --release-notes with the version's
+# section of CHANGELOG.md on main (scripts/release-notes.sh), written in a PR
+# before the release.
 changelog:
   disable: true
 
@@ -72,3 +74,6 @@ release:
   use_existing_draft: true
   replace_existing_artifacts: true
   prerelease: auto
+  # A re-run writes the notes again rather than keeping the draft's body, so
+  # notes corrected in CHANGELOG.md on main reach the release.
+  mode: replace
