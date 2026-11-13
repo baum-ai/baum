@@ -1626,6 +1626,24 @@ mod tests {
                 .filter(|e| e.id.starts_with("usage"))
                 .all(|e| !e.enabled)
         );
+        // An expired sign-in says what to open, under the same heading.
+        observed.plans = Some(
+            status::parse_plan_usage(
+                br#"{"plans":[{"provider":"codex","available":false,"needs_sign_in":true,
+                    "reason":"Open Codex to refresh its sign-in.","windows":[],
+                    "fetched_at":"2026-10-26T11:40:00Z"}]}"#,
+            )
+            .unwrap(),
+        );
+        let spec = menu_spec(&view(observed.clone()), false, NOW);
+        assert_eq!(
+            texts(&spec)[..3],
+            [
+                "Idle",
+                "Plan usage left",
+                "Codex: Open Codex to refresh its sign-in.",
+            ]
+        );
         // Neither agent readable: no heading, no separator.
         observed.plans = Some(Vec::new());
         let spec = menu_spec(&view(observed), false, NOW);

@@ -192,12 +192,17 @@ pub struct PlanWindow {
     pub resets_at: Option<String>,
 }
 
-/// A plan the daemon could read.
+/// A plan the daemon could read, or one whose sign-in needs refreshing.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Plan {
     pub provider: String,
     #[serde(default)]
     pub available: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    /// The reason asks the person to open the agent to refresh its sign-in.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub needs_sign_in: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub plan: Option<String>,
     #[serde(default)]
@@ -213,9 +218,10 @@ struct PlansBody {
 }
 
 /// `GET /api/plan-usage`: the plans it could read, each with at least one
-/// window. A provider that is not installed, signed out or has not run yet
-/// is left out, as is a plan in a shape this app does not know, so the tray
-/// shows only what it can.
+/// window, and those whose sign-in needs refreshing, with their reason and no
+/// windows. A provider that is not installed or has not run yet is left
+/// out, as is a plan in a shape this app does not know, so the tray shows
+/// only what it can.
 pub fn parse_plan_usage(body: &[u8]) -> Result<Vec<Plan>, String> {
     let body: PlansBody =
         serde_json::from_slice(body).map_err(|e| format!("unreadable plan usage: {e}"))?;
@@ -223,8 +229,23 @@ pub fn parse_plan_usage(body: &[u8]) -> Result<Vec<Plan>, String> {
         .plans
         .into_iter()
         .filter_map(|plan| serde_json::from_value::<Plan>(plan).ok())
-        .filter(|plan| plan.available && !plan.windows.is_empty())
+        .filter_map(|mut plan| {
+            if plan.available {
+                return (!plan.windows.is_empty()).then_some(plan);
+            }
+            if !needs_sign_in(&plan) {
+                return None;
+            }
+            plan.windows.clear();
+            Some(plan)
+        })
         .collect())
+}
+
+/// A plan the daemon could not read because the agent's sign-in expired:
+/// shown with its reason, since only the person can fix it.
+pub fn needs_sign_in(plan: &Plan) -> bool {
+    !plan.available && plan.needs_sign_in && plan.reason.is_some()
 }
 
 /// One plan window as the menu shows it.
@@ -237,11 +258,17 @@ pub struct Meter {
     pub left: Option<u8>,
     /// When it resets, in Unix seconds.
     pub resets_at: Option<i64>,
+    /// Said instead of a figure: why the plan cannot be read ("Open Codex to
+    /// refresh its sign-in."), under the provider's name alone.
+    pub note: Option<String>,
 }
 
 impl Meter {
     /// "62% left · resets in 3 h".
     pub fn text(&self, now: i64) -> String {
+        if let Some(note) = &self.note {
+            return note.clone();
+        }
         let Some(left) = self.left else {
             return "reset since baum last saw it".to_string();
         };
@@ -271,14 +298,23 @@ fn meters(plans: &[Plan]) -> Vec<Meter> {
     plans
         .iter()
         .flat_map(|plan| {
-            plan.windows.iter().map(|win| Meter {
-                label: format!("{} · {}", provider_name(&plan.provider), capital(&win.name)),
-                left: win
-                    .used_percent
-                    .filter(|used| used.is_finite())
-                    .map(|used| (100.0 - used).round().clamp(0.0, 100.0) as u8),
-                resets_at: win.resets_at.as_deref().and_then(parse_time),
-            })
+            let note = needs_sign_in(plan).then(|| Meter {
+                label: provider_name(&plan.provider).to_string(),
+                left: None,
+                resets_at: None,
+                note: plan.reason.clone(),
+            });
+            note.into_iter().chain(plan.windows.iter().map(|win| {
+                Meter {
+                    label: format!("{} · {}", provider_name(&plan.provider), capital(&win.name)),
+                    left: win
+                        .used_percent
+                        .filter(|used| used.is_finite())
+                        .map(|used| (100.0 - used).round().clamp(0.0, 100.0) as u8),
+                    resets_at: win.resets_at.as_deref().and_then(parse_time),
+                    note: None,
+                }
+            }))
         })
         .collect()
 }
@@ -1280,6 +1316,31 @@ mod tests {
         observed.plans = Some(parse_plan_usage(body).unwrap());
         let view = Tracker::default().update(&observed);
         assert!(view.usage.is_empty());
+    }
+
+    #[test]
+    fn an_expired_sign_in_is_kept_as_a_line_saying_what_to_open() {
+        let body = br#"{"plans":[
+            {"provider":"claude","available":false,"needs_sign_in":true,"reason":"Open Claude Code to refresh its sign-in.","windows":[{"name":"weekly","used_percent":1}],"fetched_at":"2026-10-26T12:00:00Z"},
+            {"provider":"codex","available":false,"needs_sign_in":true,"windows":[],"fetched_at":"2026-10-26T12:00:00Z"}]}"#;
+        let plans = parse_plan_usage(body).unwrap();
+        assert_eq!(plans.len(), 1);
+        assert!(plans[0].windows.is_empty());
+        let mut observed = up(jobs(0, 0, &[]));
+        observed.plans = Some(plans);
+        let view = Tracker::default().update(&observed);
+        let lines: Vec<(String, String)> = view
+            .usage
+            .iter()
+            .map(|m| (m.label.clone(), m.text(0)))
+            .collect();
+        assert_eq!(
+            lines,
+            vec![(
+                "Claude Code".into(),
+                "Open Claude Code to refresh its sign-in.".into()
+            )]
+        );
     }
 
     #[test]
