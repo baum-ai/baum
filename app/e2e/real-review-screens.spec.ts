@@ -74,6 +74,9 @@ export const STATES: State[] = [
         const tile = page.locator(TILE).first();
         if ((await tile.count()) === 0) return false;
         await tile.click();
+        // The pointer would otherwise rest on whatever the page drew under
+        // it, such as a rail row, and the picture show that row hovered.
+        await page.mouse.move(0, 0);
       } else {
         if (!firstSection) return false;
         await page.goto(address({ pane: "section", section: firstSection }));
@@ -128,7 +131,11 @@ async function settle(page: Page, where: string): Promise<Issue[]> {
       const what: string[] = [];
       if (document.querySelector(".animate-spin")) what.push("a spinner");
       if (/Loading (excerpt|historical)/.test(document.body.innerText)) what.push("an excerpt");
-      if ([...document.images].some((i) => !i.complete)) what.push("an image");
+      // A lazy image below the window loads only once scrolled to, so it is
+      // not waited for: the window's picture does not show it.
+      const below = (i: HTMLImageElement) =>
+        i.loading === "lazy" && i.getBoundingClientRect().top > innerHeight;
+      if ([...document.images].some((i) => !i.complete && !below(i))) what.push("an image");
       return what;
     });
   await page.evaluate(() => document.fonts.ready);
