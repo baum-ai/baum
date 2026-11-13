@@ -92,11 +92,12 @@ func TestSelectThreadsTrustsOnlyAuthorsWhoMayPush(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(selection.Threads) != 2 || selection.Untrusted != 5 {
+	// Kept: the pushers' threads and the review bot's.
+	if len(selection.Threads) != 3 || selection.Untrusted != 4 {
 		t.Fatalf("selection %+v", selection)
 	}
-	first, second := selection.Threads[0], selection.Threads[1]
-	if first.ID != "RT_1" || len(first.Comments) != 2 || first.Comments[1].Author != "bob" || first.LeftOut != 1 || second.ID != "RT_6" {
+	first, bot, third := selection.Threads[0], selection.Threads[1], selection.Threads[2]
+	if first.ID != "RT_1" || len(first.Comments) != 2 || first.Comments[1].Author != "bob" || first.LeftOut != 1 || bot.ID != "RT_4" || third.ID != "RT_6" {
 		t.Fatalf("threads %+v", selection.Threads)
 	}
 	// Each author is read once, an app never.
@@ -128,8 +129,8 @@ func TestSelectThreadsKeepsTrustedAddressableThreads(t *testing.T) {
 	}}
 	list.Unresolved[0].Total = 5
 	selection := selectThreads(t, list)
-	// The stranger's thread and the app's are left out.
-	if len(selection.Threads) != 1 || selection.Untrusted != 2 || selection.Capped {
+	// The stranger's thread is left out; the review bot's is kept.
+	if len(selection.Threads) != 2 || selection.Untrusted != 1 || selection.Capped || selection.Threads[1].ID != "RT_3" {
 		t.Fatalf("selection %+v", selection)
 	}
 	first := selection.Threads[0]

@@ -3783,8 +3783,9 @@ Push access is the collaborator permission over REST
 (`fix.CollaboratorPushAccess`: `write`, `maintain` or `admin`, or
 `user.permissions.push` for a custom role), read once per author per read of
 the threads; a 404 or 403 is no access, any other failure fails the
-preparation. GitHub's author association is not used, and bots are not trusted
-(`trustedBots` is empty).
+preparation. GitHub's author association is not used. Comments by apps' bot
+accounts are trusted without a permission read, so review bots' threads can be
+fixed.
 `Prepared.Fix` records what it fixes (`conflicts`, `checks`, and `threads`, a
 digest of the kept threads and their comments) and the branches;
 `fix_threads` keeps the threads' places and excerpts for the job, with

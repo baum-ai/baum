@@ -113,15 +113,13 @@ func CollaboratorPushAccess(r Reader, repository github.Repository) PushAccess {
 	}
 }
 
-// trustedBots are the apps whose comments a fix acts on. There are none:
-// an app comments with whatever its own input made it say, and who installed
-// it, or what it read, says nothing of whether the repository's owner wants
-// its words to steer an agent that pushes. The person can always fix such a
-// thread with a reply of their own.
-var trustedBots = map[string]bool{}
-
 // trusted reports a comment whose text a fix may act on: from an account
-// that may push to the repository (canPush), or from one of trustedBots.
+// that may push to the repository (canPush), or from an app's bot account.
+// Bots are trusted so that review bots' comments (Copilot, CodeRabbit…) can
+// be fixed: an app is installed by someone who administers the repository,
+// and its words reach the agent like everyone's, as untrusted data under
+// fix-threads.md's rules, with the workflow guard and the credential check
+// applied to what it pushes.
 // GitHub's author association is not enough: MEMBER is any member of the
 // owning organisation, whatever their access to this repository, and
 // COLLABORATOR includes read and triage access. Anyone with a GitHub
@@ -132,7 +130,7 @@ func trusted(ctx context.Context, comment github.ThreadComment, canPush PushAcce
 		return false, nil
 	}
 	if comment.Bot {
-		return trustedBots[strings.ToLower(comment.Author)], nil
+		return true, nil
 	}
 	return canPush(ctx, comment.Author)
 }

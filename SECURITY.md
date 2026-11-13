@@ -613,8 +613,11 @@ once per author per read of the threads) and trusts `write`, `maintain` and
 `admin`. GitHub's author association is not used: `MEMBER` is any member of
 the owning organisation, whatever their access to this repository, and
 `COLLABORATOR` includes read and triage access. Comments by apps' bot accounts
-are left out too: no app is on the allowlist of trusted bots, since what a
-bot writes follows from whatever it read. A permission GitHub does not answer
+(review bots such as Copilot or CodeRabbit) are kept: an app is installed by
+someone who administers the repository. What a bot writes can follow from
+what it read, so its comments reach the agent like everyone's, as untrusted
+data under the rules below, and the workflow and credential checks apply to
+what the fix pushes. A permission GitHub does not answer
 stops the fix rather than trusting the author. Within a kept thread, other
 authors' comments are dropped. At most
 20 threads and the first 10 comments of each are read, each comment bounded
