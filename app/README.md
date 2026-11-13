@@ -2198,6 +2198,16 @@ fixture uses the `state/inboxes` document in its shared `app.sqlite`.
 `e2e/inbox-screens.spec.ts` takes pictures of the inbox pages, light and dark,
 only with `INBOX_SCREENSHOTS=1`.
 
+Custom tile kit: `src/tile-kit/*.test.ts` load the kit's sources from
+`../tiles/kit/v1/` and run them in jsdom frames the way a tile's frame does.
+`just local_app::tile-kit-screens` composes the demo tiles in `e2e/tile-kit/`
+(synthetic data) with the Go kit and takes pictures of them in sandboxed
+frames under the frame route's headers, glance at each card size and detail at
+720 and 360px, light and dark, into `test-results/tile-kit`
+(`e2e/tile-kit-screens.spec.ts`, only with `TILE_KIT_SCREENSHOTS=1`); it also
+checks that a throwing, network-using, failing and height-looping tile is
+reported from a real frame. `pnpm tile-kit` regenerates the kit's tokens.
+
 Real reviews: a review page is designed against real data with pictures of
 saved reviews from a dataset the person supplies, which is a directory of
 review stores (`reviews/<machine>/<repo>.versions.sqlite`), bare mirrors of the

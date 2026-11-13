@@ -11,3 +11,10 @@ e2e:
     {{ heavy }} pnpm build
     BAUM_OP_RUN=0 BAUM_DEV_HEAVY=1 {{ dev_compose }} run --build --rm --no-deps oss-test sh -ec 'CGO_ENABLED=0 go test -c ./internal/uiserver -o app/e2e/fixture'
     {{ heavy }} sh -ec 'pnpm test:e2e && pnpm test:development && pnpm test:desktop'
+
+# Pictures of the custom tile kit's demo tiles (e2e/tile-kit) in sandboxed
+# frames under the frame route's headers, glance and detail, light and dark,
+# written to test-results/tile-kit. The Go kit composes the frames first.
+tile-kit-screens:
+    BAUM_OP_RUN=0 BAUM_DEV_HEAVY=1 {{ dev_compose }} run --rm --no-deps -e BAUM_KIT_COMPOSE_SRC=/oss/app/e2e/tile-kit -e BAUM_KIT_COMPOSE_OUT=/oss/app/test-results/tile-kit/frames oss-test go test ./tiles/kit -run '^TestComposeFiles$' -count=1 -v
+    {{ heavy }} sh -ec 'TILE_KIT_SCREENSHOTS=1 pnpm exec playwright test -c playwright.tile-kit.config.ts'

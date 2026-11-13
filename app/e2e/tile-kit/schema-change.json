@@ -1,0 +1,312 @@
+{
+  "title": "Schema changes",
+  "data": {
+    "engine": "sqlite",
+    "summary": "Adds a `widget_tags` table and a nullable `archived_at` column to `widgets`, both created when the store opens. The old `labels` column is **dropped** without copying its values.",
+    "migrations": [
+      {
+        "kind": "embedded",
+        "label": "store.Open",
+        "applies": "on_start",
+        "reversible": false,
+        "idempotent": true,
+        "cites": [{ "type": "hunk", "id": "h_1111aaaa2222", "lines": [40, 52] }]
+      }
+    ],
+    "tables": [
+      {
+        "name": "widget_tags",
+        "change": "created",
+        "renamed_from": null,
+        "columns": [
+          {
+            "name": "widget_id",
+            "change": "added",
+            "before": null,
+            "after": "INTEGER NOT NULL",
+            "note": "references widgets(id)"
+          },
+          {
+            "name": "tag",
+            "change": "added",
+            "before": null,
+            "after": "TEXT NOT NULL",
+            "note": null
+          }
+        ],
+        "cites": [{ "type": "hunk", "id": "h_1111aaaa2222", "lines": [40, 46] }]
+      },
+      {
+        "name": "widgets",
+        "change": "altered",
+        "renamed_from": null,
+        "columns": [
+          {
+            "name": "archived_at",
+            "change": "added",
+            "before": null,
+            "after": "TEXT",
+            "note": "null until archived"
+          },
+          {
+            "name": "labels",
+            "change": "removed",
+            "before": "TEXT NOT NULL DEFAULT ''",
+            "after": null,
+            "note": "values are not copied"
+          },
+          {
+            "name": "name",
+            "change": "altered",
+            "before": "TEXT",
+            "after": "TEXT NOT NULL",
+            "note": null
+          }
+        ],
+        "cites": [{ "type": "hunk", "id": "h_1111aaaa2222", "lines": [48, 52] }]
+      }
+    ],
+    "data_changes": [],
+    "readers": [],
+    "concerns": [
+      {
+        "severity": "high",
+        "kind": "destructive",
+        "text": "Dropping labels loses every widget's labels; nothing copies them into widget_tags first.",
+        "cites": [
+          { "type": "hunk", "id": "h_1111aaaa2222", "lines": [48, 52] },
+          { "type": "risk", "id": "rsk_labels_lost" }
+        ]
+      },
+      {
+        "severity": "medium",
+        "kind": "compatibility",
+        "text": "An older build reading the store still selects labels and fails after this one opens it.",
+        "cites": [{ "type": "file", "path": "internal/widgets/query.go" }]
+      }
+    ]
+  },
+  "refs": {
+    "hunk:h_1111aaaa2222:40-52": {
+      "status": "ok",
+      "label": "store.go:40–52",
+      "navigable": true,
+      "path": "internal/widgets/store.go",
+      "change": "modified",
+      "role": "code",
+      "range": [36, 60],
+      "additions": 11,
+      "deletions": 2,
+      "excerpt": {
+        "header": "@@ -36,9 +36,18 @@ func Open(path string) (*Store, error) {",
+        "omitted_before": 1,
+        "omitted_after": 3,
+        "lines": [
+          {
+            "kind": "context",
+            "old": 37,
+            "new": 37,
+            "text": "\tif _, err := db.Exec(`",
+            "tokens": [
+              ["\t", null],
+              ["if", "keyword"],
+              [" _, err ", null],
+              [":=", "punctuation"],
+              [" db.", null],
+              ["Exec", "function"],
+              ["(`", "punctuation"]
+            ]
+          },
+          {
+            "kind": "context",
+            "old": 38,
+            "new": 38,
+            "text": "\t\tCREATE TABLE IF NOT EXISTS widgets (id INTEGER PRIMARY KEY, name TEXT)"
+          },
+          { "kind": "add", "new": 39, "text": "\t\tCREATE TABLE IF NOT EXISTS widget_tags (" },
+          {
+            "kind": "add",
+            "new": 40,
+            "text": "\t\t\twidget_id INTEGER NOT NULL REFERENCES widgets(id),"
+          },
+          { "kind": "add", "new": 41, "text": "\t\t\ttag TEXT NOT NULL" },
+          { "kind": "add", "new": 42, "text": "\t\t);" },
+          { "kind": "remove", "old": 39, "text": "\t`); err != nil {" },
+          { "kind": "add", "new": 43, "text": "\t`); err != nil {" },
+          {
+            "kind": "context",
+            "old": 40,
+            "new": 44,
+            "text": "\t\treturn nil, err",
+            "tokens": [
+              ["\t\t", null],
+              ["return", "keyword"],
+              [" ", null],
+              ["nil", "constant"],
+              [", err", null]
+            ]
+          },
+          { "kind": "context", "old": 41, "new": 45, "text": "\t}" },
+          {
+            "kind": "add",
+            "new": 46,
+            "text": "\taddColumn(db, \"widgets\", \"archived_at TEXT\")",
+            "tokens": [
+              ["\t", null],
+              ["addColumn", "function"],
+              ["(db, ", null],
+              ["\"widgets\"", "string"],
+              [", ", null],
+              ["\"archived_at TEXT\"", "string"],
+              [")", "punctuation"]
+            ]
+          },
+          {
+            "kind": "remove",
+            "old": 42,
+            "text": "\t// labels stay until every reader moves to widget_tags",
+            "tokens": [
+              ["\t", null],
+              ["// labels stay until every reader moves to widget_tags", "comment"]
+            ]
+          },
+          {
+            "kind": "add",
+            "new": 47,
+            "text": "\tdropColumn(db, \"widgets\", \"labels\")",
+            "tokens": [
+              ["\t", null],
+              ["dropColumn", "function"],
+              ["(db, ", null],
+              ["\"widgets\"", "string"],
+              [", ", null],
+              ["\"labels\"", "string"],
+              [")", "punctuation"]
+            ]
+          },
+          {
+            "kind": "add",
+            "new": 48,
+            "text": "\treturn &Store{db: db}, nil",
+            "tokens": [
+              ["\t", null],
+              ["return", "keyword"],
+              [" &", null],
+              ["Store", "function"],
+              ["{db: db}, ", null],
+              ["nil", "constant"]
+            ]
+          }
+        ]
+      }
+    },
+    "hunk:h_1111aaaa2222:40-46": {
+      "status": "ok",
+      "label": "store.go:40–46",
+      "navigable": true,
+      "path": "internal/widgets/store.go",
+      "change": "modified",
+      "role": "code",
+      "range": [36, 60],
+      "additions": 4,
+      "deletions": 0,
+      "excerpt": {
+        "header": "@@ -37,4 +37,8 @@ func Open(path string) (*Store, error) {",
+        "omitted_before": 1,
+        "omitted_after": 12,
+        "lines": [
+          {
+            "kind": "context",
+            "old": 38,
+            "new": 38,
+            "text": "\t\tCREATE TABLE IF NOT EXISTS widgets (id INTEGER PRIMARY KEY, name TEXT)"
+          },
+          { "kind": "add", "new": 39, "text": "\t\tCREATE TABLE IF NOT EXISTS widget_tags (" },
+          {
+            "kind": "add",
+            "new": 40,
+            "text": "\t\t\twidget_id INTEGER NOT NULL REFERENCES widgets(id),"
+          },
+          { "kind": "add", "new": 41, "text": "\t\t\ttag TEXT NOT NULL" },
+          { "kind": "add", "new": 42, "text": "\t\t);" }
+        ]
+      }
+    },
+    "hunk:h_1111aaaa2222:48-52": {
+      "status": "ok",
+      "label": "store.go:48–52",
+      "navigable": true,
+      "path": "internal/widgets/store.go",
+      "change": "modified",
+      "role": "code",
+      "range": [36, 60],
+      "additions": 2,
+      "deletions": 1,
+      "excerpt": {
+        "header": "@@ -41,3 +45,4 @@ func Open(path string) (*Store, error) {",
+        "omitted_before": 9,
+        "omitted_after": 3,
+        "lines": [
+          { "kind": "context", "old": 41, "new": 45, "text": "\t}" },
+          {
+            "kind": "add",
+            "new": 46,
+            "text": "\taddColumn(db, \"widgets\", \"archived_at TEXT\")",
+            "tokens": [
+              ["\t", null],
+              ["addColumn", "function"],
+              ["(db, ", null],
+              ["\"widgets\"", "string"],
+              [", ", null],
+              ["\"archived_at TEXT\"", "string"],
+              [")", "punctuation"]
+            ]
+          },
+          {
+            "kind": "remove",
+            "old": 42,
+            "text": "\t// labels stay until every reader moves to widget_tags",
+            "tokens": [
+              ["\t", null],
+              ["// labels stay until every reader moves to widget_tags", "comment"]
+            ]
+          },
+          {
+            "kind": "add",
+            "new": 47,
+            "text": "\tdropColumn(db, \"widgets\", \"labels\")",
+            "tokens": [
+              ["\t", null],
+              ["dropColumn", "function"],
+              ["(db, ", null],
+              ["\"widgets\"", "string"],
+              [", ", null],
+              ["\"labels\"", "string"],
+              [")", "punctuation"]
+            ]
+          }
+        ]
+      }
+    },
+    "risk:rsk_labels_lost": {
+      "status": "ok",
+      "label": "Labels are lost on upgrade",
+      "navigable": true,
+      "tier": "high",
+      "category": "data_loss",
+      "state": "open",
+      "text": "Opening an existing store drops labels before anything reads them into widget_tags.",
+      "change": "sec_store"
+    },
+    "file:internal/widgets/query.go": {
+      "status": "ok",
+      "label": "query.go",
+      "navigable": true,
+      "path": "internal/widgets/query.go",
+      "change": "modified",
+      "additions": 3,
+      "deletions": 3,
+      "hunks": 1
+    }
+  }
+}

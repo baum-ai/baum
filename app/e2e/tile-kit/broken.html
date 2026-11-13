@@ -1,0 +1,24 @@
+<style>
+  /* A detail that sizes itself by the frame: a height feedback loop. */
+  .tall {
+    height: calc(100vh + 24px);
+  }
+</style>
+<script>
+  baum.tile({
+    glance({ data }) {
+      if (data.mode === "throw") throw new RangeError("no rows to draw");
+      if (data.mode === "network") {
+        const image = new Image();
+        image.src = "https://tracker.example.invalid/pixel.png";
+        document.body.append(image);
+      }
+      return baum.html`<p>${data.mode}</p>`;
+    },
+    detail({ data }) {
+      if (data.mode === "fail") return baum.fail("The data names no tables.");
+      if (data.mode === "loop") return baum.html`<div class="tall"><p>grows with the frame</p></div>`;
+      return baum.html`<p>${data.mode}</p>`;
+    },
+  });
+</script>
