@@ -1171,22 +1171,23 @@ it("moves through Settings' sections and their controls from the keyboard", asyn
   const current = () =>
     node.querySelector<HTMLElement>('nav[aria-label="Settings sections"] [aria-current="page"]')!;
   // Keys pressed where the focus is, as a person's would be.
-  const key = (name: string) =>
+  const key = (name: string, shiftKey = false) =>
     act(async () => {
       (document.activeElement ?? document.body).dispatchEvent(
-        new KeyboardEvent("keydown", { key: name, bubbles: true, cancelable: true }),
+        new KeyboardEvent("keydown", { key: name, shiftKey, bubbles: true, cancelable: true }),
       );
     });
-  await key("j");
+  // Shift+J and Shift+K move through the sections.
+  await key("J", true);
   expect(location.search).toBe("?page=settings&section=reviews");
   expect(document.activeElement).toBe(current());
   await key("4");
   expect(location.search).toBe("?page=settings&section=connections");
-  await key("k");
-  await key("k");
+  await key("K", true);
+  await key("ArrowUp", true);
   expect(location.search).toBe("?page=settings&section=reviews");
-  // Enter goes into the section, where j and k step through its controls.
-  await key("Enter");
+  // j goes into the section, where j and k step through its controls.
+  await key("j");
   const automatic = node.querySelector<HTMLInputElement>("#review-automatic")!;
   expect(document.activeElement).toBe(automatic);
   await key("j");
@@ -1200,12 +1201,20 @@ it("moves through Settings' sections and their controls from the keyboard", asyn
   await key("j");
   expect(document.activeElement).toBe(node.querySelector("#review-agent"));
   automatic.focus();
-  // Escape goes back to the list, where j moves the section again.
+  // Shift+J moves the section from inside one too.
+  await key("J", true);
+  expect(location.search).toBe("?page=settings&section=fixes");
+  expect(document.activeElement).toBe(current());
+  await key("K", true);
+  // Escape goes back to the list; Enter goes in again.
+  const again = node.querySelector<HTMLInputElement>("#review-automatic")!;
+  again.focus();
   await key("Escape");
   expect(document.activeElement).toBe(current());
   expect(current().textContent).toContain("Reviews");
-  await key("j");
-  expect(location.search).toBe("?page=settings&section=fixes");
+  expect(location.search).toBe("?page=settings&section=reviews");
+  await key("Enter");
+  expect(document.activeElement).toBe(again);
 });
 it("edits the environment agents run with and shows server errors inline", async () => {
   history.replaceState(null, "", "/s/test-ns/?page=settings&section=computer");

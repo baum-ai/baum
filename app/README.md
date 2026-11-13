@@ -144,8 +144,8 @@ A repository's name in the list opens its page
 (`?page=repositories&repository=<owner/name>&section=`, `RepositoryPage` in
 `src/settings.tsx`), drawn as Settings is: its sections in a sand list down the
 left, each with a line under its name, and the chosen one on the warm panel, with
-the same keys (`useSettingsKeys`: j/k, 1 to 3, Enter into a section, Esc back to
-the list). Esc on the list, `u`, or the back link return to Repositories. The
+the same keys (`useSettingsKeys`: Shift+J/K between sections, 1 to 3, j/k
+through the section's controls, Esc back to the list). Esc on the list, `u`, or the back link return to Repositories. The
 sections are **Reviews** (automatic reviews for this repository and decision
 capture, setting rows saved as they change with "Saved" by the heading, as
 Settings' sections are), **Prompts** (below; its line counts the custom ones and
@@ -818,12 +818,14 @@ transcript (Watch while a fix runs); on Repositories `a` opens or closes the
 picker and `/` searches it (the search takes the focus when the picker opens,
 and `Esc` in an empty search leaves it); on the Timeline `Enter` or `o` opens or
 closes the feature or decision, an open feature's side panel follows the
-focus, and `/` focuses the search box (its hint shows inside the box). Settings' section list is its
-selection, as Up next's list is: `j`/`↓` and `k`/`↑` move it, `1` to `6` jump
-to a section, and `Enter`, `l` or `→` go into the shown section, where `j` and
-`k` step through its controls, `Space` or `Enter` changes the focused one and
-`Esc`, `h` or `←` go back to the list (`Esc` in a text field or select gives
-it up first, and `j` and `k` go on from it). On a pull request or group page `j`
+focus, and `/` focuses the search box (its hint shows inside the box). In Settings, as on a
+review page, `Shift+J`/`Shift+↓` and `Shift+K`/`Shift+↑` move to the next or
+previous section from anywhere, and `1` to `6` jump to one. `j`/`↓` and `k`/`↑`
+step through the shown section's controls; from the section list `j` goes to
+the first control and `k` to the last, as `Enter`, `l` or `→` go to the first.
+`Space` or `Enter` changes the focused control and `Esc`, `h` or `←` go back to
+the list (`Esc` in a text field or select gives it up first, and `j` and `k` go
+on from it). On a pull request or group page `j`
 and `k` step to the next and previous place in reading order, as the
 navigator's arrows do (`ReviewViewer`'s `steps` ref), `m` and `f`
 merge and fix where the header offers them, and `t`
