@@ -27,6 +27,7 @@ import (
 	"github.com/baum-ai/baum/agent/claude"
 	"github.com/baum-ai/baum/agent/codex"
 	"github.com/baum-ai/baum/internal/agentcli"
+	"github.com/baum-ai/baum/internal/agentcontext"
 	"github.com/baum-ai/baum/internal/agentdirs"
 	"github.com/baum-ai/baum/internal/agentplugins"
 	"github.com/baum-ai/baum/internal/agentrequests"
@@ -776,12 +777,27 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 			Diagnostics: uiDiagnostics, Version: version()}.Handler()
 		// The tour's sample project, written when first asked for.
 		sample := &sampleapp.Workspace{Dir: filepath.Join(state, "sample"), Own: api}
+		// Agents' MCP server; an action's reads resolve clone ids to check
+		// they stay in its repository.
+		mcp := agentcontext.New(agentcontext.Options{API: api, Version: version(), Clone: func(ctx context.Context, id string) (string, error) {
+			clones, err := registry.CloneRows(ctx)
+			if err != nil {
+				return "", err
+			}
+			for _, c := range clones {
+				if c.ID == id {
+					return c.Repository, nil
+				}
+			}
+			return "", errors.New("unknown clone")
+		}})
 		// Everything the journaled jobs need is wired: start them.
 		queue.Resume()
 		return daemon.App{
 			API:     api,
 			Assets:  localapp.Handler(),
 			Sample:  sample,
+			MCP:     mcp,
 			Methods: methods,
 			Waits:   waits,
 			Run: func(ctx context.Context) {

@@ -641,6 +641,12 @@ type Backend interface {
 }
 ```
 
+Every run has no MCP server: Claude Code gets `--strict-mcp-config` with an empty
+`--mcp-config`, Codex `--ignore-user-config`. A local run may set
+`Request.MCP` to give the agent exactly one, baum's own (the daemon's
+`/api/mcp`, over HTTP); see
+"MCP server for agents" for the flags and the token's path.
+
 A backend may also implement `agent.Completer`: one structured completion
 with a system prompt, a user message and a schema, no working files, used by
 decision capture. It is normally one model call. The anthropic backend makes one Messages call offering only
@@ -2998,6 +3004,8 @@ which builds every provider, the generation runner included, once it owns
 the per-user lock. SSE has a bounded
 in-memory event log; reconnect replays notifications or asks for an index reset.
 It does not persist a second review index. An event's data is at most 16 KiB.
+`POST /api/mcp` is the exception to this middleware: it takes only an MCP
+token, never the launch token or the cookie (see "MCP server for agents").
 
 The generation queue's changes go out as two kinds. A `progress` event
 `{"job": <job>}` announces anything but a running job's usage: queued, started,
@@ -5355,11 +5363,143 @@ one place (`featureVersion`: the live stages' current one, a build's
 building one). See
 [its README](internal/decisionlog/README.md#feature-log).
 
+### MCP server for agents
+
+`internal/agentcontext` is an MCP server agents use to read what the app
+shows: the app's chat, and actions working on one pull request. The app
+server routes `POST /api/mcp` to it (`uiserver.Options.MCP`, set through
+`daemon.App.MCP`). It speaks JSON-RPC 2.0 by hand, MCP revision
+`2025-06-18`: `initialize`, `ping`, `tools/list` (each tool carries
+annotations: `readOnlyHint` true and `openWorldHint` false, or, for a tool with
+`Tool.Proposes`, `readOnlyHint` false and `destructiveHint` false, so a client
+can approve reading tools unasked) and `tools/call`, one JSON
+response per request, no batches and no event stream. A notification gets
+202 with no body. Malformed JSON is -32700, an invalid request (a batch
+included) -32600, an unknown method -32601, and missing or invalid params,
+or an unknown tool, -32602. A tool that fails returns a result with
+`isError: true` and its explanation, not a protocol error; so do arguments
+that do not match the tool's JSON Schema.
+
+Agent CLIs reach the route directly over HTTP; there is no bridge process.
+`agent.Request.MCP` (`agent.MCPServer{URL, Token}`) names it for a run: URL
+is `<daemon origin>/api/mcp`, and `Validate` accepts only `http` on a
+loopback address with a port. Claude keeps `--strict-mcp-config` and names
+only `baum` in `--mcp-config`, an `http` server whose `Authorization` header
+is `Bearer ${BAUM_MCP_TOKEN}` (Claude Code expands it from its environment),
+and adds `--allowedTools mcp__baum`, since `--tools` only selects built-in
+tools and a `--print` run cannot ask permission. Codex adds
+`-c mcp_servers.baum.url` and `.bearer_token_env_var="BAUM_MCP_TOKEN"` under
+`--ignore-user-config`. Both put `BAUM_MCP_TOKEN` last in the CLI's
+environment, after `agent_env`, so the token is in no argument or
+configuration. Only the Claude `User` and Codex `Local` profiles accept it;
+the others return an error. With no `MCP` the arguments are what they always
+were. No job sets it yet.
+
+What the CLIs send (checked by `internal/agentcontext/livecheck` against the
+latest and floor releases): Claude Code asks `initialize` for a newer revision
+and accepts `2025-06-18`, opens a `GET` for an event stream and accepts the
+405, and recent releases first try `server/discover` with a newer
+`MCP-Protocol-Version`, take the 400 and fall back to `initialize`. Codex asks
+for `2025-06-18`. With a revoked token both get 401, try no OAuth discovery,
+and finish the run without baum's tools. Tokens die with the daemon, so a CLI
+that outlives a daemon restart has nothing to reconnect to.
+
+The route takes only an MCP token as `Authorization: Bearer`. The app
+server checks the exact Host, asks the MCP server whether the token is live,
+refuses a foreign Origin and needs none; the MCP server takes only `POST`
+(405 otherwise), `application/json` (415), at most 1 MiB (413) and an
+`MCP-Protocol-Version` header that is absent or `2025-06-18` (400 otherwise).
+The launch token and the cookie are refused there, and
+`/s/<namespace>/api/mcp` is not served. An MCP token is not the launch
+token, so it opens no other route.
+
+`Registry` mints tokens in memory: `Mint(Consumer)` returns a token of 32
+random bytes, an opaque consumer id and a revoke function, and refuses any
+consumer but a `chat` (bound to nothing) or an `action` with an `owner/name`
+repository and a pull request number. Nothing about tokens is persisted or
+logged. A chat may read any page and propose changes to the page it has
+open; an action only reads, within its repository: its tools default to its
+pull request and may read the repository's other pull requests. `SetPage(id, PageContext)` records a chat's
+page: its name (`inbox`, `pulls`, `timeline`, `sessions`, `analytics`,
+`jobs`, `repositories`, `settings`, or a detail page: `pull_request`,
+`group`, `session`, `job`, `feature`), the repository, pull request, group,
+session, job or feature it shows, its filters and the focus the user picked.
+An action's page is its pull request and does not change. Callers hold the
+id, not the token, to set the page.
+
+Tools are registered with a name, description, JSON Schema, a scope, the
+route prefixes they read (`Reads`) and a call that gets a `CallContext`:
+the consumer, its page, a reader and `Propose`. A `ScopeGlobal` tool,
+the zero value, reads across repositories or the app's own state; actions
+neither list nor call it (a call is an unknown tool). A `ScopeRepository`
+tool reads one repository, which it takes only from
+`CallContext.Target`: the repository and pull request asked for, else the
+action's, else the open page's; an action is refused any other repository.
+`RegisterPage` lists the tools that read a page and the proposer that takes
+its changes. Two repository-scoped tools are built in: `current_page`,
+which returns the page context and the tools of that page the consumer may
+call, and `read_more`.
+
+Tools read through `Reader`, which serves an in-process `GET` against the
+`LocalAPI` handler, below the app server's authentication and with no
+credentials. `Get` is its only method, so nothing but `GET` can be sent,
+and it refuses the `refresh` and `more` parameters, which make some `GET`
+routes do work beyond reading. A tool's reader takes only clean paths under
+the prefixes it declared, a whole segment at a time, and never the
+unreadable ones (`/api/settings`, `/api/debug`, `/api/github` and
+`/api/github-auth`, `/api/diagnostics`, `/api/plan-usage`, `/api/events`,
+`/api/mcp`), which no tool may declare. It fails a body over 8 MiB.
+
+An action's reader also reads only the routes in `actionRoutes`
+(`reader.go`). Each entry is a path pattern, the query parameters it allows
+and how the route is bound to the action's repository: by the `repository`
+parameter its handler reads, by a `clone` parameter resolved through
+`Options.Clone`, by `{owner}/{name}` in the path, or, for a route that finds
+a record by id, by a check that reads the repository from the response and
+returns nothing on a mismatch. Any other route, and any parameter its entry
+does not list, is refused. The table holds `GET /api/jobs?repository=&pr=`
+and `GET /api/jobs/{id}` (checked by the job's `repository`); routes are
+added beside the tools that need them.
+
+Every result goes through one envelope. It masks the text with
+`bundle.NewRedactor`, cuts it at most 64 KiB in at a UTF-8 boundary, and
+places the part between `BEGIN UNTRUSTED DATA <tag>` and
+`END UNTRUSTED DATA <tag>` lines with a fresh random tag removed from the data
+first (`internal/untrusted`, which the chat and fix prompts use too; tests
+pin their bytes). The rest is kept masked in memory under a random cursor,
+and the result ends with a line naming it; `read_more` with the cursor
+returns the next part, with a new cursor while more remains. A cursor gives
+its part once, only to its consumer, for 15 minutes; a consumer keeps at
+most eight, the oldest (by the order they were kept) dropped first.
+Revoking a token drops its cursors and proposals, and a call still running
+then keeps neither: both are stored only after checking, under their lock,
+that the consumer is live.
+
+`Proposals` hold changes a chat proposes: page, target, the value before and
+after, the target's revision and the page context it was made on. A
+`Proposer` reads a target (`Current`), validates a change (`Validate`) and
+saves it (`Apply`), each given that page context so it refuses a target the
+page does not show. `Propose` refuses an action, a page other than the open
+one and a page with no proposer; it reads the target's value and revision
+itself, ignoring the agent's revision, refuses with the bare
+`ErrNotRecorded` a `Before` the agent sent that no longer matches, and
+records the proposal; nothing changes. A tool gets only a `Receipt` (id,
+page, target): the current value is for the person, through the Go API,
+never for the agent. `List` returns deep copies. `Save` reads the target
+again, which refuses one that left the page and a changed revision; then,
+under the lock a revoke takes to drop proposals, it checks that the
+consumer is live and the proposal open and calls `Apply` with the recorded
+revision. The proposer compares and writes in one transaction, as
+`appdb.Update` does, and returns `ErrStale` without writing when the target
+moved meanwhile. `Dismiss` drops a proposal. No page has a proposer yet, and the app reaches proposals only
+through the Go API.
+
 ### Transports and control protocol
 
 The app transport is `internal/uiserver` on `127.0.0.1` (a free port unless
 `--port`), unchanged: launch-token exchange, the cookie scoped to the secret
-`/s/<namespace>/` path, exact Host and Origin checks. Its token is written to
+`/s/<namespace>/` path, exact Host and Origin checks; `POST /api/mcp` takes
+only an MCP token and no Origin (see "MCP server for agents"). Its token is written to
 the credential file instead of being printed by a foreground process.
 
 The control transport is a Unix domain socket, mode 0600 in a 0700 directory:

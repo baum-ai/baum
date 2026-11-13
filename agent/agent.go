@@ -8,6 +8,8 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"net"
+	"net/url"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -126,6 +128,49 @@ type Request struct {
 	// the original untouched; Result.SessionID is then the new one. Without
 	// ResumeSession it is an error.
 	ForkSession bool
+	// MCP, when set, gives the run exactly one MCP server: baum's own, the
+	// daemon's /api/mcp route, which the agent CLI reaches over HTTP. Nil
+	// leaves the run with none, as every run has been. Only a local (User or
+	// Local profile) run supports it.
+	MCP *MCPServer
+}
+
+// MCPTokenEnv names the environment variable that carries an MCPServer's
+// token to the agent CLI, which sends it as the bearer token of each request.
+// The token is never an argument or written to the CLI's configuration: the
+// configuration names the variable.
+const MCPTokenEnv = "BAUM_MCP_TOKEN"
+
+// MCPServer is the MCP server a run may reach (Request.MCP): URL is the
+// daemon's MCP route on its loopback app server, such as
+// http://127.0.0.1:43123/api/mcp. Token authenticates the agent to it and
+// reaches the CLI through MCPTokenEnv only.
+type MCPServer struct {
+	URL   string
+	Token string
+}
+
+// Validate rejects a server the CLI could not reach or authenticate to. The
+// URL must be plain HTTP on a loopback address, the only place the daemon
+// serves, so the token is never sent anywhere else.
+func (m *MCPServer) Validate() error {
+	u, err := url.Parse(m.URL)
+	switch {
+	case err != nil || u.Scheme != "http" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || u.Port() == "":
+		return errors.New("the MCP server needs an http URL with a port, and no credentials, query or fragment")
+	case !isLoopback(u.Hostname()):
+		return errors.New("the MCP server must be on a loopback address")
+	case m.Token == "":
+		return errors.New("the MCP server needs a token")
+	case strings.ContainsAny(m.Token, "\r\n\x00"):
+		return errors.New("the MCP token is not a single line")
+	}
+	return nil
+}
+
+func isLoopback(host string) bool {
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 // WantsSession reports whether the request uses any session option.

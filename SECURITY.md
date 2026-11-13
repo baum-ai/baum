@@ -328,7 +328,12 @@ as far as the tool allows:
 - `--setting-sources ""` skips the user, project and local settings files, so
   only the inline `--settings` baum passes is applied; administrator-managed
   policy settings may still apply. No MCP server is loaded
-  (`--strict-mcp-config` with an empty list), and no session is written
+  (`--strict-mcp-config` with an empty list) for reviews, fixes and Ask. A
+  run the chat or a quick action starts may get exactly one: baum's own,
+  named by `--mcp-config` under `--strict-mcp-config` (so the user's, a
+  project's and plugins' stay out) and allowed as `mcp__baum`, with the token
+  in the environment only, never in the configuration or the arguments (see
+  [MCP server for agents](#mcp-server-for-agents)). No session is written
   (`--no-session-persistence`), unless the caller asks the local run to keep,
   resume (`--resume`) or fork (`--fork-session`) a session; the hosted profile
   never does. `--restricted` and the tool allowlist apply on every launch,
@@ -381,6 +386,14 @@ Codex's own read-only sandbox:
   `CODEX_HOME` when you set it. `CODEX_API_KEY`, `OPENAI_*` and the other
   provider and cloud credentials are removed; `CODEX_API_KEY` and the base URL
   are set only when you configure an endpoint for baum.
+- A run with an MCP server (none does yet; the chat and quick actions will) gets
+  `-c mcp_servers.baum.url` (the daemon's loopback `/api/mcp`) and
+  `.bearer_token_env_var="BAUM_MCP_TOKEN"`, so Codex reads the token from its
+  own environment and it is never an argument. Codex itself makes those
+  requests, outside its sandbox (`read-only` or `workspace-write` with
+  `network_access=false`), which confines the commands the model runs and not
+  Codex's own MCP client; the model gets no network access from it. See
+  [MCP server for agents](#mcp-server-for-agents).
 - It uses your own login (`codex login`, kept in `CODEX_HOME` or `~/.codex`).
   The output schema is written to a private temporary file that is removed
   after the run; baum never writes into `CODEX_HOME`.
@@ -1231,7 +1244,9 @@ credential available; an unknown host key fails it with git's error. An ssh comm
 
 The daemon's application server accepts only the bound `127.0.0.1:port` Host. Its bootstrap has no
 local data; every API requires the random private launch capability or an
-HttpOnly SameSite=Strict cookie obtained by exchanging that capability. The
+HttpOnly SameSite=Strict cookie obtained by exchanging that capability, except
+`POST /api/mcp`, which takes only an agent's MCP token (see
+[MCP server for agents](#mcp-server-for-agents)). The
 browser receives the capability in a URL fragment, removes it from history,
 and sends it in the same-origin JSON exchange body. Browsers send cookies to
 every port of a host, so the cookie is scoped to a second random secret path,
@@ -1239,7 +1254,9 @@ every port of a host, so the cookie is scoped to a second random secret path,
 loopback port never receives it, and the cookie authorizes nothing outside
 that path. All mutations require the
 exact local Origin and JSON content type, including requests using Bearer
-authentication. No route enables CORS. The capability is the daemon's app
+authentication; `POST /api/mcp` requires the JSON content type but no Origin,
+and refuses a foreign one (see [MCP server for agents](#mcp-server-for-agents)).
+No route enables CORS. The capability is the daemon's app
 credential: it is written to `credential.json` (mode 0600) in the daemon's
 state directory, where the desktop app reads it, stays valid for repeated
 exchanges while that daemon runs, and is replaced when a new daemon starts.
@@ -1460,6 +1477,84 @@ only GitHub writes are the ones listed under "Writes to GitHub": a merge, a
 branch update and a re-run you confirm and a fix you start, with that fix's
 replies on the review threads it addressed, and resolving a review thread you
 chose; it supplies no approvals or other discussion controls.
+
+### MCP server for agents
+
+An agent CLI reaches the server over HTTP at the daemon's loopback
+`/api/mcp`; no other process sits between them. The CLI gets its token only
+in the `BAUM_MCP_TOKEN` environment variable and sends it as
+`Authorization: Bearer`. Its MCP configuration names the variable, never the
+token: Claude Code's header is `Bearer ${BAUM_MCP_TOKEN}`, which it expands
+from its environment, and Codex's `bearer_token_env_var` is
+`BAUM_MCP_TOKEN`. So the token is in no argument, which the process list
+would show, and in no configuration file. baum sets the variable after the
+user's `agent_env`, so that cannot replace or remove it, and accepts only an
+`http` URL on a loopback address, so the token goes nowhere else. Only the
+local profiles run an MCP server; the hosted and container profiles refuse a
+request that asks for one. Claude Code runs with `--strict-mcp-config` and
+Codex with `--ignore-user-config`, so baum's server is the only one. No job
+sets it yet: the chat and quick actions will, and no other run has it.
+
+The application server also serves `POST /api/mcp`, an MCP server that lets
+an agent read what the app shows. It takes only an MCP token, sent as
+`Authorization: Bearer`. The launch capability and the session cookie are
+refused there, and `/s/<namespace>/api/mcp` is not served, so the cookie a
+browser holds cannot reach it. An MCP token opens no other route: every
+other `/api/` route still requires the launch capability or the cookie. The
+route keeps the exact Host check and the security headers, takes only
+`POST` with a JSON content type, a body of at most 1 MiB and no
+`MCP-Protocol-Version` other than `2025-06-18`, and needs no Origin, because
+its client is an agent CLI rather than a browser; a request that
+carries a foreign Origin is refused.
+
+Each token is 32 random bytes, minted by the daemon for one agent: the app's
+chat, or an action working on one pull request of one `owner/name`
+repository. Tokens live only in the daemon's memory. They are never written
+to `app.sqlite`, `config.toml`, `credential.json` or any other file, never
+logged, and die with the daemon or when revoked; a revoked token is refused.
+Lookups compare a hash of the token in constant time.
+
+Tools read through the same routes the app calls, only through `GET` routes
+on an allowlist and without refresh flags: the reader has no way to send
+another method, and refuses the `refresh` and `more` parameters, which make
+some `GET` routes fetch from GitHub or rebuild a cache. Each tool reads only
+the route prefixes it declares, and no tool can read settings, GitHub
+authentication or GitHub listings, diagnostics, debugging, plan usage, the
+event stream or `/api/mcp`. Responses are bounded to 8 MiB.
+
+An action's token is bound to its repository. Its tools default to its own
+pull request and may read other pull requests of that repository, never
+another repository. Tools are either global or scoped to one repository; an
+action neither lists nor calls a global tool. The repository-scoped tools
+read the repository the server resolves for them, which for an action is
+always its own. As a backstop, an action's reader reads only the routes in
+a fixed table, each bound to the repository the way its handler finds what
+it serves: by the `repository` or `clone` parameter that handler reads, by
+an `owner/name` path, or, for a route that finds a record by id, by checking
+the record's repository and returning nothing on a mismatch. Any other
+route, and any query parameter its entry does not list, is refused. An
+action never proposes changes.
+
+A chat's token may also propose a change to the page the user has open, and
+only to something that page shows (on a pull request's page, only that pull
+request's items). A proposal changes nothing until the user saves it in the
+app. The value and revision it is compared against are read by the daemon
+when the proposal is recorded, never taken from the agent; a value the agent
+says it read must match the current one, and a mismatch is refused with an
+error that says nothing more. The current value is shown to you, never
+returned to the agent. Saving checks that the target still belongs to the
+page and that the agent's token is still live, and the page compares the
+revision and writes in one step, so a target changed by anyone since the
+proposal was made is refused and nothing is saved. A token revoked while a
+save is writing takes effect once the write ends.
+
+Every tool result is masked with the same redaction as prompts, cut to at
+most 64 KiB, and placed between `BEGIN UNTRUSTED DATA` and
+`END UNTRUSTED DATA` lines that carry a fresh random tag, which is removed
+from the data first. The rest of a long result is kept masked in memory, for
+at most 15 minutes and eight results per agent, under a random cursor that
+gives it once and only to the agent it was cut for. Revoking a token drops
+its cursors and proposals, including any a call still running would leave.
 
 ## Desktop app
 
