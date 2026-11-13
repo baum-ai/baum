@@ -51,7 +51,7 @@ function MediaGlance({ tile, ctx }: TileFaceProps) {
           {shown.map((image, position) => (
             <li
               key={`${image.attachment}-${position}`}
-              className="relative min-h-0 overflow-hidden rounded-md border border-subtle bg-surface-sunken"
+              className="relative min-h-28 overflow-hidden rounded-md border border-subtle bg-surface-sunken"
             >
               <img
                 src={url(image.attachment, ctx.review)}

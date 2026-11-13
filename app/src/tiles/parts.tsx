@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { cn } from "@baum/viewer/components/classnames";
 import { LiveDot } from "@baum/viewer/components/ui";
 import { CheckIcon } from "@baum/viewer/components/icons";
@@ -153,4 +153,32 @@ export function plainSentence(
   const plain = plainText(text, labels);
   const match = /^(.+?[.!?])(\s|$)/.exec(plain);
   return match ? match[1]! : plain;
+}
+
+/** A glance's body, faded at its foot when it holds more than fits. */
+export function Fade({ children, className }: { children: ReactNode; className?: string }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [over, setOver] = useState(false);
+  useLayoutEffect(() => {
+    const element = ref.current;
+    if (!element) return;
+    const measure = () => setOver(element.scrollHeight > element.clientHeight + 1);
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(element);
+    for (const child of element.children) observer.observe(child);
+    return () => observer.disconnect();
+  }, []);
+  return (
+    <div
+      ref={ref}
+      className={cn(
+        "relative min-h-0 flex-1 overflow-hidden",
+        over && "[mask-image:linear-gradient(to_bottom,black_calc(100%-2.5rem),transparent)]",
+        className,
+      )}
+    >
+      {children}
+    </div>
+  );
 }

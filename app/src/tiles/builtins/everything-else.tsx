@@ -33,7 +33,8 @@ function EverythingElseGlance({ tile, ctx }: TileFaceProps) {
   const { hunks } = covered(ctx, data);
   const wanted = new Set(hunks);
   const indexed = ctx.review.index.hunks.filter((hunk) => wanted.has(hunk.id));
-  const files = new Set(indexed.map((hunk) => hunk.path)).size;
+  const paths = [...new Set(indexed.map((hunk) => hunk.path))];
+  const files = paths.length;
   const roles = [...new Set(indexed.map((hunk) => hunk.role))].map((role) => ({
     role,
     count: indexed.filter((hunk) => hunk.role === role).length,
@@ -52,11 +53,19 @@ function EverythingElseGlance({ tile, ctx }: TileFaceProps) {
         <Clamp lines={3} className="text-base leading-normal text-secondary">
           {sentence}
         </Clamp>
-      ) : data.unassigned.length > 0 ? (
-        <p className="text-base text-secondary">
-          {pluralize("hunk", data.unassigned.length, true)} no change describes.
-        </p>
-      ) : null}
+      ) : (
+        // No change describes them: the files say what they are.
+        <ul className="min-w-0 space-y-0.5">
+          {paths.slice(0, 3).map((path) => (
+            <li key={path} className="truncate font-mono text-xs text-secondary" title={path}>
+              {path}
+            </li>
+          ))}
+          {paths.length > 3 ? (
+            <li className="text-xs text-tertiary">and {paths.length - 3} more</li>
+          ) : null}
+        </ul>
+      )}
       <p className="mt-auto flex flex-wrap gap-x-2 text-xs text-tertiary">
         {roles
           .toSorted((a, b) => b.count - a.count)

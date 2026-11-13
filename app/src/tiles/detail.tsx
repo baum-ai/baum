@@ -25,8 +25,11 @@ export function TileDetail({
 }) {
   const face = tileFace(tile);
   const Icon = face.type?.icon ?? GridIcon;
+  // A Change, and Everything else with its mechanical change, open on the
+  // section's own heading.
   const ownHeader =
-    face.kind === "ready" && (tile.type === "change" || tile.type === "everything_else");
+    face.kind === "ready" &&
+    (tile.type === "change" || (tile.type === "everything_else" && Boolean(tileChange(tile))));
   const root = useRef<HTMLDivElement>(null);
   useItemFocus(root, tile, item, ctx);
   return (

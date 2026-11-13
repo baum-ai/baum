@@ -38,10 +38,10 @@ function ranked(ctx: Pick<TileContext, "doc">, data: unknown): TileRisk[] {
 }
 
 const URGENT: RiskTier[] = ["critical", "high"];
-const MEDIUM_LINES = 3;
+const LINES = 3;
 
 /** How many open risks of each tier, every critical and high one in full,
- *  then the first medium ones: the reader sees at once whether there is
+ *  then the next ones down: the reader sees at once whether there is
  *  anything to fear and what it is. */
 function RisksGlance({ tile, ctx }: TileFaceProps) {
   const risks = ranked(ctx, tile.data);
@@ -60,8 +60,9 @@ function RisksGlance({ tile, ctx }: TileFaceProps) {
     },
   );
   const urgent = risks.filter((risk) => URGENT.includes(risk.tier));
-  const medium = risks.filter((risk) => risk.tier === "medium");
-  const shownMedium = urgent.length >= 3 ? [] : medium.slice(0, MEDIUM_LINES - urgent.length);
+  // Then the next ones down, as room allows.
+  const lower = risks.filter((risk) => !URGENT.includes(risk.tier));
+  const shownMedium = urgent.length >= LINES ? [] : lower.slice(0, LINES - urgent.length);
   const rest = risks.length - urgent.length - shownMedium.length;
   return (
     <div className="space-y-3">
@@ -75,7 +76,7 @@ function RisksGlance({ tile, ctx }: TileFaceProps) {
           <RiskLine key={risk.id} risk={risk} ctx={ctx} urgent />
         ))}
         {shownMedium.map((risk) => (
-          <RiskLine key={risk.id} risk={risk} ctx={ctx} />
+          <RiskLine key={risk.id} risk={risk} ctx={ctx} roomy={urgent.length === 0} />
         ))}
       </ul>
       {rest > 0 ? (
@@ -90,10 +91,13 @@ function RiskLine({
   risk,
   ctx,
   urgent = false,
+  roomy = false,
 }: {
   risk: TileRisk;
   ctx: TileContext;
   urgent?: boolean;
+  /** No urgent risk takes the room, so a lower one has two lines. */
+  roomy?: boolean;
 }) {
   const change = changeById(ctx.doc, risk.change);
   return (
@@ -106,7 +110,7 @@ function RiskLine({
       <div className="min-w-0 flex-1">
         <span className="sr-only">{humanize(risk.tier)} risk: </span>
         <Clamp
-          lines={urgent ? 2 : 1}
+          lines={urgent || roomy ? 2 : 1}
           className={urgent ? "text-base text-primary" : "text-base text-secondary"}
         >
           {plainText(risk.text, ctx.labels)}

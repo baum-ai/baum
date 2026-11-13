@@ -4,7 +4,7 @@ import { SummaryIcon, WarningIcon } from "@baum/viewer/components/icons";
 import { Markdown } from "@baum/viewer/components/markdown";
 import { ChangeKindTag, Facts, Lines, Part, PROSE } from "@baum/viewer/components/review-parts";
 import { humanize } from "@baum/viewer/review-document";
-import { Clamp, plainText } from "../parts";
+import { Clamp, Fade, plainText } from "../parts";
 import type { OverviewData } from "../tile-document";
 import { isRecord, type TileFaceProps, type TileType } from "../types";
 
@@ -27,7 +27,7 @@ function OverviewGlance({ tile, ctx }: TileFaceProps) {
         <ChangeKindTag kind={data.change_kind} />
         {minutes ? <span>≈{pluralize("minute", minutes, true)} to read</span> : null}
       </p>
-      <div className="min-h-0 flex-1 space-y-2.5 overflow-hidden">
+      <Fade className="space-y-2.5">
         <Clamp lines={4} className="text-base leading-normal text-primary">
           {paragraph}
         </Clamp>
@@ -47,7 +47,7 @@ function OverviewGlance({ tile, ctx }: TileFaceProps) {
             </span>
           </p>
         ) : null}
-      </div>
+      </Fade>
       {stats ? (
         <p className="flex flex-wrap items-center gap-x-1.5 text-xs text-tertiary">
           <Lines additions={stats.additions} deletions={stats.deletions} />

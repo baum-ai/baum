@@ -16,7 +16,7 @@ import {
   type ReviewDocument,
   type Section,
 } from "@baum/viewer/review-document";
-import { Clamp, Count, Counts, plainSentence, Quiet, Writing } from "../parts";
+import { Clamp, Count, Counts, Fade, plainSentence, Quiet, Writing } from "../parts";
 import {
   changeById,
   isCurrent,
@@ -78,26 +78,18 @@ function ChangeGlance({ tile, ctx }: TileFaceProps) {
   const tally = evidenceTally(change.derived.evidence_summary);
   const { open, urgent } = openRisks(ctx.doc, change.id);
   const sentence = plainSentence(data.summary?.text, ctx.labels);
-  // Why the change scored as it did, as the risk it names says it, where the
-  // change has nothing more pressing to show.
-  const why = change.derived.review_reason;
-  const named = why?.risk ? riskInChange(ctx.doc, change.id, why.risk) : undefined;
-  const reason =
-    named && named.state !== "mitigated"
-      ? plainSentence(named.text, ctx.labels)
-      : plainSentence(why?.text, ctx.labels);
   const stale = !isCurrent(change);
   return (
     <div className="flex h-full min-h-0 flex-col gap-2.5">
       <ChangeBadges change={change} ctx={ctx} section={section} />
-      <div className="min-h-0 flex-1 space-y-2 overflow-hidden">
+      <Fade className="space-y-2">
         {tile.state === "pending" ? (
           <Writing />
         ) : tile.state === "failed" ? (
           <DetailsUnavailable change={change} ctx={ctx} />
         ) : sentence ? (
           <Clamp
-            lines={urgent.length > 0 || data.attention?.text || reason ? 2 : 4}
+            lines={urgent.length > 0 || data.attention?.text ? 2 : 4}
             className="text-base leading-normal text-primary"
           >
             {sentence}
@@ -108,7 +100,7 @@ function ChangeGlance({ tile, ctx }: TileFaceProps) {
         {urgent.length > 0 ? (
           <p className="flex items-start gap-1.5 text-base text-status-critical">
             <RiskIcon size={14} className="mt-0.5 flex-none" />
-            <span className="line-clamp-2 min-w-0">
+            <span className="line-clamp-1 min-w-0">
               {urgent.length === 1
                 ? plainSentence(urgent[0]!.text, ctx.labels)
                 : `${urgent.length} high or critical risks`}
@@ -117,14 +109,12 @@ function ChangeGlance({ tile, ctx }: TileFaceProps) {
         ) : data.attention?.text ? (
           <p className="flex items-start gap-1.5 text-base text-secondary">
             <WarningIcon size={14} className="mt-0.5 flex-none text-status-caution" />
-            <span className="line-clamp-2 min-w-0">
+            <span className="line-clamp-1 min-w-0">
               {plainSentence(data.attention.text, ctx.labels)}
             </span>
           </p>
-        ) : reason ? (
-          <p className="line-clamp-2 text-base text-secondary">{reason}</p>
         ) : null}
-      </div>
+      </Fade>
       <div className="space-y-1 text-xs text-tertiary">
         <p className="flex flex-wrap items-center gap-x-1.5">
           <Lines additions={change.derived.additions} deletions={change.derived.deletions} />
@@ -179,6 +169,10 @@ function ChangeBadges({
   section: Section | undefined;
 }) {
   const state = sectionBadgeState(change.derived.state, ctx.review.review);
+  // Why it scored so, in the words of the risk the reason names, where one does.
+  const reason = change.derived.review_reason;
+  const named = reason?.risk ? riskInChange(ctx.doc, change.id, reason.risk) : undefined;
+  const why = plainSentence(named?.text ?? reason?.text, ctx.labels);
   const score = change.derived.review_score;
   const added = ctx.compare?.added.has(change.id);
   const labels = section && ctx.renderLabels ? ctx.renderLabels(section) : null;
@@ -189,7 +183,7 @@ function ChangeBadges({
         <Badge
           size="compact"
           tone={reviewScoreTone(score)}
-          title={`Review score ${score} of 5: ${RISK_SCORE_MEANING[score]}`}
+          title={`Review score ${score} of 5: ${RISK_SCORE_MEANING[score]}${why ? `. ${why}` : ""}`}
         >
           Score {score}
         </Badge>

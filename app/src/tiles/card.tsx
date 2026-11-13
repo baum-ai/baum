@@ -1,10 +1,10 @@
-import { Component, useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { Component, useId, type ReactNode } from "react";
 import { cn, FOCUS_RING } from "@baum/viewer/components/classnames";
 import { CommentsIcon, RiskIcon } from "@baum/viewer/components/icons";
 import { Badge, LiveDot } from "@baum/viewer/components/ui";
 import { MenuButton, type MenuItem, type useContextMenu } from "../context-menu";
 import { GridIcon } from "./icons";
-import { Quiet, Writing } from "./parts";
+import { Fade, Quiet, Writing } from "./parts";
 import { tileFace } from "./registry";
 import { mustShowRisks, type Tile, type TileSize } from "./tile-document";
 import type { TileContext } from "./types";
@@ -16,12 +16,13 @@ export const SPAN: Record<TileSize, string> = {
   third: "@min-[52rem]/tiles:col-span-2",
 };
 
-/** One height for each size, so the grid keeps its rows however much a tile
- *  has to say; what does not fit fades out at the foot. */
+/** One height for each size once the grid has columns, so it keeps its rows
+ *  however much a tile has to say; in one column a card is as tall as what it
+ *  says, up to that height. What does not fit fades out at the foot. */
 export const CARD_HEIGHT: Record<TileSize, string> = {
-  full: "h-[13rem]",
-  half: "h-[17rem]",
-  third: "h-[15rem]",
+  full: "max-h-[13rem] @min-[36rem]/tiles:h-[13rem]",
+  half: "max-h-[17rem] @min-[36rem]/tiles:h-[17rem]",
+  third: "max-h-[16rem] @min-[36rem]/tiles:h-[16rem]",
 };
 
 /** A tile on the landing page: its kind, its title and its glance face, the
@@ -133,33 +134,6 @@ export function GlanceCard({
         </TileBoundary>
       </Fade>
     </article>
-  );
-}
-
-/** A glance's body, faded at its foot when it holds more than fits. */
-function Fade({ children }: { children: ReactNode }) {
-  const ref = useRef<HTMLDivElement>(null);
-  const [over, setOver] = useState(false);
-  useLayoutEffect(() => {
-    const element = ref.current;
-    if (!element) return;
-    const measure = () => setOver(element.scrollHeight > element.clientHeight + 1);
-    measure();
-    const observer = new ResizeObserver(measure);
-    observer.observe(element);
-    for (const child of element.children) observer.observe(child);
-    return () => observer.disconnect();
-  }, []);
-  return (
-    <div
-      ref={ref}
-      className={cn(
-        "relative min-h-0 flex-1 overflow-hidden",
-        over && "[mask-image:linear-gradient(to_bottom,black_calc(100%-2.5rem),transparent)]",
-      )}
-    >
-      {children}
-    </div>
   );
 }
 
