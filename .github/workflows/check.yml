@@ -43,9 +43,11 @@ jobs:
           go-version-file: go.mod
           cache-dependency-path: go.sum
 
-      - name: Test release ordering
+      - name: Test release ordering and notes
         if: matrix.os == 'linux'
-        run: sh scripts/release-check-test.sh
+        run: |
+          sh scripts/release-check-test.sh
+          sh scripts/release-notes-test.sh
 
       - name: Check formatting
         run: |

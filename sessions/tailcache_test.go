@@ -286,33 +286,29 @@ func TestMapRereadsATornFinalLine(t *testing.T) {
 	}
 }
 
-// A transcript that has not changed for a while is decoded whole and its
-// lines are not kept: it is unlikely to grow.
-func TestMapKeepsOnlyChangingTranscripts(t *testing.T) {
+// Age alone must not turn repeated reads of unchanged transcripts into full
+// decodes. The same memory and inactivity bounds still apply.
+func TestMapKeepsOldUnchangedTranscripts(t *testing.T) {
 	c := useTails(t, DefaultTailCacheBytes)
-	s, main, _ := claudeTree(t, 31)
-	old := time.Now().Add(-2 * tailActiveFor)
+	s, _, _ := claudeTree(t, 31)
+	old := time.Now().Add(-2 * time.Hour)
 	for _, f := range s.Files {
 		if err := os.Chtimes(f.Path, old, old); err != nil {
 			t.Fatal(err)
 		}
 	}
 	mapsAsWhole(t, s, "old")
-	if c.len() != 0 {
-		t.Errorf("kept %d old transcripts", c.len())
+	before := c.counts()
+	mapsAsWhole(t, s, "unchanged")
+	if after := c.counts(); after.full != before.full || after.lines != before.lines {
+		t.Errorf("old unchanged transcript decoded again: before %+v after %+v", before, after)
 	}
-
-	now := time.Now()
-	if err := os.Chtimes(main, now, now); err != nil {
-		t.Fatal(err)
-	}
-	mapsAsWhole(t, s, "changed")
-	if c.len() != 1 {
-		t.Errorf("kept %d transcripts, want the one that changed", c.len())
+	if c.len() == 0 || c.held > c.limit {
+		t.Fatalf("invalid retention: entries %d bytes %d limit %d", c.len(), c.held, c.limit)
 	}
 	SetTailCacheLimit(0)
 	if c.len() != 0 || c.held != 0 {
-		t.Errorf("a zero limit left %d entries holding %d bytes", c.len(), c.held)
+		t.Errorf("zero limit retains entries")
 	}
 }
 

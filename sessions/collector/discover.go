@@ -50,8 +50,8 @@ type FindOptions struct {
 	// within one of its passes, the scan of the store. Nil uses codex.Shared,
 	// the process-wide cache.
 	CodexCache *codex.Cache
-	// Since skips Claude Code transcripts last modified before it without
-	// opening them. Zero keeps every transcript.
+	// Since skips Claude Code transcripts and Cursor conversations last
+	// modified before it without opening them. Zero keeps every session.
 	Since time.Time
 	// ExcludeNestedClones drops sessions that ran in an independent clone
 	// nested inside one of the roots: they belong to that clone's own
@@ -118,7 +118,7 @@ func FindSessions(dir string, opts FindOptions) ([]Session, ScanReport, error) {
 		return nil, report, err
 	}
 	sessions = append(sessions, codexSessions...)
-	cursorSessions, cursorReport, err := cursor.FindSessions(opts.CursorStorePaths, roots)
+	cursorSessions, cursorReport, err := cursor.FindSessionsSince(opts.CursorStorePaths, roots, opts.Since)
 	if err != nil {
 		return nil, report, err
 	}

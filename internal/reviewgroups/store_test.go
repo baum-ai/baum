@@ -156,6 +156,14 @@ func TestGroupVersionsAreFencedAndKeyedByGroup(t *testing.T) {
 	if err != nil || summary.VersionCount != 2 || summary.Latest.Version != 2 || len(summary.Reviewed) != 1 || !strings.Contains(string(summary.RiskScore), `"score":3`) {
 		t.Fatalf("summary %+v %v", summary, err)
 	}
+	summaries, err := s.Summaries(ctx)
+	if err != nil || len(summaries) != 1 {
+		t.Fatalf("summaries %+v %v", summaries, err)
+	}
+	batched := summaries[g.ID]
+	if batched.VersionCount != 2 || batched.Latest.Version != 2 || len(batched.Reviewed) != 1 || string(batched.RiskScore) != string(summary.RiskScore) {
+		t.Fatalf("batched summary %+v", batched)
+	}
 	versions, err := s.Versions(ctx, g.ID)
 	if err != nil || len(versions) != 2 || versions[0].Version != 2 {
 		t.Fatalf("versions %+v %v", versions, err)
@@ -166,9 +174,18 @@ func TestGroupVersionsAreFencedAndKeyedByGroup(t *testing.T) {
 	if summary, _ := s.Summary(ctx, other.ID); summary.VersionCount != 0 || summary.Latest != nil {
 		t.Fatalf("another group sees the versions: %+v", summary)
 	}
+	if err := s.Put(ctx, other.ID, 0, groupReview(t, "acme/demo", 1, reviewed...)); err != nil {
+		t.Fatal(err)
+	}
+	if summaries, err := s.Summaries(ctx); err != nil || len(summaries) != 2 || summaries[g.ID].VersionCount != 2 || summaries[other.ID].VersionCount != 1 || len(summaries[other.ID].Reviewed) != 2 {
+		t.Fatalf("independent group summaries %+v %v", summaries, err)
+	}
 	// Deleting the group keeps its versions.
 	if err := s.Delete(ctx, g.ID); err != nil {
 		t.Fatal(err)
+	}
+	if summaries, err := s.Summaries(ctx); err != nil || len(summaries) != 1 || summaries[other.ID].Latest == nil {
+		t.Fatalf("deleted group listed: %+v %v", summaries, err)
 	}
 	if kept, err := s.Version(ctx, g.ID, 2); err != nil || kept.Metadata.Version != 2 {
 		t.Fatalf("a deleted group's version is gone: %v", err)

@@ -353,9 +353,11 @@ func Open(path string) (*Registry, error) {
 }
 
 // OpenReadOnly opens an existing registry only to list it. Unlike Open it
-// creates no directory, file or table and changes no file mode, and SQLite
-// opens the file read-only, so it writes no journal. A missing file is an error
-// wrapping fs.ErrNotExist; a file without tables lists no clones.
+// creates no directory, database or table and changes no file mode, and
+// SQLite opens the file read-only, so it never writes it. In WAL mode SQLite
+// creates its -shm and -wal coordination files beside the database when
+// missing (see appdb.Open). A missing file is an error wrapping
+// fs.ErrNotExist; a file without tables lists no clones.
 func OpenReadOnly(path string) (*Registry, error) {
 	db, e := appdb.Open(path, true)
 	if e != nil {

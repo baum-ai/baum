@@ -52,14 +52,10 @@ type Service struct {
 	Sources []Source
 	Now     func() time.Time
 
-	mu     sync.Mutex
-	plans  []Plan
-	loaded time.Time
-
-	// snapMu guards snapshot, the plans last read, apart from mu, which a
-	// reading holds while it asks the providers: Cached never waits for one.
-	snapMu   sync.RWMutex
-	snapshot []Plan
+	mu      sync.Mutex
+	plans   []Plan
+	loaded  time.Time
+	reading chan struct{}
 }
 
 // NewService reads Claude Code's usage endpoint and Codex's session files.
@@ -77,31 +73,65 @@ func (s *Service) now() time.Time {
 // Plans returns the cached plans, reading again when they are older than
 // CacheTTL, or older than MinRefresh when refresh is set.
 func (s *Service) Plans(ctx context.Context, refresh bool) []Plan {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	age := s.now().Sub(s.loaded)
-	fresh := age >= 0 && (age < CacheTTL && !refresh || age < MinRefresh)
-	if s.plans != nil && fresh {
-		return s.plans
+	for {
+		s.mu.Lock()
+		age := s.now().Sub(s.loaded)
+		fresh := age >= 0 && (age < CacheTTL && !refresh || age < MinRefresh)
+		if s.plans != nil && fresh {
+			plans := s.plans
+			s.mu.Unlock()
+			return plans
+		}
+		if ctx.Err() != nil {
+			plans := s.plans
+			s.mu.Unlock()
+			return plans
+		}
+		if reading := s.reading; reading != nil {
+			s.mu.Unlock()
+			select {
+			case <-reading:
+			case <-ctx.Done():
+			}
+			continue
+		}
+		s.reading = make(chan struct{})
+		s.mu.Unlock()
+		return s.read(ctx)
 	}
+}
+
+// read releases the flight even if a provider panics, as an HTTP handler's
+// panic must not leave all later refreshes waiting forever.
+func (s *Service) read(ctx context.Context) []Plan {
+	defer func() {
+		s.mu.Lock()
+		close(s.reading)
+		s.reading = nil
+		s.mu.Unlock()
+	}()
 	plans := make([]Plan, 0, len(s.Sources))
 	for _, source := range s.Sources {
 		plans = append(plans, source.Read(ctx))
 	}
-	s.plans, s.loaded = plans, s.now()
-	s.snapMu.Lock()
-	s.snapshot = plans
-	s.snapMu.Unlock()
-	return plans
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	// A disconnected reader must not cache cancellation as an unavailable
+	// plan for everyone else. Waiters may retry with their own context.
+	if ctx.Err() == nil {
+		s.plans, s.loaded = plans, s.now()
+	}
+	return s.plans
 }
 
 // Cached returns the plans last read, however old, without reading again; nil
 // when none was read yet. It never asks a provider, so it is safe for a caller
-// that must not cause a fetch, and it never waits for a read in progress.
+// that must not cause a fetch, and it never waits for a read in progress: a
+// reading holds mu only to record its result.
 func (s *Service) Cached() []Plan {
-	s.snapMu.RLock()
-	defer s.snapMu.RUnlock()
-	return append([]Plan(nil), s.snapshot...)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]Plan(nil), s.plans...)
 }
 
 // Handler serves GET /api/plan-usage; ?refresh=1 asks for a newer reading,

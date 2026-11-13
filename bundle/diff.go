@@ -36,7 +36,9 @@ func BuildDiffIndex(comparison Comparison, fetch PatchFetcher, roleFor func(path
 
 // DiffLimits bound the diff index assembly reads. A zero field is unlimited.
 type DiffLimits struct {
-	// MaxFiles bounds the changed files, checked before any patch is read.
+	// MaxFiles bounds the changed files whose patches are read. Each file
+	// past it is one textless entry (FileLimitReason) whose patch is never
+	// read; generated and vendored files are the first left unread.
 	MaxFiles int
 	// MaxPatchBytes bounds the patch bytes read across every file.
 	MaxPatchBytes int64
@@ -73,19 +75,23 @@ func buildDiffIndex(comparison Comparison, fetch PatchFetcher, roleFor func(path
 	return BuildDiffIndexWithin(comparison, fetch, roleFor, DiffLimits{})
 }
 
-// BuildDiffIndexWithin is buildDiffIndex within limits. Exceeding a file
-// or byte limit fails with the checkout budget reason naming it.
+// BuildDiffIndexWithin is buildDiffIndex within limits. The files past
+// MaxFiles are not read (unreadFiles): each is one textless entry, with one
+// note for them all. Exceeding the byte limit fails with the checkout budget
+// reason naming it.
 func BuildDiffIndexWithin(comparison Comparison, fetch PatchFetcher, roleFor func(path string) string, limits DiffLimits) ([]Hunk, []string, error) {
-	if limits.MaxFiles > 0 && len(comparison.Files) > limits.MaxFiles {
-		return nil, nil, errors.New(BudgetExceededReason("diff files"))
-	}
+	unread := unreadFiles(comparison.Files, roleFor, limits.MaxFiles)
 	var hunks []Hunk
 	var patchBytes int64
 	omitted := map[string]int{}
 	keepLines := max(limits.MaxHunkLines, 0)
-	for _, file := range comparison.Files {
+	for i, file := range comparison.Files {
 		path := effectivePatchPath(file)
 		change := diffChangeKind(file)
+		if unread[i] {
+			hunks = append(hunks, unreadFileHunk(comparison, file, path, change, roleFor(path)))
+			continue
+		}
 		patch, err := fetch(ChangePaths(file)...)
 		omission := patchOmission(err)
 		if err != nil && omission == "" {
@@ -100,7 +106,7 @@ func BuildDiffIndexWithin(comparison Comparison, fetch PatchFetcher, roleFor fun
 		}
 		fileHunks, filePatch, textless := parseFileHunks(path, patch, keepLines)
 		if textless {
-			fileHunks = []rawHunk{{id: hunkIDFromDigest(newHunkIDDigest(path))}}
+			fileHunks = []rawHunk{{id: fileHunkID(path)}}
 		}
 		role := roleFor(path)
 		seen := map[string]int{}
@@ -129,6 +135,9 @@ func BuildDiffIndexWithin(comparison Comparison, fetch PatchFetcher, roleFor fun
 		}
 	}
 	var notes []string
+	if len(unread) > 0 {
+		notes = append(notes, fmt.Sprintf("patch text not read for %d file(s) over the %d-file limit, generated and vendored files first; each is one diff index entry", len(unread), limits.MaxFiles))
+	}
 	if n := omitted[patchTooLarge]; n > 0 {
 		notes = append(notes, fmt.Sprintf("patch text omitted for %d file(s) over the patch size limit", n))
 	}
@@ -136,6 +145,72 @@ func BuildDiffIndexWithin(comparison Comparison, fetch PatchFetcher, roleFor fun
 		notes = append(notes, fmt.Sprintf("patch text omitted for %d file(s) git could not diff", n))
 	}
 	return hunks, notes, nil
+}
+
+// FileLimitReason is the TextlessReason of a file past DiffLimits.MaxFiles,
+// whose patch assembly did not read.
+const FileLimitReason = "file_limit"
+
+// unreadFiles picks, by index into files, the files past maxFiles whose
+// patches are not read: generated and vendored files first, then the rest,
+// each from the end of the comparison. It picks none when maxFiles is zero.
+func unreadFiles(files []FileChange, roleFor func(path string) string, maxFiles int) map[int]bool {
+	if maxFiles <= 0 || len(files) <= maxFiles {
+		return nil
+	}
+	order := make([]int, 0, len(files))
+	var generated []int
+	for i, file := range files {
+		if role := roleFor(effectivePatchPath(file)); role == RoleGenerated || role == RoleVendored {
+			generated = append(generated, i)
+		} else {
+			order = append(order, i)
+		}
+	}
+	order = append(order, generated...)
+	unread := make(map[int]bool, len(files)-maxFiles)
+	for _, i := range order[maxFiles:] {
+		unread[i] = true
+	}
+	return unread
+}
+
+// unreadFileHunk is the one entry of a file whose patch is not read:
+// textless, with the file's line counts when the comparison has them.
+func unreadFileHunk(comparison Comparison, file FileChange, path, change, role string) Hunk {
+	hunk := Hunk{
+		ID: unreadFileID(comparison, file, path), Path: path, Change: change, Role: role,
+		DiffURL: HunkDiffURL(path, 0), Textless: true, TextlessReason: FileLimitReason,
+	}
+	if file.OldPath != "" && file.OldPath != path {
+		hunk.OldPath = file.OldPath
+	}
+	if file.Additions != nil {
+		hunk.Additions = int(*file.Additions)
+	}
+	if file.Deletions != nil {
+		hunk.Deletions = int(*file.Deletions)
+	}
+	return hunk
+}
+
+// unreadFileID hashes the path and the file's blob IDs and modes on both
+// sides, so the entry's ID changes whenever the file's content does, as a
+// hunk ID would: a later version reuses a section's details only when the
+// file is unchanged (review.ReusableSectionDetails compares hunk IDs). A
+// comparison without blob IDs hashes its base and head commits instead, so
+// the entry changes with every new head rather than hide a change.
+func unreadFileID(comparison Comparison, file FileChange, path string) string {
+	digest := newHunkIDDigest(path)
+	digest.Write([]byte("unread\x00"))
+	identity := []string{file.OldOID, file.NewOID, file.OldMode, file.NewMode}
+	if file.OldOID == "" && file.NewOID == "" {
+		identity = append(identity, comparison.BaseOID, comparison.HeadOID)
+	}
+	for _, part := range identity {
+		digest.Write([]byte(part + "\x00"))
+	}
+	return hunkIDFromDigest(digest)
 }
 
 func effectivePatchPath(file FileChange) string {
@@ -401,6 +476,11 @@ func newHunkIDDigest(path string) hash.Hash {
 
 func hunkIDFromDigest(digest hash.Hash) string {
 	return "h_" + hex.EncodeToString(digest.Sum(nil)[:6])
+}
+
+// fileHunkID is the ID of a textless file's one entry.
+func fileHunkID(path string) string {
+	return hunkIDFromDigest(newHunkIDDigest(path))
 }
 
 func hunkID(path, changedLines string) string {

@@ -94,7 +94,7 @@ type Sender struct {
 //   - A daemon that does not answer in time, answers with an error, or does
 //     not know Method or e's Version: e is spooled for the next drain. A
 //     daemon older than this baum is asked to stop once it is idle (a busy
-//     one restarts as this version when its jobs finish), as `baum daemon
+//     one restarts as this version when its running jobs finish), as `baum daemon
 //     ensure` would, without waiting for it; the next hook then starts this
 //     version, which drains the spool.
 //
@@ -209,10 +209,11 @@ func daemonEnvironment() []string {
 	return env
 }
 
-// upgrade asks a daemon older than this baum to stop once no job is queued or
-// running: an idle one stops at once, a busy one restarts as this version
-// when its jobs finish. The hook does not wait for it to exit; the next hook
-// finds no daemon and starts this version, which drains the spool.
+// upgrade asks a daemon older than this baum to stop once idle: one with no
+// job queued or running stops at once, a busy one restarts as this version
+// when its running jobs finish, leaving the queued ones to this version. The
+// hook does not wait for it to exit; the next hook finds no daemon and starts
+// this version, which drains the spool.
 func (s *Sender) upgrade(ctx context.Context, client *daemon.Client, status *daemon.Status, log *slog.Logger) {
 	if status == nil {
 		hello, err := client.Hello(ctx)

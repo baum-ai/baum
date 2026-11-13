@@ -116,6 +116,7 @@ func Open(path string) (*Store, error) {
 		return nil, err
 	}
 	if _, err = db.Exec(`CREATE TABLE IF NOT EXISTS groups(id TEXT PRIMARY KEY, repository TEXT NOT NULL, name TEXT NOT NULL, members TEXT NOT NULL, created INTEGER NOT NULL, updated INTEGER NOT NULL, deleted INTEGER NOT NULL DEFAULT 0, stack INTEGER NOT NULL DEFAULT 0);
+CREATE INDEX IF NOT EXISTS groups_repository ON groups(repository,deleted,created,id);
 CREATE TABLE IF NOT EXISTS versions(group_id TEXT NOT NULL, version INTEGER NOT NULL, metadata BLOB NOT NULL, summary BLOB NOT NULL, document BLOB NOT NULL, PRIMARY KEY(group_id, version));`); err != nil {
 		_ = db.Close()
 		return nil, err
@@ -399,7 +400,39 @@ func (s *Store) Summary(ctx context.Context, id string) (Summary, error) {
 	if err != nil {
 		return out, err
 	}
-	out.Latest = &store.Metadata{}
+	return decodeSummary(out.VersionCount, metadata, summary)
+}
+
+// Summaries reads the latest summary and version count of every live group
+// in one query. Groups without versions have no entry.
+func (s *Store) Summaries(ctx context.Context) (map[string]Summary, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT v.group_id, c.n, v.metadata, v.summary
+FROM (SELECT group_id, COUNT(*) AS n, MAX(version) AS latest FROM versions
+      WHERE group_id IN (SELECT id FROM groups WHERE deleted=0) GROUP BY group_id) c
+JOIN versions v ON v.group_id=c.group_id AND v.version=c.latest`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]Summary{}
+	for rows.Next() {
+		var id string
+		var count int
+		var metadata, summary []byte
+		if err := rows.Scan(&id, &count, &metadata, &summary); err != nil {
+			return nil, err
+		}
+		value, err := decodeSummary(count, metadata, summary)
+		if err != nil {
+			return nil, err
+		}
+		out[id] = value
+	}
+	return out, rows.Err()
+}
+
+func decodeSummary(count int, metadata, summary []byte) (Summary, error) {
+	out := Summary{VersionCount: count, Latest: &store.Metadata{}, Reviewed: []ReviewedMember{}}
 	if err := json.Unmarshal(metadata, out.Latest); err != nil {
 		return out, err
 	}

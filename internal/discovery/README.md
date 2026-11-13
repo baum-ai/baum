@@ -2,7 +2,7 @@
 
 Keeps a private cache of each picked repository's open pull requests (the
 local app's inbox), read from GitHub with the user's token. It makes no git
-fetch, no generation and no write to GitHub. `Cached` never makes a request;
+fetch, no generation and no write to GitHub. `Cached` and `CachedStable` never make a request;
 `Poll`, `PollNow` and `Probe` do, on the credential's shared budget.
 
 The cache lives in `app.sqlite` under `cache/discovery/<hash>`, partitioned by
@@ -16,9 +16,11 @@ fingerprint, the budgets) once, on first use. `Cached`, `Probe` and the budget
 share that decoded copy until the document changes; `Cached` gives each caller
 its own pull request and observation slices, and nothing may write through
 their pointers. Polls, `Observe`, `Merged` and `Unresolved` decode a copy of
-their own to change. The kept copy is trusted while `app.sqlite` (and a WAL
-beside it) keep the identity, size and modification time they had when it was
-read. When they changed, or were modified within the last three seconds
+their own to change. The kept copy is trusted while `app.sqlite` and its
+write-ahead log (`app.sqlite-wal`) keep the identity, size and modification
+time they had when it was read. A commit appends to the log and leaves
+`app.sqlite` as it was until a checkpoint copies the log into it, so the log's
+stat is what moves with each write. When they changed, or were modified within the last three seconds
 (`racyWindow`), the document is read again and decoded only if its bytes
 differ, so another process or service writing the cache is seen at the next
 read. The database is only stat'ed, never opened as an ordinary file.
@@ -39,7 +41,17 @@ how many times this service changed it. Two equal revisions read the same
 snapshot, except that `Stale` turns true once `NextPoll` passes. The count
 lives in memory, so it holds only because the daemon's service is the cache's
 one writer: the daemon runs once, and nothing else writes `cache/discovery`.
-Live sessions use it to decode a cache again only after it changed.
+Live sessions and the review index use it to read a cache again only after it
+changed. `Updated`, when set, is called after each write of a repository's
+cache, an identity reset and each change to live freshness. A write of the
+budget record alone (a probe saves only that) is not reported, since `Cached`
+does not read it.
+
+`CachedStable` returns the same data without making it stale merely because
+`NextPoll` passed. The review index uses this form: an error or a cache not yet
+validated in this process remains stale, but waiting for the next poll does
+not change every row. `Cached` retains deadline-based staleness for readers
+that use it to decide whether to fetch fresh data.
 
 ## A poll
 
@@ -116,7 +128,8 @@ and not reused.
   limit one poll meets stops the next request of the others. Within one rate
   window the lower remaining count stands. They are saved with each poll and
   merged with the saved record at the start of the next, so a restart honours
-  them.
+  them. `GraphQLBudget` reads the GraphQL budget without a request, so the
+  background refresh can leave discovery and generation their share.
 
 ## Time limits and concurrency
 

@@ -168,15 +168,19 @@ func (h *API) list(w http.ResponseWriter, r *http.Request) {
 		fail(w, err)
 		return
 	}
+	summaries, err := h.Store.Summaries(r.Context())
+	if err != nil {
+		fail(w, err)
+		return
+	}
 	heads := h.heads(r.Context())
 	views := make([]View, 0, len(groups))
 	for _, g := range groups {
-		v, err := h.view(r.Context(), g, heads)
-		if err != nil {
-			fail(w, err)
-			return
+		summary, ok := summaries[g.ID]
+		if !ok {
+			summary = Summary{Reviewed: []ReviewedMember{}}
 		}
-		views = append(views, v)
+		views = append(views, View{Group: g, Summary: summary, Outdated: Outdated(g.Members, summary.Reviewed, heads[g.Repository])})
 	}
 	respond(w, http.StatusOK, map[string]any{"available": true, "groups": views})
 }

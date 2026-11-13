@@ -1540,6 +1540,58 @@ export type OpenThread = {
 
 export type ReviewThreadStatus = { open: OpenThread[]; total: number };
 
+/** A pull request's review threads as GitHub has them now: the ids of those
+ *  still unresolved, and whether that list holds every one of them. */
+export type LiveThreads = { unresolved: ReadonlySet<string>; complete: boolean };
+
+/** The document with its review threads, and the findings they carry, as
+ *  GitHub has them now. A review's thread index is a snapshot from when it
+ *  was generated, so a thread resolved since would still read as open. A
+ *  thread in the live list is open; one missing from a complete list is
+ *  resolved; one missing from a list cut short keeps its stored state.
+ *  Threads opened since are not added: the review never read them. Without
+ *  synced threads, or with nothing changed, the document is returned as is. */
+export function withLiveThreads<D extends ReviewEvidence>(
+  document: D,
+  live: LiveThreads | null,
+): D {
+  if (!live || document.review.sources.review_threads !== true) return document;
+  const resolvedNow = (id: string, stored: boolean) =>
+    live.unresolved.has(id) ? false : live.complete ? true : stored;
+  let changed = false;
+  const threads = document.index.threads.map((thread) => {
+    const resolved = resolvedNow(thread.id, thread.resolved);
+    if (resolved === thread.resolved) return thread;
+    changed = true;
+    return { ...thread, resolved };
+  });
+  const known = new Map(threads.map((thread) => [thread.id, thread.resolved]));
+  const agentReviews = document.agent_reviews.map((review) => {
+    let findingsChanged = false;
+    const findings = review.findings.map((finding) => {
+      // A dismissed finding was set aside by its tool, whatever its thread.
+      if (finding.state === "dismissed") return finding;
+      const thread = finding.anchors.flatMap((anchor) =>
+        anchor.type === "review_thread" && known.has(anchor.id) ? [anchor.id] : [],
+      )[0];
+      if (thread === undefined) return finding;
+      const state: FindingState = known.get(thread) ? "resolved" : "open";
+      if (state === finding.state) return finding;
+      findingsChanged = true;
+      return { ...finding, state };
+    });
+    if (!findingsChanged) return review;
+    changed = true;
+    return { ...review, findings };
+  });
+  if (!changed) return document;
+  return {
+    ...document,
+    index: { ...document.index, threads },
+    agent_reviews: agentReviews,
+  };
+}
+
 const SEVERITY_RANK: Record<FindingSeverity, number> = { must_fix: 0, should_fix: 1, consider: 2 };
 
 /** The pull request's review threads nobody has resolved, worst first: a
