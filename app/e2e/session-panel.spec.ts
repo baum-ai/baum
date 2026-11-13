@@ -34,9 +34,7 @@ test("opens the session panel on a pull request and starts a session there", asy
     "Reuse the existing PR page · acme/demo #7",
   );
   await expect(panel(page).getByText("A checkout of acme/demo #7")).toBeVisible();
-  await expect(
-    panel(page).getByRole("button", { name: "Full access", pressed: true }),
-  ).toBeVisible();
+  await expect(panel(page).getByRole("button", { name: "Auto", pressed: true })).toBeVisible();
   await expect(panel(page).getByText("Start a session")).toBeVisible();
   // The daemon knows the page the panel was opened on.
   await expect
@@ -74,7 +72,7 @@ test("opens the session panel on a pull request and starts a session there", asy
     panel(page).getByRole("heading", { name: "Why is the retry delay capped?" }),
   ).toBeVisible();
   await expect(panel(page).locator(".session-panel-directory code")).toContainText("console");
-  await expect(panel(page).getByText("Full access", { exact: true })).toBeVisible();
+  await expect(panel(page).getByText("Auto", { exact: true })).toBeVisible();
   await page.screenshot({
     path: "test-results/session-panel-answered.png",
     animations: "disabled",

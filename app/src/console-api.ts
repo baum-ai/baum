@@ -4,7 +4,7 @@ import type { PageContext } from "./page-context";
 /** The agents a session panel conversation runs. */
 export type PanelAgent = "claude-code" | "codex";
 /** What a conversation's agent may do without asking (`agent.Access`). */
-export type PanelMode = "full" | "workspace";
+export type PanelMode = "auto" | "full" | "workspace";
 export type ConversationState = "idle" | "running" | "failed" | "closed";
 
 /** A conversation as the panel's picker lists it

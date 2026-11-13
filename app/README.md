@@ -2397,7 +2397,7 @@ the agent works (before it starts, a checkout of the pull request on a pull
 request's page, else a new empty folder), with `directory_note` in the
 caution tone when a pull request's conversation fell back to an empty folder;
 **Agent**, its agent and model (the model the transcript names, once it does,
-when none was chosen); **Mode**, Full access or Workspace, chosen before the
+when none was chosen); **Mode**, Auto, Full access or Workspace, chosen before the
 first message (the setting's default) and shown afterwards; and its cost once
 a turn was priced (`≥` while part of it could not be). The page and the
 directory give way first, cut with an ellipsis and whole in their tooltips.
