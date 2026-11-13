@@ -5448,18 +5448,104 @@ routes do work beyond reading. A tool's reader takes only clean paths under
 the prefixes it declared, a whole segment at a time, and never the
 unreadable ones (`/api/settings`, `/api/debug`, `/api/github` and
 `/api/github-auth`, `/api/diagnostics`, `/api/plan-usage`, `/api/events`,
-`/api/mcp`), which no tool may declare. It fails a body over 8 MiB.
+`/api/mcp`), which no tool may declare. It fails a body over 8 MiB, except
+`/api/document` and `/api/facts`, which the daemon serves up to
+`viewserver.MaxDocumentBytes` (32 MiB) and which are read up to that (a test
+keeps the two equal); a tool projects what it needs, so its result is bounded
+as before.
 
 An action's reader also reads only the routes in `actionRoutes`
 (`reader.go`). Each entry is a path pattern, the query parameters it allows
 and how the route is bound to the action's repository: by the `repository`
 parameter its handler reads, by a `clone` parameter resolved through
-`Options.Clone`, by `{owner}/{name}` in the path, or, for a route that finds
-a record by id, by a check that reads the repository from the response and
-returns nothing on a mismatch. Any other route, and any parameter its entry
-does not list, is refused. The table holds `GET /api/jobs?repository=&pr=`
-and `GET /api/jobs/{id}` (checked by the job's `repository`); routes are
-added beside the tools that need them.
+`Options.Clone`, by `{owner}/{name}` in the path, and for a route that finds
+a record by id in one of three ways: by a check that reads the repository
+from the response and returns nothing on a mismatch (`byResponse`); for a
+route whose response names no repository, by reading the record the id names
+first and checking its repository before the route is read (`byLookup`); and
+for a route that answers for every repository, by filtering the response to
+the action's repository inside the reader, so the rest never reaches the agent
+(`byFilter`). Any other route, and any parameter its entry does not list, is
+refused. The table holds:
+
+- by `repository` (parameters `pr`, and as listed): `GET /api/jobs`,
+  `/api/prs/description`, `/api/prs/checks` (`head_sha`),
+  `/api/prs/failing-checks` (`head_sha`), `/api/prs/review-threads`
+  (`unresolved`), `/api/prs/conflicts`, `/api/prs/merge-options`,
+  `/api/prs/update-branch-options` and `/api/prs/rerun-checks-options`;
+- by `clone` (parameter `pr`, and as listed): `GET /api/versions`,
+  `/api/prs/chat`, `/api/document` and `/api/commits` (`version`), `/api/patch` (`version`,
+  `path`), `/api/sessions` and `/api/sessions/{id}` (`version`), `/api/facts`,
+  `/api/facts/commits`, `/api/facts/sessions` and `/api/facts/sessions/{id}`
+  (`head`), and `/api/facts/patch` (`head`, `path`);
+- by response: `GET /api/jobs/{id}` and `/api/groups/{id}`, checked by the
+  record's `repository`;
+- by lookup: `GET /api/jobs/{id}/transcript` (`after`) and
+  `/api/jobs/{id}/draft`, after `/api/jobs/{id}`, and `/api/groups/{id}/document`
+  (`version`) and `/api/groups/{id}/versions`, after `/api/groups/{id}`;
+- by filter: `GET /api/index` (`history`), which keeps the entries of the
+  action's repository and drops the problems; `GET /api/groups`, which keeps
+  the groups of its repository; and `GET /api/inbox`, which keeps the items of
+  its repository by their `owner/name#number` keys, drops each item's
+  saved-inbox ids and the saved inboxes themselves (their queries are the
+  user's own), and recounts `count` over what is kept by the daemon's own rule
+  (items queued for the user, not being fixed, snoozed or archived). A filtered
+  route that answers an error, or `{"available":false}`, is refused as
+  unavailable, which the tools report apart from a pull request that is not in
+  the index.
+
+Routes are added beside the tools that need them.
+
+The pull request and group tools are all repository-scoped and read the routes
+the app calls (the pull request page's own: the review index with its
+`clone_id` and `version_count`, the facts before a review exists and the saved
+review after), compacting the answer. Each takes `repository` and `pr` (a
+group tool `repository` and `id`) defaulting to the consumer's page, for an
+action its pull request, and only through `CallContext.Target`:
+
+| Tool | Reads |
+| --- | --- |
+| `pull_request` | the header and review status from `/api/index` (of the clone with a saved review, else one with a clone; the latest review is only its version, heads, backend, model, `generated_at` and cost, never the session, accounting, digests or policy), `/api/prs/description`, its inbox state (`kind`, `fixing`, `snoozed`, `archived`) from `/api/inbox`, and the groups and stacks it is a member of (`id`, `name`, `stack`) from `/api/groups` |
+| `diff` | the changed files from `/api/document` (a saved review) or `/api/facts` (none), and each file's patch from `/api/patch` or `/api/facts/patch`, one file by `path`, else patches up to 100 files and about 1 MiB of patch text, the files left out listed by path |
+| `commits` | `/api/commits`, or `/api/facts/commits` at the head the index shows, building the facts (`/api/facts`) only when the daemon has none |
+| `checks` | `/api/prs/checks` at the head the index shows, its failing checks marked apart, and `/api/prs/failing-checks` only when `/api/prs/checks` is not found, as the page does |
+| `review_threads` | `/api/prs/review-threads`, with the unresolved count discovery has |
+| `merge_state` | the three `-options` routes, and `/api/prs/conflicts` when the pull request conflicts; nothing is changed |
+| `jobs` | `/api/jobs` of the pull request, less each job's accounting |
+| `job_transcript` | `/api/jobs/{id}` to check that the job is the repository's and pull request's, then its transcript; a job with none says only fix jobs keep one |
+| `sessions`, `session_transcript` | `/api/sessions` or `/api/facts/sessions`, and one session's transcript, which the viewer serves only for a session the pull request's commits link |
+| `focus` | no route: the focus of the consumer's page, or `none` |
+| `group`, `group_versions` | `/api/groups/{id}` and `/api/groups/{id}/versions`; a group of another repository is refused. The group defaults to the open group page's; for an action, to the one group its pull request is in (`/api/groups`), and none or several must be named |
+
+Labels, reviewer lists, check log tails and the inbox's Up next sentence are
+not returned, as the app shows none of them.
+
+The review tools read a review in parts, one per call, so the document is
+never sent whole; none marshals the document it read, and a document that
+cannot be read is an error that quotes none of it. Each takes `repository` and
+`pr` as above.
+The tools `review_outline`, `review_section` and `review_context`
+also take `version` (a saved version, the latest by default); `review_versions`
+lists every version and takes none. `review_outline`, `review_section`,
+`review_context` and `review_versions` take `group` (a group id, `this` for
+the open group page's or, for an action, the one group its pull request is in,
+or none: the pull request's own review; a chat on a group page defaults to its
+group). `facts`, `review_draft` and `review_conversations` take neither: they
+need a pull request, so the group page does not list them. A group's tools read
+its combined review through `/api/groups/{id}/document` and
+`/api/groups/{id}/versions`, after `/api/groups/{id}` has shown the group is
+the repository's. `/api/jobs/{id}/draft` is read up to the 32 MiB document
+bound, like the documents.
+
+| Tool | Reads |
+| --- | --- |
+| `facts` | `/api/facts` at the head the index shows (the facts, which exist before any review) |
+| `review_outline` | `/api/document` (or the group's): the overview and each section's id, title, kind, hunks, files, assessment and `details` state (`pending`, `failed` or absent), by `review.ReadOutline`, the projection the staged outline stage writes (`review.OutlineOf` without its fallback to the document), never a section's details |
+| `review_section` | one section by `id`: all it holds (summary, risks, evidence, citations), or for a `failed` or `pending` section its outline and that state in words |
+| `review_context` | `summary.context`, or that it is absent, or failed (from the job's `context_failed`) |
+| `review_draft` | `/api/jobs` to find the review running now, then `/api/jobs/{id}/draft` (drafts are never stored): `part` `outline` (default), `section` (with `id`) or `context`, projected as the stored tools; "No running review of this pull request." otherwise |
+| `review_versions` | `/api/versions` or the group's versions: version, heads, `generated_at`, backend, model and recorded cost, never the session, accounting, digests or policy |
+| `review_conversations` | `/api/prs/chat`: a list (id, version, times, turn count, the first question cut at 200 characters), or with an `id` that conversation's turns (question, focus, answer, citations, state, reason, note), never cost or job ids |
 
 Every result goes through one envelope. It masks the text with
 `bundle.NewRedactor`, cuts it at most 64 KiB in at a UTF-8 boundary, and

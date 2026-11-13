@@ -246,10 +246,10 @@ func TestHTTPChecks(t *testing.T) {
 
 func TestCurrentPage(t *testing.T) {
 	s := newServer(t)
-	if err := s.RegisterTool(Tool{Name: "pull_request", Description: "A pull request.", Call: func(context.Context, CallContext, json.RawMessage) (string, error) { return "", nil }}); err != nil {
+	if err := s.RegisterTool(Tool{Name: "page_probe", Description: "A page's tool.", Call: func(context.Context, CallContext, json.RawMessage) (string, error) { return "", nil }}); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.RegisterPage(PageSpec{Name: PagePullRequest, Tools: []string{"pull_request"}}); err != nil {
+	if err := s.RegisterPage(PageSpec{Name: PagePullRequest, Tools: []string{"page_probe"}}); err != nil {
 		t.Fatal(err)
 	}
 	token, id := chat(t, s)
@@ -274,7 +274,7 @@ func TestCurrentPage(t *testing.T) {
 	if err := json.Unmarshal([]byte(data), &page); err != nil {
 		t.Fatal(err, data)
 	}
-	if page.Page != PagePullRequest || page.Repository != "acme/web" || page.PullRequest != 12 || page.Filters["tab"] != "files" || !bytes.Equal(compact(page.Focus), []byte(`{"kind":"tile","id":"t1"}`)) || len(page.Tools) != 1 || page.Tools[0] != "pull_request" {
+	if page.Page != PagePullRequest || page.Repository != "acme/web" || page.PullRequest != 12 || page.Filters["tab"] != "files" || !bytes.Equal(compact(page.Focus), []byte(`{"kind":"tile","id":"t1"}`)) || len(page.Tools) != 1 || page.Tools[0] != "page_probe" {
 		t.Fatalf("page %s", data)
 	}
 	if result := call(t, s, token, "current_page", map[string]any{"extra": 1}); !result.IsError {

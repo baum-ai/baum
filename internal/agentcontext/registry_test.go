@@ -184,7 +184,7 @@ func TestActionReaderIsBoundToItsRepository(t *testing.T) {
 	saved := actionRoutes
 	t.Cleanup(func() { actionRoutes = saved })
 	actionRoutes = append(append([]actionRoute(nil), saved...),
-		actionRoute{pattern: "/api/groups", bind: byClone},
+		actionRoute{pattern: "/api/clonecheck", bind: byClone},
 		actionRoute{pattern: "/api/repositories/{owner}/{name}/clone-target", bind: byPath},
 	)
 	var seen []string
@@ -192,6 +192,11 @@ func TestActionReaderIsBoundToItsRepository(t *testing.T) {
 	api := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		seen = append(seen, r.URL.RequestURI())
 		if id, ok := strings.CutPrefix(r.URL.Path, "/api/jobs/"); ok {
+			// A transcript names no repository.
+			if job, ok := strings.CutSuffix(id, "/transcript"); ok {
+				_, _ = fmt.Fprintf(w, `{"entries":[],"job":%q}`, job)
+				return
+			}
 			repository, found := jobs[id]
 			if !found {
 				http.NotFound(w, r)
@@ -211,7 +216,7 @@ func TestActionReaderIsBoundToItsRepository(t *testing.T) {
 	}})
 	if err := s.RegisterTool(Tool{
 		Name: "raw_read", Description: "Reads a path as given.", Scope: ScopeRepository,
-		Reads:       []string{"/api/prs", "/api/jobs", "/api/groups", "/api/repositories", "/api/timeline"},
+		Reads:       []string{"/api/prs", "/api/jobs", "/api/clonecheck", "/api/repositories", "/api/timeline"},
 		InputSchema: json.RawMessage(`{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}`),
 		Call: func(ctx context.Context, c CallContext, args json.RawMessage) (string, error) {
 			var a struct{ Path string }
@@ -232,7 +237,8 @@ func TestActionReaderIsBoundToItsRepository(t *testing.T) {
 	}{
 		{"/api/jobs?repository=ACME/web&pr=12", true, true},
 		{"/api/jobs/j-web", true, true},
-		{"/api/groups?clone=c-web", true, true},
+		{"/api/jobs/j-web/transcript?after=3", true, true},
+		{"/api/clonecheck?clone=c-web", true, true},
 		{"/api/repositories/acme/web/clone-target", true, true},
 		// No handler reads repo=, and /api/prs is not an action's route.
 		{"/api/prs?repo=acme/web", false, false},
@@ -243,20 +249,31 @@ func TestActionReaderIsBoundToItsRepository(t *testing.T) {
 		{"/api/jobs?repository=acme/web&repository=evil/x&pr=1", false, false},
 		{"/api/jobs?repository=acme/web&pr=12&limit=5", false, false},
 		{"/api/jobs?repository=acme/web&pr=12&refresh=1", false, false},
-		{"/api/groups?clone=c-other", false, false},
-		{"/api/groups?clone=unknown", false, false},
+		{"/api/clonecheck?clone=c-other", false, false},
+		{"/api/clonecheck?clone=unknown", false, false},
 		{"/api/repositories/evil/secrets/clone-target", false, false},
-		{"/api/jobs/j-web/transcript", false, false},
 		{"/api/timeline/decisions", false, false},
 		// Found by id: the job answered, but it is another repository's, so
 		// nothing of it comes back.
 		{"/api/jobs/j-other", false, true},
 		{"/api/jobs/missing", false, true},
+		// A transcript names no repository: the job it belongs to is read
+		// first, and the transcript only when that job is the action's.
+		{"/api/jobs/j-other/transcript", false, true},
+		{"/api/jobs/missing/transcript", false, true},
+		{"/api/jobs/j-web/transcript?after=3&limit=5", false, false},
 	} {
 		seen = nil
 		r := call(t, s, action, "raw_read", map[string]string{"path": tt.path})
 		if r.IsError == tt.allowed || (len(seen) > 0) != tt.reached {
 			t.Errorf("action read %s: reached %v: %s", tt.path, seen, r.Content[0].Text)
+		}
+		if strings.HasSuffix(strings.Split(tt.path, "?")[0], "/transcript") && !tt.allowed {
+			for _, got := range seen {
+				if strings.Contains(got, "/transcript") {
+					t.Errorf("%s read the transcript of another repository's job: %v", tt.path, seen)
+				}
+			}
 		}
 		// The error names the path asked for, nothing the API answered.
 		if (strings.Contains(r.Content[0].Text, "evil/secrets") && !strings.Contains(tt.path, "evil/secrets")) || (!tt.allowed && strings.Contains(r.Content[0].Text, "secret title")) {

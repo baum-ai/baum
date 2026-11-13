@@ -61,13 +61,43 @@ func New(opts Options) *Server {
 		return spec.Proposer
 	})
 	registry.onRevoke(s.envelope.forget)
-	for _, t := range s.builtinTools() {
+	pull, group, reviews := s.pullTools(), s.groupTools(), s.reviewTools()
+	for _, t := range slices.Concat(s.builtinTools(), pull, group, reviews) {
 		if err := t.compile(); err != nil {
 			panic(err)
 		}
 		s.tools = append(s.tools, t)
 	}
+	names := func(tools []Tool) []string {
+		var out []string
+		for _, t := range tools {
+			out = append(out, t.Name)
+		}
+		return out
+	}
+	// "focus" is the page's own. A group page has no pull request, so the tools
+	// that need one are not its tools.
+	forGroup := names(group)
+	for _, name := range names(reviews) {
+		if !slices.Contains([]string{"facts", "review_draft", "review_conversations"}, name) {
+			forGroup = append(forGroup, name)
+		}
+	}
+	s.pages[PagePullRequest] = PageSpec{Name: PagePullRequest, Tools: append(names(pull), names(reviews)...)}
+	s.pages[PageGroup] = PageSpec{Name: PageGroup, Tools: append(forGroup, "focus")}
 	return s
+}
+
+// ToolReads are the route prefixes each registered tool may read, by tool
+// name, so a test can check that none reaches a route that writes.
+func (s *Server) ToolReads() map[string][]string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	out := map[string][]string{}
+	for _, t := range s.tools {
+		out[t.Name] = slices.Clone(t.Reads)
+	}
+	return out
 }
 
 // RegisterTool adds a tool. Names are unique.
