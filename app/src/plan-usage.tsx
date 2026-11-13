@@ -12,6 +12,8 @@ export type PlanUsageEntry = {
   provider: "claude" | "codex";
   available: boolean;
   reason?: string;
+  /** The reason asks the person to open the agent to refresh its sign-in. */
+  needs_sign_in?: boolean;
   plan?: string;
   windows: PlanWindow[];
   fetched_at: string;
@@ -84,9 +86,15 @@ export function usePlanUsage(): { plans: PlanUsageEntry[] | null; now: number } 
   return { plans, now };
 }
 
-/** The plans worth a meter: read, with at least one window. A provider
- *  that is not installed, signed out or has not run yet, and anything the
- *  daemon sent in another shape, is left out rather than explained. */
+/** A plan the daemon could not read because the agent's sign-in expired:
+ *  shown with its reason, since only the person can fix it. */
+export const needsSignIn = (plan: PlanUsageEntry) =>
+  !plan.available && plan.needs_sign_in === true && typeof plan.reason === "string";
+
+/** The plans worth showing: those read, with at least one window, and those
+ *  whose sign-in needs refreshing, with no windows. A provider that is not
+ *  installed or has not run yet, and anything the daemon sent in another
+ *  shape, is left out rather than explained. */
 export function readablePlans(plans: unknown): PlanUsageEntry[] {
   if (!Array.isArray(plans)) return [];
   return plans
@@ -94,14 +102,17 @@ export function readablePlans(plans: unknown): PlanUsageEntry[] {
       (plan): plan is PlanUsageEntry =>
         typeof plan === "object" &&
         plan !== null &&
-        plan.available === true &&
         typeof plan.provider === "string" &&
         Array.isArray(plan.windows) &&
-        plan.windows.some((win: unknown) => typeof (win as PlanWindow | null)?.name === "string"),
+        ((plan.available === true &&
+          plan.windows.some(
+            (win: unknown) => typeof (win as PlanWindow | null)?.name === "string",
+          )) ||
+          needsSignIn(plan)),
     )
     .map((plan) => ({
       ...plan,
-      windows: plan.windows.filter((win) => typeof win?.name === "string"),
+      windows: plan.available ? plan.windows.filter((win) => typeof win?.name === "string") : [],
     }));
 }
 
@@ -165,6 +176,7 @@ export function PlanUsageRailView({ plans, now }: { plans: PlanUsageEntry[]; now
             {name(plan)}
             {plan.plan ? <span className="plan-rail-tier">{capital(plan.plan)}</span> : null}
           </span>
+          {needsSignIn(plan) ? <span className="plan-rail-note">{plan.reason}</span> : null}
           {lines
             .filter((line) => line.plan === plan)
             .map(({ win, left, reset, at }) => (
@@ -212,9 +224,9 @@ export function PlanUsageRailView({ plans, now }: { plans: PlanUsageEntry[]; now
   );
 }
 
-/** The sidebar's plan usage, from the daemon: only the plans it could read,
- *  and nothing at all until it answers, when it cannot, or when neither
- *  Claude Code nor Codex is there to read. */
+/** The sidebar's plan usage, from the daemon: the plans it could read and
+ *  those whose sign-in needs refreshing, and nothing at all until it answers,
+ *  when it cannot, or when neither Claude Code nor Codex is there to read. */
 export function PlanUsageRail() {
   const { plans, now } = usePlanUsage();
   const shown = readablePlans(plans);

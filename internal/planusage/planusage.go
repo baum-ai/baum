@@ -26,12 +26,16 @@ type Window struct {
 
 // Plan is the usage of one provider's plan, or why it is unavailable.
 type Plan struct {
-	Provider  string    `json:"provider"`
-	Available bool      `json:"available"`
-	Reason    string    `json:"reason,omitempty"`
-	Plan      string    `json:"plan,omitempty"`
-	Windows   []Window  `json:"windows"`
-	FetchedAt time.Time `json:"fetched_at"`
+	Provider  string `json:"provider"`
+	Available bool   `json:"available"`
+	Reason    string `json:"reason,omitempty"`
+	// NeedsSignIn reports that Reason asks the person to open the agent so it
+	// refreshes its own sign-in. The app shows such a plan with its reason
+	// instead of leaving it out.
+	NeedsSignIn bool      `json:"needs_sign_in,omitempty"`
+	Plan        string    `json:"plan,omitempty"`
+	Windows     []Window  `json:"windows"`
+	FetchedAt   time.Time `json:"fetched_at"`
 }
 
 // Source reads one provider's usage. A failure is reported as an unavailable

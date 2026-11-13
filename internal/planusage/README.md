@@ -17,7 +17,10 @@ sidebar, and the desktop tray in its menu and panel.
 
 A plan that cannot be read has `available: false` and a `reason` in words. The
 reason is always a fixed sentence: no upstream body, error text, path or token
-is ever in it.
+is ever in it. When only the person can fix it, because the agent's stored
+sign-in has expired or was refused and baum never renews it, the plan also
+has `needs_sign_in: true`, and the app shows that reason instead of leaving
+the plan out.
 
 ## Codex
 
@@ -51,6 +54,14 @@ applies. `plan_type` becomes the plan's name as Codex shows it: "prolite",
 `plan_type` is named the same way). The fallback makes no network request and
 reads no credential.
 
+A snapshot whose every window has reset since says nothing about what is
+left, only how long Codex has been idle, so it is not served: the plan is
+unavailable. If the token had expired, or the endpoint answered 401 or 403,
+the reason is "Open Codex to refresh its sign-in." with `needs_sign_in`;
+otherwise "Codex has not reported its usage since its limits reset." A
+snapshot with a window still running is served even with an expired token,
+since its figure still holds and `fetched_at` shows its age.
+
 ## Claude
 
 The reader calls the endpoint Claude Code's own `/usage` command uses:
@@ -71,7 +82,7 @@ which is billed at API prices, without a tier. The token is held only for the re
 never logged, stored, cached, returned by the API or included in an error, and
 the HTTP client refuses redirects. baum never refreshes it: refreshing would
 rotate Claude Code's credential. An expired token, or a 401 or 403, reads "Open
-Claude Code to refresh its sign-in."
+Claude Code to refresh its sign-in." with `needs_sign_in`.
 
 The endpoint limits how often it is asked, and answers 429 once that is
 passed; asking again keeps it limited. After a 429 the reader leaves it alone

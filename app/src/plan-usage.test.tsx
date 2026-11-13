@@ -88,3 +88,34 @@ it("shows only the plans it can read, and nothing when it can read none", () => 
   expect(asOf([], now)).toBe(null);
   expect(asOf(plans.slice(0, 1), now)).toBe("just now");
 });
+
+it("asks to open the agent when its sign-in expired, without setting the age", () => {
+  const expired: unknown = {
+    provider: "claude",
+    available: false,
+    needs_sign_in: true,
+    reason: "Open Claude Code to refresh its sign-in.",
+    windows: [{ name: "weekly", used_percent: 10, resets_at: null }],
+    fetched_at: "2026-10-17T12:00:00Z",
+  };
+  const shown = readablePlans([expired, plans[1]]);
+  expect(shown.map((plan) => [plan.provider, plan.windows.length])).toEqual([
+    ["claude", 0],
+    ["codex", 2],
+  ]);
+  const html = renderToStaticMarkup(<PlanUsageRailView plans={shown} now={now} />);
+  expect(html).toContain("Claude Code");
+  expect(html).toContain(
+    '<span class="plan-rail-note">Open Claude Code to refresh its sign-in.</span>',
+  );
+  expect(html.match(/plan-rail-track/g)).toHaveLength(2);
+  // The age is still the oldest figure read, not the failed reading.
+  expect(html).toContain("1 h ago");
+  // Alone, it still draws the box, with no age and no share when folded.
+  const alone = renderToStaticMarkup(
+    <PlanUsageRailView plans={readablePlans([expired])} now={now} />,
+  );
+  expect(alone).toContain("plan-rail-note");
+  expect(alone).not.toContain("plan-rail-age");
+  expect(alone).toMatch(/plan-rail-compact[^>]*>–</);
+});

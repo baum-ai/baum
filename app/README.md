@@ -1523,9 +1523,12 @@ each window (for example 5-hour and weekly) with the share left, when it
 resets and a thin bar coloured by what remains, and how old the oldest figure
 is; hovering "resets in" shows the exact date and time. A narrow window folds
 it to the lowest share left. Only
-plans the daemon could read show: a provider that is not installed, signed
-out or has not run yet is left out, and with neither readable (or a failed
-request) the box is not drawn. Which plans show is a choice in Settings
+plans the daemon could read show, and those whose sign-in needs refreshing
+(`needs_sign_in`), which show their reason ("Open Claude Code to refresh its
+sign-in.") with no bar and leave the age to the plans read. A provider that is
+not installed, signed out or has not run yet is left out, and with none to
+show (or a failed request) the box is not drawn. The tray's panel does the
+same. Which plans show is a choice in Settings
 (below): by default only those of the backends baum uses. The desktop setup
 shows no plan usage. The sidebar asks
 `GET api/plan-usage?refresh=1` on mount and every five minutes while the

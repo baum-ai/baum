@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import {
   capital,
   leftOf,
+  needsSignIn,
   providerName,
   readablePlans,
   span,
@@ -131,8 +132,16 @@ export function TrayPanelView({
           <hr />
           <section className="tray-usage" aria-label="Plan usage left">
             <div className="tray-usage-head">Plan usage left</div>
-            {plans.flatMap((plan) =>
-              plan.windows.map((win) => {
+            {plans.flatMap((plan) => [
+              needsSignIn(plan) ? (
+                <div key={plan.provider} className="tray-meter">
+                  <div className="tray-meter-line">
+                    <strong>{providerName[plan.provider] ?? plan.provider}</strong>
+                    <span className="tray-muted">{plan.reason}</span>
+                  </div>
+                </div>
+              ) : null,
+              ...plan.windows.map((win) => {
                 const left = typeof win.used_percent === "number" ? leftOf(win.used_percent) : null;
                 const resets = win.resets_at ? Date.parse(win.resets_at) : Number.NaN;
                 return (
@@ -163,7 +172,7 @@ export function TrayPanelView({
                   </div>
                 );
               }),
-            )}
+            ])}
           </section>
         </>
       ) : null}

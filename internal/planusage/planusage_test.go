@@ -173,10 +173,63 @@ func TestCodexOldFormatResetsInSeconds(t *testing.T) {
 func TestCodexPassedResetHasNoFigure(t *testing.T) {
 	home := t.TempDir()
 	writeRollout(t, home, "2026/10/26", "rollout-2026-10-26T01-00-00-a.jsonl",
-		`{"timestamp":"2026-10-26T01:00:00Z","type":"event_msg","payload":{"type":"token_count","rate_limits":{"primary":{"used_percent":90,"window_minutes":300,"resets_in_seconds":600}}}}`)
-	w := codexRead(home).Windows[0]
-	if !w.Reset || w.UsedPercent != nil {
+		`{"timestamp":"2026-10-26T01:00:00Z","type":"event_msg","payload":{"type":"token_count","rate_limits":{"primary":{"used_percent":90,"window_minutes":300,"resets_in_seconds":600},"secondary":{"used_percent":30,"window_minutes":10080,"resets_in_seconds":86400}}}}`)
+	p := codexRead(home)
+	if w := p.Windows[0]; !p.Available || !w.Reset || w.UsedPercent != nil {
+		t.Fatalf("%+v", p)
+	}
+	if w := p.Windows[1]; w.Reset || *w.UsedPercent != 30 {
 		t.Fatalf("%+v", w)
+	}
+}
+
+// A snapshot whose every window has reset since says nothing about what is
+// left, so it is not served with its old date; an expired sign-in asks for
+// Codex to be opened instead.
+func TestCodexSnapshotWithEveryWindowResetIsUnavailable(t *testing.T) {
+	home := t.TempDir()
+	writeRollout(t, home, "2026/10/17", "rollout-2026-10-17T01-00-00-a.jsonl",
+		`{"timestamp":"2026-10-17T01:00:00Z","type":"event_msg","payload":{"type":"token_count","rate_limits":{"primary":{"used_percent":73,"window_minutes":10080,"resets_in_seconds":86400},"plan_type":"prolite"}}}`)
+	p := codexRead(home)
+	if p.Available || p.NeedsSignIn || p.Reason != "Codex has not reported its usage since its limits reset." || !p.FetchedAt.Equal(clock) {
+		t.Fatalf("%+v", p)
+	}
+	p = codexAPIRead(t, home, "http://127.0.0.1:1/", CodexCredential{Token: codexSecret, AccountID: "acct", ExpiresAt: clock.Add(-time.Hour)})
+	if p.Available || !p.NeedsSignIn || p.Reason != "Open Codex to refresh its sign-in." {
+		t.Fatalf("%+v", p)
+	}
+}
+
+func TestCodexRefusedOrExpiredSignInAsksToOpenCodex(t *testing.T) {
+	for name, c := range map[string]struct {
+		status int
+		cred   CodexCredential
+		needs  bool
+	}{
+		"refused":   {401, CodexCredential{Token: codexSecret, AccountID: "acct"}, true},
+		"forbidden": {403, CodexCredential{Token: codexSecret, AccountID: "acct"}, true},
+		"expired":   {200, CodexCredential{Token: codexSecret, AccountID: "acct", ExpiresAt: clock.Add(-time.Minute)}, true},
+		"down":      {502, CodexCredential{Token: codexSecret, AccountID: "acct"}, false},
+		"api key":   {200, CodexCredential{}, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(c.status)
+			}))
+			defer srv.Close()
+			p := codexAPIRead(t, t.TempDir(), srv.URL, c.cred)
+			if p.Available || p.NeedsSignIn != c.needs || (p.Reason == "Open Codex to refresh its sign-in.") != c.needs {
+				t.Fatalf("%+v", p)
+			}
+		})
+	}
+	// A snapshot that still has a figure is served even then, with its date.
+	home := t.TempDir()
+	writeRollout(t, home, "2026/10/26", "rollout-2026-10-26T10-00-00-a.jsonl",
+		`{"timestamp":"2026-10-26T10:00:00Z","type":"event_msg","payload":{"type":"token_count","rate_limits":{"primary":{"used_percent":40,"window_minutes":300,"resets_at":1793100000}}}}`)
+	p := codexAPIRead(t, home, "http://127.0.0.1:1/", CodexCredential{Token: codexSecret, AccountID: "acct", ExpiresAt: clock.Add(-time.Minute)})
+	if !p.Available || p.NeedsSignIn || *p.Windows[0].UsedPercent != 40 {
+		t.Fatalf("%+v", p)
 	}
 }
 
@@ -386,15 +439,19 @@ func TestClaudeExpiredTokenIsNotSentOrRefreshed(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { called = true }))
 	defer srv.Close()
 	p := claudeRead(srv.URL, Credential{Token: secret, ExpiresAt: clock.Add(-time.Minute)})
-	if called || p.Available || p.Reason != "Open Claude Code to refresh its sign-in." {
+	if called || p.Available || !p.NeedsSignIn || p.Reason != "Open Claude Code to refresh its sign-in." {
 		t.Fatalf("called=%v %+v", called, p)
+	}
+	srv401 := claudeServer(t, 401, `{}`, nil)
+	if p := claudeRead(srv401.URL, Credential{Token: secret}); p.Available || !p.NeedsSignIn {
+		t.Fatalf("%+v", p)
 	}
 }
 
 func TestClaudeMissingCredential(t *testing.T) {
 	t.Setenv("CLAUDE_CONFIG_DIR", t.TempDir())
 	c := &Claude{Now: func() time.Time { return clock }}
-	if p := c.Read(context.Background()); p.Available || !strings.Contains(p.Reason, "not signed in") {
+	if p := c.Read(context.Background()); p.Available || p.NeedsSignIn || !strings.Contains(p.Reason, "not signed in") {
 		t.Fatalf("%+v", p)
 	}
 }
