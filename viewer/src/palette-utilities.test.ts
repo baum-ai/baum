@@ -6,6 +6,8 @@ import { fileURLToPath } from "node:url";
 import { compile } from "tailwindcss";
 import { describe, expect, it } from "vitest";
 
+import { radiusSteps } from "./palette-utility-names";
+
 /** The palette utilities `palette-utilities.css` declares (`text-secondary`,
  *  `bg-surface-card`, `shadow-card`, ...) must each resolve to the palette
  *  variable they are named after, and must not make Tailwind redeclare that
@@ -68,6 +70,25 @@ describe("palette utilities", () => {
       const rule = css.match(new RegExp(`\\.${utility} \\{([^}]*)\\}`))?.[1];
       expect(rule, utility).toContain(`var(--${token})`);
       expect(css, token).not.toMatch(new RegExp(`--${token}:\\s*var\\(--${token}\\)`));
+    }
+  });
+
+  /** `rounded-sm` is written for `rounded-(--radius-sm)`: Tailwind's corner
+   *  utilities read `--radius-<step>`, and the palette's layer, after
+   *  Tailwind's theme, sets each step over Tailwind's default. */
+  it("rounds corners by the palette's radius steps", async () => {
+    const compiler = await compile(`@import "tailwindcss";\n@import "./viewer.css";`, {
+      base: here,
+      loadStylesheet,
+    });
+    const css = compiler.build(radiusSteps.map((step) => `rounded-${step}`));
+    const palette = readFileSync(join(here, "palette.css"), "utf8");
+    expect(css.indexOf("@layer theme")).toBeLessThan(css.indexOf("@layer baum-palette"));
+    for (const step of radiusSteps) {
+      expect(css.match(new RegExp(`\\.rounded-${step} \\{([^}]*)\\}`))?.[1], step).toContain(
+        `border-radius: var(--radius-${step})`,
+      );
+      expect(palette, step).toContain(`--radius-${step}:`);
     }
   });
 });

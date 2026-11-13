@@ -198,7 +198,7 @@ function CommitFilePatch({
     return (
       <div
         role="alert"
-        className="flex flex-wrap items-center justify-between gap-2 rounded-(--radius-sm) border border-default px-3 py-2 text-base text-status-critical"
+        className="flex flex-wrap items-center justify-between gap-2 rounded-sm border border-default px-3 py-2 text-base text-status-critical"
       >
         <span className="[overflow-wrap:anywhere]">
           <span className="font-mono text-xs">{file.path}</span> could not be read.
@@ -210,7 +210,7 @@ function CommitFilePatch({
     );
   if (!diff || diff.hunks.length === 0)
     return (
-      <p className="rounded-(--radius-sm) border border-default px-3 py-2 text-base text-secondary [overflow-wrap:anywhere]">
+      <p className="rounded-sm border border-default px-3 py-2 text-base text-secondary [overflow-wrap:anywhere]">
         <span className="font-mono text-xs">{file.path}</span>: No diff to show.
       </p>
     );
@@ -229,7 +229,7 @@ function CommitFiles({
 }) {
   const [opened, setOpened] = useState<ReadonlySet<string>>(() => new Set());
   const row =
-    "flex w-full min-w-0 items-center justify-between gap-2 rounded-(--radius-sm) border border-default bg-surface-wash px-3 py-2 text-left";
+    "flex w-full min-w-0 items-center justify-between gap-2 rounded-sm border border-default bg-surface-wash px-3 py-2 text-left";
   return (
     <section aria-label="Files changed" className="space-y-2">
       <h3 className="text-xs font-medium tracking-[0.08em] uppercase text-tertiary">
@@ -246,7 +246,7 @@ function CommitFiles({
               key={file.path}
               data-review-block=""
               // Lightly filled while it is the one, as the review's other blocks.
-              className="rounded-(--radius-md) outline-none data-[review-block-active]:[&>*]:bg-surface-wash"
+              className="rounded-md outline-none data-[review-block-active]:[&>*]:bg-surface-wash"
             >
               {loadPatch && opened.has(file.path) ? (
                 <CommitFilePatch oid={oid} file={file} loadPatch={loadPatch} />

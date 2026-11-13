@@ -45,7 +45,7 @@ export function WorkflowTile({ change }: { change: WorkflowChange }) {
     >
       <section
         aria-label="Workflow paths"
-        className="mt-4 overflow-hidden rounded-(--radius-sm) border border-default bg-surface-card"
+        className="mt-4 overflow-hidden rounded-sm border border-default bg-surface-card"
       >
         <div className="flex flex-wrap items-center justify-between gap-2 border-b border-subtle bg-surface-wash px-3 py-2">
           <h5 className="text-xs font-semibold tracking-[0.12em] uppercase text-tertiary">

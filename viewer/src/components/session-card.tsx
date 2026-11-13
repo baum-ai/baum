@@ -129,7 +129,7 @@ export function SessionCard({
           aria-expanded={open}
           onClick={toggle}
           className={cn(
-            "flex w-full cursor-pointer items-center gap-3 rounded-t-(--radius-lg) px-5 py-3.5 text-left transition-colors duration-150 hover:bg-surface-hover",
+            "flex w-full cursor-pointer items-center gap-3 rounded-t-lg px-5 py-3.5 text-left transition-colors duration-150 hover:bg-surface-hover",
             (open || Boolean(meta)) && "border-b border-subtle",
             FOCUS_RING,
           )}

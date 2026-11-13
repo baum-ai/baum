@@ -147,7 +147,7 @@ export function ReviewImages({
               return (
                 <figure key={item.key} className="min-w-0 max-w-full space-y-1.5" style={{ width }}>
                   {failed.has(item.attachment.id) ? (
-                    <div className="flex min-h-24 flex-col items-center justify-center gap-2 rounded-(--radius-md) border border-dashed border-default bg-surface-sunken p-3 text-center text-base text-tertiary">
+                    <div className="flex min-h-24 flex-col items-center justify-center gap-2 rounded-md border border-dashed border-default bg-surface-sunken p-3 text-center text-base text-tertiary">
                       <span id={`${idPrefix}-${item.key}`} role="status">
                         Image unavailable
                       </span>
@@ -172,7 +172,7 @@ export function ReviewImages({
                       aria-label={`View full size: ${label}`}
                       onClick={() => setViewing(item)}
                       className={cn(
-                        "block w-full cursor-zoom-in overflow-hidden rounded-(--radius-md) border border-default bg-surface-sunken",
+                        "block w-full cursor-zoom-in overflow-hidden rounded-md border border-default bg-surface-sunken",
                         FOCUS_RING,
                       )}
                     >
@@ -222,7 +222,7 @@ export function ReviewImages({
           if (key) triggers.current.get(key)?.focus();
         }}
         className={cn(
-          "m-auto max-h-[calc(100dvh-2rem)] max-w-[calc(100vw-2rem)] overflow-auto rounded-(--radius-lg) border border-default",
+          "m-auto max-h-[calc(100dvh-2rem)] max-w-[calc(100vw-2rem)] overflow-auto rounded-lg border border-default",
           "bg-surface-card p-3 text-primary shadow-card",
           "backdrop:bg-surface-scrim",
         )}

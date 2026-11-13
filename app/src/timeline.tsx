@@ -824,7 +824,7 @@ function MoreMenu({
       <summary
         aria-label="More"
         className={cn(
-          "flex cursor-pointer list-none items-center rounded-(--radius-sm) p-1.5 text-secondary group-open:bg-surface-hover hover:bg-surface-hover [&::-webkit-details-marker]:hidden",
+          "flex cursor-pointer list-none items-center rounded-sm p-1.5 text-secondary group-open:bg-surface-hover hover:bg-surface-hover [&::-webkit-details-marker]:hidden",
           FOCUS_RING,
         )}
       >
@@ -834,12 +834,12 @@ function MoreMenu({
           <circle cx="8" cy="13" r="1.5" />
         </svg>
       </summary>
-      <div className="absolute right-0 z-20 mt-1 flex w-60 flex-col rounded-(--radius-md) border border-default bg-surface-card p-1 shadow-overlay">
+      <div className="absolute right-0 z-20 mt-1 flex w-60 flex-col rounded-md border border-default bg-surface-card p-1 shadow-overlay">
         <button
           type="button"
           disabled={starting || blocked !== ""}
           title={blocked || undefined}
-          className="flex flex-col rounded-(--radius-sm) px-2 py-1.5 text-left text-base text-primary hover:bg-surface-hover disabled:opacity-50"
+          className="flex flex-col rounded-sm px-2 py-1.5 text-left text-base text-primary hover:bg-surface-hover disabled:opacity-50"
           onClick={() => {
             close();
             onRebuild();

@@ -71,7 +71,7 @@ export function Skeleton({ className, height = 200 }: { className?: string; heig
     <div
       aria-hidden
       className={cn(
-        "animate-shimmer rounded-(--radius-sm) bg-[linear-gradient(90deg,var(--surface-sunken)_0%,var(--surface-sunken)_35%,var(--surface-wash)_50%,var(--surface-sunken)_65%,var(--surface-sunken)_100%)] bg-[length:200%_100%] motion-reduce:animate-none",
+        "animate-shimmer rounded-sm bg-[linear-gradient(90deg,var(--surface-sunken)_0%,var(--surface-sunken)_35%,var(--surface-wash)_50%,var(--surface-sunken)_65%,var(--surface-sunken)_100%)] bg-[length:200%_100%] motion-reduce:animate-none",
         className,
       )}
       style={{ height }}

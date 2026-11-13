@@ -267,9 +267,7 @@ const COMPONENTS: Components = {
   h2: ({ children }) => <p className="font-semibold">{children}</p>,
   h3: ({ children }) => <p className="font-medium">{children}</p>,
   pre: ({ children }) => (
-    <pre className="overflow-x-auto rounded-(--radius-sm) bg-code-fill p-2 text-base">
-      {children}
-    </pre>
+    <pre className="overflow-x-auto rounded-sm bg-code-fill p-2 text-base">{children}</pre>
   ),
   // React Markdown stopped passing an `inline` flag, and a fenced block
   // without a language sits in the exact same `className`-less state as an
@@ -279,9 +277,7 @@ const COMPONENTS: Components = {
   // only a genuinely inline span gets its own pill.
   code: ({ className, children }) => {
     if (String(children).includes("\n")) return codeBlock(className, children);
-    return (
-      <code className="rounded-(--radius-sm) bg-code-fill px-1 py-0.5 text-base">{children}</code>
-    );
+    return <code className="rounded-sm bg-code-fill px-1 py-0.5 text-base">{children}</code>;
   },
   // A comment body usually breaks anywhere so a long path cannot widen the
   // pane; a table cell inheriting that shrinks to a letter a line on a phone.
@@ -296,7 +292,7 @@ const COMPONENTS: Components = {
   ),
   td: ({ children }) => <td className="border border-subtle px-2 py-1">{children}</td>,
   details: ({ children }) => (
-    <details className="rounded-(--radius-sm) border border-subtle p-2">{children}</details>
+    <details className="rounded-sm border border-subtle p-2">{children}</details>
   ),
   summary: ({ children }) => <summary className="cursor-pointer font-medium">{children}</summary>,
   // A comment's body is contributor-controlled, unmoderated text — an
@@ -311,7 +307,7 @@ const COMPONENTS: Components = {
   // link in two instead of just adding an image-viewing shortcut. "View on
   // GitHub" on the comment above already opens the real, camo-proxied image.
   img: ({ alt }) => (
-    <span className="inline-block rounded-(--radius-sm) border border-subtle px-2 py-1 text-tertiary italic">
+    <span className="inline-block rounded-sm border border-subtle px-2 py-1 text-tertiary italic">
       {alt || "Image"}
     </span>
   ),
@@ -369,7 +365,7 @@ const READING_COMPONENTS: Components = {
   code: ({ className, children }) => {
     if (String(children).includes("\n")) return codeBlock(className, children);
     return (
-      <code className="rounded-(--radius-xs) bg-code-fill px-1 py-px font-mono text-base text-primary">
+      <code className="rounded-xs bg-code-fill px-1 py-px font-mono text-base text-primary">
         {pathBreaks(children)}
       </code>
     );
@@ -442,9 +438,7 @@ const INLINE_COMPONENTS: Components = {
   // row it sits in already leads somewhere.
   a: ({ children }) => <>{children}</>,
   br: () => " ",
-  code: ({ children }) => (
-    <code className="rounded-(--radius-sm) bg-code-fill px-1 py-0.5">{children}</code>
-  ),
+  code: ({ children }) => <code className="rounded-sm bg-code-fill px-1 py-0.5">{children}</code>,
 };
 
 /** Markdown for a short line inside other text, a heading or a button: the

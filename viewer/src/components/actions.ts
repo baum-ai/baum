@@ -40,7 +40,7 @@ const actionVariants = {
 
 /** A tag is a pill; every other action is boxed. */
 function actionShape(variant: NonNullable<ActionOptions["variant"]>) {
-  return variant === "tag" ? "rounded-full" : "rounded-(--radius-md)";
+  return variant === "tag" ? "rounded-full" : "rounded-md";
 }
 
 /** Every boxed action stands on `--action-shadow` and sinks a pixel while

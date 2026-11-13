@@ -245,7 +245,7 @@ export function FeatureItem({
         <div
           className={cn(
             // Hovering the feature tints the whole tile, its key decisions too.
-            "min-w-0 overflow-hidden rounded-(--radius-lg) border shadow-card has-[>button:hover]:bg-surface-hover",
+            "min-w-0 overflow-hidden rounded-lg border shadow-card has-[>button:hover]:bg-surface-hover",
             selected
               ? "border-action-accent bg-surface-selected ring-1 ring-action-accent"
               : expanded
@@ -332,7 +332,7 @@ function KeyDecisions({
         aria-controls={`${id}-keys`}
         onClick={() => setOpen((current) => !current)}
         className={cn(
-          "-ml-1.5 flex cursor-pointer items-center gap-1.5 rounded-(--radius-sm) px-1.5 py-1 text-xs text-secondary hover:bg-surface-hover hover:text-primary",
+          "-ml-1.5 flex cursor-pointer items-center gap-1.5 rounded-sm px-1.5 py-1 text-xs text-secondary hover:bg-surface-hover hover:text-primary",
           FOCUS_RING,
         )}
       >
@@ -357,7 +357,7 @@ function KeyDecisions({
               type="button"
               onClick={() => onChoose(key)}
               className={cn(
-                "flex w-full min-w-0 cursor-pointer flex-wrap items-center gap-x-2 gap-y-1 rounded-(--radius-sm) px-1.5 py-1 text-left hover:bg-surface-hover",
+                "flex w-full min-w-0 cursor-pointer flex-wrap items-center gap-x-2 gap-y-1 rounded-sm px-1.5 py-1 text-left hover:bg-surface-hover",
                 FOCUS_RING,
               )}
             >
@@ -394,7 +394,7 @@ export function FeatureSidePanel({
       id={id}
       aria-label="Opened feature"
       className={cn(
-        "sticky top-4 flex max-h-[calc(100vh-2rem)] min-w-0 flex-col overflow-hidden rounded-(--radius-lg) border border-default bg-surface-card shadow-card",
+        "sticky top-4 flex max-h-[calc(100vh-2rem)] min-w-0 flex-col overflow-hidden rounded-lg border border-default bg-surface-card shadow-card",
         TIMELINE_FIRST_ENTRY,
       )}
     >
@@ -513,7 +513,7 @@ function FeatureContents({
     list.length === 0 ? (
       <p className="py-2 text-base text-tertiary">No decisions attributed here.</p>
     ) : (
-      <ol className="rounded-(--radius-md) border border-subtle bg-surface-card">
+      <ol className="rounded-md border border-subtle bg-surface-card">
         {list.map((decision) => {
           const isOpen = located?.decision === decision;
           return (
@@ -571,7 +571,7 @@ function FeatureContents({
                   <ViewerLink
                     href={pullRequestHref(pull.number)}
                     className={cn(
-                      "w-fit rounded-(--radius-sm) text-xs text-secondary hover:text-primary hover:underline",
+                      "w-fit rounded-sm text-xs text-secondary hover:text-primary hover:underline",
                       FOCUS_RING,
                     )}
                   >
@@ -642,7 +642,7 @@ function Group({
   return (
     <li
       data-feature-group={kind}
-      className="min-w-0 rounded-(--radius-md) border border-subtle bg-surface-card"
+      className="min-w-0 rounded-md border border-subtle bg-surface-card"
     >
       <button
         type="button"
@@ -651,7 +651,7 @@ function Group({
         aria-controls={`${id}-panel`}
         onClick={onToggle}
         className={cn(
-          "flex w-full cursor-pointer items-start gap-2 rounded-(--radius-md) px-3 py-2 text-left hover:bg-surface-hover",
+          "flex w-full cursor-pointer items-start gap-2 rounded-md px-3 py-2 text-left hover:bg-surface-hover",
           FOCUS_RING,
         )}
       >

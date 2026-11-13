@@ -38,7 +38,7 @@ export type DetailState =
  *  `review-parts.tsx`), as a button: a file here filters the log rather than
  *  opening the file. */
 const FILE_CHIP = cn(
-  "inline-flex max-w-full min-w-0 cursor-pointer items-center gap-1 rounded-(--radius-sm) border border-subtle bg-surface-sunken px-1.5 py-0.5 text-xs leading-[1.4] text-secondary hover:text-primary",
+  "inline-flex max-w-full min-w-0 cursor-pointer items-center gap-1 rounded-sm border border-subtle bg-surface-sunken px-1.5 py-0.5 text-xs leading-[1.4] text-secondary hover:text-primary",
   FOCUS_RING,
 );
 

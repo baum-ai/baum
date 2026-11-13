@@ -21,7 +21,7 @@ export function TileKeyFacts({ facts }: { facts: readonly TileKeyFact[] }) {
   return (
     <dl
       aria-label="Key review facts"
-      className="mt-4 max-w-[680px] overflow-hidden rounded-(--radius-sm) border border-default bg-surface-card"
+      className="mt-4 max-w-[680px] overflow-hidden rounded-sm border border-default bg-surface-card"
     >
       {facts.map((fact, index) => (
         <div

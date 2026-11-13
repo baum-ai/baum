@@ -63,9 +63,7 @@ export function Table<T>({
   const spacing = densities[density];
 
   if (rows.length === 0 && empty) {
-    return (
-      <div className="rounded-(--radius-lg) border border-default bg-surface-card">{empty}</div>
-    );
+    return <div className="rounded-lg border border-default bg-surface-card">{empty}</div>;
   }
 
   return (
@@ -75,7 +73,7 @@ export function Table<T>({
     // containing block: outside this scroll container, so it escapes the clip
     // and widens the whole document instead. On a phone that is a page which
     // scrolls sideways for a header nobody can see.
-    <div className="relative overflow-x-auto rounded-(--radius-lg) border border-default bg-surface-card">
+    <div className="relative overflow-x-auto rounded-lg border border-default bg-surface-card">
       <table
         className={cn("w-full border-collapse text-base", fixed && "table-fixed")}
         style={{ minWidth }}
@@ -151,7 +149,7 @@ function SortButton({
       type="button"
       onClick={sort.onSort}
       className={cn(
-        "group inline-flex cursor-pointer items-center gap-1 rounded-(--radius-sm) uppercase hover:text-primary",
+        "group inline-flex cursor-pointer items-center gap-1 rounded-sm uppercase hover:text-primary",
         FOCUS_RING,
         sort.direction && "text-primary",
       )}

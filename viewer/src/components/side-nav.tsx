@@ -21,7 +21,7 @@ type Glyph = (props: IconProps) => React.ReactElement;
  *  than something a caller layers on, so rows keep one of two named gaps. */
 function rowClass(state: RowState, depth: 0 | 1, gap: "standard" | "tight" = "standard") {
   return cn(
-    "relative flex w-full items-center rounded-(--radius-sm) py-[7px] pr-2.5 text-left transition-colors duration-150 hover:no-underline",
+    "relative flex w-full items-center rounded-sm py-[7px] pr-2.5 text-left transition-colors duration-150 hover:no-underline",
     gap === "standard" ? "gap-2.5" : "gap-1.5",
     depth === 0 ? "pl-2.5 text-base" : "pl-2 text-base",
     state !== "disabled" && FOCUS_RING,

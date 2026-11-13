@@ -116,7 +116,7 @@ function Chip({
   return (
     <span
       className={cn(
-        "inline-flex h-7 items-center gap-1.5 rounded-(--radius-md) border border-default bg-surface-card px-2 text-base text-secondary",
+        "inline-flex h-7 items-center gap-1.5 rounded-md border border-default bg-surface-card px-2 text-base text-secondary",
         mono && "font-mono text-xs",
         className,
       )}
@@ -272,7 +272,7 @@ export function ReviewHeader({
               href={slots.back.href}
               aria-label={slots.back.label}
               className={cn(
-                "inline-flex h-7 w-7 flex-none items-center justify-center rounded-(--radius-sm) text-tertiary hover:bg-surface-hover hover:text-secondary",
+                "inline-flex h-7 w-7 flex-none items-center justify-center rounded-sm text-tertiary hover:bg-surface-hover hover:text-secondary",
                 FOCUS_RING,
               )}
             >
@@ -294,7 +294,7 @@ export function ReviewHeader({
             onClick={(event) => scrollerOf(event.currentTarget).scrollTo({ top: 0 })}
             title="Back to the top"
             className={cn(
-              "min-w-0 cursor-pointer truncate rounded-(--radius-sm) text-left text-base font-medium",
+              "min-w-0 cursor-pointer truncate rounded-sm text-left text-base font-medium",
               FOCUS_RING,
             )}
           >
@@ -389,7 +389,7 @@ export function ReviewHeader({
                 aria-label="View on GitHub"
                 title="View on GitHub"
                 className={cn(
-                  "inline-flex h-7 w-7 items-center justify-center rounded-(--radius-sm) text-tertiary hover:bg-action-secondary-hover hover:text-primary",
+                  "inline-flex h-7 w-7 items-center justify-center rounded-sm text-tertiary hover:bg-action-secondary-hover hover:text-primary",
                   FOCUS_RING,
                 )}
               >

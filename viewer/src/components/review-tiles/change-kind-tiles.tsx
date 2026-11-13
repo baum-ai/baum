@@ -63,7 +63,7 @@ export function BugFixTile({ change }: { change: BugFixChange }) {
     >
       <section
         aria-label="What this pull request fixes"
-        className="mt-4 overflow-hidden rounded-(--radius-sm) border border-default bg-surface-card"
+        className="mt-4 overflow-hidden rounded-sm border border-default bg-surface-card"
       >
         <div className="flex flex-wrap items-center justify-between gap-2 border-b border-subtle bg-surface-wash px-3 py-2">
           <h5 className="text-xs font-semibold tracking-[0.12em] uppercase text-tertiary">
@@ -147,7 +147,7 @@ export function RefactorTile({ change }: { change: RefactorChange }) {
         <div className="grid gap-2 sm:grid-cols-2">
           <article
             aria-label="Was"
-            className="min-w-0 rounded-(--radius-md) border border-default bg-surface-card px-4 py-3.5"
+            className="min-w-0 rounded-md border border-default bg-surface-card px-4 py-3.5"
           >
             <p className="text-xs font-semibold tracking-[0.14em] uppercase text-tertiary">Was</p>
             <p className="mt-2 text-base font-medium leading-[1.4] tracking-[-0.015em] text-primary">
@@ -156,7 +156,7 @@ export function RefactorTile({ change }: { change: RefactorChange }) {
           </article>
           <article
             aria-label="Now"
-            className="min-w-0 rounded-(--radius-md) border border-default bg-surface-card px-4 py-3.5"
+            className="min-w-0 rounded-md border border-default bg-surface-card px-4 py-3.5"
           >
             <p className="text-xs font-semibold tracking-[0.14em] uppercase text-tertiary">Now</p>
             <p className="mt-2 text-base font-medium leading-[1.4] tracking-[-0.015em] text-primary">
@@ -221,7 +221,7 @@ function Compare({ before, after }: { before: ComparedState; after: ComparedStat
 
 function StateCard({ caption, state }: { caption: string; state: ComparedState }) {
   return (
-    <article className="min-w-0 rounded-(--radius-sm) border border-default bg-surface-card px-3 py-2.5">
+    <article className="min-w-0 rounded-sm border border-default bg-surface-card px-3 py-2.5">
       <p className="text-3xs font-semibold tracking-[0.1em] uppercase text-tertiary">{caption}</p>
       <h6 className="mt-1 text-base font-semibold text-primary">{state.label}</h6>
       <p className="mt-1 text-xs leading-[1.45] text-secondary">{state.detail}</p>

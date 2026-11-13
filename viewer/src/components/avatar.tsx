@@ -30,7 +30,7 @@ export function Avatar({
   tint,
   chrome = false,
 }: AvatarProps) {
-  const radius = shape === "circle" ? "rounded-full" : "rounded-(--radius-sm)";
+  const radius = shape === "circle" ? "rounded-full" : "rounded-sm";
   // A picture that fails to load falls back to the initials rather than a
   // broken-image glyph: the name is always known, the picture is a bonus.
   const [failed, setFailed] = useState(false);

@@ -67,7 +67,7 @@ export function ReviewNavigator({
         title="All sections"
         onClick={onOpen}
         className={cn(
-          "flex h-10 min-w-0 flex-1 cursor-pointer items-center gap-1.5 rounded-(--radius-sm) px-1.5 text-left hover:bg-surface-hover",
+          "flex h-10 min-w-0 flex-1 cursor-pointer items-center gap-1.5 rounded-sm px-1.5 text-left hover:bg-surface-hover",
           FOCUS_RING,
         )}
       >
@@ -127,7 +127,7 @@ export function ReviewPaneFoot({
 }) {
   if (!previous && !next) return null;
   const step = cn(
-    "flex min-w-0 cursor-pointer flex-col gap-0.5 rounded-(--radius-sm) border border-default px-3 py-2.5 hover:bg-surface-hover",
+    "flex min-w-0 cursor-pointer flex-col gap-0.5 rounded-sm border border-default px-3 py-2.5 hover:bg-surface-hover",
     FOCUS_RING,
   );
   return (

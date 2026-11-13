@@ -64,7 +64,8 @@ colors, and Tailwind's fixed color utilities are rejected with file and line
 numbers. Palette variables, `currentColor`, `transparent` and derived mixes of
 palette variables are allowed. An arbitrary value for a token that has a
 palette utility, such as `text-(--text-secondary)`, is rejected with the
-utility to write instead (`text-secondary`). Only palette/theme definition files and the two
+utility to write instead (`text-secondary`); so is a corner written as
+`rounded-(--radius-sm)` rather than `rounded-sm`. Only palette/theme definition files and the two
 specific artwork modules may define literal colors; tests and generated files
 are excluded. Inbox filter color names are persisted palette keys, not CSS colors.
 

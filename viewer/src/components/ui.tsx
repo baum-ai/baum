@@ -34,7 +34,7 @@ export function Card({ children, className, size = "standard", ...props }: CardP
     <section
       {...props}
       className={cn(
-        "rounded-(--radius-lg) border border-default bg-surface-card shadow-card",
+        "rounded-lg border border-default bg-surface-card shadow-card",
         cardSizes[size],
         className,
       )}
@@ -200,7 +200,7 @@ export function Alert({ children, className }: AlertProps) {
     <p
       role="alert"
       className={cn(
-        "rounded-(--radius-sm) bg-status-critical-bg px-3 py-2 text-base text-status-critical",
+        "rounded-sm bg-status-critical-bg px-3 py-2 text-base text-status-critical",
         className,
       )}
     >
@@ -394,7 +394,7 @@ export function IconButton({
       aria-label={label}
       title={label}
       className={cn(
-        "inline-flex h-7 w-7 flex-none cursor-pointer items-center justify-center rounded-(--radius-sm) text-tertiary hover:bg-surface-hover hover:text-primary disabled:cursor-not-allowed disabled:opacity-50",
+        "inline-flex h-7 w-7 flex-none cursor-pointer items-center justify-center rounded-sm text-tertiary hover:bg-surface-hover hover:text-primary disabled:cursor-not-allowed disabled:opacity-50",
         FOCUS_RING,
         className,
       )}

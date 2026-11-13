@@ -97,7 +97,7 @@ function CheckRow({ check, home }: { check: DiagnosticCheck; home?: string }) {
           </dl>
         ) : null}
         {check.fix ? (
-          <p className="m-0 mt-2 rounded-(--radius-md) bg-surface-wash px-3 py-2 break-words">
+          <p className="m-0 mt-2 rounded-md bg-surface-wash px-3 py-2 break-words">
             <strong className="font-medium">Fix:</strong> {display(check.fix)}
           </p>
         ) : null}
@@ -246,7 +246,7 @@ export function DiagnosticsSection({
       ) : null}
       <div
         className={cn(
-          "flex flex-wrap items-center gap-3 rounded-(--radius-lg) border border-subtle px-4 py-3",
+          "flex flex-wrap items-center gap-3 rounded-lg border border-subtle px-4 py-3",
           overall === "problem"
             ? "bg-status-critical-bg"
             : overall === "warning"
@@ -302,7 +302,7 @@ export function DiagnosticsSection({
             <h3 className="diagnostics-group-title">
               {group.title} <span className="font-normal">· {list.length}</span>
             </h3>
-            <ul className="m-0 list-none divide-y divide-subtle overflow-hidden rounded-(--radius-lg) border border-subtle bg-surface-card p-0">
+            <ul className="m-0 list-none divide-y divide-subtle overflow-hidden rounded-lg border border-subtle bg-surface-card p-0">
               {list.map((check) => (
                 <CheckRow key={check.id} check={check} home={home} />
               ))}
