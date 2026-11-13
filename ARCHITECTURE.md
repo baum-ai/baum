@@ -649,9 +649,8 @@ showing one part of the review. It has three parts.
   document has at most one, and its default size). A single tile's ID is its
   type, and a change tile's ID is its change's, which is its section's, so
   comments, chat tools, recommendation and risk score references, agent
-  findings and details retries that name a section name its tile. `custom`
-  is reserved for a tile that embeds its own type definition; this version
-  accepts the shape and always shows it as unavailable.
+  findings and details retries that name a section name its tile. A
+  `custom` tile embeds its own type definition (see "Custom tiles" below).
 - **The layout**: entries in reading order, each a tile, a size (`full`,
   `half` or `third` of a 6-unit grid), an optional group and an optional
   pin; groups of contiguous entries, which may show only their first
@@ -665,7 +664,9 @@ showing one part of the review. It has three parts.
   that does not fit in three rows ends the landing page. The landing page
   shows the entries before `landing` that are not hidden (`tiles.Visible`);
   "Show N more tiles" reveals the rest that are not hidden (`tiles.More`).
-  `tiles.Arrange` orders a layout and sets `landing`: pinned entries move to
+  `tiles.Arrange` orders a layout and sets `landing`: it first gives a custom
+  tile's entry of a size its definition does not declare the first size it
+  declares; then pinned entries move to
   the front, and so does the risks tile when it ranks an active critical or
   high risk and would otherwise miss the landing page, both stably. A narrow
   window stacks the same order into fewer columns, so the landing page does
@@ -694,8 +695,137 @@ its data does not have its type's shape (only a draft's pending context
 tile may have empty data), its references do not resolve (a change tile's
 change, which everything else must not show too, the ranked risks, the
 changes of moved items), a decision ID repeats among the decisions tile's
-items, or its type is unknown or `custom`. `CheckTiles` runs just those
+items, its type is unknown, or it is a custom tile that fails one of the
+checks below. `CheckTiles` runs just those
 tile checks, for a host serving a document it converted.
+
+**Custom tiles.** A custom tile carries the definition of its type in
+`definition` (`tiles.TypeDefinition`, `$defs/tileTypeDefinition`), so a
+stored review renders without a library lookup. A definition has:
+
+- `name`, the type's name, which is neither `custom` nor a built-in type's;
+- `title`, and `use_when`, one line of at most 200 characters saying when a
+  composer should use the type;
+- `fill`, at most 8000 characters telling a model how to fill the data;
+- `data_schema`, the JSON Schema of the tile's data, in the dialect below;
+- `kit`, the major version of the tile kit the component was written for;
+- `sizes`, the layout sizes the glance was made for, in order of preference;
+- `source`, the component: `{"format": "html", "html"}`, at most 262144
+  characters;
+- `digest`, which the host writes.
+
+The digest is the type's identity: `"sha256:"` and the lowercase hex
+SHA-256 of the definition without its `digest` member, in the canonical
+form of RFC 8785 (JSON Canonicalization Scheme), which
+`tiles.DefinitionDigest` computes. Members are sorted by their names' UTF-16
+code units, numbers are written as ECMAScript writes a double (`1.0` and
+`1e0` are `1`), strings escape only `"`, `\` and control characters (as
+`\b`, `\t`, `\n`, `\f`, `\r` or a lowercase `\u00XX`), everything else is
+written as UTF-8, there is no whitespace and no Unicode normalisation. A
+definition that is not valid UTF-8, holds an escaped lone surrogate, a
+number a double cannot hold or a repeated member name has no digest, so a
+definition with a digest has exactly one canonical form, the same in every
+language. Authors never compute it: the host fills it in when it accepts a
+definition.
+
+The kit is versioned by major. `tiles.KitLatest` is the newest major this
+version serves, and it serves every major from 1 to it (`tiles.KitSupported`):
+a major is kept for good and only gains additions, so a saved review renders
+as it was written. A review written by a newer baum whose tile names a major
+this version lacks shows that tile as unavailable.
+
+A data schema is JSON Schema draft 2020-12 restricted to a dialect, so
+validating untrusted data against an untrusted schema has a bounded cost and
+the schema bounds what a model fills in. `tiles.CheckDataSchema` checks the
+raw schema before anything compiles it, and every problem names the place in
+the schema, what is wrong and how to fix it:
+
+| Keyword | Rule |
+| --- | --- |
+| `type` | A type name or an array of distinct ones. The top level is `"object"`. A schema without `type` has `enum`, `const`, `$ref`, `anyOf`, `oneOf` or `allOf`. |
+| `properties`, `required` | Every required property is defined. Objects only. |
+| `additionalProperties` | Must be `false` on every object. |
+| `items`, `minItems`, `maxItems` | Every array has one `items` schema and `maxItems`, at most 500. |
+| `minLength`, `maxLength` | Every string has `maxLength`, at most 20000, unless it has `enum`, `const` or `pattern`. |
+| `pattern` | At most 256 characters, Go RE2 syntax (no lookaround or backreferences), compiling to at most 400 instructions. |
+| `minimum`, `maximum`, `exclusiveMinimum`, `exclusiveMaximum` | Numbers only. |
+| `enum`, `const` | At most 64 values; strings, numbers, booleans and null only. |
+| `anyOf`, `oneOf`, `allOf` | At most 8, 8 and 4 options, nested at most 2 deep counting through properties, items and `$ref`. |
+| `$ref`, `$defs` | `$ref` is `#/$defs/<name>`, with only annotations beside it; `$defs` is at the top level; no `$ref` leads back to itself. |
+| `title`, `description`, `$comment`, `examples`, `default`, `$schema` | Annotations; descriptions at most 1000 characters; `$schema` only draft 2020-12. |
+
+Every other keyword is refused, among them `format`, `uniqueItems`,
+`if`/`then`/`else`, `not`, `patternProperties`, `propertyNames`,
+`prefixItems`, `contains`, `dependent*`, `unevaluated*`, `content*`, `$id`,
+`$anchor` and `$dynamicRef`, each with what to write instead. A schema is at
+most 32 KiB encoded without whitespace, has at most 512 schema objects and
+nests them at most 12 deep counting through `$ref`. The definitions
+`citation`, `markdown` (text of at most 4000 characters the kit renders) and
+`tier`, and those they refer to (`anchor`, `itemRef`, `hunkId`,
+`attachmentId`, `sectionId`, `tileId`), are provided to every data schema
+from `tiles-1.json` and may not be redefined. A schema that passes the
+dialect also resolves with the JSON Schema library the rest of baum uses.
+
+The package validates a custom tile's data with its own validator for the
+dialect rather than the general library, so a failure names the data's JSON
+path and never quotes the data, and every check counts its work against a
+budget of 2^18 steps: a keyword applied to a value is a step, and a pattern
+match costs its text's length times its program's size over 16. The data is
+at most 64 KiB, measured before it is decoded, and the definition at most
+2 MiB. On the costliest schemas the dialect allows (patterns in 64 nested
+options, objects in 64 options, arrays nested twelve deep, every citation
+kind, 64 long enum values, wide objects) and the costliest data that fits, a
+check takes at most about 15 ms, or stops at the budget and reports that the
+data takes too much work; a test holds it under 50 ms. A test also holds the
+validator to the library's verdict on varied data. A saved review embeds the
+definition in every tile of its type, so a `tiles.Validator` caches checked
+definitions by their encoded bytes and compiled data schemas by digest, in
+bounded caches safe for concurrent use.
+
+A citation is any object in a custom tile's data that has the shape of
+`$defs/citation`: a `baum.review/1` anchor, or a risk, evidence item, change
+or tile of the document (`{"type": "risk", "id": "rsk_…"}`). A data schema
+declares one with `{"$ref": "#/$defs/citation"}`. The data is searched in a
+fixed order (object members by name, array items in order), and a citation's
+own members are not searched. A cited hunk must be in the index (with
+`lines`, if any, not reversed), a cited check and review thread in the
+index, a cited prompt or session event's session in the index and not
+restricted, and a cited risk, evidence item, change or tile in the document.
+A file may be any file of the repository and the document lists no commits,
+so those and the other anchor kinds are left to the page. A custom tile's
+`covers` are the hunks it cites, sorted and without repeats.
+
+A custom tile is ready when its definition and data are valid, and
+unavailable, with a problem that names the cause without quoting the data,
+only when:
+
+1. its definition does not have the definition's shape or is not valid
+   UTF-8, or its name is `custom` or a built-in type's;
+2. its definition does not match its digest;
+3. it names a kit major this version does not serve ("this tile was made with
+   a newer version of baum");
+4. its component holds a NUL character;
+5. its data schema is not in the dialect;
+6. its data is larger than 64 KiB or fails its schema;
+7. its data has more than 256 citations, or a citation does not resolve.
+
+A draft's pending custom tile may have empty data until it is written.
+`tiles.Validator.CheckDefinition` and `CheckData` check a definition, and
+data against one, without a document. `tiles.EdgeSamples` generates two
+samples from a data schema for checking a component against the edges of
+what the schema allows: `minimal` (required properties only, null where a
+value may be null, the fewest items, the shortest strings, the first enum
+value, the smallest numbers) and `maximal` (every property, arrays at
+`maxItems` up to 50, strings at `maxLength` up to 2000 of long words, an
+unbroken token, right-to-left text, combining characters and CJK, shrunk
+until it fits 64 KiB). Citations are filled from a list of the review's own,
+or with a hunk no review has. Generation is deterministic, and a sample that
+does not pass its schema is dropped with a warning.
+
+`baum.review/1` has no place for custom tiles, so `tiles.ToReview` leaves
+them out, whatever their ID; a host serving the review view of a tile
+document with custom tiles serves it without them. Converted documents have
+none.
 
 **Conversion.** `tiles.FromReview` converts a stored `baum.review/1`
 document after the stored-document rules, and `tiles.ToReview` converts
