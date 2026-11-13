@@ -3633,9 +3633,13 @@ it does (a job whose start could not be journaled waits until then), and tries
 once more at shutdown after the workers stop.
 
 A run's time limit is its only bound by default: `budgets.review_timeout` (10
-minutes) for a review of a pull request or a group and `budgets.run_timeout`
+minutes) for a review of a pull request and `budgets.run_timeout`
 (30 minutes) for every other agent run, a fix, a question to a review's agent
-or a feature build. The preferences' `review_time_limit_minutes` and
+or a feature build. A group's review is written in one pass whose final
+document alone takes several minutes, so its limit is the review limit plus
+half of it for each member after the first, at most three times the review
+limit (`groupReviewTimeout`: 15 minutes for two members by default, 30 for
+five or more). The preferences' `review_time_limit_minutes` and
 `run_time_limit_minutes` (`PUT api/settings/time-limits`, 1–240) replace the
 config file's (`Preferences.Resolve`). `max_calls` and `max_tokens` are zero,
 no limit, unless the config file sets them; `agent.Exceeds` and the backends

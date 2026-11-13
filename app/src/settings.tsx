@@ -1982,7 +1982,7 @@ function TimeLimitRows() {
         "review_time_limit_minutes",
         "review-time-limit",
         "Review time limit",
-        "How long a review may run before it stops. Reviews have no call or token limit.",
+        "How long a pull request review may run before it stops. A review group gets more time for each extra pull request. Reviews have no call or token limit.",
       )}
       {row(
         "run_time_limit_minutes",

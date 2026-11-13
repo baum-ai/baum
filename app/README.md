@@ -1797,7 +1797,8 @@ daemon note, **Jobs at once** (how many reviews, fixes and feature builds run
 in parallel, 1–4 and 4 by default, saved with `PUT
 api/settings/job-concurrency` and reported as `job_concurrency` by `GET
 api/settings`; the daemon applies it at once, and lowering it lets running jobs
-finish), **Review time limit** (10 minutes by default) and **Fix time limit**
+finish), **Review time limit** (10 minutes by default; a review group gets half
+as much again per member after the first, up to three times it) and **Fix time limit**
 (how long a fix, a question to a review's agent or a feature build may run, 30
 minutes by default), each chosen from 5 to 240 minutes, saved together with
 `PUT api/settings/time-limits` as `review_time_limit_minutes` and
