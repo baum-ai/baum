@@ -74,3 +74,6 @@ release:
   use_existing_draft: true
   replace_existing_artifacts: true
   prerelease: auto
+  # A re-run writes the notes again rather than keeping the draft's body, so
+  # notes corrected in CHANGELOG.md on main reach the release.
+  mode: replace
