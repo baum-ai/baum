@@ -21,7 +21,20 @@ import { forgetLastRows } from "./shortcuts";
 // act() finds it resolved.
 beforeAll(() => import("./group"));
 
-const rail = vi.hoisted(() => ({ commit: null as string | null, file: null as string | null }));
+const rail = vi.hoisted(() => {
+  const held = {
+    commit: null as string | null,
+    file: null as string | null,
+    // The live review threads the page last handed the viewer.
+    liveThreads: undefined as ReviewViewerProps["liveThreads"],
+  };
+  return Object.assign(held, {
+    hold: (liveThreads: ReviewViewerProps["liveThreads"]) => {
+      held.liveThreads = liveThreads;
+      return null;
+    },
+  });
+});
 vi.mock("@baum/viewer/components/review-viewer", () => ({
   ReviewViewer: ({
     document,
@@ -32,8 +45,10 @@ vi.mock("@baum/viewer/components/review-viewer", () => ({
     commits,
     decisions,
     files,
+    liveThreads,
   }: ReviewViewerProps) => (
     <div>
+      {rail.hold(liveThreads)}
       <h1>{header?.heading}</h1>
       {header?.titleAside}
       {header?.subtitle}
@@ -177,7 +192,7 @@ beforeEach(() => {
       if (path === "api/jobs") return Response.json({ jobs });
       if (path === "api/github-auth")
         return Response.json({ state: "disconnected", host: "github.com", saved: false });
-      if (path === "api/repositories" || path === "api/prs") return Response.json([]);
+      if (path === "api/repositories" || path === "api/prs?view=health") return Response.json([]);
       return Response.json({});
     }),
   );
@@ -576,6 +591,70 @@ it("shows Decisions, Sessions and Commits in a stack's rail, read through each m
   expect(requests.map((r) => r.path)).toContain(
     `api/commit?clone=clone&pr=8&oid=${"a".repeat(40)}`,
   );
+});
+
+it("hands the viewer every member's review threads as GitHub has them now", async () => {
+  entries = [
+    { ...entry(7), status: "current", version_count: 1 },
+    { ...entry(8), status: "current", version_count: 1 },
+  ];
+  entries[0]!.pull_request.unresolved = 1;
+  entries[1]!.pull_request.unresolved = 0;
+  // A landed member discovery no longer lists: its count is unknown.
+  groups = [
+    group([7, 8], { version_count: 1, stack: true, landed: [{ number: 9, state: "merged" }] }),
+  ];
+  answers = {
+    "api/prs/review-threads?repository=acme%2Fdemo&pr=7&unresolved=1": {
+      threads: [{ id: "T7" }],
+      capped: false,
+    },
+    "api/prs/review-threads?repository=acme%2Fdemo&pr=9&unresolved=-1": {
+      threads: [{ id: "T9" }],
+      capped: true,
+    },
+  };
+  history.replaceState(null, "", "/s/test-ns/?group=g1");
+  await act(async () => root.render(<App />));
+  const ours = { ...example, review: { ...example.review, repository: "acme/demo" } };
+  // One list for the whole group, cut short as one member's is.
+  expect(rail.liveThreads?.(ours as never)).toEqual({
+    unresolved: new Set(["T7", "T9"]),
+    complete: false,
+  });
+  // With none unresolved, a member's threads are not asked for.
+  expect(requests.map((r) => r.path).filter((path) => path.includes("review-threads"))).toEqual([
+    "api/prs/review-threads?repository=acme%2Fdemo&pr=9&unresolved=-1",
+    "api/prs/review-threads?repository=acme%2Fdemo&pr=7&unresolved=1",
+  ]);
+  // Another repository's review keeps its own threads.
+  expect(rail.liveThreads?.(example as never)).toBeNull();
+});
+
+it("keeps reading a removed member's threads while its saved review is displayed", async () => {
+  entries = [entry(7)];
+  entries[0]!.pull_request.unresolved = 0;
+  groups = [group([7], { version_count: 1, outdated: true })];
+  const saved = {
+    ...example,
+    review: { ...example.review, repository: "acme/demo" },
+    stack: {
+      title: "Saved group",
+      members: [7, 8].map((number) => ({ number, head_sha: "head", review_version: 1 })),
+    },
+  };
+  const path = "api/prs/review-threads?repository=acme%2Fdemo&pr=8&unresolved=-1";
+  answers = {
+    "api/groups/g1/document": saved,
+    [path]: { threads: [{ id: "T8" }], capped: false },
+  };
+  history.replaceState(null, "", "/s/test-ns/?group=g1");
+  await act(async () => root.render(<App />));
+  expect(requests.map((r) => r.path)).toContain(path);
+  expect(rail.liveThreads?.(saved as never)).toEqual({
+    unresolved: new Set(["T8"]),
+    complete: true,
+  });
 });
 
 it("shows a stack member's file patch once however many of its hunks the review cites", async () => {

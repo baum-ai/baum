@@ -64,6 +64,9 @@ func (s *Server) handleTranscript(w http.ResponseWriter, r *http.Request) {
 // build outlives the request that started it, up to the server's life.
 func (s *Server) transcript(ctx context.Context, entry *sessionsEntry, id string) ([]byte, error) {
 	meta, graph, ok := linkedSession(entry.result, id)
+	if !ok && entry.result.LoadGraph != nil {
+		meta, ok = linkedSessionMeta(entry.result, id)
+	}
 	if !ok {
 		return nil, errNotLinked
 	}
@@ -91,7 +94,21 @@ func (s *Server) transcript(ctx context.Context, entry *sessionsEntry, id string
 	if start {
 		go func() {
 			defer s.compute.Done()
-			job.body, job.err = s.buildTranscript(s.life, meta, graph)
+			ctx, cancel := context.WithTimeout(s.life, sessionsTimeout)
+			defer cancel()
+			if graph == nil && entry.result.LoadGraph != nil {
+				var loaded locallink.Result
+				loaded, job.err = entry.result.LoadGraph(ctx, id)
+				if job.err == nil {
+					meta, graph, ok = linkedSession(loaded, id)
+					if !ok {
+						job.err = errNotLinked
+					}
+				}
+			}
+			if job.err == nil {
+				job.body, job.err = s.buildTranscript(ctx, meta, graph)
+			}
 			if job.err != nil {
 				entry.transcriptsMu.Lock()
 				if entry.transcripts[id] == job {
@@ -129,6 +146,14 @@ func linkedSession(result locallink.Result, id string) (transcript.Meta, *sessio
 	if graph == nil {
 		return transcript.Meta{}, nil, false
 	}
+	meta, ok := linkedSessionMeta(result, id)
+	return meta, graph, ok
+}
+
+func linkedSessionMeta(result locallink.Result, id string) (transcript.Meta, bool) {
+	if !result.Available || id == "" {
+		return transcript.Meta{}, false
+	}
 	for _, linked := range result.Sessions {
 		if linked.ID != id {
 			continue
@@ -143,7 +168,7 @@ func linkedSession(result locallink.Result, id string) (transcript.Meta, *sessio
 				}
 			}
 		}
-		return meta, graph, true
+		return meta, true
 	}
-	return transcript.Meta{}, nil, false
+	return transcript.Meta{}, false
 }

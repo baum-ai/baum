@@ -73,8 +73,9 @@ type Client struct {
 
 // StopParams are the optional parameters of "stop".
 type StopParams struct {
-	// WhenIdle asks the daemon to wait until no job is queued or running and
-	// then restart as Executable; an idle daemon stops at once.
+	// WhenIdle asks the daemon to restart as Executable once no job is
+	// running, starting no queued job meanwhile (the new daemon runs them);
+	// a daemon with no job queued or running stops at once.
 	WhenIdle   bool   `json:"when_idle,omitempty"`
 	Executable string `json:"executable,omitempty"`
 }
@@ -395,7 +396,8 @@ func (c *Client) decide(ctx context.Context, status Status) (Status, bool, error
 		return Status{}, false, nil
 	case Older(status.Version, c.Version):
 		// Same protocol: keep using it, and let it restart as this version
-		// once no job is queued or running, so no paid run is interrupted.
+		// once no job is running, so no paid run is interrupted; its queued
+		// jobs wait for this version.
 		executable := c.Executable
 		if executable == "" {
 			self, err := os.Executable()

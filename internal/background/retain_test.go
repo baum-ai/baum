@@ -26,7 +26,7 @@ func TestSyncRetainsEachCommonDirectoryOnItsSchedule(t *testing.T) {
 	more := map[string]bool{"one": true}
 	fail := map[string]bool{"two": true}
 	s := &Service{Registry: clones, Discovery: &fakeDiscovery{}, Now: func() time.Time { return now },
-		Saved: func(context.Context, repos.Clone) ([]int, error) { return nil, nil },
+		Saved: saved(),
 		Refresh: func(context.Context, repos.Clone, int) (discovery.Observation, error) {
 			return discovery.Observation{}, nil
 		},

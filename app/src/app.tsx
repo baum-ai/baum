@@ -47,6 +47,16 @@ import {
   type Held,
   type Inbox as SavedInbox,
 } from "./inboxes";
+import {
+  allReloadParts,
+  automaticParts,
+  createEventGate,
+  endedParts,
+  indexParts,
+  jobsEnded,
+  progressParts,
+  type ReloadPart,
+} from "./reload-events";
 import { queueItems, UpNextPage, useUpNext } from "./up-next";
 import {
   FilterBar,
@@ -349,7 +359,11 @@ function Workspace({ url }: { url: UrlState }) {
   const [error, setError] = useState("");
   // When the latest read of the daemon completed, for Pull requests' bar.
   const [updatedAt, setUpdatedAt] = useState<number | null>(null);
+  // Changes when the index was read: what the pull request and
+  // group pages refetch their documents on.
   const [revision, setRevision] = useState(0);
+  // Changes when the jobs were read.
+  const [jobsRevision, setJobsRevision] = useState(0);
   const [selection, setSelection] = useState(new Set<string>());
   const [generating, setGenerating] = useState(false);
   // The pull requests whose review request is on its way to the daemon: they
@@ -459,156 +473,229 @@ function Workspace({ url }: { url: UrlState }) {
     }
     setAgentRequests(pending);
   }, []);
-  const reloadPending = useRef(false);
+  const reloadPending = useRef(new Set<ReloadPart>());
   const reloadInFlight = useRef<Promise<void> | null>(null);
   const reloadAbort = useRef<AbortController | null>(null);
-  // `restart` drops the read under way, which may never answer, for a new one.
-  const reload = useCallback(({ restart = false }: { restart?: boolean } = {}) => {
-    reloadPending.current = true;
-    if (reloadInFlight.current && !restart) return reloadInFlight.current;
-    reloadAbort.current?.abort();
-    const abort = new AbortController();
-    reloadAbort.current = abort;
-    const { signal } = abort;
-    const get = <T,>(path: string) => request<T>(path, undefined, "GET", signal);
-    // Publish each completed snapshot; events during a read queue one more
-    // instead of starting competing reads that discard each other's results.
-    const drain = async () => {
-      while (reloadPending.current && !signal.aborted) {
-        reloadPending.current = false;
-        let groupsFailure = "";
-        try {
-          const [
-            repos,
-            index,
-            jobList,
-            discovery,
-            sync,
-            auto,
-            settings,
-            connection,
-            repositories,
-            found,
-            groupList,
-            inboxList,
-            inboxQueue,
-          ] = await Promise.all([
-            get<Clone[]>("api/repos"),
-            get<Snapshot>("api/index?history=1"),
-            get<{ jobs?: Job[] }>("api/jobs"),
-            get<typeof rates>("api/prs"),
-            get<typeof background>("api/background"),
-            // A daemon without automatic generation answers without repositories.
-            get<Partial<Automatic>>("api/automatic").catch(() => null),
-            get<ReviewDefaults>("api/settings").catch(() => null),
-            get<GitHubConnection>("api/github-auth").catch(() => null),
-            get<Repository[]>("api/repositories"),
-            get<FoundClones>("api/clones/found").catch(() => null),
-            // An older daemon (404) has no groups; another failure is kept
-            // apart, so it is not taken for a group that is gone.
-            get<unknown>("api/groups").catch((e) => {
-              if (!(e instanceof LocalRequestError && e.status === 404))
-                groupsFailure = errorText(e);
-              return null;
-            }),
-            // An older daemon (404) has no inboxes; another failure is reported.
-            readInboxes(signal),
-            // An older daemon (404, or `available: false`) leaves the
-            // matching to the page, as does a failed read.
-            get<unknown>("api/inbox").then(parseHeld, () => null),
-          ]);
-          if (signal.aborted) return;
-          setClones(repos);
-          setPicked(Array.isArray(repositories) ? repositories : []);
-          if (Array.isArray(found?.attached)) {
-            const keys = found.attached.map((a) => `${a.repository}:${a.at}`);
-            if (seenAttachments.current)
-              setAttached((previous) => [
-                ...previous,
-                ...found.attached.filter((_, i) => !seenAttachments.current!.has(keys[i]!)),
-              ]);
-            seenAttachments.current = new Set(keys);
+  const jobsLoaded = useRef(false);
+  // Parts whose read failed, read again by the next read.
+  const failedParts = useRef(new Set<ReloadPart>());
+  // `parts` names what to read (everything when omitted): each kind of event
+  // reads only what it can change. Reads asked for while one runs join the
+  // next. `restart` drops the read under way, which may never answer, for a
+  // new one.
+  const reload = useCallback(
+    ({
+      restart = false,
+      parts = allReloadParts,
+    }: {
+      restart?: boolean;
+      parts?: readonly ReloadPart[];
+    } = {}) => {
+      for (const part of parts) reloadPending.current.add(part);
+      for (const part of failedParts.current) reloadPending.current.add(part);
+      failedParts.current.clear();
+      if (reloadInFlight.current && !restart) return reloadInFlight.current;
+      reloadAbort.current?.abort();
+      const abort = new AbortController();
+      reloadAbort.current = abort;
+      const { signal } = abort;
+      const get = <T,>(path: string) => request<T>(path, undefined, "GET", signal);
+      // Publish each completed snapshot; events during a read queue one more
+      // instead of starting competing reads that discard each other's results.
+      const drain = async () => {
+        while (reloadPending.current.size > 0 && !signal.aborted) {
+          const want = reloadPending.current;
+          reloadPending.current = new Set();
+          let groupsFailure = "";
+          try {
+            const skip = Promise.resolve(undefined);
+            const [
+              repos,
+              index,
+              jobList,
+              discovery,
+              sync,
+              auto,
+              settings,
+              connection,
+              repositories,
+              found,
+              groupList,
+              inboxList,
+              inboxQueue,
+            ] = await Promise.all([
+              want.has("clones") ? get<Clone[]>("api/repos") : skip,
+              want.has("index") ? get<Snapshot>("api/index?history=1&detail=summary") : skip,
+              want.has("jobs") ? get<{ jobs?: Job[] }>("api/jobs") : skip,
+              want.has("discovery") ? get<typeof rates>("api/prs?view=health") : skip,
+              want.has("discovery") ? get<typeof background>("api/background") : skip,
+              // A daemon without automatic generation answers without repositories.
+              want.has("automatic")
+                ? get<Partial<Automatic>>("api/automatic").catch(() => null)
+                : skip,
+              want.has("settings") ? get<ReviewDefaults>("api/settings").catch(() => null) : skip,
+              want.has("settings")
+                ? get<GitHubConnection>("api/github-auth").catch(() => null)
+                : skip,
+              want.has("clones") ? get<Repository[]>("api/repositories") : skip,
+              want.has("clones") ? get<FoundClones>("api/clones/found").catch(() => null) : skip,
+              // An older daemon (404) has no groups; another failure is kept
+              // apart, so it is not taken for a group that is gone.
+              want.has("groups")
+                ? get<unknown>("api/groups").catch((e) => {
+                    if (!(e instanceof LocalRequestError && e.status === 404))
+                      groupsFailure = errorText(e);
+                    return null;
+                  })
+                : skip,
+              // An older daemon (404) has no inboxes; another failure is reported.
+              want.has("inboxes") ? readInboxes(signal) : skip,
+              // An older daemon (404, or `available: false`) leaves the
+              // matching to the page, as does a failed read.
+              want.has("index") ? get<unknown>("api/inbox").then(parseHeld, () => null) : skip,
+            ]);
+            if (signal.aborted) return;
+            if (repos !== undefined) {
+              setClones(repos);
+              setPicked(Array.isArray(repositories) ? repositories : []);
+            }
+            if (Array.isArray(found?.attached)) {
+              const keys = found.attached.map((a) => `${a.repository}:${a.at}`);
+              if (seenAttachments.current)
+                setAttached((previous) => [
+                  ...previous,
+                  ...found.attached.filter((_, i) => !seenAttachments.current!.has(keys[i]!)),
+                ]);
+              seenAttachments.current = new Set(keys);
+            }
+            if (index !== undefined) setSnapshot(index);
+            if (jobList !== undefined) {
+              const before = jobsNow.current;
+              jobsNow.current = jobList.jobs ?? [];
+              setJobs(jobsNow.current);
+              setJobsRevision((n) => n + 1);
+              // A job that ended stored what pages show (a review, its details,
+              // a group): whatever order the daemon's events came in, read
+              // those again.
+              if (jobsLoaded.current && jobsEnded(before, jobsNow.current))
+                for (const part of endedParts) reloadPending.current.add(part);
+              jobsLoaded.current = true;
+            }
+            // A failed read keeps the groups shown.
+            if (groupList !== undefined) {
+              if (!groupsFailure) setGroups(parseGroups(groupList));
+              setGroupsError(groupsFailure);
+            }
+            if (inboxList !== undefined) inboxes.read(inboxList);
+            if (inboxQueue !== undefined) setHeld(inboxQueue);
+            if (discovery !== undefined) {
+              setRates(discovery);
+              setBackground(Array.isArray(sync) ? sync : []);
+            }
+            if (auto !== undefined)
+              setAutomatic(auto && Array.isArray(auto.repositories) ? (auto as Automatic) : null);
+            if (settings !== undefined) {
+              setDefaults(settings);
+              setGitHub(connection ?? null);
+            }
+            setError("");
+            if (want.has("index") || want.has("discovery")) setUpdatedAt(Date.now());
+            // The pull request and group pages read their documents again only
+            // when the index was read, not for a job's progress alone (a group
+            // page also keys on its group's own version and update time).
+            if (want.has("index")) setRevision((n) => n + 1);
+          } catch (e) {
+            if (!signal.aborted) {
+              setError(errorText(e));
+              for (const part of want) failedParts.current.add(part);
+            }
+          } finally {
+            if (!signal.aborted) setLoading(false);
           }
-          setSnapshot(index);
-          jobsNow.current = jobList.jobs ?? [];
-          setJobs(jobsNow.current);
-          // A failed read keeps the groups shown.
-          if (!groupsFailure) setGroups(parseGroups(groupList));
-          setGroupsError(groupsFailure);
-          inboxes.read(inboxList);
-          setHeld(inboxQueue);
-          setRates(discovery);
-          setBackground(Array.isArray(sync) ? sync : []);
-          setAutomatic(auto && Array.isArray(auto.repositories) ? (auto as Automatic) : null);
-          setDefaults(settings);
-          setGitHub(connection);
-          setError("");
-          setUpdatedAt(Date.now());
-          setRevision((n) => n + 1);
-        } catch (e) {
-          if (!signal.aborted) setError(errorText(e));
-        } finally {
-          if (!signal.aborted) setLoading(false);
         }
-      }
-    };
-    const run: Promise<void> = drain().finally(() => {
-      if (reloadInFlight.current === run) reloadInFlight.current = null;
-    });
-    reloadInFlight.current = run;
-    return run;
-  }, []);
+      };
+      const run: Promise<void> = drain().finally(() => {
+        if (reloadInFlight.current === run) reloadInFlight.current = null;
+      });
+      reloadInFlight.current = run;
+      return run;
+    },
+    [],
+  );
+  // While the window is hidden, events only mark what is stale; one read of
+  // it runs when the window shows again.
+  const gate = useMemo(() => createEventGate(), []);
+  const stale = useRef(new Set<ReloadPart>());
+  const markStale = useCallback(
+    (parts: readonly ReloadPart[]) => {
+      for (const part of parts) stale.current.add(part);
+      gate.run("reload", () => {
+        const due = [...stale.current];
+        stale.current.clear();
+        if (due.length > 0) void reload({ parts: due });
+      });
+    },
+    [gate, reload],
+  );
+  useEffect(() => () => gate.dispose(), [gate]);
   useEffect(() => {
     void reload();
     void reloadLive();
     const source = new EventSource(appURL("api/events"));
-    const refresh = () => void reload();
-    const refreshLive = () => {
-      setLiveTick((n) => n + 1);
-      void reloadLive();
-    };
-    source.addEventListener("open", refresh);
-    source.addEventListener("open", refreshLive);
+    const refreshLive = () =>
+      gate.run("live", () => {
+        setLiveTick((n) => n + 1);
+        void reloadLive();
+      });
     source.addEventListener("live", refreshLive);
     let decisionsTimer: ReturnType<typeof setTimeout> | undefined;
-    const refreshDecisions = () => {
-      decisionsTimer ??= setTimeout(() => {
-        decisionsTimer = undefined;
-        setDecisionsTick((n) => n + 1);
-      }, 250);
-    };
+    const refreshDecisions = () =>
+      gate.run("decisions", () => {
+        decisionsTimer ??= setTimeout(() => {
+          decisionsTimer = undefined;
+          setDecisionsTick((n) => n + 1);
+        }, 250);
+      });
     for (const kind of ["decisions", "open", "reset", "automatic"])
       source.addEventListener(kind, refreshDecisions);
     source.addEventListener("reset", refreshLive);
-    source.addEventListener("index", refresh);
-    source.addEventListener("progress", refresh);
+    // Each kind of event reads what it can change, and what it may change
+    // where that is unclear.
+    source.addEventListener("index", () => markStale(indexParts));
+    source.addEventListener("progress", () => markStale(progressParts));
     // A running job's usage changes that job alone, unless it shows a change
-    // missed meanwhile.
+    // missed meanwhile. A hidden window patches nothing: it reads the jobs
+    // when it shows again.
     source.addEventListener("job", (event) => {
+      if (document.hidden) return markStale(progressParts);
       const next = applyJobUsage(jobsNow.current, (event as MessageEvent).data);
-      if (next === null) void reload();
+      if (next === null) markStale(progressParts);
       else if (next !== jobsNow.current) {
         jobsNow.current = next;
         setJobs(next);
       }
     });
-    source.addEventListener("automatic", refresh);
-    source.addEventListener("reset", refresh);
-    const refreshTimeline = () => setTimelineTick((n) => n + 1);
+    source.addEventListener("automatic", () => markStale(automaticParts));
+    source.addEventListener("reset", () => markStale(allReloadParts));
+    const refreshTimeline = () => gate.run("timeline", () => setTimelineTick((n) => n + 1));
     source.addEventListener("timeline", refreshTimeline);
     source.addEventListener("reset", refreshTimeline);
-    // The first connection is the page's first read; a later one may have
-    // missed events.
+    // The first connection is the page's first read, made above; a later one
+    // may have missed events, so it reads everything again.
     let connected = false;
     source.addEventListener("open", () => {
-      if (connected) refreshTimeline();
+      if (connected) {
+        markStale(allReloadParts);
+        refreshLive();
+        refreshTimeline();
+      }
       connected = true;
     });
     return () => {
       clearTimeout(decisionsTimer);
       source.close();
     };
-  }, [reload, reloadLive]);
+  }, [gate, reload, reloadLive, markStale]);
   const authChanged = () => {
     void reload();
   };
@@ -1174,9 +1261,9 @@ function Workspace({ url }: { url: UrlState }) {
   // A repository's page, `?page=repositories&repository=<owner/name>`.
   const openRepository = page === "repositories" ? url.search.get("repository") : null;
   // The current jobs rarely hold an older job: the daemon finds it.
-  const openedJob = useOpenJob(openJob, jobs, revision);
+  const openedJob = useOpenJob(openJob, jobs, jobsRevision);
   // The pull request page's own jobs: its fixes and questions, all of them.
-  const pullRequestJobs = usePullRequestJobs(selectedEntry, revision, jobs);
+  const pullRequestJobs = usePullRequestJobs(selectedEntry, jobsRevision, jobs);
   // The shortcuts sheet lists the keys of where it was opened first.
   const shortcutsPlace: ShortcutsPlace = onList
     ? "pulls"
@@ -1672,7 +1759,7 @@ function Workspace({ url }: { url: UrlState }) {
                   jobs={jobs}
                   entries={snapshot.entries}
                   loading={loading}
-                  revision={revision}
+                  revision={jobsRevision}
                   changed={reload}
                 />
               </div>

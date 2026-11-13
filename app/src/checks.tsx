@@ -102,7 +102,14 @@ function StateIcon({ state }: { state: CheckState }) {
 
 /** The checks as last read, or why the read failed; neither while the first
  *  read is under way. */
-export type ChecksRead = { checks?: Check[]; error?: string };
+export type ChecksRead = {
+  checks?: Check[];
+  error?: string;
+  /** How many checks GitHub reports for the head, when the daemon lists fewer
+   *  (`capped`): the list then holds the failing and running ones first. */
+  total?: number;
+  capped?: boolean;
+};
 
 /** While any check runs, the list is read again this often. */
 const RUNNING_REFRESH_MS = 20_000;
@@ -122,7 +129,12 @@ export function useChecks(
   useEffect(() => {
     if (!enabled) return;
     const abort = new AbortController();
-    request<{ checks: Check[] }>(`api/prs/checks?${query}`, undefined, "GET", abort.signal)
+    request<{ checks: Check[]; total?: number; capped?: boolean }>(
+      `api/prs/checks?${query}`,
+      undefined,
+      "GET",
+      abort.signal,
+    )
       .catch((error: unknown) => {
         if (!(error instanceof LocalRequestError) || error.status !== 404) throw error;
         return request<{ checks: FailingCheck[] }>(
@@ -132,9 +144,16 @@ export function useChecks(
           abort.signal,
         ).then((answer) => ({
           checks: (answer.checks ?? []).map((check): Check => ({ ...check, status: "completed" })),
+          total: undefined as number | undefined,
+          capped: undefined as boolean | undefined,
         }));
       })
-      .then((answer) => setRead({ checks: answer.checks ?? [] }))
+      .then((answer) =>
+        setRead({
+          checks: answer.checks ?? [],
+          ...(answer.capped ? { total: answer.total, capped: true } : {}),
+        }),
+      )
       .catch((error: unknown) => {
         if (abort.signal.aborted) return;
         setRead((previous) => ({
@@ -304,6 +323,14 @@ export function PullRequestChecks({
           );
         })}
       </ul>
+      {read.capped && read.total ? (
+        <p className="upnext-block-sub">
+          {`Showing ${formatCount(read.checks.length)} of ${formatCount(read.total)} checks, failing and running first. `}
+          <a href={`${url}/checks`} target="_blank" rel="noreferrer">
+            See all on GitHub
+          </a>
+        </p>
+      ) : null}
       {others > 0 ? (
         <button
           type="button"

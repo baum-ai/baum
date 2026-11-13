@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io/fs"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -16,8 +17,10 @@ import (
 // read. It keeps the document as it is on disk, with the fields readers use
 // (view) decoded on first use and shared by every reader until it changes.
 //
-// The service trusts what it kept while app.sqlite, and a WAL beside it, keep
-// the identity, size and modification time they had when it was read. When
+// The service trusts what it kept while app.sqlite, and the write-ahead log
+// beside it, keep the identity, size and modification time they had when it
+// was read. A commit appends to the log; app.sqlite itself moves only when a
+// checkpoint copies the log into it. When
 // they changed, or were modified within racyWindow of being looked at (a
 // later write could keep the same time on a coarse clock), it reads the
 // document again and decodes it only if its bytes differ. So a write by
@@ -302,7 +305,7 @@ func (s *Service) store(key string, cache diskCache, deferTimes bool) error {
 				s.set(key, newDocument(old.raw, old.stamp, &saved, &unsaved))
 				s.docsMu.Unlock()
 				s.wrote(key)
-				s.updated()
+				s.updatedBy(key)
 				return nil
 			}
 		}
@@ -334,8 +337,17 @@ func (s *Service) store(key string, cache diskCache, deferTimes bool) error {
 	if err != nil {
 		return err
 	}
-	s.updated()
+	s.updatedBy(key)
 	return nil
+}
+
+// updatedBy reports a write of the document under key, unless it is a
+// credential's budget record, which Cached does not read: polls and probes
+// save it on their own, and the review index must not rebuild for it.
+func (s *Service) updatedBy(key string) {
+	if !strings.HasSuffix(key, budgetSuffix) {
+		s.updated()
+	}
 }
 
 func (s *Service) wrote(key string) {

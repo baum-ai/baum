@@ -82,6 +82,9 @@ Download the desktop app:
 | Linux x86_64 | [AppImage](https://downloads.usebaum.com/desktop/linux-appimage?from=readme) or [`.deb`](https://downloads.usebaum.com/desktop/linux-deb?from=readme) |
 | Linux arm64 | [AppImage](https://downloads.usebaum.com/desktop/linux-arm64-appimage?from=readme) or [`.deb`](https://downloads.usebaum.com/desktop/linux-arm64-deb?from=readme) |
 
+Linux requires Ubuntu 24.04 or newer, or a compatible distribution with
+glibc 2.39 or newer and the corresponding system libraries.
+
 Every release, with checksums and the `baum` command line on its own, is on
 the [releases page](https://github.com/baum-ai/baum/releases).
 

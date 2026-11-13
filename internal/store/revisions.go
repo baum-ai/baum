@@ -122,11 +122,11 @@ func (s *Store) Revision(ctx context.Context, k Key, n int) (version int, revisi
 	if !k.valid() || n < 0 {
 		return 0, 0, fmt.Errorf("invalid repository, pull request or version")
 	}
-	db, err := s.database(false)
+	db, release, err := s.acquire(false)
 	if err != nil {
 		return 0, 0, err
 	}
-	defer db.Close()
+	defer release()
 	tx, err := db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
 		return 0, 0, err

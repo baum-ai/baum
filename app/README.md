@@ -6,7 +6,9 @@ host; Vite and frontend dependencies stay in Docker. Changes to the daemon-serve
 app and `../viewer` hot reload without rebuilding Go or Rust. See
 [desktop development](../desktop/README.md#development).
 
-A hidden window or closed tray panel makes no requests and repaints nothing.
+A hidden window or closed tray panel makes no requests and repaints nothing,
+daemon events included: they only mark what is stale until the window shows
+(`createEventGate` in `src/reload-events.ts`).
 Every timer that refreshes data or relative times (`useNow`, the plan usage,
 review, repository, updater, chat, transcript and GitHub connection polls and
 the tray panel's refresh) runs through `useVisibleInterval` in
@@ -16,6 +18,13 @@ the page becomes visible again. The polls that schedule each read after the last
 measure uses `visibleInterval`, from the same file. The entry points call `trackHidden`, which sets
 `data-hidden` on `<html>` while hidden; the viewer stylesheet pauses every
 animation then.
+
+`api/index`, `api/prs` and `api/document` carry an ETag. The app keeps the
+last answer of each path, up to 16 in all (`request` in `src/api.ts`), and asks
+again with `If-None-Match`; a 304 returns the kept object itself, so an
+unchanged snapshot sets no new state. Every daemon answer the app polls is
+`no-store`, so none goes through the webview's HTTP cache: WebKitGTK 2.50's
+cache path leaks memory in its network process.
 
 The desktop app's own screens are React too: `setup.html` mounts
 `src/desktop/setup.tsx` and `connecting.html` mounts `src/desktop/connecting.tsx`,
@@ -342,6 +351,19 @@ a comment over 16,000 characters, or one from an older daemon, which sends no
 once, without a dialog, reads **Resolving…** meanwhile, and removes the thread
 from the list once GitHub confirms; a refusal is shown under the thread.
 
+A review's own thread index is a snapshot from when it was generated, so a
+thread resolved after that would still read as unresolved. The review page
+reads the same list (`useLiveThreads` in `src/threads.tsx`) and hands it to the
+viewer as `liveThreads`, which the Activity tab, its badge and the findings
+those threads carry read over the snapshot (`withLiveThreads`). A thread in the
+list is open, one missing from a complete list is resolved, and one missing
+from a list cut short keeps its stored state. With discovery counting none
+unresolved, nothing is asked. An earlier version, a read not back yet and a
+read that failed keep the snapshot. A group's review holds its members'
+threads, landed members included, so the group page reads each member's list
+(`useLiveThreadsOf`) and hands the viewer them as one: complete only when
+every member's is, and the snapshot until every member's has answered.
+
 The checks (`useChecks` and `PullRequestChecks` in `src/checks.tsx`) are asked
 for by their row as soon as the panel shows it, open or not, with `GET
 api/prs/checks` and the head commit the panel shows (`head_sha`), again when
@@ -353,6 +375,9 @@ icon, its name (a GitHub Actions job's after its workflow, as GitHub lists it:
 and a **Details** link (`url`). While any check fails, only the failing ones
 (and any retried from the list) show, the rest behind **Show N other checks**,
 which **Hide other checks** folds again; with none failing every check shows.
+The daemon lists at most 100, failing first, then running (`capped`, `total`
+in its answer); when GitHub reports more, the panel adds "Showing 100 of 130
+checks, failing and running first" with a **See all on GitHub** link.
 The same bordered rows align the icon, name and status, and actions in the
 review's Activity pane, independently of the Up next panel.
 The row's title carries a pill counting them out of them all (`checksCount`):
@@ -1167,7 +1192,13 @@ request read, their owners, and the authors and base branches of every pull
 request read (`Known`, `valuesOf` in `src/pr-filter.ts`); one with nothing on
 the page counts 0. Each value is ticked while the query requires
 it with that operator and counted by how many of the page's pull requests
-picking it would leave. Picking a value adds it to the term of that field and
+picking it would leave (`countValues`: the query and each toggled query are
+parsed once and the counts of a list found in one go, again only when the pull
+requests, the query, the operator or the list change, not as the pointer moves).
+A list of more than 100 values shows the first 100 and any the query requires,
+then "N more: type in the box above to narrow the list". Such a list has a
+"Find…" box of its own that narrows its values and keeps the field and
+operator, so a value past the cap can be picked or excluded too. Picking a value adds it to the term of that field and
 operator as one more choice, or takes it out (with an `AND` beside it and
 parentheses left empty), and adds a term when there is none (around a query
 with `OR`, in parentheses); the menu stays open. Typed text also lists
@@ -1387,12 +1418,25 @@ included. The one confirmation left is for a fork or an author without write
 access (`isolation_required`, then `confirm_isolation`); a batch with such an
 entry asks the same. Refusals are shown in words, never as reason codes.
 Progress and completion arrive over the authenticated SSE stream; reconnection
-rebuilds the inbox and jobs. A `progress` event (a job queued, started, ended,
-or changed in anything but its usage) reads everything again; a `job` event, a
+rebuilds the inbox and jobs. Each kind of event reads only what it can change
+(`src/reload-events.ts`): a `progress` event (a job queued, started, ended, or
+changed in anything but its usage) reads the jobs and the groups, and, when the
+jobs read shows a job that ended, the index, the pull requests and the groups
+too; an `index` event reads the index, jobs, pull requests, clones, groups and
+inboxes; an `automatic` event reads the automatic state, settings, clones and
+pull requests; `reset` and a reconnect read everything. The first connection
+reads nothing: the page's first read covers it (an event published between that
+read and the stream opening is not replayed). A read that fails is repeated
+with the next one. The pull request and group
+pages refetch their documents when the index was read (a group page also when
+its group's version or update time changes), not for a job's progress alone; the jobs of the pull request and the Jobs page follow
+every read of the jobs. While the window is hidden, an event only marks what
+is stale (and `live`, `decisions` and `timeline` events mark theirs); one read
+of what was marked runs when the window shows again. A `job` event, a
 running job's usage every few seconds, changes only that job in the current jobs,
 and through them the PR page's own jobs, without a read. A `job` event for a job
 the current jobs lack, or whose state or phase differs from their copy, reads
-everything again; one older than their copy is ignored. Jobs appear newest first and can be cancelled. The app's
+the jobs and groups again; one older than their copy is ignored. Jobs appear newest first and can be cancelled. The app's
 global jobs are `GET api/jobs` without parameters, the current jobs (every running, queued and
 unseen failed job, and the latest of each kind for each pull request, group or repository), which
 is all `reviewJob`, `detailsJob`, `fixJob`, `groupJob`, `buildJobOf`, Up next and the tray need. The PR
@@ -1738,8 +1782,8 @@ restart interrupted); it is cancelled like any other. A stack group's review,
 which the daemon generates with its members' automatic reviews, carries no
 such note, like a group review generated by hand. Drafts get no automatic
 review, but Generate works on them as usual. `automatic` SSE events (a notice,
-and every repository's status after a settings change in any window) reload
-the page.
+and every repository's status after a settings change in any window) reread
+the automatic state, settings, clones and pull requests.
 Agent sessions in progress (`GET api/live-sessions`, tracked by the daemon from
 hook events, see "Live sessions" in ARCHITECTURE.md) show as a compact "Agent
 running" or "Agent idle" marker on the Pull requests rows of their pull request and on

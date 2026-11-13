@@ -52,9 +52,10 @@ type Service struct {
 	Sources []Source
 	Now     func() time.Time
 
-	mu     sync.Mutex
-	plans  []Plan
-	loaded time.Time
+	mu      sync.Mutex
+	plans   []Plan
+	loaded  time.Time
+	reading chan struct{}
 }
 
 // NewService reads Claude Code's usage endpoint and Codex's session files.
@@ -72,19 +73,55 @@ func (s *Service) now() time.Time {
 // Plans returns the cached plans, reading again when they are older than
 // CacheTTL, or older than MinRefresh when refresh is set.
 func (s *Service) Plans(ctx context.Context, refresh bool) []Plan {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	age := s.now().Sub(s.loaded)
-	fresh := age >= 0 && (age < CacheTTL && !refresh || age < MinRefresh)
-	if s.plans != nil && fresh {
-		return s.plans
+	for {
+		s.mu.Lock()
+		age := s.now().Sub(s.loaded)
+		fresh := age >= 0 && (age < CacheTTL && !refresh || age < MinRefresh)
+		if s.plans != nil && fresh {
+			plans := s.plans
+			s.mu.Unlock()
+			return plans
+		}
+		if ctx.Err() != nil {
+			plans := s.plans
+			s.mu.Unlock()
+			return plans
+		}
+		if reading := s.reading; reading != nil {
+			s.mu.Unlock()
+			select {
+			case <-reading:
+			case <-ctx.Done():
+			}
+			continue
+		}
+		s.reading = make(chan struct{})
+		s.mu.Unlock()
+		return s.read(ctx)
 	}
+}
+
+// read releases the flight even if a provider panics, as an HTTP handler's
+// panic must not leave all later refreshes waiting forever.
+func (s *Service) read(ctx context.Context) []Plan {
+	defer func() {
+		s.mu.Lock()
+		close(s.reading)
+		s.reading = nil
+		s.mu.Unlock()
+	}()
 	plans := make([]Plan, 0, len(s.Sources))
 	for _, source := range s.Sources {
 		plans = append(plans, source.Read(ctx))
 	}
-	s.plans, s.loaded = plans, s.now()
-	return plans
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	// A disconnected reader must not cache cancellation as an unavailable
+	// plan for everyone else. Waiters may retry with their own context.
+	if ctx.Err() == nil {
+		s.plans, s.loaded = plans, s.now()
+	}
+	return s.plans
 }
 
 // Handler serves GET /api/plan-usage; ?refresh=1 asks for a newer reading,
