@@ -1,5 +1,6 @@
 import { forgetUIState } from "./ui-state";
-import { mockStateFetch } from "./ui-state-test-helper";
+import { mockStateFetch, seedUIState } from "./ui-state-test-helper";
+import { pendingReviewKey, pendingReviewState } from "./pending-review-model";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
@@ -230,6 +231,40 @@ it("sends one review with each comment on its line", async () => {
   expect(node.textContent).toContain("Your review is on GitHub.");
   expect(Object.values(loadProgress(progressKey(doc)).notes)).toEqual([]);
   expect(changed).toHaveBeenCalled();
+});
+
+it("sends a comment saved to the pull request's review along with the walkthrough's", async () => {
+  // The session panel's agent proposed it, and the person saved it.
+  const pr = entry().pull_request;
+  seedUIState(`api/ui-state/review?key=${encodeURIComponent(pendingReviewKey(pr))}`, {
+    comments: [
+      {
+        id: "p1",
+        target: { kind: "general", id: "", title: "The pull request" },
+        body: "Cap the retries",
+        place: null,
+        head: doc.review.head,
+        created: 1,
+      },
+    ],
+    note: "",
+  });
+  await act(() => pendingReviewState(pr).load());
+  render();
+  commentAndWrapUp("Trusts a client header");
+  expect(node.textContent).toContain("Cap the retries");
+  expect(button("Approve").getAttribute("aria-disabled")).toBe("true");
+  await act(async () => exact("Send comments").click());
+  expect(posted).toEqual([
+    expect.objectContaining({
+      event: "COMMENT",
+      body: expect.stringContaining("Cap the retries"),
+      comments: [expect.objectContaining({ body: "Trusts a client header" })],
+    }),
+  ]);
+  // What was sent leaves the pull request's review.
+  await act(async () => {});
+  expect(pendingReviewState(pr).get().value.comments).toEqual([]);
 });
 
 it("offers neither a verdict on the reader's own pull request", () => {

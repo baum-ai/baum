@@ -27,6 +27,7 @@ import { githubToast, REVIEW_SENT_TITLES } from "./github-toast";
 import { useToast } from "./toast";
 import { PullRequestState } from "./inbox";
 import { useShortcuts } from "./shortcuts";
+import { pendingReviewState, pendingSubmission, placeText } from "./pending-review-model";
 import {
   buildTour,
   commentedStops,
@@ -1114,7 +1115,11 @@ function Submit({
   const [sending, setSending] = useState<SubmitState>({ state: "idle" });
   const toast = useToast();
   const comments = commentedStops(tour, progress);
-  const count = comments.length;
+  // Comments saved to the pull request's own review, such as one the session
+  // panel's agent proposed, go out with this review too.
+  const pending = useUIState(pendingReviewState(entry.pull_request));
+  const saved = pending.value.comments;
+  const count = comments.length + saved.length;
   const own = entry.pull_request.authored_by_me;
   const hasNote = Boolean(progress.note.trim());
   const events: { id: ReviewEvent; label: string; ok: boolean; hint: string }[] = [
@@ -1153,11 +1158,27 @@ function Submit({
   const send = async (inline: boolean) => {
     setSending({ state: "sending" });
     const sent = progress;
-    try {
-      const answer = await request<{ url: string }>(
-        "api/prs/review",
-        reviewSubmission(document, tour, sent, event, inline),
+    const sentSaved = saved;
+    const submission = reviewSubmission(document, tour, sent, event, inline);
+    if (sentSaved.length) {
+      const others = pendingSubmission(
+        { ...entry.pull_request, head_sha: submission.head_sha },
+        { comments: sentSaved, note: "" },
+        event,
+        inline,
       );
+      submission.comments.push(...others.comments);
+      submission.body = [submission.body, others.body].filter(Boolean).join("\n\n");
+    }
+    try {
+      const answer = await request<{ url: string }>("api/prs/review", submission);
+      if (sentSaved.length) {
+        const posted = new Map(sentSaved.map((c) => [c.id, c.body]));
+        pending.update((current) => ({
+          ...current,
+          comments: current.comments.filter((c) => posted.get(c.id) !== c.body),
+        }));
+      }
       // What was said is on GitHub now; what was looked at stays, and so
       // does anything written while it was being sent.
       setProgress((current) => ({
@@ -1238,6 +1259,15 @@ function Submit({
                   {stop.where ? ` · ${stop.where}` : " · in the review body"}
                 </span>
                 <p>{progress.notes[stop.id]}</p>
+              </li>
+            ))}
+            {saved.map((comment) => (
+              <li key={comment.id}>
+                <span>
+                  {comment.target.title}
+                  {comment.place ? ` · ${placeText(comment.place)}` : " · in the review body"}
+                </span>
+                <p>{comment.body}</p>
               </li>
             ))}
           </ul>
