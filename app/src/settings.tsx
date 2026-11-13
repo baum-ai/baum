@@ -3366,6 +3366,24 @@ function GeneralSection() {
           </select>
         </SettingRow>
         <SettingRow
+          label="Review page"
+          htmlFor="review-page"
+          detail="How a pull request's review opens. Tiles shows what matters on one screen, each part a tile to open."
+        >
+          <select
+            id="review-page"
+            disabled={!ready}
+            className="local-field settings-select"
+            value={preferences.review_page}
+            onChange={(event) =>
+              update({ review_page: event.target.value as typeof preferences.review_page })
+            }
+          >
+            <option value="full">Full review</option>
+            <option value="tiles">Tiles (preview)</option>
+          </select>
+        </SettingRow>
+        <SettingRow
           label="Page shortcut modifier"
           htmlFor="page-modifier"
           detail="The key held with 1 to 8 to open the sidebar's pages."

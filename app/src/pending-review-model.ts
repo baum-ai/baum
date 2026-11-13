@@ -7,6 +7,7 @@ import {
 import type { Selection } from "@baum/viewer/review-selection";
 import type { PR } from "./api";
 import { uiState } from "./ui-state";
+import { tileCommentTarget } from "./tiles/comments";
 
 /** Where a comment lands on GitHub: a line of the reviewed diff, or a range
  *  ending on it. */
@@ -61,10 +62,13 @@ export function placeOf(anchors: Anchor[], hunks: Map<string, IndexedHunk>): Com
   return null;
 }
 
-/** What a comment is about: the item being read when it was written. */
+/** What a comment is about: the item being read when it was written. A tile
+ *  of the tiles page that is no section, risk or file is a target of its
+ *  own. */
 export type CommentTarget = {
-  kind: "general" | "section" | "risk" | "file";
-  /** The section's or risk's id, or the file's path; empty for general. */
+  kind: "general" | "section" | "risk" | "file" | "tile";
+  /** The section's, risk's or tile's id, or the file's path; empty for
+   *  general. */
   id: string;
   title: string;
 };
@@ -123,8 +127,8 @@ export function placeText(place: CommentPlace | null): string {
   return place ? `${basename(place.path)}:${place.line}` : "";
 }
 
-/** What `c` comments on: the section, risk or file being read, placed on the
- *  first line of code it cites; anything else is a general comment. */
+/** What `c` comments on: the section, risk, file or tile being read, placed
+ *  on the first line of code it cites; anything else is a general comment. */
 export function commentTarget(
   document: ReviewDocument | null,
   selection: Selection,
@@ -151,6 +155,10 @@ export function commentTarget(
       const place = placeOf(cited.length ? cited : firstHunk(section.hunks), hunks);
       return { target: { kind: "section", id: section.id, title: section.title }, place, head };
     }
+  }
+  if (selection.kind === "tile") {
+    const tile = tileCommentTarget(document, selection.id, selection.item, firstSentence);
+    if (tile) return { target: tile.target, place: placeOf(tile.anchors, hunks), head };
   }
   if (selection.kind === "file") {
     const ids = document.index.hunks.filter((h) => h.path === selection.id).map((h) => h.id);
