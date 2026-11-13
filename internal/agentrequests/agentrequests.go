@@ -198,7 +198,8 @@ type Request struct {
 	Suggestions []Suggestion `json:"suggestions"`
 	Questions   []Question   `json:"questions"`
 	// Altered marks a request whose tool, input or questions are not shown
-	// exactly as the agent sent them: a value was cut at its bound, cleaned
+	// exactly as the agent sent them: a question's text was cut at its bound
+	// (a permission request that would be cut is not shown at all), cleaned
 	// (control or format characters, invalid UTF-8, blanks folded or
 	// trimmed) or had a secret masked. The app still shows it; an agent
 	// helping the person cannot have it allowed (only the person, who can

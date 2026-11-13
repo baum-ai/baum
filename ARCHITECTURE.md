@@ -5314,7 +5314,7 @@ saved, in the `state/agent-requests` document in `app.sqlite`.
   `{"requests":[{"id","agent","session_id","kind","tool","created_at","input":[{"label","value","code"?}],"suggestions":[{"id","label"}],"questions":[{"question","header"?,"multi_select","options":[{"label","description"?}]}],"altered"?}],"messages":[{"agent","session_id","text","queued_at"}],"settings":{"codex_approvals"}}`,
   oldest request first, message text masked. `altered` is true when the
   request's tool, input, questions or options are not shown exactly as the
-  agent sent them (a value cut at its bound, cleaned of control or format
+  agent sent them (a question's text cut at its bound, cleaned of control or format
   characters or folded blanks, or with a secret masked); the MCP server's
   `answer_request` then never proposes allowing it. `POST
   /api/agent-requests/{id}/answer` takes
