@@ -2,10 +2,12 @@ package reviewindex
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
 	"sync"
@@ -15,6 +17,7 @@ import (
 
 	"github.com/baum-ai/baum/internal/appdb"
 	"github.com/baum-ai/baum/internal/discovery"
+	"github.com/baum-ai/baum/internal/github"
 	"github.com/baum-ai/baum/internal/privatefs"
 	"github.com/baum-ai/baum/internal/repos"
 	"github.com/baum-ai/baum/internal/store"
@@ -303,21 +306,109 @@ func TestBuildReportsNextChange(t *testing.T) {
 			}), nil
 		},
 	}
-	_, next, err := s.build(context.Background(), now)
+	_, next, err := s.build(context.Background(), now, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := fetched.Add(2*time.Minute + time.Nanosecond); !next.Equal(want) {
-		t.Fatalf("observation: next %v want %v", next, want)
+	// The age of an observation is no change instant: the lease comes first.
+	if !next.Equal(lease) {
+		t.Fatalf("observation: next %v want the lease %v", next, lease)
 	}
 	fetched = now.Add(-5 * time.Minute)
 	s.Discovery.(source)["acme/a"].Observations[0].FetchedAt = fetched
-	if _, next, _ = s.build(context.Background(), now); !next.Equal(lease) {
+	if _, next, _ = s.build(context.Background(), now, nil); !next.Equal(lease) {
 		t.Fatalf("lease: next %v want %v", next, lease)
 	}
 	lease = now.Add(-time.Second)
-	if _, next, _ = s.build(context.Background(), now); !next.Equal(poll) {
-		t.Fatalf("poll: next %v want %v", next, poll)
+	if _, next, _ = s.build(context.Background(), now, nil); !next.IsZero() {
+		t.Fatalf("poll deadline scheduled a change: %v", next)
+	}
+}
+
+// Time alone does not change the index: an observation fetched a minute ago
+// reads the same three minutes on, and its age gives no next-change instant.
+func TestBuildDoesNotChangeWithObservationAge(t *testing.T) {
+	now := time.Now()
+	fetched := now.Add(-time.Minute)
+	s := &Service{
+		Registry: registry{{ID: "c", Repository: "acme/a", CommonDir: "/c", Available: true}},
+		Discovery: source{"acme/a": {
+			PullRequests: []discovery.PullRequest{{Number: 1, HeadSHA: "h", State: "OPEN"}},
+			Observations: []discovery.Observation{{Number: 1, HeadSHA: "h", State: "OPEN", FetchedAt: fetched}},
+			FetchedAt:    fetched,
+			NextPoll:     now.Add(time.Hour),
+		}},
+		OpenStore: func(string) (Reader, error) {
+			return readerFunc(func(context.Context) ([]store.Summary, error) { return nil, nil }), nil
+		},
+	}
+	first, next, err := s.build(context.Background(), now, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	later, _, err := s.build(context.Background(), now.Add(3*time.Minute), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(first, later) {
+		t.Fatalf("snapshot changed with time alone:\n%+v\n%+v", first, later)
+	}
+	if first.Entries[0].Stale || first.Entries[0].ObservedAt != fetched.UTC().Format(time.RFC3339Nano) {
+		t.Fatalf("entry %+v: want fresh with its observation's fetch time", first.Entries[0])
+	}
+	if next.Equal(fetched.Add(2*time.Minute)) || next.Equal(fetched.Add(2*time.Minute+time.Nanosecond)) {
+		t.Fatalf("next change %v follows the observation's age", next)
+	}
+}
+
+// Without an applied observation, an entry carries discovery's fetch time but
+// no observation time, so the app does not age it.
+func TestBuildLeavesObservedAtEmptyWithoutObservation(t *testing.T) {
+	now := time.Now()
+	fetched := now.Add(-time.Hour)
+	s := &Service{
+		Registry: registry{{ID: "c", Repository: "acme/a", CommonDir: "/c", Available: true}},
+		Discovery: source{"acme/a": {
+			PullRequests: []discovery.PullRequest{{Number: 1, HeadSHA: "h", State: "OPEN"}},
+			FetchedAt:    fetched,
+			NextPoll:     now.Add(time.Hour),
+		}},
+		OpenStore: func(string) (Reader, error) {
+			return readerFunc(func(context.Context) ([]store.Summary, error) { return nil, nil }), nil
+		},
+	}
+	out, _, err := s.build(context.Background(), now, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if e := out.Entries[0]; e.ObservedAt != "" || e.MetadataFetchedAt == "" || e.Stale {
+		t.Fatalf("entry %+v: want discovery's fetch time, no observation time, not stale", e)
+	}
+}
+
+// An observation older than discovery's own fetch is not applied, so the entry
+// has no observation time and does not age.
+func TestBuildLeavesObservedAtEmptyForSkippedObservation(t *testing.T) {
+	now := time.Now()
+	fetched := now.Add(-time.Minute)
+	s := &Service{
+		Registry: registry{{ID: "c", Repository: "acme/a", CommonDir: "/c", Available: true}},
+		Discovery: source{"acme/a": {
+			PullRequests: []discovery.PullRequest{{Number: 1, HeadSHA: "h", State: "OPEN"}},
+			Observations: []discovery.Observation{{Number: 1, HeadSHA: "old", State: "OPEN", FetchedAt: fetched.Add(-time.Hour)}},
+			FetchedAt:    fetched,
+			NextPoll:     now.Add(time.Hour),
+		}},
+		OpenStore: func(string) (Reader, error) {
+			return readerFunc(func(context.Context) ([]store.Summary, error) { return nil, nil }), nil
+		},
+	}
+	out, _, err := s.build(context.Background(), now, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if e := out.Entries[0]; e.ObservedAt != "" || e.Stale || e.PullRequest.HeadSHA != "h" {
+		t.Fatalf("entry %+v: want discovery's head, no observation time, not stale", e)
 	}
 }
 
@@ -604,5 +695,41 @@ func TestCacheHandlerLeavesSharedSnapshot(t *testing.T) {
 	}
 	if builds != 1 || !entries[0].Historical || entries[1].PullRequest.Number != 2 {
 		t.Fatal("builds", builds, entries)
+	}
+}
+
+// A discovery may age Cached for live readers while keeping its index view stable.
+type stableDiscovery struct{ source }
+
+func (s stableDiscovery) Cached(ctx context.Context, r github.Repository) (discovery.Snapshot, error) {
+	v, err := s.source.Cached(ctx, r)
+	v.Stale = true
+	return v, err
+}
+func (s stableDiscovery) CachedStable(ctx context.Context, r github.Repository) (discovery.Snapshot, error) {
+	return s.source.Cached(ctx, r)
+}
+
+func TestBuildUsesStableDiscoveryFreshness(t *testing.T) {
+	now := time.Now()
+	s := &Service{
+		Registry: registry{{Repository: "acme/a"}},
+		Discovery: stableDiscovery{source{"acme/a": {
+			PullRequests: []discovery.PullRequest{{Number: 1, HeadSHA: "h", State: "OPEN"}},
+			FetchedAt:    now, NextPoll: now.Add(time.Minute),
+		}}},
+	}
+	before, _, err := s.build(context.Background(), now, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	after, next, err := s.build(context.Background(), now.Add(3*time.Minute), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, _ := json.Marshal(before)
+	b, _ := json.Marshal(after)
+	if string(a) != string(b) || len(after.Entries) != 1 || after.Entries[0].Stale || !next.IsZero() {
+		t.Fatalf("deadline changed index: before=%s after=%s next=%v", a, b, next)
 	}
 }

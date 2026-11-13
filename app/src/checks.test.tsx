@@ -186,3 +186,15 @@ it("offers a log only for a failing check that has one", async () => {
   ]);
   expect(button("Show log")).toBeUndefined();
 });
+
+it("says how many checks GitHub lists when the daemon capped them", async () => {
+  const doc = document_();
+  const live = liveDetailsChecks(doc, pr(doc.review.head), {
+    checks: [check("build", "failure"), check("test", "success")],
+    total: 130,
+    capped: true,
+  });
+  await act(async () => root.render(<>{live.content}</>));
+  expect(node.textContent).toContain("Showing 2 of 130 checks, failing and running first.");
+  expect(node.querySelector("a[href$='/pull/7/checks']")?.textContent).toBe("See all on GitHub");
+});

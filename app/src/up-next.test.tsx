@@ -7,6 +7,7 @@ import { App } from "./app";
 import type { Entry, Job, LiveSession, ReviewGroup } from "./api";
 import { FOR_ME } from "./inboxes";
 import {
+  metadataStale,
   othersState,
   queueItems,
   snoozeOptions,
@@ -291,7 +292,7 @@ beforeEach(() => {
               ? [{ id: "clone", repository: "acme/demo", path: "/c", available: true }]
               : path.endsWith("api/live-sessions")
                 ? { sessions: liveList }
-                : path.endsWith("api/prs") || path.endsWith("api/background")
+                : path.endsWith("api/prs?view=health") || path.endsWith("api/background")
                   ? []
                   : path.endsWith("api/jobs")
                     ? { jobs: jobsList }
@@ -1838,4 +1839,18 @@ it("counts a review as done once its request goes, while the pull request is lis
   expect(groups()).toContain("Not waiting on you · 2");
   expect(list()).toEqual(expect.arrayContaining(["Change 1", "Change 6"]));
   expect(progress()).toBe("1 of 4");
+});
+
+it("metadataStale: stale by the repository flag or by observation age over two minutes", () => {
+  const now = Date.parse("2026-01-01T12:00:00Z");
+  const at = (seconds: number) => new Date(now - seconds * 1000).toISOString();
+  expect(metadataStale({ stale: false, observed_at: at(30) }, now)).toBe(false);
+  expect(metadataStale({ stale: false, observed_at: at(120) }, now)).toBe(false);
+  expect(metadataStale({ stale: false, observed_at: at(121) }, now)).toBe(true);
+  expect(metadataStale({ stale: false }, now)).toBe(false);
+  expect(metadataStale({ stale: true }, now)).toBe(true);
+  expect(metadataStale({ stale: true, observed_at: at(1) }, now)).toBe(true);
+  // Discovery's own fetch time alone does not age an entry.
+  const discoveryOnly = { stale: false, metadata_fetched_at: at(3600) };
+  expect(metadataStale(discoveryOnly, now)).toBe(false);
 });

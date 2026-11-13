@@ -101,10 +101,25 @@ func TestProbeComparesWithTheLastCompletePoll(t *testing.T) {
 	}
 
 	// A rate-limited probe records the budget, and the next one waits for it
-	// without asking.
+	// without asking. The budget is not what Cached reads: no change is
+	// reported for it.
+	updates := 0
+	s.Updated = func() { updates++ }
+	writes := func() (n uint64) {
+		s.writesMu.Lock()
+		defer s.writesMu.Unlock()
+		for _, w := range s.writes {
+			n += w
+		}
+		return n
+	}
+	written := writes()
 	probe = `{"errors":[{"type":"RATE_LIMITED"}]}`
 	if _, err := s.Probe(context.Background(), []github.Repository{app}); err != errRateLimit {
 		t.Fatalf("limited probe %v", err)
+	}
+	if writes() == written || updates != 0 {
+		t.Fatalf("limited probe: budget written %v, %d changes reported", writes() != written, updates)
 	}
 	asked = nil
 	if _, err := s.Probe(context.Background(), []github.Repository{app}); err != errRateLimit || asked != nil {

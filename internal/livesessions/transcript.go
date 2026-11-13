@@ -317,13 +317,17 @@ type Location struct {
 	main string
 	// store is Cursor's database.
 	store string
+	// recordOnly has a Cursor Version follow only the conversation's own
+	// record, which is all its name needs.
+	recordOnly bool
 }
 
 // Path is the session's main transcript file, empty for a Cursor
 // conversation.
 func (s Location) Path() string { return s.main }
 
-// Size is the total size of the session's own files; zero for a Cursor
+// Size is the total size of the session's own files, a compressed rollout by
+// its decoded size; zero for a Cursor
 // conversation, which shares one database with every other.
 func (s Location) Size() (int64, error) {
 	var total int64
@@ -332,14 +336,22 @@ func (s Location) Size() (int64, error) {
 		if err != nil {
 			return 0, err
 		}
-		total += info.Size()
+		total += codextranscript.DecodedSize(f.Path, info)
 	}
 	return total, nil
 }
 
 // Version is a fingerprint of the size and modification time of every file
-// the transcript is read from.
+// the transcript is read from; for a Cursor conversation, of its record in the
+// database, falling back to the database's own size and times.
 func (s Location) Version() (string, error) {
+	if s.store != "" && s.ID != "" {
+		// Cursor writes its database all the time, for every conversation. The
+		// conversation's own records change only with it.
+		if revision, err := cursorRevision(s.store, s.ID, s.recordOnly); err == nil {
+			return revision, nil
+		}
+	}
 	paths := make([]string, 0, len(s.files)+2)
 	for _, f := range s.files {
 		paths = append(paths, f.Path)
@@ -416,9 +428,6 @@ func Locate(home, cursorStore, agent, id, path string) (Location, error) {
 		return Location{Vendor: vendors.ClaudeCode, ID: id, files: files, main: main}, nil
 	case AgentCodex:
 		root := filepath.Join(home, ".codex", "sessions")
-		rollout := func(name string) bool {
-			return strings.HasPrefix(name, "rollout-") && strings.HasSuffix(name, ".jsonl")
-		}
 		if path == "" {
 			found, err := findRollout(filepath.Join(home, ".codex"), id)
 			if err != nil {
@@ -426,7 +435,7 @@ func Locate(home, cursorStore, agent, id, path string) (Location, error) {
 			}
 			path = found
 		}
-		main, err := inStore(root, path, rollout)
+		main, err := inStore(root, compressedSince(path), codextranscript.IsRolloutName)
 		if err != nil {
 			return Location{}, err
 		}
@@ -446,6 +455,21 @@ func Locate(home, cursorStore, agent, id, path string) (Location, error) {
 		return Location{Vendor: vendors.Cursor, ID: id, store: resolved}, nil
 	}
 	return Location{}, unavailable(fmt.Sprintf("baum cannot read the transcripts of %s sessions.", agent))
+}
+
+// compressedSince is the rollout at path, or its compressed copy when Codex
+// compressed it after the path was recorded and the plain file is gone.
+func compressedSince(path string) string {
+	if codextranscript.Compressed(path) {
+		return path
+	}
+	if _, err := os.Lstat(path); !errors.Is(err, fs.ErrNotExist) {
+		return path
+	}
+	if _, err := os.Lstat(path + ".zst"); err == nil {
+		return path + ".zst"
+	}
+	return path
 }
 
 // inStore resolves path and reports it when it is a regular file inside the
@@ -477,9 +501,9 @@ func inStore(root, path string, named func(string) bool) (string, error) {
 // findRollout looks a Codex session up by its id, for a session whose hooks
 // named no path (one restored from StateFile): Codex names each rollout
 // after its thread, so it is the one rollout under sessions whose name ends in
-// the id and whose first line says it is that thread's root. Only names are
-// walked, not the store's other rollouts, which Codex compresses as they age
-// (.jsonl.zst, which baum does not read).
+// the id (plain, or compressed as Codex does as they age) and whose first line
+// says it is that thread's root. Only names are walked, not the store's other
+// rollouts. A plain rollout is preferred to a compressed copy beside it.
 func findRollout(codexHome, id string) (string, error) {
 	if !safeID.MatchString(id) {
 		return "", unavailable("Codex has no transcript of this session on this computer.")
@@ -489,8 +513,16 @@ func findRollout(codexHome, id string) (string, error) {
 		if err != nil || entry.IsDir() {
 			return nil
 		}
-		name := entry.Name()
-		if !strings.HasPrefix(name, "rollout-") || !strings.HasSuffix(name, "-"+id+".jsonl") || !rootOf(path, id) {
+		name := codextranscript.PlainName(entry.Name())
+		if !codextranscript.IsRolloutName(name) || !strings.HasSuffix(name, "-"+id+".jsonl") {
+			return nil
+		}
+		if codextranscript.Compressed(path) {
+			if _, err := os.Stat(codextranscript.PlainPath(path)); err == nil {
+				path = codextranscript.PlainPath(path)
+			}
+		}
+		if !rootOf(path, id) {
 			return nil
 		}
 		found = path
@@ -504,7 +536,7 @@ func findRollout(codexHome, id string) (string, error) {
 
 // rootOf reports whether the rollout at path starts thread id's root.
 func rootOf(path, id string) bool {
-	f, err := os.Open(path)
+	f, err := codextranscript.OpenRollout(path)
 	if err != nil {
 		return false
 	}
@@ -557,4 +589,17 @@ func (s Location) Graph() (*session.Graph, error) {
 	}
 	graph, _, err := sessions.Map(found)
 	return graph, err
+}
+
+// cursorRevision fingerprints one conversation's record in Cursor's database.
+func cursorRevision(store, id string, recordOnly bool) (string, error) {
+	db, err := cursortranscript.Open(store)
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = db.Close() }()
+	if recordOnly {
+		return db.RecordRevision(id)
+	}
+	return db.Revision(id)
 }

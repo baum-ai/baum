@@ -67,6 +67,16 @@
   color: var(--text-primary);
   font-size: var(--text-base);
 }
+.filter-menu-sub-search {
+  min-width: 0;
+  margin: 0 0 0.3rem;
+  padding: 0.4rem 0.6rem;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  background: none;
+  color: var(--text-primary);
+  font-size: var(--text-base);
+}
 .filter-menu-search:focus {
   outline: none;
 }

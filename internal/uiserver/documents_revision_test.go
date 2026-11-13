@@ -72,12 +72,12 @@ func TestRewrittenDocumentIsNeverServedStale(t *testing.T) {
 
 	first := get("/api/document", "")
 	etag := first.Header().Get("ETag")
-	if first.Code != 200 || first.Body.String() != string(saved.Document) || etag == "" {
-		t.Fatalf("first read: %d %q %q", first.Code, etag, first.Body.String())
+	if first.Code != 200 || first.Body.String() != string(saved.Document) || etag == "" || first.Header().Get("Cache-Control") != "no-store" {
+		t.Fatalf("first read: %d %q %q %v", first.Code, etag, first.Body.String(), first.Header())
 	}
 	for range 3 {
-		if w := get("/api/document", etag); w.Code != 304 || w.Body.Len() != 0 {
-			t.Fatalf("unchanged document: %d %q", w.Code, w.Body.String())
+		if w := get("/api/document", etag); w.Code != 304 || w.Body.Len() != 0 || w.Header().Get("Cache-Control") != "no-store" || w.Header().Get("ETag") != etag {
+			t.Fatalf("unchanged document: %d %q %v", w.Code, w.Body.String(), w.Header())
 		}
 		if w := get("/api/sessions", ""); w.Code != 200 {
 			t.Fatalf("sessions: %d", w.Code)

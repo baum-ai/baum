@@ -38,6 +38,7 @@ import { useVersionLoader } from "./version-cache";
 import { openActiveBlock, reviewKeyStep, toggleActiveBlock, useShortcuts } from "./shortcuts";
 import { LoadingStatus, NineDots } from "./nine-dots";
 import { listedForGroup, useGroupRail, type RailMember } from "./group-rail";
+import { useLiveThreadsOf } from "./threads";
 
 const errorText = (error: unknown) =>
   error instanceof Error ? error.message : "Local request failed.";
@@ -165,6 +166,33 @@ export function GroupPage({
       ? history.state.document
       : null
     : doc;
+  // The group review's threads are its members' (removed and landed included), as a
+  // snapshot from when it was generated; the Activity tab reads them as
+  // GitHub has them now.
+  const threadsNow = useLiveThreadsOf(
+    group.repository,
+    [
+      ...new Set([
+        ...landed.map(({ number }) => number),
+        ...group.members,
+        ...(doc?.stack?.members.map(({ number }) => number) ?? []),
+        ...(viewedDocument?.stack?.members.map(({ number }) => number) ?? []),
+      ]),
+    ].map((number) => {
+      const same = entries.filter(
+        (e) =>
+          sameRepository(e.pull_request.repository, group.repository) &&
+          e.pull_request.number === number,
+      );
+      const entry = same.find((e) => !e.historical) ?? same[0];
+      return {
+        number,
+        unresolved: entry?.pull_request.unresolved ?? null,
+        capped: entry?.pull_request.unresolved_capped ?? false,
+      };
+    }),
+    revision,
+  );
   // Decisions, Sessions and Commits come from the members' own saved reviews:
   // the daemon has no group routes for them.
   const railMembers: RailMember[] = [...landed, ...members].flatMap(({ number, entry }) => {
@@ -411,6 +439,9 @@ export function GroupPage({
           return true;
         }}
         document={doc}
+        liveThreads={(shown) =>
+          sameRepository(shown.review.repository, group.repository) ? threadsNow : null
+        }
         history={history}
         versions={provenance.map((p) => p.version).filter((v) => v !== doc?.review.version)}
         loadVersion={loadVersion}

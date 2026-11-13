@@ -1,6 +1,6 @@
 {
   "format": 2,
-  "version": "2026-10-27",
+  "version": "2026-11-12",
   "models": {
     "claude-fable-5": {
       "input": 10,
@@ -16,6 +16,14 @@
       "cache_read": 0.25,
       "cache_write": 12.5,
       "cache_write_1h": 20,
+      "source": "litellm"
+    },
+    "claude-fable-5-2": {
+      "input": 8,
+      "output": 40,
+      "cache_read": 0.2,
+      "cache_write": 10,
+      "cache_write_1h": 16,
       "source": "litellm"
     },
     "claude-haiku-3": {
@@ -74,6 +82,14 @@
       "cache_read": 0.25,
       "cache_write": 12.5,
       "cache_write_1h": 20,
+      "source": "litellm"
+    },
+    "claude-mythos-5-2": {
+      "input": 8,
+      "output": 40,
+      "cache_read": 0.2,
+      "cache_write": 10,
+      "cache_write_1h": 16,
       "source": "litellm"
     },
     "claude-opus-3": {
