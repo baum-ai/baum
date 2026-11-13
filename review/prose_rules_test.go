@@ -47,7 +47,7 @@ func proseFindingsOf(t *testing.T, mutate func(summary, section map[string]any))
 	checkNoError(t, err)
 	doc := mustDecode(t, authoredFixture())
 	mutate(doc["summary"].(map[string]any), doc["sections"].([]any)[0].(map[string]any))
-	_, findings := v.Prepare(tileJSON(t, doc), proseBundle(), t.TempDir())
+	_, findings := v.Prepare(encodeJSON(t, doc), proseBundle(), t.TempDir())
 	return findings
 }
 
@@ -373,7 +373,7 @@ func TestRecommendationIsRequiredForAuthoredDocumentsOnly(t *testing.T) {
 	checkNoError(t, err)
 	// The model is asked for the key, null or not; the stored contract does not.
 	for name, build := range map[string]func() ([]byte, error){
-		"model":   func() ([]byte, error) { return v.ModelSchema(nil) },
+		"model":   func() ([]byte, error) { return v.Schema, nil },
 		"outline": v.OutlineSchema,
 	} {
 		schema, err := build()
@@ -430,7 +430,7 @@ func TestRecommendationSurvivesCompletionRefreshAndStaging(t *testing.T) {
 
 	doc := mustDecode(t, authoredFixture())
 	doc["summary"].(map[string]any)["recommendation"] = recommendation
-	completed, findings := v.Complete(tileJSON(t, doc), proseBundle(), "", "model", now)
+	completed, findings := v.Complete(encodeJSON(t, doc), proseBundle(), "", "model", now)
 	checkEqual(t, "", findings)
 	check("completed", completed)
 	refreshed, err := v.Refresh(completed, proseBundle(), now.Add(time.Hour))
@@ -443,14 +443,14 @@ func TestRecommendationSurvivesCompletionRefreshAndStaging(t *testing.T) {
 	// An explicit null stays null, and a stored document without the key
 	// stays without it through a refresh.
 	doc["summary"].(map[string]any)["recommendation"] = nil
-	completed, findings = v.Complete(tileJSON(t, doc), proseBundle(), "", "model", now)
+	completed, findings = v.Complete(encodeJSON(t, doc), proseBundle(), "", "model", now)
 	checkEqual(t, "", findings)
 	if value, present := mustDecode(t, completed)["summary"].(map[string]any)["recommendation"]; !present || value != nil {
 		t.Errorf("recommendation = %v (present %v), want null", value, present)
 	}
 	old := mustDecode(t, completed)
 	delete(old["summary"].(map[string]any), "recommendation")
-	refreshed, err = v.Refresh(tileJSON(t, old), proseBundle(), now.Add(time.Hour))
+	refreshed, err = v.Refresh(encodeJSON(t, old), proseBundle(), now.Add(time.Hour))
 	checkNoError(t, err)
 	if _, present := mustDecode(t, refreshed)["summary"].(map[string]any)["recommendation"]; present {
 		t.Error("refresh added a recommendation to a document that had none")
