@@ -188,13 +188,20 @@ func (s *Server) Handler() http.Handler {
 			return
 		}
 		// Browsers label every request with where it came from. The app's own
-		// requests are same-origin and a typed or native navigation is none;
-		// anything a page or frame from another origin sends, even with the
-		// session cookie attached, is refused before any route sees it. Clients
-		// that are not browsers send no label.
+		// requests are same-origin and a typed or native navigation is none.
+		// Requests from inside a page or frame of another origin (fetch,
+		// subresources, frame navigations, form posts) are refused before any
+		// route sees them, even with the session cookie attached. A top-level
+		// GET navigation is let through, so a link or the desktop shell can
+		// open the app from elsewhere; it can read nothing. Clients that are
+		// not browsers send no label.
 		if site := r.Header.Get("Sec-Fetch-Site"); site == "cross-site" || site == "same-site" {
-			http.Error(w, "cross-site request refused", http.StatusForbidden)
-			return
+			topLevel := (r.Method == "GET" || r.Method == "HEAD") &&
+				r.Header.Get("Sec-Fetch-Mode") == "navigate" && r.Header.Get("Sec-Fetch-Dest") == "document"
+			if !topLevel {
+				http.Error(w, "cross-site request refused", http.StatusForbidden)
+				return
+			}
 		}
 		if r.URL.Path == mcpPath {
 			s.serveMCP(w, r)

@@ -407,47 +407,73 @@ func TestFetchMetadataRefusesCrossSiteRequests(t *testing.T) {
 		{name: "mcp", method: "POST", path: "/api/mcp", body: `{}`, auth: "Bearer mcp-token"},
 		{name: "static asset", method: "GET", path: s.appPath() + "app.js", withCookie: true},
 	}
-	for _, site := range []struct {
-		value   string
-		refused bool
+	// kinds are the ways a browser can make a request: its Sec-Fetch-Mode
+	// and Sec-Fetch-Dest, and whether it replaces the route's method.
+	for _, kind := range []struct {
+		name, mode, dest, method string
+		topLevel                 bool
 	}{
-		{"", false}, {"none", false}, {"same-origin", false},
-		{"same-site", true}, {"cross-site", true}, {"unknown", false},
+		{name: "unlabelled"},
+		{name: "top-level navigation", mode: "navigate", dest: "document", topLevel: true},
+		{name: "iframe navigation", mode: "navigate", dest: "iframe"},
+		{name: "fetch", mode: "cors", dest: "empty"},
+		{name: "image", mode: "no-cors", dest: "image"},
+		{name: "script", mode: "no-cors", dest: "script"},
+		{name: "form post", mode: "navigate", dest: "document", method: "POST"},
 	} {
-		for _, route := range routes {
-			t.Run(route.name+"/"+site.value, func(t *testing.T) {
-				before := api + app + mcp
-				r := httptest.NewRequest(route.method, s.origin+route.path, strings.NewReader(route.body))
-				if site.value != "" {
-					r.Header.Set("Sec-Fetch-Site", site.value)
+		for _, site := range []string{"", "none", "same-origin", "same-site", "cross-site", "unknown"} {
+			for _, route := range routes {
+				method := route.method
+				if kind.method != "" {
+					method = kind.method
 				}
-				if route.mutation {
-					r.Header.Set("Origin", s.origin)
+				// A form post is only a different request on routes that are not
+				// already writes, and the mutation checks answer it first.
+				if kind.method != "" && route.method == "GET" {
+					continue
 				}
-				if route.mutation || route.auth != "" {
-					r.Header.Set("Content-Type", "application/json")
-				}
-				if route.auth != "" {
-					r.Header.Set("Authorization", route.auth)
-				}
-				if route.withCookie {
-					r.AddCookie(cookie)
-				}
-				w := httptest.NewRecorder()
-				s.Handler().ServeHTTP(w, r)
-				if site.refused {
-					if w.Code != 403 || strings.TrimSpace(w.Body.String()) != "cross-site request refused" {
+				refused := (site == "same-site" || site == "cross-site") && !(kind.topLevel && method == "GET")
+				t.Run(route.name+"/"+kind.name+"/"+site, func(t *testing.T) {
+					before := api + app + mcp
+					r := httptest.NewRequest(method, s.origin+route.path, strings.NewReader(route.body))
+					if site != "" {
+						r.Header.Set("Sec-Fetch-Site", site)
+					}
+					if kind.mode != "" {
+						r.Header.Set("Sec-Fetch-Mode", kind.mode)
+						r.Header.Set("Sec-Fetch-Dest", kind.dest)
+					}
+					if route.mutation {
+						r.Header.Set("Origin", s.origin)
+					}
+					if route.mutation || route.auth != "" {
+						r.Header.Set("Content-Type", "application/json")
+					}
+					if route.auth != "" {
+						r.Header.Set("Authorization", route.auth)
+					}
+					if route.withCookie {
+						r.AddCookie(cookie)
+					}
+					w := httptest.NewRecorder()
+					s.Handler().ServeHTTP(w, r)
+					if refused {
+						if w.Code != 403 || strings.TrimSpace(w.Body.String()) != "cross-site request refused" {
+							t.Fatalf("%d: %s", w.Code, w.Body.String())
+						}
+						if api+app+mcp != before || len(w.Result().Cookies()) != 0 {
+							t.Fatal("a refused request had an effect")
+						}
+						return
+					}
+					if method == "GET" && w.Code != 200 {
 						t.Fatalf("%d: %s", w.Code, w.Body.String())
 					}
-					if api+app+mcp != before || len(w.Result().Cookies()) != 0 {
-						t.Fatal("a refused request had an effect")
+					if w.Body.String() != "" && strings.Contains(w.Body.String(), "cross-site request refused") {
+						t.Fatal("passing request was refused")
 					}
-					return
-				}
-				if w.Code != 200 {
-					t.Fatalf("%d: %s", w.Code, w.Body.String())
-				}
-			})
+				})
+			}
 		}
 	}
 }
