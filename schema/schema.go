@@ -6,7 +6,8 @@
 // features. legacy-review-tiles.json keeps the tile kinds the schema retired,
 // for stored documents that still carry them. Additive schema edits bump the revision recorded at
 // $defs/schemaRevision/const, which a generated document echoes in
-// generator.schema_revision.
+// generator.schema_revision. tiles-1.json is the baum.tiles/1 tile document
+// schema, which reuses review-1.json's definitions (CompileTiles).
 package schema
 
 import (
