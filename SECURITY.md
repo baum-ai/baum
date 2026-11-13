@@ -139,6 +139,56 @@ edits no raw hook settings and keeps no settings backups or migration markers.
 Native plugin operations can download from GitHub. Codex hook trust belongs
 to Codex and must be reviewed with `/hooks`; installation grants no trust.
 
+### Claude Code configuration directories
+
+Claude Code keeps its settings, plugins, sign-in and session transcripts in one
+configuration directory: `~/.claude`, or the one `CLAUDE_CONFIG_DIR` names, so a
+person with two accounts has two. baum reads Claude Code's sessions, and the
+registry of its running sessions, from `~/.claude`, from the directory of the
+daemon's own `CLAUDE_CONFIG_DIR`, and from the directories listed in
+`claude-dirs.json` beside `config.toml` (at most 16, absolute paths).
+
+Only your own baum processes write that file, each from its own environment or
+your explicit choice: `baum hooks install --user` adds the directory it
+installed into (`--claude-config-dir`, else `CLAUDE_CONFIG_DIR`); a Claude Code
+hook adds the `CLAUDE_CONFIG_DIR` its session runs with, when the session
+starts or takes a prompt; and Settings adds a directory you choose for reviews,
+fixes or data extraction, which must exist. Nothing a request to the daemon or a hook event
+carries is added: a transcript path a hook reports is still read only inside
+one of these directories' `projects` folders, under the same checks as before.
+Knowing a directory lets baum read the sessions in it, find and signal the
+sessions running from it as it does for `~/.claude`, and delete the sessions of
+its own review runs there. Remove a directory from the file to stop that.
+
+A directory chosen in Settings for reviews, fixes or data extraction is passed
+to Claude Code as `CLAUDE_CONFIG_DIR` for those runs, so they use that directory's sign-in,
+settings, plugins and hooks. It wins over a `CLAUDE_CONFIG_DIR` in the
+environment for agents. Before it is saved, the daemon runs `claude auth
+status --json` with that directory and refuses one Claude Code is signed out
+with; nothing of the answer but signed in or not is kept. While a directory is
+chosen for runs that use Claude Code, plan usage also reads that directory's
+stored credential (its `.credentials.json`, on macOS first the Keychain item
+Claude Code names after the directory) and asks Anthropic for its plan's
+usage, under the same rules as the daemon's own: the token is held only for
+the request and never stored, logged, returned or refreshed. The plan is
+served with the directory's path, your home written as `~`.
+
+### Codex homes
+
+Codex keeps the same in its home: `~/.codex`, or the one `CODEX_HOME` names.
+baum treats homes as it treats Claude Code's directories, with a record of its
+own, `codex-dirs.json` beside `config.toml` (at most 16, absolute paths). It
+reads Codex's sessions (`sessions` and `archived_sessions`) from `~/.codex`,
+from the daemon's own `CODEX_HOME` and from the recorded homes. The record is
+written by `baum hooks install --user` (`--codex-home`, else `CODEX_HOME`), by
+a Codex hook with the `CODEX_HOME` its session runs with, and by Settings. A
+rollout path a hook reports is read only inside one of these homes' `sessions`
+folders. A home chosen in Settings reaches Codex alone, as `CODEX_HOME`, over
+one in the environment for agents; before it is saved the daemon runs `codex
+login status` with it and refuses one Codex says is signed out. Plan usage
+then reads that home's `auth.json` and session files under the rules of the
+daemon's own Codex plan.
+
 Plugin callbacks check only that they run in a Git worktree and that baum's
 local daemon has run. They read no hosted credentials, Entire settings or
 third-party hook configuration. baum does not install, configure or invoke
@@ -376,8 +426,9 @@ model was given: the unpacked head and merge-base checkouts, the description
 images, `bundle.json` (already redacted) and `schema.json`. The raw model output
 of a repair (`rejected-N.json`, unredacted) is deleted before the directory is
 kept. The CLI also keeps its transcript of the kept session in its usual store
-(`$CLAUDE_CONFIG_DIR` or `~/.claude` for Claude Code, `$CODEX_HOME` or
-`~/.codex` for Codex), which holds the prompt, the bundle and the model's
+(for Claude Code the configuration directory Settings chose for the run, else
+`$CLAUDE_CONFIG_DIR` or `~/.claude`; for Codex the home Settings chose, else
+`$CODEX_HOME` or `~/.codex`), which holds the prompt, the bundle and the model's
 answers. Only the session that produced the saved review stays: the sessions of
 retries and repairs are deleted when the run ends, and all of them when the run
 fails, is rejected or interrupted. The directory lives under baum's user cache
@@ -871,7 +922,10 @@ The Analytics page (`GET /api/analytics`) is built from what is already on the
 computer, plus one GitHub search per picked repository:
 
 - **Agent sessions.** The daemon reads the Claude Code, Codex and Cursor session
-  stores (`~/.claude/projects`, `~/.codex/sessions`, Cursor's `state.vscdb`),
+  stores (`~/.claude/projects` and the `projects` folder of the other
+  [Claude Code configuration directories](#claude-code-configuration-directories)
+  it knows, `~/.codex/sessions` and the same folder of the other
+  [Codex homes](#codex-homes) it knows, Cursor's `state.vscdb`),
   the same files the PR page reads, but only sessions whose working directory is
   inside a registered clone and that were written in the last 90 days. It keeps
   aggregates only, in the `analytics_sessions` table of its private application database: per
@@ -939,8 +993,10 @@ is refused.
 The daemon looks for local clones of the repositories you pick, so you are not
 asked for their folders. It makes no network request for this and sends nothing
 about your folders anywhere. It reads: the working directories recorded in the
-hook event record and in the Claude Code (`~/.claude/projects`), Codex
-(`~/.codex/sessions`, `~/.codex/archived_sessions`) and Cursor (`state.vscdb`)
+hook event record and in the Claude Code (`~/.claude/projects`, and the same
+folder of the other configuration directories baum knows), Codex
+(`~/.codex/sessions`, `~/.codex/archived_sessions`, and the same folders of the
+other homes baum knows) and Cursor (`state.vscdb`)
 session stores, without parsing the transcripts; the folders `~/code`, `~/src`,
 `~/dev`, `~/projects`, `~/workspace`, `~/repos`, `~/git` and
 `~/go/src/github.com`, to four levels deep, without following symlinks; the
@@ -1239,12 +1295,14 @@ only the transcript of a session it is tracking from its hook events: the
 request names the session, never a file. The file is the transcript path the
 session's own hooks reported (Claude Code and Codex send one), and it is read
 only when, with its symbolic links resolved, it is a regular file inside that
-agent's own session folder in your home directory, the one baum already reads
-sessions from: `~/.claude/projects` for Claude Code and `~/.codex/sessions`
-for Codex. A path elsewhere, a link out of the folder, a directory or a file of
+agent's own session folder, the one baum already reads sessions from:
+`~/.claude/projects` for Claude Code, or the `projects` folder of another
+[Claude Code configuration directory](#claude-code-configuration-directories)
+baum knows, and `~/.codex/sessions` for Codex, or the `sessions` folder of
+another [Codex home](#codex-homes) baum knows. A path elsewhere, a link out of the folder, a directory or a file of
 another kind is not read, and the app is told only that the transcript is not
 available. A Codex session whose hooks named no path is looked up by id in
-that folder; a Cursor session is read from Cursor's own conversation database
+those folders; a Cursor session is read from Cursor's own conversation database
 by its id. The transcript is redacted exactly as the PR page's linked sessions
 (the same code): secrets and e-mail addresses masked, your home directory
 written as `~`, nothing else removed. The path itself never reaches the app.

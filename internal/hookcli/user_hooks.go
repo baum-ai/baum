@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
 	"slices"
 	"strings"
@@ -16,6 +17,7 @@ import (
 	"github.com/baum-ai/baum/agent/claude"
 	"github.com/baum-ai/baum/agent/codex"
 	"github.com/baum-ai/baum/internal/agentcli"
+	"github.com/baum-ai/baum/internal/agentdirs"
 	"github.com/baum-ai/baum/internal/agentplugins"
 	"github.com/baum-ai/baum/internal/codexconfig"
 	"github.com/baum-ai/baum/plugins"
@@ -34,6 +36,7 @@ func newUpdateUserHooksCommand(stdout, stderr io.Writer) *cobra.Command {
 func newChangeUserPluginsCommand(action string, stdout, stderr io.Writer) *cobra.Command {
 	var user bool
 	var agents []string
+	var claudeDir, codexHome string
 	defaults := "supported coding-agent CLIs found on PATH"
 	if action == "update" {
 		defaults = "the coding agents with the plugin enabled"
@@ -44,10 +47,21 @@ plugin and enables it. Update refreshes the marketplace and brings an installed
 plugin to its latest version. The agent owns plugin settings; baum edits no hook
 files. Review hook trust in the agent afterwards (Codex: /hooks). Installed and enabled
 do not mean trusted. No baum sign-in is needed and no baum server is contacted.
-Without --agent, uses ` + defaults + `.`, Args: cobra.NoArgs,
+Without --agent, uses ` + defaults + `.
+
+Claude Code keeps its plugins in its configuration directory: ~/.claude, or
+the one CLAUDE_CONFIG_DIR names. To manage the plugin of another directory
+(a second account, for example), pass --claude-config-dir or run this with
+CLAUDE_CONFIG_DIR set as you run claude. Codex keeps them in its home:
+~/.codex, or the one CODEX_HOME names; pass --codex-home or set CODEX_HOME
+for another. baum remembers a directory it installed into and reads the
+sessions kept there.`, Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if !user {
 				return errors.New("pass --user to manage user-scoped agent marketplace plugins")
+			}
+			if err := useAgentDirs(claudeDir, codexHome); err != nil {
+				return err
 			}
 			if len(agents) == 0 && action == "update" {
 				agents = updatableUserHookAgents(cmd.Context())
@@ -65,6 +79,8 @@ Without --agent, uses ` + defaults + `.`, Args: cobra.NoArgs,
 		}}
 	cmd.Flags().BoolVar(&user, "user", false, "manage user-scoped agent marketplace plugins")
 	cmd.Flags().StringSliceVar(&agents, "agent", nil, "coding agent, "+strings.Join(agentplugins.Agents(), " or ")+" (default: "+defaults+")")
+	cmd.Flags().StringVar(&claudeDir, "claude-config-dir", "", claudeConfigDirUsage)
+	cmd.Flags().StringVar(&codexHome, "codex-home", "", codexHomeUsage)
 	cmd.SetOut(stdout)
 	cmd.SetErr(stderr)
 	return cmd
@@ -96,16 +112,97 @@ type userHooksStatus struct {
 	UpdateAvailable bool                    `json:"update_available,omitempty"`
 	Error           string                  `json:"error,omitempty"`
 	Trust           *agentplugins.HookTrust `json:"trust,omitempty"`
+	// ConfigDir is the agent's configuration directory the status is of
+	// (Claude Code's configuration directory, Codex's home), when it is not
+	// the default ~/.claude or ~/.codex.
+	ConfigDir string `json:"config_dir,omitempty"`
+}
+
+const (
+	claudeConfigDirUsage = "Claude Code configuration `directory` to manage the plugin of (default: $CLAUDE_CONFIG_DIR, else ~/.claude)"
+	codexHomeUsage       = "Codex home `directory` to manage the plugin of (default: $CODEX_HOME, else ~/.codex)"
+)
+
+// agentDirs is the agentdirs.Agent of a coding agent whose directories baum
+// knows: Claude Code's and Codex's.
+func agentDirs(agent string) (agentdirs.Agent, bool) {
+	switch agent {
+	case "claude-code":
+		return agentdirs.Claude, true
+	case "codex":
+		return agentdirs.Codex, true
+	}
+	return agentdirs.Agent{}, false
+}
+
+// useAgentDirs makes the directories given, each when given, those of this
+// command: the agent CLIs it runs, and what it reads of the agents'
+// settings, take them from CLAUDE_CONFIG_DIR and CODEX_HOME.
+func useAgentDirs(claudeDir, codexHome string) error {
+	for _, use := range []struct {
+		agent     agentdirs.Agent
+		flag, dir string
+	}{{agentdirs.Claude, "--claude-config-dir", claudeDir}, {agentdirs.Codex, "--codex-home", codexHome}} {
+		if use.dir == "" {
+			continue
+		}
+		dir, err := agentdirs.Normalize(use.dir)
+		if err != nil {
+			return fmt.Errorf("%s: %w", use.flag, err)
+		}
+		if err := os.Setenv(use.agent.Env, dir); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// otherAgentDir is the directory of agent this command manages when it is
+// not the default (~/.claude, ~/.codex), else "".
+func otherAgentDir(agent string) string {
+	a, ok := agentDirs(agent)
+	if !ok {
+		return ""
+	}
+	if dir := a.FromEnv(); dir != a.Default("") {
+		return dir
+	}
+	return ""
+}
+
+// rememberAgentDir is a seam for tests: recording the directory installed
+// into.
+var rememberAgentDir = func(a agentdirs.Agent, dir string) (bool, error) { return a.Remember(dir) }
+
+// rememberSessionDir records the directory of the agent session a hook runs
+// in, when it is not the default: Claude Code passes its hooks its
+// CLAUDE_CONFIG_DIR, and Codex's hooks inherit its CODEX_HOME. The daemon
+// reads a session's transcript only from the directories it knows, so a
+// session of a directory the plugin was installed into by hand would
+// otherwise never show. It reads one small file when the directory is
+// already recorded, and never fails the hook.
+func rememberSessionDir(agent string) {
+	a, ok := agentDirs(agent)
+	if !ok {
+		return
+	}
+	if dir := otherAgentDir(agent); dir != "" {
+		_, _ = rememberAgentDir(a, dir)
+	}
 }
 
 func newUserHooksStatusCommand(stdout io.Writer) *cobra.Command {
 	var user, asJSON bool
+	var claudeDir, codexHome string
 	cmd := &cobra.Command{Use: "status --user [--json]", Short: "Show native agent plugin installation and enablement", Long: `Reads Claude Code and Codex's native plugin registries. Reports baum@baum's
 user installation, enablement and version separately. Trust belongs to the
 agent: inspect its hooks UI. This does not edit hook settings.`, Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if !user {
 				return errors.New("pass --user to inspect user-scoped agent plugins")
+			}
+			if err := useAgentDirs(claudeDir, codexHome); err != nil {
+				return err
 			}
 			statuses := userHooksStatuses(cmd.Context())
 			if asJSON {
@@ -128,12 +225,18 @@ agent: inspect its hooks UI. This does not edit hook settings.`, Args: cobra.NoA
 						state = "installed, enabled (hooks: " + s.Trust.State + ")"
 					}
 				}
-				_, _ = fmt.Fprintf(stdout, "%s: %s %s\n", s.Name, s.Plugin, state)
+				name := s.Name
+				if s.ConfigDir != "" {
+					name += " (" + s.ConfigDir + ")"
+				}
+				_, _ = fmt.Fprintf(stdout, "%s: %s %s\n", name, s.Plugin, state)
 			}
 			return nil
 		}}
 	cmd.Flags().BoolVar(&user, "user", false, "inspect user-scoped agent marketplace plugins")
 	cmd.Flags().BoolVar(&asJSON, "json", false, "print status as one JSON line")
+	cmd.Flags().StringVar(&claudeDir, "claude-config-dir", "", claudeConfigDirUsage)
+	cmd.Flags().StringVar(&codexHome, "codex-home", "", codexHomeUsage)
 	cmd.SetOut(stdout)
 	return cmd
 }
@@ -147,6 +250,7 @@ func userHooksStatuses(ctx context.Context) []userHooksStatus {
 	}
 	for _, agent := range agentplugins.Agents() {
 		s := userHooksStatus{Agent: agent, Name: agentDisplayName(agent), Plugin: agentplugins.Plugin}
+		s.ConfigDir = otherAgentDir(agent)
 		binary, err := lookPath(agentplugins.Binary(agent))
 		s.Detected = err == nil
 		if cli, ok := agentcli.Lookup(agent); ok && s.Detected {
@@ -226,6 +330,19 @@ func changeUserHooks(ctx context.Context, agents []string, action string, stdout
 			}
 			if changed {
 				_, _ = fmt.Fprintln(stdout, "Configured Codex terminal focus. Restart running Codex terminal sessions, then try Focus again.")
+			}
+		}
+		if dir := otherAgentDir(agent); dir != "" {
+			name += " (" + dir + ")"
+			if action == "install" {
+				// baum reads sessions only from the directories it knows;
+				// without the record this one's would not show.
+				a, _ := agentDirs(agent)
+				if _, err := rememberAgentDir(a, dir); err != nil {
+					failures = append(failures, fmt.Errorf("%s plugin is installed, but baum could not remember %s to read its sessions: %w", a.Product, dir, err))
+					_, _ = fmt.Fprintf(stderr, "error: remembering %s: %v\n", dir, err)
+					continue
+				}
 			}
 		}
 		switch {

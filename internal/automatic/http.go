@@ -8,9 +8,20 @@ import (
 	"strings"
 	"time"
 
+	"github.com/baum-ai/baum/agent/claude"
+	"github.com/baum-ai/baum/agent/codex"
+	"github.com/baum-ai/baum/internal/agentdirs"
 	"github.com/baum-ai/baum/internal/config"
 	"github.com/baum-ai/baum/internal/repos"
 )
+
+// nonEmpty is a pointer to s, or nil when it is empty.
+func nonEmpty(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return &s
+}
 
 // Handler serves GET and PUT /api/automatic and POST
 // /api/automatic/catch-up (CatchUp). Like the registry handler it
@@ -39,6 +50,13 @@ func (s *Scheduler) Handler() http.Handler {
 			Effort       *string `json:"effort"`
 			FixEffort    *string `json:"fix_effort"`
 			PullRequests *string `json:"pull_requests"`
+			// The Claude Code configuration directories of reviews and
+			// fixes; empty goes back to the environment's.
+			ClaudeConfigDir    *string `json:"claude_config_dir"`
+			FixClaudeConfigDir *string `json:"fix_claude_config_dir"`
+			// The Codex homes of reviews and fixes, likewise.
+			CodexHome    *string `json:"codex_home"`
+			FixCodexHome *string `json:"fix_codex_home"`
 		}
 		r.Body = http.MaxBytesReader(w, r.Body, 4<<10)
 		d := json.NewDecoder(r.Body)
@@ -48,6 +66,35 @@ func (s *Scheduler) Handler() http.Handler {
 			return
 		}
 		var invalid error
+		// The directories are checked, and remembered for reading their
+		// sessions, before the choice is stored.
+		claudeSignedIn, codexSignedIn := s.ClaudeSignedIn, s.CodexSignedIn
+		if claudeSignedIn == nil {
+			claudeSignedIn = claude.SignedInWithConfigDir(s.ClaudeBinary)
+		}
+		if codexSignedIn == nil {
+			codexSignedIn = codex.SignedInWithHome(s.CodexBinary)
+		}
+		for _, choice := range []struct {
+			agent    agentdirs.Agent
+			given    *string
+			signedIn agentdirs.SignedIn
+		}{
+			{agentdirs.Claude, input.ClaudeConfigDir, claudeSignedIn},
+			{agentdirs.Claude, input.FixClaudeConfigDir, claudeSignedIn},
+			{agentdirs.Codex, input.CodexHome, codexSignedIn},
+			{agentdirs.Codex, input.FixCodexHome, codexSignedIn},
+		} {
+			if choice.given == nil {
+				continue
+			}
+			dir, err := choice.agent.Choose(r.Context(), *choice.given, choice.signedIn)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			*choice.given = dir
+		}
 		_, err := s.Registry.UpdatePreferences(r.Context(), func(p repos.Preferences) repos.Preferences {
 			next := p
 			if input.Enabled != nil {
@@ -69,6 +116,7 @@ func (s *Scheduler) Handler() http.Handler {
 				if strings.TrimSpace(*input.FixBackend) == "" {
 					// Back to the same agent as reviews.
 					next.FixBackend, next.FixModel, next.FixEffort = nil, nil, nil
+					next.FixClaudeConfigDir, next.FixCodexHome = nil, nil
 				} else {
 					backend, err := config.ParseBackend(*input.FixBackend)
 					if err != nil {
@@ -93,6 +141,20 @@ func (s *Scheduler) Handler() http.Handler {
 				if *e.target, invalid = config.ParseEffort(**e.input); invalid != nil {
 					return p
 				}
+			}
+			if input.ClaudeConfigDir != nil {
+				next.ClaudeConfigDir = nonEmpty(*input.ClaudeConfigDir)
+			}
+			// Following reviews again sends an empty directory, which is no
+			// choice; one without a fix agent is refused below.
+			if input.FixClaudeConfigDir != nil {
+				next.FixClaudeConfigDir = nonEmpty(*input.FixClaudeConfigDir)
+			}
+			if input.CodexHome != nil {
+				next.CodexHome = nonEmpty(*input.CodexHome)
+			}
+			if input.FixCodexHome != nil {
+				next.FixCodexHome = nonEmpty(*input.FixCodexHome)
 			}
 			if input.PullRequests != nil {
 				next.PullRequests = *input.PullRequests

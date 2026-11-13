@@ -2711,6 +2711,46 @@ variables, so it may name a `GIT_` variable the allowlist drops. A fix passes
 it to `gitlocal.FixOptions.Env` for every git command in the checkout and the
 push, without the variables that would redirect git.
 
+`config.Config.ClaudeConfigDir` (never in the file) is the Claude Code
+configuration directory the app chose for a run: `repos.Preferences`'
+`ClaudeConfigDir` for reviews and extraction (`Resolve`), and
+`FixClaudeConfigDir` for a fix with its own agent (`ResolveFix`; a fix that
+follows reviews takes theirs), and `Decisions.ClaudeConfigDir` for extraction
+with its own agent (`ResolveExtraction`, set with `PUT
+/api/settings/decisions`). All three are checked by `agentdirs.Claude.Choose`. `DefaultBackendsFor` gives it to the `claude`
+backend alone as `CLAUDE_CONFIG_DIR`, set over `agent_env`'s. `PUT
+/api/automatic` takes `claude_config_dir` and `fix_claude_config_dir` (`~`
+expanded, stored absolute, an existing directory, `""` for the
+environment's), refuses one `claude auth status --json` reports signed out
+with that directory (`Scheduler.ClaudeSignedIn`, `claude.SignedInWith`; an
+answer it cannot read does not refuse), and records the directory with
+`agentdirs.Claude.Remember`. `planusage.Service.Others` reads the plan of each
+directory chosen for a run that uses Claude Code
+(`Preferences.ClaudeConfigDirs`) and serves it with `config_dir`.
+
+`config.Config.CodexHome` is the same for Codex: `Preferences.CodexHome`,
+`FixCodexHome` and `Decisions.CodexHome` under the same rules,
+`DefaultBackendsFor` gives it to the `codex` backend alone as `CODEX_HOME`,
+`PUT /api/automatic` takes `codex_home` and `fix_codex_home` and `PUT
+/api/settings/decisions` `codex_home`, checked by `agentdirs.Codex.Choose`
+with `codex login status` (`codex.SignedInWithHome`). The plans of
+`Preferences.CodexHomes` (runs whose backend is `codex`) are read with
+`planusage.Codex{Home: dir}`.
+
+`internal/agentdirs` is the one place that says which agent directories baum
+reads. `agentdirs.Claude` and `agentdirs.Codex` each have `All(home)`: the
+default (`~/.claude`, `~/.codex`), the process's variable (`CLAUDE_CONFIG_DIR`,
+`CODEX_HOME`) and a record beside `config.toml` (`claude-dirs.json`,
+`codex-dirs.json`; `Remember`, at most 16). Session discovery
+(`collector.FindSessions`, `FindStores`, with `ClaudeProjectsDir` and
+`CodexSessionsDir` still overrides), clone finding, the live transcript store
+checks (`livesessions.claudeTranscript`, `codexRollout`), the running-session
+registry (`readClaudeRegistry`) and review-run cleanup
+(`reviewruns.RemoveSessions`) all read each directory. `baum hooks install
+--user` records the directory it installed into, and an agent hook the one its
+session runs with (`hookcli.rememberSessionDir`, on the events that locate the
+terminal).
+
 ## Local application persistence
 
 [`internal/appdb`](internal/appdb/README.md) owns the shared per-user
@@ -4959,16 +4999,18 @@ replace it.
   hooks last reported (kept in the tracker's entry, never served, and not in
   `live-sessions.json`), read only when, its symbolic links resolved
   (`filepath.EvalSymlinks`, the store's root resolved too), it is a regular
-  file strictly inside the agent's own store under the home directory, the
-  one discovery reads (`~/.claude/projects` for Claude Code, a `.jsonl`;
-  `~/.codex/sessions` for Codex, a `rollout-*.jsonl`). A Claude Code
+  file strictly inside the agent's own store, the one discovery reads
+  (`~/.claude/projects` under the home directory or the `projects` folder of
+  another directory of `agentdirs.Claude.All` for Claude Code, a `.jsonl`;
+  `~/.codex/sessions` or the `sessions` folder of another home of
+  `agentdirs.Codex.All` for Codex, a `rollout-*.jsonl`). A Claude Code
   subagent transcript beside it that resolves outside the store is left out.
-  Without a path a Codex session is looked up by id (`findRollout`, once per
+  Without a path a Codex session is looked up by id in each home (`findRollout`, once per
   session): the `rollout-*-<id>.jsonl` under `~/.codex/sessions` whose first
   line names that thread as a root. Only names are walked, so the rollouts
   Codex compresses as they age (`.jsonl.zst`, which a store scan rejects) do
   not stop it; a Claude Code one is found by its id in the project folders
-  under `~/.claude/projects` (`<folder>/<id>.jsonl`), as a session read back
+  of each store (`<folder>/<id>.jsonl`), as a session read back
   from `live-sessions.json` has no path. A Cursor session is read from Cursor's own database
   (`cursortranscript.DefaultStorePath`, a regular file) by its conversation
   id, since Cursor keeps no transcript file baum reads. The files are mapped

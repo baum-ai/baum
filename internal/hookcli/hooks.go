@@ -162,6 +162,7 @@ func newAgentHooksCommand(stdout io.Writer) *cobra.Command {
 			}
 			if locatesTerminal(event) {
 				hookEvent.Terminal = captureTerminal()
+				rememberSessionDir(agent)
 			}
 			delivered := sendHookEvent(cmd.Context(), hookEvent)
 			switch event {

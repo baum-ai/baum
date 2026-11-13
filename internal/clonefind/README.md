@@ -25,7 +25,9 @@ network request, and nothing about local folders leaves the computer.
 ## Folders read and never read
 
 Read: the agent session stores (`~/.claude/projects`, `~/.codex/sessions`,
-`~/.codex/archived_sessions`, Cursor's `state.vscdb`), the hook event record,
+`~/.codex/archived_sessions`, the same folders of the other Claude Code
+configuration directories and Codex homes baum knows, Cursor's `state.vscdb`),
+the hook event record,
 the folders listed above, and a directory an agent worked in (to find the clone
 containing it). In a clone, git reads `.git/config` and the repository
 directory; no file of the working tree is read.

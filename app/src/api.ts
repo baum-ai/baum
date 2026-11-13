@@ -798,6 +798,11 @@ export type DecisionSettings = {
   model: string;
   /** The reasoning effort; empty or absent is the agent's own. */
   effort?: string;
+  /** Extraction's own Claude Code configuration directory, empty while it
+   *  follows the reviews' or uses the environment's. */
+  claude_config_dir?: string;
+  /** Extraction's own Codex home, likewise. */
+  codex_home?: string;
   /** What the daemon makes of them: the harness extraction resolves to, its
    *  model, and whether `model` is ignored. */
   effective_backend?: string;
