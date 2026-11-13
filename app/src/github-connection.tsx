@@ -55,7 +55,7 @@ export function GitHubConnectionSection({ onChanged }: { onChanged?: () => void 
         detail={
           connection?.saved ? (
             <>
-              Signed in as <strong className="text-(--text-primary)">{connection.login}</strong> on{" "}
+              Signed in as <strong className="text-primary">{connection.login}</strong> on{" "}
               {connection.host}
               {connection.override ? " (not currently used)" : ""}.
             </>
@@ -108,9 +108,9 @@ export function GitHubConnectionSection({ onChanged }: { onChanged?: () => void 
         }
       />
       {!connection || error || notes ? (
-        <div className="space-y-4 border-t border-(--border-subtle) p-5">
+        <div className="space-y-4 border-t border-subtle p-5">
           {!connection && !error ? (
-            <p role="status" className="flex items-center gap-2 text-(--text-secondary)">
+            <p role="status" className="flex items-center gap-2 text-secondary">
               <NineDots /> Checking GitHub connection…
             </p>
           ) : null}
@@ -154,13 +154,13 @@ export function GitHubConnectionSection({ onChanged }: { onChanged?: () => void 
             </Alert>
           ) : null}
           {connection && terminal[connection.state] ? (
-            <p role="status" className="text-(--text-secondary)">
+            <p role="status" className="text-secondary">
               {terminal[connection.state]}
             </p>
           ) : null}
           {pending ? (
             <div className="space-y-4">
-              <div className="rounded-(--radius-md) border border-(--border-default) bg-(--surface-wash) px-4 py-4">
+              <div className="rounded-(--radius-md) border border-default bg-surface-wash px-4 py-4">
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <p
                     className="font-mono text-2xl font-semibold tracking-[0.2em] select-all break-all"
@@ -172,11 +172,8 @@ export function GitHubConnectionSection({ onChanged }: { onChanged?: () => void 
                     Copy code
                   </Button>
                 </div>
-                <p
-                  role="status"
-                  className="mt-3 flex items-center gap-2 text-xs text-(--text-secondary)"
-                >
-                  <LiveDot className="text-(--status-positive)" />
+                <p role="status" className="mt-3 flex items-center gap-2 text-xs text-secondary">
+                  <LiveDot className="text-status-positive" />
                   {copied || "Waiting for you to enter this code on GitHub."}
                 </p>
               </div>
@@ -200,7 +197,7 @@ export function GitHubConnectionSection({ onChanged }: { onChanged?: () => void 
                   {working === "cancel" ? "Cancelling…" : "Cancel sign-in"}
                 </Button>
               </div>
-              <p className="text-xs text-(--text-tertiary)">
+              <p className="text-xs text-tertiary">
                 The code expires at{" "}
                 {new Date(pending.expires_at).toLocaleTimeString([], {
                   hour: "2-digit",
@@ -216,15 +213,15 @@ export function GitHubConnectionSection({ onChanged }: { onChanged?: () => void 
         </div>
       ) : null}
       {connection ? (
-        <footer className="border-t border-(--border-subtle) px-5 py-4 text-xs">
-          <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-5 gap-y-1.5 text-(--text-secondary)">
+        <footer className="border-t border-subtle px-5 py-4 text-xs">
+          <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-5 gap-y-1.5 text-secondary">
             {scopesKnown ? (
               <Detail label="Access">
                 {connection.workflow
                   ? "Repositories (read and write), workflows and organizations (read)."
                   : "Repositories (read and write) and organizations (read)."}
                 {noWorkflow && !pending ? (
-                  <span className="block text-(--text-tertiary)">
+                  <span className="block text-tertiary">
                     Workflow access is off by default, so pull requests that change GitHub Actions
                     workflows merge on GitHub. The Reconnect menu turns it on.
                   </span>
@@ -234,7 +231,7 @@ export function GitHubConnectionSection({ onChanged }: { onChanged?: () => void 
             {connection.saved ? (
               <Detail label="Credential">
                 {connection.source || "none"}.{" "}
-                <span className="text-(--text-tertiary)">
+                <span className="text-tertiary">
                   {connection.override ? "It stays active if you disconnect. " : ""}
                   Disconnecting removes baum&rsquo;s saved credential and does not revoke access on
                   GitHub.
@@ -252,7 +249,7 @@ export function GitHubConnectionSection({ onChanged }: { onChanged?: () => void 
 function Detail({ label, children }: { label: string; children: ReactNode }) {
   return (
     <>
-      <dt className="text-(--text-tertiary)">{label}</dt>
+      <dt className="text-tertiary">{label}</dt>
       <dd>{children}</dd>
     </>
   );
@@ -260,10 +257,7 @@ function Detail({ label, children }: { label: string; children: ReactNode }) {
 
 function Callout({ children }: { children: ReactNode }) {
   return (
-    <p
-      role="status"
-      className="rounded-(--radius-sm) bg-(--status-info-bg) px-3 py-2 text-(--status-info)"
-    >
+    <p role="status" className="rounded-(--radius-sm) bg-status-info-bg px-3 py-2 text-status-info">
       {children}
     </p>
   );

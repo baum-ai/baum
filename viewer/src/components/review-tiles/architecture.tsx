@@ -242,10 +242,10 @@ function layout(nodes: readonly ArchitectureNode[], edges: readonly Architecture
 
 const edgeStroke = (change: ArchitectureEdge["change"]) =>
   change === "add"
-    ? "text-(--status-positive)"
+    ? "text-status-positive"
     : change === "remove"
-      ? "text-(--status-critical)"
-      : "text-(--text-secondary)";
+      ? "text-status-critical"
+      : "text-secondary";
 
 /** Components as boxes and connections as numbered arrows between them. The
  *  numbers key each arrow to its full description beneath, so the drawing
@@ -310,10 +310,10 @@ function ContainerDiagram({
 
   return (
     <section aria-label="Components and connections" className="mt-4">
-      <h5 className="text-xs font-semibold tracking-[0.12em] uppercase text-(--text-tertiary)">
+      <h5 className="text-xs font-semibold tracking-[0.12em] uppercase text-tertiary">
         Components and connections
       </h5>
-      <div className="mt-2 overflow-x-auto rounded-(--radius-sm) border border-(--border-default) bg-(--surface-card)">
+      <div className="mt-2 overflow-x-auto rounded-(--radius-sm) border border-default bg-surface-card">
         <svg
           role="img"
           aria-label={`${plural(nodes.length, "component")} and ${plural(edges.length, "connection")}`}
@@ -368,7 +368,7 @@ function ContainerDiagram({
         </svg>
       </div>
       {edges.length > 0 ? (
-        <ol className="mt-2 divide-y divide-(--border-subtle) rounded-(--radius-sm) border border-(--border-default) bg-(--surface-card)">
+        <ol className="mt-2 divide-y divide-subtle rounded-(--radius-sm) border border-default bg-surface-card">
           {edges.map((edge, index) => (
             <li
               key={`${index}:${edge.from}:${edge.to}`}
@@ -379,30 +379,23 @@ function ContainerDiagram({
                 className={cn(
                   "flex h-5 w-5 flex-none items-center justify-center rounded-full border text-3xs font-semibold",
                   edge.change === "add"
-                    ? "border-(--status-positive) text-(--status-positive)"
+                    ? "border-status-positive text-status-positive"
                     : edge.change === "remove"
-                      ? "border-(--status-critical) text-(--status-critical)"
-                      : "border-(--border-default) text-(--text-secondary)",
+                      ? "border-status-critical text-status-critical"
+                      : "border-default text-secondary",
                 )}
               >
                 {index + 1}
               </span>
               <span className="min-w-0 flex-1">
-                <span className="font-medium text-(--text-primary)">
-                  {byId.get(edge.from)?.label}
-                </span>
-                <span aria-hidden className="text-(--text-tertiary)">
+                <span className="font-medium text-primary">{byId.get(edge.from)?.label}</span>
+                <span aria-hidden className="text-tertiary">
                   {" "}
                   →{" "}
                 </span>
-                <span className="font-medium text-(--text-primary)">
-                  {byId.get(edge.to)?.label}
-                </span>
+                <span className="font-medium text-primary">{byId.get(edge.to)?.label}</span>
                 <span
-                  className={cn(
-                    "block text-(--text-secondary)",
-                    edge.change === "remove" && "line-through",
-                  )}
+                  className={cn("block text-secondary", edge.change === "remove" && "line-through")}
                 >
                   {edge.label}
                 </span>
@@ -424,22 +417,22 @@ function NodeBox({ node }: { node: ArchitectureNode }) {
       className={cn(
         "flex h-full flex-col justify-center gap-0.5 rounded-(--radius-sm) border px-2.5 py-1.5",
         node.change === "add"
-          ? "border-(--status-positive)"
+          ? "border-status-positive"
           : node.change === "remove"
-            ? "border-dashed border-(--status-critical)"
-            : "border-(--border-default)",
-        outside ? "bg-(--surface-wash)" : "bg-(--surface-card)",
+            ? "border-dashed border-status-critical"
+            : "border-default",
+        outside ? "bg-surface-wash" : "bg-surface-card",
       )}
     >
       <span className="flex min-w-0 items-center gap-1.5">
         {node.change === "add" ? (
-          <span aria-hidden className="flex-none font-semibold text-(--status-positive)">
+          <span aria-hidden className="flex-none font-semibold text-status-positive">
             +
           </span>
         ) : null}
         <span
           className={cn(
-            "line-clamp-2 min-w-0 text-xs font-medium leading-[1.3] text-(--text-primary)",
+            "line-clamp-2 min-w-0 text-xs font-medium leading-[1.3] text-primary",
             node.change === "remove" && "line-through",
           )}
         >
@@ -447,9 +440,7 @@ function NodeBox({ node }: { node: ArchitectureNode }) {
         </span>
       </span>
       <span className="flex items-center gap-1.5">
-        <span className="text-3xs tracking-[0.08em] uppercase text-(--text-tertiary)">
-          {node.kind}
-        </span>
+        <span className="text-3xs tracking-[0.08em] uppercase text-tertiary">{node.kind}</span>
         {node.change ? <ChangeMark change={node.change} /> : null}
       </span>
     </div>
@@ -478,12 +469,12 @@ function SequenceDiagram({ sequence }: { sequence: ArchitectureSequence }) {
   return (
     <section aria-label={`Sequence: ${sequence.title}`} className="mt-4">
       <div className="flex flex-wrap items-baseline gap-2">
-        <h5 className="text-xs font-semibold tracking-[0.12em] uppercase text-(--text-tertiary)">
+        <h5 className="text-xs font-semibold tracking-[0.12em] uppercase text-tertiary">
           Sequence
         </h5>
-        <span className="text-xs text-(--text-secondary)">{sequence.title}</span>
+        <span className="text-xs text-secondary">{sequence.title}</span>
       </div>
-      <div className="mt-2 overflow-x-auto rounded-(--radius-sm) border border-(--border-default) bg-(--surface-card)">
+      <div className="mt-2 overflow-x-auto rounded-(--radius-sm) border border-default bg-surface-card">
         <svg
           role="img"
           aria-label={`${sequence.title}: ${plural(sequence.steps.length, "step")}`}
@@ -514,9 +505,9 @@ function SequenceDiagram({ sequence }: { sequence: ArchitectureSequence }) {
               >
                 <div
                   title={name}
-                  className="flex h-full items-center justify-center rounded-(--radius-sm) border border-(--border-default) bg-(--surface-wash) px-2 text-center"
+                  className="flex h-full items-center justify-center rounded-(--radius-sm) border border-default bg-surface-wash px-2 text-center"
                 >
-                  <span className="line-clamp-2 text-xs font-medium leading-[1.25] text-(--text-primary)">
+                  <span className="line-clamp-2 text-xs font-medium leading-[1.25] text-primary">
                     {name}
                   </span>
                 </div>
@@ -533,9 +524,7 @@ function SequenceDiagram({ sequence }: { sequence: ArchitectureSequence }) {
             return (
               <g
                 key={`${index}:${step.from}:${step.to}`}
-                className={
-                  step.change === "add" ? "text-(--status-positive)" : "text-(--text-secondary)"
-                }
+                className={step.change === "add" ? "text-status-positive" : "text-secondary"}
               >
                 <path
                   d={
@@ -558,10 +547,10 @@ function SequenceDiagram({ sequence }: { sequence: ArchitectureSequence }) {
                     title={step.message}
                     className="flex h-full items-end justify-center text-center"
                   >
-                    <span className="line-clamp-2 text-3xs leading-[1.3] text-(--text-secondary)">
-                      <span className="font-semibold text-(--text-primary)">{index + 1}.</span>{" "}
+                    <span className="line-clamp-2 text-3xs leading-[1.3] text-secondary">
+                      <span className="font-semibold text-primary">{index + 1}.</span>{" "}
                       {step.change === "add" ? (
-                        <span className="font-semibold text-(--status-positive)">+ </span>
+                        <span className="font-semibold text-status-positive">+ </span>
                       ) : null}
                       {step.message}
                     </span>
@@ -625,9 +614,9 @@ function DanglingEdges({
   return (
     <section
       aria-label="Connections not drawn"
-      className="mt-2 rounded-(--radius-sm) border border-(--border-default) bg-(--surface-card) px-3 py-2 text-xs leading-[1.45]"
+      className="mt-2 rounded-(--radius-sm) border border-default bg-surface-card px-3 py-2 text-xs leading-[1.45]"
     >
-      <p className="text-(--text-secondary)">
+      <p className="text-secondary">
         {plural(edges.length, "connection")} {edges.length === 1 ? "names" : "name"} a component
         this tile does not list, so {edges.length === 1 ? "it is" : "they are"} not drawn:
       </p>
@@ -637,12 +626,12 @@ function DanglingEdges({
             key={`${index}:${edge.from}:${edge.to}`}
             className="flex flex-wrap items-center gap-1.5"
           >
-            <span className="font-medium text-(--text-primary)">{name(edge.from)}</span>
-            <span aria-hidden className="text-(--text-tertiary)">
+            <span className="font-medium text-primary">{name(edge.from)}</span>
+            <span aria-hidden className="text-tertiary">
               →
             </span>
-            <span className="font-medium text-(--text-primary)">{name(edge.to)}</span>
-            <span className="text-(--text-secondary)">· {edge.label}</span>
+            <span className="font-medium text-primary">{name(edge.to)}</span>
+            <span className="text-secondary">· {edge.label}</span>
             {edge.change ? <ChangeMark change={edge.change} /> : null}
           </li>
         ))}

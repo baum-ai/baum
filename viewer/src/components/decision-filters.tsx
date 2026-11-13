@@ -29,7 +29,7 @@ import { useDisclosure } from "./use-disclosure";
  *  and authors load; these only show them and report changes. */
 
 const FIELD = cn(
-  "rounded-(--radius-sm) border border-(--border-default) bg-(--surface-card) px-2 py-1 text-base text-(--text-primary)",
+  "rounded-(--radius-sm) border border-default bg-surface-card px-2 py-1 text-base text-primary",
   FOCUS_RING,
 );
 
@@ -127,24 +127,24 @@ export function DecisionFilterControls({
       <details {...filtersPopover.detailsProps} className="group relative">
         <summary
           className={cn(
-            "flex cursor-pointer list-none items-center gap-1.5 rounded-(--radius-sm) border border-(--border-default) bg-(--surface-card) px-2.5 py-1 text-base text-(--text-secondary) group-open:bg-(--surface-pressed) group-open:text-(--text-primary) hover:bg-(--surface-hover) hover:text-(--text-primary) [&::-webkit-details-marker]:hidden",
+            "flex cursor-pointer list-none items-center gap-1.5 rounded-(--radius-sm) border border-default bg-surface-card px-2.5 py-1 text-base text-secondary group-open:bg-surface-pressed group-open:text-primary hover:bg-surface-hover hover:text-primary [&::-webkit-details-marker]:hidden",
             FOCUS_RING,
           )}
         >
           <FilterIcon size={14} />
           Filters
           {pills.length > 0 ? (
-            <span className="rounded-full bg-(--surface-wash) px-1.5 text-xs font-medium text-(--text-primary) tabular-nums">
+            <span className="rounded-full bg-surface-wash px-1.5 text-xs font-medium text-primary tabular-nums">
               {pills.length}
             </span>
           ) : null}
           <ChevronDownIcon
             size={12}
-            className="text-(--text-tertiary) transition-transform duration-150 group-open:rotate-180 motion-reduce:transition-none"
+            className="text-tertiary transition-transform duration-150 group-open:rotate-180 motion-reduce:transition-none"
           />
         </summary>
         {/* Kept mounted while closed, so a half-typed path survives. */}
-        <div className="absolute left-0 z-20 mt-1 grid w-[min(34rem,calc(100vw-2rem))] grid-cols-[auto_minmax(0,1fr)] items-center gap-x-4 gap-y-3 rounded-(--radius-md) border border-(--border-default) bg-(--surface-card) p-4 shadow-(--shadow-overlay)">
+        <div className="absolute left-0 z-20 mt-1 grid w-[min(34rem,calc(100vw-2rem))] grid-cols-[auto_minmax(0,1fr)] items-center gap-x-4 gap-y-3 rounded-(--radius-md) border border-default bg-surface-card p-4 shadow-overlay">
           <FilterRowLabel>File</FilterRowLabel>
           <FileFilter files={files} value={shown.file} onChange={(file) => change({ file })} />
           <FilterRowLabel>Author</FilterRowLabel>
@@ -222,7 +222,7 @@ export function DecisionFilterControls({
           ) : null}
           <FilterRowLabel>Dates</FilterRowLabel>
           <div className="flex flex-wrap items-center gap-2" role="group" aria-label="Date range">
-            <label className="flex items-center gap-1.5 text-base text-(--text-tertiary)">
+            <label className="flex items-center gap-1.5 text-base text-tertiary">
               From
               <input
                 type="date"
@@ -232,7 +232,7 @@ export function DecisionFilterControls({
                 className={FIELD}
               />
             </label>
-            <label className="flex items-center gap-1.5 text-base text-(--text-tertiary)">
+            <label className="flex items-center gap-1.5 text-base text-tertiary">
               To
               <input
                 type="date"
@@ -247,7 +247,7 @@ export function DecisionFilterControls({
             <>
               <FilterRowLabel>Show</FilterRowLabel>
               <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-                <label className="flex cursor-pointer items-center gap-1.5 text-base text-(--text-secondary)">
+                <label className="flex cursor-pointer items-center gap-1.5 text-base text-secondary">
                   <input
                     type="checkbox"
                     checked={shown.superseded}
@@ -255,7 +255,7 @@ export function DecisionFilterControls({
                   />
                   Superseded
                 </label>
-                <label className="flex cursor-pointer items-center gap-1.5 text-base text-(--text-secondary)">
+                <label className="flex cursor-pointer items-center gap-1.5 text-base text-secondary">
                   <input
                     type="checkbox"
                     checked={shown.hideAgent}
@@ -287,12 +287,12 @@ export function DecisionFilterControls({
                 aria-label={`Remove filter: ${pill.label}`}
                 title="Remove this filter"
                 className={cn(
-                  "inline-flex max-w-72 cursor-pointer items-center gap-1 rounded-full border border-(--border-default) bg-(--surface-wash) py-0.5 pr-1.5 pl-2.5 text-xs text-(--text-primary) hover:bg-(--surface-hover)",
+                  "inline-flex max-w-72 cursor-pointer items-center gap-1 rounded-full border border-default bg-surface-wash py-0.5 pr-1.5 pl-2.5 text-xs text-primary hover:bg-surface-hover",
                   FOCUS_RING,
                 )}
               >
                 <span className="truncate">{pill.label}</span>
-                <CloseIcon size={10} className="flex-none text-(--text-tertiary)" />
+                <CloseIcon size={10} className="flex-none text-tertiary" />
               </button>
             </li>
           ))}
@@ -309,7 +309,7 @@ export function DecisionFilterControls({
 }
 
 function FilterRowLabel({ children }: { children: ReactNode }) {
-  return <span className="text-base text-(--text-tertiary)">{children}</span>;
+  return <span className="text-base text-tertiary">{children}</span>;
 }
 
 type FilterPill = { key: string; label: string; remove: () => void };
@@ -438,7 +438,7 @@ export function KeywordSearch({
         placeholder={label}
         autoComplete="off"
         onChange={(event) => setText(event.target.value)}
-        className={cn(FIELD, "w-full placeholder:text-(--text-tertiary)")}
+        className={cn(FIELD, "w-full placeholder:text-tertiary")}
       />
     </div>
   );
@@ -554,23 +554,23 @@ function CategoryPicker({
           "flex cursor-pointer list-none items-center gap-1.5 rounded-(--radius-sm) border px-2.5 py-1 text-base [&::-webkit-details-marker]:hidden",
           FOCUS_RING,
           selected.length === 0
-            ? "border-(--border-default) bg-(--surface-card) text-(--text-secondary) hover:bg-(--surface-hover)"
-            : "border-(--action-accent) bg-(--surface-pressed) font-medium text-(--text-primary)",
+            ? "border-default bg-surface-card text-secondary hover:bg-surface-hover"
+            : "border-action-accent bg-surface-pressed font-medium text-primary",
         )}
       >
         <span className="sr-only">Category: </span>
         {label}
         <ChevronDownIcon
           size={12}
-          className="flex-none text-(--text-tertiary) transition-transform duration-150 group-open:rotate-180"
+          className="flex-none text-tertiary transition-transform duration-150 group-open:rotate-180"
         />
       </summary>
-      <fieldset className="absolute left-0 z-20 mt-1 w-56 rounded-(--radius-md) border border-(--border-default) bg-(--surface-card) p-1 shadow-(--shadow-overlay)">
+      <fieldset className="absolute left-0 z-20 mt-1 w-56 rounded-(--radius-md) border border-default bg-surface-card p-1 shadow-overlay">
         <legend className="sr-only">Categories</legend>
         {CATEGORIES.map((category) => (
           <label
             key={category}
-            className="flex cursor-pointer items-center gap-2 rounded-(--radius-sm) px-2 py-1.5 text-base hover:bg-(--surface-hover)"
+            className="flex cursor-pointer items-center gap-2 rounded-(--radius-sm) px-2 py-1.5 text-base hover:bg-surface-hover"
           >
             <input
               type="checkbox"

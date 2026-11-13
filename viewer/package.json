@@ -81,6 +81,7 @@
     "./host": "./src/host.ts",
     "./navigation": "./src/navigation.ts",
     "./package.json": "./package.json",
+    "./palette-utility-names": "./src/palette-utility-names.ts",
     "./patch": "./src/patch.ts",
     "./review-document": "./src/review-document.ts",
     "./review-entity-groups": "./src/review-entity-groups.ts",

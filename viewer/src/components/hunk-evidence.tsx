@@ -305,7 +305,7 @@ export function HunkEvidence({
       <summary
         aria-label={`Code evidence: ${summary}`}
         className={cn(
-          "inline-flex cursor-pointer list-none items-center gap-1 rounded-(--radius-sm) text-xs text-(--text-tertiary) hover:text-(--text-secondary) marker:hidden [&::-webkit-details-marker]:hidden",
+          "inline-flex cursor-pointer list-none items-center gap-1 rounded-(--radius-sm) text-xs text-tertiary hover:text-secondary marker:hidden [&::-webkit-details-marker]:hidden",
           FOCUS_RING,
         )}
       >
@@ -318,8 +318,8 @@ export function HunkEvidence({
             {hasLineTotals && (
               <>
                 {" · "}
-                <span className="text-(--status-positive)">+{additions}</span>{" "}
-                <span className="text-(--status-critical)">−{deletions}</span>
+                <span className="text-status-positive">+{additions}</span>{" "}
+                <span className="text-status-critical">−{deletions}</span>
               </>
             )}
             {usesHistorical && historicalVersion ? ` · review v${historicalVersion}` : ""}
@@ -331,7 +331,7 @@ export function HunkEvidence({
         />
       </summary>
       {usesHistorical && historicalVersion ? (
-        <p className="mt-3 text-base text-(--text-tertiary)">
+        <p className="mt-3 text-base text-tertiary">
           Historical evidence from review v{historicalVersion}
         </p>
       ) : null}
@@ -340,7 +340,7 @@ export function HunkEvidence({
        *  excerpt. Any way of opening the disclosure fires toggle. */}
       {opened ? <CodeDiff files={files} bare highlight className={diffClassName} /> : null}
       {unavailable.length > 0 ? (
-        <ul className="mt-3 space-y-1.5 text-base text-(--text-tertiary)">
+        <ul className="mt-3 space-y-1.5 text-base text-tertiary">
           {unavailable.map(({ anchor, hunk, patch }) => (
             <li key={`${anchor.id}:${anchor.lines?.join("-") ?? "all"}`}>
               {hunk && patch && (!patch.state || patch.state.status === "loading") ? (
@@ -359,7 +359,7 @@ export function HunkEvidence({
                       path={hunk.path}
                       line={hunkLine(hunk)}
                       href={hunkUrl(document, hunk)}
-                      className="text-(--text-link) hover:underline"
+                      className="text-link hover:underline"
                     >
                       View {hunk.path}
                     </CodeFileLink>

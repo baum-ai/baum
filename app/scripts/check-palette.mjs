@@ -1,10 +1,16 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { dirname, extname, join, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import {
+  arbitraryPaletteValues,
+  paletteUtilityNames,
+} from "../../viewer/src/palette-utility-names.ts";
 
 const app = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const oss = resolve(app, "..");
 const palette = join(oss, "viewer/src/palette.css");
+const paletteUtilities = join(oss, "viewer/src/palette-utilities.css");
+const markup = new Set([".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".html"]);
 const extensions = new Set([
   ".css",
   ".ts",
@@ -54,6 +60,14 @@ function sourceFiles() {
   ];
 }
 const mask = (text) => text.replace(/[^\n]/g, " ");
+/** Blanks comments, keeping line numbers, so documentation may quote what
+ *  the rules reject. */
+function withoutComments(original) {
+  return original
+    .replace(/\/\*[\s\S]*?\*\//g, mask)
+    .replace(/<!--[\s\S]*?-->/g, mask)
+    .replace(/^[ \t]*\/\/[^\n]*/gm, mask);
+}
 function matches(source, expression) {
   const flags = expression.flags.includes("g") ? expression.flags : expression.flags + "g";
   return [...source.matchAll(new RegExp(expression.source, flags))];
@@ -71,10 +85,7 @@ export function isColorDefinition(path) {
 }
 
 export function disallowedColorLines(original, inboxKeys = false) {
-  const source = original
-    .replace(/\/\*[\s\S]*?\*\//g, mask)
-    .replace(/<!--[\s\S]*?-->/g, mask)
-    .replace(/^[ \t]*\/\/[^\n]*/gm, mask);
+  const source = withoutComments(original);
   // These are stored filter keys, resolved through --inbox-*, not CSS values.
   const styling = inboxKeys
     ? source.replace(/(["'])(?:blue|green|red|amber|purple|grey)\1/g, mask)
@@ -98,15 +109,21 @@ export function disallowedColorLines(original, inboxKeys = false) {
 
 function main() {
   const failures = [];
+  const arbitrary = [];
+  const names = paletteUtilityNames(readFileSync(paletteUtilities, "utf8"));
   let checked = 0;
   for (const path of sourceFiles()) {
     if (isColorDefinition(path)) continue;
     checked++;
-    const lines = disallowedColorLines(
-      readFileSync(path, "utf8"),
-      path === join(app, "src/inboxes.ts"),
-    );
+    const source = readFileSync(path, "utf8");
+    const lines = disallowedColorLines(source, path === join(app, "src/inboxes.ts"));
     for (const { line, text } of lines) failures.push(`${relative(oss, path)}:${line}: ${text}`);
+    if (!markup.has(extname(path))) continue;
+    for (const { line, match, replacement } of arbitraryPaletteValues(
+      withoutComments(source),
+      names,
+    ))
+      arbitrary.push(`${relative(oss, path)}:${line}: ${match} -> ${replacement}`);
   }
   if (failures.length) {
     console.error(
@@ -114,7 +131,15 @@ function main() {
         failures.join("\n"),
     );
     process.exitCode = 1;
-  } else {
+  }
+  if (arbitrary.length) {
+    console.error(
+      "Use the palette utility (viewer/src/palette-utilities.css) rather than the arbitrary value:\n" +
+        arbitrary.join("\n"),
+    );
+    process.exitCode = 1;
+  }
+  if (!failures.length && !arbitrary.length) {
     console.log(`Palette lint passed (${checked} source files).`);
   }
 }

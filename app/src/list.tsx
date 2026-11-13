@@ -5,11 +5,11 @@ import { ChevronRightIcon } from "@baum/viewer/components/icons";
 
 /** The tones of a section's dot. */
 export const LIST_TONES = {
-  caution: "text-(--status-caution)",
-  critical: "text-(--status-critical)",
-  positive: "text-(--status-positive)",
-  info: "text-(--status-info)",
-  quiet: "text-(--text-tertiary)",
+  caution: "text-status-caution",
+  critical: "text-status-critical",
+  positive: "text-status-positive",
+  info: "text-status-info",
+  quiet: "text-tertiary",
 } as const;
 export type ListTone = keyof typeof LIST_TONES;
 

@@ -179,11 +179,11 @@ class TileBoundary extends Component<
 
 function UnavailableTile({ kind }: { kind?: string }) {
   return (
-    <details className="rounded-(--radius-md) border border-(--border-default) p-3">
+    <details className="rounded-(--radius-md) border border-default p-3">
       <summary className="cursor-pointer text-base">
         Tile unavailable{kind ? ` (${kind})` : ""}
       </summary>
-      <p className="mt-2 text-base text-(--text-secondary)">
+      <p className="mt-2 text-base text-secondary">
         This tile type or its data is not supported. The rest of the review is still available.
       </p>
     </details>
@@ -220,10 +220,7 @@ export function ReviewTiles({ document, tiles }: { document: ReviewDocument; til
               fallback
             )}
 
-            <ul
-              aria-label="Tile sources"
-              className="flex flex-wrap gap-2 text-xs text-(--text-tertiary)"
-            >
+            <ul aria-label="Tile sources" className="flex flex-wrap gap-2 text-xs text-tertiary">
               {anchors.map((anchor, index) => {
                 const resolved = resolveAnchor(document, anchor);
                 const href =
@@ -236,17 +233,12 @@ export function ReviewTiles({ document, tiles }: { document: ReviewDocument; til
                         path={file.path}
                         line={file.line}
                         href={href}
-                        className="text-(--text-link) hover:underline"
+                        className="text-link hover:underline"
                       >
                         {resolved.label}
                       </CodeFileLink>
                     ) : href ? (
-                      <a
-                        href={href}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="text-(--text-link)"
-                      >
+                      <a href={href} target="_blank" rel="noreferrer" className="text-link">
                         {resolved.label}
                       </a>
                     ) : (
@@ -258,7 +250,7 @@ export function ReviewTiles({ document, tiles }: { document: ReviewDocument; til
             </ul>
 
             {unresolved ? (
-              <p className="text-base text-(--status-caution)">
+              <p className="text-base text-status-caution">
                 Some tile sources could not be resolved.
               </p>
             ) : null}

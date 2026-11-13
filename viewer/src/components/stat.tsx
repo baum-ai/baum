@@ -17,12 +17,10 @@ export function Stat({
 }) {
   return (
     <div className={cn("min-w-0", truncate && "max-w-80")}>
-      <dt className="text-xs tracking-[0.08em] text-(--text-tertiary) uppercase">{label}</dt>
-      <dd className={cn("mt-0.5 tabular-nums text-(--text-primary)", truncate && "truncate")}>
+      <dt className="text-xs tracking-[0.08em] text-tertiary uppercase">{label}</dt>
+      <dd className={cn("mt-0.5 tabular-nums text-primary", truncate && "truncate")}>
         {value}
-        {detail ? (
-          <span className="ml-1.5 text-xs text-(--text-tertiary) normal-case">{detail}</span>
-        ) : null}
+        {detail ? <span className="ml-1.5 text-xs text-tertiary normal-case">{detail}</span> : null}
       </dd>
     </div>
   );

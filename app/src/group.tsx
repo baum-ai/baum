@@ -525,7 +525,7 @@ export function GroupPage({
                                 {entry.pull_request.title}
                               </ViewerLink>
                             ) : (
-                              <span className="text-(--text-tertiary)">Not in the inbox</span>
+                              <span className="text-tertiary">Not in the inbox</span>
                             )}
                             <span className="local-group-member-state">
                               {state === "merged" ? (
@@ -549,13 +549,13 @@ export function GroupPage({
                                 {entry.pull_request.title}
                               </ViewerLink>
                             ) : (
-                              <span className="text-(--text-tertiary)">Not in the inbox</span>
+                              <span className="text-tertiary">Not in the inbox</span>
                             )}
                             {entry ? (
                               <span className="local-group-member-state">
                                 <PullRequestState entry={entry} />
                                 {entry.status === "generating" ? (
-                                  <span className="inline-flex items-center gap-1.5 text-(--text-secondary)">
+                                  <span className="inline-flex items-center gap-1.5 text-secondary">
                                     <NineDots size={14} />
                                     {reviewStatus.generating}
                                   </span>

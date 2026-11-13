@@ -24,7 +24,7 @@ const STALE_AFTER_MS = 60 * 60 * 1000;
 function AsOf({ at }: { at?: string }) {
   if (!at || Date.now() - new Date(at).getTime() < STALE_AFTER_MS) return null;
   return (
-    <span className="text-xs text-(--text-tertiary)" title={`Checks as of ${formatDate(at)}`}>
+    <span className="text-xs text-tertiary" title={`Checks as of ${formatDate(at)}`}>
       as of {formatRelative(at)}
     </span>
   );
@@ -39,7 +39,7 @@ function AsOf({ at }: { at?: string }) {
 export function CheckState({ status, asOf }: { status: CheckStatus; asOf?: string }) {
   if (status.state === "none") {
     return (
-      <span className="flex flex-wrap items-center gap-2 text-base text-(--text-tertiary)">
+      <span className="flex flex-wrap items-center gap-2 text-base text-tertiary">
         No checks ran on this head
         <AsOf at={asOf} />
       </span>
@@ -71,9 +71,7 @@ export function CheckState({ status, asOf }: { status: CheckStatus; asOf?: strin
       <Badge tone={tone} role="status">
         {label} · {counted}
       </Badge>
-      {rest.length > 0 && (
-        <span className="text-base text-(--text-tertiary)">{rest.join(" · ")}</span>
-      )}
+      {rest.length > 0 && <span className="text-base text-tertiary">{rest.join(" · ")}</span>}
       <AsOf at={asOf} />
     </span>
   );
@@ -83,17 +81,17 @@ export function CheckState({ status, asOf }: { status: CheckStatus; asOf?: strin
  *  request's repository (see `repositoryLink`); otherwise it reads as text. */
 function CheckLink({ check }: { check: IndexedCheck }) {
   if (!check.url) {
-    return <span className="min-w-0 truncate text-base text-(--text-primary)">{check.name}</span>;
+    return <span className="min-w-0 truncate text-base text-primary">{check.name}</span>;
   }
   return (
     <a
       href={check.url}
       target="_blank"
       rel="noreferrer"
-      className="inline-flex min-w-0 items-center gap-1 text-base text-(--text-primary)"
+      className="inline-flex min-w-0 items-center gap-1 text-base text-primary"
     >
       <span className="truncate">{check.name}</span>
-      <ExternalLinkIcon size={10} className="flex-none text-(--text-tertiary)" />
+      <ExternalLinkIcon size={10} className="flex-none text-tertiary" />
     </a>
   );
 }
@@ -151,15 +149,15 @@ export function ChecksPart({ document: supplied }: { document: ReviewEvidence })
           }
         />
         {head !== document.review.head && (
-          <span className="block text-xs text-(--text-tertiary)">Head {head.slice(0, 7)}</span>
+          <span className="block text-xs text-tertiary">Head {head.slice(0, 7)}</span>
         )}
         <FailingChecks status={status} />
         {checks.length > 0 && (
           <details>
-            <summary className="cursor-pointer text-base text-(--text-link) hover:underline">
+            <summary className="cursor-pointer text-base text-link hover:underline">
               {pluralize("check", checks.length, true)} on this head
             </summary>
-            <ul aria-label="Checks on this head" className="mt-2 divide-y divide-(--border-subtle)">
+            <ul aria-label="Checks on this head" className="mt-2 divide-y divide-subtle">
               {checks.map((check) => (
                 <li key={check.id} className="flex flex-wrap items-center gap-x-2 gap-y-1 py-2">
                   <Badge

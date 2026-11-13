@@ -60,7 +60,7 @@ export function Avatar({
         !tint &&
           (chrome
             ? "bg-(--brand-sand-100) text-(--brand-forest)"
-            : "bg-(--status-neutral-bg) text-(--text-secondary)"),
+            : "bg-status-neutral-bg text-secondary"),
         radius,
         className,
       )}

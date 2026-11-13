@@ -58,7 +58,7 @@ export function ReviewNavigator({
   return (
     <div
       ref={ref}
-      className="sticky top-(--review-host-bar,0px) z-(--z-sticky) -mb-px flex h-12 items-center gap-0.5 border-b border-(--border-subtle) bg-(--surface-card) pr-2 pl-1 lg:top-12 wide:hidden"
+      className="sticky top-(--review-host-bar,0px) z-(--z-sticky) -mb-px flex h-12 items-center gap-0.5 border-b border-subtle bg-surface-card pr-2 pl-1 lg:top-12 wide:hidden"
     >
       <button
         type="button"
@@ -67,18 +67,16 @@ export function ReviewNavigator({
         title="All sections"
         onClick={onOpen}
         className={cn(
-          "flex h-10 min-w-0 flex-1 cursor-pointer items-center gap-1.5 rounded-(--radius-sm) px-1.5 text-left hover:bg-(--surface-hover)",
+          "flex h-10 min-w-0 flex-1 cursor-pointer items-center gap-1.5 rounded-(--radius-sm) px-1.5 text-left hover:bg-surface-hover",
           FOCUS_RING,
         )}
       >
-        <Icon className="flex-none text-(--action-accent)" />
-        <span className="min-w-0 truncate text-base font-medium text-(--text-primary)">
-          {label}
-        </span>
+        <Icon className="flex-none text-action-accent" />
+        <span className="min-w-0 truncate text-base font-medium text-primary">{label}</span>
         {position ? (
-          <span className="flex-none text-xs tabular-nums text-(--text-tertiary)">{position}</span>
+          <span className="flex-none text-xs tabular-nums text-tertiary">{position}</span>
         ) : null}
-        <ChevronDownIcon size={12} className="flex-none text-(--text-tertiary)" />
+        <ChevronDownIcon size={12} className="flex-none text-tertiary" />
       </button>
       {check}
       <IconButton
@@ -103,13 +101,13 @@ export function ReviewNavigator({
         aria-expanded={aside.expanded}
         aria-controls="review-aside"
         onClick={aside.onOpen}
-        className="relative h-10 w-9 text-(--text-secondary)"
+        className="relative h-10 w-9 text-secondary"
       >
         {aside.label === "Conversation" ? <TeamChatIcon /> : <ChecksIcon />}
         {aside.alert ? (
           <span
             aria-hidden
-            className="absolute top-2 right-2 h-1.5 w-1.5 rounded-full bg-(--status-critical)"
+            className="absolute top-2 right-2 h-1.5 w-1.5 rounded-full bg-status-critical"
           />
         ) : null}
       </IconButton>
@@ -129,21 +127,21 @@ export function ReviewPaneFoot({
 }) {
   if (!previous && !next) return null;
   const step = cn(
-    "flex min-w-0 cursor-pointer flex-col gap-0.5 rounded-(--radius-sm) border border-(--border-default) px-3 py-2.5 hover:bg-(--surface-hover)",
+    "flex min-w-0 cursor-pointer flex-col gap-0.5 rounded-(--radius-sm) border border-default px-3 py-2.5 hover:bg-surface-hover",
     FOCUS_RING,
   );
   return (
     <nav
       aria-label="Next in review"
-      className="mt-8 flex gap-3 border-t border-(--border-subtle) pt-4 wide:hidden"
+      className="mt-8 flex gap-3 border-t border-subtle pt-4 wide:hidden"
     >
       {previous ? (
         <button type="button" onClick={previous.go} className={cn(step, "max-w-[45%] text-left")}>
-          <span className="flex items-center gap-1 text-xs text-(--text-tertiary)">
+          <span className="flex items-center gap-1 text-xs text-tertiary">
             <ChevronLeftIcon size={12} />
             Previous
           </span>
-          <span className="truncate text-base text-(--text-secondary)">{previous.label}</span>
+          <span className="truncate text-base text-secondary">{previous.label}</span>
         </button>
       ) : null}
       {next ? (
@@ -152,13 +150,11 @@ export function ReviewPaneFoot({
           onClick={next.go}
           className={cn(step, "ml-auto flex-1 text-right sm:max-w-sm")}
         >
-          <span className="flex items-center justify-end gap-1 text-xs text-(--text-tertiary)">
+          <span className="flex items-center justify-end gap-1 text-xs text-tertiary">
             Next
             <ChevronRightIcon size={12} />
           </span>
-          <span className="line-clamp-2 text-base font-medium text-(--text-primary)">
-            {next.label}
-          </span>
+          <span className="line-clamp-2 text-base font-medium text-primary">{next.label}</span>
         </button>
       ) : null}
     </nav>

@@ -602,14 +602,14 @@ export function UpdatedAgo({ at, busy }: { at: number | null; busy: boolean }) {
 function ReviewActivity({ entry }: { entry: Entry }) {
   if (entry.needs_clone)
     return (
-      <span className="inbox-activity text-(--status-caution)">
+      <span className="inbox-activity text-status-caution">
         <WarningIcon size={12} className="flex-none" />
         Needs a local clone
       </span>
     );
   if (entry.status === "generating")
     return (
-      <span className="inbox-activity text-(--text-secondary)">
+      <span className="inbox-activity text-secondary">
         <NineDots size={14} />
         Generating review
       </span>
@@ -617,7 +617,7 @@ function ReviewActivity({ entry }: { entry: Entry }) {
   if (entry.status === "failed")
     return (
       <span
-        className="inbox-activity text-(--status-critical)"
+        className="inbox-activity text-status-critical"
         title={entry.failure_reason ?? entry.store_error}
       >
         <WarningIcon size={14} className="flex-none" />
@@ -632,10 +632,10 @@ type StateStyle = {
   icon: ComponentType<IconProps>;
   iconTone?: string;
 };
-const MUTED = "text-(--text-tertiary)";
-const POSITIVE = "text-(--status-positive)";
-const CRITICAL = "text-(--status-critical)";
-const CAUTION = "text-(--status-caution)";
+const MUTED = "text-tertiary";
+const POSITIVE = "text-status-positive";
+const CRITICAL = "text-status-critical";
+const CAUTION = "text-status-caution";
 // Colour only where a state asks something of someone: red where it needs the
 // author, amber while checks run, green when it can merge. The normal states
 // (no GitHub review yet, nothing to report) leave the cell empty.
@@ -937,7 +937,7 @@ function GroupRow({
           <ChevronRightIcon
             size={12}
             className={cn(
-              "text-(--text-tertiary) transition-transform motion-reduce:transition-none",
+              "text-tertiary transition-transform motion-reduce:transition-none",
               expanded && "rotate-90",
             )}
           />
@@ -949,7 +949,7 @@ function GroupRow({
               // The hosted pull request list's mark for a stack.
               <span
                 title={`Stack of ${formatCount(group.members.length + (group.landed?.length ?? 0))} pull requests`}
-                className="flex flex-none items-center gap-0.5 self-center text-xs font-semibold text-(--text-secondary)"
+                className="flex flex-none items-center gap-0.5 self-center text-xs font-semibold text-secondary"
               >
                 <StackIcon size={14} />
                 <span className="sr-only">Stack of</span>
@@ -959,17 +959,17 @@ function GroupRow({
             <Link
               href={appURL(`?page=pulls&group=${encodeURIComponent(group.id)}`)}
               title={group.name}
-              className="inbox-pr-title min-w-0 font-medium text-(--text-primary) hover:underline"
+              className="inbox-pr-title min-w-0 font-medium text-primary hover:underline"
             >
               {group.name}
             </Link>
             {group.stack ? null : <Badge size="compact">Group of {group.members.length}</Badge>}
           </div>
-          <p title={metadata} className="inbox-meta text-xs text-(--text-tertiary)">
+          <p title={metadata} className="inbox-meta text-xs text-tertiary">
             {metadata}
           </p>
           {isActiveJob(job) ? (
-            <span className="inbox-activity text-(--text-secondary)">
+            <span className="inbox-activity text-secondary">
               <NineDots size={14} />
               Generating group review
             </span>
@@ -1038,7 +1038,7 @@ function InboxRow({
       className={cn(
         "inbox-columns inbox-row list-row",
         nested && "inbox-nested",
-        selected && "bg-(--surface-selected)",
+        selected && "bg-surface-selected",
       )}
     >
       <input
@@ -1054,14 +1054,14 @@ function InboxRow({
           <Link
             href={href}
             title={pr.title}
-            className="inbox-pr-title min-w-0 font-medium text-(--text-primary) hover:underline"
+            className="inbox-pr-title min-w-0 font-medium text-primary hover:underline"
           >
             {pr.title || "Saved review"}
           </Link>
           {pr.draft ? <Badge size="compact">Draft</Badge> : null}
           {pr.fork ? <Badge size="compact">Fork</Badge> : null}
         </div>
-        <p title={metadata.join(" · ")} className="inbox-meta text-xs text-(--text-tertiary)">
+        <p title={metadata.join(" · ")} className="inbox-meta text-xs text-tertiary">
           {metadata.join(" · ")}
         </p>
         {/* What is happening on the pull request now: baum's review and the
@@ -1069,7 +1069,7 @@ function InboxRow({
         <div className="inbox-activities">
           <ReviewActivity entry={entry} />
           {fixing ? (
-            <span className="inbox-activity text-(--text-secondary)">
+            <span className="inbox-activity text-secondary">
               <SparkleIcon size={12} className="flex-none" />
               Fixing…
             </span>

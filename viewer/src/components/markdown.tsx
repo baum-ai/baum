@@ -248,7 +248,7 @@ const COMPONENTS: Components = {
     const ref = node?.properties?.dataRef;
     if (typeof ref === "string") return <ReviewRefChip refKey={ref} />;
     return (
-      <a href={href} target="_blank" rel="noreferrer" className="text-(--text-link) underline">
+      <a href={href} target="_blank" rel="noreferrer" className="text-link underline">
         {children}
       </a>
     );
@@ -259,17 +259,15 @@ const COMPONENTS: Components = {
   ul: ({ children }) => <ul className="list-disc space-y-1 pl-5">{children}</ul>,
   ol: ({ children }) => <ol className="list-decimal space-y-1 pl-5">{children}</ol>,
   li: ({ children }) => <li>{children}</li>,
-  hr: () => <hr className="border-(--border-subtle)" />,
+  hr: () => <hr className="border-subtle" />,
   blockquote: ({ children }) => (
-    <blockquote className="border-l-2 border-(--border-default) pl-3 text-(--text-secondary)">
-      {children}
-    </blockquote>
+    <blockquote className="border-l-2 border-default pl-3 text-secondary">{children}</blockquote>
   ),
   h1: ({ children }) => <p className="font-semibold">{children}</p>,
   h2: ({ children }) => <p className="font-semibold">{children}</p>,
   h3: ({ children }) => <p className="font-medium">{children}</p>,
   pre: ({ children }) => (
-    <pre className="overflow-x-auto rounded-(--radius-sm) bg-(--code-fill) p-2 text-base">
+    <pre className="overflow-x-auto rounded-(--radius-sm) bg-code-fill p-2 text-base">
       {children}
     </pre>
   ),
@@ -282,9 +280,7 @@ const COMPONENTS: Components = {
   code: ({ className, children }) => {
     if (String(children).includes("\n")) return codeBlock(className, children);
     return (
-      <code className="rounded-(--radius-sm) bg-(--code-fill) px-1 py-0.5 text-base">
-        {children}
-      </code>
+      <code className="rounded-(--radius-sm) bg-code-fill px-1 py-0.5 text-base">{children}</code>
     );
   },
   // A comment body usually breaks anywhere so a long path cannot widen the
@@ -296,13 +292,11 @@ const COMPONENTS: Components = {
     </div>
   ),
   th: ({ children }) => (
-    <th className="border border-(--border-subtle) px-2 py-1 text-left font-medium">{children}</th>
+    <th className="border border-subtle px-2 py-1 text-left font-medium">{children}</th>
   ),
-  td: ({ children }) => <td className="border border-(--border-subtle) px-2 py-1">{children}</td>,
+  td: ({ children }) => <td className="border border-subtle px-2 py-1">{children}</td>,
   details: ({ children }) => (
-    <details className="rounded-(--radius-sm) border border-(--border-subtle) p-2">
-      {children}
-    </details>
+    <details className="rounded-(--radius-sm) border border-subtle p-2">{children}</details>
   ),
   summary: ({ children }) => <summary className="cursor-pointer font-medium">{children}</summary>,
   // A comment's body is contributor-controlled, unmoderated text — an
@@ -317,7 +311,7 @@ const COMPONENTS: Components = {
   // link in two instead of just adding an image-viewing shortcut. "View on
   // GitHub" on the comment above already opens the real, camo-proxied image.
   img: ({ alt }) => (
-    <span className="inline-block rounded-(--radius-sm) border border-(--border-subtle) px-2 py-1 text-(--text-tertiary) italic">
+    <span className="inline-block rounded-(--radius-sm) border border-subtle px-2 py-1 text-tertiary italic">
       {alt || "Image"}
     </span>
   ),
@@ -331,28 +325,28 @@ const READING_COMPONENTS: Components = {
   ...COMPONENTS,
   // A reply's title, over the sections a level down: heavier, and ruled off.
   h1: ({ children }) => (
-    <h3 className="mt-6 border-b border-(--border-subtle) pb-2 font-(family-name:--font-heading) text-lg font-extrabold text-(--text-primary) first:mt-0">
+    <h3 className="mt-6 border-b border-subtle pb-2 font-(family-name:--font-heading) text-lg font-extrabold text-primary first:mt-0">
       {children}
     </h3>
   ),
   h2: ({ children }) => (
-    <h3 className="mt-6 font-(family-name:--font-heading) text-lg font-bold text-(--text-primary) first:mt-0">
+    <h3 className="mt-6 font-(family-name:--font-heading) text-lg font-bold text-primary first:mt-0">
       {children}
     </h3>
   ),
   h3: ({ children }) => (
-    <h4 className="mt-5 text-base font-semibold text-(--text-primary) first:mt-0">{children}</h4>
+    <h4 className="mt-5 text-base font-semibold text-primary first:mt-0">{children}</h4>
   ),
   h4: ({ children }) => (
-    <h5 className="mt-4 text-base font-semibold text-(--text-primary) first:mt-0">{children}</h5>
+    <h5 className="mt-4 text-base font-semibold text-primary first:mt-0">{children}</h5>
   ),
   ul: ({ children }) => (
-    <ul className="list-disc space-y-1.5 pl-5 marker:text-(--text-tertiary) [&_ol]:mt-1 [&_ol]:space-y-1 [&_ul]:mt-1 [&_ul]:space-y-1">
+    <ul className="list-disc space-y-1.5 pl-5 marker:text-tertiary [&_ol]:mt-1 [&_ol]:space-y-1 [&_ul]:mt-1 [&_ul]:space-y-1">
       {children}
     </ul>
   ),
   ol: ({ children }) => (
-    <ol className="list-decimal space-y-1.5 pl-5 marker:text-(--text-tertiary) [&_ol]:mt-1 [&_ol]:space-y-1 [&_ul]:mt-1 [&_ul]:space-y-1">
+    <ol className="list-decimal space-y-1.5 pl-5 marker:text-tertiary [&_ol]:mt-1 [&_ol]:space-y-1 [&_ul]:mt-1 [&_ul]:space-y-1">
       {children}
     </ol>
   ),
@@ -365,17 +359,17 @@ const READING_COMPONENTS: Components = {
     </div>
   ),
   th: ({ children }) => (
-    <th className="border border-(--border-subtle) bg-(--code-fill) px-3 py-2 text-left align-bottom font-semibold">
+    <th className="border border-subtle bg-code-fill px-3 py-2 text-left align-bottom font-semibold">
       {children}
     </th>
   ),
   td: ({ children }) => (
-    <td className="min-w-32 border border-(--border-subtle) px-3 py-2 align-top">{children}</td>
+    <td className="min-w-32 border border-subtle px-3 py-2 align-top">{children}</td>
   ),
   code: ({ className, children }) => {
     if (String(children).includes("\n")) return codeBlock(className, children);
     return (
-      <code className="rounded-(--radius-xs) bg-(--code-fill) px-1 py-px font-mono text-base text-(--text-primary)">
+      <code className="rounded-(--radius-xs) bg-code-fill px-1 py-px font-mono text-base text-primary">
         {pathBreaks(children)}
       </code>
     );
@@ -449,7 +443,7 @@ const INLINE_COMPONENTS: Components = {
   a: ({ children }) => <>{children}</>,
   br: () => " ",
   code: ({ children }) => (
-    <code className="rounded-(--radius-sm) bg-(--code-fill) px-1 py-0.5">{children}</code>
+    <code className="rounded-(--radius-sm) bg-code-fill px-1 py-0.5">{children}</code>
   ),
 };
 

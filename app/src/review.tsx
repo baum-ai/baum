@@ -893,7 +893,7 @@ export function LocalReview({
                         disabled={fixing || fixStarting}
                         onClick={() => fix()}
                       >
-                        <SparkleIcon size={14} className="flex-none text-(--status-critical)" />
+                        <SparkleIcon size={14} className="flex-none text-status-critical" />
                         {fixing ? "Fixing…" : fixStarting ? "Starting…" : fixLabelText}
                       </button>
                     ) : null}
@@ -1120,7 +1120,7 @@ export function LocalReview({
                           ]}
                         />
                         {fixing || fixStarting ? (
-                          <span className="inline-flex items-center gap-1.5 text-xs text-(--text-secondary)">
+                          <span className="inline-flex items-center gap-1.5 text-xs text-secondary">
                             <LiveDot />
                             {fixing ? "Fixing" : "Starting the fix"}
                           </span>
@@ -1510,7 +1510,7 @@ function StatusMenu({ entry, items }: { entry: Entry; items: MenuItem[] }) {
         onPointerLeave={(event) => delete event.currentTarget.dataset.closing}
       >
         <PullRequestState entry={entry} />
-        <ChevronDownIcon size={12} className="flex-none text-(--text-tertiary)" />
+        <ChevronDownIcon size={12} className="flex-none text-tertiary" />
       </button>
       {menu.menu}
     </>
@@ -1639,11 +1639,11 @@ export function ReviewJob({
           {job.state === "queued" ? "New version queued" : "Generating a new version"}
           {/* The title already says it generates; another phase is news. */}
           {job.state === "running" && job.phase && job.phase !== "generating" ? (
-            <span className="font-normal text-(--text-tertiary)"> · {job.phase}</span>
+            <span className="font-normal text-tertiary"> · {job.phase}</span>
           ) : null}
         </p>
         {started || saved ? (
-          <p className="text-(--text-tertiary)">
+          <p className="text-tertiary">
             {[started, saved ? "The saved version stays available while it runs." : ""]
               .filter(Boolean)
               .join(". ")}

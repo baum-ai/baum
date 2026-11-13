@@ -31,10 +31,10 @@ const statusTone: Record<DiagnosticCheck["status"], BadgeTone> = {
   info: "neutral",
 };
 const statusColor: Record<DiagnosticCheck["status"], string> = {
-  ok: "text-(--status-positive)",
-  warning: "text-(--status-caution)",
-  problem: "text-(--status-critical)",
-  info: "text-(--text-tertiary)",
+  ok: "text-status-positive",
+  warning: "text-status-caution",
+  problem: "text-status-critical",
+  info: "text-tertiary",
 };
 const order = { problem: 0, warning: 1, ok: 2, info: 3 } as const;
 
@@ -61,12 +61,9 @@ function StatusIcon({ status }: { status: DiagnosticCheck["status"] }) {
 function Detail({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
   return (
     <div className="flex min-w-0 gap-1.5">
-      <dt className="flex-none text-(--text-tertiary)">{label}</dt>
+      <dt className="flex-none text-tertiary">{label}</dt>
       <dd
-        className={cn(
-          "m-0 min-w-0 text-(--text-secondary) [overflow-wrap:anywhere]",
-          mono && "font-mono",
-        )}
+        className={cn("m-0 min-w-0 text-secondary [overflow-wrap:anywhere]", mono && "font-mono")}
       >
         {value}
       </dd>
@@ -91,7 +88,7 @@ function CheckRow({ check, home }: { check: DiagnosticCheck; home?: string }) {
             <span className="sr-only">{statusText[check.status]}</span>
           )}
         </div>
-        <p className="m-0 text-(--text-secondary) break-words">{display(check.detail)}</p>
+        <p className="m-0 text-secondary break-words">{display(check.detail)}</p>
         {check.path || check.version || check.source ? (
           <dl className="m-0 flex flex-wrap gap-x-4 gap-y-0.5 text-xs">
             {check.path ? <Detail label="Path" value={display(check.path)} mono /> : null}
@@ -100,7 +97,7 @@ function CheckRow({ check, home }: { check: DiagnosticCheck; home?: string }) {
           </dl>
         ) : null}
         {check.fix ? (
-          <p className="m-0 mt-2 rounded-(--radius-md) bg-(--surface-wash) px-3 py-2 break-words">
+          <p className="m-0 mt-2 rounded-(--radius-md) bg-surface-wash px-3 py-2 break-words">
             <strong className="font-medium">Fix:</strong> {display(check.fix)}
           </p>
         ) : null}
@@ -249,14 +246,14 @@ export function DiagnosticsSection({
       ) : null}
       <div
         className={cn(
-          "flex flex-wrap items-center gap-3 rounded-(--radius-lg) border border-(--border-subtle) px-4 py-3",
+          "flex flex-wrap items-center gap-3 rounded-(--radius-lg) border border-subtle px-4 py-3",
           overall === "problem"
-            ? "bg-(--status-critical-bg)"
+            ? "bg-status-critical-bg"
             : overall === "warning"
-              ? "bg-(--status-caution-bg)"
+              ? "bg-status-caution-bg"
               : overall
-                ? "bg-(--status-positive-bg)"
-                : "bg-(--surface-wash)",
+                ? "bg-status-positive-bg"
+                : "bg-surface-wash",
         )}
       >
         {report ? <StatusIcon status={report.status} /> : null}
@@ -271,10 +268,10 @@ export function DiagnosticsSection({
           ) : report === null ? (
             <p className="m-0">Diagnostics are not available in this build.</p>
           ) : null}
-          <p className="m-0 text-xs text-(--text-tertiary)">
+          <p className="m-0 text-xs text-tertiary">
             {report ? `${report.checks.length} checks. ` : ""}Credential values are never shown.
           </p>
-          <p className="m-0 text-xs text-(--text-tertiary)">
+          <p className="m-0 text-xs text-tertiary">
             “Report a problem” opens a new GitHub issue in your browser with as much of a redacted
             summary as you choose; nothing is sent until you submit it there.
           </p>
@@ -305,7 +302,7 @@ export function DiagnosticsSection({
             <h3 className="diagnostics-group-title">
               {group.title} <span className="font-normal">· {list.length}</span>
             </h3>
-            <ul className="m-0 list-none divide-y divide-(--border-subtle) overflow-hidden rounded-(--radius-lg) border border-(--border-subtle) bg-(--surface-card) p-0">
+            <ul className="m-0 list-none divide-y divide-subtle overflow-hidden rounded-(--radius-lg) border border-subtle bg-surface-card p-0">
               {list.map((check) => (
                 <CheckRow key={check.id} check={check} home={home} />
               ))}

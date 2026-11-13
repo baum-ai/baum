@@ -142,7 +142,7 @@ export function ReportProblemDialog({
         <AttachmentPreview attachment={attachment} link={link} waiting={waiting} error={error} />
       </div>
       {link === null ? <Alert>Too long for a link to GitHub. Shorten what you wrote.</Alert> : null}
-      <p className="mt-4 text-xs text-(--text-secondary)">
+      <p className="mt-4 text-xs text-secondary">
         This will open an issue in {ISSUE_REPOSITORY} on GitHub
       </p>
       <div className="mt-3 flex justify-end gap-2">

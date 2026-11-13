@@ -106,7 +106,7 @@ const OPEN_SESSION: OpenSessionSource<LiveTranscriptAnswer> = {
   render: (answer, at) => {
     if (!answer.available || !answer.transcript)
       return (
-        <p className="text-base text-(--text-tertiary) italic">
+        <p className="text-base text-tertiary italic">
           {answer.available ? WITHHELD_NOTE : answer.message}
         </p>
       );
@@ -116,7 +116,7 @@ const OPEN_SESSION: OpenSessionSource<LiveTranscriptAnswer> = {
         {/* The transcript lists the prompts it kept; a decision can cite a
             turn that is not one of them. */}
         {prompts.length === 0 || prompts.some((prompt) => prompt.ordinal === at.turn) ? null : (
-          <p className="mb-2 text-base text-(--text-tertiary) italic">
+          <p className="mb-2 text-base text-tertiary italic">
             Turn {formatCount(at.turn)} is not among the prompts shown for this session.
           </p>
         )}
@@ -824,7 +824,7 @@ function MoreMenu({
       <summary
         aria-label="More"
         className={cn(
-          "flex cursor-pointer list-none items-center rounded-(--radius-sm) p-1.5 text-(--text-secondary) group-open:bg-(--surface-hover) hover:bg-(--surface-hover) [&::-webkit-details-marker]:hidden",
+          "flex cursor-pointer list-none items-center rounded-(--radius-sm) p-1.5 text-secondary group-open:bg-surface-hover hover:bg-surface-hover [&::-webkit-details-marker]:hidden",
           FOCUS_RING,
         )}
       >
@@ -834,12 +834,12 @@ function MoreMenu({
           <circle cx="8" cy="13" r="1.5" />
         </svg>
       </summary>
-      <div className="absolute right-0 z-20 mt-1 flex w-60 flex-col rounded-(--radius-md) border border-(--border-default) bg-(--surface-card) p-1 shadow-(--shadow-overlay)">
+      <div className="absolute right-0 z-20 mt-1 flex w-60 flex-col rounded-(--radius-md) border border-default bg-surface-card p-1 shadow-overlay">
         <button
           type="button"
           disabled={starting || blocked !== ""}
           title={blocked || undefined}
-          className="flex flex-col rounded-(--radius-sm) px-2 py-1.5 text-left text-base text-(--text-primary) hover:bg-(--surface-hover) disabled:opacity-50"
+          className="flex flex-col rounded-(--radius-sm) px-2 py-1.5 text-left text-base text-primary hover:bg-surface-hover disabled:opacity-50"
           onClick={() => {
             close();
             onRebuild();
@@ -847,7 +847,7 @@ function MoreMenu({
         >
           {starting ? "Starting…" : "Rebuild feature history"}
           {blocked || note ? (
-            <span className="text-xs text-(--text-tertiary)">{blocked || note}</span>
+            <span className="text-xs text-tertiary">{blocked || note}</span>
           ) : null}
         </button>
       </div>
@@ -872,5 +872,5 @@ function CoverageLine({ coverage }: { coverage: Coverage }) {
     parts.push(`${formatCount(coverage.skipped)} skipped (${reasons})`);
   }
   if (coverage.pending > 0) parts.push(`${formatCount(coverage.pending)} being read`);
-  return <p className="text-xs text-(--text-tertiary)">{parts.join(" · ")}</p>;
+  return <p className="text-xs text-tertiary">{parts.join(" · ")}</p>;
 }

@@ -159,7 +159,7 @@ export const transcriptHref = (s: LiveSession) =>
 export function Agent({ agent }: { agent: string }) {
   const logo = agentLogos[agent];
   return (
-    <span className="flex min-w-0 items-center gap-2 font-medium text-(--text-primary)">
+    <span className="flex min-w-0 items-center gap-2 font-medium text-primary">
       {logo ? <BrandMark brand={logo} size={18} className="shrink-0" /> : null}
       {agentName(agent)}
     </span>
@@ -186,12 +186,11 @@ export function SessionState({ session }: { session: LiveSession }) {
     <span className="local-session-state">
       {session.state === "running" ? (
         <>
-          <LiveDot className="text-(--status-positive)" /> Working
+          <LiveDot className="text-status-positive" /> Working
         </>
       ) : session.state === "idle" ? (
         <>
-          <CircleDashedIcon size={12} className="flex-none text-(--status-caution)" /> Waiting for
-          you
+          <CircleDashedIcon size={12} className="flex-none text-status-caution" /> Waiting for you
         </>
       ) : (
         "Ended"

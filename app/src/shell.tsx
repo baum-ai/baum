@@ -842,7 +842,7 @@ export function PanelHeader({
   return (
     <header className="flex flex-wrap items-center gap-x-4 gap-y-3 p-5">
       <div className="flex min-w-0 flex-[1_1_18rem] items-center gap-3">
-        <span className="flex h-10 w-10 flex-none items-center justify-center rounded-(--radius-md) bg-(--surface-wash) text-(--text-primary)">
+        <span className="flex h-10 w-10 flex-none items-center justify-center rounded-(--radius-md) bg-surface-wash text-primary">
           {icon}
         </span>
         <div className="min-w-0">
@@ -852,7 +852,7 @@ export function PanelHeader({
             </h2>
             {badge}
           </div>
-          {detail ? <p className="mt-0.5 text-xs text-(--text-secondary)">{detail}</p> : null}
+          {detail ? <p className="mt-0.5 text-xs text-secondary">{detail}</p> : null}
         </div>
       </div>
       {actions ? (

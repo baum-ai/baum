@@ -25,10 +25,9 @@ function rowClass(state: RowState, depth: 0 | 1, gap: "standard" | "tight" = "st
     gap === "standard" ? "gap-2.5" : "gap-1.5",
     depth === 0 ? "pl-2.5 text-base" : "pl-2 text-base",
     state !== "disabled" && FOCUS_RING,
-    state === "active" && "bg-(--surface-selected) font-medium text-(--text-primary)",
-    state === "idle" &&
-      "text-(--text-secondary) hover:bg-(--surface-hover) hover:text-(--text-primary)",
-    state === "disabled" && "cursor-default text-(--text-disabled)",
+    state === "active" && "bg-surface-selected font-medium text-primary",
+    state === "idle" && "text-secondary hover:bg-surface-hover hover:text-primary",
+    state === "disabled" && "cursor-default text-disabled",
   );
 }
 
@@ -40,8 +39,8 @@ function rowClass(state: RowState, depth: 0 | 1, gap: "standard" | "tight" = "st
 export type RowTint = "neutral" | "accent" | "critical" | "teal";
 
 const TINTS: Record<Exclude<RowTint, "neutral">, string> = {
-  accent: "text-(--action-accent)",
-  critical: "text-(--status-critical)",
+  accent: "text-action-accent",
+  critical: "text-status-critical",
   teal: "text-(--data-3)",
 };
 
@@ -49,12 +48,12 @@ function glyphClass(state: RowState, tint: RowTint = "neutral") {
   return cn(
     "flex-none transition-colors duration-150",
     state === "disabled"
-      ? "text-(--text-disabled)"
+      ? "text-disabled"
       : tint !== "neutral"
         ? cn(TINTS[tint], state === "idle" && "opacity-80")
         : state === "active"
-          ? "text-(--text-secondary)"
-          : "text-(--text-tertiary)",
+          ? "text-secondary"
+          : "text-tertiary",
   );
 }
 
@@ -65,7 +64,7 @@ function ActiveMark({ active }: { active: boolean }) {
     <span
       aria-hidden
       className={cn(
-        "absolute top-1/2 left-0 h-4 w-0.5 -translate-y-1/2 bg-(--action-accent) transition-opacity duration-150",
+        "absolute top-1/2 left-0 h-4 w-0.5 -translate-y-1/2 bg-action-accent transition-opacity duration-150",
         active ? "opacity-100" : "opacity-0",
       )}
     />
@@ -84,7 +83,7 @@ function ProgressBar({ read, total }: { read: number; total: number }) {
       <span
         className={cn(
           "block h-full rounded-full transition-[width] duration-300 ease-out",
-          share >= 1 ? "bg-(--status-positive)" : "bg-(--action-accent)",
+          share >= 1 ? "bg-status-positive" : "bg-action-accent",
         )}
         style={{ width: `${share * 100}%` }}
       />
@@ -128,10 +127,7 @@ export function SideNavGroup({
  *  nesting visible once the rows are narrower than the rail. */
 export function SideNavNest({ id, children }: { id?: string; children: ReactNode }) {
   return (
-    <div
-      id={id}
-      className="mt-0.5 ml-[17px] flex flex-col gap-0.5 border-l border-(--border-subtle) pl-1.5"
-    >
+    <div id={id} className="mt-0.5 ml-[17px] flex flex-col gap-0.5 border-l border-subtle pl-1.5">
       {children}
     </div>
   );
@@ -147,9 +143,7 @@ export function RowIndicator({ indicator }: { indicator: "live" | "attention" })
       className="inline-flex flex-none"
     >
       <LiveDot
-        className={
-          indicator === "attention" ? "text-(--status-caution)" : "text-(--status-positive)"
-        }
+        className={indicator === "attention" ? "text-status-caution" : "text-status-positive"}
       />
     </span>
   );
@@ -235,9 +229,9 @@ export function SideNavDisclosure({
       <Icon className={glyphClass(state, tint)} />
       <Label>{label}</Label>
       {indicator ? <RowIndicator indicator={indicator} /> : null}
-      {busy ? <Spinner size={11} className="text-(--text-tertiary)" /> : null}
+      {busy ? <Spinner size={11} className="text-tertiary" /> : null}
       {trailing ? (
-        <span aria-hidden className="flex-none text-xs tabular-nums text-(--text-tertiary)">
+        <span aria-hidden className="flex-none text-xs tabular-nums text-tertiary">
           {trailing}
         </span>
       ) : null}

@@ -37,16 +37,14 @@ export function ContextPart({
   if (!context && pending) {
     return (
       <section aria-label="Context" className="min-w-0">
-        <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 border-b border-(--border-subtle) pb-1.5">
-          <h3 className="text-base font-semibold tracking-[0.08em] text-(--text-primary) uppercase">
+        <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 border-b border-subtle pb-1.5">
+          <h3 className="text-base font-semibold tracking-[0.08em] text-primary uppercase">
             Context
           </h3>
-          <span className="text-xs text-(--text-tertiary)">
-            Where this change sits in the codebase
-          </span>
+          <span className="text-xs text-tertiary">Where this change sits in the codebase</span>
         </div>
-        <p role="status" className="mt-3 flex items-center gap-2 text-base text-(--text-secondary)">
-          <Spinner size={12} className="text-(--text-tertiary)" />
+        <p role="status" className="mt-3 flex items-center gap-2 text-base text-secondary">
+          <Spinner size={12} className="text-tertiary" />
           Writing context…
         </p>
       </section>
@@ -62,20 +60,18 @@ export function ContextPart({
       <details className="group">
         <summary
           className={cn(
-            "flex cursor-pointer list-none flex-wrap items-baseline gap-x-3 gap-y-1 border-b border-(--border-subtle) pb-1.5 [&::-webkit-details-marker]:hidden",
+            "flex cursor-pointer list-none flex-wrap items-baseline gap-x-3 gap-y-1 border-b border-subtle pb-1.5 [&::-webkit-details-marker]:hidden",
             FOCUS_RING,
           )}
         >
-          <h3 className="flex items-center gap-1.5 text-base font-semibold tracking-[0.08em] text-(--text-primary) uppercase">
+          <h3 className="flex items-center gap-1.5 text-base font-semibold tracking-[0.08em] text-primary uppercase">
             <ChevronRightIcon
               size={12}
-              className="flex-none self-center text-(--text-tertiary) transition-transform group-open:rotate-90"
+              className="flex-none self-center text-tertiary transition-transform group-open:rotate-90"
             />
             Context
           </h3>
-          <span className="text-xs text-(--text-tertiary)">
-            Where this change sits in the codebase
-          </span>
+          <span className="text-xs text-tertiary">Where this change sits in the codebase</span>
         </summary>
         <dl className="mt-3 space-y-4">
           {parts.map(({ key, label, part }) => (
@@ -83,7 +79,7 @@ export function ContextPart({
               key={key}
               className="grid min-w-0 grid-cols-1 gap-x-3 gap-y-0.5 @md:grid-cols-[6.5rem_minmax(0,1fr)]"
             >
-              <dt className="text-xs leading-[1.7rem] font-medium tracking-[0.06em] text-(--text-tertiary) uppercase">
+              <dt className="text-xs leading-[1.7rem] font-medium tracking-[0.06em] text-tertiary uppercase">
                 {label}
               </dt>
               <dd className="m-0 min-w-0 space-y-2">
@@ -170,7 +166,7 @@ function ContextRefChip({
       className={cn(chipLinkClass, FOCUS_RING)}
     >
       {label}
-      <ExternalLinkIcon size={10} className="flex-none text-(--text-tertiary)" />
+      <ExternalLinkIcon size={10} className="flex-none text-tertiary" />
     </a>
   );
 }
@@ -193,16 +189,16 @@ function ContextRefLabel({
     <span className="flex min-w-0 items-baseline gap-1.5 whitespace-nowrap">
       {symbol ? (
         <>
-          <code className="min-w-[4ch] shrink truncate font-mono text-xs text-(--text-primary)">
+          <code className="min-w-[4ch] shrink truncate font-mono text-xs text-primary">
             {symbol}
           </code>
-          <span aria-hidden className="flex-none text-(--text-tertiary)">
+          <span aria-hidden className="flex-none text-tertiary">
             ·
           </span>
-          <span className="min-w-[4ch] shrink-[2] truncate text-(--text-secondary)">{name}</span>
+          <span className="min-w-[4ch] shrink-[2] truncate text-secondary">{name}</span>
         </>
       ) : (
-        <span className="min-w-[4ch] shrink truncate text-(--text-primary)">{name}</span>
+        <span className="min-w-[4ch] shrink truncate text-primary">{name}</span>
       )}
     </span>
   );

@@ -468,7 +468,7 @@ function useVisibleHeight<T extends HTMLElement>() {
  *  finding out. */
 function RailNote({ children, busy = false }: { children: string; busy?: boolean }) {
   return (
-    <p className="flex items-center gap-2 px-2.5 py-1.5 text-base text-(--text-tertiary)">
+    <p className="flex items-center gap-2 px-2.5 py-1.5 text-base text-tertiary">
       {busy ? <Spinner size={11} /> : null}
       {children}
     </p>
@@ -1412,7 +1412,7 @@ function ReviewWorkspace<F extends ReviewFile>({
   // the line ends with the way to close it.
   const barHeader = (
     <div className="mb-4 flex flex-none items-end">
-      <span className="box-content hidden h-9 flex-none items-center border-b border-(--border-subtle) pr-1 wide:flex">
+      <span className="box-content hidden h-9 flex-none items-center border-b border-subtle pr-1 wide:flex">
         <IconButton
           label={conversation ? "Collapse conversation" : "Collapse side pane"}
           title="Collapse side pane (])"
@@ -1431,7 +1431,7 @@ function ReviewWorkspace<F extends ReviewFile>({
         items={barTabs}
         className="min-w-0 flex-1"
       />
-      <span className="box-content flex h-9 flex-none items-center border-b border-(--border-subtle) wide:hidden">
+      <span className="box-content flex h-9 flex-none items-center border-b border-subtle wide:hidden">
         <CloseButton
           label={`Close ${asideLabel.toLowerCase()}`}
           className="h-9 w-9"
@@ -1445,9 +1445,7 @@ function ReviewWorkspace<F extends ReviewFile>({
   );
   const historicalNote =
     barHistorical && barDocument ? (
-      <p className="mb-4 text-xs text-(--text-tertiary)">
-        As of review v{barDocument.review.version}
-      </p>
+      <p className="mb-4 text-xs text-tertiary">As of review v{barDocument.review.version}</p>
     ) : null;
   const conversationContext: ReviewConversationContext = {
     document: navigationDocument,
@@ -1497,7 +1495,7 @@ function ReviewWorkspace<F extends ReviewFile>({
                   }
                 >
                   {changes && (
-                    <span className="text-base text-(--text-secondary)">
+                    <span className="text-base text-secondary">
                       {pluralize("new section", changes.sections.size, true)} ·{" "}
                       {pluralize("new risk", changes.risks.size, true)} since v
                       {historyView.selection?.version}
@@ -1512,7 +1510,7 @@ function ReviewWorkspace<F extends ReviewFile>({
                   ) : null}
                 </HistoryToolbar>
               ) : document ? (
-                <div className="flex items-center gap-3 text-base text-(--text-tertiary)">
+                <div className="flex items-center gap-3 text-base text-tertiary">
                   <span>
                     Review v{document.review.version}
                     {reviewGeneration(document, header?.generation).state === "current"
@@ -1546,7 +1544,7 @@ function ReviewWorkspace<F extends ReviewFile>({
                   // own padding would otherwise stack up to a tenth of the width.
                   // Stacked, the one column is the window's width: an `auto` track
                   // would grow to the bar's untruncated title and widen the page.
-                  "-mx-4 grid flex-1 grid-cols-[minmax(0,1fr)] items-start border-y border-(--border-default) bg-(--surface-card) sm:mx-0 sm:border-x wide:items-stretch",
+                  "-mx-4 grid flex-1 grid-cols-[minmax(0,1fr)] items-start border-y border-default bg-surface-card sm:mx-0 sm:border-x wide:items-stretch",
                   columns,
                 )}
               >
@@ -1581,7 +1579,7 @@ function ReviewWorkspace<F extends ReviewFile>({
                     type="button"
                     aria-label={sheetOpen ? "Close sections" : `Close ${asideLabel.toLowerCase()}`}
                     onClick={closeSheet}
-                    className="fixed inset-0 z-(--z-sheet) bg-(--surface-scrim) wide:hidden"
+                    className="fixed inset-0 z-(--z-sheet) bg-surface-scrim wide:hidden"
                   />
                 ) : null}
                 <nav
@@ -1592,7 +1590,7 @@ function ReviewWorkspace<F extends ReviewFile>({
                   // closed so its rows leave the tab order with it; once wide the
                   // column beside the pane, under the head's bar.
                   className={cn(
-                    "fixed inset-x-0 bottom-0 z-(--z-sheet) max-h-[80dvh] min-w-0 overflow-x-hidden overflow-y-auto border-t border-(--border-default) bg-(--surface-card) px-4 pt-4 pb-[max(1rem,env(safe-area-inset-bottom))] shadow-(--shadow-overlay)",
+                    "fixed inset-x-0 bottom-0 z-(--z-sheet) max-h-[80dvh] min-w-0 overflow-x-hidden overflow-y-auto border-t border-default bg-surface-card px-4 pt-4 pb-[max(1rem,env(safe-area-inset-bottom))] shadow-overlay",
                     "wide:sticky wide:inset-x-auto wide:top-12 wide:bottom-auto wide:z-auto wide:block wide:h-[calc(100cqh-3rem)] wide:max-h-none wide:self-start wide:border-t-0 wide:bg-transparent wide:p-4 wide:shadow-none",
                     sheetOpen ? "block" : "hidden",
                   )}
@@ -1653,7 +1651,7 @@ function ReviewWorkspace<F extends ReviewFile>({
                                 section.stale && "opacity-60 grayscale",
                                 !section.stale &&
                                   sectionRead(section.id) &&
-                                  "bg-(--status-positive-bg)/60",
+                                  "bg-status-positive-bg/60",
                               )}
                             >
                               <div className="min-w-0 flex-1">
@@ -1682,7 +1680,7 @@ function ReviewWorkspace<F extends ReviewFile>({
                                           role="img"
                                           aria-label="High or critical risks"
                                           title="High or critical risks"
-                                          className="mr-2 flex-none text-(--status-critical)"
+                                          className="mr-2 flex-none text-status-critical"
                                         >
                                           <RiskIcon size={14} />
                                         </span>
@@ -1718,7 +1716,7 @@ function ReviewWorkspace<F extends ReviewFile>({
                             aria-expanded={showObsolete}
                             onClick={toggleObsolete}
                             className={cn(
-                              "mx-2.5 mt-2 cursor-pointer rounded-sm py-1 text-left text-xs text-(--text-tertiary) hover:text-(--text-primary)",
+                              "mx-2.5 mt-2 cursor-pointer rounded-sm py-1 text-left text-xs text-tertiary hover:text-primary",
                               FOCUS_RING,
                             )}
                           >
@@ -1784,7 +1782,7 @@ function ReviewWorkspace<F extends ReviewFile>({
                         controls="review-section"
                         aside={
                           decisions.count === undefined ? undefined : (
-                            <span className="text-xs tabular-nums text-(--text-tertiary)">
+                            <span className="text-xs tabular-nums text-tertiary">
                               {decisions.count}
                             </span>
                           )
@@ -1899,7 +1897,7 @@ function ReviewWorkspace<F extends ReviewFile>({
                   ref={reviewPane}
                   id="review-section"
                   aria-label={paneLabel}
-                  className="relative flex min-h-[22rem] min-w-0 flex-col border-b border-(--border-subtle) p-4 sm:p-5 wide:min-h-0 wide:border-b-0 wide:border-l"
+                  className="relative flex min-h-[22rem] min-w-0 flex-col border-b border-subtle p-4 sm:p-5 wide:min-h-0 wide:border-b-0 wide:border-l"
                 >
                   {/* Laid over the pane's left border rather than given a column, so
               the rail and the pane keep their places and only gain a grip. */}
@@ -2027,7 +2025,7 @@ function ReviewWorkspace<F extends ReviewFile>({
                   // height so the chat's feed and composer both have room; once wide
                   // the column beside the pane, under the head's bar.
                   className={cn(
-                    "fixed inset-x-0 top-[max(3rem,8dvh)] bottom-0 z-(--z-sheet) min-w-0 flex-col overflow-hidden outline-none border-t border-(--border-default) bg-(--surface-aside) p-4 pb-[max(1rem,env(safe-area-inset-bottom))] shadow-(--shadow-overlay) sm:p-5",
+                    "fixed inset-x-0 top-[max(3rem,8dvh)] bottom-0 z-(--z-sheet) min-w-0 flex-col overflow-hidden outline-none border-t border-default bg-surface-aside p-4 pb-[max(1rem,env(safe-area-inset-bottom))] shadow-overlay sm:p-5",
                     "wide:sticky wide:inset-x-auto wide:top-12 wide:bottom-auto wide:z-auto wide:flex wide:h-(--review-visible) wide:self-start wide:border-t-0 wide:shadow-none",
                     asideOpen ? "flex" : "hidden",
                     chatCollapsed && "wide:items-center wide:px-0 wide:py-2",
@@ -2047,7 +2045,7 @@ function ReviewWorkspace<F extends ReviewFile>({
                       label={conversation ? "Expand conversation" : "Expand side pane"}
                       title="Expand side pane (])"
                       aria-keyshortcuts="]"
-                      className="h-9 w-9 text-(--text-secondary)"
+                      className="h-9 w-9 text-secondary"
                       onClick={() => setChatCollapsed(false)}
                     >
                       <ChevronLeftIcon />
@@ -2059,9 +2057,7 @@ function ReviewWorkspace<F extends ReviewFile>({
                         label={tab.label}
                         className={cn(
                           "relative h-9 w-9",
-                          tab.value === barTab
-                            ? "text-(--text-primary)"
-                            : "text-(--text-secondary)",
+                          tab.value === barTab ? "text-primary" : "text-secondary",
                         )}
                         onClick={() => openBarTab(tab.value)}
                       >
@@ -2071,9 +2067,7 @@ function ReviewWorkspace<F extends ReviewFile>({
                             aria-hidden
                             className={cn(
                               "absolute top-1.5 right-1.5 h-1.5 w-1.5 rounded-full",
-                              tab.tone === "caution"
-                                ? "bg-(--status-caution)"
-                                : "bg-(--status-critical)",
+                              tab.tone === "caution" ? "bg-status-caution" : "bg-status-critical",
                             )}
                           />
                         ) : null}
@@ -2224,7 +2218,7 @@ function ReviewWorkspace<F extends ReviewFile>({
     const section = snapshot.sections.find((item) => item.id === sectionId);
     if (!section) {
       return (
-        <p className="text-base text-(--text-secondary)">
+        <p className="text-base text-secondary">
           This section did not exist in review v{snapshot.review.version}.
         </p>
       );

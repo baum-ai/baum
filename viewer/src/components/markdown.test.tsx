@@ -64,7 +64,7 @@ describe("Markdown output", () => {
   it("renders representative inputs with raw HTML on", () => {
     expect(renderAll()).toMatchInlineSnapshot(`
       {
-        "autolink": "<div class="space-y-2"><p>see <a href="https://example.com/a?b=1" target="_blank" rel="noreferrer" class="text-(--text-link) underline">https://example.com/a?b=1</a> and <a href="https://example.org" target="_blank" rel="noreferrer" class="text-(--text-link) underline">https://example.org</a></p></div>",
+        "autolink": "<div class="space-y-2"><p>see <a href="https://example.com/a?b=1" target="_blank" rel="noreferrer" class="text-link underline">https://example.com/a?b=1</a> and <a href="https://example.org" target="_blank" rel="noreferrer" class="text-link underline">https://example.org</a></p></div>",
         "blocks": "<div class="space-y-2"><p class="font-semibold">Title</p>
       <ul class="list-disc space-y-1 pl-5">
       <li>one</li>
@@ -78,20 +78,20 @@ describe("Markdown output", () => {
       <li>a</li>
       <li>b</li>
       </ol>
-      <blockquote class="border-l-2 border-(--border-default) pl-3 text-(--text-secondary)">
+      <blockquote class="border-l-2 border-default pl-3 text-secondary">
       <p>quote</p>
       </blockquote>
-      <hr class="border-(--border-subtle)"/>
-      <p><del>gone</del> and <code class="rounded-(--radius-sm) bg-(--code-fill) px-1 py-0.5 text-base">code</code> and <strong>bold</strong></p></div>",
+      <hr class="border-subtle"/>
+      <p><del>gone</del> and <code class="rounded-(--radius-sm) bg-code-fill px-1 py-0.5 text-base">code</code> and <strong>bold</strong></p></div>",
         "comment": "<div class="space-y-2"><p>visible  text</p></div>",
-        "details": "<div class="space-y-2"><details class="rounded-(--radius-sm) border border-(--border-subtle) p-2"><summary class="cursor-pointer font-medium">More</summary>
+        "details": "<div class="space-y-2"><details class="rounded-(--radius-sm) border border-subtle p-2"><summary class="cursor-pointer font-medium">More</summary>
       <p>hidden <strong>bold</strong></p>
       </details></div>",
-        "fence": "<div class="space-y-2"><pre class="overflow-x-auto rounded-(--radius-sm) bg-(--code-fill) p-2 text-base"><code class="language-ts">const x = 1 &lt; 2;
+        "fence": "<div class="space-y-2"><pre class="overflow-x-auto rounded-(--radius-sm) bg-code-fill p-2 text-base"><code class="language-ts">const x = 1 &lt; 2;
       </code></pre>
-      <pre class="overflow-x-auto rounded-(--radius-sm) bg-(--code-fill) p-2 text-base"><code>plain &lt;b&gt;fence&lt;/b&gt;
+      <pre class="overflow-x-auto rounded-(--radius-sm) bg-code-fill p-2 text-base"><code>plain &lt;b&gt;fence&lt;/b&gt;
       </code></pre></div>",
-        "img": "<div class="space-y-2"><p>before <span class="inline-block rounded-(--radius-sm) border border-(--border-subtle) px-2 py-1 text-(--text-tertiary) italic">shot</span> after</p></div>",
+        "img": "<div class="space-y-2"><p>before <span class="inline-block rounded-(--radius-sm) border border-subtle px-2 py-1 text-tertiary italic">shot</span> after</p></div>",
         "kbd": "<div class="space-y-2"><p>Press <kbd>Ctrl</kbd> + <kbd>C</kbd></p></div>",
         "lessThan": "<div class="space-y-2"><p>a &lt; b and c &gt; d</p></div>",
         "plain": "<div class="space-y-2"><p>Just some text.<br/>
@@ -109,12 +109,12 @@ describe("Markdown output", () => {
 
 
 
-      <div class="relative overflow-x-auto"><table class="text-base [overflow-wrap:normal]"><thead><tr><th class="border border-(--border-subtle) px-2 py-1 text-left font-medium">a</th><th class="border border-(--border-subtle) px-2 py-1 text-left font-medium">b</th></tr></thead><tbody><tr><td class="border border-(--border-subtle) px-2 py-1">1</td><td class="border border-(--border-subtle) px-2 py-1">2</td></tr></tbody></table></div></div>",
+      <div class="relative overflow-x-auto"><table class="text-base [overflow-wrap:normal]"><thead><tr><th class="border border-subtle px-2 py-1 text-left font-medium">a</th><th class="border border-subtle px-2 py-1 text-left font-medium">b</th></tr></thead><tbody><tr><td class="border border-subtle px-2 py-1">1</td><td class="border border-subtle px-2 py-1">2</td></tr></tbody></table></div></div>",
         "tasks": "<div class="space-y-2"><ul class="list-disc space-y-1 pl-5">
       <li><input type="checkbox" disabled="" checked=""/> done</li>
       <li><input type="checkbox" disabled=""/> todo</li>
       </ul></div>",
-        "xss": "<div class="space-y-2"><span class="inline-block rounded-(--radius-sm) border border-(--border-subtle) px-2 py-1 text-(--text-tertiary) italic">Image</span><a target="_blank" rel="noreferrer" class="text-(--text-link) underline">x</a></div>",
+        "xss": "<div class="space-y-2"><span class="inline-block rounded-(--radius-sm) border border-subtle px-2 py-1 text-tertiary italic">Image</span><a target="_blank" rel="noreferrer" class="text-link underline">x</a></div>",
       }
     `);
   });
@@ -122,7 +122,7 @@ describe("Markdown output", () => {
   it("renders them as written with raw HTML off", () => {
     expect(renderAll({ html: false })).toMatchInlineSnapshot(`
       {
-        "autolink": "<div class="space-y-2"><p>see <a href="https://example.com/a?b=1" target="_blank" rel="noreferrer" class="text-(--text-link) underline">https://example.com/a?b=1</a> and <a href="https://example.org" target="_blank" rel="noreferrer" class="text-(--text-link) underline">https://example.org</a></p></div>",
+        "autolink": "<div class="space-y-2"><p>see <a href="https://example.com/a?b=1" target="_blank" rel="noreferrer" class="text-link underline">https://example.com/a?b=1</a> and <a href="https://example.org" target="_blank" rel="noreferrer" class="text-link underline">https://example.org</a></p></div>",
         "blocks": "<div class="space-y-2"><p class="font-semibold">Title</p>
       <ul class="list-disc space-y-1 pl-5">
       <li>one</li>
@@ -136,25 +136,25 @@ describe("Markdown output", () => {
       <li>a</li>
       <li>b</li>
       </ol>
-      <blockquote class="border-l-2 border-(--border-default) pl-3 text-(--text-secondary)">
+      <blockquote class="border-l-2 border-default pl-3 text-secondary">
       <p>quote</p>
       </blockquote>
-      <hr class="border-(--border-subtle)"/>
-      <p><del>gone</del> and <code class="rounded-(--radius-sm) bg-(--code-fill) px-1 py-0.5 text-base">code</code> and <strong>bold</strong></p></div>",
+      <hr class="border-subtle"/>
+      <p><del>gone</del> and <code class="rounded-(--radius-sm) bg-code-fill px-1 py-0.5 text-base">code</code> and <strong>bold</strong></p></div>",
         "comment": "<div class="space-y-2"><p>visible &lt;!-- hidden marker --&gt; text</p></div>",
         "details": "<div class="space-y-2">&lt;details&gt;&lt;summary&gt;More&lt;/summary&gt;
       <p>hidden <strong>bold</strong></p>
       &lt;/details&gt;</div>",
-        "fence": "<div class="space-y-2"><pre class="overflow-x-auto rounded-(--radius-sm) bg-(--code-fill) p-2 text-base"><code class="language-ts">const x = 1 &lt; 2;
+        "fence": "<div class="space-y-2"><pre class="overflow-x-auto rounded-(--radius-sm) bg-code-fill p-2 text-base"><code class="language-ts">const x = 1 &lt; 2;
       </code></pre>
-      <pre class="overflow-x-auto rounded-(--radius-sm) bg-(--code-fill) p-2 text-base"><code>plain &lt;b&gt;fence&lt;/b&gt;
+      <pre class="overflow-x-auto rounded-(--radius-sm) bg-code-fill p-2 text-base"><code>plain &lt;b&gt;fence&lt;/b&gt;
       </code></pre></div>",
         "img": "<div class="space-y-2"><p>before &lt;img src=&quot;https://example.com/x.png&quot; alt=&quot;shot&quot;&gt; after</p></div>",
         "kbd": "<div class="space-y-2"><p>Press &lt;kbd&gt;Ctrl&lt;/kbd&gt; + &lt;kbd&gt;C&lt;/kbd&gt;</p></div>",
         "lessThan": "<div class="space-y-2"><p>a &lt; b and c &gt; d</p></div>",
         "plain": "<div class="space-y-2"><p>Just some text.<br/>
       Second line.</p></div>",
-        "table": "<div class="space-y-2"><div class="relative overflow-x-auto"><table class="text-base [overflow-wrap:normal]"><thead><tr><th class="border border-(--border-subtle) px-2 py-1 text-left font-medium">a</th><th class="border border-(--border-subtle) px-2 py-1 text-left font-medium">b</th></tr></thead><tbody><tr><td class="border border-(--border-subtle) px-2 py-1">1</td><td class="border border-(--border-subtle) px-2 py-1">2</td></tr></tbody></table></div></div>",
+        "table": "<div class="space-y-2"><div class="relative overflow-x-auto"><table class="text-base [overflow-wrap:normal]"><thead><tr><th class="border border-subtle px-2 py-1 text-left font-medium">a</th><th class="border border-subtle px-2 py-1 text-left font-medium">b</th></tr></thead><tbody><tr><td class="border border-subtle px-2 py-1">1</td><td class="border border-subtle px-2 py-1">2</td></tr></tbody></table></div></div>",
         "tasks": "<div class="space-y-2"><ul class="list-disc space-y-1 pl-5">
       <li><input type="checkbox" disabled="" checked=""/> done</li>
       <li><input type="checkbox" disabled=""/> todo</li>
@@ -167,34 +167,34 @@ describe("Markdown output", () => {
   it("renders them in the reading style", () => {
     expect(renderAll({ reading: true })).toMatchInlineSnapshot(`
       {
-        "autolink": "<div class="space-y-3"><p>see <a href="https://example.com/a?b=1" target="_blank" rel="noreferrer" class="text-(--text-link) underline">https://example.com/a?b=1</a> and <a href="https://example.org" target="_blank" rel="noreferrer" class="text-(--text-link) underline">https://example.org</a></p></div>",
-        "blocks": "<div class="space-y-3"><h3 class="mt-6 border-b border-(--border-subtle) pb-2 font-(family-name:--font-heading) text-lg font-extrabold text-(--text-primary) first:mt-0">Title</h3>
-      <ul class="list-disc space-y-1.5 pl-5 marker:text-(--text-tertiary) [&amp;_ol]:mt-1 [&amp;_ol]:space-y-1 [&amp;_ul]:mt-1 [&amp;_ul]:space-y-1">
+        "autolink": "<div class="space-y-3"><p>see <a href="https://example.com/a?b=1" target="_blank" rel="noreferrer" class="text-link underline">https://example.com/a?b=1</a> and <a href="https://example.org" target="_blank" rel="noreferrer" class="text-link underline">https://example.org</a></p></div>",
+        "blocks": "<div class="space-y-3"><h3 class="mt-6 border-b border-subtle pb-2 font-(family-name:--font-heading) text-lg font-extrabold text-primary first:mt-0">Title</h3>
+      <ul class="list-disc space-y-1.5 pl-5 marker:text-tertiary [&amp;_ol]:mt-1 [&amp;_ol]:space-y-1 [&amp;_ul]:mt-1 [&amp;_ul]:space-y-1">
       <li>one</li>
       <li>two
-      <ul class="list-disc space-y-1.5 pl-5 marker:text-(--text-tertiary) [&amp;_ol]:mt-1 [&amp;_ol]:space-y-1 [&amp;_ul]:mt-1 [&amp;_ul]:space-y-1">
+      <ul class="list-disc space-y-1.5 pl-5 marker:text-tertiary [&amp;_ol]:mt-1 [&amp;_ol]:space-y-1 [&amp;_ul]:mt-1 [&amp;_ul]:space-y-1">
       <li>nested</li>
       </ul>
       </li>
       </ul>
-      <ol class="list-decimal space-y-1.5 pl-5 marker:text-(--text-tertiary) [&amp;_ol]:mt-1 [&amp;_ol]:space-y-1 [&amp;_ul]:mt-1 [&amp;_ul]:space-y-1">
+      <ol class="list-decimal space-y-1.5 pl-5 marker:text-tertiary [&amp;_ol]:mt-1 [&amp;_ol]:space-y-1 [&amp;_ul]:mt-1 [&amp;_ul]:space-y-1">
       <li>a</li>
       <li>b</li>
       </ol>
-      <blockquote class="border-l-2 border-(--border-default) pl-3 text-(--text-secondary)">
+      <blockquote class="border-l-2 border-default pl-3 text-secondary">
       <p>quote</p>
       </blockquote>
-      <hr class="border-(--border-subtle)"/>
-      <p><del>gone</del> and <code class="rounded-(--radius-xs) bg-(--code-fill) px-1 py-px font-mono text-base text-(--text-primary)">code</code> and <strong>bold</strong></p></div>",
+      <hr class="border-subtle"/>
+      <p><del>gone</del> and <code class="rounded-(--radius-xs) bg-code-fill px-1 py-px font-mono text-base text-primary">code</code> and <strong>bold</strong></p></div>",
         "comment": "<div class="space-y-3"><p>visible  text</p></div>",
-        "details": "<div class="space-y-3"><details class="rounded-(--radius-sm) border border-(--border-subtle) p-2"><summary class="cursor-pointer font-medium">More</summary>
+        "details": "<div class="space-y-3"><details class="rounded-(--radius-sm) border border-subtle p-2"><summary class="cursor-pointer font-medium">More</summary>
       <p>hidden <strong>bold</strong></p>
       </details></div>",
-        "fence": "<div class="space-y-3"><pre class="overflow-x-auto rounded-(--radius-sm) bg-(--code-fill) p-2 text-base"><code class="language-ts">const x = 1 &lt; 2;
+        "fence": "<div class="space-y-3"><pre class="overflow-x-auto rounded-(--radius-sm) bg-code-fill p-2 text-base"><code class="language-ts">const x = 1 &lt; 2;
       </code></pre>
-      <pre class="overflow-x-auto rounded-(--radius-sm) bg-(--code-fill) p-2 text-base"><code>plain &lt;b&gt;fence&lt;/b&gt;
+      <pre class="overflow-x-auto rounded-(--radius-sm) bg-code-fill p-2 text-base"><code>plain &lt;b&gt;fence&lt;/b&gt;
       </code></pre></div>",
-        "img": "<div class="space-y-3"><p>before <span class="inline-block rounded-(--radius-sm) border border-(--border-subtle) px-2 py-1 text-(--text-tertiary) italic">shot</span> after</p></div>",
+        "img": "<div class="space-y-3"><p>before <span class="inline-block rounded-(--radius-sm) border border-subtle px-2 py-1 text-tertiary italic">shot</span> after</p></div>",
         "kbd": "<div class="space-y-3"><p>Press <kbd>Ctrl</kbd> + <kbd>C</kbd></p></div>",
         "lessThan": "<div class="space-y-3"><p>a &lt; b and c &gt; d</p></div>",
         "plain": "<div class="space-y-3"><p>Just some text.<br/>
@@ -212,12 +212,12 @@ describe("Markdown output", () => {
 
 
 
-      <div class="relative overflow-x-auto"><table class="w-full border-collapse text-base [overflow-wrap:normal]"><thead><tr><th class="border border-(--border-subtle) bg-(--code-fill) px-3 py-2 text-left align-bottom font-semibold">a</th><th class="border border-(--border-subtle) bg-(--code-fill) px-3 py-2 text-left align-bottom font-semibold">b</th></tr></thead><tbody><tr><td class="min-w-32 border border-(--border-subtle) px-3 py-2 align-top">1</td><td class="min-w-32 border border-(--border-subtle) px-3 py-2 align-top">2</td></tr></tbody></table></div></div>",
-        "tasks": "<div class="space-y-3"><ul class="list-disc space-y-1.5 pl-5 marker:text-(--text-tertiary) [&amp;_ol]:mt-1 [&amp;_ol]:space-y-1 [&amp;_ul]:mt-1 [&amp;_ul]:space-y-1">
+      <div class="relative overflow-x-auto"><table class="w-full border-collapse text-base [overflow-wrap:normal]"><thead><tr><th class="border border-subtle bg-code-fill px-3 py-2 text-left align-bottom font-semibold">a</th><th class="border border-subtle bg-code-fill px-3 py-2 text-left align-bottom font-semibold">b</th></tr></thead><tbody><tr><td class="min-w-32 border border-subtle px-3 py-2 align-top">1</td><td class="min-w-32 border border-subtle px-3 py-2 align-top">2</td></tr></tbody></table></div></div>",
+        "tasks": "<div class="space-y-3"><ul class="list-disc space-y-1.5 pl-5 marker:text-tertiary [&amp;_ol]:mt-1 [&amp;_ol]:space-y-1 [&amp;_ul]:mt-1 [&amp;_ul]:space-y-1">
       <li><input type="checkbox" disabled="" checked=""/> done</li>
       <li><input type="checkbox" disabled=""/> todo</li>
       </ul></div>",
-        "xss": "<div class="space-y-3"><span class="inline-block rounded-(--radius-sm) border border-(--border-subtle) px-2 py-1 text-(--text-tertiary) italic">Image</span><a target="_blank" rel="noreferrer" class="text-(--text-link) underline">x</a></div>",
+        "xss": "<div class="space-y-3"><span class="inline-block rounded-(--radius-sm) border border-subtle px-2 py-1 text-tertiary italic">Image</span><a target="_blank" rel="noreferrer" class="text-link underline">x</a></div>",
       }
     `);
   });
@@ -230,7 +230,7 @@ describe("Markdown output", () => {
         </InlineMarkdown>,
       ),
     ).toMatchInlineSnapshot(`
-      "<span class="x"><strong>b</strong> <code class="rounded-(--radius-sm) bg-(--code-fill) px-1 py-0.5">c</code> l &lt;i&gt;t&lt;/i&gt; 
+      "<span class="x"><strong>b</strong> <code class="rounded-(--radius-sm) bg-code-fill px-1 py-0.5">c</code> l &lt;i&gt;t&lt;/i&gt; 
       h</span>"
     `);
   });

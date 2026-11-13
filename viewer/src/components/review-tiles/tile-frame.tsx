@@ -34,9 +34,9 @@ export function TileShell({
   return (
     <section
       aria-label={title}
-      className="min-w-0 rounded-(--radius-md) border border-(--border-default) bg-(--surface-sunken) p-4 [overflow-wrap:anywhere]"
+      className="min-w-0 rounded-(--radius-md) border border-default bg-surface-sunken p-4 [overflow-wrap:anywhere]"
     >
-      <h4 className="text-base font-medium tracking-[-0.01em] text-(--text-primary)">{title}</h4>
+      <h4 className="text-base font-medium tracking-[-0.01em] text-primary">{title}</h4>
       {children}
       {facts ? <TileKeyFacts facts={facts} /> : null}
       <TileCode source={source} />
@@ -62,23 +62,17 @@ export function TileGlance({
   return (
     <section
       aria-label={label}
-      className="mt-4 overflow-hidden rounded-(--radius-md) border border-(--border-default) bg-(--surface-card)"
+      className="mt-4 overflow-hidden rounded-(--radius-md) border border-default bg-surface-card"
     >
       <div className="px-4 py-3.5">
-        <p className="text-xs font-semibold tracking-[0.12em] uppercase text-(--text-tertiary)">
+        <p className="text-xs font-semibold tracking-[0.12em] uppercase text-tertiary">
           At a glance
         </p>
-        <h5 className="mt-1 text-lg font-semibold tracking-[-0.01em] text-(--text-primary)">
-          {headline}
-        </h5>
-        <p className="mt-1 max-w-[62rem] text-base leading-[1.5] text-(--text-secondary)">
-          {description}
-        </p>
+        <h5 className="mt-1 text-lg font-semibold tracking-[-0.01em] text-primary">{headline}</h5>
+        <p className="mt-1 max-w-[62rem] text-base leading-[1.5] text-secondary">{description}</p>
       </div>
       {shown.length > 0 && (
-        <div className="flex flex-wrap gap-2 border-t border-(--border-subtle) px-4 py-2.5">
-          {shown}
-        </div>
+        <div className="flex flex-wrap gap-2 border-t border-subtle px-4 py-2.5">{shown}</div>
       )}
     </section>
   );
@@ -99,7 +93,7 @@ export function TileDisclosure({
 }) {
   return (
     <details
-      className="group mt-3 rounded-(--radius-sm) border border-(--border-default) bg-(--surface-card)"
+      className="group mt-3 rounded-(--radius-sm) border border-default bg-surface-card"
       onToggle={(event) => onToggle?.(event.currentTarget.open)}
     >
       <summary
@@ -107,25 +101,22 @@ export function TileDisclosure({
         className="cursor-pointer list-none marker:hidden [&::-webkit-details-marker]:hidden"
       >
         <span className="flex items-center gap-3 px-3 py-3">
-          <span
-            aria-hidden
-            className="text-(--text-tertiary) transition-transform group-open:rotate-90"
-          >
+          <span aria-hidden className="text-tertiary transition-transform group-open:rotate-90">
             ›
           </span>
           <span className="min-w-0 flex-1">
-            <span className="block text-base font-medium text-(--text-primary)">{label}</span>
-            <span className="mt-0.5 block text-xs text-(--text-tertiary)">{summary}</span>
+            <span className="block text-base font-medium text-primary">{label}</span>
+            <span className="mt-0.5 block text-xs text-tertiary">{summary}</span>
           </span>
-          <span className="text-xs font-semibold tracking-[0.08em] uppercase text-(--text-link) group-open:hidden">
+          <span className="text-xs font-semibold tracking-[0.08em] uppercase text-link group-open:hidden">
             Show
           </span>
-          <span className="hidden text-xs font-semibold tracking-[0.08em] uppercase text-(--text-link) group-open:inline">
+          <span className="hidden text-xs font-semibold tracking-[0.08em] uppercase text-link group-open:inline">
             Hide
           </span>
         </span>
       </summary>
-      <div className="border-t border-(--border-subtle) px-3 pb-3">{children}</div>
+      <div className="border-t border-subtle px-3 pb-3">{children}</div>
     </details>
   );
 }
@@ -136,7 +127,7 @@ export function TileCode({ source }: { source: TileSource }) {
     <TileDisclosure label="Code" summary={`${source.code.length} source files`}>
       <section aria-label="Code" className="mt-3 min-w-0 space-y-3">
         {source.code.length === 0 ? (
-          <p className="text-base text-(--text-tertiary)">
+          <p className="text-base text-tertiary">
             No code excerpts supplied. See the source references.
           </p>
         ) : (
@@ -148,20 +139,18 @@ export function TileCode({ source }: { source: TileSource }) {
                   path={link.label}
                   line={file?.hunks[0]?.lines.find((line) => line.newLine)?.newLine}
                   href={link.href}
-                  className="inline-flex max-w-full items-center gap-1 break-all text-base text-(--text-link) hover:underline"
+                  className="inline-flex max-w-full items-center gap-1 break-all text-base text-link hover:underline"
                 >
                   {link.label}
                 </CodeFileLink>
-                <p className="text-base text-(--text-secondary)">{link.why}</p>
-                <p className="text-xs text-(--text-tertiary)">
+                <p className="text-base text-secondary">{link.why}</p>
+                <p className="text-xs text-tertiary">
                   {link.older ? "Older source · " : "Source · "}review v{link.reviewVersion}
                 </p>
                 {file ? (
                   <CodeDiff files={[file]} />
                 ) : (
-                  <p className="mt-2 text-base text-(--text-tertiary)">
-                    Code excerpt not supplied.
-                  </p>
+                  <p className="mt-2 text-base text-tertiary">Code excerpt not supplied.</p>
                 )}
               </div>
             );

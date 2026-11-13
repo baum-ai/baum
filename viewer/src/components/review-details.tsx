@@ -118,7 +118,7 @@ export function ReviewDetails({
               aria-label={`Lines by risk tier: ${segments
                 .map((segment) => `${segment.tier} ${segment.lines}`)
                 .join(", ")}`}
-              className="flex h-2 w-full overflow-hidden rounded-full bg-(--surface-sunken)"
+              className="flex h-2 w-full overflow-hidden rounded-full bg-surface-sunken"
             >
               {segments.map((segment) => (
                 <span
@@ -127,12 +127,12 @@ export function ReviewDetails({
                 />
               ))}
             </div>
-            <ul className="flex flex-wrap gap-x-4 gap-y-1 text-base text-(--text-secondary)">
+            <ul className="flex flex-wrap gap-x-4 gap-y-1 text-base text-secondary">
               {segments.map((segment) => (
                 <li key={segment.tier} className="flex items-center gap-1.5">
                   <TierDot tier={segment.tier} />
                   {humanize(segment.tier)}{" "}
-                  <span className="tabular-nums text-(--text-tertiary)">
+                  <span className="tabular-nums text-tertiary">
                     {segment.lines.toLocaleString("en-US")}
                   </span>
                 </li>
@@ -152,18 +152,14 @@ function RoleLines({ roles }: { roles: [string, number | undefined][] }) {
   if (roles.length === 0) return null;
   return (
     <div className="mt-3 space-y-1.5">
-      <p className="text-xs font-semibold tracking-[0.1em] text-(--text-tertiary) uppercase">
-        By role
-      </p>
+      <p className="text-xs font-semibold tracking-[0.1em] text-tertiary uppercase">By role</p>
       {/* The same list shape as the risk legend above it, so the two
           breakdowns of the same lines read as a pair. */}
-      <ul className="flex flex-wrap gap-x-4 gap-y-1 text-base text-(--text-secondary)">
+      <ul className="flex flex-wrap gap-x-4 gap-y-1 text-base text-secondary">
         {roles.map(([role, lines]) => (
           <li key={role} className="flex items-center gap-1.5">
             {humanize(role)}
-            <span className="tabular-nums text-(--text-tertiary)">
-              {lines!.toLocaleString("en-US")}
-            </span>
+            <span className="tabular-nums text-tertiary">{lines!.toLocaleString("en-US")}</span>
           </li>
         ))}
       </ul>
@@ -508,10 +504,10 @@ function DecisionGroup({ label, decisions }: { label: string; decisions: ListedD
   if (decisions.length === 0) return null;
   return (
     <div>
-      <p className="mb-1 text-base font-semibold text-(--text-secondary)">
+      <p className="mb-1 text-base font-semibold text-secondary">
         {label} · {decisions.length}
       </p>
-      <ul className="divide-y divide-(--border-subtle)">
+      <ul className="divide-y divide-subtle">
         {decisions.map((decision) => (
           <DecisionRow key={decision.key} decision={decision} />
         ))}
@@ -522,7 +518,7 @@ function DecisionGroup({ label, decisions }: { label: string; decisions: ListedD
 
 function DecisionRow({ decision }: { decision: ListedDecision }) {
   const className = cn(
-    "flex w-full items-start gap-2 rounded-sm text-left hover:text-(--text-link) hover:no-underline",
+    "flex w-full items-start gap-2 rounded-sm text-left hover:text-link hover:no-underline",
     FOCUS_RING,
   );
   const content = (
@@ -530,7 +526,7 @@ function DecisionRow({ decision }: { decision: ListedDecision }) {
       <InlineMarkdown className="min-w-0 flex-1">
         {decision.title?.trim() || decision.text}
       </InlineMarkdown>
-      <span className="flex flex-none items-baseline gap-1 text-(--text-tertiary)">
+      <span className="flex flex-none items-baseline gap-1 text-tertiary">
         {decision.memberNumber && <span className="text-xs">#{decision.memberNumber}</span>}
         {(decision.href || decision.section) && <span aria-hidden>→</span>}
       </span>
@@ -570,8 +566,8 @@ function Figures({ items }: { items: { label: string; value: ReactNode }[] }) {
   return (
     <dl className="grid grid-cols-2 gap-2 @xl:grid-cols-4">
       {items.map((item) => (
-        <div key={item.label} className="rounded-(--radius-md) bg-(--surface-sunken) px-3 py-2">
-          <dt className="truncate text-xs text-(--text-tertiary)">{item.label}</dt>
+        <div key={item.label} className="rounded-(--radius-md) bg-surface-sunken px-3 py-2">
+          <dt className="truncate text-xs text-tertiary">{item.label}</dt>
           <dd className="text-lg font-medium tabular-nums">{item.value}</dd>
         </div>
       ))}
@@ -581,7 +577,7 @@ function Figures({ items }: { items: { label: string; value: ReactNode }[] }) {
 
 function modelLine(items: string[]) {
   return items.length > 0 ? (
-    <span className="block truncate text-xs text-(--text-tertiary)" title={items.join(", ")}>
+    <span className="block truncate text-xs text-tertiary" title={items.join(", ")}>
       {items[0]}
       {items.length > 1 ? ` + ${items.length - 1}` : ""}
     </span>
@@ -650,7 +646,7 @@ export function SessionItem({
       <Item compact className="flex flex-wrap items-center gap-2">
         <HarnessName vendor={session.vendor} className="font-medium" />
         <Badge size="compact">Details restricted</Badge>
-        <span className="w-full text-base text-(--text-tertiary)">
+        <span className="w-full text-base text-tertiary">
           This repository is not a connected member of this session, so the review carries none of
           its prompts or events.
         </span>
@@ -671,7 +667,7 @@ export function SessionItem({
       compact
       className={cn(
         "space-y-0.5",
-        onOpen && "relative cursor-pointer transition-colors hover:bg-(--surface-hover)",
+        onOpen && "relative cursor-pointer transition-colors hover:bg-surface-hover",
       )}
     >
       {/* One row: the first model, and how many more beside it, named in
@@ -704,10 +700,10 @@ export function SessionItem({
       </div>
       {/* Its own line: beside the badges it wrapped wherever the pane's
           width happened to break it. */}
-      <p className="text-xs text-(--text-tertiary)">{meta.join(" · ")}</p>
+      <p className="text-xs text-tertiary">{meta.join(" · ")}</p>
       {(session.title || session.git_branch) && (
         <p
-          className="truncate text-xs text-(--text-secondary)"
+          className="truncate text-xs text-secondary"
           title={[session.title, session.git_branch].filter(Boolean).join(" · ")}
         >
           {session.title}

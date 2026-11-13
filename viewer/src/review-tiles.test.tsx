@@ -316,7 +316,7 @@ describe("JSON review tiles", () => {
         const row = rows.find((value) => value.includes(`${side}_${change}`))!;
         expect(row).toContain(labels[index]);
         expect(row).toContain("required");
-        expect(row).toContain("bg-(--status-");
+        expect(row).toContain("bg-status-");
         if (change === "remove") expect(row).toContain("line-through");
       });
     }
@@ -351,7 +351,7 @@ describe("JSON review tiles", () => {
       expect(row).toContain(label);
       if (name === "removed") expect(row).toContain("line-through");
     }
-    expect(rows.find((value) => value.includes(">existing</span>"))).not.toContain("bg-(--status-");
+    expect(rows.find((value) => value.includes(">existing</span>"))).not.toContain("bg-status-");
   });
 
   it("draws foreign keys in crow's-foot notation, with optionality from the column's nullability", () => {
@@ -699,7 +699,7 @@ describe("JSON review tiles", () => {
     expect(framed).toContain("Stated defect");
     expect(framed).toContain("Stated correction");
     expect(framed).toContain('aria-label="Schema changes"');
-    expect(framed).toContain("bg-(--surface-sunken)");
+    expect(framed).toContain("bg-surface-sunken");
     // A database tile attached to a risk still renders there. It is not
     // dropped because the behaviour section is where section tiles sit.
     const doc = document();
