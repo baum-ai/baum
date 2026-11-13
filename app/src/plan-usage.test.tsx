@@ -2,6 +2,8 @@ import { expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import {
   asOf,
+  planKey,
+  planName,
   PlanUsageRailView,
   readablePlans,
   resetsAt,
@@ -118,4 +120,48 @@ it("asks to open the agent when its sign-in expired, without setting the age", (
   expect(alone).toContain("plan-rail-note");
   expect(alone).not.toContain("plan-rail-age");
   expect(alone).toMatch(/plan-rail-compact[^>]*>–</);
+  // One of several sign-ins of the same agent says it under its directory.
+  const grouped = renderToStaticMarkup(
+    <PlanUsageRailView
+      plans={readablePlans([
+        plans[0],
+        { ...(expired as object), config_dir: "~/.claude.personal" },
+      ])}
+      now={now}
+    />,
+  );
+  expect(grouped).toMatch(
+    /data-config-dir="~\/\.claude\.personal">.*plan-rail-account-dir[^>]*>~\/\.claude\.personal<.*plan-rail-note">Open Claude Code/,
+  );
+});
+
+it("tells a second Claude plan from the first by its configuration directory", () => {
+  const second: PlanUsageEntry = {
+    ...plans[0]!,
+    plan: "Ultra",
+    config_dir: "~/.claude.personal",
+    windows: [{ name: "5-hour", used_percent: 10, resets_at: "2026-10-26T15:00:00Z" }],
+  };
+  expect(planName(plans[0]!)).toBe("Claude Code");
+  expect(planName(second)).toBe("Claude Code (~/.claude.personal)");
+  expect(planKey(second)).not.toBe(planKey(plans[0]!));
+  // Wherever the daemon lists it, it sits with the agent's other plan, under
+  // one heading, each named by its directory with its plan beside it.
+  const html = renderToStaticMarkup(
+    <PlanUsageRailView plans={[plans[0]!, plans[1]!, second]} now={now} />,
+  );
+  expect(html.match(/class="plan-rail-plan"/g)).toHaveLength(2);
+  expect(html.match(/>Claude Code</g)).toHaveLength(1);
+  expect(html.match(/class="plan-rail-account"/g)).toHaveLength(2);
+  expect(html.indexOf("~/.claude.personal")).toBeLessThan(html.indexOf(">Codex<"));
+  expect(html).toMatch(/plan-rail-account-dir">Default<\/span>/);
+  expect(html).toMatch(
+    /plan-rail-account-dir" title="[^"]*">~\/\.claude\.personal<\/span><span class="plan-rail-reset">Ultra<\/span>/,
+  );
+  // Alone, a plan keeps its agent's heading, with its directory under it.
+  const alone = renderToStaticMarkup(<PlanUsageRailView plans={[second]} now={now} />);
+  expect(alone).not.toContain("plan-rail-account");
+  expect(alone).toMatch(/<span class="plan-rail-dir"[^>]*>~\/\.claude\.personal<\/span>/);
+  expect(html).toContain('aria-label="Claude Code (~/.claude.personal) 5-hour left"');
+  expect(html).toContain('aria-label="Claude Code 5-hour left"');
 });

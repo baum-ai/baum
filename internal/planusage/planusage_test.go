@@ -284,8 +284,8 @@ func TestClaudeParsesWindowsLeniently(t *testing.T) {
 	srv := claudeServer(t, 200, `{"five_hour":{"utilization":62.5,"resets_at":"2026-10-26T15:00:00Z"},
 		"seven_day":{"utilization":10,"resets_at":null},"seven_day_opus":null,
 		"seven_day_sonnet":{"utilization":"bad"},"extra_usage":{"x":1},"future":5}`, &seen)
-	p := claudeRead(srv.URL, Credential{Token: secret, ExpiresAt: clock.Add(time.Hour), Plan: "Max 5x"})
-	if !p.Available || p.Plan != "Max 5x" || len(p.Windows) != 2 || p.Windows[0].Name != "5-hour" || *p.Windows[0].UsedPercent != 62.5 || p.Windows[1].Name != "weekly" {
+	p := claudeRead(srv.URL, Credential{Token: secret, ExpiresAt: clock.Add(time.Hour), Plan: "Ultra"})
+	if !p.Available || p.Plan != "Ultra" || len(p.Windows) != 2 || p.Windows[0].Name != "5-hour" || *p.Windows[0].UsedPercent != 62.5 || p.Windows[1].Name != "weekly" {
 		t.Fatalf("%+v", p)
 	}
 	if p.Windows[1].ResetsAt != nil || !p.Windows[0].ResetsAt.Equal(time.Date(2026, 10, 26, 15, 0, 0, 0, time.UTC)) {
@@ -539,8 +539,8 @@ func TestCodexPlanNamesAreCodexs(t *testing.T) {
 func TestClaudePlanNamesAreAnthropics(t *testing.T) {
 	for _, c := range []struct{ subscription, tier, want string }{
 		{"pro", "default_claude_ai", "Pro"},
-		{"max", "default_claude_max_5x", "Max 5x"},
-		{"max", "default_claude_max_20x", "Max 20x"},
+		{"max", "default_claude_max_5x", "Max"},
+		{"max", "default_claude_max_20x", "Ultra"},
 		{"max", "", "Max"},
 		{"team", "default_claude_max_5x", "Team Premium"},
 		{"team", "default_claude_ai", "Team Standard"},

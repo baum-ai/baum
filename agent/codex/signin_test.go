@@ -27,3 +27,20 @@ func TestSignedIn(t *testing.T) {
 		}
 	}
 }
+
+func TestSignedInWithHomeAsksAboutThatHome(t *testing.T) {
+	t.Setenv("CODEX_HOME", t.TempDir())
+	work := t.TempDir()
+	binary := filepath.Join(t.TempDir(), "codex")
+	// Signed in only with the work home.
+	script := "#!/bin/sh\nif [ \"$CODEX_HOME\" = '" + work + "' ]; then echo 'Logged in using ChatGPT'; exit 0; fi\necho 'Not logged in' >&2; exit 1\n"
+	if err := os.WriteFile(binary, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if signedIn, known := SignedIn(context.Background(), binary); signedIn || !known {
+		t.Fatalf("the process's home: %v, %v", signedIn, known)
+	}
+	if signedIn, known := SignedInWithHome(binary)(context.Background(), work); !signedIn || !known {
+		t.Fatalf("the work home: %v, %v", signedIn, known)
+	}
+}
