@@ -2864,15 +2864,14 @@ See its [README](internal/analytics/README.md).
 ## Durable desktop reading state
 
 `internal/uistate` stores the Inbox's seen/cleared record, snoozes and archives, and the
-walkthrough's seen stops and draft comments, in `app.sqlite`'s `ui` document
+reader's draft review comments, in `app.sqlite`'s `ui` document
 bucket. The records survive changing loopback origins and fresh webviews;
-localStorage is used only for presentation choices. Walkthrough keys include
-repository, pull request and review version; one transaction retains the 40
-most recently saved records, using write order even if the wall clock moves
-backwards.
+localStorage is used only for presentation choices. Review keys are the
+repository and pull request; one transaction retains the 200 most recently
+saved records, using write order even if the wall clock moves backwards.
 
 `GET`/`PUT /api/ui-state/inbox` and
-`GET`/`PUT /api/ui-state/walkthrough?key=…` run inside the existing local
+`GET`/`PUT /api/ui-state/review?key=…` run inside the existing local
 Host/authentication/Origin/JSON boundary. Each value is a bounded typed record.
 Writes compare that record's revision inside an immediate transaction and
 return the current value on conflict. Client sequence high-water marks
@@ -4016,7 +4015,7 @@ its `draft` count): without a saved version it shows the draft as soon as the
 outline lands, sections still being written as "Writing details…" and the
 Summary's context as being written (`contextPending`), and the facts before
 that; with one it keeps the saved version, with the regeneration's status and
-a "View draft" toggle. A draft has no version menu, walkthrough,
+a "View draft" toggle. A draft has no version menu,
 approvals or read ticks. A saved version published without some sections'
 details or its context says so in a short notice, and the latest version's
 failed sections offer Retry (`onRetryDetails`), which queues a details job
@@ -5710,10 +5709,8 @@ refused. The table holds:
   names a session, which names no repository, is not allowed): `GET
   /api/decisions`;
 - by key (the repository's lower-case name, `#` and the action's pull request
-  number, and for the walkthrough `@v` and a version number, with `key` the
-  only parameter): `GET /api/ui-state/review` (the person's draft review) and
-  `/api/ui-state/walkthrough` (where they are in the review); another pull
-  request's key, or another repository's, is refused though the repository is
+  number, with `key` the only parameter): `GET /api/ui-state/review` (the
+  person's draft review); another pull request's key, or another repository's, is refused though the repository is
   the action's, and no other kind of saved state (the inbox, the filters, the
   tour) is read;
 - by response: `GET /api/jobs/{id}` and `/api/groups/{id}`, checked by the
@@ -5763,7 +5760,7 @@ action its pull request, and only through `CallContext.Target`:
 | `jobs` | `/api/jobs` of the pull request, less each job's accounting |
 | `job_transcript` | `/api/jobs/{id}` to check that the job is the repository's and pull request's, then its transcript; a job with none says only fix jobs keep one |
 | `sessions`, `session_transcript` | `/api/sessions` or `/api/facts/sessions`, and one session's transcript, which the viewer serves only for a session the pull request's commits link |
-| `focus` | no route: the focus of the consumer's page, or `none`. On a pull request's page the app sends the walkthrough mode and anchor of its address (`walk`, `anchor`) and, after an Ask about part of the review, that part (`kind` `section`, `stop` or `overview`, `id`, `title`, `anchors` of `{path, start_line?, end_line?}`) |
+| `focus` | no route: the focus of the consumer's page, or `none`. On a pull request's page the app sends the anchor of its address (`anchor`) and, after an Ask about part of the review, that part (`kind` `section` or `overview`, `id`, `title`, `anchors` of `{path, start_line?, end_line?}`) |
 | `group`, `group_versions` | `/api/groups/{id}` and `/api/groups/{id}/versions`; a group of another repository is refused. The group defaults to the open group page's; for an action, to the one group its pull request is in (`/api/groups`), and none or several must be named |
 
 Labels, reviewer lists, check log tails and the inbox's Up next sentence are
@@ -5855,7 +5852,6 @@ tools, and is repository-scoped, so an action reads its own repository's):
 | `check_log` | `/api/prs/check-log` for a check of the pull request's `/api/prs/checks` (at the head the index shows), named by its name or id: the tail of its GitHub Actions log, as the page shows it; a name several checks share needs the id, and a commit status answers that it has no log without reading the route |
 | `update_branch_options`, `rerun_options` | `/api/prs/update-branch-options` and `/api/prs/rerun-checks-options`; nothing is changed |
 | `pending_review` | `/api/ui-state/review?key=<repository lower-case>#<number>`, projected: each comment's target, text, place and head, the summary note and the reviews sent from baum; not their ids or the record's revision |
-| `walkthrough_position` | `/api/ui-state/walkthrough?key=<repository>#<number>@v<version>` (the latest version by default, from the index): the stops seen, the notes and the overall comment |
 | `group_patch`, `group_file` | `/api/groups/{id}/patch` and `/file`, after `/api/groups/{id}` has shown the group is the repository's; the path must be one the group's review cites |
 
 The Analytics, Jobs and Repositories pages, a job's page and the Report a

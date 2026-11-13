@@ -1665,9 +1665,9 @@ from the sessions of its pull requests, the group patches and files its groups'
 reviews cite, and what the app offers about a branch and the failed checks.
 It may also read the last lines of a failing check's log for any check of its
 repository's pull requests (`check_log`; see below).
-It may read the person's own draft review comments and walkthrough place only
-for its own pull request: those are kept by a key that names the repository
-and pull request, the handler cannot tell whose a key is, so the reader refuses
+It may read the person's own draft review comments only for its own pull
+request: those are kept by a key that names the repository and pull request,
+the handler cannot tell whose a key is, so the reader refuses
 any key but the action's own pull request's (and any other kind of saved state),
 whatever the repository. A chat reads them for any pull request, as it reads
 the page the person has open.
