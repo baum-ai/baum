@@ -2201,9 +2201,12 @@ desktop setup's first step. Device sign-in requests repository and organization
 read access. Workflow access is opt-in and offered only in Settings: Reconnect
 is a split button whose menu adds **Reconnect with workflow access** (or
 **Reconnect without workflow access** once granted), and Reconnect itself keeps
-the access the connection has. A saved connection without workflow access shows
-a caution note that merges of pull requests changing GitHub Actions workflows
-need it. `POST api/github-auth/start` takes `{"workflow": true}` for that
+the access the connection has. A saved connection without workflow access says so
+in small print, not a warning, since that is the default: pull requests
+changing GitHub Actions workflows merge on GitHub. The panel's footer is a
+short list (Access, Credential, Data); Access is left out for an explicit
+credential, whose scopes are not known. Disconnect is the last choice in the
+Reconnect button's menu. `POST api/github-auth/start` takes `{"workflow": true}` for that
 choice; an empty object is a plain sign-in.
 The desktop setup's GitHub step and Settings share
 `src/github-auth.ts`. Sign in with GitHub starts device authorization through
