@@ -109,6 +109,7 @@ import {
 } from "./pending-review";
 import { commentTarget, reviewable } from "./pending-review-model";
 import type { ReviewEvent } from "./walkthrough-model";
+import { useMedia } from "./media";
 import { readSelection } from "@baum/viewer/review-selection";
 
 /** `commitsSlot`'s loaders over the daemon's commit routes under `route`
@@ -226,21 +227,6 @@ export function listedSessionRows(
         </>
       ),
     }));
-}
-/** Whether the window matches a media query, as it changes. */
-function useMedia(query: string) {
-  const [matches, setMatches] = useState(
-    () => typeof matchMedia === "function" && matchMedia(query).matches,
-  );
-  useEffect(() => {
-    if (typeof matchMedia !== "function") return;
-    const list = matchMedia(query);
-    const change = () => setMatches(list.matches);
-    change();
-    list.addEventListener("change", change);
-    return () => list.removeEventListener("change", change);
-  }, [query]);
-  return matches;
 }
 /** The hosted PR page's shared viewer, with local sources for its slots. */
 

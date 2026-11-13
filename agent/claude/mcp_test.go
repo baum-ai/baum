@@ -14,10 +14,13 @@ import (
 	"github.com/baum-ai/baum/agent"
 )
 
-const mcpToken = "mcp-token-0123456789abcdef"
+const (
+	mcpToken = "mcp-token-0123456789abcdef"
+	mcpURL   = "http://127.0.0.1:43123/api/mcp"
+)
 
 func testMCP() *agent.MCPServer {
-	return &agent.MCPServer{Command: "/opt/baum/bin/baum", Args: []string{"mcp"}, Token: mcpToken}
+	return &agent.MCPServer{URL: mcpURL, Token: mcpToken}
 }
 
 func readFile(t *testing.T, dir, name string) string {
@@ -62,15 +65,17 @@ func TestMCPNamesOnlyBaumAndNoToken(t *testing.T) {
 		var config struct {
 			MCPServers map[string]struct {
 				Type    string
-				Command string
-				Args    []string
+				URL     string
+				Headers map[string]string
 			} `json:"mcpServers"`
 		}
 		if err := json.Unmarshal([]byte(args[at+1]), &config); err != nil {
 			t.Fatal(err)
 		}
 		baum, ok := config.MCPServers["baum"]
-		if len(config.MCPServers) != 1 || !ok || baum.Type != "stdio" || baum.Command != "/opt/baum/bin/baum" || !slices.Equal(baum.Args, []string{"mcp"}) {
+		// The header names the variable; Claude Code expands it.
+		if len(config.MCPServers) != 1 || !ok || baum.Type != "http" || baum.URL != mcpURL ||
+			len(baum.Headers) != 1 || baum.Headers["Authorization"] != "Bearer ${BAUM_MCP_TOKEN}" {
 			t.Errorf("%s: servers %+v", name, config.MCPServers)
 		}
 		if at := slices.Index(args, "--allowedTools"); at < 0 || args[at+1] != "mcp__baum" {
@@ -123,7 +128,7 @@ func TestMCPRefusesWhatItCannotRun(t *testing.T) {
 	if _, err := (&Backend{Profile: Isolated, Binary: "unused"}).Run(context.Background(), run); err == nil || !strings.Contains(err.Error(), "MCP") {
 		t.Errorf("the isolated profile ran with an MCP server: %v", err)
 	}
-	for _, server := range []*agent.MCPServer{{Token: "t"}, {Command: "baum"}, {Command: "baum", Token: "a\nb"}} {
+	for _, server := range []*agent.MCPServer{{Token: "t"}, {URL: mcpURL}, {URL: "http://example.com:80/api/mcp", Token: "t"}, {URL: mcpURL, Token: "a\nb"}} {
 		run.MCP = server
 		if _, err := (&Backend{Binary: "unused"}).Run(context.Background(), run); err == nil {
 			t.Errorf("accepted %+v", server)

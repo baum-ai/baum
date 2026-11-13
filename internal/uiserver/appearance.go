@@ -12,6 +12,7 @@ type appearanceSettings struct {
 	Theme        string `json:"theme"`
 	KeyHints     bool   `json:"key_hints"`
 	PageModifier string `json:"page_modifier"`
+	Sidebar      string `json:"sidebar"`
 }
 
 func appearanceOf(p repos.Preferences) appearanceSettings {
@@ -19,10 +20,15 @@ func appearanceOf(p repos.Preferences) appearanceSettings {
 	if theme == "" {
 		theme = "system"
 	}
+	sidebar := p.Appearance.Sidebar
+	if sidebar != "folded" {
+		sidebar = "pinned"
+	}
 	return appearanceSettings{
 		Theme:        theme,
 		KeyHints:     p.Appearance.KeyHints == nil || *p.Appearance.KeyHints,
 		PageModifier: p.Appearance.PageModifier,
+		Sidebar:      sidebar,
 	}
 }
 
@@ -40,6 +46,7 @@ func (a LocalAPI) putAppearance(w http.ResponseWriter, r *http.Request) {
 		Theme        *string `json:"theme"`
 		KeyHints     *bool   `json:"key_hints"`
 		PageModifier *string `json:"page_modifier"`
+		Sidebar      *string `json:"sidebar"`
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, 4096)
 	d := json.NewDecoder(r.Body)
@@ -57,6 +64,10 @@ func (a LocalAPI) putAppearance(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "page_modifier must be empty, meta, ctrl or alt", http.StatusBadRequest)
 		return
 	}
+	if input.Sidebar != nil && *input.Sidebar != "pinned" && *input.Sidebar != "folded" {
+		http.Error(w, "sidebar must be pinned or folded", http.StatusBadRequest)
+		return
+	}
 	prefs, err := a.Registry.UpdatePreferences(r.Context(), func(p repos.Preferences) repos.Preferences {
 		if input.Theme != nil {
 			p.Appearance.Theme = *input.Theme
@@ -66,6 +77,9 @@ func (a LocalAPI) putAppearance(w http.ResponseWriter, r *http.Request) {
 		}
 		if input.PageModifier != nil {
 			p.Appearance.PageModifier = *input.PageModifier
+		}
+		if input.Sidebar != nil {
+			p.Appearance.Sidebar = *input.Sidebar
 		}
 		return p
 	})
