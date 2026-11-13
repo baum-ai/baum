@@ -142,7 +142,7 @@ func TestBackendsAreBuiltOnce(t *testing.T) {
 		}
 	})
 	ctx := context.Background()
-	for _, mode := range []string{ModeFull, ModeWorkspace} {
+	for _, mode := range []string{ModeAuto, ModeFull, ModeWorkspace} {
 		c, err := f.service.Create(ctx, CreateRequest{Agent: AgentClaudeCode, Mode: mode})
 		if err != nil {
 			t.Fatal(err)

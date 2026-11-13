@@ -165,7 +165,7 @@ func TestConversationRunsAndResumes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.Mode != ModeFull || c.State != StateIdle || c.Repository != "" || c.CreatedWorktree {
+	if c.Mode != ModeAuto || c.State != StateIdle || c.Repository != "" || c.CreatedWorktree {
 		t.Fatalf("created %+v", c)
 	}
 	if c.Directory != filepath.Join(f.opts.Root, "sessions", c.ID) || strings.Contains(c.Directory, agent.RunDirPrefix) {
@@ -199,7 +199,7 @@ func TestConversationRunsAndResumes(t *testing.T) {
 		t.Fatalf("the agent ran in %s", pwd)
 	}
 	args := strings.Split(f.read("arguments.txt"), "\n")
-	if !slices.Contains(args, "bypassPermissions") || !slices.Contains(args, "opus") || slices.Contains(args, "--resume") {
+	if !slices.Contains(args, "auto") || !slices.Contains(args, "opus") || slices.Contains(args, "--resume") {
 		t.Fatalf("first turn arguments %q", args)
 	}
 	// The token the agent got is the conversation's, bound to its session.

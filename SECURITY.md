@@ -1445,11 +1445,14 @@ sets it yet: the chat and quick actions will, and no other run has it.
 The session panel's conversations are the exception, by design: each is your
 own Claude Code or Codex session, run as you set it up, with your settings,
 hooks, instructions and MCP servers, and baum's server added beside yours.
-It runs with full access unless you choose workspace access: Claude Code's
-`bypassPermissions` mode and Codex without approvals or sandbox, or
-`acceptEdits` and Codex's `workspace-write` sandbox. That is what running the
-agent yourself with every prompt approved would allow, in a directory baum
-chose: a worktree of the pull request you opened it from (yours, or one baum
+By default it runs in auto mode: Claude Code's `auto` permission mode, whose
+classifier approves or blocks each action, and Codex in its `workspace-write`
+sandbox with its automatic reviewer answering each request to leave it. You
+can choose full access instead (Claude Code's `bypassPermissions` mode and
+Codex without approvals or sandbox, what running the agent yourself with every
+prompt approved would allow) or workspace access (`acceptEdits` and Codex's
+`workspace-write` sandbox with no requests to leave it). It runs in a
+directory baum chose: a worktree of the pull request you opened it from (yours, or one baum
 adds without changing your other checkouts and without running hooks) or an
 empty directory of its own. Each conversation holds a `chat` token of its own,
 bound to its session once the agent names it and revoked when you close it or
@@ -1479,10 +1482,12 @@ boundary for an agent that cooperates with baum, not a sandbox: an agent in
 Full mode can read the daemon's launch credential (`credential.json`) or
 `app.sqlite` and act on baum directly, as any program you run can, and its
 MCP token, which its own hooks and stdio MCP servers can read too, opens only
-the MCP route. Workspace mode narrows that only as far as the agent's own
-sandbox does: Claude Code's `acceptEdits` refuses commands it would ask about,
-and Codex's `workspace-write` sandbox limits where its commands write; neither
-is a boundary baum adds. The panel's sessions are listed on the Sessions page
+the MCP route. Auto mode, the default, and Workspace mode narrow that only as
+far as the agent's own checks do: in auto mode Claude Code's classifier and
+Codex's reviewer, a model that decides what to allow, and in Workspace mode
+Claude Code's `acceptEdits`, which refuses commands it would ask about, and
+Codex's `workspace-write` sandbox, which limits where its commands write. None
+of them is a boundary baum adds. The panel's sessions are listed on the Sessions page
 marked as the panel's, without the end, message or focus actions, and their
 routes, the message queue and request answers refuse them (409
 `panel_session`): the panel runs and stops them. A panel session's permission

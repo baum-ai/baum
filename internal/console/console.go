@@ -41,6 +41,7 @@ const (
 
 // The access a conversation's agent has (agent.Access).
 const (
+	ModeAuto      = string(agent.AccessAuto)
 	ModeFull      = string(agent.AccessFull)
 	ModeWorkspace = string(agent.AccessWorkspace)
 )
@@ -120,7 +121,7 @@ type Conversation struct {
 	// empty for the agent's own default.
 	Agent string `json:"agent"`
 	Model string `json:"model"`
-	// Mode is ModeFull or ModeWorkspace.
+	// Mode is ModeAuto, ModeFull or ModeWorkspace.
 	Mode string `json:"mode"`
 	// Directory is where the agent works. With Repository and PullRequest it
 	// is a worktree of a clone of that repository with the pull request's
@@ -205,7 +206,7 @@ type Options struct {
 	Publish func(Event)
 	// Defaults gives the agent, model and mode a conversation opens with
 	// when its request names none; nil is Claude Code, its own default model
-	// and full access.
+	// and auto access.
 	Defaults func(ctx context.Context) (Defaults, error)
 	// Proposals holds what conversations' agents propose (the MCP server's);
 	// nil lists none.
@@ -321,7 +322,7 @@ func New(opts Options) (*Service, error) {
 type CreateRequest struct {
 	// Agent, Model and Mode left out are the Defaults: a request that names
 	// no agent takes the default agent and model, one that names the default
-	// agent and no model the default model. Mode is ModeFull or
+	// agent and no model the default model. Mode is ModeAuto, ModeFull or
 	// ModeWorkspace.
 	Agent string  `json:"agent,omitempty"`
 	Model *string `json:"model,omitempty"`
@@ -335,7 +336,7 @@ type CreateRequest struct {
 // directory, saves it idle and mints its MCP token. The agent runs on the
 // first Send.
 func (s *Service) Create(ctx context.Context, request CreateRequest) (Conversation, error) {
-	defaults := Defaults{Agent: AgentClaudeCode, Mode: ModeFull}
+	defaults := Defaults{Agent: AgentClaudeCode, Mode: ModeAuto}
 	if s.opts.Defaults != nil {
 		chosen, err := s.opts.Defaults(ctx)
 		if err != nil {
@@ -356,10 +357,10 @@ func (s *Service) Create(ctx context.Context, request CreateRequest) (Conversati
 		return Conversation{}, invalid("agent must be %s or %s", AgentClaudeCode, AgentCodex)
 	}
 	if request.Mode == "" {
-		request.Mode = ModeFull
+		request.Mode = ModeAuto
 	}
 	if err := agent.Access(request.Mode).Validate(); err != nil {
-		return Conversation{}, invalid("mode must be %s or %s", ModeFull, ModeWorkspace)
+		return Conversation{}, invalid("mode must be %s, %s or %s", ModeAuto, ModeFull, ModeWorkspace)
 	}
 	model = strings.TrimSpace(model)
 	if len(model) > maxModel || strings.ContainsFunc(model, unicode.IsControl) {

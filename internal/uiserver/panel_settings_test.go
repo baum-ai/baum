@@ -52,8 +52,11 @@ func TestPanelSettingsRoundTrip(t *testing.T) {
 		return panel
 	}
 	server, registry, closeFirst := start()
-	if got := call(server, "GET", "", 200); got != (repos.Panel{Agent: "claude-code", Mode: "full", Position: "bottom", AgentSource: "fix", ModelSource: "fix"}) {
+	if got := call(server, "GET", "", 200); got != (repos.Panel{Agent: "claude-code", Mode: "auto", Position: "bottom", AgentSource: "fix", ModelSource: "fix"}) {
 		t.Fatalf("defaults: %#v", got)
+	}
+	if got := call(server, "PUT", `{"mode":"full"}`, 200); got.Mode != "full" {
+		t.Fatalf("full access: %#v", got)
 	}
 	codex, model := config.BackendCodex, "gpt-5"
 	if _, err := registry.UpdatePreferences(context.Background(), func(p repos.Preferences) repos.Preferences {

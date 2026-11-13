@@ -58,32 +58,11 @@ func conversePair(t *testing.T, c agent.Converser) {
 	w.expect(token)
 	mcp := agent.MCPServer{URL: endpoint, Token: token}
 
-	t.Run("full", func(t *testing.T) {
-		server.reset()
-		dir := t.TempDir()
-		r1, started := turn(t, c, dir,
-			"Call the baum current_page tool. Then run this exact shell command: echo panel > probe.txt . Reply with the page name only.",
-			"", agent.AccessFull, mcp)
-		if !server.called("current_page") {
-			t.Errorf("baum current_page not called; saw %v", server.seen())
-		}
-		if !strings.Contains(strings.ToLower(string(r1.Document)), page) {
-			t.Errorf("answer does not name page %q", page)
-		}
-		if !exists(dir, "probe.txt") {
-			t.Errorf("full access: shell command did not create probe.txt")
-		}
-		if len(started) == 0 || started[0] != r1.SessionID {
-			t.Errorf("SessionStarted %v vs result session %q", started, r1.SessionID)
-		}
-		r2, _ := turn(t, c, dir, "What exact file name did you create in the previous turn? Reply with the file name only.", r1.SessionID, agent.AccessFull, mcp)
-		if !strings.Contains(string(r2.Document), "probe.txt") {
-			t.Errorf("resume lost context: %q", r2.Document)
-		}
-		if r2.SessionID != r1.SessionID {
-			t.Logf("note: resumed session id %q differs from %q", r2.SessionID, r1.SessionID)
-		}
-	})
+	// Auto, the default, and full access both run a shell command in the
+	// working directory and resume the session.
+	for _, access := range []agent.Access{agent.AccessAuto, agent.AccessFull} {
+		t.Run(string(access), func(t *testing.T) { shellAndResume(t, c, server, page, access, mcp) })
+	}
 
 	t.Run("workspace with a conflicting project baum server", func(t *testing.T) {
 		server.reset()
@@ -102,6 +81,35 @@ func conversePair(t *testing.T, c agent.Converser) {
 			t.Errorf("workspace: edit did not create edited.txt")
 		}
 	})
+}
+
+// shellAndResume runs a turn that reads baum's page and runs a shell command
+// in the working directory, then resumes the session.
+func shellAndResume(t *testing.T, c agent.Converser, server *recorder, page string, access agent.Access, mcp agent.MCPServer) {
+	server.reset()
+	dir := t.TempDir()
+	r1, started := turn(t, c, dir,
+		"Call the baum current_page tool. Then run this exact shell command: echo panel > probe.txt . Reply with the page name only.",
+		"", access, mcp)
+	if !server.called("current_page") {
+		t.Errorf("baum current_page not called; saw %v", server.seen())
+	}
+	if !strings.Contains(strings.ToLower(string(r1.Document)), page) {
+		t.Errorf("answer does not name page %q", page)
+	}
+	if !exists(dir, "probe.txt") {
+		t.Errorf("%s access: shell command did not create probe.txt", access)
+	}
+	if len(started) == 0 || started[0] != r1.SessionID {
+		t.Errorf("SessionStarted %v vs result session %q", started, r1.SessionID)
+	}
+	r2, _ := turn(t, c, dir, "What exact file name did you create in the previous turn? Reply with the file name only.", r1.SessionID, access, mcp)
+	if !strings.Contains(string(r2.Document), "probe.txt") {
+		t.Errorf("resume lost context: %q", r2.Document)
+	}
+	if r2.SessionID != r1.SessionID {
+		t.Logf("note: resumed session id %q differs from %q", r2.SessionID, r1.SessionID)
+	}
 }
 
 func TestLiveConverseClaude(t *testing.T) {
