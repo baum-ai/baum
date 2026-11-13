@@ -198,3 +198,38 @@ func TestGenerationOffersAndKeepsNoTiles(t *testing.T) {
 		t.Fatalf("the prepared document keeps tiles:\n%s", prepared)
 	}
 }
+
+// Only a section's and a risk's tiles are dropped, whatever their value: a
+// tiles key elsewhere is the document's own, and a document with none comes
+// back byte for byte.
+func TestDropStoredTilesShapes(t *testing.T) {
+	for _, c := range []struct {
+		name, stored, want string
+	}{
+		{"null tiles", `{"sections":[{"id":"sec_a","tiles":null,"risks":[{"id":"rsk_a","tiles":null}]}]}`, `{"sections":[{"id":"sec_a","risks":[{"id":"rsk_a"}]}]}`},
+		{"tiles that are not a list", `{"sections":[{"id":"sec_a","tiles":{"kind":"bug-fix"},"risks":[{"id":"rsk_a","tiles":"x"}]}]}`, `{"sections":[{"id":"sec_a","risks":[{"id":"rsk_a"}]}]}`},
+		{"a risk of a stale section", `{"sections":[{"id":"sec_a","derived":{"state":"stale"},"risks":[{"id":"rsk_a","state":"active","tiles":[{"kind":"refactor"}]}]}]}`, `{"sections":[{"id":"sec_a","derived":{"state":"stale"},"risks":[{"id":"rsk_a","state":"active"}]}]}`},
+		{"tiles in a block or a table", `{"sections":[{"id":"sec_a","blocks":[{"kind":"code","tiles":[1]},{"kind":"table","columns":["tiles"],"rows":[["a"]],"data":{"tiles":[2]}}],"tiles":[]}]}`, `{"sections":[{"id":"sec_a","blocks":[{"kind":"code","tiles":[1]},{"kind":"table","columns":["tiles"],"rows":[["a"]],"data":{"tiles":[2]}}]}]}`},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			got, err := DropStoredTiles([]byte(c.stored))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(decodedJSON(t, got), decodedJSON(t, []byte(c.want))) {
+				t.Fatalf("dropped %s, want %s", got, c.want)
+			}
+		})
+	}
+	for name, document := range map[string]string{
+		"no sections":           `{"schema":"baum.review/1", "summary": {"text": "x"}}`,
+		"the word in prose":     `{"sections": [{"id": "sec_a", "summary": {"text": "Adds \"tiles\" to the page."}}]}`,
+		"the word as a value":   `{"sections": [{"id": "sec_a", "title": "tiles"}]}`,
+		"a block's own tiles":   `{"sections": [{"id": "sec_a", "blocks": [{"kind": "code", "tiles": []}]}]}`,
+		"sections that are odd": `{"sections": "tiles"}`,
+	} {
+		if got, err := DropStoredTiles([]byte(document)); err != nil || string(got) != document {
+			t.Errorf("%s: got %s (%v), want the bytes unchanged", name, got, err)
+		}
+	}
+}

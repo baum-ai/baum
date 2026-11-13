@@ -16,6 +16,7 @@ import (
 	"github.com/baum-ai/baum/internal/reviewindex"
 	"github.com/baum-ai/baum/internal/store"
 	"github.com/baum-ai/baum/internal/viewserver"
+	"github.com/baum-ai/baum/review"
 )
 
 // Registry is the part of *repos.Registry the handler reads: the picked
@@ -349,9 +350,15 @@ func (h *API) document(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	// A version an earlier release stored may hold section and risk tiles,
+	// which the schema no longer has.
+	document, err := review.DropStoredTiles(version.Document)
+	if err != nil {
+		document = version.Document
+	}
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")
-	_, _ = w.Write(version.Document)
+	_, _ = w.Write(document)
 }
 
 // patchDocument is what the patch route reads of a group review.

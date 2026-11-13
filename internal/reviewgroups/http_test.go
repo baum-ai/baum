@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -244,5 +245,51 @@ func TestPatchPicksTheMemberHoldingTheHunk(t *testing.T) {
 	reads := len(f.patches)
 	if status, raw = f.do(t, "GET", "/api/groups/"+g.ID+"/patch?path=vendor/x.go&hunk=hv", ""); status != http.StatusOK || !strings.Contains(string(raw), "+1,3") || len(f.patches) != reads+1 {
 		t.Fatalf("a vendored file: %d %s after %d reads", status, raw, len(f.patches)-reads)
+	}
+}
+
+// A group review an earlier release stored with tiles on its sections and
+// risks is served without them.
+func TestDocumentIsServedWithoutStoredTiles(t *testing.T) {
+	f := newAPI(t)
+	g, err := f.store.Create(context.Background(), "acme/demo", "Pair", []int{7, 8})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tiles := []any{map[string]any{"id": "tile_fix", "kind": "bug-fix"}, map[string]any{"id": "tile_was", "kind": "refactor"}, map[string]any{"id": "tile_preview", "kind": "ui-preview"}}
+	section := func(withTiles bool) map[string]any {
+		risk := map[string]any{"id": "rsk_a"}
+		section := map[string]any{"id": "sec_a", "risks": []any{risk}}
+		if withTiles {
+			risk["tiles"], section["tiles"] = tiles, tiles
+		}
+		return section
+	}
+	document := func(withTiles bool) []byte {
+		encoded, _ := json.Marshal(map[string]any{
+			"review":   map[string]any{"repository": "acme/demo", "pull_request": 7, "version": 1},
+			"stack":    map[string]any{"title": "Pair", "members": []ReviewedMember{{Number: 7, HeadSHA: "aaaaaaa", ReviewVersion: 1}}},
+			"sections": []any{section(withTiles)},
+		})
+		return encoded
+	}
+	version := groupReview(t, "acme/demo", 1)
+	version.Document = document(true)
+	if err := f.store.Put(context.Background(), g.ID, 0, version); err != nil {
+		t.Fatal(err)
+	}
+	status, raw := f.do(t, "GET", "/api/groups/"+g.ID+"/document", "")
+	if status != http.StatusOK {
+		t.Fatalf("document: %d %s", status, raw)
+	}
+	var got, want any
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(document(false), &want); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("served %s, want %s", raw, document(false))
 	}
 }
