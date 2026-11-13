@@ -97,6 +97,12 @@ func (c *Claude) unavailable(reason string) Plan {
 	return Plan{Provider: "claude", Reason: reason, Windows: []Window{}, FetchedAt: c.now()}
 }
 
+func (c *Claude) needsSignIn() Plan {
+	plan := c.unavailable("Open Claude Code to refresh its sign-in.")
+	plan.NeedsSignIn = true
+	return plan
+}
+
 // Read never refreshes the token: that would rotate Claude Code's credential.
 // A failure that should pass (the endpoint limits the rate, is down or cannot
 // be reached) serves the last reading for up to staleFor, and after a 429 the
@@ -117,7 +123,7 @@ func (c *Claude) Read(ctx context.Context) Plan {
 		return c.unavailable("Claude Code is not signed in on this computer.")
 	case !cred.ExpiresAt.IsZero() && !cred.ExpiresAt.After(c.now()):
 		c.last = nil
-		return c.unavailable("Open Claude Code to refresh its sign-in.")
+		return c.needsSignIn()
 	}
 	if c.now().Before(c.notBefore) {
 		return c.stale(c.unavailable("Claude's usage is unavailable right now."))
@@ -190,7 +196,7 @@ func (c *Claude) fetch(ctx context.Context, cred Credential) (Plan, outcome, tim
 	defer func() { _ = resp.Body.Close() }()
 	switch {
 	case resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden:
-		return c.unavailable("Open Claude Code to refresh its sign-in."), signedOut, 0
+		return c.needsSignIn(), signedOut, 0
 	case resp.StatusCode == http.StatusTooManyRequests:
 		// Retry-After in seconds; absent, zero or a date leaves the wait to Read.
 		seconds, _ := strconv.Atoi(resp.Header.Get("Retry-After"))

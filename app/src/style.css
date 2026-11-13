@@ -413,6 +413,10 @@ body {
   font-weight: 400;
   color: var(--text-tertiary);
 }
+.plan-rail-note {
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+}
 /* The directory of a second plan of the same agent, on a line of its own so
    a long path is cut rather than pushing the name. */
 .plan-rail-dir {

@@ -129,6 +129,33 @@ it("leaves plan usage out when no agent could be read, and says when reviews are
   expect(html).toContain("Resume automatic reviews");
 });
 
+it("says which agent to open when its sign-in expired", () => {
+  const html = renderToStaticMarkup(
+    <TrayPanelView
+      panel={{
+        ...panel,
+        plans: [
+          {
+            provider: "codex",
+            available: false,
+            needs_sign_in: true,
+            reason: "Open Codex to refresh its sign-in.",
+            windows: [],
+            fetched_at: "",
+          },
+        ],
+      }}
+      now={now}
+      act={() => {}}
+    />,
+  );
+  expect(html).toContain("Plan usage left");
+  expect(html).toMatch(
+    /<strong>Codex<\/strong><span class="tray-muted">Open Codex to refresh its sign-in.<\/span>/,
+  );
+  expect(html).not.toContain("tray-track");
+});
+
 it("moves through the menu's items with the arrows, wrapping, and closes with Escape", () => {
   const menu = document.createElement("div");
   menu.innerHTML = renderToStaticMarkup(
