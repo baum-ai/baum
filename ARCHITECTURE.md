@@ -4588,6 +4588,35 @@ renderer stays in `viewer/`; the app owns
 only local inbox, jobs, confirmation and settings presentation. The common
 viewer build/freshness scripts include both embedded applications.
 
+### Tile page
+
+With the `review_page` preference set to `tiles`, or `?view=tiles` in the
+address, the PR and group pages read every version, and a running job's
+draft, from the tile routes (see "Tile documents"), which answer the
+`baum.review/1` document with its tile document. `api.ts` hangs the tile
+document on the review document under an enumerable symbol (`TILES`), so the
+copies the page makes of a document (a draft, a retry marking failed sections
+pending, live threads) carry it, and the viewer's version loader, history and
+Compare hand it back unchanged. `TypeScript` does no conversion: it mirrors
+the types (`src/tiles/tile-document.ts`, reusing the viewer's domain types)
+and reads the Go goldens through a structural guard in its tests. A document
+whose tiles are null shows as the full review.
+
+The page passes the viewer `places` (`useTilePlaces`): a rail of the tiles in
+the layout's order, a pane per snapshot (the landing page or a tile's detail)
+called inside the viewer's history so an earlier version and both columns of
+a comparison draw their own tiles, stepping through the Summary and the tiles,
+prose chips sent to the tile holding their item, and the rail folded on the
+landing page. Everything else is the viewer's and the page's own. The landing
+grid mirrors `tiles.Hidden` and `tiles.More`: a group member past
+`collapse_after` waits behind its group's cell wherever it stands, and the
+entries from `landing` on behind "Show N more tiles". A registry maps each
+built-in type to its glance and detail faces, a check of its data and the
+anchors a comment on it is placed on; an unknown, custom, unavailable or
+failing tile renders unavailable inside its own error boundary. Comments use
+the `tile` target except on a Change tile (its section's target) and a risk
+(the risk's), so a full review and an older daemon read them as before.
+
 ### Free background synchronization
 
 `internal/background` runs one cancellable worker in the daemon, once it owns
