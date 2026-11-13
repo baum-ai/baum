@@ -20,8 +20,9 @@ work; these additive fields do not change existing review rendering.
 
 ## Using it
 
-React, React DOM and the Markdown, sanitising, syntax highlighting (`shiki`),
-validation and pluralisation libraries are peer dependencies (see
+React, React DOM, the Markdown, sanitising, syntax highlighting (`shiki`),
+validation and pluralisation libraries, and `tailwind-merge` (for `cn`) are
+peer dependencies (see
 `package.json`), so the host and the viewer share one copy of each. A host that links the package should resolve
 those imports from its own `node_modules` (in Vite, `resolve.dedupe`).
 
@@ -38,7 +39,15 @@ add its sources so the utilities its components use are generated:
 @source "<path to this package>/src";
 ```
 
-`viewer.css` defines the type scale and animations. It imports
+`viewer.css` defines the type scale and animations. It imports the palette
+utilities (`src/palette-utilities.css`): each semantic colour and shadow token
+is a utility named after it, without repeating the utility's own word
+(`text-secondary` for `--text-secondary`, `border-subtle`, `bg-surface-card`,
+`text-status-critical`, `shadow-overlay`). They resolve to the palette's
+variables, so themes and dark mode apply to them. `cn`
+(`components/classnames.ts`) merges classes with tailwind-merge, so a later
+conflicting utility, such as a caller's `className`, replaces an earlier one.
+`viewer.css` also imports
 `src/theme.css`, which loads the default palette from `src/palette.css` and
 custom theme overrides. Dark variants apply under `:root[data-theme="dark"]`.
 Nineteen explicit base colors are shared by the two default modes:

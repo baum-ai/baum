@@ -15,6 +15,7 @@
 
 @import "./fonts/fonts.css";
 @import "./theme.css";
+@import "./palette-utilities.css";
 
 @theme inline {
   --font-sans: var(--viewer-font-sans, var(--font-text));

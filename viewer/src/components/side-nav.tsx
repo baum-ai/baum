@@ -18,8 +18,7 @@ type Glyph = (props: IconProps) => React.ReactElement;
 
 /** `depth` indents a nested row past its parent's glyph, so the guide line
  *  {@link SideNavNest} draws falls between the two. `gap` is a variant rather
- *  than something a caller layers on: `cn` joins classes without resolving
- *  them, so a second gap utility would leave the winner to stylesheet order. */
+ *  than something a caller layers on, so rows keep one of two named gaps. */
 function rowClass(state: RowState, depth: 0 | 1, gap: "standard" | "tight" = "standard") {
   return cn(
     "relative flex w-full items-center rounded-(--radius-sm) py-[7px] pr-2.5 text-left transition-colors duration-150 hover:no-underline",

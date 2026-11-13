@@ -1,11 +1,25 @@
+import { extendTailwindMerge } from "tailwind-merge";
+
 type ClassValue = string | false | null | undefined;
 
-/** Joins class names. Note that it does NOT resolve conflicts: two competing
- *  utilities both survive and the winner is decided by stylesheet order, not by
- *  argument order. A component that needs to vary a size or a colour must
- *  expose a variant prop rather than expect a caller's `className` to win. */
+/** tailwind-merge, taught the names our theme adds (`viewer.css` and the
+ *  hosts' type steps). Without them it reads a step it does not know, such as
+ *  `text-3xs` or `text-public-note`, as a text colour and drops it next to
+ *  `text-secondary`, and reads `shadow-card` as a shadow colour. */
+const merge = extendTailwindMerge({
+  extend: {
+    theme: {
+      text: ["3xs", (value: string) => value.startsWith("public-")],
+      shadow: ["card", "raised", "overlay"],
+    },
+  },
+});
+
+/** Joins class names, and resolves conflicting utilities in favour of the
+ *  later one: `cn("px-4 text-secondary", className)` lets a caller's `px-2`
+ *  or `text-primary` replace the default rather than compete with it. */
 export function cn(...classes: ClassValue[]) {
-  return classes.filter(Boolean).join(" ");
+  return merge(...classes);
 }
 
 /** The keyboard focus treatment, on every interactive surface that is not a
