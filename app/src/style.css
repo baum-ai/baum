@@ -538,6 +538,18 @@ body {
     display: none;
   }
 }
+/* Without a pointer that hovers, the folded sidebar never opens to show
+   Help, so it keeps Help under the mark. */
+@media (hover: none) {
+  .local-rail-lane[data-rail="folded"]:not(:has(:focus-visible:not(.context-menu *))) {
+    .local-rail-head {
+      flex-direction: column;
+    }
+    .local-rail-help {
+      display: flex;
+    }
+  }
+}
 
 /* The page's panel. */
 .local-frame {
