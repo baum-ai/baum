@@ -177,8 +177,30 @@ func MergeGroup(ctx context.Context, name string, members []GroupMember, previou
 		return GroupResult{}, fmt.Errorf("previous group review: %w", err)
 	}
 	b.Sources["previous_version"] = b.Previous != nil
+	// Fit may collapse a file's hunks to one entry: it belongs to every
+	// member that held one of the file's hunks.
+	pathMembers, pathIDs := map[string][]int{}, map[string][]string{}
+	for _, hunk := range b.Diff {
+		pathIDs[hunk.Path] = append(pathIDs[hunk.Path], hunk.ID)
+		for _, number := range hunkMembers[hunk.ID] {
+			if !slices.Contains(pathMembers[hunk.Path], number) {
+				pathMembers[hunk.Path] = append(pathMembers[hunk.Path], number)
+			}
+		}
+	}
 	if err := bundle.Fit(&b, caps); err != nil {
 		return GroupResult{}, err
+	}
+	fittedIDs := map[string][]string{}
+	for _, hunk := range b.Diff {
+		fittedIDs[hunk.Path] = append(fittedIDs[hunk.Path], hunk.ID)
+	}
+	for _, hunk := range b.Diff {
+		if !slices.Equal(fittedIDs[hunk.Path], pathIDs[hunk.Path]) {
+			hunkMembers[hunk.ID] = slices.SortedFunc(slices.Values(pathMembers[hunk.Path]), func(a, b int) int {
+				return slices.Index(numbers, a) - slices.Index(numbers, b)
+			})
+		}
 	}
 	if err := bundle.SetDigest(&b); err != nil {
 		return GroupResult{}, err

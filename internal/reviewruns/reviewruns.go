@@ -7,6 +7,9 @@
 // Kept directories live under one root in the user's cache directory, named
 // with agent.RunDirPrefix. Expiry only ever removes directories directly
 // under the root whose names carry the prefix, and never follows a symlink.
+// Each directory may have a small record next to it (see Record) of the agent
+// sessions its run created, so expiring it deletes those session files by id
+// and does not scan the agents' stores.
 package reviewruns
 
 import (
@@ -19,6 +22,7 @@ import (
 	"time"
 
 	"github.com/baum-ai/baum/agent"
+	"github.com/baum-ai/baum/internal/privatefs"
 )
 
 // MaxAge is how old a kept directory may get, by modification time.
@@ -32,6 +36,63 @@ func DefaultRoot() (string, error) {
 		return "", err
 	}
 	return filepath.Join(root, "baum", "review-runs"), nil
+}
+
+// Create makes the root (private) and a new run directory in it, and returns
+// the directory with symlinks resolved, which is the working directory the
+// agent CLI records its session under.
+func Create(root string) (string, error) {
+	root = resolvedRoot(root)
+	if err := privatefs.MkdirAll(root); err != nil {
+		return "", err
+	}
+	dir, err := os.MkdirTemp(root, agent.RunDirPrefix+"*")
+	if err != nil {
+		return "", err
+	}
+	if err := privatefs.ProtectDirectory(dir); err != nil {
+		_ = os.RemoveAll(dir)
+		return "", err
+	}
+	resolved, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		_ = os.RemoveAll(dir)
+		return "", err
+	}
+	// Record the start so removing the run only looks at Codex's dated
+	// folders from then on. Failing to write it is not fatal: the run then
+	// counts as one with no record.
+	manifestMu.Lock()
+	_ = writeManifest(root, resolved, manifest{Created: time.Now()})
+	manifestMu.Unlock()
+	return resolved, nil
+}
+
+// candidate reports whether dir is a real directory (not a symlink) directly
+// under root with the run directory prefix. Parent directory aliases are
+// resolved, but the run directory itself must not be a symlink.
+func candidate(root, dir string) bool {
+	if !underRoot(root, dir) {
+		return false
+	}
+	info, err := os.Lstat(dir)
+	return err == nil && info.IsDir()
+}
+
+// Remove removes the listed run directories under root and the agent CLI
+// sessions that ran in them, and ignores anything else.
+func Remove(root string, dirs ...string) error {
+	var errs []error
+	for _, dir := range dirs {
+		if dir == "" || !underRoot(root, dir) {
+			continue
+		}
+		if candidate(root, dir) {
+			errs = append(errs, removeTree(dir))
+		}
+		errs = append(errs, RemoveSessions(root, dir))
+	}
+	return errors.Join(errs...)
 }
 
 // Expire removes the run directories under root last modified more than
@@ -57,6 +118,31 @@ func Expire(root string, now time.Time, maxAge time.Duration) error {
 		}
 		dir := filepath.Join(resolvedRoot(root), entry.Name())
 		errs = append(errs, removeTree(filepath.Join(root, entry.Name())), RemoveSessions(root, dir))
+	}
+	// A record whose directory is gone (a crash between the two removals)
+	// still names sessions to delete.
+	for _, entry := range entries {
+		name, ok := strings.CutPrefix(entry.Name(), manifestPrefix)
+		if !ok || !entry.Type().IsRegular() || !strings.HasPrefix(name, agent.RunDirPrefix) {
+			continue
+		}
+		if strings.HasPrefix(name, agent.RunDirPrefix+"tmp-") {
+			// A write that crashed before its rename.
+			if info, err := entry.Info(); err == nil && now.Sub(info.ModTime()) > maxAge {
+				_ = os.Remove(filepath.Join(resolvedRoot(root), entry.Name()))
+			}
+			continue
+		}
+		dir := filepath.Join(resolvedRoot(root), name)
+		if _, err := os.Lstat(dir); !errors.Is(err, fs.ErrNotExist) {
+			continue
+		}
+		// The record's age, and that the first loop did not just remove it.
+		info, err := os.Lstat(manifestPath(root, dir))
+		if err != nil || now.Sub(info.ModTime()) <= maxAge {
+			continue
+		}
+		errs = append(errs, RemoveSessions(root, dir))
 	}
 	return errors.Join(errs...)
 }

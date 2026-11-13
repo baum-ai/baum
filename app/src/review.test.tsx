@@ -12,6 +12,17 @@ import { reviewJob, type Entry, type Job } from "./api";
 import type { FixState } from "./fix";
 import { forgetLastRows, MAC, useCommandKeys } from "./shortcuts";
 import { PageRefreshProvider, usePageRefresh } from "./shell";
+// The live review threads the page last handed the viewer.
+const viewer = vi.hoisted(() => {
+  const held = { liveThreads: undefined as ReviewViewerProps["liveThreads"] };
+  return {
+    held,
+    hold: (liveThreads: ReviewViewerProps["liveThreads"]) => {
+      held.liveThreads = liveThreads;
+      return null;
+    },
+  };
+});
 vi.mock("@baum/viewer/components/review-viewer", () => ({
   ReviewViewer: ({
     document,
@@ -22,6 +33,7 @@ vi.mock("@baum/viewer/components/review-viewer", () => ({
     commits,
     openSource,
     openRepositoryFile,
+    liveThreads,
   }: ReviewViewerProps) => (
     <div
       data-generation={header?.generation?.state}
@@ -29,6 +41,7 @@ vi.mock("@baum/viewer/components/review-viewer", () => ({
       data-sessions={sessions?.state.status}
       data-commits={commits?.state.status}
     >
+      {viewer.hold(liveThreads)}
       {header?.beside}
       {header?.versionActions?.map((action) => (
         <button
@@ -323,6 +336,46 @@ it("keeps the saved document readable while regenerating and updates after compl
     )!.disabled,
   ).toBe(false);
 });
+it("hands the viewer the review threads as GitHub has them now", async () => {
+  const stored = structuredClone(example) as unknown as ReviewDocument;
+  documentValue = stored;
+  const threadReads: string[] = [];
+  vi.stubGlobal(
+    "fetch",
+    mockStateFetch(async (path: string) => {
+      if (path.includes("api/prs/review-threads")) {
+        threadReads.push(path);
+        return Response.json({ threads: [{ id: "T2" }], capped: false });
+      }
+      if (path.startsWith("/s/test-ns/api/document")) return Response.json(stored);
+      if (path.startsWith("/s/test-ns/api/versions")) return Response.json([]);
+      return Response.json({ available: true, sessions: [], commits: [] });
+    }),
+  );
+  const pr = {
+    ...entry.pull_request,
+    repository: "example-org/taskline",
+    number: 212,
+    unresolved: 1,
+  };
+  const current: Entry = { ...entry, pull_request: pr, version_count: 1, status: "current" };
+  await render(job("completed"), 0, current);
+  expect(viewer.held.liveThreads?.(stored)).toEqual({
+    unresolved: new Set(["T2"]),
+    complete: true,
+  });
+  expect(threadReads).toEqual([
+    expect.stringContaining("repository=example-org%2Ftaskline&pr=212&unresolved=1"),
+  ]);
+  // Another pull request's review keeps its own threads.
+  expect(
+    viewer.held.liveThreads?.({ ...stored, review: { ...stored.review, pull_request: 9 } }),
+  ).toBeNull();
+  // With none unresolved, every thread is resolved and nothing is asked.
+  await render(job("completed"), 1, { ...current, pull_request: { ...pr, unresolved: 0 } });
+  expect(viewer.held.liveThreads?.(stored)).toEqual({ unresolved: new Set(), complete: true });
+  expect(threadReads).toHaveLength(1);
+});
 it("keeps saved content and offers retry when the completed review cannot be read", async () => {
   documentValue = structuredClone(example) as unknown as ReviewDocument;
   documentValue.summary.text = "Saved version";
@@ -451,7 +504,7 @@ it("keeps the PR page through queued, running and completed SSE states across cl
           ? Response.json({ entries: [indexed], problems: [] })
           : path === "/s/test-ns/api/jobs"
             ? Response.json({ jobs: [currentJob] })
-            : path === "/s/test-ns/api/prs"
+            : path === "/s/test-ns/api/prs?view=health"
               ? Response.json([])
               : path === "/s/test-ns/api/health"
                 ? Response.json({})
@@ -478,6 +531,57 @@ it("keeps the PR page through queued, running and completed SSE states across cl
       (button) => button.textContent === "Regenerate review",
     )!.disabled,
   ).toBe(false);
+});
+it("reads the open pull request's document again for an index event, not for a job's progress", async () => {
+  const events: EventTarget[] = [];
+  vi.stubGlobal(
+    "EventSource",
+    class extends EventTarget {
+      constructor() {
+        super();
+        events.push(this);
+      }
+      close() {}
+    },
+  );
+  documentValue = structuredClone(example) as unknown as ReviewDocument;
+  const original = globalThis.fetch;
+  const documents = () =>
+    vi.mocked(fetch).mock.calls.filter(([path]) => String(path).includes("api/document")).length;
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (path: string, ...args: unknown[]) =>
+      path === "/s/test-ns/api/repos"
+        ? Response.json([
+            {
+              id: "selected-clone",
+              repository: "acme/demo",
+              available: true,
+              path: "/fixture",
+              settings: { automatic: false },
+            },
+          ])
+        : path.startsWith("/s/test-ns/api/index")
+          ? Response.json({
+              entries: [{ ...entry, status: "current", version_count: 1 }],
+              problems: [],
+            })
+          : path === "/s/test-ns/api/jobs"
+            ? Response.json({ jobs: [job("running")] })
+            : path === "/s/test-ns/api/prs?view=health"
+              ? Response.json([])
+              : original(path, ...(args as [])),
+    ),
+  );
+  history.replaceState(null, "", "/s/test-ns/?clone=selected-clone&pr=7");
+  await act(async () => root.render(<App />));
+  const loaded = documents();
+  expect(loaded).toBeGreaterThan(0);
+  for (let i = 0; i < 3; i++)
+    await act(async () => events[0]!.dispatchEvent(new Event("progress")));
+  expect(documents()).toBe(loaded);
+  await act(async () => events[0]!.dispatchEvent(new Event("index")));
+  expect(documents()).toBeGreaterThan(loaded);
 });
 it("opens the description a source chip cites in a panel, and another pull request in the app", async () => {
   Object.defineProperty(HTMLDialogElement.prototype, "showModal", {

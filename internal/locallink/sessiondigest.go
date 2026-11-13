@@ -15,6 +15,7 @@ import (
 	"github.com/baum-ai/baum/linkage/sessioncorrelate"
 	"github.com/baum-ai/baum/sessions"
 	"github.com/baum-ai/baum/sessions/codextranscript"
+	"github.com/baum-ai/baum/sessions/session"
 )
 
 // DefaultDigestBytes bounds the memory the session digests take, roughly
@@ -44,6 +45,17 @@ func init() {
 		defer c.mu.Unlock()
 		return c.held
 	})
+	workstats.Gauge("locallink.evidence_basis.per_session_limit", func() int64 { return maxEvidenceBasisBytes })
+	workstats.Gauge("locallink.evidence_basis.bytes", func() int64 {
+		c := sessionDigests
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		var bytes int64
+		for _, e := range c.entries {
+			bytes += e.Value.(*sessionDigest).basisCost
+		}
+		return bytes
+	})
 	workstats.Gauge("locallink.session_digests.entries", func() int64 {
 		c := sessionDigests
 		c.mu.Lock()
@@ -62,6 +74,8 @@ type sessionFacts struct {
 	root               bool
 	startedAt, endedAt *time.Time
 	gitBranch          *string
+	title              *string
+	outcome            session.Outcome
 	correlated         sessioncorrelate.Result
 	// writes are the session's Git-writing shell calls (gitWrites), which
 	// the reflog matcher places in the clone's working trees.
@@ -79,6 +93,7 @@ func graphFacts(s sessions.Session) sessionFacts {
 	if root := s.Root(); root != nil {
 		facts.root = true
 		facts.startedAt, facts.endedAt, facts.gitBranch = root.StartedAt, root.EndedAt, root.GitBranch
+		facts.title, facts.outcome = root.Title, root.Outcome
 	}
 	return facts
 }
@@ -99,6 +114,10 @@ func (f sessionFacts) detached() sessionFacts {
 		branch := strings.Clone(*f.gitBranch)
 		out.gitBranch = &branch
 	}
+	if f.title != nil {
+		title := strings.Clone(*f.title)
+		out.title = &title
+	}
 	out.correlated = detach(f.correlated)
 	out.writes = make([]gitWrite, len(f.writes))
 	for i, w := range f.writes {
@@ -117,8 +136,11 @@ type sessionDigest struct {
 	facts sessionFacts
 	cost  int64
 
-	mu          sync.Mutex
-	projections []*projection
+	mu             sync.Mutex
+	projections    []*projection
+	basis          *session.Graph
+	basisCost      int64
+	basisOversized bool
 }
 
 // projection is the evidence sessionEvidence gave a session, with
@@ -186,8 +208,9 @@ func (p *projection) fits(s sessions.Session, roots sessioncorrelate.CloneRoots,
 // their sessions, so an eviction meanwhile cannot take them away. A nil book
 // reads everything from the graphs.
 type digestBook struct {
-	cache *digestCache
-	held  map[string]*sessionDigest
+	cache          *digestCache
+	held           map[string]*sessionDigest
+	basisAttempted map[string]bool
 	// refused are keys whose sessions must be mapped; refusingAll maps all.
 	refused     map[string]bool
 	refusingAll bool
@@ -202,7 +225,7 @@ type digestBook struct {
 var newBuildBook = newDigestBook
 
 func newDigestBook(cache *digestCache) *digestBook {
-	return &digestBook{cache: cache, held: map[string]*sessionDigest{}, refused: map[string]bool{}}
+	return &digestBook{cache: cache, held: map[string]*sessionDigest{}, basisAttempted: map[string]bool{}, refused: map[string]bool{}}
 }
 
 // reuse is the book's sessions.Reuse.
@@ -243,11 +266,13 @@ func (b *digestBook) digest(s sessions.Session) *sessionDigest {
 		return nil
 	}
 	if d, ok := b.held[s.Key]; ok {
+		b.keepBasis(d, s)
 		return d
 	}
 	// Another build may have made it meanwhile: its projections are kept.
 	if d, ok := b.cache.get(s.Key); ok {
 		b.held[s.Key] = d
+		b.keepBasis(d, s)
 		return d
 	}
 	if s.Unmapped {
@@ -259,9 +284,44 @@ func (b *digestBook) digest(s sessions.Session) *sessionDigest {
 	d := &sessionDigest{key: s.Key, facts: graphFacts(s).detached()}
 	d.cost = digestOverhead + estimateCost(reflect.ValueOf(d.facts))
 	b.cache.put(d)
+	b.keepBasis(d, s)
 	b.held[s.Key] = d
 	workstats.Inc("locallink.session_digests.built")
 	return d
+}
+
+// keepBasis seeds optional reusable evidence inputs only from a real mapped
+// graph. A later full-read fallback may refill a basis shed under pressure.
+func (b *digestBook) keepBasis(d *sessionDigest, s sessions.Session) {
+	if s.Unmapped || s.Graph == nil || !d.facts.root || d.facts.generationRun || b.basisAttempted[s.Key] {
+		return
+	}
+	b.basisAttempted[s.Key] = true
+	d.mu.Lock()
+	present := d.basis != nil || d.basisOversized
+	d.mu.Unlock()
+	if present {
+		return
+	}
+	limit := b.cache.basisAllowance(d)
+	if limit <= 0 {
+		workstats.Inc("locallink.evidence_basis.no_space")
+		return
+	}
+	workstats.Add("locallink.evidence_basis.source_graph_bytes", estimateCost(reflect.ValueOf(s.Graph)))
+	basis, cost := newEvidenceBasis(s.Graph, limit)
+	if basis == nil {
+		if limit == maxEvidenceBasisBytes {
+			d.mu.Lock()
+			d.basisOversized = true
+			d.mu.Unlock()
+			workstats.Inc("locallink.evidence_basis.oversized")
+		} else {
+			workstats.Inc("locallink.evidence_basis.no_space")
+		}
+		return
+	}
+	b.cache.addBasis(d, basis, cost)
 }
 
 // facts are what linking reads from s.
@@ -316,7 +376,15 @@ func (b *digestBook) evidence(s sessions.Session, confidence float64, roots []st
 		return item, p.ok, false
 	}
 	if s.Unmapped {
-		return bundle.Session{}, false, true
+		d.mu.Lock()
+		basis := d.basis
+		d.mu.Unlock()
+		if basis == nil {
+			workstats.Inc("locallink.evidence_basis.missing")
+			return bundle.Session{}, false, true
+		}
+		s.Graph, s.Unmapped = basis, false
+		workstats.Inc("locallink.evidence_basis.reused")
 	}
 	p := &projection{
 		id: s.ID, vendor: s.Vendor, path: s.Path, maxPrompts: maxPrompts, maxCommandEvents: maxCommandEvents,
@@ -424,8 +492,74 @@ func (c *digestCache) addProjection(d *sessionDigest, p *projection) {
 	}
 }
 
+// Bases are optional: do not evict compact facts to admit one, and discard
+// bases before facts when later essential data needs their space.
+func (c *digestCache) basisAllowance(d *sessionDigest) int64 {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if e := c.entries[d.key]; e == nil || e.Value.(*sessionDigest) != d {
+		return 0
+	}
+	capacity := c.limit - c.held
+	for _, e := range c.entries {
+		capacity += e.Value.(*sessionDigest).basisCost
+	}
+	return min(maxEvidenceBasisBytes, max(int64(0), capacity))
+}
+
+func (c *digestCache) addBasis(d *sessionDigest, basis *session.Graph, cost int64) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	e := c.entries[d.key]
+	if e == nil || e.Value.(*sessionDigest) != d {
+		workstats.Inc("locallink.evidence_basis.no_space")
+		return
+	}
+	d.mu.Lock()
+	present := d.basis != nil
+	d.mu.Unlock()
+	if present {
+		return
+	}
+	for e := c.order.Back(); e != nil && c.held+cost > c.limit; e = e.Prev() {
+		c.dropBasis(e.Value.(*sessionDigest))
+	}
+	if c.held+cost > c.limit {
+		workstats.Inc("locallink.evidence_basis.no_space")
+		return
+	}
+	d.mu.Lock()
+	d.basis, d.basisCost = basis, cost
+	d.cost += cost
+	d.mu.Unlock()
+	c.held += cost
+	workstats.Inc("locallink.evidence_basis.built")
+	workstats.Add("locallink.evidence_basis.retained_bytes", cost)
+}
+
+// dropBasis sheds optional data only; the compact facts stay reusable.
+// c.mu is held throughout every accounting change.
+func (c *digestCache) dropBasis(d *sessionDigest) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.basisCost == 0 {
+		return
+	}
+	c.held -= d.basisCost
+	d.cost -= d.basisCost
+	d.basisCost = 0
+	d.basis = nil
+	workstats.Inc("locallink.evidence_basis.evicted")
+}
+
 func (c *digestCache) evict() {
 	for c.held > c.limit {
+		for e := c.order.Back(); e != nil && c.held > c.limit; e = e.Prev() {
+			c.dropBasis(e.Value.(*sessionDigest))
+		}
+		if c.held <= c.limit {
+			return
+		}
 		last := c.order.Back()
 		if last == nil {
 			return
@@ -449,6 +583,9 @@ func estimateCost(v reflect.Value) int64 {
 		}
 		return 8 + estimateCost(v.Elem())
 	case reflect.Slice:
+		if v.Type().Elem().Kind() == reflect.Uint8 {
+			return 24 + int64(v.Len())
+		}
 		cost := int64(24)
 		for i := range v.Len() {
 			cost += estimateCost(v.Index(i))

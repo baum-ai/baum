@@ -1,6 +1,6 @@
 //! Native notifications from the daemon's events.
 //!
-//! The app subscribes to the daemon's events stream itself (`events`), so a
+//! The tray forwards the shared native daemon events stream, so a
 //! hidden or minimised window does not stop them (closing the window hides it
 //! and the app keeps running). `toast` turns the events that matter into text: a `notice` event (review finished or failed,
 //! review requested from the user, review generated automatically, news of
@@ -15,13 +15,12 @@
 //! section of `desktop.json` in the app's config directory. The saved settings are the only state; a
 //! click flips them and both menus are brought to them.
 
-mod events;
 mod notifier;
 mod platform;
 mod settings;
 mod toast;
 
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard, mpsc};
 use std::thread;
 
 use tauri::menu::{CheckMenuItem, MenuItemKind, Submenu};
@@ -29,7 +28,7 @@ use tauri::{AppHandle, Manager};
 use url::Url;
 
 use crate::daemon::Launch;
-use events::Endpoint;
+use crate::events::{self, Endpoint};
 use notifier::{Host, Notifier};
 use settings::Store;
 use toast::Kind;
@@ -42,6 +41,7 @@ const SUBMENU_ID: &str = "notifications";
 pub struct Service {
     notifier: Arc<Notifier>,
     host: Arc<AppHost>,
+    notices: mpsc::Sender<(Endpoint, events::Event)>,
 }
 
 struct AppHost {
@@ -189,7 +189,22 @@ pub fn install(app: &AppHandle) -> tauri::Result<()> {
         Arc::new(platform::Os),
         Store::in_dir(dir),
     ));
-    app.manage(Service { notifier, host });
+    // OS notification calls can block. Keep them off the shared SSE reader
+    // so tray updates and health liveness keep flowing.
+    let (notices, receiver) = mpsc::channel::<(Endpoint, events::Event)>();
+    let (worker_host, worker_notifier) = (host.clone(), notifier.clone());
+    thread::spawn(move || {
+        while let Ok((endpoint, event)) = receiver.recv() {
+            if worker_host.endpoint().as_ref() == Some(&endpoint) {
+                worker_notifier.handle_event(&event.name, &event.data);
+            }
+        }
+    });
+    app.manage(Service {
+        notifier,
+        host,
+        notices,
+    });
     Ok(())
 }
 
@@ -276,16 +291,9 @@ pub fn open(app: &AppHandle, route: Route) {
     thread::spawn(move || host.open(&route));
 }
 
-/// Starts reading the attached daemon's events until `stop` returns true (the
-/// app attached to another daemon, or gave up on this one). `frontend` is
-/// where the window shows the app, to which notifications and the tray open
-/// their pages.
-pub fn attach(
-    app: &AppHandle,
-    launch: &Launch,
-    frontend: &Url,
-    stop: impl Fn() -> bool + Send + 'static,
-) {
+/// Sets the notification click destination for the attached daemon.
+/// Events arrive through the tray's shared native stream.
+pub fn attach(app: &AppHandle, launch: &Launch, frontend: &Url) {
     let Some(service) = app.try_state::<Service>() else {
         return;
     };
@@ -293,18 +301,29 @@ pub fn attach(
         eprintln!("baum desktop: notifications are off: the daemon's address is unusable");
         return;
     };
-    *service.host.endpoint() = Some(endpoint.clone());
+    *service.host.endpoint() = Some(endpoint);
     *service
         .host
         .frontend
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(frontend.origin());
-    let notifier = service.notifier.clone();
-    thread::spawn(move || {
-        events::run(&endpoint, &stop, &mut |event| {
-            notifier.handle_event(&event.name, &event.data);
-        });
-    });
+}
+
+/// Clears the click destination while disconnected or connecting.
+pub fn detach(app: &AppHandle) {
+    if let Some(service) = app.try_state::<Service>() {
+        *service.host.endpoint() = None;
+    }
+}
+
+/// Hands notices to the notification worker without blocking the shared stream.
+pub fn handle_event(app: &AppHandle, endpoint: &Endpoint, event: &events::Event) {
+    if event.name != "notice" {
+        return;
+    }
+    if let Some(service) = app.try_state::<Service>() {
+        let _ = service.notices.send((endpoint.clone(), event.clone()));
+    }
 }
 
 #[cfg(test)]

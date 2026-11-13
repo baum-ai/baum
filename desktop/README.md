@@ -26,7 +26,9 @@ may start it, and it outlives the app: quitting the app leaves it running.
 4. The window loads that URL. The daemon's bootstrap page exchanges the
    capability for a session cookie, as it does in a browser. The capability is
    never shown or logged.
-5. While attached, the app checks the daemon's `/api/health` every 5 seconds.
+5. While attached, the app checks the daemon's `/api/health` every 30 seconds
+   while the native event stream is up, and every 5 seconds otherwise. A stream
+   disconnect wakes the health check immediately.
    - If the daemon rejects the credential, a newer daemon has replaced it, and
      the app attaches to that one, once.
    - After three failures in a row, the window returns to the connecting
@@ -544,10 +546,14 @@ Two channels, each the least that does the job:
    daemon not attached then, or a failed request, only skips it). This is the
    credential the app already reads for the window and the health check,
    accepted on `/api/` routes only; the requests that change state send the daemon's own origin and JSON, as the daemon
-   requires. The events stream carries change notices only, so an event
-   makes the tray fetch the data; the stream uses the same bearer token.
+   requires. Tray change events carry no snapshots, so an event makes the
+   tray fetch the data; the stream uses the same bearer token.
 
-Notifications read the events stream separately (see "Notifications").
+The tray and notifications share one native event stream. Its reader forwards
+change notices to the tray and full `notice` payloads to a notification worker,
+so OS notification calls do not delay tray updates. It starts beyond the latest
+event and resumes from the last event ID on reconnect. Detaching or replacing
+the daemon closes the old stream immediately (see "Notifications").
 
 The tray menu adds no Tauri capability, and none names a remote URL: the
 tray, the dialogs and the autostart entry are used from Rust only, so pages
@@ -621,7 +627,7 @@ SMAppService login items replace it.
 ## Notifications
 
 The app turns daemon events into operating system notifications. It reads the
-daemon's `GET /api/events` stream itself (`src/notifications/`), so they
+daemon's `GET /api/events` stream shared with the tray (`src/events.rs`), so they
 arrive while the window is hidden (closing it hides it) or minimised, for as
 long as the app runs. Where no tray exists, closing the window quits the app
 (see "Tray, closing and quitting"), and notifications stop with it. Pages the
@@ -999,6 +1005,14 @@ test, viewer-dist, desktop-test          checks of the tagged release commit
   holds the manifest release candidates read, and being a pre-release, it is
   never the latest release.
 
+Before tagging a stable release, write the version's section (`## v1.2.3`) in
+`CHANGELOG.md` in a PR and merge it. The tagging workflow and the release
+workflow both read it from `main`, not from the tagged commit, and a stable tag
+without notes fails before anything is pushed. A release candidate uses its
+version's section if present and has no notes otherwise, so notes written
+after a candidate still reach its promotion. The release workflow gives them to
+goreleaser as the draft's notes.
+
 To release, run the private monorepo's "Tag an open-source release" workflow
 (`oss-release-tag.yml`) on its `main` with the next version (`v1.2.3`). In a
 clone of this repository at the commit published for that `main`, it builds
@@ -1009,9 +1023,8 @@ so nothing unchecked may get that far. To promote a release candidate, give
 its `base` input the commit the candidate was made from (`git rev-parse
 v1.2.3-rc.1^`); otherwise later commits on `main` would come along. The
 reviewer then works through the checklist below
-before approving the `release` environment. Write the release notes on the draft while the run waits
-for the environment approval; the draft is published, with those notes, when
-the desktop files are attached. A tag with a pre-release suffix
+before approving the `release` environment. The draft is published, with the
+changelog notes, when the desktop files are attached. A tag with a pre-release suffix
 (`v1.2.3-rc.1`) becomes a GitHub pre-release. Full releases of the app do not
 update to it, since they read the latest full release; installed release
 candidates do, through `desktop-rc-updates`.
@@ -1135,16 +1148,19 @@ makes it.
 ### Linux
 
 The Linux bundles are built in this directory's Docker image, on Ubuntu
-22.04 (the base image pinned by digest), the oldest supported distribution.
-They need glibc 2.35 or newer and WebKitGTK with the 4.1 API
-(`libwebkit2gtk-4.1-0`; Ubuntu 22.04, Debian 12 and newer). The deb declares
-that dependency and installs `baum-desktop` and `baum` in `/usr/bin`. The
-AppImage carries its own WebKitGTK, GTK and Pango but uses the system's
-glibc, HarfBuzz and the other libraries linuxdeploy leaves out, which is why
-it is built on the oldest system: one built on Debian 12 carries a Pango
-that needs HarfBuzz 4, and fails on Ubuntu 22.04. It updates itself in
-place, so keep it in a directory you can write (for example
-`~/Applications`).
+24.04 (the base image pinned by digest), the oldest supported distribution.
+They require Ubuntu 24.04 or newer, or a compatible distribution with glibc
+2.39 or newer and the corresponding system libraries. Ubuntu 22.04 and
+Debian 12 are no longer supported. The deb uses the system's WebKitGTK with
+the 4.1 API (`libwebkit2gtk-4.1-0`), declares its package dependencies and
+installs `baum-desktop` and `baum` in `/usr/bin`.
+
+The AppImage carries its own WebKitGTK, GTK and Pango but uses the system's
+glibc, HarfBuzz and the other libraries linuxdeploy leaves out. The image
+requires WebKitGTK 2.50.5 or newer; Ubuntu 24.04 currently supplies 2.52.6.
+This includes the [NetworkLoadClient lifetime fix](https://github.com/WebKit/WebKit/commit/b99f8c3daae0d6d0fdb99338c2e6f63cf4c6dc49)
+for the resource-loader memory leak in 2.50.4. The AppImage updates itself in place,
+so keep it in a directory you can write (for example `~/Applications`).
 
 A downloaded AppImage is not executable. With an integration tool that
 handles AppImages (AppImageLauncher 3.x, Gear Lever), double-clicking it
@@ -1157,9 +1173,9 @@ the AppImage does not start there; 3.x fixed that. Other AppImages built on
 this runtime, such as Cursor's, have the same limitation.
 
 On NVIDIA GPUs under Wayland, WebKitGTK only uses its fast GPU renderer
-from 2.54. The AppImage carries Ubuntu 22.04's WebKitGTK (2.50), so it renders
+from 2.54. The AppImage carries Ubuntu 24.04's WebKitGTK (2.52), so it renders
 slowly there, as does the deb on systems whose WebKitGTK is older than 2.54.
-No Ubuntu release offers 2.54 yet, so a newer build image would not help.
+The move to Ubuntu 24.04 fixes the loader leak but does not fix this limitation.
 User-facing limitations like these are listed in
 [KNOWN_ISSUES.md](../KNOWN_ISSUES.md).
 

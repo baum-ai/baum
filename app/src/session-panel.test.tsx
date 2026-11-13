@@ -7,6 +7,7 @@ import { withPicked, type PageContext } from "./page-context";
 import {
   conversationFor,
   holdsMessage,
+  panelSettingsChanged,
   ProposalCard,
   publishConsoleEvent,
   REPORT_DEBOUNCE,
@@ -406,6 +407,33 @@ it("starts a session from the page, showing the prompt at once, and stops it", a
   await until(() => expect(button("Send")).toBeDefined());
   expect(calls.some((c) => c.path === "api/console/conversations/c1/cancel")).toBe(true);
   expect(panel()!.textContent).toContain("Stopped before the agent finished.");
+});
+
+it("sends the first message with the page open once the session has started", async () => {
+  let created!: (response: Response) => void;
+  answer = (call) =>
+    call.path === "api/console/conversations" && call.method === "POST"
+      ? new Promise<Response>((resolve) => {
+          created = resolve;
+        })
+      : undefined;
+  await host(pr);
+  await act(async () => sessionPanel.show());
+  await type(composer(), "Why?");
+  await key(composer(), "Enter");
+  // The person moves on while the checkout is made.
+  const pulls: PageContext = { page: "pulls" };
+  await host(pulls);
+  conversation = made();
+  await act(async () => created(Response.json(conversation, { status: 201 })));
+  const messages = () => calls.filter((c) => c.path === "api/console/conversations/c1/messages");
+  await until(() => expect(messages()).toHaveLength(1));
+  expect(
+    calls.find((c) => c.path === "api/console/conversations" && c.method === "POST")!.body,
+  ).toMatchObject({
+    page: pr,
+  });
+  expect(messages()[0]!.body).toEqual({ text: "Why?", page: pulls });
 });
 
 it("reads a conversation again on its events", async () => {
@@ -838,4 +866,25 @@ it("shows a comment saved to the pending review at once", async () => {
   await act(async () => button("Save")!.click());
   await until(() => expect(calls.some((c) => c.path.endsWith("/proposals/p3/save"))).toBe(true));
   await until(() => expect(review().length).toBeGreaterThan(0));
+});
+
+it("reads the panel's setting again when the fix agent it follows changes", async () => {
+  let current = settings;
+  answer = (call) =>
+    call.path === "api/settings/panel" && call.method === "GET"
+      ? Response.json(current)
+      : undefined;
+  await act(async () =>
+    root.render(
+      <ToastProvider>
+        <SessionPanelSection />
+      </ToastProvider>,
+    ),
+  );
+  const section = () => node.querySelector('section[aria-labelledby="settings-panel-heading"]');
+  await until(() => expect(section()!.textContent).toContain("Now Claude Code, the fix agent."));
+  // Settings → Fixes saved another agent.
+  current = { ...settings, agent: "codex", model: "gpt-6-luna" };
+  await act(async () => panelSettingsChanged());
+  await until(() => expect(section()!.textContent).toContain("Now Codex"));
 });

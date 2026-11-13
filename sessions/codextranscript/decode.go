@@ -11,6 +11,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 	"unsafe"
 
@@ -44,6 +45,9 @@ func DecodeFirst(r io.Reader) (Line, error) {
 	reader := bufio.NewReaderSize(r, firstLineBufferBytes)
 	for {
 		raw, readErr := traceprocessing.ReadJSONLLine(reader)
+		if readErr != nil && !errors.Is(readErr, io.EOF) {
+			return Line{}, readErr
+		}
 		trimmed := bytes.TrimSpace(raw)
 		if len(trimmed) > 0 {
 			line, outerOrdinal, err := decodeLine(trimmed, 1)
@@ -485,6 +489,14 @@ func readFile(fsys fs.FS, name, label string) (*File, error) {
 		return nil, fmt.Errorf("opening rollout %s: %w", label, err)
 	}
 	defer func() { _ = handle.Close() }()
+	if strings.HasSuffix(name, ".zst") {
+		rc, err := decompressWhole(handle)
+		if err != nil {
+			return nil, fmt.Errorf("opening rollout %s: %w", label, err)
+		}
+		defer func() { _ = rc.Close() }()
+		return Read(rc, label)
+	}
 	return Read(handle, label)
 }
 

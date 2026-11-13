@@ -96,6 +96,7 @@ import { sessionPanel } from "./session-panel-state";
 import { EarlierQuestions, useEarlierQuestions } from "./chat";
 import { documentFilesSlot, factsFilesSlot, factsQuery, useFacts } from "./facts";
 import { liveDetailsChecks, useChecks } from "./checks";
+import { useLiveThreads } from "./threads";
 import { SECONDARY } from "./action-classes";
 import {
   CommentsPane,
@@ -760,6 +761,15 @@ export function LocalReview({
   // The head's checks as GitHub lists them now, for the Details tab: the
   // review's own are a snapshot from when it was generated.
   const liveChecks = useChecks(pr.repository, pr.number, pr.head_sha);
+  // A review's threads are a snapshot from when it was generated; the
+  // Activity tab reads them as GitHub has them now.
+  const threadsNow = useLiveThreads(
+    pr.repository,
+    pr.number,
+    pr.unresolved,
+    pr.unresolved_capped,
+    revision,
+  );
   const factsHead = shownFacts?.review.head ?? "";
   const factsBase = shownFacts?.review.base ?? "";
   const factsMergeBase = shownFacts?.review.merge_base ?? "";
@@ -1020,6 +1030,12 @@ export function LocalReview({
                     },
                     liveChecks,
                   )
+                }
+                liveThreads={(shown) =>
+                  shown.review.repository === pr.repository &&
+                  shown.review.pull_request === pr.number
+                    ? threadsNow
+                    : null
                 }
                 foldSidePane={questionsOpen && tight}
                 header={{

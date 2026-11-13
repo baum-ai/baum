@@ -307,7 +307,7 @@ func (d *Discovery) Fingerprint() (string, bool) {
 	h := sha256.New()
 	_, _ = fmt.Fprintf(h, "%q\x00%q\x00", d.worktrees, d.entire)
 	for _, s := range d.wanted {
-		key, _, ok := mapKey(s)
+		key, ok := mapKeyOnly(s)
 		if !ok {
 			return "", false
 		}
@@ -446,12 +446,15 @@ func Map(s collector.Session) (*session.Graph, []string, error) {
 // wait returns ctx's error, which is never cached.
 func mapCtx(ctx context.Context, s collector.Session) (*session.Graph, []string, error) {
 	workstats.Inc("sessions.map.calls")
-	key, cost, cacheable := mapKey(s)
+	key, cacheable := mapKeyOnly(s)
 	if cacheable {
 		if entry, ok := cache.get(key); ok {
 			return entry.graph, mapNotes(s, entry), entry.err
 		}
 	}
+	// The cost is only needed to decode, and a compressed rollout's takes
+	// opening it.
+	_, cost, _ := mapKey(s)
 	// A transcript that grew is decoded from where its kept lines end.
 	release, err := decodeBudget.acquire(ctx, tails.pending(s, cost))
 	if err != nil {
@@ -498,7 +501,7 @@ func sessionKey(s collector.Session) string {
 			return ""
 		}
 	}
-	key, _, ok := mapKey(s)
+	key, ok := mapKeyOnly(s)
 	if !ok {
 		return ""
 	}

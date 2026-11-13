@@ -17,8 +17,9 @@ with the reasons beside it where there are any.
 
 ## The session index
 
-`Index` keeps one entry per session file in the `cache/analytics-index` document in `app.sqlite` in the
-daemon's state directory (`$XDG_STATE_HOME/baum`). It holds aggregates only:
+`Index` keeps one entry per session file, one row each in the
+`analytics_sessions` table of `app.sqlite` in the daemon's state directory
+(`$XDG_STATE_HOME/baum`). It holds aggregates only:
 the agent, the clone and its repository, the top-level session's branch, its
 start and end, active seconds (in total and by hour), human prompts, tool
 calls and failed ones, subagents, model calls, token sums by model, speed and
@@ -39,9 +40,17 @@ prompt, message, tool input or output, or file path is stored.
 - The daemon builds it in the background when it starts and refreshes it every
   five minutes and when an agent session ends. While the first pass runs, the
   report answers with what it has and `indexing: {done, total, complete}`.
-- A refresh that changed nothing writes nothing: the document is saved only
-  when an entry was added, replaced or dropped (a failed save is retried on the
-  next refresh). The head of each Claude transcript (working directory, start)
+- A save writes only the rows of entries added, replaced or dropped since the
+  last one, in one transaction, so a refresh that changed nothing writes
+  nothing and a failed save is retried whole on the next refresh. A first build
+  saves after every 25 sessions read, and a stopping daemon saves what it read,
+  so a restart resumes from the last save instead of starting over. The one-row `analytics_index` table holds the
+  index format version and the price list's long-prompt thresholds the entries
+  were summed with; rows stored under others are ignored and deleted with the
+  next save. Refreshes run one at a time. An older baum kept the whole index in
+  the `cache/analytics-index` document; the first open moves its entries into
+  rows and deletes it in one transaction (a document of another version or
+  thresholds is deleted unread). The head of each Claude transcript (working directory, start)
   is remembered by path, size and modification time, so an unchanged transcript
   is not opened again; the memory is per process and forgets deleted files.
 - baum's own generation runs are kept as marked entries, so they are not read
@@ -135,14 +144,33 @@ its rows. Without the store, `available` is false.
 `Delivery` caches one GitHub search per picked repository (`repo:owner/name
 is:pr author:@me created:>=…`, `github.AuthoredPullRequests`) for the last 90
 days, for an hour (five minutes after a failure). A request never waits for
-it: a repository not searched yet makes the section `loading` and starts the
-search in the background, and the app reads the page again. Figures cover
+it: a repository not searched yet makes the section `loading` and queues the
+search, and the app reads the page again. Figures cover
 non-draft pull requests opened in the window; drafts are counted separately.
 Time to merge and to the first review by someone else are medians. The
 conflict and failing-checks share is what GitHub reports for each pull
 request's latest head now, not its history. Line survival is not measured and
 must not be added. A failed search is a reason in fixed words, never GitHub's
-text. An account change forgets every answer.
+text. An account change forgets every answer and the queue.
+
+Queued searches run on three workers. Every GitHub request they make, each
+page (50 pull requests, up to five a search) and each retry, first waits for a
+slot 2.5 seconds after the last: at most 24 search requests a minute across
+the workers, under GitHub's search limit of 30. The pace reaches the client
+through `github.WithRequestPacer`. Repositories whose answers expire together
+are therefore spread over time rather than searched at once, and the section
+shows the ones read so far (`loading` only while one has no answer and no
+failure).
+
+A rate limit stops the queue: the repository that hit it, and every one still
+queued, keep their earlier answer and carry the rate-limit reason, and none is
+searched again before the limit's reset (at least five minutes). A request
+that has waited for its slot checks the limit again before it is sent. The
+limit is shared with the background refresh in both directions
+(`background.Service.Paused` and `Limited`): while the refresh holds a pause,
+searches are not sent and fail with the same reason, and a limit a search hits
+pauses the refresh until its reset. Searches do not count against the
+refresh's hourly request budget.
 
 ## Plan usage
 

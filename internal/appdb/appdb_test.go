@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -22,6 +23,7 @@ import (
 	"github.com/baum-ai/baum/internal/privatefs"
 	"github.com/baum-ai/baum/internal/repos"
 	"github.com/baum-ai/baum/internal/reviewgroups"
+	"github.com/baum-ai/baum/internal/sqlitepool"
 )
 
 func TestBaselineStoresShareOneDatabaseAndSurviveReopen(t *testing.T) {
@@ -248,7 +250,7 @@ func TestUnrecognizedDatabaseIsRefused(t *testing.T) {
 	}
 }
 
-func TestDatabaseAndRollbackJournalArePrivate(t *testing.T) {
+func TestDatabaseAndWriteAheadLogArePrivate(t *testing.T) {
 	path := filepath.Join(appdbtest.TempDir(t), "app.sqlite")
 	db, err := appdb.Open(path, false)
 	if err != nil {
@@ -263,7 +265,7 @@ func TestDatabaseAndRollbackJournalArePrivate(t *testing.T) {
 	if _, err = tx.Exec("INSERT INTO app_documents(bucket,key,value) VALUES('state','private','secret')"); err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{path, path + "-journal"} {
+	for _, name := range []string{path, path + "-wal", path + "-shm"} {
 		info, err := os.Lstat(name)
 		if err != nil {
 			t.Fatal(err)
@@ -428,6 +430,297 @@ func TestWritableTransactionsReserveBeforeReading(t *testing.T) {
 		t.Fatalf("group %v %v", saved, err)
 	}
 	if raw, err := appdb.Read(path, "state", "job"); err != nil || string(raw) != "saved" {
+		t.Fatalf("document %s %v", raw, err)
+	}
+}
+
+// The database switches to the write-ahead log at its first write-open, and
+// keeps it: a plain connection, as an older baum makes, finds it in that mode
+// and reads it.
+func TestWriteOpenSwitchesToTheWriteAheadLog(t *testing.T) {
+	path := filepath.Join(appdbtest.TempDir(t), "app.sqlite")
+	if err := appdb.Write(path, "state", "x", []byte("1")); err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("sqlite", "file:"+filepath.ToSlash(path)+"?mode=ro")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = db.Close() }()
+	var mode string
+	if err = db.QueryRow("PRAGMA journal_mode").Scan(&mode); err != nil || mode != "wal" {
+		t.Fatalf("journal mode %q %v", mode, err)
+	}
+	var raw []byte
+	if err = db.QueryRow("SELECT value FROM app_documents WHERE bucket='state' AND key='x'").Scan(&raw); err != nil || string(raw) != "1" {
+		t.Fatalf("plain read %s %v", raw, err)
+	}
+}
+
+// A read-only open reads what a writer committed while the writer is still
+// connected (the commit is only in the log), and after it closed.
+func TestReadOnlyOpenOfWriteAheadLogDatabase(t *testing.T) {
+	path := filepath.Join(appdbtest.TempDir(t), "app.sqlite")
+	writer, err := appdb.Open(path, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = writer.Exec("INSERT INTO app_documents(bucket,key,value) VALUES('state','x','logged')"); err != nil {
+		t.Fatal(err)
+	}
+	if info, err := os.Stat(path + "-wal"); err != nil || info.Size() == 0 {
+		t.Fatalf("commit not in the log: %v", err)
+	}
+	if raw, err := appdb.Read(path, "state", "x"); err != nil || string(raw) != "logged" {
+		t.Fatalf("read beside a writer %s %v", raw, err)
+	}
+	if err = writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if raw, err := appdb.Read(path, "state", "x"); err != nil || string(raw) != "logged" {
+		t.Fatalf("read after the writer closed %s %v", raw, err)
+	}
+	if _, err := appdb.Read(path, "state", "missing"); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("missing %v", err)
+	}
+}
+
+// A reader's open transaction does not hold up a writer, and keeps reading
+// the snapshot it began with until it ends.
+func TestReaderDoesNotBlockWriter(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(appdbtest.TempDir(t), "app.sqlite")
+	if err := appdb.Write(path, "state", "x", []byte("before")); err != nil {
+		t.Fatal(err)
+	}
+	reader, err := appdb.Open(path, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = reader.Close() }()
+	tx, err := reader.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	read := func() string {
+		t.Helper()
+		var raw []byte
+		if err := tx.QueryRow("SELECT value FROM app_documents WHERE bucket='state' AND key='x'").Scan(&raw); err != nil {
+			t.Fatal(err)
+		}
+		return string(raw)
+	}
+	if got := read(); got != "before" {
+		t.Fatal(got)
+	}
+	start := time.Now()
+	written := make(chan error, 1)
+	go func() { written <- appdb.Write(path, "state", "x", []byte("after")) }()
+	select {
+	case err := <-written:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(9 * time.Second):
+		t.Fatal("the writer waited for a reader")
+	}
+	// With a rollback journal it would wait for the reader until busy_timeout
+	// (10 s) and fail.
+	if waited := time.Since(start); waited > 8*time.Second {
+		t.Fatalf("the writer waited %v", waited)
+	}
+	if got := read(); got != "before" {
+		t.Fatalf("snapshot changed under a reader: %s", got)
+	}
+	_ = tx.Rollback()
+	if raw, err := appdb.Read(path, "state", "x"); err != nil || string(raw) != "after" {
+		t.Fatalf("after %s %v", raw, err)
+	}
+}
+
+// With shared handles on, a reader keeps one handle and still sees what
+// another connection commits; a database replaced at the path is opened
+// again rather than read through the old handle.
+func TestSharedHandleSeesOtherWritersAndFollowsTheFile(t *testing.T) {
+	// After TempDir, so the kept handles close before it is removed.
+	dir := appdbtest.TempDir(t)
+	sqlitepool.Enable()
+	t.Cleanup(sqlitepool.Disable)
+	path := filepath.Join(dir, "app.sqlite")
+	if err := appdb.Write(path, "state", "x", []byte("1")); err != nil {
+		t.Fatal(err)
+	}
+	first, release, err := appdb.Acquire(path, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	release()
+	again, release, err := appdb.Acquire(path, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	release()
+	if again != first {
+		t.Fatal("handle not reused")
+	}
+	// Another process's connection.
+	other, err := appdb.Open(path, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = other.Exec("UPDATE app_documents SET value='2' WHERE bucket='state' AND key='x'"); err != nil {
+		t.Fatal(err)
+	}
+	if raw, err := appdb.Read(path, "state", "x"); err != nil || string(raw) != "2" {
+		t.Fatalf("other writer not seen %s %v", raw, err)
+	}
+	if err = other.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if runtime.GOOS == "windows" {
+		// An open SQLite file cannot be renamed there.
+		return
+	}
+	moved := filepath.Join(dir, "moved.sqlite")
+	for _, suffix := range []string{"", "-wal", "-shm"} {
+		if err := os.Rename(path+suffix, moved+suffix); err != nil && !errors.Is(err, os.ErrNotExist) {
+			t.Fatal(err)
+		}
+	}
+	if err := appdb.Write(path, "state", "x", []byte("new")); err != nil {
+		t.Fatal(err)
+	}
+	if raw, err := appdb.Read(path, "state", "x"); err != nil || string(raw) != "new" {
+		t.Fatalf("replaced database read through the old handle: %s %v", raw, err)
+	}
+	moved2, release, err := appdb.Acquire(path, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	release()
+	if moved2 == first {
+		t.Fatal("old handle kept for a new file")
+	}
+}
+
+func TestVersionOneUpgradeAddsGroupRepositoryIndex(t *testing.T) {
+	for _, withGroups := range []bool{false, true} {
+		t.Run(strconv.FormatBool(withGroups), func(t *testing.T) {
+			path := filepath.Join(appdbtest.TempDir(t), "app.sqlite")
+			if err := appdb.Write(path, "state", "kept", []byte("value")); err != nil {
+				t.Fatal(err)
+			}
+			if withGroups {
+				groups, err := reviewgroups.Open(path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if _, err = groups.Create(context.Background(), "org/repo", "Pair", []int{1, 2}); err != nil {
+					t.Fatal(err)
+				}
+				_ = groups.Close()
+			}
+			db, err := sql.Open("sqlite", path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err = db.Exec("DROP INDEX IF EXISTS groups_repository; PRAGMA user_version=1"); err != nil {
+				t.Fatal(err)
+			}
+			_ = db.Close()
+			if db, err := appdb.Open(path, true); err == nil {
+				_ = db.Close()
+				t.Fatal("read-only open silently upgraded the schema")
+			}
+			db, err = appdb.Open(path, false)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var version, indices int
+			if err = db.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != appdb.Version {
+				t.Fatalf("version %d %v", version, err)
+			}
+			if err = db.QueryRow("SELECT count(*) FROM sqlite_master WHERE name='groups_repository'").Scan(&indices); err != nil {
+				t.Fatal(err)
+			}
+			if withGroups && indices != 1 || !withGroups && indices != 0 {
+				t.Fatalf("indices %d", indices)
+			}
+			_ = db.Close()
+			if raw, err := appdb.Read(path, "state", "kept"); err != nil || string(raw) != "value" {
+				t.Fatalf("document %s %v", raw, err)
+			}
+			groups, err := reviewgroups.Open(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() { _ = groups.Close() }()
+			listed, err := groups.List(context.Background())
+			if err != nil || withGroups && len(listed) != 1 || !withGroups && len(listed) != 0 {
+				t.Fatalf("groups %+v %v", listed, err)
+			}
+			// Every stack lookup must search the repository index rather than scan
+			// all repositories while its immediate transaction holds the writer.
+			db, err = appdb.Open(path, true)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() { _ = db.Close() }()
+			rows, err := db.Query("EXPLAIN QUERY PLAN SELECT id FROM groups WHERE repository=? AND deleted=0 ORDER BY created,id", "org/repo")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer rows.Close()
+			used := false
+			for rows.Next() {
+				var id, parent, unused int
+				var detail string
+				if err := rows.Scan(&id, &parent, &unused, &detail); err != nil {
+					t.Fatal(err)
+				}
+				used = used || strings.Contains(detail, "SEARCH groups USING") && strings.Contains(detail, "groups_repository")
+			}
+			if err := rows.Err(); err != nil {
+				t.Fatal(err)
+			}
+			if !used {
+				t.Fatal("repository lookup did not use its index")
+			}
+		})
+	}
+}
+
+func TestFailedVersionOneUpgradeRollsBack(t *testing.T) {
+	path := filepath.Join(appdbtest.TempDir(t), "app.sqlite")
+	if err := appdb.Write(path, "state", "kept", []byte("value")); err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A malformed group table makes creating the index fail. The migration
+	// must leave the schema version and existing records alone.
+	if _, err = db.Exec("CREATE TABLE groups(id TEXT); PRAGMA user_version=1"); err != nil {
+		t.Fatal(err)
+	}
+	_ = db.Close()
+	if opened, err := appdb.Open(path, false); err == nil {
+		_ = opened.Close()
+		t.Fatal("upgrade accepted a malformed group table")
+	}
+	db, err = sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = db.Close() }()
+	var version int
+	if err = db.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != 1 {
+		t.Fatalf("version %d %v", version, err)
+	}
+	var raw string
+	if err = db.QueryRow("SELECT value FROM app_documents WHERE bucket='state' AND key='kept'").Scan(&raw); err != nil || raw != "value" {
 		t.Fatalf("document %s %v", raw, err)
 	}
 }

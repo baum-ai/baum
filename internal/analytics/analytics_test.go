@@ -149,12 +149,12 @@ func TestIndexCountsASessionByTheHostedRules(t *testing.T) {
 	if len(e.Usage) != 1 || e.Usage[0].Calls != 3 || e.Usage[0].Input != 300 || e.Usage[0].CacheRead != 3000 || e.TokensUnknown {
 		t.Errorf("usage = %+v (unknown %v)", e.Usage, e.TokensUnknown)
 	}
-	raw, err := appdb.Read(f.index.Path, "cache", "analytics-index")
-	if err != nil {
-		t.Fatal(err)
+	rows := storedRows(t, f.index.Path)
+	if len(rows) != 1 {
+		t.Fatalf("stored rows = %d, want 1", len(rows))
 	}
 	for _, text := range []string{"Fix the parser", "Now push it", "go test", "FAIL", "Done."} {
-		if strings.Contains(string(raw), text) {
+		if raw := fmt.Sprint(rows); strings.Contains(raw, text) {
 			t.Errorf("the index holds session text %q", text)
 		}
 	}
@@ -839,12 +839,12 @@ func TestArchivedJobsAreOutsideEveryWindow(t *testing.T) {
 func TestIndexSkipsSaveAndHeadReadsWhenNothingChanged(t *testing.T) {
 	f := newFixture(t)
 	saves, fail := 0, false
-	f.index.write = func(path, ns, key string, raw []byte) error {
+	f.index.write = func(path string, b indexBatch) error {
 		saves++
 		if fail {
 			return errors.New("disk full")
 		}
-		return appdb.Write(path, ns, key, raw)
+		return writeIndex(path, b)
 	}
 	path := f.write(t, f.repo, sessionID, claudeTranscript(f.repo, sessionID))
 	ctx := context.Background()

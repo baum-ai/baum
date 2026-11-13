@@ -84,9 +84,16 @@ export function publishConsoleEvent(data: string) {
 export function publishConsoleResync() {
   bus.dispatchEvent(new CustomEvent("console", { detail: null }));
 }
-/** Tells the panel its setting changed (Settings saved it). */
+/** Tells the panel its setting changed: Settings saved it, or the fix or
+ *  review agent it follows. */
 export function panelSettingsChanged() {
   bus.dispatchEvent(new Event("settings"));
+}
+/** Calls `listener` whenever the panel's setting may have changed; returns
+ *  the unsubscribe. */
+export function onPanelSettingsChanged(listener: () => void) {
+  bus.addEventListener("settings", listener);
+  return () => bus.removeEventListener("settings", listener);
 }
 
 function useConsoleEvents(handler: (event: ConsoleEvent | null) => void) {
@@ -193,9 +200,7 @@ function usePanelSettings() {
   });
   useEffect(() => {
     read();
-    const listener = () => read();
-    bus.addEventListener("settings", listener);
-    return () => bus.removeEventListener("settings", listener);
+    return onPanelSettingsChanged(() => read());
   }, [read]);
   return settings;
 }
@@ -493,6 +498,8 @@ function SessionPanel({
   const [usedModel, setUsedModel] = useState("");
   useEffect(() => setUsedModel(""), [id]);
   const [closing, setClosing] = useState(false);
+  const latestPage = useRef(page);
+  latestPage.current = page;
 
   const send = async (event?: FormEvent) => {
     event?.preventDefault();
@@ -520,7 +527,9 @@ function SessionPanel({
         update(created);
       }
       setSending("sending");
-      update(await sendTurn(target, text, page));
+      // The page now, not the one sent before creating: a navigation while
+      // the conversation started was reported, and creating overwrote it.
+      update(await sendTurn(target, text, latestPage.current));
       setMode(null);
     } catch (e) {
       setTurn(null);

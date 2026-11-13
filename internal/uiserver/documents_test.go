@@ -72,52 +72,65 @@ func TestDocumentCacheSharesLinkageAndInvalidatesRevision(t *testing.T) {
 	}
 }
 func TestDocumentCacheBoundsConcurrentLocalReadsAcrossDocuments(t *testing.T) {
-	cache := newDocumentCache()
-	defer cache.close()
-	var active, maxActive atomic.Int64
-	entered := make(chan struct{}, maxLocalReads)
-	unblock := make(chan struct{})
-	cache.resolve = func(ctx context.Context, _ locallink.Request) (locallink.Result, error) {
-		n := active.Add(1)
-		defer active.Add(-1)
-		for {
-			previous := maxActive.Load()
-			if n <= previous || maxActive.CompareAndSwap(previous, n) {
-				break
+	for _, lazy := range []bool{false, true} {
+		t.Run(fmt.Sprintf("lazy=%t", lazy), func(t *testing.T) {
+			cache := newDocumentCache()
+			defer cache.close()
+			var active, maxActive atomic.Int64
+			entered := make(chan struct{}, maxLocalReads)
+			unblock := make(chan struct{})
+			read := func(ctx context.Context, _ locallink.Request) (locallink.Result, error) {
+				n := active.Add(1)
+				defer active.Add(-1)
+				for {
+					previous := maxActive.Load()
+					if n <= previous || maxActive.CompareAndSwap(previous, n) {
+						break
+					}
+				}
+				select {
+				case entered <- struct{}{}:
+				default:
+				}
+				select {
+				case <-unblock:
+					return locallink.Result{Available: true}, nil
+				case <-ctx.Done():
+					return locallink.Result{}, ctx.Err()
+				}
 			}
-		}
-		select {
-		case entered <- struct{}{}:
-		default:
-		}
-		select {
-		case <-unblock:
-			return locallink.Result{Available: true}, nil
-		case <-ctx.Done():
-			return locallink.Result{}, ctx.Err()
-		}
-	}
-	var workers sync.WaitGroup
-	for i := range 12 {
-		server, release, err := cache.get(context.Background(), repos.Clone{ID: fmt.Sprint(i)}, []byte(`{"review":{"repository":"owner/repo","head":"aaaaaaaa","base":"bbbbbbbb"}}`), "")
-		if err != nil {
-			t.Fatal(err)
-		}
-		workers.Go(func() {
-			defer release()
-			server.Mux().ServeHTTP(httptest.NewRecorder(), httptest.NewRequest("GET", "/api/sessions", nil))
+			cache.resolve = read
+			path := "/api/sessions"
+			if lazy {
+				path += "/s"
+				cache.resolve = func(context.Context, locallink.Request) (locallink.Result, error) {
+					return locallink.Result{Available: true, Sessions: []locallink.Session{{ID: "s"}}, LoadGraph: func(ctx context.Context, _ string) (locallink.Result, error) { return read(ctx, locallink.Request{}) }}, nil
+				}
+			}
+
+			var workers sync.WaitGroup
+			for i := range 12 {
+				server, release, err := cache.get(context.Background(), repos.Clone{ID: fmt.Sprint(i)}, []byte(`{"review":{"repository":"owner/repo","head":"aaaaaaaa","base":"bbbbbbbb"}}`), "")
+				if err != nil {
+					t.Fatal(err)
+				}
+				workers.Go(func() {
+					defer release()
+					server.Mux().ServeHTTP(httptest.NewRecorder(), httptest.NewRequest("GET", path, nil))
+				})
+			}
+			for range maxLocalReads {
+				<-entered
+			}
+			if got := maxActive.Load(); got != maxLocalReads {
+				t.Fatal("local read bound", got)
+			}
+			close(unblock)
+			workers.Wait()
+			if got := maxActive.Load(); got > maxLocalReads {
+				t.Fatal("unbounded concurrent reads", got)
+			}
 		})
-	}
-	for range maxLocalReads {
-		<-entered
-	}
-	if got := maxActive.Load(); got != maxLocalReads {
-		t.Fatal("local read bound", got)
-	}
-	close(unblock)
-	workers.Wait()
-	if got := maxActive.Load(); got > maxLocalReads {
-		t.Fatal("unbounded concurrent reads", got)
 	}
 }
 

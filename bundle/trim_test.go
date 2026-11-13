@@ -873,9 +873,10 @@ func TestFitBytesKeepsEveryHunkOfALargeDiff(t *testing.T) {
 	}
 }
 
+// Only a diff index limit below an empty index's two bytes still fails.
 func TestFitBytesRejectsDiffIndexOverItsLimit(t *testing.T) {
 	bundle := &Bundle{Diff: []Hunk{{ID: testHunk, Path: "main.go", Role: RoleCode, DiffURL: "diff-" + strings.Repeat("0", 64) + "R1"}}}
-	caps := Caps{MaxBytes: 1 << 20, MaxDiffIndexBytes: diffIndexBytes(bundle) - 1}
+	caps := Caps{MaxBytes: 1 << 20, MaxDiffIndexBytes: 1}
 	err := Fit(bundle, caps)
 	if err == nil || !strings.HasPrefix(err.Error(), EvidenceBudgetExceededReason) || !strings.Contains(err.Error(), "diff index") {
 		t.Fatalf("expected a named diff index budget failure, got %v", err)
