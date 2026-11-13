@@ -140,7 +140,7 @@ func (c *Backend) run(ctx context.Context, request agent.Request, args, env []st
 	}
 	if request.MCP != nil {
 		if c.Profile != User {
-			return result, errors.New("claude: only the User profile can start an MCP server")
+			return result, errors.New("claude: only the User profile can use an MCP server")
 		}
 		if err := request.MCP.Validate(); err != nil {
 			return result, fmt.Errorf("claude: %w", err)

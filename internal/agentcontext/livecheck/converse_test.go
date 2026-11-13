@@ -3,15 +3,18 @@
 package livecheck
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/baum-ai/baum/agent"
 	"github.com/baum-ai/baum/agent/claude"
 	"github.com/baum-ai/baum/agent/codex"
+	"github.com/baum-ai/baum/internal/agentcontext"
 )
 
 // turn runs one Converse turn and logs what a person would see.
@@ -24,7 +27,7 @@ func turn(t *testing.T, c agent.Converser, dir, prompt, resume string, access ag
 		SessionStarted: func(id string) { mu.Lock(); started = append(started, id); mu.Unlock() },
 		TextDelta:      func(string) { mu.Lock(); deltas++; mu.Unlock() },
 	}
-	ctx, cancel := timeout()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 	result, err := c.Converse(ctx, req, access)
 	t.Logf("access=%s resume=%q err=%v session=%q started=%v deltas=%d", access, resume, err, result.SessionID, started, deltas)
@@ -41,7 +44,19 @@ func exists(dir, name string) bool {
 }
 
 func conversePair(t *testing.T, c agent.Converser) {
-	server, mcp, page := fixture(t)
+	server, w, endpoint := fixture(t)
+	// One chat token for the conversation's turns, as the session panel has.
+	token, id, revoke, err := server.Registry.Mint(agentcontext.Consumer{Kind: agentcontext.Chat})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(revoke)
+	page := agentcontext.PageSettings
+	if err := server.Registry.SetPage(id, agentcontext.PageContext{Page: page}); err != nil {
+		t.Fatal(err)
+	}
+	w.expect(token)
+	mcp := agent.MCPServer{URL: endpoint, Token: token}
 
 	t.Run("full", func(t *testing.T) {
 		server.reset()
@@ -93,12 +108,12 @@ func TestLiveConverseClaude(t *testing.T) {
 	if os.Getenv("BAUM_LIVE_SKIP_CLAUDE") != "" {
 		t.Skip("BAUM_LIVE_SKIP_CLAUDE is set")
 	}
-	conversePair(t, &claude.Backend{Model: os.Getenv("BAUM_LIVE_CLAUDE_MODEL")})
+	conversePair(t, &claude.Backend{Binary: os.Getenv("BAUM_LIVE_CLAUDE_BIN"), Model: os.Getenv("BAUM_LIVE_CLAUDE_MODEL")})
 }
 
 func TestLiveConverseCodex(t *testing.T) {
 	if os.Getenv("BAUM_LIVE_SKIP_CODEX") != "" {
 		t.Skip("BAUM_LIVE_SKIP_CODEX is set")
 	}
-	conversePair(t, &codex.Backend{Model: os.Getenv("BAUM_LIVE_CODEX_MODEL")})
+	conversePair(t, &codex.Backend{Binary: os.Getenv("BAUM_LIVE_CODEX_BIN"), Model: os.Getenv("BAUM_LIVE_CODEX_MODEL")})
 }

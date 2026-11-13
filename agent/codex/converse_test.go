@@ -18,8 +18,7 @@ import (
 // resume, which takes no --sandbox), approvals never asked for, and baum's
 // server beside the person's own.
 func TestConverseArguments(t *testing.T) {
-	mcp := []string{"-c", `mcp_servers.baum.command="/opt/baum/bin/baum"`, "-c", `mcp_servers.baum.args=["mcp"]`,
-		"-c", `mcp_servers.baum.env_vars=["BAUM_MCP_TOKEN","XDG_STATE_HOME","XDG_RUNTIME_DIR"]`}
+	mcp := []string{"-c", `mcp_servers.baum.url="http://127.0.0.1:43123/api/mcp"`, "-c", `mcp_servers.baum.bearer_token_env_var="BAUM_MCP_TOKEN"`}
 	for _, c := range []struct {
 		name   string
 		access agent.Access

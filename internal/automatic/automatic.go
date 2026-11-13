@@ -21,6 +21,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/baum-ai/baum/internal/agentdirs"
 	"github.com/baum-ai/baum/internal/appdb"
 	"github.com/baum-ai/baum/internal/discovery"
 	"github.com/baum-ai/baum/internal/github"
@@ -106,10 +107,21 @@ type Scheduler struct {
 	Hold func() bool
 	// Notify publishes a repository's changed status (a notice) for the app
 	// and the desktop app's notifications.
-	Notify   func(Status)
-	Now      func() time.Time
-	Interval time.Duration
-	Log      *slog.Logger
+	Notify func(Status)
+	// ClaudeSignedIn asks whether Claude Code is signed in with the
+	// configuration directory dir, before PUT /api/automatic accepts it for
+	// reviews or fixes; known is false when it cannot tell. Nil asks
+	// ClaudeBinary (claude.SignedInWith), the claude a run would start:
+	// the config file's backend_paths.claude, or empty for the one on PATH.
+	ClaudeSignedIn agentdirs.SignedIn
+	ClaudeBinary   string
+	// CodexSignedIn and CodexBinary are the same for a Codex home
+	// (codex.SignedInWithHome; backend_paths.codex).
+	CodexSignedIn agentdirs.SignedIn
+	CodexBinary   string
+	Now           func() time.Time
+	Interval      time.Duration
+	Log           *slog.Logger
 
 	once sync.Once
 	wake chan struct{}

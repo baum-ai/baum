@@ -99,7 +99,6 @@ daemon keep them current. The commands here set those up.`,
 
 	cmd.AddCommand(
 		newDaemonCommand(),
-		newMCPCommand(),
 		newDesktopSetupCommand(),
 		newInternalCommand(),
 	)
