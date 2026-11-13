@@ -81,6 +81,28 @@ export const STATES: State[] = [
     },
   },
   {
+    // The tiles page with every tile and every group shown.
+    name: "more",
+    views: ["tiles"],
+    open: async ({ page, address }) => {
+      await page.goto(address({ more: "1", expand: "changes,obsolete" }));
+    },
+  },
+  {
+    name: "risks",
+    views: ["tiles"],
+    open: async ({ page, address }) => {
+      await page.goto(address({ pane: "tile", tile: "risks" }));
+    },
+  },
+  {
+    name: "everything-else",
+    views: ["tiles"],
+    open: async ({ page, address }) => {
+      await page.goto(address({ pane: "tile", tile: "everything_else" }));
+    },
+  },
+  {
     // The first hunk excerpt of the detail, opened to code.
     name: "excerpt",
     open: async ({ page }) => {
