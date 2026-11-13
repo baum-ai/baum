@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, type ReactNode, useState } from "react";
+import { act, type ReactNode, useEffect, useLayoutEffect, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
@@ -13,6 +13,7 @@ import {
   type ReviewPlaceContext,
   type ReviewPlaces,
   ReviewViewer,
+  type ReviewStep,
   type ReviewViewerProps,
 } from "./review-viewer";
 
@@ -220,7 +221,7 @@ describe("ReviewViewer with host places", () => {
     ["pane=risks", "risks"],
     ["pane=section&section=sec_retry", "section"],
     ["pane=risk&risk_section=sec_retry&risk_id=rsk_x", "risk"],
-    ["pane=tile&tile=tile-a&item=rsk_x", "tile"],
+    ["pane=tile&tile=tile-a&tile_item=rsk_x", "tile"],
   ])("routes %s to the host's pane", async (initial, kind) => {
     const container = await render(
       <Host initial={initial}>{viewer({ places: dummyPlaces() })}</Host>,
@@ -320,7 +321,7 @@ describe("ReviewViewer with host places", () => {
     expect(jump).toHaveBeenCalledWith("sec_retry", "dec_snapshot");
     expect(container.querySelector('[data-testid="search"]')?.textContent).toBe(
       redirect
-        ? "pane=tile&tile=sec_retry&item=dec_snapshot"
+        ? "pane=tile&tile=sec_retry&tile_item=dec_snapshot"
         : "pane=section&section=sec_retry&decision=dec_snapshot",
     );
   });
@@ -390,7 +391,329 @@ describe("ReviewViewer without places", () => {
     );
     await act(async () => select!({ kind: "tile", id: "tile-b", item: "x" }));
     expect(container.querySelector('[data-testid="search"]')?.textContent).toBe(
-      "pane=tile&tile=tile-b&item=x",
+      "pane=tile&tile=tile-b&tile_item=x",
     );
+  });
+});
+
+const stepTo = (step: ReviewStep | null | undefined) => step?.go();
+
+const key = (name: string, shiftKey = false) =>
+  act(async () => {
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: name, shiftKey, bubbles: true }));
+  });
+
+const decisionChip = '[title="Decision dec_snapshot"]';
+
+/** The review with a decision of sec_retry named, and a summary that cites it. */
+function citing(base: ReviewDocument): ReviewDocument {
+  const snapshot = structuredClone(base);
+  const section = snapshot.sections.find((item) => item.id === "sec_retry")!;
+  const decisions = section.blocks.find((block) => block.kind === "decisions") as Extract<
+    Block,
+    { kind: "decisions" }
+  >;
+  decisions.items[0]!.id = "dec_snapshot";
+  snapshot.summary.text = "Inspect dec_snapshot.";
+  snapshot.summary.recommendation = null;
+  return snapshot;
+}
+
+const search = (container: HTMLElement) =>
+  container.querySelector('[data-testid="search"]')?.textContent;
+
+describe("ReviewViewer places: the rail's fold", () => {
+  it("shows the host's default in the first commit after its answer changes", async () => {
+    const commits: boolean[] = [];
+    function Probe() {
+      useLayoutEffect(() => {
+        commits.push(Boolean(strip(document.body)));
+      });
+      return null;
+    }
+    const container = await render(
+      <Host>
+        {viewer({
+          places: dummyPlaces({
+            railFolded: (selection) => selection.kind === "summary",
+            renderRail: (context) => (
+              <>
+                <Probe />
+                {ORDER.map((id) => (
+                  <button key={id} type="button" onClick={() => context.select(rowFor(id))}>
+                    Host row {id}
+                  </button>
+                ))}
+              </>
+            ),
+          }),
+        })}
+      </Host>,
+    );
+    const go = (id: string) =>
+      act(async () =>
+        [...container.querySelectorAll<HTMLButtonElement>("#review-rail button")]
+          .find((button) => button.textContent === `Host row ${id}`)!
+          .click(),
+      );
+    await act(async () => strip(container)!.click());
+    expect(strip(container)).toBeNull();
+    // The answer changes to open: the first commit already shows it open.
+    commits.length = 0;
+    await go("tile-a");
+    expect(commits[0]).toBe(false);
+    // The reader folds it; the answer changes back to folded, and the
+    // reader's old unfold is gone: folded in the very first commit.
+    await act(async () =>
+      container.querySelector<HTMLButtonElement>('[aria-label="Collapse sections"]')!.click(),
+    );
+    commits.length = 0;
+    await go("home");
+    expect(commits[0]).toBe(true);
+    // Back at an answer the reader once unfolded for, the default applies again.
+    await act(async () => strip(container)!.click());
+    await go("tile-a");
+    commits.length = 0;
+    await go("home");
+    expect(commits[0]).toBe(true);
+  });
+
+  it("labels the fold buttons and moves focus to the counterpart", async () => {
+    const container = await render(
+      <Host>
+        {viewer({
+          places: dummyPlaces({ railFolded: (selection) => selection.kind === "summary" }),
+        })}
+      </Host>,
+    );
+    const expand = strip(container)!;
+    expect(expand.getAttribute("aria-expanded")).toBe("false");
+    expect(expand.getAttribute("aria-controls")).toBe("review-rail");
+    expect(expand.hasAttribute("aria-keyshortcuts")).toBe(false);
+    await act(async () => expand.click());
+    const collapse = container.querySelector<HTMLButtonElement>(
+      '[aria-label="Collapse sections"]',
+    )!;
+    expect(collapse.getAttribute("aria-expanded")).toBe("true");
+    expect(collapse.getAttribute("aria-controls")).toBe("review-rail");
+    expect(document.activeElement).toBe(collapse);
+    await act(async () => collapse.click());
+    expect(document.activeElement).toBe(strip(container));
+  });
+});
+
+describe("ReviewViewer places: the pane and the context", () => {
+  it("keeps the pane mounted between items of one tile, and remounts it for another tile", async () => {
+    const mounts = vi.fn();
+    function Pane() {
+      useEffect(() => mounts(), []);
+      return <p>pane</p>;
+    }
+    let select: ReviewPlaceContext["select"] | undefined;
+    await render(
+      <Host initial="pane=tile&tile=tile-a&tile_item=x">
+        {viewer({
+          places: dummyPlaces({
+            renderPane: (_snapshot, _historical, context) => {
+              select = context.select;
+              return <Pane />;
+            },
+          }),
+        })}
+      </Host>,
+    );
+    expect(mounts).toHaveBeenCalledTimes(1);
+    await act(async () => select!({ kind: "tile", id: "tile-a", item: "y" }));
+    await act(async () => select!({ kind: "tile", id: "tile-a" }));
+    expect(mounts).toHaveBeenCalledTimes(1);
+    await act(async () => select!({ kind: "tile", id: "tile-b" }));
+    expect(mounts).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps the context's identity across a render that changes nothing it carries", async () => {
+    const seen: ReviewPlaceContext[] = [];
+    let bump: (() => void) | undefined;
+    function Wrapper() {
+      const [, setTick] = useState(0);
+      bump = () => setTick((tick) => tick + 1);
+      return viewer({ places: dummyPlaces({}, seen) });
+    }
+    await render(
+      <Host>
+        <Wrapper />
+      </Host>,
+    );
+    const before = seen.length;
+    await act(async () => bump!());
+    expect(seen.length).toBeGreaterThan(before);
+    expect(seen.at(-1)).toBe(seen[before - 1]);
+  });
+
+  it("opens a file, reveals the comments and reports the generation", async () => {
+    const seen: ReviewPlaceContext[] = [];
+    const container = await render(
+      <Host>
+        {viewer({
+          header: { generation: { state: "pending" } },
+          places: dummyPlaces({}, seen),
+          comments: { count: 0, render: () => <p>Comments body</p> },
+          files: {
+            files: [{ id: "f1", path: "a.go", viewed: false }],
+            loading: false,
+            failed: false,
+            retry() {},
+            renderTree: () => null,
+            renderFiles: () => <p>Files pane</p>,
+          },
+        })}
+      </Host>,
+    );
+    const context = () => seen.at(-1)!;
+    expect(context().generation?.state).toBe("pending");
+    await act(async () => context().openFile("f1"));
+    expect(search(container)).toBe("pane=file&file=f1");
+    expect(container.querySelector("#review-section")?.textContent).toContain("Files pane");
+    await act(async () => context().revealComments());
+    expect(container.querySelector('[role="tab"][aria-selected="true"]')?.textContent).toContain(
+      "Comments",
+    );
+    await act(async () => context().openSidePane("details"));
+    expect(container.querySelector('[role="tab"][aria-selected="true"]')?.textContent).toContain(
+      "Details",
+    );
+  });
+
+  it("follows the section the host's steps name in the side pane and the section aside", async () => {
+    const asides = vi.fn((id: string) => <p data-testid="aside">{id}</p>);
+    const conversation = vi.fn((context: { sectionId: string | null }) => (
+      <p data-testid="conversation">{String(context.sectionId)}</p>
+    ));
+    const container = await render(
+      <Host initial="pane=tile&tile=tile-a">
+        {viewer({
+          renderSectionAside: asides,
+          conversation,
+          places: dummyPlaces({
+            steps: (selection, context) => {
+              const base = dummyPlaces().steps(selection, context);
+              return base ? { ...base, sectionId: "sec_retry" } : null;
+            },
+          }),
+        })}
+      </Host>,
+    );
+    expect(container.querySelector('[data-testid="conversation"]')?.textContent).toBe("sec_retry");
+    expect(container.querySelector('[data-testid="aside"]')?.textContent).toBe("sec_retry");
+  });
+
+  it("keeps a tile selection as it is, and does not write the URL", async () => {
+    const container = await render(
+      <Host initial="pane=tile&tile=unknown">{viewer({ places: dummyPlaces() })}</Host>,
+    );
+    expect(container.querySelector('[data-testid="host-pane"]')?.textContent).toContain(
+      '{"kind":"tile","id":"unknown"}',
+    );
+    expect(search(container)).toBe("pane=tile&tile=unknown");
+  });
+
+  it("round-trips a tile id that needs encoding", async () => {
+    const id = "a/b c&d";
+    let select: ReviewPlaceContext["select"] | undefined;
+    const container = await render(
+      <Host>
+        {viewer({
+          places: dummyPlaces({
+            renderPane: (_snapshot, _historical, context) => {
+              select = context.select;
+              return (
+                <p data-testid="host-pane">
+                  {context.selection.kind === "tile"
+                    ? `${context.selection.id}|${context.selection.item}`
+                    : ""}
+                </p>
+              );
+            },
+          }),
+        })}
+      </Host>,
+    );
+    await act(async () => select!({ kind: "tile", id, item: "i/1 2" }));
+    expect(container.querySelector('[data-testid="host-pane"]')?.textContent).toBe(`${id}|i/1 2`);
+    expect(new URLSearchParams(search(container)!).get("tile")).toBe(id);
+  });
+});
+
+describe("ReviewViewer places: keys and chips in earlier versions", () => {
+  it("steps across the host's rows and on into the viewer's own, with real keys", async () => {
+    const steps = { current: null } as NonNullable<ReviewViewerProps["steps"]>;
+    function Keys() {
+      useEffect(() => {
+        const on = (event: KeyboardEvent) => {
+          const live = steps.current;
+          if (event.key === "J") stepTo(live?.rail?.next);
+          if (event.key === "K") stepTo(live?.rail?.previous);
+          if (event.key === "ArrowRight") stepTo(live?.next);
+          if (event.key === "ArrowLeft") stepTo(live?.previous);
+        };
+        window.addEventListener("keydown", on);
+        return () => window.removeEventListener("keydown", on);
+      }, []);
+      return null;
+    }
+    const container = await render(
+      <Host>
+        <Keys />
+        {viewer({
+          steps,
+          places: dummyPlaces(),
+          decisions: { renderPane: () => <p>Decisions pane</p> },
+        })}
+      </Host>,
+    );
+    const pane = () => container.querySelector("#review-section")?.getAttribute("aria-label");
+    await key("J", true);
+    expect(pane()).toBe("Place tile-a");
+    await key("ArrowRight");
+    expect(pane()).toBe("Place tile-b");
+    // Past the last host row the rail goes on to the viewer's own Decisions row.
+    await key("J", true);
+    expect(pane()).toBe("Decisions");
+    await key("K", true);
+    expect(pane()).toBe("Place tile-b");
+    await key("ArrowLeft");
+    await key("ArrowLeft");
+    expect(pane()).toBe("Place home");
+    await key("ArrowLeft");
+    expect(pane()).toBe("Place home");
+  });
+
+  it.each([
+    ["alone", "review=2"],
+    ["compared", "review=2&compare=1"],
+  ])("redirects a chip in an earlier version read %s", async (_name, initial) => {
+    const latest = citing(current);
+    const old = citing(earlier());
+    const jump = vi.fn((id: string, item?: string): Selection | null => ({
+      kind: "tile",
+      id,
+      item,
+    }));
+    const container = await render(
+      <Host initial={initial}>
+        {viewer({
+          document: latest,
+          versions: [2],
+          loadVersion: async () => ({ status: "ready", document: old }),
+          places: dummyPlaces({
+            jump,
+            renderPane: (shown) => <ReviewSummary document={shown} onSelectSection={() => {}} />,
+          }),
+        })}
+      </Host>,
+    );
+    const pane = container.querySelector('[aria-label^="Historical"]')!;
+    await act(async () => pane.querySelector<HTMLButtonElement>(decisionChip)!.click());
+    expect(jump).toHaveBeenCalledWith("sec_retry", "dec_snapshot");
+    expect(search(container)).toContain("pane=tile&tile=sec_retry&tile_item=dec_snapshot");
   });
 });

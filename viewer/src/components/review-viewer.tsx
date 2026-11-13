@@ -262,6 +262,14 @@ export type ReviewPlaceContext = {
   selection: Selection;
   /** Goes to a place, writing it to the URL as the rail's own rows do. */
   select: (selection: Selection) => void;
+  /** Opens a changed file in the Files pane, at a line when one is given.
+   *  Does nothing without a `files` slot. */
+  openFile: (id: string, line?: FileLineFocus) => void;
+  /** Opens the side pane on a tab, unfolding it. */
+  openSidePane: (tab: ConversationTab) => void;
+  /** Opens the side pane on its Comments tab and gives it the keys; does
+   *  nothing without a `comments` slot. */
+  revealComments: () => void;
   /** The document being read: the earlier version when one is read alone,
    *  else the current one. */
   document: ReviewDocument | null;
@@ -271,7 +279,9 @@ export type ReviewPlaceContext = {
   historical: boolean;
   /** Two versions are on screen side by side. */
   comparing: boolean;
-  /** The earlier version the reader chose, if one. */
+  /** The earlier version the reader chose, when it is read alone. Absent on
+   *  the current version and while two versions are compared (see
+   *  `historicalDocument` for the compared one). */
   version?: number;
   /** Starts comparing the current version with an earlier one. */
   compareWith: (version: number) => void;
@@ -291,10 +301,15 @@ export type ReviewPlaceContext = {
   /** The current document is a draft whose context is still being written. A
    *  pane says so only for the current version. */
   contextPending: boolean;
+  /** The generation state of the document being read, as the head shows it
+   *  (with the host's `header.generation` applied); null without a document. */
+  generation: ReturnType<typeof reviewGeneration> | null;
 };
 
 /** What the navigator bar, the pane's foot and the host's keys know of the
  *  place a host owns. */
+export type { IconProps, ReviewStep };
+
 export type ReviewPlaceSteps = {
   /** The place's name, in the navigator bar and as the pane's label. */
   label: string;
@@ -321,17 +336,28 @@ export type ReviewPlaces = {
   /** The rail's rows for the Summary and the Changes, with the toggle of
    *  obsolete changes, which replace the viewer's own. The Files, Decisions,
    *  Sessions and Commits rows stay. A host's notice, `checks.notice`, follows
-   *  these rows. */
+   *  these rows.
+   *
+   *  Each row is a button with `aria-pressed` set for the row of the current
+   *  place and `aria-controls` containing `review-section`: where the panes
+   *  stack the rail is a sheet, and it puts the focus on the pressed row that
+   *  controls the pane. Call it as a function; it is not a component, so
+   *  hooks belong in a component element it returns. */
   renderRail: (context: ReviewPlaceContext) => ReactNode;
   /** The same rows in the order the rail shows them, for the keys that step
    *  through the rail; the viewer follows them with its own rows. */
   railRows: (context: ReviewPlaceContext) => ReviewRailRow[];
   /** The stepping model of a selection, for the summary, changes, risks,
-   *  section, risk and tile selections; null falls back to the viewer's own. */
+   *  section, risk and tile selections. The host answers for every one of
+   *  those it owns: returning null leaves the navigator bar, the pane's foot
+   *  and the host's stepping keys without previous and next for that
+   *  selection, and the pane label as the viewer's own would name it. */
   steps: (selection: Selection, context: ReviewPlaceContext) => ReviewPlaceSteps | null;
   /** The pane for those selections in one snapshot of the review. Called
    *  inside the version history, once for the current version and once for
-   *  an earlier one read alone or compared, so those keep working. */
+   *  an earlier one read alone or compared, so those keep working. Return a
+   *  component element (`<TilePane ... />`), not content that calls hooks
+   *  itself: the viewer calls this function during its own render. */
   renderPane: (
     snapshot: ReviewDocument,
     historical: boolean,
@@ -721,8 +747,15 @@ function ReviewWorkspace<F extends ReviewFile>({
   // A host's places can start the rail folded to a strip, as on a landing page
   // whose own grid is the way in. The host's answer is applied when it
   // changes, as the reader moves between places; the reader's fold or unfold
-  // holds until then. Without places the rail never folds.
-  const [railChoice, setRailChoice] = useState<boolean | null>(null);
+  // holds until then, and is dropped in the render that sees the answer
+  // change, so no frame shows the old choice. Without places the rail never
+  // folds.
+  const [railChoice, setRailChoice] = useState<{ answer: boolean; folded: boolean } | null>(null);
+  // Which fold button the reader used, so focus can move to its counterpart
+  // once that has been drawn.
+  const railFocus = useRef<"expand" | "collapse" | null>(null);
+  const expandRail = useRef<HTMLButtonElement>(null);
+  const collapseRail = useRef<HTMLButtonElement>(null);
   const paneChoice = useRef({ chosenCollapsed, foldSidePane, sheet });
   paneChoice.current = { chosenCollapsed, foldSidePane, sheet };
   useEffect(() => {
@@ -795,6 +828,7 @@ function ReviewWorkspace<F extends ReviewFile>({
     historyView.state?.status === "ready" ? historyView.state.document : null;
   const sectionHistory = useSectionHistory(document, versions, loadVersion, historicalDocument);
   const historicalOnly = Boolean(historyView.selection && !historyView.selection.compare);
+  const historyActive = Boolean(historyView.selection);
   const navigationDocument = historicalOnly ? historicalDocument : document;
   const comparing = Boolean(historyView.selection?.compare);
   const fileVersion = historicalOnly ? historyView.selection?.version : undefined;
@@ -992,27 +1026,96 @@ function ReviewWorkspace<F extends ReviewFile>({
     select: setSelection,
     openFile: (id) => openFile(id),
   };
-  const hostContext: ReviewPlaceContext = {
-    selection,
+  // The context a host's places are given keeps its identity across renders
+  // that change nothing it carries, so a host can use it in dependency arrays
+  // and hand it to memoised components: its functions read the latest state
+  // through a ref.
+  const placeApi = useRef({
     select: setSelection,
-    document: navigationDocument,
-    historicalDocument,
-    historical: Boolean(historyView.selection),
-    comparing,
-    version: fileVersion,
-    compareWith: (version) => historyView.setSelection({ version, compare: true }),
-    versions,
-    loadVersion,
-    sectionHistory,
-    hunkPatches: comparing ? null : hunkPatches,
-    onRetryDetails,
-    contextPending,
+    openFile,
+    setHistory: historyView.setSelection,
+    openBarTab,
+    hasComments: Boolean(comments),
+    bumpComments: () => setCommentsShown((count) => count + 1),
+  });
+  placeApi.current = {
+    select: setSelection,
+    openFile,
+    setHistory: historyView.setSelection,
+    openBarTab,
+    hasComments: Boolean(comments),
+    bumpComments: () => setCommentsShown((count) => count + 1),
   };
+  const placeActions = useMemo(
+    () => ({
+      select: (next: Selection) => placeApi.current.select(next),
+      compareWith: (version: number) => placeApi.current.setHistory({ version, compare: true }),
+      openFile: (id: string, line?: FileLineFocus) => placeApi.current.openFile(id, line ?? null),
+      openSidePane: (tab: ConversationTab) => placeApi.current.openBarTab(tab),
+      revealComments: () => {
+        if (!placeApi.current.hasComments) return;
+        placeApi.current.openBarTab("comments");
+        placeApi.current.bumpComments();
+      },
+    }),
+    [],
+  );
+  const placeGeneration = useMemo(
+    () => (document ? reviewGeneration(document, header?.generation) : null),
+    [document, header?.generation],
+  );
+  const sectionHistoryActive = sectionHistory?.active;
+  const hostContext = useMemo<ReviewPlaceContext>(
+    () => ({
+      selection,
+      ...placeActions,
+      document: navigationDocument,
+      historicalDocument,
+      historical: historyActive,
+      comparing,
+      version: fileVersion,
+      versions,
+      loadVersion,
+      sectionHistory: sectionHistoryActive ? { active: sectionHistoryActive } : null,
+      hunkPatches: comparing ? null : hunkPatches,
+      onRetryDetails,
+      contextPending,
+      generation: placeGeneration,
+    }),
+    [
+      selection,
+      placeActions,
+      navigationDocument,
+      historicalDocument,
+      historyActive,
+      comparing,
+      fileVersion,
+      versions,
+      loadVersion,
+      sectionHistoryActive,
+      hunkPatches,
+      onRetryDetails,
+      contextPending,
+      placeGeneration,
+    ],
+  );
   const hostSteps =
     places && PLACE_KINDS.has(selection.kind) ? places.steps(selection, hostContext) : null;
   const hostFolds = places?.railFolded?.(selection) ?? false;
-  useEffect(() => setRailChoice(null), [hostFolds]);
-  const railFolded = Boolean(places) && (railChoice ?? hostFolds);
+  if (railChoice && railChoice.answer !== hostFolds) setRailChoice(null);
+  const railFolded =
+    Boolean(places) &&
+    (railChoice && railChoice.answer === hostFolds ? railChoice.folded : hostFolds);
+  const chooseRail = (fold: boolean) => {
+    railFocus.current = fold ? "expand" : "collapse";
+    setRailChoice({ answer: hostFolds, folded: fold });
+  };
+  useEffect(() => {
+    const target = railFocus.current;
+    if (!target) return;
+    railFocus.current = null;
+    (target === "expand" ? expandRail : collapseRail).current?.focus();
+  }, [railFolded]);
   /** The Summary's "view all" links: each opens the pane the rail row of the
    *  same name would; Team unfolds the side pane and puts the cursor in its
    *  text box. */
@@ -1109,7 +1212,13 @@ function ReviewWorkspace<F extends ReviewFile>({
   // What the pane's arrival is keyed on: the place, not the data behind it.
   const selectionKey = JSON.stringify(selection);
   // Every file shares one pane, which scrolls its own cards into view.
-  const paneKey = filesSelected ? "files" : selectionKey;
+  // An item of a tile is an anchor inside its pane, so moving between items
+  // keeps the pane, its scroll and its state.
+  const paneKey = filesSelected
+    ? "files"
+    : selection.kind === "tile"
+      ? JSON.stringify({ kind: "tile", id: selection.id })
+      : selectionKey;
   // A new place starts at its top. The pane shares the page's scroll, so
   // one read far down would otherwise open the next part way through; the
   // page only moves when the pane's top has gone under the bar. Where the
@@ -1783,10 +1892,13 @@ function ReviewWorkspace<F extends ReviewFile>({
                 stack the rail is a sheet, and keeps its rows. */}
                   {railFolded ? (
                     <IconButton
+                      ref={expandRail}
                       label="Expand sections"
                       title="Expand sections"
+                      aria-expanded={false}
+                      aria-controls="review-rail"
                       className="hidden h-9 w-9 text-secondary wide:flex"
-                      onClick={() => setRailChoice(false)}
+                      onClick={() => chooseRail(false)}
                     >
                       <ChevronRightIcon />
                     </IconButton>
@@ -1802,10 +1914,13 @@ function ReviewWorkspace<F extends ReviewFile>({
                     {places ? (
                       <div className="mb-1 hidden justify-end wide:flex">
                         <IconButton
+                          ref={collapseRail}
                           label="Collapse sections"
                           title="Collapse sections"
+                          aria-expanded
+                          aria-controls="review-rail"
                           className="h-8 w-8 text-secondary"
-                          onClick={() => setRailChoice(true)}
+                          onClick={() => chooseRail(true)}
                         >
                           <ChevronLeftIcon />
                         </IconButton>
@@ -2215,7 +2330,7 @@ function ReviewWorkspace<F extends ReviewFile>({
                                 item: (id, item) => hostJump(id, item, snapshot.review.version),
                               }}
                             >
-                              <PaneIn key={selectionKey}>{renderPane(snapshot, historical)}</PaneIn>
+                              <PaneIn key={paneKey}>{renderPane(snapshot, historical)}</PaneIn>
                             </ReviewJumpContext.Provider>
                           </ReviewRefsProvider>
                         )}

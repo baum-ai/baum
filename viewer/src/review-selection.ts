@@ -32,7 +32,7 @@ const PARAM = {
   session: "session",
   commit: "commit",
   tile: "tile",
-  item: "item",
+  tileItem: "tile_item",
   // A host's own place within the selection, such as the prompt of a session
   // a link opens at. Readers of it take it from the URL themselves; it is
   // cleared with the selection so it never applies to the next one.
@@ -70,7 +70,7 @@ export function readSelection(search: URLSearchParams): Selection {
   if (pane === "tile") {
     const id = search.get(PARAM.tile);
     if (id) {
-      const item = search.get(PARAM.item);
+      const item = search.get(PARAM.tileItem);
       return { kind: "tile", id, ...(item ? { item } : {}) };
     }
   }
@@ -122,7 +122,7 @@ export function withSelection(search: URLSearchParams, selection: Selection): UR
   } else if (selection.kind === "tile") {
     next.set(PARAM.pane, "tile");
     next.set(PARAM.tile, selection.id);
-    if (selection.item) next.set(PARAM.item, selection.item);
+    if (selection.item) next.set(PARAM.tileItem, selection.item);
   } else if (selection.kind === "commit") {
     next.set(PARAM.pane, "commit");
     next.set(PARAM.commit, selection.id);
