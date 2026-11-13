@@ -4,6 +4,7 @@ import (
 	"archive/tar"
 	"bytes"
 	"compress/gzip"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -42,7 +43,7 @@ func TestEveryCaseOfADatasetLoads(t *testing.T) {
 	}
 	limits := assemble.LimitsFrom(caps)
 	scratch := t.TempDir()
-	var loaded, lossless, withImages, unpacked, indexed, noMergeBase int
+	var withPrevious, previousAndImages, loaded, lossless, withImages, unpacked, indexed, noMergeBase int
 	for i, id := range ids {
 		c, err := ds.LoadCase(ctx(), id)
 		if err != nil {
@@ -50,8 +51,15 @@ func TestEveryCaseOfADatasetLoads(t *testing.T) {
 			continue
 		}
 		loaded++
-		if c.Lossless {
+		// The bundle type should still hold every field of the capture.
+		if again, err := json.Marshal(c.Bundle); err == nil && bytes.Equal(append(again, '\n'), c.BundleJSON) {
 			lossless++
+		}
+		if c.Bundle.Previous != nil {
+			withPrevious++
+			if len(c.Bundle.Attachments) > 0 {
+				previousAndImages++
+			}
 		}
 		if c.Entry != nil {
 			indexed++
@@ -79,6 +87,7 @@ func TestEveryCaseOfADatasetLoads(t *testing.T) {
 		}
 		unpacked++
 	}
+	t.Logf("with a previous version %d, of which also offering images %d", withPrevious, previousAndImages)
 	t.Logf("cases %d, loaded %d, archives checked %d, bundle type lossless %d, with images %d, indexed %d, bundles without a merge base %d", len(ids), loaded, unpacked, lossless, withImages, indexed, noMergeBase)
 	if len(ds.Index) > 0 && len(ds.Index) != len(ids) {
 		t.Logf("the index has %d entries for %d case directories", len(ds.Index), len(ids))

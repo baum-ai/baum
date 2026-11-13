@@ -38,19 +38,12 @@ var idPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,200}$`)
 // Entry is a dataset index line: the facts a selection uses. Fields the index
 // does not have decode as their zero value.
 type Entry struct {
-	ID             string          `json:"id"`
-	Repository     string          `json:"repository"`
-	Number         int             `json:"number"`
-	Split          string          `json:"split"`
-	Representative bool            `json:"representative"`
-	Primary        bool            `json:"primary"`
-	Size           string          `json:"size"`
-	SessionVendors []string        `json:"session_vendors"`
-	Attachments    int             `json:"attachments"`
-	Threads        int             `json:"threads"`
-	PreviousBundle json.RawMessage `json:"previous_version"`
-	Staged         bool            `json:"staged"`
-	BundleBytes    int64           `json:"bundle_bytes"`
+	ID             string   `json:"id"`
+	Split          string   `json:"split"`
+	Representative bool     `json:"representative"`
+	Primary        bool     `json:"primary"`
+	Size           string   `json:"size"`
+	SessionVendors []string `json:"session_vendors"`
 }
 
 // Dataset is an opened dataset directory.
@@ -122,9 +115,6 @@ type Case struct {
 	Digest     string
 	// FileSHA256 is the SHA-256 of the bundle file, which case.json records.
 	FileSHA256 string
-	// Lossless reports that encoding Bundle gives BundleJSON back, so the
-	// bundle type still holds every field the capture had.
-	Lossless   bool
 	Repository github.Repository
 	// HeadTree and MergeBaseTree are the tree ids of the two checkouts.
 	HeadTree, MergeBaseTree string
@@ -173,9 +163,6 @@ func (d *Dataset) LoadCase(ctx context.Context, id string) (Case, error) {
 	c.Bundle.Digest = c.Digest
 	file := sha256.Sum256(raw)
 	c.FileSHA256 = hex.EncodeToString(file[:])
-	if again, err := json.Marshal(c.Bundle); err == nil {
-		c.Lossless = bytes.Equal(append(again, '\n'), raw)
-	}
 	if c.Repository, err = github.ParseRepository(c.Bundle.Repository); err != nil {
 		return fail("the bundle's repository is not owner/name: %v", err)
 	}
@@ -223,11 +210,23 @@ func (c Case) FreshBundle() (bundle.Bundle, error) {
 	return b, nil
 }
 
+// gitEnv is the environment of every git process: the process's own without
+// any GIT_ variable, so nothing redirects the repository or its configuration.
+func gitEnv() []string {
+	var env []string
+	for _, entry := range os.Environ() {
+		if !strings.HasPrefix(entry, "GIT_") {
+			env = append(env, entry)
+		}
+	}
+	return append(env, "GIT_CONFIG_GLOBAL="+os.DevNull, "GIT_CONFIG_NOSYSTEM=1", "GIT_TERMINAL_PROMPT=0")
+}
+
 func (c Case) ref(which string) string { return "refs/cases/" + c.ID + "/" + which }
 
 func (c Case) git(ctx context.Context, args ...string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, "git", append([]string{"-c", "safe.directory=*", "--git-dir=" + c.gitDir}, args...)...)
-	cmd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL="+os.DevNull, "GIT_CONFIG_NOSYSTEM=1", "GIT_TERMINAL_PROMPT=0")
+	cmd.Env = gitEnv()
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	out, err := cmd.Output()
@@ -279,7 +278,7 @@ func (c Case) WriteCheckout(ctx context.Context, w io.Writer) error {
 // copyTree appends the tree of ref root under the directory root/.
 func (c Case) copyTree(ctx context.Context, out *tar.Writer, root string) error {
 	cmd := exec.CommandContext(ctx, "git", "-c", "safe.directory=*", "--git-dir="+c.gitDir, "archive", "--format=tar", "--prefix="+root+"/", c.ref(root))
-	cmd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL="+os.DevNull, "GIT_CONFIG_NOSYSTEM=1")
+	cmd.Env = gitEnv()
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	pipe, err := cmd.StdoutPipe()

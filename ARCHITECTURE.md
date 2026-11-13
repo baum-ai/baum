@@ -2790,6 +2790,19 @@ best-effort and only reports, in Analytics and a run's recorded usage: no
 budget, cap, limit, confirmation, ordering or dedupe reads a price or the
 list's version.
 
+## Replaying review generation
+
+`cmd/replay` (package `internal/replay`) runs review generation again on frozen
+cases from a dataset directory, with no GitHub access, to try a prompt or
+pipeline change on real pull requests. A case is a saved bundle (the exact
+bytes generation read) with the `head/` and `merge-base/` trees the agent could
+read. A replay assembler hands both to `generate.Run`, so everything after
+assembly is the desktop app's. A `Generator` interface holds what depends on
+the document's format (running, validating, describing prompts); the runner,
+driver, guards and files do not. It is developer tooling, not a command of the
+`baum` binary; its [README](cmd/replay/README.md) describes the dataset layout,
+the flags and the files written.
+
 ## Diagnostics
 
 `internal/doctor` builds the report behind `baum internal doctor`: `Run(ctx, Options)`

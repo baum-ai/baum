@@ -1,14 +1,14 @@
 package replay
 
 import (
+	"bytes"
 	"cmp"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"math/rand/v2"
 	"os"
 	"os/exec"
@@ -20,7 +20,6 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"github.com/baum-ai/baum/agent/prompt"
 	"github.com/baum-ai/baum/internal/generate"
 )
 
@@ -103,14 +102,18 @@ type Plan struct {
 	Settings  Settings
 	// Concurrency is how many cases run at once; below one is one.
 	Concurrency int
-	// MaxCostUSD stops starting cases once the priced cost so far reaches it;
-	// zero is no guard. Cases already running finish, so with concurrency N the
-	// total can pass it by up to N cases.
+	// MaxCostUSD stops starting cases once the priced cost so far, resumed
+	// cases' included, reaches it, or once a case that made calls has no cost
+	// (an unpriced run cannot be guarded); zero is no guard. Cases already
+	// running finish, so with concurrency N the total can pass it by up to N-1
+	// cases beyond the one that crossed it.
 	MaxCostUSD float64
 	// MaxCases refuses a run of more cases than this; zero is no guard.
 	MaxCases int
 	// Resume skips cases whose outcome in the run directory succeeded.
 	Resume, DryRun bool
+	// ResumeAnyway continues a run whose saved settings differ from these.
+	ResumeAnyway bool
 	// Out receives the table and progress lines.
 	Out io.Writer
 	// NewRunner defaults to the package's.
@@ -120,20 +123,22 @@ type Plan struct {
 // Manifest records what a run was asked to do. It holds no dataset content:
 // only case ids and the index file's hash.
 type Manifest struct {
-	Run                string         `json:"run"`
-	CreatedAt          time.Time      `json:"created_at"`
-	ToolCommit         string         `json:"tool_commit"`
-	ToolDirty          bool           `json:"tool_dirty,omitempty"`
-	Generator          string         `json:"generator"`
-	DatasetIndexSHA256 string         `json:"dataset_index_sha256,omitempty"`
-	DatasetCases       int            `json:"dataset_cases"`
-	Selection          Selection      `json:"selection"`
-	CaseIDs            []string       `json:"case_ids"`
+	Run                string    `json:"run"`
+	CreatedAt          time.Time `json:"created_at"`
+	ToolCommit         string    `json:"tool_commit"`
+	ToolDirty          bool      `json:"tool_dirty,omitempty"`
+	DatasetIndexSHA256 string    `json:"dataset_index_sha256,omitempty"`
+	DatasetCases       int       `json:"dataset_cases"`
+	Selection          Selection `json:"selection"`
+	CaseIDs            []string  `json:"case_ids"`
+
 	Backend            string         `json:"backend"`
 	BackendVersion     string         `json:"backend_version"`
 	Model              string         `json:"model"`
 	Effort             string         `json:"effort"`
-	Staged             bool           `json:"staged"`
+	ClaudeConfigDir    string         `json:"claude_config_dir,omitempty"`
+	CodexHome          string         `json:"codex_home,omitempty"`
+	AgentEnvNames      []string       `json:"agent_env_names,omitempty"`
 	TimeLimitSeconds   float64        `json:"time_limit_seconds"`
 	PassTimeoutSeconds float64        `json:"pass_timeout_seconds"`
 	MaxCalls           int            `json:"max_calls"`
@@ -142,32 +147,49 @@ type Manifest struct {
 	Concurrency        int            `json:"concurrency"`
 	MaxCostUSD         float64        `json:"max_cost_usd"`
 	PriceVersion       string         `json:"price_version,omitempty"`
-	PromptVersion      string         `json:"prompt_version"`
-	PromptDigest       string         `json:"prompt_digest"`
-	// PromptOverrides are the replaced prompts by id, with the SHA-256 of
-	// each text and the file it came from, if recorded by the caller.
-	PromptOverrides []OverrideRecord `json:"prompt_overrides,omitempty"`
+	// Generator and GeneratorSettings are the generator's name and its
+	// description (Generator.Describe): staged, reuse, prompt version and
+	// digest, prompt override hashes for the review generator.
+	Generator         string         `json:"generator"`
+	GeneratorSettings map[string]any `json:"generator_settings"`
 }
 
-// OverrideRecord names one replaced prompt.
-type OverrideRecord struct {
-	ID     string `json:"id"`
-	SHA256 string `json:"sha256"`
-	File   string `json:"file,omitempty"`
+// comparable is what a resume must find unchanged.
+func (m Manifest) comparable() map[string]any {
+	return map[string]any{"backend": m.Backend, "model": m.Model, "effort": m.Effort, "generator": m.Generator, "generator_settings": m.GeneratorSettings}
+}
+
+// differences names the settings of saved that differ from m's.
+func (m Manifest) differences(saved Manifest) []string {
+	normalise := func(v map[string]any) map[string]any {
+		encoded, _ := json.Marshal(v)
+		var out map[string]any
+		_ = json.Unmarshal(encoded, &out)
+		return out
+	}
+	now, then := normalise(m.comparable()), normalise(saved.comparable())
+	var diff []string
+	for _, key := range slices.Sorted(maps.Keys(now)) {
+		a, _ := json.Marshal(now[key])
+		b, _ := json.Marshal(then[key])
+		if !bytes.Equal(a, b) {
+			diff = append(diff, fmt.Sprintf("%s (saved %s, now %s)", key, b, a))
+		}
+	}
+	return diff
 }
 
 // Row is one case in the summary.
 type Row struct {
-	CaseID         string   `json:"case_id"`
-	Status         string   `json:"status"` // ok, failed, skipped, resumed
-	Reason         string   `json:"reason,omitempty"`
-	WallSeconds    float64  `json:"wall_seconds"`
-	Calls          int      `json:"calls"`
-	Tokens         int      `json:"tokens"`
-	CostUSD        *float64 `json:"cost_usd"`
-	Repairs        int      `json:"repairs"`
-	FailedSections []string `json:"failed_sections,omitempty"`
-	NoContext      bool     `json:"context_failed,omitempty"`
+	CaseID      string   `json:"case_id"`
+	Status      string   `json:"status"` // ok, failed, interrupted, skipped, resumed
+	Reason      string   `json:"reason,omitempty"`
+	WallSeconds float64  `json:"wall_seconds"`
+	Calls       int      `json:"calls"`
+	Tokens      int      `json:"tokens"`
+	CostUSD     *float64 `json:"cost_usd"`
+	Repairs     int      `json:"repairs"`
+	Notes       []string `json:"notes,omitempty"`
 }
 
 // Totals add up a run's rows.
@@ -196,7 +218,8 @@ type Summary struct {
 func (p Plan) RunDir() string { return filepath.Join(p.OutDir, p.Name) }
 
 // Execute selects the cases, runs them and writes the manifest, each case's
-// files and the summary.
+// files and the summary. Cases that fail do not make it return an error: the
+// caller reads the summary.
 func Execute(ctx context.Context, p Plan) (Summary, error) {
 	if p.Out == nil {
 		p.Out = io.Discard
@@ -249,16 +272,20 @@ func Execute(ctx context.Context, p Plan) (Summary, error) {
 	if err != nil {
 		return Summary{}, err
 	}
+	manifest := p.manifest(runner, ids)
+	manifestPath := filepath.Join(dir, "manifest.json")
+	var saved Manifest
+	if raw, err := os.ReadFile(manifestPath); p.Resume && err == nil && json.Unmarshal(raw, &saved) == nil {
+		if diff := manifest.differences(saved); len(diff) > 0 && !p.ResumeAnyway {
+			return Summary{}, fmt.Errorf("the run %s was started with other settings: %s; use the same settings, or --resume-anyway", p.Name, strings.Join(diff, "; "))
+		}
+	}
 	if err := os.MkdirAll(filepath.Join(dir, "cases"), 0o700); err != nil {
 		return Summary{}, err
 	}
-	manifest, err := p.manifest(ctx, runner, ids)
-	if err != nil {
-		return Summary{}, err
-	}
 	// A resumed run keeps the manifest of the run it continues.
-	if _, err := os.Stat(filepath.Join(dir, "manifest.json")); !p.Resume || err != nil {
-		if err := writeJSON(filepath.Join(dir, "manifest.json"), manifest); err != nil {
+	if _, err := os.Stat(manifestPath); !p.Resume || err != nil {
+		if err := writeJSON(manifestPath, manifest); err != nil {
 			return Summary{}, err
 		}
 	}
@@ -269,6 +296,11 @@ func Execute(ctx context.Context, p Plan) (Summary, error) {
 		stopped string
 		wg      sync.WaitGroup
 	)
+	for _, row := range rows {
+		if row.CostUSD != nil {
+			spent += *row.CostUSD
+		}
+	}
 	slots := make(chan struct{}, max(p.Concurrency, 1))
 	add := func(row Row) {
 		mu.Lock()
@@ -276,15 +308,19 @@ func Execute(ctx context.Context, p Plan) (Summary, error) {
 		rows = append(rows, row)
 		if row.CostUSD != nil {
 			spent += *row.CostUSD
+		} else if p.MaxCostUSD > 0 && row.Calls > 0 && stopped == "" {
+			stopped = fmt.Sprintf("cost guard: case %s made %d call(s) but has no cost (usage not reported or the model is not priced), so --max-cost-usd cannot be enforced", row.CaseID, row.Calls)
 		}
-		_, _ = fmt.Fprintf(p.Out, "%-8s %s  %.0fs  %d call(s)  %s\n", row.Status, row.CaseID, row.WallSeconds, row.Calls, costText(row.CostUSD))
+		_, _ = fmt.Fprintf(p.Out, "%-11s %s  %.0fs  %d call(s)  %s\n", row.Status, row.CaseID, row.WallSeconds, row.Calls, costText(row.CostUSD))
 	}
 	for _, id := range todo {
 		slots <- struct{}{}
 		mu.Lock()
 		switch {
 		case ctx.Err() != nil:
-			stopped = "interrupted"
+			if stopped == "" || !strings.HasPrefix(stopped, "interrupted") {
+				stopped = "interrupted"
+			}
 		case p.MaxCostUSD > 0 && spent >= p.MaxCostUSD && stopped == "":
 			stopped = fmt.Sprintf("cost guard: %.2f USD spent, --max-cost-usd %.2f", spent, p.MaxCostUSD)
 		}
@@ -305,6 +341,9 @@ func Execute(ctx context.Context, p Plan) (Summary, error) {
 		}()
 	}
 	wg.Wait()
+	if ctx.Err() != nil && stopped == "" {
+		stopped = "interrupted"
+	}
 	summary := summarize(p.Name, rows, stopped)
 	if err := writeJSON(filepath.Join(dir, "summary.json"), summary); err != nil {
 		return summary, err
@@ -331,23 +370,24 @@ func (p Plan) runCase(ctx context.Context, runner *Runner, id string) Row {
 		return fail("internal", err)
 	}
 	// A rerun replaces the case's earlier files.
-	for _, name := range []string{"document.json", "transcript.jsonl", "outcome.json"} {
+	for _, name := range caseFiles {
 		_ = os.Remove(filepath.Join(caseDir, name))
 	}
-	settings := runner.Settings
-	settings.OutputDir = caseDir
 	run := *runner
-	run.Settings = settings
+	run.Settings.OutputDir = caseDir
 	out, err := run.Run(ctx, c)
 	if err != nil {
 		return fail("internal", err)
+	}
+	if out.Status == "interrupted" {
+		_ = os.Remove(caseDir)
 	}
 	return rowOf(out, out.Status)
 }
 
 func rowOf(o Outcome, status string) Row {
 	return Row{CaseID: o.CaseID, Status: status, Reason: o.Reason, WallSeconds: o.WallSeconds, Calls: o.Calls, Tokens: o.Tokens, CostUSD: o.CostUSD,
-		Repairs: o.Repairs, FailedSections: o.Failed, NoContext: o.NoContext}
+		Repairs: o.Repairs, Notes: o.Notes}
 }
 
 func summarize(name string, rows []Row, stopped string) Summary {
@@ -392,17 +432,13 @@ func costText(c *float64) string {
 // Print writes the per-case table, the totals and the failures by reason.
 func (s Summary) Print(w io.Writer) {
 	table := tabwriter.NewWriter(w, 0, 2, 2, ' ', 0)
-	_, _ = fmt.Fprintln(table, "CASE\tSTATUS\tTIME\tCALLS\tTOKENS\tCOST\tREPAIRS\tFAILED SECTIONS")
+	_, _ = fmt.Fprintln(table, "CASE\tSTATUS\tTIME\tCALLS\tTOKENS\tCOST\tREPAIRS\tNOTES")
 	for _, r := range s.Rows {
 		status := r.Status
 		if r.Reason != "" && r.Status != "resumed" {
 			status += " (" + r.Reason + ")"
 		}
-		failed := strings.Join(r.FailedSections, ",")
-		if r.NoContext {
-			failed = strings.TrimPrefix(failed+",context", ",")
-		}
-		_, _ = fmt.Fprintf(table, "%s\t%s\t%.0fs\t%d\t%d\t%s\t%d\t%s\n", r.CaseID, status, r.WallSeconds, r.Calls, r.Tokens, costText(r.CostUSD), r.Repairs, failed)
+		_, _ = fmt.Fprintf(table, "%s\t%s\t%.0fs\t%d\t%d\t%s\t%d\t%s\n", r.CaseID, status, r.WallSeconds, r.Calls, r.Tokens, costText(r.CostUSD), r.Repairs, strings.Join(r.Notes, ","))
 	}
 	t := s.Totals
 	_, _ = fmt.Fprintf(table, "TOTAL\t%d ok, %d failed, %d skipped, %d resumed\t%.0fs\t%d\t%d\t$%.2f\t%d\t\n", t.OK, t.Failed, t.Skipped, t.Resumed, t.WallSeconds, t.Calls, t.Tokens, t.CostUSD, t.Repairs)
@@ -423,29 +459,17 @@ func (s Summary) Print(w io.Writer) {
 	}
 }
 
-func (p Plan) manifest(ctx context.Context, r *Runner, ids []string) (Manifest, error) {
-	version, digest, err := r.Prompts(ctx)
-	if err != nil {
-		return Manifest{}, err
-	}
+func (p Plan) manifest(r *Runner, ids []string) Manifest {
 	s := r.Settings
 	commit, dirty := toolCommit()
-	m := Manifest{Run: p.Name, CreatedAt: time.Now().UTC(), ToolCommit: commit, ToolDirty: dirty, Generator: r.generator.Name(),
+	m := Manifest{Run: p.Name, CreatedAt: time.Now().UTC(), ToolCommit: commit, ToolDirty: dirty,
 		DatasetIndexSHA256: p.Dataset.IndexSHA256, DatasetCases: len(p.Dataset.Index), Selection: p.Selection, CaseIDs: ids,
-		Backend: r.Selected.Backend.Name(), BackendVersion: r.Selected.Version, Model: r.Selected.Model, Effort: s.Effort, Staged: s.Staged,
+		Backend: r.Selected.Backend.Name(), BackendVersion: r.Selected.Version, Model: r.Selected.Model, Effort: s.Effort,
+		ClaudeConfigDir: s.ClaudeConfigDir, CodexHome: s.CodexHome, AgentEnvNames: slices.Sorted(maps.Keys(s.AgentEnv)),
 		TimeLimitSeconds: s.TimeLimit.Seconds(), PassTimeoutSeconds: s.PassTimeout.Seconds(), MaxCalls: s.MaxCalls, MaxTokens: s.MaxTokens,
 		Caps: r.Caps, Concurrency: max(p.Concurrency, 1), MaxCostUSD: p.MaxCostUSD, PriceVersion: r.prices.Version(),
-		PromptVersion: version, PromptDigest: digest}
-	overrideIDs := make([]prompt.ID, 0, len(s.PromptOverrides))
-	for id := range s.PromptOverrides {
-		overrideIDs = append(overrideIDs, id)
-	}
-	slices.Sort(overrideIDs)
-	for _, id := range overrideIDs {
-		sum := sha256.Sum256([]byte(s.PromptOverrides[id]))
-		m.PromptOverrides = append(m.PromptOverrides, OverrideRecord{ID: string(id), SHA256: hex.EncodeToString(sum[:])})
-	}
-	return m, nil
+		Generator: r.generator.Name(), GeneratorSettings: r.Described}
+	return m
 }
 
 func toolCommit() (commit string, dirty bool) {

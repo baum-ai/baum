@@ -121,6 +121,12 @@ func gitWith(t *testing.T, extra []string, dir string, args ...string) string {
 // the two refs in checkouts.git and an index line made of facts.
 func (d *dataset) addCase(t *testing.T, id string, facts map[string]any) {
 	t.Helper()
+	d.addCaseJSON(t, id, facts, d.src.result.JSON)
+}
+
+// addCaseJSON is addCase with the case's bundle bytes given.
+func (d *dataset) addCaseJSON(t *testing.T, id string, facts map[string]any, bundleJSON []byte) {
+	t.Helper()
 	dir := filepath.Join(d.dir, "cases", id)
 	if err := os.MkdirAll(filepath.Join(dir, "attachments"), 0o755); err != nil {
 		t.Fatal(err)
@@ -130,7 +136,7 @@ func (d *dataset) addCase(t *testing.T, id string, facts map[string]any) {
 			t.Fatal(err)
 		}
 	}
-	write(filepath.Join(dir, "bundle.json"), d.src.result.JSON)
+	write(filepath.Join(dir, "bundle.json"), bundleJSON)
 	for name, content := range d.src.images {
 		write(filepath.Join(dir, "attachments", name), content)
 	}
@@ -154,7 +160,7 @@ func (d *dataset) addCase(t *testing.T, id string, facts map[string]any) {
 		gitWith(t, env, work, "--git-dir="+bare, "update-ref", "refs/cases/"+id+"/"+root, commit)
 		trees[root] = tree
 	}
-	sum := sha256.Sum256(d.src.result.JSON)
+	sum := sha256.Sum256(bundleJSON)
 	meta, _ := json.Marshal(map[string]string{"id": id, "bundle_sha256": hex.EncodeToString(sum[:]), "head_tree": trees["head"], "merge_base_tree": trees["merge-base"]})
 	write(filepath.Join(dir, "case.json"), meta)
 

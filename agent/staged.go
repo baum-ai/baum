@@ -50,6 +50,10 @@ type StagedRun struct {
 	// that continues a saved version passes that version here and the
 	// version before it as the bundle's, which completion reconciles with.
 	Reuse *bundle.PreviousVersion
+	// NoReuse writes the details of every section, even those a previous
+	// version could supply. Tools that measure the prompts, not the reuse, set
+	// it; the desktop never does.
+	NoReuse bool
 }
 
 // StagedProgress is one stage result of a staged review.
@@ -479,8 +483,11 @@ func (s *stagedReview) reuse() []string {
 	if from == nil {
 		from = s.run.Bundle.Previous
 	}
-	reusable := review.ReusableSectionDetails(from, s.parts.Outline, s.run.Bundle.Attachments)
-	if review.NewImages(from, s.run.Bundle.Attachments) {
+	var reusable map[string][]byte
+	if !s.run.NoReuse {
+		reusable = review.ReusableSectionDetails(from, s.parts.Outline, s.run.Bundle.Attachments)
+	}
+	if !s.run.NoReuse && review.NewImages(from, s.run.Bundle.Attachments) {
 		if logger := s.g.Logger; logger != nil {
 			logger.Info("previous section details not reused: new images offered")
 		}

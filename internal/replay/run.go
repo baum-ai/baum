@@ -14,46 +14,61 @@ import (
 	"time"
 
 	"github.com/baum-ai/baum/agent"
-	"github.com/baum-ai/baum/agent/prompt"
 	"github.com/baum-ai/baum/internal/assemble"
 	"github.com/baum-ai/baum/internal/config"
 	"github.com/baum-ai/baum/internal/generate"
 	"github.com/baum-ai/baum/internal/pricing"
-	"github.com/baum-ai/baum/review"
 )
 
-// Generator is what a replay generates from a case. The runner builds the
-// production options (assembler, backend, budgets, prompts, validator) and the
-// generator runs them: ReviewGenerator is generate.Run, which writes the
-// review document. Another kind of output plugs in by implementing this; the
-// runner, the driver and the files it writes do not name the document's format.
+// Generator is what a replay generates from a case, and everything about it
+// that depends on the document's format. The runner builds the production
+// options that do not (assembler, backend, budgets, accounting) and hands them
+// to the generator, so another kind of output implements this interface and
+// nothing else of the runner, driver, guards, files or summary changes.
 type Generator interface {
 	// Name is recorded in manifests and outcomes.
 	Name() string
-	Run(ctx context.Context, options generate.Options) (generate.Result, error)
+	// Describe reports what a run with this generator sends, for the manifest:
+	// its own settings and the versions and digests of its prompts. A resume
+	// refuses to continue a run whose description differs.
+	Describe(ctx context.Context, backend string) (map[string]any, error)
+	// Generate runs the pipeline for one case. base holds the options common to
+	// every generator; the result is returned even when err is not nil, with
+	// whatever the run spent.
+	Generate(ctx context.Context, base generate.Options, c Case) (Generated, error)
+	// Validate checks a generated document against its case and returns the
+	// findings, none for a valid document.
+	Validate(document []byte, c Case) []string
 }
 
-// ReviewGenerator generates a pull request's review as the desktop app does.
-type ReviewGenerator struct{}
-
-func (ReviewGenerator) Name() string { return "review" }
-
-func (ReviewGenerator) Run(ctx context.Context, o generate.Options) (generate.Result, error) {
-	return generate.Run(ctx, o)
+// Generated is what a generator produced for one case.
+type Generated struct {
+	Document []byte
+	Outcome  agent.Outcome
+	// PromptVersion and PromptDigest identify the prompt actually sent.
+	PromptVersion, PromptDigest string
+	// BundleDigest is the digest of the bundle the run read.
+	BundleDigest string
+	// Notes are short labels for the summary table (such as parts that failed);
+	// Details is format-specific and kept in outcome.json as it is.
+	Notes   []string
+	Details map[string]any
 }
 
 // Settings choose how a case is generated. The zero value of each field is the
-// desktop app's default.
+// desktop app's default, except that the backend is claude and the agent's
+// environment is what the process has: replay reads neither the developer's
+// baum configuration nor the desktop's preferences.
 type Settings struct {
 	// Backend is claude or codex; empty is claude. Model and Effort are empty
 	// for the agent's own.
 	Backend       config.Backend
 	Model, Effort string
-	// Staged writes the review in stages, as the desktop does.
-	Staged bool
-	// PromptOverrides replace built-in staged prompts, validated by
-	// ValidateOverrides.
-	PromptOverrides prompt.Overrides
+	// ClaudeConfigDir and CodexHome, and AgentEnv, are the config fields the
+	// app sets for its agents (config.Config.ClaudeConfigDir, CodexHome,
+	// AgentEnv); empty leaves the ambient login.
+	ClaudeConfigDir, CodexHome string
+	AgentEnv                   map[string]string
 	// TimeLimit bounds one case (the desktop's review time limit, ten minutes
 	// by default); PassTimeout bounds one model call and is at least TimeLimit,
 	// as in the desktop.
@@ -67,7 +82,7 @@ type Settings struct {
 	Backends generate.Backends
 	// Prices prices the run; nil is the active price list.
 	Prices *pricing.List
-	// Generator defaults to ReviewGenerator.
+	// Generator defaults to a staged ReviewGenerator.
 	Generator Generator
 	// OutputDir, when set, receives the case's files: document.json (when
 	// one was generated), outcome.json, diagnostics.json, progress.log and
@@ -75,27 +90,6 @@ type Settings struct {
 	OutputDir string
 	// NoTranscript leaves transcript.jsonl out.
 	NoTranscript bool
-}
-
-// ValidateOverrides checks the override texts against the staged review
-// prompt ids and rejects them for a run that is not staged.
-func (s Settings) ValidateOverrides() error {
-	for id, text := range s.PromptOverrides {
-		if !s.Staged {
-			return fmt.Errorf("prompt override %s needs a staged run: a review written in one pass has no replaceable prompt", id)
-		}
-		known := false
-		for _, review := range prompt.ReviewIDs(false, true) {
-			known = known || review == id
-		}
-		if !known {
-			return fmt.Errorf("prompt override %q is not a staged review prompt; use one of %v", id, prompt.ReviewIDs(false, true))
-		}
-		if err := prompt.Validate(id, text); err != nil {
-			return fmt.Errorf("prompt override %s: %w", id, err)
-		}
-	}
-	return nil
 }
 
 // Call is one model call of a case.
@@ -110,8 +104,8 @@ type Call struct {
 type Outcome struct {
 	CaseID    string `json:"case_id"`
 	Generator string `json:"generator"`
-	// Status is "ok" or "failed". Reason is a generate.Category, or "case"
-	// for an input that did not load, and Error the redacted message.
+	// Status is "ok", "failed" or "interrupted". Reason is a generate.Category,
+	// or "case" for an input that did not load, and Error the redacted message.
 	Status string `json:"status"`
 	Reason string `json:"reason,omitempty"`
 	Error  string `json:"error,omitempty"`
@@ -122,26 +116,25 @@ type Outcome struct {
 	Backend        string `json:"backend,omitempty"`
 	BackendVersion string `json:"backend_version,omitempty"`
 	Model          string `json:"model,omitempty"`
-	Staged         bool   `json:"staged"`
 	PromptVersion  string `json:"prompt_version,omitempty"`
 	PromptDigest   string `json:"prompt_digest,omitempty"`
 	BundleDigest   string `json:"bundle_digest,omitempty"`
 	SchemaRevision string `json:"schema_revision,omitempty"`
 
-	Calls     int               `json:"calls"`
-	Tokens    int               `json:"tokens"`
-	Usage     agent.Usage       `json:"usage"`
-	CostUSD   *float64          `json:"cost_usd"`
-	Repairs   int               `json:"repairs"`
-	Accounts  *agent.Accounting `json:"accounting,omitempty"`
-	CallLog   []Call            `json:"call_log,omitempty"`
-	Findings  string            `json:"findings,omitempty"`
-	Failed    []string          `json:"failed_sections,omitempty"`
-	NoContext bool              `json:"context_failed,omitempty"`
-	// StoredValid says the document passes the stored-document validator
-	// against the case's own bundle.
-	StoredValid    bool     `json:"stored_valid"`
-	StoredFindings []string `json:"stored_findings,omitempty"`
+	Calls    int               `json:"calls"`
+	Tokens   int               `json:"tokens"`
+	Usage    agent.Usage       `json:"usage"`
+	CostUSD  *float64          `json:"cost_usd"`
+	Repairs  int               `json:"repairs"`
+	Accounts *agent.Accounting `json:"accounting,omitempty"`
+	CallLog  []Call            `json:"call_log,omitempty"`
+	Findings string            `json:"findings,omitempty"`
+	Notes    []string          `json:"notes,omitempty"`
+	Details  map[string]any    `json:"details,omitempty"`
+	// DocumentValid says the document passes the generator's validation
+	// against the case; ValidationFindings are what it found otherwise.
+	DocumentValid      bool     `json:"document_valid"`
+	ValidationFindings []string `json:"validation_findings,omitempty"`
 
 	Document []byte `json:"-"`
 }
@@ -154,19 +147,16 @@ type Runner struct {
 	Settings Settings
 	Selected generate.Selected
 	// Caps are the effective caps.
-	Caps      map[string]int
-	validator *review.DocumentValidator
+	Caps map[string]int
+	// Described is the generator's description (Generator.Describe).
+	Described map[string]any
 	prices    *pricing.List
 	generator Generator
-	config    config.Config
 }
 
 // NewRunner selects and checks the backend (it must be installed and logged in)
-// and validates the settings.
+// and the generator's settings.
 func NewRunner(ctx context.Context, s Settings) (*Runner, error) {
-	if err := s.ValidateOverrides(); err != nil {
-		return nil, err
-	}
 	cfg := config.Default()
 	cfg.Backend, cfg.Model, cfg.Effort = s.Backend, s.Model, s.Effort
 	if cfg.Backend == "" {
@@ -175,7 +165,10 @@ func NewRunner(ctx context.Context, s Settings) (*Runner, error) {
 	if !config.ValidEffort(s.Effort) {
 		return nil, fmt.Errorf("unknown reasoning effort %q", s.Effort)
 	}
-	cfg.Caps = s.Caps
+	if err := config.ValidateAgentEnv(s.AgentEnv); err != nil {
+		return nil, fmt.Errorf("agent environment: %w", err)
+	}
+	cfg.Caps, cfg.AgentEnv, cfg.ClaudeConfigDir, cfg.CodexHome = s.Caps, s.AgentEnv, s.ClaudeConfigDir, s.CodexHome
 	caps, err := cfg.EffectiveCaps()
 	if err != nil {
 		return nil, err
@@ -186,6 +179,9 @@ func NewRunner(ctx context.Context, s Settings) (*Runner, error) {
 	if s.PassTimeout <= 0 {
 		s.PassTimeout = time.Duration(cfg.Budgets.PassTimeout)
 	}
+	if s.Generator == nil {
+		s.Generator = &ReviewGenerator{Staged: true}
+	}
 	if s.Backends.Claude == nil && s.Backends.Codex == nil {
 		s.Backends = generate.DefaultBackendsFor(cfg)
 	}
@@ -193,39 +189,26 @@ func NewRunner(ctx context.Context, s Settings) (*Runner, error) {
 	if err != nil {
 		return nil, err
 	}
-	validator, err := review.NewDocumentValidator()
+	described, err := s.Generator.Describe(ctx, selected.Backend.Name())
 	if err != nil {
 		return nil, err
 	}
-	r := &Runner{Settings: s, Selected: selected, Caps: caps, validator: validator, prices: s.Prices, generator: s.Generator, config: cfg}
+	r := &Runner{Settings: s, Selected: selected, Caps: caps, Described: described, prices: s.Prices, generator: s.Generator}
 	if r.prices == nil {
 		r.prices = pricing.Active()
-	}
-	if r.generator == nil {
-		r.generator = ReviewGenerator{}
 	}
 	return r, nil
 }
 
-// Prompts describes the prompts a run sends: their version and digest, and
-// the override texts that replace built-in ones.
-func (r *Runner) Prompts(ctx context.Context) (version, digest string, err error) {
-	if !r.Settings.Staged {
-		instructions, err := prompt.Prompts{}.Instructions(ctx, r.Selected.Backend.Name())
-		return instructions.Version, instructions.Digest, err
-	}
-	instructions, err := prompt.StagedPrompts{Overrides: r.Settings.PromptOverrides}.StagedInstructions(ctx, r.Selected.Backend.Name())
-	return instructions.Version, instructions.Digest, err
-}
-
 // Run generates one case. The error is for a replay that could not be
-// attempted; a generation that failed is an Outcome with Status "failed".
+// attempted; a generation that failed is an Outcome with Status "failed", and
+// one stopped by ctx has Status "interrupted" and leaves no files.
 // With Settings.OutputDir set the case's files are written there.
 func (r *Runner) Run(ctx context.Context, c Case) (Outcome, error) {
 	s := r.Settings
 	started := time.Now()
 	out := Outcome{CaseID: c.ID, Generator: r.generator.Name(), StartedAt: started.UTC(), Backend: r.Selected.Backend.Name(), BackendVersion: r.Selected.Version,
-		Model: r.Selected.Model, Staged: s.Staged, BundleDigest: c.Digest}
+		Model: r.Selected.Model, BundleDigest: c.Digest}
 	// The progress log is written as the run goes, so a long case can be watched.
 	progress := &syncWriter{}
 	if s.OutputDir != "" {
@@ -241,54 +224,65 @@ func (r *Runner) Run(ctx context.Context, c Case) (Outcome, error) {
 	if s.OutputDir != "" {
 		diagnostics = filepath.Join(s.OutputDir, "diagnostics.json")
 	}
-	options := generate.Options{
+	base := generate.Options{
 		PriceList: r.prices, Assembler: Assembler{Case: c},
 		Request: assemble.Request{Repository: c.Repository, Number: c.Bundle.PullRequest.Number, Limits: assemble.LimitsFrom(r.Caps)},
 		Backend: tracked, BackendVersion: r.Selected.Version, Model: r.Selected.Model,
 		Budgets:     agent.Budgets{WallClock: s.TimeLimit, MaxCalls: s.MaxCalls, MaxTokens: s.MaxTokens, MaxProviderAttempts: 3, MaxRepairAttempts: 2},
 		PassTimeout: max(s.PassTimeout, s.TimeLimit),
-		Staged:      s.Staged, Validator: r.validator, Progress: progress, DiagnosticsOut: diagnostics,
+		Progress:    progress, DiagnosticsOut: diagnostics,
 	}
-	if s.Staged {
-		options.StagedPrompts = prompt.StagedPrompts{Overrides: s.PromptOverrides}
-	}
-	result, err := r.generator.Run(ctx, options)
+	generated, err := r.generator.Generate(ctx, base, c)
 	out.WallSeconds = time.Since(started).Seconds()
-	out.Calls, out.Tokens, out.Usage = result.Outcome.Calls, result.Outcome.Tokens, result.Outcome.Usage
-	out.Repairs, out.Accounts, out.Findings = result.Outcome.ValidationRepairs, result.Outcome.Accounting, result.Outcome.Findings
-	out.SchemaRevision = result.Outcome.SchemaRevision
-	if model := result.Outcome.Model; model != "" {
+	spent := generated.Outcome
+	out.Calls, out.Tokens, out.Usage = spent.Calls, spent.Tokens, spent.Usage
+	out.Repairs, out.Accounts, out.Findings = spent.ValidationRepairs, spent.Accounting, spent.Findings
+	out.SchemaRevision = spent.SchemaRevision
+	if model := spent.Model; model != "" {
 		out.Model = model
 	}
-	out.CostUSD = r.prices.BackendOutcomeCost(out.Backend, out.Model, result.Outcome)
+	out.CostUSD = r.prices.BackendOutcomeCost(out.Backend, out.Model, spent)
 	out.CallLog = tracked.calls()
-	if err != nil {
+	switch {
+	case err != nil:
 		out.Status, out.Reason, out.Error = "failed", string(generate.CategoryOf(err)), err.Error()
 		if out.Reason == "" {
 			out.Reason = string(generate.CategoryInternal)
 		}
-	} else {
-		out.Status = "ok"
-		out.Document = result.Document
-		out.PromptVersion, out.PromptDigest = result.Metadata.PromptVersion, result.Metadata.PromptDigest
-		out.Failed, out.NoContext = result.FailedSections, result.ContextFailed
-		b, err := c.FreshBundle()
-		if err == nil {
-			out.StoredFindings = r.validator.ValidateStored(result.Document, &b)
+		if out.Reason == string(generate.CategoryInterrupted) {
+			out.Status = "interrupted"
 		}
-		out.StoredValid = err == nil && len(out.StoredFindings) == 0
-		if !out.StoredValid {
+	default:
+		out.Status = "ok"
+		out.Document = generated.Document
+		out.PromptVersion, out.PromptDigest = generated.PromptVersion, generated.PromptDigest
+		if generated.BundleDigest != "" {
+			out.BundleDigest = generated.BundleDigest
+		}
+		out.Notes, out.Details = generated.Notes, generated.Details
+		out.ValidationFindings = r.generator.Validate(generated.Document, c)
+		out.DocumentValid = len(out.ValidationFindings) == 0
+		if !out.DocumentValid {
 			out.Status, out.Reason = "failed", string(generate.CategoryValidation)
-			out.Error = "the document does not pass the stored-document validator"
+			out.Error = "the document does not pass the generator's validation"
 		}
 	}
 	if s.OutputDir != "" {
+		if out.Status == "interrupted" {
+			for _, name := range caseFiles {
+				_ = os.Remove(filepath.Join(s.OutputDir, name))
+			}
+			return out, nil
+		}
 		if werr := writeCase(s.OutputDir, out, tracked.transcript()); werr != nil {
 			return out, werr
 		}
 	}
 	return out, nil
 }
+
+// caseFiles are the files a case's run writes.
+var caseFiles = []string{"document.json", "transcript.jsonl", "progress.log", "diagnostics.json", "outcome.json"}
 
 func writeCase(dir string, out Outcome, transcript []byte) error {
 	if out.Document != nil {
