@@ -81,7 +81,7 @@ it("draws on-or-off choices as checkboxes and sets apart what removes", async ()
   // Every choice keeps the tick's column, so the labels line up.
   expect(choices().every((choice) => choice.querySelector(".context-menu-check"))).toBe(true);
   // The separator stands right before Remove, and is not a choice.
-  const separator = menu()!.querySelector('[role="separator"]')!;
+  const separator = menu()!.querySelector("hr")!;
   expect(separator.nextElementSibling?.textContent).toBe("Remove");
   expect(choices().every((choice) => choice.tabIndex === -1)).toBe(true);
   expect(choices()[0]!.querySelector("kbd")?.getAttribute("aria-hidden")).toBe("true");
