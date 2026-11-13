@@ -139,7 +139,8 @@ function usePeek(folded: boolean) {
  *
  *  The button beside Help folds it to its glyphs, so the page gets the width,
  *  and pins it open again; the choice is saved with the appearance
- *  preferences. Folded, resting the mouse on it or moving keyboard focus into
+ *  preferences. Folded, Help is hidden and `?` shows the shortcuts sheet.
+ *  Folded, resting the mouse on it or moving keyboard focus into
  *  it opens it over the page, and a link chosen there folds it again. Below
  *  `lg` it is always folded, and the button is gone. */
 export function Sidebar({
@@ -291,7 +292,7 @@ export function Sidebar({
             <Stumpy size={28} className="flex-none" />
             <Wordmark size="sidebar" className="local-rail-label" />
           </Link>
-          <HelpButton help={help} menu={helpMenu} />
+          <HelpButton help={help} menu={helpMenu} shown={pinned || peek.peeking} />
           <button
             type="button"
             className="local-rail-pin"
@@ -371,8 +372,18 @@ export type RailHelp = {
 
 /** Help, at the right of the baum title: a menu of the shortcuts, reporting
  *  a problem and the docs. It opens from the keys as a menu button does (Enter, Space, and
- *  Down on the first choice, Up on the last), and from the `?` key. */
-function HelpButton({ help, menu }: { help?: RailHelp; menu: ReturnType<typeof useContextMenu> }) {
+ *  Down on the first choice, Up on the last), and from the `?` key. The folded
+ *  sidebar hides it; `shown` is false then, so `?` shows the shortcuts sheet
+ *  instead of a menu hanging from nothing. */
+function HelpButton({
+  help,
+  menu,
+  shown,
+}: {
+  help?: RailHelp;
+  menu: ReturnType<typeof useContextMenu>;
+  shown: boolean;
+}) {
   const ref = useRef<HTMLButtonElement>(null);
   const open = menu.anchor !== null && menu.anchor === ref.current;
   const items = (): MenuItem[] => [
@@ -393,7 +404,7 @@ function HelpButton({ help, menu }: { help?: RailHelp; menu: ReturnType<typeof u
   };
   const opener = help?.opener;
   useEffect(() => {
-    if (!opener) return;
+    if (!opener || !shown) return;
     // Opened by `?`, the keys go back to where they were, not to this button,
     // which would then draw its focus ring.
     opener.current = () => show(false, document.activeElement);

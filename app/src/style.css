@@ -508,15 +508,6 @@ body {
   .local-rail-inboxes {
     display: none;
   }
-  /* Folded, Help sits under the mark. */
-  .local-rail-head {
-    flex-direction: column;
-    align-items: stretch;
-  }
-  .local-rail-help {
-    width: auto;
-    height: 1.75rem;
-  }
   /* Folded, the box keeps only the lowest share left. */
   .plan-rail {
     align-items: center;
@@ -540,9 +531,23 @@ body {
     padding: 0 0.2rem;
     line-height: 1rem;
   }
+  /* Folded, the head keeps only the mark: `?` still shows the shortcuts. */
   kbd.local-rail-key,
+  .local-rail-help,
   .local-rail-pin {
     display: none;
+  }
+}
+/* Without a pointer that hovers, the folded sidebar never opens to show
+   Help, so it keeps Help under the mark. */
+@media (hover: none) {
+  .local-rail-lane[data-rail="folded"]:not(:has(:focus-visible:not(.context-menu *))) {
+    .local-rail-head {
+      flex-direction: column;
+    }
+    .local-rail-help {
+      display: flex;
+    }
   }
 }
 

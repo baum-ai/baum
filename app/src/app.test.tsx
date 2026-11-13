@@ -2763,6 +2763,28 @@ it("opens the help menu with ?, the sheet with Enter on it, and hides the sheet 
   );
   expect(node.querySelector("dialog")?.textContent).toContain("Refresh from GitHub");
 });
+it("shows the shortcuts sheet with ? while the folded sidebar hides Help", async () => {
+  entries = [entry(1)];
+  Object.defineProperty(HTMLDialogElement.prototype, "showModal", {
+    configurable: true,
+    value(this: HTMLDialogElement) {
+      this.open = true;
+    },
+  });
+  // A narrow window always folds the sidebar.
+  vi.stubGlobal("matchMedia", (query: string) => ({
+    matches: query === "(width < 64rem)",
+    addEventListener() {},
+    removeEventListener() {},
+  }));
+  await act(async () => root.render(<App />));
+  expect(node.querySelector(".local-rail-lane")!.getAttribute("data-rail")).toBe("folded");
+  await press("?");
+  expect(node.querySelector('[role="menu"]')).toBeNull();
+  expect(node.querySelector("dialog")?.textContent).toContain("Keyboard shortcuts");
+  await press("?");
+  expect(node.querySelector("dialog")).toBeNull();
+});
 it("offers the shortcuts, a problem report and the docs from Help beside the baum title", async () => {
   entries = [entry(1)];
   Object.defineProperty(HTMLDialogElement.prototype, "showModal", {
