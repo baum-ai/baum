@@ -574,7 +574,8 @@ type Backend interface {
 
 Every run has no MCP server: Claude Code gets `--strict-mcp-config` with an empty
 `--mcp-config`, Codex `--ignore-user-config`. A local run may set
-`Request.MCP` to give the agent exactly one, baum's own (`baum mcp`); see
+`Request.MCP` to give the agent exactly one, baum's own (the daemon's
+`/api/mcp`, over HTTP); see
 "MCP server for agents" for the flags and the token's path.
 
 A backend may also implement `agent.Completer`: one structured completion
@@ -5283,34 +5284,29 @@ or an unknown tool, -32602. A tool that fails returns a result with
 `isError: true` and its explanation, not a protocol error; so do arguments
 that do not match the tool's JSON Schema.
 
-Agents reach the route through `baum mcp` (`internal/cli/mcp.go`), a stdio
-bridge: the agent CLI starts it, it reads one JSON-RPC message per line from
-stdin (at most 1 MiB) and POSTs each to `<daemon origin>/api/mcp` with the
-token from `BAUM_MCP_TOKEN`, then prints each response as one line on stdout.
-A notification (202, no body) prints nothing. It takes the origin, never the
-token, from `credential.json` and reads that file again after a connection
-failure, so a daemon restarted on a new port is found. When the daemon is
-unreachable or refuses the token (revoked), each request gets a JSON-RPC
-error (-32000) with its id and a notification gets nothing; the bridge keeps
-running until stdin closes (exit 0) or SIGTERM. It re-reads the credential and
-retries only when no connection was made (a dial failure); a timeout or a
-failure after the request was written is returned as the error and never
-retried, because the daemon may have acted on it. It handles one message at a
-time: a slow tool call delays the messages behind it. Only protocol lines go to
-stdout; diagnostics go to stderr, once per kind, never with the token.
+Agent CLIs reach the route directly over HTTP; there is no bridge process.
+`agent.Request.MCP` (`agent.MCPServer{URL, Token}`) names it for a run: URL
+is `<daemon origin>/api/mcp`, and `Validate` accepts only `http` on a
+loopback address with a port. Claude keeps `--strict-mcp-config` and names
+only `baum` in `--mcp-config`, an `http` server whose `Authorization` header
+is `Bearer ${BAUM_MCP_TOKEN}` (Claude Code expands it from its environment),
+and adds `--allowedTools mcp__baum`, since `--tools` only selects built-in
+tools and a `--print` run cannot ask permission. Codex adds
+`-c mcp_servers.baum.url` and `.bearer_token_env_var="BAUM_MCP_TOKEN"` under
+`--ignore-user-config`. Both put `BAUM_MCP_TOKEN` last in the CLI's
+environment, after `agent_env`, so the token is in no argument or
+configuration. Only the Claude `User` and Codex `Local` profiles accept it;
+the others return an error. With no `MCP` the arguments are what they always
+were. No job sets it yet.
 
-`agent.Request.MCP` (`agent.MCPServer{Command, Args, Token}`) starts it for a
-run: Command is the absolute path of the running baum with `mcp`. Claude
-keeps `--strict-mcp-config` and names only `baum` in `--mcp-config` (a stdio
-server, no token), and adds `--allowedTools mcp__baum`, since `--tools` only
-selects built-in tools and a `--print` run cannot ask permission. Codex adds
-`-c mcp_servers.baum.command`, `.args` and
-`.env_vars=["BAUM_MCP_TOKEN","XDG_STATE_HOME","XDG_RUNTIME_DIR"]` (Codex gives
-an MCP server only a default environment; the names that are set are
-forwarded, so `baum mcp` finds the same daemon) under `--ignore-user-config`. Both put `BAUM_MCP_TOKEN` last in the child's
-environment, after `agent_env`. Only the Claude `User` and Codex `Local`
-profiles accept it; the others return an error. With no `MCP` the arguments
-are what they always were. No job sets it yet.
+What the CLIs send (checked by `internal/agentcontext/livecheck` against the
+latest and floor releases): Claude Code asks `initialize` for a newer revision
+and accepts `2025-06-18`, opens a `GET` for an event stream and accepts the
+405, and recent releases first try `server/discover` with a newer
+`MCP-Protocol-Version`, take the 400 and fall back to `initialize`. Codex asks
+for `2025-06-18`. With a revoked token both get 401, try no OAuth discovery,
+and finish the run without baum's tools. Tokens die with the daemon, so a CLI
+that outlives a daemon restart has nothing to reconnect to.
 
 The route takes only an MCP token as `Authorization: Bearer`. The app
 server checks the exact Host, asks the MCP server whether the token is live,

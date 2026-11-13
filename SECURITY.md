@@ -387,14 +387,13 @@ Codex's own read-only sandbox:
   provider and cloud credentials are removed; `CODEX_API_KEY` and the base URL
   are set only when you configure an endpoint for baum.
 - A run with an MCP server (none does yet; the chat and quick actions will) gets
-  `-c mcp_servers.baum.command`, `.args` and `.env_vars`. `env_vars` names
-  `BAUM_MCP_TOKEN` (the token, so it is never an argument) and `XDG_STATE_HOME`
-  and `XDG_RUNTIME_DIR`, which `baum mcp` needs to find the daemon; Codex
-  forwards the names that are set. Codex starts `baum mcp` itself, outside its
-  sandbox (`read-only` or `workspace-write` with `network_access=false`),
-  which confines the commands the model runs and not Codex's own MCP servers.
-  The process's only network peer is the loopback daemon, and it runs no
-  commands. See [MCP server for agents](#mcp-server-for-agents).
+  `-c mcp_servers.baum.url` (the daemon's loopback `/api/mcp`) and
+  `.bearer_token_env_var="BAUM_MCP_TOKEN"`, so Codex reads the token from its
+  own environment and it is never an argument. Codex itself makes those
+  requests, outside its sandbox (`read-only` or `workspace-write` with
+  `network_access=false`), which confines the commands the model runs and not
+  Codex's own MCP client; the model gets no network access from it. See
+  [MCP server for agents](#mcp-server-for-agents).
 - It uses your own login (`codex login`, kept in `CODEX_HOME` or `~/.codex`).
   The output schema is written to a private temporary file that is removed
   after the run; baum never writes into `CODEX_HOME`.
@@ -1426,14 +1425,16 @@ chose; it supplies no approvals or other discussion controls.
 
 ### MCP server for agents
 
-An agent reaches the server through `baum mcp`, a stdio program the agent CLI
-starts. It reads JSON-RPC lines from stdin, forwards each to the daemon's
-`/api/mcp` and prints the response. It takes its token only from the
-`BAUM_MCP_TOKEN` environment variable (never an argument, so the process list
-does not show it), never logs it, and reads the daemon's address, not its
-launch token, from `credential.json`. Claude Code gets the variable through
-its environment and Codex through `mcp_servers.baum.env_vars`. baum sets it
-after the user's `agent_env`, so that cannot replace or remove it. Only the
+An agent CLI reaches the server over HTTP at the daemon's loopback
+`/api/mcp`; no other process sits between them. The CLI gets its token only
+in the `BAUM_MCP_TOKEN` environment variable and sends it as
+`Authorization: Bearer`. Its MCP configuration names the variable, never the
+token: Claude Code's header is `Bearer ${BAUM_MCP_TOKEN}`, which it expands
+from its environment, and Codex's `bearer_token_env_var` is
+`BAUM_MCP_TOKEN`. So the token is in no argument, which the process list
+would show, and in no configuration file. baum sets the variable after the
+user's `agent_env`, so that cannot replace or remove it, and accepts only an
+`http` URL on a loopback address, so the token goes nowhere else. Only the
 local profiles run an MCP server; the hosted and container profiles refuse a
 request that asks for one. Claude Code runs with `--strict-mcp-config` and
 Codex with `--ignore-user-config`, so baum's server is the only one. No job
@@ -1448,7 +1449,7 @@ other `/api/` route still requires the launch capability or the cookie. The
 route keeps the exact Host check and the security headers, takes only
 `POST` with a JSON content type, a body of at most 1 MiB and no
 `MCP-Protocol-Version` other than `2025-06-18`, and needs no Origin, because
-its client is a command-line bridge rather than a browser; a request that
+its client is an agent CLI rather than a browser; a request that
 carries a foreign Origin is refused.
 
 Each token is 32 random bytes, minted by the daemon for one agent: the app's
