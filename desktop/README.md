@@ -143,7 +143,8 @@ happen only when the user selects an install or add action. Displayed paths abbr
      unticking it unpicks it. A picked repository without a clone still lists its pull requests;
      generating waits for a clone. Repositories show only once GitHub is
      connected: baum works with GitHub repositories only, with no local-folder
-     fallback. The setup `repositories` command relays only
+     fallback. On macOS, Also look in Documents
+     starts a single opt-in scan. The setup `repositories` command relays only
      allowlisted list, pick/unpick, discovery, folder registration and clone
      actions to the daemon. It cannot provide arbitrary HTTP routes or see a
      GitHub token. Explicit folder attachment may file a fork under its

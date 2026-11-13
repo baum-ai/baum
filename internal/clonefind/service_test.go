@@ -282,7 +282,7 @@ func TestAPIServesAndRefreshes(t *testing.T) {
 		return s.ScannedAt != nil && s.ScannedAt.After(first) && !s.Running
 	})
 
-	for _, bad := range []string{`{"x":1}`, `{"include_documents":true}`, ``, `[]`, `{} {}`} {
+	for _, bad := range []string{`{"x":1}`, `{"include_documents":"yes"}`, ``, `[]`, `{} {}`} {
 		rec := httptest.NewRecorder()
 		handler.ServeHTTP(rec, httptest.NewRequest("POST", "/api/clones/found/refresh", strings.NewReader(bad)))
 		if rec.Code != http.StatusBadRequest {
@@ -314,5 +314,43 @@ func TestPackageMakesNoNetworkRequests(t *testing.T) {
 				t.Errorf("%s uses %s", name, banned)
 			}
 		}
+	}
+}
+
+func TestRefreshCanIncludeDocumentsOnce(t *testing.T) {
+	h := home(t)
+	repo(t, filepath.Join(h, "Documents", "app"), "origin", gh("acme/app"))
+	f := start(t, h)
+	f.service.Options.GOOS = "darwin"
+	f.run(t)
+	f.scan(t)
+	if len(f.service.Snapshot().Repositories) != 0 {
+		t.Fatal("Documents walked without opt-in")
+	}
+	post := func(body string) {
+		rec := httptest.NewRecorder()
+		f.service.Handler().ServeHTTP(rec, httptest.NewRequest("POST", "/api/clones/found/refresh", strings.NewReader(body)))
+		if rec.Code != http.StatusAccepted {
+			t.Fatalf("POST %s = %d", body, rec.Code)
+		}
+	}
+	scannedAfter := func(at time.Time) func() bool {
+		return func() bool {
+			s := f.service.Snapshot()
+			return s.ScannedAt != nil && s.ScannedAt.After(at) && !s.Running
+		}
+	}
+	first := *f.service.Snapshot().ScannedAt
+	post(`{"include_documents": true}`)
+	eventually(t, "the scan with Documents", scannedAfter(first))
+	if len(f.service.Snapshot().Repositories["acme/app"]) != 1 {
+		t.Fatal("opt-in did not walk Documents")
+	}
+	// The opt-in is not kept: a plain refresh leaves Documents out again.
+	second := *f.service.Snapshot().ScannedAt
+	post(`{}`)
+	eventually(t, "the plain scan", scannedAfter(second))
+	if len(f.service.Snapshot().Repositories) != 0 {
+		t.Fatal("opt-in persisted")
 	}
 }

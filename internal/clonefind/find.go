@@ -93,10 +93,12 @@ type Options struct {
 	TempDirs []string
 	// GOOS is the operating system, runtime.GOOS by default. On darwin
 	// ~/Documents is a protected folder whose first read prompts the user, so
-	// it is never read; elsewhere it is walked like the rest of the home
-	// directory.
-	GOOS string
-	Now  func() time.Time
+	// it is read (walked, or a folder an agent worked in there) only when
+	// IncludeDocuments is set; elsewhere it is walked like the rest of the
+	// home directory.
+	GOOS             string
+	IncludeDocuments bool
+	Now              func() time.Time
 	// Probe replaces the git probe, for tests.
 	Probe Probe
 	// MaxDepth is how deep a walk goes below its folder (default
@@ -446,25 +448,59 @@ func contains(list []string, s string) bool {
 	return false
 }
 
-// protected reports a folder macOS guards with a privacy prompt: reading it
-// asks the user, so nothing is read in it.
+// macPromptFolders are the folders of a macOS home directory whose first read
+// makes macOS ask the user (Documents unless the scan was asked to include
+// it), and the cloud-drive folders, which may too. All of ~/Library is in it:
+// ~/Library/Containers and ~/Library/Group Containers ask for "data from other
+// apps", Mobile Documents and CloudStorage hold iCloud Drive and the cloud
+// drives.
+var macPromptFolders = []string{"Desktop", "Documents", "Downloads", "Pictures", "Movies", "Music", "Library", "iCloud Drive"}
+
+// macCloudPrefixes name cloud-drive folders a home directory may hold.
+var macCloudPrefixes = []string{"Google Drive", "Dropbox", "OneDrive"}
+
+// protected reports, on macOS, a path that reading may make macOS ask the
+// user: one in a folder of macPromptFolders or a cloud drive of the home
+// directory, or on a volume under /Volumes (removable and network volumes
+// ask). It is the one rule for every path read before git runs there: the
+// walk of the home directory, a folder an agent worked in, and the main
+// clone of its worktree. Other systems have no such prompt.
 func (f *finder) protected(path string) bool {
 	if f.o.GOOS != "darwin" {
 		return false
 	}
+	path = filepath.Clean(path)
+	inHome := false
 	for _, home := range []string{f.home, filepath.Clean(f.o.Home)} {
+		if home == "" || home == "." {
+			continue
+		}
 		rel, err := filepath.Rel(home, path)
 		if err != nil || strings.HasPrefix(rel, "..") {
 			continue
 		}
-		parts := strings.Split(rel, string(filepath.Separator))
-		switch {
-		case strings.EqualFold(parts[0], "Documents"), strings.EqualFold(parts[0], "Desktop"), strings.EqualFold(parts[0], "Downloads"):
-			return true
-		case strings.EqualFold(parts[0], "Library") && len(parts) > 1 &&
-			(strings.EqualFold(parts[1], "Mobile Documents") || strings.EqualFold(parts[1], "CloudStorage")):
-			return true
+		// A home directory on a volume of its own is read like any other.
+		inHome = true
+		if rel == "." {
+			continue
 		}
+		top := strings.Split(rel, string(filepath.Separator))[0]
+		if strings.EqualFold(top, "Documents") && f.o.IncludeDocuments {
+			continue
+		}
+		for _, folder := range macPromptFolders {
+			if strings.EqualFold(top, folder) {
+				return true
+			}
+		}
+		for _, prefix := range macCloudPrefixes {
+			if len(top) >= len(prefix) && strings.EqualFold(top[:len(prefix)], prefix) {
+				return true
+			}
+		}
+	}
+	if rel, err := filepath.Rel("/Volumes", path); !inHome && err == nil && !strings.HasPrefix(rel, "..") {
+		return true
 	}
 	return false
 }
@@ -496,15 +532,17 @@ func (f *finder) mainOf(ctx context.Context, tree *workTree) *workTree {
 }
 
 // documentsAllowed reports whether ~/Documents may be walked: everywhere but
-// on macOS, where reading it asks the user.
-func (f *finder) documentsAllowed() bool { return f.o.GOOS != "darwin" }
+// on macOS, where reading it asks the user, unless this scan was asked to.
+func (f *finder) documentsAllowed() bool { return f.o.GOOS != "darwin" || f.o.IncludeDocuments }
 
 // personal reports a folder of the home directory a walk never enters:
-// personal files and cloud mounts (scanskip.UserDataFor), which on macOS
-// include every folder whose first read asks the user, and Downloads
-// everywhere.
+// personal files and cloud mounts (scanskip.UserDataFor, Downloads
+// everywhere), and on macOS every folder protected names.
 func (f *finder) personal(name string) bool {
-	if name == "Documents" && f.documentsAllowed() {
+	if f.protected(filepath.Join(f.home, name)) {
+		return true
+	}
+	if strings.EqualFold(name, "Documents") && f.documentsAllowed() {
 		return false
 	}
 	return scanskip.UserDataFor(f.o.GOOS, name)
@@ -546,7 +584,7 @@ func (f *finder) temporary(path string) bool {
 // when a symlink leads there.
 func (f *finder) walkable(root string) (string, bool) {
 	root = canonical(root)
-	if root == "" || f.unsafe(root) {
+	if root == "" || f.unsafe(root) || f.protected(root) {
 		return "", false
 	}
 	if info, err := os.Stat(root); err != nil || !info.IsDir() {

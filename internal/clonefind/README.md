@@ -44,21 +44,37 @@ virtual environment and build folders (`node_modules`, `bower_components`,
 home directory never enters `Desktop`, `Downloads`, `Pictures`, `Movies`,
 `Music`, `Public`, `iCloud Drive`, or a `Google Drive`, `Dropbox` or
 `OneDrive` folder (the lists are defined in `internal/scanskip`), nor
-Windows' `AppData`. `~/Documents` is walked on Linux and Windows, never on
-macOS. A directory an agent worked in is allowed anywhere but in a temporary
-folder (the agent was there); the folder around it is not walked. The
+Windows' `AppData`. `~/Documents` is walked on Linux and Windows, and on
+macOS only with the opt-in (see [Documents](#documents)). A directory an agent
+worked in is allowed anywhere but in a temporary folder or, on macOS, a
+protected one (the agent was there); the folder around it is not walked. The
 filesystem root, the home directory and anything above it are never reported
 as a clone.
 
+### Documents
+
+`~/Documents` is walked like the rest of the home directory on Linux and
+Windows. On macOS it is a protected folder: the first read makes the system
+ask the user, so the automatic scan leaves it out. `Options.IncludeDocuments`
+(`GOOS` is injectable for tests) or `POST /api/clones/found/refresh` with
+`{"include_documents": true}` runs one scan that includes it, walked and as a
+folder an agent worked in; the choice is not stored, and a later scan leaves
+Documents out again. An event never carries it.
+
 ### Protected folders on macOS
 
-macOS asks the user before an app first reads `~/Documents`, `~/Desktop`,
-`~/Downloads`, `~/Pictures`, `~/Movies`, `~/Music`, anything under
-`~/Library` (iCloud Drive in `Mobile Documents`, `CloudStorage`). The walk
-enters none of them. An agent directory under `~/Documents`, `~/Desktop`,
-`~/Downloads`, `~/Library/Mobile Documents` or `~/Library/CloudStorage` is
-dropped lexically, and again after resolving symlinks, before any stat or git
-command. Names are compared without regard to case on macOS and Windows
+macOS asks the user before an app first reads some paths. One rule
+(`finder.protected`) names them for every path read before git runs there:
+the walk, a directory an agent worked in (`resolve`, and `Locate` for an
+event) and the main clone of its worktree (`mainOf`). It covers, in the home
+directory, `Desktop`, `Documents` (unless opted in), `Downloads`, `Pictures`,
+`Movies`, `Music`, all of `Library` (iCloud Drive in `Mobile Documents`, the
+cloud drives in `CloudStorage`, and `Containers` and `Group Containers`, which
+ask for "data from other apps"), `iCloud Drive` and `Google Drive`,
+`Dropbox` and `OneDrive` folders; and everything under `/Volumes`, whose
+removable and network volumes ask (a home directory on a volume of its own is
+read as any other). An agent directory there is dropped lexically, and again
+after resolving symlinks, before any stat or git command. Names are compared without regard to case on macOS and Windows
 (`scanskip.DirFor`, `UserDataFor`). Git may follow an `include.path` in a
 clone's configuration to a file elsewhere; baum does not control that.
 
@@ -160,7 +176,7 @@ origin checks, since it returns local paths.
 | Route | Result |
 | --- | --- |
 | `GET /api/clones/found` | the last result |
-| `POST /api/clones/found/refresh` `{}` | starts a scan unless one runs; 202 `{"started","running"}` |
+| `POST /api/clones/found/refresh` `{}` or `{"include_documents": true}` | starts a scan unless one runs; 202 `{"started","running"}` |
 
 ```json
 {

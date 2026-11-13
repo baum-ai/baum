@@ -989,16 +989,19 @@ virtual environment or build folders (`node_modules`, `vendor`, `venv`,
 `target`, `build`, `dist`, `Pods`, `DerivedData` and the like), or the folders
 `Desktop`, `Downloads`, `Pictures`, `Movies`, `Music`, `Public`, `Library`,
 `Applications`, `iCloud Drive`, Google Drive, Dropbox or OneDrive (on macOS
-nor `Documents`; on Windows nor `AppData`); and, in each candidate clone, the
+nor `Documents`, unless you ask for one scan that includes it; on Windows nor
+`AppData`); and, in each candidate clone, the
 remote URLs of its git configuration, through `git rev-parse` and `git config`.
 A directory an agent worked in is stat'ed, with its parents up to your home
 directory, and git runs in the clone containing it, wherever it is (git may
 also follow an `include.path` in that clone's configuration). To register what
 it found it runs the registry's local checks, which may resolve an SSH alias
-with `ssh -G`; that contacts nothing. On macOS it reads no folder whose first
-read makes macOS ask you for permission (`~/Documents`, `~/Desktop`,
-`~/Downloads`, `~/Pictures`, `~/Movies`, `~/Music`, anything in `~/Library`),
-not even a directory an agent worked in there. The paths it finds are served
+with `ssh -G`; that contacts nothing. On macOS it reads no path whose first
+read makes macOS ask you for permission (`~/Desktop`, `~/Downloads`,
+`~/Pictures`, `~/Movies`, `~/Music`, anything in `~/Library`, including
+`Containers` and `Group Containers`, iCloud Drive and cloud-drive folders,
+anything under `/Volumes`, and `~/Documents` except in the single scan you ask
+for), not even a directory an agent worked in there. The paths it finds are served
 only by `GET /api/clones/found`, behind the daemon's authenticated Host/Origin
 boundary, and registered only for repositories you picked.
 

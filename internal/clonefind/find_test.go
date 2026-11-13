@@ -313,24 +313,25 @@ func TestProbeBudgetAndCancellation(t *testing.T) {
 	}
 }
 
-func TestDocumentsAreWalkedExceptOnMacOS(t *testing.T) {
+func TestDocumentsAreWalkedOnLinuxButNeedOptInOnMacOS(t *testing.T) {
 	h := home(t)
 	docs := repo(t, filepath.Join(h, "Documents", "proj", "app"), "origin", gh("acme/app"))
 	repo(t, filepath.Join(h, "Desktop", "x"), "origin", gh("acme/desktop"))
 	repo(t, filepath.Join(h, "Downloads", "x"), "origin", gh("acme/downloads"))
 	for _, tc := range []struct {
-		goos string
-		want bool
-	}{{"linux", true}, {"windows", true}, {"darwin", false}} {
+		goos    string
+		include bool
+		want    bool
+	}{{"linux", false, true}, {"windows", false, true}, {"darwin", false, false}, {"darwin", true, true}} {
 		o := options(h)
-		o.GOOS = tc.goos
+		o.GOOS, o.IncludeDocuments = tc.goos, tc.include
 		result := find(t, o)
 		got := result.Repositories["acme/app"]
 		if tc.want != (len(got) == 1 && got[0].Path == docs) {
-			t.Errorf("%s: %+v", tc.goos, got)
+			t.Errorf("%s include=%v: %+v", tc.goos, tc.include, got)
 		}
 		if result.Repositories["acme/desktop"] != nil || result.Repositories["acme/downloads"] != nil {
-			t.Errorf("%s walked Desktop or Downloads", tc.goos)
+			t.Errorf("%s include=%v walked Desktop or Downloads", tc.goos, tc.include)
 		}
 	}
 }

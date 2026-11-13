@@ -19,14 +19,24 @@ func counting(calls *[]string) Probe {
 	}
 }
 
+// On macOS one rule says which paths may make macOS ask the user: the walk
+// never enters them, and git never runs in a folder an agent worked in there,
+// nor is it even stat'ed. ~/Documents is read only with the opt-in.
 func TestMacOSProtectedFoldersOfAgentsAreNotTouched(t *testing.T) {
 	h := home(t)
 	protected := map[string]string{
-		"acme/documents": filepath.Join(h, "Documents", "a"),
-		"acme/desktop":   filepath.Join(h, "Desktop", "b"),
-		"acme/downloads": filepath.Join(h, "Downloads", "c"),
-		"acme/cloud":     filepath.Join(h, "Library", "CloudStorage", "d"),
-		"acme/icloud":    filepath.Join(h, "Library", "Mobile Documents", "e"),
+		"acme/documents":  filepath.Join(h, "Documents", "a"),
+		"acme/desktop":    filepath.Join(h, "Desktop", "b"),
+		"acme/downloads":  filepath.Join(h, "Downloads", "c"),
+		"acme/pictures":   filepath.Join(h, "Pictures", "d"),
+		"acme/movies":     filepath.Join(h, "Movies", "e"),
+		"acme/music":      filepath.Join(h, "Music", "f"),
+		"acme/library":    filepath.Join(h, "Library", "Developer", "g"),
+		"acme/containers": filepath.Join(h, "Library", "Containers", "h"),
+		"acme/group":      filepath.Join(h, "Library", "Group Containers", "i"),
+		"acme/cloud":      filepath.Join(h, "Library", "CloudStorage", "j"),
+		"acme/icloud":     filepath.Join(h, "Library", "Mobile Documents", "k"),
+		"acme/dropbox":    filepath.Join(h, "Dropbox (Work)", "l"),
 	}
 	now := time.Now()
 	var events []hookevents.Record
@@ -51,12 +61,60 @@ func TestMacOSProtectedFoldersOfAgentsAreNotTouched(t *testing.T) {
 			}
 		}
 	}
+	// Locate, which the service runs for each event, follows the same rule.
+	for name, dir := range protected {
+		if got := Locate(context.Background(), darwin, dir, now); got != nil {
+			t.Errorf("%s: Locate = %+v", name, got)
+		}
+	}
+
+	// The one-off Documents opt-in lets that folder through, walked and as
+	// an agent's folder, and only that one.
+	calls = nil
+	darwin.IncludeDocuments = true
+	result = find(t, darwin)
+	if len(result.Repositories) != 2 || result.Repositories["acme/documents"] == nil || result.Repositories["acme/documents"][0].Source != SourceAgent {
+		t.Fatalf("with the opt-in: %+v", result.Repositories)
+	}
+	if got := Locate(context.Background(), darwin, protected["acme/documents"], now); len(got) != 1 {
+		t.Fatalf("Locate with the opt-in = %+v", got)
+	}
 
 	// Other systems have no such prompt: an agent worked there, so it is
 	// read, except in Downloads, which holds nobody's clone.
 	linux := options(h, events...)
 	if got := find(t, linux); len(got.Repositories) != len(protected) || got.Repositories["acme/downloads"] != nil {
 		t.Fatalf("linux repositories = %+v", got.Repositories)
+	}
+}
+
+// Removable and network volumes ask too; a home directory on a volume of its
+// own does not.
+func TestMacOSVolumesAreProtected(t *testing.T) {
+	// A macOS home directory, spelt so that it reads as no real one.
+	mac := "/Us" + "ers/dev"
+	f := newFinder(Options{Home: mac, GOOS: "darwin", TempDirs: []string{}})
+	for path, want := range map[string]bool{
+		"/Volumes":                 true,
+		"/Volumes/USB/code/app":    true,
+		"/Volumes/share/app":       true,
+		mac + "/code/app":          false,
+		mac + "/Library/Caches/x":  true,
+		mac + "/library/caches/x":  true,
+		mac + "/Pictures/x":        true,
+		mac + "/Documents/x":       true,
+		mac + "/OneDrive - Acme/x": true,
+	} {
+		if got := f.protected(path); got != want {
+			t.Errorf("protected(%s) = %v", path, got)
+		}
+	}
+	onVolume := newFinder(Options{Home: "/Volumes/Home/dev", GOOS: "darwin", TempDirs: []string{}})
+	if onVolume.protected("/Volumes/Home/dev/code/app") || !onVolume.protected("/Volumes/Home/dev/Music/x") || !onVolume.protected("/Volumes/USB/app") {
+		t.Error("a home on a volume is read like any other")
+	}
+	if linux := newFinder(Options{Home: "/home/dev", GOOS: "linux", TempDirs: []string{}}); linux.protected("/Volumes/USB/app") {
+		t.Error("only macOS asks")
 	}
 }
 

@@ -59,6 +59,7 @@ export type RepositoryCall = <T>(
     query?: string;
     path?: string;
     dir?: string;
+    include_documents?: boolean;
   },
 ) => Promise<T>;
 export const repositoryCall: RepositoryCall = (action, args = {}) => {
@@ -80,7 +81,9 @@ export const repositoryCall: RepositoryCall = (action, args = {}) => {
     case "found":
       return request("api/clones/found");
     case "refresh":
-      return request("api/clones/found/refresh", {});
+      return request("api/clones/found/refresh", {
+        include_documents: args.include_documents ?? false,
+      });
     case "target":
       return request(`${base}/clone-target`);
     case "clone":
@@ -591,6 +594,7 @@ export function RepositoryPicker({
   const pendingLabel = needle
     ? "Searching your GitHub repositories…"
     : "Loading your GitHub repositories…";
+  const mac = /Mac/i.test(navigator.platform);
   return (
     <section className="repository-picker" aria-label="Choose GitHub repositories">
       {connected ? (
@@ -737,6 +741,18 @@ export function RepositoryPicker({
             </p>
           ) : null}
         </div>
+      ) : null}
+      {mac && list.some((r) => r.picked && !r.clone) ? (
+        <button
+          type="button"
+          className={SECONDARY}
+          disabled={busy !== null || found?.running}
+          onClick={() =>
+            void action("documents", () => call("refresh", { include_documents: true }))
+          }
+        >
+          {busy === "documents" ? "Looking…" : "Also look in Documents"}
+        </button>
       ) : null}
     </section>
   );

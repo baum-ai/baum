@@ -512,6 +512,41 @@ it("maps needs_clone conflicts from generation and other requests", async () => 
   expect(LocalRequestError).toBeDefined();
 });
 
+it("offers the macOS Documents scan only through its explicit action", async () => {
+  const original = Object.getOwnPropertyDescriptor(navigator, "platform");
+  Object.defineProperty(navigator, "platform", { value: "MacIntel", configurable: true });
+  const calls: { action: string; args: unknown }[] = [];
+  const call: RepositoryCall = async (action, args) => {
+    calls.push({ action, args });
+    return (
+      action === "list"
+        ? {
+            repositories: [
+              { repository: "documents/missing", clone: "", picked: true, description: "" },
+            ],
+          }
+        : action === "picked"
+          ? [{ repository: "documents/missing" }]
+          : action === "found"
+            ? { running: false, repositories: {}, attached: [] }
+            : {}
+    ) as never;
+  };
+  try {
+    await act(async () => root.render(<RepositoryPicker call={call} />));
+    expect(calls.some((c) => c.action === "refresh")).toBe(false);
+    await act(async () =>
+      [...node.querySelectorAll("button")]
+        .find((b) => b.textContent === "Also look in Documents")!
+        .click(),
+    );
+    expect(calls).toContainEqual({ action: "refresh", args: { include_documents: true } });
+  } finally {
+    if (original) Object.defineProperty(navigator, "platform", original);
+    else Reflect.deleteProperty(navigator, "platform");
+  }
+});
+
 it("clones into the repository's own folder inside the folder picked", () => {
   expect(cloneDirectory("/home/user/code", "acme/widgets")).toBe("/home/user/code/widgets");
   expect(cloneDirectory("/home/user/code/", "acme/widgets")).toBe("/home/user/code/widgets");

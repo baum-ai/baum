@@ -2824,8 +2824,10 @@ the last scan was under a minute ago), attaches the best candidate with
 any remote names it; a path or repository directory registered to another
 repository is never moved, and an unpicked repository is never picked again),
 and attaches the clone of an agent event's directory at once, after a registry
-query that runs no git. On macOS it reads none of the protected folders
-(Documents, Desktop, Downloads, Pictures, Movies, Music, Library). `GET /api/clones/found` and
+query that runs no git. On macOS one rule (`finder.protected`) keeps the walk
+and agent folders out of every path that would make macOS ask (Desktop,
+Downloads, Pictures, Movies, Music, all of Library, cloud drives, `/Volumes`,
+and Documents unless one scan is asked to include it). `GET /api/clones/found` and
 `POST /api/clones/found/refresh` serve it. It makes no network request. See
 its [README](internal/clonefind/README.md).
 
