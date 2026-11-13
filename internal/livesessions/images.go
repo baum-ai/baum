@@ -134,7 +134,7 @@ func eachImageLine(path string, markers [][]byte, fn func(raw []byte, number int
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	reader := bufio.NewReaderSize(f, 1<<20)
 	for number := 1; ; number++ {
 		raw, err := reader.ReadBytes('\n')

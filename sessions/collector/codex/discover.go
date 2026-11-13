@@ -279,7 +279,7 @@ func readEntry(path string) (Entry, error) {
 	if err != nil {
 		return Entry{}, fmt.Errorf("opening rollout %s: %w", path, err)
 	}
-	defer handle.Close()
+	defer func() { _ = handle.Close() }()
 	line, err := codextranscript.DecodeFirst(handle)
 	if err != nil {
 		if errors.Is(err, codextranscript.ErrDecompress) {
