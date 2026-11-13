@@ -10,10 +10,9 @@ import { centerJump } from "@baum/viewer/components/jump-focus";
 import { useUrlState } from "@baum/viewer/navigation";
 import { humanize, TIER_COLOR } from "@baum/viewer/review-document";
 import { type MenuItem, useContextMenu } from "../context-menu";
-import { CARD_HEIGHT, GlanceCard, SPAN } from "./card";
+import { GlanceCard } from "./card";
 import { useTileHost, type LandingMemory } from "./host";
 import { landingOf, onLanding, type Landing } from "./layout";
-import { tileType } from "./registry";
 import { Clamp, plainText } from "./parts";
 import { readExpansions, withExpansions, type Expansions } from "./place";
 import { FixedStrip } from "./strip";
@@ -152,14 +151,6 @@ function TileGrid({
 }) {
   const host = useTileHost();
   const menu = useContextMenu();
-  // While a half tile grows to show its must-read risks, the halves beside it
-  // grow to the same row.
-  const halvesGrow = landing.items.some(
-    (item) =>
-      item.kind === "tile" &&
-      item.entry.size === "half" &&
-      Boolean(tileType(item.tile.type)?.tall?.(item.tile, ctx.doc)),
-  );
   const toggleGroup = (group: string, open: boolean) => {
     const groups = new Set(expansions.groups);
     if (open) groups.add(group);
@@ -211,118 +202,84 @@ function TileGrid({
                   menu={menu}
                   menuItems={menuItems(item.tile)}
                   comments={host.commentCounts.get(item.tile.id) ?? 0}
-                  grows={item.entry.size === "half" && halvesGrow}
                 />
               );
             case "more":
               return (
-                <MoreCard
+                <ControlRow
                   key={`more-${item.group.id}`}
-                  title={item.group.title}
-                  hidden={item.hidden}
-                  onOpen={() => toggleGroup(item.group.id, true)}
+                  expanded={false}
+                  onClick={() => toggleGroup(item.group.id, true)}
+                  label={`Show ${item.hidden.length} more ${pluralize(item.group.title.toLowerCase(), item.hidden.length)}`}
+                  names={item.hidden.map((tile) => tile.title)}
                 />
               );
             case "less":
               return (
-                <div key={`less-${item.group.id}`} className="col-span-full -mt-1">
-                  <button
-                    type="button"
-                    aria-expanded
-                    onClick={() => toggleGroup(item.group.id, false)}
-                    className={cn(
-                      "cursor-pointer rounded-sm text-base text-link hover:underline",
-                      FOCUS_RING,
-                    )}
-                  >
-                    Show fewer {item.group.title.toLowerCase()}
-                  </button>
-                </div>
+                <ControlRow
+                  key={`less-${item.group.id}`}
+                  expanded
+                  onClick={() => toggleGroup(item.group.id, false)}
+                  label={`Show fewer ${item.group.title.toLowerCase()}`}
+                />
               );
           }
         })}
       </div>
       {landing.rest.length > 0 || expansions.more ? (
-        <div data-review-block="" className="rounded-md outline-none">
-          <button
-            type="button"
-            aria-expanded={expansions.more}
-            onClick={() => expand({ ...expansions, more: !expansions.more })}
-            className={cn(
-              "flex w-full cursor-pointer items-center gap-3 rounded-lg border border-dashed border-default px-4 py-3 text-left hover:bg-surface-hover",
-              FOCUS_RING,
-            )}
-          >
-            <ChevronDownIcon
-              size={14}
-              className={cn(
-                "flex-none text-tertiary transition-transform motion-reduce:transition-none",
-                expansions.more && "rotate-180",
-              )}
-            />
-            {expansions.more ? (
-              <span className="text-base text-primary">Show fewer tiles</span>
-            ) : (
-              <span className="min-w-0 flex-1 truncate text-base">
-                <span className="font-medium text-primary">
-                  Show {pluralize("more tile", landing.rest.length, true)}
-                </span>
-                <span className="text-secondary">
-                  {" "}
-                  · {landing.rest.map((tile) => tile.title).join(", ")}
-                </span>
-              </span>
-            )}
-          </button>
-        </div>
+        <ControlRow
+          expanded={expansions.more}
+          onClick={() => expand({ ...expansions, more: !expansions.more })}
+          label={
+            expansions.more
+              ? "Show fewer tiles"
+              : `Show ${pluralize("more tile", landing.rest.length, true)}`
+          }
+          names={expansions.more ? undefined : landing.rest.map((tile) => tile.title)}
+        />
       ) : null}
       {menu.menu}
     </>
   );
 }
 
-/** The members a group holds back, as one cell that names them. */
-function MoreCard({
-  title,
-  hidden,
-  onOpen,
+/** A slim row across the grid that shows or hides tiles: a group's members
+ *  past its first ones, or the tiles past the landing area, named after it. */
+function ControlRow({
+  label,
+  names,
+  expanded,
+  onClick,
 }: {
-  title: string;
-  hidden: Tile[];
-  onOpen: () => void;
+  label: string;
+  names?: string[];
+  expanded: boolean;
+  onClick: () => void;
 }) {
   return (
-    <div
-      data-review-block=""
-      className={cn(
-        "relative flex min-w-0 flex-col gap-2 rounded-lg border border-dashed border-default px-4 py-3 outline-none hover:bg-surface-hover data-[review-block-active]:border-focus",
-        CARD_HEIGHT.third,
-        SPAN.third,
-      )}
-    >
+    <div data-review-block="" className="col-span-full rounded-md outline-none">
       <button
         type="button"
-        aria-expanded={false}
+        aria-expanded={expanded}
         data-block-open=""
-        onClick={onOpen}
+        onClick={onClick}
         className={cn(
-          "cursor-pointer rounded-sm text-left text-base font-semibold text-primary",
-          "after:absolute after:inset-0 after:rounded-lg after:content-['']",
+          "flex w-full cursor-pointer items-center gap-2.5 rounded-md border border-dashed border-default px-3 py-2 text-left hover:bg-surface-hover",
           FOCUS_RING,
         )}
       >
-        Show {hidden.length} more {pluralize(title.toLowerCase(), hidden.length)}
+        <ChevronDownIcon
+          size={14}
+          className={cn(
+            "flex-none text-tertiary transition-transform motion-reduce:transition-none",
+            expanded && "rotate-180",
+          )}
+        />
+        <span className="min-w-0 flex-1 truncate text-base">
+          <span className="font-medium text-primary">{label}</span>
+          {names?.length ? <span className="text-secondary"> · {names.join(", ")}</span> : null}
+        </span>
       </button>
-      <ul className="min-h-0 flex-1 space-y-1.5 overflow-hidden text-base text-secondary">
-        {hidden.slice(0, 6).map((tile) => (
-          <li key={tile.id} className="truncate">
-            {tile.title}
-          </li>
-        ))}
-      </ul>
-      {hidden.length > 6 ? (
-        <p className="text-xs text-tertiary">and {hidden.length - 6} more</p>
-      ) : null}
     </div>
   );
 }

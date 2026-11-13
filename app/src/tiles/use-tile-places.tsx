@@ -84,12 +84,17 @@ export function useTilePlaces(): ReviewPlaces {
         const tile = tileOfChange(doc, section);
         return tile ? tileSelection(tile.id) : null;
       },
-      railFolded: (selection) =>
-        selection.kind === "summary" || selection.kind === "changes" || selection.kind === "risks",
+      // The landing grid takes the width: the rail and the side pane start
+      // folded there, and a tile's detail has them as the reader left them.
+      railFolded: onLanding,
+      sidePaneFolded: onLanding,
     }),
     [],
   );
 }
+
+const onLanding = (selection: Selection) =>
+  selection.kind === "summary" || selection.kind === "changes" || selection.kind === "risks";
 
 function stepsOf(
   selection: Selection,

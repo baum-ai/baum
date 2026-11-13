@@ -155,8 +155,20 @@ export function plainSentence(
   return match ? match[1]! : plain;
 }
 
-/** A glance's body, faded at its foot when it holds more than fits. */
-export function Fade({ children, className }: { children: ReactNode; className?: string }) {
+/** The part of a glance that takes the room its row leaves: it asks for
+ *  `min` (what the glance must show, so its card is that tall at least), then
+ *  grows with the row its card stands in, showing more of what it holds, and
+ *  fades at its foot when that is not all. Its content does not make the card
+ *  taller: a row is as tall as its cards' other content asks. */
+export function Fill({
+  children,
+  min = "0",
+  className,
+}: {
+  children: ReactNode;
+  min?: string;
+  className?: string;
+}) {
   const ref = useRef<HTMLDivElement>(null);
   const [over, setOver] = useState(false);
   useLayoutEffect(() => {
@@ -172,8 +184,9 @@ export function Fade({ children, className }: { children: ReactNode; className?:
   return (
     <div
       ref={ref}
+      style={{ minHeight: min }}
       className={cn(
-        "relative min-h-0 flex-1 overflow-hidden",
+        "relative shrink-0 grow basis-0 overflow-hidden",
         over && "[mask-image:linear-gradient(to_bottom,black_calc(100%-1.5rem),transparent)]",
         className,
       )}

@@ -2,7 +2,7 @@ import { Markdown } from "@baum/viewer/components/markdown";
 import { AnchorChips, PROSE } from "@baum/viewer/components/review-parts";
 import { type Column, Table } from "@baum/viewer/components/table";
 import { CodeIcon, DiagramIcon, QuoteIcon, TableIcon } from "../icons";
-import { Clamp, plainText } from "../parts";
+import { Fill, plainText } from "../parts";
 import type { CodeData, DiagramData, ProseData, TableData } from "../tile-document";
 import { isRecord, type TileFaceProps, type TileType } from "../types";
 
@@ -14,9 +14,11 @@ const strings = (value: unknown) =>
 
 function ProseGlance({ tile, ctx }: TileFaceProps) {
   return (
-    <Clamp lines={6} className="text-base leading-normal text-primary">
-      {plainText((tile.data as ProseData).text, ctx.labels)}
-    </Clamp>
+    <Fill min="4.5rem">
+      <p className="text-base leading-normal text-primary">
+        {plainText((tile.data as ProseData).text, ctx.labels)}
+      </p>
+    </Fill>
   );
 }
 

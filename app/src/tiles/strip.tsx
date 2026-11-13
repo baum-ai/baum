@@ -11,7 +11,7 @@ import {
 } from "@baum/viewer/review-document";
 import type { ReviewPlaceContext } from "@baum/viewer/components/review-viewer";
 import { cn } from "@baum/viewer/components/classnames";
-import { Clamp, plainText } from "./parts";
+import { plainSentence, plainText } from "./parts";
 import { itemTarget } from "./place";
 import {
   changesInState,
@@ -22,9 +22,11 @@ import {
 } from "./tile-document";
 import type { TileContext } from "./types";
 
-/** The strip over every landing page, in the same place on every review: the
- *  review's bottom line, the pull request's risk score, and where this
- *  version stands. */
+/** The band over every landing page, in the same place on every review: the
+ *  review's bottom line when it gives one, the pull request's risk score, and
+ *  where this version stands when that is news (outdated, a draft, changes
+ *  being written or that failed, an earlier version); the version bar above
+ *  already says a version is current. One line once wide. */
 export function FixedStrip({
   ctx,
   generation,
@@ -33,48 +35,17 @@ export function FixedStrip({
   generation: ReviewPlaceContext["generation"];
 }) {
   return (
-    // Cells side by side while they fit, each wrapping to a row of its own
-    // below; the rules between them are each cell's own top and left edge,
-    // clipped where a cell starts a row.
     <section
       aria-label="Review at a glance"
-      className="flex flex-wrap overflow-hidden rounded-lg border border-default bg-surface-card"
-    >
-      <Cell label="Recommendation" grow={given(ctx) ? "wide" : "narrow"}>
-        <Recommendation ctx={ctx} />
-      </Cell>
-      <Cell label="Risk score" grow="wide">
-        <RiskScore ctx={ctx} />
-      </Cell>
-      <Cell label={ctx.historical ? "Version" : "This version"} grow="narrow">
-        <Generation ctx={ctx} generation={generation} />
-      </Cell>
-    </section>
-  );
-}
-
-function Cell({
-  label,
-  grow,
-  children,
-}: {
-  label: string;
-  grow: "wide" | "narrow";
-  children: ReactNode;
-}) {
-  return (
-    <div
-      role="group"
-      aria-label={label}
       data-review-block=""
-      className={cn(
-        "-mt-px -ml-px min-w-0 space-y-1 border-t border-l border-subtle px-4 pt-2.5 pb-3 outline-none data-[review-block-active]:bg-surface-wash",
-        grow === "wide" ? "flex-[2_1_17rem]" : "flex-[1_1_9rem]",
-      )}
+      className="flex min-w-0 flex-col gap-1.5 rounded-lg border border-default bg-surface-card px-4 py-2.5 outline-none data-[review-block-active]:border-focus"
     >
-      <p className="text-xs font-medium tracking-[0.08em] text-tertiary uppercase">{label}</p>
-      {children}
-    </div>
+      {given(ctx) ? <Recommendation ctx={ctx} /> : null}
+      <div className="flex min-w-0 flex-wrap items-center gap-x-4 gap-y-1.5">
+        <RiskScore ctx={ctx} />
+        <Generation ctx={ctx} generation={generation} />
+      </div>
+    </section>
   );
 }
 
@@ -107,34 +78,38 @@ function referenceTargets(doc: TileDocument, review: ReviewDocument, refs: strin
   });
 }
 
+/** The review's bottom line: its decision and its sentence, then the tiles
+ *  it cites. */
 function Recommendation({ ctx }: { ctx: TileContext }) {
-  const recommendation = ctx.doc.recommendation;
-  if (!recommendation || !given(ctx)) return <p className="text-base text-tertiary">None given</p>;
+  const recommendation = ctx.doc.recommendation!;
   const targets = referenceTargets(ctx.doc, ctx.review, recommendation.refs ?? []);
+  const text = plainText(recommendation.text, ctx.labels);
   return (
-    <>
-      <Clamp lines={3} className="text-base leading-normal text-primary">
-        <span title={plainText(recommendation.text, ctx.labels)}>
-          <Badge tone={RECOMMENDATION_TONE[recommendation.decision]} className="mr-2 align-[1px]">
-            {RECOMMENDATION_LABEL[recommendation.decision]}
-          </Badge>
-          {plainText(recommendation.text, ctx.labels)}
-        </span>
-      </Clamp>
+    <div
+      role="group"
+      aria-label="Recommendation"
+      className="flex min-w-0 flex-wrap items-baseline gap-x-2.5 gap-y-1"
+    >
+      <Badge tone={RECOMMENDATION_TONE[recommendation.decision]} className="self-center">
+        {RECOMMENDATION_LABEL[recommendation.decision]}
+      </Badge>
+      <p className="min-w-0 flex-[1_1_20rem] truncate text-base text-primary" title={text}>
+        {plainSentence(recommendation.text, ctx.labels)}
+      </p>
       {targets.length > 0 ? (
-        <p className="flex flex-wrap gap-x-3 gap-y-0.5 text-base">
+        <span className="flex min-w-0 flex-wrap gap-x-3 text-base">
           {targets.slice(0, 3).map((target) => (
             <JumpLink
               key={target.ref}
-              className="max-w-full truncate"
+              className="max-w-[16rem] truncate"
               onClick={() => ctx.open(target.tile.id, target.item)}
             >
               {target.label} →
             </JumpLink>
           ))}
-        </p>
+        </span>
       ) : null}
-    </>
+    </div>
   );
 }
 
@@ -146,61 +121,74 @@ const SCORE_TEXT = {
   critical: "text-status-critical",
 } as const;
 
+/** The risk score on one line: the score and its meaning, then its strongest
+ *  reason, cut to the line, which leads to what it names; every reason and
+ *  any gap in the input are in its title. */
 function RiskScore({ ctx }: { ctx: TileContext }) {
   const view = riskScoreView(ctx.review);
+  const reasons = ctx.doc.risk_score?.reasons ?? [];
   if (!view.assessed)
     return (
-      <>
-        <p className="text-base font-medium text-primary">Not assessed</p>
-        <p className="text-xs text-tertiary">
-          {view.legacy
-            ? "Generated before risk scores."
-            : "No current change of this review was rated."}
-        </p>
-      </>
+      <p role="group" aria-label="Risk score" className="text-base text-secondary">
+        <span className="font-medium text-primary">Risk not assessed</span>
+        {" · "}
+        {view.legacy ? "generated before risk scores" : "no current change was rated"}
+      </p>
     );
+  const reason = reasons[0];
   // The strongest reason, leading to the risk it names where it names one.
-  const reason = ctx.doc.risk_score?.reasons[0];
-  const reasonTarget = reason
+  const target = reason
     ? ((reason.risk ? itemTarget(ctx.doc, reason.section, reason.risk) : null) ??
       itemTarget(ctx.doc, reason.section, undefined))
     : null;
+  const all = [
+    ...reasons.map((each) => plainText(each.text, ctx.labels)),
+    ...(view.limitations.length > 0 ? [`Incomplete input: ${view.limitations.join(", ")}`] : []),
+  ].join("\n");
   return (
-    <>
-      <p className="flex flex-wrap items-baseline gap-x-2">
-        <span
-          className={cn(
-            "text-lg font-semibold tabular-nums",
-            SCORE_TEXT[riskScoreTone(view.score)],
-          )}
-        >
-          {view.lowerBound ? "≥" : ""}
-          {view.score}
-          <span className="text-base font-normal text-tertiary">/5</span>
-        </span>
-        <span className="text-base text-secondary">
-          {view.lowerBound ? "At least; input was incomplete" : view.meaning}
-        </span>
-      </p>
-      {reason && reasonTarget ? (
-        <JumpLink
-          tone="secondary"
-          className="line-clamp-2 text-base"
-          onClick={() => ctx.open(reasonTarget.tile.id, reasonTarget.item)}
-        >
-          {plainText(reason.text, ctx.labels)} →
-        </JumpLink>
+    <div
+      role="group"
+      aria-label="Risk score"
+      className="flex min-w-0 flex-[1_1_24rem] items-baseline gap-x-2 text-base"
+      title={all || undefined}
+    >
+      <span className="flex-none text-xs font-medium tracking-[0.08em] text-tertiary uppercase">
+        Risk
+      </span>
+      <span
+        className={cn(
+          "flex-none font-semibold tabular-nums",
+          SCORE_TEXT[riskScoreTone(view.score)],
+        )}
+      >
+        {view.lowerBound ? "≥" : ""}
+        {view.score}
+        <span className="font-normal text-tertiary">/5</span>
+      </span>
+      <span className="flex-none text-secondary">
+        {view.lowerBound ? "at least; input was incomplete" : view.meaning}
+      </span>
+      {reason && target ? (
+        <>
+          <span aria-hidden className="flex-none text-tertiary">
+            ·
+          </span>
+          <JumpLink
+            tone="secondary"
+            className="min-w-0 truncate"
+            onClick={() => ctx.open(target.tile.id, target.item)}
+          >
+            {plainText(reason.text, ctx.labels)}
+          </JumpLink>
+        </>
       ) : null}
-      {view.limitations.length > 0 ? (
-        <p className="text-xs text-tertiary">Incomplete input: {view.limitations.join(" · ")}</p>
-      ) : null}
-    </>
+    </div>
   );
 }
 
-/** Where this version stands: current or outdated, a draft being written,
- *  changes being written or that failed (with Retry), or the earlier
- *  version being read. */
+/** Where this version stands, when that is news: an earlier version, a draft,
+ *  changes being written or that failed (with Retry), a new version being
+ *  generated, or an outdated review. A current review says nothing here. */
 function Generation({
   ctx,
   generation,
@@ -208,55 +196,67 @@ function Generation({
   ctx: TileContext;
   generation: ReviewPlaceContext["generation"];
 }) {
-  const version = ctx.review.review.version;
   const pending = changesInState(ctx.doc, "pending").length;
   const failed = changesInState(ctx.doc, "failed").length;
   const current = ctx.doc.changes.filter((change) => change.derived.state !== "stale").length;
-  if (ctx.historical)
-    return (
-      <p className="text-base text-primary">
-        Review v{version} <span className="text-secondary">· an earlier version</span>
-      </p>
-    );
   const state = ctx.draft ? "draft" : (generation?.state ?? ctx.review.review.generation_state);
-  return (
-    <>
-      <p className="flex flex-wrap items-center gap-2 text-base">
-        {ctx.draft ? (
-          <Badge tone="info" className="gap-1.5">
-            <LiveDot />
-            Draft
-          </Badge>
-        ) : (
-          <>
-            <span className="text-primary">Review v{version}</span>
-            {state === "current" ? (
-              <Badge tone="positive">Current</Badge>
-            ) : state === "outdated" ? (
-              <Badge tone="caution">Outdated</Badge>
-            ) : state === "failed" ? (
-              <Badge tone="critical">Last run failed</Badge>
-            ) : null}
-          </>
-        )}
-      </p>
-      {pending > 0 ? (
-        <p role="status" className="flex items-center gap-2 text-base text-secondary">
+  const parts: ReactNode[] = [];
+  if (ctx.historical)
+    parts.push(
+      <span key="old" className="text-secondary">
+        Review v{ctx.review.review.version}, an earlier version
+      </span>,
+    );
+  else {
+    if (ctx.draft)
+      parts.push(
+        <Badge key="draft" tone="info" className="gap-1.5">
+          <LiveDot />
+          Draft
+        </Badge>,
+      );
+    if (pending > 0)
+      parts.push(
+        <span key="pending" role="status" className="flex items-center gap-2 text-secondary">
           {ctx.draft ? null : <LiveDot />}
           Writing details for {pending} of {pluralize("change", current, true)}
-        </p>
-      ) : generation?.rewriting ? (
-        <p role="status" className="flex items-center gap-2 text-base text-secondary">
+        </span>,
+      );
+    else if (generation?.rewriting)
+      parts.push(
+        <span key="rewriting" role="status" className="flex items-center gap-2 text-secondary">
           <LiveDot />A new version is being generated
-        </p>
-      ) : state === "outdated" ? (
-        <p className="text-base text-secondary">The pull request changed since this review.</p>
-      ) : null}
-      {failed > 0 ? <Failures count={failed} ctx={ctx} /> : null}
-      {ctx.contextPending && tileById(ctx.doc, "context")?.state === "pending" ? (
-        <p className="text-xs text-tertiary">The codebase context is still being written.</p>
-      ) : null}
-    </>
+        </span>,
+      );
+    else if (state === "outdated")
+      parts.push(
+        <Badge key="outdated" tone="caution" title="The pull request changed since this review.">
+          Outdated
+        </Badge>,
+      );
+    else if (state === "failed")
+      parts.push(
+        <Badge key="failed" tone="critical">
+          Last run failed
+        </Badge>,
+      );
+    if (failed > 0) parts.push(<Failures key="failures" count={failed} ctx={ctx} />);
+    if (ctx.contextPending && tileById(ctx.doc, "context")?.state === "pending")
+      parts.push(
+        <span key="context" className="text-xs text-tertiary">
+          Context still being written
+        </span>,
+      );
+  }
+  if (parts.length === 0) return null;
+  return (
+    <div
+      role="group"
+      aria-label={ctx.historical ? "Version" : "This version"}
+      className="flex flex-none flex-wrap items-center gap-x-3 gap-y-1 text-base"
+    >
+      {parts}
+    </div>
   );
 }
 

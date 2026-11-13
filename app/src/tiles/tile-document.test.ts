@@ -82,7 +82,7 @@ describe("the substrate", () => {
 });
 
 describe("the landing page", () => {
-  it("shows a group's first members and holds the rest behind one cell", () => {
+  it("shows a group's first members and holds the rest behind its control", () => {
     const doc = golden("many-changes");
     const landing = landingOf(doc, readExpansions(new URLSearchParams()));
     const kinds = landing.items.map((item) =>
@@ -90,8 +90,15 @@ describe("the landing page", () => {
     );
     expect(kinds.slice(0, 3)).toEqual(["overview", "risks", "heading:changes"]);
     const more = landing.items.find((item) => item.kind === "more");
-    expect(more?.kind === "more" && more.hidden.length).toBe(4);
+    // Nine changes: six shown, the other three behind the group's control.
+    expect(more?.kind === "more" && more.hidden.map((tile) => tile.id)).toEqual([
+      "sec_part_1",
+      "sec_part_0",
+      "sec_part_4",
+    ]);
     expect(landing.rest.map((tile) => tile.id)).toEqual([
+      "evidence",
+      "media",
       "intent",
       "context",
       "decisions",

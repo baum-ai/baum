@@ -40,18 +40,18 @@ function MediaGlance({ tile, ctx }: TileFaceProps) {
   const alt = (id: string) => ctx.review.index.attachments?.find((each) => each.id === id)?.alt;
   const shown = all.slice(0, THUMBNAILS);
   return (
-    <div className="flex h-full min-h-0 flex-col gap-2.5">
+    <div className="flex min-h-0 grow flex-col gap-2.5">
       {url && shown.length > 0 ? (
         <ul
           className={cn(
-            "grid min-h-0 flex-1 gap-1.5",
+            "grid h-32 gap-1.5",
             shown.length === 1 ? "grid-cols-1" : shown.length === 2 ? "grid-cols-2" : "grid-cols-3",
           )}
         >
           {shown.map((image, position) => (
             <li
               key={`${image.attachment}-${position}`}
-              className="relative min-h-28 overflow-hidden rounded-md border border-subtle bg-surface-sunken"
+              className="relative overflow-hidden rounded-md border border-subtle bg-surface-sunken"
             >
               <img
                 src={url(image.attachment, ctx.review)}

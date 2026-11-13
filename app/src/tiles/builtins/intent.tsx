@@ -5,7 +5,7 @@ import { AnchorChips, Item, JumpLink, Part } from "@baum/viewer/components/revie
 import { harnessName } from "@baum/viewer/agent-names";
 import { implementsGroups, intentPrompts, type Implements } from "@baum/viewer/review-document";
 import { QuoteIcon } from "../icons";
-import { Clamp, plainText, Quiet } from "../parts";
+import { Fill, plainText, Quiet } from "../parts";
 import { changeById, type IntentData } from "../tile-document";
 import { isRecord, type TileContext, type TileFaceProps, type TileType } from "../types";
 
@@ -44,20 +44,25 @@ function ImplementsChips({ items }: { items: Implements[] }) {
   );
 }
 
-/** What was asked for: the issues it implements, the first stated reason,
- *  and how many prompts it came from. */
+/** What was asked for: the issues it implements, the stated reasons, and how
+ *  many prompts they came from. */
 function IntentGlance({ tile, ctx }: TileFaceProps) {
   const data = dataOf(tile.data);
   const prompts = intentPrompts(ctx.review, intentLines(ctx, data));
   const first = data.lines[0];
   if (!first && data.implements.length === 0) return <Quiet>No stated intent.</Quiet>;
   return (
-    <div className="space-y-2.5">
+    <div className="flex min-h-0 grow flex-col gap-2.5">
       <ImplementsChips items={data.implements} />
       {first ? (
-        <Clamp lines={4} className="text-base leading-normal text-primary">
-          {plainText(first.text, ctx.labels)}
-        </Clamp>
+        // Every stated reason, as many as the row has room for.
+        <Fill min="3rem" className="space-y-1.5">
+          {data.lines.map((line, position) => (
+            <p key={position} className="text-base leading-normal text-primary">
+              {plainText(line.text, ctx.labels)}
+            </p>
+          ))}
+        </Fill>
       ) : null}
       <p className="text-xs text-tertiary">
         {[

@@ -1,4 +1,3 @@
-import pluralize from "pluralize";
 import { LightbulbIcon } from "@baum/viewer/components/icons";
 import { Markdown } from "@baum/viewer/components/markdown";
 import {
@@ -10,7 +9,7 @@ import {
   Part,
 } from "@baum/viewer/components/review-parts";
 import { decisionGroups } from "@baum/viewer/review-document";
-import { Clamp, Count, Counts, plainText, Quiet } from "../parts";
+import { Clamp, Count, Counts, Fill, plainText, Quiet } from "../parts";
 import { changeById, type DecisionsData, type TileDecision } from "../tile-document";
 import { isRecord, type TileContext, type TileFaceProps, type TileType } from "../types";
 
@@ -20,7 +19,8 @@ const itemsOf = (data: unknown) => (data as DecisionsData).items;
 const titleOf = (decision: TileDecision, labels: ReadonlyMap<string, string>) =>
   plainText(decision.title?.trim() || decision.text, labels);
 
-/** How many decisions and who made them, and the first two. */
+/** How many decisions and who made them, then the decisions, as many as the
+ *  row has room for. */
 function DecisionsGlance({ tile, ctx }: TileFaceProps) {
   const items = itemsOf(tile.data);
   if (items.length === 0) return <Quiet>No decisions recorded.</Quiet>;
@@ -28,7 +28,7 @@ function DecisionsGlance({ tile, ctx }: TileFaceProps) {
   const approved = items.filter((item) => item.by === "agent" && item.approved_by_human).length;
   const agent = items.length - human - approved;
   return (
-    <div className="space-y-3">
+    <div className="flex min-h-0 grow flex-col gap-2.5">
       <Counts>
         {[
           human > 0 ? <Count key="h" value={human} label="by a person" /> : null,
@@ -36,23 +36,20 @@ function DecisionsGlance({ tile, ctx }: TileFaceProps) {
           agent > 0 ? <Count key="g" value={agent} label="agent's own" /> : null,
         ]}
       </Counts>
-      <ul className="space-y-2">
-        {items.slice(0, 2).map((item) => (
-          <li key={item.id} className="flex min-w-0 items-start gap-2">
-            <span className="mt-px flex-none">
-              <DecisionByBadge decision={item} />
-            </span>
-            <Clamp lines={2} className="text-base text-primary">
-              {titleOf(item, ctx.labels)}
-            </Clamp>
-          </li>
-        ))}
-      </ul>
-      {items.length > 2 ? (
-        <p className="text-xs text-tertiary">
-          {pluralize("more decision", items.length - 2, true)}
-        </p>
-      ) : null}
+      <Fill min="3rem">
+        <ul className="space-y-2">
+          {items.map((item) => (
+            <li key={item.id} className="flex min-w-0 items-start gap-2">
+              <span className="mt-px flex-none">
+                <DecisionByBadge decision={item} />
+              </span>
+              <Clamp lines={2} className="text-base text-primary">
+                {titleOf(item, ctx.labels)}
+              </Clamp>
+            </li>
+          ))}
+        </ul>
+      </Fill>
     </div>
   );
 }

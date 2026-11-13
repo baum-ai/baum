@@ -16,7 +16,7 @@ import {
   type ReviewDocument,
   type Section,
 } from "@baum/viewer/review-document";
-import { Clamp, Count, Counts, Fade, plainSentence, Quiet, Writing } from "../parts";
+import { Count, Counts, Fill, plainSentence, plainText, Quiet, Writing } from "../parts";
 import {
   changeById,
   isCurrent,
@@ -77,44 +77,40 @@ function ChangeGlance({ tile, ctx }: TileFaceProps) {
   );
   const tally = evidenceTally(change.derived.evidence_summary);
   const { open, urgent } = openRisks(ctx.doc, change.id);
-  const sentence = plainSentence(data.summary?.text, ctx.labels);
+  const summary = plainText(data.summary?.text, ctx.labels);
   const stale = !isCurrent(change);
   return (
-    <div className="flex h-full min-h-0 flex-col gap-2.5">
+    <div className="flex min-h-0 grow flex-col gap-2.5">
       <ChangeBadges change={change} ctx={ctx} section={section} />
-      <Fade className="space-y-2">
-        {urgent.length > 0 ? (
-          <p className="flex items-start gap-1.5 text-base text-status-critical">
-            <RiskIcon size={14} className="mt-0.5 flex-none" />
-            <span className="line-clamp-1 min-w-0">
-              {urgent.length === 1
-                ? plainSentence(urgent[0]!.text, ctx.labels)
-                : `${urgent.length} high or critical risks`}
-            </span>
-          </p>
-        ) : data.attention?.text ? (
-          <p className="flex items-start gap-1.5 text-base text-secondary">
-            <WarningIcon size={14} className="mt-0.5 flex-none text-status-caution" />
-            <span className="line-clamp-1 min-w-0">
-              {plainSentence(data.attention.text, ctx.labels)}
-            </span>
-          </p>
-        ) : null}
-        {tile.state === "pending" ? (
-          <Writing />
-        ) : tile.state === "failed" ? (
-          <DetailsUnavailable change={change} ctx={ctx} />
-        ) : sentence ? (
-          <Clamp
-            lines={urgent.length > 0 || data.attention?.text ? 3 : 4}
-            className="text-base leading-normal text-primary"
-          >
-            {sentence}
-          </Clamp>
-        ) : (
-          <Quiet>No summary.</Quiet>
-        )}
-      </Fade>
+      {urgent.length > 0 ? (
+        <p className="flex items-start gap-1.5 text-base text-status-critical">
+          <RiskIcon size={14} className="mt-0.5 flex-none" />
+          <span className="line-clamp-1 min-w-0 @min-[36rem]/tiles:line-clamp-2">
+            {urgent.length === 1
+              ? plainSentence(urgent[0]!.text, ctx.labels)
+              : `${urgent.length} high or critical risks`}
+          </span>
+        </p>
+      ) : data.attention?.text ? (
+        <p className="flex items-start gap-1.5 text-base text-secondary">
+          <WarningIcon size={14} className="mt-0.5 flex-none text-status-caution" />
+          <span className="line-clamp-1 min-w-0 @min-[36rem]/tiles:line-clamp-2">
+            {plainSentence(data.attention.text, ctx.labels)}
+          </span>
+        </p>
+      ) : null}
+      {tile.state === "pending" ? (
+        <Writing />
+      ) : tile.state === "failed" ? (
+        <DetailsUnavailable change={change} ctx={ctx} />
+      ) : summary ? (
+        // Three lines at least, and as much more as the row leaves room for.
+        <Fill min="4.5rem">
+          <p className="text-base leading-normal text-primary">{summary}</p>
+        </Fill>
+      ) : (
+        <Quiet>No summary.</Quiet>
+      )}
       <div className="space-y-1 text-xs text-tertiary">
         <p className="flex flex-wrap items-center gap-x-1.5">
           <Lines additions={change.derived.additions} deletions={change.derived.deletions} />

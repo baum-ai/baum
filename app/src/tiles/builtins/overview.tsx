@@ -4,7 +4,7 @@ import { SummaryIcon, WarningIcon } from "@baum/viewer/components/icons";
 import { Markdown } from "@baum/viewer/components/markdown";
 import { ChangeKindTag, Facts, Lines, Part, PROSE } from "@baum/viewer/components/review-parts";
 import { humanize } from "@baum/viewer/review-document";
-import { Clamp, Fade, plainText } from "../parts";
+import { Fill, plainText } from "../parts";
 import type { OverviewData } from "../tile-document";
 import { isRecord, type TileFaceProps, type TileType } from "../types";
 
@@ -13,44 +13,54 @@ const valid = (data: unknown) =>
 
 const dataOf = (data: unknown) => data as OverviewData;
 
-/** What the pull request does, in its first paragraph, what kind of change it
- *  is and how long it takes to read, with a breaking change and what needs
- *  attention called out under it. */
+/** What kind of change it is and how long it takes to read, a breaking
+ *  change and what needs attention, then what the pull request does, as much
+ *  of it as the row has room for. */
 function OverviewGlance({ tile, ctx }: TileFaceProps) {
   const data = dataOf(tile.data);
   const minutes = ctx.doc.facts.review_minutes;
-  const paragraph = plainText(data.text.split(/\n\s*\n/)[0], ctx.labels);
+  const paragraphs = data.text
+    .split(/\n\s*\n/)
+    .map((paragraph) => plainText(paragraph, ctx.labels))
+    .filter(Boolean);
   const stats = ctx.doc.stats;
   return (
-    <div className="flex h-full min-h-0 flex-col gap-3">
+    <div className="flex min-h-0 grow flex-col gap-3">
       <p className="flex flex-wrap items-center gap-x-2.5 gap-y-1 text-xs text-tertiary">
         <ChangeKindTag kind={data.change_kind} />
         {minutes ? <span>≈{pluralize("minute", minutes, true)} to read</span> : null}
       </p>
-      <Fade className="space-y-2.5">
-        <Clamp
-          lines={data.breaking_change || data.attention?.text ? 3 : 4}
-          className="text-base leading-normal text-primary"
-        >
-          {paragraph}
-        </Clamp>
-        {data.breaking_change ? (
-          <p className="flex items-start gap-1.5 text-base text-status-critical">
-            <WarningIcon size={14} className="mt-0.5 flex-none" />
-            <span className="line-clamp-2 min-w-0">
-              Breaking: {plainText(data.breaking_change, ctx.labels)}
-            </span>
+      {data.breaking_change ? (
+        <p className="flex items-start gap-1.5 text-base text-status-critical">
+          <WarningIcon size={14} className="mt-0.5 flex-none" />
+          <span className="line-clamp-1 min-w-0 @min-[36rem]/tiles:line-clamp-2">
+            Breaking: {plainText(data.breaking_change, ctx.labels)}
+          </span>
+        </p>
+      ) : null}
+      {data.attention?.text ? (
+        <p className="flex items-start gap-1.5 text-base text-secondary">
+          <WarningIcon size={14} className="mt-0.5 flex-none text-status-caution" />
+          <span className="line-clamp-1 min-w-0 @min-[36rem]/tiles:line-clamp-2">
+            {plainText(data.attention.text, ctx.labels)}
+          </span>
+        </p>
+      ) : null}
+      {/* Two lines at least, then the rest of the text and the release note
+          as the row allows. */}
+      <Fill min="3rem" className="space-y-2">
+        {paragraphs.map((paragraph, position) => (
+          <p key={position} className="text-base leading-normal text-primary">
+            {paragraph}
+          </p>
+        ))}
+        {data.release_note ? (
+          <p className="text-base leading-normal text-secondary">
+            <span className="text-tertiary">Release note: </span>
+            {plainText(data.release_note, ctx.labels)}
           </p>
         ) : null}
-        {data.attention?.text ? (
-          <p className="flex items-start gap-1.5 text-base text-secondary">
-            <WarningIcon size={14} className="mt-0.5 flex-none text-status-caution" />
-            <span className="line-clamp-2 min-w-0">
-              {plainText(data.attention.text, ctx.labels)}
-            </span>
-          </p>
-        ) : null}
-      </Fade>
+      </Fill>
       {stats ? (
         <p className="flex flex-wrap items-center gap-x-1.5 text-xs text-tertiary">
           <Lines additions={stats.additions} deletions={stats.deletions} />

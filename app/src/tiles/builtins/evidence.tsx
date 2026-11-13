@@ -4,8 +4,9 @@ import { HunkEvidence, HunkPatchProvider } from "@baum/viewer/components/hunk-ev
 import { Markdown } from "@baum/viewer/components/markdown";
 import { Item, JumpLink, None, Part } from "@baum/viewer/components/review-parts";
 import { EvidenceBadge } from "@baum/viewer/components/review-section";
-import { checkStatus, humanize } from "@baum/viewer/review-document";
-import { Clamp, Count, Counts, plainSentence, Quiet } from "../parts";
+import { checkStatus, evidenceTone, humanize } from "@baum/viewer/review-document";
+import { cn } from "@baum/viewer/components/classnames";
+import { Clamp, Count, Counts, Fill, plainSentence, Quiet } from "../parts";
 import { changeById, changesInState, isCurrent, type TileEvidence } from "../tile-document";
 import { type TileContext, type TileFaceProps, type TileType } from "../types";
 import { StillWriting } from "./still-writing";
@@ -38,8 +39,10 @@ function EvidenceGlance({ ctx }: TileFaceProps) {
         <StillWriting count={pending} />
       </div>
     );
+  // The gaps lead; what holds follows, as far as the row has room.
+  const shown = [...gaps, ...items.filter((item) => !GAPS.has(item.status))];
   return (
-    <div className="space-y-3">
+    <div className="flex min-h-0 grow flex-col gap-2.5">
       <Counts>
         {[
           verified > 0 ? <Count key="v" value={verified} label="verified" tone="positive" /> : null,
@@ -48,33 +51,44 @@ function EvidenceGlance({ ctx }: TileFaceProps) {
           failed > 0 ? <Count key="f" value={failed} label="failed" tone="critical" /> : null,
         ]}
       </Counts>
-      {gaps.length > 0 ? (
+      {gaps.length === 0 ? (
+        <p className="text-base text-secondary">Nothing missing or failing.</p>
+      ) : null}
+      <Fill min={gaps.length > 0 ? "3rem" : "0"}>
         <ul className="space-y-1.5">
-          {gaps.slice(0, 3).map((item) => (
-            <li key={item.id} className="flex min-w-0 items-start gap-2">
+          {shown.map((item) => (
+            <li key={item.id} className="flex min-w-0 items-baseline gap-2">
               <span
-                className={
-                  item.status === "failed"
-                    ? "mt-px flex-none text-xs font-medium text-status-critical"
-                    : "mt-px flex-none text-xs font-medium text-status-caution"
-                }
+                className={cn(
+                  "w-16 flex-none text-xs font-medium",
+                  STATUS_TEXT[evidenceTone(item.status)],
+                )}
               >
                 {humanize(item.status)}
               </span>
               <Clamp lines={2} className="text-base text-secondary">
-                {plainSentence(item.expects || item.claim, ctx.labels)}
+                {plainSentence(
+                  GAPS.has(item.status) ? item.expects || item.claim : item.claim,
+                  ctx.labels,
+                )}
               </Clamp>
             </li>
           ))}
         </ul>
-      ) : (
-        <p className="text-base text-secondary">Nothing missing or failing.</p>
-      )}
+      </Fill>
       <CheckLine checks={checks} />
       <StillWriting count={pending} />
     </div>
   );
 }
+
+const STATUS_TEXT = {
+  neutral: "text-tertiary",
+  info: "text-status-info",
+  positive: "text-status-positive",
+  caution: "text-status-caution",
+  critical: "text-status-critical",
+} as const;
 
 function CheckLine({ checks }: { checks: ReturnType<typeof checkStatus> }) {
   if (checks.state === "none") return null;

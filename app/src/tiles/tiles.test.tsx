@@ -267,9 +267,10 @@ describe("the landing page", () => {
       <TileLanding ctx={contextFor(doc, review)} generation={null} memory={{ current: null }} />,
     );
     const strip = page.querySelector('[aria-label="Review at a glance"]')!;
-    expect(strip.textContent).toContain("Recommendation");
-    expect(strip.textContent).toContain("Risk score");
-    expect(strip.textContent).toContain("Review v");
+    // No recommendation and a current version: the risk score alone.
+    expect(strip.querySelector('[aria-label="Recommendation"]')).toBeNull();
+    expect(strip.querySelector('[aria-label="This version"]')).toBeNull();
+    expect(strip.querySelector('[aria-label="Risk score"]')?.textContent).toContain("5/5");
     const order = [...page.querySelectorAll("[data-tile]")].map((card) =>
       card.getAttribute("data-tile"),
     );
@@ -281,10 +282,10 @@ describe("the landing page", () => {
       "sec_deadletter",
       "sec_ackfix",
     ]);
-    // The fifth change is behind the group's cell, the tiles past the
-    // landing area behind the page's own control.
-    expect(page.textContent).toContain("Show 1 more change");
-    expect(page.textContent).toMatch(/Show \d+ more tiles/);
+    // Five changes are all shown; the tiles past the landing area wait
+    // behind the page's own control.
+    expect(page.textContent).not.toMatch(/more change/);
+    expect(page.textContent).toContain("Show 5 more tiles");
   });
 
   it("names the recommendation and leads to what it cites", () => {

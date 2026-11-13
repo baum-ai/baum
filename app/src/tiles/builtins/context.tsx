@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "react";
 import { ContextPart } from "@baum/viewer/components/review-context";
 import { MapIcon } from "../icons";
-import { Clamp, plainText, Quiet, Writing } from "../parts";
+import { Fill, plainText, Quiet, Writing } from "../parts";
 import type { ContextData } from "../tile-document";
 import { isRecord, type TileFaceProps, type TileType } from "../types";
 
@@ -14,10 +14,10 @@ function ContextGlance({ tile, ctx }: TileFaceProps) {
   const area = (tile.data as ContextData).area;
   const files = area.refs.slice(0, 3);
   return (
-    <div className="flex h-full min-h-0 flex-col gap-2.5">
-      <Clamp lines={5} className="text-base leading-normal text-primary">
-        {plainText(area.text, ctx.labels)}
-      </Clamp>
+    <div className="flex min-h-0 grow flex-col gap-2.5">
+      <Fill min="4.5rem">
+        <p className="text-base leading-normal text-primary">{plainText(area.text, ctx.labels)}</p>
+      </Fill>
       {files.length > 0 ? (
         <ul aria-label="Files" className="flex flex-wrap gap-1.5">
           {files.map((ref, position) => (

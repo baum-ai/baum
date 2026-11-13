@@ -6,7 +6,7 @@ import { humanize, sectionHunks, type HunkGroup } from "@baum/viewer/review-docu
 import { cn, FOCUS_RING } from "@baum/viewer/components/classnames";
 import { ChevronRightIcon } from "@baum/viewer/components/icons";
 import { LayersIcon } from "../icons";
-import { Clamp, plainSentence, Quiet } from "../parts";
+import { Fill, plainText, Quiet } from "../parts";
 import type { EverythingElseData } from "../tile-document";
 import { isRecord, type TileContext, type TileFaceProps, type TileType } from "../types";
 import { ChangeSection } from "./change";
@@ -39,34 +39,28 @@ function EverythingElseGlance({ tile, ctx }: TileFaceProps) {
     role,
     count: indexed.filter((hunk) => hunk.role === role).length,
   }));
-  const sentence = plainSentence(data.summary?.text, ctx.labels);
+  const summary = plainText(data.summary?.text, ctx.labels);
   if (indexed.length === 0) return <Quiet>Nothing outside the changes.</Quiet>;
   return (
-    <div className="flex h-full min-h-0 flex-col gap-2.5">
+    <div className="flex min-h-0 grow flex-col gap-2.5">
       <p className="text-base text-primary">
         <span className="font-semibold tabular-nums">
           {pluralize("hunk", indexed.length, true)}
         </span>{" "}
         <span className="text-secondary">in {pluralize("file", files, true)}</span>
       </p>
-      {sentence ? (
-        <Clamp lines={3} className="text-base leading-normal text-secondary">
-          {sentence}
-        </Clamp>
-      ) : (
-        // No change describes them: the files say what they are.
+      <Fill min="3rem" className="space-y-1.5">
+        {summary ? <p className="text-base leading-normal text-secondary">{summary}</p> : null}
+        {/* The files say what the hunks no change describes are. */}
         <ul className="min-w-0 space-y-0.5">
-          {paths.slice(0, 3).map((path) => (
+          {paths.map((path) => (
             <li key={path} className="truncate font-mono text-xs text-secondary" title={path}>
               {path}
             </li>
           ))}
-          {paths.length > 3 ? (
-            <li className="text-xs text-tertiary">and {paths.length - 3} more</li>
-          ) : null}
         </ul>
-      )}
-      <p className="mt-auto flex flex-wrap gap-x-2 text-xs text-tertiary">
+      </Fill>
+      <p className="flex flex-wrap gap-x-2 text-xs text-tertiary">
         {roles
           .toSorted((a, b) => b.count - a.count)
           .map(({ role, count }) => (

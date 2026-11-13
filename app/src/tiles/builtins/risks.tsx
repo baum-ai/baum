@@ -19,7 +19,7 @@ import {
   TIER_COLOR,
   type RiskTier,
 } from "@baum/viewer/review-document";
-import { AllClear, Clamp, plainText, TierCount } from "../parts";
+import { AllClear, Clamp, Fill, plainText, TierCount } from "../parts";
 import { changeById, changesInState, isCurrent, reviewIdOf, type TileRisk } from "../tile-document";
 import { isRecord, type TileContext, type TileFaceProps, type TileType } from "../types";
 import { StillWriting } from "./still-writing";
@@ -38,7 +38,6 @@ function ranked(ctx: Pick<TileContext, "doc">, data: unknown): TileRisk[] {
 }
 
 const URGENT: RiskTier[] = ["critical", "high"];
-const LINES = 3;
 
 /** How many open risks of each tier, every critical and high one in full,
  *  then the next ones down: the reader sees at once whether there is
@@ -60,27 +59,30 @@ function RisksGlance({ tile, ctx }: TileFaceProps) {
     },
   );
   const urgent = risks.filter((risk) => URGENT.includes(risk.tier));
-  // Then the next ones down, as room allows.
   const lower = risks.filter((risk) => !URGENT.includes(risk.tier));
-  const shownMedium = urgent.length >= LINES ? [] : lower.slice(0, LINES - urgent.length);
-  const rest = risks.length - urgent.length - shownMedium.length;
   return (
-    <div className="space-y-3">
+    <div className="flex min-h-0 grow flex-col gap-3">
       <p className="flex flex-wrap items-center gap-x-3.5 gap-y-1">
         {tiers.map(({ tier, count }) => (
           <TierCount key={tier} tier={tier} count={count} />
         ))}
       </p>
-      <ul className="space-y-2">
-        {urgent.map((risk) => (
-          <RiskLine key={risk.id} risk={risk} ctx={ctx} urgent />
-        ))}
-        {shownMedium.map((risk) => (
-          <RiskLine key={risk.id} risk={risk} ctx={ctx} roomy={urgent.length === 0} />
-        ))}
-      </ul>
-      {rest > 0 ? (
-        <p className="text-base text-tertiary">{pluralize("more risk", rest, true)}, lower tiers</p>
+      {urgent.length > 0 ? (
+        <ul className="space-y-2">
+          {urgent.map((risk) => (
+            <RiskLine key={risk.id} risk={risk} ctx={ctx} urgent />
+          ))}
+        </ul>
+      ) : null}
+      {/* The next ones down, as many as the row has room for: at least one. */}
+      {lower.length > 0 ? (
+        <Fill min={urgent.length > 0 ? "0" : "3rem"}>
+          <ul className="space-y-1.5">
+            {lower.map((risk) => (
+              <RiskLine key={risk.id} risk={risk} ctx={ctx} />
+            ))}
+          </ul>
+        </Fill>
       ) : null}
       <StillWriting count={pending} />
     </div>
@@ -91,13 +93,10 @@ function RiskLine({
   risk,
   ctx,
   urgent = false,
-  roomy = false,
 }: {
   risk: TileRisk;
   ctx: TileContext;
   urgent?: boolean;
-  /** No urgent risk takes the room, so a lower one has two lines. */
-  roomy?: boolean;
 }) {
   const change = changeById(ctx.doc, risk.change);
   return (
@@ -110,7 +109,7 @@ function RiskLine({
       <div className="min-w-0 flex-1">
         <span className="sr-only">{humanize(risk.tier)} risk: </span>
         <Clamp
-          lines={urgent ? 4 : roomy ? 2 : 1}
+          lines={urgent ? 4 : 2}
           className={urgent ? "text-base text-primary" : "text-base text-secondary"}
         >
           {plainText(risk.text, ctx.labels)}
