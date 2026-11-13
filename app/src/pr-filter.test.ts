@@ -1,6 +1,8 @@
 import { expect, it } from "vitest";
 import type { Entry } from "./api";
+import type { Option } from "./pr-filter";
 import {
+  countValues,
   hasPart,
   hasValue,
   matchesQuery,
@@ -346,3 +348,81 @@ it("puts a quick filter's query in, and takes it out again, as written", () => {
   // A group already in parentheses is not wrapped twice.
   expect(togglePart("(org=x OR org=y)", "risk>=4")).toBe("(org=x OR org=y) risk>=4");
 });
+
+// The counts as the menu worked them out before they were found in one go:
+// the query toggled and parsed again for every option and pull request.
+function countedOneByOne(
+  query: string,
+  key: string,
+  options: Option[],
+  entries: Entry[],
+  op: "=" | "!=" = "=",
+  kindOf?: (entry: Entry) => string | undefined,
+) {
+  const passing = (text: string, one: Entry) => matchesQuery(text, one, kindOf?.(one));
+  const live = entries.filter((one) => passing(query, one));
+  return new Map(
+    options.map(({ value }) => [
+      value,
+      hasValue(query, key, value, op)
+        ? live.filter((one) => passing(toggleValue("", key, value, op), one)).length
+        : entries.filter(
+            (one) =>
+              passing(toggleValue(query, key, value, op), one) &&
+              passing(toggleValue("", key, value, op), one),
+          ).length,
+    ]),
+  );
+}
+
+it("counts every value in one pass as it counted them one by one", () => {
+  const entries = Array.from({ length: 200 }, (_, i) =>
+    entry(
+      {
+        repository: `org${i % 7}/repo${i % 40}`,
+        author: `author${i % 30}`,
+        authored_by_me: i % 11 === 0,
+        draft: i % 5 === 0,
+        base_ref: i % 3 ? "main" : "dev",
+      },
+      { review: i % 4 ? "approved" : "changes_requested", checks: i % 2 ? "passing" : "failing" },
+    ),
+  );
+  const kindOf = (one: Entry) => (one.pull_request.draft ? "review" : "merge");
+  const repos = [...new Set(entries.map((one) => one.pull_request.repository as string))].map(
+    (value) => ({ label: value, value }),
+  );
+  const authors = [
+    { value: "@me", label: "Me" },
+    ...[...new Set(entries.map((one) => one.pull_request.author as string))].map((value) => ({
+      value,
+      label: value,
+    })),
+  ];
+  const queries = [
+    "",
+    "repo:org1/repo1",
+    "repo:org1/repo1,org2/repo2",
+    "-repo:org3/repo3",
+    "repo!=org3/repo3 author:author1,author2",
+    "author:@me OR author:author4",
+    "(author:author1 OR repo:repo5) AND review:approved",
+    "is:draft checks:failing",
+    "waiting:review",
+    'repo:"org1/repo1" -is:draft base:main',
+    "-(author:author3 OR author:author9)",
+    "author:",
+    "(unclosed",
+    "fix",
+  ];
+  for (const query of queries)
+    for (const [key, options] of [
+      ["repo", repos],
+      ["author", authors],
+    ] as const)
+      for (const op of ["=", "!="] as const)
+        for (const kinds of [undefined, kindOf])
+          expect(countValues(query, key, options, entries, op, kinds)).toEqual(
+            countedOneByOne(query, key, options, entries, op, kinds),
+          );
+}, 60_000);

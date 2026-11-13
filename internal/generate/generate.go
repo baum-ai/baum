@@ -327,13 +327,17 @@ func Run(ctx context.Context, o Options) (result Result, err error) {
 	// did not produce the accepted document go.
 	kept := false
 	var sessionIDs []string
+	// uncertain is set when a call may have left a session with no id reported.
+	uncertain := false
 	if keepSession && !o.KeepRunDir {
 		defer func() {
 			switch {
 			case !kept:
 				RemoveTree(runDir)
-				if len(sessionIDs) > 0 {
+				if len(sessionIDs) > 0 || uncertain {
 					_ = reviewruns.RemoveSessions(sessionRoot, runDir)
+				} else {
+					reviewruns.Forget(sessionRoot, runDir)
 				}
 			case len(sessionIDs) > 1:
 				var others []string
@@ -452,6 +456,14 @@ func Run(ctx context.Context, o Options) (result Result, err error) {
 		outcome, document, genErr = generator.Generate(runCtx, run)
 		sessionIDs = outcome.Sessions
 		document, closed, redactErr = agent.RedactOutput(redactCtx, validator, redactor, document, &b, checkout, &outcome)
+	}
+	if keepSession {
+		uncertain = outcome.ErroredAttempts > 0
+		// Removing the run deletes exactly these sessions by id. A failed
+		// write only leaves the removal to a bounded scan.
+		if e := reviewruns.Record(sessionRoot, runDir, outcome.ErroredAttempts == 0, sessionIDs...); e != nil {
+			progress("warning: recording the agent sessions: %v", e)
+		}
 	}
 	if redactErr == nil {
 		document, _ = agent.RejectSecrets(&outcome, document, closed)

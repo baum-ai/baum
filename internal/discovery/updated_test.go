@@ -3,6 +3,7 @@ package discovery
 import (
 	"context"
 	"testing"
+	"time"
 )
 
 // The review index cache is invalidated through Updated whenever what
@@ -28,5 +29,77 @@ func TestUpdatedFollowsWhatCachedReads(t *testing.T) {
 	}
 	if calls != 0 {
 		t.Fatal("a read reported a change", calls)
+	}
+}
+
+// The credential's budget record is not read by Cached: writing it alone,
+// as a probe does, does not report a change, so the review index does not
+// rebuild for it.
+func TestBudgetWriteIsNotReported(t *testing.T) {
+	ctx := context.Background()
+	s, now := service(t, recordedFixture())
+	if _, err := s.Poll(ctx, testRepo); err != nil {
+		t.Fatal(err)
+	}
+	reader, err := s.client.REST(ctx, testRepo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, err := s.path(reader.CacheIdentity(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	key += budgetSuffix
+	writes := func() uint64 {
+		s.writesMu.Lock()
+		defer s.writesMu.Unlock()
+		return s.writes[key]
+	}
+	before, err := s.Revision(ctx, testRepo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	written := writes()
+	calls := 0
+	s.Updated = func() { calls++ }
+	remaining := 1
+	if err := s.save(key, diskCache{GraphQLRate: RateLimit{Remaining: &remaining, Reset: now.Add(time.Hour)}}); err != nil {
+		t.Fatal(err)
+	}
+	if writes() == written {
+		t.Fatal("the budget record was not written")
+	}
+	if calls != 0 {
+		t.Fatal("a budget write reported a change", calls)
+	}
+	if after, err := s.Revision(ctx, testRepo); err != nil || after != before {
+		t.Fatalf("revision moved: %+v -> %+v (%v)", before, after, err)
+	}
+}
+
+func TestCachedStableDoesNotAgeAtPollDeadline(t *testing.T) {
+	ctx := context.Background()
+	s, now := service(t, recordedFixture())
+	polled, err := s.Poll(ctx, testRepo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, err := s.CachedStable(ctx, testRepo)
+	if err != nil || before.Stale {
+		t.Fatalf("validated: %+v %v", before, err)
+	}
+	*now = polled.NextPoll.Add(time.Second)
+	after, err := s.CachedStable(ctx, testRepo)
+	if err != nil || after.Stale {
+		t.Fatalf("past deadline: %+v %v", after, err)
+	}
+	ordinary, err := s.Cached(ctx, testRepo)
+	if err != nil || !ordinary.Stale {
+		t.Fatalf("ordinary reader lost aging: %+v %v", ordinary, err)
+	}
+	s.ResetIdentity()
+	unvalidated, err := s.CachedStable(ctx, testRepo)
+	if err != nil || !unvalidated.Stale {
+		t.Fatalf("unvalidated: %+v %v", unvalidated, err)
 	}
 }

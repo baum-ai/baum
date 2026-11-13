@@ -874,7 +874,7 @@ computer, plus one GitHub search per picked repository:
   stores (`~/.claude/projects`, `~/.codex/sessions`, Cursor's `state.vscdb`),
   the same files the PR page reads, but only sessions whose working directory is
   inside a registered clone and that were written in the last 90 days. It keeps
-  aggregates only, in the `cache/analytics-index` document in its private application database: per
+  aggregates only, in the `analytics_sessions` table of its private application database: per
   session file, its path, size and modification time (to
   read only what changed), the agent, session id, clone and repository, the
   top-level branch, start and end, active seconds by hour, counts of human

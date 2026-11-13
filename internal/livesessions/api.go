@@ -118,7 +118,7 @@ func (t *Transcripts) WriteAnswer(w http.ResponseWriter, r *http.Request, answer
 			out.Transcript, out.Images = nil, nil
 		} else if t.Tracker != nil {
 			if _, path, ok := t.Tracker.Lookup(answer.Session.Agent, answer.Session.ID); ok {
-				_, _, out.Summary, _ = t.describe(key{answer.Session.Agent, answer.Session.ID}, path, false)
+				_, _, out.Summary, _ = t.describe(key{answer.Session.Agent, answer.Session.ID}, path, false, endedAt(answer.Session))
 			}
 		}
 		writeJSON(w, http.StatusOK, out)

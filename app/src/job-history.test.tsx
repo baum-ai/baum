@@ -72,7 +72,7 @@ beforeEach(() => {
         return given instanceof Response ? given : Response.json(given);
       }
       if (key.startsWith("api/index")) return Response.json({ entries: [], problems: [] });
-      if (key === "api/repos" || key === "api/repositories" || key === "api/prs")
+      if (key === "api/repos" || key === "api/repositories" || key === "api/prs?view=health")
         return Response.json([]);
       return Response.json({});
     }),
@@ -191,7 +191,7 @@ it("reads the jobs of a pull request on its page, again when the app reads its j
     review_minutes: null,
   };
   history.replaceState(null, "", "/s/test-ns/?filter=all&repository=acme%2Fdemo&pr=1");
-  answers["api/index?history=1"] = { entries: [entry], problems: [] };
+  answers["api/index?history=1&detail=summary"] = { entries: [entry], problems: [] };
   answers["api/jobs?repository=acme%2Fdemo&pr=1"] = {
     available: true,
     jobs: [
@@ -379,7 +379,7 @@ describe("a running job's usage event", () => {
     const before = currentReads();
     await send(usage({ state: "completed", phase: "finished" }));
     expect(currentReads()).toBe(before + 1);
-    expect(requests).toContain("/s/test-ns/api/index?history=1");
+    expect(requests).toContain("/s/test-ns/api/index?history=1&detail=summary");
   });
 
   it("reads everything again for a job the app does not have", async () => {

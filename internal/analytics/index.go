@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -13,7 +14,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/baum-ai/baum/internal/appdb"
 	"github.com/baum-ai/baum/internal/gitlocal"
 	"github.com/baum-ai/baum/internal/pricing"
 	"github.com/baum-ai/baum/internal/repos"
@@ -35,7 +35,8 @@ const (
 	// indexVersion changes whenever Entry's meaning does, which rebuilds it.
 	indexVersion = 3
 	// saveEvery is how many sessions are read between saves of a first
-	// build, so a restart resumes rather than starts over.
+	// build, so a restart resumes rather than starts over. A save writes only
+	// the rows of the sessions read since the last one.
 	saveEvery = 25
 )
 
@@ -73,13 +74,16 @@ type Index struct {
 	Now    func() time.Time
 	// mapSession maps a found session; tests count its calls.
 	mapSession func(collector.Session) (*session.Graph, []string, error)
-	// write stores the document; tests replace it to count and fail saves.
-	write func(path, namespace, key string, raw []byte) error
+	// write stores a save's rows; tests replace it to count and fail saves.
+	write func(path string, b indexBatch) error
 	// heads remembers each Claude transcript's head between refreshes.
 	heads claudecode.HeadCache
 	// codex remembers each Codex rollout's first record between refreshes and
 	// scans the Codex store once per refresh, not once per clone.
 	codex codex.Cache
+
+	// refreshing serializes refreshes, so their saves cannot interleave.
+	refreshing sync.Mutex
 
 	mu      sync.RWMutex
 	entries map[string]Entry
@@ -87,17 +91,15 @@ type Index struct {
 	bands    []int64
 	progress Progress
 	loaded   bool
-	// dirty is set when entries differ from what was last stored, so an
-	// unchanged refresh writes nothing.
-	dirty bool
+	// pending holds the paths whose stored row may differ from entries: the
+	// next save writes the entry of each, or deletes its row when there is
+	// none. An unchanged refresh has none and writes nothing.
+	pending map[string]bool
+	// reset says the stored rows are not this index's (none yet, another
+	// version or other thresholds): the next save deletes them all first.
+	reset bool
 	wake  chan struct{}
 	once  sync.Once
-}
-
-type indexFile struct {
-	Version int              `json:"version"`
-	Bands   []int64          `json:"bands"`
-	Entries map[string]Entry `json:"entries"`
 }
 
 func (x *Index) now() time.Time {
@@ -142,7 +144,9 @@ func (x *Index) Run(ctx context.Context) {
 func (x *Index) Snapshot() ([]Entry, Progress) {
 	x.mu.Lock()
 	defer x.mu.Unlock()
-	x.load()
+	if err := x.load(); err != nil && x.Log != nil {
+		x.Log.Warn("analytics index not loaded", "error", err)
+	}
 	out := make([]Entry, 0, len(x.entries))
 	for _, e := range x.entries {
 		out = append(out, e)
@@ -150,52 +154,80 @@ func (x *Index) Snapshot() ([]Entry, Progress) {
 	return out, x.progress
 }
 
-// load reads the cached document once; the caller holds mu. A document for another
-// version or price list thresholds is ignored, so every session is read again.
-func (x *Index) load() {
+// load reads the stored index once; the caller holds mu. Rows for another
+// version or price list thresholds are ignored, so every session is read
+// again, and deleted by the next save. A failed read is retried by the next
+// call rather than taken for an empty index, so it never clears the rows.
+func (x *Index) load() error {
 	if x.loaded {
-		return
+		return nil
+	}
+	if x.entries == nil {
+		x.entries = map[string]Entry{}
+	}
+	if x.pending == nil {
+		x.pending = map[string]bool{}
+	}
+	bands := pricing.Active().PromptBands()
+	stored, err := loadIndex(x.Path, bands)
+	if err != nil {
+		return err
 	}
 	x.loaded = true
-	x.entries = map[string]Entry{}
-	x.bands = pricing.Active().PromptBands()
-	// Nothing valid is stored yet: the first save has to write.
-	x.dirty = true
-	raw, err := appdb.Read(x.Path, "cache", "analytics-index")
-	if err != nil {
-		return
+	x.entries, x.bands, x.reset = stored.entries, bands, !stored.valid
+	for _, p := range stored.unreadable {
+		x.pending[p] = true
 	}
-	var stored indexFile
-	if json.Unmarshal(raw, &stored) != nil || stored.Version != indexVersion || !slices.Equal(stored.Bands, pricing.Active().PromptBands()) {
-		return
-	}
-	for path, e := range stored.Entries {
-		x.entries[path] = e
-	}
-	x.dirty = false
+	return nil
 }
 
-// save stores the document unless it is what was stored last. A failed write
-// leaves it dirty, so the next refresh tries again.
+// change marks path's stored row out of date; the caller holds mu.
+func (x *Index) change(path string) {
+	if x.pending == nil {
+		x.pending = map[string]bool{}
+	}
+	x.pending[path] = true
+}
+
+// save writes the rows of the entries changed since the last save, in one
+// transaction, and nothing when none did. A failed write marks them pending
+// again, so the next refresh tries again.
 func (x *Index) save() error {
 	x.mu.Lock()
-	if !x.dirty {
+	if !x.reset && len(x.pending) == 0 {
 		x.mu.Unlock()
 		return nil
 	}
-	raw, err := json.Marshal(indexFile{Version: indexVersion, Bands: x.bands, Entries: x.entries})
-	x.dirty = false
-	x.mu.Unlock()
-	if err == nil {
-		write := x.write
-		if write == nil {
-			write = appdb.Write
+	b := indexBatch{reset: x.reset, bands: x.bands, upsert: map[string][]byte{}}
+	for p := range x.pending {
+		e, ok := x.entries[p]
+		if !ok {
+			b.remove = append(b.remove, p)
+			continue
 		}
-		err = write(x.Path, "cache", "analytics-index", raw)
+		raw, err := json.Marshal(e)
+		if err != nil {
+			x.mu.Unlock()
+			return err
+		}
+		b.upsert[p] = raw
 	}
+	pending := x.pending
+	x.pending, x.reset = map[string]bool{}, false
+	x.mu.Unlock()
+	write := x.write
+	if write == nil {
+		write = writeIndex
+	}
+	err := write(x.Path, b)
 	if err != nil {
 		x.mu.Lock()
-		x.dirty = true
+		// Only the refresh that called save changes entries, so nothing was
+		// marked since the swap: the batch's paths and reset go back as they were.
+		x.reset = x.reset || b.reset
+		for p := range pending {
+			x.pending[p] = true
+		}
 		x.mu.Unlock()
 	}
 	return err
@@ -214,11 +246,16 @@ type found struct {
 // until it is back or unregistered.
 func (x *Index) Refresh(ctx context.Context) error {
 	workstats.Inc("analytics.refreshes")
+	x.refreshing.Lock()
+	defer x.refreshing.Unlock()
 	x.mu.Lock()
-	x.load()
+	if err := x.load(); err != nil {
+		x.mu.Unlock()
+		return err
+	}
 	// A newer price list with other thresholds groups usage differently.
 	if bands := pricing.Active().PromptBands(); !slices.Equal(x.bands, bands) {
-		x.entries, x.bands, x.dirty = map[string]Entry{}, bands, true
+		x.entries, x.bands, x.pending, x.reset = map[string]Entry{}, bands, map[string]bool{}, true
 	}
 	x.mu.Unlock()
 
@@ -276,7 +313,7 @@ func (x *Index) Refresh(ctx context.Context) error {
 		drop := !registered[e.Clone] || e.ModifiedAt.Before(cutoff) || (scanned[e.Clone] && !seen[path])
 		if drop {
 			delete(x.entries, path)
-			x.dirty = true
+			x.change(path)
 		}
 	}
 	var todo []found
@@ -295,12 +332,13 @@ func (x *Index) Refresh(ctx context.Context) error {
 
 	for i, f := range todo {
 		if err := ctx.Err(); err != nil {
-			return err
+			// Stopping: keep what was read since the last save.
+			return errors.Join(err, x.save())
 		}
 		entry := x.read(ctx, f)
 		x.mu.Lock()
 		x.entries[f.session.Path] = entry
-		x.dirty = true
+		x.change(f.session.Path)
 		x.progress.Done++
 		x.mu.Unlock()
 		if (i+1)%saveEvery == 0 {

@@ -43,6 +43,7 @@ import (
 	"github.com/baum-ai/baum/internal/repos"
 	"github.com/baum-ai/baum/internal/reviewgroups"
 	"github.com/baum-ai/baum/internal/reviewindex"
+	"github.com/baum-ai/baum/internal/sqlitepool"
 	"github.com/baum-ai/baum/internal/transcript"
 	"github.com/baum-ai/baum/internal/uiserver"
 	"github.com/baum-ai/baum/internal/uistate"
@@ -121,12 +122,18 @@ func (w *Workspace) release() {
 		w.closers[i]()
 	}
 	w.api, w.closers = nil, nil
+	// Shared SQLite handles on the project's databases too: Windows cannot
+	// remove an open file.
+	if w.Dir != "" {
+		sqlitepool.CloseUnder(w.Dir)
+	}
 }
 
 func (w *Workspace) build(ctx context.Context, now time.Time) (http.Handler, error) {
 	if w.Dir == "" || w.Own == nil {
 		return nil, errors.New("no directory or own API")
 	}
+	sqlitepool.CloseUnder(w.Dir)
 	if err := os.RemoveAll(w.Dir); err != nil {
 		return nil, err
 	}

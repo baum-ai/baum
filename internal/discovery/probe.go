@@ -70,7 +70,7 @@ func (s *Service) Probe(ctx context.Context, repositories []github.Repository) (
 	if err != nil {
 		return nil, err
 	}
-	budgetPath += ".budget"
+	budgetPath += budgetSuffix
 	budget, err := s.ledger(budgetPath)
 	if err != nil {
 		return nil, err

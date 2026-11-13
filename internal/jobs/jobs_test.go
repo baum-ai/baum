@@ -719,11 +719,19 @@ func TestUsageProgressIsDurableAndDetached(t *testing.T) {
 	if q.List()[0].Accounting.Usage.Input != 6 {
 		t.Fatal("List leaked mutable accounting")
 	}
-	persisted, err := readJournal(q.path)
-	if err != nil {
-		t.Fatal(err)
+	// List shows a progress report while it is being written (saveOutside);
+	// TestPublishedChangesSurviveACrash checks it is written before it is
+	// published.
+	var persisted []Job
+	for deadline := time.Now().Add(3 * time.Second); ; time.Sleep(time.Millisecond) {
+		if persisted, err = readJournal(q.path); err != nil {
+			t.Fatal(err)
+		}
+		if persisted[0].Accounting != nil || time.Now().After(deadline) {
+			break
+		}
 	}
-	if persisted[0].Accounting.Usage.CacheRead != 100 {
+	if persisted[0].Accounting == nil || persisted[0].Accounting.Usage.CacheRead != 100 {
 		t.Fatalf("running usage not saved: %+v", persisted[0])
 	}
 	if _, err = q.Cancel(jobs[0].ID); err != nil {

@@ -531,6 +531,12 @@ func (a LocalAPI) Handler() *LocalHandler {
 		query := routed.URL.Query()
 		query.Del("version")
 		routed.URL.RawQuery = query.Encode()
+		// The viewer tags the document for a client that stores and revalidates
+		// it. The app keeps the ETag itself and no answer goes through the
+		// webview's HTTP cache, so /api/document is no-store.
+		if r.URL.Path == "/api/document" {
+			w = noStore{w}
+		}
 		viewer.Mux().ServeHTTP(w, routed)
 	}
 	mux.HandleFunc("GET /api/document", document)
@@ -632,3 +638,20 @@ func pickedRepository(ctx context.Context, registry *repos.Registry, name string
 	}
 	return "", repos.ErrNotFound
 }
+
+// noStore forces Cache-Control: no-store on the response it wraps, keeping the
+// ETag and status the handler chose. The header is set when the status is
+// written, after the handler's own.
+type noStore struct{ http.ResponseWriter }
+
+func (w noStore) WriteHeader(code int) {
+	w.Header().Set("Cache-Control", "no-store")
+	w.ResponseWriter.WriteHeader(code)
+}
+
+func (w noStore) Write(b []byte) (int, error) {
+	w.Header().Set("Cache-Control", "no-store")
+	return w.ResponseWriter.Write(b)
+}
+
+func (w noStore) Unwrap() http.ResponseWriter { return w.ResponseWriter }

@@ -307,7 +307,18 @@ func TestRealRegistryListsClonesAndTheirStores(t *testing.T) {
 
 	after, _ := os.ReadFile(registryPath)
 	afterNames, _ := os.ReadDir(filepath.Dir(registryPath))
-	if !bytes.Equal(before, after) || len(names) != len(afterNames) {
+	// SQLite's coordination files for a database in WAL mode, which any
+	// connection to it creates when missing, do not count.
+	count := func(entries []os.DirEntry) int {
+		n := 0
+		for _, entry := range entries {
+			if !strings.HasSuffix(entry.Name(), "-shm") && !strings.HasSuffix(entry.Name(), "-wal") {
+				n++
+			}
+		}
+		return n
+	}
+	if !bytes.Equal(before, after) || count(names) != count(afterNames) {
 		t.Error("doctor changed the registry or its directory")
 	}
 }

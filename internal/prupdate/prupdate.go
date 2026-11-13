@@ -589,9 +589,16 @@ type CheckStatus struct {
 
 // CheckList lists all of a head commit's checks, failing ones first, then
 // those still running, each group by name.
+//
+// At most fix.MaxAllChecks are listed, chosen after sorting, so failing ones
+// are never the ones left out. Total is how many GitHub reports for the head
+// (check runs and commit statuses), so the app can say "showing 100 of 130";
+// Capped is true when Checks lists fewer than Total.
 type CheckList struct {
 	HeadSHA string        `json:"head_sha"`
 	Checks  []CheckStatus `json:"checks"`
+	Total   int           `json:"total"`
+	Capped  bool          `json:"capped"`
 }
 
 // failingConclusions are the conclusions that sort a check first.
@@ -619,7 +626,7 @@ func (s Service) AllChecks(ctx context.Context, repository github.Repository, nu
 		}
 		head = pull.HeadSHA
 	}
-	list, err := fix.AllChecks(ctx, reader, repository, head)
+	list, total, err := fix.AllChecks(ctx, reader, repository, head)
 	if err != nil {
 		return CheckList{}, &Error{Failed, "baum could not read the checks from GitHub."}
 	}
@@ -639,6 +646,11 @@ func (s Service) AllChecks(ctx context.Context, repository github.Repository, nu
 	slices.SortStableFunc(out.Checks, func(a, b CheckStatus) int {
 		return cmp.Or(cmp.Compare(rank(a), rank(b)), strings.Compare(a.Name, b.Name))
 	})
+	if len(out.Checks) > fix.MaxAllChecks {
+		out.Checks = out.Checks[:fix.MaxAllChecks]
+	}
+	out.Total = max(total, len(out.Checks))
+	out.Capped = len(out.Checks) < out.Total
 	s.Cache.storeAllChecks(headKey(repository, head), gen, out)
 	return out, nil
 }

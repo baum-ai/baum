@@ -356,6 +356,13 @@ type Queue struct {
 	released chan struct{}
 	// draining refuses new jobs while the daemon restarts.
 	draining bool
+	// held starts no queued job while a restart waits for the running ones
+	// (DrainRunning).
+	held bool
+	// grouping counts the group generations queuing their members' reviews
+	// and then the group's job in separate steps; DrainRunning waits for
+	// them, so none is cut in half.
+	grouping int
 	// gate, when set, answers whether an automatic job may run now (and
 	// under which daily cap); see SetAutomaticGate.
 	gate func(Job) Admission
@@ -374,6 +381,13 @@ type Queue struct {
 	// heads are the archived runs of each head (headKey), as job_heads
 	// keeps them.
 	heads map[string]headRuns
+	// journalMu orders journal writes: a write takes it before it lets go of
+	// mu, so writes commit in the order their rows were read (saveOutside).
+	journalMu sync.Mutex
+	// flushing is set while saveOutside writes without mu; flushed, made
+	// on first use, is signalled with mu when it ends.
+	flushing bool
+	flushed  *sync.Cond
 }
 
 // mark records that the job with this id changed; mu is held.
@@ -407,6 +421,18 @@ func DefaultPath() (string, error) {
 }
 
 func Open(path string, executor Executor, concurrency int, changed func(Job)) (*Queue, error) {
+	return open(path, executor, concurrency, changed, false)
+}
+
+// OpenHeld is Open with the queue held: no journaled job starts until
+// Resume, so the caller can first wire what the executor and the queue's
+// settings need (a queued feature build needs the feature log, a chat job
+// the chat service). Jobs are accepted meanwhile.
+func OpenHeld(path string, executor Executor, concurrency int, changed func(Job)) (*Queue, error) {
+	return open(path, executor, concurrency, changed, true)
+}
+
+func open(path string, executor Executor, concurrency int, changed func(Job), held bool) (*Queue, error) {
 	if executor == nil || !validConcurrency(concurrency) {
 		return nil, errors.New("invalid runner configuration")
 	}
@@ -431,7 +457,7 @@ func Open(path string, executor Executor, concurrency int, changed func(Job)) (*
 		return nil, err
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	q := &Queue{path: path, transcripts: filepath.Join(filepath.Dir(path), "transcripts"), executor: executor, estimates: map[string]Estimate{}, drafts: map[string][]byte{}, superseded: map[string]bool{}, cancels: map[string]context.CancelFunc{}, dirty: map[string]bool{}, wake: make(chan struct{}, 1), chatWake: make(chan struct{}, 1), ctx: ctx, cancel: cancel, changed: changed, lock: lock, limit: concurrency}
+	q := &Queue{path: path, transcripts: filepath.Join(filepath.Dir(path), "transcripts"), executor: executor, estimates: map[string]Estimate{}, drafts: map[string][]byte{}, superseded: map[string]bool{}, cancels: map[string]context.CancelFunc{}, dirty: map[string]bool{}, wake: make(chan struct{}, 1), chatWake: make(chan struct{}, 1), ctx: ctx, cancel: cancel, changed: changed, lock: lock, limit: concurrency, held: held}
 	opened := false
 	defer func() {
 		if !opened {
@@ -490,7 +516,85 @@ func Open(path string, executor Executor, concurrency int, changed func(Job)) (*
 // reduced, or stays marked and unwritten, and the others are written. mu is
 // held.
 func (q *Queue) save() error {
-	var rows []journalRow
+	rows, gone := q.pending()
+	if len(rows) > 0 || len(gone) > 0 {
+		// Waits for a saveOutside write under way, which holds older rows.
+		q.journalMu.Lock()
+		e := writeJournal(q.path, rows, gone)
+		q.journalMu.Unlock()
+		if e != nil {
+			return e
+		}
+	}
+	for _, row := range rows {
+		delete(q.dirty, row.job.ID)
+	}
+	for _, id := range gone {
+		delete(q.dirty, id)
+	}
+	q.unsaved = false
+	return nil
+}
+
+// saveOutside writes the jobs marked changed, as save does, but lets go of mu
+// while it writes, so List and the other workers do not wait on the disk. mu
+// is held on entry and released on return. It returns once every change made
+// before the call is committed, by this write or another, or with the error
+// of its own write, after which the changes it held are marked again.
+//
+// Writes stay in order: one saveOutside writes at a time, a save waits for it
+// (journalMu), and its rows are read under mu, so nothing older commits after
+// something newer. The marks of the rows it holds are cleared when they are
+// read, and a change while it writes marks them again.
+func (q *Queue) saveOutside() error {
+	q.waitFlush()
+	rows, gone := q.pending()
+	if len(rows) == 0 && len(gone) == 0 {
+		q.mu.Unlock()
+		return nil
+	}
+	for _, row := range rows {
+		delete(q.dirty, row.job.ID)
+	}
+	for _, id := range gone {
+		delete(q.dirty, id)
+	}
+	q.flushing = true
+	path := q.path
+	q.journalMu.Lock()
+	q.mu.Unlock()
+	err := writeJournal(path, rows, gone)
+	q.journalMu.Unlock()
+	q.mu.Lock()
+	q.flushing = false
+	q.flushed.Broadcast()
+	if err != nil {
+		for _, row := range rows {
+			q.mark(row.job.ID)
+		}
+		for _, id := range gone {
+			q.mark(id)
+		}
+	}
+	q.mu.Unlock()
+	return err
+}
+
+// waitFlush waits until no saveOutside is writing. mu is held, and let go of
+// while waiting.
+func (q *Queue) waitFlush() {
+	if q.flushed == nil {
+		q.flushed = sync.NewCond(&q.mu)
+	}
+	for q.flushing {
+		q.flushed.Wait()
+	}
+}
+
+// pending returns the rows of the jobs marked changed and the ids of those no
+// longer in the history. A job too large for the journal is logged and left
+// out, still marked. mu is held.
+func (q *Queue) pending() (rows []journalRow, gone []string) {
 	present := map[string]bool{}
 	for _, j := range q.jobs {
 		if !q.dirty[j.ID] {
@@ -509,25 +613,12 @@ func (q *Queue) save() error {
 		}
 		rows = append(rows, journalRow{j, raw})
 	}
-	var gone []string
 	for id := range q.dirty {
 		if !present[id] {
 			gone = append(gone, id)
 		}
 	}
-	if len(rows) > 0 || len(gone) > 0 {
-		if e := writeJournal(q.path, rows, gone); e != nil {
-			return e
-		}
-	}
-	for _, row := range rows {
-		delete(q.dirty, row.job.ID)
-	}
-	for _, id := range gone {
-		delete(q.dirty, id)
-	}
-	q.unsaved = false
-	return nil
+	return rows, gone
 }
 
 // Delays between retries of a failed journal write; variables for tests.
@@ -675,11 +766,35 @@ func (q *Queue) Drain() bool {
 	return true
 }
 
-// Resume accepts jobs again after Drain.
-func (q *Queue) Resume() {
+// DrainRunning prepares a restart without waiting for the queued jobs: it
+// holds the queue, so no queued job starts in either lane, and reports true
+// once none is running, refusing new jobs with ErrRestarting in the same step
+// (as Drain does). Queued jobs stay journaled, and the next Open runs them.
+// While it reports false the queue stays held and still accepts jobs, which
+// queue behind the hold; Resume releases it.
+func (q *Queue) DrainRunning() bool {
 	q.mu.Lock()
 	defer q.mu.Unlock()
-	q.draining = false
+	q.held = true
+	if q.grouping > 0 {
+		return false
+	}
+	for _, j := range q.jobs {
+		if j.State == "running" {
+			return false
+		}
+	}
+	q.draining = true
+	return true
+}
+
+// Resume accepts jobs again after Drain, and starts queued jobs again after
+// DrainRunning.
+func (q *Queue) Resume() {
+	q.mu.Lock()
+	q.draining, q.held = false, false
+	q.mu.Unlock()
+	q.signal()
 }
 func (q *Queue) List() []Job {
 	q.mu.Lock()
@@ -847,6 +962,21 @@ func (q *Queue) Generate(ctx context.Context, items []Item, mode string, isolati
 		return nil, &BlockedError{e.Items[0].BlockedReason}
 	}
 	if group := e.Items[0]; len(group.Awaiting) > 0 {
+		// A restart that drains between the members' reviews and the
+		// group's job would accept half of what the person asked for.
+		q.mu.Lock()
+		if q.draining {
+			q.mu.Unlock()
+			q.forget(e.ID)
+			return nil, ErrRestarting
+		}
+		q.grouping++
+		q.mu.Unlock()
+		defer func() {
+			q.mu.Lock()
+			q.grouping--
+			q.mu.Unlock()
+		}()
 		// The group's isolation covers its members: confirmed for it, it is
 		// confirmed for their reviews.
 		if err := q.reviewMembers(ctx, group, false, isolation); err != nil {
@@ -1314,8 +1444,9 @@ func (q *Queue) worker(chat bool) {
 				return
 			}
 			i := -1
-			// Outside the chat lane a worker takes a job only below limit.
-			if chat || q.running() < q.limit {
+			// Outside the chat lane a worker takes a job only below limit;
+			// none starts while a restart waits (DrainRunning).
+			if !q.held && !q.draining && (chat || q.running() < q.limit) {
 				i = q.next(chat)
 			}
 			if i < 0 {
@@ -1394,20 +1525,28 @@ func (q *Queue) worker(chat bool) {
 				}
 				job.UpdatedAt = time.Now().UTC()
 				q.mark(job.ID)
-				// Save every reported usage update before publishing it. A crash
-				// may lose in-flight provider usage, never the reports we received.
-				if e := q.save(); e != nil {
-					cancel()
-					q.mu.Unlock()
-					return
-				}
 				current := *job
 				current.Accounting = current.Accounting.Clone()
 				usage := q.usage
 				if !usageOnly(before, current) {
 					usage = nil
 				}
+				// Save every reported usage update before publishing it. A crash
+				// may lose in-flight provider usage, never the reports we received.
+				// The write lets go of mu (saveOutside).
+				if e := q.saveOutside(); e != nil {
+					cancel()
+					return
+				}
+				// A state change made while it was written (a cancellation, the
+				// end) published itself, saved; this older report would undo it.
+				q.mu.Lock()
+				k = q.find(current.ID)
+				superseded := k < 0 || q.jobs[k].State != current.State
 				q.mu.Unlock()
+				if superseded {
+					return
+				}
 				if usage != nil {
 					usage(usageOf(current))
 				} else {
