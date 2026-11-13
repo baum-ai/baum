@@ -1459,3 +1459,71 @@ func TestCatchUpSkipsAPullRequestThatTurnedIneligible(t *testing.T) {
 	h.pass()
 	h.want("org/repo#2@b1:setup")
 }
+
+func TestOverviewDoesNotWaitForPersistenceAndSavesStayOrdered(t *testing.T) {
+	h := newHarness(t)
+	h.observe(pr{number: 1, head: "a", authored: true})
+	db, err := appdb.Open(h.scheduler.Path, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = db.Close() }()
+	tx, err := db.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	first := make(chan struct{})
+	snapshot := h.snapshot(pr{number: 1, head: "b", authored: true})
+	go func() { h.scheduler.Observe(context.Background(), snapshot); close(first) }()
+	// Wait until the mutation released mu to persist its snapshot. The real
+	// database writer above holds persistence, without relying on a fake clock.
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		ready := false
+		if h.scheduler.mu.TryLock() {
+			ready = h.scheduler.state.Repositories["org/repo"].PRs[1].Head == "b" && h.scheduler.pending == nil
+			h.scheduler.mu.Unlock()
+		}
+		if ready {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("mutation did not release the state mutex for persistence")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	overviewDone := make(chan struct{})
+	go func() {
+		defer close(overviewDone)
+		overview, err := h.scheduler.Overview(context.Background())
+		if err != nil || len(overview.Repositories) != 1 || overview.Repositories[0].Pending != 1 {
+			t.Errorf("overview %+v %v", overview, err)
+		}
+	}()
+	select {
+	case <-overviewDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("overview waited for persistence")
+	}
+	select {
+	case <-first:
+		t.Fatal("save ignored the database write lock")
+	default:
+	}
+	second := make(chan struct{})
+	next := h.snapshot(pr{number: 1, head: "c", authored: true})
+	go func() { h.scheduler.Observe(context.Background(), next); close(second) }()
+	if err := tx.Rollback(); err != nil {
+		t.Fatal(err)
+	}
+	<-first
+	<-second
+	h.restart()
+	h.scheduler.mu.Lock()
+	defer h.scheduler.mu.Unlock()
+	if got := h.scheduler.load().Repositories["org/repo"].PRs[1]; got.Head != "c" || got.Pending != "c" {
+		t.Fatalf("restart lost the newer snapshot: %+v", got)
+	}
+}

@@ -267,3 +267,47 @@ func TestIndexWatcherInvalidatesChangeBetweenIdleTickAndFirstSubscriber(t *testi
 	until("invalidated on connect", func() bool { _, _, invalidated := index.state(); return invalidated == 1 })
 	until("published", func() bool { return s.published() == 1 })
 }
+
+// In-process changes wake a long-interval watcher but still compare content.
+func TestIndexWatcherChecksInProcessChanges(t *testing.T) {
+	s, err := New(Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	index := &fakeIndex{fingerprint: "a"}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { defer close(done); s.WatchIndex(ctx, time.Hour, index.watch()) }()
+	defer func() { cancel(); <-done }()
+	until := func(ok func() bool) {
+		t.Helper()
+		deadline := time.Now().Add(time.Second)
+		for !ok() {
+			if time.Now().After(deadline) {
+				t.Fatal("watcher did not wake")
+			}
+			time.Sleep(time.Millisecond)
+		}
+	}
+	until(func() bool { _, ticks, _ := index.state(); return ticks > 0 })
+	index.set(func(f *fakeIndex) { f.fresh = false })
+	s.CheckIndex()
+	until(func() bool { _, ticks, _ := index.state(); return ticks > 1 })
+	if builds, _, _ := index.state(); builds != 0 {
+		t.Fatal("built without subscribers", builds)
+	}
+	defer s.subscribe()()
+	until(func() bool { return s.published() == 1 })
+	for range 2 {
+		before, _, _ := index.state()
+		index.set(func(f *fakeIndex) { f.fresh = false })
+		s.CheckIndex()
+		until(func() bool { builds, _, _ := index.state(); return builds > before })
+	}
+	if s.published() != 1 {
+		t.Fatal("unchanged callbacks published", s.published())
+	}
+	index.set(func(f *fakeIndex) { f.fresh = false; f.content++ })
+	s.CheckIndex()
+	until(func() bool { return s.published() == 2 })
+}

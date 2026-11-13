@@ -360,6 +360,31 @@ func TestWriteArchiveKeepsComparedTextWithNULs(t *testing.T) {
 	}
 }
 
+// A file whose patch was not read (past the diff's file limit) is not
+// exported as a compared path: only the head tree's pass takes it, sniffed
+// like any other file.
+func TestWriteArchiveTakesUnreadFilesOnlyFromTheHeadTree(t *testing.T) {
+	export := fakeExport{
+		head:      map[string]string{"logo.png": "\x89PNG\x00", "notes.txt": "text\n"},
+		mergeBase: map[string]string{"notes.txt": "old\n"},
+	}
+	hunks := []Hunk{
+		{Path: "logo.png", Textless: true, TextlessReason: FileLimitReason},
+		{Path: "notes.txt", Textless: true, TextlessReason: FileLimitReason},
+	}
+	config := CheckoutConfig{MaxFileBytes: 1024, MaxTotalBytes: 1024, MaxTotalFiles: 10}
+	omissions, files := writeAndReadArchive(t, export, hunks, config)
+	if want := []CheckoutOmission{{Path: "logo.png", Reason: OmittedBinaryReason}}; !slices.Equal(omissions, want) {
+		t.Fatalf("omissions = %+v, want %+v", omissions, want)
+	}
+	if files["head/notes.txt"] != "text\n" {
+		t.Fatalf("unread text file missing: %q", files)
+	}
+	if _, ok := files["merge-base/notes.txt"]; ok {
+		t.Fatalf("unread file exported at the merge base: %q", files)
+	}
+}
+
 // Over the byte or file budget, the export keeps the compared paths at both
 // trees, fills the rest of the budget with other head files, and omits what
 // does not fit instead of failing; the archive unpacks under the same caps.

@@ -6,21 +6,25 @@ package appdb
 import (
 	"context"
 	"database/sql"
+	"database/sql/driver"
 	"errors"
 	"fmt"
 	"io/fs"
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"time"
 
 	_ "modernc.org/sqlite"
 
 	"github.com/baum-ai/baum/internal/privatefs"
+	"github.com/baum-ai/baum/internal/sqlitepool"
 )
 
-// Version is the first public application database baseline.
-const Version = 1
+// Version is the current application database schema.
+const Version = 2
 const applicationID = 0x6261756d
 
 // Directory is the application data directory, beside daemon runtime state.
@@ -45,8 +49,18 @@ func Path() (string, error) {
 	return filepath.Join(dir, "app.sqlite"), nil
 }
 
-// Open opens the common database policy. Read-only opens never create a file,
-// change permissions, or initialize a schema. A newer schema is always refused.
+// JournalSizeLimit is the size, in bytes, a write-ahead log is cut back to
+// once a checkpoint has copied it into the database.
+const JournalSizeLimit = 16 << 20
+
+// sharedConnections is how many connections a shared handle (Acquire) opens
+// at most: readers do not wait for each other or for the writer.
+const sharedConnections = 8
+
+// Open opens the common database policy. Read-only opens never create the
+// database, change permissions, or initialize a schema; on a database in WAL
+// mode SQLite creates its -shm (and an empty -wal) beside it, private like the
+// database, as any connection to it does. A newer schema is always refused.
 func Open(path string, readOnly bool) (*sql.DB, error) {
 	if path == "" {
 		var err error
@@ -102,21 +116,46 @@ func Open(path string, readOnly bool) (*sql.DB, error) {
 	// Read-then-write transactions must reserve the writer before reading;
 	// upgrading a deferred read lock can fail immediately despite busy_timeout.
 	if !readOnly {
-		uri += "&_txlock=immediate"
+		uri += "&_txlock=immediate&_pragma=journal_size_limit(" + strconv.Itoa(JournalSizeLimit) + ")"
 	}
 	db, err := sql.Open("sqlite", uri)
 	if err != nil {
 		return nil, err
 	}
 	db.SetMaxOpenConns(1)
-	if err = initialize(db, readOnly); err != nil {
+	if err = initialize(db, readOnly, filepath.Dir(absolute)); err != nil {
 		_ = db.Close()
 		return nil, err
 	}
 	return db, nil
 }
 
-func initialize(db *sql.DB, readOnly bool) (err error) {
+// Acquire returns a handle opened as Open opens one, shared with the rest of
+// the process once sqlitepool is enabled, and the function that releases it.
+// Callers must not close it or leave a transaction open past release.
+func Acquire(path string, readOnly bool) (*sql.DB, func(), error) {
+	if path == "" {
+		var err error
+		if path, err = Path(); err != nil {
+			return nil, nil, err
+		}
+	}
+	absolute, err := filepath.Abs(path)
+	if err != nil {
+		return nil, nil, err
+	}
+	return sqlitepool.Acquire(absolute, readOnly, func() (*sql.DB, bool, error) {
+		db, err := Open(absolute, readOnly)
+		if err == nil {
+			db.SetMaxOpenConns(sharedConnections)
+			db.SetMaxIdleConns(2)
+			db.SetConnMaxIdleTime(time.Minute)
+		}
+		return db, true, err
+	})
+}
+
+func initialize(db *sql.DB, readOnly bool, dir string) (err error) {
 	ctx := context.Background()
 	conn, err := db.Conn(ctx)
 	if err != nil {
@@ -124,6 +163,13 @@ func initialize(db *sql.DB, readOnly bool) (err error) {
 	}
 	defer func() { _ = conn.Close() }()
 	if !readOnly {
+		// Best effort: a database another connection holds stays in its
+		// journal mode until a later write-open switches it, and one in a
+		// directory where the log does not work is never switched.
+		var mode string
+		if conn.QueryRowContext(ctx, "PRAGMA journal_mode").Scan(&mode) == nil && mode != "wal" && sqlitepool.WALSupported(dir) {
+			_, _ = conn.ExecContext(ctx, "PRAGMA journal_mode=WAL")
+		}
 		if _, err = conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
 			return err
 		}
@@ -173,6 +219,20 @@ func initialize(db *sql.DB, readOnly bool) (err error) {
 	} else if id != applicationID {
 		return errors.New("unsupported application database baseline")
 	}
+	if version == 1 {
+		var groups int
+		if err = conn.QueryRowContext(ctx, "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='groups'").Scan(&groups); err != nil {
+			return err
+		}
+		if groups > 0 {
+			if _, err = conn.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS groups_repository ON groups(repository,deleted,created,id)`); err != nil {
+				return err
+			}
+		}
+		if _, err = conn.ExecContext(ctx, "PRAGMA user_version=2"); err != nil {
+			return err
+		}
+	}
 	rows, err := conn.QueryContext(ctx, "SELECT bucket,key,value FROM app_documents LIMIT 0")
 	if err != nil {
 		return err
@@ -186,11 +246,11 @@ func initialize(db *sql.DB, readOnly bool) (err error) {
 
 // Read returns fs.ErrNotExist for a missing database or document.
 func Read(path, bucket, key string) ([]byte, error) {
-	db, err := Open(path, true)
+	db, release, err := Acquire(path, true)
 	if err != nil {
 		return nil, err
 	}
-	defer func() { _ = db.Close() }()
+	defer release()
 	var raw []byte
 	err = db.QueryRow(`SELECT value FROM app_documents WHERE bucket=? AND key=?`, bucket, key).Scan(&raw)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -207,11 +267,11 @@ func Write(path, bucket, key string, raw []byte) error {
 // Update serializes read-modify-write across processes. Missing rows pass nil
 // to change; a failed callback or commit leaves the prior value untouched.
 func Update(path, bucket, key string, change func([]byte) ([]byte, error)) (err error) {
-	db, err := Open(path, false)
+	db, release, err := Acquire(path, false)
 	if err != nil {
 		return err
 	}
-	defer func() { _ = db.Close() }()
+	defer release()
 	ctx := context.Background()
 	conn, err := db.Conn(ctx)
 	if err != nil {
@@ -221,9 +281,11 @@ func Update(path, bucket, key string, change func([]byte) ([]byte, error)) (err 
 	if _, err = conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
 		return err
 	}
+	committed := false
+	// Also on a panic in change: the connection goes back to a shared handle.
 	defer func() {
-		if err != nil {
-			_, _ = conn.ExecContext(ctx, "ROLLBACK")
+		if !committed {
+			Abandon(ctx, conn)
 		}
 	}()
 	var raw []byte
@@ -243,6 +305,46 @@ func Update(path, bucket, key string, change func([]byte) ([]byte, error)) (err 
 	if err != nil {
 		return err
 	}
-	_, err = conn.ExecContext(ctx, "COMMIT")
-	return err
+	if _, err = conn.ExecContext(ctx, "COMMIT"); err != nil {
+		return err
+	}
+	committed = true
+	return nil
+}
+
+// Transact runs change in one immediate write transaction on a connection of
+// db and commits it. A failed change or commit, or a panic, rolls it back
+// (Abandon).
+func Transact(ctx context.Context, db *sql.DB, change func(*sql.Conn) error) (err error) {
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = conn.Close() }()
+	if _, err = conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
+		return err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			Abandon(ctx, conn)
+		}
+	}()
+	if err = change(conn); err != nil {
+		return err
+	}
+	if _, err = conn.ExecContext(ctx, "COMMIT"); err != nil {
+		return err
+	}
+	committed = true
+	return nil
+}
+
+// Abandon rolls back the transaction open on conn; when that fails, the
+// connection is closed rather than returned to its handle, so a transaction
+// left open cannot keep holding the database's write lock.
+func Abandon(ctx context.Context, conn *sql.Conn) {
+	if _, err := conn.ExecContext(ctx, "ROLLBACK"); err != nil {
+		_ = conn.Raw(func(any) error { return driver.ErrBadConn })
+	}
 }

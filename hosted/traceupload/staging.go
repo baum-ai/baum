@@ -13,6 +13,7 @@ import (
 
 	"github.com/baum-ai/goredact"
 
+	"github.com/baum-ai/baum/sessions/codextranscript"
 	"github.com/baum-ai/baum/sessions/collector"
 	"github.com/baum-ai/baum/sessions/collector/model"
 )
@@ -35,7 +36,7 @@ func stageSession(ctx context.Context, engine *goredact.Engine, stagedDir string
 	files := session.Files
 	if len(files) == 0 {
 		files = []collector.SessionFile{{
-			Path: session.Path, Name: filepath.Base(session.Path), Kind: model.KindTranscript,
+			Path: session.Path, Name: codextranscript.PlainName(filepath.Base(session.Path)), Kind: model.KindTranscript,
 		}}
 	}
 	roots := 0
@@ -43,10 +44,12 @@ func stageSession(ctx context.Context, engine *goredact.Engine, stagedDir string
 	for i, file := range files {
 		// The name is how a reader tells the files of a tree apart once the
 		// layout is gone, so two files may not share one.
-		if file.Name == "" || names[file.Name] {
+		// A compressed rollout is staged under its plain name.
+		name := codextranscript.PlainName(file.Name)
+		if name == "" || names[name] {
 			return SessionManifest{}, fmt.Errorf("session %s names file %q twice or not at all", session.SessionID, file.Name)
 		}
-		names[file.Name] = true
+		names[name] = true
 		if file.Kind == model.KindTranscript {
 			roots++
 		}
@@ -76,6 +79,7 @@ func stageSessionFile(
 
 	var in io.Reader
 	var size int64
+	var decoded bool
 	switch {
 	case file.Data != nil && file.Path != "":
 		return SessionFileManifest{}, fmt.Errorf("file %s has both a path and generated data", file.Name)
@@ -98,6 +102,18 @@ func stageSessionFile(
 			return SessionFileManifest{}, fmt.Errorf("file %s is not regular", file.Name)
 		}
 		in, size = handle, info.Size()
+		if codextranscript.Compressed(file.Path) {
+			// The decoded bytes are staged, never the zstd stream. The strict
+			// decoder fails on a corrupt file, so a transcript cut short is
+			// not uploaded as if it were whole. Reading stops one byte past
+			// the bound for an archive, so that one past it fails below.
+			rc, err := codextranscript.OpenRollout(file.Path)
+			if err != nil {
+				return SessionFileManifest{}, fmt.Errorf("reading file %s: %w", file.Name, err)
+			}
+			defer func() { _ = rc.Close() }()
+			in, size, decoded = rc, MaxUnpackedBytes+1, true
+		}
 	}
 
 	outputPath := stagedPath(stagedDir, sessionIndex, id)
@@ -120,13 +136,16 @@ func stageSessionFile(
 	if err != nil {
 		return SessionFileManifest{}, fmt.Errorf("redacting file %s: %w", file.Name, err)
 	}
+	if decoded && stats.BytesWritten > MaxUnpackedBytes {
+		return SessionFileManifest{}, fmt.Errorf("file %s is larger than %d bytes once decompressed", file.Name, MaxUnpackedBytes)
+	}
 	counts := make(map[string]int, len(stats.ByRule))
 	for rule, findings := range stats.ByRule {
 		counts[rule] = int(findings)
 	}
 	return SessionFileManifest{
 		ID:             id,
-		Name:           file.Name,
+		Name:           codextranscript.PlainName(file.Name),
 		Kind:           file.Kind,
 		Member:         member,
 		Root:           file.Kind == model.KindTranscript,

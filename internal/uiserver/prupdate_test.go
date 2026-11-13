@@ -39,7 +39,7 @@ func (f *fakeUpdater) FailingChecks(_ context.Context, _ github.Repository, _ in
 
 func (f *fakeUpdater) AllChecks(_ context.Context, _ github.Repository, _ int, head string) (prupdate.CheckList, error) {
 	f.calls = append(f.calls, "all checks "+head)
-	return prupdate.CheckList{HeadSHA: "abc", Checks: []prupdate.CheckStatus{{Name: "build", Status: "in_progress"}, {Name: "test", Status: "completed", Conclusion: "failure", JobID: 21, ID: 21, HasLog: true}}}, f.err
+	return prupdate.CheckList{HeadSHA: "abc", Total: 2, Checks: []prupdate.CheckStatus{{Name: "build", Status: "in_progress"}, {Name: "test", Status: "completed", Conclusion: "failure", JobID: 21, ID: 21, HasLog: true}}}, f.err
 }
 
 func (f *fakeUpdater) CheckLog(_ context.Context, r github.Repository, number int, check int64) (prupdate.CheckLog, error) {
@@ -196,7 +196,7 @@ func TestUpdateHandlerReviewThreads(t *testing.T) {
 		t.Fatalf("failing checks: %d %s %v", w.Code, w.Body.String(), updater.calls)
 	}
 	updater.calls = nil
-	if w := do("GET", "/api/prs/checks?repository=acme/bare&pr=7&head_sha=abc", ""); w.Code != 200 || w.Body.String() != `{"head_sha":"abc","checks":[{"name":"build","status":"in_progress","conclusion":""},{"name":"test","status":"completed","conclusion":"failure","job_id":21,"id":21,"has_log":true}]}`+"\n" || strings.Join(updater.calls, ",") != "all checks abc" {
+	if w := do("GET", "/api/prs/checks?repository=acme/bare&pr=7&head_sha=abc", ""); w.Code != 200 || w.Body.String() != `{"head_sha":"abc","checks":[{"name":"build","status":"in_progress","conclusion":""},{"name":"test","status":"completed","conclusion":"failure","job_id":21,"id":21,"has_log":true}],"total":2,"capped":false}`+"\n" || strings.Join(updater.calls, ",") != "all checks abc" {
 		t.Fatalf("all checks: %d %s %v", w.Code, w.Body.String(), updater.calls)
 	}
 	updater.calls = nil

@@ -7,6 +7,7 @@ package benchcorpus
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -62,14 +63,19 @@ func ProjectedRoot(b testing.TB) (root, label string) {
 	if label == "synthetic" {
 		return src, label
 	}
-	// Stores do not use WAL, so versions.sqlite is the whole database.
-	raw, err := os.ReadFile(filepath.Join(src, "versions.sqlite"))
-	if err != nil {
-		b.Fatal(err)
-	}
+	// Commits not checkpointed yet are in the write-ahead log beside it.
 	root = b.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "versions.sqlite"), raw, 0o600); err != nil {
-		b.Fatal(err)
+	for _, name := range []string{"versions.sqlite", "versions.sqlite-wal"} {
+		raw, err := os.ReadFile(filepath.Join(src, name))
+		if errors.Is(err, os.ErrNotExist) && name != "versions.sqlite" {
+			continue
+		}
+		if err != nil {
+			b.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(root, name), raw, 0o600); err != nil {
+			b.Fatal(err)
+		}
 	}
 	if _, err := store.Open("", root, true); err != nil {
 		b.Fatal(err)

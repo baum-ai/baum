@@ -1,5 +1,7 @@
-// Package etagjson serves JSON that is encoded once and revalidated with a
-// strong ETag, so an unchanged snapshot costs neither an encode nor a body.
+// Package etagjson serves JSON that is encoded once and tagged with a strong
+// ETag, so an unchanged snapshot costs neither an encode nor a body. The client
+// revalidates itself by sending If-None-Match; the response is never stored by
+// an HTTP cache.
 package etagjson
 
 import (
@@ -29,11 +31,12 @@ func Encode(v any) (Body, error) {
 }
 
 // Serve answers 304 when the request's If-None-Match names b, and the body
-// otherwise. no-cache lets the webview store the response but makes it
-// revalidate each time, which is what turns an unchanged snapshot into a 304.
+// otherwise. The response is no-store: the webview's HTTP cache leaks memory
+// on WebKitGTK 2.50, so the app keeps the last answer and sends If-None-Match
+// itself, which is what turns an unchanged snapshot into a 304.
 func Serve(w http.ResponseWriter, r *http.Request, b Body) {
 	h := w.Header()
-	h.Set("Cache-Control", "no-cache")
+	h.Set("Cache-Control", "no-store")
 	h.Set("ETag", b.ETag)
 	if matches(r.Header.Get("If-None-Match"), b.ETag) {
 		w.WriteHeader(http.StatusNotModified)

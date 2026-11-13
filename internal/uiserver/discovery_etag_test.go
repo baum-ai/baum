@@ -55,7 +55,7 @@ func TestDiscoveryHandlerEncodesPerRevision(t *testing.T) {
 	}
 	first := get("")
 	etag := first.Header().Get("ETag")
-	if first.Code != 200 || etag == "" || first.Header().Get("Cache-Control") != "no-cache" {
+	if first.Code != 200 || etag == "" || first.Header().Get("Cache-Control") != "no-store" {
 		t.Fatalf("%d %v", first.Code, first.Header())
 	}
 	if w := get(etag); w.Code != http.StatusNotModified {

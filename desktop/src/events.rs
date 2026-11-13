@@ -1,4 +1,4 @@
-//! The daemon's events stream, read from Rust so notifications work while the
+//! The daemon's shared native events stream, read from Rust while the
 //! window is closed or hidden. The client is a small blocking HTTP/1.0 reader
 //! (a response without chunked encoding, ended by closing the connection) so
 //! the app needs no HTTP crate for a loopback socket.
@@ -11,28 +11,27 @@
 //! path for a click). It never goes in a URL, a log line or a page.
 
 use std::io::{self, BufRead, BufReader, Read, Write};
-use std::net::{SocketAddr, TcpStream};
-use std::time::{Duration, Instant};
+use std::net::{Shutdown, SocketAddr, TcpStream};
+use std::sync::Mutex;
+use std::time::Duration;
 
 use serde::Deserialize;
 use url::Url;
 
 use crate::daemon::Launch;
 
+/// The daemon pings every 20 s. A stream silent for this long is dead.
+pub const READ_TIMEOUT: Duration = Duration::from_secs(70);
+
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
-/// How often a quiet stream checks whether it should stop. The daemon pings
-/// every 20 seconds, so a minute of silence is a dead connection.
-const POLL: Duration = Duration::from_secs(2);
-const IDLE_LIMIT: Duration = Duration::from_secs(60);
 const MAX_LINE: usize = 64 << 10;
-const MAX_BACKOFF: Duration = Duration::from_secs(30);
 /// A cursor no event reaches: the daemon answers with a `reset` carrying the
 /// latest id and then sends only new events, so history is never replayed as
 /// news.
-const NO_HISTORY: u64 = u64::MAX;
+pub const NO_HISTORY: u64 = u64::MAX;
 
 /// A daemon's app transport and the credential for it.
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct Endpoint {
     addr: SocketAddr,
     authority: String,
@@ -78,6 +77,31 @@ impl Endpoint {
     }
 }
 
+/// Lets attachment changes interrupt a blocked read without a polling timer.
+#[derive(Default)]
+pub struct Control(Mutex<Option<TcpStream>>);
+
+impl Control {
+    pub fn cancel(&self) {
+        if let Some(socket) = self.0.lock().unwrap_or_else(|p| p.into_inner()).take() {
+            let _ = socket.shutdown(Shutdown::Both);
+        }
+    }
+
+    fn track(&self, socket: &TcpStream) -> io::Result<Reading<'_>> {
+        *self.0.lock().unwrap_or_else(|p| p.into_inner()) = Some(socket.try_clone()?);
+        Ok(Reading(self))
+    }
+}
+
+struct Reading<'a>(&'a Control);
+
+impl Drop for Reading<'_> {
+    fn drop(&mut self) {
+        self.0.cancel();
+    }
+}
+
 /// One server-sent event.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Event {
@@ -86,38 +110,12 @@ pub struct Event {
     pub data: String,
 }
 
-/// Reads events until `stop` says so, reconnecting with a growing delay and
-/// resuming after the last event seen.
-pub fn run(endpoint: &Endpoint, stop: &dyn Fn() -> bool, on_event: &mut dyn FnMut(&Event)) {
-    let mut last = NO_HISTORY;
-    let mut delay = Duration::from_secs(1);
-    let mut failing = false;
-    while !stop() {
-        let started = Instant::now();
-        let result = stream(endpoint, &mut last, stop, on_event);
-        if stop() {
-            return;
-        }
-        if let Err(e) = result
-            && !failing
-        {
-            failing = true;
-            eprintln!("baum desktop: the daemon's events stream ended ({e}); reconnecting");
-        }
-        if started.elapsed() > MAX_BACKOFF {
-            delay = Duration::from_secs(1);
-            failing = false;
-        }
-        sleep(delay, stop);
-        delay = (delay * 2).min(MAX_BACKOFF);
-    }
-}
-
-fn sleep(total: Duration, stop: &dyn Fn() -> bool) {
-    let end = Instant::now() + total;
-    while Instant::now() < end && !stop() {
-        std::thread::sleep(Duration::from_millis(100));
-    }
+/// Items shared by the tray and notification consumers.
+#[derive(Debug, PartialEq, Eq)]
+pub enum StreamItem {
+    Open,
+    Event(Event),
+    Ping,
 }
 
 fn invalid(message: impl Into<String>) -> io::Error {
@@ -126,14 +124,20 @@ fn invalid(message: impl Into<String>) -> io::Error {
 
 /// One connection's worth of events. Returns when the connection ends, which
 /// is an error unless `stop` asked for it.
-fn stream(
+pub fn stream(
     endpoint: &Endpoint,
     last: &mut u64,
+    timeout: Duration,
     stop: &dyn Fn() -> bool,
-    on_event: &mut dyn FnMut(&Event),
+    control: &Control,
+    on_item: &mut dyn FnMut(StreamItem),
 ) -> io::Result<()> {
     let mut socket = TcpStream::connect_timeout(&endpoint.addr, CONNECT_TIMEOUT)?;
-    socket.set_read_timeout(Some(POLL))?;
+    let _reading = control.track(&socket)?;
+    if stop() {
+        return Ok(());
+    }
+    socket.set_read_timeout(Some(timeout))?;
     socket.set_write_timeout(Some(CONNECT_TIMEOUT))?;
     write!(
         socket,
@@ -141,14 +145,16 @@ fn stream(
         endpoint.authority, endpoint.token, last
     )?;
     let mut reader = BufReader::new(socket);
-    // Bytes of the line being read: a timeout can leave half a line (or half
-    // a multibyte character) here, and only a complete line is decoded.
+    // Decode only complete lines, including multibyte characters split
+    // across socket reads.
     let mut buf: Vec<u8> = Vec::new();
-    let mut idle = Duration::ZERO;
     let mut in_headers = true;
     let mut seen_status = false;
     let (mut id, mut name, mut data) = (None, String::new(), String::new());
     loop {
+        if stop() {
+            return Ok(());
+        }
         // A peer that never sends a newline cannot grow the buffer past this.
         let room = MAX_LINE.saturating_sub(buf.len());
         if room == 0 {
@@ -157,23 +163,11 @@ fn stream(
         match (&mut reader).take(room as u64).read_until(b'\n', &mut buf) {
             Ok(0) => return Err(io::ErrorKind::UnexpectedEof.into()),
             Ok(_) if buf.last() != Some(&b'\n') => continue,
-            Ok(_) => idle = Duration::ZERO,
-            Err(e)
-                if matches!(
-                    e.kind(),
-                    io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
-                ) =>
-            {
-                if stop() {
-                    return Ok(());
-                }
-                idle += POLL;
-                if idle >= IDLE_LIMIT {
-                    return Err(io::ErrorKind::TimedOut.into());
-                }
-                continue;
-            }
+            Ok(_) => {}
             Err(e) => return Err(e),
+        }
+        if stop() {
+            return Ok(());
         }
         let text = String::from_utf8_lossy(&buf)
             .trim_end_matches(['\r', '\n'])
@@ -187,6 +181,7 @@ fn stream(
                 }
             } else if text.is_empty() {
                 in_headers = false;
+                on_item(StreamItem::Open);
             }
             continue;
         }
@@ -204,9 +199,13 @@ fn stream(
                 if let Some(id) = event.id {
                     *last = id;
                 }
-                on_event(&event);
+                on_item(StreamItem::Event(event));
             }
             (id, name, data) = (None, String::new(), String::new());
+            continue;
+        }
+        if text.starts_with(':') {
+            on_item(StreamItem::Ping);
             continue;
         }
         let (field, value) = text.split_once(':').unwrap_or((&text, ""));
@@ -274,9 +273,30 @@ pub fn app_url(endpoint: &Endpoint) -> io::Result<Url> {
 mod tests {
     use super::*;
     use std::net::TcpListener;
-    use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::{Arc, Mutex};
     use std::thread;
+
+    const POLL: Duration = Duration::from_secs(2);
+
+    fn read_events(
+        endpoint: &Endpoint,
+        last: &mut u64,
+        stop: &dyn Fn() -> bool,
+        on_event: &mut dyn FnMut(&Event),
+    ) -> io::Result<()> {
+        stream(
+            endpoint,
+            last,
+            POLL,
+            stop,
+            &Control::default(),
+            &mut |item| {
+                if let StreamItem::Event(event) = item {
+                    on_event(&event);
+                }
+            },
+        )
+    }
 
     const TOKEN: &str = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQ";
 
@@ -318,7 +338,7 @@ mod tests {
         });
         let mut got = Vec::new();
         let mut last = NO_HISTORY;
-        let result = stream(&endpoint, &mut last, &|| false, &mut |e| {
+        let result = read_events(&endpoint, &mut last, &|| false, &mut |e| {
             got.push(e.clone())
         });
         assert!(result.is_err(), "the server closed the stream");
@@ -351,6 +371,110 @@ mod tests {
     }
 
     #[test]
+    fn one_stream_delivers_liveness_and_full_events() {
+        let (listener, endpoint) = server();
+        let served = thread::spawn(move || {
+            let (mut socket, _) = listener.accept().unwrap();
+            request(&mut socket);
+            write!(socket, "HTTP/1.0 200 OK\r\n\r\n: ping\n\nid: 9\nevent: notice\ndata: {{\"kind\":\"review_finished\"}}\n\n").unwrap();
+        });
+        let mut items = Vec::new();
+        let mut last = NO_HISTORY;
+        let _ = stream(
+            &endpoint,
+            &mut last,
+            POLL,
+            &|| false,
+            &Control::default(),
+            &mut |item| items.push(item),
+        );
+        served.join().unwrap();
+        assert_eq!(
+            items,
+            vec![
+                StreamItem::Open,
+                StreamItem::Ping,
+                StreamItem::Event(Event {
+                    id: Some(9),
+                    name: "notice".into(),
+                    data: r#"{"kind":"review_finished"}"#.into(),
+                }),
+            ]
+        );
+        assert_eq!(last, 9);
+    }
+
+    #[test]
+    fn replacement_stops_before_dispatching_buffered_events() {
+        let (listener, endpoint) = server();
+        let served = thread::spawn(move || {
+            let (mut socket, _) = listener.accept().unwrap();
+            request(&mut socket);
+            write!(
+                socket,
+                "HTTP/1.0 200 OK\r\n\r\nid: 9\nevent: notice\ndata: {{}}\n\n"
+            )
+            .unwrap();
+        });
+        let stopped = std::cell::Cell::new(false);
+        let mut last = NO_HISTORY;
+        stream(
+            &endpoint,
+            &mut last,
+            POLL,
+            &|| stopped.get(),
+            &Control::default(),
+            &mut |item| {
+                assert_eq!(item, StreamItem::Open);
+                stopped.set(true);
+            },
+        )
+        .unwrap();
+        served.join().unwrap();
+        assert_eq!(last, NO_HISTORY);
+    }
+
+    #[test]
+    fn cancellation_interrupts_a_quiet_socket() {
+        let (listener, endpoint) = server();
+        let (release, released) = std::sync::mpsc::channel();
+        let served = thread::spawn(move || {
+            let (mut socket, _) = listener.accept().unwrap();
+            request(&mut socket);
+            write!(socket, "HTTP/1.0 200 OK\r\n\r\n").unwrap();
+            released.recv().unwrap();
+        });
+        let control = Arc::new(Control::default());
+        let reader_control = control.clone();
+        let (opened, ready) = std::sync::mpsc::channel();
+        let (finished, done) = std::sync::mpsc::channel();
+        let reader = thread::spawn(move || {
+            let mut last = NO_HISTORY;
+            let _ = stream(
+                &endpoint,
+                &mut last,
+                READ_TIMEOUT,
+                &|| false,
+                &reader_control,
+                &mut |item| {
+                    assert_eq!(item, StreamItem::Open);
+                    opened.send(()).unwrap();
+                },
+            );
+            finished.send(()).unwrap();
+        });
+        ready.recv_timeout(Duration::from_secs(5)).unwrap();
+        control.cancel();
+        let result = done.recv_timeout(Duration::from_secs(2));
+        // Release the server even if cancellation failed, so a failed test
+        // never leaves a thread waiting for the full socket timeout.
+        release.send(()).unwrap();
+        served.join().unwrap();
+        reader.join().unwrap();
+        result.expect("cancellation must interrupt the read before its 70-second timeout");
+    }
+
+    #[test]
     fn a_refused_credential_is_an_error() {
         let (listener, endpoint) = server();
         thread::spawn(move || {
@@ -359,7 +483,7 @@ mod tests {
             write!(socket, "HTTP/1.0 401 Unauthorized\r\n\r\nunauthorized\n").unwrap();
         });
         let mut last = NO_HISTORY;
-        let error = stream(&endpoint, &mut last, &|| false, &mut |_| {
+        let error = read_events(&endpoint, &mut last, &|| false, &mut |_| {
             panic!("no events")
         })
         .unwrap_err();
@@ -372,8 +496,6 @@ mod tests {
         let (listener, endpoint) = server();
         let heads = Arc::new(Mutex::new(Vec::new()));
         let seen = heads.clone();
-        let stopped = Arc::new(AtomicBool::new(false));
-        let flag = stopped.clone();
         let served = thread::spawn(move || {
             for n in 0..2 {
                 let (mut socket, _) = listener.accept().unwrap();
@@ -385,12 +507,12 @@ mod tests {
                 )
                 .unwrap();
             }
-            flag.store(true, Ordering::SeqCst);
         });
         let mut ids = Vec::new();
-        run(&endpoint, &|| stopped.load(Ordering::SeqCst), &mut |e| {
-            ids.push(e.id)
-        });
+        let mut last = NO_HISTORY;
+        for _ in 0..2 {
+            let _ = read_events(&endpoint, &mut last, &|| false, &mut |e| ids.push(e.id));
+        }
         served.join().unwrap();
         assert_eq!(ids, [Some(10), Some(11)]);
         let heads = heads.lock().unwrap();
@@ -456,7 +578,7 @@ mod tests {
             while socket.write_all(&chunk).is_ok() {}
         });
         let mut last = NO_HISTORY;
-        let error = stream(&endpoint, &mut last, &|| false, &mut |_| {
+        let error = read_events(&endpoint, &mut last, &|| false, &mut |_| {
             panic!("no events")
         })
         .unwrap_err();
@@ -474,12 +596,12 @@ mod tests {
             socket.write_all(b"HTTP/1.0 200 OK\r\n\r\n").unwrap();
             socket.write_all(head).unwrap();
             socket.flush().unwrap();
-            thread::sleep(POLL + Duration::from_millis(500));
+            thread::sleep(Duration::from_millis(50));
             socket.write_all(tail).unwrap();
         });
         let mut got = Vec::new();
         let mut last = NO_HISTORY;
-        let _ = stream(&endpoint, &mut last, &|| false, &mut |e| {
+        let _ = read_events(&endpoint, &mut last, &|| false, &mut |e| {
             got.push(e.data.clone())
         });
         assert_eq!(got, ["caf\u{e9}"]);

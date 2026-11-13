@@ -21,12 +21,12 @@ func TestServeRevalidates(t *testing.T) {
 		return rec
 	}
 	first := get("")
-	if first.Code != 200 || first.Body.String() != "{\"a\":1}\n" || first.Header().Get("ETag") != b.ETag || first.Header().Get("Cache-Control") != "no-cache" {
+	if first.Code != 200 || first.Body.String() != "{\"a\":1}\n" || first.Header().Get("ETag") != b.ETag || first.Header().Get("Cache-Control") != "no-store" {
 		t.Fatalf("first = %d %q %v", first.Code, first.Body.String(), first.Header())
 	}
 	for _, inm := range []string{b.ETag, "W/" + b.ETag, `"x", ` + b.ETag, "*"} {
 		rec := get(inm)
-		if rec.Code != http.StatusNotModified || rec.Body.Len() != 0 || rec.Header().Get("ETag") != b.ETag {
+		if rec.Code != http.StatusNotModified || rec.Body.Len() != 0 || rec.Header().Get("ETag") != b.ETag || rec.Header().Get("Cache-Control") != "no-store" {
 			t.Fatalf("If-None-Match %q = %d %q", inm, rec.Code, rec.Body.String())
 		}
 	}

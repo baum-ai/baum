@@ -151,7 +151,8 @@ type Status struct {
 	// Stopping is set once the daemon has been asked to stop.
 	Stopping bool `json:"stopping,omitempty"`
 	// RestartPending is set once a newer client asked the daemon to restart
-	// as its version when no job is queued or running.
+	// as its version when no job is running; until then no queued job
+	// starts, and the queued ones wait for the new daemon.
 	RestartPending bool `json:"restart_pending,omitempty"`
 }
 

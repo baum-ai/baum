@@ -535,7 +535,7 @@ it("keeps the page working, with no requests, when api/agent-requests fails", as
             ? Response.json({ jobs: [] })
             : path.endsWith("api/repos") || path.endsWith("api/repositories")
               ? Response.json([])
-              : path.endsWith("api/prs") || path.endsWith("api/background")
+              : path.endsWith("api/prs?view=health") || path.endsWith("api/background")
                 ? Response.json([])
                 : new Response("missing", { status: 404 });
   await act(async () => root.render(<App />));

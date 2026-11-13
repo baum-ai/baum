@@ -123,7 +123,7 @@ beforeEach(() => {
                   ? Response.json({ entries: indexEntries, problems: [] })
                   : path === "/s/test-ns/api/jobs"
                     ? Response.json({ jobs: [] })
-                    : path === "/s/test-ns/api/prs"
+                    : path === "/s/test-ns/api/prs?view=health"
                       ? Response.json([])
                       : path === "/s/test-ns/api/background"
                         ? Response.json([])
