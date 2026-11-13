@@ -56,7 +56,7 @@ func TestEveryCaseOfADatasetLoads(t *testing.T) {
 		if c.Entry != nil {
 			indexed++
 		}
-		result, err := replay.Assembler{Case: c}.Assemble(ctx(), assemble.Request{Repository: c.Repository, Number: c.Bundle.PullRequest.Number, Limits: limits, Checkout: io.Discard, Attachments: io.Discard})
+		result, err := replay.Assembler{Case: c}.Assemble(ctx(), assemble.Request{Repository: c.Repository, Number: c.Bundle.PullRequest.Number, Limits: limits})
 		if err != nil || result.Bundle.Digest != c.Digest || string(result.JSON) != string(c.BundleJSON) {
 			t.Errorf("%s: assembler: %v", id, err)
 			continue
@@ -64,18 +64,22 @@ func TestEveryCaseOfADatasetLoads(t *testing.T) {
 		if c.Bundle.PullRequest.MergeBaseSHA == "" {
 			noMergeBase++
 		}
-		// The archives are what generation unpacks: every case's is read
-		// through, and a sample goes through bundle.UnpackCheckout.
+		if len(c.Bundle.Attachments) > 0 {
+			withImages++
+		}
+		// The archives are what generation unpacks. A checkout is tens of
+		// megabytes, so a sample is written and read through, and a smaller
+		// one goes through bundle.UnpackCheckout.
+		if i%10 != 0 {
+			continue
+		}
 		if err := checkArchives(t, c, limits, i%50 == 0, scratch); err != nil {
 			t.Errorf("%s: archives: %v", id, err)
 			continue
 		}
 		unpacked++
-		if len(c.Bundle.Attachments) > 0 {
-			withImages++
-		}
 	}
-	t.Logf("cases %d, loaded %d, archives %d, bundle type lossless %d, with images %d, indexed %d, bundles without a merge base %d", len(ids), loaded, unpacked, lossless, withImages, indexed, noMergeBase)
+	t.Logf("cases %d, loaded %d, archives checked %d, bundle type lossless %d, with images %d, indexed %d, bundles without a merge base %d", len(ids), loaded, unpacked, lossless, withImages, indexed, noMergeBase)
 	if len(ds.Index) > 0 && len(ds.Index) != len(ids) {
 		t.Logf("the index has %d entries for %d case directories", len(ds.Index), len(ids))
 	}

@@ -258,7 +258,11 @@ func (c Case) checkAttachments() error {
 // (bundle.UnpackCheckout): a gzip-compressed tar of the head/ and
 // merge-base/ trees, regular files and directories only.
 func (c Case) WriteCheckout(ctx context.Context, w io.Writer) error {
-	zip := gzip.NewWriter(w)
+	// The archive is read once, on this machine: speed over size.
+	zip, err := gzip.NewWriterLevel(w, gzip.BestSpeed)
+	if err != nil {
+		return err
+	}
 	archive := tar.NewWriter(zip)
 	for _, root := range []string{"head", "merge-base"} {
 		// The roots always exist, even for a tree with no files.
