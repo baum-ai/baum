@@ -16,7 +16,7 @@ import (
 const mcpToken = "mcp-token-0123456789abcdef"
 
 func testMCP() *agent.MCPServer {
-	return &agent.MCPServer{Command: "/opt/baum/bin/baum", Args: []string{"mcp"}, Token: mcpToken}
+	return &agent.MCPServer{URL: "http://127.0.0.1:43123/api/mcp", Token: mcpToken}
 }
 
 func runWith(t *testing.T, backend *Backend, fix bool, mcp *agent.MCPServer) (args []string, env string) {
@@ -44,7 +44,7 @@ func TestMCPConfiguresOnlyBaumAndKeepsTheTokenOutOfArguments(t *testing.T) {
 	script := fakeCodex(t, "codex-cli 0.162.1", recording)
 	for name, fix := range map[string]bool{"review (read-only)": false, "fix (workspace-write)": true} {
 		args, env := runWith(t, &Backend{Binary: script, Model: "m", Env: []string{"BAUM_MCP_TOKEN=user-supplied"}}, fix, testMCP())
-		for _, want := range []string{`mcp_servers.baum.command="/opt/baum/bin/baum"`, `mcp_servers.baum.args=["mcp"]`, `mcp_servers.baum.env_vars=["BAUM_MCP_TOKEN","XDG_STATE_HOME","XDG_RUNTIME_DIR"]`} {
+		for _, want := range []string{`mcp_servers.baum.url="http://127.0.0.1:43123/api/mcp"`, `mcp_servers.baum.bearer_token_env_var="BAUM_MCP_TOKEN"`} {
 			at := slices.Index(args, want)
 			if at < 1 || args[at-1] != "-c" {
 				t.Errorf("%s: missing -c %s in %q", name, want, args)
@@ -94,7 +94,7 @@ func TestMCPRefusesWhatItCannotRun(t *testing.T) {
 	if _, err := (&Backend{Profile: Container, Binary: "unused"}).Run(context.Background(), request); err == nil || !strings.Contains(err.Error(), "MCP") {
 		t.Errorf("the container profile ran with an MCP server: %v", err)
 	}
-	request.MCP = &agent.MCPServer{Command: "baum"}
+	request.MCP = &agent.MCPServer{URL: "http://127.0.0.1:43123/api/mcp"}
 	if _, err := (&Backend{Binary: "unused"}).Run(context.Background(), request); err == nil {
 		t.Error("accepted a server without a token")
 	}

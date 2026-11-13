@@ -90,9 +90,10 @@ const noMCPConfig = `{"mcpServers":{}}`
 // --strict-mcp-config always stays, so only the servers --mcp-config names
 // load, never the user's, a project's or a plugin's.
 //
-// Without request.MCP none is named. With it, exactly one is, baum's own as a
-// stdio server whose configuration holds no token: it reaches the process
-// through its environment (agent.MCPTokenEnv), never the argument list.
+// Without request.MCP none is named. With it, exactly one is, baum's own as an
+// HTTP server whose configuration holds no token: its Authorization header
+// names agent.MCPTokenEnv, which Claude Code expands from its own environment,
+// so the token is never in the argument list.
 //
 // --tools only selects Claude Code's built-in tools, so it neither adds nor
 // removes MCP tools. Permissions decide those, and a --print run has no one to
@@ -105,7 +106,8 @@ func mcpArgs(request agent.Request) []string {
 		return []string{"--strict-mcp-config", "--mcp-config", noMCPConfig}
 	}
 	config, _ := json.Marshal(map[string]any{"mcpServers": map[string]any{"baum": map[string]any{
-		"type": "stdio", "command": request.MCP.Command, "args": append([]string{}, request.MCP.Args...),
+		"type": "http", "url": request.MCP.URL,
+		"headers": map[string]string{"Authorization": "Bearer ${" + agent.MCPTokenEnv + "}"},
 	}}})
 	return []string{"--strict-mcp-config", "--mcp-config", string(config), "--allowedTools", "mcp__baum"}
 }
