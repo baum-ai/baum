@@ -1,5 +1,5 @@
 import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { expect, test, type Page } from "@playwright/test";
 import { launchURL } from "./inbox-helpers";
 
@@ -15,13 +15,15 @@ import { launchURL } from "./inbox-helpers";
 //   REAL_REVIEW_TILE     a selector for the tiles of the tiles page; the
 //                        "detail" state opens the first one
 //   REAL_REVIEW_ONLY     only the reviews whose repo#number contains this text
-//   REAL_REVIEW_OUT      the output directory (default test-results/real-reviews)
+//   REAL_REVIEW_MINUTES  the time one review may take before it is left and
+//                        recorded as a problem (default 8)
 //   REAL_REVIEW_FULL=0   viewport pictures only
 test.skip(!process.env.REAL_REVIEW_SCREENSHOTS, "screenshots are taken on request");
 
 const VIEW = process.env.REAL_REVIEW_VIEW || "full";
 const TILE = process.env.REAL_REVIEW_TILE || "[data-tile-id]";
-const OUT = process.env.REAL_REVIEW_OUT || "test-results/real-reviews";
+const OUT = "test-results/real-reviews";
+const BUDGET_MS = Number(process.env.REAL_REVIEW_MINUTES || 8) * 60_000;
 const FULL_PAGE = process.env.REAL_REVIEW_FULL !== "0";
 
 const SIZES = [
@@ -90,7 +92,9 @@ export const STATES: State[] = [
   },
 ];
 
-type Issue = { where: string; what: string };
+/** A problem a picture does not show clearly. `truncated` names a full-page
+ *  picture that does not hold the whole page. */
+type Issue = { where: string; what: string; truncated?: string };
 
 /** Waits until the page has stopped changing: nothing spins, fonts and images
  *  have loaded, no excerpt is loading. What did not settle is returned. */
@@ -165,16 +169,30 @@ async function capture(
   await page.screenshot({ path: `${base}.png`, animations: "disabled" });
   if (!FULL_PAGE) return;
   // Growing the viewport can lengthen the content (regions that render what
-  // fits), so grow until it all fits.
+  // fits), so grow until it all fits. A region whose overflow does not shrink
+  // as the viewport grows (it is sized to the viewport) is not more content.
   let height = size.height;
-  for (let round = 0; round < 4; round++) {
+  let previous = Number.POSITIVE_INFINITY;
+  let truncated = false;
+  for (let round = 0; ; round++) {
     const extra = await scrollExtra(page);
-    if (extra === 0 || height >= MAX_HEIGHT) break;
+    if (extra === 0 || extra >= previous) break;
+    if (round === 6 || height >= MAX_HEIGHT) {
+      truncated = true;
+      break;
+    }
+    previous = extra;
     height = Math.min(height + extra, MAX_HEIGHT);
     await page.setViewportSize({ width: size.width, height });
     issues.push(...(await settle(page, `${base} (full page)`)));
   }
   if (height === size.height) return;
+  if (truncated)
+    issues.push({
+      where: base,
+      what: "the full-page picture is truncated (the page kept growing or hit the height limit)",
+      truncated: `${basename(base)}-full.png`,
+    });
   await page.screenshot({ path: `${base}-full.png`, animations: "disabled" });
   await page.setViewportSize(size);
   await page.waitForTimeout(200);
@@ -200,8 +218,10 @@ test("pictures of real saved reviews", async ({ page }) => {
   page.on("console", (m) => m.type() === "error" && consoleErrors.push(m.text()));
   page.on("pageerror", (e) => consoleErrors.push(String(e)));
 
+  const ran: string[] = [];
   for (const pick of picks) {
     const slug = slugOf(pick);
+    ran.push(slug);
     const dir = join(OUT, slug);
     await rm(dir, { recursive: true, force: true });
     await mkdir(dir, { recursive: true });
@@ -217,40 +237,61 @@ test("pictures of real saved reviews", async ({ page }) => {
       }).toString();
       return url.href;
     };
+    const started = Date.now();
+    const over = () => {
+      if (Date.now() - started > BUDGET_MS) throw new Error("the review's time budget ran out");
+    };
     await test.step(`${pick.repository}#${pick.number}`, async () => {
-      await page.setViewportSize(SIZES[0]!);
-      await page.goto(address());
-      issues.push(...(await settle(page, "first load")));
-      const firstSection: string = await page.evaluate(
-        async ({ clone, pr, version }) => {
-          const query = new URLSearchParams({
-            clone,
-            pr: String(pr),
-            ...(version ? { version } : {}),
+      try {
+        await page.setViewportSize(SIZES[0]!);
+        await page.goto(address());
+        issues.push(...(await settle(page, "first load")));
+        const document = await page.evaluate(
+          async ({ clone, pr, version }) => {
+            const query = new URLSearchParams({
+              clone,
+              pr: String(pr),
+              ...(version ? { version } : {}),
+            });
+            const answer = await fetch(`api/document?${query}`);
+            return answer.ok
+              ? {
+                  status: answer.status,
+                  firstSection: (await answer.json()).sections?.[0]?.id ?? "",
+                }
+              : { status: answer.status, firstSection: "" };
+          },
+          { clone: pick.clone, pr: pick.number, version: pick.version ? String(pick.version) : "" },
+        );
+        const firstSection: string = document.firstSection;
+        if (!firstSection)
+          issues.push({
+            where: "document",
+            what: `no first section (the document answered ${document.status}): the detail and excerpt states of the full page are skipped`,
           });
-          const answer = await fetch(`api/document?${query}`);
-          return answer.ok ? ((await answer.json()).sections?.[0]?.id ?? "") : "";
-        },
-        { clone: pick.clone, pr: pick.number, version: pick.version ? String(pick.version) : "" },
-      );
-      for (const theme of THEMES as readonly Theme[]) {
-        await page.emulateMedia({ colorScheme: theme });
-        for (const size of SIZES) {
-          await page.setViewportSize(size);
-          await page.goto(address());
-          const context: Context = { page, pick, firstSection, address };
-          for (const s of STATES) {
-            if (s.views && !s.views.includes(VIEW)) continue;
-            const name = `${VIEW}-${s.name}-${size.width}-${theme}`;
-            if ((await s.open(context)) === false) continue;
-            issues.push(...(await settle(page, name)));
-            const dark = await page.evaluate(() => document.documentElement.dataset.theme);
-            if (dark !== theme)
-              issues.push({ where: name, what: `the page is in the ${dark} theme` });
-            issues.push(...(await inspect(page, name)));
-            await capture(page, join(dir, name), size, issues);
+        for (const theme of THEMES as readonly Theme[]) {
+          await page.emulateMedia({ colorScheme: theme });
+          for (const size of SIZES) {
+            await page.setViewportSize(size);
+            await page.goto(address());
+            const context: Context = { page, pick, firstSection, address };
+            for (const s of STATES) {
+              if (s.views && !s.views.includes(VIEW)) continue;
+              over();
+              const name = `${VIEW}-${s.name}-${size.width}-${theme}`;
+              if ((await s.open(context)) === false) continue;
+              issues.push(...(await settle(page, name)));
+              const dark = await page.evaluate(() => document.documentElement.dataset.theme);
+              if (dark !== theme)
+                issues.push({ where: name, what: `the page is in the ${dark} theme` });
+              issues.push(...(await inspect(page, name)));
+              await capture(page, join(dir, name), size, issues);
+            }
           }
         }
+      } catch (error) {
+        // A review that hangs or fails is recorded and left; the run goes on.
+        issues.push({ where: "review", what: `left unfinished: ${String(error).split("\n")[0]}` });
       }
     });
     const unique = [...new Map(issues.map((i) => [`${i.where}|${i.what}`, i])).values()];
@@ -263,22 +304,38 @@ test("pictures of real saved reviews", async ({ page }) => {
       ),
     );
   }
-  if (consoleErrors.length) console.log(`console errors: ${consoleErrors.length}`);
   await writeFile(join(OUT, "console-errors.txt"), [...new Set(consoleErrors)].join("\n"));
+  // The requests the refusing GitHub and model backends answer with an error
+  // are expected; any other console error is worth a look.
+  const unexpected = consoleErrors.filter(
+    (e) =>
+      !/^Failed to load resource: the server responded with a status of (404|502|503)\b/.test(e),
+  );
+  if (unexpected.length) console.log(`console errors: ${unexpected.length}`);
+  await writeFile(
+    join(OUT, "run.json"),
+    JSON.stringify(
+      { view: VIEW, reviews: ran, unexpectedConsoleErrors: [...new Set(unexpected)] },
+      null,
+      2,
+    ),
+  );
   await writeContactSheet(OUT);
 });
 
 const escape = (s: string) =>
   s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
 
-/** A static page that lists every review in the output directory, its
- *  problems, and its pictures by state, size and theme. */
+/** A static page that lists the reviews of this run (run.json), their
+ *  problems, and their pictures by state, size and theme. Folders of earlier
+ *  runs stay in the directory but are not listed. */
 async function writeContactSheet(out: string) {
+  const run: { view: string; reviews: string[]; unexpectedConsoleErrors: string[] } = JSON.parse(
+    await readFile(join(out, "run.json"), "utf8"),
+  );
   const reviews: string[] = [];
-  for (const entry of (await readdir(out, { withFileTypes: true })).sort((a, b) =>
-    a.name.localeCompare(b.name),
-  )) {
-    if (!entry.isDirectory()) continue;
+  for (const slug of run.reviews) {
+    const entry = { name: slug };
     let info: (Pick & { issues: Issue[]; shown: number }) | undefined;
     try {
       info = JSON.parse(await readFile(join(out, entry.name, "review.json"), "utf8"));
@@ -297,7 +354,8 @@ async function writeContactSheet(out: string) {
         .map((file) => {
           const full = file.replace(/\.png$/, "-full.png");
           const link = all.includes(full) ? ` · <a href="${entry.name}/${full}">full page</a>` : "";
-          return `<figure><a href="${entry.name}/${file}"><img loading="lazy" src="${entry.name}/${file}" alt="${escape(file)}"></a><figcaption>${escape(file.replace(/\.png$/, ""))}${link}</figcaption></figure>`;
+          const cut = info!.issues.some((i) => i.truncated === full) ? " (truncated)" : "";
+          return `<figure><a href="${entry.name}/${file}"><img loading="lazy" src="${entry.name}/${file}" alt="${escape(file)}"></a><figcaption>${escape(file.replace(/\.png$/, ""))}${link}${cut}</figcaption></figure>`;
         });
       return `<h3>${escape(key)}</h3><div class="row">${cells.join("")}</div>`;
     });
@@ -324,6 +382,6 @@ img{height:260px;width:auto;border:1px solid #ccc;display:block}
 figcaption{font-size:12px;color:#555}
 .issues{color:#a00}.ok{color:#070}
 </style>
-<h1>Real review screenshots</h1><nav>${nav.join("")}</nav>${reviews.join("\n")}`,
+<h1>Real review screenshots</h1><p class="${run.unexpectedConsoleErrors.length ? "issues" : "ok"}">${run.unexpectedConsoleErrors.length ? `console errors: ${escape(run.unexpectedConsoleErrors.join(" | ").slice(0, 600))}` : "no unexpected console errors"}</p><nav>${nav.join("")}</nav>${reviews.join("\n")}`,
   );
 }

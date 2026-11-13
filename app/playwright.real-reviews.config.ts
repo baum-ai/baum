@@ -21,6 +21,8 @@ export default defineConfig({
   use: {
     baseURL: "http://127.0.0.1:4169",
     headless: true,
+    actionTimeout: 30_000,
+    navigationTimeout: 60_000,
     viewport: { width: 1440, height: 900 },
   },
   webServer: {

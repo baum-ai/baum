@@ -2210,9 +2210,13 @@ file. From the repository root:
 just real-review-screens /path/to/dataset [full|tiles] [owner/repo#12,owner/repo#40@2]
 ```
 
-The recipe mounts the dataset read-only into the `ui-test` and `oss-test`
-services, builds the app and the fixture, and runs
-`playwright.real-reviews.config.ts`. `TestLocalAppRealReviews`
+The recipe builds the app and the fixture, then mounts the dataset read-only
+into the `ui-test` service, which runs the fixture and the script
+(`playwright.real-reviews.config.ts`). It does not cut the container off from
+the network (`docker compose run` has no option for it); the fixture itself
+reaches nothing, since GitHub and model calls are refused.
+
+`TestLocalAppRealReviews`
 (`../internal/uiserver/real_reviews_fixture_test.go`, skipped without
 `BAUM_APP_REAL_REVIEWS`) runs the real daemon on a temporary state directory,
 with no model and no GitHub: it clones each repository from its mirror with
@@ -2227,11 +2231,13 @@ Sessions, decisions and the Timeline are not served.
 The pick is a list of `repo#number[@version]`, which opens that version (the
 latest by default); the history lists every saved version. Without a list the
 fixture chooses from the calibration split of the repository with the most
-saved reviews (`BAUM_APP_REAL_REPOS` names others, `BAUM_APP_REAL_COUNT` is 14
-by default): one review per
-size bucket, with and without images and threads, with sessions of each agent,
-the one with the most sections, the highest risk and the most unassigned hunks,
-and the rest spread over the numbers. It logs the chosen identifiers with
+saved reviews (`BAUM_APP_REAL_REPOS` names others). `BAUM_APP_REAL_COUNT`, 14
+by default, is the most it chooses. In priority order it takes the review with
+the most sections, the highest risk, the most unassigned hunks, the most images
+and the most threads, one with sessions of each agent, one of each size bucket
+(xl, xs, m, s, l), one without images and one without threads, then spreads the
+rest over the numbers, stopping at the count. A pull request named twice is
+read once. It logs the chosen identifiers with
 their tags and writes `picks.json` for the script.
 
 `e2e/real-review-screens.spec.ts`, taken only with `REAL_REVIEW_SCREENSHOTS=1`,
@@ -2240,9 +2246,15 @@ light and dark schemes (the app follows the system's), waits for fonts, images
 and spinners to settle, and writes
 `test-results/real-reviews/<repo>-<number>-v<version>/<view>-<state>-<width>-<theme>.png`,
 with a `-full.png` beside it that is as tall as the page's scrolling content,
-and an `index.html` contact sheet in the directory. The sheet lists what a
+and an `index.html` contact sheet in the directory. The sheet is built from the
+run's own manifest (`run.json`), so it lists only this run's reviews; the
+folders of earlier runs stay in place and are not listed. It lists what a
 picture does not show clearly: a notice, an unavailable excerpt, an image that
-failed, sideways scrolling. States are the `STATES` list at the top of the
+failed, sideways scrolling, a full-page picture that is truncated, a detail
+that was skipped for want of a document, and a review left unfinished after
+`REAL_REVIEW_MINUTES` (8 by default). Expected 404, 502 and 503 console errors
+from the refusing backends stay in `console-errors.txt` and out of the sheet's
+error count. States are the `STATES` list at the top of the
 spec: the landing page, a detail (the first section, or with `view=tiles` the
 first element matching `REAL_REVIEW_TILE`) and its first hunk excerpt opened.
 A new page adds a state by adding an entry with the steps that open it.

@@ -51,9 +51,8 @@ import (
 //
 //	BAUM_APP_REAL_REVIEWS  the dataset directory; the fixture is skipped without it
 //	BAUM_APP_REAL_PICK     the pull requests to serve: repo#number[@version], separated by commas or white space
-//	BAUM_APP_REAL_PICK_FILE  the same, one per line, in a file (used when BAUM_APP_REAL_PICK is empty)
 //	BAUM_APP_REAL_REPOS    the repositories the default picker draws from, separated by commas (default: the one with the most saved reviews)
-//	BAUM_APP_REAL_COUNT    how many reviews the default picker chooses (default 14)
+//	BAUM_APP_REAL_COUNT    the most reviews the default picker chooses (default 14)
 //
 // The dataset is read only: stores and the app database are copied, and each
 // repository is cloned from its mirror with shared objects.
@@ -129,6 +128,26 @@ type realDataset struct {
 	root   string
 	work   string
 	stores map[string]*store.Store
+	pulls  []realIndexPull
+}
+
+// allPulls reads index/pulls.jsonl, once.
+func (d *realDataset) allPulls() []realIndexPull {
+	if d.pulls == nil {
+		d.pulls = readJSONLines[realIndexPull](d.t, filepath.Join(d.root, "index", "pulls.jsonl"), nil)
+	}
+	return d.pulls
+}
+
+// pullsWhere are the index's pull requests that keep returns true for.
+func (d *realDataset) pullsWhere(keep func(realIndexPull) bool) []realIndexPull {
+	var out []realIndexPull
+	for _, p := range d.allPulls() {
+		if keep(p) {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 func (d *realDataset) store(machine, repository string) *store.Store {
@@ -262,7 +281,7 @@ func parseRealPicks(t *testing.T, text string) []realPick {
 // that have a saved review: what the picker draws from unless told otherwise.
 func (d *realDataset) busiestRepository() []string {
 	counts := map[string]int{}
-	for _, p := range readJSONLines(d.t, filepath.Join(d.root, "index", "pulls.jsonl"), func(p realIndexPull) bool {
+	for _, p := range d.pullsWhere(func(p realIndexPull) bool {
 		return p.Split == "calibration" && len(p.ReviewVersions) > 0
 	}) {
 		counts[p.Repository]++
@@ -280,12 +299,15 @@ func (d *realDataset) busiestRepository() []string {
 }
 
 // choosePicks is the default picker: calibration pull requests of the allowed
-// repositories that have a complete saved review history, spread across size
-// buckets, with and without images and threads, with sessions of each agent,
-// one with many sections, one with a high risk and one with unassigned hunks.
+// repositories that have a complete saved review history. In priority order it
+// takes the one with the most sections, the highest risk, the most unassigned
+// hunks, the most images, the most threads, one with sessions of each agent,
+// one of each size bucket (xl, xs, m, s, l), one without images and one
+// without threads, then spreads the rest evenly; it never returns more than
+// count reviews.
 func (d *realDataset) choosePicks(repositories []string, count int) []realPick {
 	t := d.t
-	pulls := readJSONLines(t, filepath.Join(d.root, "index", "pulls.jsonl"), func(p realIndexPull) bool {
+	pulls := d.pullsWhere(func(p realIndexPull) bool {
 		return p.Split == "calibration" && slices.Contains(repositories, p.Repository) && len(p.ReviewVersions) > 0
 	})
 	cases := map[string]realIndexCase{}
@@ -339,7 +361,8 @@ func (d *realDataset) choosePicks(repositories []string, count int) []realPick {
 		tags[i] = append(tags[i], tag)
 	}
 	// want picks, for a tag, the candidate that satisfies it best, unless one
-	// already chosen does; ties go to the lowest number.
+	// already chosen does; ties go to the lowest number. Once count reviews are
+	// chosen it only tags those, so the rules below are in priority order.
 	want := func(tag string, ok func(candidate) bool, score func(candidate) float64) {
 		best := -1
 		for i, c := range candidates {
@@ -354,23 +377,23 @@ func (d *realDataset) choosePicks(repositories []string, count int) []realPick {
 				best = i
 			}
 		}
-		if best >= 0 {
+		if best >= 0 && len(chosen) < count {
 			take(best, tag)
 		}
-	}
-	for _, size := range []string{"xs", "s", "m", "l", "xl"} {
-		want("size-"+size, func(c candidate) bool { return c.size == size }, nil)
-	}
-	want("images", func(c candidate) bool { return c.facts.images > 0 }, func(c candidate) float64 { return float64(c.facts.images) })
-	want("no-images", func(c candidate) bool { return c.facts.images == 0 }, nil)
-	want("threads", func(c candidate) bool { return c.facts.threads > 0 }, func(c candidate) float64 { return float64(c.facts.threads) })
-	want("no-threads", func(c candidate) bool { return c.facts.threads == 0 }, nil)
-	for _, vendor := range []string{"claude_code", "codex"} {
-		want("sessions-"+vendor, func(c candidate) bool { return slices.Contains(c.facts.vendors, vendor) }, nil)
 	}
 	want("many-sections", func(c candidate) bool { return true }, func(c candidate) float64 { return float64(c.facts.sections) })
 	want("high-risk", func(c candidate) bool { return c.facts.risk > 0 }, func(c candidate) float64 { return c.facts.risk })
 	want("unassigned-hunks", func(c candidate) bool { return c.facts.unassigned > 0 }, func(c candidate) float64 { return float64(c.facts.unassigned) })
+	want("images", func(c candidate) bool { return c.facts.images > 0 }, func(c candidate) float64 { return float64(c.facts.images) })
+	want("threads", func(c candidate) bool { return c.facts.threads > 0 }, func(c candidate) float64 { return float64(c.facts.threads) })
+	for _, vendor := range []string{"claude_code", "codex"} {
+		want("sessions-"+vendor, func(c candidate) bool { return slices.Contains(c.facts.vendors, vendor) }, nil)
+	}
+	for _, size := range []string{"xl", "xs", "m", "s", "l"} {
+		want("size-"+size, func(c candidate) bool { return c.size == size }, nil)
+	}
+	want("no-images", func(c candidate) bool { return c.facts.images == 0 }, nil)
+	want("no-threads", func(c candidate) bool { return c.facts.threads == 0 }, nil)
 	// The rest is spread evenly over the numbers that remain.
 	var rest []int
 	for i := range candidates {
@@ -485,19 +508,21 @@ func TestLocalAppRealReviews(t *testing.T) {
 	}
 
 	list := os.Getenv("BAUM_APP_REAL_PICK")
-	if file := os.Getenv("BAUM_APP_REAL_PICK_FILE"); list == "" && file != "" {
-		raw, err := os.ReadFile(file)
-		if err != nil {
-			t.Fatal(err)
-		}
-		list = string(raw)
-	}
 	var picks []realPick
 	if strings.TrimSpace(list) != "" {
 		picks = parseRealPicks(t, list)
+		seen := map[string]bool{}
+		picks = slices.DeleteFunc(picks, func(p realPick) bool {
+			if seen[p.id()] {
+				t.Logf("pick %s is listed twice; the first is kept", p.id())
+				return true
+			}
+			seen[p.id()] = true
+			return false
+		})
 		for i := range picks {
 			var pull realIndexPull
-			for _, p := range readJSONLines(t, filepath.Join(root, "index", "pulls.jsonl"), func(p realIndexPull) bool { return p.Repository == picks[i].Repository && p.Number == picks[i].Number }) {
+			for _, p := range dataset.pullsWhere(func(p realIndexPull) bool { return p.Repository == picks[i].Repository && p.Number == picks[i].Number }) {
 				pull = p
 			}
 			if picks[i].machine = realBestMachine(pull); picks[i].machine == "" {
