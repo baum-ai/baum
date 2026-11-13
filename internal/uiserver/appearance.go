@@ -13,6 +13,7 @@ type appearanceSettings struct {
 	Theme        string `json:"theme"`
 	KeyHints     bool   `json:"key_hints"`
 	PageModifier string `json:"page_modifier"`
+	Sidebar      string `json:"sidebar"`
 }
 
 func appearanceOf(p repos.Preferences) appearanceSettings {
@@ -20,10 +21,15 @@ func appearanceOf(p repos.Preferences) appearanceSettings {
 	if theme == "" {
 		theme = "system"
 	}
+	sidebar := p.Appearance.Sidebar
+	if sidebar != "folded" {
+		sidebar = "pinned"
+	}
 	return appearanceSettings{
 		Theme:        theme,
 		KeyHints:     p.Appearance.KeyHints == nil || *p.Appearance.KeyHints,
 		PageModifier: p.Appearance.PageModifier,
+		Sidebar:      sidebar,
 	}
 }
 
@@ -42,6 +48,7 @@ type appearanceInput struct {
 	Theme        *string `json:"theme,omitempty"`
 	KeyHints     *bool   `json:"key_hints,omitempty"`
 	PageModifier *string `json:"page_modifier,omitempty"`
+	Sidebar      *string `json:"sidebar,omitempty"`
 }
 
 // check refuses what the route refuses (400).
@@ -52,6 +59,9 @@ func (in appearanceInput) check() error {
 	if in.PageModifier != nil && *in.PageModifier != "" && *in.PageModifier != "meta" &&
 		*in.PageModifier != "ctrl" && *in.PageModifier != "alt" {
 		return errors.New("page_modifier must be empty, meta, ctrl or alt")
+	}
+	if in.Sidebar != nil && *in.Sidebar != "pinned" && *in.Sidebar != "folded" {
+		return errors.New("sidebar must be pinned or folded")
 	}
 	return nil
 }
@@ -66,6 +76,9 @@ func (in appearanceInput) edit(p repos.Preferences) repos.Preferences {
 	}
 	if in.PageModifier != nil {
 		p.Appearance.PageModifier = *in.PageModifier
+	}
+	if in.Sidebar != nil {
+		p.Appearance.Sidebar = *in.Sidebar
 	}
 	return p
 }

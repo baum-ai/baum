@@ -10,6 +10,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/baum-ai/baum/agent/claude"
+	"github.com/baum-ai/baum/agent/codex"
+	"github.com/baum-ai/baum/internal/agentdirs"
 	"github.com/baum-ai/baum/internal/config"
 	"github.com/baum-ai/baum/internal/locallink"
 	"github.com/baum-ai/baum/internal/repos"
@@ -105,6 +108,11 @@ type decisionSettings struct {
 	Backend string `json:"backend"`
 	Model   string `json:"model"`
 	Effort  string `json:"effort"`
+	// ClaudeConfigDir is extraction's own Claude Code configuration
+	// directory, "" while it follows the reviews' or uses the environment's.
+	ClaudeConfigDir string `json:"claude_config_dir"`
+	// CodexHome is extraction's own Codex home, likewise.
+	CodexHome string `json:"codex_home"`
 }
 
 // DecisionModel is the backend and decision model capture uses
@@ -155,6 +163,12 @@ func decisionSettingsOf(p repos.Preferences) decisionSettings {
 	if d.Effort != nil {
 		out.Effort = *d.Effort
 	}
+	if d.Backend != nil && d.ClaudeConfigDir != nil {
+		out.ClaudeConfigDir = *d.ClaudeConfigDir
+	}
+	if d.Backend != nil && d.CodexHome != nil {
+		out.CodexHome = *d.CodexHome
+	}
 	return out
 }
 
@@ -165,6 +179,10 @@ type decisionsInput struct {
 	Backend *string `json:"backend,omitempty"`
 	Model   *string `json:"model,omitempty"`
 	Effort  *string `json:"effort,omitempty"`
+	// The route checks each directory with agentdirs.Agent.Choose before the
+	// save; a proposal sets neither.
+	ClaudeConfigDir *string `json:"claude_config_dir,omitempty"`
+	CodexHome       *string `json:"codex_home,omitempty"`
 }
 
 // edit is the route's change of the saved preferences p, or the reason it
@@ -174,7 +192,8 @@ func (input decisionsInput) edit(p repos.Preferences) (repos.Preferences, error)
 		return p, errors.New("enabled is required")
 	}
 	next := p
-	next.Decisions = repos.DecisionPreferences{Backend: p.Decisions.Backend, Effort: p.Decisions.Effort}
+	next.Decisions = repos.DecisionPreferences{Backend: p.Decisions.Backend, Effort: p.Decisions.Effort,
+		ClaudeConfigDir: p.Decisions.ClaudeConfigDir, CodexHome: p.Decisions.CodexHome}
 	if !*input.Enabled {
 		next.Decisions.Enabled = new(false)
 	}
@@ -183,6 +202,24 @@ func (input decisionsInput) edit(p repos.Preferences) (repos.Preferences, error)
 		if *input.Backend != "" {
 			next.Decisions.Backend = new(config.Backend(*input.Backend))
 		}
+	}
+	if input.ClaudeConfigDir != nil {
+		next.Decisions.ClaudeConfigDir = nil
+		if *input.ClaudeConfigDir != "" {
+			next.Decisions.ClaudeConfigDir = input.ClaudeConfigDir
+		}
+	}
+	if input.CodexHome != nil {
+		next.Decisions.CodexHome = nil
+		if *input.CodexHome != "" {
+			next.Decisions.CodexHome = input.CodexHome
+		}
+	}
+	if next.Decisions.Backend == nil && (input.ClaudeConfigDir == nil || *input.ClaudeConfigDir == "") {
+		next.Decisions.ClaudeConfigDir = nil
+	}
+	if next.Decisions.Backend == nil && (input.CodexHome == nil || *input.CodexHome == "") {
+		next.Decisions.CodexHome = nil
 	}
 	if input.Model != nil && strings.TrimSpace(*input.Model) != "" {
 		next.Decisions.Model = new(strings.TrimSpace(*input.Model))
@@ -207,8 +244,10 @@ func (a LocalAPI) decisionsChanged() {
 }
 
 // putDecisionSettings serves PUT /api/settings/decisions, which replaces the
-// whole decision capture preferences, except that a missing backend or
-// effort keeps the saved one, as an app from before them sends neither.
+// whole decision capture preferences, except that a missing backend, effort,
+// Claude Code configuration directory or Codex home keeps the saved one, as
+// an app from before them sends none. Following the reviews' agent again (""
+// backend) drops the directories, which then follow the reviews' too.
 func (a LocalAPI) putDecisionSettings(w http.ResponseWriter, r *http.Request) {
 	var input decisionsInput
 	r.Body = http.MaxBytesReader(w, r.Body, 4<<10)
@@ -217,6 +256,32 @@ func (a LocalAPI) putDecisionSettings(w http.ResponseWriter, r *http.Request) {
 	if d.Decode(&input) != nil || d.Decode(new(any)) != io.EOF || input.Enabled == nil {
 		http.Error(w, "invalid JSON request", http.StatusBadRequest)
 		return
+	}
+	// The directory is checked, and remembered for reading its sessions,
+	// before the choice is stored.
+	if input.ClaudeConfigDir != nil {
+		signedIn := a.ClaudeSignedIn
+		if signedIn == nil {
+			signedIn = claude.SignedInWithConfigDir(a.Config.BackendPaths[config.BackendClaude])
+		}
+		dir, err := agentdirs.Claude.Choose(r.Context(), *input.ClaudeConfigDir, signedIn)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		input.ClaudeConfigDir = &dir
+	}
+	if input.CodexHome != nil {
+		signedIn := a.CodexSignedIn
+		if signedIn == nil {
+			signedIn = codex.SignedInWithHome(a.Config.BackendPaths[config.BackendCodex])
+		}
+		dir, err := agentdirs.Codex.Choose(r.Context(), *input.CodexHome, signedIn)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		input.CodexHome = &dir
 	}
 	var invalid error
 	prefs, err := a.Registry.UpdatePreferences(r.Context(), func(p repos.Preferences) repos.Preferences {

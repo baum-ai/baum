@@ -574,7 +574,8 @@ type Backend interface {
 
 Every run has no MCP server: Claude Code gets `--strict-mcp-config` with an empty
 `--mcp-config`, Codex `--ignore-user-config`. A local run may set
-`Request.MCP` to give the agent exactly one, baum's own (`baum mcp`); see
+`Request.MCP` to give the agent exactly one, baum's own (the daemon's
+`/api/mcp`, over HTTP); see
 "MCP server for agents" for the flags and the token's path.
 
 A backend may also implement `agent.Completer`: one structured completion
@@ -2710,6 +2711,46 @@ over `LocalEnvironment` with `agent.WithUserEnv` before their own run
 variables, so it may name a `GIT_` variable the allowlist drops. A fix passes
 it to `gitlocal.FixOptions.Env` for every git command in the checkout and the
 push, without the variables that would redirect git.
+
+`config.Config.ClaudeConfigDir` (never in the file) is the Claude Code
+configuration directory the app chose for a run: `repos.Preferences`'
+`ClaudeConfigDir` for reviews and extraction (`Resolve`), and
+`FixClaudeConfigDir` for a fix with its own agent (`ResolveFix`; a fix that
+follows reviews takes theirs), and `Decisions.ClaudeConfigDir` for extraction
+with its own agent (`ResolveExtraction`, set with `PUT
+/api/settings/decisions`). All three are checked by `agentdirs.Claude.Choose`. `DefaultBackendsFor` gives it to the `claude`
+backend alone as `CLAUDE_CONFIG_DIR`, set over `agent_env`'s. `PUT
+/api/automatic` takes `claude_config_dir` and `fix_claude_config_dir` (`~`
+expanded, stored absolute, an existing directory, `""` for the
+environment's), refuses one `claude auth status --json` reports signed out
+with that directory (`Scheduler.ClaudeSignedIn`, `claude.SignedInWith`; an
+answer it cannot read does not refuse), and records the directory with
+`agentdirs.Claude.Remember`. `planusage.Service.Others` reads the plan of each
+directory chosen for a run that uses Claude Code
+(`Preferences.ClaudeConfigDirs`) and serves it with `config_dir`.
+
+`config.Config.CodexHome` is the same for Codex: `Preferences.CodexHome`,
+`FixCodexHome` and `Decisions.CodexHome` under the same rules,
+`DefaultBackendsFor` gives it to the `codex` backend alone as `CODEX_HOME`,
+`PUT /api/automatic` takes `codex_home` and `fix_codex_home` and `PUT
+/api/settings/decisions` `codex_home`, checked by `agentdirs.Codex.Choose`
+with `codex login status` (`codex.SignedInWithHome`). The plans of
+`Preferences.CodexHomes` (runs whose backend is `codex`) are read with
+`planusage.Codex{Home: dir}`.
+
+`internal/agentdirs` is the one place that says which agent directories baum
+reads. `agentdirs.Claude` and `agentdirs.Codex` each have `All(home)`: the
+default (`~/.claude`, `~/.codex`), the process's variable (`CLAUDE_CONFIG_DIR`,
+`CODEX_HOME`) and a record beside `config.toml` (`claude-dirs.json`,
+`codex-dirs.json`; `Remember`, at most 16). Session discovery
+(`collector.FindSessions`, `FindStores`, with `ClaudeProjectsDir` and
+`CodexSessionsDir` still overrides), clone finding, the live transcript store
+checks (`livesessions.claudeTranscript`, `codexRollout`), the running-session
+registry (`readClaudeRegistry`) and review-run cleanup
+(`reviewruns.RemoveSessions`) all read each directory. `baum hooks install
+--user` records the directory it installed into, and an agent hook the one its
+session runs with (`hookcli.rememberSessionDir`, on the events that locate the
+terminal).
 
 ## Local application persistence
 
@@ -4998,16 +5039,18 @@ replace it.
   hooks last reported (kept in the tracker's entry, never served, and not in
   `live-sessions.json`), read only when, its symbolic links resolved
   (`filepath.EvalSymlinks`, the store's root resolved too), it is a regular
-  file strictly inside the agent's own store under the home directory, the
-  one discovery reads (`~/.claude/projects` for Claude Code, a `.jsonl`;
-  `~/.codex/sessions` for Codex, a `rollout-*.jsonl`). A Claude Code
+  file strictly inside the agent's own store, the one discovery reads
+  (`~/.claude/projects` under the home directory or the `projects` folder of
+  another directory of `agentdirs.Claude.All` for Claude Code, a `.jsonl`;
+  `~/.codex/sessions` or the `sessions` folder of another home of
+  `agentdirs.Codex.All` for Codex, a `rollout-*.jsonl`). A Claude Code
   subagent transcript beside it that resolves outside the store is left out.
-  Without a path a Codex session is looked up by id (`findRollout`, once per
+  Without a path a Codex session is looked up by id in each home (`findRollout`, once per
   session): the `rollout-*-<id>.jsonl` under `~/.codex/sessions` whose first
   line names that thread as a root. Only names are walked, so the rollouts
   Codex compresses as they age (`.jsonl.zst`, which a store scan rejects) do
   not stop it; a Claude Code one is found by its id in the project folders
-  under `~/.claude/projects` (`<folder>/<id>.jsonl`), as a session read back
+  of each store (`<folder>/<id>.jsonl`), as a session read back
   from `live-sessions.json` has no path. A Cursor session is read from Cursor's own database
   (`cursortranscript.DefaultStorePath`, a regular file) by its conversation
   id, since Cursor keeps no transcript file baum reads. The files are mapped
@@ -5284,34 +5327,29 @@ or an unknown tool, -32602. A tool that fails returns a result with
 `isError: true` and its explanation, not a protocol error; so do arguments
 that do not match the tool's JSON Schema.
 
-Agents reach the route through `baum mcp` (`internal/cli/mcp.go`), a stdio
-bridge: the agent CLI starts it, it reads one JSON-RPC message per line from
-stdin (at most 1 MiB) and POSTs each to `<daemon origin>/api/mcp` with the
-token from `BAUM_MCP_TOKEN`, then prints each response as one line on stdout.
-A notification (202, no body) prints nothing. It takes the origin, never the
-token, from `credential.json` and reads that file again after a connection
-failure, so a daemon restarted on a new port is found. When the daemon is
-unreachable or refuses the token (revoked), each request gets a JSON-RPC
-error (-32000) with its id and a notification gets nothing; the bridge keeps
-running until stdin closes (exit 0) or SIGTERM. It re-reads the credential and
-retries only when no connection was made (a dial failure); a timeout or a
-failure after the request was written is returned as the error and never
-retried, because the daemon may have acted on it. It handles one message at a
-time: a slow tool call delays the messages behind it. Only protocol lines go to
-stdout; diagnostics go to stderr, once per kind, never with the token.
+Agent CLIs reach the route directly over HTTP; there is no bridge process.
+`agent.Request.MCP` (`agent.MCPServer{URL, Token}`) names it for a run: URL
+is `<daemon origin>/api/mcp`, and `Validate` accepts only `http` on a
+loopback address with a port. Claude keeps `--strict-mcp-config` and names
+only `baum` in `--mcp-config`, an `http` server whose `Authorization` header
+is `Bearer ${BAUM_MCP_TOKEN}` (Claude Code expands it from its environment),
+and adds `--allowedTools mcp__baum`, since `--tools` only selects built-in
+tools and a `--print` run cannot ask permission. Codex adds
+`-c mcp_servers.baum.url` and `.bearer_token_env_var="BAUM_MCP_TOKEN"` under
+`--ignore-user-config`. Both put `BAUM_MCP_TOKEN` last in the CLI's
+environment, after `agent_env`, so the token is in no argument or
+configuration. Only the Claude `User` and Codex `Local` profiles accept it;
+the others return an error. With no `MCP` the arguments are what they always
+were. No job sets it yet.
 
-`agent.Request.MCP` (`agent.MCPServer{Command, Args, Token}`) starts it for a
-run: Command is the absolute path of the running baum with `mcp`. Claude
-keeps `--strict-mcp-config` and names only `baum` in `--mcp-config` (a stdio
-server, no token), and adds `--allowedTools mcp__baum`, since `--tools` only
-selects built-in tools and a `--print` run cannot ask permission. Codex adds
-`-c mcp_servers.baum.command`, `.args` and
-`.env_vars=["BAUM_MCP_TOKEN","XDG_STATE_HOME","XDG_RUNTIME_DIR"]` (Codex gives
-an MCP server only a default environment; the names that are set are
-forwarded, so `baum mcp` finds the same daemon) under `--ignore-user-config`. Both put `BAUM_MCP_TOKEN` last in the child's
-environment, after `agent_env`. Only the Claude `User` and Codex `Local`
-profiles accept it; the others return an error. With no `MCP` the arguments
-are what they always were. No job sets it yet.
+What the CLIs send (checked by `internal/agentcontext/livecheck` against the
+latest and floor releases): Claude Code asks `initialize` for a newer revision
+and accepts `2025-06-18`, opens a `GET` for an event stream and accepts the
+405, and recent releases first try `server/discover` with a newer
+`MCP-Protocol-Version`, take the 400 and fall back to `initialize`. Codex asks
+for `2025-06-18`. With a revoked token both get 401, try no OAuth discovery,
+and finish the run without baum's tools. Tokens die with the daemon, so a CLI
+that outlives a daemon restart has nothing to reconnect to.
 
 The route takes only an MCP token as `Authorization: Bearer`. The app
 server checks the exact Host, asks the MCP server whether the token is live,
