@@ -781,30 +781,33 @@ The goldens in `tiles/testdata` cover each shape the conversion handles, and
 stores when `BAUM_TILES_CORPUS` names one, logging only counts.
 
 **Serving.** The desktop daemon converts a review each time it answers for
-one; nothing about the tile document is stored.
+one; nothing about the tile document is stored. All three routes answer
+`{"document": <baum.review/1>, "tiles": <baum.tiles/1> | null, "problem"?: string}`.
+`document` is always the normalised review, never the raw stored bytes: the
+stored-document rules (`review.NormalizeStored`) and the derived hunk URLs are
+applied, and `tiles` is converted from exactly those bytes, so the page's
+chrome and its tiles read one review. This holds for a group review too,
+whose plain `/document` route serves the stored bytes as they are. Only the
+tile-level checks run (`Validator.CheckTiles`), so a tile that fails one is
+`unavailable` in a response that is still served; the full schema is checked
+in tests. A review the converter cannot split gives `tiles: null` and a short
+`problem` that never quotes the document, and the page shows the full review.
+One validator, kept by `internal/tileview`, serves all three routes; the
+daemon compiles its schemas in the background at start-up (`tileview.Warm`,
+about 0.4 s), so the first review opened does not wait for them.
 
 - `GET /api/tiles?clone=&pr=[&version=N]` takes the selector of
-  `GET /api/document` and answers
-  `{"document": <baum.review/1>, "tiles": <baum.tiles/1> | null, "problem"?: string}`,
-  with the same 400, 404 and 413 answers. `document` is the stored document
-  after the stored-document rules (`review.NormalizeStored`) and the derived
-  hunk URLs, and `tiles` is converted from exactly those bytes, so the page's
-  chrome and its tiles read one review. Only the tile-level checks run
-  (`Validator.CheckTiles`), so a tile that fails one is `unavailable` in a
-  response that is still served; the full schema is checked in tests. A
-  document the converter cannot split gives `tiles: null` and a short
-  `problem` that never quotes the document, and the page shows the full
-  review. The answer is `no-store` with a strong `ETag` of the body (a
-  matching `If-None-Match` is a 304), and the daemon keeps up to 16 encoded
-  answers, 64 MiB in all, by store revision as it does for viewers, so an
-  unchanged version is neither read nor converted again.
-- `GET /api/jobs/{id}/draft?tiles=1` answers the same shape for the running
-  review's draft, plus the draft's `draft` count, converted with
-  `Options.Draft` so a context not yet written is a pending context tile.
-  Without `tiles=1` the answer is the draft alone, as before.
-- `GET /api/groups/{id}/tiles[?version=N]` answers the same shape for a
-  review group's version, with the selectors and errors of
-  `GET /api/groups/{id}/document`.
+  `GET /api/document`, with the same 400, 404 and 413 answers. The answer is
+  `no-store` with a strong `ETag` of the body (a matching `If-None-Match` is a
+  304), and the daemon keeps up to 16 encoded answers, 64 MiB in all, by store
+  revision as it does for viewers, so an unchanged version is neither read nor
+  converted again.
+- `GET /api/jobs/{id}/draft?tiles=1` answers the running review's draft in
+  that shape, plus the draft's `draft` count, converted with `Options.Draft`
+  so a context not yet written is a pending context tile. Without `tiles=1`
+  the answer is the draft alone, as before.
+- `GET /api/groups/{id}/tiles[?version=N]` answers a review group's version,
+  with the selectors and errors of `GET /api/groups/{id}/document`.
 
 The `review_page` appearance preference (`full`, the default, or `tiles`; see
 `GET`/`PUT /api/settings/appearance`) chooses which page a review opens on,
@@ -5911,7 +5914,7 @@ refused. The table holds:
   `/api/timeline/features/{id}`, checked by the `repository.full_name` the
   detail names (an archived feature names none, so no action reads it);
 - by lookup: `GET /api/jobs/{id}/transcript` (`after`) and
-  `/api/jobs/{id}/draft`, after `/api/jobs/{id}`, and `/api/groups/{id}/document`
+  `/api/jobs/{id}/draft` (`tiles`), after `/api/jobs/{id}`, and `/api/groups/{id}/document`
   and `/api/groups/{id}/tiles` (`version`), `/api/groups/{id}/versions`, `/api/groups/{id}/patch` (`version`,
   `path`, `hunk`) and `/api/groups/{id}/file` (`version`, `path`), after
   `/api/groups/{id}`;

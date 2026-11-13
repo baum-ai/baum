@@ -7,6 +7,7 @@ import (
 
 	"github.com/baum-ai/baum/internal/tileview/tileviewtest"
 	"github.com/baum-ai/baum/tiles"
+	"github.com/baum-ai/baum/tiles/tilestest"
 )
 
 func decode(t *testing.T, r Response) map[string]any {
@@ -39,7 +40,7 @@ func TestBuildConvertsAReview(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if equal, err := tiles.RoundTripEqual(r.Document, back); err != nil || !equal {
+	if equal, err := tilestest.RoundTripEqual(r.Document, back); err != nil || !equal {
 		t.Fatalf("round trip: %v %v", equal, err)
 	}
 }
@@ -79,5 +80,37 @@ func TestBuildFailureLeavesTilesNullWithoutContent(t *testing.T) {
 		if err != nil || !json.Valid(body.Data) || !strings.Contains(string(body.Data), `"tiles":null`) {
 			t.Errorf("%s: %s %v", document, body.Data, err)
 		}
+	}
+}
+
+func TestDraftOutlineConverts(t *testing.T) {
+	r := Build(tileviewtest.Encode(t, tileviewtest.DraftOutline(t)), tiles.Options{Draft: true})
+	if r.Tiles == nil || r.Problem != "" {
+		t.Fatalf("problem %q", r.Problem)
+	}
+	for _, tile := range r.Tiles.Tiles {
+		if tile.State == tiles.StateUnavailable {
+			t.Errorf("%s is unavailable: %v", tile.ID, tile.Problems)
+		}
+		if tile.ID == tiles.TypeContext && tile.State != tiles.StatePending {
+			t.Errorf("context is %s", tile.State)
+		}
+	}
+}
+
+// Warm compiles the checks once and is safe to repeat and to run beside
+// requests.
+func TestWarm(t *testing.T) {
+	done := make(chan error, 2)
+	for range 2 {
+		go func() { done <- Warm() }()
+	}
+	for range 2 {
+		if err := <-done; err != nil {
+			t.Fatal(err)
+		}
+	}
+	if r := Build(tileviewtest.Encode(t, tileviewtest.Base(t)), tiles.Options{}); r.Tiles == nil {
+		t.Fatal(r.Problem)
 	}
 }

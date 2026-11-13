@@ -25,6 +25,11 @@ type Response struct {
 // it compiles its schemas once.
 var validator = tiles.NewValidator()
 
+// Warm compiles the schemas the tile checks use, which the first Build would
+// otherwise do (about 0.4 s). The daemon calls it in the background at start-up
+// so the first review a person opens does not wait for it.
+func Warm() error { return validator.CheckTiles(&tiles.Document{}) }
+
 // Build converts a stored or draft review document. A tile that fails its
 // checks is marked unavailable in the result; a conversion failure leaves the
 // tile document nil. Build runs only the tile-level checks, not the full

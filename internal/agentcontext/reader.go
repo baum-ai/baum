@@ -140,7 +140,7 @@ var actionRoutes = []actionRoute{
 	// One job, by id, and its transcript, which names no repository: the job
 	// it belongs to is read first.
 	{pattern: "/api/jobs/{id}", bind: byResponse, check: repositoryField},
-	{pattern: "/api/jobs/{id}/draft", bind: byLookup, check: repositoryField, lookup: func(v map[string]string) string { return "/api/jobs/" + v["id"] }},
+	{pattern: "/api/jobs/{id}/draft", bind: byLookup, params: []string{"tiles"}, check: repositoryField, lookup: func(v map[string]string) string { return "/api/jobs/" + v["id"] }},
 	{pattern: "/api/jobs/{id}/transcript", bind: byLookup, params: []string{"after"}, check: repositoryField, lookup: func(v map[string]string) string { return "/api/jobs/" + v["id"] }},
 
 	// The pull request page's reads of GitHub, by repository and number.

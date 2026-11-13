@@ -130,10 +130,8 @@ func TestQueueServesTheDraftUntilTheJobEnds(t *testing.T) {
 // document and its tile document, a context still being written a pending
 // tile. Without it the answer is the draft as it was.
 func TestQueueServesTheDraftAsTiles(t *testing.T) {
-	doc := tileviewtest.Base(t)
-	delete(doc["summary"].(map[string]any), "context")
 	q, d := draftQueue(t, nil)
-	d.document = tileviewtest.Encode(t, doc)
+	d.document = tileviewtest.Encode(t, tileviewtest.DraftOutline(t))
 	handler := q.Handler()
 	jobs, err := q.Generate(context.Background(), []Item{{Clone: "clone", PR: 1}}, "single", false)
 	if err != nil {
@@ -189,6 +187,9 @@ func TestQueueServesTheDraftAsTiles(t *testing.T) {
 	}
 	if context != tiles.StatePending {
 		t.Fatalf("a draft without context has a %q context tile", context)
+	}
+	if got := tileStates(withTiles.Tiles, "change"); got != "pending" {
+		t.Fatalf("change tiles of an outline draft are %q", got)
 	}
 	if code, _ := get("?tiles=0"); code != 200 {
 		t.Fatalf("tiles=0: %d", code)
@@ -510,4 +511,19 @@ func TestANewHeadSupersedesADetailsRetry(t *testing.T) {
 			}
 		})
 	}
+}
+
+// tileStates is the state every tile of a type shares, or "mixed".
+func tileStates(doc *tiles.Document, tileType string) string {
+	state := ""
+	for _, tile := range doc.Tiles {
+		if tile.Type != tileType {
+			continue
+		}
+		if state != "" && state != tile.State {
+			return "mixed"
+		}
+		state = tile.State
+	}
+	return state
 }
