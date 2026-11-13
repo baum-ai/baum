@@ -1278,6 +1278,41 @@ it("opens on General and marks sections needing attention", async () => {
   expect(node.querySelector("#fix-agent")).not.toBeNull();
   expect(nav.querySelector('[aria-current="page"]')!.textContent).toContain("Fixes");
 });
+it("chooses the review page in General, the full review by default", async () => {
+  history.replaceState(null, "", "/s/test-ns/?page=settings");
+  stubDiagnostics(async () => Response.json({ local: true, report: diagnosticsReport }));
+  stubAutomatic();
+  const stubbed = vi.mocked(fetch).getMockImplementation()!;
+  const puts: unknown[] = [];
+  vi.mocked(fetch).mockImplementation((...args) => {
+    const init = args[1] as RequestInit | undefined;
+    if (String(args[0]).includes("api/settings/appearance") && init?.method === "PUT") {
+      puts.push(JSON.parse(String(init.body)));
+      return Promise.resolve(
+        Response.json({
+          theme: "system",
+          key_hints: true,
+          sidebar: "pinned",
+          review_page: "tiles",
+        }),
+      );
+    }
+    return stubbed(...args);
+  });
+  await act(async () => root.render(<App />));
+  const select = node.querySelector<HTMLSelectElement>("#review-page")!;
+  expect(select.value).toBe("full");
+  expect([...select.options].map((option) => option.text)).toEqual([
+    "Full review",
+    "Tiles (preview)",
+  ]);
+  await act(async () => {
+    select.value = "tiles";
+    select.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+  expect(puts).toContainEqual({ review_page: "tiles" });
+  expect(select.value).toBe("tiles");
+});
 it("summarises the prompts in the section list and marks outdated ones", async () => {
   history.replaceState(null, "", "/s/test-ns/?page=settings&section=prompts");
   stubDiagnostics(async () => Response.json({ local: true, report: diagnosticsReport }));
