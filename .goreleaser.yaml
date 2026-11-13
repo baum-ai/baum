@@ -57,7 +57,9 @@ snapshot:
   version_template: "{{ incpatch .Version }}-dev+{{ .ShortCommit }}"
 
 # Commit subjects are not release notes (and may name internal tracking
-# identifiers); a person writes the notes on the draft release.
+# identifiers). The release workflow passes --release-notes with the version's
+# section of CHANGELOG.md on main (scripts/release-notes.sh), written in a PR
+# before the release.
 changelog:
   disable: true
 

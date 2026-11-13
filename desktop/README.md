@@ -1002,6 +1002,14 @@ test, viewer-dist, desktop-test          checks of the tagged release commit
   holds the manifest release candidates read, and being a pre-release, it is
   never the latest release.
 
+Before tagging a stable release, write the version's section (`## v1.2.3`) in
+`CHANGELOG.md` in a PR and merge it. The tagging workflow and the release
+workflow both read it from `main`, not from the tagged commit, and a stable tag
+without notes fails before anything is pushed. A release candidate uses its
+version's section if present and has no notes otherwise, so notes written
+after a candidate still reach its promotion. The release workflow gives them to
+goreleaser as the draft's notes.
+
 To release, run the private monorepo's "Tag an open-source release" workflow
 (`oss-release-tag.yml`) on its `main` with the next version (`v1.2.3`). In a
 clone of this repository at the commit published for that `main`, it builds
@@ -1012,9 +1020,8 @@ so nothing unchecked may get that far. To promote a release candidate, give
 its `base` input the commit the candidate was made from (`git rev-parse
 v1.2.3-rc.1^`); otherwise later commits on `main` would come along. The
 reviewer then works through the checklist below
-before approving the `release` environment. Write the release notes on the draft while the run waits
-for the environment approval; the draft is published, with those notes, when
-the desktop files are attached. A tag with a pre-release suffix
+before approving the `release` environment. The draft is published, with the
+changelog notes, when the desktop files are attached. A tag with a pre-release suffix
 (`v1.2.3-rc.1`) becomes a GitHub pre-release. Full releases of the app do not
 update to it, since they read the latest full release; installed release
 candidates do, through `desktop-rc-updates`.
