@@ -38,3 +38,6 @@ node_modules/
 
 # Local benchmark corpus copies (scripts/bench-index-corpus.sh); private data
 /.bench/
+
+# Replay runs hold private content
+replay-runs/
