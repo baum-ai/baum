@@ -1713,11 +1713,16 @@ returning to a window rereads the saved preferences. Orange or red markers
 beside section names identify issues needing attention. Fixes needs attention when it follows reviews whose
 harness cannot fix. **Reviews** holds
 the global review settings, one per row: whether reviews run automatically,
-for which pull requests (authored, requested, both, or all open pull requests
-in the repository), the harness and its model (a listed model or a custom
-name, saved when its field is left or Enter is pressed) and the reasoning
-effort (Default, which leaves it to the agent, Low, Medium or High; higher levels
-selected in onboarding remain visible). The harness is Claude Code or Codex
+for which pull requests (a select of authored, requested, both, or all open
+pull requests in the repository), the **Agent** (Claude Code or Codex) and the
+**Model**, a select of the agent's models with a custom name (saved when its
+field is left or Enter is pressed) beside the reasoning effort ("Default
+effort", which leaves it to the agent, then Low, Medium or High; a higher level
+selected in onboarding stays visible). The rows of choices (`SettingRow`'s
+`pick`) put the name and control on one line, every control at the same width
+on the right, with the row's sentence under both; when the panel is narrower
+than 40rem (a container query) the control drops below and fills it. The
+harness is Claude Code or Codex
 only: the daemon refuses `cursor-agent` and `anthropic` (400 when saving, a
 failed job for one already in `config.toml`), and when neither is installed
 the section says so. Each change is saved
@@ -1727,30 +1732,37 @@ keeps as app preferences over the config file; `GET api/settings` reports the
 effective harness, model and effort. Each section sends all its choices and runs one
 save at a time; changes made while one runs are sent together afterwards, so
 an older choice never lands after a newer one. A failed save shows the error
-and puts the control back. **Fixes** chooses the agent that fixes: "Same as reviews" (the
-default) or Claude Code
-or Codex with a model and a reasoning effort, sent as `fix_backend`,
-`fix_model` and `fix_effort` (`""` returns to the reviews', effort included)
-and reported by `GET api/settings`. A chosen fix agent applies
-in every repository. While the agent of Reviews, Fixes or (its own) Data
-extraction is Claude Code, a
-closed **Advanced** disclosure at the end of the section (`ClaudeConfigDirAdvanced`,
-open when a directory is chosen) holds **Configuration directory**:
-Default (the environment's, named in the row from `default_claude_config_dir`), the
-other directories baum knows (`claude_config_dirs`, home written as `~` from `home`), or another path typed and saved
-when its field is left or Enter is pressed. It is sent as `claude_config_dir`
-or `fix_claude_config_dir` (`PUT api/automatic`), or as `claude_config_dir`
-with `PUT api/settings/decisions`, only when it changes (`""` returns to the default;
-fixes that follow reviews have none of their own), and the daemon refuses a
-path that is not an existing directory or that Claude Code is signed out
-with, saying how to sign in; the section shows the refusal and puts the
-control back. The sidebar's plan usage and the tray then show that
-directory's Claude plan too. The sidebar puts an agent's plans under one heading, each on a line naming its directory ("Default" for the daemon's own) and plan; the tray names it after the agent with the directory
-(`config_dir`, `planName`). `GET api/settings` reports all four. The daemon
-takes Codex homes the same way: `codex_home` and `fix_codex_home` (`PUT
-api/automatic`), `codex_home` (`PUT api/settings/decisions`), and `GET
-api/settings` reports `codex_home`, `fix_codex_home`, `default_codex_home`
-and `codex_homes`. In the desktop app, the agent selects of Reviews, Fixes
+and puts the control back. **Fixes** chooses the agent that fixes: "Same as
+reviews (agent · model)" (the default) or Claude Code or Codex, then a model
+and a reasoning effort, sent as `fix_backend`, `fix_model` and `fix_effort`
+(`""` returns to the reviews', effort included) and reported by `GET
+api/settings`. A chosen fix agent applies in every repository. **Data
+extraction** has the same Agent and Model rows, its agent "Same as reviews
+(agent)" by default.
+
+While the agent of Reviews, Fixes or (its own) Data extraction is Claude Code
+or Codex, a closed **Advanced** disclosure at the end of the section
+(`AccountAdvanced`, open when a folder is chosen) holds **Claude Code
+account** or **Codex account**: Default (the environment's, named in the
+row's sentence), the other folders baum knows, written with `~`, or another
+path typed and saved when its field is left or Enter is pressed. For Claude
+Code it is sent as `claude_config_dir` or `fix_claude_config_dir` (`PUT
+api/automatic`), or `claude_config_dir` (`PUT api/settings/decisions`); for
+Codex as `codex_home`, `fix_codex_home` or `codex_home`. Each is sent only
+when it changes (`""` returns to the default; fixes and extraction that follow
+the reviews' agent have none of their own), and changing the agent clears the
+other agent's. The daemon refuses a path that is not an existing directory or
+that the agent is signed out with, saying how to sign in; the section shows
+the refusal and puts the control back. `GET api/settings` reports
+`claude_config_dir`, `fix_claude_config_dir`, `default_claude_config_dir`,
+`claude_config_dirs`, `codex_home`, `fix_codex_home`, `default_codex_home`,
+`codex_homes` and `home`. The sidebar's plan usage and the tray then show the
+chosen account's plan too: the sidebar puts an agent's plans under one
+heading, each on a line naming its folder ("Default" for the daemon's own) and
+plan; the tray names it after the agent with the folder (`config_dir`,
+`planName`). The capture note under Data extraction (`DecisionsDisclosure`)
+says in two sentences what is sent, what never is, and that it needs the
+hooks. In the desktop app, the agent selects of Reviews, Fixes
 and Data extraction label a CLI that reports no sign-in "(not signed in)",
 and while the agent a section uses is one, its row says that section's jobs
 will fail and how to sign in. **Connections** holds the GitHub connection and, in the

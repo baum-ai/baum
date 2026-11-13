@@ -118,6 +118,11 @@ export type ReviewDefaults = {
   fix_claude_config_dir?: string;
   default_claude_config_dir?: string;
   claude_config_dirs?: string[];
+  /** The same for Codex: the CODEX_HOME reviews and fixes run with. */
+  codex_home?: string;
+  fix_codex_home?: string;
+  default_codex_home?: string;
+  codex_homes?: string[];
   /** The user's home directory, written as ~ in those paths. */
   home?: string;
 };
@@ -566,11 +571,43 @@ const efforts: { value: string; label: string }[] = [
   { value: "high", label: "High" },
 ];
 
-/** The Claude Code configuration directory a use case runs with, behind an
- *  Advanced disclosure that starts closed unless one is chosen: "" leaves it
- *  to the environment. Only Claude Code has one, so other agents show
- *  nothing. */
-function ClaudeConfigDirAdvanced({
+/** What tells one account of an agent from another: its configuration
+ *  directory, as `GET api/settings` reports it per agent. */
+const accounts: Record<
+  string,
+  {
+    name: string;
+    folder: string;
+    placeholder: string;
+    known: (d: ReviewDefaults) => string[] | undefined;
+    fallback: (d: ReviewDefaults) => string | undefined;
+  }
+> = {
+  claude: {
+    name: "Claude Code account",
+    folder: ".claude",
+    placeholder: "~/.claude-work",
+    known: (d) => d.claude_config_dirs,
+    fallback: (d) => d.default_claude_config_dir,
+  },
+  codex: {
+    name: "Codex account",
+    folder: ".codex",
+    placeholder: "~/.codex-work",
+    known: (d) => d.codex_homes,
+    fallback: (d) => d.default_codex_home,
+  },
+};
+
+/** The draft field holding `backend`'s configuration directory. */
+const accountField = (backend: string) =>
+  backend === "codex" ? ("codex_home" as const) : ("claude_config_dir" as const);
+
+/** The configuration directory (CLAUDE_CONFIG_DIR, CODEX_HOME) a use case
+ *  runs its agent with, behind an Advanced disclosure that starts closed
+ *  unless one is chosen: "" leaves it to the environment. An agent without
+ *  one shows nothing. */
+function AccountAdvanced({
   id,
   backend,
   value,
@@ -583,21 +620,26 @@ function ClaudeConfigDirAdvanced({
   defaults: ReviewDefaults;
   onChange: (next: string) => void;
 }) {
-  const known = [...new Set([...(defaults.claude_config_dirs ?? []), ...(value ? [value] : [])])];
+  const account = accounts[backend];
+  const known = [
+    ...new Set([...((account && account.known(defaults)) ?? []), ...(value ? [value] : [])]),
+  ];
   const [custom, setCustom] = useState(false);
   const [text, setText] = useState("");
   // A saved choice ends the typing; a failed save keeps the field to correct.
   // biome-ignore lint/correctness/useExhaustiveDependencies: `value` changing is the signal
   useEffect(() => setCustom(false), [value]);
-  if (backend !== "claude") return null;
+  if (!account) return null;
   const commit = () => {
     const next = text.trim();
     if (next && next !== value) onChange(next);
   };
-  const fallback = defaults.default_claude_config_dir;
+  const fallback = account.fallback(defaults);
   // A daemon older than this page, still finishing its jobs after an update,
   // sends no home; the usual default directory then tells where it is.
-  const home = defaults.home || fallback?.match(/^(.+)[\\/]\.claude$/)?.[1];
+  const home =
+    defaults.home ||
+    (fallback?.endsWith(`/${account.folder}`) ? fallback.slice(0, -account.folder.length - 1) : "");
   const display = (dir: string) => displayPath(dir, home);
   // The default is in the list under its own name, not a second time by path.
   const others = known.filter((dir) => dir !== fallback || dir === value);
@@ -606,7 +648,7 @@ function ClaudeConfigDirAdvanced({
       <summary>Advanced</summary>
       <SettingRow
         pick
-        label="Claude Code account"
+        label={account.name}
         htmlFor={id}
         detail={
           <>
@@ -644,8 +686,8 @@ function ClaudeConfigDirAdvanced({
           {custom ? (
             <input
               className="local-field settings-select"
-              aria-label="Claude Code configuration directory path"
-              placeholder="~/.claude-work"
+              aria-label={`${account.name} folder`}
+              placeholder={account.placeholder}
               value={text}
               spellCheck={false}
               onChange={(event) => setText(event.target.value)}
@@ -825,16 +867,18 @@ function ReviewsSection({
   /** Harnesses the desktop app found signed out. */
   signedOut?: readonly string[];
 }) {
-  const saved: ReviewSettings & { effort: string; claude_config_dir: string } = {
-    ...withModel({
-      backend: shownBackend(defaults.backend),
-      model: defaults.backend === "auto" ? "" : defaults.model,
-      automatic: automatic.enabled,
-      pull_requests: (automatic.pull_requests ?? "both") as PullRequests,
-    }),
-    effort: defaults.effort ?? "",
-    claude_config_dir: defaults.claude_config_dir ?? "",
-  };
+  const saved: ReviewSettings & { effort: string; claude_config_dir: string; codex_home: string } =
+    {
+      ...withModel({
+        backend: shownBackend(defaults.backend),
+        model: defaults.backend === "auto" ? "" : defaults.model,
+        automatic: automatic.enabled,
+        pull_requests: (automatic.pull_requests ?? "both") as PullRequests,
+      }),
+      effort: defaults.effort ?? "",
+      claude_config_dir: defaults.claude_config_dir ?? "",
+      codex_home: defaults.codex_home ?? "",
+    };
   const key = JSON.stringify(saved);
   const [draft, setDraft] = useState(saved);
   const { save, error, status, failures } = useAutoSave(changed);
@@ -851,10 +895,11 @@ function ReviewsSection({
       model: next.model,
       effort: next.effort,
       pull_requests: next.pull_requests,
-      // Sent only when it changes, so other saves never touch it.
+      // Sent only when they change, so other saves never touch them.
       ...(next.claude_config_dir !== saved.claude_config_dir
         ? { claude_config_dir: next.claude_config_dir }
         : {}),
+      ...(next.codex_home !== saved.codex_home ? { codex_home: next.codex_home } : {}),
     });
   };
   const harness = harnesses.find((h) => h.id === draft.backend);
@@ -954,12 +999,12 @@ function ReviewsSection({
             />
           </div>
         </SettingRow>
-        <ClaudeConfigDirAdvanced
-          id="review-claude-config-dir"
+        <AccountAdvanced
+          id={draft.backend === "codex" ? "review-codex-home" : "review-claude-config-dir"}
           backend={draft.backend}
-          value={draft.claude_config_dir}
+          value={draft[accountField(draft.backend)]}
           defaults={defaults}
-          onChange={(claude_config_dir) => change({ claude_config_dir })}
+          onChange={(dir) => change({ [accountField(draft.backend)]: dir })}
         />
       </div>
       <p className="settings-footnote">
@@ -988,6 +1033,7 @@ function FixesSection({
     model: savedBackend ? defaults.fix_model || (modelPresets[savedBackend]?.[0] ?? "") : "",
     effort: savedBackend ? (defaults.fix_effort ?? "") : "",
     claude_config_dir: savedBackend ? (defaults.fix_claude_config_dir ?? "") : "",
+    codex_home: savedBackend ? (defaults.fix_codex_home ?? "") : "",
   };
   const key = JSON.stringify(saved);
   const [draft, setDraft] = useState(saved);
@@ -1000,9 +1046,12 @@ function FixesSection({
       fix_backend: next.backend,
       fix_model: next.model,
       fix_effort: next.effort,
-      // Sent only when it changes; following reviews again clears it anyway.
+      // Sent only when they change; following reviews again clears them anyway.
       ...(next.backend && next.claude_config_dir !== saved.claude_config_dir
         ? { fix_claude_config_dir: next.claude_config_dir }
+        : {}),
+      ...(next.backend && next.codex_home !== saved.codex_home
+        ? { fix_codex_home: next.codex_home }
         : {}),
     });
   };
@@ -1047,6 +1096,7 @@ function FixesSection({
                 model: backend ? (modelPresets[backend]?.[0] ?? "") : "",
                 effort: backend ? draft.effort : "",
                 claude_config_dir: backend === "claude" ? draft.claude_config_dir : "",
+                codex_home: backend === "codex" ? draft.codex_home : "",
               })
             }
           />
@@ -1070,12 +1120,12 @@ function FixesSection({
             </div>
           </SettingRow>
         ) : null}
-        <ClaudeConfigDirAdvanced
-          id="fix-claude-config-dir"
+        <AccountAdvanced
+          id={draft.backend === "codex" ? "fix-codex-home" : "fix-claude-config-dir"}
           backend={draft.backend}
-          value={draft.claude_config_dir}
+          value={draft[accountField(draft.backend)]}
           defaults={defaults}
-          onChange={(claude_config_dir) => change({ ...draft, claude_config_dir })}
+          onChange={(dir) => change({ ...draft, [accountField(draft.backend)]: dir })}
         />
       </div>
       <p className="settings-footnote">
@@ -2040,6 +2090,7 @@ function DecisionSettingsSection({
     model: saved.model,
     effort: saved.effort ?? "",
     claude_config_dir: saved.claude_config_dir ?? "",
+    codex_home: saved.codex_home ?? "",
   };
   const key = JSON.stringify(choice);
   const [draft, setDraft] = useState(choice);
@@ -2062,9 +2113,12 @@ function DecisionSettingsSection({
       backend: next.backend,
       model,
       effort: next.effort,
-      // Sent only when it changes; following reviews again clears it anyway.
+      // Sent only when they change; following reviews again clears them anyway.
       ...(next.backend && next.claude_config_dir !== (saved.claude_config_dir ?? "")
         ? { claude_config_dir: next.claude_config_dir }
+        : {}),
+      ...(next.backend && next.codex_home !== (saved.codex_home ?? "")
+        ? { codex_home: next.codex_home }
         : {}),
     });
   };
@@ -2133,6 +2187,7 @@ function DecisionSettingsSection({
                 backend: next,
                 model: "",
                 claude_config_dir: next === "claude" ? draft.claude_config_dir : "",
+                codex_home: next === "codex" ? draft.codex_home : "",
               })
             }
           />
@@ -2172,12 +2227,12 @@ function DecisionSettingsSection({
         ) : null}
         {/* Only with an agent of its own: otherwise it follows the reviews'. */}
         {draft.backend && !off ? (
-          <ClaudeConfigDirAdvanced
-            id="decisions-claude-config-dir"
+          <AccountAdvanced
+            id={draft.backend === "codex" ? "decisions-codex-home" : "decisions-claude-config-dir"}
             backend={draft.backend}
-            value={draft.claude_config_dir}
+            value={draft[accountField(draft.backend)]}
             defaults={defaults}
-            onChange={(claude_config_dir) => change({ claude_config_dir })}
+            onChange={(dir) => change({ [accountField(draft.backend)]: dir })}
           />
         ) : null}
       </div>
