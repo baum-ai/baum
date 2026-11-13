@@ -165,7 +165,6 @@ afterEach(async () => {
   vi.unstubAllGlobals();
   forgetLastRows();
 });
-// These test the full review's page; the walkthrough has its own tests.
 async function render(current: Job, revision = 0, currentEntry = entry) {
   await act(async () =>
     root.render(

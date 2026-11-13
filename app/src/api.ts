@@ -875,7 +875,7 @@ export function appURL(path = ""): string {
 /** What the app keeps in each of its history entries: how many of its own
  *  entries lie behind it (`depth`), the place it shows (`place`), and the
  *  depth of the entry it was opened from (`back`), the last one that showed
- *  another place. Moves within a place (a walkthrough step, the Ask panel)
+ *  another place. Moves within a place (such as the Ask panel)
  *  keep their `back`, so going back leaves the place in one step. */
 type AppHistory = { depth: number; place: string; back?: number };
 
@@ -1404,11 +1404,11 @@ export type GitHubConnection = {
  *  usually because they restrict OAuth app access until an owner approves baum. */
 export type OrganizationAccess = { hidden: string[]; approval_url: string };
 
-/** What an Ask is about: a section of the review, a stop of the walkthrough,
- *  or the pull request as a whole. The session panel carries it in the page
+/** What an Ask is about: a section of the review or the pull request as a
+ *  whole. The session panel carries it in the page
  *  context's focus; an earlier question to the review's agent stored it. */
 export type ChatFocus = {
-  kind: "section" | "stop" | "overview";
+  kind: "section" | "overview";
   id?: string;
   title?: string;
   anchors?: ChatAnchor[];

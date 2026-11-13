@@ -5,12 +5,17 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import {
   DecisionsRevision,
   LiveSessionDecisions,
-  PullRequestDecisionsList,
+  PullRequestDecisionsPane,
   captureState,
   usePullRequestDecisions,
   useGroupDecisions,
 } from "./decisions";
 import type { CapturedDecision, LiveSession, SessionDecisions } from "./api";
+
+function PullRequestDecisions({ live }: { live: LiveSession[] }) {
+  const read = usePullRequestDecisions("acme/demo", 7, 0);
+  return read ? <PullRequestDecisionsPane read={read} live={live} /> : null;
+}
 
 const live: LiveSession = {
   agent: "claude-code",
@@ -110,7 +115,7 @@ it("draws nothing for a daemon without decision capture", async () => {
     root.render(
       <>
         <LiveSessionDecisions session={live} />
-        <PullRequestDecisionsList repository="acme/demo" number={7} live={[]} revision={0} />
+        <PullRequestDecisions live={[]} />
       </>,
     ),
   );
@@ -153,16 +158,8 @@ it("lists a pull request's decisions by session and marks the provisional ones",
       },
     ],
   };
-  await act(async () =>
-    root.render(
-      <PullRequestDecisionsList repository="acme/demo" number={7} live={[live]} revision={0} />,
-    ),
-  );
-  const section = node.querySelector('[aria-labelledby="pr-decisions-heading"]')!;
-  expect(section.querySelector("h3")!.textContent).toBe("Decisions from sessions (3)");
-  // The list can be long, so it starts closed behind its heading.
-  expect(section.querySelector("details")!.open).toBe(false);
-  expect(section.querySelector("summary h3")).not.toBeNull();
+  await act(async () => root.render(<PullRequestDecisions live={[live]} />));
+  const section = node;
   expect(section.textContent).toContain(
     "One decision was made after the saved review was generated",
   );
@@ -197,13 +194,8 @@ it("shows a session whose first capture is in flight on the pull request", async
       },
     ],
   };
-  await act(async () =>
-    root.render(
-      <PullRequestDecisionsList repository="acme/demo" number={7} live={[live]} revision={0} />,
-    ),
-  );
-  const section = node.querySelector('[aria-labelledby="pr-decisions-heading"]')!;
-  expect(section.querySelector("h3")!.textContent).toBe("Decisions from sessions (0)");
+  await act(async () => root.render(<PullRequestDecisions live={[live]} />));
+  const section = node;
   expect(section.textContent).toContain("Add a retry budget");
   expect(section.textContent).toContain("Capturing…");
 });
@@ -271,12 +263,7 @@ it.each([
       sessions: [{ ...captured({ decisions: [], relevance }), live: true }],
       review_generated_at: null,
     };
-    await act(async () =>
-      root.render(
-        <PullRequestDecisionsList repository="acme/demo" number={7} live={[live]} revision={0} />,
-      ),
-    );
-    expect(node.textContent).toContain("Decisions from sessions (0)");
+    await act(async () => root.render(<PullRequestDecisions live={[live]} />));
     expect(node.textContent).toContain(text);
     expect(node.querySelectorAll("li.local-decision")).toHaveLength(0);
   },

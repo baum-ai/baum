@@ -1016,8 +1016,7 @@ function Workspace({ url }: { url: UrlState }) {
     if (first && url.search.get("inbox") === target.id)
       url.update(
         (current) => {
-          for (const key of ["page", "pr", "clone", "repository", "group", "walk"])
-            current.delete(key);
+          for (const key of ["page", "pr", "clone", "repository", "group"]) current.delete(key);
           current.set("inbox", first.id);
           return current;
         },
@@ -1285,20 +1284,18 @@ function Workspace({ url }: { url: UrlState }) {
   // The shortcuts sheet lists the keys of where it was opened first.
   const shortcutsPlace: ShortcutsPlace = onList
     ? "pulls"
-    : selectedEntry && url.search.get("walk") && url.search.get("walk") !== "full"
-      ? "walkthrough"
-      : (page === "inbox" || page === "pulls") && (groupId || selectedEntry)
-        ? "review"
-        : (page === "sessions" && openSession) || openJob || openRepository
-          ? "page"
-          : page === "inbox" ||
-              page === "sessions" ||
-              page === "jobs" ||
-              page === "repositories" ||
-              page === "timeline" ||
-              page === "settings"
-            ? page
-            : "anywhere";
+    : (page === "inbox" || page === "pulls") && (groupId || selectedEntry)
+      ? "review"
+      : (page === "sessions" && openSession) || openJob || openRepository
+        ? "page"
+        : page === "inbox" ||
+            page === "sessions" ||
+            page === "jobs" ||
+            page === "repositories" ||
+            page === "timeline" ||
+            page === "settings"
+          ? page
+          : "anywhere";
   // What the person has open, as the session panel reports it to the daemon
   // and names it in its bar, with its subject's name where the app has it,
   // and the part of a pull request's review an Ask picked.
@@ -1520,7 +1517,7 @@ function Workspace({ url }: { url: UrlState }) {
         event.preventDefault();
         if (backToOpener()) return;
         url.update((current) => {
-          for (const key of ["pr", "clone", "repository", "group", "walk"]) current.delete(key);
+          for (const key of ["pr", "clone", "repository", "group"]) current.delete(key);
           return current;
         });
       } else if (

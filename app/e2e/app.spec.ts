@@ -475,7 +475,7 @@ test("merges a ready pull request from the inbox after choosing a method", async
   await rm(join(process.env.BAUM_APP_STATE_DIR ?? "", "merged-7"), { force: true });
 });
 
-test("walks through a review, comments on a behaviour and submits the review", async ({
+test("comments on a review, keeps the draft in the daemon and submits the review", async ({
   page,
   browser,
 }) => {
@@ -497,23 +497,13 @@ test("walks through a review, comments on a behaviour and submits the review", a
   await page.goto(await launchURL());
   await page.getByRole("link", { name: "Pull requests", exact: true }).first().click();
   await page.getByRole("link", { name: /Reuse the existing PR page/ }).click();
-  // The PR page has no Walk through button for now; the walkthrough still
-  // opens from its address.
-  await expect(page).toHaveURL(/pr=/);
-  await page.goto(`${page.url()}&walk=landing`);
-  const walk = page.getByRole("region", { name: "Walkthrough" });
-  await expect(walk.getByText("The tour · riskiest first")).toBeVisible();
-  await walk.getByRole("button", { name: "Start the review", exact: true }).click();
-  await expect(page).toHaveURL(/walk=tour/);
-  await expect(walk.getByRole("article").getByRole("heading", { level: 2 })).toHaveText(
-    "Operator-only dead-letter endpoints",
-  );
-  await walk.getByRole("button", { name: /Something looks off/ }).click();
+  await expect(page.getByRole("heading", { name: "Reuse the existing PR page" })).toBeVisible();
+  const count = page.locator("[data-review-button] .review-count").first();
+  await page.keyboard.press("c");
   await page.keyboard.type("Trusts a client-supplied header");
-  await walk.getByRole("button", { name: "Save comment", exact: true }).click();
-  await expect(walk.getByText("1 comment", { exact: true })).toBeVisible();
+  await page.keyboard.press("Control+Enter");
+  await expect(count).toHaveText("1");
   // Drafts are stored by the daemon and survive another browser context.
-  await expect(walk.getByText("Saving review draft…", { exact: true })).toHaveCount(0);
   const retainedURL = page.url();
   await page.evaluate(() => localStorage.clear());
   const freshContext = await browser.newContext();
@@ -522,44 +512,37 @@ test("walks through a review, comments on a behaviour and submits the review", a
     await freshPage.goto(await launchURL());
     await expect(freshPage.getByRole("heading", { name: "Default", exact: true })).toBeVisible();
     await freshPage.goto(retainedURL);
-    await expect(
-      freshPage
-        .getByRole("region", { name: "Walkthrough" })
-        .getByText("1 comment", { exact: true }),
-    ).toBeVisible();
+    await expect(freshPage.locator("[data-review-button] .review-count").first()).toHaveText("1");
   } finally {
     await freshContext.close();
   }
-  // A reload keeps the walkthrough, what was looked at and the comment.
   await page.reload();
-  await expect(walk.getByText("1 comment", { exact: true })).toBeVisible();
-  await expect(page).toHaveURL(/walk=tour/);
-  await walk.getByRole("button", { name: "Send review", exact: true }).click();
-  await walk.getByRole("radio", { name: /Request changes/ }).click();
-  await walk.getByRole("button", { name: "Request changes", exact: true }).click();
-  await expect(walk.getByText("Your review is on GitHub.")).toBeVisible();
+  await expect(count).toHaveText("1");
+  await page.keyboard.press("v");
+  await page.getByRole("menuitem", { name: "Request changes", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: /Review pull request #7/ });
+  await expect(dialog.getByText("Trusts a client-supplied header")).toBeVisible();
+  await dialog.getByRole("button", { name: "Request changes", exact: true }).click();
+  await expect(page.getByText("Changes requested on GitHub")).toBeVisible();
   expect(submitted).toEqual([
     expect.objectContaining({
       repository: "acme/demo",
       pr: 7,
       event: "REQUEST_CHANGES",
-      comments: [
-        expect.objectContaining({ body: "Trusts a client-supplied header", side: "RIGHT" }),
-      ],
+      // A comment on the pull request as a whole has no line, so it goes in the body.
+      body: "Trusts a client-supplied header",
+      comments: [],
     }),
   ]);
   // Narrow: no sideways scroll.
   await page.setViewportSize({ width: 390, height: 844 });
-  await walk.getByRole("button", { name: /^Retry policy and backoff,/ }).click();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
     true,
   );
-  await walk.getByRole("button", { name: "Full review", exact: true }).click();
-  await expect(page).not.toHaveURL(/walk=/);
   expect(errors).toEqual([]);
 });
 
-test("Ask opens the session panel on the pull request, and a stop's Ask says what it is about", async ({
+test("Ask opens the session panel on the pull request and lists the earlier questions", async ({
   page,
 }) => {
   const errors: string[] = [];
@@ -590,6 +573,9 @@ test("Ask opens the session panel on the pull request, and a stop's Ask says wha
   await expect(composer).toBeFocused();
   await expect(composer).toHaveValue("");
   expect(page.url()).not.toContain("ask=");
+  await expect
+    .poll(() => reported.at(-1))
+    .toMatchObject({ page: "pull_request", repository: "acme/demo", pull_request: 7 });
   await composer.press("Escape");
   await expect(panel).toHaveCount(0);
 
@@ -609,31 +595,6 @@ test("Ask opens the session panel on the pull request, and a stop's Ask says wha
   await page.getByRole("button", { name: "Earlier questions", exact: true }).click();
   await expect(earlier).toHaveCount(0);
 
-  // In the walkthrough, a stop's Ask opens the panel about that stop: the
-  // page context the agent reads carries it.
-  // The tour opens on the stop where the reader is.
-  await page.goto(`${page.url()}&walk=tour`);
-  const walk = page.getByRole("region", { name: "Walkthrough" });
-  await walk.getByRole("button", { name: "Ask about this", exact: true }).click();
-  await expect(panel).toBeVisible();
-  await expect(composer).toBeFocused();
-  await expect
-    .poll(() => reported.at(-1))
-    .toMatchObject({
-      page: "pull_request",
-      repository: "acme/demo",
-      pull_request: 7,
-      focus: { walk: "tour", kind: "stop" },
-    });
-  const focus = reported.at(-1)!.focus as { id: string; title: string; anchors: unknown[] };
-  expect(focus.id).toBeTruthy();
-  expect(focus.anchors.length).toBeGreaterThan(0);
-  const stop = focus.title;
-  await expect(panel.locator(".session-panel-focus")).toContainText(`About ${stop}`);
-  // Leaving it out keeps the pull request.
-  await panel.getByRole("button", { name: `Stop asking about ${stop}` }).click();
-  await expect(panel.locator(".session-panel-focus")).toHaveCount(0);
-  await expect.poll(() => reported.at(-1)?.focus).toEqual({ walk: "tour" });
   expect(errors).toEqual([]);
 });
 

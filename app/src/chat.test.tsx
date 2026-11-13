@@ -15,7 +15,7 @@ import {
   type Entry,
   type Job,
 } from "./api";
-import { EarlierQuestions, focusAnchors, sectionFocus, stopFocus, turnReasonText } from "./chat";
+import { EarlierQuestions, focusAnchors, sectionFocus, turnReasonText } from "./chat";
 import { LocalReview } from "./review";
 import { resetSessionPanel, useSessionPanel } from "./session-panel-state";
 
@@ -242,7 +242,7 @@ it("notes that a seeded conversation started without the review's context", asyn
   expect(node.textContent).toContain("Seeded from disk.");
 });
 
-it("builds a focus from a section and a stop with the hunks' files and lines", () => {
+it("builds a focus from a section and from anchors with the hunks' files and lines", () => {
   const section = sectionFocus(doc, "sec_retry")!;
   expect(section).toMatchObject({
     kind: "section",
@@ -251,20 +251,12 @@ it("builds a focus from a section and a stop with the hunks' files and lines", (
   });
   expect(section.anchors).toContainEqual({ path: "queue/retry.go", start_line: 1, end_line: 43 });
   expect(sectionFocus(doc, "missing")).toBeNull();
-  const stop = stopFocus(doc, {
-    id: "beh_delay",
-    title: "Delays",
-    anchors: [
+  expect(
+    focusAnchors(doc, [
       { type: "hunk", id: "h_141757b19901", lines: [31, 42] },
       { type: "pr", number: 1 },
-    ],
-  });
-  expect(stop).toEqual({
-    kind: "stop",
-    id: "beh_delay",
-    title: "Delays",
-    anchors: [{ path: "queue/retry.go", start_line: 31, end_line: 42 }],
-  });
+    ]),
+  ).toEqual([{ path: "queue/retry.go", start_line: 31, end_line: 42 }]);
   const many = focusAnchors(
     doc,
     doc.index.hunks.flatMap((hunk) => Array(3).fill({ type: "hunk", id: hunk.id })),
@@ -375,7 +367,7 @@ it("opens the earlier questions read-only, keeps them in the URL and closes them
 
 it("starts with the earlier questions open when the URL says questions=1", async () => {
   conversations = [conversation({ turns: [answered()] })];
-  await act(async () => root.render(<Harness search="walk=full&questions=1" />));
+  await act(async () => root.render(<Harness search="questions=1" />));
   await settle();
   expect(node.querySelector(".ask-panel")).not.toBeNull();
 });

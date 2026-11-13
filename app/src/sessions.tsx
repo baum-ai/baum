@@ -371,33 +371,6 @@ function WaitingFor({ reason }: { reason: WaitingReason }) {
   );
 }
 
-/** The agent sessions in progress on a pull request's branch, on its page,
- *  each with the way into its transcript. Once one ends the page reads its
- *  full session from disk, as for any finished session. */
-export function LiveSessions({
-  sessions,
-  Link,
-  decisions,
-}: {
-  sessions: LiveSession[];
-  Link: ComponentType<ViewerLinkProps>;
-  decisions?: PullRequestDecisionsRead | null;
-}) {
-  if (sessions.length === 0) return null;
-  return (
-    <section aria-label="Sessions in progress" className="mb-3 local-panel local-pr-sessions">
-      <h3>Sessions in progress</h3>
-      <ul>
-        {sessions.map((s) => (
-          <li key={sessionKey(s)}>
-            <LiveSessionCard session={s} Link={Link} decisions={decisions} />
-          </li>
-        ))}
-      </ul>
-    </section>
-  );
-}
-
 /** What names a listed session in a pull request's Sessions list: its title,
  *  else its agent's name. */
 export const liveSessionLabel = (s: Pick<LiveSession, "title" | "agent">) =>
