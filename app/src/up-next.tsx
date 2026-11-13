@@ -243,7 +243,28 @@ function memberLabel(kind: UpNextKind, entry: Entry): string {
   return problems.length ? problems.join(" · ") : KINDS.fix.label;
 }
 
-function why(kind: UpNextKind, entry: Entry, working: number): string {
+/** How long fetched pull request metadata counts as current. */
+const METADATA_MAX_AGE_MS = 2 * 60_000;
+
+/** Whether what the index says of an entry may be behind GitHub: its
+ *  repository's list is stale, or the observation applied to it was fetched
+ *  over two minutes before `now`. An entry without an observation does not age.
+ *  The daemon does not count the age, so the index does not change with time
+ *  alone. */
+export function metadataStale(entry: Pick<Entry, "stale" | "observed_at">, now: number): boolean {
+  if (entry.stale) return true;
+  const observed = entry.observed_at ? Date.parse(entry.observed_at) : NaN;
+  return !Number.isNaN(observed) && now - observed > METADATA_MAX_AGE_MS;
+}
+
+/** The instant `metadataStale` turns true for an entry by age, or null. */
+function staleAt(entry: Entry): number | null {
+  if (entry.stale || !entry.observed_at) return null;
+  const observed = Date.parse(entry.observed_at);
+  return Number.isNaN(observed) ? null : observed + METADATA_MAX_AGE_MS + 1;
+}
+
+function why(kind: UpNextKind, entry: Entry, working: number, now: number): string {
   const pr = entry.pull_request;
   switch (kind) {
     case "review": {
@@ -254,7 +275,7 @@ function why(kind: UpNextKind, entry: Entry, working: number): string {
             ? "baum's review failed."
             : entry.version_count === 0
               ? "There is no baum review yet."
-              : entry.status === "outdated" || entry.stale
+              : entry.status === "outdated" || metadataStale(entry, now)
                 ? "baum's review covers an earlier commit."
                 : `baum's review is ready${riskText(entry) ? `, risk ${riskText(entry)}` : ""}.`;
       const agents =
@@ -328,6 +349,7 @@ export function upNext(
   live: LiveSession[] = [],
   jobs: Job[] = [],
   groups: ReviewGroup[] = [],
+  now = Date.now(),
 ): {
   items: UpNextItem[];
   waiting: Entry[];
@@ -368,7 +390,7 @@ export function upNext(
       key,
       kind,
       entry,
-      why: why(kind, entry, working.length),
+      why: why(kind, entry, working.length, now),
       minutes: kind === "review" ? (entry.review_minutes ?? null) : null,
       working,
       ...(last && changedNothing(last)
@@ -560,11 +582,17 @@ export function useUpNext(
   const persistence = useUIState(inboxRecord());
   const stored = persistence.value;
   // Renders when a snooze ends or the day rolls over, not on a steady tick.
-  const now = useDeadlineNow(Object.values(stored.snoozed), true);
+  // Also when a ready review's pull request metadata passes two minutes old,
+  // which turns "ready" into "covers an earlier commit".
+  const ageDeadlines = entries.flatMap((entry) => {
+    const at = entry.version_count > 0 && entry.status !== "outdated" ? staleAt(entry) : null;
+    return at === null ? [] : [at];
+  });
+  const now = useDeadlineNow([...Object.values(stored.snoozed), ...ageDeadlines], true);
   const day = dayOf(now);
   const state = stored.day === day ? stored : fresh(day, stored, now);
   const archived = state.archived ?? {};
-  const { items, waiting, others, fixing, stackedOn } = upNext(entries, live, jobs, groups);
+  const { items, waiting, others, fixing, stackedOn } = upNext(entries, live, jobs, groups, now);
   const isArchived = (entry: Entry) => upNextKey(entry.pull_request) in archived;
   // An archived pull request is not snoozed as well: it never comes back.
   const snoozedNow = (entry: Entry) => {

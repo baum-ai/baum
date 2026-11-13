@@ -101,6 +101,10 @@ type Result struct {
 	// for a caller that shows a session's transcript; RedactGraph redacts
 	// one. They are never part of the JSON.
 	Graphs map[string]*session.Graph
+	// LoadGraph is set by ResolveSummary. It obtains a graph only for an
+	// explicit transcript read with its current linked metadata, rechecking that it is still linked
+	// to this request's pinned commits. It is never part of the JSON.
+	LoadGraph func(context.Context, string) (Result, error)
 }
 
 // Session is a linked session. All text is redacted.
@@ -181,6 +185,34 @@ const maxSubject = 200
 // Result, not an error; an error is a failure to read something that should
 // have been readable.
 func Resolve(ctx context.Context, req Request) (Result, error) {
+	workstats.Inc("locallink.resolve.full")
+	return resolveRequest(ctx, req, true)
+}
+
+// ResolveSummary returns exactly Resolve's JSON without retaining full graphs.
+// Compact row facts outlive graph-cache eviction; transcript readers may call
+// LoadGraph to revalidate linkage and obtain the graph on demand.
+func ResolveSummary(ctx context.Context, req Request) (Result, error) {
+	workstats.Inc("locallink.resolve.summary")
+	result, err := resolveRequest(ctx, req, false)
+	if err == nil && result.Available {
+		result.LoadGraph = func(ctx context.Context, id string) (Result, error) {
+			full, err := Resolve(ctx, req)
+			if err != nil {
+				return Result{}, err
+			}
+			for _, linked := range full.Sessions {
+				if linked.ID == id {
+					return full, nil
+				}
+			}
+			return Result{Available: true}, nil
+		}
+	}
+	return result, err
+}
+
+func resolveRequest(ctx context.Context, req Request, graphs bool) (Result, error) {
 	if req.Repository == "" || req.Head == "" || (req.Base == "" && req.MergeBase == "") {
 		return Unavailable(CodeNoHead, "the document does not name its repository and head and base commits"), nil
 	}
@@ -233,28 +265,57 @@ func Resolve(ctx context.Context, req Request) (Result, error) {
 		return Result{Available: true, Sessions: []Session{}, Commits: []Commit{}}, nil
 	}
 
-	found, associations, err := loadSessions(ctx, dir, repo, req.Sessions, commits, remoteFor(remotes, req.Repository), req.Warn)
+	d, err := discoverSessions(ctx, dir, req.Sessions, commits)
 	if err != nil {
 		return Result{}, err
 	}
-	return match(ctx, engine, found, commits, associations)
-}
-
-// loadSessions reads recent local sessions and the candidate associations named
-// by the commits' checkpoints. Missing local transcripts are recovered from
-// checkpoints where possible. Generation runs are excluded from both. remote
-// names the remote in a missing-checkpoint fetch hint; nothing is fetched here.
-// Checkpoints are read in repo's private repository.
-func loadSessions(ctx context.Context, dir string, repo *gitlocal.Repo, opts sessions.Options, commits []gitlocal.Commit, remote string, warn io.Writer) ([]sessions.Session, map[string][]string, error) {
-	d, err := discoverSessions(ctx, dir, opts, commits)
-	if err != nil {
-		return nil, nil, err
+	book := newBuildBook(sessionDigests)
+	warnings := heldWarnings(req.Warn)
+	defer warnings.flush()
+	for attempt := 0; ; attempt++ {
+		warnings.reset()
+		found, associations, _, err := loadDiscovered(ctx, d, dir, repo, commits, remoteFor(remotes, req.Repository), warnings.writer(), book)
+		if err != nil {
+			return Result{}, err
+		}
+		ids, latest, edges, err := linkSessions(ctx, found, commits, book)
+		if err != nil {
+			return Result{}, err
+		}
+		if book.missing {
+			if book.refusingAll {
+				return Result{}, errors.New("resolving sessions: a session was not mapped though every one was refused")
+			}
+			workstats.Inc("locallink.resolve.fallback.missing")
+			book.missing = false
+			book.refuseAll()
+			continue
+		}
+		// Only linked sessions need their full graph for result rows and
+		// transcript access. Other candidates compete through compact facts.
+		var unmapped []string
+		for _, edge := range edges {
+			if s := latest[edge.RunID].session; graphs && s.Unmapped {
+				unmapped = append(unmapped, s.Key)
+			}
+		}
+		if len(unmapped) == 0 {
+			return matchedResult(engine, ids, latest, edges, commits, associations, graphs)
+		}
+		if book.refusingAll {
+			return Result{}, errors.New("resolving sessions: linked sessions still unmapped after a full read")
+		}
+		workstats.Inc("locallink.resolve.graph_remaps")
+		if attempt == 0 {
+			book.refuse(unmapped...)
+		} else {
+			workstats.Inc("locallink.resolve.fallback.selection")
+			book.refuseAll()
+		}
 	}
-	found, associations, _, err := loadDiscovered(ctx, d, dir, repo, commits, remote, warn, nil)
-	return found, associations, err
 }
 
-// discoverSessions finds the sessions loadSessions reads for the commits,
+// discoverSessions finds the sessions linkage reads for the commits,
 // without reading any.
 func discoverSessions(ctx context.Context, dir string, opts sessions.Options, commits []gitlocal.Commit) (*sessions.Discovery, error) {
 	if since, ok := sessionsSince(commits); ok && opts.Since.Before(since) {
@@ -270,7 +331,7 @@ func discoverSessions(ctx context.Context, dir string, opts sessions.Options, co
 	return d, nil
 }
 
-// loadDiscovered is loadSessions over sessions already discovered. complete
+// loadDiscovered reads the sessions already discovered. complete
 // is false when a session store file was skipped or a session did not map.
 // Every read of the clone, Entire checkpoints included, goes through repo, or
 // through one clone opened here when repo is nil. With a book, a session
@@ -322,16 +383,11 @@ func match(ctx context.Context, engine *redact.Engine, found []sessions.Session,
 	if err != nil {
 		return Result{}, err
 	}
-	rows := make(map[string]Row, len(latest))
-	for _, id := range ids {
-		snap := latest[id]
-		row, err := rowOf(engine, snap.session, snap.facts.correlated)
-		if err != nil {
-			return Result{}, err
-		}
-		rows[id] = row
-	}
+	return matchedResult(engine, ids, latest, edges, commits, associations, true)
+}
 
+// matchedResult formats linked rows from compact facts and optionally includes graphs.
+func matchedResult(engine *redact.Engine, ids []string, latest map[string]snapshot, edges []linkage.Edge, commits []gitlocal.Commit, associations map[string][]string, graphs bool) (Result, error) {
 	links := map[string][]Link{}
 	linked := map[string]bool{}
 	for _, edge := range edges {
@@ -346,11 +402,15 @@ func match(ctx context.Context, engine *redact.Engine, found []sessions.Session,
 		Graphs: map[string]*session.Graph{},
 	}
 	for _, id := range ids {
-		row, ok := rows[id]
-		if !ok || !linked[id] {
+		if !linked[id] {
 			continue
 		}
-		if graph := latest[id].session.Graph; graph != nil {
+		snap := latest[id]
+		row, err := rowOfFacts(engine, snap.session, snap.facts)
+		if err != nil {
+			return Result{}, err
+		}
+		if graph := latest[id].session.Graph; graphs && graph != nil {
 			result.Graphs[id] = graph
 		}
 		result.Sessions = append(result.Sessions, Session{

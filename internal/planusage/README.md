@@ -104,8 +104,12 @@ reads the plans to work out the default), so a chat's question can never cause
 a fetch.
 
 `Service` keeps the result for five minutes. `?refresh=1` (the app sends it when
-a page opens) reads again, but never more than once a minute. One mutex covers a
-reading, so simultaneous requests share it.
+a page opens) reads again, but never more than once a minute. Simultaneous
+refreshes share one provider read. The cache mutex is released during that
+read, so requests that can still use the cached reading return immediately.
+A request waiting for a refresh can stop when its context ends; cancellation
+of the request doing the read leaves the cache untouched and lets another
+waiting request retry.
 
 ## History
 

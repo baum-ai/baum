@@ -140,7 +140,7 @@ beforeEach(() => {
             ? [{ repository: "acme/demo", settings: {}, clones: [] }]
             : path.endsWith("api/repos")
               ? [{ id: "clone", repository: "acme/demo", path: "/c", available: true }]
-              : path.endsWith("api/prs") || path.endsWith("api/background")
+              : path.endsWith("api/prs?view=health") || path.endsWith("api/background")
                 ? []
                 : path.endsWith("api/jobs")
                   ? { jobs: [] }

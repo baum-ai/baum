@@ -311,7 +311,13 @@ func (a *Assembler) Assemble(ctx context.Context, req Request) (Result, error) {
 	// Alt text was masked when the images were captured, so Redact found
 	// nothing left in it to count.
 	b.MaskedSpanCount += altMasked
-	if err := bundle.Fit(&b, limits.Caps); err != nil {
+	caps := limits.Caps
+	if req.Facts {
+		// No model reads facts, so the diff index keeps every file and the
+		// facts count all of them.
+		caps.MaxDiffIndexBytes = 0
+	}
+	if err := bundle.Fit(&b, caps); err != nil {
 		return Result{}, err
 	}
 	pruneImageOrigins(&b)

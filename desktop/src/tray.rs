@@ -36,7 +36,7 @@ use tauri_plugin_opener::OpenerExt;
 use crate::daemon::Launch;
 use crate::notifications::Route;
 use crate::status::{self, Icon, Link, Observed, Plan, Tracker, View};
-use crate::{autostart, client, lifecycle, notifications, onboarding, panel};
+use crate::{autostart, client, events, lifecycle, notifications, onboarding, panel};
 
 /// Events wait this long for more before the tray reads (at most
 /// `DEBOUNCE_MAX`), so a burst of job events costs one set of requests.
@@ -321,6 +321,8 @@ struct Inner {
     wake: Mutex<Option<mpsc::Sender<Dirty>>>,
     /// The daemon's event stream is open.
     stream_up: AtomicBool,
+    /// Closes a blocked stream read when the attachment changes.
+    stream_control: events::Control,
     /// Wakes `health_pause` when the stream goes down.
     stream_down: (Mutex<()>, Condvar),
     /// Wakes the stream thread (waiting for a daemon or to reconnect).
@@ -727,7 +729,12 @@ pub fn launch(app: &AppHandle) -> Option<Launch> {
 /// `main` attached to a daemon.
 pub fn attached(app: &AppHandle, launch: &Launch) {
     let Some(shared) = shared(app) else { return };
-    *lock(&shared.0.launch) = Some(launch.clone());
+    {
+        let mut current = lock(&shared.0.launch);
+        *current = Some(launch.clone());
+        shared.0.generation.fetch_add(1, Ordering::Relaxed);
+        shared.0.stream_control.cancel();
+    }
     {
         // A new attachment may be a replacement daemon: what the last one
         // said is stale.
@@ -737,7 +744,6 @@ pub fn attached(app: &AppHandle, launch: &Launch) {
             ..Observed::default()
         };
     }
-    shared.0.generation.fetch_add(1, Ordering::Relaxed);
     render(app, &shared, false);
     for kick in [&shared.0.stream_kick, &shared.0.periodic_kick] {
         if let Some(sender) = lock(kick).as_ref() {
@@ -758,8 +764,10 @@ pub fn connecting(app: &AppHandle) {
 }
 
 fn set_link(app: &AppHandle, link: Link) {
+    notifications::detach(app);
     let Some(shared) = shared(app) else { return };
     *lock(&shared.0.launch) = None;
+    shared.0.stream_control.cancel();
     lock(&shared.0.observed).link = link;
     render(app, &shared, false);
 }
@@ -1072,8 +1080,8 @@ fn spawn_polls(app: &AppHandle, shared: &Shared) {
 
     let (stream_sender, stream_receiver) = mpsc::channel();
     *lock(&shared.0.stream_kick) = Some(stream_sender);
-    let stream_shared = shared.clone();
-    thread::spawn(move || stream_loop(&stream_shared, &stream_receiver));
+    let (stream_app, stream_shared) = (app.clone(), shared.clone());
+    thread::spawn(move || stream_loop(&stream_app, &stream_shared, &stream_receiver));
 
     let (kick_sender, kick_receiver) = mpsc::channel();
     *lock(&shared.0.periodic_kick) = Some(kick_sender);
@@ -1085,36 +1093,56 @@ fn spawn_polls(app: &AppHandle, shared: &Shared) {
 /// the poll thread on events that change what the tray shows. It reconnects
 /// with backoff, and a connection (also a re-connection) wakes a read so
 /// nothing missed meanwhile stays missed.
-fn stream_loop(shared: &Shared, kick: &mpsc::Receiver<()>) {
+fn stream_loop(app: &AppHandle, shared: &Shared, kick: &mpsc::Receiver<()>) {
     let mut attempt = 0u32;
+    let mut cursor = (0, events::NO_HISTORY);
     loop {
-        let Some(launch) = lock(&shared.0.launch).clone() else {
+        let (launch, generation) = {
+            let launch = lock(&shared.0.launch);
+            (launch.clone(), shared.0.generation.load(Ordering::Relaxed))
+        };
+        let Some(launch) = launch else {
             attempt = 0;
             if kick.recv().is_err() {
                 return;
             }
             continue;
         };
-        let generation = shared.0.generation.load(Ordering::Relaxed);
-        let result = client::stream_events(&launch, client::STREAM_READ_TIMEOUT, |item| {
-            match item {
-                client::StreamItem::Open => {
-                    attempt = 0;
-                    shared.0.stream_up.store(true, Ordering::Relaxed);
-                    wake(shared);
-                }
-                client::StreamItem::Event(kind) => {
-                    let dirty = dirty_by(&kind);
-                    if !dirty.is_empty() {
-                        wake_for(shared, dirty);
+        if cursor.0 != generation {
+            cursor = (generation, events::NO_HISTORY);
+        }
+        let stop = || {
+            shared.0.generation.load(Ordering::Relaxed) != generation
+                || lock(&shared.0.launch).is_none()
+        };
+        let result = match events::Endpoint::from_launch(&launch) {
+            Some(endpoint) => events::stream(
+                &endpoint,
+                &mut cursor.1,
+                events::READ_TIMEOUT,
+                &stop,
+                &shared.0.stream_control,
+                &mut |item| match item {
+                    events::StreamItem::Open => {
+                        attempt = 0;
+                        shared.0.stream_up.store(true, Ordering::Relaxed);
+                        wake(shared);
                     }
-                }
-                client::StreamItem::Ping => {}
-            }
-            // Stop for a detached or replaced daemon, at the next ping.
-            shared.0.generation.load(Ordering::Relaxed) == generation
-                && lock(&shared.0.launch).is_some()
-        });
+                    events::StreamItem::Event(event) => {
+                        let dirty = dirty_by(&event.name);
+                        if !dirty.is_empty() {
+                            wake_for(shared, dirty);
+                        }
+                        notifications::handle_event(app, &endpoint, &event);
+                    }
+                    events::StreamItem::Ping => {}
+                },
+            ),
+            None => Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "the daemon's address is unusable",
+            )),
+        };
         if shared.0.stream_up.swap(false, Ordering::Relaxed) {
             // Under the mutex, so a waiter between its check and its wait
             // cannot miss it.

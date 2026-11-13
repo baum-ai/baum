@@ -98,7 +98,8 @@ type Scheduler struct {
 	// their members' (see passGroups). Nil generates no group review.
 	Groups Groups
 	// Hold reports that the daemon is stopping or waiting to restart as a
-	// newer version; nothing is submitted meanwhile, so the queue can drain.
+	// newer version; nothing is submitted meanwhile, and the new daemon's
+	// passes submit what is pending.
 	Hold func() bool
 	// Notify publishes a repository's changed status (a notice) for the app
 	// and the desktop app's notifications.
@@ -112,9 +113,11 @@ type Scheduler struct {
 	// run is a one-slot lock held by a pass or by an identity change, which
 	// can hold it for a whole device sign-in. A pass waiting for it gives up
 	// when its context ends, so the daemon can stop meanwhile.
-	run   chan struct{}
-	mu    sync.Mutex
-	state *fileState
+	run     chan struct{}
+	mu      sync.Mutex
+	writeMu sync.Mutex
+	pending []byte
+	state   *fileState
 	// observed is when the newest snapshot Observe took for each repository
 	// was fetched. Background refresh and Trigger observe from different
 	// goroutines, so an older snapshot can arrive after a newer one.
@@ -143,8 +146,8 @@ func (s *Scheduler) BeginIdentityChange() func(bool) {
 		if !changed {
 			return
 		}
-		s.mu.Lock()
-		defer s.mu.Unlock()
+		s.lockState()
+		defer s.unlockState()
 		s.resetAt = s.now().UTC()
 		s.identitySince.Store(s.resetAt.UnixNano())
 		for _, repository := range s.load().Repositories {
@@ -375,14 +378,34 @@ func (s *Scheduler) load() *fileState {
 	return s.state
 }
 
+// lockState serializes mutations and their saves. Readers need only mu.
+func (s *Scheduler) lockState() {
+	s.writeMu.Lock()
+	s.mu.Lock()
+}
+
+func (s *Scheduler) unlockState() {
+	raw := s.pending
+	s.pending = nil
+	s.mu.Unlock()
+	defer s.writeMu.Unlock()
+	// Keep writeMu through persistence so a newer mutation cannot be saved
+	// before this one. Overview can read the updated state while SQLite waits.
+	if raw != nil {
+		if err := appdb.Write(s.Path, "state", "automatic", raw); err != nil {
+			s.log().Warn("automatic generation state not saved", "error", err)
+		}
+	}
+}
+
+// save snapshots the state while mu is held; unlockState persists it.
 func (s *Scheduler) save() {
 	raw, err := json.Marshal(s.state)
-	if err == nil {
-		err = appdb.Write(s.Path, "state", "automatic", raw)
-	}
 	if err != nil {
 		s.log().Warn("automatic generation state not saved", "error", err)
+		return
 	}
+	s.pending = raw
 }
 
 // prune forgets repositories that are no longer registered or enabled, so
@@ -427,8 +450,8 @@ func (s *Scheduler) Observe(ctx context.Context, snapshot discovery.Snapshot) {
 		return
 	}
 	name := strings.ToLower(snapshot.Repository)
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.lockState()
+	defer s.unlockState()
 	if snapshot.FetchedAt.Before(s.resetAt) {
 		return
 	}
@@ -542,7 +565,7 @@ func (s *Scheduler) CatchUp(ctx context.Context, n int) error {
 		return err
 	}
 	// Enabling is recorded before the polls, so they can be the baselines.
-	s.mu.Lock()
+	s.lockState()
 	state := s.load()
 	changed := s.prune(v)
 	names := make([]string, 0, len(v.repos))
@@ -559,7 +582,7 @@ func (s *Scheduler) CatchUp(ctx context.Context, n int) error {
 	if changed {
 		s.save()
 	}
-	s.mu.Unlock()
+	s.unlockState()
 	sort.Strings(names)
 	type candidate struct {
 		name string
@@ -630,7 +653,7 @@ func (s *Scheduler) CatchUp(ctx context.Context, n int) error {
 			}
 		}
 	}
-	s.mu.Lock()
+	s.lockState()
 	queued := false
 	for _, c := range chosen {
 		rs := s.load().Repositories[c.name]
@@ -651,7 +674,7 @@ func (s *Scheduler) CatchUp(ctx context.Context, n int) error {
 	if queued {
 		s.save()
 	}
-	s.mu.Unlock()
+	s.unlockState()
 	if queued {
 		s.Wake()
 	}
@@ -688,7 +711,7 @@ func (s *Scheduler) Pass(ctx context.Context) {
 	interrupted := s.Queue.Interrupted()
 	refused := s.Queue.Refused()
 	queued := s.Queue.QueuedAutomatic()
-	s.mu.Lock()
+	s.lockState()
 	state := s.load()
 	changed := s.prune(v)
 	// Enabling is dated when it is first seen, so the baseline is a
@@ -754,7 +777,7 @@ func (s *Scheduler) Pass(ctx context.Context) {
 	if changed {
 		s.save()
 	}
-	s.mu.Unlock()
+	s.unlockState()
 	// At most queuedPerSlot automatic jobs per running slot wait in the
 	// queue; the rest stay pending for a later pass. A new head that a PR's
 	// waiting review takes over adds none, so it is always submitted.
@@ -816,7 +839,7 @@ func (s *Scheduler) submit(ctx context.Context, v view, w work, now time.Time) (
 		job, err = s.Queue.SubmitAutomatic(ctx, jobs.AutomaticRequest{Item: jobs.Item{Clone: w.repo.clone.ID, PR: w.number}, Repository: w.repo.clone.Repository, Head: w.head, Trigger: w.trigger})
 		queued = err == nil
 	}
-	s.mu.Lock()
+	s.lockState()
 	rs := s.load().Repositories[w.name]
 	var pr *prState
 	if rs != nil {
@@ -824,7 +847,7 @@ func (s *Scheduler) submit(ctx context.Context, v view, w work, now time.Time) (
 	}
 	if pr == nil || pr.Pending != w.head {
 		// Disabled, closed or moved on while this was submitted.
-		s.mu.Unlock()
+		s.unlockState()
 		return carryOn, queued
 	}
 	result := carryOn
@@ -875,7 +898,7 @@ func (s *Scheduler) submit(ctx context.Context, v view, w work, now time.Time) (
 	rs.Notice = notice
 	s.save()
 	status := s.status(w.name, w.repo, rs)
-	s.mu.Unlock()
+	s.unlockState()
 	if announce {
 		s.notify([]Status{status})
 	}

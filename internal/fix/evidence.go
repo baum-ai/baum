@@ -150,7 +150,7 @@ func FailingChecks(ctx context.Context, r Reader, repository github.Repository, 
 	var checks []Check
 	workflows := workflowNames{ctx: ctx, r: r, repository: repository, sha: sha}
 	path := repositoryPath(repository) + "/commits/" + url.PathEscape(sha)
-	for page := 1; len(checks) < maxChecks; page++ {
+	for page := 1; len(checks) < maxChecks && page <= maxCheckPages; page++ {
 		var runs struct {
 			CheckRuns []struct {
 				ID         int64
@@ -184,16 +184,11 @@ func FailingChecks(ctx context.Context, r Reader, repository github.Repository, 
 			break
 		}
 	}
-	var combined struct {
-		Statuses []struct {
-			Context, State, Description string
-			TargetURL                   string `json:"target_url"`
-		}
+	statuses, _, err := readStatuses(ctx, r, path)
+	if err != nil {
+		return nil, err
 	}
-	if err := readJSON(ctx, r, path+"/status?per_page=100", &combined); err != nil {
-		return nil, fmt.Errorf("reading the commit statuses: %w", err)
-	}
-	for _, status := range combined.Statuses {
+	for _, status := range statuses {
 		if failing[status.State] {
 			checks = append(checks, Check{Name: bounded(status.Context, 256), Conclusion: status.State, Summary: bounded(status.Description, maxCheckField), URL: status.TargetURL})
 		}
@@ -220,18 +215,24 @@ func (w *workflowNames) name(actions bool, suite *struct{ ID int64 }, job string
 	}
 	if !w.read {
 		w.read = true
-		var list struct {
-			WorkflowRuns []struct {
-				Name         string
-				CheckSuiteID int64 `json:"check_suite_id"`
-			} `json:"workflow_runs"`
-		}
-		if readJSON(w.ctx, w.r, fmt.Sprintf("%s/actions/runs?head_sha=%s&per_page=100", repositoryPath(w.repository), url.QueryEscape(w.sha)), &list) == nil {
-			w.bySuite = make(map[int64]string, len(list.WorkflowRuns))
+		w.bySuite = map[int64]string{}
+		for page := 1; page <= maxWorkflowPages; page++ {
+			var list struct {
+				WorkflowRuns []struct {
+					Name         string
+					CheckSuiteID int64 `json:"check_suite_id"`
+				} `json:"workflow_runs"`
+			}
+			if readJSON(w.ctx, w.r, fmt.Sprintf("%s/actions/runs?head_sha=%s&per_page=100&page=%d", repositoryPath(w.repository), url.QueryEscape(w.sha), page), &list) != nil {
+				break
+			}
 			for _, run := range list.WorkflowRuns {
 				if run.Name != "" && run.CheckSuiteID != 0 {
 					w.bySuite[run.CheckSuiteID] = run.Name
 				}
+			}
+			if len(list.WorkflowRuns) < 100 {
+				break
 			}
 		}
 	}
@@ -241,21 +242,62 @@ func (w *workflowNames) name(actions bool, suite *struct{ ID int64 }, job string
 	return job
 }
 
-// MaxAllChecks bounds how many checks AllChecks lists.
+// MaxAllChecks bounds how many checks the app lists; AllChecks reads more, up
+// to maxCheckPages and maxStatusPages, so that sorting can choose which stay.
 const MaxAllChecks = 100
 
+// Bounds on the pages AllChecks reads, 100 entries each: check runs, commit
+// statuses and, for naming Actions jobs, workflow runs. A head past them is
+// reported as having more checks than were read.
+const (
+	maxCheckPages    = 5
+	maxStatusPages   = 3
+	maxWorkflowPages = 3
+)
+
+// commitStatus is one commit status of a head, as GitHub's combined status
+// lists it.
+type commitStatus struct {
+	Context, State, Description string
+	TargetURL                   string `json:"target_url"`
+}
+
+// readStatuses reads the head's commit statuses, at most maxStatusPages pages
+// of 100; total is how many GitHub reports, never fewer than returned.
+func readStatuses(ctx context.Context, r Reader, path string) (statuses []commitStatus, total int, err error) {
+	for page := 1; page <= maxStatusPages; page++ {
+		var combined struct {
+			TotalCount int `json:"total_count"`
+			Statuses   []commitStatus
+		}
+		if err := readJSON(ctx, r, fmt.Sprintf("%s/status?per_page=100&page=%d", path, page), &combined); err != nil {
+			return nil, 0, fmt.Errorf("reading the commit statuses: %w", err)
+		}
+		total = max(total, combined.TotalCount)
+		statuses = append(statuses, combined.Statuses...)
+		if len(combined.Statuses) < 100 || len(statuses) >= combined.TotalCount {
+			break
+		}
+	}
+	return statuses, max(total, len(statuses)), nil
+}
+
 // AllChecks lists every check run (their latest attempt) and commit status
-// of the head commit, passing or not, at most MaxAllChecks, with their output
-// bounded. A commit status that is pending is in_progress, and any other is
-// completed; JobID is set only for a failing GitHub Actions run, as in
-// FailingChecks.
-func AllChecks(ctx context.Context, r Reader, repository github.Repository, sha string) ([]Check, error) {
-	var checks []Check
+// of the head commit, passing or not, with their output bounded, in no
+// particular order. It reads at most maxCheckPages pages of check runs and
+// maxStatusPages of statuses, so a head with more has more checks than are
+// returned; total is how many GitHub reports (never fewer than returned).
+// The caller sorts and caps the list. A commit status that is pending is
+// in_progress, and any other is completed; JobID is set only for a failing
+// GitHub Actions run, as in FailingChecks.
+func AllChecks(ctx context.Context, r Reader, repository github.Repository, sha string) (checks []Check, total int, err error) {
 	workflows := workflowNames{ctx: ctx, r: r, repository: repository, sha: sha}
 	path := repositoryPath(repository) + "/commits/" + url.PathEscape(sha)
-	for page := 1; len(checks) < MaxAllChecks; page++ {
+	runTotal := 0
+	for page := 1; page <= maxCheckPages; page++ {
 		var runs struct {
-			CheckRuns []struct {
+			TotalCount int `json:"total_count"`
+			CheckRuns  []struct {
 				ID         int64
 				Name       string
 				Status     string
@@ -268,8 +310,9 @@ func AllChecks(ctx context.Context, r Reader, repository github.Repository, sha 
 			} `json:"check_runs"`
 		}
 		if err := readJSON(ctx, r, fmt.Sprintf("%s/check-runs?per_page=100&filter=latest&page=%d", path, page), &runs); err != nil {
-			return nil, fmt.Errorf("reading the checks: %w", err)
+			return nil, 0, fmt.Errorf("reading the checks: %w", err)
 		}
+		runTotal = max(runTotal, runs.TotalCount)
 		for _, run := range runs.CheckRuns {
 			actions := run.App != nil && run.App.Slug == "github-actions"
 			check := Check{Name: bounded(workflows.name(actions, run.CheckSuite, run.Name), 256), Status: run.Status, Title: bounded(run.Output.Title, 512), Summary: bounded(run.Output.Summary, 512), URL: cmp.Or(run.DetailsURL, run.HTMLURL)}
@@ -285,31 +328,24 @@ func AllChecks(ctx context.Context, r Reader, repository github.Repository, sha 
 				}
 			}
 			checks = append(checks, check)
-			if len(checks) == MaxAllChecks {
-				break
-			}
 		}
-		if len(runs.CheckRuns) < 100 {
+		if len(runs.CheckRuns) < 100 || len(checks) >= runs.TotalCount {
 			break
 		}
 	}
-	var combined struct {
-		Statuses []struct {
-			Context, State, Description string
-			TargetURL                   string `json:"target_url"`
-		}
+	runTotal = max(runTotal, len(checks))
+	statuses, statusTotal, err := readStatuses(ctx, r, path)
+	if err != nil {
+		return nil, 0, err
 	}
-	if err := readJSON(ctx, r, path+"/status?per_page=100", &combined); err != nil {
-		return nil, fmt.Errorf("reading the commit statuses: %w", err)
-	}
-	for _, status := range combined.Statuses {
+	for _, status := range statuses {
 		check := Check{Name: bounded(status.Context, 256), Status: "completed", Conclusion: status.State, Summary: bounded(status.Description, 512), URL: status.TargetURL}
 		if status.State == "pending" {
 			check.Status, check.Conclusion = "in_progress", ""
 		}
 		checks = append(checks, check)
 	}
-	return checks[:min(len(checks), MaxAllChecks)], nil
+	return checks, runTotal + statusTotal, nil
 }
 
 // Logs reads the job log of the first four failing GitHub Actions checks

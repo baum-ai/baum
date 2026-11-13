@@ -93,7 +93,7 @@ Callbacks never install repository hooks or invoke Entire. See the exact
 The existing daemon hook-event protocol/version handshake and bounded spool
 remain the compatibility contract. An absent daemon starts only under those
 existing rules; an incompatible daemon receives events through the spool,
-and an older busy daemon restarts when idle. Plugins introduce no daemon
+and an older busy daemon restarts once its running jobs finish. Plugins introduce no daemon
 protocol or independent daemon version requirement: a permission request
 asks the daemon only once it took the hook's event, and a daemon that does
 not know the request answers `unknown_method`, which leaves the hook quiet.

@@ -138,10 +138,41 @@ graph and, for a linked session, the evidence built for it with what that
 evidence depended on besides the transcript. The digest is reused only when
 all of it is unchanged, so the evidence is the same as a full rebuild.
 [Local session evidence](../../ARCHITECTURE.md#local-session-evidence)
-describes the keys. `Resolve` and
-`LinkCommits` map every session.
+describes the keys. `LinkCommits` shares the same bounded compact facts cache
+and skips unchanged session graphs too, including transcripts older than an
+hour and graphs evicted from the mapping cache. It recomputes observed and
+reflog creation evidence for the current commits, so changing external evidence
+still changes the links. If facts needed for an unmapped session are missing,
+it retries with full mapping. `Resolve` also selects links using those compact
+facts, then maps only linked sessions to produce their complete rows and
+transcript graphs. If a remap changes the selected sessions it retries, with a
+full read as the final fallback. Unlinked unchanged candidates need no graph.
 
 Run `just oss-go test ./internal/locallink/...` from the monorepo root. The
 tests cover concurrent readers/editors, stale sessions, matching-parent false
 positives, ambiguous edits, outside contributors, checkpoint discovery and
 offline behavior.
+
+`ResolveSummary` returns the same redacted session/commit JSON from compact
+facts, including title, outcome and edited-file count, without retaining linked
+graphs. The local app uses this for lists and decision attribution. Its lazy
+`LoadGraph` reader rechecks linkage against the same pinned commits when a
+transcript is explicitly opened; a session no longer linked yields no graph.
+The viewer shares and bounds this lazy read like its other transcript builds,
+and the daemon applies its existing local-read semaphore. Default `Resolve`
+still supplies complete linked graphs for callers that need them.
+
+Digests may also keep an optional context-independent evidence basis (at most
+4 MiB per session, inside the existing 64 MiB total). It contains only fields
+read by the existing evidence projector: session/path/spawn metadata, bounded
+prompt/latest-reply text, distinct model names, execute inputs and statuses,
+and file-touch paths. Tool output, assistant content and patch hunks are not
+kept. New PR paths, checkout placement, caps and thread names are projected
+again from these inputs without decoding an unchanged source. All retained
+strings and bytes are detached from the original graph.
+
+Compact facts take priority: optional bases may shed colder optional bases to
+fit, but never evict facts for admission. Essential data can discard bases
+first under pressure. Missing, oversized or inadmissible bases retain the full
+read fallback, which may refill a hot basis. `locallink.evidence_basis` counters
+and its bytes gauge distinguish reuse, size rejection and memory pressure.

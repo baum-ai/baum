@@ -118,8 +118,10 @@ func saveAttachments(ctx context.Context, tx *sql.Tx, k Key, v Version) error {
 }
 
 // migrationBatchBytes bounds the image bytes one migration transaction moves,
-// so the write lock it holds stays short (the store uses a rollback journal,
-// which blocks readers while a large transaction spills to the file).
+// so the write lock it holds stays short (a store an older binary wrote may
+// still use a rollback journal, which blocks readers while a large
+// transaction spills to the file; with the write-ahead log the log grows by
+// what a transaction writes before a checkpoint copies it back).
 var migrationBatchBytes = 32 << 20
 
 // migrateAttachments moves the per-version copies of an earlier store into the
@@ -183,11 +185,11 @@ func (s *Store) Attachment(ctx context.Context, k Key, version int, id string) (
 	if !k.valid() || version < 0 || !attachmentID.MatchString(id) {
 		return Attachment{}, ErrNotFound
 	}
-	db, err := s.database(false)
+	db, release, err := s.acquire(false)
 	if err != nil {
 		return Attachment{}, err
 	}
-	defer db.Close()
+	defer release()
 	tx, err := db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
 		return Attachment{}, err

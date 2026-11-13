@@ -198,8 +198,13 @@ func TestEveryAppPageHasItsOwnTools(t *testing.T) {
 	// itself, its filters and sections, the saved-inbox and tour state.
 	notPages := map[string]bool{"page": true, "clone": true, "filter": true, "inbox": true, "open": true, "peek": true, "repo": true, "section": true, "tour": true, "walk": true}
 	read := map[string]bool{}
-	for _, m := range regexp.MustCompile(`\.(?:get|has|getAll|delete|set)\("([A-Za-z_]+)"\)`).FindAllSubmatch(sources, -1) {
-		read[string(m[1])] = true
+	for _, m := range regexp.MustCompile(`\b(\w+)\.(?:get|has|getAll|delete|set)\("([A-Za-z_]+)"\)`).FindAllSubmatch(sources, -1) {
+		// app.tsx's `want` is the set of daemon reads an event asks for,
+		// not the address.
+		if string(m[1]) == "want" {
+			continue
+		}
+		read[string(m[2])] = true
 	}
 	for param := range read {
 		if _, ok := opensPage[param]; !ok && !notPages[param] {

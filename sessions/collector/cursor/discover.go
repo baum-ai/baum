@@ -18,12 +18,19 @@ const payloadName = "cursor-tree.json"
 // the repository roots. Each storePaths entry is a state.vscdb file or a
 // directory searched for one; empty storePaths means the default global store.
 func FindSessions(storePaths, roots []string) ([]model.Session, model.ScanReport, error) {
+	return FindSessionsSince(storePaths, roots, time.Time{})
+}
+
+// FindSessionsSince is FindSessions without the conversations last updated
+// before since, which are skipped before their trees are read. A zero since
+// keeps every conversation.
+func FindSessionsSince(storePaths, roots []string, since time.Time) ([]model.Session, model.ScanReport, error) {
 	paths := sessionStorePaths(storePaths)
 	slices.Sort(paths)
 	var report model.ScanReport
 	byID := map[string]model.Session{}
 	for _, path := range paths {
-		found, storeReport := findStoreSessions(path, roots)
+		found, storeReport := findStoreSessions(path, roots, since)
 		report.Merge(storeReport)
 		for _, candidate := range found {
 			current, exists := byID[candidate.SessionID]
@@ -47,7 +54,7 @@ func FindSessions(storePaths, roots []string) ([]model.Session, model.ScanReport
 	return sessions, report, nil
 }
 
-func findStoreSessions(path string, roots []string) ([]model.Session, model.ScanReport) {
+func findStoreSessions(path string, roots []string, since time.Time) ([]model.Session, model.ScanReport) {
 	var report model.ScanReport
 	store, err := cursortranscript.Open(path)
 	if err != nil {
@@ -71,6 +78,15 @@ func findStoreSessions(path string, roots []string) ([]model.Session, model.Scan
 		if workingDir == "" || !model.PathWithinAny(roots, workingDir) || model.IsAgentRun(workingDir) {
 			continue
 		}
+		modifiedAt := cursorTime(root.LastUpdatedAt)
+		if modifiedAt.IsZero() && info != nil {
+			modifiedAt = info.ModTime().UTC()
+		}
+		// Callers drop sessions modified before since afterwards; doing it here
+		// keeps their trees, which hold every bubble, from being read at all.
+		if !since.IsZero() && modifiedAt.Before(since) {
+			continue
+		}
 		tree, err := store.Tree(root.ComposerID)
 		if err != nil {
 			report.Add(path+"#"+root.ComposerID, err.Error())
@@ -80,10 +96,6 @@ func findStoreSessions(path string, roots []string) ([]model.Session, model.Scan
 		if err != nil {
 			report.Add(path+"#"+root.ComposerID, err.Error())
 			continue
-		}
-		modifiedAt := cursorTime(root.LastUpdatedAt)
-		if modifiedAt.IsZero() && info != nil {
-			modifiedAt = info.ModTime().UTC()
 		}
 		sessions = append(sessions, model.Session{
 			Source: vendors.Cursor, Path: path + "#" + root.ComposerID,

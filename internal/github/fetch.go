@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
 
 	graphql "github.com/cli/shurcooL-graphql"
 
@@ -40,6 +41,10 @@ const fetchAttempts = 3
 
 // maxPages bounds one connection's pagination.
 const maxPages = 1000
+
+// partConcurrency is how many parts of one pull request Fetch reads at once.
+// A part's own pages are read one after another.
+const partConcurrency = 3
 
 // FetchOptions adjust what Fetch flags.
 type FetchOptions struct {
@@ -95,9 +100,11 @@ func (e Evidence) Apply(b *bundle.Bundle) {
 // statuses at the head with whether each is required, and its comments,
 // reviews and review threads. A part GitHub refuses is left empty, recorded
 // false in Sources and explained in Unavailable; a missing pull request, a
-// rate limit the client does not wait out and cancellation fail the fetch.
-// When the head moves while the parts are read, the fetch starts over, so
-// every part describes the same head.
+// rate limit the client does not wait out, a request that runs out of time
+// (WithRequestTimeout) and cancellation fail the fetch. After the header, the
+// parts are read partConcurrency at a time. When the head moves while the
+// parts are read, the fetch starts over, so every part describes the same
+// head.
 func (c *Client) Fetch(ctx context.Context, repo Repository, number int, opts FetchOptions) (Evidence, error) {
 	if number <= 0 {
 		return Evidence{}, fmt.Errorf("pull request number must be positive, got %d", number)
@@ -138,34 +145,78 @@ func (c *Client) fetchOnce(ctx context.Context, repo Repository, number int, opt
 	}
 	sources := bundle.Sources{SourcePullRequest: true}
 	unavailable := map[string]error{}
+	// Each part writes only its own fields of raw.
 	parts := []struct {
 		name string
-		read func() error
+		read func(context.Context) error
 	}{
-		{SourceRequestedReviewers, func() (err error) { raw.reviewers, err = f.reviewRequests(ctx); return err }},
-		{SourceCommits, func() (err error) { raw.commits, err = f.commits(ctx); return err }},
-		{SourceComments, func() (err error) { raw.comments, err = f.comments(ctx); return err }},
-		{SourceReviews, func() (err error) { raw.reviews, err = f.reviews(ctx); return err }},
-		{SourceReviewThreads, func() (err error) { raw.threads, err = f.threads(ctx); return err }},
-		{SourceChecks, func() (err error) { raw.suites, raw.statuses, err = checksReader.checks(ctx); return err }},
-		{SourceRequiredChecks, func() (err error) { raw.required, err = f.requiredChecks(ctx, raw.header.BaseRefName); return err }},
+		{SourceRequestedReviewers, func(ctx context.Context) (err error) { raw.reviewers, err = f.reviewRequests(ctx); return err }},
+		{SourceCommits, func(ctx context.Context) (err error) { raw.commits, err = f.commits(ctx); return err }},
+		{SourceComments, func(ctx context.Context) (err error) { raw.comments, err = f.comments(ctx); return err }},
+		{SourceReviews, func(ctx context.Context) (err error) { raw.reviews, err = f.reviews(ctx); return err }},
+		{SourceReviewThreads, func(ctx context.Context) (err error) { raw.threads, err = f.threads(ctx); return err }},
+		{SourceChecks, func(ctx context.Context) (err error) {
+			raw.suites, raw.statuses, err = checksReader.checks(ctx)
+			return err
+		}},
+		{SourceRequiredChecks, func(ctx context.Context) (err error) {
+			raw.required, err = f.requiredChecks(ctx, raw.header.BaseRefName)
+			return err
+		}},
 	}
-	for _, part := range parts {
+	// The parts are independent: partConcurrency of them are read at once, in
+	// order. The first fatal error stops the others and fails the fetch.
+	partCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	errs := make([]error, len(parts))
+	var fatalErr error
+	var mu sync.Mutex
+	var reads sync.WaitGroup
+	slots := make(chan struct{}, partConcurrency)
+	for i, part := range parts {
 		if opts.MetadataOnly && part.name != SourceChecks {
 			continue
 		}
-		err := part.read()
-		switch {
-		case err == nil:
-			sources[part.name] = true
-		case fatal(err):
-			return Evidence{}, err
-		default:
+		select {
+		case slots <- struct{}{}:
+		case <-partCtx.Done():
+		}
+		if partCtx.Err() != nil {
+			break
+		}
+		reads.Go(func() {
+			defer func() { <-slots }()
+			err := part.read(partCtx)
+			errs[i] = err
+			if err != nil && fatal(err) {
+				mu.Lock()
+				if fatalErr == nil {
+					fatalErr = err
+					cancel()
+				}
+				mu.Unlock()
+			}
+		})
+	}
+	reads.Wait()
+	if fatalErr == nil && ctx.Err() != nil {
+		fatalErr = ctx.Err()
+	}
+	if fatalErr != nil {
+		return Evidence{}, fatalErr
+	}
+	for i, part := range parts {
+		if opts.MetadataOnly && part.name != SourceChecks {
+			continue
+		}
+		if err := errs[i]; err != nil {
 			// Each reader returns nothing alongside an error, so a failed part
 			// is empty, never a partial list.
 			sources[part.name] = false
 			unavailable[part.name] = err
+			continue
 		}
+		sources[part.name] = true
 	}
 	if threadsErr := unavailable[SourceReviewThreads]; threadsErr != nil {
 		unavailable[UnavailableReviewComments] = fmt.Errorf("review comments are read with the review threads: %w", threadsErr)

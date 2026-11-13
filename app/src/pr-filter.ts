@@ -501,6 +501,45 @@ export function matchesQuery(query: string, entry: Entry, kind?: string): boolea
   return !expr || test(expr, entry, kind);
 }
 
+/** How many of `entries` each option's value would leave if picked (`op`
+ *  with `key`), as the filter menu counts them. A value the query already
+ *  requires counts the pull requests passing the query and that value; any
+ *  other counts those passing the query with the value added and that value.
+ *  The query and each toggled query are parsed once, not once per entry. */
+export function countValues(
+  query: string,
+  key: string,
+  options: readonly Option[],
+  entries: readonly Entry[],
+  op: Op = "=",
+  kindOf?: (entry: Entry) => string | undefined,
+): Map<string, number> {
+  const kinds = kindOf ? entries.map(kindOf) : [];
+  // Parsed outside the shared cache: hundreds of toggled queries would evict
+  // the ones every row of every list asks for.
+  const matcher = (text: string) => {
+    const { expr } = parse(text, FIELDS);
+    return (index: number) => !expr || test(expr, entries[index]!, kinds[index]);
+  };
+  const passesQuery = matcher(query);
+  let live: number[] | null = null;
+  const counts = new Map<string, number>();
+  for (const option of options) {
+    const only = matcher(toggleValue("", key, option.value, op));
+    let count = 0;
+    if (hasValue(query, key, option.value, op)) {
+      live ??= entries.flatMap((_, index) => (passesQuery(index) ? [index] : []));
+      for (const index of live) if (only(index)) count++;
+    } else {
+      const toggled = matcher(toggleValue(query, key, option.value, op));
+      for (let index = 0; index < entries.length; index++)
+        if (toggled(index) && only(index)) count++;
+    }
+    counts.set(option.value, count);
+  }
+  return counts;
+}
+
 /** An expression in words, for a chip: "Author is Me", "Draft is not…". */
 function describe(expr: Expr, fields: readonly Field[]): string {
   switch (expr.kind) {
