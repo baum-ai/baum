@@ -538,8 +538,23 @@ func (s *Store) saveAttribution(ctx context.Context, version int64, repository s
 			}
 		}
 		dirty = slices.DeleteFunc(dirty, func(id string) bool { return id == "" })
-		return markFeatures(ctx, tx, dirty, now)
+		return markAttributed(ctx, tx, dirty, now)
 	})
+}
+
+// markAttributed puts the features' text behind their newly attributed
+// decisions without restarting the FeatureQuiet debounce (changed_at), which
+// waits on membership. Otherwise each batch of an attribution backlog would
+// hold the feature's summary back until the whole backlog drained.
+func markAttributed(ctx context.Context, tx *sql.Tx, ids []string, now time.Time) error {
+	slices.Sort(ids)
+	for _, id := range slices.Compact(ids) {
+		if _, err := tx.ExecContext(ctx, `UPDATE feature SET membership_version=membership_version+1, dirty_since=COALESCE(dirty_since, ?1),
+updated_at=?1 WHERE id=?2`, now.UnixMilli(), id); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func hash(text string) string { sum := sha256.Sum256([]byte(text)); return hex.EncodeToString(sum[:]) }

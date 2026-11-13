@@ -362,6 +362,53 @@ func TestAttributionQuantumWritesTextBeforeDrainingBacklog(t *testing.T) {
 	}
 }
 
+// In daemon runs a feature quiet for FeatureQuiet gets its text after the
+// first attribution quantum; attributing its backlog does not restart the
+// debounce.
+func TestAttributionQuantumDoesNotRestartSummaryDebounce(t *testing.T) {
+	f := newFeatureFixture(t)
+	ctx := context.Background()
+	f.clock.now = t0.Add(time.Hour)
+	f.pull(1, "Export widgets", t0, "h1", []string{"export.go"}, "Export configuration")
+	version := f.live()
+	f.feature(version, "export", 1)
+	f.exec(`INSERT INTO pull_commit(repository,number,sha,committed_at)VALUES(?,1,'shared',0)`, repo)
+	for i := 0; i < 6; i++ {
+		id := fmt.Sprintf("s%d", i)
+		f.saveSession(id, "export.go")
+		f.exec(`INSERT INTO session_commit(agent,session_id,repository,sha,method,confidence)VALUES('claude-code',?,?,'shared','checkpoint',1)`, id, repo)
+	}
+	f.backend.attribute = func(user string) (string, error) {
+		var input attributionInput
+		if err := json.Unmarshal([]byte(user), &input); err != nil {
+			return "", err
+		}
+		reply := struct {
+			Decisions []decisionResolution `json:"decisions"`
+		}{}
+		for _, d := range input.Decisions {
+			reply.Decisions = append(reply.Decisions, decisionResolution{DecisionID: d.ID, FeatureID: "export", KeyEligible: true, Reason: "Explicit export configuration choice."})
+		}
+		data, err := json.Marshal(reply)
+		return string(data), err
+	}
+	f.backend.text = func() (string, error) {
+		return `{"title":"Widget export","description":"Exports widgets.","digest":"Export controls.","key_decisions":["D1"]}`, nil
+	}
+	f.clock.now = f.clock.now.Add(FeatureQuiet + time.Minute)
+	first, err := f.worker.Summarize(ctx, repo, "", FeatureOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(first.Features) != 1 || f.backend.calls["text"] != 1 {
+		t.Fatalf("attribution held back the quiet feature's text: %+v calls=%v", first, f.backend.calls)
+	}
+	f.clock.now = f.clock.now.Add(time.Minute)
+	if second, err := f.worker.Summarize(ctx, repo, "", FeatureOptions{}); err != nil || len(second.Features) != 1 {
+		t.Fatalf("next quantum's text was held back: %+v %v", second, err)
+	}
+}
+
 func TestLiveTextReusesOnlyCurrentGeneratedPullSummary(t *testing.T) {
 	for _, change := range []string{"title", "body", "decision"} {
 		t.Run(change, func(t *testing.T) {
