@@ -210,6 +210,7 @@ func TestIDsInProseMustResolve(t *testing.T) {
 		"Thread PRRT_other-1 is open.":                `"PRRT_other-1" is not a known review thread ID`,
 		"As said in comment 999999999, this changed.": `"comment 999999999" is not a known comment ID`,
 		"As said in `999999999`, this changed.":       `"999999999" is not a known comment ID`,
+
 		"Written in session 00000000-2222-3333-4444-555555555555.": "is not a known session ID",
 		"Written in session 99999999-2222-3333-4444-555555555555.": "restricted sessions cannot be cited",
 		"At commit " + strings.Repeat("a", 40) + ".":               "is a full SHA; write the 7-character short SHA",
