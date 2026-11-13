@@ -130,6 +130,17 @@ func SetMapCacheLimit(limit int64) {
 // bytes. ok is false when a file cannot be described, and the session is then
 // mapped without the cache.
 func mapKey(s collector.Session) (key string, cost int64, ok bool) {
+	return describe(s, true)
+}
+
+// mapKeyOnly is mapKey without the size, which a compressed rollout takes
+// opening the file to know.
+func mapKeyOnly(s collector.Session) (string, bool) {
+	key, _, ok := describe(s, false)
+	return key, ok
+}
+
+func describe(s collector.Session, withCost bool) (key string, cost int64, ok bool) {
 	var b strings.Builder
 	b.WriteString(string(s.Source))
 	for _, f := range s.Files {
@@ -145,7 +156,9 @@ func mapKey(s collector.Session) (key string, cost int64, ok bool) {
 			return "", 0, false
 		}
 		fmt.Fprintf(&b, "file:%s\x00%d\x00%d", f.Path, info.Size(), info.ModTime().UnixNano())
-		cost += codextranscript.DecodedSize(f.Path, info)
+		if withCost {
+			cost += codextranscript.DecodedSize(f.Path, info)
+		}
 	}
 	return b.String(), cost, true
 }

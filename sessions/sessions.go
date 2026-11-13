@@ -307,7 +307,7 @@ func (d *Discovery) Fingerprint() (string, bool) {
 	h := sha256.New()
 	_, _ = fmt.Fprintf(h, "%q\x00%q\x00", d.worktrees, d.entire)
 	for _, s := range d.wanted {
-		key, _, ok := mapKey(s)
+		key, ok := mapKeyOnly(s)
 		if !ok {
 			return "", false
 		}
@@ -498,7 +498,7 @@ func sessionKey(s collector.Session) string {
 			return ""
 		}
 	}
-	key, _, ok := mapKey(s)
+	key, ok := mapKeyOnly(s)
 	if !ok {
 		return ""
 	}

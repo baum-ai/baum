@@ -209,10 +209,17 @@ compressed rollout unless a plain file of the same name is beside it, in which
 case the plain one wins and the compressed copy is ignored, so a rollout is
 never a duplicate thread. The session's file keeps its real `.zst` path but its
 plain name (`rollout-<ts>-<uuid>.jsonl`), so graph source refs and native
-session identity do not change when Codex compresses a rollout. A compressed
-rollout whose zstd data is corrupt or truncated is skipped like one without a
-complete first record, with its own reason ("compressed rollout is corrupt or
+session identity do not change when Codex compresses a rollout. The walk lists
+every rollout once and decides between the two copies from that listing, without
+a stat per file. If Codex deletes the plain file after the walk saw both, the
+compressed copy is read instead. Discovery reads only a rollout's first record.
+A compressed rollout whose zstd data fails there (corrupt, truncated, or
+larger than the decoder's 64 MiB bound) is skipped, like one without a complete
+first record but with its own reason ("compressed rollout is corrupt or
 truncated"; `ScanReport.UnreadablePaths`), and the rest of the store is indexed.
+A stream that fails later is read as a plain rollout cut off at that point: the
+records decoded before the failure are kept and the rest is a torn final line,
+without an error. Decoders are pooled, since each holds a few MiB.
 If a scan does fail, discovery falls back to a partial index of `sessions/`,
 read through the same cache.
 Cursor is the exception to "never a transcript": it keeps every conversation

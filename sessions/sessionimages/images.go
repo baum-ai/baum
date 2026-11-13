@@ -124,7 +124,7 @@ func Read(ctx context.Context, s sessions.Session, limits Limits) Result {
 	r := &reader{ctx: ctx, limits: limits.defaults(), root: s.Graph.Root().ID, id: s.ID, files: map[string]*fileIndex{}, positions: map[string]int{}, humanKinds: map[string]string{}}
 	r.index(s.Graph)
 	names := make([]string, 0, len(r.files))
-	main := filepath.Base(s.Path)
+	main := codextranscript.PlainName(filepath.Base(s.Path))
 	if _, ok := r.files[main]; ok {
 		names = append(names, main)
 	}

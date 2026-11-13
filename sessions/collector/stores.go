@@ -155,6 +155,7 @@ func claudeStores(projectsDir string) ([]Store, error) {
 func codexStores(sessionsDir string) ([]Store, error) {
 	var stores []Store
 	for _, root := range codexStoreRoots(sessionsDir) {
+		var listed []Store
 		err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 			if err != nil {
 				if path == root {
@@ -168,16 +169,11 @@ func codexStores(sessionsDir string) ([]Store, error) {
 			if d.IsDir() || !codextranscript.IsRolloutName(d.Name()) {
 				return nil
 			}
-			if codextranscript.Compressed(path) {
-				if _, err := os.Stat(codextranscript.PlainPath(path)); err == nil {
-					return nil
-				}
-			}
 			info, err := d.Info()
 			if err != nil {
 				return nil
 			}
-			stores = append(stores, Store{
+			listed = append(listed, Store{
 				Source:     vendors.Codex,
 				Path:       path,
 				ModifiedAt: info.ModTime().UTC(),
@@ -187,6 +183,16 @@ func codexStores(sessionsDir string) ([]Store, error) {
 		})
 		if err != nil && !os.IsNotExist(err) {
 			return nil, err
+		}
+		// A compressed rollout is left out when its plain copy was listed too.
+		plain := make(map[string]bool, len(listed))
+		for _, store := range listed {
+			plain[store.Path] = true
+		}
+		for _, store := range listed {
+			if !codextranscript.Compressed(store.Path) || !plain[codextranscript.PlainPath(store.Path)] {
+				stores = append(stores, store)
+			}
 		}
 	}
 	return stores, nil

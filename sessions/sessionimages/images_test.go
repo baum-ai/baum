@@ -440,6 +440,11 @@ func TestCodexImagesAreReadFromCompressedRollouts(t *testing.T) {
 	if len(got.Images) != 2 {
 		t.Fatalf("images %d diagnostics %v", len(got.Images), got.Diagnostics)
 	}
+	// The compressed root is read first, as a plain one is, so a limit that
+	// takes one image takes its.
+	if got := Read(context.Background(), s, Limits{MaxImages: 1}); len(got.Images) != 1 || got.Images[0].Source.ChildSessionID != "" {
+		t.Fatalf("limited to one image: %+v", got.Images)
+	}
 
 	// With a plain copy beside it the child is read from that one, and a
 	// corrupt compressed copy is not looked at.

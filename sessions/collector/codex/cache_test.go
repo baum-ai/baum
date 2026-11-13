@@ -5,13 +5,14 @@ import (
 	"slices"
 
 	"fmt"
-	"github.com/klauspost/compress/zstd"
 	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/klauspost/compress/zstd"
 )
 
 type store struct {

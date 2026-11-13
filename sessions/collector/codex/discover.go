@@ -106,7 +106,7 @@ func loadEntries(sessionsDir string, cache *Cache) ([]Entry, model.ScanReport, s
 		}
 		for _, path := range scan.SkippedPaths {
 			if unreadable[path] {
-				report.Add(path, "compressed rollout is corrupt or truncated")
+				report.Add(path, unreadableReason)
 			} else {
 				report.Add(path, "first record absent or incomplete")
 			}
@@ -163,7 +163,7 @@ func ScanStore(codexHome string) ([]Entry, ScanReport, error) {
 // scanStore is ScanStore reading first records through cache, which may be nil.
 func scanStore(codexHome string, cache *Cache) ([]Entry, ScanReport, error) {
 	var report ScanReport
-	var paths []string
+	var found []string
 	scan := cache.beginScan(codexHome)
 	for _, dir := range []string{filepath.Join(codexHome, "sessions"), filepath.Join(codexHome, "archived_sessions")} {
 		err := filepath.WalkDir(dir, func(path string, entry os.DirEntry, err error) error {
@@ -173,8 +173,8 @@ func scanStore(codexHome string, cache *Cache) ([]Entry, ScanReport, error) {
 			if entry.IsDir() {
 				return nil
 			}
-			if wanted(path, entry.Name()) {
-				paths = append(paths, path)
+			if codextranscript.IsRolloutName(entry.Name()) {
+				found = append(found, path)
 			}
 			return nil
 		})
@@ -182,6 +182,7 @@ func scanStore(codexHome string, cache *Cache) ([]Entry, ScanReport, error) {
 			return nil, report, fmt.Errorf("scanning %s: %w", dir, err)
 		}
 	}
+	paths, siblings := chooseRollouts(found)
 	slices.Sort(paths)
 	// Reading each rollout's first record is independent per file and is what
 	// scanning the store costs, so the reads run concurrently. Every outcome is
@@ -193,7 +194,7 @@ func scanStore(codexHome string, cache *Cache) ([]Entry, ScanReport, error) {
 	group.SetLimit(runtime.GOMAXPROCS(0))
 	for i, path := range paths {
 		group.Go(func() error {
-			read[i].entry, read[i].err = scan.read(path)
+			read[i].entry, read[i].err = scan.readOrSibling(path, siblings)
 			return nil
 		})
 	}
@@ -228,17 +229,41 @@ func scanStore(codexHome string, cache *Cache) ([]Entry, ScanReport, error) {
 // decompressed. The rollout is skipped, not an error for the whole scan.
 var errUnreadableCompressed = errors.New("compressed rollout is unreadable")
 
-// wanted reports whether the file at path is a rollout to index: a plain one,
-// or a compressed one without a plain copy beside it.
-func wanted(path, name string) bool {
-	if !codextranscript.IsRolloutName(name) {
-		return false
+// unreadableReason is why a corrupt compressed rollout is skipped.
+const unreadableReason = "compressed rollout is corrupt or truncated"
+
+// chooseRollouts is the rollouts to read among the ones a walk found: a plain
+// one, or a compressed one without a plain copy. siblings gives, for each
+// plain rollout that has a compressed copy, that copy: Codex deletes the plain
+// file once it has compressed it, which may happen after the walk.
+func chooseRollouts(found []string) (paths []string, siblings map[string]string) {
+	listed := make(map[string]bool, len(found))
+	for _, path := range found {
+		listed[path] = true
 	}
-	if !codextranscript.Compressed(path) {
-		return true
+	siblings = map[string]string{}
+	for _, path := range found {
+		switch {
+		case !codextranscript.Compressed(path):
+			paths = append(paths, path)
+			if listed[path+".zst"] {
+				siblings[path] = path + ".zst"
+			}
+		case !listed[codextranscript.PlainPath(path)]:
+			paths = append(paths, path)
+		}
 	}
-	_, err := os.Stat(codextranscript.PlainPath(path))
-	return err != nil
+	return paths, siblings
+}
+
+// readOrSibling reads the rollout at path, or its compressed copy from
+// siblings when the plain file is gone.
+func (s *scan) readOrSibling(path string, siblings map[string]string) (Entry, error) {
+	entry, err := s.read(path)
+	if compressed, ok := siblings[path]; ok && errors.Is(err, os.ErrNotExist) {
+		return s.read(compressed)
+	}
+	return entry, err
 }
 
 func readEntry(path string) (Entry, error) {
@@ -279,6 +304,7 @@ func SessionWorkingDir(path string) (string, bool, error) {
 // it does not walk archived_sessions, so ending it would evict the archived
 // entries and the next full scan would read them all again.
 func softIndex(sessionsDir string, cache *Cache) ([]Entry, model.ScanReport) {
+	var found []string
 	var index []Entry
 	var report model.ScanReport
 	scan := cache.beginScan(filepath.Dir(sessionsDir))
@@ -292,17 +318,23 @@ func softIndex(sessionsDir string, cache *Cache) ([]Entry, model.ScanReport) {
 			}
 			return nil
 		}
-		if d.IsDir() || !wanted(path, d.Name()) {
-			return nil
-		}
-		entry, err := scan.read(path)
-		if err != nil {
-			report.Add(path, err.Error())
-		} else {
-			index = append(index, entry)
+		if !d.IsDir() && codextranscript.IsRolloutName(d.Name()) {
+			found = append(found, path)
 		}
 		return nil
 	})
+	paths, siblings := chooseRollouts(found)
+	for _, path := range paths {
+		entry, err := scan.readOrSibling(path, siblings)
+		switch {
+		case errors.Is(err, errUnreadableCompressed):
+			report.Add(path, unreadableReason)
+		case err != nil:
+			report.Add(path, err.Error())
+		default:
+			index = append(index, entry)
+		}
+	}
 	return index, report
 }
 

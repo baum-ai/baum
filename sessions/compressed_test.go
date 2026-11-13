@@ -146,6 +146,9 @@ func TestMapKeyCostsACompressedRolloutByItsDecodedSize(t *testing.T) {
 	if !ok || cost != plainCost || key == plainKey || !strings.Contains(key, packed.Files[0].Path) {
 		t.Fatalf("cost %d, want %d; key %q", cost, plainCost, key)
 	}
+	if only, ok := mapKeyOnly(packed); !ok || only != key {
+		t.Fatalf("key without cost %q, want %q", only, key)
+	}
 }
 
 // copyStore copies the Codex fixture store into home/sessions, compressing

@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"strings"
+	"sync"
 
 	"github.com/klauspost/compress/zstd"
 )
@@ -67,10 +68,31 @@ func OpenRollout(path string) (io.ReadCloser, error) {
 }
 
 // Decompress is the decoded stream of the compressed rollout r holds, for a
-// caller that has the file open already. Errors from it wrap ErrDecompress.
-// Closing the result does not close r.
+// caller that reads all of it and has the file open already. A stream that
+// fails part way ends as if the file had been cut there: the lines decoded
+// before are kept and the rest is a torn final line. Closing the result does
+// not close r.
 func Decompress(r io.Reader) (io.ReadCloser, error) {
-	return decompress(r)
+	return decompressWhole(r)
+}
+
+func decompressWhole(r io.Reader) (io.ReadCloser, error) {
+	rc, err := decompress(r)
+	if err != nil {
+		return nil, err
+	}
+	return cutAtFailure{rc}, nil
+}
+
+// cutAtFailure reports a failed zstd stream as the end of the data.
+type cutAtFailure struct{ io.ReadCloser }
+
+func (c cutAtFailure) Read(p []byte) (int, error) {
+	n, err := c.ReadCloser.Read(p)
+	if errors.Is(err, ErrDecompress) {
+		err = io.EOF
+	}
+	return n, err
 }
 
 type closeBoth struct {
@@ -82,14 +104,31 @@ func (c *closeBoth) Close() error {
 	return errors.Join(c.ReadCloser.Close(), c.file.Close())
 }
 
+// decoders keeps zstd decoders between rollouts: a decoder of a 2 MiB window
+// holds a few MiB, too much to allocate for each rollout's first line. The
+// memory bound also holds for frames that declare a single segment, which the
+// window bound does not.
+var decoders = sync.Pool{New: func() any {
+	d, err := zstd.NewReader(nil,
+		zstd.WithDecoderConcurrency(1),
+		zstd.WithDecoderLowmem(true),
+		zstd.WithDecoderMaxWindow(maxDecoderWindow),
+		zstd.WithDecoderMaxMemory(maxDecoderWindow))
+	if err != nil {
+		return nil
+	}
+	return d
+}}
+
 // decompress streams the zstd data in r. Errors from the stream wrap
 // ErrDecompress. Closing the result does not close r.
 func decompress(r io.Reader) (io.ReadCloser, error) {
-	d, err := zstd.NewReader(r,
-		zstd.WithDecoderConcurrency(1),
-		zstd.WithDecoderLowmem(true),
-		zstd.WithDecoderMaxWindow(maxDecoderWindow))
-	if err != nil {
+	d, _ := decoders.Get().(*zstd.Decoder)
+	if d == nil {
+		return nil, fmt.Errorf("%w: no decoder", ErrDecompress)
+	}
+	if err := d.Reset(r); err != nil {
+		d.Close()
 		return nil, fmt.Errorf("%w: %w", ErrDecompress, err)
 	}
 	return &decoded{d: d}, nil
@@ -106,7 +145,11 @@ func (r *decoded) Read(p []byte) (int, error) {
 }
 
 func (r *decoded) Close() error {
-	r.d.Close()
+	if r.d != nil {
+		_ = r.d.Reset(nil)
+		decoders.Put(r.d)
+		r.d = nil
+	}
 	return nil
 }
 
