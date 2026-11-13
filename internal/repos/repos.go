@@ -93,6 +93,10 @@ type AppearancePreferences struct {
 	// PageModifier is the key held with 1 to 8 to open the sidebar's pages:
 	// "meta", "ctrl" or "alt"; empty is the platform's command key.
 	PageModifier string `json:"page_modifier,omitempty"`
+	// Sidebar is whether the app's sidebar stays open beside the page
+	// ("pinned") or folds to its glyphs and opens over the page under the
+	// pointer ("folded"); empty is pinned.
+	Sidebar string `json:"sidebar,omitempty"`
 }
 
 // PlanUsagePreferences are the plans the person chose to show or hide in plan

@@ -48,11 +48,11 @@ func TestAppearanceSurvivesNewDaemonOrigin(t *testing.T) {
 		return saved
 	}
 	server, closeFirst := start()
-	if got := call(server, "GET", "", 200); got != (appearanceSettings{Theme: "system", KeyHints: true}) {
+	if got := call(server, "GET", "", 200); got != (appearanceSettings{Theme: "system", KeyHints: true, Sidebar: "pinned"}) {
 		t.Fatalf("defaults: %#v", got)
 	}
-	call(server, "PUT", `{"theme":"dark","key_hints":false,"page_modifier":"alt"}`, 200)
-	for _, invalid := range []string{`{"theme":"sepia"}`, `{"page_modifier":"shift"}`, `{"key_hints":"false"}`, `{"extra":true}`, `{} {}`} {
+	call(server, "PUT", `{"theme":"dark","key_hints":false,"page_modifier":"alt","sidebar":"folded"}`, 200)
+	for _, invalid := range []string{`{"theme":"sepia"}`, `{"page_modifier":"shift"}`, `{"key_hints":"false"}`, `{"sidebar":"hidden"}`, `{"extra":true}`, `{} {}`} {
 		call(server, "PUT", invalid, 400)
 	}
 	closeFirst()
@@ -60,16 +60,19 @@ func TestAppearanceSurvivesNewDaemonOrigin(t *testing.T) {
 	// daemon restart does, with no browser storage or cookies carried over.
 	server, closeSecond := start()
 	defer closeSecond()
-	if got := call(server, "GET", "", 200); got != (appearanceSettings{Theme: "dark", KeyHints: false, PageModifier: "alt"}) {
+	if got := call(server, "GET", "", 200); got != (appearanceSettings{Theme: "dark", KeyHints: false, PageModifier: "alt", Sidebar: "folded"}) {
 		t.Fatalf("after restart: %#v", got)
 	}
-	if got := call(server, "PUT", `{"theme":"light"}`, 200); got != (appearanceSettings{Theme: "light", KeyHints: false, PageModifier: "alt"}) {
+	if got := call(server, "PUT", `{"theme":"light"}`, 200); got != (appearanceSettings{Theme: "light", KeyHints: false, PageModifier: "alt", Sidebar: "folded"}) {
 		t.Fatalf("partial theme edit: %#v", got)
 	}
-	if got := call(server, "PUT", `{"key_hints":true}`, 200); got != (appearanceSettings{Theme: "light", KeyHints: true, PageModifier: "alt"}) {
+	if got := call(server, "PUT", `{"key_hints":true}`, 200); got != (appearanceSettings{Theme: "light", KeyHints: true, PageModifier: "alt", Sidebar: "folded"}) {
 		t.Fatalf("partial hints edit: %#v", got)
 	}
-	if got := call(server, "PUT", `{"page_modifier":""}`, 200); got != (appearanceSettings{Theme: "light", KeyHints: true}) {
+	if got := call(server, "PUT", `{"page_modifier":""}`, 200); got != (appearanceSettings{Theme: "light", KeyHints: true, Sidebar: "folded"}) {
 		t.Fatalf("page modifier back to the platform's: %#v", got)
+	}
+	if got := call(server, "PUT", `{"sidebar":"pinned"}`, 200); got != (appearanceSettings{Theme: "light", KeyHints: true, Sidebar: "pinned"}) {
+		t.Fatalf("sidebar pinned again: %#v", got)
 	}
 }
