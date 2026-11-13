@@ -650,13 +650,13 @@ function SessionPanel({
       {position === "bottom" ? <Grip position={position} height={panel.height} /> : null}
       <header className="session-panel-head">
         <div className="session-panel-title">
-          <TerminalIcon size={16} className="flex-none text-(--text-tertiary)" />
+          <TerminalIcon size={16} className="flex-none text-tertiary" />
           <h2 id={headId} title={heading}>
             {heading}
           </h2>
           {running ? (
             <span className="session-panel-state">
-              <LiveDot className="text-(--status-positive)" /> Working
+              <LiveDot className="text-status-positive" /> Working
             </span>
           ) : null}
           <Button
@@ -1126,7 +1126,7 @@ function Tail({
         </p>
       ) : running || sending ? (
         <p className="session-panel-working">
-          <LiveDot className="text-(--status-positive)" />
+          <LiveDot className="text-status-positive" />
           {progress?.tool ? (
             <span className="session-panel-tool">{progress.tool}</span>
           ) : (
