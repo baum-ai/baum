@@ -22,7 +22,7 @@
    `review` container), not the window's, so a host's sidebar folding or
    opening gives the review its columns as soon as they fit. 64rem is the
    narrowest the columns ran at before this was a container query: a 1280px
-   window beside the application's widest sidebar. `WIDE_PX` in
+   window beside the application's widest sidebar. `WIDE_REM` in
    `review-viewer.tsx` is the same width for the code that needs it. */
 @custom-variant wide {
   @container review (width >= 64rem) {

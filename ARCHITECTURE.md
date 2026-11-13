@@ -399,6 +399,75 @@ copy:
   matches a file or directory inside either tree, including the case of
   every path component even on case-insensitive filesystems. It never spends
   a repair on a reference.
+- `summary.recommendation` (`null`, or a `decision` of `approve`,
+  `look_first` or `request_changes` with a `text` and `refs`) is optional in
+  the stored schema, for documents generated before it existed, and required
+  (null allowed) in the authored contract and the model schema. The outline
+  stage writes it, so it survives into the assembled and stored document;
+  refresh never adds or changes it. `summary.review_exchange.summary` may be
+  null, for a pull request nobody has reviewed.
+- Prose rules (`prose_rules.go`) run on newly authored documents only, and
+  their findings go back to the model through the repair loop. The public
+  prompts (`agent/prompt`) state the same rules up front, so a repair is the
+  exception. `ValidateStored`
+  and `Refresh` never apply them, so a stored review is never rejected or
+  rewritten for them. Which rules run depends on what is being prepared:
+  a one-pass document (`Validate`, `Prepare`) gets all of them; a staged
+  outline (`PrepareOutline`) gets them with prose and recommendation refs
+  limited to section IDs, because no risk, evidence or decision exists yet
+  ("the outline can cite only section IDs; cite the section"); a section's
+  details (`PrepareSectionDetails`) are checked without the outline around
+  them (summary, section title and assessment belong to the outline, which a
+  details reply cannot change, and a continued run's stored outline is
+  unchecked), citing their own items and any section; details a previous version wrote
+  (`PrepareReusedSectionDetails`) get the wording rules but no identifier is
+  resolved against the bundle, since a check or hunk of an earlier head does
+  not exist now and the section would be rewritten on every push; the context
+  stage, a stored outline that is continued (`PrepareStoredOutline`) and the
+  final assembly (`PrepareStaged`, `CompleteStaged`) apply none, since each
+  part was checked when it was written or accepted.
+- A host that writes the summary's review exchange itself, as a stack review
+  does from its members' exchanges, uses `PrepareHostExchange` and
+  `CompleteWithPromptHostExchange`: the model never sees that field, so no
+  finding on it could be repaired, and the rules do not read it.
+- The rules, and the fields they read:
+  - Run-state wording ("still in progress", "had not finished", "at the
+    snapshot", and "was/is in progress, queued or pending" when the sentence
+    is about a CI check, workflow, suite, pipeline or bot, not the verb "check": the evidence
+    status is refreshed later, the sentence is not) and talk about the model's
+    inputs ("in the bundle", "in the excerpts", "in the supplied snapshot",
+    "in the head checkout", "outline stage", "I read") are checked only in the
+    fields that carry the review's judgement: evidence claim, detail and
+    expects, attention text, risk text, the overview, the review exchange
+    summary, assessment reasons and the recommendation text. Behaviour steps,
+    context, intent, titles, the other descriptive blocks, tiles and the
+    release note describe the code under review, which may itself run jobs and
+    take snapshots, and are not checked for them.
+  - Identifiers in any prose field must resolve, because the viewer links
+    them: a hunk ID must be in the bundle's diff; a `rsk_`, `ev_`, `dec_` or
+    `sec_` ID in the document; a `check_run:` or `status:` ID among the
+    bundle's checks; a `PRRT_` ID (hyphens allowed) among its review threads;
+    `comment <digits>` (or a code span of digits) among its conversation items;
+    a session UUID a non-restricted session. Without a bundle only the
+    document's own IDs are checked. A full 40-hex SHA is rejected: write the
+    short SHA.
+  - A ticket key in a title (section, step or decision titles).
+  - `ci` evidence: the authored contract and the model schema do not offer the
+    kind (the page shows the checks; a `test` item whose claim names what the
+    tests cover, anchored to the check, replaces it); the stored contract keeps
+    it, and the finding remains for a path without the enum.
+  - An absence claim about tests, checks, runs or evidence ("No test covers
+    X", "no passing check") whose status is not `missing`, `unavailable`,
+    `failed`, `skipped` or `pending`; "No caller of X remains" is a code fact
+    and is left alone.
+  - More than one `missing` evidence item in a section. Risks are not capped:
+    a cap makes the model drop real risks, which the next version then records
+    as mitigated.
+  - Two risks, or a risk and the section's attention, that state one point:
+    at least six distinct words in the shorter text and at least 80% of them
+    (stop words aside) in the longer one.
+  - Recommendation refs that name no section, risk, evidence or decision, or
+    none for `look_first` and `request_changes`.
 
 ### History
 
@@ -834,12 +903,12 @@ and anthropic, `submit-codex.md`, and `submit-cursor.md`, which points at the
 schema the cursor-agent backend appends and lists the tools that stop a run),
 embedded with `go:embed`.
 `Prompts.Instructions` appends the backend's block under that heading, sets
-`Version` to `review-public-v6` and `Digest` to the sha256 of the composed body,
+`Version` to `review-public-v8` and `Digest` to the sha256 of the composed body,
 and fails for any other backend. A host may supply another implementation; the
 hosted service does, with its private prompts. `StaticPrompts` is a fixed
 implementation for tests and simple hosts. The prompt is per backend because
 each backend submits its result differently. `GroupPrompts` is the local
-review group's prompt (`group-review-public-v4`): the same text with
+review group's prompt (`group-review-public-v6`): the same text with
 `group-public-v1.md` inserted before the Submitting heading, which says how a
 group's bundle, per-member checkout and `members.json` differ and what a
 combined review covers (see "Review groups").
@@ -848,7 +917,7 @@ A staged review takes its instructions through `StagedPrompts`, whose
 `StagedInstructions(ctx, backend)` returns a `StagedPrompt`: `Shared` and
 one text per stage (`Outline`, `Details`, `Context`), with a `Version` and a
 `Digest` covering all four. The module's `prompt.StagedPrompts`
-(`review-staged-public-v1`) embeds `review-shared-public-v1.md` (the stages
+(`review-staged-public-v3`) embeds `review-shared-public-v1.md` (the stages
 and what each writes, so none repeats another, plus the ground rules,
 inputs, checks, anchors, writing and calibration of `review-public-v6.md`)
 and `review-outline-public-v1.md`, `review-details-public-v1.md` and

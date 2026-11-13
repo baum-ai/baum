@@ -26,7 +26,7 @@ import (
 // reading time, which the host computes (ReviewMinutes).
 var (
 	outlineFields        = []string{"schema", "summary", "sections", "relations"}
-	outlineSummaryFields = []string{"text", "review_exchange", "change_kind", "implements", "release_note", "breaking_change", "attention", "authorship"}
+	outlineSummaryFields = []string{"text", "review_exchange", "change_kind", "implements", "release_note", "breaking_change", "attention", "recommendation", "authorship"}
 	outlineSectionFields = []string{"id", "title", "kind", "hunks", "assessment"}
 	detailsSectionFields = []string{"id", "summary", "attention", "risks", "evidence", "blocks", "tiles"}
 )
@@ -243,6 +243,18 @@ var sectionIdentifier = identifierRule{prefix: "sec"}
 // mechanical section), and every logical section with hunks must have an
 // assessment.
 func (v *DocumentValidator) PrepareOutline(reply []byte, b *bundlepkg.Bundle, directory string) ([]byte, string) {
+	return v.prepareOutline(reply, b, directory, proseOutline)
+}
+
+// PrepareStoredOutline is PrepareOutline for an outline already accepted and
+// stored (StoredOutline), which a host continues: the prose rules, which
+// apply to what the model writes now, are not applied, so an outline stored
+// before they existed is still valid.
+func (v *DocumentValidator) PrepareStoredOutline(reply []byte, b *bundlepkg.Bundle, directory string) ([]byte, string) {
+	return v.prepareOutline(reply, b, directory, proseOff)
+}
+
+func (v *DocumentValidator) prepareOutline(reply []byte, b *bundlepkg.Bundle, directory string, outlineProse proseScope) ([]byte, string) {
 	root, err := decodeObject(reply, "outline")
 	if err != nil {
 		return reply, "output is not a JSON document"
@@ -261,7 +273,7 @@ func (v *DocumentValidator) PrepareOutline(reply []byte, b *bundlepkg.Bundle, di
 	if err != nil {
 		return reply, err.Error()
 	}
-	prepared, findings := v.prepare(v.staged, encoded, b, directory)
+	prepared, findings := v.prepare(v.staged, encoded, b, directory, outlineProse)
 	prepared = previousSectionsFirst(prepared, b.Previous)
 	var outline struct {
 		Sections []struct {
@@ -521,6 +533,19 @@ func SectionID(details []byte) string {
 // findings, empty when it is valid; every finding is the section's own, since
 // the outline is valid and the other sections hold nothing to check.
 func (v *DocumentValidator) PrepareSectionDetails(outline, details []byte, b *bundlepkg.Bundle, directory string) ([]byte, string) {
+	return v.prepareSectionDetails(outline, details, b, directory, proseDetails)
+}
+
+// PrepareReusedSectionDetails is PrepareSectionDetails for details a previous
+// version wrote (ReusableSectionDetails): the prose rules about wording apply,
+// but identifiers are not resolved against the bundle, since a check or hunk
+// of an earlier head does not exist now and the section would be rewritten on
+// every push.
+func (v *DocumentValidator) PrepareReusedSectionDetails(outline, details []byte, b *bundlepkg.Bundle, directory string) ([]byte, string) {
+	return v.prepareSectionDetails(outline, details, b, directory, proseReused)
+}
+
+func (v *DocumentValidator) prepareSectionDetails(outline, details []byte, b *bundlepkg.Bundle, directory string, detailsProse proseScope) ([]byte, string) {
 	root, err := decodeObject(outline, "outline")
 	if err != nil {
 		return nil, err.Error()
@@ -549,7 +574,7 @@ func (v *DocumentValidator) PrepareSectionDetails(outline, details []byte, b *bu
 	if err != nil {
 		return nil, err.Error()
 	}
-	prepared, findings := v.prepare(v.staged, encoded, b, directory)
+	prepared, findings := v.prepare(v.staged, encoded, b, directory, detailsProse)
 	var document struct {
 		Sections []json.RawMessage `json:"sections"`
 	}
@@ -587,7 +612,7 @@ func (v *DocumentValidator) PrepareContext(outline, reply []byte, b *bundlepkg.B
 	if err != nil {
 		return nil, err.Error()
 	}
-	prepared, findings := v.prepare(v.staged, encoded, b, directory)
+	prepared, findings := v.prepare(v.staged, encoded, b, directory, proseOff)
 	var document struct {
 		Summary struct {
 			Context json.RawMessage `json:"context"`
@@ -803,7 +828,7 @@ func AssembleStaged(parts StagedParts, final bool) ([]byte, error) {
 // without their details the stored ones, and the summary may lack its
 // context.
 func (v *DocumentValidator) PrepareStaged(document []byte, b *bundlepkg.Bundle, directory string) ([]byte, string) {
-	return v.prepare(v.staged, document, b, directory)
+	return v.prepare(v.staged, document, b, directory, proseOff)
 }
 
 // CompleteStaged is CompleteWithPrompt for a document a staged generator
@@ -812,7 +837,7 @@ func (v *DocumentValidator) PrepareStaged(document []byte, b *bundlepkg.Bundle, 
 // completes a draft with pending sections the same way to show it, and
 // publishes or saves only a document without them (FailPendingDetails).
 func (v *DocumentValidator) CompleteStaged(document []byte, b *bundlepkg.Bundle, directory string, model, promptVersion string, now time.Time) ([]byte, string) {
-	return v.complete(v.staged, document, b, directory, model, promptVersion, now)
+	return v.complete(v.staged, document, b, directory, model, promptVersion, now, proseOff)
 }
 
 const readingWordsPerMinute = 400

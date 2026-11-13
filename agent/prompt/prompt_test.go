@@ -111,6 +111,40 @@ func TestGroupInstructionsInsertGroupTextBeforeSubmitting(t *testing.T) {
 	}
 }
 
+// The review prompts ask up front for what the prose rules (review package)
+// would otherwise send back for repair: no run state, no talk about the
+// inputs, one finding in one place, optional step questions, at most one
+// missing item, a null summary attention and a recommendation.
+func TestReviewPromptsAskForQuietProse(t *testing.T) {
+	flat := func(file string) string { return strings.Join(strings.Fields(readFile(t, file)), " ") }
+	onePass, staged := flat("review-public-v6.md"), flat("review-shared-public-v1.md")
+	outline, details := flat("review-outline-public-v1.md"), flat("review-details-public-v1.md")
+	for name, text := range map[string]string{"one-pass": onePass, "shared": staged} {
+		for _, phrase := range []string{"Never write the run state of a check", "not about the review's inputs or process", "Say each finding once", "Titles carry no ticket keys", "Never write a full 40-character SHA", "appears once"} {
+			if !strings.Contains(text, phrase) {
+				t.Errorf("%s text does not say %q", name, phrase)
+			}
+		}
+	}
+	for name, text := range map[string]string{"one-pass": onePass, "details": details} {
+		for _, phrase := range []string{"`question` (optional)", "Most steps need no question", "Do not write `ci` evidence", "At most one `missing` item per section", "Never drop a previous risk that is still active", "never process advice", "A missing test is never a risk of its own", "It never mentions checks"} {
+			if !strings.Contains(text, phrase) {
+				t.Errorf("%s text does not say %q", name, phrase)
+			}
+		}
+		if strings.Contains(text, "`title`, `after` and `question`") || strings.Contains(text, "`ci`, `run`, `report`") || strings.Contains(text, "unresolved reviewer request") {
+			t.Errorf("%s text still requires a question on every step or offers ci evidence", name)
+		}
+	}
+	for name, text := range map[string]string{"one-pass": onePass, "outline": outline} {
+		for _, phrase := range []string{"attention: null", "- `attention`: null. The recommendation says what to look at.", "- `recommendation`: the bottom line", "`look_first`", "`request_changes` for a concrete defect in the code", "never on the thread's state", "- `review_exchange.summary`: null when", "never by whether its thread is open or resolved"} {
+			if !strings.Contains(text, phrase) {
+				t.Errorf("%s text does not say %q", name, phrase)
+			}
+		}
+	}
+}
+
 // A staged review's prompts share one prefix for every stage and backend;
 // each stage's text names its own schema file, carries the writing rules of
 // the parts it writes and ends with the backend's submit block.

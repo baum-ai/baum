@@ -142,7 +142,7 @@ started from.
    whose details are pending or failed has "Details for this section are
    unavailable." in place of its summary.
 4. Runs the agent loop with the public group prompt
-   (`agent/prompt` `GroupPrompts`, version `group-review-public-v4`).
+   (`agent/prompt` `GroupPrompts`, version `group-review-public-v6`).
    The model names the group: its schema asks for `stack` with only a
    `title` (`agent.Run.ModelSchema`). Before validation the host fills the
    rest of `stack` (`members` = number, head SHA and member review version)

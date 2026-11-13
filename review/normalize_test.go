@@ -132,7 +132,7 @@ func lenientFixture() []byte {
 	// attention reference, a revision named by role, no review_version and an
 	// excerpt named by header only.
 	return []byte(`{
-	  "summary": {"text": "Changes parser behavior.", "context": {"area": {"text": "The parser turns source text into a syntax tree."}}, "review_exchange": {"summary": "No reviews."}, "change_kind": "feature", "release_note": null, "attention": null, "authorship": {"declared": "unknown", "declared_tools": null}, "review_minutes": 4},
+	  "summary": {"text": "Changes parser behavior.", "context": {"area": {"text": "The parser turns source text into a syntax tree."}}, "review_exchange": {"summary": "No reviews."}, "change_kind": "feature", "release_note": null, "attention": null, "recommendation": null, "authorship": {"declared": "unknown", "declared_tools": null}, "review_minutes": 4},
 	  "sections": [{
 	    "id": "Parser Core", "title": "Parser", "kind": "logical",
 	    "hunks": ["h_0123456789ab", "h_0123456789ab", "h_ffffffffffff"],
@@ -427,8 +427,8 @@ func TestNormalizationAssertsEvidenceItsAnchorsCannotCarry(t *testing.T) {
 	}{
 		{"observed from the diff alone", "observed", "model", "run", []any{hunk}, "asserted", nil},
 		{"observed with a session event", "observed", "session", "run", []any{event}, "observed", nil},
-		{"verified without a check", "verified", "ci", "ci", []any{hunk}, "asserted", nil},
-		{"verified check without granularity", "verified", "ci", "ci", []any{check}, "verified", "job"},
+		{"verified without a check", "verified", "ci", "run", []any{hunk}, "asserted", nil},
+		{"verified check without granularity", "verified", "ci", "run", []any{check}, "verified", "job"},
 		{"verified test without a test anchor", "verified", "ci", "test", []any{check}, "asserted", nil},
 		{"verified test with a test hunk", "verified", "ci", "test", []any{check, hunk}, "verified", "job"},
 		{"verified test with a source hunk", "verified", "ci", "test", []any{check, source}, "asserted", nil},

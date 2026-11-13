@@ -107,9 +107,24 @@ export function ReviewSection({
   };
   const showAttention =
     attention && (section.attention!.refs.length === 0 || attention.refs.length > 0);
+  const attentionEvidenceIds = new Set(
+    showAttention
+      ? section.evidence
+          .filter((item) => attention.refs.includes(item.id) && !RESTATED_EVIDENCE.has(item.status))
+          .map((item) => item.id)
+      : [],
+  );
+  const otherEvidence = section.evidence.filter((item) => !attentionEvidenceIds.has(item.id));
   const attentionRiskIds = new Set(attention?.refs ?? []);
   const attentionRisks = section.risks.filter((risk) => attentionRiskIds.has(risk.id));
   const otherRisks = section.risks.filter((risk) => !attentionRiskIds.has(risk.id));
+  // A risk the code has since addressed is no longer the reader's to weigh,
+  // so it waits behind a disclosure rather than sharing the list with the
+  // open ones. In an obsolete section every risk is shown as obsolete instead.
+  const isMitigated = (risk: Section["risks"][number]) =>
+    risk.state === "mitigated" && derived.state !== "stale";
+  const openRisks = otherRisks.filter((risk) => !isMitigated(risk));
+  const mitigatedRisks = otherRisks.filter(isMitigated);
   const renderRisk = (risk: Section["risks"][number], position: number, inAttention = false) => {
     const Container = inAttention ? "li" : Item;
     return (
@@ -221,6 +236,7 @@ export function ReviewSection({
             document={document}
             attention={attention}
             section={section}
+            itemId={itemId}
             onJump={(ref) => scrollToItem(itemId(ref))}
             risks={attentionRisks.map((risk, position) => renderRisk(risk, position, true))}
           />
@@ -240,11 +256,36 @@ export function ReviewSection({
           />
         ))}
 
+        {otherEvidence.length > 0 && (
+          <Part label="Evidence">
+            <ul className="space-y-3">
+              {otherEvidence.map((evidence) => (
+                <Item key={evidence.id} id={itemId(evidence.id)} className="space-y-1.5">
+                  <EvidenceBadge evidence={evidence} compact />
+                  <EvidenceContent document={document} evidence={evidence} />
+                </Item>
+              ))}
+            </ul>
+          </Part>
+        )}
+
         {otherRisks.length > 0 && (
           <Part label="Risks">
-            <ol className="space-y-2">
-              {otherRisks.map((risk, position) => renderRisk(risk, position))}
-            </ol>
+            {openRisks.length > 0 && (
+              <ol className="space-y-2">
+                {openRisks.map((risk, position) => renderRisk(risk, position))}
+              </ol>
+            )}
+            {mitigatedRisks.length > 0 && (
+              <details className={openRisks.length > 0 ? "mt-2.5" : undefined}>
+                <summary className="cursor-pointer text-base text-(--text-link) hover:underline">
+                  {pluralize("mitigated risk", mitigatedRisks.length, true)}
+                </summary>
+                <ol className="mt-2 space-y-2">
+                  {mitigatedRisks.map((risk, position) => renderRisk(risk, position))}
+                </ol>
+              </details>
+            )}
           </Part>
         )}
 
@@ -412,6 +453,7 @@ type AttentionRef = {
   badge?: ReactNode;
   /** Whether the item is listed on the section, so the row can jump to it. */
   listed: boolean;
+  evidence?: Evidence;
 };
 
 /** What an attention reference points at: the risk, the decision or the
@@ -436,13 +478,13 @@ function resolveRef(section: Section, ref: string): AttentionRef {
   }
   const evidence = section.evidence.find((item) => item.id === ref);
   if (evidence) {
-    // Evidence is not listed on the section, so the row carries its status.
     return {
       ref,
       kind: "Evidence",
       text: evidence.claim,
       badge: <EvidenceBadge evidence={evidence} compact />,
       listed: false,
+      evidence,
     };
   }
   return { ref, kind: "Reference", text: ref, listed: false };
@@ -483,19 +525,21 @@ function AttentionCallout({
   document,
   attention,
   section,
+  itemId,
   onJump,
   risks,
 }: {
   document: ReviewDocument;
   attention: NonNullable<Section["attention"]>;
   section: Section;
+  itemId: (ref: string) => string;
   onJump: (ref: string) => void;
   risks: ReactNode[];
 }) {
   // Evidence that only restates the attention (no proof was found, or the
   // claim is merely stated) is left out: the attention already says so. What
   // is shown points at something to open or act on.
-  const refs = attention.refs
+  const refs = [...new Set(attention.refs)]
     .filter((ref) => !section.risks.some((risk) => risk.id === ref))
     .filter((ref) => {
       const evidence = section.evidence.find((item) => item.id === ref);
@@ -539,21 +583,34 @@ function AttentionCallout({
           {refs.map((item, index) => (
             <li
               key={`${index}:${item.ref}`}
+              id={item.evidence ? itemId(item.ref) : undefined}
               className="flex items-start gap-3 py-2 text-base leading-[1.45]"
             >
               <span className="w-16 flex-none pt-0.5 text-3xs font-semibold tracking-[0.08em] uppercase text-(--text-tertiary)">
                 {item.kind}
               </span>
               {item.badge ? <span className="flex-none">{item.badge}</span> : null}
-              <Markdown
-                title={item.text}
-                className={cn(
-                  "line-clamp-2 min-w-0 flex-1 text-(--text-primary)",
-                  item.kind === "Reference" && "font-mono",
-                )}
-              >
-                {item.text}
-              </Markdown>
+              {item.evidence ? (
+                <div className="min-w-0 flex-1 space-y-1.5">
+                  <EvidenceContent
+                    document={document}
+                    evidence={item.evidence}
+                    anchors={item.evidence.anchors.filter(
+                      (anchor) => anchor.type !== "hunk" && anchor.type !== "file",
+                    )}
+                  />
+                </div>
+              ) : (
+                <Markdown
+                  title={item.text}
+                  className={cn(
+                    "line-clamp-2 min-w-0 flex-1 text-(--text-primary)",
+                    item.kind === "Reference" && "font-mono",
+                  )}
+                >
+                  {item.text}
+                </Markdown>
+              )}
               {item.listed ? (
                 <JumpLink onClick={() => onJump(item.ref)} className="flex-none">
                   View ↓
@@ -564,6 +621,32 @@ function AttentionCallout({
         </ul>
       )}
     </section>
+  );
+}
+
+function EvidenceContent({
+  document,
+  evidence,
+  anchors = evidence.anchors,
+}: {
+  document: ReviewDocument;
+  evidence: Evidence;
+  anchors?: Anchor[];
+}) {
+  return (
+    <>
+      <Markdown className="text-(--text-primary)">{evidence.claim}</Markdown>
+      {evidence.detail && (
+        <Markdown className="text-(--text-secondary)">{evidence.detail}</Markdown>
+      )}
+      {evidence.expects && (
+        <div className="space-y-1">
+          <p className="text-xs font-medium text-(--text-tertiary)">Expected coverage</p>
+          <Markdown className="text-(--text-secondary)">{evidence.expects}</Markdown>
+        </div>
+      )}
+      <AnchorChips document={document} anchors={anchors} />
+    </>
   );
 }
 
