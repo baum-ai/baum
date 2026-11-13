@@ -1,0 +1,6056 @@
+{
+  "schema": "baum.tiles/1",
+  "origin": {
+    "kind": "converted",
+    "from": "baum.review/1",
+    "schema_revision": "2026-10-06.1",
+    "converter": 1
+  },
+  "review": {
+    "repository": "example-org/taskline",
+    "pull_request": 212,
+    "pr_state": "merged",
+    "head": "d6d7a116b9babb73a1e9be4db63b94f35952ba6b",
+    "base": "48682784a10b4ecf3a94f47a2f8f68b846cfc01b",
+    "merge_base": "48682784a10b4ecf3a94f47a2f8f68b846cfc01b",
+    "merged_commit": "4db91f2226c257a5ebef5ec7743da181611d1b94",
+    "version": 3,
+    "previous_version": 2,
+    "generation_state": "current",
+    "generated_at": "2026-09-10T10:30:00Z",
+    "evidence_refreshed_at": "2026-09-10T11:15:00Z",
+    "generator": {
+      "model": "example-model",
+      "review_md": "9737b2b5a316b2c416d2ca99e45663a3ad4c0650592436093ed2eeffbdd02d7e",
+      "review_md_changed": false,
+      "truncated": [
+        "Session command events are paraphrased; raw command lines, tool output and local paths are not included",
+        "Section sec_fixed_delay contains risk or behavior anchors unavailable in this input."
+      ],
+      "schema_revision": "2026-10-06.1"
+    },
+    "sources": {
+      "diff": true,
+      "sessions": 2,
+      "checks": 6,
+      "test_reports": 0,
+      "review_threads": true,
+      "agent_reviews": 3,
+      "spec_links": false,
+      "review_md": true
+    },
+    "relations": [
+      {
+        "pr": 207,
+        "type": "includes"
+      },
+      {
+        "pr": 205,
+        "type": "stacked_on"
+      },
+      {
+        "issue": {
+          "key": "TASK-40",
+          "system": "jira"
+        },
+        "type": "follow_up"
+      }
+    ]
+  },
+  "facts": {
+    "title": "Add retry budgets and a dead-letter queue",
+    "author": {
+      "login": "example-dev",
+      "association": "MEMBER",
+      "bot": false
+    },
+    "authorship": {
+      "declared": "ai_assisted",
+      "declared_tools": [
+        "acme-agent"
+      ],
+      "anchors": [
+        {
+          "type": "pr_body"
+        }
+      ],
+      "observed_sessions": 2,
+      "observed_vendors": [
+        "acme-agent",
+        "other-agent"
+      ],
+      "observed_models": [
+        "acme-model-1"
+      ]
+    },
+    "review_exchange": {
+      "summary": "Two automated reviewers and a maintainer reviewed earlier heads. The first automated review's overflow note and the maintainer's request for an operator check were resolved by later commits, and a second automated finding about Requeue was resolved too. The final automated review approved the last commit but left one open must-fix thread: the operator role is read from a request header the client can set.",
+      "reviews": 4,
+      "back_and_forths": 3,
+      "critical_issues_found": 1,
+      "changes_after_open": {
+        "commits": 3,
+        "lines_added": 321,
+        "lines_removed": 13
+      }
+    }
+  },
+  "stats": {
+    "sections": 7,
+    "files": 17,
+    "hunks": 23,
+    "additions": 401,
+    "deletions": 17,
+    "risk_loc": {
+      "critical": 15,
+      "high": 43,
+      "low": 18,
+      "mechanical": 6,
+      "medium": 136,
+      "unrated": 200
+    },
+    "role_loc": {
+      "code": 244,
+      "docs": 19,
+      "migration": 11,
+      "test": 144
+    },
+    "checks": {
+      "required_failed": 0,
+      "optional_failed": 1,
+      "pending": 1,
+      "skipped": 1
+    },
+    "agent_findings": {
+      "open": 1,
+      "resolved": 3,
+      "dismissed": 0
+    }
+  },
+  "index": {
+    "hunks": [
+      {
+        "id": "h_8143a44d25d2",
+        "path": "CHANGELOG.md",
+        "change": "modified",
+        "role": "docs",
+        "new_range": [
+          1,
+          9
+        ],
+        "additions": 4,
+        "deletions": 0,
+        "github_url": "https://github.com/example-org/taskline/pull/212/files#diff-06572a96a58dc510037d5efa622f9bec8519bc1beab13c9f251e97e657a9d4edR1",
+        "diff": {
+          "header": "@@ -1,5 +1,9 @@",
+          "lines": [
+            {
+              "kind": "context",
+              "text": "# Changelog",
+              "old_line": 1,
+              "new_line": 1
+            },
+            {
+              "kind": "context",
+              "text": "",
+              "old_line": 2,
+              "new_line": 2
+            },
+            {
+              "kind": "add",
+              "text": "## Unreleased",
+              "new_line": 3
+            },
+            {
+              "kind": "add",
+              "text": "",
+              "new_line": 4
+            },
+            {
+              "kind": "add",
+              "text": "- Add retry budgets and a dead-letter queue.",
+              "new_line": 5
+            },
+            {
+              "kind": "add",
+              "text": "",
+              "new_line": 6
+            },
+            {
+              "kind": "context",
+              "text": "## 0.4.0",
+              "old_line": 3,
+              "new_line": 7
+            },
+            {
+              "kind": "context",
+              "text": "",
+              "old_line": 4,
+              "new_line": 8
+            },
+            {
+              "kind": "context",
+              "text": "- Add the admin API.",
+              "old_line": 5,
+              "new_line": 9
+            }
+          ]
+        }
+      },
+      {
+        "id": "h_3b2315bd3e0a",
+        "path": "api/auth.go",
+        "change": "modified",
+        "role": "code",
+        "new_range": [
+          7,
+          22
+        ],
+        "additions": 14,
+        "deletions": 1,
+        "github_url": "https://github.com/example-org/taskline/pull/212/files#diff-d4f2fd957537e7a7ac6f532c8e2e30ad66a223cc4e623e95116d639c3684df1fR7",
+        "diff": {
+          "header": "@@ -7,9 +7,22 @@ import \"net/http\"",
+          "lines": [
+            {
+              "kind": "context",
+              "text": "type Role string",
+              "old_line": 7,
+              "new_line": 7
+            },
+            {
+              "kind": "context",
+              "text": "",
+              "old_line": 8,
+              "new_line": 8
+            },
+            {
+              "kind": "context",
+              "text": "const (",
+              "old_line": 9,
+              "new_line": 9
+            },
+            {
+              "kind": "remove",
+              "text": "\tRoleViewer Role = \"viewer\"",
+              "old_line": 10
+            },
+            {
+              "kind": "add",
+              "text": "\tRoleViewer   Role = \"viewer\"",
+              "new_line": 10
+            },
+            {
+              "kind": "add",
+              "text": "\tRoleOperator Role = \"operator\"",
+              "new_line": 11
+            },
+            {
+              "kind": "context",
+              "text": ")",
+              "old_line": 11,
+              "new_line": 12
+            },
+            {
+              "kind": "context",
+              "text": "",
+              "old_line": 12,
+              "new_line": 13
+            },
+            {
+              "kind": "add",
+              "text": "// RequireOperator wraps next so only operators reach it. Other callers get",
+              "new_line": 14
+            },
+            {
+              "kind": "add",
+              "text": "// 403 and the handler is not run.",
+              "new_line": 15
+            },
+            {
+              "kind": "add",
+              "text": "func RequireOperator(next http.HandlerFunc) http.HandlerFunc {",
+              "new_line": 16
+            },
+            {
+              "kind": "add",
+              "text": "\treturn func(w http.ResponseWriter, r *http.Request) {",
+              "new_line": 17
+            },
+            {
+              "kind": "add",
+              "text": "\t\tif RoleFromRequest(r) != RoleOperator {",
+              "new_line": 18
+            },
+            {
+              "kind": "add",
+              "text": "\t\t\thttp.Error(w, \"operator role required\", http.StatusForbidden)",
+              "new_line": 19
+            },
+            {
+              "kind": "add",
+              "text": "\t\t\treturn",
+              "new_line": 20
+            },
+            {
+              "kind": "add",
+              "text": "\t\t}",
+              "new_line": 21
+            },
+            {
+              "kind": "add",
+              "text": "\t\tnext(w, r)",
+              "new_line": 22
+            },
+            {
+              "kind": "add",
+              "text": "\t}",
+              "new_line": 23
+            },
+            {
+              "kind": "add",
+              "text": "}",
+              "new_line": 24
+            },
+            {
+              "kind": "add",
+              "text": "",
+              "new_line": 25
+            },
+            {
+              "kind": "context",
+              "text": "// RoleFromRequest reads the caller's role from the X-Taskline-Role header,",
+              "old_line": 13,
+              "new_line": 26
+            },
+            {
+              "kind": "context",
+              "text": "// which the deployment's gateway sets after authenticating the caller.",
+              "old_line": 14,
+              "new_line": 27
+            },
+            {
+              "kind": "context",
+              "text": "func RoleFromRequest(r *http.Request) Role {",
+              "old_line": 15,
+              "new_line": 28
+            }
+          ]
+        }
+      },
+      {
+        "id": "h_578603ca5fc8",
+        "path": "api/deadletters.go",
+        "change": "added",
+        "role": "code",
+        "new_range": [
+          1,
+          56
+        ],
+        "additions": 56,
+        "deletions": 0,
+        "github_url": "https://github.com/example-org/taskline/pull/212/files#diff-8f045df911fca5e687d862c6c89e7c015a1232f976d5c51b7661aab17a1e5c90R1",
+        "diff": {
+          "header": "@@ -0,0 +1,56 @@",
+          "lines": [
+            {
+              "kind": "add",
+              "text": "package api",
+              "new_line": 1
+            },
+            {
+              "kind": "add",
+              "text": "",
+              "new_line": 2
+            },
+            {
+              "kind": "add",
+              "text": "import (",
+              "new_line": 3
+            },
+            {
+              "kind": "add",
+              "text": "\t\"encoding/json\"",
+              "new_line": 4
+            },
+            {
+              "kind": "add",
+              "text": "\t\"errors\"",
+              "new_line": 5
+            },
+            {
+              "kind": "add",
+              "text": "\t\"net/http\"",
+              "new_line": 6
+            },
+            {
+              "kind": "add",
+              "text": "\t\"strconv\"",
+              "new_line": 7
+            },
+            {
+              "kind": "add",
+              "text": "\t\"time\"",
+              "new_line": 8
+            },
+            {
+              "kind": "add",
+              "text": "",
+              "new_line": 9
+            },
+            {
+              "kind": "add",
+              "text": "\t\"github.com/example-org/taskline/queue\"",
+              "new_line": 10
+            },
+            {
+              "kind": "add",
+              "text": ")",
+              "new_line": 11
+            },
+            {
+              "kind": "add",
+              "text": "",
+              "new_line": 12
+            },
+            {
+              "kind": "add",
+              "text": "type deadLetterResponse struct {",
+              "new_line": 13
+            },
+            {
+              "kind": "add",
+              "text": "\tJobID    string    `json:\"job_id\"`",
+              "new_line": 14
+            },
+            {
+              "kind": "add",
+              "text": "\tReason   string    `json:\"reason\"`",
+              "new_line": 15
+            },
+            {
+              "kind": "add",
+              "text": "\tAttempts int       `json:\"attempts\"`",
+              "new_line": 16
+            },
+            {
+              "kind": "add",
+              "text": "\tBuriedAt time.Time `json:\"buried_at\"`",
+              "new_line": 17
+            },
+            {
+              "kind": "add",
+              "text": "}",
+              "new_line": 18
+            },
+            {
+              "kind": "add",
+              "text": "",
+              "new_line": 19
+            },
+            {
+              "kind": "add",
+              "text": "// listDeadLetters answers GET /v1/dead-letters?limit=N, newest first, with",
+              "new_line": 20
+            },
+            {
+              "kind": "add",
+              "text": "// limit defaulting to 50 and capped at 200.",
+              "new_line": 21
+            },
+            {
+              "kind": "add",
+              "text": "func (h *Handler) listDeadLetters(w http.ResponseWriter, r *http.Request) {",
+              "new_line": 22
+            },
+            {
+              "kind": "add",
+              "text": "\tlimit := 50",
+              "new_line": 23
+            },
+            {
+              "kind": "add",
+              "text": "\tif v := r.URL.Query().Get(\"limit\"); v != \"\" {",
+              "new_line": 24
+            },
+            {
+              "kind": "add",
+              "text": "\t\tn, err := strconv.Atoi(v)",
+              "new_line": 25
+            },
+            {
+              "kind": "add",
+              "text": "\t\tif err != nil || n \u003c 1 {",
+              "new_line": 26
+            },
+            {
+              "kind": "add",
+              "text": "\t\t\thttp.Error(w, \"invalid limit\", http.StatusBadRequest)",
+              "new_line": 27
+            },
+            {
+              "kind": "add",
+              "text": "\t\t\treturn",
+              "new_line": 28
+            },
+            {
+              "kind": "add",
+              "text": "\t\t}",
+              "new_line": 29
+            },
+            {
+              "kind": "add",
+              "text": "\t\tlimit = min(n, 200)",
+              "new_line": 30
+            },
+            {
+              "kind": "add",
+              "text": "\t}",
+              "new_line": 31
+            },
+            {
+              "kind": "add",
+              "text": "\tentries, err := h.Dead.List(r.Context(), limit)",
+              "new_line": 32
+            },
+            {
+              "kind": "add",
+              "text": "\tif err != nil {",
+              "new_line": 33
+            },
+            {
+              "kind": "add",
+              "text": "\t\thttp.Error(w, \"internal error\", http.StatusInternalServerError)",
+              "new_line": 34
+            },
+            {
+              "kind": "add",
+              "text": "\t\treturn",
+              "new_line": 35
+            },
+            {
+              "kind": "add",
+              "text": "\t}",
+              "new_line": 36
+            },
+            {
+              "kind": "add",
+              "text": "\tout := make([]deadLetterResponse, 0, len(entries))",
+              "new_line": 37
+            },
+            {
+              "kind": "add",
+              "text": "\tfor _, e := range entries {",
+              "new_line": 38
+            },
+            {
+              "kind": "add",
+              "text": "\t\tout = append(out, deadLetterResponse{JobID: e.JobID, Reason: e.Reason, Attempts: e.Attempts, BuriedAt: e.BuriedAt})",
+              "new_line": 39
+            },
+            {
+              "kind": "add",
+              "text": "\t}",
+              "new_line": 40
+            },
+            {
+              "kind": "add",
+              "text": "\tjson.NewEncoder(w).Encode(out)",
+              "new_line": 41
+            },
+            {
+              "kind": "add",
+              "text": "}",
+              "new_line": 42
+            },
+            {
+              "kind": "add",
+              "text": "",
+              "new_line": 43
+            },
+            {
+              "kind": "add",
+              "text": "// requeueDeadLetter answers POST /v1/dead-letters/{id}/requeue with 204, or",
+              "new_line": 44
+            },
+            {
+              "kind": "add",
+              "text": "// 404 when the job is not in the dead-letter set.",
+              "new_line": 45
+            },
+            {
+              "kind": "add",
+              "text": "func (h *Handler) requeueDeadLetter(w http.ResponseWriter, r *http.Request) {",
+              "new_line": 46
+            },
+            {
+              "kind": "add",
+              "text": "\terr := h.Dead.Requeue(r.Context(), r.PathValue(\"id\"))",
+              "new_line": 47
+            },
+            {
+              "kind": "add",
+              "text": "\tswitch {",
+              "new_line": 48
+            },
+            {
+              "kind": "add",
+              "text": "\tcase errors.Is(err, queue.ErrNotFound):",
+              "new_line": 49
+            },
+            {
+              "kind": "add",
+              "text": "\t\thttp.Error(w, \"not found\", http.StatusNotFound)",
+              "new_line": 50
+            },
+            {
+              "kind": "add",
+              "text": "\tcase err != nil:",
+              "new_line": 51
+            },
+            {
+              "kind": "add",
+              "text": "\t\thttp.Error(w, \"internal error\", http.StatusInternalServerError)",
+              "new_line": 52
+            },
+            {
+              "kind": "add",
+              "text": "\tdefault:",
+              "new_line": 53
+            },
+            {
+              "kind": "add",
+              "text": "\t\tw.WriteHeader(http.StatusNoContent)",
+              "new_line": 54
+            },
+            {
+              "kind": "add",
+              "text": "\t}",
+              "new_line": 55
+            },
+            {
+              "kind": "add",
+              "text": "}",
+              "new_line": 56
+            }
+          ]
+        }
+      },
+      {
+        "id": "h_0ef0ef8ca4e0",
+        "path": "api/deadletters_test.go",
+        "change": "added",
+        "role": "test",
+        "new_range": [
+          1,
+          57
+        ],
+        "additions": 57,
+        "deletions": 0,
+        "github_url": "https://github.com/example-org/taskline/pull/212/files#diff-2939132ea5910feb8aa2503aa7e6a22ce67bfedd24a412eaccbb0e5793de0601R1",
+        "diff": {
+          "header": "@@ -0,0 +1,57 @@",
+          "lines": [
+            {
+              "kind": "add",
+              "text": "package api",
+              "new_line": 1
+            },
+            {
+              "kind": "add",
+              "text": "",
+              "new_line": 2
+            },
+            {
+              "kind": "add",
+              "text": "import (",
+              "new_line": 3
+            },
+            {
+              "kind": "add",
+              "text": "\t\"context\"",
+              "new_line": 4
+            },
+            {
+              "kind": "add",
+              "text": "\t\"net/http\"",
+              "new_line": 5
+            },
+            {
+              "kind": "add",
+              "text": "\t\"net/http/httptest\"",
+              "new_line": 6
+            },
+            {
+              "kind": "add",
+              "text": "\t\"testing\"",
+              "new_line": 7
+            },
+            {
+              "kind": "add",
+              "text": "",
+              "new_line": 8
+            },
+            {
+              "kind": "add",
+              "text": "\t\"github.com/example-org/taskline/queue\"",
+              "new_line": 9
+            },
+            {
+              "kind": "add",
+              "text": ")",
+              "new_line": 10
+            },
+            {
+              "kind": "add",
+              "text": "",
+              "new_line": 11
+            },
+            {
+              "kind": "add",
+              "text": "func newServer(t *testing.T) (*http.ServeMux, *queue.MemoryDeadLetters) {",
+              "new_line": 12
+            },
+            {
+              "kind": "add",
+              "text": "\tt.Helper()",
+              "new_line": 13
+            },
+            {
+              "kind": "add",
+              "text": "\ts := queue.NewMemoryStore()",
+              "new_line": 14
+            },
+            {
+              "kind": "add",
+              "text": "\td := queue.NewMemoryDeadLetters(s)",
+              "new_line": 15
+            },
+            {
+              "kind": "add",
+              "text": "\ts.Add(\u0026queue.Job{ID: \"j1\", Kind: \"noop\", Attempts: 5})",
+              "new_line": 16
+            },
+            {
+              "kind": "add",
+              "text": "\tj, _ := s.Get(context.Background(), \"j1\")",
+              "new_line": 17
+            },
+            {
+              "kind": "add",
+              "text": "\td.Bury(context.Background(), j, \"boom\")",
+              "new_line": 18
+            },
+            {
+              "kind": "add",
+              "text": "\tmux := http.NewServeMux()",
+              "new_line": 19
+            },
+            {
+              "kind": "add",
+              "text": "\t(\u0026Handler{Store: s, Dead: d}).Routes(mux)",
+              "new_line": 20
+            },
+            {
+              "kind": "add",
+              "text": "\treturn mux, d",
+              "new_line": 21
+            },
+            {
+              "kind": "add",
+              "text": "}",
+              "new_line": 22
+            },
+            {
+              "kind": "add",
+              "text": "",
+              "new_line": 23
+            },
+            {
+              "kind": "add",
+              "text": "func TestDeadLettersRequireOperator(t *testing.T) {",
+              "new_line": 24
+            },
+            {
+              "kind": "add",
+              "text": "\tmux, _ := newServer(t)",
+              "new_line": 25
+            },
+            {
+              "kind": "add",
+              "text": "\tfor _, role := range []string{\"\", \"viewer\"} {",
+              "new_line": 26
+            },
+            {
+              "kind": "add",
+              "text": "\t\treq := httptest.NewRequest(\"GET\", \"/v1/dead-letters\", nil)",
+              "new_line": 27
+            },
+            {
+              "kind": "add",
+              "text": "\t\treq.Header.Set(\"X-Taskline-Role\", role)",
+              "new_line": 28
+            },
+            {
+              "kind": "add",
+              "text": "\t\trec := httptest.NewRecorder()",
+              "new_line": 29
+            },
+            {
+              "kind": "add",
+              "text": "\t\tmux.ServeHTTP(rec, req)",
+              "new_line": 30
+            },
+            {
+              "kind": "add",
+              "text": "\t\tif rec.Code != http.StatusForbidden {",
+              "new_line": 31
+            },
+            {
+              "kind": "add",
+              "text": "\t\t\tt.Errorf(\"role %q: status = %d\", role, rec.Code)",
+              "new_line": 32
+            },
+            {
+              "kind": "add",
+              "text": "\t\t}",
+              "new_line": 33
+            },
+            {
+              "kind": "add",
+              "text": "\t}",
+              "new_line": 34
+            },
+            {
+              "kind": "add",
+              "text": "}",
+              "new_line": 35
+            },
+            {
+              "kind": "add",
+              "text": "",
+              "new_line": 36
+            },
+            {
+              "kind": "add",
+              "text": "func TestOperatorRequeues(t *testing.T) {",
+              "new_line": 37
+            },
+            {
+              "kind": "add",
+              "text": "\tmux, _ := newServer(t)",
+              "new_line": 38
+            },
+            {
+              "kind": "add",
+              "text": "\treq := httptest.NewRequest(\"POST\", \"/v1/dead-letters/j1/requeue\", nil)",
+              "new_line": 39
+            },
+            {
+              "kind": "add",
+              "text": "\treq.Header.Set(\"X-Taskline-Role\", \"operator\")",
+              "new_line": 40
+            },
+            {
+              "kind": "add",
+              "text": "\trec := httptest.NewRecorder()",
+              "new_line": 41
+            },
+            {
+              "kind": "add",
+              "text": "\tmux.ServeHTTP(rec, req)",
+              "new_line": 42
+            },
+            {
+              "kind": "add",
+              "text": "\tif rec.Code != http.StatusNoContent {",
+              "new_line": 43
+            },
+            {
+              "kind": "add",
+              "text": "\t\tt.Fatalf(\"status = %d\", rec.Code)",
+              "new_line": 44
+            },
+            {
+              "kind": "add",
+              "text": "\t}",
+              "new_line": 45
+            },
+            {
+              "kind": "add",
+              "text": "}",
+              "new_line": 46
+            },
+            {
+              "kind": "add",
+              "text": "",
+              "new_line": 47
+            },
+            {
+              "kind": "add",
+              "text": "func TestListRejectsBadLimit(t *testing.T) {",
+              "new_line": 48
+            },
+            {
+              "kind": "add",
+              "text": "\tmux, _ := newServer(t)",
+              "new_line": 49
+            },
+            {
+              "kind": "add",
+              "text": "\treq := httptest.NewRequest(\"GET\", \"/v1/dead-letters?limit=zero\", nil)",
+              "new_line": 50
+            },
+            {
+              "kind": "add",
+              "text": "\treq.Header.Set(\"X-Taskline-Role\", \"operator\")",
+              "new_line": 51
+            },
+            {
+              "kind": "add",
+              "text": "\trec := httptest.NewRecorder()",
+              "new_line": 52
+            },
+            {
+              "kind": "add",
+              "text": "\tmux.ServeHTTP(rec, req)",
+              "new_line": 53
+            },
+            {
+              "kind": "add",
+              "text": "\tif rec.Code != http.StatusBadRequest {",
+              "new_line": 54
+            },
+            {
+              "kind": "add",
+              "text": "\t\tt.Fatalf(\"status = %d\", rec.Code)",
+              "new_line": 55
+            },
+            {
+              "kind": "add",
+              "text": "\t}",
+              "new_line": 56
+            },
+            {
+              "kind": "add",
+              "text": "}",
+              "new_line": 57
+            }
+          ]
+        }
+      },
+      {
+        "id": "h_a408875b8eaa",
+        "path": "api/handler.go",
+        "change": "modified",
+        "role": "code",
+        "new_range": [
+          11,
+          22
+        ],
+        "additions": 8,
+        "deletions": 5,
+        "github_url": "https://github.com/example-org/taskline/pull/212/files#diff-c96aec1ae21049528ee0b11f53791f858c202f1890fe615563d844b9b058862aR11",
+        "diff": {
+          "header": "@@ -11,19 +11,22 @@ import (",
+          "lines": [
+            {
+              "kind": "context",
+              "text": "// Handler serves job lookups.",
+              "old_line": 11,
+              "new_line": 11
+            },
+            {
+              "kind": "context",
+              "text": "type Handler struct {",
+              "old_line": 12,
+              "new_line": 12
+            },
+            {
+              "kind": "context",
+              "text": "\tStore queue.Store",
+              "old_line": 13,
+              "new_line": 13
+            },
+            {
+              "kind": "add",
+              "text": "\tDead  queue.DeadLetters",
+              "new_line": 14
+            },
+            {
+              "kind": "context",
+              "text": "}",
+              "old_line": 14,
+              "new_line": 15
+            },
+            {
+              "kind": "context",
+              "text": "",
+              "old_line": 15,
+              "new_line": 16
+            },
+            {
+              "kind": "context",
+              "text": "// Routes registers the handler's routes on mux.",
+              "old_line": 16,
+              "new_line": 17
+            },
+            {
+              "kind": "context",
+              "text": "func (h *Handler) Routes(mux *http.ServeMux) {",
+              "old_line": 17,
+              "new_line": 18
+            },
+            {
+              "kind": "context",
+              "text": "\tmux.HandleFunc(\"GET /v1/jobs/{id}\", h.getJob)",
+              "old_line": 18,
+              "new_line": 19
+            },
+            {
+              "kind": "add",
+              "text": "\tmux.HandleFunc(\"GET /v1/dead-letters\", RequireOperator(h.listDeadLetters))",
+              "new_line": 20
+            },
+            {
+              "kind": "add",
+              "text": "\tmux.HandleFunc(\"POST /v1/dead-letters/{id}/requeue\", RequireOperator(h.requeueDeadLetter))",
+              "new_line": 21
+            },
+            {
+              "kind": "context",
+              "text": "}",
+              "old_line": 19,
+              "new_line": 22
+            },
+            {
+              "kind": "context",
+              "text": "",
+              "old_line": 20,
+              "new_line": 23
+            },
+            {
+              "kind": "context",
+              "text": "type jobResponse struct {",
+              "old_line": 21,
+              "new_line": 24
+            },
+            {
+              "kind": "remove",
+              "text": "\tID       string `json:\"id\"`",
+              "old_line": 22
+            },
+            {
+              "kind": "remove",
+              "text": "\tKind     string `json:\"kind\"`",
+              "old_line": 23
+            },
+            {
+              "kind": "remove",
+              "text": "\tState    string `json:\"state\"`",
+              "old_line": 24
+            },
+            {
+              "kind": "remove",
+              "text": "\tAttempts int    `json:\"attempts\"`",
+              "old_line": 25
+            },
+            {
+              "kind": "remove",
+              "text": "\tErr      string `json:\"err,omitempty\"`",
+              "old_line": 26
+            },
+            {
+              "kind": "add",
+              "text": "\tID        string `json:\"id\"`",
+              "new_line": 25
+            },
+            {
+              "kind": "add",
+              "text": "\tKind      string `json:\"kind\"`",
+              "new_line": 26
+            },
+            {
+              "kind": "add",
+              "text": "\tState     string `json:\"state\"`",
+              "new_line": 27
+            },
+            {
+              "kind": "add",
+              "text": "\tAttempts  int    `json:\"attempts\"`",
+              "new_line": 28
+            },
+            {
+              "kind": "add",
+              "text": "\tLastError string `json:\"err,omitempty\"`",
+              "new_line": 29
+            },
+            {
+              "kind": "context",
+              "text": "}",
+              "old_line": 27,
+              "new_line": 30
+            },
+            {
+              "kind": "context",
+              "text": "",
+              "old_line": 28,
+              "new_line": 31
+            },
+            {
+              "kind": "context",
+              "text": "func (h *Handler) getJob(w http.ResponseWriter, r *http.Request) {",
+              "old_line": 29,
+              "new_line": 32
+            }
+          ]
+        }
+      },
+      {
+        "id": "h_a0480f808203",
+        "path": "api/handler.go",
+        "change": "modified",
+        "role": "code",
+        "new_range": [
+          36,
+          5
+        ],
+        "additions": 1,
+        "deletions": 1,
+        "github_url": "https://github.com/example-org/taskline/pull/212/files#diff-c96aec1ae21049528ee0b11f53791f858c202f1890fe615563d844b9b058862aR36",
+        "diff": {
+          "header": "@@ -33,5 +36,5 @@ func (h *Handler) getJob(w http.ResponseWriter, r *http.Request) {",
+          "lines": [
+            {
+              "kind": "context",
+              "text": "\t\thttp.Error(w, \"not found\", http.StatusNotFound)",
+              "old_line": 33,
+              "new_line": 36
+            },
+            {
+              "kind": "context",
+              "text": "\t\treturn",
+              "old_line": 34,
+              "new_line": 37
+            },
+            {
+              "kind": "context",
+              "text": "\t}",
+              "old_line": 35,
+              "new_line": 38
+            },
+            {
+              "kind": "remove",
+              "text": "\tjson.NewEncoder(w).Encode(jobResponse{ID: j.ID, Kind: j.Kind, State: string(j.State), Attempts: j.Attempts, Err: j.Err})",
+              "old_line": 36
+            },
+            {
+              "kind": "add",
+              "text": "\tjson.NewEncoder(w).Encode(jobResponse{ID: j.ID, Kind: j.Kind, State: string(j.State), Attempts: j.Attempts, LastError: j.LastError})",
+              "new_line": 39
+            },
+            {
+              "kind": "context",
+              "text": "}",
+              "old_line": 37,
+              "new_line": 40
+            }
+          ]
+        }
+      },
+      {
+        "id": "h_938fb177e9e6",
+        "path": "docs/dead-letters.md",
+        "change": "added",
+        "role": "docs",
+        "new_range": [
+          1,
+          15
+        ],
+        "additions": 15,
+        "deletions": 0,
+        "github_url": "https://github.com/example-org/taskline/pull/212/files#diff-5b24fe88295a8989351bfd1b8ea174a700942cb9488b73858ce7b6d8a7e21e82R1",
+        "diff": {
+          "header": "@@ -0,0 +1,15 @@",
+          "lines": [
+            {
+              "kind": "add",
+              "text": "# Dead letters",
+              "new_line": 1
+            },
+            {
+              "kind": "add",
+              "text": "",
+              "new_line": 2
+            },
+            {
+              "kind": "add",
+              "text": "A job that fails more often than its retry budget allows is buried in the",
+              "new_line": 3
+            },
+            {
+              "kind": "add",
+              "text": "dead-letter set instead of being retried again.",
+              "new_line": 4
+            },
+            {
+              "kind": "add",
+              "text": "",
+              "new_line": 5
+            },
+            {
+              "kind": "add",
+              "text": "## Retry budget",
+              "new_line": 6
+            },
+            {
+              "kind": "add",
+              "text": "",
+              "new_line": 7
+            },
+            {
+              "kind": "add",
+              "text": "`RetryPolicy.Budget` is the total number of attempts a job gets. The default",
+              "new_line": 8
+            },
+            {
+              "kind": "add",
+              "text": "is five. Delays double from one second up to one minute, with up to 20 percent",
+              "new_line": 9
+            },
+            {
+              "kind": "add",
+              "text": "jitter.",
+              "new_line": 10
+            },
+            {
+              "kind": "add",
+              "text": "",
+              "new_line": 11
+            },
+            {
+              "kind": "add",
+              "text": "## Inspecting and requeueing",
+              "new_line": 12
+            },
+            {
+              "kind": "add",
+              "text": "",
+              "new_line": 13
+            },
+            {
+              "kind": "add",
+              "text": "Operators can list buried jobs and requeue them through the admin API. A",
+              "new_line": 14
+            },
+            {
+              "kind": "add",
+              "text": "requeued job starts again with a fresh attempt count.",
+              "new_line": 15
+            }
+          ]
+        }
+      },
+      {
+        "id": "h_3d1ee52461f5",
+        "path": "docs/img/dead-letter-flow.png",
+        "change": "added",
+        "role": "docs",
+        "new_range": [
+          0,
+          0
+        ],
+        "additions": 0,
+        "deletions": 0,
+        "github_url": "https://github.com/example-org/taskline/pull/212/files#diff-ff06a97eeff983015e4ca003c5b9bac8d425236e4fe32588cdf73da31d95956cR0"
+      },
+      {
+        "id": "h_b085f482046e",
+        "path": "go.mod",
+        "change": "modified",
+        "role": "code",
+        "new_range": [
+          2,
+          4
+        ],
+        "additions": 1,
+        "deletions": 1,
+        "github_url": "https://github.com/example-org/taskline/pull/212/files#diff-33ef32bf6c23acb95f5902d7097b7a1d5128ca061167ec0716715b0b9eeaa5f6R2",
+        "diff": {
+          "header": "@@ -2,4 +2,4 @@ module github.com/example-org/taskline",
+          "lines": [
+            {
+              "kind": "context",
+              "text": "",
+              "old_line": 2,
+              "new_line": 2
+            },
+            {
+              "kind": "context",
+              "text": "go 1.22",
+              "old_line": 3,
+              "new_line": 3
+            },
+            {
+              "kind": "context",
+              "text": "",
+              "old_line": 4,
+              "new_line": 4
+            },
+            {
+              "kind": "remove",
+              "text": "require golang.org/x/time v0.5.0",
+              "old_line": 5
+            },
+            {
+              "kind": "add",
+              "text": "require golang.org/x/time v0.6.0",
+              "new_line": 5
+            }
+          ]
+        }
+      },
+      {
+        "id": "h_e744026adb28",
+        "path": "migrations/0007_dead_letters.sql",
+        "change": "added",
+        "role": "migration",
+        "new_range": [
+          1,
+          11
+        ],
+        "additions": 11,
+        "deletions": 0,
+        "github_url": "https://github.com/example-org/taskline/pull/212/files#diff-07627792178cbd31212c48a32241144d7cbe8dc2bed014a892a07ae5c43b252dR1",
+        "diff": {
+          "header": "@@ -0,0 +1,11 @@",
+          "lines": [
+            {
+              "kind": "add",
+              "text": "CREATE TABLE dead_letters (",
+              "new_line": 1
+            },
+            {
+              "kind": "add",
+              "text": "    job_id      text PRIMARY KEY REFERENCES jobs (id) ON DELETE CASCADE,",
+              "new_line": 2
+            },
+            {
+              "kind": "add",
+              "text": "    reason      text NOT NULL,",
+              "new_line": 3
+            },
+            {
+              "kind": "add",
+              "text": "    attempts    integer NOT NULL,",
+              "new_line": 4
+            },
+            {
+              "kind": "add",
+              "text": "    buried_at   timestamptz NOT NULL DEFAULT now(),",
+              "new_line": 5
+            },
+            {
+              "kind": "add",
+              "text": "    requeued_at timestamptz",
+              "new_line": 6
+            },
+            {
+              "kind": "add",
+              "text": ");",
+              "new_line": 7
+            },
+            {
+              "kind": "add",
+              "text": "",
+              "new_line": 8
+            },
+            {
+              "kind": "add",
+              "text": "ALTER TABLE jobs ADD COLUMN buried boolean NOT NULL DEFAULT false;",
+              "new_line": 9
+            },
+            {
+              "kind": "add",
+              "text": "",
+              "new_line": 10
+            },
+            {
+              "kind": "add",
+              "text": "CREATE INDEX dead_letters_buried_idx ON dead_letters (buried_at DESC);",
+              "new_line": 11
+            }
+          ]
+        }
+      },
+      {
+        "id": "h_113c5f55c94f",
+        "path": "queue/deadletter.go",
+        "change": "added",
+        "role": "code",
+        "new_range": [
+          1,
+          69
+        ],
+        "additions": 69,
+        "deletions": 0,
+        "github_url": "https://github.com/example-org/taskline/pull/212/files#diff-d73cea2b251fbf9ceeef72852e86b2fb5beebbf5cd025789e629a85008189196R1",
+        "diff": {
+          "header": "@@ -0,0 +1,69 @@",
+          "lines": [
+            {
+              "kind": "add",
+              "text": "package queue",
+              "new_line": 1
+            },
+            {
+              "kind": "add",
+              "text": "",
+              "new_line": 2
+            },
+            {
+              "kind": "add",
+              "text": "import (",
+              "new_line": 3
+            },
+            {
+              "kind": "add",
+              "text": "\t\"context\"",
+              "new_line": 4
+            },
+            {
+              "kind": "add",
+              "text": "\t\"sync\"",
+              "new_line": 5
+            },
+            {
+              "kind": "add",
+              "text": "\t\"time\"",
+              "new_line": 6
+            },
+            {
+              "kind": "add",
+              "text": ")",
+              "new_line": 7
+            },
+            {
+              "kind": "add",
+              "text": "",
+              "new_line": 8
+            },
+            {
+              "kind": "add",
+              "text": "// DeadLetter is a job that used up its retry budget.",
+              "new_line": 9
+            },
+            {
+              "kind": "add",
+              "text": "type DeadLetter struct {",
+              "new_line": 10
+            },
+            {
+              "kind": "add",
+              "text": "\tJobID      string",
+              "new_line": 11
+            },
+            {
+              "kind": "add",
+              "text": "\tReason     string",
+              "new_line": 12
+            },
+            {
+              "kind": "add",
+              "text": "\tAttempts   int",
+              "new_line": 13
+            },
+            {
+              "kind": "add",
+              "text": "\tBuriedAt   time.Time",
+              "new_line": 14
+            },
+            {
+              "kind": "add",
+              "text": "\tRequeuedAt *time.Time",
+              "new_line": 15
+            },
+            {
+              "kind": "add",
+              "text": "}",
+              "new_line": 16
+            },
+            {
+              "kind": "add",
+              "text": "",
+              "new_line": 17
+            },
+            {
+              "kind": "add",
+              "text": "// DeadLetters holds jobs that stopped retrying.",
+              "new_line": 18
+            },
+            {
+              "kind": "add",
+              "text": "type DeadLetters interface {",
+              "new_line": 19
+            },
+            {
+              "kind": "add",
+              "text": "\tBury(ctx context.Context, j *Job, reason string) error",
+              "new_line": 20
+            },
+            {
+              "kind": "add",
+              "text": "\tList(ctx context.Context, limit int) ([]DeadLetter, error)",
+              "new_line": 21
+            },
+            {
+              "kind": "add",
+              "text": "\tRequeue(ctx context.Context, jobID string) error",
+              "new_line": 22
+            },
+            {
+              "kind": "add",
+              "text": "}",
+              "new_line": 23
+            },
+            {
+              "kind": "add",
+              "text": "",
+              "new_line": 24
+            },
+            {
+              "kind": "add",
+              "text": "// MemoryDeadLetters is a DeadLetters that keeps entries in memory.",
+              "new_line": 25
+            },
+            {
+              "kind": "add",
+              "text": "type MemoryDeadLetters struct {",
+              "new_line": 26
+            },
+            {
+              "kind": "add",
+              "text": "\tmu      sync.Mutex",
+              "new_line": 27
+            },
+            {
+              "kind": "add",
+              "text": "\tentries map[string]*DeadLetter",
+              "new_line": 28
+            },
+            {
+              "kind": "add",
+              "text": "\tstore   *MemoryStore",
+              "new_line": 29
+            },
+            {
+              "kind": "add",
+              "text": "}",
+              "new_line": 30
+            },
+            {
+              "kind": "add",
+              "text": "",
+              "new_line": 31
+            },
+            {
+              "kind": "add",
+              "text": "// NewMemoryDeadLetters returns an empty set that requeues into store.",
+              "new_line": 32
+            },
+            {
+              "kind": "add",
+              "text": "func NewMemoryDeadLetters(store *MemoryStore) *MemoryDeadLetters {",
+              "new_line": 33
+            },
+            {
+              "kind": "add",
+              "text": "\treturn \u0026MemoryDeadLetters{entries: map[string]*DeadLetter{}, store: store}",
+              "new_line": 34
+            },
+            {
+              "kind": "add",
+              "text": "}",
+              "new_line": 35
+            },
+            {
+              "kind": "add",
+              "text": "",
+              "new_line": 36
+            },
+            {
+              "kind": "add",
+              "text": "// Bury records j as dead and takes it out of the queue.",
+              "new_line": 37
+            },
+            {
+              "kind": "add",
+              "text": "func (d *MemoryDeadLetters) Bury(ctx context.Context, j *Job, reason string) error {",
+              "new_line": 38
+            },
+            {
+              "kind": "add",
+              "text": "\td.mu.Lock()",
+              "new_line": 39
+            },
+            {
+              "kind": "add",
+              "text": "\tdefer d.mu.Unlock()",
+              "new_line": 40
+            },
+            {
+              "kind": "add",
+              "text": "\td.entries[j.ID] = \u0026DeadLetter{JobID: j.ID, Reason: reason, Attempts: j.Attempts, BuriedAt: time.Now()}",
+              "new_line": 41
+            },
+            {
+              "kind": "add",
+              "text": "\treturn d.store.Fail(ctx, j.ID, reason)",
+              "new_line": 42
+            },
+            {
+              "kind": "add",
+              "text": "}",
+              "new_line": 43
+            },
+            {
+              "kind": "add",
+              "text": "",
+              "new_line": 44
+            },
+            {
+              "kind": "add",
+              "text": "// List returns up to limit entries that have not been requeued.",
+              "new_line": 45
+            },
+            {
+              "kind": "add",
+              "text": "func (d *MemoryDeadLetters) List(ctx context.Context, limit int) ([]DeadLetter, error) {",
+              "new_line": 46
+            },
+            {
+              "kind": "add",
+              "text": "\td.mu.Lock()",
+              "new_line": 47
+            },
+            {
+              "kind": "add",
+              "text": "\tdefer d.mu.Unlock()",
+              "new_line": 48
+            },
+            {
+              "kind": "add",
+              "text": "\tvar out []DeadLetter",
+              "new_line": 49
+            },
+            {
+              "kind": "add",
+              "text": "\tfor _, e := range d.entries {",
+              "new_line": 50
+            },
+            {
+              "kind": "add",
+              "text": "\t\tif e.RequeuedAt == nil \u0026\u0026 len(out) \u003c limit {",
+              "new_line": 51
+            },
+            {
+              "kind": "add",
+              "text": "\t\t\tout = append(out, *e)",
+              "new_line": 52
+            },
+            {
+              "kind": "add",
+              "text": "\t\t}",
+              "new_line": 53
+            },
+            {
+              "kind": "add",
+              "text": "\t}",
+              "new_line": 54
+            },
+            {
+              "kind": "add",
+              "text": "\treturn out, nil",
+              "new_line": 55
+            },
+            {
+              "kind": "add",
+              "text": "}",
+              "new_line": 56
+            },
+            {
+              "kind": "add",
+              "text": "",
+              "new_line": 57
+            },
+            {
+              "kind": "add",
+              "text": "// Requeue puts a dead job back in the queue with a fresh attempt count.",
+              "new_line": 58
+            },
+            {
+              "kind": "add",
+              "text": "func (d *MemoryDeadLetters) Requeue(ctx context.Context, jobID string) error {",
+              "new_line": 59
+            },
+            {
+              "kind": "add",
+              "text": "\td.mu.Lock()",
+              "new_line": 60
+            },
+            {
+              "kind": "add",
+              "text": "\tdefer d.mu.Unlock()",
+              "new_line": 61
+            },
+            {
+              "kind": "add",
+              "text": "\te, ok := d.entries[jobID]",
+              "new_line": 62
+            },
+            {
+              "kind": "add",
+              "text": "\tif !ok {",
+              "new_line": 63
+            },
+            {
+              "kind": "add",
+              "text": "\t\treturn ErrNotFound",
+              "new_line": 64
+            },
+            {
+              "kind": "add",
+              "text": "\t}",
+              "new_line": 65
+            },
+            {
+              "kind": "add",
+              "text": "\tnow := time.Now()",
+              "new_line": 66
+            },
+            {
+              "kind": "add",
+              "text": "\te.RequeuedAt = \u0026now",
+              "new_line": 67
+            },
+            {
+              "kind": "add",
+              "text": "\treturn d.store.Reset(ctx, jobID)",
+              "new_line": 68
+            },
+            {
+              "kind": "add",
+              "text": "}",
+              "new_line": 69
+            }
+          ]
+        }
+      },
+      {
+        "id": "h_9cce5ce589a0",
+        "path": "queue/deadletter_test.go",
+        "change": "added",
+        "role": "test",
+        "new_range": [
+          1,
+          35
+        ],
+        "additions": 35,
+        "deletions": 0,
+        "github_url": "https://github.com/example-org/taskline/pull/212/files#diff-1e7ff20f0d4cefcf04e76f68ad97936039b6a1b27f1bede0ecf2dacd286fe838R1",
+        "diff": {
+          "header": "@@ -0,0 +1,35 @@",
+          "lines": [
+            {
+              "kind": "add",
+              "text": "package queue",
+              "new_line": 1
+            },
+            {
+              "kind": "add",
+              "text": "",
+              "new_line": 2
+            },
+            {
+              "kind": "add",
+              "text": "import (",
+              "new_line": 3
+            },
+            {
+              "kind": "add",
+              "text": "\t\"context\"",
+              "new_line": 4
+            },
+            {
+              "kind": "add",
+              "text": "\t\"testing\"",
+              "new_line": 5
+            },
+            {
+              "kind": "add",
+              "text": ")",
+              "new_line": 6
+            },
+            {
+              "kind": "add",
+              "text": "",
+              "new_line": 7
+            },
+            {
+              "kind": "add",
+              "text": "func TestBuryAndRequeue(t *testing.T) {",
+              "new_line": 8
+            },
+            {
+              "kind": "add",
+              "text": "\tctx := context.Background()",
+              "new_line": 9
+            },
+            {
+              "kind": "add",
+              "text": "\ts := NewMemoryStore()",
+              "new_line": 10
+            },
+            {
+              "kind": "add",
+              "text": "\td := NewMemoryDeadLetters(s)",
+              "new_line": 11
+            },
+            {
+              "kind": "add",
+              "text": "\ts.Add(\u0026Job{ID: \"j1\", Kind: \"noop\", Attempts: 5})",
+              "new_line": 12
+            },
+            {
+              "kind": "add",
+              "text": "\tj, _ := s.Get(ctx, \"j1\")",
+              "new_line": 13
+            },
+            {
+              "kind": "add",
+              "text": "\tif err := d.Bury(ctx, j, \"too many failures\"); err != nil {",
+              "new_line": 14
+            },
+            {
+              "kind": "add",
+              "text": "\t\tt.Fatal(err)",
+              "new_line": 15
+            },
+            {
+              "kind": "add",
+              "text": "\t}",
+              "new_line": 16
+            },
+            {
+              "kind": "add",
+              "text": "\tlist, _ := d.List(ctx, 10)",
+              "new_line": 17
+            },
+            {
+              "kind": "add",
+              "text": "\tif len(list) != 1 || list[0].Attempts != 5 {",
+              "new_line": 18
+            },
+            {
+              "kind": "add",
+              "text": "\t\tt.Fatalf(\"list = %+v\", list)",
+              "new_line": 19
+            },
+            {
+              "kind": "add",
+              "text": "\t}",
+              "new_line": 20
+            },
+            {
+              "kind": "add",
+              "text": "\tif err := d.Requeue(ctx, \"j1\"); err != nil {",
+              "new_line": 21
+            },
+            {
+              "kind": "add",
+              "text": "\t\tt.Fatal(err)",
+              "new_line": 22
+            },
+            {
+              "kind": "add",
+              "text": "\t}",
+              "new_line": 23
+            },
+            {
+              "kind": "add",
+              "text": "\tgot, _ := s.Get(ctx, \"j1\")",
+              "new_line": 24
+            },
+            {
+              "kind": "add",
+              "text": "\tif got.Attempts != 0 || got.State != StatePending {",
+              "new_line": 25
+            },
+            {
+              "kind": "add",
+              "text": "\t\tt.Fatalf(\"job after requeue = %+v\", got)",
+              "new_line": 26
+            },
+            {
+              "kind": "add",
+              "text": "\t}",
+              "new_line": 27
+            },
+            {
+              "kind": "add",
+              "text": "}",
+              "new_line": 28
+            },
+            {
+              "kind": "add",
+              "text": "",
+              "new_line": 29
+            },
+            {
+              "kind": "add",
+              "text": "func TestRequeueUnknownJob(t *testing.T) {",
+              "new_line": 30
+            },
+            {
+              "kind": "add",
+              "text": "\td := NewMemoryDeadLetters(NewMemoryStore())",
+              "new_line": 31
+            },
+            {
+              "kind": "add",
+              "text": "\tif err := d.Requeue(context.Background(), \"missing\"); err != ErrNotFound {",
+              "new_line": 32
+            },
+            {
+              "kind": "add",
+              "text": "\t\tt.Fatalf(\"err = %v\", err)",
+              "new_line": 33
+            },
+            {
+              "kind": "add",
+              "text": "\t}",
+              "new_line": 34
+            },
+            {
+              "kind": "add",
+              "text": "}",
+              "new_line": 35
+            }
+          ]
+        }
+      },
+      {
+        "id": "h_99ac328e799a",
+        "path": "queue/job.go",
+        "change": "modified",
+        "role": "code",
+        "new_range": [
+          20,
+          6
+        ],
+        "additions": 1,
+        "deletions": 1,
+        "github_url": "https://github.com/example-org/taskline/pull/212/files#diff-6bbc4f59b0c3ef598bcd37d46600af3417f9bfe350358a824631030a5bfcc05cR20",
+        "diff": {
+          "header": "@@ -20,6 +20,6 @@ type Job struct {",
+          "lines": [
+            {
+              "kind": "context",
+              "text": "\tPayload   []byte",
+              "old_line": 20,
+              "new_line": 20
+            },
+            {
+              "kind": "context",
+              "text": "\tState     State",
+              "old_line": 21,
+              "new_line": 21
+            },
+            {
+              "kind": "context",
+              "text": "\tAttempts  int",
+              "old_line": 22,
+              "new_line": 22
+            },
+            {
+              "kind": "remove",
+              "text": "\tErr       string",
+              "old_line": 23
+            },
+            {
+              "kind": "add",
+              "text": "\tLastError string",
+              "new_line": 23
+            },
+            {
+              "kind": "context",
+              "text": "\tUpdatedAt time.Time",
+              "old_line": 24,
+              "new_line": 24
+            },
+            {
+              "kind": "context",
+              "text": "}",
+              "old_line": 25,
+              "new_line": 25
+            }
+          ]
+        }
+      },
+      {
+        "id": "h_141757b19901",
+        "path": "queue/retry.go",
+        "change": "added",
+        "role": "code",
+        "new_range": [
+          1,
+          43
+        ],
+        "additions": 43,
+        "deletions": 0,
+        "github_url": "https://github.com/example-org/taskline/pull/212/files#diff-5cd32cbac46233f695882109d63eec260c1b1de66b5d9cfac037280952a4bde5R1",
+        "diff": {
+          "header": "@@ -0,0 +1,43 @@",
+          "lines": [
+            {
+              "kind": "add",
+              "text": "package queue",
+              "new_line": 1
+            },
+            {
+              "kind": "add",
+              "text": "",
+              "new_line": 2
+            },
+            {
+              "kind": "add",
+              "text": "import (",
+              "new_line": 3
+            },
+            {
+              "kind": "add",
+              "text": "\t\"math/rand\"",
+              "new_line": 4
+            },
+            {
+              "kind": "add",
+              "text": "\t\"time\"",
+              "new_line": 5
+            },
+            {
+              "kind": "add",
+              "text": ")",
+              "new_line": 6
+            },
+            {
+              "kind": "add",
+              "text": "",
+              "new_line": 7
+            },
+            {
+              "kind": "add",
+              "text": "// RetryPolicy decides how long a failed job waits and when to stop retrying.",
+              "new_line": 8
+            },
+            {
+              "kind": "add",
+              "text": "type RetryPolicy struct {",
+              "new_line": 9
+            },
+            {
+              "kind": "add",
+              "text": "\t// Base is the delay after the first failure.",
+              "new_line": 10
+            },
+            {
+              "kind": "add",
+              "text": "\tBase time.Duration",
+              "new_line": 11
+            },
+            {
+              "kind": "add",
+              "text": "\t// Max caps the delay.",
+              "new_line": 12
+            },
+            {
+              "kind": "add",
+              "text": "\tMax time.Duration",
+              "new_line": 13
+            },
+            {
+              "kind": "add",
+              "text": "\t// Budget is the number of attempts a job gets in total.",
+              "new_line": 14
+            },
+            {
+              "kind": "add",
+              "text": "\tBudget int",
+              "new_line": 15
+            },
+            {
+              "kind": "add",
+              "text": "\t// Jitter spreads delays by up to this fraction, from 0 to 1.",
+              "new_line": 16
+            },
+            {
+              "kind": "add",
+              "text": "\tJitter float64",
+              "new_line": 17
+            },
+            {
+              "kind": "add",
+              "text": "}",
+              "new_line": 18
+            },
+            {
+              "kind": "add",
+              "text": "",
+              "new_line": 19
+            },
+            {
+              "kind": "add",
+              "text": "// DefaultRetryPolicy retries five times with delays from one to sixty seconds.",
+              "new_line": 20
+            },
+            {
+              "kind": "add",
+              "text": "var DefaultRetryPolicy = RetryPolicy{Base: time.Second, Max: time.Minute, Budget: 5, Jitter: 0.2}",
+              "new_line": 21
+            },
+            {
+              "kind": "add",
+              "text": "",
+              "new_line": 22
+            },
+            {
+              "kind": "add",
+              "text": "// Exhausted reports whether a job that has made attempts attempts is out of",
+              "new_line": 23
+            },
+            {
+              "kind": "add",
+              "text": "// retries.",
+              "new_line": 24
+            },
+            {
+              "kind": "add",
+              "text": "func (p RetryPolicy) Exhausted(attempts int) bool {",
+              "new_line": 25
+            },
+            {
+              "kind": "add",
+              "text": "\treturn attempts \u003e= p.Budget",
+              "new_line": 26
+            },
+            {
+              "kind": "add",
+              "text": "}",
+              "new_line": 27
+            },
+            {
+              "kind": "add",
+              "text": "",
+              "new_line": 28
+            },
+            {
+              "kind": "add",
+              "text": "// Delay returns how long to wait after the given failed attempt, counted",
+              "new_line": 29
+            },
+            {
+              "kind": "add",
+              "text": "// from one.",
+              "new_line": 30
+            },
+            {
+              "kind": "add",
+              "text": "func (p RetryPolicy) Delay(attempt int) time.Duration {",
+              "new_line": 31
+            },
+            {
+              "kind": "add",
+              "text": "\td := p.Base",
+              "new_line": 32
+            },
+            {
+              "kind": "add",
+              "text": "\tfor i := 1; i \u003c attempt \u0026\u0026 d \u003c p.Max; i++ {",
+              "new_line": 33
+            },
+            {
+              "kind": "add",
+              "text": "\t\td *= 2",
+              "new_line": 34
+            },
+            {
+              "kind": "add",
+              "text": "\t}",
+              "new_line": 35
+            },
+            {
+              "kind": "add",
+              "text": "\tif d \u003e p.Max {",
+              "new_line": 36
+            },
+            {
+              "kind": "add",
+              "text": "\t\td = p.Max",
+              "new_line": 37
+            },
+            {
+              "kind": "add",
+              "text": "\t}",
+              "new_line": 38
+            },
+            {
+              "kind": "add",
+              "text": "\tif p.Jitter \u003e 0 {",
+              "new_line": 39
+            },
+            {
+              "kind": "add",
+              "text": "\t\td += time.Duration(float64(d) * p.Jitter * rand.Float64())",
+              "new_line": 40
+            },
+            {
+              "kind": "add",
+              "text": "\t}",
+              "new_line": 41
+            },
+            {
+              "kind": "add",
+              "text": "\treturn d",
+              "new_line": 42
+            },
+            {
+              "kind": "add",
+              "text": "}",
+              "new_line": 43
+            }
+          ]
+        }
+      },
+      {
+        "id": "h_b10d7bdede44",
+        "path": "queue/retry_test.go",
+        "change": "added",
+        "role": "test",
+        "new_range": [
+          1,
+          33
+        ],
+        "additions": 33,
+        "deletions": 0,
+        "github_url": "https://github.com/example-org/taskline/pull/212/files#diff-c56dc83cace1da5fccef9b2a3ce5cc4d6af4d90e5a721271cc76862269c8cc65R1",
+        "diff": {
+          "header": "@@ -0,0 +1,33 @@",
+          "lines": [
+            {
+              "kind": "add",
+              "text": "package queue",
+              "new_line": 1
+            },
+            {
+              "kind": "add",
+              "text": "",
+              "new_line": 2
+            },
+            {
+              "kind": "add",
+              "text": "import (",
+              "new_line": 3
+            },
+            {
+              "kind": "add",
+              "text": "\t\"testing\"",
+              "new_line": 4
+            },
+            {
+              "kind": "add",
+              "text": "\t\"time\"",
+              "new_line": 5
+            },
+            {
+              "kind": "add",
+              "text": ")",
+              "new_line": 6
+            },
+            {
+              "kind": "add",
+              "text": "",
+              "new_line": 7
+            },
+            {
+              "kind": "add",
+              "text": "func TestDelayDoublesUpToMax(t *testing.T) {",
+              "new_line": 8
+            },
+            {
+              "kind": "add",
+              "text": "\tp := RetryPolicy{Base: time.Second, Max: 8 * time.Second, Budget: 10}",
+              "new_line": 9
+            },
+            {
+              "kind": "add",
+              "text": "\twant := []time.Duration{1, 2, 4, 8, 8}",
+              "new_line": 10
+            },
+            {
+              "kind": "add",
+              "text": "\tfor i, w := range want {",
+              "new_line": 11
+            },
+            {
+              "kind": "add",
+              "text": "\t\tif got := p.Delay(i + 1); got != w*time.Second {",
+              "new_line": 12
+            },
+            {
+              "kind": "add",
+              "text": "\t\t\tt.Errorf(\"Delay(%d) = %s, want %s\", i+1, got, w*time.Second)",
+              "new_line": 13
+            },
+            {
+              "kind": "add",
+              "text": "\t\t}",
+              "new_line": 14
+            },
+            {
+              "kind": "add",
+              "text": "\t}",
+              "new_line": 15
+            },
+            {
+              "kind": "add",
+              "text": "}",
+              "new_line": 16
+            },
+            {
+              "kind": "add",
+              "text": "",
+              "new_line": 17
+            },
+            {
+              "kind": "add",
+              "text": "func TestExhaustedAtBudget(t *testing.T) {",
+              "new_line": 18
+            },
+            {
+              "kind": "add",
+              "text": "\tp := RetryPolicy{Budget: 3}",
+              "new_line": 19
+            },
+            {
+              "kind": "add",
+              "text": "\tif p.Exhausted(2) || !p.Exhausted(3) {",
+              "new_line": 20
+            },
+            {
+              "kind": "add",
+              "text": "\t\tt.Fatal(\"budget boundary is wrong\")",
+              "new_line": 21
+            },
+            {
+              "kind": "add",
+              "text": "\t}",
+              "new_line": 22
+            },
+            {
+              "kind": "add",
+              "text": "}",
+              "new_line": 23
+            },
+            {
+              "kind": "add",
+              "text": "",
+              "new_line": 24
+            },
+            {
+              "kind": "add",
+              "text": "func TestJitterStaysWithinBounds(t *testing.T) {",
+              "new_line": 25
+            },
+            {
+              "kind": "add",
+              "text": "\tp := RetryPolicy{Base: time.Second, Max: time.Minute, Budget: 3, Jitter: 0.5}",
+              "new_line": 26
+            },
+            {
+              "kind": "add",
+              "text": "\tfor i := 0; i \u003c 100; i++ {",
+              "new_line": 27
+            },
+            {
+              "kind": "add",
+              "text": "\t\td := p.Delay(1)",
+              "new_line": 28
+            },
+            {
+              "kind": "add",
+              "text": "\t\tif d \u003c time.Second || d \u003e 1500*time.Millisecond {",
+              "new_line": 29
+            },
+            {
+              "kind": "add",
+              "text": "\t\t\tt.Fatalf(\"Delay(1) = %s\", d)",
+              "new_line": 30
+            },
+            {
+              "kind": "add",
+              "text": "\t\t}",
+              "new_line": 31
+            },
+            {
+              "kind": "add",
+              "text": "\t}",
+              "new_line": 32
+            },
+            {
+              "kind": "add",
+              "text": "}",
+              "new_line": 33
+            }
+          ]
+        }
+      },
+      {
+        "id": "h_e66d5057fa3c",
+        "path": "queue/store.go",
+        "change": "modified",
+        "role": "code",
+        "new_range": [
+          10,
+          18
+        ],
+        "additions": 6,
+        "deletions": 0,
+        "github_url": "https://github.com/example-org/taskline/pull/212/files#diff-1a932b2b22ed53a34f4897663124a2394b85a9ce55f7b4af407f96f3abe70266R10",
+        "diff": {
+          "header": "@@ -10,12 +10,18 @@ import (",
+          "lines": [
+            {
+              "kind": "context",
+              "text": "// ErrNotFound reports a job the store does not hold.",
+              "old_line": 10,
+              "new_line": 10
+            },
+            {
+              "kind": "context",
+              "text": "var ErrNotFound = errors.New(\"queue: job not found\")",
+              "old_line": 11,
+              "new_line": 11
+            },
+            {
+              "kind": "context",
+              "text": "",
+              "old_line": 12,
+              "new_line": 12
+            },
+            {
+              "kind": "add",
+              "text": "// ErrNotRunning reports an Ack for a job that is not running, for example one",
+              "new_line": 13
+            },
+            {
+              "kind": "add",
+              "text": "// already acknowledged by another worker.",
+              "new_line": 14
+            },
+            {
+              "kind": "add",
+              "text": "var ErrNotRunning = errors.New(\"queue: job is not running\")",
+              "new_line": 15
+            },
+            {
+              "kind": "add",
+              "text": "",
+              "new_line": 16
+            },
+            {
+              "kind": "context",
+              "text": "// Store holds jobs and their state.",
+              "old_line": 13,
+              "new_line": 17
+            },
+            {
+              "kind": "context",
+              "text": "type Store interface {",
+              "old_line": 14,
+              "new_line": 18
+            },
+            {
+              "kind": "context",
+              "text": "\tClaim(ctx context.Context) (*Job, error)",
+              "old_line": 15,
+              "new_line": 19
+            },
+            {
+              "kind": "context",
+              "text": "\tAck(ctx context.Context, id string) error",
+              "old_line": 16,
+              "new_line": 20
+            },
+            {
+              "kind": "context",
+              "text": "\tFail(ctx context.Context, id string, reason string) error",
+              "old_line": 17,
+              "new_line": 21
+            },
+            {
+              "kind": "context",
+              "text": "\tGet(ctx context.Context, id string) (*Job, error)",
+              "old_line": 18,
+              "new_line": 22
+            },
+            {
+              "kind": "add",
+              "text": "\t// Reset returns a job to the queue with its attempt count cleared.",
+              "new_line": 23
+            },
+            {
+              "kind": "add",
+              "text": "\tReset(ctx context.Context, id string) error",
+              "new_line": 24
+            },
+            {
+              "kind": "context",
+              "text": "}",
+              "old_line": 19,
+              "new_line": 25
+            },
+            {
+              "kind": "context",
+              "text": "",
+              "old_line": 20,
+              "new_line": 26
+            },
+            {
+              "kind": "context",
+              "text": "// MemoryStore is a Store that keeps jobs in memory.",
+              "old_line": 21,
+              "new_line": 27
+            }
+          ]
+        }
+      },
+      {
+        "id": "h_bd8d10ed6374",
+        "path": "queue/store.go",
+        "change": "modified",
+        "role": "code",
+        "new_range": [
+          70,
+          9
+        ],
+        "additions": 3,
+        "deletions": 0,
+        "github_url": "https://github.com/example-org/taskline/pull/212/files#diff-1a932b2b22ed53a34f4897663124a2394b85a9ce55f7b4af407f96f3abe70266R70",
+        "diff": {
+          "header": "@@ -64,6 +70,9 @@ func (s *MemoryStore) Ack(ctx context.Context, id string) error {",
+          "lines": [
+            {
+              "kind": "context",
+              "text": "\tif !ok {",
+              "old_line": 64,
+              "new_line": 70
+            },
+            {
+              "kind": "context",
+              "text": "\t\treturn ErrNotFound",
+              "old_line": 65,
+              "new_line": 71
+            },
+            {
+              "kind": "context",
+              "text": "\t}",
+              "old_line": 66,
+              "new_line": 72
+            },
+            {
+              "kind": "add",
+              "text": "\tif j.State != StateRunning {",
+              "new_line": 73
+            },
+            {
+              "kind": "add",
+              "text": "\t\treturn ErrNotRunning",
+              "new_line": 74
+            },
+            {
+              "kind": "add",
+              "text": "\t}",
+              "new_line": 75
+            },
+            {
+              "kind": "context",
+              "text": "\tj.State = StateDone",
+              "old_line": 67,
+              "new_line": 76
+            },
+            {
+              "kind": "context",
+              "text": "\treturn nil",
+              "old_line": 68,
+              "new_line": 77
+            },
+            {
+              "kind": "context",
+              "text": "}",
+              "old_line": 69,
+              "new_line": 78
+            }
+          ]
+        }
+      },
+      {
+        "id": "h_49d34df71eac",
+        "path": "queue/store.go",
+        "change": "modified",
+        "role": "code",
+        "new_range": [
+          85,
+          7
+        ],
+        "additions": 1,
+        "deletions": 1,
+        "github_url": "https://github.com/example-org/taskline/pull/212/files#diff-1a932b2b22ed53a34f4897663124a2394b85a9ce55f7b4af407f96f3abe70266R85",
+        "diff": {
+          "header": "@@ -76,7 +85,7 @@ func (s *MemoryStore) Fail(ctx context.Context, id string, reason string) error",
+          "lines": [
+            {
+              "kind": "context",
+              "text": "\tif !ok {",
+              "old_line": 76,
+              "new_line": 85
+            },
+            {
+              "kind": "context",
+              "text": "\t\treturn ErrNotFound",
+              "old_line": 77,
+              "new_line": 86
+            },
+            {
+              "kind": "context",
+              "text": "\t}",
+              "old_line": 78,
+              "new_line": 87
+            },
+            {
+              "kind": "remove",
+              "text": "\tj.Err = reason",
+              "old_line": 79
+            },
+            {
+              "kind": "add",
+              "text": "\tj.LastError = reason",
+              "new_line": 88
+            },
+            {
+              "kind": "context",
+              "text": "\tj.State = StatePending",
+              "old_line": 80,
+              "new_line": 89
+            },
+            {
+              "kind": "context",
+              "text": "\tj.UpdatedAt = time.Now()",
+              "old_line": 81,
+              "new_line": 90
+            },
+            {
+              "kind": "context",
+              "text": "\treturn nil",
+              "old_line": 82,
+              "new_line": 91
+            }
+          ]
+        }
+      },
+      {
+        "id": "h_1b38ee9b9a9b",
+        "path": "queue/store.go",
+        "change": "modified",
+        "role": "code",
+        "new_range": [
+          102,
+          18
+        ],
+        "additions": 15,
+        "deletions": 0,
+        "github_url": "https://github.com/example-org/taskline/pull/212/files#diff-1a932b2b22ed53a34f4897663124a2394b85a9ce55f7b4af407f96f3abe70266R102",
+        "diff": {
+          "header": "@@ -93,3 +102,18 @@ func (s *MemoryStore) Get(ctx context.Context, id string) (*Job, error) {",
+          "lines": [
+            {
+              "kind": "context",
+              "text": "\tc := *j",
+              "old_line": 93,
+              "new_line": 102
+            },
+            {
+              "kind": "context",
+              "text": "\treturn \u0026c, nil",
+              "old_line": 94,
+              "new_line": 103
+            },
+            {
+              "kind": "context",
+              "text": "}",
+              "old_line": 95,
+              "new_line": 104
+            },
+            {
+              "kind": "add",
+              "text": "",
+              "new_line": 105
+            },
+            {
+              "kind": "add",
+              "text": "// Reset returns a job to the queue with its attempt count cleared.",
+              "new_line": 106
+            },
+            {
+              "kind": "add",
+              "text": "func (s *MemoryStore) Reset(ctx context.Context, id string) error {",
+              "new_line": 107
+            },
+            {
+              "kind": "add",
+              "text": "\ts.mu.Lock()",
+              "new_line": 108
+            },
+            {
+              "kind": "add",
+              "text": "\tdefer s.mu.Unlock()",
+              "new_line": 109
+            },
+            {
+              "kind": "add",
+              "text": "\tj, ok := s.jobs[id]",
+              "new_line": 110
+            },
+            {
+              "kind": "add",
+              "text": "\tif !ok {",
+              "new_line": 111
+            },
+            {
+              "kind": "add",
+              "text": "\t\treturn ErrNotFound",
+              "new_line": 112
+            },
+            {
+              "kind": "add",
+              "text": "\t}",
+              "new_line": 113
+            },
+            {
+              "kind": "add",
+              "text": "\tj.State = StatePending",
+              "new_line": 114
+            },
+            {
+              "kind": "add",
+              "text": "\tj.Attempts = 0",
+              "new_line": 115
+            },
+            {
+              "kind": "add",
+              "text": "\tj.LastError = \"\"",
+              "new_line": 116
+            },
+            {
+              "kind": "add",
+              "text": "\tj.UpdatedAt = time.Now()",
+              "new_line": 117
+            },
+            {
+              "kind": "add",
+              "text": "\treturn nil",
+              "new_line": 118
+            },
+            {
+              "kind": "add",
+              "text": "}",
+              "new_line": 119
+            }
+          ]
+        }
+      },
+      {
+        "id": "h_be4e5374ec6c",
+        "path": "queue/worker.go",
+        "change": "modified",
+        "role": "code",
+        "new_range": [
+          2,
+          7
+        ],
+        "additions": 1,
+        "deletions": 0,
+        "github_url": "https://github.com/example-org/taskline/pull/212/files#diff-956d03d9916ff2d69ac24682eadffb63d96075824322b921385a4d83223da2d6R2",
+        "diff": {
+          "header": "@@ -2,6 +2,7 @@ package queue",
+          "lines": [
+            {
+              "kind": "context",
+              "text": "",
+              "old_line": 2,
+              "new_line": 2
+            },
+            {
+              "kind": "context",
+              "text": "import (",
+              "old_line": 3,
+              "new_line": 3
+            },
+            {
+              "kind": "context",
+              "text": "\t\"context\"",
+              "old_line": 4,
+              "new_line": 4
+            },
+            {
+              "kind": "add",
+              "text": "\t\"errors\"",
+              "new_line": 5
+            },
+            {
+              "kind": "context",
+              "text": "\t\"time\"",
+              "old_line": 5,
+              "new_line": 6
+            },
+            {
+              "kind": "context",
+              "text": ")",
+              "old_line": 6,
+              "new_line": 7
+            },
+            {
+              "kind": "context",
+              "text": "",
+              "old_line": 7,
+              "new_line": 8
+            }
+          ]
+        }
+      },
+      {
+        "id": "h_635a75a6dabc",
+        "path": "queue/worker.go",
+        "change": "modified",
+        "role": "code",
+        "new_range": [
+          12,
+          10
+        ],
+        "additions": 3,
+        "deletions": 2,
+        "github_url": "https://github.com/example-org/taskline/pull/212/files#diff-956d03d9916ff2d69ac24682eadffb63d96075824322b921385a4d83223da2d6R12",
+        "diff": {
+          "header": "@@ -11,9 +12,10 @@ type Handler func(ctx context.Context, j *Job) error",
+          "lines": [
+            {
+              "kind": "context",
+              "text": "// Worker claims jobs and runs them with a Handler.",
+              "old_line": 11,
+              "new_line": 12
+            },
+            {
+              "kind": "context",
+              "text": "type Worker struct {",
+              "old_line": 12,
+              "new_line": 13
+            },
+            {
+              "kind": "context",
+              "text": "\tStore   Store",
+              "old_line": 13,
+              "new_line": 14
+            },
+            {
+              "kind": "add",
+              "text": "\tDead    DeadLetters",
+              "new_line": 15
+            },
+            {
+              "kind": "context",
+              "text": "\tHandler Handler",
+              "old_line": 14,
+              "new_line": 16
+            },
+            {
+              "kind": "remove",
+              "text": "\t// Delay is how long a failed job waits before it is claimed again.",
+              "old_line": 15
+            },
+            {
+              "kind": "remove",
+              "text": "\tDelay time.Duration",
+              "old_line": 16
+            },
+            {
+              "kind": "add",
+              "text": "\t// Retry decides how long a failed job waits before it is claimed again.",
+              "new_line": 17
+            },
+            {
+              "kind": "add",
+              "text": "\tRetry RetryPolicy",
+              "new_line": 18
+            },
+            {
+              "kind": "context",
+              "text": "}",
+              "old_line": 17,
+              "new_line": 19
+            },
+            {
+              "kind": "context",
+              "text": "",
+              "old_line": 18,
+              "new_line": 20
+            },
+            {
+              "kind": "context",
+              "text": "// Run claims and runs jobs until ctx is done.",
+              "old_line": 19,
+              "new_line": 21
+            }
+          ]
+        }
+      },
+      {
+        "id": "h_61fd2272d6b3",
+        "path": "queue/worker.go",
+        "change": "modified",
+        "role": "code",
+        "new_range": [
+          32,
+          15
+        ],
+        "additions": 8,
+        "deletions": 2,
+        "github_url": "https://github.com/example-org/taskline/pull/212/files#diff-956d03d9916ff2d69ac24682eadffb63d96075824322b921385a4d83223da2d6R32",
+        "diff": {
+          "header": "@@ -30,9 +32,15 @@ func (w *Worker) Run(ctx context.Context) {",
+          "lines": [
+            {
+              "kind": "context",
+              "text": "",
+              "old_line": 30,
+              "new_line": 32
+            },
+            {
+              "kind": "context",
+              "text": "func (w *Worker) run(ctx context.Context, j *Job) {",
+              "old_line": 31,
+              "new_line": 33
+            },
+            {
+              "kind": "context",
+              "text": "\tif err := w.Handler(ctx, j); err != nil {",
+              "old_line": 32,
+              "new_line": 34
+            },
+            {
+              "kind": "add",
+              "text": "\t\tif w.Retry.Exhausted(j.Attempts) \u0026\u0026 w.Dead != nil {",
+              "new_line": 35
+            },
+            {
+              "kind": "add",
+              "text": "\t\t\tw.Dead.Bury(ctx, j, err.Error())",
+              "new_line": 36
+            },
+            {
+              "kind": "add",
+              "text": "\t\t\treturn",
+              "new_line": 37
+            },
+            {
+              "kind": "add",
+              "text": "\t\t}",
+              "new_line": 38
+            },
+            {
+              "kind": "context",
+              "text": "\t\tw.Store.Fail(ctx, j.ID, err.Error())",
+              "old_line": 33,
+              "new_line": 39
+            },
+            {
+              "kind": "remove",
+              "text": "\t\ttime.Sleep(w.Delay)",
+              "old_line": 34
+            },
+            {
+              "kind": "add",
+              "text": "\t\ttime.Sleep(w.Retry.Delay(j.Attempts))",
+              "new_line": 40
+            },
+            {
+              "kind": "context",
+              "text": "\t\treturn",
+              "old_line": 35,
+              "new_line": 41
+            },
+            {
+              "kind": "context",
+              "text": "\t}",
+              "old_line": 36,
+              "new_line": 42
+            },
+            {
+              "kind": "remove",
+              "text": "\tw.Store.Ack(ctx, j.ID)",
+              "old_line": 37
+            },
+            {
+              "kind": "add",
+              "text": "\tif err := w.Store.Ack(ctx, j.ID); err != nil \u0026\u0026 !errors.Is(err, ErrNotRunning) {",
+              "new_line": 43
+            },
+            {
+              "kind": "add",
+              "text": "\t\tw.Store.Fail(ctx, j.ID, err.Error())",
+              "new_line": 44
+            },
+            {
+              "kind": "add",
+              "text": "\t}",
+              "new_line": 45
+            },
+            {
+              "kind": "context",
+              "text": "}",
+              "old_line": 38,
+              "new_line": 46
+            }
+          ]
+        }
+      },
+      {
+        "id": "h_7405cf5cb903",
+        "path": "queue/worker_test.go",
+        "change": "modified",
+        "role": "test",
+        "new_range": [
+          23,
+          25
+        ],
+        "additions": 16,
+        "deletions": 3,
+        "github_url": "https://github.com/example-org/taskline/pull/212/files#diff-5210799b58226ee077161e9efd34924773948d2bb114f5dd9b95d0013ebe97abR23",
+        "diff": {
+          "header": "@@ -23,12 +23,25 @@ func TestWorkerAcksSuccess(t *testing.T) {",
+          "lines": [
+            {
+              "kind": "context",
+              "text": "func TestWorkerRecordsFailure(t *testing.T) {",
+              "old_line": 23,
+              "new_line": 23
+            },
+            {
+              "kind": "context",
+              "text": "\ts := NewMemoryStore()",
+              "old_line": 24,
+              "new_line": 24
+            },
+            {
+              "kind": "context",
+              "text": "\ts.Add(\u0026Job{ID: \"b\", Kind: \"noop\"})",
+              "old_line": 25,
+              "new_line": 25
+            },
+            {
+              "kind": "remove",
+              "text": "\tw := \u0026Worker{Store: s, Handler: func(context.Context, *Job) error { return errors.New(\"boom\") }, Delay: time.Millisecond}",
+              "old_line": 26
+            },
+            {
+              "kind": "add",
+              "text": "\tw := \u0026Worker{Store: s, Handler: func(context.Context, *Job) error { return errors.New(\"boom\") }, Retry: RetryPolicy{Base: time.Millisecond, Max: time.Millisecond, Budget: 3}}",
+              "new_line": 26
+            },
+            {
+              "kind": "context",
+              "text": "\tctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)",
+              "old_line": 27,
+              "new_line": 27
+            },
+            {
+              "kind": "context",
+              "text": "\tdefer cancel()",
+              "old_line": 28,
+              "new_line": 28
+            },
+            {
+              "kind": "context",
+              "text": "\tw.Run(ctx)",
+              "old_line": 29,
+              "new_line": 29
+            },
+            {
+              "kind": "context",
+              "text": "\tj, _ := s.Get(context.Background(), \"b\")",
+              "old_line": 30,
+              "new_line": 30
+            },
+            {
+              "kind": "remove",
+              "text": "\tif j.Err != \"boom\" {",
+              "old_line": 31
+            },
+            {
+              "kind": "remove",
+              "text": "\t\tt.Fatalf(\"err = %q\", j.Err)",
+              "old_line": 32
+            },
+            {
+              "kind": "add",
+              "text": "\tif j.LastError != \"boom\" {",
+              "new_line": 31
+            },
+            {
+              "kind": "add",
+              "text": "\t\tt.Fatalf(\"err = %q\", j.LastError)",
+              "new_line": 32
+            },
+            {
+              "kind": "add",
+              "text": "\t}",
+              "new_line": 33
+            },
+            {
+              "kind": "add",
+              "text": "}",
+              "new_line": 34
+            },
+            {
+              "kind": "add",
+              "text": "",
+              "new_line": 35
+            },
+            {
+              "kind": "add",
+              "text": "func TestSecondAckIsIgnored(t *testing.T) {",
+              "new_line": 36
+            },
+            {
+              "kind": "add",
+              "text": "\tctx := context.Background()",
+              "new_line": 37
+            },
+            {
+              "kind": "add",
+              "text": "\ts := NewMemoryStore()",
+              "new_line": 38
+            },
+            {
+              "kind": "add",
+              "text": "\ts.Add(\u0026Job{ID: \"c\", Kind: \"noop\"})",
+              "new_line": 39
+            },
+            {
+              "kind": "add",
+              "text": "\tj, _ := s.Claim(ctx)",
+              "new_line": 40
+            },
+            {
+              "kind": "add",
+              "text": "\tif err := s.Ack(ctx, j.ID); err != nil {",
+              "new_line": 41
+            },
+            {
+              "kind": "add",
+              "text": "\t\tt.Fatal(err)",
+              "new_line": 42
+            },
+            {
+              "kind": "add",
+              "text": "\t}",
+              "new_line": 43
+            },
+            {
+              "kind": "add",
+              "text": "\tif err := s.Ack(ctx, j.ID); err != ErrNotRunning {",
+              "new_line": 44
+            },
+            {
+              "kind": "add",
+              "text": "\t\tt.Fatalf(\"second Ack = %v, want ErrNotRunning\", err)",
+              "new_line": 45
+            },
+            {
+              "kind": "context",
+              "text": "\t}",
+              "old_line": 33,
+              "new_line": 46
+            },
+            {
+              "kind": "context",
+              "text": "}",
+              "old_line": 34,
+              "new_line": 47
+            }
+          ]
+        }
+      }
+    ],
+    "checks": [
+      {
+        "id": "chk_9001",
+        "kind": "check_run",
+        "name": "test (go 1.22)",
+        "conclusion": "success",
+        "required": true,
+        "head": "d6d7a116b9babb73a1e9be4db63b94f35952ba6b",
+        "started_at": "2026-09-09T15:02:00Z",
+        "completed_at": "2026-09-09T15:05:41Z",
+        "url": "https://github.com/example-org/taskline/actions/runs/9001/job/9001"
+      },
+      {
+        "id": "chk_9002",
+        "kind": "check_run",
+        "name": "test (go 1.23)",
+        "conclusion": "success",
+        "required": true,
+        "head": "d6d7a116b9babb73a1e9be4db63b94f35952ba6b",
+        "started_at": "2026-09-09T15:02:01Z",
+        "completed_at": "2026-09-09T15:05:12Z",
+        "url": "https://github.com/example-org/taskline/actions/runs/9001/job/9002"
+      },
+      {
+        "id": "chk_9003",
+        "kind": "check_run",
+        "name": "lint",
+        "conclusion": "failure",
+        "required": false,
+        "head": "d6d7a116b9babb73a1e9be4db63b94f35952ba6b",
+        "started_at": "2026-09-09T15:02:01Z",
+        "completed_at": "2026-09-09T15:03:30Z",
+        "url": "https://github.com/example-org/taskline/actions/runs/9001/job/9003"
+      },
+      {
+        "id": "chk_9004",
+        "kind": "check_run",
+        "name": "docs-preview",
+        "conclusion": "skipped",
+        "required": null,
+        "head": "d6d7a116b9babb73a1e9be4db63b94f35952ba6b",
+        "started_at": "2026-09-09T15:02:02Z",
+        "completed_at": "2026-09-09T15:02:03Z",
+        "url": "https://github.com/example-org/taskline/actions/runs/9001/job/9004"
+      },
+      {
+        "id": "chk_9005",
+        "kind": "check_run",
+        "name": "bench",
+        "conclusion": "pending",
+        "required": false,
+        "head": "d6d7a116b9babb73a1e9be4db63b94f35952ba6b",
+        "started_at": "2026-09-09T15:02:02Z",
+        "completed_at": null,
+        "url": "https://github.com/example-org/taskline/actions/runs/9001/job/9005"
+      },
+      {
+        "id": "chk_9006",
+        "kind": "status",
+        "name": "ci/deploy-preview",
+        "conclusion": "success",
+        "required": null,
+        "head": "d6d7a116b9babb73a1e9be4db63b94f35952ba6b",
+        "started_at": null,
+        "completed_at": null,
+        "url": "https://preview.example.com/taskline/212"
+      }
+    ],
+    "reports": [
+      {
+        "id": "7301",
+        "tool": "covercheck",
+        "marker": "baum",
+        "comment": "7301",
+        "summary": "Coverage 91.4 percent (+1.2) across queue/ and api/."
+      }
+    ],
+    "comments": [
+      {
+        "id": "7001",
+        "kind": "issue",
+        "author": "example-dev",
+        "bot": false,
+        "created_at": "2026-09-08T10:05:00Z"
+      },
+      {
+        "id": "7002",
+        "kind": "review",
+        "author": "example-maintainer",
+        "bot": false,
+        "created_at": "2026-09-09T08:30:00Z"
+      },
+      {
+        "id": "7003",
+        "kind": "review_comment",
+        "author": "example-maintainer",
+        "bot": false,
+        "created_at": "2026-09-09T08:31:00Z"
+      },
+      {
+        "id": "7101",
+        "kind": "review",
+        "author": "reviewbot",
+        "bot": true,
+        "created_at": "2026-09-08T10:20:00Z"
+      },
+      {
+        "id": "7102",
+        "kind": "review_comment",
+        "author": "reviewbot",
+        "bot": true,
+        "created_at": "2026-09-08T10:20:30Z"
+      },
+      {
+        "id": "7210",
+        "kind": "review",
+        "author": "lintsage",
+        "bot": true,
+        "created_at": "2026-09-09T12:00:00Z"
+      },
+      {
+        "id": "7211",
+        "kind": "review_comment",
+        "author": "lintsage",
+        "bot": true,
+        "created_at": "2026-09-09T12:00:20Z"
+      },
+      {
+        "id": "7201",
+        "kind": "review",
+        "author": "lintsage",
+        "bot": true,
+        "created_at": "2026-09-09T16:00:00Z"
+      },
+      {
+        "id": "7202",
+        "kind": "review_comment",
+        "author": "lintsage",
+        "bot": true,
+        "created_at": "2026-09-09T16:00:30Z"
+      },
+      {
+        "id": "7203",
+        "kind": "review_comment",
+        "author": "lintsage",
+        "bot": true,
+        "created_at": "2026-09-09T16:01:00Z"
+      },
+      {
+        "id": "7301",
+        "kind": "issue",
+        "author": "covercheck",
+        "bot": true,
+        "created_at": "2026-09-09T15:30:00Z"
+      }
+    ],
+    "threads": [
+      {
+        "id": "PRRT_example_01",
+        "path": "queue/worker.go",
+        "line": null,
+        "resolved": true,
+        "outdated": true,
+        "url": "https://github.com/example-org/taskline/pull/212#discussion_r7003"
+      },
+      {
+        "id": "PRRT_example_02",
+        "path": "queue/retry.go",
+        "line": null,
+        "resolved": true,
+        "outdated": true,
+        "url": "https://github.com/example-org/taskline/pull/212#discussion_r7102"
+      },
+      {
+        "id": "PRRT_example_03",
+        "path": "api/auth.go",
+        "line": 28,
+        "resolved": false,
+        "outdated": false,
+        "url": "https://github.com/example-org/taskline/pull/212#discussion_r7202"
+      },
+      {
+        "id": "PRRT_example_04",
+        "path": "api/deadletters.go",
+        "line": 30,
+        "resolved": true,
+        "outdated": false,
+        "url": "https://github.com/example-org/taskline/pull/212#discussion_r7203"
+      },
+      {
+        "id": "PRRT_example_05",
+        "path": "queue/deadletter.go",
+        "line": null,
+        "resolved": true,
+        "outdated": true,
+        "url": "https://github.com/example-org/taskline/pull/212#discussion_r7211"
+      }
+    ],
+    "sessions": [
+      {
+        "id": "785faefe-40b5-5521-9932-4dc2d659ec1d",
+        "vendor": "acme-agent",
+        "models": [
+          "acme-model-1"
+        ],
+        "title": "Add retry budget and dead letters",
+        "git_branch": "feature/dead-letters",
+        "started_at": "2026-09-08T08:20:00Z",
+        "ended_at": "2026-09-09T15:00:00Z",
+        "outcome": "committed",
+        "prompt_count": 5,
+        "tool_calls": 5,
+        "restricted": false,
+        "prompts": [
+          {
+            "index": 1,
+            "id": "389a1221-117c-5a53-8ac6-f1e573239425",
+            "at": "2026-09-08T08:20:00Z",
+            "text": "Add a retry policy with exponential backoff and a total attempt budget to the worker."
+          },
+          {
+            "index": 2,
+            "id": "b7656325-4a15-5b3b-bbb4-4b2eb86f9a3d",
+            "at": "2026-09-08T11:40:00Z",
+            "text": "Bury jobs that run out of attempts in a dead-letter table so an operator can look at them."
+          },
+          {
+            "index": 3,
+            "id": "d7506b99-be58-5463-9901-fc3df4b1fc9b",
+            "at": "2026-09-09T09:10:00Z",
+            "text": "Add endpoints to list and requeue dead letters, and limit them to operators."
+          },
+          {
+            "index": 4,
+            "id": "5f30aa12-b84a-578c-98e2-474cd4529ce8",
+            "at": "2026-09-09T13:20:00Z",
+            "text": "A second ack of the same job should not mark it done twice; fix it and rename Err to LastError."
+          },
+          {
+            "index": 5,
+            "id": "452e012a-a2e8-564f-9eac-69f7576274fd",
+            "at": "2026-09-09T14:40:00Z",
+            "text": "Document the retry budget and dead letters, and bump golang.org/x/time while you are in go.mod."
+          }
+        ],
+        "events": [
+          {
+            "id": "827d56d2-5c2e-59eb-8b22-03390413bda3",
+            "at": "2026-09-08T08:55:00Z",
+            "verb": "execute",
+            "summary": "go test ./queue/..."
+          },
+          {
+            "id": "a82cf7c4-6d8a-551d-bdd2-104ff25a44f6",
+            "at": "2026-09-08T13:30:00Z",
+            "verb": "execute",
+            "summary": "psql database migrations/0007_dead_letters.sql"
+          },
+          {
+            "id": "8f50d015-999f-5383-a262-714de6928b6d",
+            "at": "2026-09-09T10:45:00Z",
+            "verb": "execute",
+            "summary": "curl network /v1/dead-letters"
+          },
+          {
+            "id": "be003c5f-efb1-56fb-9a09-4f2c107c03d5",
+            "at": "2026-09-09T14:10:00Z",
+            "verb": "execute",
+            "summary": "go test ./queue/..."
+          },
+          {
+            "id": "65cc149b-a460-5963-8d41-422eca0a616c",
+            "at": "2026-09-09T14:25:00Z",
+            "verb": "execute",
+            "summary": "go test ./..."
+          }
+        ]
+      },
+      {
+        "id": "fe59570b-2cd1-5daa-80cb-4d45f0c233cf",
+        "vendor": "other-agent",
+        "restricted": true
+      }
+    ],
+    "prs": [
+      {
+        "number": 207,
+        "title": "Add the admin API job lookup",
+        "state": "merged",
+        "url": "https://github.com/example-org/taskline/pull/207"
+      },
+      {
+        "number": 205,
+        "title": "Add the in-memory store",
+        "state": "merged",
+        "url": "https://github.com/example-org/taskline/pull/205"
+      }
+    ],
+    "attachments": [
+      {
+        "id": "att_e7b5a4d8274ca858a94cbc586c93c37a",
+        "alt": "Flow of a job from retry to the dead-letter set",
+        "heading": "Design",
+        "position": 1,
+        "content_type": "image/png",
+        "width": 1280,
+        "height": 720,
+        "source_url": "https://example.com/acme/taskline/assets/dead-letter-flow.png"
+      },
+      {
+        "id": "att_736e4be0bc0c6f5e62e3ccb048891c8f",
+        "alt": "Terminal output of a successful requeue",
+        "heading": "Manual check",
+        "position": 2,
+        "content_type": "image/png",
+        "width": 960,
+        "height": 400,
+        "source_url": "https://example.com/acme/taskline/assets/requeue-response.png"
+      }
+    ]
+  },
+  "agent_reviews": [
+    {
+      "id": "ar_reviewbot_91b7e4f",
+      "tool": "reviewbot",
+      "assessed_head": "91b7e4fc80761ec63b0d7f04d7b5631e74728856",
+      "stale": true,
+      "verdict": "comment",
+      "blocked_on": null,
+      "counts": {
+        "must_fix": 0,
+        "should_fix": 1,
+        "consider": 0
+      },
+      "anchors": [
+        {
+          "type": "pr_comment",
+          "id": "7101"
+        }
+      ],
+      "findings": [
+        {
+          "id": "fnd_reviewbot_7102",
+          "severity": "should_fix",
+          "text": "P2** Delay doubles in a loop without an overflow guard when Max is zero.",
+          "section": "sec_retry",
+          "anchors": [
+            {
+              "type": "review_thread",
+              "id": "PRRT_example_02"
+            },
+            {
+              "type": "hunk",
+              "id": "h_141757b19901"
+            }
+          ],
+          "state": "resolved",
+          "addressed_by": null
+        }
+      ]
+    },
+    {
+      "id": "ar_lintsage_2076d33",
+      "tool": "lintsage",
+      "assessed_head": "2076d336e1edb789dc02adf3887bccf0815211f1",
+      "stale": true,
+      "verdict": "request_changes",
+      "blocked_on": null,
+      "counts": {
+        "must_fix": 0,
+        "should_fix": 1,
+        "consider": 0
+      },
+      "anchors": [
+        {
+          "type": "pr_comment",
+          "id": "7210"
+        }
+      ],
+      "findings": [
+        {
+          "id": "fnd_lintsage_7211",
+          "severity": "should_fix",
+          "text": "P2** Requeue does not check that the job is still buried, so a second call resets a running job.",
+          "section": "sec_deadletter",
+          "anchors": [
+            {
+              "type": "review_thread",
+              "id": "PRRT_example_05"
+            },
+            {
+              "type": "hunk",
+              "id": "h_113c5f55c94f"
+            }
+          ],
+          "state": "resolved",
+          "addressed_by": null
+        }
+      ]
+    },
+    {
+      "id": "ar_lintsage_d6d7a11",
+      "tool": "lintsage",
+      "assessed_head": "d6d7a116b9babb73a1e9be4db63b94f35952ba6b",
+      "stale": false,
+      "verdict": "approve",
+      "blocked_on": null,
+      "counts": {
+        "must_fix": 1,
+        "should_fix": 0,
+        "consider": 1
+      },
+      "anchors": [
+        {
+          "type": "pr_comment",
+          "id": "7201"
+        }
+      ],
+      "findings": [
+        {
+          "id": "fnd_lintsage_7202",
+          "severity": "must_fix",
+          "text": "P1** RoleFromRequest trusts a client-controlled header; any caller that reaches the service directly can claim the operator role.",
+          "section": "sec_api",
+          "anchors": [
+            {
+              "type": "review_thread",
+              "id": "PRRT_example_03"
+            },
+            {
+              "type": "hunk",
+              "id": "h_3b2315bd3e0a"
+            }
+          ],
+          "state": "open",
+          "addressed_by": null
+        },
+        {
+          "id": "fnd_lintsage_7203",
+          "severity": "consider",
+          "text": "Consider returning 400 when limit is above the cap instead of clamping it.",
+          "section": "sec_api",
+          "anchors": [
+            {
+              "type": "review_thread",
+              "id": "PRRT_example_04"
+            },
+            {
+              "type": "hunk",
+              "id": "h_578603ca5fc8"
+            }
+          ],
+          "state": "resolved",
+          "addressed_by": null
+        }
+      ]
+    }
+  ],
+  "unassigned_hunks": [
+    "h_8143a44d25d2"
+  ],
+  "risk_score": {
+    "rubric": "risk-v1",
+    "status": "assessed",
+    "score": 5,
+    "reasons": [
+      {
+        "section": "sec_api",
+        "risk": "rsk_api_header",
+        "text": "RoleFromRequest trusts X-Taskline-Role, so any caller that reaches the service without the gateway can claim the operator role and read or requeue dead letters"
+      },
+      {
+        "section": "sec_api",
+        "risk": null,
+        "text": "Authorization depends on a client-supplied header, so a direct caller can claim the operator role."
+      },
+      {
+        "section": "sec_api",
+        "risk": null,
+        "text": "Two new HTTP operations can read failure reasons and reset jobs."
+      }
+    ],
+    "limitations": []
+  },
+  "changes": [
+    {
+      "id": "sec_retry",
+      "title": "Retry policy and backoff",
+      "kind": "logical",
+      "hunks": [
+        "h_141757b19901",
+        "h_b10d7bdede44",
+        "h_635a75a6dabc",
+        "h_61fd2272d6b3"
+      ],
+      "assessment": {
+        "level": 3,
+        "factors": [
+          "concurrency"
+        ],
+        "reasons": [
+          {
+            "text": "Every worker retries on one shared policy, so retry timing under load depends on its jitter.",
+            "anchors": [
+              {
+                "type": "hunk",
+                "id": "h_141757b19901",
+                "lines": [
+                  31,
+                  42
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "derived": {
+        "state": "changed",
+        "risk_tier": "high",
+        "additions": 87,
+        "deletions": 4,
+        "role_loc": {
+          "code": 58,
+          "test": 33
+        },
+        "reviewers": [
+          {
+            "login": "example-maintainer",
+            "source": "requested"
+          }
+        ],
+        "evidence_summary": {
+          "missing": 1,
+          "pending": 1,
+          "verified": 2
+        },
+        "open_findings": 0,
+        "review_score": 4,
+        "review_reason": {
+          "risk": "rsk_retry_herd",
+          "text": "All workers share one policy, so a burst of failures retries in step; 20 percent jitter may not spread the retries enough to protect a recovering dependency"
+        }
+      }
+    },
+    {
+      "id": "sec_fixed_delay",
+      "title": "Fixed retry delay",
+      "kind": "logical",
+      "hunks": [],
+      "derived": {
+        "state": "stale",
+        "risk_tier": "unrated",
+        "additions": 0,
+        "deletions": 0,
+        "role_loc": {},
+        "reviewers": [
+          {
+            "login": "example-maintainer",
+            "source": "requested"
+          }
+        ],
+        "evidence_summary": {},
+        "open_findings": 0
+      }
+    },
+    {
+      "id": "sec_api",
+      "title": "Operator-only dead-letter endpoints",
+      "kind": "logical",
+      "hunks": [
+        "h_578603ca5fc8",
+        "h_0ef0ef8ca4e0",
+        "h_3b2315bd3e0a",
+        "h_a408875b8eaa"
+      ],
+      "assessment": {
+        "level": 5,
+        "factors": [
+          "permissions",
+          "public_api",
+          "untrusted_input"
+        ],
+        "reasons": [
+          {
+            "text": "Authorization depends on a client-supplied header, so a direct caller can claim the operator role.",
+            "anchors": [
+              {
+                "type": "hunk",
+                "id": "h_3b2315bd3e0a",
+                "lines": [
+                  28,
+                  28
+                ]
+              }
+            ]
+          },
+          {
+            "text": "Two new HTTP operations can read failure reasons and reset jobs.",
+            "anchors": [
+              {
+                "type": "file",
+                "path": "api/deadletters.go"
+              }
+            ]
+          }
+        ]
+      },
+      "derived": {
+        "state": "unchanged",
+        "risk_tier": "critical",
+        "additions": 135,
+        "deletions": 6,
+        "role_loc": {
+          "code": 84,
+          "test": 57
+        },
+        "reviewers": [
+          {
+            "login": "example-maintainer",
+            "source": "requested"
+          }
+        ],
+        "evidence_summary": {
+          "asserted": 1,
+          "failed": 1,
+          "observed": 1,
+          "reported": 1,
+          "verified": 1
+        },
+        "open_findings": 1,
+        "review_score": 5,
+        "review_reason": {
+          "risk": "rsk_api_header",
+          "text": "RoleFromRequest trusts X-Taskline-Role, so any caller that reaches the service without the gateway can claim the operator role and read or requeue dead letters"
+        }
+      }
+    },
+    {
+      "id": "sec_deadletter",
+      "title": "Dead-letter store and migration",
+      "kind": "logical",
+      "hunks": [
+        "h_113c5f55c94f",
+        "h_9cce5ce589a0",
+        "h_e744026adb28",
+        "h_e66d5057fa3c",
+        "h_1b38ee9b9a9b",
+        "h_635a75a6dabc",
+        "h_61fd2272d6b3"
+      ],
+      "assessment": {
+        "level": 4,
+        "factors": [
+          "data_migration",
+          "concurrency"
+        ],
+        "reasons": [
+          {
+            "text": "A new table and a jobs column ship in one migration that has no down step.",
+            "anchors": [
+              {
+                "type": "file",
+                "path": "migrations/0007_dead_letters.sql"
+              }
+            ]
+          },
+          {
+            "text": "Requeue holds the dead-letter lock while calling Store.Reset, which takes the store lock.",
+            "anchors": [
+              {
+                "type": "hunk",
+                "id": "h_113c5f55c94f",
+                "lines": [
+                  68,
+                  68
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "derived": {
+        "state": "changed",
+        "risk_tier": "medium",
+        "additions": 147,
+        "deletions": 4,
+        "role_loc": {
+          "code": 105,
+          "migration": 11,
+          "test": 35
+        },
+        "reviewers": [
+          {
+            "login": "example-maintainer",
+            "source": "requested"
+          }
+        ],
+        "evidence_summary": {
+          "observed": 1,
+          "reported": 1,
+          "skipped": 1,
+          "verified": 1
+        },
+        "open_findings": 0,
+        "review_score": 4,
+        "review_reason": {
+          "risk": null,
+          "text": "A new table and a jobs column ship in one migration that has no down step."
+        }
+      }
+    },
+    {
+      "id": "sec_docs",
+      "title": "Docs and dependency bump",
+      "kind": "logical",
+      "hunks": [
+        "h_938fb177e9e6",
+        "h_3d1ee52461f5",
+        "h_b085f482046e"
+      ],
+      "assessment": {
+        "level": 1,
+        "factors": [],
+        "reasons": [
+          {
+            "text": "Documentation and a minor dependency bump with no code using it yet.",
+            "anchors": [
+              {
+                "type": "hunk",
+                "id": "h_b085f482046e"
+              }
+            ]
+          }
+        ]
+      },
+      "derived": {
+        "state": "unchanged",
+        "risk_tier": "low",
+        "additions": 16,
+        "deletions": 1,
+        "role_loc": {
+          "code": 2,
+          "docs": 15
+        },
+        "reviewers": [
+          {
+            "login": "example-maintainer",
+            "source": "requested"
+          }
+        ],
+        "evidence_summary": {
+          "reported": 1,
+          "unavailable": 1,
+          "verified": 1
+        },
+        "open_findings": 0,
+        "review_score": 1,
+        "review_reason": {
+          "risk": null,
+          "text": "Documentation and a minor dependency bump with no code using it yet."
+        }
+      }
+    },
+    {
+      "id": "sec_mechanical",
+      "title": "Mechanical changes",
+      "kind": "mechanical",
+      "hunks": [
+        "h_99ac328e799a",
+        "h_a0480f808203",
+        "h_49d34df71eac"
+      ],
+      "derived": {
+        "state": "changed",
+        "risk_tier": "mechanical",
+        "additions": 3,
+        "deletions": 3,
+        "role_loc": {
+          "code": 6
+        },
+        "reviewers": [
+          {
+            "login": "example-maintainer",
+            "source": "requested"
+          }
+        ],
+        "evidence_summary": {},
+        "open_findings": 0,
+        "review_score": 1
+      }
+    },
+    {
+      "id": "sec_ackfix",
+      "title": "Second ack is ignored",
+      "kind": "logical",
+      "hunks": [
+        "h_e66d5057fa3c",
+        "h_bd8d10ed6374",
+        "h_be4e5374ec6c",
+        "h_61fd2272d6b3",
+        "h_7405cf5cb903"
+      ],
+      "assessment": {
+        "level": 2,
+        "factors": [
+          "concurrency"
+        ],
+        "reasons": [
+          {
+            "text": "Ack gains a new error that custom Store implementations must also return.",
+            "anchors": [
+              {
+                "type": "hunk",
+                "id": "h_e66d5057fa3c",
+                "lines": [
+                  13,
+                  15
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "derived": {
+        "state": "new",
+        "risk_tier": "low",
+        "additions": 34,
+        "deletions": 5,
+        "role_loc": {
+          "code": 20,
+          "test": 19
+        },
+        "reviewers": [
+          {
+            "login": "example-maintainer",
+            "source": "requested"
+          }
+        ],
+        "evidence_summary": {
+          "reported": 1,
+          "verified": 2
+        },
+        "open_findings": 0,
+        "review_score": 2,
+        "review_reason": {
+          "risk": null,
+          "text": "Ack gains a new error that custom Store implementations must also return."
+        }
+      }
+    }
+  ],
+  "risks": [
+    {
+      "id": "rsk_retry_herd",
+      "tier": "high",
+      "category": "concurrency",
+      "source": "model",
+      "text": "All workers share one policy, so a burst of failures retries in step; 20 percent jitter may not spread the retries enough to protect a recovering dependency",
+      "anchors": [
+        {
+          "type": "hunk",
+          "id": "h_141757b19901",
+          "lines": [
+            31,
+            42
+          ]
+        },
+        {
+          "type": "hunk",
+          "id": "h_141757b19901",
+          "lines": [
+            20,
+            20
+          ]
+        }
+      ],
+      "state": "active",
+      "introduced_version": 2,
+      "mitigated_version": null,
+      "change": "sec_retry"
+    },
+    {
+      "id": "rsk_retry_loop",
+      "tier": "low",
+      "category": "performance",
+      "source": "tool",
+      "text": "Delay doubles in a loop that runs at most log2(Max/Base) times; a zero Max skips the loop and returns Base",
+      "anchors": [
+        {
+          "type": "hunk",
+          "id": "h_141757b19901",
+          "lines": [
+            33,
+            35
+          ]
+        }
+      ],
+      "state": "active",
+      "introduced_version": 2,
+      "mitigated_version": null,
+      "change": "sec_retry"
+    },
+    {
+      "id": "rsk_retry_sleep",
+      "tier": "medium",
+      "category": "performance",
+      "source": "model",
+      "text": "A fixed Delay sleeps the worker goroutine, so one failing job stalls every job behind it on that worker",
+      "anchors": [
+        {
+          "type": "hunk",
+          "id": "h_61fd2272d6b3"
+        }
+      ],
+      "state": "mitigated",
+      "introduced_version": 2,
+      "mitigated_version": 3,
+      "change": "sec_retry"
+    },
+    {
+      "id": "rsk_delay_stall",
+      "tier": "low",
+      "category": "performance",
+      "source": "model",
+      "text": "The fixed delay is the same for every failure, so a persistent error is retried at the same rate forever",
+      "anchors": [
+        {
+          "type": "hunk",
+          "id": "h_52af97368ab7"
+        }
+      ],
+      "state": "active",
+      "introduced_version": 1,
+      "mitigated_version": null,
+      "change": "sec_fixed_delay"
+    },
+    {
+      "id": "rsk_api_header",
+      "tier": "critical",
+      "category": "permissions",
+      "source": "agent_review",
+      "text": "RoleFromRequest trusts X-Taskline-Role, so any caller that reaches the service without the gateway can claim the operator role and read or requeue dead letters",
+      "anchors": [
+        {
+          "type": "hunk",
+          "id": "h_3b2315bd3e0a",
+          "lines": [
+            28,
+            28
+          ]
+        },
+        {
+          "type": "hunk",
+          "id": "h_3b2315bd3e0a",
+          "lines": [
+            16,
+            24
+          ]
+        }
+      ],
+      "finding": "fnd_lintsage_7202",
+      "state": "active",
+      "introduced_version": 2,
+      "mitigated_version": null,
+      "change": "sec_api"
+    },
+    {
+      "id": "rsk_api_order",
+      "tier": "medium",
+      "category": "api_compat",
+      "source": "human_review",
+      "text": "The handler documents newest first, but the in-memory List walks a map and returns entries in no defined order",
+      "anchors": [
+        {
+          "type": "hunk",
+          "id": "h_578603ca5fc8",
+          "lines": [
+            20,
+            21
+          ]
+        },
+        {
+          "type": "hunk",
+          "id": "h_113c5f55c94f",
+          "lines": [
+            50,
+            54
+          ]
+        }
+      ],
+      "state": "active",
+      "introduced_version": 2,
+      "mitigated_version": null,
+      "change": "sec_api"
+    },
+    {
+      "id": "rsk_api_lint",
+      "tier": "low",
+      "category": "api_compat",
+      "source": "tool",
+      "text": "The new handlers ignore the error from the JSON encoder, as the existing job handler does",
+      "anchors": [
+        {
+          "type": "hunk",
+          "id": "h_578603ca5fc8",
+          "lines": [
+            41,
+            41
+          ]
+        }
+      ],
+      "state": "active",
+      "introduced_version": 2,
+      "mitigated_version": null,
+      "change": "sec_api"
+    },
+    {
+      "id": "rsk_dl_cascade",
+      "tier": "medium",
+      "category": "data_migration",
+      "source": "model",
+      "text": "ON DELETE CASCADE removes a dead-letter row when its job is deleted, so pruning old jobs also erases their failure history",
+      "anchors": [
+        {
+          "type": "hunk",
+          "id": "h_e744026adb28",
+          "lines": [
+            2,
+            2
+          ]
+        }
+      ],
+      "state": "active",
+      "introduced_version": 2,
+      "mitigated_version": null,
+      "change": "sec_deadletter"
+    },
+    {
+      "id": "rsk_dl_lock",
+      "tier": "medium",
+      "category": "concurrency",
+      "source": "tool",
+      "text": "Requeue acquires the dead-letter lock and then the store lock, while Bury takes them in the same order only through Store.Fail; a future caller reversing the order could deadlock",
+      "anchors": [
+        {
+          "type": "hunk",
+          "id": "h_113c5f55c94f",
+          "lines": [
+            59,
+            69
+          ]
+        }
+      ],
+      "state": "active",
+      "introduced_version": 2,
+      "mitigated_version": null,
+      "change": "sec_deadletter"
+    },
+    {
+      "id": "rsk_dl_requeue",
+      "tier": "low",
+      "category": "concurrency",
+      "source": "agent_review",
+      "text": "Requeue did not check that the job was still buried before resetting it, so a second call could reset a job that had already started running",
+      "anchors": [
+        {
+          "type": "hunk",
+          "id": "h_113c5f55c94f",
+          "lines": [
+            62,
+            65
+          ]
+        }
+      ],
+      "finding": "fnd_lintsage_7211",
+      "state": "active",
+      "introduced_version": 2,
+      "mitigated_version": null,
+      "change": "sec_deadletter"
+    },
+    {
+      "id": "rsk_dl_index",
+      "tier": "low",
+      "category": "performance",
+      "source": "model",
+      "text": "The buried_at index is descending and only serves the list endpoint; it adds write cost to every burial",
+      "anchors": [
+        {
+          "type": "hunk",
+          "id": "h_e744026adb28",
+          "lines": [
+            11,
+            11
+          ]
+        }
+      ],
+      "state": "active",
+      "introduced_version": 2,
+      "mitigated_version": null,
+      "change": "sec_deadletter"
+    },
+    {
+      "id": "rsk_docs_unused",
+      "tier": "low",
+      "category": "dependency",
+      "source": "tool",
+      "text": "golang.org/x/time is required but nothing in the module imports it",
+      "anchors": [
+        {
+          "type": "hunk",
+          "id": "h_b085f482046e"
+        }
+      ],
+      "state": "active",
+      "introduced_version": 2,
+      "mitigated_version": null,
+      "change": "sec_docs"
+    },
+    {
+      "id": "rsk_ack_contract",
+      "tier": "low",
+      "category": "api_compat",
+      "source": "model",
+      "text": "Store implementations outside this repository must return ErrNotRunning for a job that is not running, or the worker will record the second ack as a failure",
+      "anchors": [
+        {
+          "type": "hunk",
+          "id": "h_e66d5057fa3c",
+          "lines": [
+            13,
+            15
+          ]
+        },
+        {
+          "type": "hunk",
+          "id": "h_61fd2272d6b3",
+          "lines": [
+            43,
+            43
+          ]
+        }
+      ],
+      "state": "active",
+      "introduced_version": 3,
+      "mitigated_version": null,
+      "change": "sec_ackfix"
+    }
+  ],
+  "evidence": [
+    {
+      "id": "ev_retry_tests",
+      "kind": "test",
+      "claim": "Delays double up to the cap and the attempt budget stops at its boundary",
+      "status": "verified",
+      "granularity": "job",
+      "source": "ci",
+      "anchors": [
+        {
+          "type": "check",
+          "id": "chk_9001"
+        },
+        {
+          "type": "hunk",
+          "id": "h_b10d7bdede44"
+        }
+      ],
+      "detail": "TestDelayDoublesUpToMax, TestExhaustedAtBudget and TestJitterStaysWithinBounds run in the test job",
+      "change": "sec_retry"
+    },
+    {
+      "id": "ev_retry_boundary",
+      "kind": "test",
+      "claim": "The third of three attempts counts as exhausted",
+      "status": "verified",
+      "granularity": "test",
+      "source": "ci",
+      "anchors": [
+        {
+          "type": "check",
+          "id": "chk_9002",
+          "test": "TestExhaustedAtBudget"
+        },
+        {
+          "type": "hunk",
+          "id": "h_b10d7bdede44",
+          "lines": [
+            18,
+            23
+          ]
+        }
+      ],
+      "change": "sec_retry"
+    },
+    {
+      "id": "ev_retry_spread",
+      "kind": "test",
+      "claim": "Workers retrying one failing handler together stay spread out",
+      "status": "missing",
+      "source": "model",
+      "anchors": [],
+      "expects": "A test that runs several workers against one failing handler and checks that their retry times differ",
+      "change": "sec_retry"
+    },
+    {
+      "id": "ev_retry_bench",
+      "kind": "benchmark",
+      "claim": "Computing a delay does not slow job claiming",
+      "status": "pending",
+      "source": "ci",
+      "anchors": [
+        {
+          "type": "check",
+          "id": "chk_9005"
+        }
+      ],
+      "change": "sec_retry"
+    },
+    {
+      "id": "ev_delay_unit",
+      "kind": "test",
+      "claim": "A failed job is retried after the delay",
+      "status": "asserted",
+      "source": "model",
+      "anchors": [
+        {
+          "type": "hunk",
+          "id": "h_0fe0ef58dee5"
+        }
+      ],
+      "change": "sec_fixed_delay"
+    },
+    {
+      "id": "ev_api_forbidden",
+      "kind": "test",
+      "claim": "Anonymous and viewer callers get 403 on the list endpoint",
+      "status": "verified",
+      "granularity": "test",
+      "source": "ci",
+      "anchors": [
+        {
+          "type": "check",
+          "id": "chk_9001",
+          "test": "TestDeadLettersRequireOperator"
+        },
+        {
+          "type": "hunk",
+          "id": "h_0ef0ef8ca4e0",
+          "lines": [
+            24,
+            36
+          ]
+        }
+      ],
+      "change": "sec_api"
+    },
+    {
+      "id": "ev_api_curl",
+      "kind": "run",
+      "claim": "The list endpoint answers an operator request against a running server",
+      "status": "observed",
+      "source": "session",
+      "anchors": [
+        {
+          "type": "session_event",
+          "session": "785faefe-40b5-5521-9932-4dc2d659ec1d",
+          "event": "8f50d015-999f-5383-a262-714de6928b6d"
+        },
+        {
+          "type": "prompt",
+          "session": "785faefe-40b5-5521-9932-4dc2d659ec1d",
+          "index": 3,
+          "input": "d7506b99-be58-5463-9901-fc3df4b1fc9b"
+        }
+      ],
+      "change": "sec_api"
+    },
+    {
+      "id": "ev_api_review",
+      "kind": "review",
+      "claim": "A maintainer asked for the operator check and it was added in the next commit",
+      "status": "reported",
+      "source": "human_review",
+      "anchors": [
+        {
+          "type": "pr_comment",
+          "id": 7002
+        },
+        {
+          "type": "review_thread",
+          "id": "PRRT_example_01"
+        }
+      ],
+      "change": "sec_api"
+    },
+    {
+      "id": "ev_api_requeue_404",
+      "kind": "coverage",
+      "claim": "Requeue answers 404 for a job that was never buried",
+      "status": "asserted",
+      "source": "model",
+      "anchors": [
+        {
+          "type": "hunk",
+          "id": "h_578603ca5fc8",
+          "lines": [
+            49,
+            50
+          ]
+        }
+      ],
+      "change": "sec_api"
+    },
+    {
+      "id": "ev_api_lint",
+      "kind": "ci",
+      "claim": "The linter accepts the new handlers",
+      "status": "failed",
+      "source": "ci",
+      "anchors": [
+        {
+          "type": "check",
+          "id": "chk_9003"
+        }
+      ],
+      "detail": "The lint job reports the unchecked json encoder error, which the existing handler also has",
+      "change": "sec_api"
+    },
+    {
+      "id": "ev_dl_tests",
+      "kind": "test",
+      "claim": "A buried job is listed with its attempts and a requeued job starts again as pending",
+      "status": "verified",
+      "granularity": "job",
+      "source": "ci",
+      "anchors": [
+        {
+          "type": "check",
+          "id": "chk_9001"
+        },
+        {
+          "type": "hunk",
+          "id": "h_9cce5ce589a0"
+        }
+      ],
+      "change": "sec_deadletter"
+    },
+    {
+      "id": "ev_dl_migration",
+      "kind": "run",
+      "claim": "The migration applies to a scratch database that already holds jobs",
+      "status": "observed",
+      "source": "session",
+      "anchors": [
+        {
+          "type": "session_event",
+          "session": "785faefe-40b5-5521-9932-4dc2d659ec1d",
+          "event": "a82cf7c4-6d8a-551d-bdd2-104ff25a44f6"
+        }
+      ],
+      "detail": "The session applied the migration with psql against a local database seeded with jobs",
+      "change": "sec_deadletter"
+    },
+    {
+      "id": "ev_dl_review",
+      "kind": "review",
+      "claim": "An automated review found the missing buried check in Requeue and the author addressed it",
+      "status": "reported",
+      "source": "agent_review",
+      "anchors": [
+        {
+          "type": "pr_comment",
+          "id": 7211
+        },
+        {
+          "type": "review_thread",
+          "id": "PRRT_example_05"
+        }
+      ],
+      "change": "sec_deadletter"
+    },
+    {
+      "id": "ev_dl_docs",
+      "kind": "ci",
+      "claim": "The documentation site builds with the new page",
+      "status": "skipped",
+      "source": "ci",
+      "anchors": [
+        {
+          "type": "check",
+          "id": "chk_9004"
+        }
+      ],
+      "change": "sec_deadletter"
+    },
+    {
+      "id": "ev_docs_screenshot",
+      "kind": "media",
+      "claim": "The author shows a successful requeue in a terminal",
+      "status": "reported",
+      "source": "author_human",
+      "anchors": [
+        {
+          "type": "attachment",
+          "id": "att_736e4be0bc0c6f5e62e3ccb048891c8f",
+          "url": "https://example.com/acme/taskline/assets/requeue-response.png"
+        },
+        {
+          "type": "pr_body"
+        }
+      ],
+      "change": "sec_docs"
+    },
+    {
+      "id": "ev_docs_report",
+      "kind": "report",
+      "claim": "A published test report covers the documentation examples",
+      "status": "unavailable",
+      "source": "ci",
+      "anchors": [],
+      "change": "sec_docs"
+    },
+    {
+      "id": "ev_docs_preview",
+      "kind": "ci",
+      "claim": "The deploy preview shows the new page",
+      "status": "verified",
+      "granularity": "job",
+      "source": "ci",
+      "anchors": [
+        {
+          "type": "check",
+          "id": "chk_9006"
+        }
+      ],
+      "change": "sec_docs"
+    },
+    {
+      "id": "ev_ack_regression",
+      "kind": "test",
+      "claim": "A second Ack of a done job returns ErrNotRunning and leaves the job done",
+      "status": "verified",
+      "granularity": "job",
+      "source": "ci",
+      "anchors": [
+        {
+          "type": "check",
+          "id": "chk_9001"
+        },
+        {
+          "type": "hunk",
+          "id": "h_7405cf5cb903",
+          "lines": [
+            36,
+            47
+          ]
+        }
+      ],
+      "change": "sec_ackfix"
+    },
+    {
+      "id": "ev_ack_race",
+      "kind": "run",
+      "claim": "The author's agent reports running the whole suite with the race detector",
+      "status": "reported",
+      "source": "author_agent",
+      "anchors": [
+        {
+          "type": "pr_comment",
+          "id": 7001
+        }
+      ],
+      "change": "sec_ackfix"
+    },
+    {
+      "id": "ev_ack_coverage",
+      "kind": "coverage",
+      "claim": "Coverage of queue/ rises with the new test",
+      "status": "verified",
+      "granularity": "job",
+      "source": "ci",
+      "anchors": [
+        {
+          "type": "check",
+          "id": "chk_9002"
+        },
+        {
+          "type": "bot_report",
+          "id": "7301"
+        }
+      ],
+      "change": "sec_ackfix"
+    }
+  ],
+  "tiles": [
+    {
+      "id": "overview",
+      "type": "overview",
+      "title": "Add retry budgets and a dead-letter queue",
+      "headline": "Jobs that fail now back off exponentially and stop after a bounded number of attempts",
+      "data": {
+        "text": "Jobs that fail now back off exponentially and stop after a bounded number of attempts. A job that runs out of attempts is buried in a new dead-letter table, and operators can list and requeue buried jobs through two new endpoints. A second acknowledgement of a job no longer marks it done twice, and Job.Err becomes Job.LastError.",
+        "change_kind": "feature",
+        "release_note": "taskline retries failed jobs with exponential backoff and a configurable attempt budget, and buries jobs that run out of attempts so operators can requeue them.",
+        "breaking_change": "Store implementations must add Reset(ctx, id) and return ErrNotRunning from Ack for a job that is not running.",
+        "attention": {
+          "refs": [
+            "sec_api",
+            "sec_deadletter"
+          ],
+          "text": "The operator role comes from a client-settable header, and the Store interface gained a method."
+        }
+      },
+      "state": "ready"
+    },
+    {
+      "id": "risks",
+      "type": "risks",
+      "title": "Risks",
+      "headline": "11 open risks, 2 high or critical",
+      "data": {
+        "ranked": [
+          "rsk_api_header",
+          "rsk_retry_herd",
+          "rsk_api_order",
+          "rsk_dl_cascade",
+          "rsk_dl_lock",
+          "rsk_api_lint",
+          "rsk_retry_loop",
+          "rsk_dl_requeue",
+          "rsk_dl_index",
+          "rsk_ack_contract",
+          "rsk_docs_unused"
+        ]
+      },
+      "state": "ready"
+    },
+    {
+      "id": "sec_api",
+      "type": "change",
+      "title": "Operator-only dead-letter endpoints",
+      "headline": "Adds GET /v1/dead-letters and POST /v1/dead-letters/{id}/requeue behind a RequireOperator wrapper that reads the caller's role from a request header",
+      "data": {
+        "change": "sec_api",
+        "summary": {
+          "anchors": [
+            {
+              "id": "h_578603ca5fc8",
+              "type": "hunk"
+            },
+            {
+              "id": "h_3b2315bd3e0a",
+              "type": "hunk"
+            }
+          ],
+          "text": "Adds GET /v1/dead-letters and POST /v1/dead-letters/{id}/requeue behind a RequireOperator wrapper that reads the caller's role from a request header."
+        },
+        "attention": {
+          "refs": [
+            "rsk_api_header",
+            "dec_api_header"
+          ],
+          "text": "The operator role comes from a header the client can send; the endpoints are only as safe as the gateway in front of them."
+        },
+        "blocks": [
+          {
+            "items": [
+              {
+                "change": "added",
+                "hunks": [
+                  "h_578603ca5fc8"
+                ],
+                "kind": "endpoint",
+                "name": "GET /v1/dead-letters",
+                "path": "api/deadletters.go"
+              },
+              {
+                "change": "added",
+                "hunks": [
+                  "h_578603ca5fc8"
+                ],
+                "kind": "endpoint",
+                "name": "POST /v1/dead-letters/{id}/requeue",
+                "path": "api/deadletters.go"
+              },
+              {
+                "change": "added",
+                "hunks": [
+                  "h_3b2315bd3e0a"
+                ],
+                "kind": "function",
+                "name": "RequireOperator",
+                "path": "api/auth.go"
+              },
+              {
+                "change": "modified",
+                "hunks": [
+                  "h_a408875b8eaa"
+                ],
+                "kind": "type",
+                "name": "Handler",
+                "path": "api/handler.go"
+              }
+            ],
+            "kind": "entities"
+          },
+          {
+            "kind": "behavior",
+            "steps": [
+              {
+                "anchors": [
+                  {
+                    "id": "h_578603ca5fc8",
+                    "lines": [
+                      22,
+                      43
+                    ],
+                    "type": "hunk"
+                  }
+                ],
+                "evidence": [
+                  "ev_api_forbidden",
+                  "ev_api_curl"
+                ],
+                "id": "beh_list",
+                "text": "The list endpoint returns up to limit entries, with limit defaulting to 50 and capped at 200, and rejects a non-numeric or zero limit with 400"
+              },
+              {
+                "anchors": [
+                  {
+                    "id": "h_578603ca5fc8",
+                    "lines": [
+                      46,
+                      56
+                    ],
+                    "type": "hunk"
+                  }
+                ],
+                "evidence": [
+                  "ev_api_requeue_404"
+                ],
+                "id": "beh_requeue_api",
+                "text": "Requeue answers 204 on success and 404 when the job is not in the dead-letter set"
+              },
+              {
+                "anchors": [
+                  {
+                    "id": "h_3b2315bd3e0a",
+                    "lines": [
+                      16,
+                      24
+                    ],
+                    "type": "hunk"
+                  }
+                ],
+                "evidence": [
+                  "ev_api_forbidden"
+                ],
+                "id": "beh_guard",
+                "text": "Callers whose role is not operator receive 403 before the handler runs"
+              }
+            ]
+          },
+          {
+            "items": [
+              {
+                "note": "Adds GET /v1/jobs/{id}, which the new routes sit beside",
+                "pr": 207
+              }
+            ],
+            "kind": "included_prs"
+          },
+          {
+            "columns": [
+              "Operation",
+              "Required role",
+              "Success"
+            ],
+            "kind": "table",
+            "rows": [
+              [
+                "GET /v1/dead-letters",
+                "operator",
+                "200 with a list"
+              ],
+              [
+                "POST /v1/dead-letters/{id}/requeue",
+                "operator",
+                "204"
+              ]
+            ],
+            "source": [
+              {
+                "id": "h_a408875b8eaa",
+                "type": "hunk"
+              }
+            ]
+          }
+        ]
+      },
+      "covers": [
+        "h_578603ca5fc8",
+        "h_0ef0ef8ca4e0",
+        "h_3b2315bd3e0a",
+        "h_a408875b8eaa"
+      ],
+      "state": "ready"
+    },
+    {
+      "id": "sec_retry",
+      "type": "change",
+      "title": "Retry policy and backoff",
+      "headline": "Adds RetryPolicy with exponential backoff, a delay cap, jitter and a total attempt budget, and makes Worker use it in place of a fixed delay",
+      "data": {
+        "change": "sec_retry",
+        "summary": {
+          "anchors": [
+            {
+              "id": "h_141757b19901",
+              "type": "hunk"
+            },
+            {
+              "id": "h_635a75a6dabc",
+              "type": "hunk"
+            }
+          ],
+          "text": "Adds RetryPolicy with exponential backoff, a delay cap, jitter and a total attempt budget, and makes Worker use it in place of a fixed delay."
+        },
+        "attention": {
+          "refs": [
+            "rsk_retry_herd",
+            "ev_retry_spread"
+          ],
+          "text": "Backoff and jitter are covered only by unit tests, and nothing exercises many workers retrying together."
+        },
+        "blocks": [
+          {
+            "items": [
+              {
+                "change": "added",
+                "hunks": [
+                  "h_141757b19901"
+                ],
+                "kind": "type",
+                "name": "RetryPolicy",
+                "path": "queue/retry.go"
+              },
+              {
+                "change": "added",
+                "hunks": [
+                  "h_141757b19901"
+                ],
+                "kind": "function",
+                "name": "RetryPolicy.Delay",
+                "path": "queue/retry.go"
+              },
+              {
+                "change": "added",
+                "hunks": [
+                  "h_141757b19901"
+                ],
+                "kind": "function",
+                "name": "RetryPolicy.Exhausted",
+                "path": "queue/retry.go"
+              },
+              {
+                "change": "modified",
+                "hunks": [
+                  "h_635a75a6dabc",
+                  "h_61fd2272d6b3"
+                ],
+                "kind": "type",
+                "name": "Worker",
+                "path": "queue/worker.go"
+              }
+            ],
+            "kind": "entities"
+          },
+          {
+            "kind": "behavior",
+            "steps": [
+              {
+                "anchors": [
+                  {
+                    "id": "h_141757b19901",
+                    "lines": [
+                      31,
+                      42
+                    ],
+                    "type": "hunk"
+                  }
+                ],
+                "evidence": [
+                  "ev_retry_tests"
+                ],
+                "id": "beh_delay",
+                "title": "Retries wait longer after each failure, up to a cap",
+                "before": "Every retry waited the same fixed time.",
+                "after": "The wait starts short, doubles after each failed attempt and stops growing at a maximum.",
+                "question": "Can the doubling overflow before Max is applied?",
+                "text": "The delay after a failed attempt starts at Base, doubles with each further attempt and never exceeds Max"
+              },
+              {
+                "anchors": [
+                  {
+                    "id": "h_141757b19901",
+                    "lines": [
+                      25,
+                      27
+                    ],
+                    "type": "hunk"
+                  }
+                ],
+                "evidence": [
+                  "ev_retry_boundary"
+                ],
+                "id": "beh_budget",
+                "text": "A job is exhausted once its attempt count reaches Budget"
+              },
+              {
+                "anchors": [
+                  {
+                    "id": "h_141757b19901",
+                    "lines": [
+                      39,
+                      41
+                    ],
+                    "type": "hunk"
+                  }
+                ],
+                "evidence": [
+                  "ev_retry_tests"
+                ],
+                "id": "beh_jitter",
+                "text": "Jitter adds up to the configured fraction of the delay, so the delay never shrinks below the computed value"
+              },
+              {
+                "anchors": [
+                  {
+                    "id": "h_61fd2272d6b3",
+                    "lines": [
+                      40,
+                      40
+                    ],
+                    "type": "hunk"
+                  }
+                ],
+                "evidence": [],
+                "id": "beh_worker",
+                "text": "After a failure the worker sleeps for the policy's delay for the job's attempt count"
+              }
+            ]
+          },
+          {
+            "content": "sequenceDiagram\n  participant W as Worker\n  participant P as RetryPolicy\n  participant S as Store\n  W-\u003e\u003eS: Claim\n  S--\u003e\u003eW: job (attempt n)\n  W-\u003e\u003eW: Handler fails\n  W-\u003e\u003eP: Exhausted(n)?\n  P--\u003e\u003eW: no\n  W-\u003e\u003eS: Fail(reason)\n  W-\u003e\u003eP: Delay(n)\n  W-\u003e\u003eW: sleep",
+            "format": "mermaid",
+            "kind": "diagram",
+            "source": [
+              {
+                "id": "h_141757b19901",
+                "type": "hunk"
+              },
+              {
+                "id": "h_61fd2272d6b3",
+                "lines": [
+                  33,
+                  46
+                ],
+                "type": "hunk"
+              }
+            ]
+          },
+          {
+            "caption": "Configuring a worker with a custom policy",
+            "content": "w := \u0026queue.Worker{\n\tStore:   store,\n\tHandler: handle,\n\tRetry:   queue.RetryPolicy{Base: 2 * time.Second, Max: 2 * time.Minute, Budget: 8, Jitter: 0.3},\n}",
+            "kind": "code",
+            "language": "go",
+            "source": [
+              {
+                "id": "h_635a75a6dabc",
+                "lines": [
+                  18,
+                  18
+                ],
+                "type": "hunk"
+              }
+            ]
+          },
+          {
+            "columns": [
+              "Attempt",
+              "Delay before jitter"
+            ],
+            "kind": "table",
+            "rows": [
+              [
+                "1",
+                "1s"
+              ],
+              [
+                "2",
+                "2s"
+              ],
+              [
+                "3",
+                "4s"
+              ],
+              [
+                "4",
+                "8s"
+              ],
+              [
+                "5",
+                "exhausted"
+              ]
+            ],
+            "source": [
+              {
+                "id": "h_141757b19901",
+                "lines": [
+                  20,
+                  20
+                ],
+                "type": "hunk"
+              }
+            ]
+          }
+        ]
+      },
+      "covers": [
+        "h_141757b19901",
+        "h_b10d7bdede44",
+        "h_635a75a6dabc",
+        "h_61fd2272d6b3"
+      ],
+      "state": "ready"
+    },
+    {
+      "id": "sec_deadletter",
+      "type": "change",
+      "title": "Dead-letter store and migration",
+      "headline": "Adds a dead-letter set for jobs that exhaust their retry budget, a migration with the dead_letters table, and Store.Reset so a buried job can be requeued with a fresh attempt count",
+      "data": {
+        "change": "sec_deadletter",
+        "summary": {
+          "anchors": [
+            {
+              "id": "h_113c5f55c94f",
+              "type": "hunk"
+            },
+            {
+              "id": "h_e744026adb28",
+              "type": "hunk"
+            }
+          ],
+          "text": "Adds a dead-letter set for jobs that exhaust their retry budget, a migration with the dead_letters table, and Store.Reset so a buried job can be requeued with a fresh attempt count."
+        },
+        "attention": {
+          "refs": [
+            "rsk_dl_cascade",
+            "rsk_dl_lock"
+          ],
+          "text": "The migration cascades deletes from jobs, and Requeue calls into the store while holding its own lock."
+        },
+        "blocks": [
+          {
+            "items": [
+              {
+                "change": "added",
+                "hunks": [
+                  "h_e744026adb28"
+                ],
+                "kind": "table",
+                "name": "dead_letters",
+                "path": "migrations/0007_dead_letters.sql"
+              },
+              {
+                "change": "added",
+                "hunks": [
+                  "h_e744026adb28"
+                ],
+                "kind": "migration",
+                "name": "0007_dead_letters.sql",
+                "path": "migrations/0007_dead_letters.sql"
+              },
+              {
+                "change": "added",
+                "hunks": [
+                  "h_113c5f55c94f"
+                ],
+                "kind": "type",
+                "name": "DeadLetters",
+                "path": "queue/deadletter.go"
+              },
+              {
+                "change": "added",
+                "hunks": [
+                  "h_1b38ee9b9a9b"
+                ],
+                "kind": "function",
+                "name": "MemoryStore.Reset",
+                "path": "queue/store.go"
+              }
+            ],
+            "kind": "entities"
+          },
+          {
+            "kind": "behavior",
+            "steps": [
+              {
+                "anchors": [
+                  {
+                    "id": "h_61fd2272d6b3",
+                    "lines": [
+                      36,
+                      37
+                    ],
+                    "type": "hunk"
+                  },
+                  {
+                    "id": "h_113c5f55c94f",
+                    "lines": [
+                      38,
+                      43
+                    ],
+                    "type": "hunk"
+                  }
+                ],
+                "evidence": [
+                  "ev_dl_tests"
+                ],
+                "id": "beh_bury",
+                "text": "A job whose handler fails with no attempts left is recorded as a dead letter and takes no further retries"
+              },
+              {
+                "anchors": [
+                  {
+                    "id": "h_113c5f55c94f",
+                    "lines": [
+                      59,
+                      69
+                    ],
+                    "type": "hunk"
+                  },
+                  {
+                    "id": "h_1b38ee9b9a9b",
+                    "lines": [
+                      107,
+                      119
+                    ],
+                    "type": "hunk"
+                  }
+                ],
+                "evidence": [
+                  "ev_dl_tests"
+                ],
+                "id": "beh_requeue",
+                "text": "Requeue marks the entry requeued and resets the job to pending with zero attempts and no error"
+              },
+              {
+                "anchors": [
+                  {
+                    "id": "h_e744026adb28",
+                    "type": "hunk"
+                  }
+                ],
+                "evidence": [
+                  "ev_dl_migration"
+                ],
+                "id": "beh_schema",
+                "text": "The migration adds the dead_letters table keyed by job id and a buried flag on jobs defaulting to false"
+              }
+            ]
+          }
+        ]
+      },
+      "covers": [
+        "h_113c5f55c94f",
+        "h_9cce5ce589a0",
+        "h_e744026adb28",
+        "h_e66d5057fa3c",
+        "h_1b38ee9b9a9b",
+        "h_635a75a6dabc",
+        "h_61fd2272d6b3"
+      ],
+      "state": "ready"
+    },
+    {
+      "id": "sec_ackfix",
+      "type": "change",
+      "title": "Second ack is ignored",
+      "headline": "Fixes a race where two workers acknowledging the same job both marked it done: Ack now fails with ErrNotRunning unless the job is running, and the worker treats that error as already handled",
+      "data": {
+        "change": "sec_ackfix",
+        "summary": {
+          "anchors": [
+            {
+              "id": "h_bd8d10ed6374",
+              "type": "hunk"
+            },
+            {
+              "id": "h_61fd2272d6b3",
+              "type": "hunk"
+            }
+          ],
+          "text": "Fixes a race where two workers acknowledging the same job both marked it done: Ack now fails with ErrNotRunning unless the job is running, and the worker treats that error as already handled."
+        },
+        "attention": null,
+        "blocks": [
+          {
+            "kind": "behavior",
+            "steps": [
+              {
+                "anchors": [
+                  {
+                    "id": "h_bd8d10ed6374",
+                    "lines": [
+                      73,
+                      75
+                    ],
+                    "type": "hunk"
+                  }
+                ],
+                "evidence": [
+                  "ev_ack_regression"
+                ],
+                "id": "beh_ack_guard",
+                "text": "Ack on a job that is not running returns ErrNotRunning and changes nothing"
+              },
+              {
+                "anchors": [
+                  {
+                    "id": "h_61fd2272d6b3",
+                    "lines": [
+                      43,
+                      45
+                    ],
+                    "type": "hunk"
+                  }
+                ],
+                "evidence": [],
+                "id": "beh_ack_worker",
+                "text": "The worker ignores ErrNotRunning from Ack and records any other Ack error as a failure"
+              }
+            ]
+          },
+          {
+            "kind": "repro",
+            "source": [
+              {
+                "id": "h_7405cf5cb903",
+                "lines": [
+                  36,
+                  47
+                ],
+                "type": "hunk"
+              }
+            ],
+            "steps": [
+              "Add a job and Claim it so it is running",
+              "Call Ack twice with the job's ID",
+              "Before the fix the second call marks the job done again; after it, the call returns ErrNotRunning"
+            ]
+          }
+        ]
+      },
+      "covers": [
+        "h_e66d5057fa3c",
+        "h_bd8d10ed6374",
+        "h_be4e5374ec6c",
+        "h_61fd2272d6b3",
+        "h_7405cf5cb903"
+      ],
+      "state": "ready"
+    },
+    {
+      "id": "sec_docs",
+      "type": "change",
+      "title": "Docs and dependency bump",
+      "headline": "Documents the retry budget and dead letters with a flow diagram, and raises golang.org/x/time from v0.5.0 to v0.6.0",
+      "data": {
+        "change": "sec_docs",
+        "summary": {
+          "anchors": [
+            {
+              "id": "h_938fb177e9e6",
+              "type": "hunk"
+            },
+            {
+              "id": "h_b085f482046e",
+              "type": "hunk"
+            }
+          ],
+          "text": "Documents the retry budget and dead letters with a flow diagram, and raises golang.org/x/time from v0.5.0 to v0.6.0."
+        },
+        "attention": null,
+        "blocks": [
+          {
+            "items": [
+              {
+                "changelog": {
+                  "label": "x/time changelog",
+                  "type": "external_url",
+                  "url": "https://example.com/changelogs/golang-x-time"
+                },
+                "ecosystem": "go",
+                "from": "v0.5.0",
+                "hunks": [
+                  "h_b085f482046e"
+                ],
+                "name": "golang.org/x/time",
+                "to": "v0.6.0"
+              }
+            ],
+            "kind": "dependency"
+          }
+        ]
+      },
+      "covers": [
+        "h_938fb177e9e6",
+        "h_3d1ee52461f5",
+        "h_b085f482046e"
+      ],
+      "state": "ready"
+    },
+    {
+      "id": "media",
+      "type": "media",
+      "title": "Media",
+      "headline": "2 media blocks",
+      "data": {
+        "items": [
+          {
+            "change": "sec_docs",
+            "block": {
+              "items": [
+                {
+                  "attachment": "att_e7b5a4d8274ca858a94cbc586c93c37a",
+                  "caption": "How a job moves from retry to the dead-letter set"
+                },
+                {
+                  "attachment": "att_736e4be0bc0c6f5e62e3ccb048891c8f",
+                  "caption": "A successful requeue"
+                }
+              ],
+              "kind": "images",
+              "source": [
+                {
+                  "type": "pr_body"
+                }
+              ]
+            },
+            "origin": {
+              "change": "sec_docs",
+              "block": 2
+            }
+          },
+          {
+            "change": "sec_docs",
+            "block": {
+              "caption": "Requeueing a dead letter from the command line",
+              "kind": "media",
+              "source": [
+                {
+                  "type": "pr_body"
+                }
+              ],
+              "url": "https://example.com/taskline/media/requeue-demo.mp4"
+            },
+            "origin": {
+              "change": "sec_docs",
+              "block": 3
+            }
+          }
+        ]
+      },
+      "state": "ready"
+    },
+    {
+      "id": "evidence",
+      "type": "evidence",
+      "title": "Evidence",
+      "headline": "20 items, 1 missing",
+      "data": {},
+      "state": "ready"
+    },
+    {
+      "id": "intent",
+      "type": "intent",
+      "title": "Intent",
+      "data": {
+        "implements": [
+          {
+            "key": "TASK-31",
+            "system": "jira",
+            "type": "issue"
+          },
+          {
+            "key": "TASK-32",
+            "system": "jira",
+            "type": "issue"
+          }
+        ],
+        "lines": [
+          {
+            "change": "sec_retry",
+            "text": "A job that fails should wait longer after each failure and stop after a bounded number of attempts, instead of retrying forever at a fixed delay.",
+            "anchors": [
+              {
+                "type": "pr_body"
+              },
+              {
+                "key": "TASK-31",
+                "system": "jira",
+                "type": "issue"
+              },
+              {
+                "index": 1,
+                "input": "389a1221-117c-5a53-8ac6-f1e573239425",
+                "session": "785faefe-40b5-5521-9932-4dc2d659ec1d",
+                "type": "prompt"
+              }
+            ],
+            "origin": {
+              "change": "sec_retry",
+              "block": 0
+            }
+          },
+          {
+            "change": "sec_api",
+            "text": "Operators need a way to see which jobs ran out of retries and to put them back, without giving every API caller that power.",
+            "anchors": [
+              {
+                "type": "pr_body"
+              },
+              {
+                "index": 3,
+                "input": "d7506b99-be58-5463-9901-fc3df4b1fc9b",
+                "session": "785faefe-40b5-5521-9932-4dc2d659ec1d",
+                "type": "prompt"
+              },
+              {
+                "key": "TASK-32",
+                "system": "jira",
+                "type": "issue"
+              }
+            ],
+            "origin": {
+              "change": "sec_api",
+              "block": 0
+            }
+          },
+          {
+            "change": "sec_deadletter",
+            "text": "A job that has used its whole retry budget should not be retried again or silently dropped; an operator should be able to see it and put it back.",
+            "anchors": [
+              {
+                "type": "pr_body"
+              },
+              {
+                "key": "TASK-32",
+                "system": "jira",
+                "type": "issue"
+              },
+              {
+                "index": 2,
+                "input": "b7656325-4a15-5b3b-bbb4-4b2eb86f9a3d",
+                "session": "785faefe-40b5-5521-9932-4dc2d659ec1d",
+                "type": "prompt"
+              }
+            ],
+            "origin": {
+              "change": "sec_deadletter",
+              "block": 0
+            }
+          },
+          {
+            "change": "sec_docs",
+            "text": "Readers need to know how the retry budget works and how to recover buried jobs.",
+            "anchors": [
+              {
+                "type": "pr_body"
+              },
+              {
+                "sha": "2076d336e1edb789dc02adf3887bccf0815211f1",
+                "type": "commit"
+              },
+              {
+                "index": 5,
+                "input": "452e012a-a2e8-564f-9eac-69f7576274fd",
+                "session": "785faefe-40b5-5521-9932-4dc2d659ec1d",
+                "type": "prompt"
+              }
+            ],
+            "origin": {
+              "change": "sec_docs",
+              "block": 0
+            }
+          },
+          {
+            "change": "sec_ackfix",
+            "text": "Acknowledging a job twice should be harmless and must not flip a job's state again or be recorded as a failure.",
+            "anchors": [
+              {
+                "index": 4,
+                "input": "5f30aa12-b84a-578c-98e2-474cd4529ce8",
+                "session": "785faefe-40b5-5521-9932-4dc2d659ec1d",
+                "type": "prompt"
+              },
+              {
+                "sha": "d6d7a116b9babb73a1e9be4db63b94f35952ba6b",
+                "type": "commit"
+              }
+            ],
+            "origin": {
+              "change": "sec_ackfix",
+              "block": 0
+            }
+          }
+        ]
+      },
+      "state": "ready"
+    },
+    {
+      "id": "context",
+      "type": "context",
+      "title": "Context",
+      "headline": "The `queue` package runs taskline's background jobs: a `Worker` claims jobs from a `Store`, runs them and acknowledges or fails each one",
+      "data": {
+        "area": {
+          "text": "The `queue` package runs taskline's background jobs: a `Worker` claims jobs from a `Store`, runs them and acknowledges or fails each one. The `api` package serves job lookups over HTTP from the same store.",
+          "refs": [
+            {
+              "path": "queue/worker.go",
+              "symbol": "Worker"
+            },
+            {
+              "path": "queue/store.go",
+              "symbol": "Store"
+            },
+            {
+              "path": "api/handler.go",
+              "symbol": "Handler"
+            }
+          ]
+        },
+        "reached_by": {
+          "text": "Every job passes through `Worker.Run`, so a failed run now reaches the retry policy there. The dead-letter endpoints join the job lookup in `Handler.Routes`, behind `RequireOperator`.",
+          "refs": [
+            {
+              "path": "queue/worker.go",
+              "symbol": "Worker.Run"
+            },
+            {
+              "path": "api/handler.go",
+              "symbol": "Handler.Routes"
+            },
+            {
+              "path": "api/auth.go",
+              "symbol": "RequireOperator"
+            }
+          ]
+        },
+        "contracts": {
+          "text": "`Store` is an interface other stores implement, so a new method and a new `Ack` error reach every implementation. `RoleFromRequest` decides who is an operator, and the new endpoints trust it as it is.",
+          "refs": [
+            {
+              "path": "queue/store.go",
+              "symbol": "Store"
+            },
+            {
+              "path": "api/auth.go",
+              "symbol": "RoleFromRequest"
+            }
+          ]
+        },
+        "related": {
+          "text": "`MemoryStore` is the store the tests use; it gains `Reset` and the stricter `Ack` alongside the interface.",
+          "refs": [
+            {
+              "path": "queue/store.go",
+              "symbol": "MemoryStore"
+            }
+          ]
+        }
+      },
+      "state": "ready"
+    },
+    {
+      "id": "decisions",
+      "type": "decisions",
+      "title": "Decisions",
+      "headline": "8 decisions",
+      "data": {
+        "items": [
+          {
+            "anchors": [
+              {
+                "index": 1,
+                "input": "389a1221-117c-5a53-8ac6-f1e573239425",
+                "session": "785faefe-40b5-5521-9932-4dc2d659ec1d",
+                "type": "prompt"
+              },
+              {
+                "id": 7001,
+                "type": "pr_comment"
+              }
+            ],
+            "by": "human",
+            "change": "sec_retry",
+            "id": "dec_retry_double",
+            "origin": {
+              "change": "sec_retry",
+              "block": 3,
+              "item": 0
+            },
+            "rejected": "A Multiplier field on RetryPolicy",
+            "text": "Use plain doubling with a cap rather than a configurable multiplier"
+          },
+          {
+            "anchors": [
+              {
+                "sha": "91b7e4fc80761ec63b0d7f04d7b5631e74728856",
+                "type": "commit"
+              },
+              {
+                "id": "h_141757b19901",
+                "lines": [
+                  14,
+                  15
+                ],
+                "type": "hunk"
+              }
+            ],
+            "by": "agent",
+            "change": "sec_retry",
+            "id": "dec_retry_budget",
+            "origin": {
+              "change": "sec_retry",
+              "block": 3,
+              "item": 1
+            },
+            "text": "Count the budget as total attempts, including the first, so Budget 5 means one run and four retries"
+          },
+          {
+            "anchors": [
+              {
+                "id": "PRRT_example_02",
+                "type": "review_thread"
+              },
+              {
+                "sha": "91b7e4fc80761ec63b0d7f04d7b5631e74728856",
+                "type": "commit"
+              }
+            ],
+            "by": "human",
+            "change": "sec_retry",
+            "id": "dec_retry_review",
+            "origin": {
+              "change": "sec_retry",
+              "block": 3,
+              "item": 2
+            },
+            "text": "Fix the overflow concern from the first automated review by capping the loop on Max"
+          },
+          {
+            "anchors": [
+              {
+                "id": 7001,
+                "type": "pr_comment"
+              },
+              {
+                "label": "Gateway design note",
+                "type": "external_url",
+                "url": "https://example.com/taskline/design/auth-gateway"
+              }
+            ],
+            "by": "human",
+            "change": "sec_api",
+            "id": "dec_api_header",
+            "origin": {
+              "change": "sec_api",
+              "block": 3,
+              "item": 0
+            },
+            "rejected": "Bearer tokens checked inside taskline",
+            "text": "Read the role from a gateway-set header for now and defer real authentication"
+          },
+          {
+            "anchors": [
+              {
+                "number": 207,
+                "type": "pr"
+              },
+              {
+                "id": "h_a408875b8eaa",
+                "lines": [
+                  20,
+                  21
+                ],
+                "type": "hunk"
+              }
+            ],
+            "by": "agent",
+            "change": "sec_api",
+            "id": "dec_api_routes",
+            "origin": {
+              "change": "sec_api",
+              "block": 3,
+              "item": 1
+            },
+            "text": "Register the new routes beside the job lookup from the earlier admin API change"
+          },
+          {
+            "anchors": [
+              {
+                "id": "PRRT_example_04",
+                "type": "review_thread"
+              },
+              {
+                "id": "h_578603ca5fc8",
+                "lines": [
+                  30,
+                  30
+                ],
+                "type": "hunk"
+              }
+            ],
+            "by": "agent",
+            "change": "sec_api",
+            "id": "dec_api_cap",
+            "origin": {
+              "change": "sec_api",
+              "block": 3,
+              "item": 2
+            },
+            "text": "Clamp limit to 200 instead of rejecting larger values"
+          },
+          {
+            "anchors": [
+              {
+                "index": 2,
+                "input": "b7656325-4a15-5b3b-bbb4-4b2eb86f9a3d",
+                "session": "785faefe-40b5-5521-9932-4dc2d659ec1d",
+                "type": "prompt"
+              },
+              {
+                "sha": "2076d336e1edb789dc02adf3887bccf0815211f1",
+                "type": "commit"
+              },
+              {
+                "id": "h_e744026adb28",
+                "type": "hunk"
+              }
+            ],
+            "by": "agent",
+            "change": "sec_deadletter",
+            "id": "dec_dl_table",
+            "origin": {
+              "change": "sec_deadletter",
+              "block": 3,
+              "item": 0
+            },
+            "rejected": "A dead state on jobs",
+            "text": "Keep dead letters in their own table instead of a state on the jobs row, so the queue's claim query is unchanged"
+          },
+          {
+            "anchors": [
+              {
+                "id": 7003,
+                "type": "pr_comment"
+              },
+              {
+                "id": "PRRT_example_01",
+                "type": "review_thread"
+              }
+            ],
+            "by": "human",
+            "change": "sec_deadletter",
+            "id": "dec_dl_bury",
+            "origin": {
+              "change": "sec_deadletter",
+              "block": 3,
+              "item": 1
+            },
+            "text": "Bury only on failure, never after a successful last attempt"
+          }
+        ]
+      },
+      "state": "ready"
+    },
+    {
+      "id": "everything_else",
+      "type": "everything_else",
+      "title": "Everything else",
+      "headline": "Renames Job.Err to Job.LastError at each use",
+      "data": {
+        "change": "sec_mechanical",
+        "unassigned": [
+          "h_8143a44d25d2"
+        ],
+        "summary": {
+          "anchors": [
+            {
+              "id": "h_99ac328e799a",
+              "type": "hunk"
+            }
+          ],
+          "text": "Renames Job.Err to Job.LastError at each use."
+        },
+        "attention": null,
+        "blocks": [
+          {
+            "items": [
+              {
+                "count": 3,
+                "derived_from": "sec_ackfix",
+                "hunks": [
+                  "h_99ac328e799a",
+                  "h_a0480f808203",
+                  "h_49d34df71eac"
+                ],
+                "id": "grp_lasterror",
+                "rule": "Job.Err renamed to Job.LastError"
+              }
+            ],
+            "kind": "groups"
+          }
+        ]
+      },
+      "covers": [
+        "h_99ac328e799a",
+        "h_a0480f808203",
+        "h_49d34df71eac",
+        "h_8143a44d25d2"
+      ],
+      "state": "ready"
+    },
+    {
+      "id": "sec_fixed_delay",
+      "type": "change",
+      "title": "Fixed retry delay",
+      "headline": "Adds a Delay field to Worker and sleeps for it after each failure",
+      "data": {
+        "change": "sec_fixed_delay",
+        "summary": {
+          "anchors": [
+            {
+              "id": "h_52af97368ab7",
+              "type": "hunk"
+            }
+          ],
+          "text": "Adds a Delay field to Worker and sleeps for it after each failure."
+        },
+        "attention": null,
+        "blocks": [
+          {
+            "anchors": [
+              {
+                "type": "pr_body"
+              },
+              {
+                "index": 1,
+                "input": "389a1221-117c-5a53-8ac6-f1e573239425",
+                "session": "785faefe-40b5-5521-9932-4dc2d659ec1d",
+                "type": "prompt"
+              }
+            ],
+            "kind": "intent",
+            "text": "A failed job should not be retried immediately."
+          }
+        ]
+      },
+      "state": "ready"
+    }
+  ],
+  "layout": {
+    "entries": [
+      {
+        "tile": "overview",
+        "size": "half"
+      },
+      {
+        "tile": "risks",
+        "size": "half"
+      },
+      {
+        "tile": "sec_api",
+        "size": "third",
+        "group": "changes"
+      },
+      {
+        "tile": "sec_retry",
+        "size": "third",
+        "group": "changes"
+      },
+      {
+        "tile": "sec_deadletter",
+        "size": "third",
+        "group": "changes"
+      },
+      {
+        "tile": "sec_ackfix",
+        "size": "third",
+        "group": "changes"
+      },
+      {
+        "tile": "sec_docs",
+        "size": "third",
+        "group": "changes"
+      },
+      {
+        "tile": "media",
+        "size": "third"
+      },
+      {
+        "tile": "evidence",
+        "size": "third"
+      },
+      {
+        "tile": "intent",
+        "size": "third"
+      },
+      {
+        "tile": "context",
+        "size": "third"
+      },
+      {
+        "tile": "decisions",
+        "size": "third"
+      },
+      {
+        "tile": "everything_else",
+        "size": "third"
+      },
+      {
+        "tile": "sec_fixed_delay",
+        "size": "third",
+        "group": "obsolete"
+      }
+    ],
+    "groups": [
+      {
+        "id": "changes",
+        "title": "Changes",
+        "collapse_after": 4
+      },
+      {
+        "id": "obsolete",
+        "title": "Obsolete changes",
+        "collapse_after": 0
+      }
+    ],
+    "landing": 9
+  }
+}
