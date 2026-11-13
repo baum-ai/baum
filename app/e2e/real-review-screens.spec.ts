@@ -1,0 +1,329 @@
+import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import { expect, test, type Page } from "@playwright/test";
+import { launchURL } from "./inbox-helpers";
+
+// Pictures of real saved reviews, taken only on request
+// (REAL_REVIEW_SCREENSHOTS=1) against the real-reviews fixture daemon
+// (TestLocalAppRealReviews, started by playwright.real-reviews.config.ts),
+// which serves reviews copied from a private dataset. They are written to
+// test-results/real-reviews, which is not committed, and hold private content.
+//
+// Per review, size and theme it opens the review page and takes each of STATES,
+// as a viewport picture and a full-page one. Settings, all optional:
+//   REAL_REVIEW_VIEW     the review page: full (default) or tiles
+//   REAL_REVIEW_TILE     a selector for the tiles of the tiles page; the
+//                        "detail" state opens the first one
+//   REAL_REVIEW_ONLY     only the reviews whose repo#number contains this text
+//   REAL_REVIEW_OUT      the output directory (default test-results/real-reviews)
+//   REAL_REVIEW_FULL=0   viewport pictures only
+test.skip(!process.env.REAL_REVIEW_SCREENSHOTS, "screenshots are taken on request");
+
+const VIEW = process.env.REAL_REVIEW_VIEW || "full";
+const TILE = process.env.REAL_REVIEW_TILE || "[data-tile-id]";
+const OUT = process.env.REAL_REVIEW_OUT || "test-results/real-reviews";
+const FULL_PAGE = process.env.REAL_REVIEW_FULL !== "0";
+
+const SIZES = [
+  { width: 1440, height: 900 },
+  { width: 900, height: 900 },
+  { width: 390, height: 844 },
+];
+const THEMES = ["light", "dark"] as const;
+type Theme = (typeof THEMES)[number];
+
+type Pick = {
+  repository: string;
+  number: number;
+  title: string;
+  version: number;
+  versions: number[];
+  clone: string;
+  tags?: string[];
+};
+
+/** What a state's steps know about the review being photographed. */
+type Context = {
+  page: Page;
+  pick: Pick;
+  /** The id of the review's first section. */
+  firstSection: string;
+  /** The address of the review page, to which a state adds what it needs. */
+  address: (extra?: Record<string, string>) => string;
+};
+
+/** A state of the page to photograph. `open` brings the page to it from the
+ *  review's landing page and returns false when the review has no such state
+ *  (it is then skipped). Add a state here to photograph it for every review;
+ *  `views` limits it to some review pages. */
+type State = {
+  name: string;
+  views?: string[];
+  open: (c: Context) => Promise<boolean | void>;
+};
+
+export const STATES: State[] = [
+  { name: "landing", open: async () => true },
+  {
+    // The first section; with the tiles page, the first tile.
+    name: "detail",
+    open: async ({ page, address, firstSection }) => {
+      if (VIEW === "tiles") {
+        const tile = page.locator(TILE).first();
+        if ((await tile.count()) === 0) return false;
+        await tile.click();
+      } else {
+        if (!firstSection) return false;
+        await page.goto(address({ pane: "section", section: firstSection }));
+      }
+    },
+  },
+  {
+    // The first hunk excerpt of the detail, opened to code.
+    name: "excerpt",
+    open: async ({ page }) => {
+      const summary = page.locator("summary[aria-label^='Code evidence']").first();
+      if ((await summary.count()) === 0) return false;
+      await summary.scrollIntoViewIfNeeded();
+      await summary.click();
+    },
+  },
+];
+
+type Issue = { where: string; what: string };
+
+/** Waits until the page has stopped changing: nothing spins, fonts and images
+ *  have loaded, no excerpt is loading. What did not settle is returned. */
+async function settle(page: Page, where: string): Promise<Issue[]> {
+  const issues: Issue[] = [];
+  // What is still going on, as names; empty once the page has settled.
+  const pending = () =>
+    page.evaluate(() => {
+      const what: string[] = [];
+      if (document.querySelector(".animate-spin")) what.push("a spinner");
+      if (/Loading (excerpt|historical)/.test(document.body.innerText)) what.push("an excerpt");
+      if ([...document.images].some((i) => !i.complete)) what.push("an image");
+      return what;
+    });
+  await page.evaluate(() => document.fonts.ready);
+  try {
+    await expect.poll(pending, { timeout: 20_000 }).toEqual([]);
+  } catch {
+    issues.push({
+      where,
+      what: `the page did not settle: ${(await pending()).join(", ")} still loading`,
+    });
+  }
+  // Layout and transitions after the last load.
+  await page.waitForTimeout(400);
+  return issues;
+}
+
+/** What is wrong with a settled page that a picture would not show clearly. */
+async function inspect(page: Page, where: string): Promise<Issue[]> {
+  const found = await page.evaluate(() => {
+    const what: string[] = [];
+    for (const alert of document.querySelectorAll("[role='alert']")) {
+      const text = (alert as HTMLElement).innerText.trim();
+      if (text) what.push(`notice: ${text.slice(0, 160)}`);
+    }
+    const body = document.body.innerText;
+    if (body.includes("Excerpt unavailable")) what.push("an excerpt is unavailable");
+    if ([...document.images].some((i) => i.complete && i.naturalWidth === 0 && i.currentSrc))
+      what.push("an image failed to load");
+    if (document.documentElement.scrollWidth > innerWidth + 1)
+      what.push("the page scrolls sideways");
+    return what;
+  });
+  return found.map((what) => ({ where, what }));
+}
+
+/** The tallest scrolling region and how far it scrolls: the app keeps its
+ *  panes in regions of their own, so a full-page picture is a viewport as
+ *  tall as the content. */
+function scrollExtra(page: Page): Promise<number> {
+  return page.evaluate(() => {
+    let extra = document.documentElement.scrollHeight - innerHeight;
+    for (const el of document.querySelectorAll<HTMLElement>("*")) {
+      const overflow = getComputedStyle(el).overflowY;
+      if ((overflow === "auto" || overflow === "scroll") && el.clientHeight > innerHeight / 3)
+        extra = Math.max(extra, el.scrollHeight - el.clientHeight);
+    }
+    return Math.max(extra, 0);
+  });
+}
+
+// Chromium cannot draw a picture much taller than this.
+const MAX_HEIGHT = 16000;
+
+async function capture(
+  page: Page,
+  base: string,
+  size: { width: number; height: number },
+  issues: Issue[],
+) {
+  await page.screenshot({ path: `${base}.png`, animations: "disabled" });
+  if (!FULL_PAGE) return;
+  // Growing the viewport can lengthen the content (regions that render what
+  // fits), so grow until it all fits.
+  let height = size.height;
+  for (let round = 0; round < 4; round++) {
+    const extra = await scrollExtra(page);
+    if (extra === 0 || height >= MAX_HEIGHT) break;
+    height = Math.min(height + extra, MAX_HEIGHT);
+    await page.setViewportSize({ width: size.width, height });
+    issues.push(...(await settle(page, `${base} (full page)`)));
+  }
+  if (height === size.height) return;
+  await page.screenshot({ path: `${base}-full.png`, animations: "disabled" });
+  await page.setViewportSize(size);
+  await page.waitForTimeout(200);
+}
+
+const slugOf = (pick: Pick) =>
+  `${pick.repository.replace("/", "-")}-${pick.number}-v${pick.version || pick.versions.at(-1)}`;
+
+test("pictures of real saved reviews", async ({ page }) => {
+  test.setTimeout(0);
+  const state = process.env.BAUM_APP_STATE_DIR ?? "";
+  const picks: Pick[] = JSON.parse(await readFile(join(state, "picks.json"), "utf8")).filter(
+    (p: Pick) => `${p.repository}#${p.number}`.includes(process.env.REAL_REVIEW_ONLY ?? ""),
+  );
+  expect(picks.length).toBeGreaterThan(0);
+  // The launch address signs the browser in and redirects to the session's own
+  // path, dropping any query; review pages are addresses under that path.
+  await page.goto(await launchURL());
+  await expect(page.getByRole("navigation", { name: "Main" })).toBeVisible();
+  const launch = new URL(page.url());
+  launch.search = "";
+  const consoleErrors: string[] = [];
+  page.on("console", (m) => m.type() === "error" && consoleErrors.push(m.text()));
+  page.on("pageerror", (e) => consoleErrors.push(String(e)));
+
+  for (const pick of picks) {
+    const slug = slugOf(pick);
+    const dir = join(OUT, slug);
+    await rm(dir, { recursive: true, force: true });
+    await mkdir(dir, { recursive: true });
+    const issues: Issue[] = [];
+    const address = (extra: Record<string, string> = {}) => {
+      const url = new URL(launch);
+      url.search = new URLSearchParams({
+        clone: pick.clone,
+        pr: String(pick.number),
+        view: VIEW,
+        ...(pick.version ? { review: String(pick.version) } : {}),
+        ...extra,
+      }).toString();
+      return url.href;
+    };
+    await test.step(`${pick.repository}#${pick.number}`, async () => {
+      await page.setViewportSize(SIZES[0]!);
+      await page.goto(address());
+      issues.push(...(await settle(page, "first load")));
+      const firstSection: string = await page.evaluate(
+        async ({ clone, pr, version }) => {
+          const query = new URLSearchParams({
+            clone,
+            pr: String(pr),
+            ...(version ? { version } : {}),
+          });
+          const answer = await fetch(`api/document?${query}`);
+          return answer.ok ? ((await answer.json()).sections?.[0]?.id ?? "") : "";
+        },
+        { clone: pick.clone, pr: pick.number, version: pick.version ? String(pick.version) : "" },
+      );
+      for (const theme of THEMES as readonly Theme[]) {
+        await page.emulateMedia({ colorScheme: theme });
+        for (const size of SIZES) {
+          await page.setViewportSize(size);
+          await page.goto(address());
+          const context: Context = { page, pick, firstSection, address };
+          for (const s of STATES) {
+            if (s.views && !s.views.includes(VIEW)) continue;
+            const name = `${VIEW}-${s.name}-${size.width}-${theme}`;
+            if ((await s.open(context)) === false) continue;
+            issues.push(...(await settle(page, name)));
+            const dark = await page.evaluate(() => document.documentElement.dataset.theme);
+            if (dark !== theme)
+              issues.push({ where: name, what: `the page is in the ${dark} theme` });
+            issues.push(...(await inspect(page, name)));
+            await capture(page, join(dir, name), size, issues);
+          }
+        }
+      }
+    });
+    const unique = [...new Map(issues.map((i) => [`${i.where}|${i.what}`, i])).values()];
+    await writeFile(
+      join(dir, "review.json"),
+      JSON.stringify(
+        { ...pick, shown: pick.version || pick.versions.at(-1), issues: unique },
+        null,
+        2,
+      ),
+    );
+  }
+  if (consoleErrors.length) console.log(`console errors: ${consoleErrors.length}`);
+  await writeFile(join(OUT, "console-errors.txt"), [...new Set(consoleErrors)].join("\n"));
+  await writeContactSheet(OUT);
+});
+
+const escape = (s: string) =>
+  s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
+
+/** A static page that lists every review in the output directory, its
+ *  problems, and its pictures by state, size and theme. */
+async function writeContactSheet(out: string) {
+  const reviews: string[] = [];
+  for (const entry of (await readdir(out, { withFileTypes: true })).sort((a, b) =>
+    a.name.localeCompare(b.name),
+  )) {
+    if (!entry.isDirectory()) continue;
+    let info: (Pick & { issues: Issue[]; shown: number }) | undefined;
+    try {
+      info = JSON.parse(await readFile(join(out, entry.name, "review.json"), "utf8"));
+    } catch {
+      continue;
+    }
+    const all = await readdir(join(out, entry.name));
+    const byState = new Map<string, string[]>();
+    for (const file of all.filter((f) => f.endsWith(".png") && !f.endsWith("-full.png"))) {
+      const key = file.replace(/-\d+-(light|dark)\.png$/, "");
+      byState.set(key, [...(byState.get(key) ?? []), file]);
+    }
+    const rows = [...byState.entries()].map(([key, list]) => {
+      const cells = list
+        .sort((a, b) => a.localeCompare(b))
+        .map((file) => {
+          const full = file.replace(/\.png$/, "-full.png");
+          const link = all.includes(full) ? ` · <a href="${entry.name}/${full}">full page</a>` : "";
+          return `<figure><a href="${entry.name}/${file}"><img loading="lazy" src="${entry.name}/${file}" alt="${escape(file)}"></a><figcaption>${escape(file.replace(/\.png$/, ""))}${link}</figcaption></figure>`;
+        });
+      return `<h3>${escape(key)}</h3><div class="row">${cells.join("")}</div>`;
+    });
+    const issues = info!.issues.length
+      ? `<ul class="issues">${info!.issues.map((i) => `<li>${escape(i.where)}: ${escape(i.what)}</li>`).join("")}</ul>`
+      : `<p class="ok">no problems found</p>`;
+    reviews.push(
+      `<section id="${entry.name}"><h2>${escape(info!.repository)}#${info!.number} v${info!.shown} <small>${escape((info!.tags ?? []).join(" "))}</small></h2><p>${escape(info!.title)}</p>${issues}${rows.join("")}</section>`,
+    );
+  }
+  const nav = reviews
+    .map((r) => r.match(/id="([^"]+)"/)![1]!)
+    .map((id) => `<a href="#${id}">${escape(id)}</a>`);
+  await writeFile(
+    join(out, "index.html"),
+    `<!doctype html><meta charset="utf-8"><title>Real review screenshots</title>
+<style>
+body{font:14px system-ui,sans-serif;margin:16px;background:#fafafa;color:#111}
+nav a{margin-right:10px}
+h2{margin-top:40px} h2 small{font-weight:400;color:#666}
+.row{display:flex;gap:12px;overflow-x:auto;align-items:flex-start;padding-bottom:8px}
+figure{margin:0;flex:none}
+img{height:260px;width:auto;border:1px solid #ccc;display:block}
+figcaption{font-size:12px;color:#555}
+.issues{color:#a00}.ok{color:#070}
+</style>
+<h1>Real review screenshots</h1><nav>${nav.join("")}</nav>${reviews.join("\n")}`,
+  );
+}
