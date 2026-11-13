@@ -76,6 +76,35 @@ func TestACompressedCodexRolloutIsFoundDescribedAndItsImagesServed(t *testing.T)
 	servedImage(t, f.live.Handler(), base, imageAnswer(t, f.live.Handler(), base))
 }
 
+// A compressed rollout whose frame does not record its size is described to
+// its end, past the estimate of its size: a prompt there still names it.
+func TestACompressedRolloutIsDescribedPastItsEstimatedSize(t *testing.T) {
+	f := newTranscriptFixture(t)
+	const id = "019f0000-0000-7000-8000-000000000014"
+	const turn = "019f0000-0000-7000-8000-0000000000cc"
+	var b strings.Builder
+	b.WriteString(`{"timestamp":"2026-10-30T15:42:21.557Z","ordinal":0,"type":"session_meta","payload":{"session_id":"` + id + `","id":"` + id + `","cwd":"/work/demo","cli_version":"0.166.0","model_provider":"openai","history_mode":"paginated"}}` + "\n")
+	for range 20000 {
+		b.WriteString(`{"timestamp":"2026-10-30T15:42:30.000Z","type":"event_msg","payload":{"type":"token_count","info":null}}` + "\n")
+	}
+	b.WriteString(`{"timestamp":"2026-10-30T15:50:00.000Z","type":"event_msg","payload":{"type":"user_message","message":"Rename the late flag"}}` + "\n")
+	b.WriteString(`{"timestamp":"2026-10-30T15:50:01.000Z","type":"event_msg","payload":{"type":"task_started","turn_id":"` + turn + `"}}` + "\n")
+	content := b.String()
+	path := filepath.Join(f.home, ".codex", "sessions", "2026", "10", "30", "rollout-2026-10-30T15-42-13-"+id+".jsonl.zst")
+	writeZstd(t, path, content)
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if estimate := codextranscript.DecodedSize(path, info); estimate >= int64(len(content)) {
+		t.Fatalf("estimated %d of %d bytes: the frame records its size or compresses too little to test this", estimate, len(content))
+	}
+	trackCodex(t, f, id)
+	if title := titles(t, f)["codex/"+id]; !strings.Contains(title, "Rename the late flag") {
+		t.Fatalf("title %q, want the prompt past the estimated size", title)
+	}
+}
+
 // A compressed rollout is read by decoded offset: lines before from are
 // skipped, and a read that has nothing to read does not open the file.
 func TestEachLineReadsACompressedRolloutByDecodedOffset(t *testing.T) {

@@ -383,9 +383,11 @@ func (c *tailCache) account(e *tailEntry) {
 	if !ok || element.Value != e {
 		return
 	}
-	c.held += e.reading.Bytes() - e.cost
+	// A compressed rollout's final line is kept beside the Reading (rest).
+	cost := e.reading.Bytes() + int64(len(e.rest))
+	c.held += cost - e.cost
 	c.covered += e.offset - e.covered
-	e.cost, e.covered = e.reading.Bytes(), e.offset
+	e.cost, e.covered = cost, e.offset
 	if c.held > c.limit && !e.kept {
 		c.remove(element)
 		return

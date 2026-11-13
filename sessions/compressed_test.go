@@ -117,6 +117,29 @@ func TestMapDecodesACompressedRolloutOnlyWhenItChanged(t *testing.T) {
 	}
 }
 
+// The final line a compressed rollout ends without a newline is kept beside
+// its Reading, and counts toward the cache's memory like its lines.
+func TestTheKeptFinalLineOfACompressedRolloutIsAccounted(t *testing.T) {
+	c := useTails(t, DefaultTailCacheBytes)
+	all, _, packed := compressedLifecycle(t)
+	unfinished := `{"timestamp":"2026-06-20T08:09:00Z","type":"event_msg","payload":{"type":"agent_message","message":"` + strings.Repeat("x", 200<<10)
+	path := packed.Files[0].Path
+	zstdFile(t, path, append(bytes.Join(all, nil), unfinished...))
+	if _, err := c.codex(path); err != nil {
+		t.Fatal(err)
+	}
+	if c.len() != 1 {
+		t.Fatalf("entries %d, want the rollout kept", c.len())
+	}
+	e := c.order.Front().Value.(*tailEntry)
+	if len(e.rest) < len(unfinished) {
+		t.Fatalf("kept final line of %d bytes, want the %d unread", len(e.rest), len(unfinished))
+	}
+	if want := e.reading.Bytes() + int64(len(e.rest)); c.held != want || e.cost != want {
+		t.Fatalf("held %d, cost %d; want the lines and the final line, %d", c.held, e.cost, want)
+	}
+}
+
 // With the cache off a compressed rollout is decoded whole each time.
 func TestMapReadsACompressedRolloutWithoutTheCache(t *testing.T) {
 	useTails(t, 0)

@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"maps"
+	"math"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -553,25 +554,26 @@ func (t *Transcripts) describeFiles(k key, path string) (describeSource, error) 
 // the last read stopped (from the start when it is another file or shrank),
 // and the names kept outside it.
 func (s *describeSource) read(id string, scan *scanState) error {
-	if s.transcript != "" && (scan.path != s.transcript || s.size < scan.offset) {
+	compressed := codextranscript.Compressed(s.transcript)
+	if s.transcript != "" && (compressed || scan.path != s.transcript || s.size < scan.offset) {
 		*scan = scanState{path: s.transcript}
-	}
-	// A compressed rollout is decompressed from its start however far in a
-	// pass begins, so it is read in one pass, not in several.
-	pass := int64(scanPass)
-	if codextranscript.Compressed(s.transcript) {
-		pass = s.size
 	}
 	switch s.agent {
 	case AgentClaudeCode:
-		return readClaude(s.transcript, scan.offset, min(s.size, scan.offset+pass), scan)
+		return readClaude(s.transcript, scan.offset, min(s.size, scan.offset+scanPass), scan)
 	case AgentCodex:
 		if s.index != "" {
 			if name, err := codextranscript.ThreadName(s.index, id); err == nil {
 				s.name = name
 			}
 		}
-		return readCodex(s.transcript, scan.offset, min(s.size, scan.offset+pass), scan)
+		if compressed {
+			// A compressed rollout never grows and is decompressed from its
+			// start wherever a read begins, so it is read whole, to its end:
+			// its size may be an estimate.
+			return readCodex(s.transcript, 0, math.MaxInt64, scan)
+		}
+		return readCodex(s.transcript, scan.offset, min(s.size, scan.offset+scanPass), scan)
 	case AgentCursor:
 		store, err := cursortranscript.Open(s.store)
 		if err != nil {
