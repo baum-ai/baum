@@ -141,8 +141,8 @@ func New(opts Options) *Server {
 	}
 	// The pull request page also reads what its own views open: files,
 	// commits, decisions, what the app offers about the branch and checks,
-	// and the person's draft review and walkthrough place. A group's page
-	// reads its patches and files.
+	// and the person's draft review. A group's page reads its patches and
+	// files.
 	pullPage := slices.Concat(names(pull), names(reviews), names(extras))
 	groupExtras := byName(extras, "group_patch", "group_file")
 	s.pages[PagePullRequest] = PageSpec{Name: PagePullRequest, Tools: withCommonTools(slices.DeleteFunc(pullPage, func(n string) bool { return slices.Contains(groupExtras, n) }))}

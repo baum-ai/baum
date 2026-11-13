@@ -128,7 +128,6 @@ func TestPullRequestExtraToolsReturnWhatTheRoutesReturn(t *testing.T) {
 		"update_branch_options":  with(nil),
 		"rerun_options":          with(nil),
 		"pending_review":         with(nil),
-		"walkthrough_position":   with(map[string]any{"version": 1}),
 	} {
 		if text, failed := f.callTool(t, action, tool, args); !failed || !strings.Contains(text, "own pull request's repository") {
 			t.Errorf("%s of another repository: %v %s", tool, failed, text)

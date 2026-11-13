@@ -94,7 +94,7 @@ func (s *Server) pullTools() []Tool {
 		Call:        callSessionTranscript,
 	}, {
 		Name:        "focus",
-		Description: "The part of the open page the user picked: a section, a stop, the overview and the anchors, as the page describes it. \"none\" when nothing is picked.",
+		Description: "The part of the open page the user picked: a section or the overview and the anchors, as the page describes it. \"none\" when nothing is picked.",
 		Scope:       ScopeRepository,
 		Call: func(_ context.Context, c CallContext, _ json.RawMessage) (string, error) {
 			if !c.HasPage || len(c.Page.Focus) == 0 || string(c.Page.Focus) == "null" {

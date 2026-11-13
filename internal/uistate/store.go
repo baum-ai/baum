@@ -19,8 +19,6 @@ import (
 	"github.com/baum-ai/baum/internal/inboxes"
 )
 
-const KeepWalkthroughs = 40
-
 // KeepReviews is how many pull requests' pending reviews are retained.
 const KeepReviews = 200
 
@@ -41,7 +39,6 @@ var dayKey = regexp.MustCompile(`^[0-9]{4}-[0-9]{1,2}-[0-9]{1,2}$`)
 var filterPage = regexp.MustCompile(`^(inbox|pulls|(inbox|tab):[0-9a-f]{32})$`)
 var tabID = regexp.MustCompile(`^[0-9a-f]{32}$`)
 var tabView = regexp.MustCompile(`^(open|history)$`)
-var reviewKey = regexp.MustCompile(`^[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+){1,2}#[1-9][0-9]*@v[1-9][0-9]*$`)
 var pullKey = regexp.MustCompile(`^[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+){1,2}#[1-9][0-9]*$`)
 var commentID = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
 var headSHA = regexp.MustCompile(`^[0-9a-f]{7,64}$`)
@@ -68,8 +65,6 @@ func valid(kind, key string) bool {
 	switch kind {
 	case "inbox", "tour", "filters":
 		return key == ""
-	case "walkthrough":
-		return len(key) <= 300 && reviewKey.MatchString(key)
 	case "review":
 		return len(key) <= 300 && pullKey.MatchString(key)
 	}
@@ -80,8 +75,6 @@ func valid(kind, key string) bool {
 // for a kind that is one record.
 func keep(kind string) int {
 	switch kind {
-	case "walkthrough":
-		return KeepWalkthroughs
 	case "review":
 		return KeepReviews
 	}
@@ -268,25 +261,6 @@ func validate(kind string, raw []byte) error {
 		}
 		for key, at := range value.Archived {
 			if len(key) > 300 || at == nil || *at < 0 {
-				return ErrInvalid
-			}
-		}
-	case "walkthrough":
-		var value struct {
-			Seen  *[]string           `json:"seen"`
-			Notes *map[string]*string `json:"notes"`
-			Note  *string             `json:"note"`
-		}
-		if json.Unmarshal(raw, &value) != nil || value.Seen == nil || value.Notes == nil || value.Note == nil || len(*value.Seen) > 2000 || len(*value.Notes) > 2000 || len(*value.Note) > 64<<10 {
-			return ErrInvalid
-		}
-		for _, id := range *value.Seen {
-			if id == "" || len(id) > 256 {
-				return ErrInvalid
-			}
-		}
-		for id, note := range *value.Notes {
-			if id == "" || len(id) > 256 || note == nil || len(*note) > 64<<10 {
 				return ErrInvalid
 			}
 		}

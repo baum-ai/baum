@@ -177,10 +177,9 @@ var actionRoutes = []actionRoute{
 	{pattern: "/api/commit-patch", bind: byClone, params: []string{"pr", "version", "oid", "path"}},
 	{pattern: "/api/decisions", bind: byRepository, params: []string{"pr"}},
 
-	// The person's own draft review and walkthrough place are kept by key,
-	// which says whose they are: only the action's own pull request's key.
+	// The person's own draft review is kept by key, which says whose it is:
+	// only the action's own pull request's key.
 	{pattern: "/api/ui-state/review", bind: byKey, key: ownReviewKey},
-	{pattern: "/api/ui-state/walkthrough", bind: byKey, key: ownWalkthroughKey},
 
 	// Its facts, before a review exists.
 	{pattern: "/api/facts", bind: byClone, params: []string{"pr", "head"}},
@@ -500,8 +499,8 @@ var (
 	errRefreshFlag     = errors.New("reads never ask for a refresh")
 	errNotActionRoute  = errors.New("not a route this agent reads")
 	errOtherRepository = errors.New("this agent may read only its own pull request's repository")
-	// errOtherPullRequest is a kept state (the person's draft review, their
-	// walkthrough place) of a pull request that is not the action's own.
+	// errOtherPullRequest is a kept state (the person's draft review) of a
+	// pull request that is not the action's own.
 	errOtherPullRequest = errors.New("this agent may read only its own pull request's saved state")
 )
 

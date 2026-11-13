@@ -20,13 +20,13 @@
       "context": { "page": "pull_request", "repository": "acme/demo", "pull_request": 7 }
     },
     {
-      "query": "clone=c1&pr=7&walk=b2",
+      "query": "clone=c1&pr=7",
       "hash": "#sec_rest",
       "context": {
         "page": "pull_request",
         "repository": "acme/demo",
         "pull_request": 7,
-        "focus": { "walk": "b2", "anchor": "sec_rest" }
+        "focus": { "anchor": "sec_rest" }
       }
     },
     { "query": "page=pulls&clone=gone&pr=7", "context": { "page": "pulls" } },
