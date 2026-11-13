@@ -607,9 +607,16 @@ Review comments are other people's text, and on a public repository anyone
 with a GitHub account can write one. baum reads them only on a pull request
 you opened, and only from threads that are unresolved and that your account
 can reply to and resolve. A thread is left out unless its first comment comes
-from an owner, member or collaborator of the repository (GitHub's author
-association) or from an app's bot account, which someone with admin access
-installed; within a kept thread, other authors' comments are dropped. At most
+from an account that can push to the repository: baum reads each author's
+collaborator permission (`GET /repos/{owner}/{repo}/collaborators/{login}/permission`,
+once per author per read of the threads) and trusts `write`, `maintain` and
+`admin`. GitHub's author association is not used: `MEMBER` is any member of
+the owning organisation, whatever their access to this repository, and
+`COLLABORATOR` includes read and triage access. Comments by apps' bot accounts
+are left out too: no app is on the allowlist of trusted bots, since what a
+bot writes follows from whatever it read. A permission GitHub does not answer
+stops the fix rather than trusting the author. Within a kept thread, other
+authors' comments are dropped. At most
 20 threads and the first 10 comments of each are read, each comment bounded
 to 2 KiB, and the job lists the threads it addressed.
 Each thread goes into the prompt as untrusted data under the same random-tag
@@ -673,11 +680,30 @@ What baum does after the agent:
   conflict marker, and fails when nothing changed.
 - It refuses a result that does not descend from the head it started from: a fix
   only adds commits, it never rewrites the branch.
-- A fix of review comments alone (no conflict, no failing check) refuses a
+- It checks what the fix itself changed: the paths and lines the result has
+  that the pull request's head did not, and, after a merge of the base branch,
+  that the merge did not bring (for a merge that stopped at conflicts, a line
+  counts only when neither side had it). Submodules are included whatever
+  your git configuration says.
+- It refuses a result that adds a credential: a line the fix added on which
+  the redactor reviews use finds a secret (e-mail addresses aside; the whole
+  file is searched, so a private key whose first line the file already had
+  is still found), a new or changed file at a well-known credential path
+  (`id_rsa`, `id_ed25519` and the other OpenSSH private key names,
+  `.git-credentials`, `.netrc`, `.aws/credentials`, `gh/hosts.yml`), or a text
+  file over 8 MiB, too large to check. The refusal names the files, with
+  secrets in their names masked, never the secret. Binary files are not read.
+- It refuses a result that adds or changes a gitlink (mode `160000`): `git add`
+  records a repository the agent made in the checkout as a commit of another
+  repository, which the push would carry without its content.
+- A fix whose prompt held review comments or a conversation refuses a
   result that changes anything under `.github/workflows/` or
-  `.github/actions/`: a workflow runs with the repository's secrets as soon
-  as it is pushed, and no review comment, being other people's words, may
-  bring one about.
+  `.github/actions/`, whether or not it also fixes conflicts or checks: a
+  workflow runs with the repository's secrets as soon as it is pushed, and no
+  review comment or conversation, being other people's or an agent's words,
+  may bring one about. A workflow change the merge of the base branch brought
+  is not the fix's. A fix of conflicts or failing checks alone may change a
+  workflow.
 - It pushes with a plain `git push --no-verify <remote> <commit>:refs/heads/<branch>`
   from your clone to the remote whose URL names the repository: never forced,
   so GitHub refuses it if the branch moved on, and nothing else (no tags, no
@@ -691,14 +717,17 @@ What remains:
 - The agent's changes are pushed without anyone reviewing them first. Look at
   the commit before you merge the pull request.
 - A `codex` agent can read files outside the checkout, such as credentials
-  under your home directory, and copy them into the checkout, and baum would
-  commit and push them to the pull request's branch, which may be public. A
-  pull request or check log could try to make it do so. The `claude` backend's
-  file tools cannot read outside the checkout.
+  under your home directory, and copy them into the checkout. A pull request
+  or check log could try to make it do so. baum refuses to push what the
+  redactor recognises as a secret or what sits at a well-known credential
+  path, but a credential in a format it does not know, encoded, renamed, split
+  so no line holds it whole, or inside a binary file would still be committed
+  and pushed to the pull request's branch, which may be public. The `claude`
+  backend's file tools cannot read outside the checkout.
 - The commit is yours: your identity, and your signature if you sign commits.
   Clean and smudge filters your git configuration defines (Git LFS, for
   example) run on the checkout as they do in your clone.
-- A review comment from a trusted author (or a compromised bot) can still try
+- A review comment from a trusted author can still try
   to steer the agent, as a pull request or a log can, and the agent decides
   which threads it addressed: it could claim threads it did not address, and
   baum would resolve them, hiding that feedback until someone reopens it. The

@@ -351,7 +351,11 @@ const jobReasons: Record<string, string> = {
   history_rewritten:
     "The result didn't build on the pull request's commits, so baum refused to push it.",
   workflow_changed:
-    "The agent changed a GitHub workflow or action, which a fix of review comments never pushes. Nothing was pushed.",
+    "The agent changed a GitHub workflow or action, which a fix of review comments or a conversation never pushes. Nothing was pushed.",
+  credential_added:
+    "The agent's change adds what looks like a credential, which baum never pushes. Nothing was pushed.",
+  nested_repository:
+    "The agent's change adds a nested repository or changes a submodule, which a fix never pushes. Nothing was pushed.",
   push_rejected:
     "GitHub refused the push, usually because the branch moved on. Nothing was force-pushed.",
   push_failed: "The push failed. Check that git can push to this repository from your clone.",

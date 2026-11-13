@@ -3777,8 +3777,14 @@ commit statuses. On a pull request the signed-in account opened
 GraphQL document (`FixReviewThreads`, up to four pages of 50 threads with the
 first 10 comments of each; `github.Client.UnresolvedThreads`) and keeps,
 through `fix.SelectThreads`, those the account can reply to and resolve whose
-first comment comes from an `OWNER`, `MEMBER` or `COLLABORATOR` or a bot, at
+first comment comes from an account with push access to the repository, at
 most 20, dropping other authors' comments and bounding each body to 2 KiB.
+Push access is the collaborator permission over REST
+(`fix.CollaboratorPushAccess`: `write`, `maintain` or `admin`, or
+`user.permissions.push` for a custom role), read once per author per read of
+the threads; a 404 or 403 is no access, any other failure fails the
+preparation. GitHub's author association is not used, and bots are not trusted
+(`trustedBots` is empty).
 `Prepared.Fix` records what it fixes (`conflicts`, `checks`, and `threads`, a
 digest of the kept threads and their comments) and the branches;
 `fix_threads` keeps the threads' places and excerpts for the job, with
@@ -3820,16 +3826,27 @@ failure, so it sends no notice and the app shows that summary in neutral
 words (jobs saved as failed by an older daemon are shown the same way). A
 failed fix records a reason (`head_changed`, `threads_changed`, `no_remote`,
 `git`, `backend`, `budget`, `conflicts_remain`, `history_rewritten`,
-`workflow_changed`, `push_rejected`, `push_failed`, `signed_out`) and a
-bounded detail. `signed_out` is an agent failure whose provider refused its
+`credential_added`, `nested_repository`, `workflow_changed`, `push_rejected`,
+`push_failed`, `signed_out`) and a bounded detail. `signed_out` is an agent failure whose provider refused its
 sign-in (`agent.SignInRejected`); review and chat jobs report the same reason
 in place of `backend`. A
 `budget` detail names the limit the agent reached (its time limit, in
 minutes, or its call or token budget); a `backend` one points to the daemon
 log, where `fix.Options.Logger` (the job's logger) has the agent's own error,
 which the job never keeps. A
-fix of review comments alone fails with `workflow_changed` when its commit
-changes a path under `.github/workflows/` or `.github/actions/`.
+fix checks its commit before the push (`fix.guard`), against what the fix
+itself changed (`gitlocal.Fix.Changes`: the raw tree diff from the head, or
+from the merge commit after a clean merge of the base, or, after a merge that
+stopped at conflicts, only paths that differ from both head and base, with
+added lines those neither side had; submodules always included). It fails with
+`credential_added` when a non-e-mail span the redactor finds overlaps an added
+line, when a changed file sits at a well-known credential path (OpenSSH
+private key names, `.git-credentials`, `.netrc`, `.aws/credentials`,
+`gh/hosts.yml`), or when a changed text file is over 8 MiB; with
+`nested_repository` when it adds or changes a gitlink (mode `160000`); and,
+when review threads or a conversation were in the prompt, with
+`workflow_changed` when it changes a path under `.github/workflows/` or
+`.github/actions/`. The detail names the paths, masked.
 
 A fix can also be made from a chat conversation. The estimate item carries
 `fix_chat: {conversation_id, turn?}` (`jobs.FixChatRef`; `fix_chat` rather than
