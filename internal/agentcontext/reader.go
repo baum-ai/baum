@@ -24,8 +24,8 @@ const maxDocumentRead = 32 << 20
 
 // readLimit is the body bound of a read of path.
 func readLimit(path string) int {
-	if path == "/api/document" || path == "/api/facts" ||
-		(strings.HasPrefix(path, "/api/groups/") && strings.HasSuffix(path, "/document")) ||
+	if path == "/api/document" || path == "/api/tiles" || path == "/api/facts" ||
+		(strings.HasPrefix(path, "/api/groups/") && (strings.HasSuffix(path, "/document") || strings.HasSuffix(path, "/tiles"))) ||
 		(strings.HasPrefix(path, "/api/jobs/") && strings.HasSuffix(path, "/draft")) {
 		return maxDocumentRead
 	}
@@ -165,6 +165,7 @@ var actionRoutes = []actionRoute{
 	// registered clone the handler resolves.
 	{pattern: "/api/versions", bind: byClone, params: []string{"pr"}},
 	{pattern: "/api/document", bind: byClone, params: []string{"pr", "version"}},
+	{pattern: "/api/tiles", bind: byClone, params: []string{"pr", "version"}},
 	{pattern: "/api/patch", bind: byClone, params: []string{"pr", "version", "path"}},
 	{pattern: "/api/commits", bind: byClone, params: []string{"pr", "version"}},
 	{pattern: "/api/sessions", bind: byClone, params: []string{"pr", "version"}},
@@ -195,6 +196,7 @@ var actionRoutes = []actionRoute{
 	{pattern: "/api/groups", bind: byFilter, filter: filterGroups},
 	{pattern: "/api/groups/{id}", bind: byResponse, check: repositoryField},
 	{pattern: "/api/groups/{id}/document", bind: byLookup, params: []string{"version"}, check: repositoryField, lookup: func(v map[string]string) string { return "/api/groups/" + v["id"] }},
+	{pattern: "/api/groups/{id}/tiles", bind: byLookup, params: []string{"version"}, check: repositoryField, lookup: func(v map[string]string) string { return "/api/groups/" + v["id"] }},
 	{pattern: "/api/groups/{id}/versions", bind: byLookup, check: repositoryField, lookup: func(v map[string]string) string { return "/api/groups/" + v["id"] }},
 	{pattern: "/api/groups/{id}/patch", bind: byLookup, params: []string{"version", "path", "hunk"}, check: repositoryField, lookup: func(v map[string]string) string { return "/api/groups/" + v["id"] }},
 	{pattern: "/api/groups/{id}/file", bind: byLookup, params: []string{"version", "path"}, check: repositoryField, lookup: func(v map[string]string) string { return "/api/groups/" + v["id"] }},

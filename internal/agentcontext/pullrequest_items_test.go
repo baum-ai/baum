@@ -241,7 +241,7 @@ func TestDiffReadsFactsOverTheUsualBound(t *testing.T) {
 	if failed || !strings.Contains(text, `"path":"f0.go"`) || !strings.Contains(text, `"path":"f1.go"`) {
 		t.Fatalf("a 9 MiB facts document: %v %.300s", failed, text)
 	}
-	if readLimit("/api/facts") != maxDocumentRead || readLimit("/api/document") != maxDocumentRead || readLimit("/api/patch") != maxRead || readLimit("/api/facts/patch") != maxRead {
+	if readLimit("/api/facts") != maxDocumentRead || readLimit("/api/document") != maxDocumentRead || readLimit("/api/tiles") != maxDocumentRead || readLimit("/api/groups/g/tiles") != maxDocumentRead || readLimit("/api/patch") != maxRead || readLimit("/api/facts/patch") != maxRead {
 		t.Error("read limits")
 	}
 	// Past the document bound it fails, saying so.

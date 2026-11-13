@@ -11,11 +11,14 @@ import (
 	"strings"
 	"time"
 
+	"github.com/baum-ai/baum/internal/etagjson"
 	"github.com/baum-ai/baum/internal/locallink"
 	"github.com/baum-ai/baum/internal/repos"
 	"github.com/baum-ai/baum/internal/reviewindex"
 	"github.com/baum-ai/baum/internal/store"
+	"github.com/baum-ai/baum/internal/tileview"
 	"github.com/baum-ai/baum/internal/viewserver"
+	"github.com/baum-ai/baum/tiles"
 )
 
 // Registry is the part of *repos.Registry the handler reads: the picked
@@ -79,6 +82,7 @@ func (h *API) Handler() http.Handler {
 	mux.HandleFunc("DELETE /api/groups/{id}", h.remove)
 	mux.HandleFunc("GET /api/groups/{id}/versions", h.versions)
 	mux.HandleFunc("GET /api/groups/{id}/document", h.document)
+	mux.HandleFunc("GET /api/groups/{id}/tiles", h.tiles)
 	mux.HandleFunc("GET /api/groups/{id}/patch", h.patch)
 	mux.HandleFunc("GET /api/groups/{id}/file", h.file)
 	return mux
@@ -352,6 +356,22 @@ func (h *API) document(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")
 	_, _ = w.Write(version.Document)
+}
+
+// tiles serves a group review's document with the tile document converted
+// from it, for the version the request names, as GET /api/tiles does for a
+// pull request's.
+func (h *API) tiles(w http.ResponseWriter, r *http.Request) {
+	_, version, ok := h.version(w, r)
+	if !ok {
+		return
+	}
+	body, err := tileview.Encode(tileview.Build(version.Document, tiles.Options{}))
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	etagjson.Serve(w, r, body)
 }
 
 // patchDocument is what the patch route reads of a group review.

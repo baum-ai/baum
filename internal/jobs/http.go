@@ -9,6 +9,8 @@ import (
 	"strconv"
 
 	"github.com/baum-ai/baum/internal/reviewgroups"
+	"github.com/baum-ai/baum/internal/tileview"
+	"github.com/baum-ai/baum/tiles"
 )
 
 // A page of GET /api/jobs?limit=&before= holds defaultJobsPage jobs unless
@@ -203,10 +205,20 @@ func (q *Queue) Handler() http.Handler {
 	// draft serves a running staged review's latest draft: masked and
 	// completed like a version, with the sections still being written
 	// pending, and never a version. A job without one, or ended, is 404.
+	// With tiles=1 it answers as GET /api/tiles does, plus the draft number.
 	mux.HandleFunc("GET /api/jobs/{id}/draft", func(w http.ResponseWriter, r *http.Request) {
 		draft, revision, ok := q.Draft(r.PathValue("id"))
 		if !ok {
 			http.Error(w, http.StatusText(404), 404)
+			return
+		}
+		if r.URL.Query().Get("tiles") == "1" {
+			// The draft's tile view: a missing context is still being
+			// written, so it is a pending context tile.
+			respond(w, struct {
+				Draft int `json:"draft"`
+				tileview.Response
+			}{revision, tileview.Build(draft, tiles.Options{Draft: true})})
 			return
 		}
 		respond(w, map[string]any{"draft": revision, "document": json.RawMessage(draft)})

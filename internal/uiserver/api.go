@@ -570,6 +570,7 @@ func (a LocalAPI) Handler() *LocalHandler {
 		viewer.Mux().ServeHTTP(w, routed)
 	}
 	mux.HandleFunc("GET /api/document", document)
+	mux.HandleFunc("GET /api/tiles", a.tilesHandler(cache, new(tileCache)))
 	mux.HandleFunc("GET /api/sessions", document)
 	mux.HandleFunc("GET /api/sessions/{id}", document)
 	mux.HandleFunc("GET /api/patch", document)
