@@ -67,6 +67,7 @@ function RisksGlance({ tile, ctx }: TileFaceProps) {
           <TierCount key={tier} tier={tier} count={count} />
         ))}
       </p>
+      {urgent.length === 0 ? <AllClear>None critical or high</AllClear> : null}
       {urgent.length > 0 ? (
         <ul className="space-y-2">
           {urgent.map((risk) => (

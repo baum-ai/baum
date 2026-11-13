@@ -165,17 +165,18 @@ function RiskScore({ ctx }: { ctx: TileContext }) {
         {view.score}
         <span className="font-normal text-tertiary">/5</span>
       </span>
-      <span className="flex-none text-secondary">
+      <span className="min-w-0 shrink truncate text-secondary">
         {view.lowerBound ? "at least; input was incomplete" : view.meaning}
       </span>
       {reason && target ? (
         <>
-          <span aria-hidden className="flex-none text-tertiary">
+          {/* The reason waits for a wider band; on a phone its title says it. */}
+          <span aria-hidden className="hidden flex-none text-tertiary @min-[36rem]/tiles:inline">
             ·
           </span>
           <JumpLink
             tone="secondary"
-            className="min-w-0 truncate"
+            className="hidden min-w-0 shrink-[2] truncate @min-[36rem]/tiles:block"
             onClick={() => ctx.open(target.tile.id, target.item)}
           >
             {plainText(reason.text, ctx.labels)}
