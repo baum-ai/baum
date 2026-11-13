@@ -165,13 +165,14 @@ const SECTION_CONTROLS = [
   "summary",
 ].join(", ");
 
-/** Settings' keys (`SETTINGS_SHORTCUTS`), beside Tab (`useTabStops`):
- *  the section list is the selection, as Up next's list is: j/↓ and k/↑ move
- *  it, 1 to 6 jump to a section, and Enter, l or → goes into the shown
- *  section. There j/↓ and k/↑ step through its controls, Enter or Space
- *  changes the focused one, and Esc, h or ← go back to the list. Esc in a text
- *  field or select gives it up first (`useEscapeBlurs`), leaving the place in
- *  the section, so j and k go on from it. */
+/** Settings' keys (`SETTINGS_SHORTCUTS`), beside Tab (`useTabStops`), as a
+ *  review page's are: Shift+J/Shift+↓ and Shift+K/Shift+↑ move to the next or
+ *  previous section from anywhere, and 1 to 6 jump to one. j/↓ and k/↑ step
+ *  through the shown section's controls; from the section list j goes to its
+ *  first control and k to its last, as Enter, l or → go to the first. Enter or
+ *  Space changes the focused control, and Esc, h or ← go back to the list. Esc
+ *  in a text field or select gives it up first (`useEscapeBlurs`), leaving the
+ *  place in the section, so j and k go on from it. */
 function useSettingsKeys<S extends string>(
   sections: readonly S[],
   section: S,
@@ -205,8 +206,15 @@ function useSettingsKeys<S extends string>(
     if (document.activeElement === document.body) navItem(section)?.focus({ preventScroll: true });
   }, [section]);
   useShortcuts((event) => {
-    const key = event.key;
+    const key = event.key.length === 1 ? event.key.toLowerCase() : event.key;
     const step = key === "j" || key === "ArrowDown" ? 1 : key === "k" || key === "ArrowUp" ? -1 : 0;
+    if (step && event.shiftKey) {
+      event.preventDefault();
+      const index = sections.indexOf(section);
+      show(sections[Math.min(sections.length - 1, Math.max(0, index + step))]!);
+      return;
+    }
+    if (event.shiftKey && key.length === 1) return;
     const active = document.activeElement;
     const inSection =
       active instanceof HTMLElement &&
@@ -239,9 +247,11 @@ function useSettingsKeys<S extends string>(
       return;
     }
     if (step) {
+      const list = controls();
+      const target = step > 0 ? list[0] : list[list.length - 1];
+      if (!target) return;
       event.preventDefault();
-      const index = sections.indexOf(section);
-      show(sections[Math.min(sections.length - 1, Math.max(0, index + step))]!);
+      focus(target);
     } else if (/^[1-9]$/.test(key) && sections[Number(key) - 1]) {
       event.preventDefault();
       show(sections[Number(key) - 1]!);
