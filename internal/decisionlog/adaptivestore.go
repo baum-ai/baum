@@ -67,9 +67,12 @@ type adaptiveState struct {
 	Failures          int                              `json:"failures"`
 	ExplorationClosed bool                             `json:"exploration_closed"`
 	Complete          bool                             `json:"complete"`
-	Feedback          string                           `json:"feedback"`
-	Sequence          int64                            `json:"-"`
-	RetryAt           time.Time                        `json:"retry_at,omitempty"`
+	// CoverageAsked is set once a finish was answered with the coverage
+	// question, so it is asked once in a build.
+	CoverageAsked bool      `json:"coverage_asked,omitempty"`
+	Feedback      string    `json:"feedback"`
+	Sequence      int64     `json:"-"`
+	RetryAt       time.Time `json:"retry_at,omitempty"`
 }
 
 func newAdaptiveState() *adaptiveState {

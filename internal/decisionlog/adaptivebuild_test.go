@@ -152,6 +152,14 @@ func adaptiveInput(t *testing.T, req agent.Request) map[string]json.RawMessage {
 	if err = json.Unmarshal(data, &state); err != nil {
 		t.Fatal(err)
 	}
+	// The catalog is a file of its own; tests read it where the state names it.
+	var catalog string
+	if err = json.Unmarshal(state["catalog"], &catalog); err != nil {
+		t.Fatal(err)
+	}
+	if state["catalog"], err = os.ReadFile(filepath.Join(req.Directory, catalog)); err != nil {
+		t.Fatal(err)
+	}
 	return state
 }
 

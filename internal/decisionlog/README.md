@@ -108,6 +108,15 @@ not a failure.
    checks and source references are validated, with up to two repairs. A failed
    provider attempt is retried by capture's existing failure/backoff policy.
 
+   The task works in two steps: it finds the decisions from the transcript
+   alone, at the bar the extraction instructions set, and only then opens the
+   source, to name what each decision concerns as the code does and to tell
+   apart choices the transcript blurs. The source never adds a decision, never
+   removes one (the session may describe work that was not committed) and
+   never supplies a reason. Asking the agent to judge significance from the
+   source first made a small model keep a third of the decisions a session
+   holds (see "Dataset checks").
+
    The initial reservation estimates the transcript and reply; repository reads
    and additional task turns can add usage. The ledger records the aggregate
    actual task usage, priced as reviews price it; unpriced usage stays unknown.
@@ -136,7 +145,11 @@ the transcript changes; other skips only when it changes.
 - `capture_source`: the latest successful head extraction's source context,
   including the version, revision, omissions, limitations and validated source
   references. `decision_source` keeps the same extraction-level context for each
-  newly created decision; extending a session preserves older decisions' original
+  newly created decision, with the omissions as a count (`omitted`): a checkout
+  leaves out every binary file, so their list is long and the same for every
+  decision of an extraction. The copies kept with a placement, an attribution
+  and a split, and the ones a model reads beside a decision, are counted the
+  same way. Extending a session preserves older decisions' original
   provenance. Earlier decisions without recorded source remain explicitly
   without provenance. These additive tables are created on writable open; a
   read-only old store remains readable without them.
@@ -410,6 +423,7 @@ prevents a long capture backlog from delaying all highlights; an explicit
 Unavailable-source attempts also consume the quantum. Inputs over 512 KiB remain unresolved with a reason. Failures use the
 same per-input backoff as placement. Every supplied ID must occur exactly once;
 only supplied eligible features/PRs may be chosen, and explicit no-match is valid.
+A reply that leaves decisions out is sent back with their IDs.
 
 `feature_decision` stores repository/version/decision ID, input hash, context
 version, selected feature and optional supported PR, key eligibility, reason and
@@ -539,6 +553,10 @@ first build's features needs the room.
 Adaptive task inputs reference immutable per-PR evidence files, so later steps
 can read selected descriptions and patches without embedding all accumulated
 evidence in every state input. Durable evidence remains pinned in the checkpoint.
+The catalog is a file of its own beside `state.json`, `catalog.jsonl`: one
+compact line per pull request (number, state, dates, title, `selected`, and
+`scope` once it is assigned or skipped), oldest first, so a month of a busy
+repository can be read in parts and the unsettled work found by searching.
 
 New builds requested from the desktop Timeline use `BuildOptions.Adaptive` and
 `features/adaptive`'s published `feature-build-public-v1` protocol. A code-capable
@@ -565,6 +583,21 @@ descriptions never require a Git ref fetch or session-link pass. Repeated window
 the PR's merge base and are bounded to 64 KiB per requested file; an unavailable
 request stops with the exact request pending for a resume.
 
+The prompt asks for the work to be covered rather than sampled, since the
+result replaces the repository's feature history: every title of the chosen
+horizon is read, a title is usually enough to select and assign, and a
+checkpoint may settle up to 100 pull requests at once.
+
+A request or checkpoint the host can serve only in part is served so far, and
+the next step's `feedback` says what was left out and why. A `code` request
+gives each pull request the patches of the requested paths it changes; a
+`details` request skips a number that is no pull request, a bot's or one closed
+without merging; a checkpoint keeps its valid assignments when others name a
+scope nobody defined (a `finish` is refused instead, having no later step to
+repair it in); an assignment selects its pull request; and a request that adds
+nothing says so. Failing these would leave a pending request that no resume
+could ever serve.
+
 `checkpoint` replies add selected work, scopes and assignments. A scope retains
 its purpose, boundaries, paths, examples and source revision after membership;
 paths must exist in the source checkout or explicitly requested pinned PR code.
@@ -579,7 +612,12 @@ source revision, requested evidence, scopes, selected work, assignments and
 remaining request. Memberships and concise feature text are saved with it in one
 transaction. A sequence compare-and-swap refuses competing workers or clones.
 `finish` requires every selected PR to have an assignment or explicit skip and
-every populated scope to have a digest. It validates and switches the candidate
+every populated scope to have a digest. The first `finish` of a build that
+leaves 40 or more catalogued pull requests unselected, and more than half of
+the catalog, is saved as a checkpoint instead: the feedback says how many are
+unselected and that the result replaces the whole feature history, and a
+second `finish` stands. A small model otherwise settles a handful of recent
+pull requests and stops. It validates and switches the candidate
 to current atomically; zero substantial outcomes can finish with zero features.
 The old Timeline stays current while any selected work is incomplete. Resuming
 reuses accepted results and the pinned source/catalog; it does not reselect
@@ -590,11 +628,14 @@ five minutes, the host signals `exploration_closed` as convergence guidance; nec
 windows remain fetchable while selected work is finished. Each
 model work unit has the configured pass timeout (ten minutes by default),
 provider/context protections and stall/tool guards. Schema errors get at most
-two repairs. Evidence failures retry once after a one-second backoff and then preserve their
+two repairs; a step whose reply is still refused after them saves nothing, is
+told why in `feedback` and counts as a step without progress, rather than
+failing the build. Evidence failures retry once after a one-second backoff and then preserve their
 pending request. GitHub rate-limit responses record Retry-After/reset timing as
-a durable wait, with no immediate retry; early resumes preserve that wait. Three steps with no new evidence or changed accepted scope,
+a durable wait, with no immediate retry; early resumes preserve that wait. Three steps in a row with no new evidence or changed accepted scope,
 selection or assignment stop as `no_progress`; a changing narrative does not
-count. Cancellation or failure keeps the candidate resumable. Prices report
+count, and each run counts from zero, so a resume is not stopped by its first
+such step. Cancellation or failure keeps the candidate resumable. Prices report
 cost, including failed task attempts and unpriced usage, without a spend cap.
 
 Adaptive candidates use `feature_version.state=building_adaptive`. The unique
@@ -949,6 +990,45 @@ and a distinct explicit replacement preserving current features. Fresh jobs are
 not replayed after they fail or are interrupted. The browser fixture establishes
 positive semantic relevance through a Run-only fake backend and actual committed
 source, rather than fabricated attribution cache hashes.
+
+### Dataset checks
+
+`dataset_test.go` runs capture, a requested adaptive build and the live
+attribution and text stages on a private dataset of real sessions and pull
+requests, with the real backend, and writes what each produced for reading.
+It is how the prompts above were checked on real work; the scripted tests
+cannot tell whether what is extracted makes sense. The tests are skipped
+unless `BAUM_REVIEW_DATASET` names the dataset; `BAUM_DATASET_WORK` names a
+private directory that outlives the run, where one machine's app database is
+copied (once, so later runs resume), a clone is made from the dataset's
+mirror and the results are written under `out/`.
+
+```sh
+BAUM_REVIEW_DATASET=<dataset> BAUM_DATASET_WORK=<private directory> \
+  BAUM_DATASET_SESSIONS=claude-code:<id>,codex:<id> \
+  go test ./internal/decisionlog -run 'TestDatasetCapture$' -count=1 -v -timeout 2h
+```
+
+- `TestDatasetCapture` captures the named root sessions and writes, for each,
+  the decisions the store held before and after, the source references and
+  the cost. `BAUM_DATASET_FRESH=1` forgets the session first, for a full
+  extraction rather than an extension; `BAUM_DATASET_TAG` keeps the results of
+  several runs apart.
+- `TestDatasetBuild` runs or resumes an adaptive build (`BAUM_DATASET_FRESH=1`
+  replaces the candidate) and writes its checkpoint: catalog, selections,
+  scopes and assignments. It lists pull requests through GitHub and needs
+  `GITHUB_TOKEN`.
+- `TestDatasetLive` runs semantic attribution and the feature text stage.
+- `BAUM_DATASET_HOST` (default `yona`) chooses the machine whose database and
+  session stores are read, `BAUM_DATASET_REPOSITORY` the repository, and
+  `BAUM_DATASET_BACKEND` and `BAUM_DATASET_MODEL` replace the backend and
+  model of that machine's preferences.
+
+They run on the host, not in Docker: they call the Claude Code and Codex
+command-line tools with the machine's own sign-ins and each tool's sandbox,
+which is what is being checked. The dataset is private and stays out of the
+repository, and so do the results. Tune prompts on its calibration pull
+requests only and report on the held-out ones.
 
 Run the scripted matrix in Docker with
 `just oss-go test ./internal/decisionlog -run 'TestAdaptiveSynthetic|TestAdaptiveCancelled|TestLiveSync' -count=1 -v`.
