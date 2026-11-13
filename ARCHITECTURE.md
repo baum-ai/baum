@@ -4941,7 +4941,9 @@ replace it.
   Sessions page reads) marks a panel session, in its empty directory or a
   pull request worktree, with `origin` `panel` and `conversation`, its
   conversation's id; other sessions carry neither. A panel session has
-  `endable`, `messageable` and `focus` unset, and its end, message and focus
+  `endable`, `messageable` and `focus` unset and no `waiting_reason`,
+  `waiting_since` or `waiting_message` (a finished turn waits on the panel,
+  not on the person, so nothing counts it as waiting for them), and its end, message and focus
   routes answer 409 `panel_session`: the panel runs and stops it. The agent
   requests store's `Panel` (the same `Owns`, by session id) leaves a panel
   session's permission requests to its own permission mode, so none is
@@ -5507,7 +5509,10 @@ confirmed, dismissed, had its summary replaced, or its token was revoked);
 they never carry text. `Progress`
 holds, in memory, a turn's answer so far (its finished messages, then
 Claude's streaming one, and after the turn its final message; at most
-`agent.MaxConverseBytes`, keeping the end), the tool it runs and its session.
+`agent.MaxConverseBytes`, keeping the end), its latest message on its own
+(`message`: the one streaming, else the last finished, so the app shows each
+message of a turn of several until the transcript holds it), the tool it runs
+and its session.
 
 Before each turn `SSHAgent` (the daemon's `shellenv.Agent`, which fetches
 share) replaces a stale `SSH_AUTH_SOCK` in the daemon's environment with the
@@ -5547,7 +5552,8 @@ routes answer as the local API does for a capability it lacks: a read with
 | --- | --- |
 | `GET /api/console/conversations` | `{"conversations":[...]}`, newest first: `id`, `title`, `agent`, `model`, `mode`, `state`, `directory`, `directory_note`, `repository`, `pull_request`, `updated_at` and `session` (`agent:id`, once known) |
 | `POST /api/console/conversations` | opens one from `{"agent","model","mode","page"}`, each optional (the panel's setting); 201 with the conversation |
-| `GET /api/console/conversations/{id}` | every field of the conversation, its pages included, `session_key`, and `progress` (the running or last turn since the daemon started: `text`, `tool`, `session`, `state`, `cost_usd`) or null |
+| `GET /api/console/conversations/{id}` | every field of the conversation, its pages included, `session_key`, and `progress` (the running or last turn since the daemon started: `text`, `message`, `tool`, `session`, `state`, `cost_usd`) or null |
+| `GET /api/console/conversations/{id}/transcript` | the transcript of the session the conversation's agent reported, answered as `GET /api/live-sessions/{agent}/{id}/transcript` is (`?version=` included), read with `Transcripts.Read`: found by that session id in the agent's own session store, whether or not the tracker still lists it; nothing in the request names the file. Before the agent reported a session, or when its file is gone, `available: false` with why |
 | `POST /api/console/conversations/{id}/messages` | sends `{"text","page"}` (the page optional) as a turn; 202 with the conversation, running |
 | `POST /api/console/conversations/{id}/cancel` | stops the running turn (none running is no error) and answers the conversation |
 | `POST /api/console/conversations/{id}/close` | closes it: stops its turn, revokes its token, drops its proposals |

@@ -24,6 +24,7 @@ import { PlanUsageRail } from "./plan-usage";
 import { useMedia } from "./media";
 import { usePreferences, type SidebarChoice } from "./preferences";
 import { NineDots } from "./nine-dots";
+import { SessionPanelButton } from "./session-panel";
 import {
   pageKeyLabel,
   pageKeyShortcut,
@@ -347,6 +348,7 @@ export function Sidebar({
         <div className="local-rail-foot">
           <PlanUsageRail />
           <nav aria-label="More" className="local-rail-nav">
+            <SessionPanelButton />
             {PAGES.filter((item) => item.foot).map(link)}
           </nav>
         </div>

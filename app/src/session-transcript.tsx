@@ -15,7 +15,7 @@ import { SessionCard } from "@baum/viewer/components/session-card";
 import { SessionTranscript } from "@baum/viewer/components/transcript";
 import { Markdown } from "@baum/viewer/components/markdown";
 import { ChevronLeftIcon } from "@baum/viewer/components/icons";
-import { CloseButton } from "@baum/viewer/components/ui";
+import { Button, CloseButton } from "@baum/viewer/components/ui";
 import { parseTranscript, type LocalTranscript } from "@baum/viewer/local-transcript";
 import type { TranscriptSession, TranscriptSource } from "@baum/viewer/transcript";
 import type { ViewerLinkProps } from "@baum/viewer/navigation";
@@ -143,11 +143,14 @@ const transcriptPath = (agent: string, id: string, version: string | null) =>
  *  the state changes only for another version or an answer of another kind,
  *  so an unchanged transcript renders nothing again. Reads never overlap: one
  *  asked for during another follows it. A failed read keeps a transcript
- *  shown. */
+ *  shown. `route`, when given, is the route that answers it instead of the
+ *  live sessions' (a session panel conversation's, which serves its
+ *  session's transcript whether or not the session is still listed), the
+ *  same answer under another address. */
 export function useLiveTranscript(
   agent: string,
   id: string,
-  { tick, poll }: { tick: number; poll: number | null },
+  { tick, poll, route }: { tick: number; poll: number | null; route?: string },
 ): { state: LiveTranscriptState; retry: () => void } {
   const [state, setState] = useState<LiveTranscriptState>({ kind: "loading" });
   const [attempt, setAttempt] = useState(0);
@@ -170,7 +173,11 @@ export function useLiveTranscript(
           let next: LiveTranscriptState | null = null;
           try {
             const answer = parseLiveTranscript(
-              await request<unknown>(transcriptPath(agent, id, known)),
+              await request<unknown>(
+                route
+                  ? `${route}${known ? `?version=${encodeURIComponent(known)}` : ""}`
+                  : transcriptPath(agent, id, known),
+              ),
             );
             if (!answer) throw Error("The daemon's answer was not a transcript.");
             if (!answer.available) {
@@ -221,7 +228,7 @@ export function useLiveTranscript(
       stopped = true;
       read.current = () => {};
     };
-  }, [agent, id, attempt]);
+  }, [agent, id, attempt, route]);
   const first = useRef(tick);
   useEffect(() => {
     if (tick === first.current) return;
@@ -430,6 +437,7 @@ export function SessionTranscriptPage({
   tick,
   prHref,
   Link,
+  openInPanel,
 }: {
   agent: string;
   id: string;
@@ -439,8 +447,13 @@ export function SessionTranscriptPage({
   tick: number;
   prHref: (session: LiveSession) => string | null;
   Link: ComponentType<ViewerLinkProps>;
+  /** Opens a session panel conversation in the panel, by its id. */
+  openInPanel?: (conversation: string) => void;
 }) {
   const now = useNow();
+  // The session panel runs its own sessions: they open there, instead of
+  // being brought forward or written to here.
+  const conversation = session?.origin === "panel" ? session.conversation : undefined;
   const back = (
     <Link
       href={appURL("?page=sessions")}
@@ -475,7 +488,17 @@ export function SessionTranscriptPage({
           title={session?.title || `${agentName(agent)} session`}
           detail={session ? undefined : "Agent session on this computer"}
           back={back}
-          actions={session ? <FocusSession session={session} hotkey /> : null}
+          actions={
+            conversation ? (
+              openInPanel ? (
+                <Button size="compact" onClick={() => openInPanel(conversation)}>
+                  Open in panel
+                </Button>
+              ) : null
+            ) : session ? (
+              <FocusSession session={session} hotkey />
+            ) : null
+          }
         />
         {session || shown ? (
           <div className="local-session-top-body">
@@ -627,7 +650,7 @@ function shownSession(
 /** The transcript as this page reads it: the agent's compaction summary
  *  when there is one, then the conversation as a log, without the card a
  *  review draws around a linked session. */
-function TranscriptReader({
+export function TranscriptReader({
   transcript,
   version,
   summary,

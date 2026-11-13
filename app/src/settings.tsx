@@ -12,7 +12,14 @@ import {
   type ReactNode,
 } from "react";
 import type { ViewerLinkProps } from "@baum/viewer/navigation";
-import { Alert, Badge, Button, CloseButton, LiveDot } from "@baum/viewer/components/ui";
+import {
+  Alert,
+  Badge,
+  Button,
+  CloseButton,
+  LiveDot,
+  SegmentedControl,
+} from "@baum/viewer/components/ui";
 import {
   formatCount,
   formatDateTime,
@@ -20,6 +27,7 @@ import {
   githubAvatarURL,
 } from "@baum/viewer/components/format";
 import {
+  agentName,
   appURL,
   automaticNotice,
   isActiveJob,
@@ -40,6 +48,13 @@ import {
   type PromptEntry,
   type RepositoryPromptEntry,
 } from "./api";
+import {
+  readPanelSettings,
+  type PanelAgent,
+  type PanelMode,
+  type PanelSettings,
+} from "./console-api";
+import { onPanelSettingsChanged, panelSettingsChanged } from "./session-panel";
 import {
   RepositoryPicker,
   CloneActions,
@@ -1137,6 +1152,142 @@ function FixesSection({
   );
 }
 
+/** The session panel's agents by the harness the other settings name them. */
+const panelHarness: Record<PanelAgent, string> = { "claude-code": "claude", codex: "codex" };
+const panelAgentOf = (harness: string): PanelAgent | "" =>
+  harness === "claude" ? "claude-code" : harness === "codex" ? "codex" : "";
+
+const panelModes: { value: PanelMode; label: string }[] = [
+  { value: "auto", label: "Auto" },
+  { value: "full", label: "Full access" },
+  { value: "workspace", label: "Workspace" },
+];
+const panelPositions: { value: PanelSettings["position"]; label: string }[] = [
+  { value: "bottom", label: "Bottom" },
+  { value: "top", label: "Top" },
+];
+
+/** The session panel's setting: the agent and model a new session opens with
+ *  (the fix agent's unless chosen), the access it gets, and the edge the
+ *  panel opens from. */
+export function SessionPanelSection({ signedOut = [] }: { signedOut?: readonly string[] }) {
+  const [saved, setSaved] = useState<PanelSettings | null>(null);
+  const [loadError, setLoadError] = useState("");
+  const load = () => readPanelSettings().then(setSaved);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: read once, and again when it changes
+  useEffect(() => {
+    load().catch((e: unknown) => setLoadError(errorText(e)));
+    // A change to the fix or review agent changes what an unchosen agent follows.
+    return onPanelSettingsChanged(() => void load().catch(() => {}));
+  }, []);
+  const { save, error, status, failures } = useAutoSave(async () => {
+    await load();
+    panelSettingsChanged();
+  }, "api/settings/panel");
+  // The agent is "" while it follows the fix agent; its model is then the
+  // fix agent's too.
+  const choice = saved && {
+    agent: saved.agent_source === "panel" ? panelHarness[saved.agent] : "",
+    model: saved.agent_source === "panel" ? saved.model : "",
+    mode: saved.mode,
+    position: saved.position,
+  };
+  const key = JSON.stringify(choice);
+  const [draft, setDraft] = useState(choice);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `key` stands for `choice`
+  useEffect(() => setDraft(choice), [key, failures]);
+  if (!saved || !draft) return loadError ? <Alert>{loadError}</Alert> : null;
+  const change = (patch: Partial<typeof draft>) => {
+    const next = { ...draft, ...patch };
+    setDraft(next);
+    save({
+      agent: panelAgentOf(next.agent),
+      // A chosen agent's model is saved with it; following the fix agent,
+      // its model follows too.
+      ...(next.agent ? { model: next.model } : {}),
+      mode: next.mode,
+      position: next.position,
+    });
+  };
+  const following = `Now ${agentName(saved.agent)}${saved.model ? ` · ${modelName(saved.model)}` : ""}, the fix agent.`;
+  return (
+    <section aria-labelledby="settings-panel-heading" className="settings-section">
+      <SectionHead
+        id="settings-panel-heading"
+        title="Session panel"
+        detail={`The agent you open from any page with the panel's key (\`) or button. It works as your own agent does, sees the page you have open and asks you to save or confirm any change to baum.`}
+        status={status}
+      />
+      {error ? <Alert>{error}</Alert> : null}
+      <div className="local-panel settings-list">
+        <SettingRow
+          label="Agent"
+          htmlFor="panel-agent"
+          detail={
+            signedOut.includes(draft.agent || panelHarness[saved.agent]) ? (
+              <SignedOutCaution
+                backend={draft.agent || panelHarness[saved.agent]}
+                work="the session panel"
+              />
+            ) : draft.agent ? null : (
+              following
+            )
+          }
+        >
+          <AgentSelect
+            id="panel-agent"
+            value={draft.agent}
+            options={fixHarnesses}
+            same="Same as fixes"
+            signedOut={signedOut}
+            onChange={(agent) => change({ agent, model: modelPresets[agent]?.[0] ?? "" })}
+          />
+        </SettingRow>
+        {draft.agent ? (
+          <SettingRow label="Model" htmlFor="panel-model">
+            <ModelField
+              key={draft.agent}
+              id="panel-model"
+              backend={draft.agent}
+              value={draft.model || (modelPresets[draft.agent]?.[0] ?? "")}
+              onChange={(model) => change({ model })}
+            />
+          </SettingRow>
+        ) : null}
+        <SettingRow
+          label="Access of a new session"
+          detail={
+            draft.mode === "auto"
+              ? "Auto lets your agent's own reviewer approve each action or block the risky ones: Claude Code's auto mode, Codex's automatic review."
+              : draft.mode === "full"
+                ? "Full access runs your agent as you would with every prompt approved: it can push and use gh."
+                : "Workspace lets it edit files in its folder; what it would have to ask for is refused."
+          }
+        >
+          <SegmentedControl
+            label="Access of a new session"
+            value={draft.mode}
+            items={panelModes}
+            onChange={(mode) => change({ mode })}
+          />
+        </SettingRow>
+        <SettingRow label="Opens from" detail="The edge of the window the panel slides in from.">
+          <SegmentedControl
+            label="Opens from"
+            value={draft.position}
+            items={panelPositions}
+            onChange={(position) => change({ position })}
+          />
+        </SettingRow>
+      </div>
+      <p className="settings-footnote">
+        Changes apply to the next session you start; a session keeps the agent and access it started
+        with.
+      </p>
+    </section>
+  );
+}
+
 /** Whether the baum CLI or every agent's hooks are missing, for the sidebar's
  *  Settings badge and the Sessions page. Only the desktop app can tell; it
  *  rechecks on returning to the window (at most every 5 minutes, as the native
@@ -1560,6 +1711,9 @@ export function SettingsPage({
   const gh = githubHealth(github);
   const hooks = setup.desktop ? hooksHealth(setup.view) : null;
   const fix = defaults ? fixSummary(defaults) : null;
+  // The session panel's agent follows the fix agent, and through it the
+  // review agent, unless chosen: it reads its setting again after either.
+  const agentsChanged = () => changed().finally(panelSettingsChanged);
   const connectionTone: Tone =
     gh.tone === "critical"
       ? "critical"
@@ -1580,7 +1734,7 @@ export function SettingsPage({
     },
     {
       id: "fixes",
-      sub: defaults?.fix_backend ? harnessName(defaults.fix_backend) : "Same as reviews",
+      sub: `${defaults?.fix_backend ? harnessName(defaults.fix_backend) : "Same as reviews"} · session panel`,
       tone: fix && !fix.fixable ? "caution" : undefined,
     },
     {
@@ -1741,7 +1895,7 @@ export function SettingsPage({
                 <ReviewsSection
                   automatic={automatic}
                   defaults={defaults}
-                  changed={changed}
+                  changed={agentsChanged}
                   available={
                     setup.desktop && setup.view && !setup.view.hooks.error
                       ? detectedHarnesses(setup.view.hooks.agents)
@@ -1761,7 +1915,11 @@ export function SettingsPage({
             )
           ) : section === "fixes" ? (
             defaults ? (
-              <FixesSection defaults={defaults} changed={changed} signedOut={signedOut} />
+              <>
+                <FixesSection defaults={defaults} changed={agentsChanged} signedOut={signedOut} />
+                {/* The panel's agent follows the fix agent unless chosen. */}
+                <SessionPanelSection signedOut={signedOut} />
+              </>
             ) : (
               loading
             )

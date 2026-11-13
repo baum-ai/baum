@@ -24,12 +24,19 @@ export type Repository = {
 export class LocalRequestError extends Error {
   code?: string;
   status?: number;
-  constructor(message: string, code?: string, status?: number) {
+  /** The error's JSON body, for a refusal that carries more than its code
+   *  (the session panel's `operation_changed` holds the new summary). */
+  body?: unknown;
+  constructor(message: string, code?: string, status?: number, body?: unknown) {
     super(message);
     this.code = code;
     this.status = status;
+    this.body = body;
   }
 }
+/** The code a session's end, message, focus or answer route refuses a
+ *  session panel's session with: the panel runs and stops it. */
+export const PANEL_SESSION = "panel_session";
 export type GitHubState = {
   review: "" | "approved" | "changes_requested" | "commented" | "unreviewed";
   checks: "" | "passing" | "failing" | "running" | "none";
@@ -540,7 +547,10 @@ export type LiveSession = {
     | "ambiguous"
     | "stale"
     | "unavailable"
-    | "unknown_history";
+    | "unknown_history"
+    /** A session panel's session whose directory is in no clone: it has no
+     *  repository. */
+    | "panel";
   /** How `pr` was found: from the session's directory (`branch`, `upstream`,
    *  `head`), or from its agent's latest commit or push elsewhere. */
   link_method?: "branch" | "upstream" | "head" | "commit" | "push";
@@ -562,6 +572,12 @@ export type LiveSession = {
    *  tmux pane or Claude desktop conversation, or only the window it runs
    *  in. Absent when it cannot, as once the session ended. */
   focus?: "session" | "window";
+  /** `panel` for a session the app's session panel runs, which has no end,
+   *  message or focus actions (the panel runs and stops it); absent for
+   *  every other session. */
+  origin?: "panel";
+  /** The panel conversation a panel session belongs to. */
+  conversation?: string;
 };
 /** One tool call of a session: the tool as displayed ("Read", "Edit",
  *  "Bash", "server: tool") and what it works on, one masked line. */
@@ -1005,6 +1021,7 @@ async function failure(response: Response): Promise<LocalRequestError> {
         ? "isolation_required"
         : (body.blocked_reason ?? body.code),
     response.status,
+    body,
   );
 }
 

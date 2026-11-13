@@ -262,17 +262,25 @@ function ContextMenu({
       if (anchor?.contains(target)) anchor.dataset.closing = "";
       close();
     };
+    // A menu hung under its button closes only when what scrolled moves the
+    // button: the page, or a box that holds it. Another box scrolling, such
+    // as the session panel's transcript following its agent, leaves it open.
+    const scrolled = (event: Event) => {
+      const target = event.target;
+      if (anchor && target instanceof Element && !target.contains(anchor)) return;
+      close();
+    };
     document.addEventListener("pointerdown", outside, true);
-    window.addEventListener("scroll", close, true);
+    window.addEventListener("scroll", scrolled, true);
     window.addEventListener("resize", close);
     window.addEventListener("blur", close);
     return () => {
       document.removeEventListener("pointerdown", outside, true);
-      window.removeEventListener("scroll", close, true);
+      window.removeEventListener("scroll", scrolled, true);
       window.removeEventListener("resize", close);
       window.removeEventListener("blur", close);
     };
-  }, [close]);
+  }, [close, anchor]);
   // Escape closes it wherever the keys are, and does nothing else: the page's
   // own Escape (clearing its row) waits for the next one.
   useEffect(() => {

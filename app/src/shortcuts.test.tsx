@@ -514,6 +514,7 @@ it("lists exactly the keys that work in the sheet", async () => {
   // jsdom is not a Mac: Ctrl, and Alt with the arrows for back and forward.
   expect(listed("Anywhere")).toEqual([
     "Ctrl+K",
+    "`",
     "Ctrl+.",
     "Ctrl+R",
     "Ctrl+N",

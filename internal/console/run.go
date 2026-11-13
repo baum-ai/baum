@@ -142,8 +142,12 @@ func (s *Service) turn(ctx context.Context, c Conversation, message string, l *l
 	}
 	l.progress.State, l.progress.Session, l.progress.Tool, l.progress.CostUSD = current.State, current.Session, "", cost
 	if err == nil && len(result.Document) > 0 {
-		l.progress.Text, l.progress.streaming = tail(string(result.Document), agent.MaxConverseBytes), ""
+		final := tail(string(result.Document), agent.MaxConverseBytes)
+		l.progress.Text, l.progress.streaming, l.progress.last = final, "", final
 	} else {
+		if l.progress.streaming != "" {
+			l.progress.last = l.progress.streaming
+		}
 		l.progress.Text, l.progress.streaming = tail(joinText(l.progress.Text, l.progress.streaming), agent.MaxConverseBytes), ""
 	}
 	if err != nil && !stopped {
@@ -313,6 +317,7 @@ func (s *Service) transcript(id string, l *live, entry agent.TranscriptEntry) {
 	switch entry.Kind {
 	case "message":
 		l.progress.Text, l.progress.streaming = tail(joinText(l.progress.Text, entry.Text), agent.MaxConverseBytes), ""
+		l.progress.last = tail(entry.Text, agent.MaxConverseBytes)
 	case "tool":
 		if entry.Status == "running" {
 			l.progress.Tool = bounded(entry.Title, 512)

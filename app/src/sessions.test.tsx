@@ -13,7 +13,8 @@ import {
   type AgentRequests,
   type LiveSession,
 } from "./api";
-import { forgetFoldedSections, SessionsPage } from "./sessions";
+import { forgetFoldedSections, LiveSessions, needsYou, SessionsPage } from "./sessions";
+import { resetSessionPanel, useSessionPanel } from "./session-panel-state";
 import { ToastProvider } from "./toast";
 import { useActionsKey } from "./context-menu";
 import { useReadlineArrows } from "./shortcuts";
@@ -1469,4 +1470,124 @@ it("links a session's pull request once its link resolves, rendering only that c
   expect(second!.querySelector("a.local-session-pr")).toBeNull();
   // Only the card whose link changed rendered again.
   expect(markdownRenders.count).toBe(renders + 1);
+});
+
+it("marks the session panel's sessions and opens them in the panel instead of acting here", async () => {
+  const openInPanel = vi.fn();
+  await act(async () =>
+    root.render(
+      <ToastProvider>
+        <SessionsPage
+          sessions={[
+            // A panel session in its own empty folder: no repository, branch
+            // or title yet.
+            session({
+              session_id: "p1",
+              origin: "panel",
+              conversation: "conv1",
+              repository: "",
+              branch: undefined,
+              title: undefined,
+              link_status: "panel",
+            }),
+            session({
+              session_id: "p2",
+              state: "idle",
+              waiting_reason: "turn_finished",
+              waiting_since: ago(30),
+              origin: "panel",
+              conversation: "conv2",
+              title: "Check the migration",
+            }),
+          ]}
+          requests={requests()}
+          prHref={() => null}
+          Link={Link}
+          openInPanel={openInPanel}
+        />
+      </ToastProvider>,
+    ),
+  );
+  const running = node.querySelector('[data-row-id="claude-code:p1"]')!;
+  expect(running.querySelector(".local-session-origin")!.textContent).toBe("Panel");
+  expect(running.textContent).toContain("Own folder");
+  // Its name says what it is rather than nothing.
+  expect(running.querySelector('[aria-label^="Open transcript"]')!.getAttribute("aria-label")).toBe(
+    "Open transcript: Claude Code on Session panel",
+  );
+  // No message box for when it finishes: the panel writes to it.
+  expect(running.querySelector(".local-feed-compose")).toBeNull();
+  expect(running.textContent).toContain("Runs in the session panel");
+  await act(async () =>
+    [...running.querySelectorAll("button")].find((b) => b.textContent === "Open in panel")!.click(),
+  );
+  expect(openInPanel).toHaveBeenLastCalledWith("conv1");
+  // A finished panel turn waits on the panel, not on the person: it is not
+  // under Waiting for you, even from a daemon that still says it waits.
+  expect(node.querySelector('[aria-label="Waiting for you"]')).toBeNull();
+  expect(
+    node.querySelector('[aria-label="Running now"] [data-row-id="claude-code:p2"]'),
+  ).not.toBeNull();
+  expect(
+    needsYou([
+      session({
+        state: "idle",
+        waiting_reason: "turn_finished",
+        origin: "panel",
+        conversation: "c",
+      }),
+    ]),
+  ).toEqual([]);
+  const waiting = node.querySelector('[data-row-id="claude-code:p2"]')!;
+  expect(waiting.querySelector(".local-session-origin")).not.toBeNull();
+  await act(async () => {
+    waiting
+      .querySelector(".local-feed-open")!
+      .dispatchEvent(
+        new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 9, clientY: 9 }),
+      );
+  });
+  const items = [...node.querySelectorAll<HTMLButtonElement>('[role="menu"] [role="menuitem"]')];
+  const labels = items.map((b) => b.textContent ?? "");
+  expect(labels[0]).toBe("Open in panel");
+  expect(labels.some((t) => /^(Reply|Focus session|Show window|End session)/.test(t))).toBe(false);
+  await act(async () => items[0]!.click());
+  expect(openInPanel).toHaveBeenLastCalledWith("conv2");
+});
+
+it("tags a panel session in a pull request's sessions and opens it in the panel", async () => {
+  resetSessionPanel();
+  const seen: { state?: ReturnType<typeof useSessionPanel> } = {};
+  function Watch() {
+    seen.state = useSessionPanel();
+    return null;
+  }
+  await act(async () =>
+    root.render(
+      <>
+        <Watch />
+        <LiveSessions
+          sessions={[
+            session({ session_id: "p1", origin: "panel", conversation: "conv1" }),
+            session({ session_id: "s2" }),
+          ]}
+          Link={Link}
+        />
+      </>,
+    ),
+  );
+  const cards = [...node.querySelectorAll(".local-pr-session")];
+  expect(cards[0]!.querySelector(".local-session-origin")!.textContent).toBe("Panel");
+  expect(cards[1]!.querySelector(".local-session-origin")).toBeNull();
+  expect(
+    [...cards[1]!.querySelectorAll("button")].some((b) => b.textContent === "Open in panel"),
+  ).toBe(false);
+  await act(async () =>
+    [...cards[0]!.querySelectorAll("button")]
+      .find((b) => b.textContent === "Open in panel")!
+      .click(),
+  );
+  expect(seen.state!.open).toBe(true);
+  expect(seen.state!.conversation).toBe("conv1");
+  resetSessionPanel();
 });

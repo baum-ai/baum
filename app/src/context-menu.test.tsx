@@ -180,6 +180,30 @@ it("closes when its own button is pressed again", async () => {
   expect(menu()).not.toBeNull();
 });
 
+it("stays open while a box beside its button scrolls, and closes when its button moves", async () => {
+  const beside = document.createElement("div");
+  document.body.append(beside);
+  await render();
+  await act(async () => button().click());
+  // Another box scrolling, as the session panel's transcript does while its
+  // agent writes, leaves it where it is.
+  await act(async () => {
+    beside.dispatchEvent(new Event("scroll"));
+  });
+  expect(menu()).not.toBeNull();
+  // A box holding its button scrolls it away: the menu closes.
+  await act(async () => {
+    node.dispatchEvent(new Event("scroll"));
+  });
+  expect(menu()).toBeNull();
+  await act(async () => button().click());
+  await act(async () => {
+    document.dispatchEvent(new Event("scroll"));
+  });
+  expect(menu()).toBeNull();
+  beside.remove();
+});
+
 it("opens the same menu on a right click on the row", async () => {
   await render();
   await act(async () => {

@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/baum-ai/baum/agent"
+	"github.com/baum-ai/baum/internal/agentcontext"
 	"github.com/baum-ai/baum/internal/analytics"
 	"github.com/baum-ai/baum/internal/appdb/appdbtest"
 	"github.com/baum-ai/baum/internal/assemble/assembletest"
@@ -30,6 +31,7 @@ import (
 	"github.com/baum-ai/baum/internal/chat/chattest"
 	"github.com/baum-ai/baum/internal/clonefind"
 	"github.com/baum-ai/baum/internal/config"
+	"github.com/baum-ai/baum/internal/console"
 	"github.com/baum-ai/baum/internal/daemon"
 	"github.com/baum-ai/baum/internal/decisionlog"
 	"github.com/baum-ai/baum/internal/discovery"
@@ -680,7 +682,10 @@ func TestLocalAppBrowserFixture(t *testing.T) {
 		if _, err := uiState.Replace("tour", "", 0, "browser-fixture:1", json.RawMessage(`{"seen":true}`)); err != nil {
 			return daemon.App{}, err
 		}
-		api := uiserver.LocalAPI{Clones: finder.Handler(), GitHubRepositories: repositoryService.Handler(), GitHubAuth: auth.Handler(), Registry: registry, Config: cfg, PRs: uiserver.DiscoveryHandler(registry, disc, nil), Merge: uiserver.MergeHandler(registry, actions.RecordMerges(client), func(ctx context.Context, repo github.Repository, _ int, _ string) { _, _ = disc.Poll(ctx, repo) }, changed), Update: uiserver.UpdateHandler(registry, actions.RecordUpdates(prupdate.Service{Client: client}), func(ctx context.Context, repo github.Repository) { _, _ = disc.Poll(ctx, repo) }, changed), Index: index.Handler(), Jobs: runner.Handler(), Chat: uiserver.ChatHandler(registry, runner), Automatic: scheduler.Handler(), Live: transcripts.Handler(), Changed: scheduler.Wake, Diagnostics: browserDiagnostics, CurrentName: func(_ context.Context, repository string) (string, error) {
+		// The session panel's routes, once its service below is built on the
+		// MCP server, which reads through the API.
+		consoleRoutes := console.Unavailable()
+		api := uiserver.LocalAPI{Console: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { consoleRoutes.ServeHTTP(w, r) }), Clones: finder.Handler(), GitHubRepositories: repositoryService.Handler(), GitHubAuth: auth.Handler(), Registry: registry, Config: cfg, PRs: uiserver.DiscoveryHandler(registry, disc, nil), Merge: uiserver.MergeHandler(registry, actions.RecordMerges(client), func(ctx context.Context, repo github.Repository, _ int, _ string) { _, _ = disc.Poll(ctx, repo) }, changed), Update: uiserver.UpdateHandler(registry, actions.RecordUpdates(prupdate.Service{Client: client}), func(ctx context.Context, repo github.Repository) { _, _ = disc.Poll(ctx, repo) }, changed), Index: index.Handler(), Jobs: runner.Handler(), Chat: uiserver.ChatHandler(registry, runner), Automatic: scheduler.Handler(), Live: transcripts.Handler(), Changed: scheduler.Wake, Diagnostics: browserDiagnostics, CurrentName: func(_ context.Context, repository string) (string, error) {
 			if repository == "acme/old-renamed" {
 				return "acme/renamed", nil
 			}
@@ -695,9 +700,37 @@ func TestLocalAppBrowserFixture(t *testing.T) {
 				return uiserver.DecisionModel{Backend: e.Backend, Undetermined: e.Undetermined, Model: e.Model, Ignored: e.Ignored}
 			},
 			DecisionsChanged: func() { _ = server.Publish("decisions", struct{}{}) }}.Handler()
+		// The session panel runs the real conversations service with a
+		// scripted agent (panelAgent): no agent CLI runs, and every
+		// conversation gets an empty directory, as without a clone.
+		mcp := agentcontext.New(agentcontext.Options{API: api, Version: "fixture"})
+		panel := &panelAgent{events: events, home: home}
+		conversations, err := console.New(console.Options{Database: filepath.Join(home, "app.sqlite"), Root: filepath.Join(home, "console"),
+			Registry: mcp.Registry, Proposals: mcp.Proposals, MCPURL: func() string { return server.Origin() + "/api/mcp" },
+			Backend: func(string, string, config.Config) (agent.Converser, string, error) {
+				return panel, agent.BackendClaude, nil
+			},
+			Publish: func(event console.Event) { _ = server.Publish("console", event) },
+			// A conversation's transcript, as the daemon serves it.
+			Transcript: func(w http.ResponseWriter, r *http.Request, agent, id string) {
+				answer, err := transcripts.Read(r.Context(), agent, id, "", "")
+				transcripts.WriteAnswer(w, r, answer, err)
+			}})
+		if err != nil {
+			return daemon.App{}, err
+		}
+		consoleRoutes = conversations.Handler()
+		live.Panel = conversations.Owns
 		// The tour's sample project; tour.spec.ts walks it.
 		sample := &sampleapp.Workspace{Dir: filepath.Join(state, "sample"), Own: api}
-		return daemon.App{API: api, Assets: localapp.Handler(), Sample: sample, Shutdown: runner.Shutdown, Close: func() { sample.Close(); api.Close(); _ = events.Close(); _ = groups.Close(); _ = decided.Close() }, Drain: runner.Drain, Resume: runner.Resume,
+		return daemon.App{API: api, Assets: localapp.Handler(), Sample: sample, Shutdown: runner.Shutdown, Close: func() {
+			sample.Close()
+			api.Close()
+			_ = conversations.CloseStore()
+			_ = events.Close()
+			_ = groups.Close()
+			_ = decided.Close()
+		}, Drain: runner.Drain, Resume: runner.Resume,
 			// Background discovery's place: hand the scheduler a snapshot
 			// every quarter second, as the daemon does after each poll.
 			Run: func(ctx context.Context) {
@@ -709,6 +742,7 @@ func TestLocalAppBrowserFixture(t *testing.T) {
 				go feedLiveSession(ctx, events, liveMarker, "live-e2e", "")
 				go feedLiveSession(ctx, events, transcriptMarker, "transcript-e2e", transcriptPath)
 				go feedLiveSession(ctx, events, needsMarker, "needs-e2e", "")
+				go conversations.Run(ctx)
 				ticker := time.NewTicker(250 * time.Millisecond)
 				defer ticker.Stop()
 				for {

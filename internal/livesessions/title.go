@@ -262,9 +262,12 @@ func (t *Transcripts) listed() []Listed {
 			}
 		}
 		// The panel runs its sessions: the app opens them there, and offers
-		// none of the actions it has for the person's own.
+		// none of the actions it has for the person's own. A finished turn
+		// waits on the panel, not on the person, so nothing counts it as
+		// waiting for them (Sessions, the sidebar, the tray, a PR's dot).
 		if l.Origin == OriginPanel {
 			l.Endable, l.EndBlocked, l.Messageable, l.Focus = false, "", false, ""
+			l.WaitingReason, l.WaitingSince, l.WaitingMessage = "", time.Time{}, ""
 		}
 		out = append(out, l)
 	}

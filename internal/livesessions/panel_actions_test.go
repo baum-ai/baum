@@ -22,13 +22,18 @@ func TestPanelSessionsOfferNoActions(t *testing.T) {
 	stop(f)
 	// Before the panel claims it, the person's own session at its prompt
 	// is offered both.
-	if l := listedS1(t, f); !l.Endable || !l.Messageable {
+	if l := listedS1(t, f); !l.Endable || !l.Messageable || l.WaitingReason == "" {
 		t.Fatalf("listed %+v", l)
 	}
 	f.tracker.Panel = func(agent, id, _ string) (string, bool) { return "c1", agent == AgentClaudeCode && id == "s1" }
 	l := listedS1(t, f)
 	if l.Origin != OriginPanel || l.Conversation != "c1" || l.Endable || l.Messageable || l.Focus != "" || l.EndBlocked != "" {
 		t.Fatalf("listed %+v", l)
+	}
+	// Its finished turn waits on the panel, not on the person: nothing lists
+	// it as waiting for them.
+	if l.WaitingReason != "" || !l.WaitingSince.IsZero() || l.WaitingMessage != "" {
+		t.Fatalf("a panel session is listed as waiting for the person: %+v", l)
 	}
 	for _, action := range []struct{ path, body string }{
 		{"/api/live-sessions/claude-code/s1/end", ""},

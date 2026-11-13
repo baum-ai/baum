@@ -771,9 +771,11 @@ number, author or branch; what waits in an inbox first), the review groups and
 the agent sessions, and, with a daemon that has inboxes, each saved inbox by its
 name (opening its queue) with **New inbox** and **Manage inboxes**. There is no
 Inbox page to go to, as no page shows the whole queue: every word typed must match, a label that starts with the
-query ranks first, `↑` and `↓` move, `Enter` opens and `Esc` closes. The sidebar
+query ranks first, `↑` and `↓` move, `Enter` opens and `Esc` closes; it also
+offers **Open the session panel**. The sidebar
 draws each page's key while Alt is held and names it in the link's tooltip and
-`aria-keyshortcuts`.
+`aria-keyshortcuts`. The backtick (`` ` ``) shows or hides the session panel
+anywhere but in a text field (see "Session panel").
 
 Tab (`useTabStops`) reaches every control without leaving the keys' model
 behind. On a page it moves by place: the sidebar is one stop, on the current
@@ -2376,6 +2378,126 @@ bundles and feature attribution use post-commit observations as creation
 links, even when transcript parsing misses the commit. Pushes alone remain
 context. Existing saved hook records are backfilled on startup; failed writes
 are retried without discarding the observations.
+
+## Session panel
+
+The session panel (`src/session-panel.tsx`) is a real Claude Code or Codex
+session the person opens from any page, drawn as a drop-down terminal over the
+page's panel: it slides in from the foot of the window (or its top, in
+Settings), as wide as the page, and is resized by dragging its grip or with
+`↑` and `↓` on it. It stays open across navigation; whether it is open, its
+height and the conversation it shows are kept in this window's storage
+(`baum.session-panel.v1`, `src/session-panel-state.ts`, which any page can
+open it through), as the sidebar's fold is. The sidebar's **Session** button,
+the backtick key (`PANEL_KEY` in `src/shortcuts.tsx`: `` ` ``, or the key in
+its place on a layout where it is a dead key; anywhere but in a text field;
+under Escape, where a drop-down terminal's key is, and taken by nothing else)
+and **Open the session panel** in Go to (⌘K) show or hide it. Escape in it
+hides it; in a field with something typed, the first Escape gives the keys to
+the panel instead and the next hides it, and the page under it never gets
+either (a pull request's page would go back to its list). Opened, its composer
+takes the keys; hidden, they go back to what had them before. The daemon's
+routes are under `/api/console/` (see "Session panel conversations" in
+`oss/ARCHITECTURE.md`; `src/console-api.ts`).
+
+The page under it stays reachable: while it is open, the page's frame carries
+`--session-panel-inset`, how much of it the panel covers. From the foot the
+panel stays over the page, and the page (`.local-main`) and the review's own
+scrolling panes end that much further down, so all of them scroll clear of it;
+from the top, where the page's bars stick to its top, the page starts below
+the panel instead.
+
+Its bar names the conversation (its first message, else "New session"),
+**Working** with the live dot while a turn runs, and **Sessions**, a menu of
+the conversations, newest first, with **New session** and **Close this
+session** (asked first while a turn runs, since closing stops it); a closed
+one can be reopened and read, not written to. The menu stays open while the
+transcript under it scrolls. Under it, on one line in small print:
+**Looking at**, the page the agent sees (the page context below, named by
+`pageLabel`, with a pull request's or group's own name); **Directory**, where
+the agent works (before it starts, a checkout of the pull request on a pull
+request's page, else a new empty folder), with `directory_note` in the
+caution tone when a pull request's conversation fell back to an empty folder;
+**Agent**, its agent and model (the model the transcript names, once it does,
+when none was chosen); **Mode**, Auto, Full access or Workspace, chosen before the
+first message (the setting's default) and shown afterwards; and its cost once
+a turn was priced (`≥` while part of it could not be). The page and the
+directory give way first, cut with an ellipsis and whole in their tooltips.
+
+The body is the session's transcript, read with `useLiveTranscript` through
+the conversation (`GET api/console/conversations/{id}/transcript`), which
+serves its session's transcript whether or not the Sessions page still lists
+it, so an older conversation reopens with its transcript, and drawn by
+`TranscriptReader` (the viewer's `SessionTranscript` in its `log` layout, as
+the Sessions page draws a transcript), following the end while the reader is
+there. What the transcript does not have yet shows under it in the same
+style: the prompt just sent (at once, in the frame the message is sent), and
+while the agent works its answer from the conversation's `progress` (read on
+the `console` events) and the tool it runs, so feedback comes before the
+transcript catches up. Until the transcript holds the prompt the whole answer
+so far shows; after, only the turn's latest message (`progress.message`),
+until the transcript holds that too, so each message of a turn of several
+shows once. A transcript that cannot be read says so and why (its file gone,
+or no session started yet), with the last answer when there is one. Before
+the first message the body is an empty state saying what the agent will do
+and where. The composer sends with Enter (Shift+Enter for a line break) with
+the page context the person has open, starting the conversation first when
+there is none; while a turn runs, **Stop** cancels it, and Enter keeps what is
+typed and says to wait for the turn or stop it. Undo in it is the app's, as
+in every field (`src/text-history.ts`). A refused message comes back into the
+composer with why (`busy`, `closed`, `shutting_down`).
+
+The agent's proposals (`GET .../proposals`, read again on the conversation's
+`proposals` events) are cards under the transcript. A change (`diff`) shows
+what it saves against what is saved now (`Diff`, as a prompt's) as text: a
+prompt's `{text}` as its own lines, saying when it replaces or resets baum's
+default prompt, other plain fields as one line each; with **Save** and
+**Dismiss**, and a field for the value the person types when the change needs
+one (an agent environment variable's), which never goes to the agent. An
+operation shows baum's summary: its action, its details, its model and effort,
+and **Costs money** and **Can't be undone** where they apply, with **Confirm**
+and **Dismiss**. A detail marked `quoted` is set apart as quoted data, never
+as baum's words; one marked `by_agent` or `multiline` is shown whole,
+scrolling in its box (which the keys reach) rather than cut. Confirm sends the summary's revision on
+screen; a `409 operation_changed` replaces it with the new summary, says
+nothing ran and asks again. A proposal made on another page says so and links
+to it, and a `not_current_page` refusal says which page to open.
+
+The app reports the page the person has open (`PUT api/console/page`,
+`usePageReport`) a moment after each navigation settles and again once the
+event stream reconnects, whether or not the panel is open, so a conversation's
+agent always knows the current page. The page context (`src/page-context.ts`,
+`pageContextOf`) is derived from the address in one place, mirroring
+`agentcontext.PageContext`: the sidebar's lists with their filters (the
+address's other parameters, as the MCP server's links take them), a pull
+request (repository and whole number, from its clone when the address names
+one, with its walkthrough stop or anchor as the focus), a group, a session, a
+job, a feature, Settings with its section and a repository's page with its
+section (an unknown one is General, or Reviews, as the pages open it). A
+subject longer than the MCP server takes (1 KiB) is left out. `hrefOf` is its
+inverse, the MCP server's `link`.
+`oss/internal/agentcontext/testdata/page-contexts.json` holds the addresses
+and their contexts, which both
+`page-context.test.ts` and the MCP server's own test (`PageContext.Validate`
+and `link`) check.
+
+When the daemon runs no session panel (`GET api/console/conversations`
+answers `available: false`), the button carries a `!` and says so, the panel
+explains that baum could not open its sessions, and no page is reported.
+
+Settings › Fixes holds the panel's setting (**Session panel**,
+`api/settings/panel`): its agent (**Same as fixes** follows the fix agent and
+its model), the model of an agent chosen there, the access of a new session
+and the edge it opens from. On the Sessions page a panel's session carries a
+**Panel** tag, a session in its own empty folder is named "Session panel" and
+placed in "Own folder", and its menu offers **Open in panel** instead of
+reply, focus and end (a running one says so under its card). A finished turn
+waits on the panel, not on the person: the daemon lists no waiting reason for
+a panel session, so it is never under Waiting for you or counted in the
+sidebar's badge, and `needsYou` leaves panel sessions out too. Its transcript
+page offers **Open in panel** instead of Focus and has no reply bar, and a
+pull request's sessions tag it **Panel** with **Open in panel** beside Open
+transcript.
 
 ## Your review
 

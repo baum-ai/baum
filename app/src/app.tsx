@@ -108,6 +108,15 @@ import {
   type ReviewDefaults,
 } from "./settings";
 import { asksYou, SessionsPage, transcriptHref } from "./sessions";
+import { pageContextOf } from "./page-context";
+import {
+  PANEL_KEY_LABEL,
+  publishConsoleEvent,
+  publishConsoleResync,
+  sessionPanel,
+  SessionPanelHost,
+  useSessionPanel,
+} from "./session-panel";
 import { SampleGuard } from "./sample";
 import { ToastProvider } from "./toast";
 import { MenuButton, useActionsKey, useContextMenu, type MenuItem } from "./context-menu";
@@ -659,6 +668,15 @@ function Workspace({ url }: { url: UrlState }) {
     for (const kind of ["decisions", "open", "reset", "automatic"])
       source.addEventListener(kind, refreshDecisions);
     source.addEventListener("reset", refreshLive);
+    // The session panel reads its conversations on their events, and all of
+    // them again after a reset or a reconnection (below), as it may have
+    // missed some.
+    source.addEventListener("console", (event) =>
+      publishConsoleEvent(String((event as MessageEvent).data)),
+    );
+    // Like the other reads, not while the window is hidden.
+    const resyncConsole = () => gate.run("console", publishConsoleResync);
+    source.addEventListener("reset", resyncConsole);
     // Each kind of event reads what it can change, and what it may change
     // where that is unclear.
     source.addEventListener("index", () => markStale(indexParts));
@@ -688,6 +706,7 @@ function Workspace({ url }: { url: UrlState }) {
         markStale(allReloadParts);
         refreshLive();
         refreshTimeline();
+        resyncConsole();
       }
       connected = true;
     });
@@ -1281,6 +1300,27 @@ function Workspace({ url }: { url: UrlState }) {
               page === "settings"
             ? page
             : "anywhere";
+  // What the person has open, as the session panel reports it to the daemon
+  // and names it in its bar, with its subject's name where the app has it.
+  const pageContext = useMemo(
+    () =>
+      pageContextOf(
+        url.search,
+        (id) => clones.find((clone) => clone.id === id)?.repository,
+        location.hash,
+      ),
+    // The hash is a pull request's anchor: read again whenever the page draws.
+    [url.search, clones, location.hash],
+  );
+  const pageTitle =
+    pageContext.page === "pull_request"
+      ? selectedEntry?.pull_request.title
+      : pageContext.page === "group"
+        ? groups.find((group) => group.id === pageContext.group)?.name
+        : pageContext.page === "session"
+          ? live.find((s) => `${s.agent}:${s.session_id}` === pageContext.session)?.title
+          : undefined;
+  const panel = useSessionPanel();
   const [openAgent = "", openID = ""] = openSession
     ? [
         openSession.slice(0, openSession.indexOf(":")),
@@ -1315,6 +1355,15 @@ function Workspace({ url }: { url: UrlState }) {
         href: item.href(),
       })),
       { id: "tour", kind: "Page" as const, label: "Take the tour", href: TOUR_HREF() },
+      {
+        id: "session-panel",
+        kind: "Action" as const,
+        label: panel.open ? "Hide the session panel" : "Open the session panel",
+        detail: PANEL_KEY_LABEL,
+        keywords: "agent claude codex terminal console chat",
+        href: "",
+        run: () => sessionPanel.toggle(),
+      },
       ...(inboxes.available
         ? [
             ...inboxes.inboxes.map((one) => ({
@@ -1662,6 +1711,7 @@ function Workspace({ url }: { url: UrlState }) {
               tick={liveTick}
               prHref={sessionPR}
               Link={LocalLink}
+              openInPanel={(conversation) => sessionPanel.show(conversation)}
             />
           ) : page === "analytics" ? (
             <AnalyticsPage Link={LocalLink} />
@@ -1736,6 +1786,7 @@ function Workspace({ url }: { url: UrlState }) {
                     Link={LocalLink}
                     prHref={sessionPR}
                     navigate={navigate}
+                    openInPanel={(conversation) => sessionPanel.show(conversation)}
                   />
                 </PageRead>
               </div>
@@ -2299,6 +2350,7 @@ function Workspace({ url }: { url: UrlState }) {
           ) : null}
         </main>
         <KeyBar place={shortcutsPlace} className="local-key-bar" />
+        <SessionPanelHost page={pageContext} title={pageTitle} liveTick={liveTick} go={navigate} />
       </div>
     </div>
   );
