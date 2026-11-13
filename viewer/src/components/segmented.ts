@@ -9,7 +9,7 @@ export const SEGMENT_BASE =
 /** The sunken track of the `segmented` control, for a group of toggles that
  *  should read as the same control. */
 export const SEGMENTED_TRACK =
-  "inline-flex items-center gap-0.5 rounded-(--radius-md) bg-(--surface-sunken) p-[3px]";
+  "inline-flex items-center gap-0.5 rounded-(--radius-md) bg-surface-sunken p-[3px]";
 
 /** A tile in that track, raised when chosen. */
 export function segmentedTileClass(selected: boolean): string {
@@ -18,7 +18,7 @@ export function segmentedTileClass(selected: boolean): string {
     FOCUS_RING,
     "h-7 rounded-(--radius-sm) px-2.5",
     selected
-      ? "bg-(--surface-card) font-medium text-(--text-primary) shadow-(--shadow-card)"
-      : "text-(--text-secondary) hover:text-(--text-primary)",
+      ? "bg-surface-card font-medium text-primary shadow-card"
+      : "text-secondary hover:text-primary",
   );
 }

@@ -57,9 +57,8 @@ export function DataMigrationTile({ change }: { change: DataMigrationChange }) {
           <Arrow />
           <RecordCard label="After" name={change.target} values={change.transform} added />
         </div>
-        <div className="mt-3 rounded-(--radius-sm) bg-(--surface-wash) px-3 py-2 text-xs text-(--text-secondary)">
-          <span className="font-semibold text-(--text-primary)">{change.records}</span> records to
-          transform
+        <div className="mt-3 rounded-(--radius-sm) bg-surface-wash px-3 py-2 text-xs text-secondary">
+          <span className="font-semibold text-primary">{change.records}</span> records to transform
         </div>
       </Frame>
     </Tile>
@@ -75,10 +74,8 @@ export function SearchSchemaTile({ change }: { change: SearchSchemaChange }) {
       codeDiff={change.codeDiff}
     >
       <Frame label="Index and query">
-        <div className="rounded-(--radius-sm) border border-(--border-subtle) bg-(--surface-wash) px-3 py-2">
-          <span className="font-mono text-xs font-semibold text-(--text-primary)">
-            {change.index}
-          </span>
+        <div className="rounded-(--radius-sm) border border-subtle bg-surface-wash px-3 py-2">
+          <span className="font-mono text-xs font-semibold text-primary">{change.index}</span>
           <div className="mt-2 flex flex-wrap gap-1.5">
             {change.fields.map((field, index) => (
               <Pill key={`${index}:${field.name}`} added={field.state === "new"}>
@@ -110,12 +107,12 @@ export function ExternalIntegrationTile({ change }: { change: ExternalIntegratio
       codeDiff={change.codeDiff}
     >
       <Frame label="Runtime sequence">
-        <div className="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-x-3 gap-y-2 rounded-(--radius-sm) border border-(--border-subtle) px-3 py-2 text-xs font-semibold tracking-[0.08em] uppercase text-(--text-tertiary)">
+        <div className="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-x-3 gap-y-2 rounded-(--radius-sm) border border-subtle px-3 py-2 text-xs font-semibold tracking-[0.08em] uppercase text-tertiary">
           <span className="truncate text-right">{change.source}</span>
           <span aria-hidden>↔</span>
           <span className="truncate">{change.provider}</span>
         </div>
-        <ol className="mt-2 overflow-hidden rounded-(--radius-sm) border border-(--border-subtle)">
+        <ol className="mt-2 overflow-hidden rounded-(--radius-sm) border border-subtle">
           <SequenceStep from={change.source} to={change.provider} message={change.request} added />
           <SequenceStep from={change.provider} to={change.source} message={change.response} />
           <SequenceStep
@@ -148,9 +145,9 @@ function Frame({ label, children }: { label: string; children: ReactNode }) {
   return (
     <section
       aria-label={label}
-      className="rounded-(--radius-sm) border border-(--border-default) bg-(--surface-card) p-3"
+      className="rounded-(--radius-sm) border border-default bg-surface-card p-3"
     >
-      <h5 className="mb-2 text-xs font-semibold tracking-[0.12em] uppercase text-(--text-tertiary)">
+      <h5 className="mb-2 text-xs font-semibold tracking-[0.12em] uppercase text-tertiary">
         {label}
       </h5>
       {children}
@@ -170,21 +167,16 @@ function RecordCard({
   added?: boolean;
 }) {
   return (
-    <section className="rounded-(--radius-sm) border border-(--border-default) bg-(--surface-wash) p-3">
-      <span className="text-3xs font-semibold tracking-[0.1em] uppercase text-(--text-tertiary)">
+    <section className="rounded-(--radius-sm) border border-default bg-surface-wash p-3">
+      <span className="text-3xs font-semibold tracking-[0.1em] uppercase text-tertiary">
         {label}
       </span>
-      <span className="mt-1 block font-mono text-xs font-semibold text-(--text-primary)">
-        {name}
-      </span>
+      <span className="mt-1 block font-mono text-xs font-semibold text-primary">{name}</span>
       <ul className="mt-2 space-y-1">
         {values.map((value, index) => (
-          <li
-            key={`${index}:${value}`}
-            className="flex gap-1.5 font-mono text-xs text-(--text-secondary)"
-          >
+          <li key={`${index}:${value}`} className="flex gap-1.5 font-mono text-xs text-secondary">
             {added ? (
-              <span aria-hidden className="flex-none font-semibold text-(--status-positive)">
+              <span aria-hidden className="flex-none font-semibold text-status-positive">
                 +
               </span>
             ) : null}
@@ -198,11 +190,11 @@ function RecordCard({
 
 function Query({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-(--radius-sm) border border-(--border-default) bg-(--surface-wash) px-3 py-2">
-      <span className="text-3xs font-semibold tracking-[0.1em] uppercase text-(--text-tertiary)">
+    <div className="rounded-(--radius-sm) border border-default bg-surface-wash px-3 py-2">
+      <span className="text-3xs font-semibold tracking-[0.1em] uppercase text-tertiary">
         {label}
       </span>
-      <span className="mt-1 block break-words text-xs text-(--text-primary)">{value}</span>
+      <span className="mt-1 block break-words text-xs text-primary">{value}</span>
     </div>
   );
 }
@@ -221,13 +213,13 @@ function SequenceStep({
   caution?: boolean;
 }) {
   return (
-    <li className="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-3 border-b border-(--border-subtle) px-3 py-2 last:border-b-0">
-      <span className="truncate text-right text-xs font-medium text-(--text-primary)">{from}</span>
-      <span aria-hidden className="text-(--text-tertiary)">
+    <li className="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-3 border-b border-subtle px-3 py-2 last:border-b-0">
+      <span className="truncate text-right text-xs font-medium text-primary">{from}</span>
+      <span aria-hidden className="text-tertiary">
         →
       </span>
-      <span className="min-w-0 text-xs text-(--text-secondary)">
-        <span className="font-medium text-(--text-primary)">{to}</span> · {message}
+      <span className="min-w-0 text-xs text-secondary">
+        <span className="font-medium text-primary">{to}</span> · {message}
         {added ? (
           <Badge tone="positive" size="compact" className="ml-1.5">
             New
@@ -246,12 +238,12 @@ function Pill({ children, added = false }: { children: ReactNode; added?: boolea
   return (
     <span
       className={cn(
-        "inline-flex items-center gap-1 rounded-full border border-(--border-default) bg-(--surface-wash) px-2 py-0.5 font-mono text-xs",
-        added ? "text-(--text-primary)" : "text-(--text-secondary)",
+        "inline-flex items-center gap-1 rounded-full border border-default bg-surface-wash px-2 py-0.5 font-mono text-xs",
+        added ? "text-primary" : "text-secondary",
       )}
     >
       {added ? (
-        <span aria-hidden className="font-semibold text-(--status-positive)">
+        <span aria-hidden className="font-semibold text-status-positive">
           +
         </span>
       ) : null}
@@ -261,7 +253,7 @@ function Pill({ children, added = false }: { children: ReactNode; added?: boolea
 }
 function Arrow() {
   return (
-    <span aria-hidden className="flex-none text-center text-lg text-(--text-tertiary)">
+    <span aria-hidden className="flex-none text-center text-lg text-tertiary">
       →
     </span>
   );

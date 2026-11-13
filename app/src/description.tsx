@@ -99,7 +99,7 @@ export function DescriptionDialog({
             {description.body ? (
               <Markdown reading>{description.body}</Markdown>
             ) : (
-              <p className="text-(--text-tertiary)">This pull request has no description.</p>
+              <p className="text-tertiary">This pull request has no description.</p>
             )}
           </div>
           {description.url ? (

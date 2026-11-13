@@ -64,9 +64,7 @@ export function Table<T>({
 
   if (rows.length === 0 && empty) {
     return (
-      <div className="rounded-(--radius-lg) border border-(--border-default) bg-(--surface-card)">
-        {empty}
-      </div>
+      <div className="rounded-(--radius-lg) border border-default bg-surface-card">{empty}</div>
     );
   }
 
@@ -77,18 +75,16 @@ export function Table<T>({
     // containing block: outside this scroll container, so it escapes the clip
     // and widens the whole document instead. On a phone that is a page which
     // scrolls sideways for a header nobody can see.
-    <div className="relative overflow-x-auto rounded-(--radius-lg) border border-(--border-default) bg-(--surface-card)">
+    <div className="relative overflow-x-auto rounded-(--radius-lg) border border-default bg-surface-card">
       <table
         className={cn("w-full border-collapse text-base", fixed && "table-fixed")}
         style={{ minWidth }}
       >
         {caption ? (
-          <caption className="px-4 pt-3 pb-1 text-left text-base text-(--text-tertiary)">
-            {caption}
-          </caption>
+          <caption className="px-4 pt-3 pb-1 text-left text-base text-tertiary">{caption}</caption>
         ) : null}
         <thead>
-          <tr className="border-b border-(--border-subtle) text-left text-xs tracking-[0.08em] text-(--text-tertiary) uppercase">
+          <tr className="border-b border-subtle text-left text-xs tracking-[0.08em] text-tertiary uppercase">
             {columns.map((column) => (
               <th
                 key={column.key}
@@ -115,7 +111,7 @@ export function Table<T>({
             <tr
               key={rowKey(row)}
               className={cn(
-                "border-b border-(--border-subtle) last:border-b-0 hover:bg-(--surface-hover)",
+                "border-b border-subtle last:border-b-0 hover:bg-surface-hover",
                 rowClassName?.(row),
               )}
             >
@@ -155,9 +151,9 @@ function SortButton({
       type="button"
       onClick={sort.onSort}
       className={cn(
-        "group inline-flex cursor-pointer items-center gap-1 rounded-(--radius-sm) uppercase hover:text-(--text-primary)",
+        "group inline-flex cursor-pointer items-center gap-1 rounded-(--radius-sm) uppercase hover:text-primary",
         FOCUS_RING,
-        sort.direction && "text-(--text-primary)",
+        sort.direction && "text-primary",
       )}
     >
       {children}
@@ -198,7 +194,7 @@ export function TablePager({
 
   return (
     <div className="mt-4 flex items-center justify-between gap-4">
-      <p className="text-base text-(--text-tertiary)">
+      <p className="text-base text-tertiary">
         {total == null
           ? `Showing ${formatCount(shown)} ${noun}`
           : `Showing ${formatCount(shown)} of ${formatCount(total)} ${noun}`}

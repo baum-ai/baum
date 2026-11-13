@@ -33,7 +33,7 @@ export function ChatSurface({
       className={cn(
         "flex flex-col",
         !log && "rounded-xl p-3 sm:p-4",
-        !plain && !log && "bg-(--surface-sunken)",
+        !plain && !log && "bg-surface-sunken",
         className,
       )}
     >
@@ -57,8 +57,8 @@ export function SystemNote({
   return (
     <p
       className={cn(
-        "flex max-w-full items-center gap-2 text-xs text-(--text-tertiary)",
-        !log && "rounded-2xl border border-(--border-subtle) bg-(--surface-card) px-3 py-1",
+        "flex max-w-full items-center gap-2 text-xs text-tertiary",
+        !log && "rounded-2xl border border-subtle bg-surface-card px-3 py-1",
         align === "start" || log ? "self-start text-left" : "self-center text-center",
         className,
       )}
@@ -120,11 +120,11 @@ export function PromptBubble({
       <div
         data-message={kind}
         // Set apart by a rule in the app's accent, not a fill.
-        className="min-w-0 border-l-2 border-(--action-primary) pl-3.5"
+        className="min-w-0 border-l-2 border-action-primary pl-3.5"
       >
-        <p className="mb-1 flex flex-wrap items-baseline gap-x-2 text-xs text-(--text-tertiary)">
+        <p className="mb-1 flex flex-wrap items-baseline gap-x-2 text-xs text-tertiary">
           {author ? (
-            <span className="min-w-0 truncate font-medium text-(--text-secondary)">{author}</span>
+            <span className="min-w-0 truncate font-medium text-secondary">{author}</span>
           ) : null}
           {meta}
         </p>
@@ -136,10 +136,10 @@ export function PromptBubble({
     <div className="flex items-start justify-end gap-2">
       <div
         data-message={kind}
-        className={cn(BUBBLE, "rounded-tr-sm border-(--border-subtle) bg-(--surface-selected)")}
+        className={cn(BUBBLE, "rounded-tr-sm border-subtle bg-surface-selected")}
       >
         {author ? (
-          <p className="mb-0.5 min-w-0 truncate text-right text-xs font-medium text-(--text-secondary)">
+          <p className="mb-0.5 min-w-0 truncate text-right text-xs font-medium text-secondary">
             {author}
           </p>
         ) : null}
@@ -185,7 +185,7 @@ function PromptImages({ images }: { images: TranscriptImage[] }) {
               type="button"
               onClick={() => setOpen(image)}
               className={cn(
-                "block cursor-zoom-in overflow-hidden rounded-(--radius-md) border border-(--border-subtle) bg-(--surface-sunken) transition-colors hover:border-(--border-strong)",
+                "block cursor-zoom-in overflow-hidden rounded-(--radius-md) border border-subtle bg-surface-sunken transition-colors hover:border-strong",
                 FOCUS_RING,
               )}
             >
@@ -203,7 +203,7 @@ function PromptImages({ images }: { images: TranscriptImage[] }) {
         ref={dialog}
         aria-label={open?.alt}
         onClose={() => setOpen(null)}
-        className="m-auto outline-none backdrop:bg-(--surface-scrim)"
+        className="m-auto outline-none backdrop:bg-surface-scrim"
         // Inline, so a host's own dialog box (its width, padding and card)
         // cannot frame the image.
         style={IMAGE_DIALOG}
@@ -316,7 +316,7 @@ export function AgentAvatar({ vendor }: { vendor?: string }) {
       {vendor !== undefined ? (
         <span
           aria-hidden
-          className="flex size-7 items-center justify-center rounded-full border border-(--border-subtle) bg-(--surface-card) text-xs font-medium text-(--text-secondary)"
+          className="flex size-7 items-center justify-center rounded-full border border-subtle bg-surface-card text-xs font-medium text-secondary"
         >
           {brand ? <BrandMark brand={brand} size={16} /> : harnessName(vendor).charAt(0)}
         </span>
@@ -330,7 +330,7 @@ export function AgentAvatar({ vendor }: { vendor?: string }) {
  *  `__init__` bold or a `# comment` into a heading. */
 function PromptText({ text }: { text: string }) {
   return (
-    <div className="space-y-2 text-base leading-[1.6] text-(--text-primary)">
+    <div className="space-y-2 text-base leading-[1.6] text-primary">
       {promptSegments(text).map((segment, index) =>
         segment.kind === "code" ? (
           <Markdown key={index} html={false}>
@@ -339,7 +339,7 @@ function PromptText({ text }: { text: string }) {
         ) : segment.kind === "quote" ? (
           <blockquote
             key={index}
-            className="m-0 border-l-2 border-(--border-default) pl-3 whitespace-pre-wrap text-(--text-secondary) [overflow-wrap:anywhere]"
+            className="m-0 border-l-2 border-default pl-3 whitespace-pre-wrap text-secondary [overflow-wrap:anywhere]"
           >
             {segment.value}
           </blockquote>
@@ -371,7 +371,7 @@ function MessageText({
       reading={reading}
       className={cn(
         "text-base leading-[1.6] [overflow-wrap:anywhere]",
-        muted ? "text-(--text-secondary)" : "text-(--text-primary)",
+        muted ? "text-secondary" : "text-primary",
       )}
     >
       {text}
@@ -382,7 +382,7 @@ function MessageText({
 /** The small print in a bubble's bottom corner: when, and by what. */
 function BubbleMeta({ children }: { children: ReactNode }) {
   return (
-    <p className="mt-0.5 flex flex-wrap items-baseline justify-end gap-x-1.5 text-xs text-(--text-tertiary)">
+    <p className="mt-0.5 flex flex-wrap items-baseline justify-end gap-x-1.5 text-xs text-tertiary">
       {children}
     </p>
   );
@@ -456,12 +456,12 @@ export function AgentText({
       <div
         className={cn(
           BUBBLE,
-          "border-(--border-strong) bg-(--surface-card)",
+          "border-strong bg-surface-card",
           vendor !== undefined && "rounded-tl-sm",
         )}
       >
         {vendor !== undefined ? (
-          <p className="mb-0.5 text-xs font-medium text-(--text-secondary)">
+          <p className="mb-0.5 text-xs font-medium text-secondary">
             {author ?? harnessName(vendor)}
           </p>
         ) : null}
@@ -485,9 +485,9 @@ export function AgentByline({
 }) {
   const brand = harnessBrand(vendor);
   return (
-    <p className="flex flex-wrap items-center gap-x-1.5 text-xs text-(--text-tertiary)">
+    <p className="flex flex-wrap items-center gap-x-1.5 text-xs text-tertiary">
       {brand && !author ? <BrandMark brand={brand} size={12} /> : null}
-      <span className="font-medium text-(--text-secondary)">{author ?? harnessName(vendor)}</span>
+      <span className="font-medium text-secondary">{author ?? harnessName(vendor)}</span>
       {caption ? <span>{caption}</span> : null}
     </p>
   );
@@ -586,14 +586,14 @@ function CollapsibleText({
         {children}
       </div>
       {collapsible ? (
-        <p className="mt-1.5 flex flex-wrap items-baseline gap-x-2 text-xs text-(--text-tertiary)">
+        <p className="mt-1.5 flex flex-wrap items-baseline gap-x-2 text-xs text-tertiary">
           <button
             type="button"
             aria-expanded={expanded}
             aria-controls={bodyId}
             onClick={toggle}
             className={cn(
-              "cursor-pointer rounded-(--radius-xs) text-xs text-(--text-link) hover:underline",
+              "cursor-pointer rounded-(--radius-xs) text-xs text-link hover:underline",
               FOCUS_RING,
             )}
           >

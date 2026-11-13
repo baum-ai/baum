@@ -50,11 +50,11 @@ export type ContractSchemaDiff = {
 };
 
 const operationStyle: Record<SchemaOperation["kind"], { mark: string; className: string }> = {
-  add: { mark: "+", className: "text-(--status-positive)" },
-  remove: { mark: "−", className: "text-(--status-critical)" },
-  alter: { mark: "~", className: "text-(--status-caution)" },
-  rename: { mark: "→", className: "text-(--accent-600)" },
-  constraint: { mark: "↳", className: "text-(--text-tertiary)" },
+  add: { mark: "+", className: "text-status-positive" },
+  remove: { mark: "−", className: "text-status-critical" },
+  alter: { mark: "~", className: "text-status-caution" },
+  rename: { mark: "→", className: "text-accent-600" },
+  constraint: { mark: "↳", className: "text-tertiary" },
 };
 
 /** Crow's-foot (Information Engineering) notation: each end of a relationship
@@ -427,24 +427,22 @@ function TableCard({ table, changes }: { table: SchemaTable; changes: TableChang
     <article
       aria-label={`${table.name} table${isNew ? " · new table" : " · existing table"}`}
       className={cn(
-        "overflow-hidden rounded-(--radius-sm) border bg-(--surface-card)",
-        isContext ? "border-(--border-subtle)" : "border-(--border-default)",
+        "overflow-hidden rounded-(--radius-sm) border bg-surface-card",
+        isContext ? "border-subtle" : "border-default",
       )}
     >
       <div
         className={cn(
           "border-b px-3",
           isNew ? "py-3" : "py-2",
-          isContext
-            ? "border-(--border-subtle) bg-(--surface-card)"
-            : "border-(--border-default) bg-(--surface-wash)",
+          isContext ? "border-subtle bg-surface-card" : "border-default bg-surface-wash",
         )}
       >
         <div className="flex flex-wrap items-center gap-2">
           {isNew ? (
             <span
               aria-hidden
-              className="w-3 flex-none text-center text-lg font-semibold text-(--status-positive)"
+              className="w-3 flex-none text-center text-lg font-semibold text-status-positive"
             >
               +
             </span>
@@ -453,7 +451,7 @@ function TableCard({ table, changes }: { table: SchemaTable; changes: TableChang
             className={cn(
               "font-mono font-semibold",
               isNew ? "text-lg" : "text-base",
-              isContext ? "text-(--text-secondary)" : "text-(--text-primary)",
+              isContext ? "text-secondary" : "text-primary",
             )}
           >
             {table.name}
@@ -463,26 +461,26 @@ function TableCard({ table, changes }: { table: SchemaTable; changes: TableChang
               New table
             </Badge>
           ) : (
-            <span className="text-3xs font-semibold tracking-[0.08em] text-(--text-tertiary)">
+            <span className="text-3xs font-semibold tracking-[0.08em] text-tertiary">
               {isContext ? "EXISTING TABLE · UNCHANGED" : "EXISTING TABLE"}
             </span>
           )}
         </div>
         {isNew ? (
-          <p className="mt-1 pl-5 text-xs text-(--text-secondary)">
+          <p className="mt-1 pl-5 text-xs text-secondary">
             {tableDetail ? `${tableDetail.detail} · ` : "Created by this pull request · "}
             {table.columns.length} {table.columns.length === 1 ? "column" : "columns"}
           </p>
         ) : tableDetail ? (
-          <p className="mt-1 text-xs text-(--text-secondary)">{tableDetail.detail}</p>
+          <p className="mt-1 text-xs text-secondary">{tableDetail.detail}</p>
         ) : columnSummary(table) ? (
-          <p className="mt-1 text-xs text-(--text-secondary)">{columnSummary(table)}</p>
+          <p className="mt-1 text-xs text-secondary">{columnSummary(table)}</p>
         ) : null}
       </div>
       {otherTableChanges.length > 0 && (
         <ul
           aria-label={`Changes to ${table.name}`}
-          className="divide-y divide-(--border-subtle) border-b border-(--border-default)"
+          className="divide-y divide-subtle border-b border-default"
         >
           {otherTableChanges.map((operation, index) => (
             <OperationRow
@@ -497,7 +495,7 @@ function TableCard({ table, changes }: { table: SchemaTable; changes: TableChang
           ))}
         </ul>
       )}
-      <ul aria-label={`${table.name} columns`} className="divide-y divide-(--border-subtle)">
+      <ul aria-label={`${table.name} columns`} className="divide-y divide-subtle">
         {table.columns.map((column, index) => {
           const columnChanges = changes?.byColumn.get(column.name) ?? [];
           // Every column of a new table is new; marking each one again would
@@ -519,7 +517,7 @@ function TableCard({ table, changes }: { table: SchemaTable; changes: TableChang
                   <span
                     className={cn(
                       "w-4 flex-none text-3xs font-semibold tracking-[0.05em]",
-                      column.key === "primary" ? "text-(--status-caution)" : "text-(--accent-600)",
+                      column.key === "primary" ? "text-status-caution" : "text-accent-600",
                     )}
                   >
                     {column.key === "primary" ? "PK" : "FK"}
@@ -529,7 +527,7 @@ function TableCard({ table, changes }: { table: SchemaTable; changes: TableChang
                 )}
                 <span
                   className={cn(
-                    "min-w-0 break-words font-mono text-(--text-primary)",
+                    "min-w-0 break-words font-mono text-primary",
                     column.change === "remove" && "line-through",
                   )}
                 >
@@ -540,19 +538,17 @@ function TableCard({ table, changes }: { table: SchemaTable; changes: TableChang
                     {columnChangeLabel[change]}
                   </Badge>
                 )}
-                <span className="ml-auto flex-none font-mono text-(--text-tertiary)">
-                  {column.type}
-                </span>
+                <span className="ml-auto flex-none font-mono text-tertiary">{column.type}</span>
               </div>
               {columnChanges.map((operation, detailIndex) => (
                 <p
                   key={`${detailIndex}:${operation.kind}`}
                   className="mt-1 flex flex-wrap gap-x-2 pl-11 text-xs leading-[1.45]"
                 >
-                  <span className="flex-none font-semibold text-(--text-tertiary)">
+                  <span className="flex-none font-semibold text-tertiary">
                     {columnDetailLabel[operation.kind]}
                   </span>
-                  <span className="min-w-0 text-(--text-secondary)">{operation.detail}</span>
+                  <span className="min-w-0 text-secondary">{operation.detail}</span>
                 </p>
               ))}
             </li>
@@ -574,12 +570,12 @@ function OperationRow({ operation, subject }: { operation: SchemaOperation; subj
       </span>
       <div className="grid min-w-0 flex-1 gap-1 sm:grid-cols-[minmax(7rem,0.8fr)_minmax(0,1fr)] sm:gap-3">
         <div className="min-w-0">
-          <span className="block text-3xs font-semibold tracking-[0.08em] text-(--text-tertiary)">
+          <span className="block text-3xs font-semibold tracking-[0.08em] text-tertiary">
             {operationLabel(operation)}
           </span>
-          <span className="block break-words font-mono text-(--text-primary)">{subject}</span>
+          <span className="block break-words font-mono text-primary">{subject}</span>
         </div>
-        <span className="min-w-0 text-(--text-secondary)">{operation.detail}</span>
+        <span className="min-w-0 text-secondary">{operation.detail}</span>
       </div>
     </li>
   );
@@ -626,7 +622,7 @@ function SchemaMap({
       <div className="grid gap-4">
         {groups.map((group) => (
           <section key={group.label} aria-label={group.label} className="grid gap-2">
-            <h6 className="text-xs font-semibold tracking-[0.12em] uppercase text-(--text-tertiary)">
+            <h6 className="text-xs font-semibold tracking-[0.12em] uppercase text-tertiary">
               {group.label} · {group.tables.length}
             </h6>
             {group.tables.map((table) => (
@@ -638,12 +634,12 @@ function SchemaMap({
       {unplaced.length > 0 && (
         <section
           aria-label="Other schema changes"
-          className="mt-3 overflow-hidden rounded-(--radius-sm) border border-(--border-default) bg-(--surface-card)"
+          className="mt-3 overflow-hidden rounded-(--radius-sm) border border-default bg-surface-card"
         >
-          <h6 className="border-b border-(--border-subtle) bg-(--surface-wash) px-3 py-2 text-xs font-semibold tracking-[0.12em] uppercase text-(--text-tertiary)">
+          <h6 className="border-b border-subtle bg-surface-wash px-3 py-2 text-xs font-semibold tracking-[0.12em] uppercase text-tertiary">
             Other changes
           </h6>
-          <ul className="divide-y divide-(--border-subtle)">
+          <ul className="divide-y divide-subtle">
             {unplaced.map((operation, index) => (
               <OperationRow
                 key={`${index}:${operation.kind}:${operation.subject}`}
@@ -657,10 +653,10 @@ function SchemaMap({
       {relationships.length > 0 && (
         <section
           aria-label="Foreign-key relationships"
-          className="mt-4 border-t border-(--border-default) pt-3"
+          className="mt-4 border-t border-default pt-3"
         >
           <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1.5">
-            <h6 className="text-xs font-semibold tracking-[0.12em] uppercase text-(--text-tertiary)">
+            <h6 className="text-xs font-semibold tracking-[0.12em] uppercase text-tertiary">
               Foreign-key relationships
             </h6>
             <NotationLegend marks={relationshipEnds.flatMap((entry) => entry.marks)} />
@@ -669,7 +665,7 @@ function SchemaMap({
             {relationshipEnds.map(({ relationship, marks }, index) => (
               <li
                 key={`${index}:${relationship.from}:${relationship.to}`}
-                className="min-w-0 rounded-(--radius-sm) border border-(--border-default) bg-(--surface-card) p-3"
+                className="min-w-0 rounded-(--radius-sm) border border-default bg-surface-card p-3"
               >
                 <RelationshipDiagram
                   relationship={relationship}
@@ -677,12 +673,12 @@ function SchemaMap({
                   tables={tables}
                   newTables={newTables}
                 />
-                <div className="mt-3 flex flex-wrap items-start gap-2 border-t border-(--border-subtle) pt-2.5">
+                <div className="mt-3 flex flex-wrap items-start gap-2 border-t border-subtle pt-2.5">
                   <Badge size="compact">
                     {tableName(relationship.from, tables)}: {endMarkLabel(marks[0])} ·{" "}
                     {tableName(relationship.to, tables)}: {endMarkLabel(marks[1])}
                   </Badge>
-                  <p className="min-w-[12rem] flex-1 text-xs leading-[1.45] text-(--text-secondary)">
+                  <p className="min-w-[12rem] flex-1 text-xs leading-[1.45] text-secondary">
                     {relationshipDescription(relationship, tables)}
                   </p>
                 </div>
@@ -753,9 +749,9 @@ function EntityBox({
   const key = keyMark ?? (listed?.key === "primary" ? "PK" : undefined);
 
   return (
-    <div className="min-w-0 overflow-hidden rounded-(--radius-sm) border border-(--border-default) bg-(--surface-card)">
-      <div className="flex flex-wrap items-center gap-1.5 border-b border-(--border-default) bg-(--surface-wash) px-2 py-1.5">
-        <span className="min-w-0 font-mono text-xs font-semibold text-(--text-primary) [overflow-wrap:anywhere]">
+    <div className="min-w-0 overflow-hidden rounded-(--radius-sm) border border-default bg-surface-card">
+      <div className="flex flex-wrap items-center gap-1.5 border-b border-default bg-surface-wash px-2 py-1.5">
+        <span className="min-w-0 font-mono text-xs font-semibold text-primary [overflow-wrap:anywhere]">
           {name}
         </span>
         {isNew ? (
@@ -769,17 +765,15 @@ function EntityBox({
           <span
             className={cn(
               "w-4 flex-none text-3xs font-semibold tracking-[0.05em]",
-              key === "PK" ? "text-(--status-caution)" : "text-(--accent-600)",
+              key === "PK" ? "text-status-caution" : "text-accent-600",
             )}
           >
             {key ?? ""}
           </span>
-          <span className="min-w-0 flex-1 font-mono text-(--text-primary) [overflow-wrap:anywhere]">
+          <span className="min-w-0 flex-1 font-mono text-primary [overflow-wrap:anywhere]">
             {column}
           </span>
-          {listed ? (
-            <span className="flex-none font-mono text-(--text-tertiary)">{listed.type}</span>
-          ) : null}
+          {listed ? <span className="flex-none font-mono text-tertiary">{listed.type}</span> : null}
         </div>
       ) : null}
     </div>
@@ -799,7 +793,7 @@ function RelationshipConnector({ from, to }: { from: EndMark; to: EndMark }) {
     </>
   );
   return (
-    <span aria-hidden className="flex items-center justify-center text-(--text-secondary)">
+    <span aria-hidden className="flex items-center justify-center text-secondary">
       <svg
         width={width}
         height="28"
@@ -835,7 +829,7 @@ function RelationshipConnector({ from, to }: { from: EndMark; to: EndMark }) {
 function NotationLegend({ marks }: { marks: readonly EndMark[] }) {
   const unique = [...new Map(marks.map((mark) => [endMarkLabel(mark), mark])).values()];
   return (
-    <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-3xs font-semibold tracking-[0.08em] uppercase text-(--text-tertiary)">
+    <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-3xs font-semibold tracking-[0.08em] uppercase text-tertiary">
       {unique.map((mark) => (
         <span key={endMarkLabel(mark)} className="flex items-center gap-1.5">
           <svg
@@ -848,7 +842,7 @@ function NotationLegend({ marks }: { marks: readonly EndMark[] }) {
             strokeWidth={1.25}
             strokeLinecap="round"
             focusable="false"
-            className="h-3.5 w-4 flex-none text-(--text-secondary)"
+            className="h-3.5 w-4 flex-none text-secondary"
           >
             <line x1={0} y1={14} x2={32} y2={14} />
             <EndGlyph mark={mark} side="end" width={32} />

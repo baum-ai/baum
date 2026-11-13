@@ -81,7 +81,7 @@ describe("reference chips in review prose", () => {
     expect(html).toContain('data-review-ref="check"');
     expect(html).toContain(">UI<");
     expect(html).toContain(">Success<");
-    expect(html).toContain("bg-(--status-positive)");
+    expect(html).toContain("bg-status-positive");
     expect(html).toContain('href="https://github.com/acme/widgets/actions/runs/1/job/1"');
   });
 
@@ -89,7 +89,7 @@ describe("reference chips in review prose", () => {
     const html = render("see status:77");
     expect(html).toContain(">deploy<");
     expect(html).toContain(">Failure<");
-    expect(html).toContain("bg-(--status-critical)");
+    expect(html).toContain("bg-status-critical");
     expect(html).not.toContain("other/repo");
     expect(html).toContain("no link available");
     expect(html).not.toContain("<a ");
@@ -101,7 +101,7 @@ describe("reference chips in review prose", () => {
     expect(html).toContain(">earlier head<");
     expect(html).toContain('title="Check lint: earlier head"');
     expect(html).not.toContain(">Failure<");
-    expect(html).not.toContain("bg-(--status-critical)");
+    expect(html).not.toContain("bg-status-critical");
   });
 
   it("shows a thread as its place and state, linked to it", () => {

@@ -34,7 +34,7 @@ export function Card({ children, className, size = "standard", ...props }: CardP
     <section
       {...props}
       className={cn(
-        "rounded-(--radius-lg) border border-(--border-default) bg-(--surface-card) shadow-(--shadow-card)",
+        "rounded-(--radius-lg) border border-default bg-surface-card shadow-card",
         cardSizes[size],
         className,
       )}
@@ -51,25 +51,25 @@ type CardHeaderSize = Exclude<CardSize, "flush"> | "pane";
 const headerSizes = {
   standard: {
     title: "text-2xl font-medium tracking-[-0.015em]",
-    detail: "mt-2.5 leading-[1.55] text-(--text-secondary)",
+    detail: "mt-2.5 leading-[1.55] text-secondary",
     row: undefined,
     heading: "h1",
   },
   compact: {
     title: "text-2xl font-semibold",
-    detail: "mt-3 leading-6 text-(--text-secondary)",
+    detail: "mt-3 leading-6 text-secondary",
     row: undefined,
     heading: "h1",
   },
   panel: {
     title: "text-base font-medium",
-    detail: "mt-1 text-base leading-[1.45] text-(--text-tertiary)",
+    detail: "mt-1 text-base leading-[1.45] text-tertiary",
     row: "mb-4 flex items-start justify-between gap-3",
     heading: "h2",
   },
   pane: {
     title: "text-lg font-medium tracking-[-0.015em]",
-    detail: "mt-1.5 text-base leading-[1.45] text-(--text-tertiary)",
+    detail: "mt-1.5 text-base leading-[1.45] text-tertiary",
     // On a phone the badges lead on a line of their own, so a long title and
     // its statistics keep the pane's width rather than wrapping beside them.
     row: "mb-4 flex flex-col-reverse items-start gap-2 sm:flex-row sm:justify-between sm:gap-3",
@@ -98,10 +98,10 @@ export function CardHeader({
 }: CardHeaderProps) {
   const toneClass =
     tone === "positive"
-      ? "text-(--status-positive)"
+      ? "text-status-positive"
       : tone === "critical"
-        ? "text-(--status-critical)"
-        : "text-(--text-primary)";
+        ? "text-status-critical"
+        : "text-primary";
 
   const scale = headerSizes[size];
   const Heading = as ?? scale.heading;
@@ -118,13 +118,13 @@ export function CardHeader({
 }
 
 const badgeTones = {
-  neutral: "bg-(--status-neutral-bg) text-(--status-neutral)",
-  info: "bg-(--status-info-bg) text-(--status-info)",
-  positive: "bg-(--status-positive-bg) text-(--status-positive)",
-  caution: "bg-(--status-caution-bg) text-(--status-caution)",
-  critical: "bg-(--status-critical-bg) text-(--status-critical)",
+  neutral: "bg-status-neutral-bg text-status-neutral",
+  info: "bg-status-info-bg text-status-info",
+  positive: "bg-status-positive-bg text-status-positive",
+  caution: "bg-status-caution-bg text-status-caution",
+  critical: "bg-status-critical-bg text-status-critical",
   /** A merged pull request, in GitHub's purple. */
-  merged: "bg-(--status-merged-bg) text-(--status-merged)",
+  merged: "bg-status-merged-bg text-status-merged",
 };
 
 export type BadgeTone = keyof typeof badgeTones;
@@ -200,7 +200,7 @@ export function Alert({ children, className }: AlertProps) {
     <p
       role="alert"
       className={cn(
-        "rounded-(--radius-sm) bg-(--status-critical-bg) px-3 py-2 text-base text-(--status-critical)",
+        "rounded-(--radius-sm) bg-status-critical-bg px-3 py-2 text-base text-status-critical",
         className,
       )}
     >
@@ -220,9 +220,9 @@ type SegmentedItem<T extends string> = {
 };
 
 const TAB_TONES = {
-  positive: { rule: "border-b-(--status-positive)", dot: "bg-(--status-positive)" },
-  critical: { rule: "border-b-(--status-critical)", dot: "bg-(--status-critical)" },
-  caution: { rule: "border-b-(--status-caution)", dot: "bg-(--status-caution)" },
+  positive: { rule: "border-b-status-positive", dot: "bg-status-positive" },
+  critical: { rule: "border-b-status-critical", dot: "bg-status-critical" },
+  caution: { rule: "border-b-status-caution", dot: "bg-status-caution" },
 } as const;
 
 /** A choice between a few views of the same pane.
@@ -284,7 +284,7 @@ export function SegmentedControl<T extends string>({
           ? SEGMENTED_TRACK
           : // Scrolls sideways when the pane is at its narrowest, without a
             // scrollbar of its own: a tab cut off at the edge is the cue.
-            "flex items-center gap-0.5 overflow-x-auto overflow-y-hidden border-b border-(--border-subtle) [scrollbar-width:none] [&::-webkit-scrollbar]:hidden",
+            "flex items-center gap-0.5 overflow-x-auto overflow-y-hidden border-b border-subtle [scrollbar-width:none] [&::-webkit-scrollbar]:hidden",
         className,
       )}
     >
@@ -315,10 +315,10 @@ export function SegmentedControl<T extends string>({
                     "-mb-px h-9 border-b-2 px-2 transition-[border-color,color] duration-150",
                     selected
                       ? cn(
-                          "font-medium text-(--text-primary)",
-                          item.tone ? TAB_TONES[item.tone].rule : "border-b-(--action-accent)",
+                          "font-medium text-primary",
+                          item.tone ? TAB_TONES[item.tone].rule : "border-b-action-accent",
                         )
-                      : "border-b-transparent text-(--text-secondary) hover:border-b-(--border-strong) hover:text-(--text-primary)",
+                      : "border-b-transparent text-secondary hover:border-b-strong hover:text-primary",
                   )
             }
           >
@@ -394,7 +394,7 @@ export function IconButton({
       aria-label={label}
       title={label}
       className={cn(
-        "inline-flex h-7 w-7 flex-none cursor-pointer items-center justify-center rounded-(--radius-sm) text-(--text-tertiary) hover:bg-(--surface-hover) hover:text-(--text-primary) disabled:cursor-not-allowed disabled:opacity-50",
+        "inline-flex h-7 w-7 flex-none cursor-pointer items-center justify-center rounded-(--radius-sm) text-tertiary hover:bg-surface-hover hover:text-primary disabled:cursor-not-allowed disabled:opacity-50",
         FOCUS_RING,
         className,
       )}
@@ -443,7 +443,7 @@ export function Toggle({
     <label
       title={title}
       className={cn(
-        "inline-flex items-center gap-2 text-base text-(--text-secondary)",
+        "inline-flex items-center gap-2 text-base text-secondary",
         disabled ? "cursor-not-allowed opacity-60" : "cursor-pointer",
         className,
       )}
@@ -461,7 +461,7 @@ export function Toggle({
         <span
           aria-hidden
           className={cn(
-            "h-full w-full rounded-full bg-(--border-strong) transition-colors duration-150 peer-checked:bg-(--action-accent)",
+            "h-full w-full rounded-full bg-(--border-strong) transition-colors duration-150 peer-checked:bg-action-accent",
             "peer-focus-visible:shadow-(--focus-ring)",
             "after:absolute after:top-0.5 after:left-0.5 after:h-3 after:w-3 after:rounded-full after:bg-(--control-thumb) after:shadow-sm after:transition-transform after:duration-150 peer-checked:after:translate-x-3 motion-reduce:after:transition-none",
           )}

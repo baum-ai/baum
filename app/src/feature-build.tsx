@@ -168,7 +168,7 @@ export function BuildStatus({
             ? `The feature history build stopped. ${buildReasonText(reason)}`
             : "A feature history build is in progress or stopped"}
         </p>
-        <p className="text-xs text-(--text-tertiary)">
+        <p className="text-xs text-tertiary">
           {building.total > 0
             ? `${formatCount(building.placed)} of ${formatCount(building.total)} pull requests placed, `
             : null}

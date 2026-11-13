@@ -9,10 +9,10 @@ import { useReviewJump, useReviewRefs } from "./review-contexts";
 
 const DOT: Record<Tone, string> = {
   neutral: "bg-(--text-tertiary)",
-  info: "bg-(--status-info)",
-  positive: "bg-(--status-positive)",
-  caution: "bg-(--status-caution)",
-  critical: "bg-(--status-critical)",
+  info: "bg-status-info",
+  positive: "bg-status-positive",
+  caution: "bg-status-caution",
+  critical: "bg-status-critical",
 };
 
 // Clickable even in prose laid over a row's own link with pointer events off
@@ -51,7 +51,7 @@ function describe(ref: ReviewRef): {
               tone={ref.stale ? "neutral" : (CHECK_CONCLUSION_TONES[ref.conclusion] ?? "neutral")}
             />
             <span className="truncate">{ref.name}</span>
-            <span className="flex-none text-(--text-tertiary)">{result}</span>
+            <span className="flex-none text-tertiary">{result}</span>
           </>
         ),
         title: `Check ${ref.name}: ${result}${ref.linkDropped ? `, ${NO_LINK}` : ""}`,
@@ -65,9 +65,7 @@ function describe(ref: ReviewRef): {
           <>
             <Dot tone={ref.resolved ? "positive" : "caution"} />
             <span className="truncate font-mono">{place}</span>
-            <span className="flex-none text-(--text-tertiary)">
-              {ref.resolved ? "resolved" : "open"}
-            </span>
+            <span className="flex-none text-tertiary">{ref.resolved ? "resolved" : "open"}</span>
           </>
         ),
         title: `Review thread${ref.path ? ` on ${ref.path}` : ""}, ${ref.resolved ? "resolved" : "open"}${ref.linkDropped ? `, ${NO_LINK}` : ""}`,
@@ -131,7 +129,7 @@ export function ReviewRefChip({ refKey }: { refKey: string }) {
         className={className}
       >
         {content}
-        <ExternalLinkIcon size={10} className="flex-none text-(--text-tertiary)" />
+        <ExternalLinkIcon size={10} className="flex-none text-tertiary" />
       </a>
     );
   }

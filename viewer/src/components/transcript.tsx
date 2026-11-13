@@ -168,7 +168,7 @@ export function SessionTranscript({
               </SystemNote>
             ) : null}
           </div>
-          <ol className={cn("flex flex-col", log ? "divide-y divide-(--border-subtle)" : "gap-5")}>
+          <ol className={cn("flex flex-col", log ? "divide-y divide-subtle" : "gap-5")}>
             {session.prompts.map((prompt, index) => (
               <Turn
                 key={prompt.turn_id}
@@ -322,10 +322,7 @@ function Turn({
         <div
           role="region"
           aria-label={`Agent activity for prompt ${prompt.ordinal}`}
-          className={cn(
-            "flex min-w-0 flex-col gap-2 border-l-2 border-(--border-subtle) pl-3",
-            log && "ml-1",
-          )}
+          className={cn("flex min-w-0 flex-col gap-2 border-l-2 border-subtle pl-3", log && "ml-1")}
         >
           <ActivityTimeline
             vendor={session.source}
@@ -348,7 +345,7 @@ function Turn({
         <details open={focused || undefined} data-system-turn="" className="min-w-0">
           <summary
             className={cn(
-              "w-fit cursor-pointer rounded-(--radius-sm) text-xs text-(--text-tertiary) hover:text-(--text-primary)",
+              "w-fit cursor-pointer rounded-(--radius-sm) text-xs text-tertiary hover:text-primary",
               FOCUS_RING,
             )}
           >
@@ -488,10 +485,8 @@ function AgentReplies({
             type="button"
             onClick={openActivity}
             className={cn(
-              "cursor-pointer rounded-full text-xs text-(--text-link) hover:underline",
-              log
-                ? "self-start"
-                : "self-center border border-(--border-subtle) bg-(--surface-card) px-3 py-1",
+              "cursor-pointer rounded-full text-xs text-link hover:underline",
+              log ? "self-start" : "self-center border border-subtle bg-surface-card px-3 py-1",
               FOCUS_RING,
             )}
           >
@@ -529,7 +524,7 @@ function AgentReplies({
         <details className="group flex flex-col">
           <summary
             className={cn(
-              "flex w-fit cursor-pointer list-none items-center gap-1 rounded-(--radius-xs) text-xs font-medium text-(--text-secondary) hover:text-(--text-primary) [&::-webkit-details-marker]:hidden",
+              "flex w-fit cursor-pointer list-none items-center gap-1 rounded-(--radius-xs) text-xs font-medium text-secondary hover:text-primary [&::-webkit-details-marker]:hidden",
               FOCUS_RING,
             )}
           >
@@ -584,7 +579,7 @@ function TurnFooter({
   return (
     <div
       className={cn(
-        "flex flex-wrap items-baseline gap-x-3 gap-y-1 text-xs text-(--text-tertiary)",
+        "flex flex-wrap items-baseline gap-x-3 gap-y-1 text-xs text-tertiary",
         log ? "pt-1" : "pl-9",
       )}
     >
@@ -595,7 +590,7 @@ function TurnFooter({
           aria-label={`Agent activity for prompt ${prompt.ordinal}`}
           onClick={onToggleActivity}
           className={cn(
-            "flex cursor-pointer items-center gap-1 self-center rounded-(--radius-xs) text-xs font-medium text-(--text-secondary) hover:text-(--text-primary)",
+            "flex cursor-pointer items-center gap-1 self-center rounded-(--radius-xs) text-xs font-medium text-secondary hover:text-primary",
             FOCUS_RING,
           )}
         >
@@ -639,7 +634,7 @@ function ActivityTimeline({
   if (activity === "failed") {
     return (
       <p role="alert" className="flex flex-wrap items-center gap-2 self-center text-base">
-        <span className="text-(--status-critical)">Agent activity could not be loaded.</span>
+        <span className="text-status-critical">Agent activity could not be loaded.</span>
         <Button variant="secondary" size="tiny" onClick={onRetry}>
           Try again
         </Button>
@@ -755,10 +750,8 @@ function FollowupTurn({
       <details className="group flex flex-col">
         <summary
           className={cn(
-            "flex w-fit max-w-full cursor-pointer list-none items-center gap-1.5 rounded-full text-xs text-(--text-secondary) hover:text-(--text-primary) [&::-webkit-details-marker]:hidden",
-            log
-              ? ""
-              : "mx-auto border border-dashed border-(--border-strong) bg-(--surface-card) px-3 py-1",
+            "flex w-fit max-w-full cursor-pointer list-none items-center gap-1.5 rounded-full text-xs text-secondary hover:text-primary [&::-webkit-details-marker]:hidden",
+            log ? "" : "mx-auto border border-dashed border-strong bg-surface-card px-3 py-1",
             FOCUS_RING,
           )}
         >
@@ -776,15 +769,15 @@ function FollowupTurn({
         </summary>
         <div
           className={cn(
-            "mt-1.5 w-full rounded-xl border border-(--border-subtle) bg-(--surface-card) px-3 py-2",
+            "mt-1.5 w-full rounded-xl border border-subtle bg-surface-card px-3 py-2",
             log ? "" : "mx-auto max-w-[92%]",
           )}
         >
-          <p className="max-h-80 overflow-auto text-xs whitespace-pre-wrap text-(--text-secondary) [overflow-wrap:anywhere]">
+          <p className="max-h-80 overflow-auto text-xs whitespace-pre-wrap text-secondary [overflow-wrap:anywhere]">
             {input.text}
           </p>
           {input.truncated ? (
-            <p className="mt-1.5 text-xs text-(--text-tertiary)">
+            <p className="mt-1.5 text-xs text-tertiary">
               Showing the first {formatCompact([...input.text].length)} of{" "}
               {formatCompact(input.text_length)} characters.
             </p>
@@ -805,7 +798,7 @@ function FollowupTurn({
 }
 
 const CALL_TEXT =
-  "mt-1 max-h-56 overflow-auto rounded-md bg-(--code-fill) p-2 text-xs whitespace-pre-wrap text-(--text-secondary) [overflow-wrap:anywhere]";
+  "mt-1 max-h-56 overflow-auto rounded-md bg-code-fill p-2 text-xs whitespace-pre-wrap text-secondary [overflow-wrap:anywhere]";
 
 /** A run of tool calls between two messages, folded to one line naming what
  *  kinds of call they were. A call's output shows when the host has it. */
@@ -820,8 +813,8 @@ function ToolRun({ calls }: { calls: TranscriptToolCall[] }) {
     <details open={!log} className="group flex flex-col">
       <summary
         className={cn(
-          "flex w-fit max-w-full cursor-pointer list-none items-center gap-1.5 rounded-full text-xs text-(--text-secondary) hover:text-(--text-primary) [&::-webkit-details-marker]:hidden",
-          !log && "border border-(--border-subtle) bg-(--surface-card) px-3 py-1",
+          "flex w-fit max-w-full cursor-pointer list-none items-center gap-1.5 rounded-full text-xs text-secondary hover:text-primary [&::-webkit-details-marker]:hidden",
+          !log && "border border-subtle bg-surface-card px-3 py-1",
           FOCUS_RING,
         )}
       >
@@ -833,9 +826,9 @@ function ToolRun({ calls }: { calls: TranscriptToolCall[] }) {
           {pluralize("tool call", calls.length, true)} · {kinds}
         </span>
       </summary>
-      <ul className="mt-1.5 flex w-full min-w-0 flex-col gap-2 rounded-xl border border-(--border-subtle) bg-(--surface-card) px-3 py-2">
+      <ul className="mt-1.5 flex w-full min-w-0 flex-col gap-2 rounded-xl border border-subtle bg-surface-card px-3 py-2">
         {calls.map((call) => (
-          <li key={call.id} className="text-xs text-(--text-tertiary)">
+          <li key={call.id} className="text-xs text-tertiary">
             {join([call.name, call.status, call.timestamp && formatTime(call.timestamp)])}
             <pre className={CALL_TEXT}>
               {call.input}
@@ -899,7 +892,7 @@ function SubagentCard({ subagent }: { subagent: TranscriptSubagent }) {
       size="flush"
       className={cn(
         log ? "border-l-2" : "ml-9 border-l-2",
-        failed ? "border-l-(--status-critical)" : "border-l-(--border-strong)",
+        failed ? "border-l-status-critical" : "border-l-strong",
       )}
       data-subagent={subagent.session_id || subagent.tool_call_id}
     >
@@ -908,19 +901,16 @@ function SubagentCard({ subagent }: { subagent: TranscriptSubagent }) {
         aria-expanded={open}
         onClick={toggle}
         className={cn(
-          "flex w-full cursor-pointer items-center gap-2 rounded-t-(--radius-lg) border-b border-(--border-subtle) px-3 py-2 text-left transition-colors duration-150 hover:bg-(--surface-hover)",
+          "flex w-full cursor-pointer items-center gap-2 rounded-t-(--radius-lg) border-b border-subtle px-3 py-2 text-left transition-colors duration-150 hover:bg-surface-hover",
           FOCUS_RING,
         )}
       >
         <ChevronDownIcon
           size={12}
-          className={cn(
-            "flex-none text-(--text-tertiary) transition-transform",
-            !open && "-rotate-90",
-          )}
+          className={cn("flex-none text-tertiary transition-transform", !open && "-rotate-90")}
         />
         <span className={cn(CARD_LABEL, "flex-none")}>Subagent</span>
-        <span className="min-w-0 flex-1 truncate text-base text-(--text-secondary)">
+        <span className="min-w-0 flex-1 truncate text-base text-secondary">
           {subagent.task || subagent.name} ·{" "}
           <HarnessName vendor={vendor} className="align-middle" />
           {duration != null ? ` · ${formatDuration(duration)}` : ""}
@@ -934,7 +924,7 @@ function SubagentCard({ subagent }: { subagent: TranscriptSubagent }) {
 
       <div className="flex flex-col gap-2.5 px-3 py-2.5">
         {!subagent.response ? (
-          <p className="text-xs text-(--text-tertiary) italic">{missingResponseNote(vendor)}</p>
+          <p className="text-xs text-tertiary italic">{missingResponseNote(vendor)}</p>
         ) : responseShown ? (
           <AgentText
             vendor={vendor}
@@ -950,7 +940,7 @@ function SubagentCard({ subagent }: { subagent: TranscriptSubagent }) {
       </div>
 
       {open ? (
-        <div className="flex flex-col gap-1.5 rounded-b-(--radius-lg) border-t border-(--border-subtle) bg-(--surface-sunken) px-2 py-3 sm:px-3">
+        <div className="flex flex-col gap-1.5 rounded-b-(--radius-lg) border-t border-subtle bg-surface-sunken px-2 py-3 sm:px-3">
           {linked ? (
             <SubagentConversation detail={detail} onRetry={load} />
           ) : (
@@ -962,14 +952,14 @@ function SubagentCard({ subagent }: { subagent: TranscriptSubagent }) {
                   This subagent's own transcript was not captured.
                 </SystemNote>
               ) : null}
-              <p className="text-xs text-(--text-tertiary)">Input to {subagent.name}</p>
+              <p className="text-xs text-tertiary">Input to {subagent.name}</p>
               {redactedSpawnMessage(subagent.input) ? (
-                <p className="text-xs text-(--text-tertiary)">
+                <p className="text-xs text-tertiary">
                   {harnessName(vendor)} recorded this instruction redacted, so its text is not
                   available.
                 </p>
               ) : null}
-              <pre className="max-h-56 overflow-auto rounded-md bg-(--surface-card) p-2 text-xs whitespace-pre-wrap text-(--text-secondary) [overflow-wrap:anywhere]">
+              <pre className="max-h-56 overflow-auto rounded-md bg-surface-card p-2 text-xs whitespace-pre-wrap text-secondary [overflow-wrap:anywhere]">
                 {subagent.input}
                 {subagent.input_truncated ? "\n…" : ""}
               </pre>
@@ -1041,9 +1031,7 @@ function SubagentConversation({ detail, onRetry }: { detail: SubagentState; onRe
   if (detail === "failed") {
     return (
       <p role="alert" className="flex flex-wrap items-center gap-2 self-center text-base">
-        <span className="text-(--status-critical)">
-          The subagent's activity could not be loaded.
-        </span>
+        <span className="text-status-critical">The subagent's activity could not be loaded.</span>
         <Button variant="secondary" size="tiny" onClick={onRetry}>
           Try again
         </Button>

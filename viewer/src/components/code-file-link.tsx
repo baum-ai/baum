@@ -80,7 +80,7 @@ export function CodeFileLink({
   return (
     <a href={href} target="_blank" rel="noreferrer" title={title} className={className}>
       {children}
-      <ExternalLinkIcon size={10} className="flex-none text-(--text-tertiary)" />
+      <ExternalLinkIcon size={10} className="flex-none text-tertiary" />
     </a>
   );
 }

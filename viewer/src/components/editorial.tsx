@@ -6,12 +6,11 @@ import { STUMPY_ARTWORK as artwork } from "./stumpy-artwork";
 /** The editorial chrome shared by the public pages: type scale, rules, shell. */
 /** `w-full` keeps the shell full-bleed when it is a flex child, not just a block child. */
 export const SHELL = "mx-auto w-full max-w-[1240px] px-6 md:px-10";
-export const KICKER = "text-base font-semibold tracking-[0.16em] uppercase text-(--accent-600)";
-export const STEP_KICKER = "text-xs font-semibold tracking-[0.14em] uppercase text-(--accent-600)";
-export const CARD_LABEL =
-  "text-xs font-semibold tracking-[0.14em] uppercase text-(--text-tertiary)";
+export const KICKER = "text-base font-semibold tracking-[0.16em] uppercase text-accent-600";
+export const STEP_KICKER = "text-xs font-semibold tracking-[0.14em] uppercase text-accent-600";
+export const CARD_LABEL = "text-xs font-semibold tracking-[0.14em] uppercase text-tertiary";
 export const NAV_LINK =
-  "text-base text-(--text-secondary) no-underline hover:text-(--text-primary) hover:no-underline";
+  "text-base text-secondary no-underline hover:text-primary hover:no-underline";
 
 /** The chrome's copy is quieter than a page's: beside the navigation it is a
  *  label for the product, not a headline. */
@@ -74,7 +73,7 @@ export function LogoMark({ size = 20, className }: { size?: number; className?: 
 /** The uppercase masthead band that runs under the header of every editorial page. */
 export function Strapline({ left, right }: { left: ReactNode; right: ReactNode }) {
   return (
-    <div className="flex flex-wrap items-center justify-between gap-3 border-t border-t-(--rule-masthead) border-b border-b-(--border-default) py-2.5 text-xs font-medium tracking-[0.16em] uppercase text-(--text-tertiary)">
+    <div className="flex flex-wrap items-center justify-between gap-3 border-t border-t-rule-masthead border-b border-b-default py-2.5 text-xs font-medium tracking-[0.16em] uppercase text-tertiary">
       <span>{left}</span>
       <span>{right}</span>
     </div>
@@ -82,29 +81,29 @@ export function Strapline({ left, right }: { left: ReactNode; right: ReactNode }
 }
 
 const STATUS_RULES = {
-  neutral: "border-t-(--border-default)",
-  info: "border-t-(--accent-600)",
-  positive: "border-t-(--status-positive)",
-  caution: "border-t-(--status-caution)",
-  critical: "border-t-(--status-critical)",
+  neutral: "border-t-default",
+  info: "border-t-accent-600",
+  positive: "border-t-status-positive",
+  caution: "border-t-status-caution",
+  critical: "border-t-status-critical",
 };
 
 const STATUS_LABELS = {
-  neutral: "text-(--text-tertiary)",
-  info: "text-(--accent-600)",
-  positive: "text-(--status-positive)",
-  caution: "text-(--status-caution)",
-  critical: "text-(--status-critical)",
+  neutral: "text-tertiary",
+  info: "text-accent-600",
+  positive: "text-status-positive",
+  caution: "text-status-caution",
+  critical: "text-status-critical",
 };
 
 /** The boxed form of the same tones: a drawn border and a tint at low strength,
  *  for a status that has to hold its own against the prose around it. */
 const STATUS_BOXES = {
-  neutral: "border-(--border-default) bg-(--surface-sunken)",
-  info: "border-(--status-info)/30 bg-(--status-info-bg)/75",
-  positive: "border-(--status-positive)/30 bg-(--status-positive-bg)/75",
-  caution: "border-(--status-caution)/30 bg-(--status-caution-bg)/75",
-  critical: "border-(--status-critical)/30 bg-(--status-critical-bg)/75",
+  neutral: "border-default bg-surface-sunken",
+  info: "border-status-info/30 bg-status-info-bg/75",
+  positive: "border-status-positive/30 bg-status-positive-bg/75",
+  caution: "border-status-caution/30 bg-status-caution-bg/75",
+  critical: "border-status-critical/30 bg-status-critical-bg/75",
 };
 
 export type StatusTone = keyof typeof STATUS_RULES;
@@ -126,7 +125,7 @@ export function StatusLine({
 }) {
   return (
     <StatusBlock tone={tone} label={label} className={className} boxed={boxed}>
-      <p className="max-w-[420px] text-base leading-[1.5] text-(--text-secondary)">{children}</p>
+      <p className="max-w-[420px] text-base leading-[1.5] text-secondary">{children}</p>
     </StatusBlock>
   );
 }
@@ -169,7 +168,7 @@ export function Panel({ children, className }: { children: ReactNode; className?
   return (
     <div
       className={cn(
-        "rounded-(--radius-lg) border border-(--border-default) bg-(--surface-card) shadow-(--shadow-card)",
+        "rounded-(--radius-lg) border border-default bg-surface-card shadow-card",
         className,
       )}
     >

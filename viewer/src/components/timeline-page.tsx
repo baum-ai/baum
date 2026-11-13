@@ -348,9 +348,7 @@ export function TimelinePage<S>({
     const state = details[id];
     return (
       <Card size="panel" className="mb-6 p-4" aria-label="Opened decision">
-        <h2 className="mb-2 text-xs tracking-[0.08em] text-(--text-tertiary) uppercase">
-          Opened decision
-        </h2>
+        <h2 className="mb-2 text-xs tracking-[0.08em] text-tertiary uppercase">Opened decision</h2>
         <DecisionDetailBody
           {...detailProps}
           pullRequestHref={(number: number) =>
@@ -437,10 +435,10 @@ export function TimelinePage<S>({
           <div className="flex flex-col gap-6">
             {sections.map((section) => (
               <section key={section.key} aria-label={section.heading}>
-                <h2 className="mb-2 text-xs tracking-[0.08em] text-(--text-tertiary) uppercase">
+                <h2 className="mb-2 text-xs tracking-[0.08em] text-tertiary uppercase">
                   {section.heading}
                 </h2>
-                <ol className="rounded-(--radius-md) border border-(--border-subtle)">
+                <ol className="rounded-(--radius-md) border border-subtle">
                   {section.decisions.map((decision) => {
                     const key = decision.id;
                     return (
@@ -607,7 +605,7 @@ export function TimelinePage<S>({
 
 function defaultLoading(label: string) {
   return (
-    <p className="flex items-center gap-2 text-base text-(--text-tertiary)">
+    <p className="flex items-center gap-2 text-base text-tertiary">
       <Spinner />
       {label}
     </p>
@@ -696,9 +694,7 @@ function OpenedFeature({
 }) {
   return (
     <section aria-label="Opened feature" className="mb-6">
-      <h2 className="mb-2 text-xs tracking-[0.08em] text-(--text-tertiary) uppercase">
-        Opened feature
-      </h2>
+      <h2 className="mb-2 text-xs tracking-[0.08em] text-tertiary uppercase">Opened feature</h2>
       {state?.status === "ready" ? (
         <ol>{item(state.detail.feature)}</ol>
       ) : (
@@ -732,19 +728,19 @@ function OlderPages<T>({
       {/* Why the list's order changed, said where the reader is when it
           happens. The live region stays mounted, so screen readers announce
           the note when its text arrives; empty, it is sr-only. */}
-      <p role="status" className={reordered ? "text-base text-(--text-tertiary)" : "sr-only"}>
+      <p role="status" className={reordered ? "text-base text-tertiary" : "sr-only"}>
         {reorderedNote(reordered)}
       </p>
       {list.cursor ? (
         list.status === "loading" ? (
-          <p className="flex items-center gap-2 text-base text-(--text-tertiary)">
+          <p className="flex items-center gap-2 text-base text-tertiary">
             <Spinner />
             {loading}
           </p>
         ) : (
           <>
             {list.status === "failed" ? (
-              <p role="alert" className="text-base text-(--status-critical)">
+              <p role="alert" className="text-base text-status-critical">
                 {failed}
               </p>
             ) : null}
@@ -754,7 +750,7 @@ function OlderPages<T>({
           </>
         )
       ) : list.rows.length > 0 && reordered !== "stopped" ? (
-        <p className="text-base text-(--text-tertiary)">{end}</p>
+        <p className="text-base text-tertiary">{end}</p>
       ) : null}
     </div>
   );

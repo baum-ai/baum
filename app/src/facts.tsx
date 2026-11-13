@@ -162,7 +162,7 @@ function filesSlot(
             active={selected === file.id}
             controls="review-section"
             aside={
-              <span className="font-mono text-xs text-(--text-tertiary)">
+              <span className="font-mono text-xs text-tertiary">
                 +{file.additions} −{file.deletions}
               </span>
             }
@@ -223,12 +223,12 @@ function FactsFilesPane({
               aria-expanded={false}
               aria-label={`${file.path} code`}
               onClick={() => setOpened((current) => new Set(current).add(file.id))}
-              className="flex w-full min-w-0 cursor-pointer items-center justify-between gap-2 rounded-(--radius-sm) border border-(--border-default) bg-(--surface-wash) px-3 py-2 text-left hover:bg-(--surface-hover)"
+              className="flex w-full min-w-0 cursor-pointer items-center justify-between gap-2 rounded-(--radius-sm) border border-default bg-surface-wash px-3 py-2 text-left hover:bg-surface-hover"
             >
-              <span className="truncate font-mono text-xs text-(--text-link)">{file.path}</span>
+              <span className="truncate font-mono text-xs text-link">{file.path}</span>
               <span className="flex-none font-mono text-xs">
-                <span className="text-(--status-positive)">+{file.additions}</span>{" "}
-                <span className="text-(--status-critical)">−{file.deletions}</span>
+                <span className="text-status-positive">+{file.additions}</span>{" "}
+                <span className="text-status-critical">−{file.deletions}</span>
               </span>
             </button>
           )}
@@ -276,7 +276,7 @@ export const FilePatch = memo(function FilePatch({
     return <LoadingStatus block>Reading {path} from the local clone…</LoadingStatus>;
   if (!diff || diff.hunks.length === 0)
     return (
-      <p className="rounded-(--radius-sm) border border-(--border-default) px-3 py-2 text-base text-(--text-secondary)">
+      <p className="rounded-(--radius-sm) border border-default px-3 py-2 text-base text-secondary">
         <span className="font-mono text-xs">{path}</span>: no text diff to show here.{" "}
         <a href={href} target="_blank" rel="noreferrer">
           View on GitHub

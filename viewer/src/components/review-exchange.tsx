@@ -53,7 +53,7 @@ function ActorKey({ actors }: { actors: Set<ExchangeActor> }) {
   const present = ACTOR_ORDER.filter((actor) => actors.has(actor));
   if (present.length < 2) return null;
   return (
-    <ul className="mb-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-(--text-tertiary)">
+    <ul className="mb-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-tertiary">
       {present.map((actor) => (
         <li key={actor} className="flex items-center gap-1.5">
           <span
@@ -96,7 +96,7 @@ export function ReviewExchange({
       label="Review exchange"
       aside={
         rounds > 0 ? (
-          <span className="text-xs text-(--text-tertiary)">
+          <span className="text-xs text-tertiary">
             {pluralize("round", rounds, true)} · {pluralize("tool", tools.size, true)}
           </span>
         ) : undefined
@@ -177,7 +177,7 @@ export function StackReviewExchange({
       label="Review exchange"
       aside={
         reviews.length > 0 ? (
-          <span className="text-xs text-(--text-tertiary)">
+          <span className="text-xs text-tertiary">
             {pluralize("round", reviews.length, true)} · {pluralize("tool", tools.size, true)}
           </span>
         ) : undefined
@@ -221,7 +221,7 @@ function OpenThreads({ entries: open, total }: { entries: ThreadEntry[]; total: 
   if (total === 0) return null;
   if (open.length === 0) {
     return (
-      <p className="mb-4 flex items-center gap-1.5 text-base text-(--status-positive)">
+      <p className="mb-4 flex items-center gap-1.5 text-base text-status-positive">
         <CircleCheckIcon size={14} aria-hidden />
         {total === 1 ? "The review thread is resolved" : `All ${total} review threads resolved`}
       </p>
@@ -235,20 +235,20 @@ function OpenThreads({ entries: open, total }: { entries: ThreadEntry[]; total: 
     <div
       className={cn(
         "mb-4 border-l-2 pl-3",
-        critical ? "border-l-(--status-critical)" : "border-l-(--status-caution)",
+        critical ? "border-l-status-critical" : "border-l-status-caution",
       )}
     >
       <p
         className={cn(
           "flex items-center gap-1.5 text-base font-medium",
-          critical ? "text-(--status-critical)" : "text-(--status-caution)",
+          critical ? "text-status-critical" : "text-status-caution",
         )}
       >
         <WarningIcon size={14} aria-hidden />
         {pluralize("unresolved thread", open.length, true)}{" "}
-        <span className="font-normal text-(--text-tertiary)">of {total}</span>
+        <span className="font-normal text-tertiary">of {total}</span>
       </p>
-      <ul className="mt-1.5 divide-y divide-(--border-subtle)">
+      <ul className="mt-1.5 divide-y divide-subtle">
         {shown.map((entry) => (
           <OpenThreadRow key={entry.key} entry={entry} />
         ))}
@@ -257,7 +257,7 @@ function OpenThreads({ entries: open, total }: { entries: ThreadEntry[]; total: 
         <button
           type="button"
           onClick={() => setExpanded(!expanded)}
-          className="mt-2 cursor-pointer text-base text-(--text-link) hover:underline"
+          className="mt-2 cursor-pointer text-base text-link hover:underline"
         >
           {expanded ? "Show fewer" : `Show ${open.length - SHOWN_THREADS} more`}
         </button>
@@ -282,7 +282,7 @@ function OpenThreadRow({
       href={href}
       target="_blank"
       rel="noreferrer"
-      className="inline-flex items-center gap-1 font-mono text-(--text-link) hover:underline"
+      className="inline-flex items-center gap-1 font-mono text-link hover:underline"
     >
       {where}
       <ExternalLinkIcon size={10} />
@@ -297,12 +297,10 @@ function OpenThreadRow({
           <Badge tone={severityTone(finding.severity)} size="compact">
             {humanize(finding.severity)}
           </Badge>
-          <Markdown className="line-clamp-3 min-w-0 flex-1 text-(--text-primary)">
-            {finding.text}
-          </Markdown>
+          <Markdown className="line-clamp-3 min-w-0 flex-1 text-primary">{finding.text}</Markdown>
         </div>
       ) : (
-        <p className="text-base text-(--text-primary)">Discussion on {place}</p>
+        <p className="text-base text-primary">Discussion on {place}</p>
       )}
       <ItemMeta>
         {member}
@@ -344,13 +342,13 @@ function Run({
       <ExchangeFigures facts={facts} criticalOpen={criticalOpen} />
       {/* Spaced from the figures when there are any. */}
       <details className="[dl+&]:mt-3">
-        <summary className="cursor-pointer text-base text-(--text-link) hover:underline">
+        <summary className="cursor-pointer text-base text-link hover:underline">
           Full exchange
         </summary>
         {/* The account in prose introduces the run it describes, rather
             than standing between the figures and the way into it. */}
         {facts.summary && (
-          <Markdown className="mt-3 max-w-[90ch] text-base leading-[1.6] text-(--text-secondary)">
+          <Markdown className="mt-3 max-w-[90ch] text-base leading-[1.6] text-secondary">
             {facts.summary}
           </Markdown>
         )}
@@ -401,14 +399,12 @@ function ExchangeFigures({
     <dl className="flex flex-wrap items-baseline gap-x-4 gap-y-1 text-base">
       {figures.map((figure) => (
         <div key={figure.key} className="flex items-baseline gap-1.5">
-          <dt className="order-2 text-(--text-secondary)">{figure.label}</dt>
+          <dt className="order-2 text-secondary">{figure.label}</dt>
           <dd
             className={cn(
               "order-1 font-medium tabular-nums",
               // A critical issue still open must not be skimmed past.
-              figure.alarming && figure.value
-                ? "text-(--status-critical)"
-                : "text-(--text-primary)",
+              figure.alarming && figure.value ? "text-status-critical" : "text-primary",
             )}
           >
             {figure.value ?? "Unknown"}
@@ -530,18 +526,16 @@ function QuietTurns({ document, events }: { document: ReviewEvidence; events: Ex
       >
         {events.length === 1 ? (
           <>
-            <span className="font-medium text-(--text-secondary)">{first.by}</span>{" "}
-            <span className="text-(--text-tertiary)">commented, no findings</span>
+            <span className="font-medium text-secondary">{first.by}</span>{" "}
+            <span className="text-tertiary">commented, no findings</span>
           </>
         ) : (
-          <span className="text-(--text-tertiary)">
+          <span className="text-tertiary">
             {pluralize("tool", names.length, true)} commented, no findings
           </span>
         )}
       </TurnLine>
-      {events.length > 1 && (
-        <p className="mt-0.5 text-xs text-(--text-tertiary)">{names.join(", ")}</p>
-      )}
+      {events.length > 1 && <p className="mt-0.5 text-xs text-tertiary">{names.join(", ")}</p>}
     </>
   );
 }
@@ -564,12 +558,10 @@ function Turn({
   return (
     <>
       <TurnLine document={document} by={event.by} at={event.at} url={event.url}>
-        <span className="font-medium text-(--text-primary)">{event.by}</span>{" "}
+        <span className="font-medium text-primary">{event.by}</span>{" "}
         {event.actor === "review" && (
           <>
-            <span className="text-(--text-secondary)">
-              {event.verdict ? "reviewed" : "commented"}
-            </span>
+            <span className="text-secondary">{event.verdict ? "reviewed" : "commented"}</span>
             {/* A comment is what reviewed already says; only a verdict that
                 approves or blocks earns a badge. */}
             {event.verdict && event.verdict !== "comment" && (
@@ -581,7 +573,7 @@ function Turn({
               </>
             )}
             {event.commit && (
-              <span className="text-xs text-(--text-tertiary)">
+              <span className="text-xs text-tertiary">
                 {" "}
                 on <CommitLink document={document} sha={event.commit} />
               </span>
@@ -589,21 +581,21 @@ function Turn({
           </>
         )}
         {event.actor === "implementation" && event.commit && (
-          <span className="text-(--text-secondary)">
+          <span className="text-secondary">
             answered in <CommitLink document={document} sha={event.commit} />
           </span>
         )}
         {event.actor === "human" && (
-          <span className="text-(--text-secondary)">
+          <span className="text-secondary">
             replied on the diff{count > 1 ? ` · ${count} times` : ""}
           </span>
         )}
       </TurnLine>
       {event.blockedOn && (
-        <p className="mt-0.5 text-base text-(--status-caution)">Blocked on {event.blockedOn}</p>
+        <p className="mt-0.5 text-base text-status-caution">Blocked on {event.blockedOn}</p>
       )}
       {event.actor === "implementation" && (
-        <p className="mt-0.5 text-xs text-(--text-tertiary)">
+        <p className="mt-0.5 text-xs text-tertiary">
           Answers{" "}
           {event.findings
             .map(
@@ -631,7 +623,7 @@ function Turn({
                   className={cn(
                     "line-clamp-2",
                     // What is settled steps back so what is open reads first.
-                    finding.state === "open" ? "text-(--text-primary)" : "text-(--text-tertiary)",
+                    finding.state === "open" ? "text-primary" : "text-tertiary",
                   )}
                 >
                   {finding.text}
@@ -639,8 +631,8 @@ function Turn({
                 <ItemMeta>
                   <span
                     className={cn(
-                      finding.state === "open" && "text-(--status-caution)",
-                      finding.state === "resolved" && "text-(--status-positive)",
+                      finding.state === "open" && "text-status-caution",
+                      finding.state === "resolved" && "text-status-positive",
                     )}
                   >
                     {humanize(finding.state)}
@@ -684,7 +676,7 @@ function TurnLine({
     <div className="flex items-baseline gap-2">
       <p className="min-w-0 flex-1 text-base break-words">{children}</p>
       {(at || href) && (
-        <span className="flex flex-none items-center gap-1.5 text-xs text-(--text-tertiary)">
+        <span className="flex flex-none items-center gap-1.5 text-xs text-tertiary">
           {at && (
             <time dateTime={at} title={formatDateTime(at)}>
               {formatShortDateTime(at)}
@@ -696,7 +688,7 @@ function TurnLine({
               target="_blank"
               rel="noreferrer"
               aria-label={`Open ${by}'s comment on GitHub`}
-              className="text-(--text-tertiary)"
+              className="text-tertiary"
             >
               <ExternalLinkIcon size={10} />
             </a>

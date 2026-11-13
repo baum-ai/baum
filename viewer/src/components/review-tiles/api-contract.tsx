@@ -52,19 +52,19 @@ export function ApiContractTile({ operation }: { operation: ApiOperation }) {
     >
       <section
         aria-label="API call flow"
-        className="mt-4 overflow-hidden rounded-(--radius-sm) border border-(--border-default) bg-(--surface-card)"
+        className="mt-4 overflow-hidden rounded-(--radius-sm) border border-default bg-surface-card"
       >
-        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-(--border-subtle) bg-(--surface-wash) px-3 py-2">
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-subtle bg-surface-wash px-3 py-2">
           <div className="flex min-w-0 flex-wrap items-center gap-2">
             <Badge tone={methodTone[operation.method]} size="compact">
               {operation.method}
             </Badge>
-            <code className="min-w-0 break-all text-base font-semibold text-(--text-primary)">
+            <code className="min-w-0 break-all text-base font-semibold text-primary">
               {operation.path}
             </code>
           </div>
           {newFields.length > 0 && (
-            <span className="text-xs text-(--text-tertiary)">
+            <span className="text-xs text-tertiary">
               {newFields.length} new {newFields.length === 1 ? "field" : "fields"}
             </span>
           )}
@@ -73,7 +73,7 @@ export function ApiContractTile({ operation }: { operation: ApiOperation }) {
           <ApiShape label="Client sends" fields={operation.request} />
           <div
             aria-hidden
-            className="flex items-center justify-center text-lg font-medium text-(--text-tertiary) sm:px-1"
+            className="flex items-center justify-center text-lg font-medium text-tertiary sm:px-1"
           >
             →
           </div>
@@ -99,19 +99,17 @@ function ApiShape({
   status?: string;
 }) {
   return (
-    <article className="overflow-hidden rounded-(--radius-sm) border border-(--border-default) bg-(--surface-card)">
-      <h5 className="border-b border-(--border-subtle) bg-(--surface-wash) px-3 py-2 text-xs font-semibold tracking-[0.12em] uppercase text-(--text-tertiary)">
+    <article className="overflow-hidden rounded-(--radius-sm) border border-default bg-surface-card">
+      <h5 className="border-b border-subtle bg-surface-wash px-3 py-2 text-xs font-semibold tracking-[0.12em] uppercase text-tertiary">
         {label}
       </h5>
-      {status && (
-        <p className="px-3 pt-3 font-mono text-base font-medium text-(--text-primary)">{status}</p>
-      )}
+      {status && <p className="px-3 pt-3 font-mono text-base font-medium text-primary">{status}</p>}
       {fields.length === 0 && (
-        <p className="px-3 py-3 text-xs text-(--text-secondary)">
+        <p className="px-3 py-3 text-xs text-secondary">
           {status ? "No response body." : "No fields."}
         </p>
       )}
-      <ul className="divide-y divide-(--border-subtle)">
+      <ul className="divide-y divide-subtle">
         {fields.map((field, index) => (
           <li
             key={`${index}:${field.name}`}
@@ -119,16 +117,14 @@ function ApiShape({
           >
             <span
               className={cn(
-                "min-w-0 flex-1 truncate font-mono text-(--text-primary)",
+                "min-w-0 flex-1 truncate font-mono text-primary",
                 field.change === "remove" && "line-through",
               )}
             >
               {field.name}
             </span>
-            <span className="min-w-0 break-words font-mono text-(--text-tertiary)">
-              {field.type}
-            </span>
-            <span className="flex-none text-3xs font-semibold tracking-[0.08em] text-(--text-tertiary)">
+            <span className="min-w-0 break-words font-mono text-tertiary">{field.type}</span>
+            <span className="flex-none text-3xs font-semibold tracking-[0.08em] text-tertiary">
               {field.requirement}
             </span>
             {field.change && (

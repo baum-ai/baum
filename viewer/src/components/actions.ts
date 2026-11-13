@@ -21,21 +21,21 @@ const actionSizes = {
 
 const actionVariants = {
   primary:
-    "bg-(--action-primary) text-(--text-inverse) hover:bg-(--action-primary-hover) hover:text-(--text-inverse) hover:no-underline",
+    "bg-action-primary text-inverse hover:bg-action-primary-hover hover:text-inverse hover:no-underline",
   secondary:
-    "border border-(--border-default) bg-(--surface-card) text-(--text-primary) hover:bg-(--action-secondary-hover) hover:text-(--text-primary) hover:no-underline",
+    "border border-default bg-surface-card text-primary hover:bg-action-secondary-hover hover:text-primary hover:no-underline",
   // A row action that should not compete with the message it sits under: no
   // border, no fill, and it only takes on weight when the pointer is over it.
   ghost:
-    "font-normal text-(--text-tertiary) hover:bg-(--action-secondary-hover) hover:text-(--text-primary) hover:no-underline",
+    "font-normal text-tertiary hover:bg-action-secondary-hover hover:text-primary hover:no-underline",
   // Confirms removing something, as a dialog's last word: filled red.
   danger:
-    "bg-(--status-critical) text-(--text-inverse) hover:bg-(--status-critical) hover:text-(--text-inverse) hover:no-underline",
+    "bg-status-critical text-inverse hover:bg-status-critical hover:text-inverse hover:no-underline",
   "danger-outline":
-    "border border-(--border-default) bg-transparent px-[18px] whitespace-nowrap text-(--status-critical) hover:bg-(--surface-hover)",
+    "border border-default bg-transparent px-[18px] whitespace-nowrap text-status-critical hover:bg-surface-hover",
   // An action that reads as a tag beside the thing it acts on: a quiet pill
   // rather than a box. Its shape comes from `actionShape`.
-  tag: "border border-(--border-default) bg-(--surface-card) whitespace-nowrap text-(--text-secondary) hover:bg-(--surface-hover) hover:text-(--text-primary) hover:no-underline",
+  tag: "border border-default bg-surface-card whitespace-nowrap text-secondary hover:bg-surface-hover hover:text-primary hover:no-underline",
 };
 
 /** A tag is a pill; every other action is boxed. */

@@ -61,10 +61,10 @@ describe("review recommendation", () => {
     const tone = (decision: Recommendation["decision"]) =>
       summaryHtml(documentWith({ decision, text: "Fine.", refs: [] }));
     expect(tone("approve")).toContain("Approve");
-    expect(tone("approve")).toContain("text-(--status-positive)");
-    expect(tone("look_first")).toContain("text-(--status-caution)");
+    expect(tone("approve")).toContain("text-status-positive");
+    expect(tone("look_first")).toContain("text-status-caution");
     expect(tone("request_changes")).toContain("Request changes");
-    expect(tone("request_changes")).toContain("text-(--status-critical)");
+    expect(tone("request_changes")).toContain("text-status-critical");
     // An approval with no refs draws no list.
     expect(tone("approve")).not.toContain('aria-label="Where to look"');
   });

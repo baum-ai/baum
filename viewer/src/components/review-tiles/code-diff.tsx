@@ -28,9 +28,9 @@ export type CodeDiffFile = {
 };
 
 const lineStyle: Record<CodeDiffLine["kind"], string> = {
-  context: "bg-(--surface-card)",
-  add: "bg-(--status-positive-bg)",
-  remove: "bg-(--status-critical-bg)",
+  context: "bg-surface-card",
+  add: "bg-status-positive-bg",
+  remove: "bg-status-critical-bg",
 };
 
 const mark: Record<CodeDiffLine["kind"], string> = {
@@ -55,8 +55,8 @@ function CodeDiffTable({ file, highlight }: { file: CodeDiffFile; highlight: boo
         </colgroup>
         <tbody>
           {file.hunks.flatMap((hunk, hunkIndex) => [
-            <tr key={`${file.path}:${hunk.header}:${hunkIndex}`} className="bg-(--accent-50)">
-              <td colSpan={4} className="px-3 py-1 text-(--accent-700)">
+            <tr key={`${file.path}:${hunk.header}:${hunkIndex}`} className="bg-accent-50">
+              <td colSpan={4} className="px-3 py-1 text-accent-700">
                 {hunk.header}
               </td>
             </tr>,
@@ -65,22 +65,22 @@ function CodeDiffTable({ file, highlight }: { file: CodeDiffFile; highlight: boo
                 key={`${file.path}:${hunk.header}:${hunkIndex}:${index}`}
                 className={cn("align-top", lineStyle[line.kind])}
               >
-                <td className="w-10 border-r border-(--border-subtle) px-1.5 text-right sm:px-2 text-(--text-tertiary) select-none">
+                <td className="w-10 border-r border-subtle px-1.5 text-right sm:px-2 text-tertiary select-none">
                   {line.oldLine ?? ""}
                 </td>
-                <td className="w-10 border-r border-(--border-subtle) px-1.5 text-right sm:px-2 text-(--text-tertiary) select-none">
+                <td className="w-10 border-r border-subtle px-1.5 text-right sm:px-2 text-tertiary select-none">
                   {line.newLine ?? ""}
                 </td>
                 <td
                   className={cn(
                     "w-5 px-1 text-center select-none sm:w-6",
-                    line.kind === "add" && "text-(--status-positive)",
-                    line.kind === "remove" && "text-(--status-critical)",
+                    line.kind === "add" && "text-status-positive",
+                    line.kind === "remove" && "text-status-critical",
                   )}
                 >
                   {mark[line.kind]}
                 </td>
-                <td className="pr-3 whitespace-pre-wrap text-(--text-primary) [overflow-wrap:anywhere]">
+                <td className="pr-3 whitespace-pre-wrap text-primary [overflow-wrap:anywhere]">
                   <HighlightedText text={line.text} tokens={highlighted?.[hunkIndex]?.[index]} />
                 </td>
               </tr>
@@ -119,12 +119,12 @@ export function CodeDiff({
       <div
         className={cn("mb-2 flex flex-wrap items-center justify-between gap-2", bare && "hidden")}
       >
-        <h5 className="text-xs font-semibold tracking-[0.12em] uppercase text-(--text-tertiary)">
+        <h5 className="text-xs font-semibold tracking-[0.12em] uppercase text-tertiary">
           Code excerpts
         </h5>
         <span className="font-mono text-xs">
-          <span className="text-(--status-positive)">+{additions}</span>{" "}
-          <span className="text-(--status-critical)">−{deletions}</span>
+          <span className="text-status-positive">+{additions}</span>{" "}
+          <span className="text-status-critical">−{deletions}</span>
         </span>
       </div>
       <div className="space-y-3">
@@ -146,12 +146,12 @@ export function CodeDiff({
             <article
               key={key}
               aria-label={`${file.path} diff`}
-              className="min-w-0 overflow-hidden rounded-(--radius-sm) border border-(--border-default) bg-(--surface-card)"
+              className="min-w-0 overflow-hidden rounded-(--radius-sm) border border-default bg-surface-card"
             >
               <header
                 className={cn(
-                  "flex min-w-0 flex-wrap items-center justify-between gap-2 bg-(--surface-wash) px-3 py-2",
-                  expanded && "border-b border-(--border-default)",
+                  "flex min-w-0 flex-wrap items-center justify-between gap-2 bg-surface-wash px-3 py-2",
+                  expanded && "border-b border-default",
                 )}
               >
                 {/* The path stays a link to the file, so folding is its own
@@ -164,7 +164,7 @@ export function CodeDiff({
                     aria-controls={body}
                     onClick={toggle}
                     className={cn(
-                      "flex-none cursor-pointer rounded-(--radius-sm) -m-1 p-1.5 text-(--text-tertiary) hover:text-(--text-secondary)",
+                      "flex-none cursor-pointer rounded-(--radius-sm) -m-1 p-1.5 text-tertiary hover:text-secondary",
                       FOCUS_RING,
                     )}
                   >
@@ -180,14 +180,14 @@ export function CodeDiff({
                     path={file.path}
                     line={file.hunks[0]?.lines.find((line) => line.newLine)?.newLine}
                     href={file.href}
-                    className="inline-flex min-w-0 items-center gap-1 font-mono text-xs text-(--text-link) hover:underline"
+                    className="inline-flex min-w-0 items-center gap-1 font-mono text-xs text-link hover:underline"
                   >
                     <span className="truncate">{file.path}</span>
                   </CodeFileLink>
                 </span>
                 <span className="flex-none font-mono text-xs">
-                  <span className="text-(--status-positive)">+{file.additions}</span>{" "}
-                  <span className="text-(--status-critical)">−{file.deletions}</span>
+                  <span className="text-status-positive">+{file.additions}</span>{" "}
+                  <span className="text-status-critical">−{file.deletions}</span>
                 </span>
               </header>
               {/* Stays on the page for aria-controls; a folded file draws and

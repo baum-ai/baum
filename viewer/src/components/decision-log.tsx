@@ -38,7 +38,7 @@ export type DetailState =
  *  `review-parts.tsx`), as a button: a file here filters the log rather than
  *  opening the file. */
 const FILE_CHIP = cn(
-  "inline-flex max-w-full min-w-0 cursor-pointer items-center gap-1 rounded-(--radius-sm) border border-(--border-subtle) bg-(--surface-sunken) px-1.5 py-0.5 text-xs leading-[1.4] text-(--text-secondary) hover:text-(--text-primary)",
+  "inline-flex max-w-full min-w-0 cursor-pointer items-center gap-1 rounded-(--radius-sm) border border-subtle bg-surface-sunken px-1.5 py-0.5 text-xs leading-[1.4] text-secondary hover:text-primary",
   FOCUS_RING,
 );
 
@@ -48,7 +48,7 @@ const FILE_CHIP = cn(
 export function CategoryTag({ category }: { category: DecisionCategory }) {
   const index = CATEGORIES.indexOf(category);
   return (
-    <span className="inline-flex items-center gap-1.5 text-xs whitespace-nowrap text-(--text-secondary)">
+    <span className="inline-flex items-center gap-1.5 text-xs whitespace-nowrap text-secondary">
       <span
         aria-hidden
         className="h-2 w-2 flex-none rounded-full"
@@ -63,7 +63,7 @@ export function CategoryTag({ category }: { category: DecisionCategory }) {
  *  request yet, say. Said rather than left out, so a row without a name does
  *  not read as one nobody drove. */
 export function UnknownPerson() {
-  return <span className="text-(--text-tertiary) italic">Unknown author</span>;
+  return <span className="text-tertiary italic">Unknown author</span>;
 }
 
 /** A person by name, with their picture or initials. Somebody the platform
@@ -90,9 +90,9 @@ export function PersonName({
 }
 
 const SUMMARY_WEIGHT = {
-  strong: "text-base font-medium text-(--text-primary)",
-  normal: "text-base text-(--text-primary)",
-  quiet: "text-xs text-(--text-tertiary)",
+  strong: "text-base font-medium text-primary",
+  normal: "text-base text-primary",
+  quiet: "text-xs text-tertiary",
 } as const;
 
 /** One decision in the timeline: a disclosure whose panel holds the detail. */
@@ -130,10 +130,7 @@ export function DecisionRow({
       // A row the app's keys move through, opened by its button.
       data-row-id={decision.id}
       data-focused={focused || undefined}
-      className={cn(
-        "border-b border-(--border-subtle) last:border-b-0",
-        expanded && "bg-(--surface-wash)",
-      )}
+      className={cn("border-b border-subtle last:border-b-0", expanded && "bg-surface-wash")}
     >
       <button
         type="button"
@@ -143,7 +140,7 @@ export function DecisionRow({
         aria-controls={`${id}-panel`}
         onClick={onToggle}
         className={cn(
-          "flex w-full cursor-pointer items-start gap-2.5 px-3 text-left hover:bg-(--surface-hover) sm:px-4",
+          "flex w-full cursor-pointer items-start gap-2.5 px-3 text-left hover:bg-surface-hover sm:px-4",
           quiet ? "py-1.5" : "py-2.5",
           FOCUS_RING,
         )}
@@ -151,13 +148,13 @@ export function DecisionRow({
         <ChevronDownIcon
           size={14}
           className={cn(
-            "mt-1 flex-none text-(--text-tertiary) transition-transform motion-reduce:transition-none",
+            "mt-1 flex-none text-tertiary transition-transform motion-reduce:transition-none",
             !expanded && "-rotate-90",
           )}
         />
         <span
           className={cn(
-            "flex-none pt-0.5 text-xs text-(--text-tertiary) tabular-nums",
+            "flex-none pt-0.5 text-xs text-tertiary tabular-nums",
             withDate ? "w-24" : "w-16",
           )}
         >
@@ -172,7 +169,7 @@ export function DecisionRow({
           )}
         </span>
         <span className="min-w-0 flex-1">
-          <span className="flex flex-wrap items-center gap-x-2.5 gap-y-1 text-xs text-(--text-secondary)">
+          <span className="flex flex-wrap items-center gap-x-2.5 gap-y-1 text-xs text-secondary">
             <DecisionByBadge decision={who.marker} />
             {decision.person ? (
               <PersonName person={decision.person} size={quiet ? 16 : 20} />
@@ -180,7 +177,7 @@ export function DecisionRow({
               <UnknownPerson />
             )}
             <CategoryTag category={decision.category} />
-            {repository ? <span className="text-(--text-tertiary)">{repository}</span> : null}
+            {repository ? <span className="text-tertiary">{repository}</span> : null}
             {decision.superseded ? <Badge size="compact">Superseded</Badge> : null}
           </span>
           <span
@@ -193,7 +190,7 @@ export function DecisionRow({
             <InlineMarkdown>{decision.summary}</InlineMarkdown>
           </span>
           {who.approvedBy ? (
-            <span className="mt-0.5 inline-flex items-center gap-1 text-xs text-(--text-secondary)">
+            <span className="mt-0.5 inline-flex items-center gap-1 text-xs text-secondary">
               <CheckIcon size={12} />
               approved by {who.approvedBy}
             </span>
@@ -245,7 +242,7 @@ export function DecisionDetailBody<T>({
 }) {
   if (!state || state.status === "loading") {
     return (
-      <p className="flex items-center gap-2 py-2 text-base text-(--text-tertiary) italic">
+      <p className="flex items-center gap-2 py-2 text-base text-tertiary italic">
         <Spinner />
         Loading this decision…
       </p>
@@ -254,7 +251,7 @@ export function DecisionDetailBody<T>({
   if (state.status === "failed") {
     return (
       <p role="alert" className="flex flex-wrap items-center gap-2 py-2 text-base">
-        <span className="text-(--status-critical)">This decision could not be loaded.</span>
+        <span className="text-status-critical">This decision could not be loaded.</span>
         <Button variant="secondary" size="tiny" onClick={onRetry}>
           Try again
         </Button>
@@ -264,7 +261,7 @@ export function DecisionDetailBody<T>({
   if (state.status === "missing") {
     return (
       <div className="flex flex-col gap-3 py-2">
-        <p role="status" className="text-base text-(--text-secondary)">
+        <p role="status" className="text-base text-secondary">
           This decision is no longer available.
         </p>
         {at ? <OpenSession at={at} source={openSession} /> : null}
@@ -283,17 +280,17 @@ export function DecisionDetailBody<T>({
   return (
     <div className="flex flex-col gap-4 pt-1">
       {detail.replaced ? (
-        <p className="text-base text-(--text-tertiary) italic">
+        <p className="text-base text-tertiary italic">
           A later reading of this session replaced this decision.
         </p>
       ) : null}
       {withSummary ? (
         <div>
-          <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1 text-xs text-(--text-secondary)">
+          <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1 text-xs text-secondary">
             <DecisionByBadge decision={who.marker} />
             <CategoryTag category={decision.category} />
             {decision.superseded ? <Badge size="compact">Superseded</Badge> : null}
-            <span className="text-(--text-tertiary)">
+            <span className="text-tertiary">
               {formatDate(decision.decided_at)} {formatTime(decision.decided_at)}
             </span>
           </div>
@@ -307,7 +304,7 @@ export function DecisionDetailBody<T>({
             <InlineMarkdown>{decision.summary}</InlineMarkdown>
           </p>
           {who.approvedBy ? (
-            <p className="mt-0.5 inline-flex items-center gap-1 text-xs text-(--text-secondary)">
+            <p className="mt-0.5 inline-flex items-center gap-1 text-xs text-secondary">
               <CheckIcon size={12} />
               approved by {who.approvedBy}
             </p>
@@ -316,8 +313,8 @@ export function DecisionDetailBody<T>({
       ) : null}
 
       {decision.rejected_alternative ? (
-        <p className="text-base text-(--text-secondary)">
-          <span className="text-(--text-tertiary)">Instead of: </span>
+        <p className="text-base text-secondary">
+          <span className="text-tertiary">Instead of: </span>
           <InlineMarkdown>{decision.rejected_alternative}</InlineMarkdown>
         </p>
       ) : null}
@@ -352,10 +349,9 @@ export function DecisionDetailBody<T>({
                 >
                   <ViewerLink
                     href={pullRequestHref(pull.number)}
-                    className="min-w-0 text-(--text-primary) hover:underline"
+                    className="min-w-0 text-primary hover:underline"
                   >
-                    <span className="text-(--text-tertiary) tabular-nums">#{pull.number}</span>{" "}
-                    {pull.title}
+                    <span className="text-tertiary tabular-nums">#{pull.number}</span> {pull.title}
                   </ViewerLink>
                   <PullRequestState pull={pull} />
                 </li>
@@ -389,7 +385,7 @@ export function DecisionDetailBody<T>({
       </DetailPart>
 
       {detail.prompts_withheld ? (
-        <p className="text-base text-(--text-tertiary) italic">{withheldNote}</p>
+        <p className="text-base text-tertiary italic">{withheldNote}</p>
       ) : turns.length > 0 ? (
         <DetailPart label={turns.length === 1 ? "Prompt" : "Prompts"}>
           <CitedPrompts turns={turns} person={detail.session.person} />
@@ -417,7 +413,7 @@ export function PullRequestState({ pull }: { pull: DecisionPullRequest }) {
         {state}
       </Badge>
       {pull.draft ? <Badge size="compact">draft</Badge> : null}
-      <span className="text-xs text-(--text-tertiary)">{reviewStateLabel(pull.review_state)}</span>
+      <span className="text-xs text-tertiary">{reviewStateLabel(pull.review_state)}</span>
     </>
   );
 }
@@ -425,7 +421,7 @@ export function PullRequestState({ pull }: { pull: DecisionPullRequest }) {
 export function DetailPart({ label, children }: { label: string; children: ReactNode }) {
   return (
     <section className="min-w-0">
-      <h4 className="mb-1.5 text-xs tracking-[0.08em] text-(--text-tertiary) uppercase">{label}</h4>
+      <h4 className="mb-1.5 text-xs tracking-[0.08em] text-tertiary uppercase">{label}</h4>
       {children}
     </section>
   );
@@ -468,8 +464,8 @@ function CitedPrompts({
 function SessionFact({ label, children }: { label: string; children: ReactNode }) {
   return (
     <div className="min-w-0">
-      <dt className="text-xs text-(--text-tertiary)">{label}</dt>
-      <dd className="mt-0.5 text-(--text-primary)">{children}</dd>
+      <dt className="text-xs text-tertiary">{label}</dt>
+      <dd className="mt-0.5 text-primary">{children}</dd>
     </div>
   );
 }
@@ -538,12 +534,12 @@ function OpenSession<T>({ at, source }: { at: SessionTurn; source: OpenSessionSo
       </Button>
       <div id={panelId} hidden={!open} className="mt-3">
         {!open ? null : loaded.status === "loading" ? (
-          <p className="flex items-center gap-2 text-base text-(--text-tertiary) italic">
+          <p className="flex items-center gap-2 text-base text-tertiary italic">
             <Spinner />
             Loading this session…
           </p>
         ) : loaded.status === "failed" ? (
-          <p role="alert" className="text-base text-(--status-critical)">
+          <p role="alert" className="text-base text-status-critical">
             This session could not be loaded. It may also belong to repositories you can't read.
           </p>
         ) : (
