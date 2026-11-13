@@ -2,7 +2,7 @@
 
 `@baum/viewer` is the React package that renders a `baum.review/1` document
 and its earlier versions: the summary, the sections and their blocks, risks,
-tiles, hunk evidence, description images, checks, the details and activity
+hunk evidence, description images, checks, the details and activity
 panes, and the version menu with comparison. It also holds the pure
 derivations behind them (review order, risk triage, anchor resolution, version
 changes) and the design tokens and primitives the components are built from.
@@ -766,26 +766,11 @@ text and code blocks stay as written, and without the provider nothing
 changes. The pass runs after sanitising, so a
 comment's own markup cannot create these links.
 
-## Schema and tile types
+## Schema
 
 The document types in `src/review-document.ts` mirror
 [`../schema/review-1.json`](../schema/review-1.json) by hand; the schema is
-canonical. Tiles are validated against it at runtime, and
-[`../schema/legacy-review-tiles.json`](../schema/legacy-review-tiles.json)
-keeps the definitions of kinds the schema has retired, so stored tiles of
-those kinds still render; the Go `review` package reads the same file, so
-stored-document validation accepts them too. The type and validator generators
-both load this combined tile contract through `scripts/review-tile-schema.mjs`.
-`pnpm generate` writes
-the tile types to `generated/review-tile-types.d.ts` from both files, which is
-not committed. `pnpm generate:validators` writes the validators to
-`src/precompiled/review-tile-validators.js` with Ajv's standalone code
-generation, and that file is committed. They are precompiled because Ajv
-otherwise compiles with `new Function`, which a page under a strict
-Content-Security-Policy (as the reference viewer host serves) cannot run. No other script
-rewrites the file, so a unit test fails when it is out of date: run
-`pnpm generate:validators` after changing either schema file, then rebuild the
-standalone app; `just viewer-build` from the module root does both.
+canonical.
 
 ## Standalone app
 
@@ -838,9 +823,8 @@ the commit a `v*` tag points at, carries it, so `go install` of a tagged
 version needs nothing but Go (see `scripts/release-commit.sh`). Elsewhere, run
 `just viewer-build` from the module root before building a binary whose
 viewer works; one built without it answers each page with a note saying so.
-`just viewer-build` runs `pnpm generate:validators` and `pnpm build:app`, and
-`just viewer-fresh` also fails when the committed validators, or on a release
-commit the built app, differ from a fresh build, as CI does. The build writes
+`just viewer-build` runs `pnpm build:app`, and `just viewer-fresh` fails when,
+on a release commit, the built app differs from a fresh build, as CI does. The build writes
 no sourcemaps, and two builds of the same source are byte-identical.
 
 ## Development
@@ -872,59 +856,6 @@ compare. `app/app.test.tsx` renders the standalone app against a mocked `fetch` 
 `EventSource`. `src/typography.test.ts` fails on a font size outside the type scale
 in `viewer.css`, and `src/dependencies.test.ts` on a shipped module importing
 a package that is not a peer dependency.
-
-### Tile gallery
-
-`gallery/` is a dev-only page for working on a review tile against real
-payloads, with no model call. It renders every tile it finds with the same
-`ReviewTiles` the review page uses, each beside the viewer's own verdict on it
-(the compiled tile validators, then the code-source checks that need the
-document), where it came from, and a filter by kind and source. It is served
-by Vite's dev server, with hot module replacement, from its own config
-(`vite.gallery.config.ts`): the standalone app's build roots at `app/` and
-never sees it, so it is not in `just viewer-build` output.
-
-```sh
-just viewer::gallery                  # http://127.0.0.1:5180, GALLERY_PORT=... to move it
-just viewer::gallery-export           # copy tiles of stored dev reviews into gallery-data/stored
-```
-
-The recipe runs the server in the `ui-test` container with the port published
-on `127.0.0.1`, prints the URL and stops with Ctrl+C. It reads three sources,
-listed afresh every moment, so a new run, export or saved fixture appears
-without a reload:
-
-| Source | Where it reads | Shown against |
-| --- | --- | --- |
-| Prompt-eval runs | `attempts/*.json` under `tools/prompt-eval/runs/` (mounted read-only), each attempt's `document` | that document; the `tools/prompt-eval/prompt-eval view <attempt>` command for the whole review sits beside it |
-| Stored reviews | `gallery-data/stored/*.json`, written by `just viewer::gallery-export` from the dev database (`--repository`, `--kinds`, `--limit`) | the stored document |
-| Fixtures | `gallery-data/fixtures/*.json`: one tile, an array of tiles, or `{ "document", "tiles" }` | the schema's example document, adjusted so the tiles' code sources can pass (or your `document`) |
-
-`gallery-data/` is ignored by git, since runs and stored reviews hold
-repository content. [`gallery/example-database-schema.json`](gallery/example-database-schema.json)
-is a valid `database-schema` tile to copy into `gallery-data/fixtures/` and
-edit. A fixture that is not valid is drawn as the viewer draws it (Tile
-unavailable) under the list of what the validator rejected, so a payload can be
-broken and repaired in place. The export needs the shared dev database
-(`just shared-up`) and writes nothing when no stored review has tiles, which is
-the case until one is generated with a tile allow-list.
-
-Editing a tile component, or anything it imports, replaces the modules in
-place and draws the page again without a reload; the kind and source filters
-live in the URL, so the page keeps its view. Set `GALLERY_POLLING=1` if file
-changes do not reach the container. The loop end to end:
-
-```sh
-just prompt_eval::cases migrations --limit 2     # pick PRs whose review has migration hunks
-tools/prompt-eval/prompt-eval \
-  -manifest "$PWD/tools/prompt-eval/experiments/migrations/manifest.json" \
-  -output "$PWD/tools/prompt-eval/runs/migrations-01"   # database-schema allowed; calls the model
-just viewer::gallery                             # open the URL, filter on database-schema
-$EDITOR oss/viewer/src/components/review-tiles/contract-schema-diff.tsx   # the page updates on save
-```
-
-See [`tools/prompt-eval`](../../tools/prompt-eval/README.md#tiles) for the
-manifest's `tile_kinds` and `tile_catalogue`.
 
 ### Browser tests
 
