@@ -36,8 +36,8 @@ type Options struct {
 	// the tour shows when there is no local data yet; the app's files are the
 	// same. Nil leaves those paths unserved.
 	Sample http.Handler
-	// MCP serves POST /api/mcp, the MCP server agents reach through the
-	// `baum mcp` bridge (internal/agentcontext). It is the one /api/ route the
+	// MCP serves POST /api/mcp, the MCP server agent CLIs reach over HTTP
+	// (internal/agentcontext). It is the one /api/ route the
 	// launch token and the cookie do not open: it takes only a token MCP
 	// authenticates, and that token opens no other route. Nil leaves it
 	// unserved.
@@ -295,7 +295,7 @@ func (s *Server) Handler() http.Handler {
 }
 
 // serveMCP admits a request to the MCP server on its own token alone. The
-// caller is the `baum mcp` bridge, not a browser, so no Origin is needed; a
+// caller is an agent CLI, not a browser, so no Origin is needed; a
 // request that carries a foreign one is refused all the same. The MCP server
 // checks the method and content type.
 func (s *Server) serveMCP(w http.ResponseWriter, r *http.Request) {

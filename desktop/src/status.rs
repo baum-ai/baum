@@ -204,6 +204,10 @@ pub struct Plan {
     pub windows: Vec<PlanWindow>,
     #[serde(default)]
     pub fetched_at: String,
+    /// Set on a provider's second plan: the Claude Code configuration
+    /// directory or Codex home whose sign-in it is, home written as `~`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub config_dir: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -271,8 +275,12 @@ fn meters(plans: &[Plan]) -> Vec<Meter> {
     plans
         .iter()
         .flat_map(|plan| {
-            plan.windows.iter().map(|win| Meter {
-                label: format!("{} · {}", provider_name(&plan.provider), capital(&win.name)),
+            let name = match plan.config_dir.as_deref().filter(|dir| !dir.is_empty()) {
+                Some(dir) => format!("{} ({dir})", provider_name(&plan.provider)),
+                None => provider_name(&plan.provider).to_string(),
+            };
+            plan.windows.iter().map(move |win| Meter {
+                label: format!("{name} · {}", capital(&win.name)),
                 left: win
                     .used_percent
                     .filter(|used| used.is_finite())
@@ -1264,6 +1272,34 @@ mod tests {
         // A daemon that is not running vouches for no figures.
         observed.link = Link::Down;
         assert!(Tracker::default().update(&observed).usage.is_empty());
+    }
+
+    #[test]
+    fn a_second_plan_is_named_by_its_configuration_directory() {
+        let body = br#"{"plans":[
+            {"provider":"claude","available":true,"windows":[{"name":"5-hour","used_percent":38}]},
+            {"provider":"claude","available":true,"config_dir":"~/.claude.personal",
+             "windows":[{"name":"5-hour","used_percent":10}]},
+            {"provider":"codex","available":true,"windows":[{"name":"5-hour","used_percent":20}]},
+            {"provider":"codex","available":true,"config_dir":"~/.codex-work",
+             "windows":[{"name":"5-hour","used_percent":30}]}]}"#;
+        let mut observed = up(jobs(0, 0, &[]));
+        observed.plans = Some(parse_plan_usage(body).unwrap());
+        let labels: Vec<String> = Tracker::default()
+            .update(&observed)
+            .usage
+            .iter()
+            .map(|m| m.label.clone())
+            .collect();
+        assert_eq!(
+            labels,
+            vec![
+                "Claude Code · 5-hour".to_string(),
+                "Claude Code (~/.claude.personal) · 5-hour".to_string(),
+                "Codex · 5-hour".to_string(),
+                "Codex (~/.codex-work) · 5-hour".to_string(),
+            ]
+        );
     }
 
     #[test]

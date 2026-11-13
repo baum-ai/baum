@@ -81,7 +81,10 @@ func (h *History) Sample(ctx context.Context) error {
 	h.load()
 	changed := h.prune()
 	for _, plan := range plans {
-		if !plan.Available {
+		// Samples are kept by provider and window, so the plan of a second
+		// configuration directory or Codex home would be mixed into the
+		// first's.
+		if !plan.Available || plan.ConfigDir != "" {
 			continue
 		}
 		for _, w := range plan.Windows {

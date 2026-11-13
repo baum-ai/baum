@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/baum-ai/baum/internal/agentdirs"
 	"github.com/baum-ai/baum/internal/gitlocal"
 	"github.com/baum-ai/baum/internal/hookevents"
 	"github.com/baum-ai/baum/internal/scanskip"
@@ -135,11 +136,11 @@ func (o Options) withDefaults() Options {
 			return gitlocal.Probe(ctx, dir, timeout)
 		}
 	}
-	if o.Stores.ClaudeProjectsDir == "" {
-		o.Stores.ClaudeProjectsDir = filepath.Join(o.Home, ".claude", "projects")
+	if o.Stores.ClaudeProjectsDir == "" && len(o.Stores.ClaudeProjectsDirs) == 0 {
+		o.Stores.ClaudeProjectsDirs = agentdirs.Claude.Under(o.Home, "projects")
 	}
-	if o.Stores.CodexSessionsDir == "" {
-		o.Stores.CodexSessionsDir = filepath.Join(o.Home, ".codex", "sessions")
+	if o.Stores.CodexSessionsDir == "" && len(o.Stores.CodexSessionsDirs) == 0 {
+		o.Stores.CodexSessionsDirs = agentdirs.Codex.Under(o.Home, "sessions")
 	}
 	return o
 }

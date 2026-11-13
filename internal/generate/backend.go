@@ -13,6 +13,7 @@ import (
 	"github.com/baum-ai/baum/agent/claude"
 	"github.com/baum-ai/baum/agent/codex"
 	"github.com/baum-ai/baum/agent/cursor"
+	"github.com/baum-ai/baum/internal/agentdirs"
 	"github.com/baum-ai/baum/internal/config"
 )
 
@@ -43,18 +44,29 @@ type Backends struct {
 func DefaultBackends() Backends { return DefaultBackendsFor(config.Config{}) }
 
 // DefaultBackendsFor is DefaultBackends with the executables cfg names in
-// BackendPaths and the variables of its AgentEnv. A named path replaces the PATH lookup: when it cannot be run,
+// BackendPaths and the variables of its AgentEnv; Claude Code also gets
+// cfg's ClaudeConfigDir as CLAUDE_CONFIG_DIR, and Codex its CodexHome as
+// CODEX_HOME. A named path replaces the PATH lookup: when it cannot be run,
 // the backend fails naming backend_paths.<name> and PATH is not searched.
 func DefaultBackendsFor(cfg config.Config) Backends {
 	claudePath, codexPath := cfg.BackendPaths[config.BackendClaude], cfg.BackendPaths[config.BackendCodex]
 	cursorPath := cfg.BackendPaths[config.BackendCursorAgent]
 	env := cfg.AgentEnviron()
+	claudeEnv := env
+	if cfg.ClaudeConfigDir != "" {
+		// The app's choice for these runs wins over agent_env's.
+		claudeEnv = agent.WithUserEnv(env, []string{agentdirs.Claude.Env + "=" + cfg.ClaudeConfigDir})
+	}
+	codexEnv := env
+	if cfg.CodexHome != "" {
+		codexEnv = agent.WithUserEnv(env, []string{agentdirs.Codex.Env + "=" + cfg.CodexHome})
+	}
 	return Backends{
 		Claude: func(model string) CheckedBackend {
-			return withExplicitPath(&claude.Backend{Binary: claudePath, Model: model, Profile: claude.User, Effort: cfg.Effort, Env: env}, config.BackendClaude, claudePath)
+			return withExplicitPath(&claude.Backend{Binary: claudePath, Model: model, Profile: claude.User, Effort: cfg.Effort, Env: claudeEnv}, config.BackendClaude, claudePath)
 		},
 		Codex: func(model string) CheckedBackend {
-			return withExplicitPath(&codex.Backend{Binary: codexPath, Model: model, Profile: codex.Local, Effort: cfg.Effort, Env: env}, config.BackendCodex, codexPath)
+			return withExplicitPath(&codex.Backend{Binary: codexPath, Model: model, Profile: codex.Local, Effort: cfg.Effort, Env: codexEnv}, config.BackendCodex, codexPath)
 		},
 		CursorAgent: func(model string) CheckedBackend {
 			return withExplicitPath(&cursor.Backend{Binary: cursorPath, Model: model, Env: env}, config.BackendCursorAgent, cursorPath)

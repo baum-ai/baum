@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/baum-ai/baum/internal/agentdirs"
 	"github.com/baum-ai/baum/internal/transcript"
 	"github.com/baum-ai/baum/internal/workstats"
 	"github.com/baum-ai/baum/sessions"
@@ -66,8 +67,10 @@ func unavailable(reason string) error { return &Unavailable{Reason: reason} }
 // session's hooks reported, and it is read only when, its symbolic links
 // resolved, it is a regular file inside that agent's own session store under
 // the home directory (~/.claude/projects for Claude Code, ~/.codex/sessions
-// for Codex). A Codex session whose hooks named no path is looked up in that
-// store by its id; a Cursor session is read from Cursor's own database by its
+// for Codex), or under the same folder of another Claude Code configuration
+// directory or Codex home baum knows (agentdirs.Claude.All,
+// agentdirs.Codex.All). A Codex session whose hooks named no path is looked
+// up in those stores by its id; a Cursor session is read from Cursor's own database by its
 // conversation id, since Cursor keeps no transcript file baum reads.
 type Transcripts struct {
 	Tracker *Tracker
@@ -399,17 +402,10 @@ func (t *Transcripts) locate(agent, id, path string, c *cached) (Location, error
 func Locate(home, cursorStore, agent, id, path string) (Location, error) {
 	switch agent {
 	case AgentClaudeCode:
-		root := filepath.Join(home, ".claude", "projects")
-		if path == "" {
-			// A session read back from StateFile keeps no path; its
-			// transcript is found by its id.
-			found, ok := claudeTranscriptByID(root, id)
-			if !ok {
-				return Location{}, unavailable("Claude Code did not say where this session's transcript is.")
-			}
-			path = found
+		main, root, _, err := claudeTranscript(home, id, path)
+		if errors.Is(err, errNoClaudeTranscript) {
+			return Location{}, unavailable("Claude Code did not say where this session's transcript is.")
 		}
-		main, err := inStore(root, path, func(name string) bool { return strings.HasSuffix(name, ".jsonl") })
 		if err != nil {
 			return Location{}, err
 		}
@@ -427,15 +423,7 @@ func Locate(home, cursorStore, agent, id, path string) (Location, error) {
 		}
 		return Location{Vendor: vendors.ClaudeCode, ID: id, files: files, main: main}, nil
 	case AgentCodex:
-		root := filepath.Join(home, ".codex", "sessions")
-		if path == "" {
-			found, err := findRollout(filepath.Join(home, ".codex"), id)
-			if err != nil {
-				return Location{}, err
-			}
-			path = found
-		}
-		main, err := inStore(root, compressedSince(path), codextranscript.IsRolloutName)
+		main, _, _, err := codexRollout(home, id, path)
 		if err != nil {
 			return Location{}, err
 		}
@@ -455,6 +443,85 @@ func Locate(home, cursorStore, agent, id, path string) (Location, error) {
 		return Location{Vendor: vendors.Cursor, ID: id, store: resolved}, nil
 	}
 	return Location{}, unavailable(fmt.Sprintf("baum cannot read the transcripts of %s sessions.", agent))
+}
+
+// errNoStore is inStore's error for a session store that is not there.
+var errNoStore error = unavailable("The agent's session folder was not found on this computer.")
+
+// errNoClaudeTranscript is claudeTranscript's error for a session whose hooks
+// named no transcript and that no store holds one of.
+var errNoClaudeTranscript = errors.New("no transcript")
+
+// claudeTranscript finds the transcript of Claude Code session id, whose
+// hooks named path (empty when none did, such as a session read back from
+// StateFile, which is then looked up by its id), and checks that it is inside
+// one of the session stores of the Claude Code configuration directories baum
+// knows (agentdirs.Claude.Under(home, "projects")): ~/.claude under home, the daemon's own
+// CLAUDE_CONFIG_DIR and the recorded ones. It returns the transcript with its
+// symbolic links resolved, the store it is in, and the path when it was
+// looked up by id.
+func claudeTranscript(home, id, path string) (main, root, found string, err error) {
+	roots := agentdirs.Claude.Under(home, "projects")
+	if path == "" {
+		for _, root := range roots {
+			if match, ok := claudeTranscriptByID(root, id); ok {
+				path, found = match, match
+				break
+			}
+		}
+		if path == "" {
+			return "", "", "", errNoClaudeTranscript
+		}
+	}
+	// Every store that exists refuses a path for the same reason, so the
+	// last such reason is the one to give; a store that is not there says
+	// nothing about the path.
+	err = errNoStore
+	for _, root := range roots {
+		main, storeErr := inStore(root, path, func(name string) bool { return strings.HasSuffix(name, ".jsonl") })
+		if storeErr == nil {
+			return main, root, found, nil
+		}
+		if storeErr != errNoStore {
+			err = storeErr
+		}
+	}
+	return "", "", "", err
+}
+
+// codexRollout finds the rollout of Codex session id, whose hooks named path
+// (empty when none did, which is then looked up by its id), and checks that it
+// is inside the sessions folder of one of the Codex homes baum knows
+// (agentdirs.Codex.All): ~/.codex under home, the daemon's own CODEX_HOME and
+// the recorded ones. It returns the rollout with its symbolic links resolved,
+// the home it is in, and the path when it was looked up by id.
+func codexRollout(home, id, path string) (main, codexHome, found string, err error) {
+	homes := agentdirs.Codex.All(home)
+	if path == "" {
+		err = unavailable("Codex has no transcript of this session on this computer.")
+		for _, h := range homes {
+			if match, findErr := findRollout(h, id); findErr == nil {
+				path, found = match, match
+				break
+			}
+		}
+		if path == "" {
+			return "", "", "", err
+		}
+	}
+	// As for Claude Code: the last refusal of a store that exists is the
+	// reason given.
+	err = errNoStore
+	for _, h := range homes {
+		main, storeErr := inStore(filepath.Join(h, "sessions"), compressedSince(path), codextranscript.IsRolloutName)
+		if storeErr == nil {
+			return main, h, found, nil
+		}
+		if storeErr != errNoStore {
+			err = storeErr
+		}
+	}
+	return "", "", "", err
 }
 
 // compressedSince is the rollout at path, or its compressed copy when Codex
@@ -482,7 +549,7 @@ func inStore(root, path string, named func(string) bool) (string, error) {
 	}
 	realRoot, err := filepath.EvalSymlinks(root)
 	if err != nil {
-		return "", unavailable("The agent's session folder was not found on this computer.")
+		return "", errNoStore
 	}
 	resolved, err := filepath.EvalSymlinks(path)
 	if errors.Is(err, os.ErrNotExist) {
