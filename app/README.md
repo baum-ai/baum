@@ -37,7 +37,9 @@ visible on large screens, and it follows the form on tall windows. It is static,
 fades into the page and leaves the step controls in place.
 
 Desktop UI colors are defined in `../viewer/src/palette.css`. The inbox,
-walkthrough, sessions, settings and charts reuse its semantic tokens. Stumpy's
+walkthrough, sessions, settings and charts reuse its semantic tokens, in
+markup through the palette utilities in `../viewer/src/palette-utilities.css`
+(`text-secondary`, `bg-surface-card`, `border-subtle`). Stumpy's
 fixed illustration colors live with the component in
 `../viewer/src/components/stumpy-artwork.ts`; the log mark and native icon
 generator reuse them. Fixed vendor logo colors live in

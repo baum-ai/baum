@@ -15,6 +15,7 @@
 
 @import "./fonts/fonts.css";
 @import "./theme.css";
+@import "./palette-utilities.css";
 
 /* The review page's columns: the rail, the review pane and the side pane
    side by side, rather than one column with the rail and the side pane as

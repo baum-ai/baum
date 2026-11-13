@@ -9,9 +9,8 @@ import { Button } from "./ui";
  *
  *  Extracted because three analytics views had already hand-rolled the same
  *  markup at two different paddings and two different header sizes, and six
- *  more tables were about to. `density` is what reconciles those two paddings:
- *  a caller cannot pass a competing `px-*` and expect it to win, because `cn`
- *  concatenates rather than resolves. */
+ *  more tables were about to. `density` is what reconciles those two paddings,
+ *  so a table picks one of them rather than passing its own `px-*`. */
 
 export type Column<T> = {
   key: string;

@@ -11,9 +11,8 @@ export type ActionOptions = {
 };
 
 const actionSizes = {
-  // Table-row scale. Exists so a caller never reaches for
-  // `className="px-3 py-1.5"`, which cannot reliably beat the size it is
-  // fighting — `cn` concatenates, so stylesheet order decides.
+  // Table-row scale. Exists so a caller picks a size rather than reaching
+  // for `className="px-3 py-1.5"`.
   tiny: "h-7 px-2.5 text-xs",
   compact: "h-8 px-3.5",
   standard: "px-4 py-[11px]",
@@ -39,8 +38,7 @@ const actionVariants = {
   tag: "border border-(--border-default) bg-(--surface-card) whitespace-nowrap text-(--text-secondary) hover:bg-(--surface-hover) hover:text-(--text-primary) hover:no-underline",
 };
 
-/** Kept apart from the variants because two `rounded-*` utilities would both
- *  survive `cn` and the stylesheet, not the variant, would pick the winner. */
+/** A tag is a pill; every other action is boxed. */
 function actionShape(variant: NonNullable<ActionOptions["variant"]>) {
   return variant === "tag" ? "rounded-full" : "rounded-(--radius-md)";
 }

@@ -17,9 +17,8 @@ export const NAV_LINK =
  *  label for the product, not a headline. */
 const wordmarkSizes = { page: "text-2xl font-medium", sidebar: "text-lg font-normal" };
 
-/** A size variant rather than a `className` override: `cn` concatenates, so two
- *  competing font sizes or weights would both survive and stylesheet order
- *  would pick. */
+/** A size variant rather than a `className` override, so the two places the
+ *  wordmark appears are named rather than restated at each call. */
 export function Wordmark({
   size = "page",
   className,
