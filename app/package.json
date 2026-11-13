@@ -13,6 +13,8 @@
     "typecheck": "pnpm generate && tsc --noEmit",
     "build": "pnpm generate && vite build",
     "lint:palette": "node scripts/check-palette.mjs",
+    "tile-kit": "node scripts/build-tile-kit.mjs",
+    "tile-kit:check": "node scripts/build-tile-kit.mjs --check",
     "lint": "pnpm lint:palette && oxlint --deny-warnings .",
     "format": "biome format --write .",
     "format:check": "biome format .",
@@ -20,7 +22,7 @@
     "test:e2e": "playwright test",
     "test:desktop": "node ../desktop/tests/onboarding.cjs",
     "test:development": "playwright test --config playwright.development.config.ts",
-    "check": "pnpm lint && pnpm format:check && pnpm typecheck && pnpm test:unit"
+    "check": "pnpm lint && pnpm format:check && pnpm tile-kit:check && pnpm typecheck && pnpm test:unit"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.4",

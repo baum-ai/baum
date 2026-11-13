@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en" data-theme="light" data-face="">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style id="baum-kit-style">{fonts.css, tokens.css, v1/kit.css}</style>
+<script id="baum-kit-script">{v1 scripts}</script>
+</head>
+<body><div id="baum-root"></div>
+<style>
+  .count { color: var(--text-secondary); }
+</style>
+<script>
+  baum.tile({
+    glance: ({ data }) => baum.html`<p class="kit-lede">${data.title}</p>`,
+    detail: ({ data }) => baum.md(data.text),
+  });
+</script>
+
+</body>
+</html>
