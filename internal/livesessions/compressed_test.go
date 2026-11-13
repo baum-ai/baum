@@ -118,3 +118,20 @@ func TestAPlainRolloutIsFoundBeforeItsCompressedCopy(t *testing.T) {
 		t.Fatal("not a rollout name")
 	}
 }
+
+// A path the hooks recorded before Codex compressed the rollout leads to the
+// compressed copy once the plain file is gone.
+func TestARecordedRolloutPathFollowsItsCompressedCopy(t *testing.T) {
+	plain := filepath.Join(t.TempDir(), "rollout-2026-07-01T10-00-00-id.jsonl")
+	if got := compressedSince(plain); got != plain {
+		t.Fatalf("nothing there: %s, want the path as given", got)
+	}
+	writeZstd(t, plain+".zst", "{}\n")
+	if got := compressedSince(plain); got != plain+".zst" {
+		t.Fatalf("compressed since: %s, want the copy", got)
+	}
+	write(t, plain, "{}\n")
+	if got := compressedSince(plain); got != plain {
+		t.Fatalf("plain still there: %s, want the plain rollout", got)
+	}
+}

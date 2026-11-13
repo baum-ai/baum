@@ -333,7 +333,10 @@ func (t *Transcripts) describe(k key, path string, working bool, endedAt time.Ti
 		t.logger().Debug("live session title not read", "agent", k.agent, "error", err)
 		return e.title, e.excerpt, e.summary, e.activity
 	}
-	caught := e.scan.offset >= src.size
+	// A compressed rollout is read whole in one pass and never grows, so a
+	// read of it is caught up even when its size was an estimate or its last
+	// line ended without a newline.
+	caught := e.scan.offset >= src.size || codextranscript.Compressed(src.transcript)
 	if !caught && k.agent == AgentClaudeCode {
 		// Not caught up: the tail names the session meanwhile.
 		var tail scanState
@@ -514,7 +517,7 @@ func (t *Transcripts) describeFiles(k key, path string) (describeSource, error) 
 			}
 			path, src.found = found, found
 		}
-		main, err := inStore(filepath.Join(codexHome, "sessions"), path, func(name string) bool {
+		main, err := inStore(filepath.Join(codexHome, "sessions"), compressedSince(path), func(name string) bool {
 			return codextranscript.IsRolloutName(name)
 		})
 		if err != nil {

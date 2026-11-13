@@ -44,10 +44,12 @@ func stageSession(ctx context.Context, engine *goredact.Engine, stagedDir string
 	for i, file := range files {
 		// The name is how a reader tells the files of a tree apart once the
 		// layout is gone, so two files may not share one.
-		if file.Name == "" || names[file.Name] {
+		// A compressed rollout is staged under its plain name.
+		name := codextranscript.PlainName(file.Name)
+		if name == "" || names[name] {
 			return SessionManifest{}, fmt.Errorf("session %s names file %q twice or not at all", session.SessionID, file.Name)
 		}
-		names[file.Name] = true
+		names[name] = true
 		if file.Kind == model.KindTranscript {
 			roots++
 		}

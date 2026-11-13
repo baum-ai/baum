@@ -435,7 +435,7 @@ func Locate(home, cursorStore, agent, id, path string) (Location, error) {
 			}
 			path = found
 		}
-		main, err := inStore(root, path, codextranscript.IsRolloutName)
+		main, err := inStore(root, compressedSince(path), codextranscript.IsRolloutName)
 		if err != nil {
 			return Location{}, err
 		}
@@ -455,6 +455,21 @@ func Locate(home, cursorStore, agent, id, path string) (Location, error) {
 		return Location{Vendor: vendors.Cursor, ID: id, store: resolved}, nil
 	}
 	return Location{}, unavailable(fmt.Sprintf("baum cannot read the transcripts of %s sessions.", agent))
+}
+
+// compressedSince is the rollout at path, or its compressed copy when Codex
+// compressed it after the path was recorded and the plain file is gone.
+func compressedSince(path string) string {
+	if codextranscript.Compressed(path) {
+		return path
+	}
+	if _, err := os.Lstat(path); !errors.Is(err, fs.ErrNotExist) {
+		return path
+	}
+	if _, err := os.Lstat(path + ".zst"); err == nil {
+		return path + ".zst"
+	}
+	return path
 }
 
 // inStore resolves path and reports it when it is a regular file inside the
