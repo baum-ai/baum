@@ -1436,9 +1436,11 @@ it("keeps counting a waiting card's wait without rendering the card again", asyn
 it("links a session's pull request once its link resolves, rendering only that card again", async () => {
   const said = { steps: [], last_message: "Working on it." };
   // The same session objects throughout: only what the resolver answers changes.
+  // Running now lists the newest first, so "a" starts later to be the first card;
+  // two `ago` calls with the same age can fall a millisecond apart and swap them.
   const sessions = [
-    session({ session_id: "a", pr: 5, pr_state: "OPEN", activity: said }),
-    session({ session_id: "b", pr: 6, pr_state: "OPEN", activity: said }),
+    session({ session_id: "a", pr: 5, pr_state: "OPEN", activity: said, started_at: ago(6 * 60) }),
+    session({ session_id: "b", pr: 6, pr_state: "OPEN", activity: said, started_at: ago(7 * 60) }),
   ];
   const draw = (links: Record<number, string>) =>
     act(async () =>
