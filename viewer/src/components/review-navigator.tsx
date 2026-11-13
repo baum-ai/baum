@@ -14,7 +14,7 @@ import { IconButton } from "./ui";
 /** A place the reader can step to from the one they are on. */
 export type ReviewStep = { label: string; go: () => void };
 
-/** The bar that stands in for the rail where the panes stack (below `xl`):
+/** The bar that stands in for the rail where the panes stack (below `wide`):
  *  where the reader is, a way to every other place, and the previous and next
  *  place in reading order. A rail stacked above the pane is a screen of rows
  *  to scroll past before the review starts, and a tap on one of them changes
@@ -49,7 +49,7 @@ export function ReviewNavigator({
   /** Whether the list of places is open. */
   expanded: boolean;
   onOpen: () => void;
-  /** The side pane, which below `xl` is a sheet this bar opens rather than
+  /** The side pane, which below `wide` is a sheet this bar opens rather than
    *  a second page under the review: its name ("Conversation", or "Details"
    *  without one), what its tabs flag in words, if anything, and whether it
    *  is open. */
@@ -58,7 +58,7 @@ export function ReviewNavigator({
   return (
     <div
       ref={ref}
-      className="sticky top-(--review-host-bar,0px) z-(--z-sticky) -mb-px flex h-12 items-center gap-0.5 border-b border-(--border-subtle) bg-(--surface-card) pr-2 pl-1 lg:top-12 xl:hidden"
+      className="sticky top-(--review-host-bar,0px) z-(--z-sticky) -mb-px flex h-12 items-center gap-0.5 border-b border-(--border-subtle) bg-(--surface-card) pr-2 pl-1 lg:top-12 wide:hidden"
     >
       <button
         type="button"
@@ -135,7 +135,7 @@ export function ReviewPaneFoot({
   return (
     <nav
       aria-label="Next in review"
-      className="mt-8 flex gap-3 border-t border-(--border-subtle) pt-4 xl:hidden"
+      className="mt-8 flex gap-3 border-t border-(--border-subtle) pt-4 wide:hidden"
     >
       {previous ? (
         <button type="button" onClick={previous.go} className={cn(step, "max-w-[45%] text-left")}>

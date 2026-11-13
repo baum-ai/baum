@@ -1199,12 +1199,14 @@ describe("source chips", () => {
   });
 });
 
-it("toggles the side pane with ] and leaves typing alone", async () => {
-  const originalMedia = window.matchMedia;
-  const media = vi.spyOn(window, "matchMedia").mockImplementation((query) => ({
-    ...originalMedia(query),
-    matches: query === "(width >= 80rem)",
-  }));
+it("toggles the side pane with ] once the page is wide, and leaves typing alone", async () => {
+  // The review page is wide enough for its columns: the layout is the page's
+  // width, not the window's.
+  const pageWidth = vi
+    .spyOn(HTMLElement.prototype, "clientWidth", "get")
+    .mockImplementation(function (this: HTMLElement) {
+      return this.hasAttribute("data-review-page") ? 1200 : 0;
+    });
   try {
     const container = await render(
       <Host>
@@ -1232,6 +1234,6 @@ it("toggles the side pane with ] and leaves typing alone", async () => {
     });
     expect(localStorage.getItem("baum.review.conversation-collapsed")).toBe("false");
   } finally {
-    media.mockRestore();
+    pageWidth.mockRestore();
   }
 });

@@ -468,7 +468,7 @@ export function CommitList({
   // says it is one of the pull request's commits, and leads back to them.
   if (single)
     return (
-      <div className="min-h-0 flex-1 xl:overflow-y-auto">
+      <div className="min-h-0 flex-1 wide:overflow-y-auto">
         <CommitDetailPane
           key={shown[0]!.id}
           commit={shown[0]!}
@@ -488,7 +488,7 @@ export function CommitList({
             : `${count} · oldest first, with the sessions linked to each.`
         }
       />
-      <div className="min-h-0 flex-1 xl:overflow-y-auto">
+      <div className="min-h-0 flex-1 wide:overflow-y-auto">
         {shown.length === 0 ? (
           <Empty title="No commits">This pull request has no commits on this machine.</Empty>
         ) : (

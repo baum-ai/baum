@@ -71,7 +71,7 @@ export function ReviewSummary({
       <div className="w-full flex-none">
         <CardHeader size="pane" title="Summary" />
       </div>
-      <div className="min-h-0 flex-1 xl:overflow-y-auto">
+      <div className="min-h-0 flex-1 wide:overflow-y-auto">
         <div className="min-w-0 space-y-8">
           {document.review.generator.review_md_changed && (
             <StatusLine tone="caution" label="Review policy changed" boxed>

@@ -171,7 +171,13 @@ A small “View obsolete changes” control reveals them with muted gray styling
 they do not count toward read progress. Opening an obsolete section by a direct
 link reveals the obsolete rows so the selected section stays visible in the rail.
 
-Below `xl` (1280px) the panes stack, and the rail becomes a sheet from the
+The rail, the review pane and the side pane sit side by side once the review
+page itself is at least 64rem (1024px) wide. The page is a width container
+named `review`, and components use the `wide:` variant from `viewer.css`
+rather than a window breakpoint, so a host's sidebar opening or folding moves
+the page across the threshold without the window changing. While the page is
+wide it carries `data-review-wide`, for a host's own CSS. Below that width the
+panes stack, and the rail becomes a sheet from the
 bottom of the window. A bar sticks over the pane in its place: it names
 where the reader is ("Behavior changes, 1 of 5"), opens the sheet, carries
 the host's read mark for the section on screen, and steps to the previous
@@ -527,7 +533,7 @@ new document object of the same version. A read that failed is tried again
 on the next refetch of the document, and only for the versions that failed.
 
 The head's compact bar is `REVIEW_BAR_PX` (48px) tall and sticks to the top
-of the window from `lg` (1024px). Below `xl` the navigator bar, 48px too,
+of the window from `lg` (1024px). While the panes stack the navigator bar, 48px too,
 sticks under it; below `lg`, where there is no compact bar, it sticks under
 the host's own sticky bar, whose height the host gives as
 `--review-host-bar` (0 without one). A host should pad the page's scroll by
@@ -541,8 +547,8 @@ html:has([data-review-page]) {
 @media (width >= 64rem) {
   html:has([data-review-page]) { scroll-padding-top: calc(48px + 48px + 0.5rem); }
 }
-@media (width >= 80rem) {
-  html:has([data-review-page]) { scroll-padding-top: calc(48px + 0.5rem); }
+html:has([data-review-page][data-review-wide]) {
+  scroll-padding-top: calc(48px + 0.5rem);
 }
 ```
 

@@ -85,7 +85,8 @@ export function PaneDivider({
   // A width remembered from a wider window, or one left behind by a window
   // that has since narrowed, would otherwise hold past what the row can give.
   // The drag and keyboard paths clamp as they go; this is the same clamp for
-  // the paths that do not go through them.
+  // the paths that do not go through them. The row is watched rather than the
+  // window: a host's sidebar folding or opening changes it with no resize.
   useEffect(() => {
     if (!onFit) return;
     const toRow = () => {
@@ -93,8 +94,9 @@ export function PaneDivider({
       if (available !== undefined) onFit(available);
     };
     toRow();
-    window.addEventListener("resize", toRow);
-    return () => window.removeEventListener("resize", toRow);
+    const resized = new ResizeObserver(toRow);
+    for (const pane of [reviewRef.current, paneRef.current]) if (pane) resized.observe(pane);
+    return () => resized.disconnect();
   });
 
   return (
@@ -107,7 +109,7 @@ export function PaneDivider({
       aria-valuemax={clamp(limits.max)}
       tabIndex={0}
       className={cn(
-        "group hidden cursor-col-resize touch-none items-stretch justify-center rounded-(--radius-sm) xl:flex",
+        "group hidden cursor-col-resize touch-none items-stretch justify-center rounded-(--radius-sm) wide:flex",
         FOCUS_RING,
         className,
       )}
