@@ -110,7 +110,7 @@ function RiskLine({
       <div className="min-w-0 flex-1">
         <span className="sr-only">{humanize(risk.tier)} risk: </span>
         <Clamp
-          lines={urgent || roomy ? 2 : 1}
+          lines={urgent ? 4 : roomy ? 2 : 1}
           className={urgent ? "text-base text-primary" : "text-base text-secondary"}
         >
           {plainText(risk.text, ctx.labels)}
@@ -233,6 +233,8 @@ export const risksTile: TileType = {
     const change = changeById(ctx.doc, risk.change);
     return (change?.hunks ?? []).slice(0, 1).map((id) => ({ type: "hunk" as const, id }));
   },
+  // Two or more must-read risks take more than a card's height to show in
+  // full; the card grows instead of fading them out.
   tall: (tile, doc) =>
-    ranked({ doc }, tile.data).filter((risk) => URGENT.includes(risk.tier)).length > 2,
+    ranked({ doc }, tile.data).filter((risk) => URGENT.includes(risk.tier)).length > 1,
 };

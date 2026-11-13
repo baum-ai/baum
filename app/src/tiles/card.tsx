@@ -34,6 +34,7 @@ export function GlanceCard({
   menu,
   menuItems,
   comments,
+  grows = false,
 }: {
   tile: Tile;
   size: TileSize;
@@ -41,6 +42,9 @@ export function GlanceCard({
   menu: ReturnType<typeof useContextMenu>;
   menuItems: () => MenuItem[];
   comments: number;
+  /** A card in the row grows to show what it must, so this one grows with it
+   *  rather than keep its height. */
+  grows?: boolean;
 }) {
   const titleId = useId();
   const face = tileFace(tile);
@@ -63,7 +67,7 @@ export function GlanceCard({
         "data-[review-block-active]:border-focus data-[review-block-active]:shadow-card",
         urgent ? "border-status-critical/40" : "border-default",
         face.kind === "unavailable" && "border-dashed",
-        tall ? "min-h-[17rem]" : CARD_HEIGHT[size],
+        tall || grows ? "@min-[36rem]/tiles:min-h-[17rem]" : CARD_HEIGHT[size],
         SPAN[size],
       )}
     >

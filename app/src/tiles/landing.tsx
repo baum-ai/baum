@@ -13,6 +13,7 @@ import { type MenuItem, useContextMenu } from "../context-menu";
 import { CARD_HEIGHT, GlanceCard, SPAN } from "./card";
 import { useTileHost, type LandingMemory } from "./host";
 import { landingOf, onLanding, type Landing } from "./layout";
+import { tileType } from "./registry";
 import { Clamp, plainText } from "./parts";
 import { readExpansions, withExpansions, type Expansions } from "./place";
 import { FixedStrip } from "./strip";
@@ -151,6 +152,14 @@ function TileGrid({
 }) {
   const host = useTileHost();
   const menu = useContextMenu();
+  // While a half tile grows to show its must-read risks, the halves beside it
+  // grow to the same row.
+  const halvesGrow = landing.items.some(
+    (item) =>
+      item.kind === "tile" &&
+      item.entry.size === "half" &&
+      Boolean(tileType(item.tile.type)?.tall?.(item.tile, ctx.doc)),
+  );
   const toggleGroup = (group: string, open: boolean) => {
     const groups = new Set(expansions.groups);
     if (open) groups.add(group);
@@ -202,6 +211,7 @@ function TileGrid({
                   menu={menu}
                   menuItems={menuItems(item.tile)}
                   comments={host.commentCounts.get(item.tile.id) ?? 0}
+                  grows={item.entry.size === "half" && halvesGrow}
                 />
               );
             case "more":

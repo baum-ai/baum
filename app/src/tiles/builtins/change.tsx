@@ -83,20 +83,6 @@ function ChangeGlance({ tile, ctx }: TileFaceProps) {
     <div className="flex h-full min-h-0 flex-col gap-2.5">
       <ChangeBadges change={change} ctx={ctx} section={section} />
       <Fade className="space-y-2">
-        {tile.state === "pending" ? (
-          <Writing />
-        ) : tile.state === "failed" ? (
-          <DetailsUnavailable change={change} ctx={ctx} />
-        ) : sentence ? (
-          <Clamp
-            lines={urgent.length > 0 || data.attention?.text ? 2 : 4}
-            className="text-base leading-normal text-primary"
-          >
-            {sentence}
-          </Clamp>
-        ) : (
-          <Quiet>No summary.</Quiet>
-        )}
         {urgent.length > 0 ? (
           <p className="flex items-start gap-1.5 text-base text-status-critical">
             <RiskIcon size={14} className="mt-0.5 flex-none" />
@@ -114,6 +100,20 @@ function ChangeGlance({ tile, ctx }: TileFaceProps) {
             </span>
           </p>
         ) : null}
+        {tile.state === "pending" ? (
+          <Writing />
+        ) : tile.state === "failed" ? (
+          <DetailsUnavailable change={change} ctx={ctx} />
+        ) : sentence ? (
+          <Clamp
+            lines={urgent.length > 0 || data.attention?.text ? 3 : 4}
+            className="text-base leading-normal text-primary"
+          >
+            {sentence}
+          </Clamp>
+        ) : (
+          <Quiet>No summary.</Quiet>
+        )}
       </Fade>
       <div className="space-y-1 text-xs text-tertiary">
         <p className="flex flex-wrap items-center gap-x-1.5">

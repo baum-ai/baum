@@ -28,7 +28,10 @@ function OverviewGlance({ tile, ctx }: TileFaceProps) {
         {minutes ? <span>≈{pluralize("minute", minutes, true)} to read</span> : null}
       </p>
       <Fade className="space-y-2.5">
-        <Clamp lines={4} className="text-base leading-normal text-primary">
+        <Clamp
+          lines={data.breaking_change || data.attention?.text ? 3 : 4}
+          className="text-base leading-normal text-primary"
+        >
           {paragraph}
         </Clamp>
         {data.breaking_change ? (

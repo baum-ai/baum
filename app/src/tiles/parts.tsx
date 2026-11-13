@@ -174,7 +174,7 @@ export function Fade({ children, className }: { children: ReactNode; className?:
       ref={ref}
       className={cn(
         "relative min-h-0 flex-1 overflow-hidden",
-        over && "[mask-image:linear-gradient(to_bottom,black_calc(100%-2.5rem),transparent)]",
+        over && "[mask-image:linear-gradient(to_bottom,black_calc(100%-1.5rem),transparent)]",
         className,
       )}
     >
