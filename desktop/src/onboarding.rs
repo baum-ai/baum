@@ -776,7 +776,6 @@ pub async fn repositories(
     query: Option<String>,
     path: Option<String>,
     dir: Option<String>,
-    include_documents: Option<bool>,
 ) -> Result<serde_json::Value, String> {
     blocking(move || {
         let (method, route, body) = repository_request(
@@ -785,7 +784,6 @@ pub async fn repositories(
             query.as_deref(),
             path.as_deref(),
             dir.as_deref(),
-            include_documents.unwrap_or(false),
         )?;
         let launch =
             crate::tray::launch(&app).ok_or("baum is still starting. Try again in a moment.")?;
@@ -825,7 +823,6 @@ fn repository_request(
     query: Option<&str>,
     path: Option<&str>,
     dir: Option<&str>,
-    documents: bool,
 ) -> Result<(&'static str, String, Option<serde_json::Value>), String> {
     use serde_json::json;
     let identity = || -> Result<&str, String> {
@@ -861,11 +858,7 @@ fn repository_request(
         ),
         "picked" => ("GET", "/api/repositories".into(), None),
         "found" => ("GET", "/api/clones/found".into(), None),
-        "refresh" => (
-            "POST",
-            "/api/clones/found/refresh".into(),
-            Some(json!({"include_documents": documents})),
-        ),
+        "refresh" => ("POST", "/api/clones/found/refresh".into(), Some(json!({}))),
         "pick" => (
             "POST",
             "/api/repositories".into(),
@@ -895,7 +888,7 @@ mod repository_relay_tests {
     use super::*;
     #[test]
     fn relay_allows_only_named_actions_and_safe_identities() {
-        assert!(repository_request("DELETE", None, None, None, None, false).is_err());
+        assert!(repository_request("DELETE", None, None, None, None).is_err());
         for name in [
             "../repo",
             "owner/../repo",
@@ -903,20 +896,20 @@ mod repository_relay_tests {
             "owner/repo?x",
             "owner/",
         ] {
-            assert!(repository_request("clone", Some(name), None, None, None, false).is_err());
+            assert!(repository_request("clone", Some(name), None, None, None).is_err());
         }
         let (_, route, _) =
-            repository_request("list", None, Some("x\r\nHeader: bad"), None, None, false).unwrap();
+            repository_request("list", None, Some("x\r\nHeader: bad"), None, None).unwrap();
         assert!(!route.contains('\r') && !route.contains('\n'));
         let (method, route, _) =
-            repository_request("retry-list", None, Some("acme widget"), None, None, false).unwrap();
+            repository_request("retry-list", None, Some("acme widget"), None, None).unwrap();
         assert_eq!(method, "GET");
         assert_eq!(
             route,
             "/api/github/repositories?query=acme+widget&refresh=1&more=0"
         );
         let (_, route, _) =
-            repository_request("more-list", None, Some("acme"), None, None, false).unwrap();
+            repository_request("more-list", None, Some("acme"), None, None).unwrap();
         assert_eq!(
             route,
             "/api/github/repositories?query=acme&refresh=0&more=1"
@@ -927,14 +920,13 @@ mod repository_relay_tests {
             None,
             Some("/work/code/fork"),
             None,
-            false,
         )
         .unwrap();
         assert_eq!(method, "POST");
         assert_eq!(route, "/api/repos");
         assert_eq!(body.unwrap()["repository"], "owner/repo");
-        let (_, _, body) = repository_request("refresh", None, None, None, None, true).unwrap();
-        assert_eq!(body.unwrap()["include_documents"], true);
+        let (_, _, body) = repository_request("refresh", None, None, None, None).unwrap();
+        assert_eq!(body.unwrap(), serde_json::json!({}));
     }
 }
 

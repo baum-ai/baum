@@ -157,8 +157,7 @@ to the list.
 choose another folder; files and saved review stores are left on disk. Keep the
 clone baum should use registered. An explicitly chosen fork clone may be filed
 under its matching upstream remote. A repository can be skipped without a clone.
-The picker explains local discovery and, on macOS, offers **Also look in
-Documents** after an explicit click. Later automatic attachments show a notice.
+The picker explains local discovery. Later automatic attachments show a notice.
 Setup uses the native `repositories` relay; app pages use namespaced local HTTP.
 The relay permits only named repository actions and never exposes credentials.
 Desktop setup requires a GitHub connection and at least one picked repository

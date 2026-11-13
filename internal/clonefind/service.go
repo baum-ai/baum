@@ -62,12 +62,11 @@ type Service struct {
 	// Interval overrides DefaultInterval.
 	Interval time.Duration
 
-	mu        sync.Mutex
-	ctx       context.Context
-	closed    bool
-	running   bool
-	again     bool
-	documents bool
+	mu      sync.Mutex
+	ctx     context.Context
+	closed  bool
+	running bool
+	again   bool
 	// triggered counts Trigger calls still checking, so a repository just
 	// picked reads as being looked for until its clone is attached or a scan
 	// runs.
@@ -101,7 +100,7 @@ func (s *Service) Run(ctx context.Context, events <-chan hookevents.Record, drop
 		s.wg.Wait()
 	}()
 	if len(s.needy(ctx)) > 0 {
-		s.start(true, false)
+		s.start(true)
 	}
 	interval := s.Interval
 	if interval <= 0 {
@@ -116,7 +115,7 @@ func (s *Service) Run(ctx context.Context, events <-chan hookevents.Record, drop
 			return
 		case <-ticker.C:
 			if len(s.needy(ctx)) > 0 {
-				s.start(false, false)
+				s.start(false)
 			}
 		case record, ok := <-events:
 			if !ok {
@@ -127,7 +126,7 @@ func (s *Service) Run(ctx context.Context, events <-chan hookevents.Record, drop
 				if n := dropped(); n != missed {
 					missed = n
 					if len(s.needy(ctx)) > 0 {
-						s.start(true, false)
+						s.start(true)
 					}
 				}
 			}
@@ -162,7 +161,7 @@ func (s *Service) Trigger() {
 		recent := !s.result.ScannedAt.IsZero() && time.Since(s.result.ScannedAt) < minRescan
 		s.mu.Unlock()
 		if !recent && len(s.needy(ctx)) > 0 {
-			s.start(true, false)
+			s.start(true)
 		}
 	}) {
 		done()
@@ -170,11 +169,7 @@ func (s *Service) Trigger() {
 }
 
 // Refresh starts a scan unless one is running, and reports whether it did.
-func (s *Service) Refresh() bool { return s.start(false, false) }
-
-// RefreshWithDocuments is Refresh for one scan that also walks ~/Documents
-// where it is otherwise left out (macOS). The choice is not kept.
-func (s *Service) RefreshWithDocuments() bool { return s.start(false, true) }
+func (s *Service) Refresh() bool { return s.start(false) }
 
 // spawn runs fn in the background while the service runs.
 func (s *Service) spawn(fn func(context.Context)) bool {
@@ -194,11 +189,10 @@ func (s *Service) spawn(fn func(context.Context)) bool {
 
 // start runs a scan in the background. While one runs it starts none; with
 // again set it asks the running one to repeat once it ends.
-func (s *Service) start(again, documents bool) bool {
+func (s *Service) start(again bool) bool {
 	s.mu.Lock()
 	if s.running {
-		s.again = s.again || again || documents
-		s.documents = s.documents || documents
+		s.again = s.again || again
 		s.mu.Unlock()
 		return false
 	}
@@ -207,18 +201,13 @@ func (s *Service) start(again, documents bool) bool {
 		return false
 	}
 	s.running = true
-	s.documents = documents
 	ctx := s.ctx
 	s.wg.Add(1)
 	s.mu.Unlock()
 	go func() {
 		defer s.wg.Done()
 		for {
-			s.mu.Lock()
-			documents := s.documents
-			s.documents = false
-			s.mu.Unlock()
-			s.scan(ctx, documents)
+			s.scan(ctx)
 			s.mu.Lock()
 			if !s.again || ctx.Err() != nil {
 				s.running, s.again = false, false
@@ -232,10 +221,8 @@ func (s *Service) start(again, documents bool) bool {
 	return true
 }
 
-func (s *Service) scan(ctx context.Context, documents bool) {
-	options := s.Options
-	options.IncludeDocuments = options.IncludeDocuments || documents
-	result, err := Find(ctx, options)
+func (s *Service) scan(ctx context.Context) {
+	result, err := Find(ctx, s.Options)
 	if ctx.Err() != nil {
 		return
 	}
@@ -474,19 +461,12 @@ func (s *Service) Handler() http.Handler {
 		r.Body = http.MaxBytesReader(w, r.Body, 1<<10)
 		d := json.NewDecoder(r.Body)
 		d.DisallowUnknownFields()
-		var body struct {
-			IncludeDocuments bool `json:"include_documents"`
-		}
+		var body struct{}
 		if d.Decode(&body) != nil || d.Decode(new(any)) != io.EOF {
 			http.Error(w, "invalid JSON request", http.StatusBadRequest)
 			return
 		}
-		var started bool
-		if body.IncludeDocuments {
-			started = s.RefreshWithDocuments()
-		} else {
-			started = s.Refresh()
-		}
+		started := s.Refresh()
 		s.mu.Lock()
 		running := s.running
 		s.mu.Unlock()

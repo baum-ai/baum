@@ -103,7 +103,7 @@ func TestAnUnpickedRepositoryIsNotPickedAgainByAnAttach(t *testing.T) {
 	clone := repo(t, filepath.Join(h, "code", "app"), "origin", gh("acme/app"))
 	f := start(t, h)
 	f.service.Registry = staleRegistry{f.registry}
-	f.service.scan(ctx, false) // finds the clone, tries to attach it
+	f.service.scan(ctx) // finds the clone, tries to attach it
 	f.service.handleEvent(ctx, agentEvent(clone, time.Now()))
 	picked, err := f.registry.Repositories(ctx)
 	if err != nil || len(picked) != 0 || len(f.clones(t)) != 0 || f.changes.Load() != 0 {

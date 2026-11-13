@@ -52,17 +52,10 @@ func TestMacOSProtectedFoldersOfAgentsAreNotTouched(t *testing.T) {
 		}
 	}
 
-	// The one-off Documents opt-in lets that folder through, and only that one.
-	darwin.IncludeDocuments = true
-	result = find(t, darwin)
-	if result.Repositories["acme/documents"] == nil || result.Repositories["acme/desktop"] != nil ||
-		result.Repositories["acme/downloads"] != nil || result.Repositories["acme/cloud"] != nil || result.Repositories["acme/icloud"] != nil {
-		t.Fatalf("with the opt-in: %+v", result.Repositories)
-	}
-
-	// Other systems are unchanged: an agent worked there, so it is read.
+	// Other systems have no such prompt: an agent worked there, so it is
+	// read, except in Downloads, which holds nobody's clone.
 	linux := options(h, events...)
-	if got := find(t, linux); len(got.Repositories) != len(protected)+1 {
+	if got := find(t, linux); len(got.Repositories) != len(protected) || got.Repositories["acme/downloads"] != nil {
 		t.Fatalf("linux repositories = %+v", got.Repositories)
 	}
 }
@@ -85,24 +78,25 @@ func TestAgentWorktreeInAHiddenFolderStandsForTheMainClone(t *testing.T) {
 	}
 }
 
-func TestWalkBudgetIsSharedByAllFolders(t *testing.T) {
+func TestWalkBudgetGoesToShallowFoldersFirst(t *testing.T) {
 	h := home(t)
 	for _, name := range []string{"r1", "r2", "r3"} {
 		repo(t, filepath.Join(h, "code", name), "origin", gh("acme/code-"+name))
 		repo(t, filepath.Join(h, "src", name), "origin", gh("acme/src-"+name))
 	}
+	repo(t, filepath.Join(h, "shallow"), "origin", gh("acme/shallow"))
 	o := options(h)
-	o.MaxWalked = 4 // code itself and its three clones
+	o.MaxWalked = 5 // the home, its three folders, then code/r1
 	result := find(t, o)
-	if len(result.Repositories) != 3 || result.Repositories["acme/code-r1"] == nil || result.Repositories["acme/src-r1"] != nil {
+	if len(result.Repositories) != 2 || result.Repositories["acme/shallow"] == nil || result.Repositories["acme/code-r1"] == nil {
 		t.Fatalf("repositories = %+v", result.Repositories)
 	}
 }
 
 func TestFolderInsideAWalkedFolderIsNotWalkedAgain(t *testing.T) {
 	h := home(t)
-	// Both clones are deeper than a walk of ~/code reaches. The agent's clone
-	// is found; its parent lies in the walked folder, so its sibling is not.
+	// Both clones are deeper than the walk of the home reaches. The agent's
+	// clone is found; the folder around it is not walked for its sibling.
 	worked := repo(t, filepath.Join(h, "code", "a", "b", "c", "d", "e"), "origin", gh("acme/worked"))
 	repo(t, filepath.Join(h, "code", "a", "b", "c", "d", "f"), "origin", gh("acme/sibling"))
 	result := find(t, options(h, agentEvent(worked, time.Now())))
