@@ -240,6 +240,16 @@ func (s *Service) read(ctx context.Context, others []Other) []Plan {
 	return s.plans
 }
 
+// Cached returns the plans last read, however old, without reading again; nil
+// when none was read yet. It never asks a provider, so it is safe for a caller
+// that must not cause a fetch, and it never waits for a read in progress: a
+// reading holds mu only to record its result.
+func (s *Service) Cached() []Plan {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]Plan(nil), s.plans...)
+}
+
 // Handler serves GET /api/plan-usage; ?refresh=1 asks for a newer reading,
 // which the cache still limits to one per MinRefresh.
 func (s *Service) Handler() http.Handler {

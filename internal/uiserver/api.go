@@ -82,6 +82,10 @@ type LocalAPI struct {
 	// PlanUsage serves /api/plan-usage: what remains of the Claude and Codex
 	// plans.
 	PlanUsage http.Handler
+	// PlanUsageCached returns the plans PlanUsage last read, without reading
+	// again: what CachedPlans filters for the MCP server, which must never
+	// cause a fetch.
+	PlanUsageCached func() []json.RawMessage
 	// Analytics serves /api/analytics: what the agents did, cost and
 	// delivered (internal/analytics).
 	Analytics http.Handler

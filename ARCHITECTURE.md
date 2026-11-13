@@ -5423,7 +5423,13 @@ pull request and may read the repository's other pull requests. `SetPage(id, Pag
 page: its name (`inbox`, `pulls`, `timeline`, `sessions`, `analytics`,
 `jobs`, `repositories`, `settings`, or a detail page: `pull_request`,
 `group`, `session`, `job`, `feature`), the repository, pull request, group,
-session, job or feature it shows, its filters and the focus the user picked.
+session, job or feature it shows, the open section, its filters and the focus
+the user picked. `section` is one of the Settings page's sections (`general`,
+`reviews`, `fixes`, `connections`, `computer`, `prompts`) on `settings`, or of
+a repository's page (`reviews`, `prompts`, `registration`) on `repositories`
+with a repository; any other section, or a section on another page or on the
+Repositories page without a repository, is refused, by the same check `link`
+builds a section's address with (`checkSection`).
 An action's page is its pull request and does not change. Callers hold the
 id, not the token, to set the page.
 
@@ -5438,7 +5444,9 @@ action's, else the open page's; an action is refused any other repository.
 `RegisterPage` lists the tools that read a page and the proposer that takes
 its changes. Two repository-scoped tools are built in: `current_page`,
 which returns the page context and the tools of that page the consumer may
-call, and `read_more`.
+call (on a page with an open section, `section_tools` are those that read
+it; the Repositories page lists a repository's tools only while it shows
+one), and `read_more`.
 
 Tools read through `Reader`, which serves an in-process `GET` against the
 `LocalAPI` handler, below the app server's authentication and with no
@@ -5454,6 +5462,63 @@ unreadable ones (`/api/settings`, `/api/debug`, `/api/github` and
 keeps the two equal); a tool projects what it needs, so its result is bounded
 as before.
 
+The unreadable routes have one narrow exception, `projectedReads`
+(`reader.go`): a fixed map from a tool's name to the exact routes it may read
+though they are unreadable. `Tool.Projected` declares them and `compile`
+refuses a name or route the map does not give that tool, a route that is not
+whole (`/api/diagnostics/x` is not `/api/diagnostics`) and a tool that is not
+`ScopeGlobal`; declaring an unreadable route in `Reads` stays refused for
+everyone. A route below an unreadable prefix is unreadable too
+(`/api/settings/appearance` is below `/api/settings`), so each Settings route
+a tool reads is its own pair. Such a tool returns a typed Go projection of the answer, never the
+answer: a struct of the fields the app shows on that page, filled from a
+decoded copy, so a field the route adds later is not passed on. The pairs are
+`diagnostics_summary` with `/api/diagnostics` (check id, label, status,
+version and source, each scrubbed with `doctor.Scrub` as the public issue
+summary scrubs them; a GitHub Enterprise token check is `other host`, and the
+token and backend checks give no source; never `home`, a check's path, detail
+or fix, the environment or the issue the Report a problem dialog drafts), and
+the Settings tools below: `settings_general` with `/api/settings/appearance`,
+`settings_reviews` and `settings_fixes` with `/api/settings`,
+`settings_connections` with `/api/github-auth`, `settings_computer` with
+`/api/settings` and `/api/diagnostics`, and `prompts` and `prompt` with
+`/api/settings/prompts`. `/api/settings` is read whole in process and decoded
+into a private struct whose agent environment keeps only the names (the
+values decode into `discarded`, which copies nothing), and no tool returns its
+budgets or caps. The raw body of a read is in memory for the call's length,
+as any read's is; it is never kept, logged or quoted in an error. A test lists the
+allowed pairs exactly and fails when any other tool declares an unreadable
+route; the reader gives a projected route only to a chat's reader, so an
+action's call is refused whatever its tool declares, and the tools are global
+besides. Three Settings routes are not exceptions either, because reading
+them does work a tool call must not repeat: `/api/settings/plan-usage` reads
+the plans to work out the default, so `settings_general` reads
+`Options.PlanChoices`, wired to `LocalAPI.CachedPlanChoices` (the same
+entries, the default from the plan usage cache alone);
+`/api/agent-hooks/codex` starts Codex when its cache is stale or holds a
+warning, so `settings_connections` reads `Options.CodexHooks`, wired to
+`uiserver.LastHookTrust`, which remembers the newest answer the daemon's check
+gave the app and never checks; and `/api/settings/decisions` resolves an auto
+backend by running the harnesses' version checks on every read, so
+`settings_reviews` reads `Options.DecisionSettings`, wired to
+`uiserver.DecisionViews`, which answers the same body, shares one resolution
+between concurrent calls and reuses it for 45 seconds while the preferences
+(hashed whole) are unchanged; the app's route still resolves on every read.
+Tests count the provider's reads, the Codex checks and the decision
+resolutions.
+`/api/plan-usage` is not an exception: its handler fetches from
+Claude or Codex when its cache is stale, so `plan_usage` reads
+`Options.PlanUsage`, an accessor the daemon wires to the plan usage cache
+(`planusage.Service.Cached`, filtered by the plans the person shows), which
+cannot read a provider; a test counts the provider's reads and finds none, and
+`Cached` never waits for a read in progress (the snapshot has its own lock).
+The picker's list is not an exception either: `/api/github/repositories`
+contacts GitHub (a new query starts a search, an expired cache reloads), so
+`github_repositories` reads `Options.PickList`, wired to
+`githubrepos.Service.Cached`, which narrows the top list the service already
+holds by the query's words and calls no lister; when no list is loaded yet the
+result says so. A test counts the lister's calls and finds none from the tool.
+
 An action's reader also reads only the routes in `actionRoutes`
 (`reader.go`). Each entry is a path pattern, the query parameters it allows
 and how the route is bound to the action's repository: by the `repository`
@@ -5465,9 +5530,17 @@ route whose response names no repository, by reading the record the id names
 first and checking its repository before the route is read (`byLookup`); and
 for a route that answers for every repository, by filtering the response to
 the action's repository inside the reader, so the rest never reaches the agent
-(`byFilter`). Any other route, and any parameter its entry does not list, is
+(`byFilter`); and for the person's saved UI state, which a key names and whose
+handler cannot tell whose it is, by requiring the key to be the action's own
+pull request's (`byKey`, with the action's pull request in the reader). Any other route, and any parameter its entry does not list, is
 refused. The table holds:
 
+- by `repository` (only the parameters listed, no `pr`): `GET /api/timeline/decisions`
+  (`q`, `who`, `category`, `file`, `person`, `superseded`, `from`, `to`, `limit`,
+  `cursor`), `/api/timeline/features` (`q`, `status`, `file`, `person`, `from`,
+  `to`, `limit`, `cursor`), `/api/timeline/build` and `/api/timeline/files`
+  (`prefix`, `limit`), whose handler reads every `repository` value and serves
+  only those, and exactly one value is allowed;
 - by `repository` (parameters `pr`, and as listed): `GET /api/jobs`,
   `/api/prs/description`, `/api/prs/checks` (`head_sha`),
   `/api/prs/failing-checks` (`head_sha`), `/api/prs/review-threads`
@@ -5477,22 +5550,47 @@ refused. The table holds:
   `/api/prs/chat`, `/api/document` and `/api/commits` (`version`), `/api/patch` (`version`,
   `path`), `/api/sessions` and `/api/sessions/{id}` (`version`), `/api/facts`,
   `/api/facts/commits`, `/api/facts/sessions` and `/api/facts/sessions/{id}`
-  (`head`), and `/api/facts/patch` (`head`, `path`);
+  (`head`), `/api/facts/patch` (`head`, `path`), `/api/facts/commit` (`head`,
+  `oid`) and `/api/facts/commit-patch` (`head`, `oid`, `path`), and the files
+  and commits a saved review cites: `/api/file` (`version`, `path`),
+  `/api/commit` (`version`, `oid`) and `/api/commit-patch` (`version`, `oid`,
+  `path`);
+- by `repository` and `pr` (the form that names a pull request; the form that
+  names a session, which names no repository, is not allowed): `GET
+  /api/decisions`;
+- by key (the repository's lower-case name, `#` and the action's pull request
+  number, and for the walkthrough `@v` and a version number, with `key` the
+  only parameter): `GET /api/ui-state/review` (the person's draft review) and
+  `/api/ui-state/walkthrough` (where they are in the review); another pull
+  request's key, or another repository's, is refused though the repository is
+  the action's, and no other kind of saved state (the inbox, the filters, the
+  tour) is read;
 - by response: `GET /api/jobs/{id}` and `/api/groups/{id}`, checked by the
-  record's `repository`;
+  record's `repository`, and `GET /api/timeline/decisions/{id}` and
+  `/api/timeline/features/{id}`, checked by the `repository.full_name` the
+  detail names (an archived feature names none, so no action reads it);
 - by lookup: `GET /api/jobs/{id}/transcript` (`after`) and
   `/api/jobs/{id}/draft`, after `/api/jobs/{id}`, and `/api/groups/{id}/document`
-  (`version`) and `/api/groups/{id}/versions`, after `/api/groups/{id}`;
+  (`version`), `/api/groups/{id}/versions`, `/api/groups/{id}/patch` (`version`,
+  `path`, `hunk`) and `/api/groups/{id}/file` (`version`, `path`), after
+  `/api/groups/{id}`;
 - by filter: `GET /api/index` (`history`), which keeps the entries of the
   action's repository and drops the problems; `GET /api/groups`, which keeps
   the groups of its repository; and `GET /api/inbox`, which keeps the items of
   its repository by their `owner/name#number` keys, drops each item's
   saved-inbox ids and the saved inboxes themselves (their queries are the
   user's own), and recounts `count` over what is kept by the daemon's own rule
-  (items queued for the user, not being fixed, snoozed or archived). A filtered
+  (items queued for the user, not being fixed, snoozed or archived), and
+  `GET /api/live-sessions`, which keeps the sessions of its repository;
+  `GET /api/repositories`, rebuilt from its repository's row alone (its
+  settings, each clone's id and availability, its earlier names: no clone's
+  folder or git directory); and `GET /api/automatic`, rebuilt from its
+  repository's status row alone (without the global switch and choice of pull
+  requests, which are Settings'). A filtered
   route that answers an error, or `{"available":false}`, is refused as
   unavailable, which the tools report apart from a pull request that is not in
-  the index.
+  the index;
+- by path: `GET /api/repositories/{owner}/{name}/prompts`, with no parameter.
 
 Routes are added beside the tools that need them.
 
@@ -5546,6 +5644,135 @@ bound, like the documents.
 | `review_draft` | `/api/jobs` to find the review running now, then `/api/jobs/{id}/draft` (drafts are never stored): `part` `outline` (default), `section` (with `id`) or `context`, projected as the stored tools; "No running review of this pull request." otherwise |
 | `review_versions` | `/api/versions` or the group's versions: version, heads, `generated_at`, backend, model and recorded cost, never the session, accounting, digests or policy |
 | `review_conversations` | `/api/prs/chat`: a list (id, version, times, turn count, the first question cut at 200 characters), or with an `id` that conversation's turns (question, focus, answer, citations, state, reason, note), never cost or job ids |
+
+Four tools work on every page, and are in the tools every page lists in
+`current_page` (`commonToolNames`: `New` gives each page them, and
+`RegisterPage` adds them to the tools of a page it registers). `search` and
+`daemon_status` are global, so an action neither lists nor calls them; `link`
+and `app_help` read nothing, so an action may use them, and `link` refuses
+another repository to an action through `CallContext.Target`.
+
+| Tool | Reads |
+| --- | --- |
+| `search` | words (`query`, `kinds`, `limit` 1 to 50, default 20) over pull requests (`/api/index`, which Go to lists), review groups (`/api/groups`), running sessions (`/api/live-sessions`), repositories (`/api/repositories`) and, only while the hits so far leave room, features and decisions (`/api/timeline/features` and `/api/timeline/decisions`, matched by the daemon). Every word must be in a title, repository, kind or keyword, ignoring case; titles starting with the words rank first, as in Go to. Each hit has its kind, title, detail and the page it opens (the `PageContext` fields). A route that cannot be read, or answers `{"available":false}`, is named in `unavailable`; all of them failing is an error |
+| `link` | no route: the app's address for a page and its subject, the query strings of `app/src/pages.ts` and the detail pages' hrefs (`?page=pulls`, `?repository=owner%2Fname&pr=7`, escaped as the app's `encodeURIComponent` does, `?group=id`, `?page=sessions&session=agent:id`, `?page=jobs&job=id`, `?page=timeline&feature=id`, `?page=inbox&inbox=id` for a saved inbox (its own `inbox` argument, in the store's id shape), a settings or repository section), relative so the chat panel makes it a link. `repository` is also accepted, unused, on group, session, job and feature so a `search` hit's page fields feed `link`. Filters are list pages' own parameters: ones that name a page or subject (`repository`, `pr`, `group`, `section`, `inbox`...) are refused, and a `repo` filter for an action goes through `Target`. Unknown pages, missing subjects, a field the page does not take and unknown sections are refused |
+| `app_help` | no route: the embedded `help.md`: each page, the words the app uses and its keyboard shortcuts; `topic` returns one section or word. A test reads `pages.ts` and `shortcuts.tsx` and fails when a page has no section or `link` mapping, or a key is not in the help |
+| `daemon_status` | `/api/background` (each repository's last and next refresh, failure count, whether the latest refresh failed and its problem count, never the error text) and `/api/jobs` (jobs queued and running), with the daemon's version. `/api/health` is answered by the app server before the API the tools read through, so `health` is `ok` when the call is answered. No paths, environment, diagnostics or tokens |
+
+The Inbox, Pull requests, Sessions and Timeline pages list the tools below (the
+`Server` registers them with `listTools`, `sessionTools` and `timelineTools`; the
+pages `inbox`, `pulls`, `sessions`, `session`, `timeline` and `feature` list
+them first, then the common four). A tool's default comes from its page's
+`Filters`, the page's own address and saved filters, which an argument
+replaces. Lists are bounded (`limit`, 50 by default and 200 at most; the
+Timeline's 25 and 100, `file_history`'s 20 and 50, `test_query`'s 100 matches)
+and say how many more there are. A transcript tool returns at most `limit`
+prompts (20 by default, 100 at most) with only their turns' activity. The tools marked
+global read across repositories or the person's own state, so an action
+neither lists nor calls them; the repository-scoped ones read one repository,
+which for an action is always its own, and every route they read has an entry in
+`actionRoutes` above. The Timeline's results leave out each person's address
+and avatar.
+
+| Tool | Scope | Reads |
+| --- | --- | --- |
+| `inbox` | global | `/api/inbox` and `/api/index`: the pull requests the Inbox lists, as the queue holds them: `kind` (review, clone, fix, merge, update, other, waiting), whether an agent is fixing it, snoozed or archived, the saved inboxes holding it, the risk score and the review, merge and check state. Defaults to the page's `inbox` filter, else the queue waiting on the person; `query` keeps what `/api/inbox?query=` says an inbox filter holds |
+| `inboxes` | global | `/api/inboxes` (id, name, colour, what, owners, risk, repositories, query, bots, badge, revision) with each inbox's own count and folded filter from `/api/inbox` |
+| `test_query` | global | `/api/inbox?query=`: the daemon's draft of a query (the matches over the queue, with the kind each waits for) joined with `/api/index`, keeping the listed items as the app's preview does (the queue and others' pull requests, neither snoozed nor archived, so the total is what a saved inbox would count); at most 100 matches and how many more. A query `prfilter.Problem` refuses is returned as `valid: false` with its message, without reading the daemon |
+| `pull_requests` | global | `/api/index?history=1`, filtered by view (open or closed), saved tab and filter query with `prfilter.Compile`, as the page does; the tab and the page's draft filter come from `/api/ui-state/filters`, the page's `filter` filter names the tab |
+| `live_sessions` | repository | `/api/live-sessions`: state, what it waits for and since when, its latest steps and message, repository, branch and pull request; not the head, upstream or the hooks' record. An action's list is its repository's by the filter above |
+| `live_session_transcript` | global | `/api/live-sessions/{agent}/{id}/transcript`: the prompts from `from_turn`, `limit` at a time, with the next turn named; no images (the answer's `images`, and any key beginning `image`, are dropped, and `/transcript/images/` is never readable by any reader), no working directory and no address |
+| `agent_requests` | global | the `requests` of `/api/agent-requests`: pending permission requests and questions; never its `settings` |
+| `agent_messages` | global | the `messages` of `/api/agent-requests`: the messages queued for running sessions |
+| `decisions` | repository | `/api/timeline/decisions`, filtered by `who`, `category`, `file`, `person`, `q`, `superseded`, dates and `repository`; the page's `repo`, `who`, `agent=hide` and other filters apply unless given; `cursor` is the result's `next_cursor` |
+| `decision` | repository | `/api/timeline/decisions/{id}` |
+| `features` | repository | `/api/timeline/features`, by `status`, `file`, `person`, `q`, dates and `repository` |
+| `feature` | repository | `/api/timeline/features/{id}`; defaults to the feature page's |
+| `feature_build` | repository | `/api/timeline/build` |
+| `file_history` | repository | `/api/timeline/files` |
+| `timeline_transcript` | global | `/api/timeline/sessions/{agent:id}/transcript`, projected as `live_session_transcript` is; it names no repository, so no action reads it |
+
+The pull request and group pages list more tools that open what their views
+open (`pullExtraTools`; each takes `repository` and `pr` like the page's other
+tools, and is repository-scoped, so an action reads its own repository's):
+
+| Tool | Reads |
+| --- | --- |
+| `file` | `/api/file`: a file of the repository at the saved review's head, text cut at 512 KiB with `truncated`, or no content for a directory, a binary file or a path the head lacks; only a path the review cites, and only a pull request with a saved review |
+| `commit`, `commit_patch` | `/api/commit` and `/api/commit-patch`, or the `/api/facts` forms before a review exists, as `commits` reads: one commit's message body and changed files, and one file's patch in it; the commit must be one `commits` lists |
+| `pull_request_decisions` | `/api/decisions?repository=&pr=`: the linked sessions and their captured decisions, and which are provisional (the Timeline's `decisions` lists across a repository) |
+| `update_branch_options`, `rerun_options` | `/api/prs/update-branch-options` and `/api/prs/rerun-checks-options`; nothing is changed |
+| `pending_review` | `/api/ui-state/review?key=<repository lower-case>#<number>`, projected: each comment's target, text, place and head, the summary note and the reviews sent from baum; not their ids or the record's revision |
+| `walkthrough_position` | `/api/ui-state/walkthrough?key=<repository>#<number>@v<version>` (the latest version by default, from the index): the stops seen, the notes and the overall comment |
+| `group_patch`, `group_file` | `/api/groups/{id}/patch` and `/file`, after `/api/groups/{id}` has shown the group is the repository's; the path must be one the group's review cites |
+
+The Analytics, Jobs and Repositories pages, a job's page and the Report a
+problem summary list these (`analyticsTools`, `repositoryTools`). Analytics
+and the job list are global; one job's tools read one repository's job through
+a binding by response:
+
+| Tool | Scope | Reads |
+| --- | --- | --- |
+| `analytics` | global | `/api/analytics` over `days` (7, 30 or 90), `repository` and `agent`, the page's own filters by default: the report as the page shows it (summary and cost, by agent, model and repository, the longest sessions, commits, baum's own work, delivery and flow), less the points of the plan usage series and each pull request's time to merge |
+| `plan_usage` | global | no route: `Options.PlanUsage`, the daemon's cached plans (name, windows with percent used and reset, `fetched_at`), never a fetch |
+| `job_list` | global | `/api/jobs?limit=&before=`, newest first, narrowed by `state` and `repository` while reading older pages (at most 10 per call), each job as the page shows it (type, state, phase, repository, pull request or group, reason, who started it, backend, model, tokens, cost, times), never its accounting or digests; `next` is the cursor for older jobs. `jobs` lists one pull request's |
+| `job` | repository | `/api/jobs/{id}`, the open job page's by default; an action's job must be its repository's |
+| `job_failure` | repository | `/api/jobs/{id}` of a failed, cancelled or interrupted job: the reason code and failure in words, the sections or context a review was published without, the backend, model and the most tokens and calls it was allowed (`max_tokens`, `max_calls`); the effort and time limits are settings, not the job's. A failure's words (here, in `job`, `job_list` and `jobs`) go through `doctor.Scrub`, since git's output can quote the home folder |
+| `repositories` | global | `/api/repositories`: each repository's automatic choice, decision capture choice, earlier names and its clones as a count, how many are available and each clone's id and availability, never a clone's folder or git directory |
+| `clones_found` | global | `/api/clones/found`: per repository how many clones were found, their sources and last activity, the repositories attached automatically and when the search ran, never a folder |
+| `github_repositories` | global | no route: `Options.PickList`, the picker's list as the daemon already holds it (never a GitHub call; `query` narrows it by name, it does not search), with a note when no list is loaded |
+| `clone_target` | global | `/api/repositories/{owner}/{name}/clone-target`: the suggested folder written `~/...` (a folder outside home is only its last folder's name) |
+| `diagnostics_summary` | global | `/api/diagnostics` (projected, see above); listed by the Settings page |
+
+The Settings page lists one or more tools per section (`settingsTools`,
+`settingsSectionTools`) and `diagnostics_summary`; a repository's page lists
+one per section (`repositoryPageToolList`, `repositorySectionTools`). The
+Settings tools are global and read their Settings routes only as the projected
+pairs above; the repository page's tools are repository-scoped, read through
+`CallContext.Target` and the action routes above, and default to the open
+page's repository. Each returns a typed struct, and none returns an agent
+environment variable's value, the GitHub token, a sign-in's user code or
+verification address, a check's folder, detail or fix, a clone's folder or the
+home folder:
+
+| Tool | Scope | Section | Reads |
+| --- | --- | --- | --- |
+| `settings_general` | global | General | `/api/settings/appearance` (theme, key hints, page shortcut modifier) and `Options.PlanChoices` (each plan's shown, default and explicit) |
+| `settings_reviews` | global | Reviews | `/api/automatic` (enabled, `pull_requests`), the review backend, model and effort of `/api/settings`, and decision capture as chosen and as resolved from `Options.DecisionSettings` (above: one resolution of an auto backend's harness checks per 45 seconds for unchanged preferences) |
+| `settings_fixes` | global | Fixes | the fix backend, model and effort of `/api/settings`, and whether they follow the reviews' |
+| `settings_connections` | global | Connections | `/api/github-auth`: state, host (`github.com` or `other host`), login, the kind of place the token comes from (`baum`, `environment`, `config_file`), override, saved, workflow, the error code and message (scrubbed) and the organizations the sign-in cannot reach; a waiting sign-in is decoded for its presence alone, so its user code and address are never copied out of the body; the read may start the background check of those organizations, as the section's does (at most every 30 seconds, from a five-minute cache). The Codex hooks state and when it was read, from `Options.CodexHooks`. The desktop app's agent panel is the desktop shell's, not the daemon's |
+| `settings_computer` | global | This computer | `/api/settings` (job concurrency, time limits, the agent environment's names, sorted, and its source), the `settings` of `/api/agent-requests` (`codex_approvals`), and `/api/diagnostics`: the agent and harness checks (`claude`, `codex`, `cursor-agent`, `backend-auto`, `backend-configured`, `anthropic-api-key`; id, label, status, version, scrubbed as `diagnostics_summary` scrubs them, without the source) and how many problems the report has. Updates, zoom, the command line tool and agent sign-in are the desktop shell's |
+| `prompts` | global | Prompts | `/api/settings/prompts`, or with `repository` `/api/repositories/{owner}/{name}/prompts`: each entry's fields but the texts (`custom` says whether it has its own) |
+| `prompt` | global | Prompts | the same routes: one entry by `id` with every `PromptEntry` field |
+| `repository_reviews` | repository | Reviews | the repository's `settings.automatic` and `settings.decisions` from `/api/repositories`, and its status row of `/api/automatic` (effective switch, notice, pending) |
+| `repository_prompts` | repository | Prompts | `/api/repositories/{owner}/{name}/prompts`: the list as `prompts`, or with `id` one entry as `prompt`. An action is not given `inherited_text` (the person's global custom text, or the built-in one) nor, for a prompt whose `source` is `global`, `missing_safety_rules` (null: they describe the global text); `withheld` says so. A chat gets every field |
+| `repository_registration` | repository | Registration | the repository's `/api/repositories` row: whether it is registered, its clones as a count, how many are available, each one's id and availability, and its earlier names |
+
+`/api/repositories` lists every picked repository with each clone probed for
+availability (`Registry.Repositories`: git runs in every registered clone, and
+the clones' configuration is read for the earlier names), so
+`repository_reviews` and `repository_registration` do that local work on each
+call, for an action too, before the reader keeps the action's row; it reads
+nothing outside this computer.
+
+`prompts` and `prompt` stay global, as they read the global prompts' projected
+route; a repository's page uses `repository_prompts`, which an action may call
+for its own repository. Prompts have no template variables (a run's data is
+appended after the prompt, and the submit block's `{part}` is baum's own), so
+there is no tool that lists them, and no Go code renders a prompt before a run,
+so none previews one.
+
+Every page a consumer can be on has a page context here that lists the common
+tools and at least one of its own. A test reads `app/src/pages.ts` and every address parameter
+`app.tsx`, `location.ts` and `timeline-filter.ts` read, and fails when a
+parameter is neither mapped to the page it opens (pull request, group,
+session, job, feature, repository) nor listed as not opening one, when a
+mapped page has no registered page with a tool of its own, or when a page is
+registered that the app lacks. Another reads `settingsSections` and
+`repositorySections` from `app/src/settings.tsx` and fails when a section has
+no tool in `settingsSectionTools` or `repositorySectionTools`, when a mapped
+tool is not on that page or has the wrong scope, or when the maps name a
+section the app does not have.
 
 Every result goes through one envelope. It masks the text with
 `bundle.NewRedactor`, cuts it at most 64 KiB in at a UTF-8 boundary, and

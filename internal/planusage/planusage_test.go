@@ -510,6 +510,71 @@ func TestServiceCachesAndLimitsRefresh(t *testing.T) {
 	}
 }
 
+func TestCachedNeverReads(t *testing.T) {
+	src := &countingSource{}
+	now := clock
+	s := &Service{Sources: []Source{src}, Now: func() time.Time { return now }}
+	if got := s.Cached(); got != nil || src.n != 0 {
+		t.Fatalf("an empty cache: %v after %d reads", got, src.n)
+	}
+	s.Plans(context.Background(), false)
+	now = now.Add(CacheTTL * 10)
+	if got := s.Cached(); len(got) != 1 || got[0].Provider != "x" || src.n != 1 {
+		t.Fatalf("a stale cache: %v after %d reads", got, src.n)
+	}
+}
+
+type blockingSource struct {
+	started chan struct{}
+	release chan struct{}
+}
+
+func (b blockingSource) Read(context.Context) Plan {
+	close(b.started)
+	<-b.release
+	return Plan{Provider: "x", Windows: []Window{}}
+}
+
+func TestCachedDoesNotWaitForAFetch(t *testing.T) {
+	first := &countingSource{}
+	src := &switchSource{first: first}
+	s := &Service{Sources: []Source{src}, Now: func() time.Time { return clock }}
+	s.Plans(context.Background(), false)
+	b := blockingSource{started: make(chan struct{}), release: make(chan struct{})}
+	src.next = b
+	s.mu.Lock()
+	s.loaded = time.Time{} // stale
+	s.mu.Unlock()
+	done := make(chan struct{})
+	go func() { s.Plans(context.Background(), false); close(done) }()
+	<-b.started
+	got := make(chan []Plan, 1)
+	go func() { got <- s.Cached() }()
+	select {
+	case plans := <-got:
+		if len(plans) != 1 {
+			t.Errorf("cached %v", plans)
+		}
+	case <-time.After(2 * time.Second):
+		t.Error("Cached waited for a fetch")
+	}
+	close(b.release)
+	<-done
+}
+
+// switchSource reads first until next is set.
+type switchSource struct {
+	first *countingSource
+	next  Source
+}
+
+func (w *switchSource) Read(ctx context.Context) Plan {
+	if w.next != nil {
+		return w.next.Read(ctx)
+	}
+	return w.first.Read(ctx)
+}
+
 func TestHandler(t *testing.T) {
 	s := &Service{Sources: []Source{&countingSource{}}, Now: func() time.Time { return clock }}
 	rec := httptest.NewRecorder()

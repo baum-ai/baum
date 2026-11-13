@@ -20,6 +20,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"time"
 )
 
 // ProtocolVersion is the MCP revision the server speaks.
@@ -39,30 +40,65 @@ type Options struct {
 	Clone func(ctx context.Context, id string) (string, error)
 	// Version is baum's version, reported to clients.
 	Version string
+	// PlanUsage returns the plans the app shows, from the plan usage cache
+	// alone: it must never read a provider, so a tool call can never cause a
+	// fetch from Claude or Codex. Nil has the plan usage tool report none.
+	PlanUsage func(ctx context.Context) ([]json.RawMessage, error)
+	// PickList returns the repositories the picker lists, narrowed by the
+	// words of query, from what the daemon already holds: it must never ask
+	// GitHub (no search, no reload), so a tool call cannot use up the
+	// account's rate limit. Nil has the tool report none.
+	PickList func(ctx context.Context, query string) (PickList, error)
+	// PlanChoices returns the entries of Settings' plan usage choice (each
+	// {provider, name, shown, default, explicit}, as GET
+	// /api/settings/plan-usage answers), worked out from the plan usage cache
+	// alone: the route reads the providers when the cache is stale, and a tool
+	// call must never cause that fetch. Nil has the tool report none.
+	PlanChoices func(ctx context.Context) ([]json.RawMessage, error)
+	// CodexHooks returns the Codex hook state the daemon last read for the
+	// app, and when, without reading again: a read starts Codex processes,
+	// which a tool call must never do. ok is false when none was read. Nil
+	// has the tool report none.
+	CodexHooks func() (state string, at time.Time, ok bool)
+	// DecisionSettings returns what GET /api/settings/decisions answers
+	// ({"decisions": ...}). Resolving an auto backend runs the harnesses'
+	// version checks, so it must share and reuse a resolution for unchanged
+	// settings rather than run them on every tool call. Nil has the tool
+	// report decision capture unavailable.
+	DecisionSettings func(ctx context.Context) (json.RawMessage, error)
 }
 
 // Server is the MCP server. Register tools and pages before serving.
 type Server struct {
-	Registry  *Registry
-	Proposals *Proposals
-	reader    *Reader
-	envelope  *envelope
-	version   string
-	mu        sync.RWMutex
-	tools     []Tool
-	pages     map[string]PageSpec
+	Registry         *Registry
+	Proposals        *Proposals
+	reader           *Reader
+	envelope         *envelope
+	version          string
+	planUsage        func(ctx context.Context) ([]json.RawMessage, error)
+	pickList         func(ctx context.Context, query string) (PickList, error)
+	planChoices      func(ctx context.Context) ([]json.RawMessage, error)
+	codexHooks       func() (string, time.Time, bool)
+	decisionSettings func(ctx context.Context) (json.RawMessage, error)
+	mu               sync.RWMutex
+	tools            []Tool
+	pages            map[string]PageSpec
 }
 
 func New(opts Options) *Server {
 	registry := NewRegistry()
-	s := &Server{Registry: registry, reader: NewReader(opts.API, opts.Clone), envelope: newEnvelope(registry.live), version: opts.Version, pages: map[string]PageSpec{}}
+	s := &Server{Registry: registry, reader: NewReader(opts.API, opts.Clone), envelope: newEnvelope(registry.live), version: opts.Version, planUsage: opts.PlanUsage, pickList: opts.PickList,
+		planChoices: opts.PlanChoices, codexHooks: opts.CodexHooks, decisionSettings: opts.DecisionSettings, pages: map[string]PageSpec{}}
 	s.Proposals = newProposals(registry, func(page string) Proposer {
 		spec, _ := s.page(page)
 		return spec.Proposer
 	})
 	registry.onRevoke(s.envelope.forget)
-	pull, group, reviews := s.pullTools(), s.groupTools(), s.reviewTools()
-	for _, t := range slices.Concat(s.builtinTools(), pull, group, reviews) {
+	pull, group, reviews, common := s.pullTools(), s.groupTools(), s.reviewTools(), s.commonTools()
+	lists, sessions, timeline := s.listTools(), s.sessionTools(), s.timelineTools()
+	extras, analytics, repositories := s.pullExtraTools(), s.analyticsTools(), s.repositoryTools()
+	settings, repositoryPage := s.settingsTools(), repositoryPageToolList()
+	for _, t := range slices.Concat(s.builtinTools(), pull, group, reviews, common, lists, sessions, timeline, extras, analytics, repositories, settings, repositoryPage) {
 		if err := t.compile(); err != nil {
 			panic(err)
 		}
@@ -75,6 +111,15 @@ func New(opts Options) *Server {
 		}
 		return out
 	}
+	byName := func(tools []Tool, want ...string) []string {
+		var out []string
+		for _, t := range tools {
+			if slices.Contains(want, t.Name) {
+				out = append(out, t.Name)
+			}
+		}
+		return out
+	}
 	// "focus" is the page's own. A group page has no pull request, so the tools
 	// that need one are not its tools.
 	forGroup := names(group)
@@ -83,8 +128,40 @@ func New(opts Options) *Server {
 			forGroup = append(forGroup, name)
 		}
 	}
-	s.pages[PagePullRequest] = PageSpec{Name: PagePullRequest, Tools: append(names(pull), names(reviews)...)}
-	s.pages[PageGroup] = PageSpec{Name: PageGroup, Tools: append(forGroup, "focus")}
+	// Every page lists the common tools; the pages with tools of their own
+	// list those first.
+	for name := range pageNames {
+		s.pages[name] = PageSpec{Name: name, Tools: withCommonTools(nil)}
+	}
+	// The pull request page also reads what its own views open: files,
+	// commits, decisions, what the app offers about the branch and checks,
+	// and the person's draft review and walkthrough place. A group's page
+	// reads its patches and files.
+	pullPage := slices.Concat(names(pull), names(reviews), names(extras))
+	groupExtras := byName(extras, "group_patch", "group_file")
+	s.pages[PagePullRequest] = PageSpec{Name: PagePullRequest, Tools: withCommonTools(slices.DeleteFunc(pullPage, func(n string) bool { return slices.Contains(groupExtras, n) }))}
+	s.pages[PageGroup] = PageSpec{Name: PageGroup, Tools: withCommonTools(slices.Concat(forGroup, groupExtras, []string{"focus"}))}
+	// The Inbox lists the queue and its inboxes; Pull requests its list. The
+	// sessions pages read the sessions and what their agents wait for; the
+	// Timeline and a feature's page read its decisions and features.
+	s.pages[PageInbox] = PageSpec{Name: PageInbox, Tools: withCommonTools(byName(lists, "inbox", "inboxes", "test_query"))}
+	s.pages[PagePulls] = PageSpec{Name: PagePulls, Tools: withCommonTools(byName(lists, "pull_requests"))}
+	s.pages[PageSessions] = PageSpec{Name: PageSessions, Tools: withCommonTools(names(sessions))}
+	s.pages[PageSession] = PageSpec{Name: PageSession, Tools: withCommonTools(names(sessions))}
+	// Analytics reads its report and the plan figures; the Jobs list and a
+	// job's page its jobs; the Repositories page and a repository's page the
+	// registered repositories, the clones found and the pickers, and a
+	// repository's page its sections' tools (current_page lists those only
+	// when the page shows a repository). Settings lists its sections' tools
+	// and the Report a problem summary.
+	s.pages[PageAnalytics] = PageSpec{Name: PageAnalytics, Tools: withCommonTools(byName(analytics, "analytics", "plan_usage"))}
+	jobPage := byName(analytics, "job", "job_failure", "job_list")
+	s.pages[PageJobs] = PageSpec{Name: PageJobs, Tools: withCommonTools(slices.Concat(jobPage, []string{"jobs", "job_transcript"}))}
+	s.pages[PageJob] = PageSpec{Name: PageJob, Tools: withCommonTools(slices.Concat(jobPage, []string{"job_transcript"}))}
+	s.pages[PageRepositories] = PageSpec{Name: PageRepositories, Tools: withCommonTools(slices.Concat(byName(repositories, "repositories", "clones_found", "github_repositories", "clone_target"), names(repositoryPage)))}
+	s.pages[PageSettings] = PageSpec{Name: PageSettings, Tools: withCommonTools(slices.Concat(names(settings), byName(repositories, "diagnostics_summary")))}
+	s.pages[PageTimeline] = PageSpec{Name: PageTimeline, Tools: withCommonTools(names(timeline))}
+	s.pages[PageFeature] = PageSpec{Name: PageFeature, Tools: withCommonTools(names(timeline))}
 	return s
 }
 
@@ -96,6 +173,21 @@ func (s *Server) ToolReads() map[string][]string {
 	out := map[string][]string{}
 	for _, t := range s.tools {
 		out[t.Name] = slices.Clone(t.Reads)
+	}
+	return out
+}
+
+// ToolProjected are the exact otherwise-unreadable routes each registered
+// tool may read in process (projectedReads), by tool name; a tool with none is
+// not listed.
+func (s *Server) ToolProjected() map[string][]string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	out := map[string][]string{}
+	for _, t := range s.tools {
+		if len(t.Projected) > 0 {
+			out[t.Name] = slices.Clone(t.Projected)
+		}
 	}
 	return out
 }
@@ -115,7 +207,8 @@ func (s *Server) RegisterTool(t Tool) error {
 }
 
 // RegisterPage says which tools read a page and which proposer takes its
-// changes.
+// changes. The common tools (commonToolNames) are the tools of every page, so
+// they are added to p's.
 func (s *Server) RegisterPage(p PageSpec) error {
 	if !pageNames[p.Name] {
 		return fmt.Errorf("unknown page %q", p.Name)
@@ -127,6 +220,7 @@ func (s *Server) RegisterPage(p PageSpec) error {
 			return fmt.Errorf("page %s: no tool %s", p.Name, name)
 		}
 	}
+	p.Tools = withCommonTools(p.Tools)
 	s.pages[p.Name] = p
 	return nil
 }
@@ -374,7 +468,7 @@ func (s *Server) call(ctx context.Context, consumer Consumer, t Tool, args json.
 	if consumer.Kind == Action {
 		bound = consumer.Repository
 	}
-	c := CallContext{Consumer: consumer, Reader: s.reader.within(t.Reads, bound), proposals: s.Proposals}
+	c := CallContext{Consumer: consumer, Reader: s.reader.forTool(t, bound, consumer.PullRequest), proposals: s.Proposals}
 	c.Page, c.HasPage = s.Registry.Page(consumer.ID)
 	out, callErr := t.Call(ctx, c, args)
 	if callErr != nil {

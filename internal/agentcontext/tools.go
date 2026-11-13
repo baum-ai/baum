@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/google/jsonschema-go/jsonschema"
@@ -34,6 +35,10 @@ type Tool struct {
 	// whole path segment at a time. The routes listed in unreadable can never
 	// be declared.
 	Reads []string
+	// Projected are the exact routes, otherwise unreadable, this tool may
+	// read in process, and only if projectedReads names them for this tool.
+	// The tool returns a typed projection of them, never their text.
+	Projected []string
 	// Proposes marks a tool that records a proposal for the user to review. The
 	// default, false, is a read-only tool; tools/list reports it in the tool's
 	// annotations so a client can approve read-only tools unasked.
@@ -131,6 +136,9 @@ func (t *Tool) compile() error {
 	if err := checkReads(t.Reads); err != nil {
 		return fmt.Errorf("tool %s: %w", t.Name, err)
 	}
+	if err := checkProjected(t.Name, t.Scope, t.Projected); err != nil {
+		return fmt.Errorf("tool %s: %w", t.Name, err)
+	}
 	schema := t.InputSchema
 	if len(schema) == 0 {
 		schema = json.RawMessage(`{"type":"object","properties":{},"additionalProperties":false}`)
@@ -178,7 +186,7 @@ func (t Tool) visible(consumer Consumer) bool {
 func (s *Server) builtinTools() []Tool {
 	return []Tool{{
 		Name:        "current_page",
-		Description: "The page the user has open in the baum app, the pull request, group, session, job or feature it shows, its filters and focus, and the tools that read it.",
+		Description: "The page the user has open in the baum app, the pull request, group, session, job or feature it shows, the Settings or repository section open, its filters and focus, and the tools that read it; on a page with sections, section_tools are the tools that read the open section.",
 		// An action's page is its own pull request.
 		Scope: ScopeRepository,
 		Call: func(_ context.Context, c CallContext, _ json.RawMessage) (string, error) {
@@ -187,13 +195,24 @@ func (s *Server) builtinTools() []Tool {
 			}
 			out := struct {
 				PageContext
-				Tools []string `json:"tools,omitempty"`
+				Tools        []string `json:"tools,omitempty"`
+				SectionTools []string `json:"section_tools,omitempty"`
 			}{PageContext: c.Page}
 			if spec, ok := s.page(c.Page.Page); ok {
+				// The Repositories page lists a repository's tools only when it
+				// shows one.
+				own := repositoryPageTools()
+				section := sectionTools(c.Page)
 				s.mu.RLock()
 				for _, name := range spec.Tools {
+					if c.Page.Page == PageRepositories && c.Page.Repository == "" && slices.Contains(own, name) {
+						continue
+					}
 					if t, ok := s.tool(name); ok && t.visible(c.Consumer) {
 						out.Tools = append(out.Tools, name)
+						if slices.Contains(section, name) {
+							out.SectionTools = append(out.SectionTools, name)
+						}
 					}
 				}
 				s.mu.RUnlock()

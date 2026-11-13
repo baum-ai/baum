@@ -327,6 +327,12 @@ func callDiff(ctx context.Context, c CallContext, args json.RawMessage) (string,
 // readSource reads one route of the pull request's source (commits,
 // sessions) as the page does, for the call's pull request.
 func readSource(ctx context.Context, c CallContext, args json.RawMessage, name string) (json.RawMessage, error) {
+	return readSourceWith(ctx, c, args, name, nil)
+}
+
+// readSourceWith is readSource with more query parameters (a commit's id, a
+// path).
+func readSourceWith(ctx context.Context, c CallContext, args json.RawMessage, name string, extra url.Values) (json.RawMessage, error) {
 	repository, number, err := c.pullTarget(args)
 	if err != nil {
 		return nil, err
@@ -340,6 +346,9 @@ func readSource(ctx context.Context, c CallContext, args json.RawMessage, name s
 		return nil, err
 	}
 	route, query := source.route(name)
+	for k, v := range extra {
+		query[k] = v
+	}
 	body, missing, err := c.get(ctx, route, query)
 	if err != nil {
 		return nil, err
@@ -351,6 +360,9 @@ func readSource(ctx context.Context, c CallContext, args json.RawMessage, name s
 			return nil, err
 		}
 		route, query = source.route(name)
+		for k, v := range extra {
+			query[k] = v
+		}
 		if body, missing, err = c.get(ctx, route, query); err != nil {
 			return nil, err
 		}
@@ -528,6 +540,11 @@ func callJobs(ctx context.Context, c CallContext, args json.RawMessage) (string,
 			if v, ok := all[field]; ok {
 				job[field] = v
 			}
+		}
+		// The failure's words can quote git's output, with folders of this machine.
+		var detail string
+		if json.Unmarshal(job["detail"], &detail) == nil && detail != "" {
+			job["detail"], _ = json.Marshal(scrubText(detail))
 		}
 		jobs = append(jobs, job)
 	}

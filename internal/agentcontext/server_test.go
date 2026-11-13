@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -274,7 +275,7 @@ func TestCurrentPage(t *testing.T) {
 	if err := json.Unmarshal([]byte(data), &page); err != nil {
 		t.Fatal(err, data)
 	}
-	if page.Page != PagePullRequest || page.Repository != "acme/web" || page.PullRequest != 12 || page.Filters["tab"] != "files" || !bytes.Equal(compact(page.Focus), []byte(`{"kind":"tile","id":"t1"}`)) || len(page.Tools) != 1 || page.Tools[0] != "page_probe" {
+	if page.Page != PagePullRequest || page.Repository != "acme/web" || page.PullRequest != 12 || page.Filters["tab"] != "files" || !bytes.Equal(compact(page.Focus), []byte(`{"kind":"tile","id":"t1"}`)) || !slices.Equal(page.Tools, withCommonTools([]string{"page_probe"})) {
 		t.Fatalf("page %s", data)
 	}
 	if result := call(t, s, token, "current_page", map[string]any{"extra": 1}); !result.IsError {

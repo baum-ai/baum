@@ -1519,8 +1519,94 @@ on an allowlist and without refresh flags: the reader has no way to send
 another method, and refuses the `refresh` and `more` parameters, which make
 some `GET` routes fetch from GitHub or rebuild a cache. Each tool reads only
 the route prefixes it declares, and no tool can read settings, GitHub
-authentication or GitHub listings, diagnostics, debugging, plan usage, the
-event stream or `/api/mcp`. Responses are bounded to 8 MiB, apart from a review document and the facts, which are read up to the 32 MiB the daemon serves.
+authentication, GitHub listings, diagnostics, debugging, plan usage, the
+event stream or `/api/mcp`, with one narrow exception below. No reader reads a pasted image of a session's
+transcript (`/transcript/images/`), which is served unmasked, and the
+transcript tools drop the image fields, the session's working directory and
+the person's address. The agents' requests are read without the person's
+settings for answering them. The Timeline's detail routes name their
+repository only in the response, which an action's reader checks (an archived
+feature names none and is never read); a session's Timeline transcript names
+none, so only a chat reads it. Responses are bounded to 8 MiB, apart from a review document and the facts, which are read up to the 32 MiB the daemon serves.
+
+The exception is a fixed list of tool and exact route pairs in the daemon's
+source, which a test pins: `diagnostics_summary` with `/api/diagnostics`, and
+the Settings tools with the Settings routes their sections show
+(`/api/settings`, `/api/settings/appearance`, `/api/settings/prompts`,
+`/api/github-auth` and, for This computer's agent setup, `/api/diagnostics`).
+These routes stay unreadable to every other tool, and every other route under
+`/api/settings` and `/api/github` (the sign-in's start, the plan usage choice,
+decision capture's settings) stays unreadable to all. The tools are global,
+so an action neither lists nor calls them, and the reader refuses an action the
+routes whatever a tool declares. Each returns a typed projection filled only
+with what the app shows in that section. The diagnostics give a check's id,
+label, status, version and where it was found, scrubbed as the public issue
+summary is (home folder and account names, secrets and addresses removed; a
+GitHub Enterprise host is `other host`; token and backend checks name no
+source), never the home folder, a check's path, detail or suggested fix, the
+environment or the issue the Report a problem dialog drafts.
+
+What the Settings tools expose: the theme, key hints and page shortcut
+modifier; which plans show their usage; whether automatic reviews are on and
+for which pull requests; the review, fix and decision capture harness, model
+and effort; the GitHub connection's state, login, `github.com` or `other host`,
+the kind of place its token comes from (the app's sign-in, an environment
+variable or the config file, never which variable or file), whether workflow
+access was granted, an error code and fixed message (scrubbed), and the
+organizations it cannot reach; the Codex hooks state the app last saw; job
+concurrency and time limits; the names of the agent environment variables and
+whether the app or the config file sets them; whether the app answers Codex's
+permission requests; the agent checks' labels, statuses and versions; and the
+prompts with their texts (built-in, custom and inherited), as the Prompts
+section shows them. What they never expose: an agent environment variable's
+value (the values are not copied out of the route's answer), the GitHub
+token, a waiting sign-in's user code or verification address (the waiting
+sign-in is decoded only for whether there is one), the budgets and caps, a
+check's folder, detail or fix, the configuration file's folder, an enterprise
+host, or the home folder. The route's raw answer is in the daemon's memory for
+the length of the call, as any read's is, and is never kept, logged or quoted
+in an error.
+
+A repository's page tools (its review choices and automatic status, its
+prompts, its registration) are repository-scoped: an action reads its own
+repository's, through routes bound to it (the repositories and automatic
+lists are rebuilt from its row alone, without clone folders or the global
+switches, and the prompts route is bound by its path), and never a clone's
+folder. From a repository's prompts an action gets what is the repository's
+own: each prompt's title, group, built-in text and version, the repository's
+custom text, whether it is outdated or invalid, its safety rules, and which
+text runs (`source`: built-in, global or the repository's). It does not get
+the text the repository inherits, which is the person's global custom prompt
+from Settings, nor, for a prompt that runs the global text, the safety rules
+that text dropped; the answer says these were withheld. A chat gets them, as
+the app shows them. Listing the repositories, which the review and
+registration tools read, probes each registered clone with git on this
+computer, as the Repositories page does; an action's call does that work too,
+and reaches nothing outside.
+
+Four routes that look like candidates are not exceptions, because they reach
+outside or start programs: the plan usage route fetches from Claude or Codex
+when its cache is stale, and so does the plan usage choice
+(`/api/settings/plan-usage`), which reads the plans to work out the default;
+the Codex hooks route starts Codex when its cache is stale or holds a warning;
+and the picker's list contacts GitHub (a new query starts a search that spends
+the account's rate limit). Their tools read what the daemon already holds,
+through accessors that cannot fetch or start anything (a call never waits for
+a fetch in progress, the picker's list says when none is loaded, and the Codex
+hooks state is the newest the app's own check returned, or says none was).
+Decision capture's settings route resolves an auto backend by running the
+harnesses' version checks on this computer on every read, as opening the
+section in the app does; its tool reads an accessor instead that shares one
+resolution between concurrent calls and reuses it for 45 seconds while the
+settings are unchanged, so an agent calling it repeatedly starts those checks
+at most that often. Reading the GitHub connection may start, as
+the section does when it opens, the background check of the organizations the
+sign-in cannot reach: at most every 30 seconds, answered from a five-minute
+cache. A job's failure
+text, which can quote git's output and so the home folder, is scrubbed the same
+way in every job tool. The repositories tools never return a folder: a
+clone is a count, an availability and an id, and the suggested clone folder is
+written from the home folder (`~/...`).
 
 An action's token is bound to its repository. Its tools default to its own
 pull request and may read other pull requests of that repository, never
@@ -1535,15 +1621,25 @@ the record's repository and returning nothing on a mismatch. A route that
 names no repository (a job's transcript or draft, a group's document or
 versions) is read only
 after the record its id names has been checked the same way, and a route that
-answers for every repository (the review index, the inbox) is filtered to the
-action's repository inside the reader, which also drops other clones'
+answers for every repository (the review index, the inbox, the running
+sessions) is filtered to the action's repository inside the reader, which also drops other clones'
 problems, the user's saved inbox queries and each inbox item's saved-inbox
 ids, and recounts the inbox total over what is kept. Any other route, and any query
 parameter its entry does not list, is refused. An
 action never proposes changes. An action reads a review only in parts, one per
 tool call, and through the same bindings: its pull request's saved review, a
 running draft of a job of its repository, conversations of its clones, and a
-group of its repository.
+group of its repository. An action may also read, for its own repository, a
+file the review cites at the review's head (text cut at 512 KiB), the commits
+and commit patches its pull request's commits link, the decisions captured
+from the sessions of its pull requests, the group patches and files its groups'
+reviews cite, and what the app offers about a branch and the failed checks.
+It may read the person's own draft review comments and walkthrough place only
+for its own pull request: those are kept by a key that names the repository
+and pull request, the handler cannot tell whose a key is, so the reader refuses
+any key but the action's own pull request's (and any other kind of saved state),
+whatever the repository. A chat reads them for any pull request, as it reads
+the page the person has open.
 
 A chat's token may also propose a change to the page the user has open, and
 only to something that page shows (on a pull request's page, only that pull
