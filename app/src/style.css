@@ -10,7 +10,11 @@
   --radius-sm: 6px;
   --radius-md: 8px;
   --radius-lg: 12px;
-  --rail-width: 244px;
+  /* The sidebar's width, open and folded to its glyphs; `--rail-width` is
+     the room it keeps beside the page, the folded width unless pinned. */
+  --rail-open-width: 244px;
+  --rail-folded-width: 56px;
+  --rail-width: var(--rail-open-width);
   /* Buttons stand slightly off the panel, so they read as pressable beside
      status pills and tags (see actionClassName). */
   --action-shadow: var(--shadow-raised);
@@ -41,19 +45,36 @@ body {
   color: var(--text-secondary);
 }
 
-/* The sidebar, in the hosted chrome's sand and espresso. */
-.local-rail {
-  position: sticky;
+/* The sidebar, in the hosted chrome's sand and espresso. Its lane is the
+   room it keeps beside the page: open while pinned, the glyphs' width
+   otherwise. The sidebar lies in the lane, so opening it over the page under
+   the pointer never moves the page. */
+:root:has(.local-rail-lane:not([data-rail="pinned"])) {
+  --rail-width: var(--rail-folded-width);
+}
+.local-rail-lane {
+  position: relative;
   z-index: 5;
-  top: 0;
-  display: flex;
   flex: none;
-  flex-direction: column;
-  gap: 0.75rem;
   width: var(--rail-width);
   height: 100vh;
+  transition: width 0.15s ease-out;
+}
+.local-rail {
+  position: absolute;
+  inset: 0 auto 0 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  width: var(--rail-open-width);
   padding: 0.5rem;
   box-sizing: border-box;
+  transition: width 0.15s ease-out;
+}
+/* Open over the page, it needs the canvas under it and the lift. */
+.local-rail-lane:not([data-rail="pinned"]) > .local-rail {
+  background: var(--surface-canvas);
+  box-shadow: var(--shadow-overlay);
 }
 /* On the forest canvas the sidebar's ink turns light and its glyphs leaf
    green, as in the hosted chrome. */
@@ -172,7 +193,8 @@ body {
 }
 .local-rail-fold,
 .local-rail-more,
-.local-rail-help {
+.local-rail-help,
+.local-rail-pin {
   display: flex;
   flex: none;
   align-items: center;
@@ -204,20 +226,30 @@ body {
   flex: 1;
   min-width: 0;
 }
-.local-rail-help {
+.local-rail-help,
+.local-rail-pin {
   width: 2rem;
   height: 2rem;
+}
+/* Pinning only changes anything where the window has room to keep the
+   sidebar open beside the page. */
+@media (width < 64rem) {
+  .local-rail-pin {
+    display: none;
+  }
 }
 .local-rail-fold:hover,
 .local-rail-more:hover,
 .local-rail-more[aria-expanded="true"],
 .local-rail-help:hover,
-.local-rail-help[aria-expanded="true"] {
+.local-rail-help[aria-expanded="true"],
+.local-rail-pin:hover {
   background: var(--nav-hover);
   color: var(--text-primary);
 }
 .local-rail-more:active,
-.local-rail-help:active {
+.local-rail-help:active,
+.local-rail-pin:active {
   transform: translateY(1px);
 }
 .local-rail-inboxes {
@@ -418,10 +450,14 @@ body {
 .plan-rail-compact {
   display: none;
 }
-/* A narrow window keeps the glyphs only; the links keep their names. */
-@media (width < 64rem) {
+/* Folded to its glyphs: unpinned, or in a narrow window, and neither under
+   the pointer (`data-rail="open"`) nor holding keyboard focus. A menu it
+   shows does not open it: the menu hangs where its button was. The links
+   keep their names. */
+.local-rail-lane[data-rail="folded"]:not(:has(:focus-visible:not(.context-menu *))) {
   .local-rail {
-    --rail-width: 56px;
+    width: var(--rail-folded-width);
+    box-shadow: none;
   }
   .local-rail-label {
     position: absolute;
@@ -471,6 +507,10 @@ body {
     min-width: 1rem;
     padding: 0 0.2rem;
     line-height: 1rem;
+  }
+  kbd.local-rail-key,
+  .local-rail-pin {
+    display: none;
   }
 }
 
@@ -683,6 +723,7 @@ body {
   .local-rail-more,
   .local-rail-fold,
   .local-rail-help,
+  .local-rail-pin,
   .local-toast-close,
   .upnext-group-toggle,
   .local-tab
@@ -4979,11 +5020,6 @@ dialog form {
 kbd.local-rail-key {
   flex: none;
   margin-left: 0;
-}
-@media (width < 64rem) {
-  kbd.local-rail-key {
-    display: none;
-  }
 }
 /* Go to: a search over the app's places, opened with ⌘K or Ctrl+K. */
 dialog.go-to {
