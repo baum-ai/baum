@@ -4,7 +4,9 @@ package githooks
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -13,76 +15,216 @@ func legacyScript(hook string) string {
 	return "#!/bin/sh\n" + legacyMarker + "\n" + entireMarker + "\nif command -v entire >/dev/null 2>&1; then\n  entire hooks git " + hook + " \"$1\"\nfi\n"
 }
 
-func enableEntire(t *testing.T, dir string) {
-	t.Helper()
-	if err := os.MkdirAll(filepath.Join(dir, ".entire"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, ".entire", "settings.json"), []byte(`{"enabled":true}`), 0o644); err != nil {
-		t.Fatal(err)
-	}
+// plainLegacyScript is a dispatcher of an earlier version that runs no hook of
+// Entire's.
+func plainLegacyScript(hook string) string {
+	return "#!/bin/sh\n" + legacyMarker + "\nbaum hooks git " + hook + " \"$@\"\n"
 }
+
+var allLegacyHooks = []string{"commit-msg", "prepare-commit-msg", "post-commit", "post-rewrite", "pre-push"}
 
 func legacyClone(t *testing.T) (repo, hooks string) {
 	t.Helper()
 	repo = initRepo(t)
 	hooks = filepath.Join(repo, ".git", "hooks")
-	for _, hook := range []string{"commit-msg", "prepare-commit-msg", "post-commit", "post-rewrite", "pre-push"} {
+	for _, hook := range allLegacyHooks {
 		writeExecutable(t, filepath.Join(hooks, hook), legacyScript(hook))
 	}
 	return repo, hooks
 }
 
-// Where Entire is enabled, the legacy dispatchers run Entire's hooks: all five
-// stay, so Entire keeps working as a whole.
-func TestEntireEnabledCloneKeepsItsLegacyDispatchers(t *testing.T) {
+// stubEntire puts an entire on PATH that logs its arguments.
+func stubEntire(t *testing.T) string {
+	t.Helper()
+	bin := t.TempDir()
+	log := filepath.Join(bin, "entire.log")
+	writeExecutable(t, filepath.Join(bin, "entire"), "#!/bin/sh\necho \"$*\" >> '"+log+"'\n")
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	return log
+}
+
+// Whether the repository uses Entire does not matter: a legacy dispatcher that
+// runs Entire's hook is replaced, and Entire's hook is kept as the backup the
+// new dispatcher runs. The legacy-only hooks, which baum no longer installs,
+// are left, since they still run Entire's hook.
+func TestLegacyDispatchersThatRunEntireKeepEntiresHook(t *testing.T) {
 	repo, hooks := legacyClone(t)
-	enableEntire(t, repo)
+	git(t, repo, "commit", "-q", "--allow-empty", "-m", "init")
 	report := ensure(t, repo)
-	for _, hook := range []string{"commit-msg", "prepare-commit-msg", "post-commit", "post-rewrite", "pre-push"} {
+	got := outcomes(report)
+	for _, hook := range Hooks {
+		if got[hook] != Chained {
+			t.Errorf("%s = %v", hook, got[hook])
+		}
+		if read(t, filepath.Join(hooks, hook)) != Dispatcher(hook, "") {
+			t.Errorf("%s is not the dispatcher", hook)
+		}
+		backup := read(t, filepath.Join(hooks, hook+backupSuffix))
+		if !strings.Contains(backup, "entire hooks git "+hook+" \"$1\"") || ours(backup) {
+			t.Errorf("%s backup = %q", hook, backup)
+		}
+	}
+	for _, hook := range legacyOnly {
+		for _, h := range report.Hooks {
+			if h.Hook == hook && (h.Outcome != Unclaimed || h.Reason != runsEntireReason) {
+				t.Errorf("%s = %+v", hook, h)
+			}
+		}
 		if read(t, filepath.Join(hooks, hook)) != legacyScript(hook) {
 			t.Errorf("%s was changed", hook)
 		}
-		found := false
-		for _, h := range report.Hooks {
-			if h.Hook == hook {
-				found = true
-				if h.Outcome != Unclaimed || h.Reason != entireEnabledReason {
-					t.Errorf("%s = %+v", hook, h)
-				}
-			}
-		}
-		if !found {
-			t.Errorf("%s is not in the report", hook)
-		}
+	}
+	if again := ensure(t, repo); again.Changed() {
+		t.Errorf("a second run changed %+v", again)
 	}
 }
 
-// A linked worktree counts as Entire-enabled by the main worktree's settings.
-func TestEntireSettingsOfTheMainWorktreeCoverLinkedOnes(t *testing.T) {
+// The kept call of a dispatcher that buffered its input reads the input the new
+// dispatcher passes on.
+func TestEntireCallDropsTheOldInputBuffer(t *testing.T) {
+	legacy := "#!/bin/sh\n" + legacyMarker + "\n" + entireMarker + "\nif command -v baum >/dev/null 2>&1 && baum hooks git --check pre-push >/dev/null 2>&1; then\n  baum hooks git pre-push \"$@\" < \"$hook_stdin\" || exit $?\nelif command -v entire >/dev/null 2>&1; then\n  entire hooks git pre-push \"$1\" < \"$hook_stdin\" || exit $?\nfi\n"
+	if got := entireCall(legacy, "pre-push"); got != `entire hooks git pre-push "$1" || exit $?` {
+		t.Fatalf("entireCall = %q", got)
+	}
+}
+
+// After the repair both baum and Entire see a commit.
+func TestRepairedDispatcherRunsBaumAndEntire(t *testing.T) {
 	repo, hooks := legacyClone(t)
 	git(t, repo, "commit", "-q", "--allow-empty", "-m", "init")
-	enableEntire(t, repo)
-	tree := filepath.Join(t.TempDir(), "feature")
-	git(t, repo, "worktree", "add", "-q", "-b", "feature", tree)
-	ensure(t, tree)
-	if read(t, filepath.Join(hooks, "post-commit")) != legacyScript("post-commit") {
-		t.Fatal("the legacy dispatcher was repaired in an Entire-enabled repository")
+	baumLog, entireLog := stubBaum(t), stubEntire(t)
+	ensure(t, repo)
+	commitWithHooks(t, repo)
+	if n := calls(t, baumLog); n != 1 {
+		t.Errorf("baum ran %d times", n)
+	}
+	data, err := os.ReadFile(entireLog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, hook := range []string{"prepare-commit-msg", "commit-msg", "post-commit"} {
+		if !strings.Contains(string(data), "hooks git "+hook) {
+			t.Errorf("Entire's %s hook did not run: %q", hook, data)
+		}
+	}
+	if _, err := os.Lstat(filepath.Join(hooks, "post-commit.pre-entire")); err == nil {
+		t.Error("an unexpected backup appeared")
 	}
 }
 
-// Without Entire the three hooks are repaired and the others retired: the hook
-// they replaced comes back, or they go.
-func TestLegacyDispatchersAreRepairedAndRetiredWithoutEntire(t *testing.T) {
+// A backup name already taken leaves the legacy dispatcher as it is.
+func TestLegacyEntireDispatcherWithATakenBackupIsLeft(t *testing.T) {
 	repo, hooks := legacyClone(t)
+	taken := "#!/bin/sh\necho mine\n"
+	writeExecutable(t, filepath.Join(hooks, "post-commit"+backupSuffix), taken)
+	report := ensure(t, repo)
+	if outcomes(report)["post-commit"] != Unclaimed {
+		t.Fatalf("report = %+v", report)
+	}
+	if read(t, filepath.Join(hooks, "post-commit")) != legacyScript("post-commit") || read(t, filepath.Join(hooks, "post-commit"+backupSuffix)) != taken {
+		t.Fatal("files were changed")
+	}
+}
+
+// Opting out never removes a legacy dispatcher that still runs Entire's hook.
+func TestOptOutLeavesLegacyDispatchersThatRunEntire(t *testing.T) {
+	repo, hooks := legacyClone(t)
+	git(t, repo, "config", "baum.hooks", "false")
+	report := ensure(t, repo)
+	for _, hook := range allLegacyHooks {
+		if read(t, filepath.Join(hooks, hook)) != legacyScript(hook) {
+			t.Errorf("%s was changed", hook)
+		}
+	}
+	for _, h := range report.Hooks {
+		if h.Outcome != Unclaimed || h.Reason != runsEntireReason {
+			t.Errorf("%s = %+v", h.Hook, h)
+		}
+	}
+}
+
+// Opting out after the repair puts Entire's hook back in place.
+func TestOptOutAfterTheRepairRestoresEntiresHook(t *testing.T) {
+	repo, hooks := legacyClone(t)
+	ensure(t, repo)
+	git(t, repo, "config", "baum.hooks", "false")
+	report := ensure(t, repo)
+	if outcomes(report)["post-commit"] != Restored {
+		t.Fatalf("report = %+v", report)
+	}
+	if got := read(t, filepath.Join(hooks, "post-commit")); !strings.Contains(got, "entire hooks git post-commit") || ours(got) {
+		t.Fatalf("post-commit = %q", got)
+	}
+}
+
+// The hook a legacy dispatcher replaced runs once per commit after the repair,
+// and still runs once Entire's hook is restored by an opt-out.
+func TestTheHookALegacyDispatcherReplacedKeepsRunning(t *testing.T) {
+	repo, hooks := legacyClone(t)
+	git(t, repo, "commit", "-q", "--allow-empty", "-m", "init")
+	stubBaum(t)
+	entireLog := stubEntire(t)
+	mine := filepath.Join(t.TempDir(), "mine.log")
+	writeExecutable(t, filepath.Join(hooks, "post-commit.pre-entire"), "#!/bin/sh\necho ran >> '"+mine+"'\n")
+	countLines := func(path string) int {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return strings.Count(string(data), "\n")
+	}
+	ensure(t, repo)
+	commitWithHooks(t, repo)
+	if n := countLines(mine); n != 1 {
+		t.Fatalf("with the dispatcher the replaced hook ran %d times", n)
+	}
+	git(t, repo, "config", "baum.hooks", "false")
+	if report := ensure(t, repo); outcomes(report)["post-commit"] != Restored {
+		t.Fatalf("report = %+v", report)
+	}
+	commitWithHooks(t, repo)
+	if n := countLines(mine); n != 2 {
+		t.Fatalf("after the opt-out the replaced hook ran %d times in all", n)
+	}
+	if data, _ := os.ReadFile(entireLog); strings.Count(string(data), "hooks git post-commit") != 2 {
+		t.Fatalf("Entire's post-commit ran: %q", data)
+	}
+}
+
+// Both Entire and the replaced pre-push hook read all of the push's input.
+func TestKeptPrePushHookFeedsItsInputToBoth(t *testing.T) {
+	repo, hooks := legacyClone(t)
+	dir := t.TempDir()
+	writeExecutable(t, filepath.Join(dir, "entire"), "#!/bin/sh\ncat > '"+filepath.Join(dir, "entire.in")+"'\n")
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	writeExecutable(t, filepath.Join(hooks, "pre-push.pre-entire"), "#!/bin/sh\ncat > '"+filepath.Join(dir, "mine.in")+"'\n")
+	ensure(t, repo)
+	git(t, repo, "config", "baum.hooks", "false")
+	ensure(t, repo)
+	cmd := exec.Command(filepath.Join(hooks, "pre-push"), "origin", "url")
+	cmd.Stdin = strings.NewReader("refs/heads/a 1 refs/heads/a 2\n")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("%v: %s", err, out)
+	}
+	for _, name := range []string{"entire.in", "mine.in"} {
+		if got := read(t, filepath.Join(dir, name)); got != "refs/heads/a 1 refs/heads/a 2\n" {
+			t.Errorf("%s = %q", name, got)
+		}
+	}
+}
+
+// Legacy dispatchers that run no hook of Entire's are repaired and the others
+// retired: the hook they replaced comes back, or they go.
+func TestPlainLegacyDispatchersAreRepairedAndRetired(t *testing.T) {
+	repo := initRepo(t)
+	hooks := filepath.Join(repo, ".git", "hooks")
+	for _, hook := range allLegacyHooks {
+		writeExecutable(t, filepath.Join(hooks, hook), plainLegacyScript(hook))
+	}
 	original := "#!/bin/sh\necho mine\n"
-	git(t, repo, "commit", "-q", "--allow-empty", "-m", "init")
 	writeExecutable(t, filepath.Join(hooks, "commit-msg.pre-entire"), original)
 	report := ensure(t, repo)
-	got := map[string]Outcome{}
-	for _, h := range report.Hooks {
-		got[h.Hook] = h.Outcome
-	}
+	got := outcomes(report)
 	want := map[string]Outcome{"post-commit": Repaired, "post-rewrite": Repaired, "pre-push": Repaired, "commit-msg": Restored, "prepare-commit-msg": Removed}
 	for hook, outcome := range want {
 		if got[hook] != outcome {
@@ -102,6 +244,7 @@ func TestLegacyDispatchersAreRepairedAndRetiredWithoutEntire(t *testing.T) {
 
 func TestRetireLeavesAHookItCannotRestoreOrDoesNotOwn(t *testing.T) {
 	repo, hooks := legacyClone(t)
+	writeExecutable(t, filepath.Join(hooks, "commit-msg"), plainLegacyScript("commit-msg"))
 	writeExecutable(t, filepath.Join(hooks, "commit-msg.pre-entire"), legacyScript("commit-msg"))
 	foreign := "#!/bin/sh\necho theirs\n"
 	writeExecutable(t, filepath.Join(hooks, "prepare-commit-msg"), foreign)
@@ -114,8 +257,32 @@ func TestRetireLeavesAHookItCannotRestoreOrDoesNotOwn(t *testing.T) {
 			t.Errorf("a hook without the marker was reported: %+v", h)
 		}
 	}
-	if read(t, filepath.Join(hooks, "prepare-commit-msg")) != foreign || read(t, filepath.Join(hooks, "commit-msg")) != legacyScript("commit-msg") {
+	if read(t, filepath.Join(hooks, "prepare-commit-msg")) != foreign || read(t, filepath.Join(hooks, "commit-msg")) != plainLegacyScript("commit-msg") {
 		t.Error("files were changed")
+	}
+}
+
+// Entire's own hook, with no dispatcher of baum's around, is chained like any
+// other: both run.
+func TestEntiresOwnHookIsChained(t *testing.T) {
+	repo := initRepo(t)
+	hooks := filepath.Join(repo, ".git", "hooks")
+	git(t, repo, "commit", "-q", "--allow-empty", "-m", "init")
+	entire := "#!/bin/sh\n" + entireMarker + "\nentire hooks git post-commit 2>/dev/null || true\n"
+	writeExecutable(t, filepath.Join(hooks, "post-commit"), entire)
+	baumLog, entireLog := stubBaum(t), stubEntire(t)
+	if report := ensure(t, repo); outcomes(report)["post-commit"] != Chained {
+		t.Fatalf("report = %+v", report)
+	}
+	if read(t, filepath.Join(hooks, "post-commit"+backupSuffix)) != entire {
+		t.Fatal("Entire's hook was not kept as it is")
+	}
+	commitWithHooks(t, repo)
+	if n := calls(t, baumLog); n != 1 {
+		t.Errorf("baum ran %d times", n)
+	}
+	if data, err := os.ReadFile(entireLog); err != nil || !strings.Contains(string(data), "hooks git post-commit") {
+		t.Errorf("Entire's hook did not run: %q %v", data, err)
 	}
 }
 
@@ -128,6 +295,17 @@ func TestOptOutReportsADispatcherInASiblingSlot(t *testing.T) {
 	git(t, repo, "config", "baum.hooks", "false")
 	report := ensure(t, repo)
 	if outcomes(report)["post-commit"] != Unclaimed {
+		t.Fatalf("report = %+v", report)
+	}
+}
+
+// A dispatcher moved aside is reported when the hook itself is missing too.
+func TestOptOutReportsADispatcherWhenTheHookIsMissing(t *testing.T) {
+	repo := initRepo(t)
+	hooks := filepath.Join(repo, ".git", "hooks")
+	writeExecutable(t, filepath.Join(hooks, "post-commit.legacy"), Dispatcher("post-commit", ""))
+	git(t, repo, "config", "baum.hooks", "false")
+	if report := ensure(t, repo); outcomes(report)["post-commit"] != Unclaimed {
 		t.Fatalf("report = %+v", report)
 	}
 }

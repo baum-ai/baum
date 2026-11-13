@@ -477,13 +477,13 @@ it("reads the sessions from disk again once a session in progress ends", async (
   expect(node.querySelector("li#session-s2")).toBeNull();
 });
 
-it("rereads a session's decisions once for a burst of events", async () => {
+it("rereads the PR's filtered decisions once for a burst of events", async () => {
   history.replaceState(null, "", "/s/test-ns/?pr=7&clone=clone");
   liveBody = { sessions: [session()] };
   const reads = () =>
     vi
       .mocked(fetch)
-      .mock.calls.filter(([url]) => String(url).startsWith("/s/test-ns/api/decisions?agent="))
+      .mock.calls.filter(([url]) => String(url).startsWith("/s/test-ns/api/decisions?repository="))
       .length;
   await act(async () => root.render(<App />));
   expect(node.querySelector("li#session-s1")).not.toBeNull();

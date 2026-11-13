@@ -17,7 +17,10 @@ sidebar, and the desktop tray in its menu and panel.
 
 A plan that cannot be read has `available: false` and a `reason` in words. The
 reason is always a fixed sentence: no upstream body, error text, path or token
-is ever in it.
+is ever in it. When only the person can fix it, because the agent's stored
+sign-in has expired or was refused and baum never renews it, the plan also
+has `needs_sign_in: true`, and the app shows that reason instead of leaving
+the plan out.
 
 ## Codex
 
@@ -51,6 +54,14 @@ applies. `plan_type` becomes the plan's name as Codex shows it: "prolite",
 `plan_type` is named the same way). The fallback makes no network request and
 reads no credential.
 
+A snapshot whose every window has reset since says nothing about what is
+left, only how long Codex has been idle, so it is not served: the plan is
+unavailable. If the token had expired, or the endpoint answered 401 or 403,
+the reason is "Open Codex to refresh its sign-in." with `needs_sign_in`;
+otherwise "Codex has not reported its usage since its limits reset." A
+snapshot with a window still running is served even with an expired token,
+since its figure still holds and `fetched_at` shows its age.
+
 ## Claude
 
 The reader calls the endpoint Claude Code's own `/usage` command uses:
@@ -65,13 +76,14 @@ The token is the one Claude Code stored: on macOS the Keychain item
 "Claude Code-credentials", and otherwise (or if the item is missing)
 `$CLAUDE_CONFIG_DIR/.credentials.json` (default `~/.claude/.credentials.json`),
 field `claudeAiOauth.accessToken`. Its `subscriptionType` and `rateLimitTier`
-name the plan as Anthropic sells it: Pro, Max 5x or Max 20x for a person, Team
-Standard or Team Premium (the `max_5x` tier) for a Team seat, and Enterprise,
+name the plan as Anthropic sells it: Pro, Max (the `max_5x` tier) or Ultra
+(the `max_20x` tier, formerly Max 20x) for a person, Team Standard or Team
+Premium (the `max_5x` tier) for a Team seat, and Enterprise,
 which is billed at API prices, without a tier. The token is held only for the request. It is
 never logged, stored, cached, returned by the API or included in an error, and
 the HTTP client refuses redirects. baum never refreshes it: refreshing would
 rotate Claude Code's credential. An expired token, or a 401 or 403, reads "Open
-Claude Code to refresh its sign-in."
+Claude Code to refresh its sign-in." with `needs_sign_in`.
 
 The endpoint limits how often it is asked, and answers 429 once that is
 passed; asking again keeps it limited. After a 429 the reader leaves it alone
@@ -82,6 +94,27 @@ out of reach, the last reading the running daemon made stands in for up to
 six hours with its own `fetched_at`, so its age shows; a window that reset
 since has `reset: true` and no figure. A sign-in failure is never covered this
 way.
+
+### Other configuration directories
+
+`Service.Others` lists the other directories baum runs an agent with, each an
+`Other{Provider, Dir}`: the daemon gives the Claude Code configuration
+directories Settings chose for reviews, fixes and data extraction while their
+agent is Claude Code (`repos.Preferences.ClaudeConfigDirs`), and the Codex
+homes chosen while it is Codex (`CodexHomes`), each without the daemon's own.
+A Codex home is read by `Codex{Home: dir}`: that home's `auth.json`, and its
+session files as the fallback. A Claude Code directory gets its own reader
+(`NewClaudeIn`, through `NewOtherIn`; every reader is kept for the
+service's life so it has its own last reading and wait after a 429), whose
+credential is that directory's (`StoredCredentialIn`): `.credentials.json` in
+it, and on macOS first the Keychain item "Claude Code-credentials-" followed
+by the first eight hex digits of the SHA-256 of the directory's path, as
+Claude Code names it. Each plan follows its provider's plan in the answer,
+before the next provider's, with `"config_dir"`, the directory with the home
+written as `~`; the plan of the daemon's own directory has none. A change of
+the directories reads again at once. These plans are shown or hidden with
+their provider's plan, and the history leaves them out: it is kept by provider
+and window.
 
 ## Which plans are served
 
@@ -96,6 +129,12 @@ explicit choice survives a backend change and the default follows it. The
 history behind the Analytics chart samples every plan regardless.
 
 ## Caching
+
+`Service.Cached` returns the plans last read, however old, and never asks a
+provider: the MCP server's plan usage tool reads it, and so does its Settings
+tool for the show-or-hide choice (whose route, `GET /api/settings/plan-usage`,
+reads the plans to work out the default), so a chat's question can never cause
+a fetch.
 
 `Service` keeps the result for five minutes. `?refresh=1` (the app sends it when
 a page opens) reads again, but never more than once a minute. Simultaneous

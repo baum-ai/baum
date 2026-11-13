@@ -264,11 +264,9 @@ export function ModelPicker({
 export function DecisionsDisclosure() {
   return (
     <p className="review-note">
-      baum captures the decisions of your agent sessions in the repositories you pick. It sends each
-      session's prompts, the agent's visible text, its plans, question-and-answer dialogue and the
-      names of the files it edited, with secrets masked, to the harness's provider; never tool
-      output or file contents. Capture follows the sessions the agent hooks report, so it needs the
-      hooks installed. Turn it off in Settings or per repository.
+      Sends each session's prompts, the agent's replies and plans, and the names of edited files to
+      the agent's provider, secrets masked; never tool output or file contents. Needs the agent
+      hooks. You can turn it off per repository.
     </p>
   );
 }

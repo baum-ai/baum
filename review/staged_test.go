@@ -37,7 +37,8 @@ func stagedOutlineReply(t *testing.T, change func(map[string]any)) []byte {
 		"summary": map[string]any{
 			"text": "Adds a parser and its tests.", "review_exchange": map[string]any{"summary": "No reviews yet."}, "change_kind": "feature",
 			"implements": []any{}, "release_note": nil, "breaking_change": nil, "attention": nil,
-			"authorship": map[string]any{"declared": "none", "declared_tools": []any{}, "anchors": []any{}},
+			"recommendation": nil,
+			"authorship":     map[string]any{"declared": "none", "declared_tools": []any{}, "anchors": []any{}},
 		},
 		"relations": []any{},
 		"sections": []any{
@@ -96,7 +97,7 @@ func TestStagedSchemasAreProjectionsOfTheModelSchema(t *testing.T) {
 	outline := schemaTree(t, outlineSchema)
 	checkEqual(t, []string{"relations", "schema", "sections", "summary"}, sortedKeys(keySet(properties(outline))))
 	summary := properties(properties(outline)["summary"])
-	checkEqual(t, []string{"attention", "authorship", "breaking_change", "change_kind", "implements", "release_note", "review_exchange", "text"}, sortedKeys(keySet(summary)))
+	checkEqual(t, []string{"attention", "authorship", "breaking_change", "change_kind", "implements", "recommendation", "release_note", "review_exchange", "text"}, sortedKeys(keySet(summary)))
 	section := properties(outline["$defs"].(map[string]any)["section"])
 	checkEqual(t, []string{"assessment", "hunks", "id", "kind", "title"}, sortedKeys(keySet(section)))
 	checkEqual(t, modelSummary["text"], summary["text"])

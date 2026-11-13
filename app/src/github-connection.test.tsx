@@ -50,6 +50,17 @@ afterEach(async () => {
   vi.unstubAllGlobals();
 });
 const render = () => act(async () => root.render(<GitHubConnectionSection />));
+/** Chooses from the menu beside Reconnect. */
+async function choose(label: string) {
+  await act(async () =>
+    node.querySelector<HTMLButtonElement>('[aria-label="More connection options"]')!.click(),
+  );
+  const item = [...document.querySelectorAll<HTMLElement>("[role^=menuitem]")].find(
+    (c) => c.textContent === label,
+  );
+  expect(item, label).toBeDefined();
+  await act(async () => item!.click());
+}
 async function click(label: string) {
   const button = [...node.querySelectorAll("button")].find((b) => b.textContent === label);
   expect(button, label).toBeDefined();
@@ -134,7 +145,7 @@ it("keeps the effective override distinct from the saved account on disconnect",
   expect(node.textContent).toContain("explicit credential from environment");
   expect(node.textContent).toContain("saved-cat on github.com (not currently used)");
   status = { ...disconnected, override: true, source: "environment" };
-  await click("Disconnect");
+  await choose("Disconnect");
   expect(node.textContent).toContain("explicit credential from environment");
   expect(node.textContent).not.toContain("saved-cat");
   expect(calls.at(-1)!.path).toBe("/s/auth-test/api/github-auth/disconnect");
@@ -148,7 +159,7 @@ it("asks for workflow access only from the Reconnect menu, and says when it is m
   };
   status = saved;
   await render();
-  expect(node.textContent).toContain("does not have workflow access");
+  expect(node.textContent).toContain("Workflow access is off by default");
   // Reconnect keeps the connection's access: no workflow scope.
   status = { ...pending, pending: { ...pending.pending!, workflow: false } };
   await click("Reconnect");
@@ -157,17 +168,18 @@ it("asks for workflow access only from the Reconnect menu, and says when it is m
     options: { method: "POST", body: "{}" },
   });
   expect(node.textContent).toContain("Grant repository and organization read access.");
-  expect(node.textContent).not.toContain("does not have workflow access");
+  expect(node.textContent).not.toContain("Workflow access is off by default");
   status = saved;
   await click("Cancel sign-in");
   // The menu's second choice asks GitHub for workflow access too.
-  const more = node.querySelector<HTMLButtonElement>('[aria-label="More reconnect options"]')!;
+  const more = node.querySelector<HTMLButtonElement>('[aria-label="More connection options"]')!;
   expect(more.getAttribute("aria-haspopup")).toBe("menu");
   await act(async () => more.click());
   const choices = [...document.querySelectorAll<HTMLElement>("[role^=menuitem]")];
   expect(choices.map((c) => c.textContent)).toEqual([
     "Reconnect",
     "Reconnect with workflow access",
+    "Disconnect",
   ]);
   status = { ...pending, pending: { ...pending.pending!, workflow: true } };
   await act(async () => choices[1]!.click());
@@ -176,22 +188,25 @@ it("asks for workflow access only from the Reconnect menu, and says when it is m
     options: { method: "POST", body: '{"workflow":true}' },
   });
   expect(node.textContent).toContain("Grant repository, organization read and workflow access.");
-  // With workflow access the warning goes, Reconnect keeps it, and the menu
+  // With workflow access the note goes, Reconnect keeps it, and the menu
   // offers to drop it.
   status = { ...saved, workflow: true };
   await click("Cancel sign-in");
   expect(node.textContent).not.toContain("workflow access");
+  expect(node.textContent).toContain(
+    "Repositories (read and write), workflows and organizations (read).",
+  );
   status = { ...pending, pending: { ...pending.pending!, workflow: true } };
   await click("Reconnect");
   expect(calls.at(-1)!.options?.body).toBe('{"workflow":true}');
   status = { ...saved, workflow: true };
   await click("Cancel sign-in");
   await act(async () =>
-    node.querySelector<HTMLButtonElement>('[aria-label="More reconnect options"]')!.click(),
+    node.querySelector<HTMLButtonElement>('[aria-label="More connection options"]')!.click(),
   );
   expect(
     [...document.querySelectorAll<HTMLElement>("[role^=menuitem]")].map((c) => c.textContent),
-  ).toEqual(["Reconnect", "Reconnect without workflow access"]);
+  ).toEqual(["Reconnect", "Reconnect without workflow access", "Disconnect"]);
 });
 it("does not claim an explicit credential lacks workflow access", async () => {
   status = {

@@ -104,6 +104,12 @@ A request GitHub refused is classified by the sign-in's runtime health
 (`config.GitHubAuth.Health`), which the GraphQL client feeds from every
 response.
 
+`Service.Cached(ctx, query)` is the list from what the service already holds
+(the top repositories last loaded, narrowed by the query's words, as picked or
+cloned as the registry says). It never calls GitHub and never reloads an
+expired cache; `loaded` is false until a listing was loaded. The MCP server's
+repository list tool reads it, so an agent cannot spend the account's rate limit.
+
 ## Cloning
 
 | Route | Result |

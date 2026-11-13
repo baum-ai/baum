@@ -1,5 +1,5 @@
 import pluralize from "pluralize";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 
 import { harnessName } from "../agent-names";
 import {
@@ -11,6 +11,9 @@ import {
   summaryIntent,
   riskScoreTone,
   riskScoreView,
+  RECOMMENDATION_LABEL,
+  reviewRecommendation,
+  reviewRefs,
   type Tone,
   type TriageRisk,
   triageRisks,
@@ -18,9 +21,11 @@ import {
 import { QuotedPrompts } from "./chat";
 import { StatusBlock, StatusLine } from "./editorial";
 import { Markdown } from "./markdown";
+import { useReviewRefs } from "./review-contexts";
 import { ContextPart } from "./review-context";
 import { SectionIcon } from "./icons";
 import { Item, ItemMeta, JumpLink, Lines, None, Part, PROSE, RiskTags } from "./review-parts";
+import { chipLinkClass } from "./chip-classes";
 import { cn } from "./classnames";
 import { Badge, CardHeader, SegmentedControl } from "./ui";
 
@@ -37,7 +42,8 @@ export function ReviewSummary({
   contextPending = false,
 }: {
   document: ReviewDocument;
-  onSelectSection: (id: string) => void;
+  /** Opens a section, and scrolls to one of its items when one is named. */
+  onSelectSection: (id: string, item?: string) => void;
   /** Opens one of the review's other panes. The "view all" links and the
    *  other jump links go through it; without it they are not drawn. */
   onNavigate?: (destination: SummaryDestination) => void;
@@ -65,7 +71,7 @@ export function ReviewSummary({
       <div className="w-full flex-none">
         <CardHeader size="pane" title="Summary" />
       </div>
-      <div className="min-h-0 flex-1 xl:overflow-y-auto">
+      <div className="min-h-0 flex-1 wide:overflow-y-auto">
         <div className="min-w-0 space-y-8">
           {document.review.generator.review_md_changed && (
             <StatusLine tone="caution" label="Review policy changed" boxed>
@@ -76,29 +82,31 @@ export function ReviewSummary({
           )}
           <div
             data-review-block=""
-            className="space-y-3 rounded-(--radius-sm) outline-none data-[review-block-active]:bg-(--surface-wash)"
+            className="space-y-3 rounded-sm outline-none data-[review-block-active]:bg-surface-wash"
           >
             <Markdown className={PROSE}>{summary.text}</Markdown>
             {summary.breaking_change && (
               <StatusBlock tone="critical" label="Breaking change">
-                <Markdown className="max-w-[90ch] text-base leading-[1.5] [overflow-wrap:anywhere] text-(--text-secondary)">
+                <Markdown className="max-w-[90ch] text-base leading-[1.5] [overflow-wrap:anywhere] text-secondary">
                   {summary.breaking_change}
                 </Markdown>
               </StatusBlock>
             )}
             {summary.release_note && (
               <StatusBlock tone="neutral" label="Release note">
-                <Markdown className="max-w-[90ch] text-base leading-[1.5] [overflow-wrap:anywhere] text-(--text-secondary)">
+                <Markdown className="max-w-[90ch] text-base leading-[1.5] [overflow-wrap:anywhere] text-secondary">
                   {summary.release_note}
                 </Markdown>
               </StatusBlock>
             )}
           </div>
 
+          <RecommendationPart document={document} onSelectSection={onSelectSection} />
+
           {(document.summary.context || contextPending) && (
             <div
               data-review-block=""
-              className="rounded-(--radius-sm) outline-none data-[review-block-active]:bg-(--surface-wash)"
+              className="rounded-sm outline-none data-[review-block-active]:bg-surface-wash"
             >
               <ContextPart document={document} pending={contextPending} />
             </div>
@@ -117,7 +125,7 @@ export function ReviewSummary({
               </ul>
               {prompts.length > 0 && (
                 <details className="mt-3">
-                  <summary className="cursor-pointer text-base text-(--text-link) hover:underline">
+                  <summary className="cursor-pointer text-base text-link hover:underline">
                     From {pluralize("session prompt", prompts.length, true)}
                   </summary>
                   <QuotedPrompts
@@ -146,7 +154,7 @@ export function ReviewSummary({
                 label="Risks"
                 aside={
                   <>
-                    <span className="text-xs text-(--text-tertiary)">
+                    <span className="text-xs text-tertiary">
                       {triage.lead.length > 0
                         ? `${pluralize("risk", triage.lead.length, true)} to read first`
                         : "None to read first"}
@@ -170,7 +178,7 @@ export function ReviewSummary({
                 )}
                 {triage.rest.length > 0 && (
                   <details className="mt-2.5">
-                    <summary className="cursor-pointer text-base text-(--text-link) hover:underline">
+                    <summary className="cursor-pointer text-base text-link hover:underline">
                       {pluralize("lower-tier risk", triage.rest.length, true)}
                     </summary>
                     <ul className="mt-2 space-y-1.5">
@@ -193,20 +201,80 @@ export function ReviewSummary({
   );
 }
 
+/** The reviewer's bottom line, below the overview: what to do with the pull
+ *  request, why in a sentence, and the sections and items it rests on. It
+ *  speaks of the code and the decisions in it, never of CI, which the Details
+ *  tab reports live. A document without one (older, or one the review could
+ *  not give) shows nothing in its place. */
+function RecommendationPart({
+  document,
+  onSelectSection,
+}: {
+  document: ReviewDocument;
+  onSelectSection: (id: string, item?: string) => void;
+}) {
+  const provided = useReviewRefs();
+  const recommendation = reviewRecommendation(document);
+  // The displayed snapshot's workspace refs when available, else the
+  // document's own, built once per document.
+  const own = useMemo(() => (provided ? null : reviewRefs(document)), [provided, document]);
+  if (!recommendation) return null;
+  const known = provided ?? own!;
+  // An ID the document does not have is left out rather than shown dead.
+  const targets = [...new Set(recommendation.refs)].flatMap((ref) => {
+    const found = known.get(ref);
+    return found?.kind === "item" ? [found] : [];
+  });
+  return (
+    <section
+      aria-label="Recommendation"
+      data-review-block=""
+      className="rounded-md outline-none data-[review-block-active]:bg-surface-wash"
+    >
+      <Part label={RECOMMENDATION_LABEL[recommendation.decision]}>
+        <Markdown className="max-w-[90ch] text-base leading-[1.5] text-primary [overflow-wrap:anywhere]">
+          {recommendation.text}
+        </Markdown>
+        {targets.length > 0 && (
+          <ul aria-label="Where to look" className="mt-2 flex flex-wrap gap-1.5">
+            {targets.map((target) => (
+              <li key={target.id} className="max-w-full min-w-0">
+                <button
+                  type="button"
+                  title={`${target.item[0]!.toUpperCase()}${target.item.slice(1)} ${target.id}`}
+                  onClick={() =>
+                    onSelectSection(
+                      target.section,
+                      target.item === "section" ? undefined : target.id,
+                    )
+                  }
+                  className={cn(chipLinkClass, "cursor-pointer")}
+                >
+                  <span className="truncate">{target.label}</span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </Part>
+    </section>
+  );
+}
+
 /** The score's colour, as text and as a meter segment's fill. */
 const RISK_TEXT: Record<Tone, string> = {
-  neutral: "text-(--text-primary)",
-  info: "text-(--status-info)",
-  positive: "text-(--status-positive)",
-  caution: "text-(--status-caution)",
-  critical: "text-(--status-critical)",
+  neutral: "text-primary",
+  info: "text-status-info",
+  positive: "text-status-positive",
+  caution: "text-status-caution",
+  critical: "text-status-critical",
 };
 const RISK_FILL: Record<Tone, string> = {
   neutral: "bg-(--text-secondary)",
-  info: "bg-(--status-info)",
-  positive: "bg-(--status-positive)",
-  caution: "bg-(--status-caution)",
-  critical: "bg-(--status-critical)",
+  info: "bg-status-info",
+  positive: "bg-status-positive",
+  caution: "bg-status-caution",
+  critical: "bg-status-critical",
 };
 
 /** Five segments filled up to the score. A lower bound outlines the
@@ -230,7 +298,7 @@ function RiskMeter({
             step <= score
               ? RISK_FILL[tone]
               : lowerBound
-                ? "border border-dashed border-(--border-strong)"
+                ? "border border-dashed border-strong"
                 : "bg-(--border-default)",
           )}
         />
@@ -255,7 +323,7 @@ function RiskScorePart({
   return (
     <div
       data-review-block=""
-      className="rounded-(--radius-sm) outline-none data-[review-block-active]:bg-(--surface-wash)"
+      className="rounded-sm outline-none data-[review-block-active]:bg-surface-wash"
     >
       <Part label="Risk score">
         {view.assessed ? (
@@ -274,9 +342,7 @@ function RiskScorePart({
                 </span>
                 {/* A lower bound names no meaning: "negligible" would read as a
                   verdict on input the review could not rate. */}
-                {!view.lowerBound && (
-                  <span className="text-(--text-secondary)"> · {view.meaning}</span>
-                )}
+                {!view.lowerBound && <span className="text-secondary"> · {view.meaning}</span>}
               </span>
             </p>
             {view.reasons.length > 0 && (
@@ -284,7 +350,7 @@ function RiskScorePart({
                 {view.reasons.map((reason, index) => (
                   <li
                     key={`${reason.section}-${index}`}
-                    className="max-w-[90ch] text-base text-(--text-primary)"
+                    className="max-w-[90ch] text-base text-primary"
                   >
                     <Markdown className="inline [&>p]:inline">{reason.text}</Markdown>{" "}
                     <JumpLink onClick={() => onSelectSection(reason.section)}>
@@ -298,7 +364,7 @@ function RiskScorePart({
         ) : (
           <p className="flex flex-wrap items-baseline gap-x-2 gap-y-1 text-base">
             <span className="font-medium">Not assessed</span>
-            <span className="text-(--text-secondary)">
+            <span className="text-secondary">
               {view.legacy
                 ? "This review was generated before risk scores. Regenerate it to assess."
                 : "No current section of this review was rated."}
@@ -306,7 +372,7 @@ function RiskScorePart({
           </p>
         )}
         {view.limitations.length > 0 && (
-          <p className="mt-2 text-xs text-(--text-tertiary)">
+          <p className="mt-2 text-xs text-tertiary">
             Incomplete input: {view.limitations.join(" · ")}
           </p>
         )}
@@ -326,13 +392,13 @@ function IntentRow({
   return (
     <li
       data-review-block=""
-      className="flex gap-2.5 rounded-(--radius-sm) outline-none data-[review-block-active]:bg-(--surface-wash)"
+      className="flex gap-2.5 rounded-sm outline-none data-[review-block-active]:bg-surface-wash"
     >
       <span
         aria-hidden
         className="mt-[0.55rem] h-1 w-1 flex-none rounded-full bg-(--text-tertiary)"
       />
-      <div className="max-w-[90ch] text-base leading-[1.6] text-(--text-primary)">
+      <div className="max-w-[90ch] text-base leading-[1.6] text-primary">
         <Markdown className="inline [&>p]:inline">{line.text}</Markdown>{" "}
         <JumpLink onClick={() => onSelectSection(line.section)}>{line.title} →</JumpLink>
       </div>
@@ -360,7 +426,7 @@ function RiskRow({
         sectionState={risk.sectionState}
         urgent={urgent}
       />
-      <Markdown className="text-(--text-primary)">{risk.text}</Markdown>
+      <Markdown className="text-primary">{risk.text}</Markdown>
       <ItemMeta>
         <JumpLink onClick={() => onSelectSection(risk.section)}>{risk.sectionTitle} →</JumpLink>
       </ItemMeta>
@@ -403,7 +469,7 @@ function KeyChanges({
         ) : undefined
       }
     >
-      <ul className="divide-y divide-(--border-subtle)">
+      <ul className="divide-y divide-subtle">
         {shown.map((change) => (
           <KeyChangeRow key={change.section} change={change} onSelectSection={onSelectSection} />
         ))}
@@ -422,7 +488,7 @@ function KeyChangeRow({
   return (
     <li>
       <div className="flex items-center gap-2.5 py-2">
-        <SectionIcon size={14} className="flex-none text-(--action-accent)" />
+        <SectionIcon size={14} className="flex-none text-action-accent" />
         <span className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-1">
           <JumpLink className="font-medium" onClick={() => onSelectSection(change.section)}>
             {change.title} →

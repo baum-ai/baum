@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -88,14 +89,11 @@ func (c *Codex) Read(ctx context.Context) Plan {
 		out.Reason = "Codex's home folder could not be found."
 		return out
 	}
-	if plan, ok := c.readAPI(ctx, home); ok {
-		return plan
+	live, ok, expired := c.readAPI(ctx, home)
+	if ok {
+		return live
 	}
 	files := newestRollouts(filepath.Join(home, "sessions"), codexMaxFiles)
-	if len(files) == 0 {
-		out.Reason = "No Codex sessions found yet. Run Codex once to see its usage."
-		return out
-	}
 	var latest Plan
 	for _, name := range files {
 		if ctx.Err() != nil {
@@ -105,10 +103,22 @@ func (c *Codex) Read(ctx context.Context) Plan {
 			latest = plan
 		}
 	}
-	if latest.Available {
+	// A snapshot whose every window has reset since tells nothing about what
+	// is left, only how long Codex has been idle.
+	if latest.Available && slices.ContainsFunc(latest.Windows, func(w Window) bool { return !w.Reset }) {
 		return latest
 	}
-	out.Reason = "Codex has not reported its usage limits yet."
+	switch {
+	case expired:
+		out.Reason = "Open Codex to refresh its sign-in."
+		out.NeedsSignIn = true
+	case len(files) == 0:
+		out.Reason = "No Codex sessions found yet. Run Codex once to see its usage."
+	case latest.Available:
+		out.Reason = "Codex has not reported its usage since its limits reset."
+	default:
+		out.Reason = "Codex has not reported its usage limits yet."
+	}
 	return out
 }
 

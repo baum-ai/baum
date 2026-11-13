@@ -110,12 +110,14 @@ func newDocumentValidator() (*DocumentValidator, error) {
 	summary := props["summary"].(map[string]any)
 	omitProperties(summary, "title", "author", "risk_score")
 	requireAuthoredContext(summary)
+	requireAuthoredRecommendation(summary)
 	authorship := summary["properties"].(map[string]any)["authorship"].(map[string]any)
 	omitProperties(authorship, "observed_sessions", "observed_vendors", "observed_models")
 	exchange := summary["properties"].(map[string]any)["review_exchange"].(map[string]any)
 	omitProperties(exchange, "reviews", "back_and_forths", "critical_issues_found", "changes_after_open")
 	defs := contract["$defs"].(map[string]any)
 	omitProperties(defs["section"].(map[string]any), "derived")
+	omitCIEvidenceKind(defs["section"].(map[string]any))
 	// The stale-state rule constrains a derived field the model never writes.
 	var authoredRules []any
 	for _, rule := range defs["section"].(map[string]any)["allOf"].([]any) {
@@ -326,6 +328,37 @@ func requireAuthoredContext(summary map[string]any) {
 	}
 }
 
+// requireAuthoredRecommendation makes summary.recommendation part of every
+// authored document, as an object or null. The stored contract lets it be
+// absent, for documents generated before it existed; those are never
+// rewritten, and refresh leaves the recommendation they lack absent.
+func requireAuthoredRecommendation(summary map[string]any) {
+	recommendation := summary["properties"].(map[string]any)["recommendation"].(map[string]any)
+	if description, _ := recommendation["description"].(string); description != "" {
+		if cut := strings.Index(description, " Absent on documents"); cut >= 0 {
+			recommendation["description"] = description[:cut]
+		}
+	}
+	if required, _ := summary["required"].([]any); !containsString(stringSlice(required), "recommendation") {
+		summary["required"] = append(required, "recommendation")
+	}
+}
+
+// omitCIEvidenceKind removes "ci" from the evidence kinds an authored section
+// may have: the review page already shows the checks. The stored contract
+// keeps it, for documents written when it was allowed.
+func omitCIEvidenceKind(section map[string]any) {
+	items := section["properties"].(map[string]any)["evidence"].(map[string]any)["items"].(map[string]any)
+	kind := items["properties"].(map[string]any)["kind"].(map[string]any)
+	var kinds []any
+	for _, value := range kind["enum"].([]any) {
+		if value != "ci" {
+			kinds = append(kinds, value)
+		}
+	}
+	kind["enum"] = kinds
+}
+
 // omitSectionDetails removes a section's details state from the authored
 // contract. The host records it on a section whose details are still being
 // written or could not be written, which then may lack its summary; the model
@@ -393,6 +426,9 @@ func (v *DocumentValidator) validate(view authoredView, document []byte, bundle 
 	if err != nil {
 		return err.Error()
 	}
+	// The prose rules are for what the model writes now; ValidateStored and
+	// refresh never apply them, so stored reviews are not rejected for them.
+	findings = append(findings, proseFindings(value, bundle, proseFull)...)
 	return strings.Join(findings, "\n")
 }
 
@@ -688,10 +724,10 @@ func walkJSON(value any, visit func(map[string]any)) {
 
 // Unresolved evidence remains visible as a model assertion; it cannot claim verification.
 func (v *DocumentValidator) Prepare(document []byte, bundle *bundlepkg.Bundle, directory string) ([]byte, string) {
-	return v.prepare(v.authored, document, bundle, directory)
+	return v.prepare(v.authored, document, bundle, directory, proseFull)
 }
 
-func (v *DocumentValidator) prepare(view authoredView, document []byte, bundle *bundlepkg.Bundle, directory string) ([]byte, string) {
+func (v *DocumentValidator) prepare(view authoredView, document []byte, bundle *bundlepkg.Bundle, directory string, prose proseScope) ([]byte, string) {
 	var value any
 	if err := json.Unmarshal(document, &value); err != nil {
 		return document, "output is not a JSON document"
@@ -759,6 +795,9 @@ func (v *DocumentValidator) prepare(view authoredView, document []byte, bundle *
 		findings = append(findings, semantic...)
 	}
 	findings = append(findings, validateTileSources(restored.Sections, bundle, directory)...)
+	// The prose rules read what the model wrote (value), not the reconciled
+	// document, which also carries trusted sections of the previous version.
+	findings = append(findings, proseFindings(value, bundle, prose)...)
 	return encoded, strings.Join(findings, "\n")
 }
 
@@ -921,11 +960,25 @@ func (v *DocumentValidator) Complete(document []byte, b *bundlepkg.Bundle, direc
 // prompt: promptVersion is recorded as generator.prompt_version, and an empty
 // one records nothing. The model's output never sets it.
 func (v *DocumentValidator) CompleteWithPrompt(document []byte, b *bundlepkg.Bundle, directory string, model, promptVersion string, now time.Time) ([]byte, string) {
-	return v.complete(v.authored, document, b, directory, model, promptVersion, now)
+	return v.complete(v.authored, document, b, directory, model, promptVersion, now, proseFull)
 }
 
-func (v *DocumentValidator) complete(view authoredView, document []byte, b *bundlepkg.Bundle, directory string, model, promptVersion string, now time.Time) ([]byte, string) {
-	document, findings := v.prepare(view, document, b, directory)
+// PrepareHostExchange is Prepare for a host that writes the summary's review
+// exchange itself, as a stack review does from its members': the model never
+// sees that field, so the prose rules do not read it, and no finding on it
+// could be repaired.
+func (v *DocumentValidator) PrepareHostExchange(document []byte, bundle *bundlepkg.Bundle, directory string) ([]byte, string) {
+	return v.prepare(v.authored, document, bundle, directory, proseHostExchange)
+}
+
+// CompleteWithPromptHostExchange is CompleteWithPrompt for a host that writes
+// the review exchange itself (PrepareHostExchange).
+func (v *DocumentValidator) CompleteWithPromptHostExchange(document []byte, b *bundlepkg.Bundle, directory string, model, promptVersion string, now time.Time) ([]byte, string) {
+	return v.complete(v.authored, document, b, directory, model, promptVersion, now, proseHostExchange)
+}
+
+func (v *DocumentValidator) complete(view authoredView, document []byte, b *bundlepkg.Bundle, directory string, model, promptVersion string, now time.Time, prose proseScope) ([]byte, string) {
+	document, findings := v.prepare(view, document, b, directory, prose)
 	if findings != "" {
 		return nil, findings
 	}

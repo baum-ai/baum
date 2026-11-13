@@ -2,6 +2,8 @@ package planusage
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
@@ -27,7 +29,7 @@ var errNoCredential = errors.New("not signed in")
 type Credential struct {
 	Token     string
 	ExpiresAt time.Time // zero when unknown
-	// Plan is the plan's name as Anthropic sells it ("Pro", "Max 5x",
+	// Plan is the plan's name as Anthropic sells it ("Pro", "Ultra",
 	// "Team Premium"), from what Claude Code recorded with the token; empty
 	// when it did not say.
 	Plan string
@@ -78,6 +80,12 @@ const (
 
 func NewClaude() *Claude { return &Claude{} }
 
+// NewClaudeIn asks for the usage of the plan Claude Code is signed in to in
+// the configuration directory dir, rather than this process's own.
+func NewClaudeIn(dir string) *Claude {
+	return &Claude{Credential: func(ctx context.Context) (Credential, error) { return StoredCredentialIn(ctx, dir) }}
+}
+
 func (c *Claude) now() time.Time {
 	if c.Now != nil {
 		return c.Now()
@@ -87,6 +95,12 @@ func (c *Claude) now() time.Time {
 
 func (c *Claude) unavailable(reason string) Plan {
 	return Plan{Provider: "claude", Reason: reason, Windows: []Window{}, FetchedAt: c.now()}
+}
+
+func (c *Claude) needsSignIn() Plan {
+	plan := c.unavailable("Open Claude Code to refresh its sign-in.")
+	plan.NeedsSignIn = true
+	return plan
 }
 
 // Read never refreshes the token: that would rotate Claude Code's credential.
@@ -109,7 +123,7 @@ func (c *Claude) Read(ctx context.Context) Plan {
 		return c.unavailable("Claude Code is not signed in on this computer.")
 	case !cred.ExpiresAt.IsZero() && !cred.ExpiresAt.After(c.now()):
 		c.last = nil
-		return c.unavailable("Open Claude Code to refresh its sign-in.")
+		return c.needsSignIn()
 	}
 	if c.now().Before(c.notBefore) {
 		return c.stale(c.unavailable("Claude's usage is unavailable right now."))
@@ -182,7 +196,7 @@ func (c *Claude) fetch(ctx context.Context, cred Credential) (Plan, outcome, tim
 	defer func() { _ = resp.Body.Close() }()
 	switch {
 	case resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden:
-		return c.unavailable("Open Claude Code to refresh its sign-in."), signedOut, 0
+		return c.needsSignIn(), signedOut, 0
 	case resp.StatusCode == http.StatusTooManyRequests:
 		// Retry-After in seconds; absent, zero or a date leaves the wait to Read.
 		seconds, _ := strconv.Atoi(resp.Header.Get("Retry-After"))
@@ -256,8 +270,10 @@ func parseCredential(data []byte) (Credential, error) {
 }
 
 // claudePlanName names the plan as Anthropic sells it, from Claude Code's
-// subscriptionType and rateLimitTier ("default_claude_max_5x"): Pro, Max 5x
-// and Max 20x for a person; a Team seat is Standard or Premium (the 5x tier);
+// subscriptionType and rateLimitTier ("default_claude_max_5x"): Pro, Max (the
+// 5x tier) and Ultra (the 20x tier, which Anthropic renamed from Max 20x; its
+// upgrade link still says max_20x) for a person; a Team seat is Standard or
+// Premium (the 5x tier);
 // Enterprise is billed at API prices and has no tier. Anything else is passed
 // on as it came, so a new plan still says something.
 func claudePlanName(subscription, tier string) string {
@@ -267,9 +283,7 @@ func claudePlanName(subscription, tier string) string {
 	case "max":
 		switch {
 		case strings.HasSuffix(tier, "max_20x"):
-			return "Max 20x"
-		case strings.HasSuffix(tier, "max_5x"):
-			return "Max 5x"
+			return "Ultra"
 		}
 		return "Max"
 	case "team":
@@ -290,15 +304,8 @@ func claudePlanName(subscription, tier string) string {
 // first, then $CLAUDE_CONFIG_DIR/.credentials.json (default
 // ~/.claude/.credentials.json).
 func StoredCredential(ctx context.Context) (Credential, error) {
-	if runtime.GOOS == "darwin" {
-		ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
-		defer cancel()
-		out, err := exec.CommandContext(ctx, "security", "find-generic-password", "-s", "Claude Code-credentials", "-w").Output()
-		if err == nil {
-			if cred, err := parseCredential([]byte(strings.TrimSpace(string(out)))); err == nil {
-				return cred, nil
-			}
-		}
+	if cred, ok := keychainCredential(ctx, keychainService); ok {
+		return cred, nil
 	}
 	dir := os.Getenv("CLAUDE_CONFIG_DIR")
 	if dir == "" {
@@ -308,6 +315,48 @@ func StoredCredential(ctx context.Context) (Credential, error) {
 		}
 		dir = filepath.Join(home, ".claude")
 	}
+	return fileCredential(dir)
+}
+
+// StoredCredentialIn reads the credential Claude Code stored for the
+// configuration directory dir: its .credentials.json, and on macOS first the
+// Keychain item Claude Code names after the directory.
+func StoredCredentialIn(ctx context.Context, dir string) (Credential, error) {
+	if cred, ok := keychainCredential(ctx, keychainServiceFor(dir)); ok {
+		return cred, nil
+	}
+	return fileCredential(dir)
+}
+
+// keychainService is the macOS Keychain item of Claude Code's default
+// configuration directory.
+const keychainService = "Claude Code-credentials"
+
+// keychainServiceFor is the item of another configuration directory: Claude
+// Code adds the first eight hex digits of the SHA-256 of the directory's
+// path as it was given in CLAUDE_CONFIG_DIR.
+func keychainServiceFor(dir string) string {
+	sum := sha256.Sum256([]byte(dir))
+	return keychainService + "-" + hex.EncodeToString(sum[:])[:8]
+}
+
+// keychainCredential reads a credential from the macOS Keychain item service;
+// false elsewhere, and when the item is missing or unreadable.
+func keychainCredential(ctx context.Context, service string) (Credential, bool) {
+	if runtime.GOOS != "darwin" {
+		return Credential{}, false
+	}
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "security", "find-generic-password", "-s", service, "-w").Output()
+	if err != nil {
+		return Credential{}, false
+	}
+	cred, err := parseCredential([]byte(strings.TrimSpace(string(out))))
+	return cred, err == nil
+}
+
+func fileCredential(dir string) (Credential, error) {
 	data, err := os.ReadFile(filepath.Join(dir, ".credentials.json"))
 	if err != nil {
 		return Credential{}, errNoCredential

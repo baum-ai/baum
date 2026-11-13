@@ -162,7 +162,7 @@ export function ReviewButton({
         {Icon ? <Icon size={14} className="review-state-icon" /> : null}
         {shown ? shown.label : own ? "Comment" : "Approve"}
         {count ? <span className="review-count">{count}</span> : null}
-        {own ? null : <ChevronDownIcon size={14} className="text-(--text-tertiary)" />}
+        {own ? null : <ChevronDownIcon size={14} className="text-tertiary" />}
         <kbd aria-hidden="true" className="key-hint">
           v
         </kbd>
@@ -282,7 +282,7 @@ export function ReviewDialog({
       <h2 id="review-title" className="text-lg font-semibold">
         Review pull request #{pr.number}
       </h2>
-      <p className="my-3 text-(--text-secondary)">
+      <p className="my-3 text-secondary">
         {pr.title} · {pr.repository}
       </p>
       {said ? <SaidBefore review={said} /> : null}
@@ -360,7 +360,7 @@ export function ReviewDialog({
       ) : null}
       <div className="mt-4 flex items-center justify-end gap-2">
         {missing ? (
-          <span className="mr-auto text-xs text-(--text-tertiary)">Write a summary to send it</span>
+          <span className="mr-auto text-xs text-tertiary">Write a summary to send it</span>
         ) : null}
         <Button variant="ghost" size="compact" disabled={busy} onClick={close}>
           Cancel
@@ -521,7 +521,7 @@ export function CommentsPane({
               aria-keyshortcuts="c"
               onClick={() => setComposer({ kind: "new", ...current })}
             >
-              <PlusIcon size={14} className="flex-none text-(--text-tertiary)" />
+              <PlusIcon size={14} className="flex-none text-tertiary" />
               Comment
               <kbd aria-hidden="true" className="key-hint">
                 c

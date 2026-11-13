@@ -1,8 +1,44 @@
 import assert from "node:assert/strict";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { disallowedColorLines, isColorDefinition } from "./check-palette.mjs";
+import {
+  arbitraryPaletteValues,
+  paletteUtilityNames,
+} from "../../viewer/src/palette-utility-names.ts";
+
+test("names the palette utility that replaces an arbitrary palette value", () => {
+  const names = paletteUtilityNames(
+    readFileSync(new URL("../../viewer/src/palette-utilities.css", import.meta.url), "utf8"),
+  );
+  const found = (source) =>
+    arbitraryPaletteValues(source, names).map(({ match, replacement }) => [match, replacement]);
+  assert.deepEqual(
+    found('"text-(--text-secondary) hover:bg-(--surface-hover) border-b-(--border-strong)"'),
+    [
+      ["text-(--text-secondary)", "text-secondary"],
+      ["bg-(--surface-hover)", "bg-surface-hover"],
+      ["border-b-(--border-strong)", "border-b-strong"],
+    ],
+  );
+  assert.deepEqual(found("`shadow-(--shadow-overlay) divide-(--border-subtle)`"), [
+    ["shadow-(--shadow-overlay)", "shadow-overlay"],
+    ["divide-(--border-subtle)", "divide-subtle"],
+  ]);
+  assert.deepEqual(found('"rounded-(--radius-sm) sm:rounded-tl-(--radius-lg)"'), [
+    ["rounded-(--radius-sm)", "rounded-sm"],
+    ["rounded-tl-(--radius-lg)", "rounded-tl-lg"],
+  ]);
+  // Tokens without a utility for that property, and non-palette variables.
+  assert.deepEqual(
+    found(
+      '"bg-(--brand-forest) bg-(--border-subtle) outline-(--border-focus) shadow-(--action-shadow) rounded-(--panel-radius) rounded-(--radius-full) text-(--site-ink)"',
+    ),
+    [],
+  );
+});
 
 test("rejects literal and utility colors across CSS, JSX and native markup", () => {
   for (const source of [

@@ -19,14 +19,24 @@ func counting(calls *[]string) Probe {
 	}
 }
 
+// On macOS one rule says which paths may make macOS ask the user: the walk
+// never enters them, and git never runs in a folder an agent worked in there,
+// nor is it even stat'ed. ~/Documents is read only with the opt-in.
 func TestMacOSProtectedFoldersOfAgentsAreNotTouched(t *testing.T) {
 	h := home(t)
 	protected := map[string]string{
-		"acme/documents": filepath.Join(h, "Documents", "a"),
-		"acme/desktop":   filepath.Join(h, "Desktop", "b"),
-		"acme/downloads": filepath.Join(h, "Downloads", "c"),
-		"acme/cloud":     filepath.Join(h, "Library", "CloudStorage", "d"),
-		"acme/icloud":    filepath.Join(h, "Library", "Mobile Documents", "e"),
+		"acme/documents":  filepath.Join(h, "Documents", "a"),
+		"acme/desktop":    filepath.Join(h, "Desktop", "b"),
+		"acme/downloads":  filepath.Join(h, "Downloads", "c"),
+		"acme/pictures":   filepath.Join(h, "Pictures", "d"),
+		"acme/movies":     filepath.Join(h, "Movies", "e"),
+		"acme/music":      filepath.Join(h, "Music", "f"),
+		"acme/library":    filepath.Join(h, "Library", "Developer", "g"),
+		"acme/containers": filepath.Join(h, "Library", "Containers", "h"),
+		"acme/group":      filepath.Join(h, "Library", "Group Containers", "i"),
+		"acme/cloud":      filepath.Join(h, "Library", "CloudStorage", "j"),
+		"acme/icloud":     filepath.Join(h, "Library", "Mobile Documents", "k"),
+		"acme/dropbox":    filepath.Join(h, "Dropbox (Work)", "l"),
 	}
 	now := time.Now()
 	var events []hookevents.Record
@@ -51,19 +61,60 @@ func TestMacOSProtectedFoldersOfAgentsAreNotTouched(t *testing.T) {
 			}
 		}
 	}
-
-	// The one-off Documents opt-in lets that folder through, and only that one.
-	darwin.IncludeDocuments = true
-	result = find(t, darwin)
-	if result.Repositories["acme/documents"] == nil || result.Repositories["acme/desktop"] != nil ||
-		result.Repositories["acme/downloads"] != nil || result.Repositories["acme/cloud"] != nil || result.Repositories["acme/icloud"] != nil {
-		t.Fatalf("with the opt-in: %+v", result.Repositories)
+	// Locate, which the service runs for each event, follows the same rule.
+	for name, dir := range protected {
+		if got := Locate(context.Background(), darwin, dir, now); got != nil {
+			t.Errorf("%s: Locate = %+v", name, got)
+		}
 	}
 
-	// Other systems are unchanged: an agent worked there, so it is read.
+	// The one-off Documents opt-in lets that folder through, walked and as
+	// an agent's folder, and only that one.
+	calls = nil
+	darwin.IncludeDocuments = true
+	result = find(t, darwin)
+	if len(result.Repositories) != 2 || result.Repositories["acme/documents"] == nil || result.Repositories["acme/documents"][0].Source != SourceAgent {
+		t.Fatalf("with the opt-in: %+v", result.Repositories)
+	}
+	if got := Locate(context.Background(), darwin, protected["acme/documents"], now); len(got) != 1 {
+		t.Fatalf("Locate with the opt-in = %+v", got)
+	}
+
+	// Other systems have no such prompt: an agent worked there, so it is
+	// read, except in Downloads, which holds nobody's clone.
 	linux := options(h, events...)
-	if got := find(t, linux); len(got.Repositories) != len(protected)+1 {
+	if got := find(t, linux); len(got.Repositories) != len(protected) || got.Repositories["acme/downloads"] != nil {
 		t.Fatalf("linux repositories = %+v", got.Repositories)
+	}
+}
+
+// Removable and network volumes ask too; a home directory on a volume of its
+// own does not.
+func TestMacOSVolumesAreProtected(t *testing.T) {
+	// A macOS home directory, spelt so that it reads as no real one.
+	mac := "/Us" + "ers/dev"
+	f := newFinder(Options{Home: mac, GOOS: "darwin", TempDirs: []string{}})
+	for path, want := range map[string]bool{
+		"/Volumes":                 true,
+		"/Volumes/USB/code/app":    true,
+		"/Volumes/share/app":       true,
+		mac + "/code/app":          false,
+		mac + "/Library/Caches/x":  true,
+		mac + "/library/caches/x":  true,
+		mac + "/Pictures/x":        true,
+		mac + "/Documents/x":       true,
+		mac + "/OneDrive - Acme/x": true,
+	} {
+		if got := f.protected(path); got != want {
+			t.Errorf("protected(%s) = %v", path, got)
+		}
+	}
+	onVolume := newFinder(Options{Home: "/Volumes/Home/dev", GOOS: "darwin", TempDirs: []string{}})
+	if onVolume.protected("/Volumes/Home/dev/code/app") || !onVolume.protected("/Volumes/Home/dev/Music/x") || !onVolume.protected("/Volumes/USB/app") {
+		t.Error("a home on a volume is read like any other")
+	}
+	if linux := newFinder(Options{Home: "/home/dev", GOOS: "linux", TempDirs: []string{}}); linux.protected("/Volumes/USB/app") {
+		t.Error("only macOS asks")
 	}
 }
 
@@ -85,24 +136,25 @@ func TestAgentWorktreeInAHiddenFolderStandsForTheMainClone(t *testing.T) {
 	}
 }
 
-func TestWalkBudgetIsSharedByAllFolders(t *testing.T) {
+func TestWalkBudgetGoesToShallowFoldersFirst(t *testing.T) {
 	h := home(t)
 	for _, name := range []string{"r1", "r2", "r3"} {
 		repo(t, filepath.Join(h, "code", name), "origin", gh("acme/code-"+name))
 		repo(t, filepath.Join(h, "src", name), "origin", gh("acme/src-"+name))
 	}
+	repo(t, filepath.Join(h, "shallow"), "origin", gh("acme/shallow"))
 	o := options(h)
-	o.MaxWalked = 4 // code itself and its three clones
+	o.MaxWalked = 5 // the home, its three folders, then code/r1
 	result := find(t, o)
-	if len(result.Repositories) != 3 || result.Repositories["acme/code-r1"] == nil || result.Repositories["acme/src-r1"] != nil {
+	if len(result.Repositories) != 2 || result.Repositories["acme/shallow"] == nil || result.Repositories["acme/code-r1"] == nil {
 		t.Fatalf("repositories = %+v", result.Repositories)
 	}
 }
 
 func TestFolderInsideAWalkedFolderIsNotWalkedAgain(t *testing.T) {
 	h := home(t)
-	// Both clones are deeper than a walk of ~/code reaches. The agent's clone
-	// is found; its parent lies in the walked folder, so its sibling is not.
+	// Both clones are deeper than the walk of the home reaches. The agent's
+	// clone is found; the folder around it is not walked for its sibling.
 	worked := repo(t, filepath.Join(h, "code", "a", "b", "c", "d", "e"), "origin", gh("acme/worked"))
 	repo(t, filepath.Join(h, "code", "a", "b", "c", "d", "f"), "origin", gh("acme/sibling"))
 	result := find(t, options(h, agentEvent(worked, time.Now())))

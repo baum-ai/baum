@@ -9,6 +9,8 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/baum-ai/baum/internal/agentdirs"
 )
 
 // ClaudeProcess is a running Claude Code session as Claude Code registers it
@@ -53,12 +55,17 @@ func FindClaude(home, id string) (ClaudeProcess, error) {
 	})
 }
 
-// readClaudeRegistry is the entries under home's ~/.claude/sessions that name
-// a session and a pid, by session id. An entry it cannot read is passed over.
+// readClaudeRegistry is the entries under the sessions folder of each Claude
+// Code configuration directory baum knows (agentdirs.Claude.All: ~/.claude under
+// home, then the others) that name a session and a pid, by session id. An entry it cannot read is passed over.
 func readClaudeRegistry(home string) (map[string][]ClaudeProcess, error) {
-	entries, err := filepath.Glob(filepath.Join(home, ".claude", "sessions", "*.json"))
-	if err != nil {
-		return nil, err
+	var entries []string
+	for _, dir := range agentdirs.Claude.All(home) {
+		found, err := filepath.Glob(filepath.Join(dir, "sessions", "*.json"))
+		if err != nil {
+			return nil, err
+		}
+		entries = append(entries, found...)
 	}
 	byID := make(map[string][]ClaudeProcess, len(entries))
 	for _, path := range entries {

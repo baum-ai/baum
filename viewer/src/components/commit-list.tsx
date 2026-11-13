@@ -97,9 +97,9 @@ function CommitStats({ files, compact }: { files: readonly CommitFileView[]; com
   const { additions, deletions } = totals(files);
   const count = pluralize("file", files.length, true);
   return (
-    <p className="text-xs text-(--text-tertiary)">
-      <span className="font-mono text-(--status-positive)">+{additions}</span>{" "}
-      <span className="font-mono text-(--status-critical)">−{deletions}</span>
+    <p className="text-xs text-tertiary">
+      <span className="font-mono text-status-positive">+{additions}</span>{" "}
+      <span className="font-mono text-status-critical">−{deletions}</span>
       {compact ? ` · ${count}` : ` across ${count}`}
     </p>
   );
@@ -123,11 +123,11 @@ function FileStatus({ status }: { status: string }) {
 
 function FileCounts({ file }: { file: CommitFileView }) {
   if (file.additions === null || file.deletions === null)
-    return <span className="flex-none text-xs text-(--text-tertiary)">binary</span>;
+    return <span className="flex-none text-xs text-tertiary">binary</span>;
   return (
     <span className="flex-none font-mono text-xs">
-      <span className="text-(--status-positive)">+{file.additions}</span>{" "}
-      <span className="text-(--status-critical)">−{file.deletions}</span>
+      <span className="text-status-positive">+{file.additions}</span>{" "}
+      <span className="text-status-critical">−{file.deletions}</span>
     </span>
   );
 }
@@ -136,11 +136,9 @@ function FileCounts({ file }: { file: CommitFileView }) {
 function FileName({ file }: { file: CommitFileView }) {
   return (
     <span className="flex min-w-0 flex-col">
-      <span className="truncate font-mono text-xs text-(--text-link)">{file.path}</span>
+      <span className="truncate font-mono text-xs text-link">{file.path}</span>
       {file.oldPath && file.oldPath !== file.path ? (
-        <span className="truncate font-mono text-xs text-(--text-tertiary)">
-          from {file.oldPath}
-        </span>
+        <span className="truncate font-mono text-xs text-tertiary">from {file.oldPath}</span>
       ) : null}
     </span>
   );
@@ -200,7 +198,7 @@ function CommitFilePatch({
     return (
       <div
         role="alert"
-        className="flex flex-wrap items-center justify-between gap-2 rounded-(--radius-sm) border border-(--border-default) px-3 py-2 text-base text-(--status-critical)"
+        className="flex flex-wrap items-center justify-between gap-2 rounded-sm border border-default px-3 py-2 text-base text-status-critical"
       >
         <span className="[overflow-wrap:anywhere]">
           <span className="font-mono text-xs">{file.path}</span> could not be read.
@@ -212,7 +210,7 @@ function CommitFilePatch({
     );
   if (!diff || diff.hunks.length === 0)
     return (
-      <p className="rounded-(--radius-sm) border border-(--border-default) px-3 py-2 text-base text-(--text-secondary) [overflow-wrap:anywhere]">
+      <p className="rounded-sm border border-default px-3 py-2 text-base text-secondary [overflow-wrap:anywhere]">
         <span className="font-mono text-xs">{file.path}</span>: No diff to show.
       </p>
     );
@@ -231,14 +229,14 @@ function CommitFiles({
 }) {
   const [opened, setOpened] = useState<ReadonlySet<string>>(() => new Set());
   const row =
-    "flex w-full min-w-0 items-center justify-between gap-2 rounded-(--radius-sm) border border-(--border-default) bg-(--surface-wash) px-3 py-2 text-left";
+    "flex w-full min-w-0 items-center justify-between gap-2 rounded-sm border border-default bg-surface-wash px-3 py-2 text-left";
   return (
     <section aria-label="Files changed" className="space-y-2">
-      <h3 className="text-xs font-medium tracking-[0.08em] uppercase text-(--text-tertiary)">
+      <h3 className="text-xs font-medium tracking-[0.08em] uppercase text-tertiary">
         Files changed
       </h3>
       {files.length === 0 ? (
-        <p className="text-base text-(--text-tertiary)">This commit changes no file.</p>
+        <p className="text-base text-tertiary">This commit changes no file.</p>
       ) : (
         <ul className="space-y-2">
           {files.map((file) => (
@@ -248,7 +246,7 @@ function CommitFiles({
               key={file.path}
               data-review-block=""
               // Lightly filled while it is the one, as the review's other blocks.
-              className="rounded-(--radius-md) outline-none data-[review-block-active]:[&>*]:bg-(--surface-wash)"
+              className="rounded-md outline-none data-[review-block-active]:[&>*]:bg-surface-wash"
             >
               {loadPatch && opened.has(file.path) ? (
                 <CommitFilePatch oid={oid} file={file} loadPatch={loadPatch} />
@@ -258,7 +256,7 @@ function CommitFiles({
                   aria-expanded={false}
                   aria-label={`${file.path} code`}
                   onClick={() => setOpened((current) => new Set(current).add(file.path))}
-                  className={`${row} cursor-pointer hover:bg-(--surface-hover)`}
+                  className={`${row} cursor-pointer hover:bg-surface-hover`}
                 >
                   <FileName file={file} />
                   <span className="flex flex-none items-center gap-2">
@@ -333,7 +331,7 @@ function CommitDetailPane({
           </Button>
         </Failed>
       ) : detail.value === null ? (
-        <p className="text-base text-(--text-tertiary)">
+        <p className="text-base text-tertiary">
           This commit's message and files could not be read from the clone on this machine.
         </p>
       ) : (
@@ -386,10 +384,10 @@ function CommitCard({
           {title}
         </JumpLink>
       ) : (
-        <p className="font-medium text-(--text-primary) [overflow-wrap:anywhere]">{title}</p>
+        <p className="font-medium text-primary [overflow-wrap:anywhere]">{title}</p>
       )}
-      <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-(--text-tertiary)">
-        <span className="font-mono text-(--text-secondary)" title={commit.id}>
+      <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-tertiary">
+        <span className="font-mono text-secondary" title={commit.id}>
           {formatSHA(commit.id)}
         </span>
         <span>{commit.author || EM_DASH}</span>
@@ -399,12 +397,12 @@ function CommitCard({
       </p>
       {detail ? <CommitStats files={detail.files} compact={openable} /> : null}
       {detail?.body && !openable ? (
-        <p className="text-base whitespace-pre-wrap text-(--text-secondary) [overflow-wrap:anywhere]">
+        <p className="text-base whitespace-pre-wrap text-secondary [overflow-wrap:anywhere]">
           {detail.body}
         </p>
       ) : null}
       {commit.links.length === 0 ? (
-        <p className="text-base text-(--text-tertiary)">No session is linked to this commit.</p>
+        <p className="text-base text-tertiary">No session is linked to this commit.</p>
       ) : (
         <ul className="flex flex-col gap-1">
           {commit.links.map((link) => (
@@ -419,7 +417,7 @@ function CommitCard({
                 {link.label}
               </JumpLink>
               <Badge size="compact">{methodLabel(link.method)}</Badge>
-              <span className="text-xs text-(--text-tertiary)">
+              <span className="text-xs text-tertiary">
                 {Math.round(Math.min(1, Math.max(0, link.confidence)) * 100)}% confidence
               </span>
             </li>
@@ -468,7 +466,7 @@ export function CommitList({
   // says it is one of the pull request's commits, and leads back to them.
   if (single)
     return (
-      <div className="min-h-0 flex-1 xl:overflow-y-auto">
+      <div className="min-h-0 flex-1 wide:overflow-y-auto">
         <CommitDetailPane
           key={shown[0]!.id}
           commit={shown[0]!}
@@ -488,7 +486,7 @@ export function CommitList({
             : `${count} · oldest first, with the sessions linked to each.`
         }
       />
-      <div className="min-h-0 flex-1 xl:overflow-y-auto">
+      <div className="min-h-0 flex-1 wide:overflow-y-auto">
         {shown.length === 0 ? (
           <Empty title="No commits">This pull request has no commits on this machine.</Empty>
         ) : (

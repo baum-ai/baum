@@ -277,6 +277,8 @@ type Tracker struct {
 	order   []string
 	wake    chan struct{}
 	kick    chan struct{}
+	// watch wakes the transcript watcher after session state changes.
+	watch chan struct{}
 	// dropped reports the subscription's missed events; reconciled is how
 	// many of them the last reconcile covered.
 	dropped    func() uint64
@@ -334,7 +336,7 @@ type entry struct {
 func (t *Tracker) init() {
 	t.ready.Do(func() {
 		t.sessions, t.pending, t.seen = map[key]*entry{}, map[key]bool{}, map[string]bool{}
-		t.wake, t.kick = make(chan struct{}, 1), make(chan struct{}, 1)
+		t.wake, t.kick, t.watch = make(chan struct{}, 1), make(chan struct{}, 1), make(chan struct{}, 1)
 	})
 }
 
@@ -535,6 +537,7 @@ func (t *Tracker) Run(ctx context.Context) {
 	}()
 	var flush <-chan time.Time
 	changed := func() {
+		t.wakeWatch()
 		if flush == nil {
 			flush = time.After(NotifyEvery)
 		}
@@ -569,8 +572,18 @@ func (t *Tracker) Run(ctx context.Context) {
 }
 
 func (t *Tracker) signal() {
+	t.wakeWatch()
 	select {
 	case t.kick <- struct{}{}:
+	default:
+	}
+}
+
+// wakeWatch coalesces state changes without making hook delivery wait for
+// transcript reads. Watch consumes the latest state, not individual events.
+func (t *Tracker) wakeWatch() {
+	select {
+	case t.watch <- struct{}{}:
 	default:
 	}
 }
@@ -688,6 +701,9 @@ func (t *Tracker) Reconcile(ctx context.Context) bool {
 	t.mu.Unlock()
 	t.persistAttributions(ctx)
 	t.announce(announcements)
+	if changed {
+		t.wakeWatch()
+	}
 	return changed
 }
 
@@ -738,6 +754,9 @@ func (t *Tracker) Apply(_ context.Context, e hookevents.Event) bool {
 	announcements := t.takeAnnouncementsLocked()
 	t.mu.Unlock()
 	t.announce(announcements)
+	if changed {
+		t.wakeWatch()
+	}
 	return changed
 }
 
@@ -793,6 +812,7 @@ func (t *Tracker) Gone(agent, id string, at time.Time) bool {
 	s.ended, s.endedAt, s.EndedAt = true, at, at
 	s.wait("", at, "")
 	s.State = s.state(now)
+	t.wakeWatch()
 	return true
 }
 
@@ -815,6 +835,7 @@ func (t *Tracker) endWait(agent, id string, at time.Time, kind, reason string, e
 	s.LastActivityAt, s.LastEvent = at, kind
 	s.wait(reason, at, "")
 	s.State = s.state(now)
+	t.wakeWatch()
 	return true
 }
 

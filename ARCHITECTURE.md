@@ -399,6 +399,75 @@ copy:
   matches a file or directory inside either tree, including the case of
   every path component even on case-insensitive filesystems. It never spends
   a repair on a reference.
+- `summary.recommendation` (`null`, or a `decision` of `approve`,
+  `look_first` or `request_changes` with a `text` and `refs`) is optional in
+  the stored schema, for documents generated before it existed, and required
+  (null allowed) in the authored contract and the model schema. The outline
+  stage writes it, so it survives into the assembled and stored document;
+  refresh never adds or changes it. `summary.review_exchange.summary` may be
+  null, for a pull request nobody has reviewed.
+- Prose rules (`prose_rules.go`) run on newly authored documents only, and
+  their findings go back to the model through the repair loop. The public
+  prompts (`agent/prompt`) state the same rules up front, so a repair is the
+  exception. `ValidateStored`
+  and `Refresh` never apply them, so a stored review is never rejected or
+  rewritten for them. Which rules run depends on what is being prepared:
+  a one-pass document (`Validate`, `Prepare`) gets all of them; a staged
+  outline (`PrepareOutline`) gets them with prose and recommendation refs
+  limited to section IDs, because no risk, evidence or decision exists yet
+  ("the outline can cite only section IDs; cite the section"); a section's
+  details (`PrepareSectionDetails`) are checked without the outline around
+  them (summary, section title and assessment belong to the outline, which a
+  details reply cannot change, and a continued run's stored outline is
+  unchecked), citing their own items and any section; details a previous version wrote
+  (`PrepareReusedSectionDetails`) get the wording rules but no identifier is
+  resolved against the bundle, since a check or hunk of an earlier head does
+  not exist now and the section would be rewritten on every push; the context
+  stage, a stored outline that is continued (`PrepareStoredOutline`) and the
+  final assembly (`PrepareStaged`, `CompleteStaged`) apply none, since each
+  part was checked when it was written or accepted.
+- A host that writes the summary's review exchange itself, as a stack review
+  does from its members' exchanges, uses `PrepareHostExchange` and
+  `CompleteWithPromptHostExchange`: the model never sees that field, so no
+  finding on it could be repaired, and the rules do not read it.
+- The rules, and the fields they read:
+  - Run-state wording ("still in progress", "had not finished", "at the
+    snapshot", and "was/is in progress, queued or pending" when the sentence
+    is about a CI check, workflow, suite, pipeline or bot, not the verb "check": the evidence
+    status is refreshed later, the sentence is not) and talk about the model's
+    inputs ("in the bundle", "in the excerpts", "in the supplied snapshot",
+    "in the head checkout", "outline stage", "I read") are checked only in the
+    fields that carry the review's judgement: evidence claim, detail and
+    expects, attention text, risk text, the overview, the review exchange
+    summary, assessment reasons and the recommendation text. Behaviour steps,
+    context, intent, titles, the other descriptive blocks, tiles and the
+    release note describe the code under review, which may itself run jobs and
+    take snapshots, and are not checked for them.
+  - Identifiers in any prose field must resolve, because the viewer links
+    them: a hunk ID must be in the bundle's diff; a `rsk_`, `ev_`, `dec_` or
+    `sec_` ID in the document; a `check_run:` or `status:` ID among the
+    bundle's checks; a `PRRT_` ID (hyphens allowed) among its review threads;
+    `comment <digits>` (or a code span of digits) among its conversation items;
+    a session UUID a non-restricted session. Without a bundle only the
+    document's own IDs are checked. A full 40-hex SHA is rejected: write the
+    short SHA.
+  - A ticket key in a title (section, step or decision titles).
+  - `ci` evidence: the authored contract and the model schema do not offer the
+    kind (the page shows the checks; a `test` item whose claim names what the
+    tests cover, anchored to the check, replaces it); the stored contract keeps
+    it, and the finding remains for a path without the enum.
+  - An absence claim about tests, checks, runs or evidence ("No test covers
+    X", "no passing check") whose status is not `missing`, `unavailable`,
+    `failed`, `skipped` or `pending`; "No caller of X remains" is a code fact
+    and is left alone.
+  - More than one `missing` evidence item in a section. Risks are not capped:
+    a cap makes the model drop real risks, which the next version then records
+    as mitigated.
+  - Two risks, or a risk and the section's attention, that state one point:
+    at least six distinct words in the shorter text and at least 80% of them
+    (stop words aside) in the longer one.
+  - Recommendation refs that name no section, risk, evidence or decision, or
+    none for `look_first` and `request_changes`.
 
 ### History
 
@@ -571,6 +640,12 @@ type Backend interface {
 	Run(ctx context.Context, req Request) (Result, error)
 }
 ```
+
+Every run has no MCP server: Claude Code gets `--strict-mcp-config` with an empty
+`--mcp-config`, Codex `--ignore-user-config`. A local run may set
+`Request.MCP` to give the agent exactly one, baum's own (the daemon's
+`/api/mcp`, over HTTP); see
+"MCP server for agents" for the flags and the token's path.
 
 A backend may also implement `agent.Completer`: one structured completion
 with a system prompt, a user message and a schema, no working files, used by
@@ -835,12 +910,12 @@ and anthropic, `submit-codex.md`, and `submit-cursor.md`, which points at the
 schema the cursor-agent backend appends and lists the tools that stop a run),
 embedded with `go:embed`.
 `Prompts.Instructions` appends the backend's block under that heading, sets
-`Version` to `review-public-v6` and `Digest` to the sha256 of the composed body,
+`Version` to `review-public-v8` and `Digest` to the sha256 of the composed body,
 and fails for any other backend. A host may supply another implementation; the
 hosted service does, with its private prompts. `StaticPrompts` is a fixed
 implementation for tests and simple hosts. The prompt is per backend because
 each backend submits its result differently. `GroupPrompts` is the local
-review group's prompt (`group-review-public-v4`): the same text with
+review group's prompt (`group-review-public-v6`): the same text with
 `group-public-v1.md` inserted before the Submitting heading, which says how a
 group's bundle, per-member checkout and `members.json` differ and what a
 combined review covers (see "Review groups").
@@ -849,7 +924,7 @@ A staged review takes its instructions through `StagedPrompts`, whose
 `StagedInstructions(ctx, backend)` returns a `StagedPrompt`: `Shared` and
 one text per stage (`Outline`, `Details`, `Context`), with a `Version` and a
 `Digest` covering all four. The module's `prompt.StagedPrompts`
-(`review-staged-public-v1`) embeds `review-shared-public-v1.md` (the stages
+(`review-staged-public-v3`) embeds `review-shared-public-v1.md` (the stages
 and what each writes, so none repeats another, plus the ground rules,
 inputs, checks, anchors, writing and calibration of `review-public-v6.md`)
 and `review-outline-public-v1.md`, `review-details-public-v1.md` and
@@ -2025,6 +2100,33 @@ a process reuses what it built:
   snapshot uses small per-checkpoint facts that `sessions` remembers by
   clone and tree. A checkpoint is read whole again, through the checkpoint
   cache below, only when a session chosen from it has to be mapped.
+* **New evidence contexts.** A digest may retain a context-independent slim
+  evidence basis, capped at 4 MiB per session within the existing 64 MiB
+  digest budget. It keeps only the evidence projector's inputs, with bounded
+  prompt/reply text and without tool output, assistant content or patch
+  hunks. New caps, known paths, checkout placements and thread names run the
+  same projector against this basis. Optional bases are shed before compact
+  facts; admission may replace colder optional bases but cannot evict facts.
+  An absent or oversized basis preserves the full-read fallback and can be
+  refilled by that mapped read. Every retained byte/string is detached from
+  the graph; byte accounting includes the whole basis.
+* **Linked-session views.** `locallink.Resolve` uses compact facts to select
+  the linked sessions, then maps only those whose graphs it must return. The
+  local app uses `ResolveSummary` for lists and decision attribution: its
+  compact facts include titles and outcomes, so even a linked graph evicted
+  from the mapping cache is not decoded merely to list its metadata. The
+  summary returns the same JSON and a lazy graph reader bound to the pinned
+  request. Opening a transcript rechecks that it is still linked and reads its
+  graph then, under the daemon's local-read semaphore and the viewer's shared
+  transcript job, lifetime and timeout. Default `Resolve` still returns full
+  linked graphs. Missing facts and changed selection retain the full-read
+  fallback.
+* **Feature linkage.** `locallink.LinkCommits` shares those compact facts and
+  skips unchanged session graphs too. The feature worker caches successful
+  recorded commit ranges by clone, base, head and shallow boundary, bounded
+  at 128 ranges and 16 MiB of estimated metadata. Full daily relinks bypass
+  range reuse, but keep their input fingerprint so a following unchanged
+  window can skip linking immediately.
 * **Closed and merged pull requests.** A refresh of a pull request that is
   closed or merged sets `EvidenceRequest.Frozen`. Its sessions are read once in
   the process, then kept for the same commits without looking at the stores
@@ -2037,7 +2139,7 @@ a process reuses what it built:
   memory, about a sixth of their transcripts' size.
 * **Growing transcripts.** A session an agent is still running changes on
   every append, so none of the above applies to it. For each Claude Code
-  transcript and Codex rollout changed in the last hour, `sessions.Map` keeps
+  transcript and Codex rollout, regardless of age, `sessions.Map` may keep
   the decoded lines and the byte offset they end at, and decodes only what was
   appended since; the mapper still runs over every line. A file that shrank,
   was replaced or had its earlier bytes rewritten is decoded whole. The lines
@@ -2066,8 +2168,13 @@ place. A reused answer prints no warnings.
 `/api/sessions` answer lists, and only those: it reads that answer from the
 same cache, computing it through the same single-flight path when it is not
 there yet, and any other id, a session read but not linked, or an unavailable
-answer is 404. The answer keeps the linked sessions' graphs for this
-(`Result.Graphs`, never part of its JSON).
+answer is 404. A full linkage answer may keep its linked graphs
+(`Result.Graphs`, never part of its JSON). The daemon's metadata-only answer
+instead supplies a lazy reader: an explicit transcript request revalidates
+linkage to the pinned document commits, under the same local-read semaphore,
+and shares one graph read and render for that session. A no-longer-linked or
+unreadable graph is not served. The lazy read has the viewer's lifetime and a
+two-minute bound; failed builds are retried on the next request.
 
 The transcript is shaped and bounded first, from the graph as read, and
 redacted after, so nothing past the limits below is ever redacted or held
@@ -2675,6 +2782,46 @@ variables, so it may name a `GIT_` variable the allowlist drops. A fix passes
 it to `gitlocal.FixOptions.Env` for every git command in the checkout and the
 push, without the variables that would redirect git.
 
+`config.Config.ClaudeConfigDir` (never in the file) is the Claude Code
+configuration directory the app chose for a run: `repos.Preferences`'
+`ClaudeConfigDir` for reviews and extraction (`Resolve`), and
+`FixClaudeConfigDir` for a fix with its own agent (`ResolveFix`; a fix that
+follows reviews takes theirs), and `Decisions.ClaudeConfigDir` for extraction
+with its own agent (`ResolveExtraction`, set with `PUT
+/api/settings/decisions`). All three are checked by `agentdirs.Claude.Choose`. `DefaultBackendsFor` gives it to the `claude`
+backend alone as `CLAUDE_CONFIG_DIR`, set over `agent_env`'s. `PUT
+/api/automatic` takes `claude_config_dir` and `fix_claude_config_dir` (`~`
+expanded, stored absolute, an existing directory, `""` for the
+environment's), refuses one `claude auth status --json` reports signed out
+with that directory (`Scheduler.ClaudeSignedIn`, `claude.SignedInWith`; an
+answer it cannot read does not refuse), and records the directory with
+`agentdirs.Claude.Remember`. `planusage.Service.Others` reads the plan of each
+directory chosen for a run that uses Claude Code
+(`Preferences.ClaudeConfigDirs`) and serves it with `config_dir`.
+
+`config.Config.CodexHome` is the same for Codex: `Preferences.CodexHome`,
+`FixCodexHome` and `Decisions.CodexHome` under the same rules,
+`DefaultBackendsFor` gives it to the `codex` backend alone as `CODEX_HOME`,
+`PUT /api/automatic` takes `codex_home` and `fix_codex_home` and `PUT
+/api/settings/decisions` `codex_home`, checked by `agentdirs.Codex.Choose`
+with `codex login status` (`codex.SignedInWithHome`). The plans of
+`Preferences.CodexHomes` (runs whose backend is `codex`) are read with
+`planusage.Codex{Home: dir}`.
+
+`internal/agentdirs` is the one place that says which agent directories baum
+reads. `agentdirs.Claude` and `agentdirs.Codex` each have `All(home)`: the
+default (`~/.claude`, `~/.codex`), the process's variable (`CLAUDE_CONFIG_DIR`,
+`CODEX_HOME`) and a record beside `config.toml` (`claude-dirs.json`,
+`codex-dirs.json`; `Remember`, at most 16). Session discovery
+(`collector.FindSessions`, `FindStores`, with `ClaudeProjectsDir` and
+`CodexSessionsDir` still overrides), clone finding, the live transcript store
+checks (`livesessions.claudeTranscript`, `codexRollout`), the running-session
+registry (`readClaudeRegistry`) and review-run cleanup
+(`reviewruns.RemoveSessions`) all read each directory. `baum hooks install
+--user` records the directory it installed into, and an agent hook the one its
+session runs with (`hookcli.rememberSessionDir`, on the events that locate the
+terminal).
+
 ## Local application persistence
 
 [`internal/appdb`](internal/appdb/README.md) owns the shared per-user
@@ -2737,11 +2884,13 @@ handler behind that middleware. The existing document viewer does not mount it.
 prompting, so a picked repository gets a clone attached and the setup screens
 can pre-select repositories already on the machine. `Find` collects directories
 from agent hook events and the Claude Code, Codex and Cursor session stores
-(cheap working-directory probes, no transcript parsing), resolves each to its
+(cheap working-directory probes, no transcript parsing), leaving out those in a
+temporary directory, an agent scratchpad or Downloads, resolves each to its
 working tree with `gitlocal.Probe` (two read-only git commands; `Open` would
-create a private mirror per candidate), then walks the usual code folders and
-the folders around the clones agents used, to four levels, using exclusions
-defined by `internal/scanskip`. Candidates are grouped by the
+create a private mirror per candidate), then walks the home directory breadth
+first, to five levels, stopping at a repository and using the exclusions
+defined by `internal/scanskip` (hidden, dependency and build folders, and
+personal folders, including every one macOS guards with a privacy prompt). Candidates are grouped by the
 lowercase `owner/name` of every github.com remote, linked worktrees collapsing
 into their main clone. The daemon's `Service` keeps the result in memory,
 rescans at start, hourly while a picked repository has no available clone, and
@@ -2751,8 +2900,10 @@ the last scan was under a minute ago), attaches the best candidate with
 any remote names it; a path or repository directory registered to another
 repository is never moved, and an unpicked repository is never picked again),
 and attaches the clone of an agent event's directory at once, after a registry
-query that runs no git. On macOS it reads none of the protected folders
-(Documents, Desktop, Downloads, iCloud Drive, CloudStorage). `GET /api/clones/found` and
+query that runs no git. On macOS one rule (`finder.protected`) keeps the walk
+and agent folders out of every path that would make macOS ask (Desktop,
+Downloads, Pictures, Movies, Music, all of Library, cloud drives, `/Volumes`,
+and Documents unless one scan is asked to include it). `GET /api/clones/found` and
 `POST /api/clones/found/refresh` serve it. It makes no network request. See
 its [README](internal/clonefind/README.md).
 
@@ -2854,6 +3005,8 @@ which builds every provider, the generation runner included, once it owns
 the per-user lock. SSE has a bounded
 in-memory event log; reconnect replays notifications or asks for an index reset.
 It does not persist a second review index. An event's data is at most 16 KiB.
+`POST /api/mcp` is the exception to this middleware: it takes only an MCP
+token, never the launch token or the cookie (see "MCP server for agents").
 
 The generation queue's changes go out as two kinds. A `progress` event
 `{"job": <job>}` announces anything but a running job's usage: queued, started,
@@ -3297,9 +3450,48 @@ failing checks and commit statuses are never what is cut. It answers
 `status` (`queued`, `in_progress` or `completed`; a pending commit status is
 `in_progress`), `conclusion` (the run's conclusion or the status's state, empty
 until completed), `title`, `url` and `job_id` (only for a failing GitHub
-Actions run, so `rerun-job` accepts it). Failing checks come first, then
-those not completed, each by name. The cache keeps a head's list for 20
-seconds, and a re-run forgets it.
+Actions run, so `rerun-job` accepts it), `id` (the check run's id; absent for
+a commit status) and `has_log` (a completed GitHub Actions run). Failing
+checks come first, then those not completed, each by name. The cache keeps a
+head's list for 20 seconds, and a re-run forgets it.
+
+`GET /api/prs/check-log?repository=&pr=&check=<check run id>` answers the tail
+of one check's log, read only when a caller asks (the app when a person opens
+**Show log**, or the `check_log` tool): `prupdate.Service.CheckLog` reads the
+pull request's current head and its checks (`AllChecks`) and refuses, as
+`not_found`, a check run that is not one of them, so a request cannot name
+another run. A completed GitHub Actions run whose job ran (`has_log`: its
+conclusion is `failure`, `success`, `cancelled`, `timed_out` or `neutral`; its
+check run id is the job id) has its job log read through
+`RESTReader.DownloadTail` (`GET /repos/{owner}/{repo}/actions/jobs/{id}/logs`;
+one redirect to a signed https URL is followed and the token goes to the API
+host alone). After the redirect it asks the download host, by a suffix `Range`
+request, for the last 8 MiB only, so the end of a log of any length is read
+without downloading the rest, and drops the first line of that part, which the
+range may have cut, unless its `Content-Range` says it starts at the file's
+first byte (a log shorter than the range comes whole). A host that ignores the range sends the whole file, which
+is read when it is within 64 MiB; over that the answer is `too_long` and the
+log is never passed off from its middle. The read is streamed through a tail
+writer that keeps the last 200 lines (each up to 16 KiB, so a secret near the
+cut is found), the lines are redacted whole by the bundle redactor (a
+redactor failure refuses the log), and only then is each cut to 2 KiB and the
+last whole lines kept within 64 KiB. Timestamps, terminal escapes, control
+characters and invisible format characters (bidirectional overrides and
+isolates, zero-width characters, variation selectors) are dropped.
+Concurrent opens of one log under the same GitHub account download it once;
+an open that begins after the account changed reads the log itself. It answers `{id, name,
+available, reason, message, log, truncated, url}`: `available` with `log` (and
+`truncated` whenever it is not the whole log), or not with `reason` `no_log`
+(another app's check run, a commit status or a job that did not run), `running`
+(not completed), `unavailable` (GitHub answered 404 or 410: the job may not
+have run, or its log is older than the repository keeps) or `too_long`, none
+of them an error. GitHub's 401, 403, 429 and other statuses are refusals in
+the same words as the other GitHub routes. `prupdate.Cache` keeps a finished
+log's tail, and a `too_long` answer, per repository and check run, at most 64,
+least recently used first, with no age limit (a finished log does not
+change); an `unavailable` answer is not kept, as GitHub may still be writing
+the log. A re-run or an account change empties the cache. Nothing reads a log
+in the background.
 
 `GET /api/prs/conflicts?repository=&pr=` answers `{head_sha, base_ref,
 base_sha, files}`: the files in which the pull request's head conflicts with
@@ -3442,9 +3634,13 @@ it does (a job whose start could not be journaled waits until then), and tries
 once more at shutdown after the workers stop.
 
 A run's time limit is its only bound by default: `budgets.review_timeout` (10
-minutes) for a review of a pull request or a group and `budgets.run_timeout`
+minutes) for a review of a pull request and `budgets.run_timeout`
 (30 minutes) for every other agent run, a fix, a question to a review's agent
-or a feature build. The preferences' `review_time_limit_minutes` and
+or a feature build. A group's review is written in one pass whose final
+document alone takes several minutes, so its limit is the review limit plus
+half of it for each member after the first, at most three times the review
+limit (`groupReviewTimeout`: 15 minutes for two members by default, 30 for
+five or more). The preferences' `review_time_limit_minutes` and
 `run_time_limit_minutes` (`PUT api/settings/time-limits`, 1–240) replace the
 config file's (`Preferences.Resolve`). `max_calls` and `max_tokens` are zero,
 no limit, unless the config file sets them; `agent.Exceeds` and the backends
@@ -3746,8 +3942,15 @@ commit statuses. On a pull request the signed-in account opened
 GraphQL document (`FixReviewThreads`, up to four pages of 50 threads with the
 first 10 comments of each; `github.Client.UnresolvedThreads`) and keeps,
 through `fix.SelectThreads`, those the account can reply to and resolve whose
-first comment comes from an `OWNER`, `MEMBER` or `COLLABORATOR` or a bot, at
+first comment comes from an account with push access to the repository, at
 most 20, dropping other authors' comments and bounding each body to 2 KiB.
+Push access is the collaborator permission over REST
+(`fix.CollaboratorPushAccess`: `write`, `maintain` or `admin`, or
+`user.permissions.push` for a custom role), read once per author per read of
+the threads; a 404 or 403 is no access, any other failure fails the
+preparation. GitHub's author association is not used. Comments by apps' bot
+accounts are trusted without a permission read, so review bots' threads can be
+fixed.
 `Prepared.Fix` records what it fixes (`conflicts`, `checks`, and `threads`, a
 digest of the kept threads and their comments) and the branches;
 `fix_threads` keeps the threads' places and excerpts for the job, with
@@ -3789,16 +3992,27 @@ failure, so it sends no notice and the app shows that summary in neutral
 words (jobs saved as failed by an older daemon are shown the same way). A
 failed fix records a reason (`head_changed`, `threads_changed`, `no_remote`,
 `git`, `backend`, `budget`, `conflicts_remain`, `history_rewritten`,
-`workflow_changed`, `push_rejected`, `push_failed`, `signed_out`) and a
-bounded detail. `signed_out` is an agent failure whose provider refused its
+`credential_added`, `nested_repository`, `workflow_changed`, `push_rejected`,
+`push_failed`, `signed_out`) and a bounded detail. `signed_out` is an agent failure whose provider refused its
 sign-in (`agent.SignInRejected`); review and chat jobs report the same reason
 in place of `backend`. A
 `budget` detail names the limit the agent reached (its time limit, in
 minutes, or its call or token budget); a `backend` one points to the daemon
 log, where `fix.Options.Logger` (the job's logger) has the agent's own error,
 which the job never keeps. A
-fix of review comments alone fails with `workflow_changed` when its commit
-changes a path under `.github/workflows/` or `.github/actions/`.
+fix checks its commit before the push (`fix.guard`), against what the fix
+itself changed (`gitlocal.Fix.Changes`: the raw tree diff from the head, or
+from the merge commit after a clean merge of the base, or, after a merge that
+stopped at conflicts, only paths that differ from both head and base, with
+added lines those neither side had; submodules always included). It fails with
+`credential_added` when a non-e-mail span the redactor finds overlaps an added
+line, when a changed file sits at a well-known credential path (OpenSSH
+private key names, `.git-credentials`, `.netrc`, `.aws/credentials`,
+`gh/hosts.yml`), or when a changed text file is over 8 MiB; with
+`nested_repository` when it adds or changes a gitlink (mode `160000`); and,
+when review threads or a conversation were in the prompt, with
+`workflow_changed` when it changes a path under `.github/workflows/` or
+`.github/actions/`. The detail names the paths, masked.
 
 A fix can also be made from a chat conversation. The estimate item carries
 `fix_chat: {conversation_id, turn?}` (`jobs.FixChatRef`; `fix_chat` rather than
@@ -4583,10 +4797,11 @@ replace it.
   left, or used only to resume another; Claude Code writes no transcript until
   then) and is left out of the list (`empty`). Since agents report few
   events during a turn, `Transcripts.Watch` builds the list every second
-  while a session is running (every 5 seconds while sessions are listed but
-  none runs, and every 15 when none is live, so an idle daemon does not wake
-  every second), reading a working session's transcript (one neither ended nor waiting)
-  when it grew and the others' every 5 seconds, only what they appended, and
+  while a session is running and every 15 seconds otherwise. Applied hook
+  events and app-driven resume or end changes wake the watcher to shorten
+  its wait when a session starts running; repeated events never postpone a
+  scheduled read. It reads a working session's transcript (one neither ended nor waiting)
+  when it grew and the others' no more often than every 5 seconds, only what they appended, and
   publishes `live` when it differs from the last one: a running session's
   steps, files and message, and a session settling, reach the app without a
   hook event, what an agent says within a couple of seconds.
@@ -4920,16 +5135,18 @@ replace it.
   hooks last reported (kept in the tracker's entry, never served, and not in
   `live-sessions.json`), read only when, its symbolic links resolved
   (`filepath.EvalSymlinks`, the store's root resolved too), it is a regular
-  file strictly inside the agent's own store under the home directory, the
-  one discovery reads (`~/.claude/projects` for Claude Code, a `.jsonl`;
-  `~/.codex/sessions` for Codex, a `rollout-*.jsonl`). A Claude Code
+  file strictly inside the agent's own store, the one discovery reads
+  (`~/.claude/projects` under the home directory or the `projects` folder of
+  another directory of `agentdirs.Claude.All` for Claude Code, a `.jsonl`;
+  `~/.codex/sessions` or the `sessions` folder of another home of
+  `agentdirs.Codex.All` for Codex, a `rollout-*.jsonl`). A Claude Code
   subagent transcript beside it that resolves outside the store is left out.
-  Without a path a Codex session is looked up by id (`findRollout`, once per
+  Without a path a Codex session is looked up by id in each home (`findRollout`, once per
   session): the `rollout-*-<id>.jsonl` under `~/.codex/sessions` whose first
   line names that thread as a root. Only names are walked, so the rollouts
   Codex compresses as they age (`.jsonl.zst`, which a store scan rejects) do
   not stop it; a Claude Code one is found by its id in the project folders
-  under `~/.claude/projects` (`<folder>/<id>.jsonl`), as a session read back
+  of each store (`<folder>/<id>.jsonl`), as a session read back
   from `live-sessions.json` has no path. A Cursor session is read from Cursor's own database
   (`cursortranscript.DefaultStorePath`, a regular file) by its conversation
   id, since Cursor keeps no transcript file baum reads. The files are mapped
@@ -5032,14 +5249,19 @@ saved, in the `state/agent-requests` document in `app.sqlite`.
   builds the agent's answer from it; the daemon answers a `Decision`
   (behaviour, suggestion index, option indexes or the user's own text per
   question), or nothing. `Store.Ask` cleans, masks (the tracker's `Mask`) and
-  cuts every string (values keep newlines, 4000 characters; others one line),
-  holds at most 64 requests, and waits for an answer, a withdrawal, the
+  bounds every string: values (which keep newlines) and suggestion labels to
+  the 64 KiB line that carries the request, so they are shown whole, and other
+  labels and question texts to one cut line. The hook sends a permission
+  request's values and suggestions whole, and sends nothing (the agent asks in
+  its terminal) when the request would not fit 56 KiB without shortening.
+  It holds at most 64 requests, and waits for an answer, a withdrawal, the
   client's disconnect or, for Codex, `CodexWait` (25 s); a Codex request
   answers nothing at once while `codex_approvals` is off (checked again under
   the lock it is inserted under), and turning it off withdraws the waiting
   ones. A request is refused, answering nothing at once, when the mask turned
   non-empty text into "" (the redaction failed: nothing unmasked is shown),
-  or when its answers could not be told apart once cleaned and cut: two
+  when a permission request's tool, row or suggestion would be cut (approving
+  covers the whole input), or when its answers could not be told apart once cleaned and cut: two
   equal questions, two equal options of one question, or a label containing
   ", " in a multi-select question.
 - **Withdrawal.** `Store.Run` follows the record's agent events
@@ -5094,8 +5316,12 @@ saved, in the `state/agent-requests` document in `app.sqlite`.
 - **API.** `LocalAPI.AgentRequests` mounts `Store.Handler` behind the same
   authentication as every route (without a record:
   `agent_requests_unavailable`). `GET /api/agent-requests` answers
-  `{"requests":[{"id","agent","session_id","kind","tool","created_at","input":[{"label","value","code"?}],"suggestions":[{"id","label"}],"questions":[{"question","header"?,"multi_select","options":[{"label","description"?}]}]}],"messages":[{"agent","session_id","text","queued_at"}],"settings":{"codex_approvals"}}`,
-  oldest request first, message text masked. `POST
+  `{"requests":[{"id","agent","session_id","kind","tool","created_at","input":[{"label","value","code"?}],"suggestions":[{"id","label"}],"questions":[{"question","header"?,"multi_select","options":[{"label","description"?}]}],"altered"?}],"messages":[{"agent","session_id","text","queued_at"}],"settings":{"codex_approvals"}}`,
+  oldest request first, message text masked. `altered` is true when the
+  request's tool, input, questions or options are not shown exactly as the
+  agent sent them (a question's text cut at its bound, cleaned of control or format
+  characters or folded blanks, or with a secret masked); the MCP server's
+  `answer_request` then never proposes allowing it. `POST
   /api/agent-requests/{id}/answer` takes
   `{"behavior","suggestion"?,"answers"?}` (answers keyed by the question and
   option labels shown, several labels joined by ", ") and answers
@@ -5195,11 +5421,697 @@ one place (`featureVersion`: the live stages' current one, a build's
 building one). See
 [its README](internal/decisionlog/README.md#feature-log).
 
+### MCP server for agents
+
+`internal/agentcontext` is an MCP server agents use to read what the app
+shows: the app's chat, and actions working on one pull request. The app
+server routes `POST /api/mcp` to it (`uiserver.Options.MCP`, set through
+`daemon.App.MCP`). It speaks JSON-RPC 2.0 by hand, MCP revision
+`2025-06-18`: `initialize`, `ping`, `tools/list` (each tool carries
+annotations: `readOnlyHint` true and `openWorldHint` false, or, for a tool with
+`Tool.Proposes`, `readOnlyHint` false and `destructiveHint` false, so a client
+can approve reading tools unasked) and `tools/call`, one JSON
+response per request, no batches and no event stream. A notification gets
+202 with no body. Malformed JSON is -32700, an invalid request (a batch
+included) -32600, an unknown method -32601, and missing or invalid params,
+or an unknown tool, -32602. A tool that fails returns a result with
+`isError: true` and its explanation, not a protocol error; so do arguments
+that do not match the tool's JSON Schema.
+
+Agent CLIs reach the route directly over HTTP; there is no bridge process.
+`agent.Request.MCP` (`agent.MCPServer{URL, Token}`) names it for a run: URL
+is `<daemon origin>/api/mcp`, and `Validate` accepts only `http` on a
+loopback address with a port. Claude keeps `--strict-mcp-config` and names
+only `baum` in `--mcp-config`, an `http` server whose `Authorization` header
+is `Bearer ${BAUM_MCP_TOKEN}` (Claude Code expands it from its environment),
+and adds `--allowedTools mcp__baum`, since `--tools` only selects built-in
+tools and a `--print` run cannot ask permission. Codex adds
+`-c mcp_servers.baum.url` and `.bearer_token_env_var="BAUM_MCP_TOKEN"` under
+`--ignore-user-config`. Both put `BAUM_MCP_TOKEN` last in the CLI's
+environment, after `agent_env`, so the token is in no argument or
+configuration. Only the Claude `User` and Codex `Local` profiles accept it;
+the others return an error. With no `MCP` the arguments are what they always
+were. No job sets it yet.
+
+What the CLIs send (checked by `internal/agentcontext/livecheck` against the
+latest and floor releases): Claude Code asks `initialize` for a newer revision
+and accepts `2025-06-18`, opens a `GET` for an event stream and accepts the
+405, and recent releases first try `server/discover` with a newer
+`MCP-Protocol-Version`, take the 400 and fall back to `initialize`. Codex asks
+for `2025-06-18`. With a revoked token both get 401, try no OAuth discovery,
+and finish the run without baum's tools. Tokens die with the daemon, so a CLI
+that outlives a daemon restart has nothing to reconnect to.
+
+The route takes only an MCP token as `Authorization: Bearer`. The app
+server checks the exact Host, asks the MCP server whether the token is live,
+refuses a foreign Origin and needs none; the MCP server takes only `POST`
+(405 otherwise), `application/json` (415), at most 1 MiB (413) and an
+`MCP-Protocol-Version` header that is absent or `2025-06-18` (400 otherwise).
+The launch token and the cookie are refused there, and
+`/s/<namespace>/api/mcp` is not served. An MCP token is not the launch
+token, so it opens no other route.
+
+`Registry` mints tokens in memory: `Mint(Consumer)` returns a token of 32
+random bytes, an opaque consumer id and a revoke function, and refuses any
+consumer but a `chat` (bound to nothing) or an `action` with an `owner/name`
+repository and a pull request number. Nothing about tokens is persisted or
+logged. A chat may read any page and propose changes to the page it has
+open; an action only reads, within its repository: its tools default to its
+pull request and may read the repository's other pull requests. `SetPage(id, PageContext)` records a chat's
+page: its name (`inbox`, `pulls`, `timeline`, `sessions`, `analytics`,
+`jobs`, `repositories`, `settings`, or a detail page: `pull_request`,
+`group`, `session`, `job`, `feature`), the repository, pull request, group,
+session, job or feature it shows, the open section, its filters and the focus
+the user picked. `section` is one of the Settings page's sections (`general`,
+`reviews`, `fixes`, `connections`, `computer`, `prompts`) on `settings`, or of
+a repository's page (`reviews`, `prompts`, `registration`) on `repositories`
+with a repository; any other section, or a section on another page or on the
+Repositories page without a repository, is refused, by the same check `link`
+builds a section's address with (`checkSection`).
+An action's page is its pull request and does not change. Callers hold the
+id, not the token, to set the page.
+
+Tools are registered with a name, description, JSON Schema, a scope, the
+route prefixes they read (`Reads`) and a call that gets a `CallContext`:
+the consumer, its page, a reader and `Propose`. A `ScopeGlobal` tool,
+the zero value, reads across repositories or the app's own state; actions
+neither list nor call it (a call is an unknown tool). A `ScopeRepository`
+tool reads one repository, which it takes only from
+`CallContext.Target`: the repository and pull request asked for, else the
+action's, else the open page's; an action is refused any other repository.
+`RegisterPage` lists the tools that read a page and the proposer that takes
+its changes. Two repository-scoped tools are built in: `current_page`,
+which returns the page context and the tools of that page the consumer may
+call (on a page with an open section, `section_tools` are those that read
+it; the Repositories page lists a repository's tools only while it shows
+one), and `read_more`.
+
+Tools read through `Reader`, which serves an in-process `GET` against the
+`LocalAPI` handler, below the app server's authentication and with no
+credentials. `Get` is its only method, so nothing but `GET` can be sent,
+and it refuses the `refresh` and `more` parameters, which make some `GET`
+routes do work beyond reading. A tool's reader takes only clean paths under
+the prefixes it declared, a whole segment at a time, and never the
+unreadable ones (`/api/settings`, `/api/debug`, `/api/github` and
+`/api/github-auth`, `/api/diagnostics`, `/api/plan-usage`, `/api/events`,
+`/api/mcp`), which no tool may declare. It fails a body over 8 MiB, except
+`/api/document` and `/api/facts`, which the daemon serves up to
+`viewserver.MaxDocumentBytes` (32 MiB) and which are read up to that (a test
+keeps the two equal); a tool projects what it needs, so its result is bounded
+as before.
+
+The unreadable routes have one narrow exception, `projectedReads`
+(`reader.go`): a fixed map from a tool's name to the exact routes it may read
+though they are unreadable. `Tool.Projected` declares them and `compile`
+refuses a name or route the map does not give that tool, a route that is not
+whole (`/api/diagnostics/x` is not `/api/diagnostics`) and a tool that is not
+`ScopeGlobal`; declaring an unreadable route in `Reads` stays refused for
+everyone. A route below an unreadable prefix is unreadable too
+(`/api/settings/appearance` is below `/api/settings`), so each Settings route
+a tool reads is its own pair. Such a tool returns a typed Go projection of the answer, never the
+answer: a struct of the fields the app shows on that page, filled from a
+decoded copy, so a field the route adds later is not passed on. The pairs are
+`diagnostics_summary` with `/api/diagnostics` (check id, label, status,
+version and source, each scrubbed with `doctor.Scrub` as the public issue
+summary scrubs them; a GitHub Enterprise token check is `other host`, and the
+token and backend checks give no source; never `home`, a check's path, detail
+or fix, the environment or the issue the Report a problem dialog drafts), and
+the Settings tools below: `settings_general` with `/api/settings/appearance`,
+`settings_reviews` and `settings_fixes` with `/api/settings`,
+`settings_connections` with `/api/github-auth`, `settings_computer` with
+`/api/settings` and `/api/diagnostics`, and `prompts` and `prompt` with
+`/api/settings/prompts`. `/api/settings` is read whole in process and decoded
+into a private struct whose agent environment keeps only the names (the
+values decode into `discarded`, which copies nothing), and no tool returns its
+budgets or caps. The raw body of a read is in memory for the call's length,
+as any read's is; it is never kept, logged or quoted in an error. A test lists the
+allowed pairs exactly and fails when any other tool declares an unreadable
+route; the reader gives a projected route only to a chat's reader, so an
+action's call is refused whatever its tool declares, and the tools are global
+besides. Three Settings routes are not exceptions either, because reading
+them does work a tool call must not repeat: `/api/settings/plan-usage` reads
+the plans to work out the default, so `settings_general` reads
+`Options.PlanChoices`, wired to `LocalAPI.CachedPlanChoices` (the same
+entries, the default from the plan usage cache alone);
+`/api/agent-hooks/codex` starts Codex when its cache is stale or holds a
+warning, so `settings_connections` reads `Options.CodexHooks`, wired to
+`uiserver.LastHookTrust`, which remembers the newest answer the daemon's check
+gave the app and never checks; and `/api/settings/decisions` resolves an auto
+backend by running the harnesses' version checks on every read, so
+`settings_reviews` reads `Options.DecisionSettings`, wired to
+`uiserver.DecisionViews`, which answers the same body, shares one resolution
+between concurrent calls and reuses it for 45 seconds while the preferences
+(hashed whole) are unchanged; the app's route still resolves on every read.
+Tests count the provider's reads, the Codex checks and the decision
+resolutions.
+`/api/plan-usage` is not an exception: its handler fetches from
+Claude or Codex when its cache is stale, so `plan_usage` reads
+`Options.PlanUsage`, an accessor the daemon wires to the plan usage cache
+(`planusage.Service.Cached`, filtered by the plans the person shows), which
+cannot read a provider; a test counts the provider's reads and finds none, and
+`Cached` never waits for a read in progress (the snapshot has its own lock).
+The picker's list is not an exception either: `/api/github/repositories`
+contacts GitHub (a new query starts a search, an expired cache reloads), so
+`github_repositories` reads `Options.PickList`, wired to
+`githubrepos.Service.Cached`, which narrows the top list the service already
+holds by the query's words and calls no lister; when no list is loaded yet the
+result says so. A test counts the lister's calls and finds none from the tool.
+
+An action's reader also reads only the routes in `actionRoutes`
+(`reader.go`). Each entry is a path pattern, the query parameters it allows
+and how the route is bound to the action's repository: by the `repository`
+parameter its handler reads, by a `clone` parameter resolved through
+`Options.Clone`, by `{owner}/{name}` in the path, and for a route that finds
+a record by id in one of three ways: by a check that reads the repository
+from the response and returns nothing on a mismatch (`byResponse`); for a
+route whose response names no repository, by reading the record the id names
+first and checking its repository before the route is read (`byLookup`); and
+for a route that answers for every repository, by filtering the response to
+the action's repository inside the reader, so the rest never reaches the agent
+(`byFilter`); and for the person's saved UI state, which a key names and whose
+handler cannot tell whose it is, by requiring the key to be the action's own
+pull request's (`byKey`, with the action's pull request in the reader). Any other route, and any parameter its entry does not list, is
+refused. The table holds:
+
+- by `repository` (only the parameters listed, no `pr`): `GET /api/timeline/decisions`
+  (`q`, `who`, `category`, `file`, `person`, `superseded`, `from`, `to`, `limit`,
+  `cursor`), `/api/timeline/features` (`q`, `status`, `file`, `person`, `from`,
+  `to`, `limit`, `cursor`), `/api/timeline/build` and `/api/timeline/files`
+  (`prefix`, `limit`), whose handler reads every `repository` value and serves
+  only those, and exactly one value is allowed;
+- by `repository` (parameters `pr`, and as listed): `GET /api/jobs`,
+  `/api/prs/description`, `/api/prs/checks` (`head_sha`),
+  `/api/prs/failing-checks` (`head_sha`), `/api/prs/check-log` (`check`),
+  `/api/prs/review-threads`
+  (`unresolved`), `/api/prs/conflicts`, `/api/prs/merge-options`,
+  `/api/prs/update-branch-options` and `/api/prs/rerun-checks-options`;
+- by `clone` (parameter `pr`, and as listed): `GET /api/versions`,
+  `/api/prs/chat`, `/api/document` and `/api/commits` (`version`), `/api/patch` (`version`,
+  `path`), `/api/sessions` and `/api/sessions/{id}` (`version`), `/api/facts`,
+  `/api/facts/commits`, `/api/facts/sessions` and `/api/facts/sessions/{id}`
+  (`head`), `/api/facts/patch` (`head`, `path`), `/api/facts/commit` (`head`,
+  `oid`) and `/api/facts/commit-patch` (`head`, `oid`, `path`), and the files
+  and commits a saved review cites: `/api/file` (`version`, `path`),
+  `/api/commit` (`version`, `oid`) and `/api/commit-patch` (`version`, `oid`,
+  `path`);
+- by `repository` and `pr` (the form that names a pull request; the form that
+  names a session, which names no repository, is not allowed): `GET
+  /api/decisions`;
+- by key (the repository's lower-case name, `#` and the action's pull request
+  number, and for the walkthrough `@v` and a version number, with `key` the
+  only parameter): `GET /api/ui-state/review` (the person's draft review) and
+  `/api/ui-state/walkthrough` (where they are in the review); another pull
+  request's key, or another repository's, is refused though the repository is
+  the action's, and no other kind of saved state (the inbox, the filters, the
+  tour) is read;
+- by response: `GET /api/jobs/{id}` and `/api/groups/{id}`, checked by the
+  record's `repository`, and `GET /api/timeline/decisions/{id}` and
+  `/api/timeline/features/{id}`, checked by the `repository.full_name` the
+  detail names (an archived feature names none, so no action reads it);
+- by lookup: `GET /api/jobs/{id}/transcript` (`after`) and
+  `/api/jobs/{id}/draft`, after `/api/jobs/{id}`, and `/api/groups/{id}/document`
+  (`version`), `/api/groups/{id}/versions`, `/api/groups/{id}/patch` (`version`,
+  `path`, `hunk`) and `/api/groups/{id}/file` (`version`, `path`), after
+  `/api/groups/{id}`;
+- by filter: `GET /api/index` (`history`), which keeps the entries of the
+  action's repository and drops the problems; `GET /api/groups`, which keeps
+  the groups of its repository; and `GET /api/inbox`, which keeps the items of
+  its repository by their `owner/name#number` keys, drops each item's
+  saved-inbox ids and the saved inboxes themselves (their queries are the
+  user's own), and recounts `count` over what is kept by the daemon's own rule
+  (items queued for the user, not being fixed, snoozed or archived), and
+  `GET /api/live-sessions`, which keeps the sessions of its repository;
+  `GET /api/repositories`, rebuilt from its repository's row alone (its
+  settings, each clone's id and availability, its earlier names: no clone's
+  folder or git directory); and `GET /api/automatic`, rebuilt from its
+  repository's status row alone (without the global switch and choice of pull
+  requests, which are Settings'). A filtered
+  route that answers an error, or `{"available":false}`, is refused as
+  unavailable, which the tools report apart from a pull request that is not in
+  the index;
+- by path: `GET /api/repositories/{owner}/{name}/prompts`, with no parameter.
+
+Routes are added beside the tools that need them.
+
+The pull request and group tools are all repository-scoped and read the routes
+the app calls (the pull request page's own: the review index with its
+`clone_id` and `version_count`, the facts before a review exists and the saved
+review after), compacting the answer. Each takes `repository` and `pr` (a
+group tool `repository` and `id`) defaulting to the consumer's page, for an
+action its pull request, and only through `CallContext.Target`:
+
+| Tool | Reads |
+| --- | --- |
+| `pull_request` | the header and review status from `/api/index` (of the clone with a saved review, else one with a clone; the latest review is only its version, heads, backend, model, `generated_at` and cost, never the session, accounting, digests or policy), `/api/prs/description`, its inbox state (`kind`, `fixing`, `snoozed`, `archived`) from `/api/inbox`, and the groups and stacks it is a member of (`id`, `name`, `stack`) from `/api/groups` |
+| `diff` | the changed files from `/api/document` (a saved review) or `/api/facts` (none), and each file's patch from `/api/patch` or `/api/facts/patch`, one file by `path`, else patches up to 100 files and about 1 MiB of patch text, the files left out listed by path |
+| `commits` | `/api/commits`, or `/api/facts/commits` at the head the index shows, building the facts (`/api/facts`) only when the daemon has none |
+| `checks` | `/api/prs/checks` at the head the index shows, its failing checks marked apart, and `/api/prs/failing-checks` only when `/api/prs/checks` is not found, as the page does |
+| `review_threads` | `/api/prs/review-threads`, with the unresolved count discovery has |
+| `merge_state` | the three `-options` routes, and `/api/prs/conflicts` when the pull request conflicts; nothing is changed |
+| `jobs` | `/api/jobs` of the pull request, less each job's accounting |
+| `job_transcript` | `/api/jobs/{id}` to check that the job is the repository's and pull request's, then its transcript; a job with none says only fix jobs keep one |
+| `sessions`, `session_transcript` | `/api/sessions` or `/api/facts/sessions`, and one session's transcript, which the viewer serves only for a session the pull request's commits link |
+| `focus` | no route: the focus of the consumer's page, or `none` |
+| `group`, `group_versions` | `/api/groups/{id}` and `/api/groups/{id}/versions`; a group of another repository is refused. The group defaults to the open group page's; for an action, to the one group its pull request is in (`/api/groups`), and none or several must be named |
+
+Labels, reviewer lists, check log tails and the inbox's Up next sentence are
+not returned, as the app shows none of them.
+
+The review tools read a review in parts, one per call, so the document is
+never sent whole; none marshals the document it read, and a document that
+cannot be read is an error that quotes none of it. Each takes `repository` and
+`pr` as above.
+The tools `review_outline`, `review_section` and `review_context`
+also take `version` (a saved version, the latest by default); `review_versions`
+lists every version and takes none. `review_outline`, `review_section`,
+`review_context` and `review_versions` take `group` (a group id, `this` for
+the open group page's or, for an action, the one group its pull request is in,
+or none: the pull request's own review; a chat on a group page defaults to its
+group). `facts`, `review_draft` and `review_conversations` take neither: they
+need a pull request, so the group page does not list them. A group's tools read
+its combined review through `/api/groups/{id}/document` and
+`/api/groups/{id}/versions`, after `/api/groups/{id}` has shown the group is
+the repository's. `/api/jobs/{id}/draft` is read up to the 32 MiB document
+bound, like the documents.
+
+| Tool | Reads |
+| --- | --- |
+| `facts` | `/api/facts` at the head the index shows (the facts, which exist before any review) |
+| `review_outline` | `/api/document` (or the group's): the overview and each section's id, title, kind, hunks, files, assessment and `details` state (`pending`, `failed` or absent), by `review.ReadOutline`, the projection the staged outline stage writes (`review.OutlineOf` without its fallback to the document), never a section's details |
+| `review_section` | one section by `id`: all it holds (summary, risks, evidence, citations), or for a `failed` or `pending` section its outline and that state in words |
+| `review_context` | `summary.context`, or that it is absent, or failed (from the job's `context_failed`) |
+| `review_draft` | `/api/jobs` to find the review running now, then `/api/jobs/{id}/draft` (drafts are never stored): `part` `outline` (default), `section` (with `id`) or `context`, projected as the stored tools; "No running review of this pull request." otherwise |
+| `review_versions` | `/api/versions` or the group's versions: version, heads, `generated_at`, backend, model and recorded cost, never the session, accounting, digests or policy |
+| `review_conversations` | `/api/prs/chat`: a list (id, version, times, turn count, the first question cut at 200 characters), or with an `id` that conversation's turns (question, focus, answer, citations, state, reason, note), never cost or job ids |
+
+Four tools work on every page, and are in the tools every page lists in
+`current_page` (`commonToolNames`: `New` gives each page them, and
+`RegisterPage` adds them to the tools of a page it registers). `search` and
+`daemon_status` are global, so an action neither lists nor calls them; `link`
+and `app_help` read nothing, so an action may use them, and `link` refuses
+another repository to an action through `CallContext.Target`.
+
+| Tool | Reads |
+| --- | --- |
+| `search` | words (`query`, `kinds`, `limit` 1 to 50, default 20) over pull requests (`/api/index`, which Go to lists), review groups (`/api/groups`), running sessions (`/api/live-sessions`), repositories (`/api/repositories`) and, only while the hits so far leave room, features and decisions (`/api/timeline/features` and `/api/timeline/decisions`, matched by the daemon). Every word must be in a title, repository, kind or keyword, ignoring case; titles starting with the words rank first, as in Go to. Each hit has its kind, title, detail and the page it opens (the `PageContext` fields). A route that cannot be read, or answers `{"available":false}`, is named in `unavailable`; all of them failing is an error |
+| `link` | no route: the app's address for a page and its subject, the query strings of `app/src/pages.ts` and the detail pages' hrefs (`?page=pulls`, `?repository=owner%2Fname&pr=7`, escaped as the app's `encodeURIComponent` does, `?group=id`, `?page=sessions&session=agent:id`, `?page=jobs&job=id`, `?page=timeline&feature=id`, `?page=inbox&inbox=id` for a saved inbox (its own `inbox` argument, in the store's id shape), a settings or repository section), relative so the chat panel makes it a link. `repository` is also accepted, unused, on group, session, job and feature so a `search` hit's page fields feed `link`. Filters are list pages' own parameters: ones that name a page or subject (`repository`, `pr`, `group`, `section`, `inbox`...) are refused, and a `repo` filter for an action goes through `Target`. Unknown pages, missing subjects, a field the page does not take and unknown sections are refused |
+| `app_help` | no route: the embedded `help.md`: each page, the words the app uses and its keyboard shortcuts; `topic` returns one section or word. A test reads `pages.ts` and `shortcuts.tsx` and fails when a page has no section or `link` mapping, or a key is not in the help |
+| `daemon_status` | `/api/background` (each repository's last and next refresh, failure count, whether the latest refresh failed and its problem count, never the error text) and `/api/jobs` (jobs queued and running), with the daemon's version. `/api/health` is answered by the app server before the API the tools read through, so `health` is `ok` when the call is answered. No paths, environment, diagnostics or tokens |
+
+The Inbox, Pull requests, Sessions and Timeline pages list the tools below (the
+`Server` registers them with `listTools`, `sessionTools` and `timelineTools`; the
+pages `inbox`, `pulls`, `sessions`, `session`, `timeline` and `feature` list
+them first, then the common four). A tool's default comes from its page's
+`Filters`, the page's own address and saved filters, which an argument
+replaces. Lists are bounded (`limit`, 50 by default and 200 at most; the
+Timeline's 25 and 100, `file_history`'s 20 and 50, `test_query`'s 100 matches)
+and say how many more there are. A transcript tool returns at most `limit`
+prompts (20 by default, 100 at most) with only their turns' activity. The tools marked
+global read across repositories or the person's own state, so an action
+neither lists nor calls them; the repository-scoped ones read one repository,
+which for an action is always its own, and every route they read has an entry in
+`actionRoutes` above. The Timeline's results leave out each person's address
+and avatar.
+
+| Tool | Scope | Reads |
+| --- | --- | --- |
+| `inbox` | global | `/api/inbox` and `/api/index`: the pull requests the Inbox lists, as the queue holds them: `kind` (review, clone, fix, merge, update, other, waiting), whether an agent is fixing it, snoozed or archived, the saved inboxes holding it, the risk score and the review, merge and check state. Defaults to the page's `inbox` filter, else the queue waiting on the person; `query` keeps what `/api/inbox?query=` says an inbox filter holds |
+| `inboxes` | global | `/api/inboxes` (id, name, colour, what, owners, risk, repositories, query, bots, badge, revision) with each inbox's own count and folded filter from `/api/inbox` |
+| `test_query` | global | `/api/inbox?query=`: the daemon's draft of a query (the matches over the queue, with the kind each waits for) joined with `/api/index`, keeping the listed items as the app's preview does (the queue and others' pull requests, neither snoozed nor archived, so the total is what a saved inbox would count); at most 100 matches and how many more. A query `prfilter.Problem` refuses is returned as `valid: false` with its message, without reading the daemon |
+| `pull_requests` | global | `/api/index?history=1`, filtered by view (open or closed), saved tab and filter query with `prfilter.Compile`, as the page does; the tab and the page's draft filter come from `/api/ui-state/filters`, the page's `filter` filter names the tab |
+| `live_sessions` | repository | `/api/live-sessions`: state, what it waits for and since when, its latest steps and message, repository, branch and pull request; not the head, upstream or the hooks' record. An action's list is its repository's by the filter above |
+| `live_session_transcript` | global | `/api/live-sessions/{agent}/{id}/transcript`: the prompts from `from_turn`, `limit` at a time, with the next turn named; no images (the answer's `images`, and any key beginning `image`, are dropped, and `/transcript/images/` is never readable by any reader), no working directory and no address |
+| `agent_requests` | global | the `requests` of `/api/agent-requests`: pending permission requests and questions; never its `settings` |
+| `agent_messages` | global | the `messages` of `/api/agent-requests`: the messages queued for running sessions |
+| `decisions` | repository | `/api/timeline/decisions`, filtered by `who`, `category`, `file`, `person`, `q`, `superseded`, dates and `repository`; the page's `repo`, `who`, `agent=hide` and other filters apply unless given; `cursor` is the result's `next_cursor` |
+| `decision` | repository | `/api/timeline/decisions/{id}` |
+| `features` | repository | `/api/timeline/features`, by `status`, `file`, `person`, `q`, dates and `repository` |
+| `feature` | repository | `/api/timeline/features/{id}`; defaults to the feature page's |
+| `feature_build` | repository | `/api/timeline/build` |
+| `file_history` | repository | `/api/timeline/files` |
+| `timeline_transcript` | global | `/api/timeline/sessions/{agent:id}/transcript`, projected as `live_session_transcript` is; it names no repository, so no action reads it |
+
+The pull request and group pages list more tools that open what their views
+open (`pullExtraTools`; each takes `repository` and `pr` like the page's other
+tools, and is repository-scoped, so an action reads its own repository's):
+
+| Tool | Reads |
+| --- | --- |
+| `file` | `/api/file`: a file of the repository at the saved review's head, text cut at 512 KiB with `truncated`, or no content for a directory, a binary file or a path the head lacks; only a path the review cites, and only a pull request with a saved review |
+| `commit`, `commit_patch` | `/api/commit` and `/api/commit-patch`, or the `/api/facts` forms before a review exists, as `commits` reads: one commit's message body and changed files, and one file's patch in it; the commit must be one `commits` lists |
+| `pull_request_decisions` | `/api/decisions?repository=&pr=`: the linked sessions and their captured decisions, and which are provisional (the Timeline's `decisions` lists across a repository) |
+| `check_log` | `/api/prs/check-log` for a check of the pull request's `/api/prs/checks` (at the head the index shows), named by its name or id: the tail of its GitHub Actions log, as the page shows it; a name several checks share needs the id, and a commit status answers that it has no log without reading the route |
+| `update_branch_options`, `rerun_options` | `/api/prs/update-branch-options` and `/api/prs/rerun-checks-options`; nothing is changed |
+| `pending_review` | `/api/ui-state/review?key=<repository lower-case>#<number>`, projected: each comment's target, text, place and head, the summary note and the reviews sent from baum; not their ids or the record's revision |
+| `walkthrough_position` | `/api/ui-state/walkthrough?key=<repository>#<number>@v<version>` (the latest version by default, from the index): the stops seen, the notes and the overall comment |
+| `group_patch`, `group_file` | `/api/groups/{id}/patch` and `/file`, after `/api/groups/{id}` has shown the group is the repository's; the path must be one the group's review cites |
+
+The Analytics, Jobs and Repositories pages, a job's page and the Report a
+problem summary list these (`analyticsTools`, `repositoryTools`). Analytics
+and the job list are global; one job's tools read one repository's job through
+a binding by response:
+
+| Tool | Scope | Reads |
+| --- | --- | --- |
+| `analytics` | global | `/api/analytics` over `days` (7, 30 or 90), `repository` and `agent`, the page's own filters by default: the report as the page shows it (summary and cost, by agent, model and repository, the longest sessions, commits, baum's own work, delivery and flow), less the points of the plan usage series and each pull request's time to merge |
+| `plan_usage` | global | no route: `Options.PlanUsage`, the daemon's cached plans (name, windows with percent used and reset, `fetched_at`), never a fetch |
+| `job_list` | global | `/api/jobs?limit=&before=`, newest first, narrowed by `state` and `repository` while reading older pages (at most 10 per call), each job as the page shows it (type, state, phase, repository, pull request or group, reason, who started it, backend, model, tokens, cost, times), never its accounting or digests; `next` is the cursor for older jobs. `jobs` lists one pull request's |
+| `job` | repository | `/api/jobs/{id}`, the open job page's by default; an action's job must be its repository's |
+| `job_failure` | repository | `/api/jobs/{id}` of a failed, cancelled or interrupted job: the reason code and failure in words, the sections or context a review was published without, the backend, model and the most tokens and calls it was allowed (`max_tokens`, `max_calls`); the effort and time limits are settings, not the job's. A failure's words (here, in `job`, `job_list` and `jobs`) go through `doctor.Scrub`, since git's output can quote the home folder |
+| `repositories` | global | `/api/repositories`: each repository's automatic choice, decision capture choice, earlier names and its clones as a count, how many are available and each clone's id and availability, never a clone's folder or git directory |
+| `clones_found` | global | `/api/clones/found`: per repository how many clones were found, their sources and last activity, the repositories attached automatically and when the search ran, never a folder |
+| `github_repositories` | global | no route: `Options.PickList`, the picker's list as the daemon already holds it (never a GitHub call; `query` narrows it by name, it does not search), with a note when no list is loaded |
+| `clone_target` | global | `/api/repositories/{owner}/{name}/clone-target`: the suggested folder written `~/...` (a folder outside home is only its last folder's name) |
+| `diagnostics_summary` | global | `/api/diagnostics` (projected, see above); listed by the Settings page |
+
+The Settings page lists one or more tools per section (`settingsTools`,
+`settingsSectionTools`) and `diagnostics_summary`; a repository's page lists
+one per section (`repositoryPageToolList`, `repositorySectionTools`). The
+Settings tools are global and read their Settings routes only as the projected
+pairs above; the repository page's tools are repository-scoped, read through
+`CallContext.Target` and the action routes above, and default to the open
+page's repository. Each returns a typed struct, and none returns an agent
+environment variable's value, the GitHub token, a sign-in's user code or
+verification address, a check's folder, detail or fix, a clone's folder or the
+home folder:
+
+| Tool | Scope | Section | Reads |
+| --- | --- | --- | --- |
+| `settings_general` | global | General | `/api/settings/appearance` (theme, key hints, page shortcut modifier) and `Options.PlanChoices` (each plan's shown, default and explicit) |
+| `settings_reviews` | global | Reviews | `/api/automatic` (enabled, `pull_requests`), the review backend, model and effort of `/api/settings`, and decision capture as chosen and as resolved from `Options.DecisionSettings` (above: one resolution of an auto backend's harness checks per 45 seconds for unchanged preferences) |
+| `settings_fixes` | global | Fixes | the fix backend, model and effort of `/api/settings`, and whether they follow the reviews' |
+| `settings_connections` | global | Connections | `/api/github-auth`: state, host (`github.com` or `other host`), login, the kind of place the token comes from (`baum`, `environment`, `config_file`), override, saved, workflow, the error code and message (scrubbed) and the organizations the sign-in cannot reach; a waiting sign-in is decoded for its presence alone, so its user code and address are never copied out of the body; the read may start the background check of those organizations, as the section's does (at most every 30 seconds, from a five-minute cache). The Codex hooks state and when it was read, from `Options.CodexHooks`. The desktop app's agent panel is the desktop shell's, not the daemon's |
+| `settings_computer` | global | This computer | `/api/settings` (job concurrency, time limits, the agent environment's names, sorted, and its source), the `settings` of `/api/agent-requests` (`codex_approvals`), and `/api/diagnostics`: the agent and harness checks (`claude`, `codex`, `cursor-agent`, `backend-auto`, `backend-configured`, `anthropic-api-key`; id, label, status, version, scrubbed as `diagnostics_summary` scrubs them, without the source) and how many problems the report has. Updates, zoom, the command line tool and agent sign-in are the desktop shell's |
+| `prompts` | global | Prompts | `/api/settings/prompts`, or with `repository` `/api/repositories/{owner}/{name}/prompts`: each entry's fields but the texts (`custom` says whether it has its own) |
+| `prompt` | global | Prompts | the same routes: one entry by `id` with every `PromptEntry` field |
+| `repository_reviews` | repository | Reviews | the repository's `settings.automatic` and `settings.decisions` from `/api/repositories`, and its status row of `/api/automatic` (effective switch, notice, pending) |
+| `repository_prompts` | repository | Prompts | `/api/repositories/{owner}/{name}/prompts`: the list as `prompts`, or with `id` one entry as `prompt`. An action is not given `inherited_text` (the person's global custom text, or the built-in one) nor, for a prompt whose `source` is `global`, `missing_safety_rules` (null: they describe the global text); `withheld` says so. A chat gets every field |
+| `repository_registration` | repository | Registration | the repository's `/api/repositories` row: whether it is registered, its clones as a count, how many are available, each one's id and availability, and its earlier names |
+
+`/api/repositories` lists every picked repository with each clone probed for
+availability (`Registry.Repositories`: git runs in every registered clone, and
+the clones' configuration is read for the earlier names), so
+`repository_reviews` and `repository_registration` do that local work on each
+call, for an action too, before the reader keeps the action's row; it reads
+nothing outside this computer.
+
+`prompts` and `prompt` stay global, as they read the global prompts' projected
+route; a repository's page uses `repository_prompts`, which an action may call
+for its own repository. Prompts have no template variables (a run's data is
+appended after the prompt, and the submit block's `{part}` is baum's own), so
+there is no tool that lists them, and no Go code renders a prompt before a run,
+so none previews one.
+
+Every page a consumer can be on has a page context here that lists the common
+tools and at least one of its own. A test reads `app/src/pages.ts` and every address parameter
+`app.tsx`, `location.ts` and `timeline-filter.ts` read, and fails when a
+parameter is neither mapped to the page it opens (pull request, group,
+session, job, feature, repository) nor listed as not opening one, when a
+mapped page has no registered page with a tool of its own, or when a page is
+registered that the app lacks. Another reads `settingsSections` and
+`repositorySections` from `app/src/settings.tsx` and fails when a section has
+no tool in `settingsSectionTools` or `repositorySectionTools`, when a mapped
+tool is not on that page or has the wrong scope, or when the maps name a
+section the app does not have.
+
+Every result goes through one envelope. It masks the text with
+`bundle.NewRedactor`, cuts it at most 64 KiB in at a UTF-8 boundary, and
+places the part between `BEGIN UNTRUSTED DATA <tag>` and
+`END UNTRUSTED DATA <tag>` lines with a fresh random tag removed from the data
+first (`internal/untrusted`, which the chat and fix prompts use too; tests
+pin their bytes). The rest is kept masked in memory under a random cursor,
+and the result ends with a line naming it; `read_more` with the cursor
+returns the next part, with a new cursor while more remains. A cursor gives
+its part once, only to its consumer, for 15 minutes; a consumer keeps at
+most eight, the oldest (by the order they were kept) dropped first.
+Revoking a token drops its cursors and proposals, and a call still running
+then keeps neither: both are stored only after checking, under their lock,
+that the consumer is live.
+
+`Proposals` hold what a chat proposes, of two kinds (`Proposal.Kind`): a
+`diff`, a change to something the page edits, which the person saves; and an
+`operation`, something the page does with a button (merge, cancel a job,
+answer an agent's request), which the person confirms (see "Operations"
+below). Both kinds are held per consumer in memory, share the limit of 32
+open proposals, are listed and dismissed the same way and are dropped when
+the token is revoked; `Save` refuses an operation and `Confirm` a diff, and
+`Propose` records only diffs. A diff holds page, target, the value before and
+after, the target's revision and the page context it was made on. A
+`Proposer` reads a target (`Current`), validates a change (`Validate`) and
+saves it (`Apply`), each given the page context so it refuses a target the
+page does not show. `Propose` refuses an action, a page other than the open
+one and a page with no proposer; it reads the target's value and revision
+itself, ignoring the agent's revision, refuses with the bare
+`ErrNotRecorded` a `Before` the agent sent that no longer matches, and
+records the proposal; nothing changes. A tool gets only a `Receipt` (id,
+page, target, kind): the current value is for the person, through the Go API,
+never for the agent. `List` returns deep copies. `Save(ctx, consumer, id,
+input)` first checks that the person still has the page the proposal was
+made on open, showing the same repository, pull request, group, session, job
+and feature (`ErrNotCurrentPage` once they navigated away); it reads the
+target again against the page as it is now, which refuses a target of
+another section, one that left the page and a changed revision; then,
+under the lock a revoke takes to drop proposals, it checks that the
+consumer is live and the proposal open and calls `Apply` with the recorded
+revision and the `SaveInput`. The proposer compares and writes in one
+transaction, as `appdb.Update` does, and returns `ErrStale` without writing
+when the target moved meanwhile. `Dismiss` drops a proposal. The app reaches
+proposals only through the Go API for now.
+
+`SaveInput` is what the person adds when saving, from the app's own save and
+never through an agent: the value of an agent environment variable the agent
+proposed adding. It goes to `Apply` alone, is never kept in the proposal, and
+prints and logs as withheld. Every proposer but the agent environment's
+refuses one.
+
+The `propose_*` tools record proposals. Each is global (an action neither
+lists nor calls one), reads nothing, names its page and target, passes the
+change asked for as `After`, and answers the receipt and a fixed status. A
+tool's schema bounds types and sizes only, so a value the page refuses
+reaches the proposer and is refused with the page's own words. Pages list
+their tools, and `current_page` lists a section's with its `section_tools`.
+`Options.Proposers` gives each page its proposer; the daemon passes
+`uiserver.Proposers.Pages()`:
+
+| Page (section) | Tool | Target | Saved as |
+| --- | --- | --- | --- |
+| `settings` (`general`; also an unnamed section) | `propose_appearance` | `appearance` | `PUT /api/settings/appearance` (theme, key hints, page modifier) |
+| `settings` (`general`) | `propose_plan_usage` | `plan_usage/<provider>` | `PUT /api/settings/plan-usage` |
+| `settings` (`reviews`) | `propose_reviews` | `reviews` | `PUT /api/automatic` (`automatic.Scheduler.SavePreferences`): enabled, pull requests, backend, model, effort |
+| `settings` (`reviews`) | `propose_decision_capture` | `decisions` | `PUT /api/settings/decisions`, the fields left out as the section shows them |
+| `settings` (`fixes`) | `propose_fixes` | `fixes` | `PUT /api/automatic`: fix backend, model, effort |
+| `settings` (`computer`) | `propose_time_limits` | `time_limits` | `PUT /api/settings/time-limits`, a limit left out as the section shows it |
+| `settings` (`computer`) | `propose_job_concurrency` | `job_concurrency` | `PUT /api/settings/job-concurrency`, then the queue's concurrency |
+| `settings` (`computer`) | `propose_codex_approvals` | `codex_approvals` | `PUT /api/agent-requests/settings` (`agentrequests.Store.SetSettingsIf`) |
+| `settings` (`computer`) | `propose_agent_env` | `agent_env/<NAME>` | `PUT /api/settings/agent-env` of the environment in force with the name added (the value from `SaveInput`) or removed |
+| `settings` (`prompts`) | `propose_prompt`, `propose_prompt_reset` | `prompt/<id>` | `PUT /api/settings/prompts/{id}` |
+| `repositories` with a repository (`reviews`) | `propose_repository_settings` | `<owner/name>:settings` | `PUT /api/repositories/{owner}/{name}/settings`, the field left out kept |
+| `repositories` with a repository (`prompts`) | `propose_prompt`, `propose_prompt_reset` | `<owner/name>:prompt/<id>` | `PUT /api/repositories/{owner}/{name}/prompts/{id}` |
+| `inbox` | `propose_inbox` | `inbox:new` or `inbox:<id>` | `PUT /api/inboxes` (`inboxes.API.Save`) of the list with the inbox added at the end or changed: name, colour, query, badge |
+| `group` | `propose_group` | `group:<id>`, the page's group | `PATCH /api/groups/{id}` (`reviewgroups.API.Update`): name, members added and removed |
+| `pull_request` | `propose_review_comment` | `<owner/name>#<n>:review_comment`, the page's pull request | `PUT /api/ui-state/review?key=` of the pending review with the comment appended, the other comments, note and sent reviews kept |
+
+A target of another section than the open one (General when none is named;
+Reviews on a repository's page), another repository, group or pull request is
+refused, at `Propose` and again at `Save`. Each proposer validates as the
+page's route does, with the same functions: `repos.ValidateTimeLimit`,
+`config.ParseBackend`, `config.ParseEffort`, `Preferences.ValidateChange`
+(through `automatic.EditPreferences` and the decisions route's edit),
+`config.ValidateAgentEnv`, the concurrency bound, the appearance and plan
+checks, `prompt.Validate`, `inboxes` normalisation (`State.Check`) and the
+app's query check (`prfilter.Problem`), `reviewgroups.CheckUpdate` and
+`uistate.CheckReviewComment`. Each saves through the function the route's
+handler calls and does what the route does after a save: the decisions event,
+the queue's concurrency, cancelling disallowed automatic jobs, waking the
+scheduler and the automatic notice, the settings and decisions events after a
+repository's settings or prompts, and `Changed` after an inbox or group. Beyond
+the page, a prompt's text, or a reset to the inherited text, that leaves out
+the text of a safety rule the prompt in use has is refused, at `Propose` and
+again inside the save's transaction against the rows it reads (the person
+can still remove one in the editor, which warns). The check finds each
+rule's text only; it cannot judge wording elsewhere that undercuts a rule, so
+the person reads the diff. Adding an agent environment variable that is set,
+or removing one that is not, is refused, and so is a change after which the
+environment in force would differ from the proposed one by more than that
+name: removing the app's last variable brings back the config file's
+`agent_env`. An inbox is proposed and saved as the Inbox holds it: it folds
+every saved inbox's older fields (what, owners, risk, repositories, bots)
+into its query (`app/src/inboxes.ts`'s `folded`, here with
+`prfilter.FoldedQuery` and `prfilter.Problem`) and saves the list so, and the
+diff's `Before` is the folded inbox.
+
+A target's revision is HMAC-SHA256, under a key made per daemon, of the
+stored state its save reads: the preference fields of its route, the agent
+environment in force (values included, which the key keeps from being
+guessed from the hash) and whether the app sets it, the Codex setting, a
+prompt's own and global rows, a repository's settings, a group's name,
+members, stack flag and landed members. Saved inboxes and pending reviews use
+their store's own revision. `Apply` checks the revision inside the writing
+transaction: `repos.Registry.UpdatePreferencesIf`, `UpdateRepositoryIf` and
+`PutPromptOverrideIf`, `reviewgroups.Store.UpdateWith` and
+`agentrequests.Store.SetSettingsIf` hand the check the state as the
+transaction (or the settings' save lock) reads it, and an error from it
+writes nothing. Saved inboxes and pending reviews are read before the write
+and saved with `inboxes.Store.Replace` and `uistate.Store.Replace`, which
+compare the revision read in their own transaction. Tests save each proposal
+and send the page's request to a twin fixture and compare the stores and
+what followed each save, and change each target through its route before the
+save, and after `Save` checked the revision, to see the save refused.
+
+#### Operations
+
+An operation proposal (`agentcontext.Operation`, `operations.go`, the list in
+`operationlist.go`) is a button of a page an agent suggests the person press.
+The agent never runs anything: nothing runs before the person confirms, and
+on `Confirm` the daemon runs, in process, the route the app's button calls,
+with that route's own validation and status. Each operation names the pages
+that offer it, a fixed method (`POST` or `DELETE`) and route template
+(`{name}` is one whole segment), an input schema, the GET routes it reads
+(`Reads`, and `Projected` for the paid runs' model and effort from
+`/api/settings`, a `projectedReads` pair), `Build`, which turns the agent's
+arguments and the page into the request (the `{name}` values, the query and
+the JSON body, as the button's code builds them) and names the target, and
+`Describe`, which checks the target belongs to the page and writes the
+summary the person reads (`OperationSummary`: what will happen, on what, and
+for a paid run the harness, model and effort; the app computes no cost
+estimate before a run, so none is shown). `Paid` marks an operation that
+starts an agent run, `Irreversible` one that cannot be undone.
+
+A summary's `Action` is baum's own sentence, naming things only by
+identifiers (a repository and number, an agent and session id, a job id). All
+else is a `SummaryField` in `Details`: baum's own facts, or `Quoted` text
+that is not baum's, shown in full and never cut. Quoted text read from a
+route (a title, a thread, a tool's input, a question) is made plain (`plain`:
+control characters (C0, C1, DEL), invalid UTF-8 and the default-ignorable
+characters (format characters such as bidirectional overrides and isolates,
+zero-width characters, the soft hyphen and tags; variation selectors; the
+other default-ignorables, the Hangul fillers and U+034F, U+17B4 and U+17B5
+among them) are dropped, and line breaks, tabs and the line and paragraph
+separators become spaces unless the field is `Multiline`, which keeps line
+breaks and tabs). Text the agent wrote (a message, an answer, a group's name;
+`ByAgent`) is sent as it is, so `Build` refuses it when it holds any such
+character, a carriage return or a line or paragraph separator
+(`checkAgentText`), and its schema's `maxLength` (in characters) refuses one
+longer than the route takes: the field is exactly what runs. A clone's target
+folder that `plain` would change is refused the same way. An identifier is
+named in the sentence, or in a field's label, only when it passes its own
+check (`validRepository`, `validSegment`, a hex head, a known merge method or
+job kind); otherwise the sentence names it generically ("a pull request", "an
+agent session") and the value is a quoted field. `refresh` and
+`register_repository` send, and name, the registry's spelling of the
+repository, not the agent's. A paid run is refused, at `Propose` and at
+`Confirm`, rather than shown with a guess when its settings cannot be read,
+or when `GET /api/settings` could read only the config file and not the
+saved preferences (it then answers `preferences_unavailable`).
+
+`ProposeOperation(ctx, consumer, name, args)` refuses any consumer but a
+chat, a page that does not offer the operation, and a target `Build` or
+`Describe` refuses (another page's pull request, a session, request, job,
+group or repository the page does not list); `Build` also refuses what the
+button's own code refuses (a draft or closed pull request, a head that moved
+since the page loaded, a merge method GitHub does not allow, a fork's branch
+update, a review or fix already running, a session that is not at its
+prompt). It records the operation, its request and its summary; nothing
+runs. Each operation has a `propose_<name>` tool, global (an action neither
+lists nor calls it), listed on the pages that offer it, whose answer is the
+`Receipt` (`{id, page, target, kind}`) and a fixed status, never the summary,
+the request or anything a route answered.
+
+`Confirm(ctx, consumer, id, seen)` checks that the consumer is live, the person
+still has the page the proposal was made on open, showing the same thing (as
+`Save` does), and runs `Describe` again against the page as it is now (the
+request still pending on the page, the job still on it, the clone still
+registered); a refusal leaves the proposal open. Each operation proposal
+holds its summary's revision (`OperationProposal.Revision`, the SHA-256 of
+the summary's JSON), which `List` returns and the app sends back as `seen`:
+under the store's lock, `seen` must be the stored summary's revision and that
+must be the revision of the summary `Describe` just wrote. When either
+differs (another title, harness, model or effort; or a summary that another
+`Confirm` replaced meanwhile, as a double click's second confirm finds),
+nothing runs, `Confirm` returns `ErrOperationChanged` and the proposal stays
+open holding the new summary and revision, for the person to read and confirm
+again. It then takes the proposal
+out of the store under the lock a revoke and every other `Confirm` take, so
+of two confirms only one runs it and a revoke either comes first and nothing
+runs or comes after the person's confirm took it; and runs its request once,
+through the writer, with a context that the caller leaving does not cancel.
+The writer is the GET `Reader`'s counterpart: it sends only the operation's
+own method to the path its route template makes from the `{name}` values,
+each a plain segment (`[A-Za-z0-9._~@+:-]`, not `.` or `..`, no `/`, `%`,
+`?` or `#`), checks that the request's method and path are those and that
+nothing was escaped, and keeps at most 1 MiB of the answer. `Confirm` returns
+an `OperationOutcome` (the route's status and a short message from its body)
+to the app; an error means nothing ran, and a status other than 2xx is the
+route's own refusal. There is no app route for listing or confirming
+proposals yet.
+
+The chat's `Consumer.Session` (`agent:id`, the agent `claude-code` or
+`codex` as the live sessions and agent requests name them, the id one plain
+segment) is the agent session it runs in, set at `Mint` or once afterwards
+with `Registry.SetSession` (Codex reports its session id late); setting
+another session after one is refused, so no proposal can come to target the
+chat's own session after it was made. A chat never proposes answering a
+request of its own session, nor messaging, queuing for, ending or bringing
+forward its own session; while its session is unknown it proposes none of
+these for any session (fail closed). These are checked at `Propose` and at
+`Confirm`. `answer_request` carries only allow or deny and a question's
+answers: a permission's suggestions (always allow, a permission mode) can
+change the agent's permissions for good, so only the person applies them, in
+the app. Allowing (or answering) a request the store marks `altered`, or one
+holding text `plain` would change, is refused: the person answers it in the
+app or the terminal. Denying it may be proposed.
+
+| Operation (tool `propose_<name>`) | Pages | Route | Paid | Irreversible |
+| --- | --- | --- | --- | --- |
+| `merge` (method from `/api/prs/merge-options`, default GitHub's) | `pull_request` | `POST /api/prs/merge` | | yes |
+| `update_branch` | `pull_request` | `POST /api/prs/update-branch` | | |
+| `rerun_checks` | `pull_request` | `POST /api/prs/rerun-checks` | | |
+| `rerun_failed_job` (a failing check's `job_id`) | `pull_request` | `POST /api/prs/rerun-job` | | |
+| `resolve_thread` (an unresolved thread the account can resolve) | `pull_request` | `POST /api/prs/resolve-thread` | | |
+| `fix` (`only: checks` for Fix CI) | `pull_request` | `POST /api/jobs` (`kind: fix`, mode `single`) | yes | |
+| `review` (no isolation confirmation: the route refuses a fork's and the person starts it in the app) | `pull_request`, `inbox`, `pulls` | `POST /api/jobs` (a review item, mode `single`) | yes | |
+| `refresh` (by repository, else a registered clone of it) | `inbox`, `pulls` | `POST /api/prs/refresh` | | |
+| `answer_request` (allow or deny, a question's answers; no suggestion) | `sessions`, `session` (its own requests) | `POST /api/agent-requests/{id}/answer` | | |
+| `send_message` (a session at its prompt) | `sessions`, `session` | `POST /api/live-sessions/{agent}/{id}/message` | | |
+| `queue_message` (a running session) | `sessions`, `session` | `POST /api/agent-messages` | | |
+| `end_session` (an endable session) | `sessions`, `session` | `POST /api/live-sessions/{agent}/{id}/end` | | yes |
+| `focus_session` | `sessions`, `session` | `POST /api/live-sessions/{agent}/{id}/focus` | | |
+| `cancel_job` (one `GET /api/jobs` lists as queued or running) | `jobs`, `job` (its own) | `POST /api/jobs/{id}/cancel` | | |
+| `create_group` (2 to 8 pull requests of one repository the list shows) | `pulls` | `POST /api/groups` | | |
+| `delete_group` | `group` (its own) | `DELETE /api/groups/{id}` | | yes |
+| `register_repository` | `repositories` | `POST /api/repositories` | | |
+| `remove_repository` | `repositories` (a repository's page: its own) | `DELETE /api/repositories/{owner}/{name}` | | yes |
+| `remove_clone` | `repositories` (a repository's page: its clones) | `DELETE /api/repos/{id}` | | yes |
+| `clone_repository` (into the app's default target) | `repositories` (a repository's page: its own) | `POST /api/repositories/{owner}/{name}/clone` | | |
+
+A clone goes where the app's Clone dialog would put it by default: `Build`
+reads `GET /api/repositories/{owner}/{name}/clone-target` and sends that folder,
+which the summary names, so the clone goes where the person saw. The agent
+cannot name a folder; to clone elsewhere the person uses the app's dialog.
+Not offered, because the app has no such button or route: marking a pull
+request seen in the Inbox (the Inbox's seen state is the app's own UI state,
+`PUT /api/ui-state/inbox`; `POST /api/jobs/{id}/seen` is the tray's), rerunning
+or starting a job from the Jobs pages (reviews and fixes start from the pages
+above), registering a local folder (the person's file picker), and running a
+review with a draft prompt (no route takes draft prompt text).
+
+Tests run each operation against the daemon's real routes
+(`uiserver/operations_test.go`): the registry, review groups, jobs queue (an
+executor that runs nothing), agent requests and live sessions (recording
+senders, enders and focuser) are real; the merge, update, rerun, thread and
+refresh handlers are real over a recording GitHub fake, and the clone route
+over a recording clone function. They check nothing is written before
+`Confirm`, one write of the operation's own method and route after it, its
+effect, that a second `Confirm` runs nothing, that a route's refusal comes back
+and changes nothing, and that crafted arguments (traversal, encoded slashes,
+ids with `/`, queries) never reach another route.
+
 ### Transports and control protocol
 
 The app transport is `internal/uiserver` on `127.0.0.1` (a free port unless
 `--port`), unchanged: launch-token exchange, the cookie scoped to the secret
-`/s/<namespace>/` path, exact Host and Origin checks. Its token is written to
+`/s/<namespace>/` path, exact Host and Origin checks; `POST /api/mcp` takes
+only an MCP token and no Origin (see "MCP server for agents"). Its token is written to
 the credential file instead of being printed by a foreground process.
 
 The control transport is a Unix domain socket, mode 0600 in a 0700 directory:

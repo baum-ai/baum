@@ -107,15 +107,30 @@ export function ReviewSection({
   };
   const showAttention =
     attention && (section.attention!.refs.length === 0 || attention.refs.length > 0);
+  const attentionEvidenceIds = new Set(
+    showAttention
+      ? section.evidence
+          .filter((item) => attention.refs.includes(item.id) && !RESTATED_EVIDENCE.has(item.status))
+          .map((item) => item.id)
+      : [],
+  );
+  const otherEvidence = section.evidence.filter((item) => !attentionEvidenceIds.has(item.id));
   const attentionRiskIds = new Set(attention?.refs ?? []);
   const attentionRisks = section.risks.filter((risk) => attentionRiskIds.has(risk.id));
   const otherRisks = section.risks.filter((risk) => !attentionRiskIds.has(risk.id));
+  // A risk the code has since addressed is no longer the reader's to weigh,
+  // so it waits behind a disclosure rather than sharing the list with the
+  // open ones. In an obsolete section every risk is shown as obsolete instead.
+  const isMitigated = (risk: Section["risks"][number]) =>
+    risk.state === "mitigated" && derived.state !== "stale";
+  const openRisks = otherRisks.filter((risk) => !isMitigated(risk));
+  const mitigatedRisks = otherRisks.filter(isMitigated);
   const renderRisk = (risk: Section["risks"][number], position: number, inAttention = false) => {
     const Container = inAttention ? "li" : Item;
     return (
       <Container key={risk.id} id={itemId(risk.id)} className="flex gap-3">
         {!inAttention && (
-          <span className="w-5 flex-none pt-px text-right text-base tabular-nums text-(--text-tertiary)">
+          <span className="w-5 flex-none pt-px text-right text-base tabular-nums text-tertiary">
             {position + 1}
           </span>
         )}
@@ -124,7 +139,7 @@ export function ReviewSection({
             <TierBadge tier={risk.tier} />
             {riskLifecycleLabel(risk, document.review, section.derived.state) &&
               (inAttention ? (
-                <span className="text-xs text-(--text-tertiary)">
+                <span className="text-xs text-tertiary">
                   {riskLifecycleLabel(risk, document.review, section.derived.state)}
                 </span>
               ) : (
@@ -133,7 +148,7 @@ export function ReviewSection({
                 </Badge>
               ))}
           </div>
-          <Markdown className="text-(--text-primary)">{risk.text}</Markdown>
+          <Markdown className="text-primary">{risk.text}</Markdown>
           {showTiles && <ReviewTiles document={document} tiles={risk.tiles} />}
           <HunkEvidence
             document={document}
@@ -193,7 +208,7 @@ export function ReviewSection({
           </>
         }
       />
-      <div className="min-h-0 flex-1 space-y-7 xl:overflow-y-auto">
+      <div className="min-h-0 flex-1 space-y-7 wide:overflow-y-auto">
         {section.summary && (
           <div className="space-y-2">
             <Markdown className={PROSE}>{section.summary.text}</Markdown>
@@ -221,6 +236,7 @@ export function ReviewSection({
             document={document}
             attention={attention}
             section={section}
+            itemId={itemId}
             onJump={(ref) => scrollToItem(itemId(ref))}
             risks={attentionRisks.map((risk, position) => renderRisk(risk, position, true))}
           />
@@ -240,11 +256,36 @@ export function ReviewSection({
           />
         ))}
 
+        {otherEvidence.length > 0 && (
+          <Part label="Evidence">
+            <ul className="space-y-3">
+              {otherEvidence.map((evidence) => (
+                <Item key={evidence.id} id={itemId(evidence.id)} className="space-y-1.5">
+                  <EvidenceBadge evidence={evidence} compact />
+                  <EvidenceContent document={document} evidence={evidence} />
+                </Item>
+              ))}
+            </ul>
+          </Part>
+        )}
+
         {otherRisks.length > 0 && (
           <Part label="Risks">
-            <ol className="space-y-2">
-              {otherRisks.map((risk, position) => renderRisk(risk, position))}
-            </ol>
+            {openRisks.length > 0 && (
+              <ol className="space-y-2">
+                {openRisks.map((risk, position) => renderRisk(risk, position))}
+              </ol>
+            )}
+            {mitigatedRisks.length > 0 && (
+              <details className={openRisks.length > 0 ? "mt-2.5" : undefined}>
+                <summary className="cursor-pointer text-base text-link hover:underline">
+                  {pluralize("mitigated risk", mitigatedRisks.length, true)}
+                </summary>
+                <ol className="mt-2 space-y-2">
+                  {mitigatedRisks.map((risk, position) => renderRisk(risk, position))}
+                </ol>
+              </details>
+            )}
           </Part>
         )}
 
@@ -260,9 +301,7 @@ export function ReviewSection({
                     <Badge tone={findingStateTone(finding.state)} size="compact">
                       {humanize(finding.state)}
                     </Badge>
-                    <Markdown className="min-w-0 flex-1 text-(--text-primary)">
-                      {finding.text}
-                    </Markdown>
+                    <Markdown className="min-w-0 flex-1 text-primary">{finding.text}</Markdown>
                   </div>
                   <ItemMeta>
                     <span>{finding.tool}</span>
@@ -316,10 +355,10 @@ function SectionOutline({
       <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
         {/* One live region for both states, so a draft whose details fail
          *  says so where it said they were being written. */}
-        <p role="status" className="flex items-center gap-2 text-base text-(--text-secondary)">
+        <p role="status" className="flex items-center gap-2 text-base text-secondary">
           {details === "pending" ? (
             <>
-              <Spinner size={12} className="text-(--text-tertiary)" />
+              <Spinner size={12} className="text-tertiary" />
               Writing details…
             </>
           ) : (
@@ -333,7 +372,7 @@ function SectionOutline({
           <ul className="space-y-1.5">
             {section.assessment.reasons.map((reason, position) => (
               <Item key={position} className="space-y-1.5">
-                <Markdown className="text-(--text-primary)">{reason.text}</Markdown>
+                <Markdown className="text-primary">{reason.text}</Markdown>
                 <AnchorChips document={document} anchors={withoutHunks(reason.anchors)} />
               </Item>
             ))}
@@ -368,7 +407,7 @@ function RetryDetails({ onRetry }: { onRetry: () => void | Promise<unknown> }) {
     <Button
       variant="secondary"
       size="compact"
-      className="shadow-(--shadow-raised) active:translate-y-px active:shadow-none"
+      className="shadow-raised active:translate-y-px active:shadow-none"
       disabled={busy}
       onClick={() => void retry()}
     >
@@ -412,6 +451,7 @@ type AttentionRef = {
   badge?: ReactNode;
   /** Whether the item is listed on the section, so the row can jump to it. */
   listed: boolean;
+  evidence?: Evidence;
 };
 
 /** What an attention reference points at: the risk, the decision or the
@@ -436,13 +476,13 @@ function resolveRef(section: Section, ref: string): AttentionRef {
   }
   const evidence = section.evidence.find((item) => item.id === ref);
   if (evidence) {
-    // Evidence is not listed on the section, so the row carries its status.
     return {
       ref,
       kind: "Evidence",
       text: evidence.claim,
       badge: <EvidenceBadge evidence={evidence} compact />,
       listed: false,
+      evidence,
     };
   }
   return { ref, kind: "Reference", text: ref, listed: false };
@@ -483,19 +523,21 @@ function AttentionCallout({
   document,
   attention,
   section,
+  itemId,
   onJump,
   risks,
 }: {
   document: ReviewDocument;
   attention: NonNullable<Section["attention"]>;
   section: Section;
+  itemId: (ref: string) => string;
   onJump: (ref: string) => void;
   risks: ReactNode[];
 }) {
   // Evidence that only restates the attention (no proof was found, or the
   // claim is merely stated) is left out: the attention already says so. What
   // is shown points at something to open or act on.
-  const refs = attention.refs
+  const refs = [...new Set(attention.refs)]
     .filter((ref) => !section.risks.some((risk) => risk.id === ref))
     .filter((ref) => {
       const evidence = section.evidence.find((item) => item.id === ref);
@@ -507,24 +549,24 @@ function AttentionCallout({
     <section
       aria-label="Attention"
       data-review-block=""
-      className="min-w-0 rounded-r-(--radius-sm) border-l-2 border-(--status-caution) py-1 pl-4 outline-none data-[review-block-active]:bg-(--surface-wash)"
+      className="min-w-0 rounded-r-sm border-l-2 border-status-caution py-1 pl-4 outline-none data-[review-block-active]:bg-surface-wash"
     >
       <div className="mb-2 flex items-center gap-2">
-        <span aria-hidden className="flex text-(--status-critical)">
+        <span aria-hidden className="flex text-status-critical">
           <RiskIcon size={14} />
         </span>
-        <h3 className="text-xs font-semibold tracking-[0.12em] uppercase text-(--text-tertiary)">
+        <h3 className="text-xs font-semibold tracking-[0.12em] uppercase text-tertiary">
           Attention
         </h3>
       </div>
       {(risks.length !== 1 || refs.length > 0) && (
-        <Markdown className="mb-2 max-w-[62rem] text-base leading-normal text-(--text-primary)">
+        <Markdown className="mb-2 max-w-[62rem] text-base leading-normal text-primary">
           {attention.text}
         </Markdown>
       )}
       {places.length > 0 ? (
         <div className="mb-2 flex flex-wrap items-center gap-2">
-          <span className="text-3xs font-semibold tracking-[0.08em] uppercase text-(--text-tertiary)">
+          <span className="text-3xs font-semibold tracking-[0.08em] uppercase text-tertiary">
             Where to look
           </span>
           <AnchorChips document={document} anchors={places} />
@@ -532,28 +574,38 @@ function AttentionCallout({
       ) : null}
       {risks.length > 0 && <ol className="space-y-3">{risks}</ol>}
       {refs.length > 0 && (
-        <ul
-          aria-label="What to look at"
-          className="divide-y divide-(--border-subtle) border-t border-(--border-subtle)"
-        >
+        <ul aria-label="What to look at" className="divide-y divide-subtle border-t border-subtle">
           {refs.map((item, index) => (
             <li
               key={`${index}:${item.ref}`}
+              id={item.evidence ? itemId(item.ref) : undefined}
               className="flex items-start gap-3 py-2 text-base leading-[1.45]"
             >
-              <span className="w-16 flex-none pt-0.5 text-3xs font-semibold tracking-[0.08em] uppercase text-(--text-tertiary)">
+              <span className="w-16 flex-none pt-0.5 text-3xs font-semibold tracking-[0.08em] uppercase text-tertiary">
                 {item.kind}
               </span>
               {item.badge ? <span className="flex-none">{item.badge}</span> : null}
-              <Markdown
-                title={item.text}
-                className={cn(
-                  "line-clamp-2 min-w-0 flex-1 text-(--text-primary)",
-                  item.kind === "Reference" && "font-mono",
-                )}
-              >
-                {item.text}
-              </Markdown>
+              {item.evidence ? (
+                <div className="min-w-0 flex-1 space-y-1.5">
+                  <EvidenceContent
+                    document={document}
+                    evidence={item.evidence}
+                    anchors={item.evidence.anchors.filter(
+                      (anchor) => anchor.type !== "hunk" && anchor.type !== "file",
+                    )}
+                  />
+                </div>
+              ) : (
+                <Markdown
+                  title={item.text}
+                  className={cn(
+                    "line-clamp-2 min-w-0 flex-1 text-primary",
+                    item.kind === "Reference" && "font-mono",
+                  )}
+                >
+                  {item.text}
+                </Markdown>
+              )}
               {item.listed ? (
                 <JumpLink onClick={() => onJump(item.ref)} className="flex-none">
                   View ↓
@@ -564,6 +616,30 @@ function AttentionCallout({
         </ul>
       )}
     </section>
+  );
+}
+
+function EvidenceContent({
+  document,
+  evidence,
+  anchors = evidence.anchors,
+}: {
+  document: ReviewDocument;
+  evidence: Evidence;
+  anchors?: Anchor[];
+}) {
+  return (
+    <>
+      <Markdown className="text-primary">{evidence.claim}</Markdown>
+      {evidence.detail && <Markdown className="text-secondary">{evidence.detail}</Markdown>}
+      {evidence.expects && (
+        <div className="space-y-1">
+          <p className="text-xs font-medium text-tertiary">Expected coverage</p>
+          <Markdown className="text-secondary">{evidence.expects}</Markdown>
+        </div>
+      )}
+      <AnchorChips document={document} anchors={anchors} />
+    </>
   );
 }
 
@@ -599,7 +675,7 @@ function EntityGroupFrame({ group, children }: { group: EntityContentGroup; chil
     <section
       aria-label={name}
       data-entity-group={group.kind}
-      className="min-w-0 space-y-4 rounded-(--radius-lg) border p-5 shadow-(--shadow-card)"
+      className="min-w-0 space-y-4 rounded-lg border p-5 shadow-card"
       style={{
         background: entityGroupWash(group.color),
         borderColor: entityGroupStroke(group.color),
@@ -612,9 +688,9 @@ function EntityGroupFrame({ group, children }: { group: EntityContentGroup; chil
           style={{ background: group.color }}
           aria-hidden
         />
-        <h3 className="min-w-0 text-base font-medium tracking-[-0.01em] text-(--text-primary)">
+        <h3 className="min-w-0 text-base font-medium tracking-[-0.01em] text-primary">
           {group.label}
-          <span className="ml-2 font-mono text-xs text-(--text-tertiary)">{group.entity.name}</span>
+          <span className="ml-2 font-mono text-xs text-tertiary">{group.entity.name}</span>
         </h3>
       </div>
       {children}
@@ -663,11 +739,11 @@ function BlockView({
           <ol className="space-y-2">
             {behavior.steps.map((step, position) => (
               <Item key={step.id} id={itemId(step.id)} className="flex gap-3">
-                <span className="w-5 flex-none pt-px text-right text-base tabular-nums text-(--text-tertiary)">
+                <span className="w-5 flex-none pt-px text-right text-base tabular-nums text-tertiary">
                   {position + 1}
                 </span>
                 <div className="min-w-0 flex-1 space-y-1.5">
-                  <Markdown className="text-(--text-primary)">{step.text}</Markdown>
+                  <Markdown className="text-primary">{step.text}</Markdown>
                   {step.evidence.length > 0 && (
                     <ul className="flex flex-wrap gap-1.5" aria-label="Supporting evidence">
                       {step.evidence.map((ref) => {
@@ -712,7 +788,7 @@ function BlockView({
           <ul className="space-y-1.5">
             {groups.items.map((group) => (
               <Item key={group.id} id={itemId(group.id)} className="space-y-1.5">
-                <Markdown className="text-(--text-primary)">{group.rule}</Markdown>
+                <Markdown className="text-primary">{group.rule}</Markdown>
                 <ItemMeta>
                   <span>{pluralize("hunk", group.count, true)}</span>
                   {group.derived_from && (
@@ -730,7 +806,7 @@ function BlockView({
                   )}
                 </ItemMeta>
                 <details>
-                  <summary className="cursor-pointer text-base text-(--text-link) hover:underline">
+                  <summary className="cursor-pointer text-base text-link hover:underline">
                     Show hunks
                   </summary>
                   <div className="mt-1.5">{hunkChips(group.hunks)}</div>
@@ -748,15 +824,15 @@ function BlockView({
           <div className="space-y-4">
             {decisionGroups(decisions.items).map((group) => (
               <div key={group.label}>
-                <p className="mb-2 text-base font-semibold text-(--text-secondary)">
+                <p className="mb-2 text-base font-semibold text-secondary">
                   {group.label} · {group.items.length}
                 </p>
-                <ul className="divide-y divide-(--border-subtle)">
+                <ul className="divide-y divide-subtle">
                   {group.items.map((decision) => (
                     <li
                       key={decision.id}
                       id={itemId(decision.id)}
-                      className="rounded-(--radius-sm) py-3 first:pt-0 last:pb-0"
+                      className="rounded-sm py-3 first:pt-0 last:pb-0"
                     >
                       <DecisionDisclosure
                         single={decisions.items.length === 1}
@@ -766,12 +842,12 @@ function BlockView({
                       >
                         <div className="mt-2 space-y-1">
                           {decision.title?.trim() && (
-                            <Markdown className="max-w-[90ch] text-base text-(--text-secondary)">
+                            <Markdown className="max-w-[90ch] text-base text-secondary">
                               {decision.text}
                             </Markdown>
                           )}
                           {decision.rationale && (
-                            <p className="max-w-[90ch] text-xs leading-normal text-(--text-tertiary)">
+                            <p className="max-w-[90ch] text-xs leading-normal text-tertiary">
                               {decision.rationale}
                             </p>
                           )}
@@ -819,7 +895,7 @@ function BlockView({
               >
                 <code className="font-mono text-base">{item.name}</code>
                 <Badge size="compact">{item.ecosystem}</Badge>
-                <span className="tabular-nums text-(--text-secondary)">
+                <span className="tabular-nums text-secondary">
                   {item.from ?? "—"} → {item.to ?? "removed"}
                 </span>
                 <span className="w-full">
@@ -845,7 +921,7 @@ function BlockView({
             {included.items.map((item) => (
               <Item key={item.pr} className="flex flex-wrap items-center gap-x-2 gap-y-1">
                 <AnchorChips document={document} anchors={[{ type: "pr", number: item.pr }]} />
-                {item.note && <span className="text-(--text-secondary)">{item.note}</span>}
+                {item.note && <span className="text-secondary">{item.note}</span>}
               </Item>
             ))}
           </ul>
@@ -863,10 +939,10 @@ function BlockView({
         content.kind === "code" ? (content as Extract<Block, { kind: "code" }>).caption : undefined;
       return (
         <Part label={label}>
-          <pre className="overflow-x-auto rounded-(--radius-md) bg-(--code-fill) p-3 font-mono text-base leading-[1.5] text-(--text-primary)">
+          <pre className="overflow-x-auto rounded-md bg-code-fill p-3 font-mono text-base leading-[1.5] text-primary">
             <code>{content.content}</code>
           </pre>
-          {caption && <p className="mt-1.5 text-base text-(--text-tertiary)">{caption}</p>}
+          {caption && <p className="mt-1.5 text-base text-tertiary">{caption}</p>}
           <AnchorChips document={document} anchors={content.source} className="mt-2" />
         </Part>
       );
@@ -887,7 +963,7 @@ function BlockView({
               <ExternalLinkIcon size={10} />
             </a>
           ) : (
-            <p className="text-base text-(--text-primary)">{media.caption ?? "Attachment"}</p>
+            <p className="text-base text-primary">{media.caption ?? "Attachment"}</p>
           )}
           <AnchorChips document={document} anchors={media.source} className="mt-2" />
         </Part>
@@ -901,7 +977,7 @@ function BlockView({
       const repro = block as Extract<Block, { kind: "repro" }>;
       return (
         <Part label="Reproduction steps">
-          <ol className="list-decimal space-y-1 pl-6 text-base text-(--text-primary)">
+          <ol className="list-decimal space-y-1 pl-6 text-base text-primary">
             {repro.steps.map((step, position) => (
               <li key={`${position}-${step}`}>{step}</li>
             ))}
@@ -935,7 +1011,7 @@ function BlockView({
     default:
       return (
         <Part label="Unsupported content">
-          <details className="rounded-(--radius-md) border border-dashed border-(--border-default) px-3 py-2 text-base text-(--text-tertiary)">
+          <details className="rounded-md border border-dashed border-default px-3 py-2 text-base text-tertiary">
             <summary className="cursor-pointer">
               This review uses a “{humanize(block.kind)}” block this page cannot render yet.
             </summary>
@@ -962,13 +1038,13 @@ function DecisionDisclosure({
   if (single)
     return (
       <div>
-        <h4 className="text-base font-medium leading-snug text-(--text-primary)">{title}</h4>
+        <h4 className="text-base font-medium leading-snug text-primary">{title}</h4>
         {children}
       </div>
     );
   return (
     <details>
-      <summary className="cursor-pointer text-base text-(--text-secondary) hover:text-(--text-primary)">
+      <summary className="cursor-pointer text-base text-secondary hover:text-primary">
         {title}
       </summary>
       {children}
@@ -983,7 +1059,7 @@ function DecisionSessionLink({ session, turn }: { session: string; turn: number 
   return (
     <ViewerLink
       href={`?${next}`}
-      className="inline-block text-xs text-(--text-link) hover:text-(--text-link-hover) hover:underline"
+      className="inline-block text-xs text-link hover:text-link-hover hover:underline"
     >
       View in session →
     </ViewerLink>

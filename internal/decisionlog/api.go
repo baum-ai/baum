@@ -42,7 +42,8 @@ type API struct {
 	// Live lists the tracked sessions; nil is none.
 	Live func() []livesessions.Session
 	// Linked is nil to link none.
-	Linked LinkedSessions
+	Linked    LinkedSessions
+	Relevance *Relevance
 	// Log is nil for slog.Default.
 	Log *slog.Logger
 }
@@ -84,7 +85,7 @@ func (a *API) Handler() http.Handler {
 		case agent != "" && session != "" && repository == "":
 			body, err = a.session(r.Context(), SessionKey{agent, session})
 		case repository != "" && numberErr == nil && number > 0 && agent == "" && session == "":
-			body, err = a.pullRequest(r.Context(), repository, number)
+			body, err = a.pullRequest(r.Context(), repository, number, q.Get("head"))
 		default:
 			http.Error(w, "agent and session, or repository and a positive pr, required", http.StatusBadRequest)
 			return
@@ -166,7 +167,7 @@ func (a *API) captureOff(ctx context.Context, repository string) (string, error)
 	return "", nil
 }
 
-func (a *API) pullRequest(ctx context.Context, repository string, number int) (PullRequestDecisions, error) {
+func (a *API) pullRequest(ctx context.Context, repository string, number int, head string) (PullRequestDecisions, error) {
 	answer := PullRequestDecisions{Sessions: []PullRequestSession{}}
 	var keys []SessionKey
 	sessions := map[SessionKey]PullRequestSession{}
@@ -202,7 +203,13 @@ func (a *API) pullRequest(ctx context.Context, repository string, number int) (P
 	if !generated.IsZero() {
 		answer.ReviewGeneratedAt = &generated
 	}
-	views, err := a.Store.Sessions(ctx, keys...)
+	var views []SessionDecisions
+	var err error
+	if a.Relevance != nil {
+		views, err = a.Relevance.Sessions(ctx, repository, number, head, keys)
+	} else {
+		views, err = a.Store.Sessions(ctx, keys...)
+	}
 	if err != nil {
 		return answer, err
 	}

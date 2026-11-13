@@ -7,9 +7,10 @@ import (
 	"path/filepath"
 	"slices"
 	"sort"
-	"strings"
 	"time"
 
+	"github.com/baum-ai/baum/internal/agentdirs"
+	"github.com/baum-ai/baum/sessions/codextranscript"
 	"github.com/baum-ai/baum/sessions/collector/cursor"
 	"github.com/baum-ai/baum/sessions/vendors"
 )
@@ -28,12 +29,22 @@ type Store struct {
 
 // StoreOptions configures FindStores.
 type StoreOptions struct {
-	// ClaudeProjectsDir overrides the Claude Code session store
-	// (default ~/.claude/projects).
+	// ClaudeProjectsDir overrides the Claude Code session stores with one
+	// directory. The default is the projects folder of every Claude Code
+	// configuration directory baum knows (agentdirs.Claude): ~/.claude,
+	// CLAUDE_CONFIG_DIR and the recorded ones.
 	ClaudeProjectsDir string
-	// CodexSessionsDir overrides the Codex session store
-	// (default ~/.codex/sessions).
+	// ClaudeProjectsDirs overrides them with several, when ClaudeProjectsDir
+	// is empty.
+	ClaudeProjectsDirs []string
+	// CodexSessionsDir overrides the Codex session stores with one
+	// directory. The default is the sessions folder of every Codex home baum
+	// knows (agentdirs.Codex): ~/.codex, CODEX_HOME and the recorded ones.
+	// The archived_sessions folder beside each is listed too.
 	CodexSessionsDir string
+	// CodexSessionsDirs overrides them with several, when CodexSessionsDir
+	// is empty.
+	CodexSessionsDirs []string
 	// CursorStorePaths overrides Cursor state store discovery. Each entry is
 	// either a `state.vscdb` file or a directory searched for one.
 	CursorStorePaths []string
@@ -52,30 +63,29 @@ type StoreOptions struct {
 // Missing stores yield no results rather than an error, so the search works
 // on a machine that has only some of these tools installed.
 func FindStores(opts StoreOptions) ([]Store, error) {
-	claudeDir, codexDir := opts.ClaudeProjectsDir, opts.CodexSessionsDir
-	if (claudeDir == "" && opts.wants(vendors.ClaudeCode)) ||
-		(codexDir == "" && opts.wants(vendors.Codex)) {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return nil, fmt.Errorf("resolve session stores: %w", err)
+	var claudeDirs, codexDirs []string
+	if opts.wants(vendors.ClaudeCode) {
+		var err error
+		if claudeDirs, err = claudeProjectsDirs(opts.ClaudeProjectsDir, opts.ClaudeProjectsDirs); err != nil {
+			return nil, err
 		}
-		if claudeDir == "" {
-			claudeDir = filepath.Join(home, ".claude", "projects")
-		}
-		if codexDir == "" {
-			codexDir = filepath.Join(home, ".codex", "sessions")
+	}
+	if opts.wants(vendors.Codex) {
+		var err error
+		if codexDirs, err = codexSessionsDirs(opts.CodexSessionsDir, opts.CodexSessionsDirs); err != nil {
+			return nil, err
 		}
 	}
 
 	var stores []Store
-	if opts.wants(vendors.ClaudeCode) {
+	for _, claudeDir := range claudeDirs {
 		found, err := claudeStores(claudeDir)
 		if err != nil {
 			return nil, err
 		}
 		stores = append(stores, found...)
 	}
-	if opts.wants(vendors.Codex) {
+	for _, codexDir := range codexDirs {
 		found, err := codexStores(codexDir)
 		if err != nil {
 			return nil, err
@@ -104,6 +114,38 @@ func FindStores(opts StoreOptions) ([]Store, error) {
 		return stores[i].Path < stores[j].Path
 	})
 	return stores, nil
+}
+
+// claudeProjectsDirs resolves the Claude Code session stores to read: the
+// one override, else the several, else the projects folder of every Claude
+// Code configuration directory baum knows.
+func claudeProjectsDirs(override string, overrides []string) ([]string, error) {
+	if override != "" {
+		return []string{override}, nil
+	}
+	if len(overrides) > 0 {
+		return overrides, nil
+	}
+	if _, err := os.UserHomeDir(); err != nil {
+		return nil, fmt.Errorf("resolve session stores: %w", err)
+	}
+	return agentdirs.Claude.Under("", "projects"), nil
+}
+
+// codexSessionsDirs resolves the Codex session stores to read: the one
+// override, else the several, else the sessions folder of every Codex home
+// baum knows.
+func codexSessionsDirs(override string, overrides []string) ([]string, error) {
+	if override != "" {
+		return []string{override}, nil
+	}
+	if len(overrides) > 0 {
+		return overrides, nil
+	}
+	if _, err := os.UserHomeDir(); err != nil {
+		return nil, fmt.Errorf("resolve session stores: %w", err)
+	}
+	return agentdirs.Codex.Under("", "sessions"), nil
 }
 
 // wants reports whether a source is in scope.
@@ -155,6 +197,7 @@ func claudeStores(projectsDir string) ([]Store, error) {
 func codexStores(sessionsDir string) ([]Store, error) {
 	var stores []Store
 	for _, root := range codexStoreRoots(sessionsDir) {
+		var listed []Store
 		err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 			if err != nil {
 				if path == root {
@@ -165,14 +208,14 @@ func codexStores(sessionsDir string) ([]Store, error) {
 				}
 				return nil
 			}
-			if d.IsDir() || !strings.HasPrefix(d.Name(), "rollout-") || filepath.Ext(d.Name()) != ".jsonl" {
+			if d.IsDir() || !codextranscript.IsRolloutName(d.Name()) {
 				return nil
 			}
 			info, err := d.Info()
 			if err != nil {
 				return nil
 			}
-			stores = append(stores, Store{
+			listed = append(listed, Store{
 				Source:     vendors.Codex,
 				Path:       path,
 				ModifiedAt: info.ModTime().UTC(),
@@ -182,6 +225,16 @@ func codexStores(sessionsDir string) ([]Store, error) {
 		})
 		if err != nil && !os.IsNotExist(err) {
 			return nil, err
+		}
+		// A compressed rollout is left out when its plain copy was listed too.
+		plain := make(map[string]bool, len(listed))
+		for _, store := range listed {
+			plain[store.Path] = true
+		}
+		for _, store := range listed {
+			if !codextranscript.Compressed(store.Path) || !plain[codextranscript.PlainPath(store.Path)] {
+				stores = append(stores, store)
+			}
 		}
 	}
 	return stores, nil
