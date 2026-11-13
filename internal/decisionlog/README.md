@@ -422,6 +422,9 @@ clone HEAD changes do not invalidate pinned evidence. Repository input revision
 is compared inside the write transaction, so changes during the task cannot
 persist stale relevance or highlights. Accepted answers dirty affected features,
 including initially clean adaptive scopes, without blocking build promotion.
+They put a feature's text behind without restarting its 15-minute membership
+debounce, so a quiet feature gets text after each quantum rather than only once
+its backlog has drained.
 
 Timeline and `summarySource` share one bulk storage-only resolver. A current
 semantic answer wins, including explicit none. While absent/stale, only file
