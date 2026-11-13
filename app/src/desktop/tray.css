@@ -1,16 +1,12 @@
 /* The tray panel (tray.html): a menu with meters under the tray icon, in
-   baum's bundled type. */
-@import "../../../viewer/src/fonts/fonts.css";
-@import "../../../viewer/src/theme.css";
-
-:root {
-  /* The type scale: mirrors the steps in oss/viewer/src/viewer.css. */
-  --text-xs: 13px;
-  --text-base: 16px;
-  --text-lg: 18px;
-  --text-2xl: 24px;
-  --text-3xl: 28px;
-}
+   baum's bundled type. Tailwind's theme and utilities load without its
+   preflight, as on the other native screens (screen.css). */
+@layer theme, base, components, utilities;
+@import "tailwindcss/theme.css" layer(theme);
+@import "tailwindcss/utilities.css" layer(utilities);
+@import "../../../viewer/src/viewer.css";
+@source "../../../viewer/src";
+@source "..";
 
 :root {
   color-scheme: light;

@@ -399,6 +399,75 @@ copy:
   matches a file or directory inside either tree, including the case of
   every path component even on case-insensitive filesystems. It never spends
   a repair on a reference.
+- `summary.recommendation` (`null`, or a `decision` of `approve`,
+  `look_first` or `request_changes` with a `text` and `refs`) is optional in
+  the stored schema, for documents generated before it existed, and required
+  (null allowed) in the authored contract and the model schema. The outline
+  stage writes it, so it survives into the assembled and stored document;
+  refresh never adds or changes it. `summary.review_exchange.summary` may be
+  null, for a pull request nobody has reviewed.
+- Prose rules (`prose_rules.go`) run on newly authored documents only, and
+  their findings go back to the model through the repair loop. The public
+  prompts (`agent/prompt`) state the same rules up front, so a repair is the
+  exception. `ValidateStored`
+  and `Refresh` never apply them, so a stored review is never rejected or
+  rewritten for them. Which rules run depends on what is being prepared:
+  a one-pass document (`Validate`, `Prepare`) gets all of them; a staged
+  outline (`PrepareOutline`) gets them with prose and recommendation refs
+  limited to section IDs, because no risk, evidence or decision exists yet
+  ("the outline can cite only section IDs; cite the section"); a section's
+  details (`PrepareSectionDetails`) are checked without the outline around
+  them (summary, section title and assessment belong to the outline, which a
+  details reply cannot change, and a continued run's stored outline is
+  unchecked), citing their own items and any section; details a previous version wrote
+  (`PrepareReusedSectionDetails`) get the wording rules but no identifier is
+  resolved against the bundle, since a check or hunk of an earlier head does
+  not exist now and the section would be rewritten on every push; the context
+  stage, a stored outline that is continued (`PrepareStoredOutline`) and the
+  final assembly (`PrepareStaged`, `CompleteStaged`) apply none, since each
+  part was checked when it was written or accepted.
+- A host that writes the summary's review exchange itself, as a stack review
+  does from its members' exchanges, uses `PrepareHostExchange` and
+  `CompleteWithPromptHostExchange`: the model never sees that field, so no
+  finding on it could be repaired, and the rules do not read it.
+- The rules, and the fields they read:
+  - Run-state wording ("still in progress", "had not finished", "at the
+    snapshot", and "was/is in progress, queued or pending" when the sentence
+    is about a CI check, workflow, suite, pipeline or bot, not the verb "check": the evidence
+    status is refreshed later, the sentence is not) and talk about the model's
+    inputs ("in the bundle", "in the excerpts", "in the supplied snapshot",
+    "in the head checkout", "outline stage", "I read") are checked only in the
+    fields that carry the review's judgement: evidence claim, detail and
+    expects, attention text, risk text, the overview, the review exchange
+    summary, assessment reasons and the recommendation text. Behaviour steps,
+    context, intent, titles, the other descriptive blocks, tiles and the
+    release note describe the code under review, which may itself run jobs and
+    take snapshots, and are not checked for them.
+  - Identifiers in any prose field must resolve, because the viewer links
+    them: a hunk ID must be in the bundle's diff; a `rsk_`, `ev_`, `dec_` or
+    `sec_` ID in the document; a `check_run:` or `status:` ID among the
+    bundle's checks; a `PRRT_` ID (hyphens allowed) among its review threads;
+    `comment <digits>` (or a code span of digits) among its conversation items;
+    a session UUID a non-restricted session. Without a bundle only the
+    document's own IDs are checked. A full 40-hex SHA is rejected: write the
+    short SHA.
+  - A ticket key in a title (section, step or decision titles).
+  - `ci` evidence: the authored contract and the model schema do not offer the
+    kind (the page shows the checks; a `test` item whose claim names what the
+    tests cover, anchored to the check, replaces it); the stored contract keeps
+    it, and the finding remains for a path without the enum.
+  - An absence claim about tests, checks, runs or evidence ("No test covers
+    X", "no passing check") whose status is not `missing`, `unavailable`,
+    `failed`, `skipped` or `pending`; "No caller of X remains" is a code fact
+    and is left alone.
+  - More than one `missing` evidence item in a section. Risks are not capped:
+    a cap makes the model drop real risks, which the next version then records
+    as mitigated.
+  - Two risks, or a risk and the section's attention, that state one point:
+    at least six distinct words in the shorter text and at least 80% of them
+    (stop words aside) in the longer one.
+  - Recommendation refs that name no section, risk, evidence or decision, or
+    none for `look_first` and `request_changes`.
 
 ### History
 
@@ -873,12 +942,12 @@ and anthropic, `submit-codex.md`, and `submit-cursor.md`, which points at the
 schema the cursor-agent backend appends and lists the tools that stop a run),
 embedded with `go:embed`.
 `Prompts.Instructions` appends the backend's block under that heading, sets
-`Version` to `review-public-v6` and `Digest` to the sha256 of the composed body,
+`Version` to `review-public-v8` and `Digest` to the sha256 of the composed body,
 and fails for any other backend. A host may supply another implementation; the
 hosted service does, with its private prompts. `StaticPrompts` is a fixed
 implementation for tests and simple hosts. The prompt is per backend because
 each backend submits its result differently. `GroupPrompts` is the local
-review group's prompt (`group-review-public-v4`): the same text with
+review group's prompt (`group-review-public-v6`): the same text with
 `group-public-v1.md` inserted before the Submitting heading, which says how a
 group's bundle, per-member checkout and `members.json` differ and what a
 combined review covers (see "Review groups").
@@ -887,7 +956,7 @@ A staged review takes its instructions through `StagedPrompts`, whose
 `StagedInstructions(ctx, backend)` returns a `StagedPrompt`: `Shared` and
 one text per stage (`Outline`, `Details`, `Context`), with a `Version` and a
 `Digest` covering all four. The module's `prompt.StagedPrompts`
-(`review-staged-public-v1`) embeds `review-shared-public-v1.md` (the stages
+(`review-staged-public-v3`) embeds `review-shared-public-v1.md` (the stages
 and what each writes, so none repeats another, plus the ground rules,
 inputs, checks, anchors, writing and calibration of `review-public-v6.md`)
 and `review-outline-public-v1.md`, `review-details-public-v1.md` and
@@ -2709,11 +2778,13 @@ handler behind that middleware. The existing document viewer does not mount it.
 prompting, so a picked repository gets a clone attached and the setup screens
 can pre-select repositories already on the machine. `Find` collects directories
 from agent hook events and the Claude Code, Codex and Cursor session stores
-(cheap working-directory probes, no transcript parsing), resolves each to its
+(cheap working-directory probes, no transcript parsing), leaving out those in a
+temporary directory, an agent scratchpad or Downloads, resolves each to its
 working tree with `gitlocal.Probe` (two read-only git commands; `Open` would
-create a private mirror per candidate), then walks the usual code folders and
-the folders around the clones agents used, to four levels, using exclusions
-defined by `internal/scanskip`. Candidates are grouped by the
+create a private mirror per candidate), then walks the home directory breadth
+first, to five levels, stopping at a repository and using the exclusions
+defined by `internal/scanskip` (hidden, dependency and build folders, and
+personal folders, including every one macOS guards with a privacy prompt). Candidates are grouped by the
 lowercase `owner/name` of every github.com remote, linked worktrees collapsing
 into their main clone. The daemon's `Service` keeps the result in memory,
 rescans at start, hourly while a picked repository has no available clone, and
@@ -2723,8 +2794,10 @@ the last scan was under a minute ago), attaches the best candidate with
 any remote names it; a path or repository directory registered to another
 repository is never moved, and an unpicked repository is never picked again),
 and attaches the clone of an agent event's directory at once, after a registry
-query that runs no git. On macOS it reads none of the protected folders
-(Documents, Desktop, Downloads, iCloud Drive, CloudStorage). `GET /api/clones/found` and
+query that runs no git. On macOS one rule (`finder.protected`) keeps the walk
+and agent folders out of every path that would make macOS ask (Desktop,
+Downloads, Pictures, Movies, Music, all of Library, cloud drives, `/Volumes`,
+and Documents unless one scan is asked to include it). `GET /api/clones/found` and
 `POST /api/clones/found/refresh` serve it. It makes no network request. See
 its [README](internal/clonefind/README.md).
 
@@ -3454,9 +3527,13 @@ it does (a job whose start could not be journaled waits until then), and tries
 once more at shutdown after the workers stop.
 
 A run's time limit is its only bound by default: `budgets.review_timeout` (10
-minutes) for a review of a pull request or a group and `budgets.run_timeout`
+minutes) for a review of a pull request and `budgets.run_timeout`
 (30 minutes) for every other agent run, a fix, a question to a review's agent
-or a feature build. The preferences' `review_time_limit_minutes` and
+or a feature build. A group's review is written in one pass whose final
+document alone takes several minutes, so its limit is the review limit plus
+half of it for each member after the first, at most three times the review
+limit (`groupReviewTimeout`: 15 minutes for two members by default, 30 for
+five or more). The preferences' `review_time_limit_minutes` and
 `run_time_limit_minutes` (`PUT api/settings/time-limits`, 1–240) replace the
 config file's (`Preferences.Resolve`). `max_calls` and `max_tokens` are zero,
 no limit, unless the config file sets them; `agent.Exceeds` and the backends
@@ -3758,8 +3835,15 @@ commit statuses. On a pull request the signed-in account opened
 GraphQL document (`FixReviewThreads`, up to four pages of 50 threads with the
 first 10 comments of each; `github.Client.UnresolvedThreads`) and keeps,
 through `fix.SelectThreads`, those the account can reply to and resolve whose
-first comment comes from an `OWNER`, `MEMBER` or `COLLABORATOR` or a bot, at
+first comment comes from an account with push access to the repository, at
 most 20, dropping other authors' comments and bounding each body to 2 KiB.
+Push access is the collaborator permission over REST
+(`fix.CollaboratorPushAccess`: `write`, `maintain` or `admin`, or
+`user.permissions.push` for a custom role), read once per author per read of
+the threads; a 404 or 403 is no access, any other failure fails the
+preparation. GitHub's author association is not used. Comments by apps' bot
+accounts are trusted without a permission read, so review bots' threads can be
+fixed.
 `Prepared.Fix` records what it fixes (`conflicts`, `checks`, and `threads`, a
 digest of the kept threads and their comments) and the branches;
 `fix_threads` keeps the threads' places and excerpts for the job, with
@@ -3801,16 +3885,28 @@ failure, so it sends no notice and the app shows that summary in neutral
 words (jobs saved as failed by an older daemon are shown the same way). A
 failed fix records a reason (`head_changed`, `threads_changed`, `no_remote`,
 `git`, `backend`, `budget`, `conflicts_remain`, `history_rewritten`,
-`workflow_changed`, `push_rejected`, `push_failed`, `signed_out`) and a
-bounded detail. `signed_out` is an agent failure whose provider refused its
-sign-in (`agent.SignInRejected`); review jobs (and the chat jobs of the
-earlier Ask did) report the same reason in place of `backend`. A
+`credential_added`, `nested_repository`, `workflow_changed`, `push_rejected`,
+`push_failed`, `signed_out`) and a bounded detail. `signed_out` is an agent
+failure whose provider refused its sign-in (`agent.SignInRejected`); review
+jobs (and the chat jobs of the earlier Ask did) report the same reason in
+place of `backend`. A
 `budget` detail names the limit the agent reached (its time limit, in
 minutes, or its call or token budget); a `backend` one points to the daemon
 log, where `fix.Options.Logger` (the job's logger) has the agent's own error,
 which the job never keeps. A
-fix of review comments alone fails with `workflow_changed` when its commit
-changes a path under `.github/workflows/` or `.github/actions/`.
+fix checks its commit before the push (`fix.guard`), against what the fix
+itself changed (`gitlocal.Fix.Changes`: the raw tree diff from the head, or
+from the merge commit after a clean merge of the base, or, after a merge that
+stopped at conflicts, only paths that differ from both head and base, with
+added lines those neither side had; submodules always included). It fails with
+`credential_added` when a non-e-mail span the redactor finds overlaps an added
+line, when a changed file sits at a well-known credential path (OpenSSH
+private key names, `.git-credentials`, `.netrc`, `.aws/credentials`,
+`gh/hosts.yml`), or when a changed text file is over 8 MiB; with
+`nested_repository` when it adds or changes a gitlink (mode `160000`); and,
+when review threads or a conversation were in the prompt, with
+`workflow_changed` when it changes a path under `.github/workflows/` or
+`.github/actions/`. The detail names the paths, masked.
 
 A fix can also be made from a conversation of the earlier Ask (see "Earlier
 questions to the review agent"). The app no longer offers it (its **Fix this**
@@ -5072,14 +5168,19 @@ saved, in the `state/agent-requests` document in `app.sqlite`.
   builds the agent's answer from it; the daemon answers a `Decision`
   (behaviour, suggestion index, option indexes or the user's own text per
   question), or nothing. `Store.Ask` cleans, masks (the tracker's `Mask`) and
-  cuts every string (values keep newlines, 4000 characters; others one line),
-  holds at most 64 requests, and waits for an answer, a withdrawal, the
+  bounds every string: values (which keep newlines) and suggestion labels to
+  the 64 KiB line that carries the request, so they are shown whole, and other
+  labels and question texts to one cut line. The hook sends a permission
+  request's values and suggestions whole, and sends nothing (the agent asks in
+  its terminal) when the request would not fit 56 KiB without shortening.
+  It holds at most 64 requests, and waits for an answer, a withdrawal, the
   client's disconnect or, for Codex, `CodexWait` (25 s); a Codex request
   answers nothing at once while `codex_approvals` is off (checked again under
   the lock it is inserted under), and turning it off withdraws the waiting
   ones. A request is refused, answering nothing at once, when the mask turned
   non-empty text into "" (the redaction failed: nothing unmasked is shown),
-  or when its answers could not be told apart once cleaned and cut: two
+  when a permission request's tool, row or suggestion would be cut (approving
+  covers the whole input), or when its answers could not be told apart once cleaned and cut: two
   equal questions, two equal options of one question, or a label containing
   ", " in a multi-select question.
 - **Withdrawal.** `Store.Run` follows the record's agent events
@@ -5137,7 +5238,7 @@ saved, in the `state/agent-requests` document in `app.sqlite`.
   `{"requests":[{"id","agent","session_id","kind","tool","created_at","input":[{"label","value","code"?}],"suggestions":[{"id","label"}],"questions":[{"question","header"?,"multi_select","options":[{"label","description"?}]}],"altered"?}],"messages":[{"agent","session_id","text","queued_at"}],"settings":{"codex_approvals"}}`,
   oldest request first, message text masked. `altered` is true when the
   request's tool, input, questions or options are not shown exactly as the
-  agent sent them (a value cut at its bound, cleaned of control or format
+  agent sent them (a question's text cut at its bound, cleaned of control or format
   characters or folded blanks, or with a secret masked); the MCP server's
   `answer_request` then never proposes allowing it. `POST
   /api/agent-requests/{id}/answer` takes

@@ -82,7 +82,7 @@ function People({ people }: { people: DecisionPerson[] }) {
           key={person.email}
           title={personLabel(person)}
           className={cn(
-            "inline-flex rounded-full ring-2 ring-(--surface-card)",
+            "inline-flex rounded-full ring-2 ring-surface-card",
             index > 0 && "-ml-1.5",
           )}
         >
@@ -90,7 +90,7 @@ function People({ people }: { people: DecisionPerson[] }) {
         </span>
       ))}
       {extra > 0 ? (
-        <span className="ml-1.5 text-xs text-(--text-tertiary)">+{formatCount(extra)}</span>
+        <span className="ml-1.5 text-xs text-tertiary">+{formatCount(extra)}</span>
       ) : null}
     </span>
   );
@@ -100,21 +100,18 @@ function People({ people }: { people: DecisionPerson[] }) {
  *  title nor stale text. */
 function FeatureTitle({ feature }: { feature: FeatureSummary }) {
   if (feature.summary_pending)
-    return <span className="text-(--text-secondary) italic">Summary being updated</span>;
-  if (!feature.title)
-    return <span className="text-(--text-secondary) italic">Untitled feature</span>;
-  return (
-    <InlineMarkdown className="font-medium text-(--text-primary)">{feature.title}</InlineMarkdown>
-  );
+    return <span className="text-secondary italic">Summary being updated</span>;
+  if (!feature.title) return <span className="text-secondary italic">Untitled feature</span>;
+  return <InlineMarkdown className="font-medium text-primary">{feature.title}</InlineMarkdown>;
 }
 
 /** The dot each feature wears on the timeline, by status, in its badge's
  *  colours: in progress a ring on the info wash, shipped solid positive,
  *  abandoned hollow. */
 const STATUS_DOTS: Record<FeatureSummary["status"], string> = {
-  in_progress: "border-2 border-(--status-info) bg-(--status-info-bg)",
-  shipped: "bg-(--status-positive)",
-  abandoned: "border-2 border-(--border-strong) bg-(--surface-page)",
+  in_progress: "border-2 border-status-info bg-status-info-bg",
+  shipped: "bg-status-positive",
+  abandoned: "border-2 border-strong bg-surface-page",
 };
 
 /** One row of the timeline: from `md` a date column, then the rail's column,
@@ -143,7 +140,7 @@ function TimelineDate({ day }: { day?: string | null }) {
   return (
     <div className="hidden pt-3.5 text-right md:block">
       {day ? (
-        <time dateTime={day} className="text-xs font-medium text-(--text-tertiary) tabular-nums">
+        <time dateTime={day} className="text-xs font-medium text-tertiary tabular-nums">
           {formatBucket(day, "day")}
         </time>
       ) : null}
@@ -171,19 +168,16 @@ export function TimelineHeading({
         {level === "day" ? (
           <span
             aria-hidden
-            className="relative mt-[0.8rem] h-2 w-2 rounded-full border border-(--border-strong) bg-(--surface-page)"
+            className="relative mt-[0.8rem] h-2 w-2 rounded-full border border-strong bg-surface-page"
           />
         ) : null}
       </TimelineRail>
       {level !== "day" ? (
-        <h3 className={cn("pt-1 text-lg font-medium text-(--text-primary)", MONTH_HEADING)}>
+        <h3 className={cn("pt-1 text-lg font-medium text-primary", MONTH_HEADING)}>
           {level === "relevance" ? "Best matches first" : formatBucket(iso, "month")}
         </h3>
       ) : (
-        <time
-          dateTime={iso}
-          className="block pt-2 pb-2.5 text-xs font-medium text-(--text-tertiary)"
-        >
+        <time dateTime={iso} className="block pt-2 pb-2.5 text-xs font-medium text-tertiary">
           {formatBucket(iso, "day")}
         </time>
       )}
@@ -241,7 +235,7 @@ export function FeatureItem({
         <span
           aria-hidden
           className={cn(
-            "relative mt-4 h-3 w-3 rounded-full ring-4 ring-(--surface-page) transition-transform motion-reduce:transition-none",
+            "relative mt-4 h-3 w-3 rounded-full ring-4 ring-surface-page transition-transform motion-reduce:transition-none",
             STATUS_DOTS[feature.status],
             selected && "scale-150",
           )}
@@ -251,12 +245,12 @@ export function FeatureItem({
         <div
           className={cn(
             // Hovering the feature tints the whole tile, its key decisions too.
-            "min-w-0 overflow-hidden rounded-(--radius-lg) border shadow-(--shadow-card) has-[>button:hover]:bg-(--surface-hover)",
+            "min-w-0 overflow-hidden rounded-lg border shadow-card has-[>button:hover]:bg-surface-hover",
             selected
-              ? "border-(--action-accent) bg-(--surface-selected) ring-1 ring-(--action-accent)"
+              ? "border-action-accent bg-surface-selected ring-1 ring-action-accent"
               : expanded
-                ? "border-(--border-strong) bg-(--surface-card)"
-                : "border-(--border-default) bg-(--surface-card)",
+                ? "border-strong bg-surface-card"
+                : "border-default bg-surface-card",
           )}
         >
           <button
@@ -275,7 +269,7 @@ export function FeatureItem({
             <ChevronDownIcon
               size={14}
               className={cn(
-                "mt-1 flex-none text-(--text-tertiary) transition-transform motion-reduce:transition-none",
+                "mt-1 flex-none text-tertiary transition-transform motion-reduce:transition-none",
                 (!expanded || panelElsewhere) && "-rotate-90",
               )}
             />
@@ -287,14 +281,14 @@ export function FeatureItem({
                 <Badge size="compact" tone={featureStatusTone(feature.status)}>
                   {featureStatusLabel(feature.status)}
                 </Badge>
-                {span ? <span className="text-xs text-(--text-tertiary)">{span}</span> : null}
+                {span ? <span className="text-xs text-tertiary">{span}</span> : null}
               </span>
               {!feature.summary_pending && feature.description ? (
-                <InlineMarkdown className="mt-1 line-clamp-2 text-base break-words text-(--text-secondary)">
+                <InlineMarkdown className="mt-1 line-clamp-2 text-base break-words text-secondary">
                   {feature.description}
                 </InlineMarkdown>
               ) : null}
-              <span className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-(--text-tertiary)">
+              <span className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-tertiary">
                 {repository ? <span>{repository}</span> : null}
                 <People people={feature.people} />
                 <span data-testid="feature-counts">{featureCounts(feature)}</span>
@@ -308,7 +302,7 @@ export function FeatureItem({
               role="region"
               aria-labelledby={`${id}-button`}
               hidden={!expanded}
-              className="border-t border-(--border-subtle) bg-(--surface-wash) px-4 py-4 sm:px-5 sm:pl-11"
+              className="border-t border-subtle bg-surface-wash px-4 py-4 sm:px-5 sm:pl-11"
             >
               {expanded ? children : null}
             </div>
@@ -338,7 +332,7 @@ function KeyDecisions({
         aria-controls={`${id}-keys`}
         onClick={() => setOpen((current) => !current)}
         className={cn(
-          "-ml-1.5 flex cursor-pointer items-center gap-1.5 rounded-(--radius-sm) px-1.5 py-1 text-xs text-(--text-secondary) hover:bg-(--surface-hover) hover:text-(--text-primary)",
+          "-ml-1.5 flex cursor-pointer items-center gap-1.5 rounded-sm px-1.5 py-1 text-xs text-secondary hover:bg-surface-hover hover:text-primary",
           FOCUS_RING,
         )}
       >
@@ -363,11 +357,11 @@ function KeyDecisions({
               type="button"
               onClick={() => onChoose(key)}
               className={cn(
-                "flex w-full min-w-0 cursor-pointer flex-wrap items-center gap-x-2 gap-y-1 rounded-(--radius-sm) px-1.5 py-1 text-left hover:bg-(--surface-hover)",
+                "flex w-full min-w-0 cursor-pointer flex-wrap items-center gap-x-2 gap-y-1 rounded-sm px-1.5 py-1 text-left hover:bg-surface-hover",
                 FOCUS_RING,
               )}
             >
-              <span className="min-w-0 basis-full text-base break-words text-(--text-primary) sm:basis-auto sm:flex-1">
+              <span className="min-w-0 basis-full text-base break-words text-primary sm:basis-auto sm:flex-1">
                 <InlineMarkdown>{key.summary}</InlineMarkdown>
               </span>
               <DecisionByBadge decision={whoPresentation(key.who, null).marker} />
@@ -400,26 +394,26 @@ export function FeatureSidePanel({
       id={id}
       aria-label="Opened feature"
       className={cn(
-        "sticky top-4 flex max-h-[calc(100vh-2rem)] min-w-0 flex-col overflow-hidden rounded-(--radius-lg) border border-(--border-default) bg-(--surface-card) shadow-(--shadow-card)",
+        "sticky top-4 flex max-h-[calc(100vh-2rem)] min-w-0 flex-col overflow-hidden rounded-lg border border-default bg-surface-card shadow-card",
         TIMELINE_FIRST_ENTRY,
       )}
     >
-      <div className="flex items-start gap-3 border-b border-(--border-subtle) px-5 py-4">
+      <div className="flex items-start gap-3 border-b border-subtle px-5 py-4">
         <div className="min-w-0 flex-1">
-          <h2 className="text-lg font-medium break-words text-(--text-primary)">
+          <h2 className="text-lg font-medium break-words text-primary">
             <FeatureTitle feature={feature} />
           </h2>
           <div className="mt-1 flex flex-wrap items-center gap-x-2.5 gap-y-1">
             <Badge size="compact" tone={featureStatusTone(feature.status)}>
               {featureStatusLabel(feature.status)}
             </Badge>
-            {span ? <span className="text-xs text-(--text-tertiary)">{span}</span> : null}
-            <span className="text-xs text-(--text-tertiary)">{featureCounts(feature)}</span>
+            {span ? <span className="text-xs text-tertiary">{span}</span> : null}
+            <span className="text-xs text-tertiary">{featureCounts(feature)}</span>
           </div>
         </div>
         <CloseButton onClick={onClose} label="Close feature" />
       </div>
-      <div className="min-h-0 flex-1 overflow-y-auto bg-(--surface-wash) px-5 py-4">{children}</div>
+      <div className="min-h-0 flex-1 overflow-y-auto bg-surface-wash px-5 py-4">{children}</div>
     </aside>
   );
 }
@@ -441,7 +435,7 @@ export function FeatureDrillDown({
 }) {
   if (!state || state.status === "loading" || state.status === "moved") {
     return (
-      <p className="flex items-center gap-2 py-2 text-base text-(--text-tertiary) italic">
+      <p className="flex items-center gap-2 py-2 text-base text-tertiary italic">
         <Spinner />
         Loading this feature…
       </p>
@@ -450,7 +444,7 @@ export function FeatureDrillDown({
   if (state.status === "failed") {
     return (
       <p role="alert" className="flex flex-wrap items-center gap-2 py-2 text-base">
-        <span className="text-(--status-critical)">This feature could not be loaded.</span>
+        <span className="text-status-critical">This feature could not be loaded.</span>
         <Button variant="secondary" size="tiny" onClick={onRetry}>
           Try again
         </Button>
@@ -459,14 +453,14 @@ export function FeatureDrillDown({
   }
   if (state.status === "missing") {
     return (
-      <p role="status" className="py-2 text-base text-(--text-secondary)">
+      <p role="status" className="py-2 text-base text-secondary">
         This feature no longer exists.
       </p>
     );
   }
   if (state.status === "archived") {
     return (
-      <p role="status" className="py-2 text-base text-(--text-secondary)">
+      <p role="status" className="py-2 text-base text-secondary">
         This feature is archived: it is from an earlier grouping of this repository&rsquo;s work.
       </p>
     );
@@ -517,9 +511,9 @@ function FeatureContents({
 
   const rows = (list: DecisionSummary[]) =>
     list.length === 0 ? (
-      <p className="py-2 text-base text-(--text-tertiary)">No decisions attributed here.</p>
+      <p className="py-2 text-base text-tertiary">No decisions attributed here.</p>
     ) : (
-      <ol className="rounded-(--radius-md) border border-(--border-subtle) bg-(--surface-card)">
+      <ol className="rounded-md border border-subtle bg-surface-card">
         {list.map((decision) => {
           const isOpen = located?.decision === decision;
           return (
@@ -552,11 +546,11 @@ function FeatureContents({
   return (
     <div className="flex min-w-0 flex-col gap-4 pt-1">
       {feature.summary_pending ? (
-        <p role="status" className="text-base text-(--text-tertiary) italic">
+        <p role="status" className="text-base text-tertiary italic">
           Summary being updated. The pull requests and decisions below are current.
         </p>
       ) : feature.digest ? (
-        <Markdown html={false} className="text-base break-words text-(--text-primary)">
+        <Markdown html={false} className="text-base break-words text-primary">
           {feature.digest}
         </Markdown>
       ) : null}
@@ -577,7 +571,7 @@ function FeatureContents({
                   <ViewerLink
                     href={pullRequestHref(pull.number)}
                     className={cn(
-                      "w-fit rounded-(--radius-sm) text-xs text-(--text-secondary) hover:text-(--text-primary) hover:underline",
+                      "w-fit rounded-sm text-xs text-secondary hover:text-primary hover:underline",
                       FOCUS_RING,
                     )}
                   >
@@ -588,7 +582,7 @@ function FeatureContents({
                 {pull.summary ? (
                   <Markdown
                     html={false}
-                    className="mb-2 px-1 text-base break-words text-(--text-secondary) sm:pl-5"
+                    className="mb-2 px-1 text-base break-words text-secondary sm:pl-5"
                   >
                     {pull.summary}
                   </Markdown>
@@ -619,7 +613,7 @@ function FeatureContents({
       ) : null}
 
       {detail.pull_requests.length === 0 && detail.sessions.length === 0 ? (
-        <p className="text-base text-(--text-tertiary)">
+        <p className="text-base text-tertiary">
           Nothing this repository can show is in this feature yet.
         </p>
       ) : null}
@@ -648,7 +642,7 @@ function Group({
   return (
     <li
       data-feature-group={kind}
-      className="min-w-0 rounded-(--radius-md) border border-(--border-subtle) bg-(--surface-card)"
+      className="min-w-0 rounded-md border border-subtle bg-surface-card"
     >
       <button
         type="button"
@@ -657,14 +651,14 @@ function Group({
         aria-controls={`${id}-panel`}
         onClick={onToggle}
         className={cn(
-          "flex w-full cursor-pointer items-start gap-2 rounded-(--radius-md) px-3 py-2 text-left hover:bg-(--surface-hover)",
+          "flex w-full cursor-pointer items-start gap-2 rounded-md px-3 py-2 text-left hover:bg-surface-hover",
           FOCUS_RING,
         )}
       >
         <ChevronDownIcon
           size={14}
           className={cn(
-            "mt-1 flex-none text-(--text-tertiary) transition-transform motion-reduce:transition-none",
+            "mt-1 flex-none text-tertiary transition-transform motion-reduce:transition-none",
             !expanded && "-rotate-90",
           )}
         />
@@ -687,8 +681,8 @@ function Group({
 function PullHeader({ pull }: { pull: FeaturePullRequest }) {
   return (
     <span className="flex flex-wrap items-center gap-x-2 gap-y-1 text-base">
-      <span className="min-w-0 break-words text-(--text-primary)">
-        <span className="text-(--text-tertiary) tabular-nums">#{pull.number}</span> {pull.title}
+      <span className="min-w-0 break-words text-primary">
+        <span className="text-tertiary tabular-nums">#{pull.number}</span> {pull.title}
       </span>
       <PullRequestState pull={pull} />
       <DecisionCount count={pull.decisions.length} />
@@ -700,14 +694,12 @@ function SessionHeader({ session }: { session: FeatureSession }) {
   return (
     <span className="flex flex-wrap items-center gap-x-2.5 gap-y-1 text-base">
       {session.person ? <PersonName person={session.person} /> : <UnknownPerson />}
-      <span className="text-xs text-(--text-secondary)">{harnessName(session.vendor)}</span>
+      <span className="text-xs text-secondary">{harnessName(session.vendor)}</span>
       {session.branch ? (
-        <span className="min-w-0 font-mono text-xs break-all text-(--text-secondary)">
-          {session.branch}
-        </span>
+        <span className="min-w-0 font-mono text-xs break-all text-secondary">{session.branch}</span>
       ) : null}
       {session.started_at ? (
-        <span className="text-xs text-(--text-tertiary)">
+        <span className="text-xs text-tertiary">
           {formatDate(session.started_at)} {formatTime(session.started_at)}
         </span>
       ) : null}
@@ -718,7 +710,7 @@ function SessionHeader({ session }: { session: FeatureSession }) {
 
 function DecisionCount({ count }: { count: number }) {
   return (
-    <span className="text-xs text-(--text-tertiary)">
+    <span className="text-xs text-tertiary">
       {formatCount(count)} {count === 1 ? "decision" : "decisions"}
     </span>
   );

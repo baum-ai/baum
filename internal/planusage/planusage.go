@@ -30,12 +30,16 @@ type Window struct {
 
 // Plan is the usage of one provider's plan, or why it is unavailable.
 type Plan struct {
-	Provider  string    `json:"provider"`
-	Available bool      `json:"available"`
-	Reason    string    `json:"reason,omitempty"`
-	Plan      string    `json:"plan,omitempty"`
-	Windows   []Window  `json:"windows"`
-	FetchedAt time.Time `json:"fetched_at"`
+	Provider  string `json:"provider"`
+	Available bool   `json:"available"`
+	Reason    string `json:"reason,omitempty"`
+	// NeedsSignIn reports that Reason asks the person to open the agent so it
+	// refreshes its own sign-in. The app shows such a plan with its reason
+	// instead of leaving it out.
+	NeedsSignIn bool      `json:"needs_sign_in,omitempty"`
+	Plan        string    `json:"plan,omitempty"`
+	Windows     []Window  `json:"windows"`
+	FetchedAt   time.Time `json:"fetched_at"`
 	// ConfigDir tells a provider's second plan from its first: the Claude
 	// Code configuration directory or Codex home whose sign-in it is, with
 	// the home directory written as ~, for a plan read from a directory

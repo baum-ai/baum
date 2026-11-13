@@ -1379,7 +1379,7 @@ function useDesktopSetup(onChanged?: () => Promise<void>) {
     <>
       {error ? <Alert>{display(error)}</Alert> : null}
       {output ? (
-        <p role="status" className="whitespace-pre-wrap text-xs text-(--text-secondary)">
+        <p role="status" className="whitespace-pre-wrap text-xs text-secondary">
           {display(output)}
         </p>
       ) : null}
@@ -1391,10 +1391,10 @@ type DesktopSetup = ReturnType<typeof useDesktopSetup>;
 
 function connectedState(label: string, connected: boolean, attention = false) {
   const tone = connected
-    ? "text-(--status-positive)"
+    ? "text-status-positive"
     : attention
-      ? "text-(--status-caution)"
-      : "text-(--text-tertiary)";
+      ? "text-status-caution"
+      : "text-tertiary";
   return (
     <span className={`inline-flex items-center gap-1.5 text-xs ${tone}`}>
       {connected ? <CheckIcon size={14} /> : attention ? <Dot tone="caution" /> : null}
@@ -1417,8 +1417,8 @@ function agentBadge(agent: Agent) {
 function TerminalSetupRow({ text, command }: { text: string; command: string }) {
   const { copied, copy } = useCopy();
   return (
-    <div id="terminal-setup" className="border-t border-(--border-subtle) px-5 py-4">
-      <p className="text-xs text-(--text-secondary)">{text}</p>
+    <div id="terminal-setup" className="border-t border-subtle px-5 py-4">
+      <p className="text-xs text-secondary">{text}</p>
       <div className="terminal-command">
         <CommandText command={command} />
         <Button
@@ -1470,7 +1470,7 @@ function AgentHooksPanel({ setup }: { setup: DesktopSetup }) {
           : checkingAgents.map((agent) => (
               <div
                 key={agent.agent}
-                className="flex flex-wrap items-center justify-between gap-4 border-t border-(--border-subtle) px-5 py-4"
+                className="flex flex-wrap items-center justify-between gap-4 border-t border-subtle px-5 py-4"
               >
                 <div className="flex min-w-0 flex-[1_1_16rem] items-center gap-3">
                   <BrandMark
@@ -1479,7 +1479,7 @@ function AgentHooksPanel({ setup }: { setup: DesktopSetup }) {
                     className="shrink-0"
                   />
                   <h3 className="text-base font-medium">{agent.name}</h3>
-                  <div className="text-xs text-(--text-tertiary)">
+                  <div className="text-xs text-tertiary">
                     <LoadingStatus>Checking…</LoadingStatus>
                   </div>
                 </div>
@@ -1488,7 +1488,7 @@ function AgentHooksPanel({ setup }: { setup: DesktopSetup }) {
         {view?.hooks.agents.map((agent) => (
           <div
             key={agent.agent}
-            className="flex flex-wrap items-center justify-between gap-4 border-t border-(--border-subtle) px-5 py-4"
+            className="flex flex-wrap items-center justify-between gap-4 border-t border-subtle px-5 py-4"
           >
             <div className="flex min-w-0 flex-[1_1_16rem] items-start gap-3">
               <BrandMark
@@ -1500,7 +1500,7 @@ function AgentHooksPanel({ setup }: { setup: DesktopSetup }) {
                 <div className="flex flex-wrap items-center gap-3">
                   <h3 className="text-base font-medium">{agent.name}</h3>
                   {checking ? (
-                    <div className="text-xs text-(--text-tertiary)">
+                    <div className="text-xs text-tertiary">
                       <LoadingStatus>Checking…</LoadingStatus>
                     </div>
                   ) : (
@@ -1511,15 +1511,15 @@ function AgentHooksPanel({ setup }: { setup: DesktopSetup }) {
                     )
                   )}
                   {agent.installed && agent.version ? (
-                    <span className="text-xs text-(--text-tertiary)">Plugin {agent.version}</span>
+                    <span className="text-xs text-tertiary">Plugin {agent.version}</span>
                   ) : null}
                 </div>
                 {(agent.error || !agent.installed || agentUnsupported(agent)) &&
                 describeAgent(agent) ? (
-                  <p className="text-xs text-(--text-secondary)">{display(describeAgent(agent))}</p>
+                  <p className="text-xs text-secondary">{display(describeAgent(agent))}</p>
                 ) : null}
                 {agent.installed ? (
-                  <p className="text-xs text-(--text-tertiary)">
+                  <p className="text-xs text-tertiary">
                     {withCode(agentHookNote(agent), ["/hooks"])}
                   </p>
                 ) : null}
@@ -1592,7 +1592,7 @@ function CommandLinePanel({ setup }: { setup: DesktopSetup }) {
         title="Command line"
         detail="Use baum from your terminal. Updates come with the desktop app."
       />
-      <div className="flex flex-wrap items-center justify-between gap-4 border-t border-(--border-subtle) px-5 py-4">
+      <div className="flex flex-wrap items-center justify-between gap-4 border-t border-subtle px-5 py-4">
         <div className="min-w-0 flex-1 space-y-1">
           <div className="flex flex-wrap items-center gap-3">
             <h3 className="text-base font-medium">baum CLI</h3>
@@ -1601,17 +1601,15 @@ function CommandLinePanel({ setup }: { setup: DesktopSetup }) {
               : null}
           </div>
           {command ? (
-            <p className="break-all text-xs text-(--text-secondary)">
+            <p className="break-all text-xs text-secondary">
               {withCode(display(command.state), [command.path && display(command.path)])}
             </p>
           ) : (
-            <p role="status" className="text-xs text-(--text-secondary)">
+            <p role="status" className="text-xs text-secondary">
               Checking installation…
             </p>
           )}
-          {command?.note ? (
-            <p className="text-xs text-(--text-secondary)">{display(command.note)}</p>
-          ) : null}
+          {command?.note ? <p className="text-xs text-secondary">{display(command.note)}</p> : null}
         </div>
         <div className="flex flex-wrap items-center gap-2">
           {command?.action ? (
@@ -2142,7 +2140,7 @@ function TimeLimitRows() {
         "review_time_limit_minutes",
         "review-time-limit",
         "Review time limit",
-        "How long a review may run before it stops. Reviews have no call or token limit.",
+        "How long a pull request review may run before it stops. A review group gets more time for each extra pull request. Reviews have no call or token limit.",
       )}
       {row(
         "run_time_limit_minutes",
@@ -2192,8 +2190,8 @@ function ZoomSection() {
         title="Zoom"
         detail="Make everything in this window larger or smaller."
       />
-      <div className="flex flex-wrap items-center justify-between gap-4 border-t border-(--border-subtle) px-5 py-4">
-        <p className="min-w-0 flex-1 text-xs text-(--text-secondary)">
+      <div className="flex flex-wrap items-center justify-between gap-4 border-t border-subtle px-5 py-4">
+        <p className="min-w-0 flex-1 text-xs text-secondary">
           {mod} + and {mod} − also change it, and {mod} 0 resets it to 100%.
         </p>
         <select
@@ -2551,7 +2549,7 @@ function AgentEnvSection() {
       />
       {loadError ? <Alert className="mx-5 mb-4">{loadError}</Alert> : null}
       {source === "file" ? (
-        <p className="px-5 pb-3 text-xs text-(--text-tertiary)">
+        <p className="px-5 pb-3 text-xs text-tertiary">
           These come from the <code>[agent_env]</code> section of the config file. Saving here
           replaces them.
         </p>
@@ -2562,9 +2560,7 @@ function AgentEnvSection() {
         )
       ) : (
         <div className="settings-env">
-          {rows.length === 0 ? (
-            <p className="text-xs text-(--text-tertiary)">No variables set.</p>
-          ) : null}
+          {rows.length === 0 ? <p className="text-xs text-tertiary">No variables set.</p> : null}
           {rows.map((row) => (
             <div key={row.id} className="settings-env-row">
               <input
@@ -2605,7 +2601,7 @@ function AgentEnvSection() {
           {tooMany ? <Alert>At most {ENV_MAX} variables.</Alert> : null}
         </div>
       )}
-      <footer className="flex flex-wrap items-center justify-between gap-3 border-t border-(--border-subtle) px-5 py-3">
+      <footer className="flex flex-wrap items-center justify-between gap-3 border-t border-subtle px-5 py-3">
         <Button
           variant="secondary"
           size="compact"
@@ -2621,7 +2617,7 @@ function AgentEnvSection() {
           Add variable
         </Button>
         <div className="flex flex-wrap items-center gap-2">
-          <p role="status" className="text-xs text-(--text-tertiary)">
+          <p role="status" className="text-xs text-tertiary">
             {done
               ? "Saved. Applies to the next agent run."
               : dirty
@@ -3023,7 +3019,7 @@ function RepositoryRow({
       <span className="local-repo-state">
         {activity.running ? (
           <>
-            <LiveDot className="text-(--status-positive)" />
+            <LiveDot className="text-status-positive" />
             {activity.running === 1 ? "Reviewing" : `Reviewing ${formatCount(activity.running)}`}
           </>
         ) : status?.pending ? (

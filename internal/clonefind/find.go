@@ -1,12 +1,11 @@
 // Package clonefind finds the local clones of GitHub repositories without
-// asking: in the folders coding agents worked in and in the usual code
-// folders. It reads local files and runs read-only git commands; it makes no
+// asking: in the folders coding agents worked in and below the home
+// directory. It reads local files and runs read-only git commands; it makes no
 // network request, and nothing it learns leaves the computer.
 package clonefind
 
 import (
 	"context"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -37,7 +36,7 @@ const (
 
 // Default limits; see Options.
 const (
-	DefaultMaxDepth     = 4
+	DefaultMaxDepth     = 5
 	DefaultMaxProbes    = 2000
 	DefaultMaxWalked    = 50000
 	DefaultProbeTimeout = 3 * time.Second
@@ -45,9 +44,9 @@ const (
 	maxStores = 3000
 )
 
-// DefaultFolders are the code folders, relative to the home directory, that a
-// scan walks when they exist.
-var DefaultFolders = []string{"code", "src", "dev", "projects", "workspace", "repos", "git", filepath.Join("go", "src", "github.com")}
+// systemTempDirs are the temporary directories of Unix systems besides
+// os.TempDir: an agent's scratch work there is nobody's clone.
+var systemTempDirs = []string{"/tmp", "/var/tmp", "/var/folders", "/private/tmp", "/private/var/tmp", "/private/var/folders"}
 
 // Candidate is one local clone of a repository.
 type Candidate struct {
@@ -86,14 +85,17 @@ type Options struct {
 	// Stores locates the agent session stores. Empty directories default to
 	// the usual ones below Home.
 	Stores collector.StoreOptions
-	// Folders replaces DefaultFolders (relative to Home, or absolute).
-	Folders []string
-	// ExtraRoots are further folders to walk.
+	// ExtraRoots are further folders to walk besides the home directory.
 	ExtraRoots []string
+	// TempDirs replaces the temporary directories (os.TempDir and the usual
+	// Unix ones), for tests. A folder an agent worked in below one of them is
+	// never a candidate.
+	TempDirs []string
 	// GOOS is the operating system, runtime.GOOS by default. On darwin
 	// ~/Documents is a protected folder whose first read prompts the user, so
-	// it is walked only when IncludeDocuments is set; elsewhere it is walked
-	// like the other code folders.
+	// it is read (walked, or a folder an agent worked in there) only when
+	// IncludeDocuments is set; elsewhere it is walked like the rest of the
+	// home directory.
 	GOOS             string
 	IncludeDocuments bool
 	Now              func() time.Time
@@ -127,8 +129,11 @@ func (o Options) withDefaults() Options {
 	if o.Now == nil {
 		o.Now = time.Now
 	}
-	if o.Folders == nil {
-		o.Folders = DefaultFolders
+	if o.TempDirs == nil {
+		o.TempDirs = []string{os.TempDir()}
+		if o.GOOS != "windows" {
+			o.TempDirs = append(o.TempDirs, systemTempDirs...)
+		}
 	}
 	if o.Probe == nil {
 		timeout := o.ProbeTimeout
@@ -162,17 +167,29 @@ type finder struct {
 	// walked counts the directories walked in this run.
 	walked      int
 	walkedRoots []string
-	byDir       map[string]*workTree
-	byTop       map[string]*workTree
+	// temps are the temporary directories, as given and resolved.
+	temps []string
+	byDir map[string]*workTree
+	byTop map[string]*workTree
 }
 
 func newFinder(o Options) *finder {
 	o = o.withDefaults()
 	home := canonical(o.Home)
-	return &finder{o: o, home: home, byDir: map[string]*workTree{}, byTop: map[string]*workTree{}}
+	f := &finder{o: o, home: home, byDir: map[string]*workTree{}, byTop: map[string]*workTree{}}
+	for _, dir := range o.TempDirs {
+		if dir == "" || !filepath.IsAbs(dir) {
+			continue
+		}
+		f.temps = append(f.temps, filepath.Clean(dir))
+		if resolved := canonical(dir); resolved != "" {
+			f.temps = append(f.temps, resolved)
+		}
+	}
+	return f
 }
 
-// Find locates local clones from agent activity and the code folders.
+// Find locates local clones from agent activity and below the home directory.
 func Find(ctx context.Context, o Options) (Result, error) {
 	f := newFinder(o)
 	result := Result{ScannedAt: f.o.Now().UTC(), Repositories: map[string][]Candidate{}}
@@ -195,27 +212,19 @@ func Find(ctx context.Context, o Options) (Result, error) {
 		}
 	}
 
-	// Code folders, and the folders agent clones sit in.
-	roots := f.scanRoots()
-	var parents []string
-	for _, tree := range f.agentTrees() {
-		if parent := filepath.Dir(tree.top); f.inHome(parent) {
-			parents = append(parents, parent)
-		}
-	}
-	sort.Strings(parents)
-	seen := map[string]bool{}
-	for _, root := range append(roots, parents...) {
+	// The home directory, then any further folders.
+	f.walkedRoots = append(f.walkedRoots, f.home)
+	f.walk(ctx, f.home, true)
+	for _, root := range f.o.ExtraRoots {
 		if ctx.Err() != nil {
 			break
 		}
 		root, ok := f.walkable(root)
-		if !ok || seen[root] || f.insideWalked(root) {
+		if !ok || f.insideWalked(root) {
 			continue
 		}
-		seen[root] = true
 		f.walkedRoots = append(f.walkedRoots, root)
-		f.walk(ctx, root)
+		f.walk(ctx, root, false)
 	}
 
 	group(&result, f.byTop)
@@ -236,8 +245,9 @@ func (f *finder) agentDirs(ctx context.Context) []agentDir {
 		}
 		dir = filepath.Clean(dir)
 		// A directory baum made to run a review agent in is nobody's clone,
-		// whatever repository lies above it.
-		if model.IsAgentRun(dir) {
+		// whatever repository lies above it, and neither is an agent's
+		// temporary work.
+		if model.IsAgentRun(dir) || f.temporary(dir) {
 			return
 		}
 		if at.After(latest[dir]) || latest[dir].IsZero() {
@@ -320,17 +330,6 @@ func (f *finder) insideWalked(root string) bool {
 	return false
 }
 
-func (f *finder) agentTrees() []*workTree {
-	var trees []*workTree
-	for _, tree := range f.byTop {
-		if tree.agent {
-			trees = append(trees, tree)
-		}
-	}
-	sort.Slice(trees, func(i, j int) bool { return trees[i].top < trees[j].top })
-	return trees
-}
-
 // unsafe reports a directory no clone or scan may be: the filesystem root,
 // the home directory, or anything above it.
 func (f *finder) unsafe(dir string) bool {
@@ -338,12 +337,6 @@ func (f *finder) unsafe(dir string) bool {
 		return true
 	}
 	rel, err := filepath.Rel(dir, f.home)
-	return err == nil && rel != "." && !strings.HasPrefix(rel, "..")
-}
-
-// inHome reports a directory below the home directory.
-func (f *finder) inHome(dir string) bool {
-	rel, err := filepath.Rel(f.home, dir)
 	return err == nil && rel != "." && !strings.HasPrefix(rel, "..")
 }
 
@@ -356,7 +349,7 @@ func (f *finder) resolve(ctx context.Context, dir string) *workTree {
 		return nil
 	}
 	dir = canonical(dir)
-	if dir == "" || f.protected(dir) {
+	if dir == "" || f.protected(dir) || f.temporary(dir) {
 		return nil
 	}
 	if info, err := os.Stat(dir); err != nil {
@@ -399,7 +392,9 @@ func (f *finder) probe(ctx context.Context, dir string) *workTree {
 		return nil
 	}
 	top, common := canonical(light.Top), canonical(light.CommonDir)
-	if top == "" || common == "" || f.unsafe(top) {
+	// A repository in a temporary folder, a linked worktree's included, is
+	// an agent's scratch work.
+	if top == "" || common == "" || f.unsafe(top) || f.temporary(top) || f.temporary(common) {
 		return nil
 	}
 	// A working tree set elsewhere by core.worktree is not this directory.
@@ -453,46 +448,59 @@ func contains(list []string, s string) bool {
 	return false
 }
 
-// scanRoots are the code folders that exist, resolved.
-func (f *finder) scanRoots() []string {
-	var roots []string
-	folders := append([]string(nil), f.o.Folders...)
-	if f.documentsAllowed() {
-		folders = append(folders, "Documents")
-	}
-	for _, folder := range append(folders, f.o.ExtraRoots...) {
-		if !filepath.IsAbs(folder) {
-			folder = filepath.Join(f.home, folder)
-		}
-		roots = append(roots, folder)
-	}
-	return roots
-}
+// macPromptFolders are the folders of a macOS home directory whose first read
+// makes macOS ask the user (Documents unless the scan was asked to include
+// it), and the cloud-drive folders, which may too. All of ~/Library is in it:
+// ~/Library/Containers and ~/Library/Group Containers ask for "data from other
+// apps", Mobile Documents and CloudStorage hold iCloud Drive and the cloud
+// drives.
+var macPromptFolders = []string{"Desktop", "Documents", "Downloads", "Pictures", "Movies", "Music", "Library", "iCloud Drive"}
 
-// protected reports a folder macOS guards with a privacy prompt: reading it
-// asks the user, so nothing is read in it. ~/Documents is protected too unless
-// this scan was asked to include it.
+// macCloudPrefixes name cloud-drive folders a home directory may hold.
+var macCloudPrefixes = []string{"Google Drive", "Dropbox", "OneDrive"}
+
+// protected reports, on macOS, a path that reading may make macOS ask the
+// user: one in a folder of macPromptFolders or a cloud drive of the home
+// directory, or on a volume under /Volumes (removable and network volumes
+// ask). It is the one rule for every path read before git runs there: the
+// walk of the home directory, a folder an agent worked in, and the main
+// clone of its worktree. Other systems have no such prompt.
 func (f *finder) protected(path string) bool {
 	if f.o.GOOS != "darwin" {
 		return false
 	}
+	path = filepath.Clean(path)
+	inHome := false
 	for _, home := range []string{f.home, filepath.Clean(f.o.Home)} {
+		if home == "" || home == "." {
+			continue
+		}
 		rel, err := filepath.Rel(home, path)
 		if err != nil || strings.HasPrefix(rel, "..") {
 			continue
 		}
-		parts := strings.Split(rel, string(filepath.Separator))
-		switch {
-		case strings.EqualFold(parts[0], "Documents"):
-			if !f.o.IncludeDocuments {
+		// A home directory on a volume of its own is read like any other.
+		inHome = true
+		if rel == "." {
+			continue
+		}
+		top := strings.Split(rel, string(filepath.Separator))[0]
+		if strings.EqualFold(top, "Documents") && f.o.IncludeDocuments {
+			continue
+		}
+		for _, folder := range macPromptFolders {
+			if strings.EqualFold(top, folder) {
 				return true
 			}
-		case strings.EqualFold(parts[0], "Desktop"), strings.EqualFold(parts[0], "Downloads"):
-			return true
-		case strings.EqualFold(parts[0], "Library") && len(parts) > 1 &&
-			(strings.EqualFold(parts[1], "Mobile Documents") || strings.EqualFold(parts[1], "CloudStorage")):
-			return true
 		}
+		for _, prefix := range macCloudPrefixes {
+			if len(top) >= len(prefix) && strings.EqualFold(top[:len(prefix)], prefix) {
+				return true
+			}
+		}
+	}
+	if rel, err := filepath.Rel("/Volumes", path); !inHome && err == nil && !strings.HasPrefix(rel, "..") {
+		return true
 	}
 	return false
 }
@@ -507,7 +515,7 @@ func (f *finder) mainOf(ctx context.Context, tree *workTree) *workTree {
 		return nil
 	}
 	main := filepath.Dir(tree.common)
-	if main == tree.top || f.unsafe(main) || f.protected(main) {
+	if main == tree.top || f.unsafe(main) || f.protected(main) || f.temporary(main) {
 		return nil
 	}
 	if _, ok := f.walkable(main); !ok {
@@ -523,9 +531,52 @@ func (f *finder) mainOf(ctx context.Context, tree *workTree) *workTree {
 	return found
 }
 
-// documentsAllowed reports whether ~/Documents may be walked.
-func (f *finder) documentsAllowed() bool {
-	return f.o.GOOS != "darwin" || f.o.IncludeDocuments
+// documentsAllowed reports whether ~/Documents may be walked: everywhere but
+// on macOS, where reading it asks the user, unless this scan was asked to.
+func (f *finder) documentsAllowed() bool { return f.o.GOOS != "darwin" || f.o.IncludeDocuments }
+
+// personal reports a folder of the home directory a walk never enters:
+// personal files and cloud mounts (scanskip.UserDataFor, Downloads
+// everywhere), and on macOS every folder protected names.
+func (f *finder) personal(name string) bool {
+	if f.protected(filepath.Join(f.home, name)) {
+		return true
+	}
+	if strings.EqualFold(name, "Documents") && f.documentsAllowed() {
+		return false
+	}
+	return scanskip.UserDataFor(f.o.GOOS, name)
+}
+
+// temporary reports a folder an agent's work there is never a clone in: one
+// below a temporary directory, below an agent's scratchpad, or in Downloads.
+func (f *finder) temporary(path string) bool {
+	fold := f.o.GOOS == "darwin" || f.o.GOOS == "windows"
+	below := func(dir string) bool {
+		if fold {
+			dir, path := strings.ToLower(dir), strings.ToLower(path)
+			rel, err := filepath.Rel(dir, path)
+			return err == nil && !strings.HasPrefix(rel, "..")
+		}
+		rel, err := filepath.Rel(dir, path)
+		return err == nil && !strings.HasPrefix(rel, "..")
+	}
+	for _, part := range strings.Split(path, string(filepath.Separator)) {
+		if strings.EqualFold(part, "scratchpad") {
+			return true
+		}
+	}
+	for _, dir := range f.temps {
+		if below(dir) {
+			return true
+		}
+	}
+	for _, home := range []string{f.home, filepath.Clean(f.o.Home)} {
+		if home != "" && home != "." && below(filepath.Join(home, "Downloads")) {
+			return true
+		}
+	}
+	return false
 }
 
 // walkable resolves a folder to scan and refuses the filesystem root, the home
@@ -533,7 +584,7 @@ func (f *finder) documentsAllowed() bool {
 // when a symlink leads there.
 func (f *finder) walkable(root string) (string, bool) {
 	root = canonical(root)
-	if root == "" || f.unsafe(root) {
+	if root == "" || f.unsafe(root) || f.protected(root) {
 		return "", false
 	}
 	if info, err := os.Stat(root); err != nil || !info.IsDir() {
@@ -552,41 +603,52 @@ func (f *finder) walkable(root string) (string, bool) {
 	return root, true
 }
 
-// walk finds the working trees below root, to MaxDepth, without following
-// symlinks and without entering what scanskip lists.
-func (f *finder) walk(ctx context.Context, root string) {
-	_ = filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
-		if err != nil {
-			if entry != nil && entry.IsDir() {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		if !entry.IsDir() {
-			return nil
-		}
+// walk finds the working trees below root, breadth first so the shallow ones
+// come before the budget runs out, to MaxDepth, without following symlinks
+// and without entering what scanskip lists. It stops at a directory with a
+// .git entry: a repository is not searched for others. In the home directory
+// (home set) it neither stops at the home's own .git (a dotfiles repository)
+// nor enters its personal folders.
+func (f *finder) walk(ctx context.Context, root string, home bool) {
+	type dir struct {
+		path  string
+		depth int
+	}
+	queue := []dir{{root, 0}}
+	for len(queue) > 0 {
 		if ctx.Err() != nil {
-			return ctx.Err()
+			return
 		}
+		d := queue[0]
+		queue = queue[1:]
 		if f.walked++; f.walked > f.o.MaxWalked {
-			return filepath.SkipAll
+			return
 		}
-		if path != root {
-			rel, relErr := filepath.Rel(root, path)
-			if relErr != nil {
-				return filepath.SkipDir
-			}
-			depth := strings.Count(rel, string(filepath.Separator)) + 1
-			if depth > f.o.MaxDepth || scanskip.DirFor(f.o.GOOS, entry.Name()) {
-				return filepath.SkipDir
+		if !home || d.depth > 0 {
+			if _, err := os.Lstat(filepath.Join(d.path, ".git")); err == nil {
+				f.probe(ctx, d.path)
+				continue
 			}
 		}
-		if _, statErr := os.Lstat(filepath.Join(path, ".git")); statErr != nil {
-			return nil
+		if d.depth >= f.o.MaxDepth {
+			continue
 		}
-		f.probe(ctx, path)
-		return filepath.SkipDir
-	})
+		entries, err := os.ReadDir(d.path)
+		if err != nil {
+			continue
+		}
+		for _, entry := range entries {
+			// A symlink is not a directory entry here, so none is followed.
+			name := entry.Name()
+			if !entry.IsDir() || scanskip.DirFor(f.o.GOOS, name) || (home && d.depth == 0 && f.personal(name)) {
+				continue
+			}
+			if f.walked+len(queue) >= f.o.MaxWalked {
+				break
+			}
+			queue = append(queue, dir{filepath.Join(d.path, name), d.depth + 1})
+		}
+	}
 }
 
 // canonical resolves symlinks, as the registry stores paths; "" when the path

@@ -52,7 +52,7 @@ import { MenuButton, useContextMenu, type MenuItem } from "./context-menu";
 import { ListHeading, type ListTone } from "./list";
 import { useNow } from "./live";
 import { useToast } from "./toast";
-import { LiveSessionDecisions } from "./decisions";
+import { LiveSessionDecisions, type PullRequestDecisionsRead } from "./decisions";
 import { listKeys, useRowFocus, useShortcuts } from "./shortcuts";
 import { SMALL } from "./action-classes";
 import { sessionPanel } from "./session-panel-state";
@@ -164,7 +164,7 @@ export const transcriptHref = (s: LiveSession) =>
 export function Agent({ agent }: { agent: string }) {
   const logo = agentLogos[agent];
   return (
-    <span className="flex min-w-0 items-center gap-2 font-medium text-(--text-primary)">
+    <span className="flex min-w-0 items-center gap-2 font-medium text-primary">
       {logo ? <BrandMark brand={logo} size={18} className="shrink-0" /> : null}
       {agentName(agent)}
     </span>
@@ -191,12 +191,11 @@ export function SessionState({ session }: { session: LiveSession }) {
     <span className="local-session-state">
       {session.state === "running" ? (
         <>
-          <LiveDot className="text-(--status-positive)" /> Working
+          <LiveDot className="text-status-positive" /> Working
         </>
       ) : session.state === "idle" ? (
         <>
-          <CircleDashedIcon size={12} className="flex-none text-(--status-caution)" /> Waiting for
-          you
+          <CircleDashedIcon size={12} className="flex-none text-status-caution" /> Waiting for you
         </>
       ) : (
         "Ended"
@@ -378,9 +377,11 @@ function WaitingFor({ reason }: { reason: WaitingReason }) {
 export function LiveSessions({
   sessions,
   Link,
+  decisions,
 }: {
   sessions: LiveSession[];
   Link: ComponentType<ViewerLinkProps>;
+  decisions?: PullRequestDecisionsRead | null;
 }) {
   if (sessions.length === 0) return null;
   return (
@@ -389,7 +390,7 @@ export function LiveSessions({
       <ul>
         {sessions.map((s) => (
           <li key={sessionKey(s)}>
-            <LiveSessionCard session={s} Link={Link} />
+            <LiveSessionCard session={s} Link={Link} decisions={decisions} />
           </li>
         ))}
       </ul>
@@ -411,12 +412,14 @@ export function LiveSessionCard({
   open,
   titled = true,
   Link,
+  decisions,
 }: {
   session: LiveSession;
   open?: () => void;
   /** False under a pane already headed by the session's title. */
   titled?: boolean;
   Link: ComponentType<ViewerLinkProps>;
+  decisions?: PullRequestDecisionsRead | null;
 }) {
   const now = useNow();
   return (
@@ -464,7 +467,7 @@ export function LiveSessionCard({
           </JumpLink>
         ) : null}
       </span>
-      <LiveSessionDecisions session={s} />
+      <LiveSessionDecisions session={s} read={decisions} />
     </div>
   );
 }

@@ -98,7 +98,7 @@ export function AccessModelTile({ change: raw }: { change: AccessModelChange }) 
     >
       <AccessAtAGlance change={change} />
       {ignored > 0 ? (
-        <p className="mt-2 text-xs text-(--text-tertiary)">
+        <p className="mt-2 text-xs text-tertiary">
           {ignored === 1 ? "One entry" : `${ignored} entries`} in the review contradicted its own
           access list (a grant to someone without the capability, a revocation from someone who
           keeps it, or an unlisted actor) and {ignored === 1 ? "is" : "are"} not shown.
@@ -108,7 +108,7 @@ export function AccessModelTile({ change: raw }: { change: AccessModelChange }) 
       {changed ? (
         <>
           <section aria-label="Access changes" className="mt-3">
-            <h5 className="text-xs font-semibold tracking-[0.12em] uppercase text-(--text-tertiary)">
+            <h5 className="text-xs font-semibold tracking-[0.12em] uppercase text-tertiary">
               Access changes
             </h5>
             <ul className="mt-2 grid gap-2">
@@ -227,12 +227,10 @@ function ChangedCapability({
   return (
     <article
       aria-label={capability.label}
-      className="overflow-hidden rounded-(--radius-sm) border border-(--border-default) bg-(--surface-card)"
+      className="overflow-hidden rounded-sm border border-default bg-surface-card"
     >
-      <div className="flex flex-wrap items-center gap-2 border-b border-(--border-subtle) bg-(--surface-wash) px-3 py-2">
-        <h6 className="min-w-0 text-base font-semibold text-(--text-primary)">
-          {capability.label}
-        </h6>
+      <div className="flex flex-wrap items-center gap-2 border-b border-subtle bg-surface-wash px-3 py-2">
+        <h6 className="min-w-0 text-base font-semibold text-primary">{capability.label}</h6>
         <Badge tone={revoked.size > 0 ? "critical" : "positive"} size="compact">
           {revoked.size > 0 && granted.size > 0
             ? "Granted and revoked"
@@ -243,7 +241,7 @@ function ChangedCapability({
       </div>
 
       {capability.detail && (
-        <p className="border-b border-(--border-subtle) px-3 py-2 text-xs leading-[1.45] text-(--text-secondary)">
+        <p className="border-b border-subtle px-3 py-2 text-xs leading-[1.45] text-secondary">
           {capability.detail}
         </p>
       )}
@@ -258,7 +256,7 @@ function ChangedCapability({
         />
         <span
           aria-hidden
-          className="hidden items-center bg-(--surface-card) px-1 text-(--text-tertiary) sm:flex"
+          className="hidden items-center bg-surface-card px-1 text-tertiary sm:flex"
         >
           →
         </span>
@@ -271,23 +269,23 @@ function ChangedCapability({
         />
       </div>
 
-      <dl className="grid gap-1 border-t border-(--border-subtle) px-3 py-2 text-xs leading-[1.45]">
+      <dl className="grid gap-1 border-t border-subtle px-3 py-2 text-xs leading-[1.45]">
         {gained.length > 0 && (
           <div className="flex flex-wrap gap-x-2">
-            <dt className="font-semibold text-(--text-primary)">Gains access:</dt>
-            <dd className="text-(--text-secondary)">{names(gained)}</dd>
+            <dt className="font-semibold text-primary">Gains access:</dt>
+            <dd className="text-secondary">{names(gained)}</dd>
           </div>
         )}
         {lost.length > 0 && (
           <div className="flex flex-wrap gap-x-2">
-            <dt className="font-semibold text-(--text-primary)">Loses access:</dt>
-            <dd className="text-(--text-secondary)">{names(lost)}</dd>
+            <dt className="font-semibold text-primary">Loses access:</dt>
+            <dd className="text-secondary">{names(lost)}</dd>
           </div>
         )}
         {stillBlocked.length > 0 && (
           <div className="flex flex-wrap gap-x-2">
-            <dt className="font-semibold text-(--text-primary)">Still blocked:</dt>
-            <dd className="text-(--text-secondary)">{names(stillBlocked)}</dd>
+            <dt className="font-semibold text-primary">Still blocked:</dt>
+            <dd className="text-secondary">{names(stillBlocked)}</dd>
           </div>
         )}
       </dl>
@@ -303,12 +301,12 @@ function BeforeAfter({
   entries: readonly { actor: AccessActor; mark?: ActorMark }[];
 }) {
   return (
-    <div className="min-w-0 bg-(--surface-card) px-3 py-2">
-      <span className="text-xs font-semibold tracking-[0.12em] uppercase text-(--text-tertiary)">
+    <div className="min-w-0 bg-surface-card px-3 py-2">
+      <span className="text-xs font-semibold tracking-[0.12em] uppercase text-tertiary">
         {label}
       </span>
       {entries.length === 0 ? (
-        <p className="mt-1.5 text-xs text-(--text-tertiary)">Nobody</p>
+        <p className="mt-1.5 text-xs text-tertiary">Nobody</p>
       ) : (
         <ul className="mt-1.5 flex flex-wrap gap-1.5">
           {entries.map((entry) => (
@@ -331,14 +329,14 @@ function CurrentAccess({
   order: readonly AccessActor[];
 }) {
   return (
-    <ul className="divide-y divide-(--border-subtle) pt-1">
+    <ul className="divide-y divide-subtle pt-1">
       {capabilities.map((capability) => {
         const allowed = new Set(capability.allowed);
         return (
           <li key={capability.id} className="grid gap-1 px-3 py-2.5">
-            <span className="text-base font-medium text-(--text-primary)">{capability.label}</span>
+            <span className="text-base font-medium text-primary">{capability.label}</span>
             {capability.detail ? (
-              <span className="text-xs text-(--text-secondary)">{capability.detail}</span>
+              <span className="text-xs text-secondary">{capability.detail}</span>
             ) : null}
             <ActorRow
               bare
@@ -380,14 +378,14 @@ function ActorRow({
     <div
       className={cn(
         "grid gap-1 sm:grid-cols-[4.5rem_minmax(0,1fr)] sm:items-baseline sm:gap-3",
-        bare ? "py-0.5" : "border-b border-(--border-subtle) px-3 py-2 last:border-b-0",
+        bare ? "py-0.5" : "border-b border-subtle px-3 py-2 last:border-b-0",
       )}
     >
-      <span className="text-xs font-semibold tracking-[0.12em] uppercase text-(--text-tertiary)">
+      <span className="text-xs font-semibold tracking-[0.12em] uppercase text-tertiary">
         {label}
       </span>
       {entries.length === 0 ? (
-        <span className="text-xs text-(--text-tertiary)">{empty}</span>
+        <span className="text-xs text-tertiary">{empty}</span>
       ) : (
         <ul className="flex flex-wrap gap-1.5">
           {entries.map((entry) => (
@@ -404,8 +402,8 @@ function ActorChip({ actor, mark }: { actor: AccessActor; mark?: ActorMark }) {
   return (
     <li
       className={cn(
-        "inline-flex items-center gap-1.5 rounded-(--radius-sm) border border-(--border-default) bg-(--surface-wash) px-2 py-0.5 text-xs",
-        mark ? "text-(--text-primary)" : "text-(--text-secondary)",
+        "inline-flex items-center gap-1.5 rounded-sm border border-default bg-surface-wash px-2 py-0.5 text-xs",
+        mark ? "text-primary" : "text-secondary",
       )}
     >
       <span className="min-w-0">{actorName(actor)}</span>
@@ -413,7 +411,7 @@ function ActorChip({ actor, mark }: { actor: AccessActor; mark?: ActorMark }) {
         <span
           className={cn(
             "flex-none text-3xs font-semibold tracking-[0.08em]",
-            mark === "gained" ? "text-(--status-positive)" : "text-(--status-critical)",
+            mark === "gained" ? "text-status-positive" : "text-status-critical",
           )}
         >
           {mark === "gained" ? "+ NEW" : "− LOST"}
@@ -430,7 +428,7 @@ function EffectiveAccess({ change }: { change: AccessModelChange }) {
       label="Effective access by actor"
       summary="Everything each actor can do after this change"
     >
-      <ul aria-label="Effective access by actor" className="divide-y divide-(--border-subtle) pt-1">
+      <ul aria-label="Effective access by actor" className="divide-y divide-subtle pt-1">
         {change.actors.map((actor) => {
           const held = change.capabilities.filter((capability) =>
             capability.allowed.includes(actor.id),
@@ -440,26 +438,22 @@ function EffectiveAccess({ change }: { change: AccessModelChange }) {
               key={actor.id}
               className="grid gap-1 px-3 py-2.5 sm:grid-cols-[11rem_minmax(0,1fr)] sm:items-baseline sm:gap-3"
             >
-              <span className="text-base font-medium text-(--text-primary)">
-                {actorName(actor)}
-              </span>
+              <span className="text-base font-medium text-primary">{actorName(actor)}</span>
               {held.length === 0 ? (
-                <span className="text-xs text-(--text-tertiary)">No access</span>
+                <span className="text-xs text-tertiary">No access</span>
               ) : (
                 <span className="flex flex-wrap gap-1.5">
                   {held.map((capability) => (
                     <span
                       key={capability.id}
                       className={cn(
-                        "inline-flex items-center gap-1.5 rounded-(--radius-sm) border border-(--border-default) bg-(--surface-wash) px-2 py-0.5 text-xs",
-                        capability.granted?.includes(actor.id)
-                          ? "text-(--text-primary)"
-                          : "text-(--text-secondary)",
+                        "inline-flex items-center gap-1.5 rounded-sm border border-default bg-surface-wash px-2 py-0.5 text-xs",
+                        capability.granted?.includes(actor.id) ? "text-primary" : "text-secondary",
                       )}
                     >
                       {capability.short ?? capability.label}
                       {capability.granted?.includes(actor.id) && (
-                        <span className="flex-none text-3xs font-semibold tracking-[0.08em] text-(--status-positive)">
+                        <span className="flex-none text-3xs font-semibold tracking-[0.08em] text-status-positive">
                           + NEW
                         </span>
                       )}

@@ -96,7 +96,7 @@ function StateMark({ state }: { state: string }) {
 
 function Dot() {
   return (
-    <span aria-hidden className="text-(--text-disabled)">
+    <span aria-hidden className="text-disabled">
       •
     </span>
   );
@@ -116,7 +116,7 @@ function Chip({
   return (
     <span
       className={cn(
-        "inline-flex h-7 items-center gap-1.5 rounded-(--radius-md) border border-(--border-default) bg-(--surface-card) px-2 text-base text-(--text-secondary)",
+        "inline-flex h-7 items-center gap-1.5 rounded-md border border-default bg-surface-card px-2 text-base text-secondary",
         mono && "font-mono text-xs",
         className,
       )}
@@ -139,7 +139,7 @@ function BranchChip({
 }) {
   return (
     <Chip mono className={cn(fit && "min-w-0", className)}>
-      <BranchIcon size={13} className="flex-none text-(--text-tertiary)" />
+      <BranchIcon size={13} className="flex-none text-tertiary" />
       <span className={fit ? "truncate" : undefined} title={name}>
         {name}
       </span>
@@ -168,15 +168,12 @@ export function ReviewFreshness({
   return (
     <span
       title={`Version ${document.review.version}, generated ${formatDate(document.review.generated_at)}${document.review.head ? ` against ${shortSha(document.review.head)}` : ""}`}
-      className={cn(
-        "inline-flex flex-wrap items-center gap-2 text-base text-(--text-tertiary)",
-        className,
-      )}
+      className={cn("inline-flex flex-wrap items-center gap-2 text-base text-tertiary", className)}
     >
       {generating ? (
         <span
           title="A new review is being generated"
-          className="inline-flex items-center text-(--status-info)"
+          className="inline-flex items-center text-status-info"
         >
           <LiveDot />
           <span className="sr-only">A new review is being generated</span>
@@ -266,7 +263,7 @@ export function ReviewHeader({
           style={{ height: REVIEW_BAR_PX }}
           className={cn(
             REVIEW_GUTTER,
-            "absolute inset-x-0 top-0 flex items-center gap-3 border-b border-(--border-subtle) bg-(--surface-page) transition-[opacity,visibility] duration-150 motion-reduce:transition-none",
+            "absolute inset-x-0 top-0 flex items-center gap-3 border-b border-subtle bg-surface-page transition-[opacity,visibility] duration-150 motion-reduce:transition-none",
             compact ? "visible opacity-100" : "invisible opacity-0",
           )}
         >
@@ -275,7 +272,7 @@ export function ReviewHeader({
               href={slots.back.href}
               aria-label={slots.back.label}
               className={cn(
-                "inline-flex h-7 w-7 flex-none items-center justify-center rounded-(--radius-sm) text-(--text-tertiary) hover:bg-(--surface-hover) hover:text-(--text-secondary)",
+                "inline-flex h-7 w-7 flex-none items-center justify-center rounded-sm text-tertiary hover:bg-surface-hover hover:text-secondary",
                 FOCUS_RING,
               )}
             >
@@ -297,7 +294,7 @@ export function ReviewHeader({
             onClick={(event) => scrollerOf(event.currentTarget).scrollTo({ top: 0 })}
             title="Back to the top"
             className={cn(
-              "min-w-0 cursor-pointer truncate rounded-(--radius-sm) text-left text-base font-medium",
+              "min-w-0 cursor-pointer truncate rounded-sm text-left text-base font-medium",
               FOCUS_RING,
             )}
           >
@@ -306,7 +303,7 @@ export function ReviewHeader({
             ) : number !== undefined ? (
               <>
                 {title ? `${title} ` : ""}
-                <span className="text-(--text-tertiary)">#{number}</span>
+                <span className="text-tertiary">#{number}</span>
               </>
             ) : (
               "Review preview"
@@ -326,7 +323,7 @@ export function ReviewHeader({
           </div>
         </div>
       </div>
-      <header ref={head} className={cn(REVIEW_GUTTER, "border-b border-(--border-subtle)")}>
+      <header ref={head} className={cn(REVIEW_GUTTER, "border-b border-subtle")}>
         <div className="pb-4">
           <div className="flex flex-wrap items-center gap-x-3 gap-y-2 pt-5">
             <h1 className="text-2xl font-medium tracking-[-0.015em]">
@@ -334,7 +331,7 @@ export function ReviewHeader({
                 heading
               ) : number !== undefined ? (
                 <>
-                  <span className="text-(--text-tertiary)">#{number}</span>
+                  <span className="text-tertiary">#{number}</span>
                   {title ? ` ${title}` : ""}
                 </>
               ) : (
@@ -359,14 +356,14 @@ export function ReviewHeader({
               <div className="ml-auto flex flex-none items-center gap-2">{slots.actions}</div>
             ) : null}
           </div>
-          <div className="flex flex-wrap items-center gap-2 pt-2 text-base text-(--text-secondary)">
+          <div className="flex flex-wrap items-center gap-2 pt-2 text-base text-secondary">
             {repositoryFullName ? <span>{repositoryFullName}</span> : null}
             {/* Beside the repository from sm; on a phone, a row of their own. */}
             {facts.branches ? (
               <span className="hidden sm:contents">
                 <Dot />
                 <BranchChip name={facts.branches.head} />
-                <span aria-hidden className="text-(--text-tertiary)">
+                <span aria-hidden className="text-tertiary">
                   →
                 </span>
                 <BranchChip name={facts.branches.base} />
@@ -392,7 +389,7 @@ export function ReviewHeader({
                 aria-label="View on GitHub"
                 title="View on GitHub"
                 className={cn(
-                  "inline-flex h-7 w-7 items-center justify-center rounded-(--radius-sm) text-(--text-tertiary) hover:bg-(--action-secondary-hover) hover:text-(--text-primary)",
+                  "inline-flex h-7 w-7 items-center justify-center rounded-sm text-tertiary hover:bg-action-secondary-hover hover:text-primary",
                   FOCUS_RING,
                 )}
               >
@@ -411,7 +408,7 @@ export function ReviewHeader({
           {facts.branches ? (
             <div className="flex min-w-0 items-center gap-2 pt-2 sm:hidden">
               <BranchChip name={facts.branches.head} fit />
-              <span aria-hidden className="flex-none text-(--text-tertiary)">
+              <span aria-hidden className="flex-none text-tertiary">
                 →
               </span>
               {/* The branch it merges into is the one a reader checks, so it
@@ -421,7 +418,7 @@ export function ReviewHeader({
           ) : null}
         </div>
         {slots.statistics ? (
-          <div className="border-t border-(--border-subtle) py-3">{slots.statistics}</div>
+          <div className="border-t border-subtle py-3">{slots.statistics}</div>
         ) : null}
       </header>
     </>

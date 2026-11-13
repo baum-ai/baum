@@ -36,7 +36,7 @@ describe("typography", () => {
   it("matches arbitrary and retired sizes in real markup, and only those", () => {
     for (const line of ['"text-[13px] x"', "'\"text-[13px]\"'", '"sm:text-sm"', '"text-xl/5"'])
       expect(forbidden.test(line), line).toBe(true);
-    for (const line of ['"text-2xl"', '"text-3xs"', '"text-(--text-secondary)"'])
+    for (const line of ['"text-2xl"', '"text-3xs"', '"text-secondary"'])
       expect(forbidden.test(line), line).toBe(false);
   });
 });

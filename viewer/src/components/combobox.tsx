@@ -101,7 +101,7 @@ export function Combobox({
           }
         }}
         className={cn(
-          "w-full rounded-(--radius-sm) border border-(--border-default) bg-(--surface-card) py-1 pr-7 pl-2 text-base text-(--text-primary) placeholder:text-(--text-tertiary)",
+          "w-full rounded-sm border border-default bg-surface-card py-1 pr-7 pl-2 text-base text-primary placeholder:text-tertiary",
           FOCUS_RING,
         )}
       />
@@ -111,7 +111,7 @@ export function Combobox({
           aria-label={`Clear ${label.toLowerCase()}`}
           onClick={() => apply("")}
           className={cn(
-            "absolute top-1/2 right-1 flex h-5 w-5 -translate-y-1/2 cursor-pointer items-center justify-center rounded-(--radius-xs) text-(--text-tertiary) hover:text-(--text-primary)",
+            "absolute top-1/2 right-1 flex h-5 w-5 -translate-y-1/2 cursor-pointer items-center justify-center rounded-xs text-tertiary hover:text-primary",
             FOCUS_RING,
           )}
         >
@@ -124,7 +124,7 @@ export function Combobox({
         aria-label={label}
         hidden={!state.open}
         aria-busy={loading || undefined}
-        className="absolute left-0 z-20 mt-1 max-h-72 w-full min-w-64 overflow-auto rounded-(--radius-md) border border-(--border-default) bg-(--surface-card) p-1 shadow-(--shadow-overlay)"
+        className="absolute left-0 z-20 mt-1 max-h-72 w-full min-w-64 overflow-auto rounded-md border border-default bg-surface-card p-1 shadow-overlay"
       >
         {options.map((option, index) => (
           <div
@@ -141,24 +141,20 @@ export function Combobox({
               apply(option.value);
             }}
             className={cn(
-              "flex cursor-pointer items-baseline justify-between gap-3 rounded-(--radius-sm) px-2 py-1.5 text-base",
+              "flex cursor-pointer items-baseline justify-between gap-3 rounded-sm px-2 py-1.5 text-base",
               index === state.active
-                ? "bg-(--surface-pressed) text-(--text-primary)"
-                : "text-(--text-secondary) hover:bg-(--surface-hover)",
+                ? "bg-surface-pressed text-primary"
+                : "text-secondary hover:bg-surface-hover",
             )}
           >
             <span className="min-w-0 truncate">{option.label}</span>
             {option.detail ? (
-              <span className="flex-none text-xs text-(--text-tertiary) tabular-nums">
-                {option.detail}
-              </span>
+              <span className="flex-none text-xs text-tertiary tabular-nums">{option.detail}</span>
             ) : null}
           </div>
         ))}
         {options.length === 0 ? (
-          <p className="px-2 py-1.5 text-base text-(--text-tertiary)">
-            {loading ? "Searching…" : empty}
-          </p>
+          <p className="px-2 py-1.5 text-base text-tertiary">{loading ? "Searching…" : empty}</p>
         ) : null}
       </div>
     </div>

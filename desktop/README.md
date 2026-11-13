@@ -136,8 +136,8 @@ happen only when the user selects an install or add action. Displayed paths abbr
      page once the loaded rows run out); the list then keeps its height and
      scrolls.
      Rows show GitHub details only and nothing is picked on its own. Once a repository
-     is picked, baum looks for its clone in folders agents worked in and common
-     code folders, with the nine-dots loader while it looks, then shows the
+     is picked, baum looks for its clone in folders agents worked in and the
+     home directory, with the nine-dots loader while it looks, then shows the
      clone it found or says none was found. A picked repository without a
      clone offers Choose folder and Clone it (with an editable default folder);
      unticking it unpicks it. A picked repository without a clone still lists its pull requests;

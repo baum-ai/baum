@@ -6,17 +6,21 @@ import (
 )
 
 // A request is Altered when what the app shows of its tool, input or
-// questions is not what the agent sent: cut at a bound, cleaned or masked.
+// questions is not what the agent sent: a question cut at a bound, or text
+// cleaned or masked. A permission request whose input would be cut is not
+// shown at all, since approving applies to the whole input.
 func TestAlteredRequestsAreMarked(t *testing.T) {
 	s := &Store{Mask: func(text string) string { return strings.ReplaceAll(text, "SECRET", "[masked]") }}
 	exact := strings.Repeat("ü", MaxValue)
+	if _, ok := s.newPending(Ask{Tool: "Bash", Input: []Row{{Label: "Command", Value: exact + "x"}}}); ok {
+		t.Error("a permission request with a cut value was shown")
+	}
 	for name, tt := range map[string]struct {
 		ask     Ask
 		altered bool
 	}{
 		"exact at the bound": {Ask{Tool: "Bash", Input: []Row{{Label: "Command", Value: exact}}}, false},
 		"multi-line":         {Ask{Tool: "Bash", Input: []Row{{Label: "Command", Value: "go vet\n\tgo test"}}}, false},
-		"cut":                {Ask{Tool: "Bash", Input: []Row{{Label: "Command", Value: exact + "x"}}}, true},
 		"masked":             {Ask{Tool: "Bash", Input: []Row{{Label: "Command", Value: "curl -H SECRET"}}}, true},
 		"format character":   {Ask{Tool: "Bash", Input: []Row{{Label: "Command", Value: "echo a\u202eb"}}}, true},
 		"control character":  {Ask{Tool: "Bash", Input: []Row{{Label: "Command", Value: "echo a\x1bb"}}}, true},

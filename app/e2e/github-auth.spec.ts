@@ -94,7 +94,7 @@ test("GitHub device lifecycle, recovery and saved reviews through the real daemo
   await page.reload();
   await expect(panel).toContainText("Signed in as alice");
   // A plain sign-in has no workflow access, and Settings says so.
-  await expect(panel).toContainText("does not have workflow access");
+  await expect(panel).toContainText("Workflow access is off by default");
   await expect(panel).toContainText("baum credential store");
   // A private GitHub read used by generation must resolve this saved account
   // through production config; the mocked external boundary rejects other tokens.
@@ -110,7 +110,7 @@ test("GitHub device lifecycle, recovery and saved reviews through the real daemo
   await page.getByRole("button", { name: "Review version", exact: true }).click();
   await openConnections();
   await mode("pending");
-  await panel.getByRole("button", { name: "More reconnect options", exact: true }).click();
+  await panel.getByRole("button", { name: "More connection options", exact: true }).click();
   const withWorkflow = page.getByRole("menuitem", {
     name: "Reconnect with workflow access",
     exact: true,
@@ -122,7 +122,7 @@ test("GitHub device lifecycle, recovery and saved reviews through the real daemo
   await expect(panel).toContainText("Grant repository, organization read and workflow access.");
   await mode("bob");
   await expect(panel).toContainText("Signed in as bob");
-  await expect(panel).not.toContainText("does not have workflow access");
+  await expect(panel).not.toContainText("Workflow access is off by default");
   expect((await (await page.request.get(`${base}api/github-auth`)).json()).workflow).toBe(true);
   await expect(panel.getByLabel("GitHub sign-in code")).toHaveCount(0);
   await page.getByRole("link", { name: "Pull requests", exact: true }).first().click();
@@ -136,7 +136,8 @@ test("GitHub device lifecycle, recovery and saved reviews through the real daemo
   await expect(page.getByRole("button", { name: "Regenerate review", exact: true })).toBeEnabled();
   await page.getByRole("button", { name: "Review version", exact: true }).click();
   await openConnections();
-  await panel.getByRole("button", { name: "Disconnect", exact: true }).click();
+  await panel.getByRole("button", { name: "More connection options", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Disconnect", exact: true }).click();
   await expect(panel).toContainText("Not connected");
   await page.getByRole("link", { name: "Pull requests", exact: true }).first().click();
   await page.getByRole("link", { name: /Reuse the existing PR page/ }).click();

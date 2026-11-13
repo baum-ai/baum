@@ -1,0 +1,79 @@
+/* The palette's semantic tokens as utilities, imported by `viewer.css`. A
+   utility is named after its token, without repeating the utility's own
+   word: `text-secondary` for `--text-secondary`, `border-subtle` for
+   `--border-subtle`, and `bg-surface-card` or `text-status-critical` for the
+   rest. Each resolves to the palette variable, so dark mode and custom themes
+   apply as before.
+
+   `reference` keeps Tailwind from declaring these names itself: shadows share
+   their names with the palette's variables, and a theme declaration of
+   `--shadow-card: var(--shadow-card)` would refer to itself. Brand, chart
+   (`--data-*`, `--series-*`), inbox, syntax and neutral-ramp tokens stay
+   arbitrary values (`bg-(--brand-forest)`), so using one is a deliberate
+   choice. `cn` (`components/classnames.ts`) knows the shadow names.
+
+   Biome's CSS parser does not accept `@theme inline reference`, so
+   `biome.json` leaves this file out; keep its formatting by hand. */
+@theme inline reference {
+  --text-color-primary: var(--text-primary);
+  --text-color-secondary: var(--text-secondary);
+  --text-color-tertiary: var(--text-tertiary);
+  --text-color-disabled: var(--text-disabled);
+  --text-color-inverse: var(--text-inverse);
+  --text-color-link: var(--text-link);
+  --text-color-link-hover: var(--text-link-hover);
+
+  --border-color-subtle: var(--border-subtle);
+  --border-color-default: var(--border-default);
+  --border-color-strong: var(--border-strong);
+  --border-color-focus: var(--border-focus);
+
+  --color-surface-aside: var(--surface-aside);
+  --color-surface-canvas: var(--surface-canvas);
+  --color-surface-card: var(--surface-card);
+  --color-surface-hover: var(--surface-hover);
+  --color-surface-inverse: var(--surface-inverse);
+  --color-surface-inverse-hover: var(--surface-inverse-hover);
+  --color-surface-page: var(--surface-page);
+  --color-surface-popup: var(--surface-popup);
+  --color-surface-pressed: var(--surface-pressed);
+  --color-surface-scrim: var(--surface-scrim);
+  --color-surface-selected: var(--surface-selected);
+  --color-surface-sunken: var(--surface-sunken);
+  --color-surface-wash: var(--surface-wash);
+
+  --color-action-primary: var(--action-primary);
+  --color-action-primary-hover: var(--action-primary-hover);
+  --color-action-secondary-hover: var(--action-secondary-hover);
+  --color-action-accent: var(--action-accent);
+  --color-action-accent-hover: var(--action-accent-hover);
+
+  --color-status-positive: var(--status-positive);
+  --color-status-positive-bg: var(--status-positive-bg);
+  --color-status-positive-border: var(--status-positive-border);
+  --color-status-caution: var(--status-caution);
+  --color-status-caution-bg: var(--status-caution-bg);
+  --color-status-caution-border: var(--status-caution-border);
+  --color-status-critical: var(--status-critical);
+  --color-status-critical-bg: var(--status-critical-bg);
+  --color-status-info: var(--status-info);
+  --color-status-info-bg: var(--status-info-bg);
+  --color-status-merged: var(--status-merged);
+  --color-status-merged-bg: var(--status-merged-bg);
+  --color-status-neutral: var(--status-neutral);
+  --color-status-neutral-bg: var(--status-neutral-bg);
+
+  --color-accent-50: var(--accent-50);
+  --color-accent-100: var(--accent-100);
+  --color-accent-600: var(--accent-600);
+  --color-accent-700: var(--accent-700);
+
+  --color-code-fill: var(--code-fill);
+  --color-nav-hover: var(--nav-hover);
+  --color-nav-selected: var(--nav-selected);
+  --color-rule-masthead: var(--rule-masthead);
+
+  --shadow-card: var(--shadow-card);
+  --shadow-raised: var(--shadow-raised);
+  --shadow-overlay: var(--shadow-overlay);
+}

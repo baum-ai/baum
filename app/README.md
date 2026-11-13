@@ -37,7 +37,9 @@ visible on large screens, and it follows the form on tall windows. It is static,
 fades into the page and leaves the step controls in place.
 
 Desktop UI colors are defined in `../viewer/src/palette.css`. The inbox,
-walkthrough, sessions, settings and charts reuse its semantic tokens. Stumpy's
+walkthrough, sessions, settings and charts reuse its semantic tokens, in
+markup through the palette utilities in `../viewer/src/palette-utilities.css`
+(`text-secondary`, `bg-surface-card`, `border-subtle`). Stumpy's
 fixed illustration colors live with the component in
 `../viewer/src/components/stumpy-artwork.ts`; the log mark and native icon
 generator reuse them. Fixed vendor logo colors live in
@@ -60,7 +62,10 @@ viewer components, bundled HTML, native sources/configuration and SVG icon
 templates. Hex colors, RGB/HSL and other literal color functions, named CSS
 colors, and Tailwind's fixed color utilities are rejected with file and line
 numbers. Palette variables, `currentColor`, `transparent` and derived mixes of
-palette variables are allowed. Only palette/theme definition files and the two
+palette variables are allowed. An arbitrary value for a token that has a
+palette utility, such as `text-(--text-secondary)`, is rejected with the
+utility to write instead (`text-secondary`); so is a corner written as
+`rounded-(--radius-sm)` rather than `rounded-sm`. Only palette/theme definition files and the two
 specific artwork modules may define literal colors; tests and generated files
 are excluded. Inbox filter color names are persisted palette keys, not CSS colors.
 
@@ -1063,8 +1068,8 @@ port changes; `localStorage` keeps a copy so a reload draws the sidebar as it
 was before the preferences arrive. A window narrower than 64rem always folds
 the sidebar, opens it the same way, and hides the pin button.
 
-A Help button at the right of the sidebar's baum title (under it when the
-sidebar is folded) opens a help menu (`HelpButton` in `src/shell.tsx`):
+A Help button at the right of the sidebar's baum title opens a help menu
+(`HelpButton` in `src/shell.tsx`):
 **Show shortcuts** opens the shortcuts sheet, **Report a problem** opens the
 Report a problem dialog (`src/report-problem.tsx`, also Diagnostics' button:
 what happened, what to attach with a preview, then **Open issue**, which opens
@@ -1073,8 +1078,9 @@ a new issue in baum-ai/baum on GitHub; see the
 window (the desktop app hands it to the browser). The `?` key opens the same
 menu with the keys on Show shortcuts, so `?` then Enter shows the sheet; with
 the sheet open `?` hides it. Opened by the key, the menu gives the keys back to
-where they were rather than to the button. With the glyph-only rail the button
-sits under the Settings glyph.
+where they were rather than to the button. The folded sidebar hides Help
+until it opens over the page; while it is hidden `?` shows the shortcuts sheet
+directly.
 
 In the sidebar Inbox is a heading, not a link: it has no address, is never the
 current page and shows the total of what waits (and, for screen readers, ", N
@@ -1493,9 +1499,12 @@ each window (for example 5-hour and weekly) with the share left, when it
 resets and a thin bar coloured by what remains, and how old the oldest figure
 is; hovering "resets in" shows the exact date and time. A narrow window folds
 it to the lowest share left. Only
-plans the daemon could read show: a provider that is not installed, signed
-out or has not run yet is left out, and with neither readable (or a failed
-request) the box is not drawn. Which plans show is a choice in Settings
+plans the daemon could read show, and those whose sign-in needs refreshing
+(`needs_sign_in`), which show their reason ("Open Claude Code to refresh its
+sign-in.") with no bar and leave the age to the plans read. A provider that is
+not installed, signed out or has not run yet is left out, and with none to
+show (or a failed request) the box is not drawn. The tray's panel does the
+same. Which plans show is a choice in Settings
 (below): by default only those of the backends baum uses. The desktop setup
 shows no plan usage. The sidebar asks
 `GET api/plan-usage?refresh=1` on mount and every five minutes while the
@@ -1729,7 +1738,8 @@ daemon note, **Jobs at once** (how many reviews, fixes and feature builds run
 in parallel, 1–4 and 4 by default, saved with `PUT
 api/settings/job-concurrency` and reported as `job_concurrency` by `GET
 api/settings`; the daemon applies it at once, and lowering it lets running jobs
-finish), **Review time limit** (10 minutes by default) and **Fix time limit**
+finish), **Review time limit** (10 minutes by default; a review group gets half
+as much again per member after the first, up to three times it) and **Fix time limit**
 (how long a fix, a question to a review's agent or a feature build may run, 30
 minutes by default), each chosen from 5 to 240 minutes, saved together with
 `PUT api/settings/time-limits` as `review_time_limit_minutes` and
@@ -1823,13 +1833,22 @@ followed by why capture will not run again (paused, off, off for the
 repository, or not a picked repository; `capture_off`).
 The PR page's review rail has a **Decisions** row above Sessions and
 Commits, with the count (the viewer's `decisions` slot, `?pane=decisions`):
-its pane lists, session by session as cards, the decisions of every session
-of the pull request, in progress or linked by the saved review, marking those
+its pane lists, session by session as cards, only decisions assessed as relevant
+to the PR's changes from its sessions, in progress or linked by the saved review, marking those
 made after that review was generated "Provisional", ended sessions the
 tracker still holds included (`usePullRequestDecisions`,
 `PullRequestDecisionsPane`). A session's decisions are split into **Decided by
 you** (the person's own, and those the agent proposed and they approved) and
 **Decided by the agent**, each with its count; an empty group is left out.
+The daemon checks relevance asynchronously and caches it per PR revision and
+decision content. Pending checks, failures, unavailable context and uncertain
+relevance have their own status text, distinct from no relevant decisions.
+The page sends its current head with the read, so cached decisions from an
+older head are withheld. Live session disclosures on a PR reuse this filtered
+answer, with no additional full-session decision requests. Session-only views
+and Timeline retain the full history. The walkthrough reuses the page's read;
+stack panes union the member PRs' relevant decisions by ID and keep their
+filtering status counts.
 Each decision is one row to scan: its title, its
 category as a pill and the time it was made, with its summary cut to a line
 under it; the row opens to the whole summary, **Why** (its rationale) and its
@@ -2157,9 +2176,12 @@ desktop setup's first step. Device sign-in requests repository and organization
 read access. Workflow access is opt-in and offered only in Settings: Reconnect
 is a split button whose menu adds **Reconnect with workflow access** (or
 **Reconnect without workflow access** once granted), and Reconnect itself keeps
-the access the connection has. A saved connection without workflow access shows
-a caution note that merges of pull requests changing GitHub Actions workflows
-need it. `POST api/github-auth/start` takes `{"workflow": true}` for that
+the access the connection has. A saved connection without workflow access says so
+in small print, not a warning, since that is the default: pull requests
+changing GitHub Actions workflows merge on GitHub. The panel's footer is a
+short list (Access, Credential, Data); Access is left out for an explicit
+credential, whose scopes are not known. Disconnect is the last choice in the
+Reconnect button's menu. `POST api/github-auth/start` takes `{"workflow": true}` for that
 choice; an empty object is a plain sign-in.
 The desktop setup's GitHub step and Settings share
 `src/github-auth.ts`. Sign in with GitHub starts device authorization through

@@ -420,9 +420,13 @@ func (l *Local) Execute(ctx context.Context, p Prepared, progress func(Progress)
 	name := selected.Backend.Name()
 	progress(Progress{Phase: "assembling", Backend: name, Model: selected.Model})
 	// A single pull request is written in stages, with a draft while they
-	// run; a group's combined review in one pass.
-	options := generate.Options{Group: group, Staged: group == nil, PriceList: list, Assembler: guarded, Request: assemble.Request{Repository: repository, Number: key.Number, Limits: assemble.LimitsFrom(caps)}, Backend: backend, BackendVersion: selected.Version, Model: selected.Model, Budgets: agent.Budgets{WallClock: time.Duration(cfg.Budgets.ReviewTimeout), MaxCalls: cfg.Budgets.MaxCalls, MaxTokens: cfg.Budgets.MaxTokens, MaxProviderAttempts: 3, MaxRepairAttempts: 2},
-		OnRepairs: backend.repaired, PassTimeout: max(time.Duration(cfg.Budgets.PassTimeout), time.Duration(cfg.Budgets.ReviewTimeout))}
+	// run; a group's combined review in one pass, under a longer limit.
+	limit := time.Duration(cfg.Budgets.ReviewTimeout)
+	if group != nil {
+		limit = groupReviewTimeout(limit, len(group.Members))
+	}
+	options := generate.Options{Group: group, Staged: group == nil, PriceList: list, Assembler: guarded, Request: assemble.Request{Repository: repository, Number: key.Number, Limits: assemble.LimitsFrom(caps)}, Backend: backend, BackendVersion: selected.Version, Model: selected.Model, Budgets: agent.Budgets{WallClock: limit, MaxCalls: cfg.Budgets.MaxCalls, MaxTokens: cfg.Budgets.MaxTokens, MaxProviderAttempts: 3, MaxRepairAttempts: 2},
+		OnRepairs: backend.repaired, PassTimeout: max(time.Duration(cfg.Budgets.PassTimeout), limit)}
 	if e := l.applyPrompts(ctx, p.Repository, &options); e != nil {
 		return nil, e
 	}
@@ -843,4 +847,13 @@ func (l *Local) applyPrompts(ctx context.Context, repository string, o *generate
 	}
 	o.PromptSource = promptSourceOf(prompt.ReviewIDs(o.Group != nil, o.Staged && o.Group == nil), overrides, sources)
 	return nil
+}
+
+// groupReviewTimeout is a group review's time limit: the review limit plus
+// half of it for each member after the first, at most three times the review
+// limit. A group's review is written in one pass whose final document alone
+// takes minutes, so the single pull request's limit is too short for it.
+func groupReviewTimeout(review time.Duration, members int) time.Duration {
+	extra := min(max(members-1, 0), 4)
+	return review + time.Duration(extra)*review/2
 }

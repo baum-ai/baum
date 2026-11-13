@@ -201,7 +201,7 @@ type Prepared struct {
 	// FixThreads are the review threads a fix addresses (Fix.Threads).
 	// FixThreadsCapped says there were more than fix.MaxThreads, and
 	// FixThreadsUntrusted counts the threads left out because an account
-	// without access to the repository started them.
+	// without push access to the repository, or an app, started them.
 	FixThreads          []FixThread `json:"fix_threads,omitempty"`
 	FixThreadsCapped    bool        `json:"fix_threads_capped,omitempty"`
 	FixThreadsUntrusted int         `json:"fix_threads_untrusted,omitempty"`

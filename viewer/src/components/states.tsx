@@ -30,8 +30,8 @@ export function Empty({
         className,
       )}
     >
-      <p className="font-medium text-(--text-secondary)">{title}</p>
-      {children ? <p className="max-w-sm text-base text-(--text-tertiary)">{children}</p> : null}
+      <p className="font-medium text-secondary">{title}</p>
+      {children ? <p className="max-w-sm text-base text-tertiary">{children}</p> : null}
     </div>
   );
 }
@@ -40,7 +40,7 @@ export function Empty({
  *  is not read as a failed load. */
 export function ZeroValue({ children, className }: StateProps) {
   return (
-    <div className={cn("px-6 py-10 text-center text-base text-(--text-tertiary)", className)}>
+    <div className={cn("px-6 py-10 text-center text-base text-tertiary", className)}>
       {children ?? "No activity in this window."}
     </div>
   );
@@ -53,7 +53,7 @@ export function Failed({ children, className }: StateProps) {
     <div
       role="alert"
       className={cn(
-        "flex flex-col items-center gap-1.5 px-6 py-10 text-center text-base text-(--status-critical)",
+        "flex flex-col items-center gap-1.5 px-6 py-10 text-center text-base text-status-critical",
         className,
       )}
     >
@@ -71,7 +71,7 @@ export function Skeleton({ className, height = 200 }: { className?: string; heig
     <div
       aria-hidden
       className={cn(
-        "animate-shimmer rounded-(--radius-sm) bg-[linear-gradient(90deg,var(--surface-sunken)_0%,var(--surface-sunken)_35%,var(--surface-wash)_50%,var(--surface-sunken)_65%,var(--surface-sunken)_100%)] bg-[length:200%_100%] motion-reduce:animate-none",
+        "animate-shimmer rounded-sm bg-[linear-gradient(90deg,var(--surface-sunken)_0%,var(--surface-sunken)_35%,var(--surface-wash)_50%,var(--surface-sunken)_65%,var(--surface-sunken)_100%)] bg-[length:200%_100%] motion-reduce:animate-none",
         className,
       )}
       style={{ height }}
@@ -89,7 +89,7 @@ export function Stale({ pending, children }: { pending: boolean; children: React
         {children}
       </div>
       {pending ? (
-        <Spinner label="Refreshing" className="absolute top-3 right-3 text-(--text-tertiary)" />
+        <Spinner label="Refreshing" className="absolute top-3 right-3 text-tertiary" />
       ) : null}
     </div>
   );

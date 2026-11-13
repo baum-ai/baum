@@ -114,7 +114,7 @@ func Open(path string, o OpenOptions) (*Store, error) {
 		return nil, err
 	}
 	s := &Store{db: db, now: time.Now}
-	_, err = db.Exec(schema + featureSchema + indexSchema + timelineRevisionTable)
+	_, err = db.Exec(schema + featureSchema + indexSchema + timelineRevisionTable + relevanceSchema)
 	if err == nil {
 		err = installTimelineRevision(context.Background(), db)
 	}
@@ -151,7 +151,7 @@ func openReadOnly(path string) (*Store, error) {
 		return nil, err
 	}
 	db.SetMaxOpenConns(1)
-	_, err = db.Exec(schema + featureSchema + indexSchema + timelineRevisionTable)
+	_, err = db.Exec(schema + featureSchema + indexSchema + timelineRevisionTable + relevanceSchema)
 	if err == nil {
 		err = installTimelineRevision(context.Background(), db)
 	}
@@ -405,6 +405,12 @@ decided_at=excluded.decided_at, branch=excluded.branch, obsolete_at=NULL`,
 			}
 		}
 		// The session's features read its decisions.
+		for _, d := range e.Decisions {
+			if _, err := tx.ExecContext(ctx, `INSERT INTO decision_relevance_input(decision_id,content_hash) VALUES(?,?)
+ON CONFLICT(decision_id) DO UPDATE SET content_hash=excluded.content_hash`, d.ID, decisionFingerprint(e.Repository, d)); err != nil {
+				return err
+			}
+		}
 		version, err := liveVersion(ctx, tx, e.Repository, false, now)
 		if err != nil || version == 0 {
 			return err
@@ -551,6 +557,10 @@ func (s *Store) currentOf(ctx context.Context, sessions []SessionKey) (map[Sessi
 // decisionsOf is currentOf, or with obsolete the decisions a later capture
 // replaced at that time: one extraction's, kept for good.
 func (s *Store) decisionsOf(ctx context.Context, sessions []SessionKey, obsolete *int64) (map[SessionKey][]Decision, error) {
+	return s.decisionsByID(ctx, sessions, obsolete, nil)
+}
+
+func (s *Store) decisionsByID(ctx context.Context, sessions []SessionKey, obsolete *int64, ids []string) (map[SessionKey][]Decision, error) {
 	out := map[SessionKey][]Decision{}
 	if len(sessions) == 0 {
 		return out, nil
@@ -564,6 +574,16 @@ func (s *Store) decisionsOf(ctx context.Context, sessions []SessionKey, obsolete
 	if obsolete != nil {
 		at = *obsolete
 	}
+	restrict := ""
+	args := []any{set, at}
+	if ids != nil {
+		encoded, err := json.Marshal(ids)
+		if err != nil {
+			return nil, err
+		}
+		restrict = ` AND decision_id IN (SELECT value FROM json_each(?3))`
+		args = append(args, string(encoded))
+	}
 	list, err := collect(func(rows *sql.Rows) (Decision, error) {
 		var d Decision
 		var turns string
@@ -576,7 +596,7 @@ func (s *Store) decisionsOf(ctx context.Context, sessions []SessionKey, obsolete
 		return d, json.Unmarshal([]byte(turns), &d.Turns)
 	})(s.db.QueryContext(ctx, `SELECT agent, session_id, decision_id, repository, title, summary, category, who, trigger, rationale,
 rejected_alternative, evidence, superseded, turns_json, decided_turn, decided_at, branch FROM decision
-WHERE (agent, session_id)`+inSessions+` AND obsolete_at IS ?2 ORDER BY agent, session_id, ordinal`, set, at))
+WHERE (agent, session_id)`+inSessions+` AND obsolete_at IS ?2`+restrict+` ORDER BY agent, session_id, ordinal`, args...))
 	if err != nil {
 		return nil, err
 	}
@@ -584,7 +604,7 @@ WHERE (agent, session_id)`+inSessions+` AND obsolete_at IS ?2 ORDER BY agent, se
 		var f [2]string
 		return f, rows.Scan(&f[0], &f[1])
 	})(s.db.QueryContext(ctx, `SELECT f.decision_id, f.path FROM decision_file f JOIN decision d ON d.decision_id=f.decision_id
-WHERE (d.agent, d.session_id)`+inSessions+` AND d.obsolete_at IS ?2 ORDER BY f.decision_id, f.path`, set, at))
+WHERE (d.agent, d.session_id)`+inSessions+` AND d.obsolete_at IS ?2`+strings.ReplaceAll(restrict, " AND decision_id", " AND d.decision_id")+` ORDER BY f.decision_id, f.path`, args...))
 	if err != nil {
 		return nil, err
 	}
@@ -624,8 +644,9 @@ func (s *Store) Coverage(ctx context.Context, sessions ...SessionKey) (map[Sessi
 // current decisions, its coverage and why it was skipped, when its row last
 // changed and whether a call for it is in flight.
 type SessionDecisions struct {
-	Agent     string `json:"agent"`
-	SessionID string `json:"session_id"`
+	candidates []decisionHint
+	Agent      string `json:"agent"`
+	SessionID  string `json:"session_id"`
 	// Repository is the session's, as last captured; empty for a session
 	// never captured. The gate reads it; the app is not told.
 	Repository string `json:"-"`
@@ -640,32 +661,62 @@ type SessionDecisions struct {
 	// Capturing is a model call for the session that has not settled.
 	Capturing bool           `json:"capturing"`
 	Decisions []DecisionView `json:"decisions"`
+	// Relevance is present only in a PR-scoped response.
+	Relevance *RelevanceStatus `json:"relevance,omitempty"`
 }
 
 // Sessions reads what the app shows of each session, in the given order.
 func (s *Store) Sessions(ctx context.Context, keys ...SessionKey) ([]SessionDecisions, error) {
+	views, err := s.sessionStates(ctx, keys)
+	if err != nil {
+		return nil, err
+	}
+	current, err := s.currentOf(ctx, keys)
+	if err != nil {
+		return nil, err
+	}
+	for i, key := range keys {
+		for _, d := range current[key] {
+			views[i].Decisions = append(views[i].Decisions, viewOf(d))
+		}
+	}
+	return views, nil
+}
+
+func (s *Store) sessionStates(ctx context.Context, keys []SessionKey) ([]SessionDecisions, error) {
 	out := make([]SessionDecisions, 0, len(keys))
+	if len(keys) == 0 {
+		return out, nil
+	}
+	set, err := sessionSet(keys)
+	if err != nil {
+		return nil, err
+	}
+	// Do not read/decode capture_session.decisions_json: currentOf already
+	// reads the decisions. Batch metadata and pending-state reads as well.
+	metadata, err := collect(func(rows *sql.Rows) (SessionDecisions, error) {
+		var v SessionDecisions
+		var at sql.NullInt64
+		err := rows.Scan(&v.Agent, &v.SessionID, &v.Repository, &v.Coverage, &v.SkipReason, &at, &v.Capturing)
+		if at.Valid {
+			updated := time.UnixMilli(at.Int64)
+			v.UpdatedAt = &updated
+		}
+		return v, err
+	})(s.db.QueryContext(ctx, `SELECT json_extract(k.value,'$[0]'), json_extract(k.value,'$[1]'),
+COALESCE(cs.repository,''), COALESCE(cs.coverage,''), COALESCE(cs.skip_reason,''), cs.updated_at,
+EXISTS(SELECT 1 FROM capture_attempt a WHERE a.agent=json_extract(k.value,'$[0]') AND a.session_id=json_extract(k.value,'$[1]') AND a.state='pending')
+FROM json_each(?) k LEFT JOIN capture_session cs ON cs.agent=json_extract(k.value,'$[0]') AND cs.session_id=json_extract(k.value,'$[1]')`, set))
+	if err != nil {
+		return nil, err
+	}
+	byKey := map[SessionKey]SessionDecisions{}
+	for _, v := range metadata {
+		byKey[SessionKey{v.Agent, v.SessionID}] = v
+	}
 	for _, key := range keys {
-		row, found, err := s.Session(ctx, key.Agent, key.ID)
-		if err != nil {
-			return nil, err
-		}
-		view := SessionDecisions{Agent: key.Agent, SessionID: key.ID, Decisions: []DecisionView{}}
-		if found {
-			updated := row.UpdatedAt
-			view.Repository, view.Coverage, view.SkipReason, view.UpdatedAt = row.Repository, row.Coverage, row.SkipReason, &updated
-		}
-		if err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM capture_attempt WHERE agent=? AND session_id=? AND state=?)`,
-			key.Agent, key.ID, AttemptPending).Scan(&view.Capturing); err != nil {
-			return nil, err
-		}
-		current, err := s.Current(ctx, key)
-		if err != nil {
-			return nil, err
-		}
-		for _, d := range current {
-			view.Decisions = append(view.Decisions, viewOf(d))
-		}
+		view := byKey[key]
+		view.Agent, view.SessionID, view.Decisions = key.Agent, key.ID, []DecisionView{}
 		out = append(out, view)
 	}
 	return out, nil
@@ -683,7 +734,7 @@ type LedgerEntry struct {
 // Ledger reads the capture attempts started at or after since, oldest first.
 func (s *Store) Ledger(ctx context.Context, since time.Time) ([]LedgerEntry, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT repository, backend, state, reason, started_at, cost_usd FROM capture_attempt
-WHERE stage = ? AND started_at >= ? ORDER BY started_at, id`, StageCapture, since.UnixMilli())
+WHERE stage IN (?, 'decision_relevance') AND started_at >= ? ORDER BY started_at, id`, StageCapture, since.UnixMilli())
 	if err != nil {
 		return nil, err
 	}

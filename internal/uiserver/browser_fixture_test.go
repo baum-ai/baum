@@ -460,7 +460,12 @@ func TestLocalAppBrowserFixture(t *testing.T) {
 		} else if r.Method == "GET" && strings.HasSuffix(r.URL.Path, "/actions/runs") {
 			body = map[string]any{"workflow_runs": []any{map[string]any{"id": 55, "name": "CI", "status": "completed", "conclusion": "failure"}}}
 		} else if strings.HasSuffix(r.URL.Path, "/permission") {
-			body = map[string]any{"permission": "write"}
+			// The stranger who comments on PR 8 may only read the repository.
+			permission := "write"
+			if strings.Contains(r.URL.Path, "/collaborators/stranger/") {
+				permission = "read"
+			}
+			body = map[string]any{"permission": permission}
 		} else if r.Method == "GET" && strings.HasSuffix(r.URL.Path, "/check-runs") {
 			body = map[string]any{"check_runs": []any{map[string]any{"id": 1, "name": "test", "conclusion": "failure", "output": map[string]any{"title": "1 test failed"}}}}
 		} else if r.Method == "GET" && strings.HasSuffix(r.URL.Path, "/status") {

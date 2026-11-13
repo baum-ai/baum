@@ -11,9 +11,8 @@ export type ActionOptions = {
 };
 
 const actionSizes = {
-  // Table-row scale. Exists so a caller never reaches for
-  // `className="px-3 py-1.5"`, which cannot reliably beat the size it is
-  // fighting — `cn` concatenates, so stylesheet order decides.
+  // Table-row scale. Exists so a caller picks a size rather than reaching
+  // for `className="px-3 py-1.5"`.
   tiny: "h-7 px-2.5 text-xs",
   compact: "h-8 px-3.5",
   standard: "px-4 py-[11px]",
@@ -22,27 +21,26 @@ const actionSizes = {
 
 const actionVariants = {
   primary:
-    "bg-(--action-primary) text-(--text-inverse) hover:bg-(--action-primary-hover) hover:text-(--text-inverse) hover:no-underline",
+    "bg-action-primary text-inverse hover:bg-action-primary-hover hover:text-inverse hover:no-underline",
   secondary:
-    "border border-(--border-default) bg-(--surface-card) text-(--text-primary) hover:bg-(--action-secondary-hover) hover:text-(--text-primary) hover:no-underline",
+    "border border-default bg-surface-card text-primary hover:bg-action-secondary-hover hover:text-primary hover:no-underline",
   // A row action that should not compete with the message it sits under: no
   // border, no fill, and it only takes on weight when the pointer is over it.
   ghost:
-    "font-normal text-(--text-tertiary) hover:bg-(--action-secondary-hover) hover:text-(--text-primary) hover:no-underline",
+    "font-normal text-tertiary hover:bg-action-secondary-hover hover:text-primary hover:no-underline",
   // Confirms removing something, as a dialog's last word: filled red.
   danger:
-    "bg-(--status-critical) text-(--text-inverse) hover:bg-(--status-critical) hover:text-(--text-inverse) hover:no-underline",
+    "bg-status-critical text-inverse hover:bg-status-critical hover:text-inverse hover:no-underline",
   "danger-outline":
-    "border border-(--border-default) bg-transparent px-[18px] whitespace-nowrap text-(--status-critical) hover:bg-(--surface-hover)",
+    "border border-default bg-transparent px-[18px] whitespace-nowrap text-status-critical hover:bg-surface-hover",
   // An action that reads as a tag beside the thing it acts on: a quiet pill
   // rather than a box. Its shape comes from `actionShape`.
-  tag: "border border-(--border-default) bg-(--surface-card) whitespace-nowrap text-(--text-secondary) hover:bg-(--surface-hover) hover:text-(--text-primary) hover:no-underline",
+  tag: "border border-default bg-surface-card whitespace-nowrap text-secondary hover:bg-surface-hover hover:text-primary hover:no-underline",
 };
 
-/** Kept apart from the variants because two `rounded-*` utilities would both
- *  survive `cn` and the stylesheet, not the variant, would pick the winner. */
+/** A tag is a pill; every other action is boxed. */
 function actionShape(variant: NonNullable<ActionOptions["variant"]>) {
-  return variant === "tag" ? "rounded-full" : "rounded-(--radius-md)";
+  return variant === "tag" ? "rounded-full" : "rounded-md";
 }
 
 /** Every boxed action stands on `--action-shadow` and sinks a pixel while

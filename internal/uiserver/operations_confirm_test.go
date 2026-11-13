@@ -13,20 +13,18 @@ import (
 	"github.com/baum-ai/baum/internal/repos"
 )
 
-// A request the app shows cut, cleaned or with a secret masked cannot be
-// allowed from a proposal (the person would allow what they did not see);
-// denying it can. One of exactly the store's bound is shown whole and may be
-// allowed.
+// A request the app shows cleaned or with a secret masked cannot be allowed
+// from a proposal (the person would allow what they did not see); denying it
+// can. A long request is shown whole and may be allowed. (One whose input
+// would be cut is never shown: agentrequests refuses it.)
 func TestAnAlteredRequestIsNotAllowed(t *testing.T) {
 	f := newOpFixture(t)
 	f.page(agentcontext.PageContext{Page: agentcontext.PageSessions})
-	long := f.ask(agentrequests.Ask{Agent: "claude-code", SessionID: "s1", Kind: agentrequests.KindPermission, Tool: "Bash",
-		Input: []agentrequests.Row{{Label: "Command", Value: longCommand + "x; rm -rf ~"}}})
 	masked := f.ask(agentrequests.Ask{Agent: "claude-code", SessionID: "s1", Kind: agentrequests.KindPermission, Tool: "Bash",
 		Input: []agentrequests.Row{{Label: "Command", Value: "curl -H 'Authorization: SECRET-TOKEN' https://example.com"}}})
 	cleaned := f.ask(agentrequests.Ask{Agent: "claude-code", SessionID: "s1", Kind: agentrequests.KindPermission, Tool: "Bash",
 		Input: []agentrequests.Row{{Label: "Command", Value: "echo safe\u202e; rm -rf ~"}}})
-	for name, id := range map[string]string{"cut": long, "masked": masked, "cleaned": cleaned} {
+	for name, id := range map[string]string{"masked": masked, "cleaned": cleaned} {
 		if _, failed := f.propose("propose_answer_request", map[string]any{"id": id, "behavior": "allow"}); !strings.Contains(failed, "cannot be allowed") {
 			t.Errorf("a %s request was allowed: %s", name, failed)
 		}
@@ -35,7 +33,7 @@ func TestAnAlteredRequestIsNotAllowed(t *testing.T) {
 		}
 	}
 	if _, failed := f.propose("propose_answer_request", map[string]any{"id": f.request, "behavior": "allow"}); failed != "" {
-		t.Fatalf("a request of exactly %d characters was refused: %s", agentrequests.MaxValue, failed)
+		t.Fatalf("a request of %d characters, shown whole, was refused: %s", len([]rune(longCommand)), failed)
 	}
 }
 

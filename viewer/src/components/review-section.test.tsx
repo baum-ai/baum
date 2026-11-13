@@ -18,6 +18,68 @@ function render(blocks: Block[]) {
 }
 
 describe("review section blocks", () => {
+  it("gives every evidence item one visible destination across attention and repeated behavior citations", () => {
+    const document = structuredClone(reviewDocumentFor("acme/widgets", 42)) as ReviewDocument;
+    const section = document.sections[0]!;
+    section.evidence = (
+      [
+        ["ev_attention", "reported"],
+        ["ev_missing", "missing"],
+        ["ev_behavior", "verified"],
+        ["ev_uncited", "asserted"],
+      ] as const
+    ).map(([id, status]) => ({
+      ...section.evidence[0]!,
+      id,
+      status,
+      claim: `Claim for ${id}`,
+      detail: `Detail for ${id}`,
+      expects: `Coverage for ${id}`,
+    }));
+    section.attention = {
+      text: "Inspect the evidence",
+      refs: ["ev_attention", "ev_attention", "ev_missing"],
+    };
+    section.blocks = ["first", "second"].map((id) => ({
+      kind: "behavior",
+      steps: [
+        {
+          id,
+          text: `Behavior ${id}`,
+          evidence: ["ev_attention", "ev_behavior"],
+          anchors: [],
+        },
+      ],
+    }));
+    const page = new DOMParser().parseFromString(
+      renderToStaticMarkup(
+        <ReviewSection
+          document={document}
+          section={section}
+          onSelectSection={() => {}}
+          idPrefix="old-"
+        />,
+      ),
+      "text/html",
+    );
+    for (const evidence of section.evidence) {
+      const destinations = page.querySelectorAll(`[id="old-${section.id}-${evidence.id}"]`);
+      expect(destinations).toHaveLength(1);
+      const destination = destinations[0]!;
+      expect(destination.textContent).toContain(evidence.claim);
+      expect(destination.textContent).toContain(evidence.detail);
+      expect(destination.textContent).toContain(evidence.expects);
+      expect(destination.closest("details")).toBeNull();
+      expect(destination.closest("[data-review-block]")).not.toBeNull();
+      expect(page.body.textContent!.split(evidence.claim)).toHaveLength(2);
+    }
+    const attention = page.querySelector('section[aria-label="Attention"]')!;
+    expect(attention.querySelector('[id$="-ev_attention"]')).not.toBeNull();
+    expect(attention.querySelector('[id$="-ev_missing"]')).toBeNull();
+    expect(page.querySelector('section[aria-label="Evidence"] [id$="-ev_missing"]')).not.toBeNull();
+    expect(page.querySelectorAll('[aria-label="Supporting evidence"] li')).toHaveLength(4);
+  });
+
   it("renders generated review prose as safe markdown in the summary and section", () => {
     const document = structuredClone(reviewDocumentFor("acme/widgets", 42)) as ReviewDocument;
     const section = document.sections[0]!;

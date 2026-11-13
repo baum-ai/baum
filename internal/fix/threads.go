@@ -6,6 +6,8 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/url"
 	"regexp"
 	"strings"
 	"unicode"
@@ -53,35 +55,102 @@ type Selection struct {
 	// Capped: more unresolved threads than MaxThreads, or than baum read.
 	Capped bool
 	// Untrusted counts the unresolved threads left out because an account
-	// without access to the repository started them.
+	// without push access to the repository, or an app, started them.
 	Untrusted int
 }
 
-// trusted reports a comment whose text a fix may act on: from an owner,
-// member or collaborator of the repository, or from an app someone with
-// admin access installed on it, such as a review bot. Anyone with a GitHub
+// PushAccess reports whether the GitHub account login may push to the
+// repository a fix is for.
+type PushAccess func(ctx context.Context, login string) (bool, error)
+
+// CollaboratorPushAccess reads an account's permission on the repository
+// over REST, GitHub's collaborator permission, as review preparation does:
+// write, maintain and admin may push; read, triage and none may not, and
+// nor may an account GitHub does not know as a collaborator. Each login is
+// read once for the PushAccess's lifetime; a fix makes one per read of its
+// threads.
+func CollaboratorPushAccess(r Reader, repository github.Repository) PushAccess {
+	known := map[string]bool{}
+	return func(ctx context.Context, login string) (bool, error) {
+		key := strings.ToLower(login)
+		if push, ok := known[key]; ok {
+			return push, nil
+		}
+		status, _, raw, err := r.Read(ctx, repositoryPath(repository)+"/collaborators/"+url.PathEscape(login)+"/permission", "")
+		if err != nil {
+			return false, err
+		}
+		push := false
+		switch status {
+		case http.StatusOK:
+			var response struct {
+				Permission string `json:"permission"`
+				User       struct {
+					Permissions struct {
+						Push bool `json:"push"`
+					} `json:"permissions"`
+				} `json:"user"`
+			}
+			if err := json.Unmarshal(raw, &response); err != nil {
+				return false, fmt.Errorf("GitHub's permission of %s: %w", login, err)
+			}
+			switch response.Permission {
+			case "admin", "maintain", "write":
+				push = true
+			case "read", "triage", "none":
+			default:
+				// A custom role names its base permission in the user's
+				// permissions.
+				push = response.User.Permissions.Push
+			}
+		case http.StatusNotFound, http.StatusForbidden:
+			// Not a collaborator, or not an account GitHub tells about.
+		default:
+			return false, fmt.Errorf("GitHub answered HTTP %d for the permission of %s", status, login)
+		}
+		known[key] = push
+		return push, nil
+	}
+}
+
+// trusted reports a comment whose text a fix may act on: from an account
+// that may push to the repository (canPush), or from an app's bot account.
+// Bots are trusted so that review bots' comments (Copilot, CodeRabbit…) can
+// be fixed: an app is installed by someone who administers the repository,
+// and its words reach the agent like everyone's, as untrusted data under
+// fix-threads.md's rules, with the workflow guard and the credential check
+// applied to what it pushes.
+// GitHub's author association is not enough: MEMBER is any member of the
+// owning organisation, whatever their access to this repository, and
+// COLLABORATOR includes read and triage access. Anyone with a GitHub
 // account can comment on a public repository's pull request; their threads
 // are left out.
-func trusted(comment github.ThreadComment) bool {
-	switch comment.Association {
-	case "OWNER", "MEMBER", "COLLABORATOR":
-		return true
+func trusted(ctx context.Context, comment github.ThreadComment, canPush PushAccess) (bool, error) {
+	if comment.Author == "" {
+		return false, nil
 	}
-	return comment.Bot
+	if comment.Bot {
+		return true, nil
+	}
+	return canPush(ctx, comment.Author)
 }
 
 // SelectThreads picks the threads a fix addresses from what GitHub
 // returned: those the signed-in account can reply to and resolve, whose
 // first comment comes from a trusted author, the first MaxThreads in
 // GitHub's order. Within a thread, comments of untrusted authors are left
-// out.
-func SelectThreads(list github.ReviewThreads) Selection {
+// out. Its error is canPush's.
+func SelectThreads(ctx context.Context, list github.ReviewThreads, canPush PushAccess) (Selection, error) {
 	out := Selection{Capped: list.Capped}
 	for _, thread := range list.Unresolved {
 		if !thread.CanReply || !thread.CanResolve || len(thread.Comments) == 0 {
 			continue
 		}
-		if !trusted(thread.Comments[0]) {
+		ok, err := trusted(ctx, thread.Comments[0], canPush)
+		if err != nil {
+			return Selection{}, err
+		}
+		if !ok {
 			out.Untrusted++
 			continue
 		}
@@ -91,7 +160,11 @@ func SelectThreads(list github.ReviewThreads) Selection {
 		}
 		t := Thread{Ref: fmt.Sprintf("T%d", len(out.Threads)+1), ID: thread.ID, Path: bounded(thread.Path, 512), Line: thread.Line, Outdated: thread.Outdated}
 		for _, comment := range thread.Comments[:min(len(thread.Comments), github.MaxThreadComments)] {
-			if !trusted(comment) {
+			ok, err := trusted(ctx, comment, canPush)
+			if err != nil {
+				return Selection{}, err
+			}
+			if !ok {
 				continue
 			}
 			comment.Author, comment.Body = bounded(comment.Author, 64), bounded(comment.Body, maxCommentBytes)
@@ -100,7 +173,7 @@ func SelectThreads(list github.ReviewThreads) Selection {
 		t.LeftOut = max(thread.Total, len(thread.Comments)) - len(t.Comments)
 		out.Threads = append(out.Threads, t)
 	}
-	return out
+	return out, nil
 }
 
 // Digest identifies the threads a fix was started for, with their comments:

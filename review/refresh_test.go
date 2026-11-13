@@ -28,7 +28,7 @@ func refreshFixture(t *testing.T) (*DocumentValidator, *bundlepkg.Bundle, []byte
 	}
 	section := doc["sections"].([]any)[0].(map[string]any)
 	section["evidence"] = []any{
-		map[string]any{"id": "ev_ci", "kind": "ci", "claim": "CI passes", "status": "pending", "source": "ci", "anchors": []any{map[string]any{"type": "check", "id": "ci"}}},
+		map[string]any{"id": "ev_ci", "kind": "run", "claim": "CI passes", "status": "pending", "source": "ci", "anchors": []any{map[string]any{"type": "check", "id": "ci"}}},
 		map[string]any{"id": "ev_session", "kind": "run", "claim": "Step performed", "status": "observed", "source": "session", "anchors": []any{map[string]any{"type": "session_event", "session": "session", "event": "event"}}},
 	}
 	authored, _ := json.Marshal(doc)

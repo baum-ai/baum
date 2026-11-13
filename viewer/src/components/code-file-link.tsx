@@ -1,11 +1,19 @@
 import { type ReactNode, useContext, useMemo } from "react";
 
-import { formatLines, humanize, hunkLine, hunkUrl, type ReviewDocument } from "../review-document";
+import {
+  formatLines,
+  humanize,
+  hunkLine,
+  hunkUrl,
+  type ReviewDocument,
+  reviewRefs,
+} from "../review-document";
 import { cn, FOCUS_RING } from "./classnames";
 import { ExternalLinkIcon } from "./icons";
 import {
   ReviewFilesContext,
   ReviewHunksContext,
+  ReviewRefsContext,
   ReviewSourcesContext,
   type ReviewFiles,
   type ReviewHunk,
@@ -72,7 +80,7 @@ export function CodeFileLink({
   return (
     <a href={href} target="_blank" rel="noreferrer" title={title} className={className}>
       {children}
-      <ExternalLinkIcon size={10} className="flex-none text-(--text-tertiary)" />
+      <ExternalLinkIcon size={10} className="flex-none text-tertiary" />
     </a>
   );
 }
@@ -91,9 +99,10 @@ export function ReviewSourcesProvider({
 }
 
 /** Set by the review workspace so a hunk ID written into the review's prose
- *  reads as a link to its file and line. A hunk ID names the hunk's content,
- *  so the shown documents' hunks are pooled: a historical section cites hunks
- *  of its own version. */
+ *  reads as a link to its file and line, and so do the other IDs it names
+ *  (items, checks, threads, comments, sessions). A hunk ID names the hunk's content,
+ *  so the shown documents' hunks are pooled. Other IDs resolve only against
+ *  document, the version whose prose is being rendered. */
 export function ReviewHunksProvider({
   document,
   historical,
@@ -119,5 +128,22 @@ export function ReviewHunksProvider({
     }
     return byId;
   }, [document, historical]);
-  return <ReviewHunksContext.Provider value={hunks}>{children}</ReviewHunksContext.Provider>;
+  return (
+    <ReviewHunksContext.Provider value={hunks}>
+      <ReviewRefsProvider document={document}>{children}</ReviewRefsProvider>
+    </ReviewHunksContext.Provider>
+  );
+}
+
+/** Unlike content-addressed hunks, item and index IDs can mean different
+ *  things in each version. Comparison panes each provide their own snapshot. */
+export function ReviewRefsProvider({
+  document,
+  children,
+}: {
+  document: ReviewDocument | null;
+  children: ReactNode;
+}) {
+  const refs = useMemo(() => (document ? reviewRefs(document) : null), [document]);
+  return <ReviewRefsContext.Provider value={refs}>{children}</ReviewRefsContext.Provider>;
 }

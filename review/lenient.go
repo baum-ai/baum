@@ -78,6 +78,11 @@ func lenientContract(strict map[string]any) (map[string]any, error) {
 			relaxSchema(node, defs)
 		}
 	}
+	// The recommendation may be null, which relaxation would let the model
+	// leave out; the model decides on one every time, so the key is required.
+	if required, _ := summary["required"].([]any); !containsString(stringSlice(required), "recommendation") {
+		summary["required"] = append(required, "recommendation")
+	}
 	if err := requireEvidenceHunkAnchors(lenient, strict); err != nil {
 		return nil, err
 	}

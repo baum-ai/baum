@@ -241,7 +241,7 @@
       "evidence": [
         {
           "id": "ev_fold_ci",
-          "kind": "ci",
+          "kind": "run",
           "claim": "The test and lint jobs passed on the head.",
           "status": "verified",
           "granularity": "job",

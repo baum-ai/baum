@@ -64,13 +64,13 @@ export function LiveBadge({ sessions }: { sessions: LiveSession[] }) {
     .join(", ");
   return (
     <span
-      className="inline-flex flex-none items-center gap-1.5 text-xs text-(--text-secondary)"
+      className="inline-flex flex-none items-center gap-1.5 text-xs text-secondary"
       title={`Agent sessions in progress: ${label}`}
     >
       {running ? (
-        <LiveDot className="text-(--status-info)" />
+        <LiveDot className="text-status-info" />
       ) : (
-        <CircleDashedIcon size={12} className="flex-none text-(--text-tertiary)" />
+        <CircleDashedIcon size={12} className="flex-none text-tertiary" />
       )}
       <span className="sr-only">Agent sessions in progress: </span>
       {sessions.length === 1

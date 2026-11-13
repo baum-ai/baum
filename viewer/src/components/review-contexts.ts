@@ -1,6 +1,6 @@
 import { createContext, useContext } from "react";
 
-import type { Anchor, ResolvedAnchor, ReviewContextRef } from "../review-document";
+import type { Anchor, ResolvedAnchor, ReviewContextRef, ReviewRef } from "../review-document";
 import type { OpenReviewFile } from "./code-file-link";
 
 // The review workspace's openers, shared by the panes under it: kept apart
@@ -48,4 +48,29 @@ export const ReviewHunksContext = createContext<ReadonlyMap<string, ReviewHunk> 
 /** The shown review's hunks by ID, or null outside a review. */
 export function useReviewHunks(): ReadonlyMap<string, ReviewHunk> | null {
   return useContext(ReviewHunksContext);
+}
+
+/** The IDs a review's prose may name besides hunks (risks, evidence,
+ *  decisions, sections, checks, threads, comments, sessions), by the key
+ *  `reviewRefs` gives each. */
+export const ReviewRefsContext = createContext<ReadonlyMap<string, ReviewRef> | null>(null);
+
+/** The shown review's nameable IDs, or null outside a review. */
+export function useReviewRefs(): ReadonlyMap<string, ReviewRef> | null {
+  return useContext(ReviewRefsContext);
+}
+
+/** Where a chip for a review's own item or session can take the reader. Only
+ *  the review workspace provides it; elsewhere such a chip is not a link. */
+export type ReviewJump = {
+  /** Opens a section, and scrolls to one of its items when one is named. */
+  item: (section: string, item?: string) => void;
+  /** Absent when the host lists no sessions. */
+  session?: (id: string) => void;
+};
+
+export const ReviewJumpContext = createContext<ReviewJump | null>(null);
+
+export function useReviewJump(): ReviewJump | null {
+  return useContext(ReviewJumpContext);
 }

@@ -205,6 +205,40 @@ func TestAgentEventAttachesANewClone(t *testing.T) {
 	}
 }
 
+// A repository an agent made in its temporary folder is not attached: the
+// daemon would run git there, and git what its configuration names.
+func TestAgentEventInATemporaryFolderIsNotAttached(t *testing.T) {
+	ctx := context.Background()
+	h := home(t)
+	f := start(t, h)
+	if _, err := f.registry.Pick(ctx, "acme/app", nil); err != nil {
+		t.Fatal(err)
+	}
+	f.run(t)
+	f.scan(t)
+	for _, dir := range []string{filepath.Join(h, "tmp", "app"), filepath.Join(h, "work", "scratchpad", "app"), filepath.Join(h, "Downloads", "app")} {
+		repo(t, dir, "origin", "git@github.com:acme/app.git")
+		git(t, dir, "config", "core.sshCommand", "touch '"+filepath.Join(h, "ran")+"'; false")
+		f.events <- agentEvent(dir, time.Now())
+	}
+	eventually(t, "the events to be handled", func() bool {
+		f.service.mu.Lock()
+		defer f.service.mu.Unlock()
+		return len(f.service.seen) == 3
+	})
+	f.service.Trigger()
+	f.scan(t)
+	if got := f.clones(t); len(got) != 0 {
+		t.Fatalf("clones = %+v", got)
+	}
+	if found := f.service.Snapshot().Repositories["acme/app"]; len(found) != 0 {
+		t.Fatalf("found = %+v", found)
+	}
+	if _, err := os.Stat(filepath.Join(h, "ran")); err == nil {
+		t.Fatal("the planted configuration ran")
+	}
+}
+
 func TestAPIServesAndRefreshes(t *testing.T) {
 	h := home(t)
 	clone := repo(t, filepath.Join(h, "code", "app"), "origin", gh("acme/app"))
@@ -248,7 +282,7 @@ func TestAPIServesAndRefreshes(t *testing.T) {
 		return s.ScannedAt != nil && s.ScannedAt.After(first) && !s.Running
 	})
 
-	for _, bad := range []string{`{"x":1}`, ``, `[]`, `{} {}`} {
+	for _, bad := range []string{`{"x":1}`, `{"include_documents":"yes"}`, ``, `[]`, `{} {}`} {
 		rec := httptest.NewRecorder()
 		handler.ServeHTTP(rec, httptest.NewRequest("POST", "/api/clones/found/refresh", strings.NewReader(bad)))
 		if rec.Code != http.StatusBadRequest {

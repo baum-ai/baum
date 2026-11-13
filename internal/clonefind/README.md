@@ -18,58 +18,85 @@ network request, and nothing about local folders leaves the computer.
    probe per file reads the recorded working directory, never the transcript
    body. Only the newest 3000 stores are probed. Each directory keeps the time
    of its latest activity (an event's time, a store's modification time).
-2. **Code folders.** `~/code ~/src ~/dev ~/projects ~/workspace ~/repos ~/git
-   ~/go/src/github.com`, and `~/Documents` (see below), those that exist, plus the parent directory of each
-   clone found in 1 when it lies below the home directory.
+   A temporary folder is left out (see [Temporary folders](#temporary-folders)).
+2. **The home directory.** A walk of the home directory finds the clones
+   nobody has worked in yet, wherever they are kept (`~/code`, `~/work`,
+   `~/Developer`, `~/go/src/github.com/...`).
 
 ## Folders read and never read
 
 Read: the agent session stores (`~/.claude/projects`, `~/.codex/sessions`,
 `~/.codex/archived_sessions`, the same folders of the other Claude Code
 configuration directories and Codex homes baum knows, Cursor's `state.vscdb`),
-the hook event record,
-the folders listed above, and a directory an agent worked in (to find the clone
-containing it). In a clone, git reads `.git/config` and the repository
-directory; no file of the working tree is read.
+the hook event record, the home directory as walked below, and a directory an
+agent worked in (to find the clone containing it). In a clone, git reads
+`.git/config` and the repository directory; no file of the working tree is
+read.
 
-A walk goes at most 4 levels below its folder, stops at a directory with a
-`.git` entry, and never follows a symlink to a directory. It never enters hidden
-folders, `node_modules`, `vendor`, `target`, `dist`, `build`, `__pycache__`,
-`Library` or `Applications`. It never starts in, or below, `Desktop`,
-`Downloads`, `Pictures`, `Movies`, `Music`, `Public`,
-`iCloud Drive`, or a `Google Drive`, `Dropbox` or `OneDrive` folder (the lists
-are defined in `internal/scanskip`), after resolving
-symlinks, so a code folder that links there is skipped. It refuses the
-filesystem root, the home directory and anything above it as a starting
-point, and never reports any of them as a clone. A directory an agent worked
-in is allowed anywhere (the agent was there), but the folder around it is
-walked only if it is below the home directory and not one of those.
+The walk is breadth first, so shallow folders are read before the budget runs
+out. It goes at most 5 levels below the home directory, stops at a directory
+with a `.git` entry (a repository is not searched for others; the home's own
+`.git`, a dotfiles repository, is not a clone and does not stop it), and never
+follows a symlink to a directory. It never enters hidden entries, dependency,
+virtual environment and build folders (`node_modules`, `bower_components`,
+`vendor`, `target`, `dist`, `build`, `__pycache__`, `venv`, `site-packages`,
+`Pods`, `Carthage`, `DerivedData`), `Library` or `Applications`, and in the
+home directory never enters `Desktop`, `Downloads`, `Pictures`, `Movies`,
+`Music`, `Public`, `iCloud Drive`, or a `Google Drive`, `Dropbox` or
+`OneDrive` folder (the lists are defined in `internal/scanskip`), nor
+Windows' `AppData`. `~/Documents` is walked on Linux and Windows, and on
+macOS only with the opt-in (see [Documents](#documents)). A directory an agent
+worked in is allowed anywhere but in a temporary folder or, on macOS, a
+protected one (the agent was there); the folder around it is not walked. The
+filesystem root, the home directory and anything above it are never reported
+as a clone.
 
 ### Documents
 
-`~/Documents` is walked like the code folders on Linux and Windows. On macOS
-it is a protected folder: the first read makes the system ask the user, so the
-automatic scan leaves it out. `Options.IncludeDocuments` (`GOOS` is injectable
-for tests) or `POST /api/clones/found/refresh` with `{"include_documents":
-true}` runs one scan that includes it; the choice is not stored, and a later
-scan leaves Documents out again. A directory an agent worked in inside
-Documents is a candidate on Linux and Windows, since no walk is needed. `Desktop`
-and `Downloads` are never walked anywhere.
+`~/Documents` is walked like the rest of the home directory on Linux and
+Windows. On macOS it is a protected folder: the first read makes the system
+ask the user, so the automatic scan leaves it out. `Options.IncludeDocuments`
+(`GOOS` is injectable for tests) or `POST /api/clones/found/refresh` with
+`{"include_documents": true}` runs one scan that includes it, walked and as a
+folder an agent worked in; the choice is not stored, and a later scan leaves
+Documents out again. An event never carries it.
 
 ### Protected folders on macOS
 
-macOS asks the user before an app first reads `~/Documents`, `~/Desktop`,
-`~/Downloads`, `~/Library/Mobile Documents` (iCloud Drive) or
-`~/Library/CloudStorage`. On macOS (`Options.GOOS`) an agent directory under
-any of them is dropped lexically, and again after resolving symlinks, before
-any stat or git command; only the one-off Documents opt-in lets `~/Documents`
-through, and an event never carries it. Names are compared without regard to
-case on macOS and Windows (`scanskip.DirFor`, `UserDataFor`), and Windows
-`AppData` is never a walk folder or parent. Git may follow an `include.path`
-in a clone's configuration to a file elsewhere; baum does not control that.
+macOS asks the user before an app first reads some paths. One rule
+(`finder.protected`) names them for every path read before git runs there:
+the walk, a directory an agent worked in (`resolve`, and `Locate` for an
+event) and the main clone of its worktree (`mainOf`). It covers, in the home
+directory, `Desktop`, `Documents` (unless opted in), `Downloads`, `Pictures`,
+`Movies`, `Music`, all of `Library` (iCloud Drive in `Mobile Documents`, the
+cloud drives in `CloudStorage`, and `Containers` and `Group Containers`, which
+ask for "data from other apps"), `iCloud Drive` and `Google Drive`,
+`Dropbox` and `OneDrive` folders; and everything under `/Volumes`, whose
+removable and network volumes ask (a home directory on a volume of its own is
+read as any other). An agent directory there is dropped lexically, and again
+after resolving symlinks, before any stat or git command. Names are compared without regard to case on macOS and Windows
+(`scanskip.DirFor`, `UserDataFor`). Git may follow an `include.path` in a
+clone's configuration to a file elsewhere; baum does not control that.
 
 On every system an agent directory is stat'ed with its parents up to the home
 directory, to find the clone containing it, and git then runs in that clone.
+
+### Temporary folders
+
+The daemon runs git in an attached clone (fetches for reviews, the inbox and
+fixes) with the person's credentials and outside any agent's sandbox, and git
+runs what the clone's own configuration names (`core.sshCommand`,
+`core.fsmonitor`, URL rewrites, filters). An agent's scratch repository is not
+the person's clone, so a folder an agent worked in is never a candidate when
+it, or its clone's working tree or repository directory, lies below a
+temporary directory (`os.TempDir()`, `$TMPDIR`, `/tmp`, `/var/tmp`,
+`/var/folders` and their `/private` forms on macOS; `Options.TempDirs` for
+tests), below a path component named `scratchpad` (Claude Code's scratchpad,
+which is itself in the temporary directory), or in `~/Downloads`. Agent
+sandboxes (Claude Code's and Codex's) let the agent write in its project and
+in those temporary directories. A repository an agent makes in a folder that
+is not temporary is attached like any other: confirming every clone would make
+the common case worse.
 
 ## Matching
 
@@ -98,8 +125,8 @@ in, most recent first, then clones only a walk found, by path. A candidate is
 ## Limits
 
 2000 directories probed with git (two commands each, 3 s per command), 50000
-directories walked per run (all folders together; a folder inside one already
-walked is skipped), depth 4, 3000 session stores, and the run's
+directories walked per run, depth 5 below the home directory, 3000 session
+stores, and the run's
 context. A run that hits a limit reports what it found.
 
 ## The service

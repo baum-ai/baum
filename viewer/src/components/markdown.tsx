@@ -11,11 +11,13 @@ import {
   type HighlightedLine,
   type Lang,
 } from "../highlight";
+import type { ReviewRef } from "../review-document";
 import { chipLinkClass } from "./chip-classes";
 import { cn } from "./classnames";
 import { CodeFileLink } from "./code-file-link";
 import { HighlightedText } from "./highlighted-text";
-import { useReviewHunks, type ReviewHunk } from "./review-contexts";
+import { useReviewHunks, useReviewRefs, type ReviewHunk } from "./review-contexts";
+import { ReviewRefChip } from "./review-ref-chip";
 
 const REMARK_PLUGINS = [remarkGfm, remarkBreaks];
 const INLINE_REMARK_PLUGINS = [remarkGfm];
@@ -42,7 +44,26 @@ const REHYPE_PLUGINS = [
 /** A hunk ID as a generated review sometimes writes it into its prose, beside
  *  the anchors that cite it properly. */
 const HUNK_ID = /\bh_[0-9a-f]{12}\b/;
-const HUNK_IDS = new RegExp(HUNK_ID.source, "g");
+
+/** Every ID of a review that its prose may name, in the forms a review writes
+ *  them: a hunk, a risk, evidence, a decision or a section, a check, a review
+ *  thread, a session, and a comment as "comment 123". */
+const REF_TOKEN = new RegExp(
+  [
+    HUNK_ID.source,
+    String.raw`\b(?:rsk|ev|dec|sec)_[a-z0-9_]+\b`,
+    String.raw`\b(?:check_run|status):\d+\b`,
+    String.raw`\bchk_[A-Za-z0-9]+\b`,
+    String.raw`\bPRRT_[A-Za-z0-9_-]+`,
+    String.raw`\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b`,
+    String.raw`\b[Cc]omment (\d+)\b`,
+  ].join("|"),
+);
+const REF_TOKENS = new RegExp(REF_TOKEN.source, "g");
+/** A code span that is a whole reference, or only a comment's number. */
+const REF_SPAN = new RegExp(`^(?:${REF_TOKEN.source}|(\\d+))$`);
+/** Whether text may hold a reference, for the cheap check before parsing. */
+const MAY_REFER = new RegExp(`${REF_TOKEN.source}|\`\\d+\``);
 
 type HastText = { type: "text"; value: string };
 type HastElement = {
@@ -56,28 +77,46 @@ type HastNode =
   | HastElement
   | { type: "root" | "comment" | "doctype"; children?: HastNode[] };
 
-function hunkRefNode(id: string): HastElement {
+/** The key a review's reference map knows a token by: a comment's number is
+ *  `comment:<number>`, any other token is its own ID. */
+function refKey(token: string, comment: string | undefined): string {
+  return comment ? `comment:${comment}` : token;
+}
+
+function refNode(property: "dataHunkRef" | "dataRef", key: string, text: string): HastElement {
   return {
     type: "element",
     tagName: "a",
-    properties: { dataHunkRef: id },
-    children: [{ type: "text", value: id }],
+    properties: { [property]: key },
+    children: [{ type: "text", value: text }],
   };
 }
 
-/** Turns each ID of a known hunk in the text, bare or as a whole code span,
- *  into a link the `a` component renders as a chip for its file and line.
- *  It runs after sanitising, so only this pass makes such links: a comment's
- *  own `data-*` attributes never survive. Links and code blocks keep their
- *  text, and an unknown ID stays as written. */
-function rehypeHunkRefs(hunks: ReadonlyMap<string, ReviewHunk>) {
+/** Turns each ID the review knows in the text, bare or as a whole code span,
+ *  into a link the `a` component renders as a chip: a hunk as its file and
+ *  line, anything else (an item, a check, a thread, a comment, a session) as
+ *  what it is. It runs after sanitising, so only this pass makes such links:
+ *  a comment's own `data-*` attributes never survive. Links and code blocks
+ *  keep their text, and an unknown ID stays as written. */
+function rehypeReviewRefs(
+  hunks: ReadonlyMap<string, ReviewHunk> | null,
+  refs: ReadonlyMap<string, ReviewRef> | null,
+) {
+  const link = (token: string, comment: string | undefined): HastElement | null => {
+    if (/^h_[0-9a-f]{12}$/.test(token)) {
+      return hunks?.has(token) ? refNode("dataHunkRef", token, token) : null;
+    }
+    const key = refKey(token, comment);
+    return refs?.has(key) ? refNode("dataRef", key, token) : null;
+  };
   const split = (value: string): HastNode[] | null => {
     const parts: HastNode[] = [];
     let last = 0;
-    for (const match of value.matchAll(HUNK_IDS)) {
-      if (!hunks.has(match[0])) continue;
+    for (const match of value.matchAll(REF_TOKENS)) {
+      const node = link(match[0], match[1]);
+      if (!node) continue;
       if (match.index > last) parts.push({ type: "text", value: value.slice(last, match.index) });
-      parts.push(hunkRefNode(match[0]));
+      parts.push(node);
       last = match.index + match[0].length;
     }
     if (last === 0) return null;
@@ -92,8 +131,12 @@ function rehypeHunkRefs(hunks: ReadonlyMap<string, ReviewHunk>) {
       if (child.tagName === "a" || child.tagName === "pre") return [child];
       if (child.tagName === "code") {
         const [only] = child.children;
-        const id = child.children.length === 1 && only?.type === "text" ? only.value.trim() : "";
-        return hunks.has(id) ? [hunkRefNode(id)] : [child];
+        const text = child.children.length === 1 && only?.type === "text" ? only.value.trim() : "";
+        const match = REF_SPAN.exec(text);
+        if (!match) return [child];
+        // Digits alone name a comment.
+        const chip = /^\d+$/.test(text) ? link(text, text) : link(match[0], match[1]);
+        return [chip ?? child];
       }
       walk(child);
       return [child];
@@ -202,8 +245,10 @@ const COMPONENTS: Components = {
   a: ({ href, children, node }) => {
     const hunk = node?.properties?.dataHunkRef;
     if (typeof hunk === "string") return <HunkRef id={hunk} />;
+    const ref = node?.properties?.dataRef;
+    if (typeof ref === "string") return <ReviewRefChip refKey={ref} />;
     return (
-      <a href={href} target="_blank" rel="noreferrer" className="text-(--text-link) underline">
+      <a href={href} target="_blank" rel="noreferrer" className="text-link underline">
         {children}
       </a>
     );
@@ -214,19 +259,15 @@ const COMPONENTS: Components = {
   ul: ({ children }) => <ul className="list-disc space-y-1 pl-5">{children}</ul>,
   ol: ({ children }) => <ol className="list-decimal space-y-1 pl-5">{children}</ol>,
   li: ({ children }) => <li>{children}</li>,
-  hr: () => <hr className="border-(--border-subtle)" />,
+  hr: () => <hr className="border-subtle" />,
   blockquote: ({ children }) => (
-    <blockquote className="border-l-2 border-(--border-default) pl-3 text-(--text-secondary)">
-      {children}
-    </blockquote>
+    <blockquote className="border-l-2 border-default pl-3 text-secondary">{children}</blockquote>
   ),
   h1: ({ children }) => <p className="font-semibold">{children}</p>,
   h2: ({ children }) => <p className="font-semibold">{children}</p>,
   h3: ({ children }) => <p className="font-medium">{children}</p>,
   pre: ({ children }) => (
-    <pre className="overflow-x-auto rounded-(--radius-sm) bg-(--code-fill) p-2 text-base">
-      {children}
-    </pre>
+    <pre className="overflow-x-auto rounded-sm bg-code-fill p-2 text-base">{children}</pre>
   ),
   // React Markdown stopped passing an `inline` flag, and a fenced block
   // without a language sits in the exact same `className`-less state as an
@@ -236,11 +277,7 @@ const COMPONENTS: Components = {
   // only a genuinely inline span gets its own pill.
   code: ({ className, children }) => {
     if (String(children).includes("\n")) return codeBlock(className, children);
-    return (
-      <code className="rounded-(--radius-sm) bg-(--code-fill) px-1 py-0.5 text-base">
-        {children}
-      </code>
-    );
+    return <code className="rounded-sm bg-code-fill px-1 py-0.5 text-base">{children}</code>;
   },
   // A comment body usually breaks anywhere so a long path cannot widen the
   // pane; a table cell inheriting that shrinks to a letter a line on a phone.
@@ -251,13 +288,11 @@ const COMPONENTS: Components = {
     </div>
   ),
   th: ({ children }) => (
-    <th className="border border-(--border-subtle) px-2 py-1 text-left font-medium">{children}</th>
+    <th className="border border-subtle px-2 py-1 text-left font-medium">{children}</th>
   ),
-  td: ({ children }) => <td className="border border-(--border-subtle) px-2 py-1">{children}</td>,
+  td: ({ children }) => <td className="border border-subtle px-2 py-1">{children}</td>,
   details: ({ children }) => (
-    <details className="rounded-(--radius-sm) border border-(--border-subtle) p-2">
-      {children}
-    </details>
+    <details className="rounded-sm border border-subtle p-2">{children}</details>
   ),
   summary: ({ children }) => <summary className="cursor-pointer font-medium">{children}</summary>,
   // A comment's body is contributor-controlled, unmoderated text — an
@@ -272,7 +307,7 @@ const COMPONENTS: Components = {
   // link in two instead of just adding an image-viewing shortcut. "View on
   // GitHub" on the comment above already opens the real, camo-proxied image.
   img: ({ alt }) => (
-    <span className="inline-block rounded-(--radius-sm) border border-(--border-subtle) px-2 py-1 text-(--text-tertiary) italic">
+    <span className="inline-block rounded-sm border border-subtle px-2 py-1 text-tertiary italic">
       {alt || "Image"}
     </span>
   ),
@@ -286,28 +321,28 @@ const READING_COMPONENTS: Components = {
   ...COMPONENTS,
   // A reply's title, over the sections a level down: heavier, and ruled off.
   h1: ({ children }) => (
-    <h3 className="mt-6 border-b border-(--border-subtle) pb-2 font-(family-name:--font-heading) text-lg font-extrabold text-(--text-primary) first:mt-0">
+    <h3 className="mt-6 border-b border-subtle pb-2 font-(family-name:--font-heading) text-lg font-extrabold text-primary first:mt-0">
       {children}
     </h3>
   ),
   h2: ({ children }) => (
-    <h3 className="mt-6 font-(family-name:--font-heading) text-lg font-bold text-(--text-primary) first:mt-0">
+    <h3 className="mt-6 font-(family-name:--font-heading) text-lg font-bold text-primary first:mt-0">
       {children}
     </h3>
   ),
   h3: ({ children }) => (
-    <h4 className="mt-5 text-base font-semibold text-(--text-primary) first:mt-0">{children}</h4>
+    <h4 className="mt-5 text-base font-semibold text-primary first:mt-0">{children}</h4>
   ),
   h4: ({ children }) => (
-    <h5 className="mt-4 text-base font-semibold text-(--text-primary) first:mt-0">{children}</h5>
+    <h5 className="mt-4 text-base font-semibold text-primary first:mt-0">{children}</h5>
   ),
   ul: ({ children }) => (
-    <ul className="list-disc space-y-1.5 pl-5 marker:text-(--text-tertiary) [&_ol]:mt-1 [&_ol]:space-y-1 [&_ul]:mt-1 [&_ul]:space-y-1">
+    <ul className="list-disc space-y-1.5 pl-5 marker:text-tertiary [&_ol]:mt-1 [&_ol]:space-y-1 [&_ul]:mt-1 [&_ul]:space-y-1">
       {children}
     </ul>
   ),
   ol: ({ children }) => (
-    <ol className="list-decimal space-y-1.5 pl-5 marker:text-(--text-tertiary) [&_ol]:mt-1 [&_ol]:space-y-1 [&_ul]:mt-1 [&_ul]:space-y-1">
+    <ol className="list-decimal space-y-1.5 pl-5 marker:text-tertiary [&_ol]:mt-1 [&_ol]:space-y-1 [&_ul]:mt-1 [&_ul]:space-y-1">
       {children}
     </ol>
   ),
@@ -320,17 +355,17 @@ const READING_COMPONENTS: Components = {
     </div>
   ),
   th: ({ children }) => (
-    <th className="border border-(--border-subtle) bg-(--code-fill) px-3 py-2 text-left align-bottom font-semibold">
+    <th className="border border-subtle bg-code-fill px-3 py-2 text-left align-bottom font-semibold">
       {children}
     </th>
   ),
   td: ({ children }) => (
-    <td className="min-w-32 border border-(--border-subtle) px-3 py-2 align-top">{children}</td>
+    <td className="min-w-32 border border-subtle px-3 py-2 align-top">{children}</td>
   ),
   code: ({ className, children }) => {
     if (String(children).includes("\n")) return codeBlock(className, children);
     return (
-      <code className="rounded-(--radius-xs) bg-(--code-fill) px-1 py-px font-mono text-base text-(--text-primary)">
+      <code className="rounded-xs bg-code-fill px-1 py-px font-mono text-base text-primary">
         {pathBreaks(children)}
       </code>
     );
@@ -368,10 +403,11 @@ export const Markdown = memo(function Markdown({
   reading?: boolean;
 }) {
   const hunks = useReviewHunks();
+  const refs = useReviewRefs();
   const sanitize = html ? (NEEDS_RAW.test(children) ? REHYPE_PLUGINS : SANITIZE_ONLY) : [];
   const rehypePlugins =
-    hunks?.size && HUNK_ID.test(children)
-      ? [...sanitize, rehypeHunkRefs(hunks) as RehypePlugin]
+    (hunks?.size || refs?.size) && MAY_REFER.test(children)
+      ? [...sanitize, rehypeReviewRefs(hunks, refs) as RehypePlugin]
       : html
         ? sanitize
         : undefined;
@@ -402,9 +438,7 @@ const INLINE_COMPONENTS: Components = {
   // row it sits in already leads somewhere.
   a: ({ children }) => <>{children}</>,
   br: () => " ",
-  code: ({ children }) => (
-    <code className="rounded-(--radius-sm) bg-(--code-fill) px-1 py-0.5">{children}</code>
-  ),
+  code: ({ children }) => <code className="rounded-sm bg-code-fill px-1 py-0.5">{children}</code>,
 };
 
 /** Markdown for a short line inside other text, a heading or a button: the

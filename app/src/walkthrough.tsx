@@ -31,6 +31,7 @@ import { pendingReviewState, pendingSubmission, placeText } from "./pending-revi
 import {
   buildTour,
   commentedStops,
+  lookAt,
   progressState,
   progressKey,
   reviewSubmission,
@@ -593,10 +594,9 @@ function Landing({
   const unresolved = entry.unresolved ?? 0;
   const stats = document.stats;
   const started = tour.stops.some(done);
-  const attention = document.summary.attention?.text?.trim();
-  const attentionChapter = tour.chapters.findIndex(
-    (chapter) => chapter.id === document.summary.attention?.refs?.[0],
-  );
+  const look = lookAt(document);
+  const attention = look?.text;
+  const attentionChapter = tour.chapters.findIndex((chapter) => chapter.id === look?.section);
   const breaking = document.summary.breaking_change?.trim();
   return (
     <article aria-labelledby="walk-landing-title" className="walk-panel">

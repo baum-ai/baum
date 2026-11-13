@@ -178,7 +178,8 @@ func DocumentFor(raw []byte, edit func(map[string]any)) ([]byte, error) {
 				"refs": []any{map[string]any{"path": b.Diff[0].Path, "symbol": nil}},
 			}},
 			"change_kind": "feature", "implements": []any{}, "release_note": nil, "breaking_change": nil, "attention": nil,
-			"authorship": map[string]any{"declared": "unknown", "declared_tools": []any{}, "anchors": []any{}},
+			"recommendation": nil,
+			"authorship":     map[string]any{"declared": "unknown", "declared_tools": []any{}, "anchors": []any{}},
 		},
 		"relations": []any{},
 		"sections": []any{map[string]any{

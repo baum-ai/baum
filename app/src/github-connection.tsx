@@ -18,7 +18,7 @@ import {
   useGitHubConnection,
 } from "./github-auth";
 import { PanelHeader } from "./shell";
-import { useContextMenu } from "./context-menu";
+import { type MenuItem, useContextMenu } from "./context-menu";
 import { NineDots } from "./nine-dots";
 
 export function GitHubConnectionSection({ onChanged }: { onChanged?: () => void } = {}) {
@@ -37,18 +37,13 @@ export function GitHubConnectionSection({ onChanged }: { onChanged?: () => void 
   } = useGitHubConnection(daemonGitHubAuth, onChanged);
   const status = connection ? describe(connection) : null;
   const idle = connection && !pending;
-  // Workflow access is opt-in, so a saved connection without it says what
-  // that means. An explicit credential's scopes are not known here.
-  const noWorkflow = Boolean(
-    connection?.saved && !connection.override && !connection.error && !connection.workflow,
-  );
+  // Workflow access is opt-in, so a saved connection without it notes what
+  // that means in the footer's small print. An explicit credential's scopes are not known here.
+  const scopesKnown = Boolean(connection?.saved && !connection.override && !connection.error);
+  const noWorkflow = scopesKnown && !connection?.workflow;
   const notes =
     connection &&
-    (connection.override ||
-      connection.error ||
-      terminal[connection.state] ||
-      pending ||
-      noWorkflow);
+    (connection.override || connection.error || terminal[connection.state] || pending);
   const reconnect = connection?.saved || connection?.error === "reconnect_required";
   return (
     <section aria-labelledby="github-connection-heading" className="local-panel p-0!">
@@ -60,7 +55,7 @@ export function GitHubConnectionSection({ onChanged }: { onChanged?: () => void 
         detail={
           connection?.saved ? (
             <>
-              Signed in as <strong className="text-(--text-primary)">{connection.login}</strong> on{" "}
+              Signed in as <strong className="text-primary">{connection.login}</strong> on{" "}
               {connection.host}
               {connection.override ? " (not currently used)" : ""}.
             </>
@@ -85,9 +80,10 @@ export function GitHubConnectionSection({ onChanged }: { onChanged?: () => void 
                 <ReconnectButton
                   primary={!connection.saved}
                   workflow={Boolean(connection.workflow)}
-                  working={working === "start"}
+                  working={working === "start" || working === "disconnect"}
                   disabled={busy || connection.state === "loading"}
                   signIn={signIn}
+                  disconnect={connection.saved ? () => void action("disconnect") : undefined}
                 />
               ) : (
                 <Button
@@ -112,9 +108,9 @@ export function GitHubConnectionSection({ onChanged }: { onChanged?: () => void 
         }
       />
       {!connection || error || notes ? (
-        <div className="space-y-4 border-t border-(--border-subtle) p-5">
+        <div className="space-y-4 border-t border-subtle p-5">
           {!connection && !error ? (
-            <p role="status" className="flex items-center gap-2 text-(--text-secondary)">
+            <p role="status" className="flex items-center gap-2 text-secondary">
               <NineDots /> Checking GitHub connection…
             </p>
           ) : null}
@@ -157,21 +153,14 @@ export function GitHubConnectionSection({ onChanged }: { onChanged?: () => void 
               ) : null}
             </Alert>
           ) : null}
-          {noWorkflow && !pending ? (
-            <Callout tone="caution">
-              baum&rsquo;s GitHub connection does not have workflow access, so it cannot merge pull
-              requests that change GitHub Actions workflows. Merge those on GitHub, or choose{" "}
-              <strong>Reconnect with workflow access</strong> from the Reconnect menu.
-            </Callout>
-          ) : null}
           {connection && terminal[connection.state] ? (
-            <p role="status" className="text-(--text-secondary)">
+            <p role="status" className="text-secondary">
               {terminal[connection.state]}
             </p>
           ) : null}
           {pending ? (
             <div className="space-y-4">
-              <div className="rounded-(--radius-md) border border-(--border-default) bg-(--surface-wash) px-4 py-4">
+              <div className="rounded-md border border-default bg-surface-wash px-4 py-4">
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <p
                     className="font-mono text-2xl font-semibold tracking-[0.2em] select-all break-all"
@@ -183,11 +172,8 @@ export function GitHubConnectionSection({ onChanged }: { onChanged?: () => void 
                     Copy code
                   </Button>
                 </div>
-                <p
-                  role="status"
-                  className="mt-3 flex items-center gap-2 text-xs text-(--text-secondary)"
-                >
-                  <LiveDot className="text-(--status-positive)" />
+                <p role="status" className="mt-3 flex items-center gap-2 text-xs text-secondary">
+                  <LiveDot className="text-status-positive" />
                   {copied || "Waiting for you to enter this code on GitHub."}
                 </p>
               </div>
@@ -211,7 +197,7 @@ export function GitHubConnectionSection({ onChanged }: { onChanged?: () => void 
                   {working === "cancel" ? "Cancelling…" : "Cancel sign-in"}
                 </Button>
               </div>
-              <p className="text-xs text-(--text-tertiary)">
+              <p className="text-xs text-tertiary">
                 The code expires at{" "}
                 {new Date(pending.expires_at).toLocaleTimeString([], {
                   hour: "2-digit",
@@ -227,74 +213,84 @@ export function GitHubConnectionSection({ onChanged }: { onChanged?: () => void 
         </div>
       ) : null}
       {connection ? (
-        <footer className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 border-t border-(--border-subtle) px-5 py-3 text-xs text-(--text-tertiary)">
-          <div className="space-y-1">
-            <p>Data is stored on this computer and never shared with baum.</p>
-            {connection.saved ? (
-              <p>
-                Credential: {connection.source || "none"}.{" "}
-                {connection.override
-                  ? "The explicit credential stays active if you disconnect. "
-                  : ""}
-                Disconnecting does not revoke access on GitHub.
-              </p>
+        <footer className="border-t border-subtle px-5 py-4 text-xs">
+          <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-5 gap-y-1.5 text-secondary">
+            {scopesKnown ? (
+              <Detail label="Access">
+                {connection.workflow
+                  ? "Repositories (read and write), workflows and organizations (read)."
+                  : "Repositories (read and write) and organizations (read)."}
+                {noWorkflow && !pending ? (
+                  <span className="block text-tertiary">
+                    Workflow access is off by default, so pull requests that change GitHub Actions
+                    workflows merge on GitHub. The Reconnect menu turns it on.
+                  </span>
+                ) : null}
+              </Detail>
             ) : null}
-          </div>
-          {connection.saved && !pending ? (
-            <Button
-              variant="danger-outline"
-              size="compact"
-              disabled={busy}
-              onClick={() => void action("disconnect")}
-            >
-              {working === "disconnect" ? "Disconnecting…" : "Disconnect"}
-            </Button>
-          ) : null}
+            {connection.saved ? (
+              <Detail label="Credential">
+                {connection.source || "none"}.{" "}
+                <span className="text-tertiary">
+                  {connection.override ? "It stays active if you disconnect. " : ""}
+                  Disconnecting removes baum&rsquo;s saved credential and does not revoke access on
+                  GitHub.
+                </span>
+              </Detail>
+            ) : null}
+            <Detail label="Data">Stored on this computer and never shared with baum.</Detail>
+          </dl>
         </footer>
       ) : null}
     </section>
   );
 }
 
-function Callout({ children, tone = "info" }: { children: ReactNode; tone?: "info" | "caution" }) {
+function Detail({ label, children }: { label: string; children: ReactNode }) {
   return (
-    <p
-      role="status"
-      className={
-        tone === "caution"
-          ? "rounded-(--radius-sm) bg-(--status-caution-bg) px-3 py-2 text-(--status-caution)"
-          : "rounded-(--radius-sm) bg-(--status-info-bg) px-3 py-2 text-(--status-info)"
-      }
-    >
+    <>
+      <dt className="text-tertiary">{label}</dt>
+      <dd>{children}</dd>
+    </>
+  );
+}
+
+function Callout({ children }: { children: ReactNode }) {
+  return (
+    <p role="status" className="rounded-sm bg-status-info-bg px-3 py-2 text-status-info">
       {children}
     </p>
   );
 }
 
 /** Reconnect keeps the connection's current access; its menu offers the other
- *  choice, so workflow access is granted (or dropped) only on purpose. */
+ *  choice, so workflow access is granted (or dropped) only on purpose, and
+ *  Disconnect for a saved connection. */
 function ReconnectButton({
   primary,
   workflow,
   working,
   disabled,
   signIn,
+  disconnect,
 }: {
   primary: boolean;
   workflow: boolean;
   working: boolean;
   disabled: boolean;
   signIn: (options?: { workflow?: boolean }) => void;
+  disconnect?: () => void;
 }) {
   const menu = useContextMenu();
   const ref = useRef<HTMLButtonElement>(null);
   const open = menu.anchor !== null && menu.anchor === ref.current;
-  const items = [
+  const items: MenuItem[] = [
     { label: "Reconnect", onSelect: () => signIn({ workflow }) },
     workflow
       ? { label: "Reconnect without workflow access", onSelect: () => signIn({ workflow: false }) }
       : { label: "Reconnect with workflow access", onSelect: () => signIn({ workflow: true }) },
   ];
+  if (disconnect) items.push({ label: "Disconnect", danger: true, onSelect: disconnect });
   return (
     <span className="inline-flex">
       <Button
@@ -311,7 +307,7 @@ function ReconnectButton({
         variant={primary ? "primary" : "secondary"}
         size="compact"
         className="-ml-px rounded-l-none! px-2!"
-        aria-label="More reconnect options"
+        aria-label="More connection options"
         aria-haspopup="menu"
         aria-expanded={open}
         aria-controls={open ? menu.id : undefined}
@@ -320,7 +316,7 @@ function ReconnectButton({
           // A click on the open menu's own button closes it, as the row menus do.
           const button = event.currentTarget;
           if (button.dataset.closing !== undefined) delete button.dataset.closing;
-          else menu.openFrom(button, items, "Reconnect options");
+          else menu.openFrom(button, items, "Connection options");
         }}
         onPointerLeave={(event) => delete event.currentTarget.dataset.closing}
       >

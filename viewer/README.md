@@ -20,8 +20,9 @@ work; these additive fields do not change existing review rendering.
 
 ## Using it
 
-React, React DOM and the Markdown, sanitising, syntax highlighting (`shiki`),
-validation and pluralisation libraries are peer dependencies (see
+React, React DOM, the Markdown, sanitising, syntax highlighting (`shiki`),
+validation and pluralisation libraries, and `tailwind-merge` (for `cn`) are
+peer dependencies (see
 `package.json`), so the host and the viewer share one copy of each. A host that links the package should resolve
 those imports from its own `node_modules` (in Vite, `resolve.dedupe`).
 
@@ -38,7 +39,15 @@ add its sources so the utilities its components use are generated:
 @source "<path to this package>/src";
 ```
 
-`viewer.css` defines the type scale and animations. It imports
+`viewer.css` defines the type scale and animations. It imports the palette
+utilities (`src/palette-utilities.css`): each semantic colour and shadow token
+is a utility named after it, without repeating the utility's own word
+(`text-secondary` for `--text-secondary`, `border-subtle`, `bg-surface-card`,
+`text-status-critical`, `shadow-overlay`). They resolve to the palette's
+variables, so themes and dark mode apply to them. `cn`
+(`components/classnames.ts`) merges classes with tailwind-merge, so a later
+conflicting utility, such as a caller's `className`, replaces an earlier one.
+`viewer.css` also imports
 `src/theme.css`, which loads the default palette from `src/palette.css` and
 custom theme overrides. Dark variants apply under `:root[data-theme="dark"]`.
 Nineteen explicit base colors are shared by the two default modes:
@@ -171,7 +180,13 @@ A small “View obsolete changes” control reveals them with muted gray styling
 they do not count toward read progress. Opening an obsolete section by a direct
 link reveals the obsolete rows so the selected section stays visible in the rail.
 
-Below `xl` (1280px) the panes stack, and the rail becomes a sheet from the
+The rail, the review pane and the side pane sit side by side once the review
+page itself is at least 64rem (1024px) wide. The page is a width container
+named `review`, and components use the `wide:` variant from `viewer.css`
+rather than a window breakpoint, so a host's sidebar opening or folding moves
+the page across the threshold without the window changing. While the page is
+wide it carries `data-review-wide`, for a host's own CSS. Below that width the
+panes stack, and the rail becomes a sheet from the
 bottom of the window. A bar sticks over the pane in its place: it names
 where the reader is ("Behavior changes, 1 of 5"), opens the sheet, carries
 the host's read mark for the section on screen, and steps to the previous
@@ -237,6 +252,19 @@ links open Changes. Changes are ordered by review score, with attention items
 first when scores tie. The Changes count excludes obsolete sections, which are
 hidden by default and can be revealed with “View obsolete changes.”
 
+The document's `summary.recommendation` follows the Summary's overview as a
+normal section labelled with the decision (Approve, Look first or Request changes),
+its one sentence, and a chip for each ref
+that names a section, risk, evidence or decision the document has (a staged
+review's refs are section IDs). A chip opens the section and scrolls to the
+item, opening a disclosure that holds it; a ref the document does not have is
+left out. It speaks of the code and the decisions in it, never of CI, which the
+Details tab's live checks report. A document without the key, or with null,
+shows nothing in its place, and the summary `attention` is not drawn on the
+Summary: a section's own attention is. The Review exchange shows a null
+`review_exchange.summary` as its figures alone, without the model's sentence,
+and says no review tool assessed the pull request when nothing was exchanged.
+
 The document's `summary.context` sits under the Summary's overview, after the
 breaking change and release note and before Intent and instructions, as a
 Context part that starts collapsed; the reviewer expands it. Each part it
@@ -287,11 +315,18 @@ summary. Category labels are omitted and lifecycle labels use quiet text
 (“Since v1”). Attention includes referenced high and critical risks only.
 Medium and low risks appear in Risks after Key decisions even when attention
 references them; a callout referencing only lower-tier risks is omitted.
-Evidence the attention references is listed only when it adds something to
+A section's Risks part lists its open risks and holds the mitigated ones
+behind a disclosure ("1 mitigated risk"), whose rows keep their "Mitigated in
+vN" label. Evidence the attention references is listed only when it adds something to
 open or act on (failed, pending, skipped, observed or reported); missing,
 asserted and unavailable claims, which restate the attention, are left out.
 Under the attention, **Where to look** shows the changed lines and files its
 risks, decisions and evidence cite, each once, as source chips that open them.
+Every evidence item has one destination with its full claim, detail and
+expected coverage when present: in Attention when listed there, otherwise in
+the section's Evidence part, including claims no behavior step cites and those
+left out of Attention. Repeated behavior citations keep their status badges
+without repeating the claim or its destination.
 
 The Author pane groups models under their harness, in small text without a
 second icon. Only the first model is shown, followed by the number of additional
@@ -507,7 +542,7 @@ new document object of the same version. A read that failed is tried again
 on the next refetch of the document, and only for the versions that failed.
 
 The head's compact bar is `REVIEW_BAR_PX` (48px) tall and sticks to the top
-of the window from `lg` (1024px). Below `xl` the navigator bar, 48px too,
+of the window from `lg` (1024px). While the panes stack the navigator bar, 48px too,
 sticks under it; below `lg`, where there is no compact bar, it sticks under
 the host's own sticky bar, whose height the host gives as
 `--review-host-bar` (0 without one). A host should pad the page's scroll by
@@ -521,8 +556,8 @@ html:has([data-review-page]) {
 @media (width >= 64rem) {
   html:has([data-review-page]) { scroll-padding-top: calc(48px + 48px + 0.5rem); }
 }
-@media (width >= 80rem) {
-  html:has([data-review-page]) { scroll-padding-top: calc(48px + 0.5rem); }
+html:has([data-review-page][data-review-wide]) {
+  scroll-padding-top: calc(48px + 0.5rem);
 }
 ```
 
@@ -714,7 +749,18 @@ Inside the review workspace, `Markdown` reads the shown review's hunks
 known hunk ID in the prose, bare or as a whole code span, becomes a chip
 naming its file and first line (`ui-state.tsx:42`, the full path in its
 tooltip) that opens the file view there, or the diff on GitHub when the file
-view cannot. The app's Up next panel sets the same provider for the review
+view cannot. The same pass (`reviewRefs`, `ReviewRefsContext`) links the other
+IDs from the snapshot whose prose is displayed, separately in each comparison
+pane: a risk, evidence, decision or section ID
+(`(rsk|ev|dec|sec)_…`) as a chip with the risk text, claim or section title,
+truncated, that opens the section and scrolls to the item through
+`ReviewJumpContext` (the workspace provides it; elsewhere the chip is plain); a
+check (`check_run:N`, `status:N`, or its indexed ID) as its name and conclusion,
+toned as the Checks list tones them, linking to its run; a review thread
+(`PRRT_…`) as `file:line` and open or resolved, linking to it; `comment N` or a
+code span of a comment's number as "Comment by author", linking when the index
+has a URL; and a session UUID as its title, opening the session when the host
+lists sessions. Links into another repository are dropped as everywhere else. The app's Up next panel sets the same provider for the review
 it previews, where every chip opens the diff on GitHub. Unknown IDs, link
 text and code blocks stay as written, and without the provider nothing
 changes. The pass runs after sanitising, so a

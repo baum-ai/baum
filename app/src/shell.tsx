@@ -140,7 +140,8 @@ function usePeek(folded: boolean) {
  *
  *  The button beside Help folds it to its glyphs, so the page gets the width,
  *  and pins it open again; the choice is saved with the appearance
- *  preferences. Folded, resting the mouse on it or moving keyboard focus into
+ *  preferences. Folded, Help is hidden and `?` shows the shortcuts sheet.
+ *  Folded, resting the mouse on it or moving keyboard focus into
  *  it opens it over the page, and a link chosen there folds it again. Below
  *  `lg` it is always folded, and the button is gone. */
 export function Sidebar({
@@ -292,7 +293,7 @@ export function Sidebar({
             <Stumpy size={28} className="flex-none" />
             <Wordmark size="sidebar" className="local-rail-label" />
           </Link>
-          <HelpButton help={help} menu={helpMenu} />
+          <HelpButton help={help} menu={helpMenu} shown={pinned || peek.peeking} />
           <button
             type="button"
             className="local-rail-pin"
@@ -373,8 +374,18 @@ export type RailHelp = {
 
 /** Help, at the right of the baum title: a menu of the shortcuts, reporting
  *  a problem and the docs. It opens from the keys as a menu button does (Enter, Space, and
- *  Down on the first choice, Up on the last), and from the `?` key. */
-function HelpButton({ help, menu }: { help?: RailHelp; menu: ReturnType<typeof useContextMenu> }) {
+ *  Down on the first choice, Up on the last), and from the `?` key. The folded
+ *  sidebar hides it; `shown` is false then, so `?` shows the shortcuts sheet
+ *  instead of a menu hanging from nothing. */
+function HelpButton({
+  help,
+  menu,
+  shown,
+}: {
+  help?: RailHelp;
+  menu: ReturnType<typeof useContextMenu>;
+  shown: boolean;
+}) {
   const ref = useRef<HTMLButtonElement>(null);
   const open = menu.anchor !== null && menu.anchor === ref.current;
   const items = (): MenuItem[] => [
@@ -395,7 +406,7 @@ function HelpButton({ help, menu }: { help?: RailHelp; menu: ReturnType<typeof u
   };
   const opener = help?.opener;
   useEffect(() => {
-    if (!opener) return;
+    if (!opener || !shown) return;
     // Opened by `?`, the keys go back to where they were, not to this button,
     // which would then draw its focus ring.
     opener.current = () => show(false, document.activeElement);
@@ -833,7 +844,7 @@ export function PanelHeader({
   return (
     <header className="flex flex-wrap items-center gap-x-4 gap-y-3 p-5">
       <div className="flex min-w-0 flex-[1_1_18rem] items-center gap-3">
-        <span className="flex h-10 w-10 flex-none items-center justify-center rounded-(--radius-md) bg-(--surface-wash) text-(--text-primary)">
+        <span className="flex h-10 w-10 flex-none items-center justify-center rounded-md bg-surface-wash text-primary">
           {icon}
         </span>
         <div className="min-w-0">
@@ -843,11 +854,11 @@ export function PanelHeader({
             </h2>
             {badge}
           </div>
-          {detail ? <p className="mt-0.5 text-xs text-(--text-secondary)">{detail}</p> : null}
+          {detail ? <p className="mt-0.5 text-xs text-secondary">{detail}</p> : null}
         </div>
       </div>
       {actions ? (
-        <div className="flex flex-none flex-wrap items-center gap-2">{actions}</div>
+        <div className="flex max-w-full flex-none flex-wrap items-center gap-2">{actions}</div>
       ) : null}
     </header>
   );

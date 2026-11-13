@@ -541,7 +541,7 @@ it("shows Decisions, Sessions and Commits in a stack's rail, read through each m
         commitOf("b".repeat(40), "s-shared", "2026-10-26T12:00:00Z"),
       ],
     ),
-    "api/decisions?repository=acme%2Fdemo&pr=7": {
+    "api/decisions?repository=acme%2Fdemo&pr=7&head=head": {
       review_generated_at: null,
       sessions: [
         {

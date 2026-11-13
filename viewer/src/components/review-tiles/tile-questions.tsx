@@ -35,7 +35,7 @@ function Point({ text }: { text: string }) {
   return (
     <span className="flex min-w-0 items-baseline gap-2">
       {status ? (
-        <code className="flex-none rounded-(--radius-sm) border border-(--border-default) bg-(--surface-wash) px-1.5 font-mono text-xs text-(--text-primary)">
+        <code className="flex-none rounded-sm border border-default bg-surface-wash px-1.5 font-mono text-xs text-primary">
           {status[1]}
         </code>
       ) : null}
@@ -47,7 +47,7 @@ function Point({ text }: { text: string }) {
             <code
               // Positions are stable for a given text, which never reorders.
               key={index}
-              className="font-mono text-xs text-(--text-primary)"
+              className="font-mono text-xs text-primary"
             >
               {part.method} {part.path}
             </code>
@@ -66,12 +66,12 @@ export function TileQuestions({ title, rows }: { title: string; rows: readonly T
   return (
     <section
       aria-label={title}
-      className="mt-4 overflow-hidden rounded-(--radius-sm) border border-(--border-default) bg-(--surface-card)"
+      className="mt-4 overflow-hidden rounded-sm border border-default bg-surface-card"
     >
-      <h5 className="border-b border-(--border-subtle) bg-(--surface-wash) px-3 py-2 text-xs font-semibold tracking-[0.12em] uppercase text-(--text-tertiary)">
+      <h5 className="border-b border-subtle bg-surface-wash px-3 py-2 text-xs font-semibold tracking-[0.12em] uppercase text-tertiary">
         {title}
       </h5>
-      <dl className="divide-y divide-(--border-subtle)">
+      <dl className="divide-y divide-subtle">
         {rows.map((row) => {
           const list = points(row.answer);
           return (
@@ -79,16 +79,16 @@ export function TileQuestions({ title, rows }: { title: string; rows: readonly T
               key={row.question}
               className="grid gap-1.5 px-3 py-2.5 sm:grid-cols-[13rem_minmax(0,1fr)] sm:gap-4"
             >
-              <dt className="flex flex-wrap items-center gap-2 self-start text-base font-medium text-(--text-primary)">
+              <dt className="flex flex-wrap items-center gap-2 self-start text-base font-medium text-primary">
                 {row.question}
                 {row.badge}
               </dt>
-              <dd className="text-base leading-[1.5] text-(--text-secondary)">
+              <dd className="text-base leading-[1.5] text-secondary">
                 {list.length > 1 ? (
                   <ul className="grid gap-1">
                     {list.map((point, index) => (
                       <li key={`${index}:${point}`} className="flex gap-2">
-                        <span aria-hidden className="flex-none text-(--text-tertiary)">
+                        <span aria-hidden className="flex-none text-tertiary">
                           ·
                         </span>
                         <Point text={point} />

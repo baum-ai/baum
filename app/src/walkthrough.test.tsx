@@ -12,6 +12,7 @@ import {
   buildTour,
   firstSentence,
   loadProgress,
+  lookAt,
   progressKey,
   progressState,
   reviewSubmission,
@@ -394,4 +395,90 @@ it("waits for saved drafts before enabling comment, submission or keyboard actio
   expect(loadProgress(progressKey(doc)).note).toBe("Existing overall comment");
   click("Continue the review");
   expect(node.textContent).toContain("1 comment");
+});
+
+const withLook = (change: (document: ReviewDocument) => void) => {
+  const copy = structuredClone(doc);
+  change(copy);
+  return copy;
+};
+
+it("looks at the recommendation first, then at an older document's attention", () => {
+  const recommended = withLook((copy) => {
+    copy.summary.recommendation = {
+      decision: "request_changes",
+      text: "  The role header is client-settable.  ",
+      refs: ["rsk_api_header"],
+    };
+  });
+  expect(lookAt(recommended)).toEqual({
+    text: "The role header is client-settable.",
+    section: "sec_api",
+  });
+  // An approval says nothing to look at, so the older attention stands.
+  const approved = withLook((copy) => {
+    copy.summary.recommendation = { decision: "approve", text: "Fine.", refs: [] };
+  });
+  expect(lookAt(approved)?.text).toBe(doc.summary.attention!.text);
+  expect(lookAt(doc)).toEqual({ text: doc.summary.attention!.text, section: "sec_api" });
+  // Neither: nothing.
+  expect(
+    lookAt(
+      withLook((copy) => {
+        copy.summary.attention = null;
+        copy.summary.recommendation = null;
+      }),
+    ),
+  ).toBeNull();
+  // A recommendation whose refs lead nowhere still says its sentence.
+  expect(
+    lookAt(
+      withLook((copy) => {
+        copy.summary.recommendation = { decision: "look_first", text: "Look.", refs: ["nope"] };
+      }),
+    ),
+  ).toEqual({ text: "Look.", section: null });
+});
+
+it("falls back to the recommendation for the tour's risk line when no score reasons exist", () => {
+  const tour = buildTour(
+    withLook((copy) => {
+      delete copy.summary.risk_score;
+      copy.summary.attention = null;
+      copy.summary.recommendation = {
+        decision: "look_first",
+        text: "Check the role header.",
+        refs: ["sec_api"],
+      };
+    }),
+  );
+  expect(tour.risks).toEqual([{ text: "Check the role header.", stop: expect.any(Number) }]);
+});
+
+it("shows the recommendation under Look closely at on the landing page", () => {
+  const recommended = withLook((copy) => {
+    copy.summary.attention = null;
+    copy.summary.recommendation = {
+      decision: "look_first",
+      text: "Check the role header.",
+      refs: ["sec_api"],
+    };
+  });
+  act(() =>
+    root.render(
+      <Walkthrough
+        entry={entry()}
+        document={recommended}
+        mode="landing"
+        setMode={() => {}}
+        back={{ href: "/s/test-ns/", label: "Inbox" }}
+        close={() => {}}
+        patches={async () => null}
+        changed={changed}
+      />,
+    ),
+  );
+  const flag = node.querySelector('[aria-label="Look closely at"]');
+  expect(flag?.textContent).toContain("Check the role header.");
+  expect(flag?.textContent).toContain("Go to Operator-only dead-letter endpoints");
 });
