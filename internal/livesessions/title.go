@@ -515,7 +515,7 @@ func (t *Transcripts) describeFiles(k key, path string) (describeSource, error) 
 			path, src.found = found, found
 		}
 		main, err := inStore(filepath.Join(codexHome, "sessions"), path, func(name string) bool {
-			return strings.HasPrefix(name, "rollout-") && strings.HasSuffix(name, ".jsonl")
+			return codextranscript.IsRolloutName(name)
 		})
 		if err != nil {
 			return src, err
@@ -541,7 +541,7 @@ func (t *Transcripts) describeFiles(k key, path string) (describeSource, error) 
 		if err != nil {
 			return src, err
 		}
-		src.size = info.Size()
+		src.size = codextranscript.DecodedSize(src.transcript, info)
 	}
 	return src, nil
 }
@@ -553,16 +553,22 @@ func (s *describeSource) read(id string, scan *scanState) error {
 	if s.transcript != "" && (scan.path != s.transcript || s.size < scan.offset) {
 		*scan = scanState{path: s.transcript}
 	}
+	// A compressed rollout is decompressed from its start however far in a
+	// pass begins, so it is read in one pass, not in several.
+	pass := int64(scanPass)
+	if codextranscript.Compressed(s.transcript) {
+		pass = s.size
+	}
 	switch s.agent {
 	case AgentClaudeCode:
-		return readClaude(s.transcript, scan.offset, min(s.size, scan.offset+scanPass), scan)
+		return readClaude(s.transcript, scan.offset, min(s.size, scan.offset+pass), scan)
 	case AgentCodex:
 		if s.index != "" {
 			if name, err := codextranscript.ThreadName(s.index, id); err == nil {
 				s.name = name
 			}
 		}
-		return readCodex(s.transcript, scan.offset, min(s.size, scan.offset+scanPass), scan)
+		return readCodex(s.transcript, scan.offset, min(s.size, scan.offset+pass), scan)
 	case AgentCursor:
 		store, err := cursortranscript.Open(s.store)
 		if err != nil {
@@ -908,12 +914,31 @@ func codexCompaction(line []byte) string {
 // longer than maxLine is passed as its first maxLine bytes, with whole false.
 // A line cut by to, or still being written, is read again next time.
 func eachLine(path string, from, to int64, scan *scanState, fn func(line []byte, whole bool)) error {
-	f, err := os.Open(path)
-	if err != nil {
-		return err
+	var src io.Reader
+	if codextranscript.Compressed(path) {
+		if from >= to {
+			scan.offset = from
+			return nil
+		}
+		rc, err := openTranscript(path)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = rc.Close() }()
+		if n, err := io.CopyN(io.Discard, rc, from); n < from || err != nil {
+			scan.offset = from
+			return nil
+		}
+		src = io.LimitReader(rc, to-from)
+	} else {
+		f, err := os.Open(path)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = f.Close() }()
+		src = io.NewSectionReader(f, from, to-from)
 	}
-	defer func() { _ = f.Close() }()
-	r := bufio.NewReaderSize(io.NewSectionReader(f, from, to-from), maxLine)
+	r := bufio.NewReaderSize(src, maxLine)
 	offset := from
 	for {
 		line, err := r.ReadSlice('\n')

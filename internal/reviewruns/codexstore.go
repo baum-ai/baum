@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/baum-ai/baum/sessions/codextranscript"
 	"github.com/baum-ai/baum/sessions/collector/codex"
 )
 
@@ -78,10 +79,10 @@ func removeCodex(dir string, ids []string, since time.Time, walk bool) error {
 		for _, e := range entries {
 			name := e.Name()
 			// A link is neither a directory nor a regular file here.
-			if !e.Type().IsRegular() || !strings.HasPrefix(name, "rollout-") || filepath.Ext(name) != ".jsonl" {
+			if !e.Type().IsRegular() || !codextranscript.IsRolloutName(name) {
 				continue
 			}
-			byID := slices.ContainsFunc(ids, func(id string) bool { return strings.HasSuffix(name, "-"+id+".jsonl") })
+			byID := slices.ContainsFunc(ids, func(id string) bool { return strings.HasSuffix(codextranscript.PlainName(name), "-"+id+".jsonl") })
 			if !byID {
 				if !walk {
 					continue

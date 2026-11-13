@@ -14,6 +14,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/baum-ai/baum/sessions/codextranscript"
 	"github.com/baum-ai/baum/sessions/session"
 	"github.com/baum-ai/baum/sessions/vendors"
 )
@@ -129,7 +130,7 @@ func codexImages(raw []byte) (string, []pastedImage) {
 // holds one of markers, and its number, from 1, as the mappers count lines,
 // until fn returns false.
 func eachImageLine(path string, markers [][]byte, fn func(raw []byte, number int) bool) error {
-	f, err := os.Open(path)
+	f, err := openTranscript(path)
 	if err != nil {
 		return err
 	}
@@ -148,6 +149,31 @@ func eachImageLine(path string, markers [][]byte, fn func(raw []byte, number int
 			return err
 		}
 	}
+}
+
+// openTranscript opens a transcript for reading its decoded bytes. A
+// compressed rollout whose stream fails part way ends there, as a plain one
+// cut off would.
+func openTranscript(path string) (io.ReadCloser, error) {
+	f, err := os.Open(path)
+	if err != nil || !codextranscript.Compressed(path) {
+		return f, err
+	}
+	rc, err := codextranscript.Decompress(f)
+	if err != nil {
+		_ = f.Close()
+		return nil, err
+	}
+	return &decodedFile{ReadCloser: rc, file: f}, nil
+}
+
+type decodedFile struct {
+	io.ReadCloser
+	file *os.File
+}
+
+func (d *decodedFile) Close() error {
+	return errors.Join(d.ReadCloser.Close(), d.file.Close())
 }
 
 // findImages is the images pasted with each prompt of a Claude Code or

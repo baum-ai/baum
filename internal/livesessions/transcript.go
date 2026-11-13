@@ -326,7 +326,8 @@ type Location struct {
 // conversation.
 func (s Location) Path() string { return s.main }
 
-// Size is the total size of the session's own files; zero for a Cursor
+// Size is the total size of the session's own files, a compressed rollout by
+// its decoded size; zero for a Cursor
 // conversation, which shares one database with every other.
 func (s Location) Size() (int64, error) {
 	var total int64
@@ -335,7 +336,7 @@ func (s Location) Size() (int64, error) {
 		if err != nil {
 			return 0, err
 		}
-		total += info.Size()
+		total += codextranscript.DecodedSize(f.Path, info)
 	}
 	return total, nil
 }
@@ -427,9 +428,6 @@ func Locate(home, cursorStore, agent, id, path string) (Location, error) {
 		return Location{Vendor: vendors.ClaudeCode, ID: id, files: files, main: main}, nil
 	case AgentCodex:
 		root := filepath.Join(home, ".codex", "sessions")
-		rollout := func(name string) bool {
-			return strings.HasPrefix(name, "rollout-") && strings.HasSuffix(name, ".jsonl")
-		}
 		if path == "" {
 			found, err := findRollout(filepath.Join(home, ".codex"), id)
 			if err != nil {
@@ -437,7 +435,7 @@ func Locate(home, cursorStore, agent, id, path string) (Location, error) {
 			}
 			path = found
 		}
-		main, err := inStore(root, path, rollout)
+		main, err := inStore(root, path, codextranscript.IsRolloutName)
 		if err != nil {
 			return Location{}, err
 		}
@@ -488,9 +486,9 @@ func inStore(root, path string, named func(string) bool) (string, error) {
 // findRollout looks a Codex session up by its id, for a session whose hooks
 // named no path (one restored from StateFile): Codex names each rollout
 // after its thread, so it is the one rollout under sessions whose name ends in
-// the id and whose first line says it is that thread's root. Only names are
-// walked, not the store's other rollouts, which Codex compresses as they age
-// (.jsonl.zst, which baum does not read).
+// the id (plain, or compressed as Codex does as they age) and whose first line
+// says it is that thread's root. Only names are walked, not the store's other
+// rollouts. A plain rollout is preferred to a compressed copy beside it.
 func findRollout(codexHome, id string) (string, error) {
 	if !safeID.MatchString(id) {
 		return "", unavailable("Codex has no transcript of this session on this computer.")
@@ -500,8 +498,16 @@ func findRollout(codexHome, id string) (string, error) {
 		if err != nil || entry.IsDir() {
 			return nil
 		}
-		name := entry.Name()
-		if !strings.HasPrefix(name, "rollout-") || !strings.HasSuffix(name, "-"+id+".jsonl") || !rootOf(path, id) {
+		name := codextranscript.PlainName(entry.Name())
+		if !codextranscript.IsRolloutName(name) || !strings.HasSuffix(name, "-"+id+".jsonl") {
+			return nil
+		}
+		if codextranscript.Compressed(path) {
+			if _, err := os.Stat(codextranscript.PlainPath(path)); err == nil {
+				path = codextranscript.PlainPath(path)
+			}
+		}
+		if !rootOf(path, id) {
 			return nil
 		}
 		found = path
@@ -515,7 +521,7 @@ func findRollout(codexHome, id string) (string, error) {
 
 // rootOf reports whether the rollout at path starts thread id's root.
 func rootOf(path, id string) bool {
-	f, err := os.Open(path)
+	f, err := codextranscript.OpenRollout(path)
 	if err != nil {
 		return false
 	}
