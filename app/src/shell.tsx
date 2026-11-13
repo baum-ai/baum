@@ -856,7 +856,7 @@ export function PanelHeader({
         </div>
       </div>
       {actions ? (
-        <div className="flex flex-none flex-wrap items-center gap-2">{actions}</div>
+        <div className="flex max-w-full flex-none flex-wrap items-center gap-2">{actions}</div>
       ) : null}
     </header>
   );
