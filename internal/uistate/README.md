@@ -24,13 +24,17 @@ reads as none (at its revision), and the next save replaces it.
 A review key is `owner/repository#number` (optionally prefixed with an
 Enterprise host), and the latest 200 pull requests' reviews are retained. A review is `{comments, note}`: at most 100 comments,
 each `{id, target: {kind, id, title}, body, place, head, created}` with a
-unique `id` (1–64 of `A-Za-z0-9_-`), `kind` `general`, `section`, `risk` or
-`file` (all but `general` with an `id`), a non-blank body, `place` null or
+unique `id` (1–64 of `A-Za-z0-9_-`), `kind` `general`, `section`, `risk`, `file` or
+`tile` (all but `general` with an `id`; a `tile`'s is the tile's ID), a non-blank body, `place` null or
 `{path, line, side, start_line?}` (side `RIGHT` or `LEFT`, `start_line`
 before `line`), and `head` empty or the hex commit the place is on;
 `CheckReviewComment` applies these rules to one comment and says which it
 breaks (a chat's proposed comment is checked with it, then appended with
-`Replace` at the revision it was read at). An optional `sent` holds
+`Replace` at the revision it was read at). A release that predates the `tile`
+kind finds a review record holding such a comment invalid, and reads the whole
+saved-reviews document as unreadable, every pull request's, until a release
+that knows `tile` returns; the inbox, filters and tour documents are
+unaffected. An optional `sent` holds
 at most 20 reviews sent from the app, each `{url, event, at, note, comments}`
 with an `https://` URL, `event` `APPROVE`, `COMMENT` or `REQUEST_CHANGES`, and
 at most 100 `{title, where, body}` comments.

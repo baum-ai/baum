@@ -319,7 +319,7 @@ func (p *Proposers) appearanceTarget() *target {
 			return in, err
 		}
 		if in == (appearanceInput{}) {
-			return in, errors.New("propose a theme, key_hints or page_modifier")
+			return in, errors.New("propose a theme, key_hints, page_modifier or review_page")
 		}
 		return in, in.check()
 	}

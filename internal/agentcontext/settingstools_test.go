@@ -71,7 +71,7 @@ func (d *settingsDaemon) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 "agent_env":{"ZED_TOKEN":%q,"API_KEY":%q,"OTHER":"%s/SENTINEL_ENV_PATH","bad name SENTINEL_NAME":"x"},"agent_env_source":"app",
 "fix_backend":"codex","fix_model":"gpt-5","effort":"high","fix_effort":"low","job_concurrency":3,"review_time_limit_minutes":20,"run_time_limit_minutes":45}`, sentinelEnv, sentinelToken, sentinelHome)
 	case "/api/settings/appearance":
-		reply(`{"theme":"dark","key_hints":false,"page_modifier":"alt","extra":"SENTINEL_APPEARANCE"}`)
+		reply(`{"theme":"dark","key_hints":false,"page_modifier":"alt","review_page":"tiles","extra":"SENTINEL_APPEARANCE"}`)
 	case "/api/automatic":
 		reply(`{"enabled":true,"pull_requests":"authored","repositories":[{"repository":"acme/web","enabled":true,"notice":"unavailable","pending":2},{"repository":"other/api","enabled":false,"notice":"OTHER_NOTICE","pending":5}]}`)
 	case "/api/agent-requests":
@@ -177,7 +177,7 @@ func TestSettingsToolsCarryNoSecret(t *testing.T) {
 		want []string
 		page *PageContext
 	}{
-		{"settings_general", nil, []string{`"theme":"dark"`, `"key_hints":false`, `"page_modifier":"alt"`, `{"provider":"claude","name":"Claude Code","shown":true,"default":true,"explicit":false}`, `{"provider":"codex","name":"Codex","shown":false,"default":false,"explicit":true}`}, nil},
+		{"settings_general", nil, []string{`"theme":"dark"`, `"key_hints":false`, `"page_modifier":"alt"`, `"review_page":"tiles"`, `{"provider":"claude","name":"Claude Code","shown":true,"default":true,"explicit":false}`, `{"provider":"codex","name":"Codex","shown":false,"default":false,"explicit":true}`}, nil},
 		{"settings_reviews", nil, []string{`"automatic":{"enabled":true,"pull_requests":"authored"}`, `"backend":"claude","model":"opus","effort":"high"`, `"decision_capture":{"enabled":true,"backend":"","model":"","effort":"","effective_backend":"claude","backend_undetermined":false,"effective_model":"haiku","model_ignored":false}`}, nil},
 		{"settings_fixes", nil, []string{`{"backend":"codex","model":"gpt-5","effort":"low","same_as_reviews":false}`}, nil},
 		{"settings_connections", nil, []string{`"state":"pending"`, `"host":"other host"`, `"login":"octo"`, `"source":"environment"`, `"override":true`, `"saved":true`, `"workflow":true`, `"error":"auth_request_failed"`, `"organizations_not_reachable":["acme-corp"]`, `"codex_hooks":{"state":"untrusted","checked_at":"2026-11-12T09:30:00Z"}`}, nil},

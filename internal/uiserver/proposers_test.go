@@ -371,6 +371,10 @@ func proposalCases() []proposalCase {
 		route:  fixed("PUT", "/api/settings/appearance", `{"theme":"light","page_modifier":"alt"}`),
 		change: fixed("PUT", "/api/settings/appearance", `{"key_hints":false}`),
 	}, {
+		name: "review page", page: settingsAt("general"), tool: "propose_appearance", args: map[string]any{"review_page": "tiles"},
+		route:  fixed("PUT", "/api/settings/appearance", `{"review_page":"tiles"}`),
+		change: fixed("PUT", "/api/settings/appearance", `{"review_page":"full"}`),
+	}, {
 		name: "appearance without a section", page: settingsAt(""), tool: "propose_appearance", args: map[string]any{"key_hints": false},
 		route:  fixed("PUT", "/api/settings/appearance", `{"key_hints":false}`),
 		change: fixed("PUT", "/api/settings/appearance", `{"theme":"dark"}`),
@@ -627,6 +631,7 @@ func TestInvalidProposalsAreRefusedWithThePagesReason(t *testing.T) {
 	}{
 		{"theme", agentcontext.PageContext{Page: agentcontext.PageSettings}, "propose_appearance", map[string]any{"theme": "neon"}, "PUT", "/api/settings/appearance", `{"theme":"neon"}`},
 		{"page modifier", agentcontext.PageContext{Page: agentcontext.PageSettings}, "propose_appearance", map[string]any{"page_modifier": "shift"}, "PUT", "/api/settings/appearance", `{"page_modifier":"shift"}`},
+		{"review page", agentcontext.PageContext{Page: agentcontext.PageSettings}, "propose_appearance", map[string]any{"review_page": "grid"}, "PUT", "/api/settings/appearance", `{"review_page":"grid"}`},
 		{"plan", agentcontext.PageContext{Page: agentcontext.PageSettings}, "propose_plan_usage", map[string]any{"provider": "gemini", "shown": true}, "PUT", "/api/settings/plan-usage", `{"provider":"gemini","shown":true}`},
 		{"effort", agentcontext.PageContext{Page: agentcontext.PageSettings, Section: "reviews"}, "propose_reviews", map[string]any{"effort": "extreme"}, "PUT", "/api/automatic", `{"effort":"extreme"}`},
 		{"backend", agentcontext.PageContext{Page: agentcontext.PageSettings, Section: "reviews"}, "propose_reviews", map[string]any{"backend": "cursor-agent"}, "PUT", "/api/automatic", `{"backend":"cursor-agent"}`},

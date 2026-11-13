@@ -183,11 +183,12 @@ func proposeTools() []Tool {
 	effort := `{"type":"string","maxLength":32,"description":"The reasoning effort: low, medium, high, xhigh, max or ultra; empty for the harness's own."}`
 	return []Tool{{
 		Name:        "propose_appearance",
-		Description: "Proposes a change to the Settings page's General section appearance: the theme, whether key hints show, and the modifier held with 1 to 8 for the sidebar's pages. The person must have Settings open at General. Nothing changes until the person saves the proposal; you get its id, never the current values.",
+		Description: "Proposes a change to the Settings page's General section appearance: the theme, whether key hints show, the modifier held with 1 to 8 for the sidebar's pages, and the review page (the full review or tiles). The person must have Settings open at General. Nothing changes until the person saves the proposal; you get its id, never the current values.",
 		InputSchema: json.RawMessage(`{"type":"object","properties":{` +
 			`"theme":{"type":"string","maxLength":16,"description":"system, light or dark."},` +
 			`"key_hints":{"type":"boolean"},` +
-			`"page_modifier":{"type":"string","maxLength":16,"description":"meta, ctrl or alt; empty is the platform's command key."}},` +
+			`"page_modifier":{"type":"string","maxLength":16,"description":"meta, ctrl or alt; empty is the platform's command key."},` +
+			`"review_page":{"type":"string","maxLength":16,"description":"full or tiles: the page a review opens on."}},` +
 			`"minProperties":1,"additionalProperties":false}`),
 		Proposes: true,
 		Call: func(ctx context.Context, c CallContext, args json.RawMessage) (string, error) {
@@ -195,6 +196,7 @@ func proposeTools() []Tool {
 				Theme        *string `json:"theme,omitempty"`
 				KeyHints     *bool   `json:"key_hints,omitempty"`
 				PageModifier *string `json:"page_modifier,omitempty"`
+				ReviewPage   *string `json:"review_page,omitempty"`
 			}
 			if err := strictArgs(args, &a); err != nil {
 				return "", err
@@ -489,11 +491,11 @@ func proposeTools() []Tool {
 		},
 	}, {
 		Name: "propose_review_comment",
-		Description: "Proposes a comment for the person's own pending review of the pull request the page shows, which they send from the app: its body, what it is about (target: general, or a section, risk or file of the review by id, with a title), and optionally the diff line it is placed on (path, line, side RIGHT or LEFT, optional start_line) at the commit head. Saving adds it to the review's comments and keeps the person's other drafts. " +
+		Description: "Proposes a comment for the person's own pending review of the pull request the page shows, which they send from the app: its body, what it is about (target: general, or a section, risk, file or tile of the review by id, with a title), and optionally the diff line it is placed on (path, line, side RIGHT or LEFT, optional start_line) at the commit head. Saving adds it to the review's comments and keeps the person's other drafts. " +
 			"The person must have the pull request's page open. Nothing changes until the person saves the proposal.",
 		InputSchema: json.RawMessage(`{"type":"object","properties":{` +
 			`"body":{"type":"string","minLength":1,"maxLength":65536},` +
-			`"target":{"type":"object","properties":{"kind":{"type":"string","maxLength":16,"description":"general, section, risk or file."},"id":{"type":"string","maxLength":4096},"title":{"type":"string","maxLength":1024}},"required":["kind","id","title"],"additionalProperties":false,"description":"Default: the pull request in general."},` +
+			`"target":{"type":"object","properties":{"kind":{"type":"string","maxLength":16,"description":"general, section, risk, file or tile."},"id":{"type":"string","maxLength":4096},"title":{"type":"string","maxLength":1024}},"required":["kind","id","title"],"additionalProperties":false,"description":"Default: the pull request in general."},` +
 			`"place":{"type":"object","properties":{"path":{"type":"string","minLength":1,"maxLength":4096},"line":{"type":"integer"},"side":{"type":"string","maxLength":8,"description":"RIGHT or LEFT."},"start_line":{"type":"integer"}},"required":["path","line","side"],"additionalProperties":false},` +
 			`"head":{"type":"string","maxLength":64,"description":"The commit the place is on, as hex; empty when there is no place."}},` +
 			`"required":["body"],"additionalProperties":false}`),

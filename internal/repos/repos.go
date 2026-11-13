@@ -98,6 +98,9 @@ type AppearancePreferences struct {
 	// ("pinned") or folds to its glyphs and opens over the page under the
 	// pointer ("folded"); empty is pinned.
 	Sidebar string `json:"sidebar,omitempty"`
+	// ReviewPage is the page a review opens on: "full" (the review's
+	// sections) or "tiles" (its tile document); empty is full.
+	ReviewPage string `json:"review_page,omitempty"`
 }
 
 // PlanUsagePreferences are the plans the person chose to show or hide in plan

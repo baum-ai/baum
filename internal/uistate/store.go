@@ -390,12 +390,12 @@ func checkReviewComment(c reviewComment) error {
 	}
 	switch *target.Kind {
 	case "general":
-	case "section", "risk", "file":
+	case "section", "risk", "file", "tile":
 		if *target.ID == "" {
-			return refuse("a section, risk or file target names its id")
+			return refuse("a section, risk, file or tile target names its id")
 		}
 	default:
-		return refuse("a comment's target is general, section, risk or file")
+		return refuse("a comment's target is general, section, risk, file or tile")
 	}
 	if place := c.Place; place != nil {
 		if place.Path == nil || *place.Path == "" || len(*place.Path) > 4096 || place.Line == nil || *place.Line < 1 || place.Side == nil || (*place.Side != "RIGHT" && *place.Side != "LEFT") || (place.StartLine != nil && (*place.StartLine < 1 || *place.StartLine >= *place.Line)) {

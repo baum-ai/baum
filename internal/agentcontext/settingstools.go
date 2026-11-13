@@ -117,7 +117,7 @@ var envName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]{0,255}$`)
 func (s *Server) settingsTools() []Tool {
 	return []Tool{{
 		Name: "settings_general",
-		Description: "What the Settings page's General section shows: the theme (system, light or dark), whether key hints show, the modifier of the page shortcuts (meta, ctrl or alt; empty is the platform's default), and for each plan (Claude Code, Codex) whether its usage shows in the sidebar and tray, what baum would show by default and whether the person chose. " +
+		Description: "What the Settings page's General section shows: the theme (system, light or dark), whether key hints show, the modifier of the page shortcuts (meta, ctrl or alt; empty is the platform's default), the review page (full or tiles), and for each plan (Claude Code, Codex) whether its usage shows in the sidebar and tray, what baum would show by default and whether the person chose. " +
 			"The plan choices are worked out from what the daemon already holds; nothing is fetched.",
 		Scope:     ScopeGlobal,
 		Projected: []string{"/api/settings/appearance"},
@@ -226,6 +226,7 @@ func (s *Server) callSettingsGeneral(ctx context.Context, c CallContext, _ json.
 		Theme        string `json:"theme"`
 		KeyHints     bool   `json:"key_hints"`
 		PageModifier string `json:"page_modifier"`
+		ReviewPage   string `json:"review_page"`
 	}
 	if json.Unmarshal(body, &appearance) != nil {
 		return "", errors.New("the appearance settings are not readable")
@@ -234,9 +235,10 @@ func (s *Server) callSettingsGeneral(ctx context.Context, c CallContext, _ json.
 		Theme         string       `json:"theme"`
 		KeyHints      bool         `json:"key_hints"`
 		PageModifier  string       `json:"page_modifier"`
+		ReviewPage    string       `json:"review_page"`
 		PlanUsage     []planChoice `json:"plan_usage"`
 		PlanUsageNote string       `json:"plan_usage_note,omitempty"`
-	}{Theme: appearance.Theme, KeyHints: appearance.KeyHints, PageModifier: appearance.PageModifier, PlanUsage: []planChoice{}}
+	}{Theme: appearance.Theme, KeyHints: appearance.KeyHints, PageModifier: appearance.PageModifier, ReviewPage: appearance.ReviewPage, PlanUsage: []planChoice{}}
 	var choices []json.RawMessage
 	if s.planChoices != nil {
 		choices, err = s.planChoices(ctx)

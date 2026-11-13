@@ -366,6 +366,12 @@ func TestReviewRecordsArePerPullRequestAndValidated(t *testing.T) {
 	if got, err := s.Read("review", "acme/demo#8"); err != nil || got.Revision != 0 {
 		t.Fatalf("another pull request: %+v %v", got, err)
 	}
+	// A comment on a tile names the tile's id, as one on a section does.
+	const tiled = `{"comments":[{"id":"c2","target":{"kind":"tile","id":"risks","title":"Risks"},"body":"Check this list.","place":null,"head":"","created":2}],"note":""}`
+	save(t, s, "review", "acme/demo#9", 0, "mutation-00000001", tiled)
+	if got, err := s.Read("review", "acme/demo#9"); err != nil || string(got.Value) != tiled {
+		t.Fatalf("tile comment: %+v %v", got, err)
+	}
 	const sent = `{"comments":[],"note":"","sent":[{"url":"https://github.com/acme/demo/pull/7#pullrequestreview-1","event":"APPROVE","at":5,"note":"LGTM","comments":[{"title":"Retry","where":"retry.go:42","body":"Why?"}]}]}`
 	save(t, s, "review", "acme/demo#7", 1, "mutation-00000001:2", sent)
 	if got, err := (&Store{Path: s.Path}).Read("review", "acme/demo#7"); err != nil || got.Revision != 2 || string(got.Value) != sent {
@@ -376,6 +382,8 @@ func TestReviewRecordsArePerPullRequestAndValidated(t *testing.T) {
 	}
 	for _, value := range []string{
 		`{"comments":[]}`,
+		`{"comments":[{"id":"c1","target":{"kind":"tile","id":"","title":"Risks"},"body":"b","place":null,"head":"","created":1}],"note":""}`,
+		`{"comments":[{"id":"c1","target":{"kind":"tile","id":"` + strings.Repeat("t", 4097) + `","title":"Risks"},"body":"b","place":null,"head":"","created":1}],"note":""}`,
 		`{"comments":[{"id":"c1","target":{"kind":"section","id":"s","title":"t"},"body":"  ","place":null,"head":"","created":1}],"note":""}`,
 		`{"comments":[{"id":"c1","target":{"kind":"section","id":"","title":"t"},"body":"b","place":null,"head":"","created":1}],"note":""}`,
 		`{"comments":[{"id":"c1","target":{"kind":"general","id":"","title":"t"},"body":"b","place":{"path":"a","line":3,"side":"UP"},"head":"","created":1}],"note":""}`,

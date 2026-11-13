@@ -14,6 +14,7 @@ type appearanceSettings struct {
 	KeyHints     bool   `json:"key_hints"`
 	PageModifier string `json:"page_modifier"`
 	Sidebar      string `json:"sidebar"`
+	ReviewPage   string `json:"review_page"`
 }
 
 func appearanceOf(p repos.Preferences) appearanceSettings {
@@ -25,11 +26,16 @@ func appearanceOf(p repos.Preferences) appearanceSettings {
 	if sidebar != "folded" {
 		sidebar = "pinned"
 	}
+	reviewPage := p.Appearance.ReviewPage
+	if reviewPage != "tiles" {
+		reviewPage = "full"
+	}
 	return appearanceSettings{
 		Theme:        theme,
 		KeyHints:     p.Appearance.KeyHints == nil || *p.Appearance.KeyHints,
 		PageModifier: p.Appearance.PageModifier,
 		Sidebar:      sidebar,
+		ReviewPage:   reviewPage,
 	}
 }
 
@@ -49,6 +55,7 @@ type appearanceInput struct {
 	KeyHints     *bool   `json:"key_hints,omitempty"`
 	PageModifier *string `json:"page_modifier,omitempty"`
 	Sidebar      *string `json:"sidebar,omitempty"`
+	ReviewPage   *string `json:"review_page,omitempty"`
 }
 
 // check refuses what the route refuses (400).
@@ -62,6 +69,9 @@ func (in appearanceInput) check() error {
 	}
 	if in.Sidebar != nil && *in.Sidebar != "pinned" && *in.Sidebar != "folded" {
 		return errors.New("sidebar must be pinned or folded")
+	}
+	if in.ReviewPage != nil && *in.ReviewPage != "full" && *in.ReviewPage != "tiles" {
+		return errors.New("review_page must be full or tiles")
 	}
 	return nil
 }
@@ -79,6 +89,9 @@ func (in appearanceInput) edit(p repos.Preferences) repos.Preferences {
 	}
 	if in.Sidebar != nil {
 		p.Appearance.Sidebar = *in.Sidebar
+	}
+	if in.ReviewPage != nil {
+		p.Appearance.ReviewPage = *in.ReviewPage
 	}
 	return p
 }
