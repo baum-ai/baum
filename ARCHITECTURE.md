@@ -900,9 +900,10 @@ repeated section ID.
   tile appear only when they have something to show; with `Options.Draft` a
   missing context is a pending context tile.
 - The default layout is the overview and risks tiles (half each), the
-  change tiles in review order (a third each, in a "Changes" group showing
-  four), then media, evidence, intent, context, decisions and everything
-  else (a third each), then the obsolete changes. Review order is the
+  change tiles in review order (a third each, in a "Changes" group that
+  shows every change up to eight and otherwise six, two rows, folding the
+  rest behind its control), then evidence, media, intent, context, decisions
+  and everything else (a third each), then the obsolete changes. Review order is the
   viewer's: by review score, highest first, a section with attention first
   within a score, otherwise document order; a document without scores keeps
   its order.
