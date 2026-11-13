@@ -655,12 +655,21 @@ showing one part of the review. It has three parts.
 - **The layout**: entries in reading order, each a tile, a size (`full`,
   `half` or `third` of a 6-unit grid), an optional group and an optional
   pin; groups of contiguous entries, which may show only their first
-  `collapse_after` members; and `landing`, the number of leading entries on
-  the landing page. `tiles.Landing` derives it: the entries fill rows of 6
-  units in order, an entry that does not fit its row starts the next, a
-  collapsed group's hidden members take no space, and the landing page is
-  three rows. A narrow window stacks the same order into fewer columns, so
-  the landing page does not depend on the viewport.
+  `collapse_after` members; and `landing`. One rule governs the landing
+  page. A group member past `collapse_after` is hidden wherever it stands
+  (`tiles.Hidden`): it takes no space, and its group's own "Show N more"
+  reveals it, counting all of the group's hidden members. `landing`
+  (`tiles.Landing`) is the index after the last entry the landing page
+  places: the entries that are not hidden fill rows of 6 units in order, an
+  entry that does not fit the rest of its row starts the next, and the first
+  that does not fit in three rows ends the landing page. The landing page
+  shows the entries before `landing` that are not hidden (`tiles.Visible`);
+  "Show N more tiles" reveals the rest that are not hidden (`tiles.More`).
+  `tiles.Arrange` orders a layout and sets `landing`: pinned entries move to
+  the front, and so does the risks tile when it ranks an active critical or
+  high risk and would otherwise miss the landing page, both stably. A narrow
+  window stacks the same order into fewer columns, so the landing page does
+  not depend on the viewport.
 
 Who writes what: the host writes the substrate's header, facts, statistics,
 index, agent reviews, derived fields, risk lifecycle fields and risk score,
@@ -679,23 +688,33 @@ evidence, tile or group ID that is not unique, a risk or evidence item naming
 a change the document lacks, a current change's hunk the index lacks, a
 layout that does not place every tile exactly once in known, contiguous
 groups, a landing past the entries, or a second tile of a single type. A
-tile whose data does not have its type's shape, whose references do not
-resolve (a change tile's change, the ranked risks, the changes of moved
-items) or whose type is unknown or `custom` is only marked `unavailable`,
-with its problems, and the rest of the document is shown. `CheckTiles` runs
-just those tile checks, for a host serving a document it converted.
+tile is only marked `unavailable`, with its problems, and the rest of the
+document is shown, when it is a single tile under another ID than its type,
+its data does not have its type's shape (only a draft's pending context
+tile may have empty data), its references do not resolve (a change tile's
+change, which everything else must not show too, the ranked risks, the
+changes of moved items), a decision ID repeats among the decisions tile's
+items, or its type is unknown or `custom`. `CheckTiles` runs just those
+tile checks, for a host serving a document it converted.
 
 **Conversion.** `tiles.FromReview` converts a stored `baum.review/1`
-document after the stored-document rules (`review.NormalizeStored`, which a
-host serving both views calls once and passes to both), and
-`tiles.ToReview` converts back. The conversion is deterministic, and the
-round trip returns the stored document exactly (compared as JSON values),
-except the retired per-section and per-risk tiles, which it drops. It runs
-on every read, in about a millisecond for a typical document. It fails, and
-a host falls back to the full review, only for a document it cannot split:
+document after the stored-document rules, and `tiles.ToReview` converts
+back. `review.NormalizeStored` applies those rules and returns the bytes a
+reader works on, the input itself when no rule applies. It is stricter than
+the raw stored document: it labels blank section titles, shortens long
+identifiers and drops retired tiles it cannot keep, and when a rule applies
+it re-encodes the document through float64 numbers, which would change only
+an integer above 2^53, a size no field of the schema reaches. A host that
+serves a review document beside its tile document serves this normalised
+document, so the two views agree. The conversion is deterministic, and the
+round trip returns the normalised document exactly (compared as JSON
+values), except the retired per-section and per-risk tiles, which it drops.
+It takes about a millisecond for a typical stored review. It fails, and a
+host can fall back to the full review, only for a document it cannot split:
 another schema, a field the review schema does not define (the stored schema
-is closed, and a field the converter does not know would be lost), a
-repeated section ID or more than one current mechanical section.
+is closed, and a field the converter does not know would be lost), a key of
+a decoded object written in another case than the schema writes it, or a
+repeated section ID.
 
 - The overview tile holds the summary's text, change kind, release note,
   breaking change and attention; its title is the pull request's.
@@ -707,7 +726,9 @@ repeated section ID or more than one current mechanical section.
   pending or failed gives a pending or failed tile, and an obsolete section
   still marked pending a failed one.
 - The current mechanical section, with its summary, attention and remaining
-  blocks, and the unassigned hunks make the `everything_else` tile.
+  blocks, and the unassigned hunks make the `everything_else` tile. The
+  schema allows one mechanical section, but a stored review can hold more;
+  any after the first become change tiles.
 - Obsolete sections become change tiles in a collapsed "Obsolete changes"
   group; their blocks do not move, and they cover no hunks.
 - The risks tile ranks the active risks of current changes by tier, then by
@@ -724,27 +745,37 @@ repeated section ID or more than one current mechanical section.
   within a score, otherwise document order; a document without scores keeps
   its order.
 - A risk, evidence or decision ID need only be unique within its section in
-  `baum.review/1`, but must be unique across a tile document. The first
-  occurrence keeps its ID; each later one becomes its ID, an underscore and
-  its section's ID without `sec_` (`ShortenIdentifier` applied, and a numeric
-  suffix when that name is taken or occurs anywhere in the document), with
-  `origin` recording its section and original ID. Within that section only,
-  prose and structured references (attention refs, behaviour step evidence)
-  to the original ID are rewritten, as whole tokens, to the section's own
-  item: the first one with that ID. The risk score and the section's derived
-  fields stay as they were and name a risk by its section and original ID.
-  The full review still resolves a repeated ID to its first occurrence, so
-  the two pages can differ on such an ID.
+  `baum.review/1`. In a tile document, risk and evidence IDs are unique
+  across the document, and decision IDs among the decisions tile's items:
+  an obsolete section keeps its blocks, so its decisions keep their IDs. The
+  first occurrence keeps its ID; each later one becomes its ID, an
+  underscore and its section's ID without `sec_` (`ShortenIdentifier`
+  applied, and a numeric suffix when that name is taken or occurs in any
+  string of the document), with `origin` recording its section and original
+  ID. Within that section only, prose and structured references (attention
+  refs, behaviour step evidence) to the original ID are rewritten, as whole
+  tokens, to the section's own item: the first one with that ID. Inline code
+  spans, URLs, paths and verbatim quotes (a decision's rejected alternative
+  and evidence, a prompt anchor's input) are left as written. The risk score
+  and the changes' derived fields stay as they were: `risk_score.reasons[].risk`
+  and `changes[].derived.review_reason.risk` name a risk by its change and
+  original ID, which `Document.RiskIn` resolves. The full review still
+  resolves a repeated ID to its first occurrence, so the two pages can differ
+  on such an ID.
 
-`tiles.CheckConversion` asserts the invariants of a conversion: the tiles
-cover exactly the current hunks, which are the index's; every risk,
-evidence item, block (by kind), decision and image is presented exactly once,
-and the risks tile ranks exactly the active risks of current changes; the
-recommendation and risk score are unchanged, present exactly when they were;
-every active critical or high risk is ranked and the risks and overview
-tiles are on the landing page; every tile is placed once and passes the
-tile checks; and the round trip holds. `tiles.CheckStability` checks that two
-consecutive versions share exactly the change and single tiles both have.
+The test-support package `tiles/tilestest`, which uses only the public API,
+checks conversions. `CheckConversion` asserts the invariants of one: the
+tiles cover exactly the current hunks, which are the index's; every risk
+and evidence item is presented exactly once, and each section's blocks,
+rebuilt from its own tile and the moved items' origins, are the review's in
+order, with the same decisions and images; the risks tile ranks exactly the
+active risks of current changes; the recommendation and risk score are
+unchanged, present exactly when they were, and every risk they name
+resolves; every active critical or high risk is ranked and the risks and
+overview tiles are on the landing page; every tile is placed once and passes
+the tile checks; and the round trip holds. `CheckStability` checks that a
+change two consecutive versions share keeps its tile's ID and type, and that
+the tiles they share are change and single tiles.
 The goldens in `tiles/testdata` cover each shape the conversion handles, and
 `internal/tilescorpus` runs every check over a directory of real review
 stores when `BAUM_TILES_CORPUS` names one, logging only counts.
