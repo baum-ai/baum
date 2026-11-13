@@ -370,12 +370,12 @@ const noVersion: LoadReviewVersion = async () => ({ status: "missing" });
  *  would have to supply. Needs a `UrlStateProvider` above it. */
 export function ReviewViewer<F extends ReviewFile = ReviewFile>(props: ReviewViewerProps<F>) {
   return (
-    <div data-review-page className="flex flex-col">
+    <div data-review-page className="@container/review flex flex-col">
       <ReviewHeader document={props.document} slots={props.header} />
-      {/* No foot from xl: the rail and the side pane fill the window to its
+      {/* No foot once wide: the rail and the side pane fill the window to its
         bottom edge, and a margin under the workspace would push them up by
         its height at the end of the page. */}
-      <div className={cn(REVIEW_GUTTER, "flex flex-1 flex-col pt-3 pb-4 xl:pb-0")}>
+      <div className={cn(REVIEW_GUTTER, "flex flex-1 flex-col pt-3 pb-4 wide:pb-0")}>
         {props.history ? (
           <ReviewWorkspace {...props} view={props.history} />
         ) : (
@@ -389,6 +389,20 @@ export function ReviewViewer<F extends ReviewFile = ReviewFile>(props: ReviewVie
 function OwnHistory<F extends ReviewFile>(props: ReviewViewerProps<F>) {
   const view = useHistoryView(props.document?.review.version, props.loadVersion ?? noVersion);
   return <ReviewWorkspace {...props} view={view} />;
+}
+
+/** The review page's width (in CSS pixels) from which the rail, the review
+ *  pane and the side pane sit side by side: the `wide` variant's container
+ *  query in `viewer.css`, for the code that has to know which layout is
+ *  showing. */
+const WIDE_PX = 1024;
+
+/** Whether the review page holding `element` is wide enough for its columns.
+ *  Measured rather than read from the window, so it agrees with the `wide`
+ *  variant whatever a host puts beside the page. */
+function isWide(element: Element | null | undefined) {
+  const page = element?.closest("[data-review-page]");
+  return page ? page.clientWidth >= WIDE_PX : false;
 }
 
 /** How wide a pane's content may run, centred in the pane. The Summary set
@@ -555,7 +569,7 @@ function ReviewWorkspace<F extends ReviewFile>({
   const railPane = useRef<HTMLElement>(null);
   const navigator = useRef<HTMLDivElement>(null);
   const scrim = useRef<HTMLButtonElement>(null);
-  // Where the panes stack (below xl) the rail and the side pane are sheets
+  // Where the panes stack (below `wide`) the rail and the side pane are sheets
   // over the page, opened from the navigator bar: the rail rather than a
   // screen of rows above the pane, the side pane rather than a second page
   // under it, whose start a reader scrolling the review cannot see coming.
@@ -602,7 +616,7 @@ function ReviewWorkspace<F extends ReviewFile>({
       )
         return;
       event.preventDefault();
-      if (window.matchMedia("(width >= 80rem)").matches) {
+      if (isWide(workspace.current)) {
         if (paneChoice.current.foldSidePane) return;
         if (paneChoice.current.chosenCollapsed) setAsideKeys((n) => n + 1);
         setChatCollapsed(!paneChoice.current.chosenCollapsed);
@@ -613,7 +627,7 @@ function ReviewWorkspace<F extends ReviewFile>({
     };
     window.document.addEventListener("keydown", toggle);
     return () => window.document.removeEventListener("keydown", toggle);
-  }, [setChatCollapsed]);
+  }, [setChatCollapsed, workspace]);
   // Which of its tabs the side pane shows: the host's conversation, the pull
   // request's details, or how it came about. Without a conversation the
   // details stand in for it.
@@ -927,7 +941,7 @@ function ReviewWorkspace<F extends ReviewFile>({
     if (!paneKey || !pane) return;
     const bar = navigator.current;
     const top = pane.getBoundingClientRect().top;
-    // No offset parent: the bar is not displayed, as from xl.
+    // No offset parent: the bar is not displayed, as once wide.
     if (bar?.offsetParent) {
       const below = bar.getBoundingClientRect().bottom;
       if (top < below) scrollerOf(pane).scrollBy({ top: top - below });
@@ -937,16 +951,22 @@ function ReviewWorkspace<F extends ReviewFile>({
   // a file already selected and picked again, or a link out of the side pane.
   useEffect(() => setSheet(null), [selectionKey, fileClick]);
   const closeSheet = () => setSheet(null);
-  // A sheet only exists below xl; one left open across a resize past it would
-  // leave the page behind it inert beside the column it has become.
+  // A sheet only exists while the panes stack; one left open as the page
+  // widens past it, by the window or by a host's sidebar folding, would leave
+  // the page behind it inert beside the column it has become. The page says
+  // which layout it has as `data-review-wide`, for a host's own CSS (its
+  // scroll padding, which counts the navigator bar only while it shows).
   useEffect(() => {
-    const wide = window.matchMedia("(width >= 80rem)");
-    const onChange = () => {
-      if (wide.matches) setSheet(null);
-    };
-    wide.addEventListener("change", onChange);
-    return () => wide.removeEventListener("change", onChange);
-  }, []);
+    const page = workspace.current?.closest("[data-review-page]");
+    if (!page) return;
+    const resized = new ResizeObserver(() => {
+      const wide = isWide(page);
+      page.toggleAttribute("data-review-wide", wide);
+      if (wide) setSheet(null);
+    });
+    resized.observe(page);
+    return () => resized.disconnect();
+  }, [workspace]);
   useEffect(() => {
     if (!sheet) return;
     const pane = sheet === "rail" ? railPane.current : conversationPane.current;
@@ -954,7 +974,7 @@ function ReviewWorkspace<F extends ReviewFile>({
     // A modal in all but name: everything but the sheet and its scrim is
     // inert while it is open, so neither a keyboard nor a screen reader can
     // reach the page it covers. The sheet stays where it is in the document
-    // (from xl the same element is a column), so rather than a dialog, each
+    // (once wide the same element is a column), so rather than a dialog, each
     // of its ancestors' other children is made inert, and only those this
     // sheet made inert are released.
     const keep = new Set<Element | null>([pane, scrim.current]);
@@ -1299,7 +1319,7 @@ function ReviewWorkspace<F extends ReviewFile>({
         ]
       : []),
   ];
-  // What the tabs' dots flag, in words for the bar's button below xl.
+  // What the tabs' dots flag, in words for the bar's button while the panes stack.
   const barAlert =
     [
       checksFailing ? "CI checks failing" : null,
@@ -1347,12 +1367,11 @@ function ReviewWorkspace<F extends ReviewFile>({
   }, []);
   const asideLabel = conversation ? "Conversation" : "Details";
   // The tabs and the fold share the pane's first line, the fold leading (at
-  // the end it read as a step to the next tab); folding only exists from xl
-  // up, where the panes sit side by side. Below xl the pane is a sheet, and
+  // the end it read as a step to the next tab); folding only exists once wide, where the panes sit side by side. While they stack the pane is a sheet, and
   // the line ends with the way to close it.
   const barHeader = (
     <div className="mb-4 flex flex-none items-end">
-      <span className="box-content hidden h-9 flex-none items-center border-b border-(--border-subtle) pr-1 xl:flex">
+      <span className="box-content hidden h-9 flex-none items-center border-b border-(--border-subtle) pr-1 wide:flex">
         <IconButton
           label={conversation ? "Collapse conversation" : "Collapse side pane"}
           title="Collapse side pane (])"
@@ -1371,7 +1390,7 @@ function ReviewWorkspace<F extends ReviewFile>({
         items={barTabs}
         className="min-w-0 flex-1"
       />
-      <span className="box-content flex h-9 flex-none items-center border-b border-(--border-subtle) xl:hidden">
+      <span className="box-content flex h-9 flex-none items-center border-b border-(--border-subtle) wide:hidden">
         <CloseButton
           label={`Close ${asideLabel.toLowerCase()}`}
           className="h-9 w-9"
@@ -1402,8 +1421,8 @@ function ReviewWorkspace<F extends ReviewFile>({
   // The panes' columns: the rail, the review pane, and the side pane or the
   // strip it folds to.
   const columns = chatCollapsed
-    ? "xl:grid-cols-[var(--rail-width)_minmax(0,1fr)_3rem]"
-    : "xl:grid-cols-[var(--rail-width)_minmax(0,1fr)_10px_var(--conversation-width)]";
+    ? "wide:grid-cols-[var(--rail-width)_minmax(0,1fr)_3rem]"
+    : "wide:grid-cols-[var(--rail-width)_minmax(0,1fr)_10px_var(--conversation-width)]";
   const columnStyle = {
     "--rail-width": `${rail.width}px`,
     "--conversation-width": `${split.width}px`,
@@ -1483,7 +1502,7 @@ function ReviewWorkspace<F extends ReviewFile>({
                 // own padding would otherwise stack up to a tenth of the width.
                 // Stacked, the one column is the window's width: an `auto` track
                 // would grow to the bar's untruncated title and widen the page.
-                "-mx-4 grid flex-1 grid-cols-[minmax(0,1fr)] items-start border-y border-(--border-default) bg-(--surface-card) sm:mx-0 sm:border-x xl:items-stretch",
+                "-mx-4 grid flex-1 grid-cols-[minmax(0,1fr)] items-start border-y border-(--border-default) bg-(--surface-card) sm:mx-0 sm:border-x wide:items-stretch",
                 columns,
               )}
             >
@@ -1516,23 +1535,23 @@ function ReviewWorkspace<F extends ReviewFile>({
                   type="button"
                   aria-label={sheetOpen ? "Close sections" : `Close ${asideLabel.toLowerCase()}`}
                   onClick={closeSheet}
-                  className="fixed inset-0 z-(--z-sheet) bg-(--surface-scrim) xl:hidden"
+                  className="fixed inset-0 z-(--z-sheet) bg-(--surface-scrim) wide:hidden"
                 />
               ) : null}
               <nav
                 ref={railPane}
                 id="review-rail"
                 aria-label="Review sections"
-                // Below xl a sheet from the bottom of the window, `hidden` while
-                // closed so its rows leave the tab order with it; from xl the
+                // While the panes stack, a sheet from the bottom of the window, `hidden` while
+                // closed so its rows leave the tab order with it; once wide the
                 // column beside the pane, under the head's bar.
                 className={cn(
                   "fixed inset-x-0 bottom-0 z-(--z-sheet) max-h-[80dvh] min-w-0 overflow-x-hidden overflow-y-auto border-t border-(--border-default) bg-(--surface-card) px-4 pt-4 pb-[max(1rem,env(safe-area-inset-bottom))] shadow-(--shadow-overlay)",
-                  "xl:sticky xl:inset-x-auto xl:top-12 xl:bottom-auto xl:z-auto xl:block xl:h-[calc(100cqh-3rem)] xl:max-h-none xl:self-start xl:border-t-0 xl:bg-transparent xl:p-4 xl:shadow-none",
+                  "wide:sticky wide:inset-x-auto wide:top-12 wide:bottom-auto wide:z-auto wide:block wide:h-[calc(100cqh-3rem)] wide:max-h-none wide:self-start wide:border-t-0 wide:bg-transparent wide:p-4 wide:shadow-none",
                   sheetOpen ? "block" : "hidden",
                 )}
               >
-                <div className="absolute top-1 right-2 xl:hidden">
+                <div className="absolute top-1 right-2 wide:hidden">
                   <CloseButton label="Close sections" className="h-10 w-10" onClick={closeSheet} />
                 </div>
                 <SideNavGroup label="Review">
@@ -1830,7 +1849,7 @@ function ReviewWorkspace<F extends ReviewFile>({
                 ref={reviewPane}
                 id="review-section"
                 aria-label={paneLabel}
-                className="relative flex min-h-[22rem] min-w-0 flex-col border-b border-(--border-subtle) p-4 sm:p-5 xl:min-h-0 xl:border-b-0 xl:border-l"
+                className="relative flex min-h-[22rem] min-w-0 flex-col border-b border-(--border-subtle) p-4 sm:p-5 wide:min-h-0 wide:border-b-0 wide:border-l"
               >
                 {/* Laid over the pane's left border rather than given a column, so
               the rail and the pane keep their places and only gain a grip. */}
@@ -1914,7 +1933,7 @@ function ReviewWorkspace<F extends ReviewFile>({
                   ) : (
                     <>
                       <CardHeader size="pane" title={paneLabel} />
-                      <div className="min-h-0 flex-1 xl:overflow-y-auto">
+                      <div className="min-h-0 flex-1 wide:overflow-y-auto">
                         {placeholder ?? (
                           <Empty title="No review document">There is no review to show yet.</Empty>
                         )}
@@ -1942,23 +1961,24 @@ function ReviewWorkspace<F extends ReviewFile>({
                 id="review-aside"
                 tabIndex={-1}
                 aria-label={conversation ? "Conversation" : "Side pane"}
-                // Below xl a sheet from the bottom of the window, nearly its full
-                // height so the chat's feed and composer both have room; from xl
+                // While the panes stack, a sheet from the bottom of the window, nearly its full
+                // height so the chat's feed and composer both have room; once wide
                 // the column beside the pane, under the head's bar.
                 className={cn(
                   "fixed inset-x-0 top-[max(3rem,8dvh)] bottom-0 z-(--z-sheet) min-w-0 flex-col overflow-hidden outline-none border-t border-(--border-default) bg-(--surface-aside) p-4 pb-[max(1rem,env(safe-area-inset-bottom))] shadow-(--shadow-overlay) sm:p-5",
-                  "xl:sticky xl:inset-x-auto xl:top-12 xl:bottom-auto xl:z-auto xl:flex xl:h-(--review-visible) xl:self-start xl:border-t-0 xl:shadow-none",
+                  "wide:sticky wide:inset-x-auto wide:top-12 wide:bottom-auto wide:z-auto wide:flex wide:h-(--review-visible) wide:self-start wide:border-t-0 wide:shadow-none",
                   asideOpen ? "flex" : "hidden",
-                  chatCollapsed && "xl:items-center xl:px-0 xl:py-2",
+                  chatCollapsed && "wide:items-center wide:px-0 wide:py-2",
                 )}
               >
                 {/* The folded strip: a way back, then one glyph per tab, each still
-              carrying the state its tab reports. Only from xl up — below it
+              carrying the state its tab reports. Only once wide — while stacked
               the panes stack, and there is nothing to fold away from. */}
                 <div
                   className={cn(
                     "hidden",
-                    chatCollapsed && "xl:flex xl:flex-none xl:flex-col xl:items-center xl:gap-1",
+                    chatCollapsed &&
+                      "wide:flex wide:flex-none wide:flex-col wide:items-center wide:gap-1",
                   )}
                 >
                   <IconButton
@@ -1998,7 +2018,7 @@ function ReviewWorkspace<F extends ReviewFile>({
                 </div>
                 <div
                   className={cn(
-                    chatCollapsed ? "flex min-h-0 flex-1 flex-col xl:hidden" : "contents",
+                    chatCollapsed ? "flex min-h-0 flex-1 flex-col wide:hidden" : "contents",
                   )}
                 >
                   {barHeader}
@@ -2014,7 +2034,7 @@ function ReviewWorkspace<F extends ReviewFile>({
                 chat's feed does; their parts query the pane's width. */}
                   <div
                     {...tabPanelProps("conversation", "details", barTab === "details")}
-                    className="@container min-h-0 flex-1 overflow-y-auto xl:-mr-2 xl:pr-2"
+                    className="@container min-h-0 flex-1 overflow-y-auto wide:-mr-2 wide:pr-2"
                   >
                     {barTab === "details" ? (
                       barDocument ? (
@@ -2038,7 +2058,7 @@ function ReviewWorkspace<F extends ReviewFile>({
                   {hideActivity ? null : (
                     <div
                       {...tabPanelProps("conversation", "activity", barTab === "activity")}
-                      className="@container min-h-0 flex-1 overflow-y-auto xl:-mr-2 xl:pr-2"
+                      className="@container min-h-0 flex-1 overflow-y-auto wide:-mr-2 wide:pr-2"
                     >
                       {barTab === "activity" ? (
                         barDocument ? (
@@ -2088,7 +2108,7 @@ function ReviewWorkspace<F extends ReviewFile>({
                   {comments ? (
                     <div
                       {...tabPanelProps("conversation", "comments", barTab === "comments")}
-                      className="@container min-h-0 flex-1 overflow-y-auto xl:-mr-2 xl:pr-2"
+                      className="@container min-h-0 flex-1 overflow-y-auto wide:-mr-2 wide:pr-2"
                     >
                       {/* Kept mounted while another tab shows, so a comment
                     being written survives a look at Details or Activity. */}

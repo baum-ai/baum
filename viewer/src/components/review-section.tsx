@@ -193,7 +193,7 @@ export function ReviewSection({
           </>
         }
       />
-      <div className="min-h-0 flex-1 space-y-7 xl:overflow-y-auto">
+      <div className="min-h-0 flex-1 space-y-7 wide:overflow-y-auto">
         {section.summary && (
           <div className="space-y-2">
             <Markdown className={PROSE}>{section.summary.text}</Markdown>

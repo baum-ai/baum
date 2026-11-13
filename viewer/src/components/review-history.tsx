@@ -217,14 +217,14 @@ export function ReviewHistory({
       <div
         className={
           compare
-            ? "grid min-h-0 flex-1 gap-5 xl:overflow-hidden 2xl:grid-cols-2 2xl:divide-x 2xl:divide-(--border-subtle)"
+            ? "grid min-h-0 flex-1 gap-5 wide:overflow-hidden 2xl:grid-cols-2 2xl:divide-x 2xl:divide-(--border-subtle)"
             : "contents"
         }
       >
         {(!selection || compare) && (
           <div
             className={
-              compare ? "flex min-h-0 min-w-0 flex-col xl:overflow-hidden 2xl:pr-5" : "contents"
+              compare ? "flex min-h-0 min-w-0 flex-col wide:overflow-hidden 2xl:pr-5" : "contents"
             }
           >
             {compare && (
@@ -239,7 +239,7 @@ export function ReviewHistory({
           <section
             aria-label={`Historical ${compare ? "comparison" : "view"} v${selection.version}`}
             className={cn(
-              "flex min-h-0 min-w-0 flex-1 flex-col xl:overflow-hidden",
+              "flex min-h-0 min-w-0 flex-1 flex-col wide:overflow-hidden",
               compare && "2xl:pl-5",
             )}
           >

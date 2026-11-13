@@ -167,7 +167,7 @@ export function SessionList({
     return (
       <>
         <CardHeader size="pane" title={own.label} />
-        <div className="min-h-0 flex-1 xl:overflow-y-auto">{own.renderPane()}</div>
+        <div className="min-h-0 flex-1 wide:overflow-y-auto">{own.renderPane()}</div>
       </>
     );
   }
@@ -243,7 +243,9 @@ export function SessionList({
             ))}
           </ul>
         ) : null}
-        <div className="min-h-0 flex-1 xl:overflow-y-auto">{renderSession(session, focusTurn)}</div>
+        <div className="min-h-0 flex-1 wide:overflow-y-auto">
+          {renderSession(session, focusTurn)}
+        </div>
       </>
     );
   }
@@ -262,7 +264,7 @@ export function SessionList({
         }
       />
       {note ? <p className="pb-3 text-base text-(--text-secondary)">{note}</p> : null}
-      <div className="min-h-0 flex-1 xl:overflow-y-auto">
+      <div className="min-h-0 flex-1 wide:overflow-y-auto">
         {total === 0 ? (
           <Empty title="No agent sessions">{empty}</Empty>
         ) : (

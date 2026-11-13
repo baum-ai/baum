@@ -69,7 +69,7 @@ export function ReviewRisk({
           </>
         }
       />
-      <div className="min-h-0 flex-1 xl:overflow-y-auto">
+      <div className="min-h-0 flex-1 wide:overflow-y-auto">
         <div className="w-full min-w-0 space-y-7">
           <div className="space-y-2">
             <Markdown className={PROSE}>{risk.text}</Markdown>

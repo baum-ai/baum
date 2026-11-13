@@ -78,7 +78,7 @@ export function ChangesOverview({
           </>
         }
       />
-      <div className="min-h-0 flex-1 xl:overflow-y-auto">
+      <div className="min-h-0 flex-1 wide:overflow-y-auto">
         {visible.length === 0 ? (
           <None>
             {document.sections.length === 0
@@ -210,7 +210,7 @@ export function RisksOverview({
             : "Medium and low risks read with the section they belong to."
         }
       />
-      <div className="min-h-0 flex-1 xl:overflow-y-auto">
+      <div className="min-h-0 flex-1 wide:overflow-y-auto">
         {risks.length === 0 ? (
           <None>No critical or high risk was identified in this review.</None>
         ) : (
