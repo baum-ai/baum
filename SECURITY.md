@@ -1529,8 +1529,9 @@ data.
 - Importing a tile type file (`POST /api/tile-type-files/check`, then `POST
   /api/tile-type-files`, from Settings › Tile library) treats the file as
   untrusted. It is refused past 3 MiB, nested deeper than 64 levels or holding
-  more than 200,000 JSON values (checked before it is decoded), holding a NUL,
-  with a member a tile type file does not have or a schema other than
+  more than 200,000 JSON values (checked before it is decoded), holding a NUL or not valid UTF-8,
+  with a member a tile type file does not have (at any level, a sample's
+  included) or a schema other than
   `baum.tile-type/1`; its definition must pass the definition checks (shape,
   UTF-8, dialect, a supported kit) and the kit's lint without an error, its
   samples must validate and cite only their own hunks and items, and its name
@@ -1543,8 +1544,23 @@ data.
   the file's definition in the frame registry once it has passed every check.
   This is the one registration of something a request carries: it is the
   person's own file pick, sent by the authenticated app, which already holds
-  that HTML, and the frame is the same sandbox as every custom tile's. An
-  imported type is marked "Not checked yet" until a render check runs on it.
+  that HTML, and the frame is the same sandbox as every custom tile's.
+  Bidirectional controls, zero-width characters and Unicode tag characters
+  are removed from the title, use-when line, fill instructions, glance and
+  review checks on import and on every save (the stored text and its digest
+  never hold them), and a path with a control or invisible character is
+  refused; the review checks are at most 1,500 characters. The dialog shows
+  the fill instructions, glance and review checks, labelled as instructions
+  given to the review agent. An import then runs the render check
+  (`tilechecks.Checker.ImportCheck`) on the file's first three samples in the
+  app's sandboxed frames: a type that fails or hangs is refused. When no
+  runner takes the check (the app is closed or cannot draw tiles) the type is
+  saved marked "Not checked yet", which is all that mark means: it is saved
+  and previewable, but no render check ran on it. Its first preview with a
+  runner available runs the check in the background once per daemon run and
+  marks it checked on a pass; a failed deferred check leaves the mark. The
+  check draws the type's HTML in the same sandbox as any custom tile; it does
+  not read the type's content for instructions.
   An exported file holds the type's synthetic samples and no review content.
 - A review keeps the definition it was made with: its library tiles embed
   the full definition, so editing or deleting a saved type changes no saved

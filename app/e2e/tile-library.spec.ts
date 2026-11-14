@@ -186,7 +186,8 @@ test("exports a type to a file and imports it back", async ({ page }) => {
     await expect(dialog).toHaveCount(0);
     await expect(page).toHaveURL(/type=interface_changes_2/);
     await expect(pane(page)).toContainText("Imported");
-    await expect(pane(page)).toContainText("Not checked yet");
+    // The app is open and draws the samples, so the import's render check ran.
+    await expect(pane(page)).not.toContainText("Not checked yet");
     await pane(page).locator("[data-preview-frame]").first().scrollIntoViewIfNeeded();
     await expect(pane(page).locator("[data-preview-frame]").first()).toHaveAttribute(
       "data-frame-state",

@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strings"
 	"testing/fstest"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/baum-ai/baum/tiles"
@@ -117,6 +118,9 @@ func IsSynthetic(s library.Sample) bool {
 
 // Prepared is a change that passed every check, in the form it is stored.
 type Prepared struct {
+	// Change is the change as stored: invisible characters removed from its
+	// texts, its definition sealed again.
+	Change Change
 	Entry  library.Entry
 	Paths  []string
 	Origin string
@@ -130,6 +134,10 @@ func (p Prepared) Name() string { return p.Entry.Definition.Name }
 // types pass applies (library.Check), and the name, paths, samples and
 // origin are checked besides. A problem names the place, never the content.
 func Prepare(c Change) (Prepared, error) {
+	c, err := sanitize(c)
+	if err != nil {
+		return Prepared{}, errors.New("The definition is not a JSON object")
+	}
 	sealed, err := sealRaw(c.Definition)
 	if err != nil {
 		return Prepared{}, errors.New("The definition is not a JSON object")
@@ -151,8 +159,8 @@ func Prepare(c Change) (Prepared, error) {
 		return Prepared{}, fmt.Errorf("A tile type has at most %d paths", MaxPaths)
 	}
 	for _, p := range c.Paths {
-		if p == "" || utf8.RuneCountInString(p) > MaxPathLength || strings.ContainsAny(p, "\x00\r\n") || !utf8.ValidString(p) {
-			return Prepared{}, fmt.Errorf("A path is a glob of 1 to %d characters on one line", MaxPathLength)
+		if p == "" || utf8.RuneCountInString(p) > MaxPathLength || !utf8.ValidString(p) || strings.ContainsFunc(p, func(r rune) bool { return unicode.IsControl(r) || Invisible(r) }) {
+			return Prepared{}, fmt.Errorf("A path is a glob of 1 to %d characters on one line, with no control or invisible characters", MaxPathLength)
 		}
 	}
 	if n := len(c.Samples); n < 1 || n > MaxSamples {
@@ -174,7 +182,7 @@ func Prepare(c Change) (Prepared, error) {
 	if problems := library.Check(entry); len(problems) > 0 {
 		return Prepared{}, refuse("tile type", problems)
 	}
-	return Prepared{Entry: entry, Paths: slices.Clone(c.Paths), Origin: c.Origin}, nil
+	return Prepared{Change: c, Entry: entry, Paths: slices.Clone(c.Paths), Origin: c.Origin}, nil
 }
 
 func refuse(what string, problems []string) error {

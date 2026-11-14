@@ -803,7 +803,7 @@ func localApplication(paths daemon.Paths, log *slog.Logger) func(context.Context
 				Publish:    func(event tilechecks.Event) { _ = server.Publish("tile_check", event) },
 				Subscribed: server.Subscribed})
 		}
-		local := uiserver.LocalAPI{TileChecks: tileChecks.Handler(), Console: consoleRoutes, GitHubAuth: githubConnection.Handler(), Registry: registry, Config: cfg, PRs: uiserver.DiscoveryHandler(registry, askedRefresh{discover, worker.Asked}, changed), Index: inboxQueue.CountHandler(index.Handler()), Inbox: inboxQueue.Handler(), Jobs: queue.Handler(), Chat: uiserver.ChatHandler(registry, queue), Background: worker.Handler(), Automatic: scheduler.Handler(), Live: liveAPI, AgentRequests: requestsAPI, Clones: clones.Handler(), GitHubRepositories: pickList.Handler(), CurrentName: currentName(githubClient), PlanUsage: plans.Handler(), PlanUsageCached: func() []json.RawMessage {
+		local := uiserver.LocalAPI{TileChecks: tileChecks.Handler(), TileImportCheck: tileChecks.ImportCheck, Console: consoleRoutes, GitHubAuth: githubConnection.Handler(), Registry: registry, Config: cfg, PRs: uiserver.DiscoveryHandler(registry, askedRefresh{discover, worker.Asked}, changed), Index: inboxQueue.CountHandler(index.Handler()), Inbox: inboxQueue.Handler(), Jobs: queue.Handler(), Chat: uiserver.ChatHandler(registry, queue), Background: worker.Handler(), Automatic: scheduler.Handler(), Live: liveAPI, AgentRequests: requestsAPI, Clones: clones.Handler(), GitHubRepositories: pickList.Handler(), CurrentName: currentName(githubClient), PlanUsage: plans.Handler(), PlanUsageCached: func() []json.RawMessage {
 			var cached []json.RawMessage
 			for _, plan := range plans.Cached() {
 				if raw, err := json.Marshal(plan); err == nil {

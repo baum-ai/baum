@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	baumschema "github.com/baum-ai/baum/schema"
 	"github.com/baum-ai/baum/tiles"
@@ -126,6 +127,9 @@ func ReadFile(raw []byte) (Change, error) {
 	if len(raw) > MaxFileBytes {
 		return Change{}, refuseFile("The file is larger than %d MiB", MaxFileBytes>>20)
 	}
+	if !utf8.Valid(raw) {
+		return Change{}, refuseFile("The file is not valid UTF-8: it is not a tile type file")
+	}
 	if bytes.IndexByte(raw, 0) >= 0 {
 		return Change{}, refuseFile("The file holds a NUL byte: it is not a tile type file")
 	}
@@ -175,10 +179,12 @@ func ReadFile(raw []byte) (Change, error) {
 	}
 	c := Change{Definition: sealed, Glance: f.Glance, ReviewChecks: f.ReviewChecks, AppliesWith: f.AppliesWith,
 		Paths: f.Paths, Samples: f.Samples, Origin: OriginImport}
-	if _, err := Prepare(c); err != nil {
+	p, err := Prepare(c)
+	if err != nil {
 		return Change{}, &FileError{Reason: err.Error()}
 	}
-	return c, nil
+	// The change as stored: invisible characters are removed from its texts.
+	return p.Change, nil
 }
 
 // decodeProblem says where a strict decode failed, without the content.

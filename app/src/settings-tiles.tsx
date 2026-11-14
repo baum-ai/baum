@@ -517,6 +517,7 @@ function ImportDialog({
       <div className="local-panel settings-list">
         <Row label="Title">{check.title}</Row>
         <Row label="Use when">{check.use_when || "No use-when line"}</Row>
+        <Row label="Glance">{check.glance || "No glance line"}</Row>
         <Row label="Paths">
           {check.paths.length === 0 ? (
             "Every pull request"
@@ -533,6 +534,15 @@ function ImportDialog({
           <p className="settings-row-detail">Given to the review agent when this type is filled.</p>
           <pre data-import-fill="">{check.fill}</pre>
         </div>
+        {check.review_checks ? (
+          <div className="tile-type-fill">
+            <span className="settings-row-label">Review checks</span>
+            <p className="settings-row-detail">
+              Instructions given to the review agent: what the review checks when this type applies.
+            </p>
+            <pre data-import-review-checks="">{check.review_checks}</pre>
+          </div>
+        ) : null}
       </div>
       <section aria-labelledby="tile-import-preview" className="tile-type-block">
         <h3 id="tile-import-preview" className="settings-subhead">

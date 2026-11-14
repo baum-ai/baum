@@ -8,7 +8,9 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/baum-ai/baum/internal/appdb/appdbtest"
 	"github.com/baum-ai/baum/internal/repos"
@@ -47,6 +49,13 @@ type libraryAPI struct {
 
 func newLibraryAPI(t *testing.T) libraryAPI {
 	t.Helper()
+	return newLibraryAPIChecking(t, nil)
+}
+
+// newLibraryAPIChecking is newLibraryAPI with the render check an import and
+// a first preview run on its samples.
+func newLibraryAPIChecking(t *testing.T, check tilelibrary.SampleCheck) libraryAPI {
+	t.Helper()
 	dir := appdbtest.TempDir(t)
 	registry, err := repos.Open(filepath.Join(dir, "app.sqlite"))
 	if err != nil {
@@ -54,7 +63,7 @@ func newLibraryAPI(t *testing.T) libraryAPI {
 	}
 	t.Cleanup(func() { _ = registry.Close() })
 	store := &tilelibrary.Store{Path: filepath.Join(dir, "app.sqlite")}
-	handler := LocalAPI{Registry: registry, TileTypes: store}.Handler()
+	handler := LocalAPI{Registry: registry, TileTypes: store, TileImportCheck: check}.Handler()
 	t.Cleanup(handler.Close)
 	return libraryAPI{t: t, handler: handler, store: store, registry: registry}
 }
@@ -273,5 +282,86 @@ func TestTileTypeFileRoutes(t *testing.T) {
 	}
 	if code := to.do("GET", "/api/tile-types/nothing/export", "", nil); code != 404 {
 		t.Errorf("export of an unknown type: %d", code)
+	}
+}
+
+// An import runs the render check when a runner is there and saves the type
+// checked; a failed check refuses it; with no runner it is saved "Not checked
+// yet", and its first preview, once a runner is there, runs the check in the
+// background and marks it checked.
+func TestImportRunsTheRenderCheckAndPreviewCompletesIt(t *testing.T) {
+	ctx := context.Background()
+	from := newLibraryAPI(t)
+	if _, err := from.store.Create(ctx, savedChange(t, "checked_import", "Checked on import"), nil); err != nil {
+		t.Fatal(err)
+	}
+	w := httptest.NewRecorder()
+	from.handler.ServeHTTP(w, httptest.NewRequest("GET", "/api/tile-types/checked_import/export", nil))
+	body, _ := json.Marshal(map[string]string{"file": w.Body.String()})
+
+	verdict, runner := tilelibrary.VerdictPass, true
+	var mu sync.Mutex
+	calls := 0
+	to := newLibraryAPIChecking(t, func(_ context.Context, entry library.Entry) (string, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		calls++
+		if len(entry.Samples) == 0 {
+			t.Error("checked without samples")
+		}
+		if !runner {
+			return "", tilelibrary.ErrNoRunner
+		}
+		return verdict, nil
+	})
+	var imported tilelibrary.Imported
+	if code := to.do("POST", "/api/tile-type-files", string(body), &imported); code != 200 || !imported.Checked || calls != 1 {
+		t.Fatalf("with a runner: %d %+v, %d checks", code, imported, calls)
+	}
+
+	// A failed check refuses the file.
+	mu.Lock()
+	verdict = "fail"
+	mu.Unlock()
+	var refusal struct{ Message string }
+	if code := to.do("POST", "/api/tile-type-files", string(body), &refusal); code != 400 || !strings.Contains(refusal.Message, "render check") {
+		t.Fatalf("a failed check: %d %+v", code, refusal)
+	}
+
+	// With no runner the type is saved not checked yet, and a preview with
+	// no runner leaves it so.
+	mu.Lock()
+	runner = false
+	mu.Unlock()
+	if code := to.do("POST", "/api/tile-type-files", string(body), &imported); code != 200 || imported.Checked || imported.Name != "checked_import_2" {
+		t.Fatalf("without a runner: %d %+v", code, imported)
+	}
+	unchecked := func() bool {
+		var list struct{ Types []tileTypeSummary }
+		to.do("GET", "/api/tile-types", "", &list)
+		for _, s := range list.Types {
+			if s.Name == "checked_import_2" {
+				return !s.Checked
+			}
+		}
+		t.Fatal("type missing")
+		return false
+	}
+	if code := to.do("GET", "/api/tile-types/checked_import_2/preview", "", nil); code != 200 || !unchecked() {
+		t.Fatalf("preview without a runner: %d", code)
+	}
+	// A runner appears: the next preview checks it in the background.
+	mu.Lock()
+	runner, verdict = true, tilelibrary.VerdictPass
+	mu.Unlock()
+	deadline := time.Now().Add(10 * time.Second)
+	for unchecked() {
+		if time.Now().After(deadline) {
+			t.Fatal("the preview never checked the type")
+		}
+		if code := to.do("GET", "/api/tile-types/checked_import_2/preview", "", nil); code != 200 {
+			t.Fatalf("preview: %d", code)
+		}
+		time.Sleep(50 * time.Millisecond)
 	}
 }

@@ -18,6 +18,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"golang.org/x/sync/singleflight"
 
@@ -62,7 +63,16 @@ type TileSettings struct {
 	// Types are saved tile type names (tilelibrary), at most
 	// MaxPinnedTileTypes, each once.
 	Types []string `json:"types,omitempty"`
+	// Text is what the person told baum about the repository's reviews, at
+	// most MaxTileTextChars characters.
+	Text string `json:"text,omitempty"`
+	// Pins are tile types (single tile types, or library type names) the
+	// repository always shows, at most MaxPinnedTileTypes, each once.
+	Pins []string `json:"pins,omitempty"`
 }
+
+// MaxTileTextChars is the longest TileSettings.Text.
+const MaxTileTextChars = 1000
 
 // tileTypeName is a saved tile type's name, as the tile library takes it.
 var tileTypeName = regexp.MustCompile(`^[a-z][a-z0-9_]{0,63}$`)
@@ -78,6 +88,20 @@ func (s Settings) Validate() error {
 	if s.Tiles == nil {
 		return nil
 	}
+	if utf8.RuneCountInString(s.Tiles.Text) > MaxTileTextChars {
+		return fmt.Errorf("tiles.text is at most %d characters", MaxTileTextChars)
+	}
+	if len(s.Tiles.Pins) > MaxPinnedTileTypes {
+		return ErrTooManyPins
+	}
+	for i, name := range s.Tiles.Pins {
+		if !tileTypeName.MatchString(name) {
+			return errors.New("a pin is a tile type's name: a lowercase letter, then lowercase letters, digits and underscores")
+		}
+		if slices.Contains(s.Tiles.Pins[:i], name) {
+			return errors.New("a tile type is pinned once")
+		}
+	}
 	if len(s.Tiles.Types) > MaxPinnedTileTypes {
 		return ErrTooManyPins
 	}
@@ -92,8 +116,10 @@ func (s Settings) Validate() error {
 	return nil
 }
 
-// empty reports settings that choose nothing.
-func (t TileSettings) empty() bool { return len(t.Types) == 0 }
+// empty reports settings that choose nothing: every field is empty.
+func (t TileSettings) empty() bool {
+	return len(t.Types) == 0 && t.Text == "" && len(t.Pins) == 0
+}
 
 // PinnedTileTypes is the tile types the settings pin, never nil.
 func (s Settings) PinnedTileTypes() []string {

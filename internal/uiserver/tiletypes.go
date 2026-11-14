@@ -6,6 +6,8 @@ import (
 	"errors"
 	"net/http"
 	"regexp"
+	"sync"
+	"time"
 
 	"github.com/baum-ai/baum/internal/agentcontext"
 	"github.com/baum-ai/baum/internal/tilelibrary"
@@ -183,6 +185,7 @@ func (a LocalAPI) tileTypePreview(w http.ResponseWriter, r *http.Request) {
 			}
 			return
 		}
+		a.checkOnFirstPreview(r.Context(), name)
 	}
 	samples := make([]string, len(entry.Samples))
 	for i, s := range entry.Samples {
@@ -218,4 +221,44 @@ func (a LocalAPI) tileTypePreview(w http.ResponseWriter, r *http.Request) {
 		"samples":    samples, "sample": sample.Name, "data": sample.Data,
 		"refs": map[string]any{"glance": glance, "detail": detail},
 	})
+}
+
+// previewChecked holds the digests whose deferred render check has run or
+// is running in this daemon: each is tried once, unless it found no runner.
+var previewChecked sync.Map
+
+// previewCheckTimeout bounds one deferred render check.
+const previewCheckTimeout = 2 * time.Minute
+
+// checkOnFirstPreview runs the render check, in the background, on a saved
+// type imported while no runner was available ("Not checked yet"), the first
+// time a person previews it with a runner there. A pass marks the type
+// checked (Store.MarkChecked). A failed check changes nothing: the type
+// stays "Not checked yet", and is not tried again until the daemon restarts.
+// A check that finds no runner or a busy queue is tried at the next preview.
+func (a LocalAPI) checkOnFirstPreview(ctx context.Context, name string) {
+	if a.TileImportCheck == nil {
+		return
+	}
+	saved, err := a.TileTypes.Get(ctx, name)
+	if err != nil || !saved.Unchecked {
+		return
+	}
+	digest, entry := saved.Entry.Definition.Digest, saved.Entry
+	if _, running := previewChecked.LoadOrStore(digest, true); running {
+		return
+	}
+	check, store := a.TileImportCheck, a.TileTypes
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), previewCheckTimeout)
+		defer cancel()
+		verdict, err := check(ctx, entry)
+		if err != nil {
+			previewChecked.Delete(digest)
+			return
+		}
+		if verdict == tilelibrary.VerdictPass {
+			_ = store.MarkChecked(ctx, digest, verdict)
+		}
+	}()
 }

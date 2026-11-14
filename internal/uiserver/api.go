@@ -159,8 +159,10 @@ type LocalAPI struct {
 	// own types preview and the library is empty.
 	TileTypes *tilelibrary.Store
 	// TileImportCheck runs the render check on an imported tile type's
-	// samples. Nil, as on this branch, marks every imported type "Not
-	// checked yet" until the render check marks it (Store.MarkChecked).
+	// samples (tilechecks.Checker.ImportCheck). An import runs it and refuses
+	// a type that fails; with no runner, or nil, the type is saved "Not
+	// checked yet", and the check runs in the background on its first
+	// preview once a runner is there, marking it checked (Store.MarkChecked).
 	TileImportCheck tilelibrary.SampleCheck
 
 	// diagnosticsWaiting is a test hook, called once a request is waiting on

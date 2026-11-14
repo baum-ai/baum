@@ -1941,14 +1941,16 @@ as a download in a browser. **Import…** (the section's heading, and the empty
 library) opens a file picker; the file's text goes to `POST
 api/tile-type-files/check {file}`, which runs every import check without
 saving, and a dialog shows the name it would get (saying so when its own is
-taken and it gets a numeric suffix), the title, use-when line, paths, the fill
-instructions ("Given to the review agent when this type is filled") and its
+taken and it gets a numeric suffix), the title, use-when line, glance, paths,
+the fill instructions ("Given to the review agent when this type is filled"),
+the review checks ("Instructions given to the review agent") and its
 first sample as a glance and a detail in their frames. **Import** sends `POST
 api/tile-type-files {file}`, opens the new type and says so in a toast. A
 refused file names the reason under the heading. An imported version shows a
-**Not checked yet** pill until a render check runs on it (`checked: false` in
-the list and the pane; with no render check runner in this build every import
-is not checked yet).
+**Not checked yet** pill when no render check ran on it (`checked: false` in
+the list and the pane): an import runs the render check on its samples when
+the app can draw them and refuses a type that fails, and with no runner
+available saves it unchecked until its first preview with one.
 
 Every list page draws its list one way: Pull requests, the Inbox's queue, Sessions,
 Jobs, Repositories and Manage inboxes. The page lies on the panel's warm paper

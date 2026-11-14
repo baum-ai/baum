@@ -2026,7 +2026,7 @@ computer by `internal/tilelibrary`, in the private application database
   undelete, and pins (`PUT …/pins`), which write the type's name into each
   picked repository's `repos.Settings.Tiles.Types` (at most 8 a repository,
   `Registry.SetTileTypePins`, one transaction). A repository settings `PUT`
-  without a `tiles` member keeps the stored pins. Pins outlive a deletion, so
+  without a `tiles` member keeps the stored tiles, and one with a `tiles` object merges it per member (`types`, `text`, `pins`: a member left out keeps its stored value, one sent, even empty, replaces it; `tiles: null` clears all). Pins outlive a deletion, so
   Undo brings a type back pinned; a purged type's name may stay pinned until
   the repository's pins change, and names no type.
 - **Export and import.** A type travels as one file, `<name>.baumtile.json`
@@ -2045,10 +2045,16 @@ computer by `internal/tilelibrary`, in the private application database
   `import`. `POST /api/tile-type-files/check` answers what the dialog shows
   and registers the checked definition's frame document; `POST
   /api/tile-type-files` imports. `tile_type_checks (digest, verdict, at)`
-  records an import's render check: `unchecked` ("Not checked yet") unless a
-  `tilelibrary.SampleCheck` (`LocalAPI.TileImportCheck`) passed on its
-  samples; `Store.MarkChecked` is the render check's way to mark a version
-  later, and the sweep removes a verdict with its definition.
+  records an import's render check: `unchecked` ("Not checked yet") unless
+  the `tilelibrary.SampleCheck` (`LocalAPI.TileImportCheck`, the daemon's
+  `tilechecks.Checker.ImportCheck` over the first three samples) passed;
+  a failed check refuses the import, and no runner (`ErrNoRunner`) saves it
+  unchecked. The tile type preview route runs the check in the background
+  for an unchecked type once a runner is there and calls `Store.MarkChecked`
+  on a pass (once per digest per daemon run unless it found no runner), and
+  the sweep removes a verdict with its definition. `Prepare` strips
+  bidirectional, zero-width and tag characters from the title, use-when, fill,
+  glance and review checks (`Invisible`).
 
 ### Tiles
 

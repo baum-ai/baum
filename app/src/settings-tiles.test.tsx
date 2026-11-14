@@ -334,7 +334,7 @@ it("shows what an imported file would add, says it was renamed, and imports it",
     use_when: "A schema changes.",
     fill: "Fill every table, and nothing else.",
     glance: "Tables",
-    review_checks: "",
+    review_checks: "Flag a table dropped without a backup.",
     paths: ["db/**"],
     sizes: ["half"],
     kit: 1,
@@ -371,6 +371,11 @@ it("shows what an imported file would add, says it was renamed, and imports it",
     "Fill every table, and nothing else.",
   );
   expect(dialog.textContent).toContain("db/**");
+  expect(dialog.textContent).toContain("Instructions given to the review agent");
+  expect(dialog.querySelector("[data-import-review-checks]")?.textContent).toBe(
+    "Flag a table dropped without a backup.",
+  );
+  expect(dialog.textContent).toContain("Tables");
   expect(dialog.querySelectorAll("iframe")).toHaveLength(2);
   expect(calls).toContainEqual({
     method: "POST",

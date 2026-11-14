@@ -63,7 +63,7 @@ func (r *Registry) HandlerWith(current CurrentName) http.Handler {
 	}
 	// decodeSettings reads the whole settings object of a PUT. keep is the
 	// stored settings' part a PUT leaves out: its tiles when the object has
-	// no tiles member, so a client that predates them (or a section that
+	// no tiles member (and per member within one), so a client that predates them (or a section that
 	// shows none of them) never drops the pins.
 	decodeSettings := func(w http.ResponseWriter, req *http.Request) (Settings, func(stored, next Settings) Settings, bool) {
 		req.Body = http.MaxBytesReader(w, req.Body, 16<<10)
@@ -88,10 +88,35 @@ func (r *Registry) HandlerWith(current CurrentName) http.Handler {
 			writeStatus(w, http.StatusBadRequest, map[string]string{"message": e.Error()})
 			return Settings{}, nil, false
 		}
-		_, withTiles := fields["tiles"]
+		// tiles merges per member: a body that sends only tiles.types keeps
+		// the stored tiles.text and tiles.pins, and the other way round; a
+		// member sent as null or empty clears it, and tiles: null clears
+		// all.
+		rawTiles, withTiles := fields["tiles"]
+		var tileFields map[string]json.RawMessage
+		_ = json.Unmarshal(rawTiles, &tileFields)
 		keep := func(stored, next Settings) Settings {
-			if !withTiles {
+			switch {
+			case !withTiles:
 				next.Tiles = stored.Tiles
+			case tileFields != nil && stored.Tiles != nil:
+				merged := TileSettings{}
+				if next.Tiles != nil {
+					merged = *next.Tiles
+				}
+				if _, ok := tileFields["types"]; !ok {
+					merged.Types = stored.Tiles.Types
+				}
+				if _, ok := tileFields["text"]; !ok {
+					merged.Text = stored.Tiles.Text
+				}
+				if _, ok := tileFields["pins"]; !ok {
+					merged.Pins = stored.Tiles.Pins
+				}
+				next.Tiles = &merged
+				if merged.empty() {
+					next.Tiles = nil
+				}
 			}
 			return next
 		}
