@@ -83,7 +83,7 @@ func TestEditUndoReset(t *testing.T) {
 		t.Errorf("refused: %+v", change.Refused)
 	}
 	summary := change.State.Summary()
-	if !summary.Edited || !summary.CanUndo || summary.Last == nil || summary.Last.By != "chat" || len(summary.Last.Summary) != 2 {
+	if !summary.Edited || !summary.CanUndo || summary.Last == nil || summary.Last.By != "chat" || len(summary.Last.Summary) != 2 || !slices.Equal(summary.Last.Tiles, []string{"risks", "context"}) {
 		t.Errorf("summary: %+v", summary)
 	}
 	if !slices.Equal(e.seen, []string{pr + "@1"}) {

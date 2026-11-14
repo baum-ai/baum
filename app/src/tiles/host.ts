@@ -1,6 +1,7 @@
 import { createContext, useContext, type ReactNode } from "react";
 import type { ReviewDocument, Section } from "@baum/viewer/review-document";
 import type { Tile } from "./tile-document";
+import type { LayoutControls } from "./your-layout";
 
 /** What the page around the tiles offers them: comments, asking about a
  *  tile, the way to the full review, and the labels a group page puts on a
@@ -22,6 +23,10 @@ export type TileHost = {
    *  tiles' frame documents with the daemon again; a custom tile whose frame
    *  never answered calls it once before mounting the frame afresh. */
   reread?: () => Promise<unknown>;
+  /** The person's own layout of the pull request's tiles: "Your layout" with
+   *  Undo and Reset, Show on a hidden tile, and the tiles a change named.
+   *  Absent on a group, a draft and an earlier version. */
+  layout?: LayoutControls;
 };
 
 const NO_COUNTS: ReadonlyMap<string, number> = new Map();

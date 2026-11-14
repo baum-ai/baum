@@ -535,3 +535,108 @@ describe("a card's menu", () => {
     expect(location.search).toBe("?view=full&pane=section&section=sec_retry_policy");
   });
 });
+
+describe("the person's layout", () => {
+  /** The example's tiles with Context hidden, as a layout edit serves them:
+   *  last, in a collapsed group of its own. */
+  function withHidden(doc: TileDocument, id: string): TileDocument {
+    const entry = doc.layout.entries.find((each) => each.tile === id)!;
+    return {
+      ...doc,
+      origin: { kind: "generated" },
+      layout: {
+        ...doc.layout,
+        entries: [
+          ...doc.layout.entries.filter((each) => each.tile !== id),
+          { tile: id, size: entry.size, group: "hidden" },
+        ],
+        groups: [...doc.layout.groups, { id: "hidden", title: "Hidden tiles", collapse_after: 0 }],
+      },
+    };
+  }
+  const controls = (overrides = {}) => ({
+    edited: true,
+    canUndo: true,
+    lastSummary: ["Removed Context"],
+    undo: vi.fn(),
+    reset: vi.fn(),
+    show: vi.fn(),
+    marked: { id: 1, tiles: new Set(["risks"]) },
+    revision: 1,
+    ...overrides,
+  });
+
+  it("keeps hidden tiles one click away at the end, each with Show", () => {
+    const { review, doc } = pairs.example();
+    const hidden = withHidden(doc, "context");
+    const layout = controls();
+    search = new URLSearchParams();
+    const page = render(
+      <TileHostContext.Provider value={{ draft: false, commentCounts: new Map(), layout }}>
+        <TileLanding
+          ctx={contextFor(hidden, review)}
+          generation={null}
+          memory={{ current: null }}
+        />
+      </TileHostContext.Provider>,
+    );
+    const control = [...page.querySelectorAll("button")].find((b) =>
+      b.textContent?.startsWith("Show 1 hidden tile"),
+    );
+    expect(control?.textContent).toContain("Context");
+    expect(page.querySelector('[data-tile="context"]')).toBeNull();
+    // Opened, the hidden card offers Show.
+    search = new URLSearchParams("expand=hidden");
+    act(() => root!.unmount());
+    const open = render(
+      <TileHostContext.Provider value={{ draft: false, commentCounts: new Map(), layout }}>
+        <TileLanding
+          ctx={contextFor(hidden, review)}
+          generation={null}
+          memory={{ current: null }}
+        />
+      </TileHostContext.Provider>,
+    );
+    const show = open.querySelector<HTMLButtonElement>(
+      '[data-tile="context"] button[aria-label="Show Context in your layout again"]',
+    );
+    expect(show).not.toBeNull();
+    act(() => show!.click());
+    expect(layout.show).toHaveBeenCalledWith("context");
+    // The change's tile is marked; the others are not.
+    expect(open.querySelector('[data-tile="risks"]')?.hasAttribute("data-layout-mark")).toBe(true);
+    expect(open.querySelector('[data-tile="overview"]')?.hasAttribute("data-layout-mark")).toBe(
+      false,
+    );
+    search = new URLSearchParams();
+  });
+
+  it("says Your layout in the band, with Undo and Reset, only while there are edits", () => {
+    const { review, doc } = pairs.example();
+    const layout = controls();
+    const page = render(
+      <TileHostContext.Provider value={{ draft: false, commentCounts: new Map(), layout }}>
+        <TileLanding ctx={contextFor(doc, review)} generation={null} memory={{ current: null }} />
+      </TileHostContext.Provider>,
+    );
+    const group = page.querySelector('[role="group"][aria-label="Your layout"]')!;
+    expect(group.textContent).toContain("Your layout");
+    const undo = group.querySelector<HTMLButtonElement>(
+      'button[aria-label="Undo: Removed Context"]',
+    )!;
+    act(() => undo.click());
+    expect(layout.undo).toHaveBeenCalled();
+    const reset = [...group.querySelectorAll("button")].find((b) => b.textContent === "Reset")!;
+    act(() => reset.click());
+    expect(layout.reset).toHaveBeenCalled();
+    act(() => root!.unmount());
+    const generated = render(
+      <TileHostContext.Provider
+        value={{ draft: false, commentCounts: new Map(), layout: controls({ edited: false }) }}
+      >
+        <TileLanding ctx={contextFor(doc, review)} generation={null} memory={{ current: null }} />
+      </TileHostContext.Provider>,
+    );
+    expect(generated.querySelector('[aria-label="Your layout"]')).toBeNull();
+  });
+});

@@ -1255,7 +1255,8 @@ as before; ops a version drops are counted in the daemon's work statistics
 of their own yet.
 
 - `GET /api/tiles/layout?clone=&pr=` answers `{revision, edited, can_undo,
-  last: {id, by, reset?, summary} | null, batches}`.
+  last: {id, by, reset?, summary, tiles?} | null, batches}`, `tiles` the
+  tiles the newest batch's ops name, which the page marks for a moment.
 - `POST /api/tiles/layout` takes `{clone, pr, action: "edit" | "undo" |
   "reset", ops?, batch?}` and answers the same summary with `applied`,
   `refused` (`{index, reason}`) or `undone`, or 400 with the host's reason

@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"io/fs"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -92,12 +93,14 @@ type Summary struct {
 	Batches int   `json:"batches"`
 }
 
-// Last names the newest batch.
+// Last names the newest batch, and the tiles its ops name, which the page
+// marks briefly.
 type Last struct {
 	ID      string   `json:"id"`
 	By      string   `json:"by"`
 	Reset   bool     `json:"reset,omitempty"`
 	Summary []string `json:"summary"`
+	Tiles   []string `json:"tiles,omitempty"`
 }
 
 // Summary sums the state up.
@@ -110,6 +113,15 @@ func (s State) Summary() Summary {
 		out.Last = &Last{ID: last.ID, By: last.By, Reset: last.Reset, Summary: last.Summary}
 		if out.Last.Summary == nil {
 			out.Last.Summary = []string{}
+		}
+		for _, op := range last.Ops {
+			tile := op.Tile
+			if op.Add != nil {
+				tile = tiles.LibraryTileID(op.Add.Name)
+			}
+			if tile != "" && !slices.Contains(out.Last.Tiles, tile) {
+				out.Last.Tiles = append(out.Last.Tiles, tile)
+			}
 		}
 	}
 	return out

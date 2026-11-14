@@ -113,7 +113,8 @@ A pull request or group:
 
 - `j`, `k`: next and previous item; `⇧J`, `⇧↓`, `→` (`Shift+J`, `Shift+↓` elsewhere): next section; `⇧K`, `⇧↑`, `←` (`Shift+K`, `Shift+↑`): previous section.
 - `Space`: open or close an item's details. `Enter`: open the item.
-- `c`: comment. `v`: send your review. `a`: ask an agent in the session panel.
+- `c`: comment. `v`: send your review. `a`: ask an agent in the session panel (on the tiles page, about the card the keys are on).
+- On the tiles page, `Mod+Z`: undo the last change to the tiles' layout.
 - `]`: toggle the right-hand sidebar; `h`, `l`: Details, Activity and Comments in it.
 - `u`, `Escape`: back to the list.
 

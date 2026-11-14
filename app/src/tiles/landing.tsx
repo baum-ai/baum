@@ -13,8 +13,10 @@ import { navigate } from "../api";
 import { type MenuItem, useContextMenu } from "../context-menu";
 import { GlanceCard } from "./card";
 import { useTileHost, type LandingMemory } from "./host";
+import { useFlip } from "./flip";
 import {
   blocksOf,
+  HIDDEN_GROUP,
   landingOf,
   narrowFills,
   onLanding,
@@ -180,6 +182,19 @@ function TileGrid({
   const menu = useContextMenu();
   const blocks = blocksOf(landing.items);
   const narrow = narrowFills(blocks);
+  // The cards slide to their new places when the person's layout changes.
+  const grid = useRef<HTMLDivElement>(null);
+  useFlip(
+    grid,
+    landing.items
+      .map((item) =>
+        item.kind === "tile"
+          ? `${item.tile.id}:${item.entry.size}:${item.entry.group ?? ""}:${item.entry.pin ? "pin" : ""}`
+          : `${item.kind}:${item.group.id}`,
+      )
+      .join(" "),
+  );
+  const layout = host.layout && !ctx.historical && !host.draft ? host.layout : undefined;
   const toggleGroup = (group: string, open: boolean) => {
     const groups = new Set(expansions.groups);
     if (open) groups.add(group);
@@ -218,7 +233,8 @@ function TileGrid({
             <span className="text-xs text-tertiary tabular-nums">{item.count}</span>
           </h3>
         );
-      case "tile":
+      case "tile": {
+        const hidden = item.entry.group === HIDDEN_GROUP;
         return (
           <GlanceCard
             key={item.tile.id}
@@ -229,15 +245,30 @@ function TileGrid({
             menu={menu}
             menuItems={menuItems(item.tile)}
             comments={host.commentCounts.get(item.tile.id) ?? 0}
+            marked={layout?.marked?.tiles.has(item.tile.id) ?? false}
+            action={
+              hidden && layout
+                ? {
+                    label: "Show",
+                    title: `Show ${item.tile.title} in your layout again`,
+                    run: () => layout.show(item.tile.id),
+                  }
+                : undefined
+            }
           />
         );
+      }
       case "more":
         return (
           <ControlRow
             key={`more-${item.group.id}`}
             expanded={false}
             onClick={() => toggleGroup(item.group.id, true)}
-            label={`Show ${item.hidden.length} more ${pluralize(item.group.title.toLowerCase(), item.hidden.length)}`}
+            label={
+              item.group.id === HIDDEN_GROUP
+                ? `Show ${pluralize("hidden tile", item.hidden.length, true)}`
+                : `Show ${item.hidden.length} more ${pluralize(item.group.title.toLowerCase(), item.hidden.length)}`
+            }
             names={item.hidden.map((tile) => tile.title)}
           />
         );
@@ -247,7 +278,11 @@ function TileGrid({
             key={`less-${item.group.id}`}
             expanded
             onClick={() => toggleGroup(item.group.id, false)}
-            label={`Show fewer ${item.group.title.toLowerCase()}`}
+            label={
+              item.group.id === HIDDEN_GROUP
+                ? "Fold the hidden tiles"
+                : `Show fewer ${item.group.title.toLowerCase()}`
+            }
           />
         );
     }
@@ -257,7 +292,7 @@ function TileGrid({
       {/* The cards' level: Overview and Risks stand under it, a group's under
           the group's own heading. */}
       <h3 className="sr-only">Tiles</h3>
-      <div className={GRID}>
+      <div ref={grid} className={GRID}>
         {blocks.map((block, index) =>
           block.group ? (
             // A group is a block of its own: its heading starts a row, and

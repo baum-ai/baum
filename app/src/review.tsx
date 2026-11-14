@@ -109,6 +109,7 @@ import { useTilePlaces } from "./tiles/use-tile-places";
 import { TileHostContext, type TileHost } from "./tiles/host";
 import { commentCounts } from "./tiles/comments";
 import { activeCard, useBackToLanding } from "./tiles/keys";
+import { useTileLayout } from "./tiles/your-layout";
 import { tileDocOf, tilesMissing, withPendingChanges, withTiles } from "./tiles/tile-document";
 
 /** `commitsSlot`'s loaders over the daemon's commit routes under `route`
@@ -428,10 +429,16 @@ export function LocalReview({
   useGitHubKey(pr.url || undefined);
   useShortcuts((event) => {
     // a asks an agent about the pull request: the session panel opens on its
-    // conversation with the keys in its composer.
+    // conversation with the keys in its composer. On the tiles' landing page
+    // a card under the keys is what it asks about, as its Ask about this tile
+    // does, so "make this wider" needs no question.
     if (event.key === "a") {
       event.preventDefault();
-      ask();
+      const card = onTiles && selection.kind === "summary" ? activeCard() : null;
+      const tile = card
+        ? tileDocOf(viewedDocument ?? null)?.tiles.find((t) => t.id === card)
+        : undefined;
+      ask(tile ? { kind: "tile", id: tile.id, title: tile.title } : null);
       return;
     }
     // Space opens or closes the fold of the block j and k are on; on a
@@ -498,8 +505,11 @@ export function LocalReview({
       button.click();
     }
   });
+  // A change to the person's layout reads the versions on screen again: an
+  // earlier version's tiles carry the layout too.
+  const [layoutGeneration, setLayoutGeneration] = useState(0);
   const loadVersion = useVersionLoader(
-    `${clone}:${pr.number}:${tilesPage ? "tiles" : "full"}`,
+    `${clone}:${pr.number}:${tilesPage ? "tiles" : "full"}:${layoutGeneration}`,
     (version) => readDocument(clone, pr.number, version),
     doc?.review.version,
   );
@@ -574,6 +584,24 @@ export function LocalReview({
     (chosenTiles || tileDocOf(shownDocument)?.origin.kind === "generated");
   // Escape or u inside a tile goes back to the landing page.
   useBackToLanding(onTiles, url);
+  // The person's own layout of the tiles: read again on each change, from
+  // the session panel or the page, with the change announced and undoable.
+  const layout = useTileLayout({
+    clone,
+    repository: pr.repository,
+    number: pr.number,
+    enabled: onTiles && !showingDraft,
+    reread: async () => {
+      setLayoutGeneration((n) => n + 1);
+      setDoc(await tilesRequest(clone, pr.number));
+    },
+  });
+  const historyRetry = useRef(history.retry);
+  historyRetry.current = history.retry;
+  // biome-ignore lint/correctness/useExhaustiveDependencies: only a layout change reads the earlier version again
+  useEffect(() => {
+    if (layoutGeneration > 0 && history.selection) historyRetry.current();
+  }, [layoutGeneration]);
   // Rebuilt only when what the tiles read of it changes, and never on the
   // full review, which has no tiles.
   const latestHost = useRef({ viewedDocument, canReview, showingDraft, search: url.search });
@@ -612,6 +640,7 @@ export function LocalReview({
         : undefined,
       ask: (tile) => ask({ kind: "tile", id: tile.id, title: tile.title }),
       reread: () => rereadTiles.current(),
+      ...(layout ? { layout } : {}),
       fullReview: (tile) =>
         appURL(
           `?${withView(withSelection(latestHost.current.search, fullReviewPlace(tile)), "full")}`,
@@ -619,7 +648,7 @@ export function LocalReview({
     }),
     // `ask` reads the pull request, which keys the page; the rest is read
     // through `latestHost` when called.
-    [showingDraft, counts, commenting],
+    [showingDraft, counts, commenting, layout],
   );
   // Why the last retry did not write the details, said until it is dismissed.
   const [headChanged, setHeadChanged] = useState(false);

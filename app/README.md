@@ -2619,11 +2619,41 @@ and Tab reaches it. The kicker reads "Custom ·" and the type's title. A tile
   items of a tile), Enter opens the card, Space shows a group's hidden
   members, `←`/`→` and Shift+J/K step through the Summary and the tiles in
   order, Escape and `u` go back from a tile, `c` comments on the tile open or
-  the card the keys are on, and `a`, `]`, `m`, `f` and `v` work as everywhere
-  on the page.
+  the card the keys are on, `a` asks the session panel about the card the
+  keys are on (about the pull request elsewhere), `Mod+Z` undoes the last
+  change to the layout, and `]`, `m`, `f` and `v` work as everywhere on the
+  page.
+- **Your layout.** A person lays a pull request's tiles out their own way by
+  asking the session panel ("move the risks to the top", "make this wider",
+  "remove this", "undo that", "reset the layout"); the panel's agent changes
+  the layout at once through the daemon's layout tools, with no Save
+  (`tilelayout`; see `ARCHITECTURE.md`, "A person's layout"). The layout is
+  kept on this computer for the pull request and applies to every version of
+  it. Each write publishes a `layout` event (`{pr, revision}`), which the app
+  passes to the open review page (`src/tiles/your-layout.ts`); the page reads
+  `GET api/tiles/layout` and the version's tiles again (an earlier version on
+  screen too), the cards slide to their new places (a FLIP over the cards'
+  boxes with the Web Animations API, `src/tiles/flip.ts`, skipped with
+  reduced motion), the cards the change named are outlined for a moment, and
+  a toast says the host's summary of the change ("Moved Risks to the top")
+  with Undo. While the layout has edits the band says **Your layout**, with
+  Undo (its label names the change it takes back) and Reset to the generated
+  layout, itself one undo step. `Mod+Z` undoes outside text fields. A removed
+  tile goes to the **Hidden tiles** group at the end of the page, always
+  there whatever the landing area holds ("Show 1 hidden tile · Context");
+  opened, each of its cards has Show. Undo, Reset and Show write through
+  `POST api/tiles/layout` (`{clone, pr, action: "edit" | "undo" | "reset",
+  ops?, batch?}`; Undo names the batch it shows, and a newer change than
+  that is refused with the layout read again); a refusal is a toast saying
+  why. A group, a draft and an earlier version have no layout controls, and
+  there is no dragging: the layout changes through the panel, Undo, Reset
+  and Show.
 
 The session panel's page context names the page in its `focus`: `view`
-`tiles`, and the `tile` open with its `item`.
+`tiles`, and the `tile` open with its `item`. Ask about this tile, in a
+card's menu, or `a` on the card that has the keys on the landing page,
+asks about that tile: the focus gains `{kind: "tile", id, title}`, which the
+layout tools read as "this tile".
 
 ## Your review
 

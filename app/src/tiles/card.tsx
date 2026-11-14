@@ -1,7 +1,7 @@
 import { Component, useId, type ReactNode } from "react";
 import { cn, FOCUS_RING } from "@baum/viewer/components/classnames";
 import { CommentsIcon, RiskIcon } from "@baum/viewer/components/icons";
-import { Badge, LiveDot } from "@baum/viewer/components/ui";
+import { Badge, Button, LiveDot } from "@baum/viewer/components/ui";
 import { MenuButton, type MenuItem, type useContextMenu } from "../context-menu";
 import { GridIcon } from "./icons";
 import { Quiet, Writing } from "./parts";
@@ -32,6 +32,8 @@ export function GlanceCard({
   menuItems,
   comments,
   narrow = false,
+  marked = false,
+  action,
 }: {
   tile: Tile;
   size: TileSize;
@@ -41,6 +43,12 @@ export function GlanceCard({
   menu: ReturnType<typeof useContextMenu>;
   menuItems: () => MenuItem[];
   comments: number;
+  /** The latest change to the person's layout named this tile: its card is
+   *  outlined briefly. */
+  marked?: boolean;
+  /** One action in the card's head, above the card's link: Show on a hidden
+   *  tile. */
+  action?: { label: string; title: string; run: () => void };
 }) {
   const titleId = useId();
   const face = tileFace(tile);
@@ -56,6 +64,7 @@ export function GlanceCard({
       data-tile={tile.id}
       data-tile-type={tile.type}
       data-tile-size={size}
+      data-layout-mark={marked ? "" : undefined}
       aria-labelledby={titleId}
       onContextMenu={(event) => menu.open(event, menuItems(), tile.title)}
       className={cn(
@@ -64,6 +73,8 @@ export function GlanceCard({
         "data-[review-block-active]:border-focus data-[review-block-active]:shadow-card",
         urgent ? "border-status-critical/40" : "border-default",
         face.kind === "unavailable" && "border-dashed",
+        // A tile the person hid waits in the last group, quieter, with Show.
+        action && "border-dashed bg-transparent",
         spanOf(size, narrow),
       )}
     >
@@ -101,6 +112,17 @@ export function GlanceCard({
               {comments}
               <span className="sr-only">{comments === 1 ? " comment" : " comments"}</span>
             </span>
+          ) : null}
+          {action ? (
+            <Button
+              variant="secondary"
+              size="tiny"
+              className="relative z-10"
+              aria-label={action.title}
+              onClick={action.run}
+            >
+              {action.label}
+            </Button>
           ) : null}
           <span className="relative z-10">
             <MenuButton label={tile.title} items={menuItems} menu={menu} />

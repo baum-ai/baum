@@ -21,6 +21,7 @@ import {
   type Tile,
   type TileDocument,
 } from "./tile-document";
+import { useTileHost } from "./host";
 import type { TileContext } from "./types";
 
 /** The band over every landing page, in the same place on every review: the
@@ -46,6 +47,7 @@ export function FixedStrip({
         <RiskScore ctx={ctx} />
         <EvidenceGaps ctx={ctx} />
         <Generation ctx={ctx} generation={generation} />
+        <YourLayout ctx={ctx} />
       </div>
     </section>
   );
@@ -300,5 +302,45 @@ function Failures({ count, ctx }: { count: number; ctx: TileContext }) {
         </Button>
       ) : null}
     </p>
+  );
+}
+
+/** Says, quietly, that the tiles are laid out the person's way, while they
+ *  are, with Undo (the change it takes back is its title) and Reset to the
+ *  generated layout. */
+function YourLayout({ ctx }: { ctx: TileContext }) {
+  const layout = useTileHost().layout;
+  if (!layout?.edited || ctx.historical || ctx.draft) return null;
+  const last = layout.lastSummary.join(" · ");
+  return (
+    <div
+      role="group"
+      aria-label="Your layout"
+      data-your-layout=""
+      className="flex flex-none items-center gap-1 text-base @min-[36rem]/tiles:ml-auto"
+    >
+      <span className="mr-1 flex items-center gap-1.5 text-secondary">
+        <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-action-primary" />
+        Your layout
+      </span>
+      <Button
+        variant="ghost"
+        size="tiny"
+        disabled={!layout.canUndo}
+        title={last ? `Undo: ${last}` : undefined}
+        aria-label={last ? `Undo: ${last}` : "Undo"}
+        onClick={layout.undo}
+      >
+        Undo
+      </Button>
+      <Button
+        variant="ghost"
+        size="tiny"
+        title="Lay the tiles out as the review was generated; Undo brings your layout back"
+        onClick={layout.reset}
+      >
+        Reset
+      </Button>
+    </div>
   );
 }

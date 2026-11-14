@@ -7,6 +7,10 @@ import {
   type TileLayoutEntry,
 } from "./tile-document";
 
+/** The group of the tiles a person hid from their layout, last and
+ *  collapsed (`tiles.GroupHidden`). */
+export const HIDDEN_GROUP = "hidden";
+
 /** One cell or row of the landing grid, in reading order. */
 export type LandingItem =
   | { kind: "tile"; tile: Tile; entry: TileLayoutEntry }
@@ -63,14 +67,18 @@ export function landingOf(document: TileDocument, expansions: Expansions): Landi
       hidden: limit !== undefined && position >= limit && !open,
     }));
     const hidden = members.filter((member) => member.hidden).map((member) => member.tile);
+    // The tiles a person hid are always one click away, at the end, whatever
+    // the landing area holds: never behind "Show N more tiles" too.
+    const always = group.id === HIDDEN_GROUP;
     const shown = members.filter(
-      (member) => !member.hidden && (member.index < landing || expansions.more),
+      (member) => !member.hidden && (member.index < landing || expansions.more || always),
     );
     for (const member of members)
-      if (!member.hidden && member.index >= landing && !expansions.more) rest.push(member.tile);
+      if (!member.hidden && member.index >= landing && !expansions.more && !always)
+        rest.push(member.tile);
     // The group is on the page once it starts in the landing area, or the
-    // reader asked for the rest.
-    if (shown.length > 0 || at < landing || expansions.more) {
+    // reader asked for the rest; the hidden group always is.
+    if (shown.length > 0 || at < landing || expansions.more || always) {
       if (shown.length > 0 || hidden.length > 0)
         items.push({ kind: "heading", group, count: members.length });
       for (const { tile, entry } of shown) items.push({ kind: "tile", tile, entry });
