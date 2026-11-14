@@ -46,7 +46,7 @@ func change(t testing.TB, name, note string) tilelibrary.Change {
 	c := tilelibrary.Change{Definition: encoded, Glance: entry.Glance, ReviewChecks: entry.ReviewChecks, AppliesWith: entry.AppliesWith,
 		Paths: []string{"**/*.sql"}, Origin: tilelibrary.OriginChat}
 	for _, s := range entry.Samples {
-		if tilelibrary.IsSynthetic(s) && len(c.Samples) < tilelibrary.MaxSamples {
+		if tilelibrary.IsSynthetic(s) && len(c.Samples) < 1 {
 			c.Samples = append(c.Samples, s)
 		}
 	}
@@ -200,23 +200,21 @@ func TestSavingRefusesWhatTheLibraryChecksRefuse(t *testing.T) {
 func TestBounds(t *testing.T) {
 	s, _ := newStore(t)
 	ctx := context.Background()
-	// 200 types.
-	base := change(t, "t000", "")
-	for i := range tilelibrary.MaxTypes {
-		c := base
-		var def tiles.TypeDefinition
-		_ = json.Unmarshal(base.Definition, &def)
-		def.Name = fmt.Sprintf("t%03d", i)
-		c.Definition, _ = library.Seal(&def)
-		if _, err := s.Create(ctx, c, nil); err != nil {
-			t.Fatalf("type %d: %v", i, err)
+	// 200 types: the rows are written directly, as saving each would only
+	// repeat the checks 200 times.
+	mustCreate(t, s, change(t, "t000", ""))
+	db, err := appdb.Open(s.Path, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = db.Close() }()
+	for i := 1; i < tilelibrary.MaxTypes; i++ {
+		if _, err := db.Exec(`INSERT INTO tile_types(name, digest, glance, review_checks, applies_with, paths, samples, origin, created, updated)
+SELECT ?, digest, glance, review_checks, applies_with, paths, samples, origin, created, updated FROM tile_types WHERE name = 't000'`, fmt.Sprintf("t%03d", i)); err != nil {
+			t.Fatal(err)
 		}
 	}
-	over := base
-	var def tiles.TypeDefinition
-	_ = json.Unmarshal(base.Definition, &def)
-	def.Name = "one_too_many"
-	over.Definition, _ = library.Seal(&def)
+	over := change(t, "one_too_many", "")
 	if _, err := s.Create(ctx, over, nil); !errors.Is(err, tilelibrary.ErrTooMany) {
 		t.Fatalf("the 201st type: %v", err)
 	}
@@ -230,11 +228,54 @@ func TestBounds(t *testing.T) {
 	}
 }
 
-func TestVersionBound(t *testing.T) {
+// A database whose tile_definitions was created with the layout fills' own
+// DDL works for the library's inserts and sweep.
+func TestSharedDefinitionsTable(t *testing.T) {
 	s, c := newStore(t)
 	ctx := context.Background()
+	db, err := appdb.Open(s.Path, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = db.Close() }()
+	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS tile_definitions(digest TEXT PRIMARY KEY, definition BLOB NOT NULL, at TEXT NOT NULL)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO tile_definitions VALUES ('sha256:orphan', x'7b7d', '2026-01-01T00:00:00Z')`); err != nil {
+		t.Fatal(err)
+	}
+	saved := mustCreate(t, s, change(t, "migrations", ""))
+	var at string
+	if err := db.QueryRow(`SELECT at FROM tile_definitions WHERE digest = ?`, saved.Entry.Definition.Digest).Scan(&at); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := time.Parse(time.RFC3339Nano, at); err != nil {
+		t.Errorf("at %q: %v", at, err)
+	}
+	// The sweep removes the orphan the other writer left, and only it.
+	if err := s.Delete(ctx, "migrations"); err != nil {
+		t.Fatal(err)
+	}
+	c.now = c.now.Add(31 * 24 * time.Hour)
+	if err := s.Purge(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var n int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM tile_definitions`).Scan(&n); err != nil || n != 0 {
+		t.Errorf("%d definitions after the sweep, %v", n, err)
+	}
+}
+
+func TestVersionBound(t *testing.T) {
+	s, c := newStore(t)
+	if tilelibrary.MaxVersions != 20 {
+		t.Fatal("the limit is 20 versions")
+	}
+	const kept = 4
+	defer tilelibrary.SetMaxVersions(kept)()
+	ctx := context.Background()
 	mustCreate(t, s, change(t, "migrations", " v0"))
-	for i := 1; i <= tilelibrary.MaxVersions+4; i++ {
+	for i := 1; i <= kept+2; i++ {
 		c.now = c.now.Add(time.Minute)
 		if _, err := s.Update(ctx, change(t, "migrations", fmt.Sprintf(" v%d", i)), nil); err != nil {
 			t.Fatal(err)
@@ -244,10 +285,10 @@ func TestVersionBound(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got.Versions) != tilelibrary.MaxVersions {
+	if len(got.Versions) != kept {
 		t.Fatalf("%d versions", len(got.Versions))
 	}
-	if !got.Versions[0].Current || !strings.Contains(got.Entry.Definition.Fill, fmt.Sprintf("v%d", tilelibrary.MaxVersions+4)) {
+	if !got.Versions[0].Current || !strings.Contains(got.Entry.Definition.Fill, fmt.Sprintf("v%d", kept+2)) {
 		t.Errorf("the newest is not current: %+v", got.Versions[0])
 	}
 	// The oldest are gone, with their definitions.
@@ -257,7 +298,7 @@ func TestVersionBound(t *testing.T) {
 	}
 	defer func() { _ = db.Close() }()
 	var n int
-	if err := db.QueryRow(`SELECT COUNT(*) FROM tile_definitions`).Scan(&n); err != nil || n != tilelibrary.MaxVersions {
+	if err := db.QueryRow(`SELECT COUNT(*) FROM tile_definitions`).Scan(&n); err != nil || n != kept {
 		t.Errorf("%d definitions, %v", n, err)
 	}
 }

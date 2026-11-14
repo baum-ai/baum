@@ -37,10 +37,12 @@ const UndoWindow = 30 * 24 * time.Hour
 // schema is created when a write opens the database; an older app ignores
 // the tables, and a read of a database without them finds an empty library.
 // tile_definitions holds the definitions by digest, as a custom tile of a
-// layout edit names them.
+// layout edit names them; its columns are the ones the layout fills create
+// it with, so whichever opens a database first, the other's inserts work.
 const schema = `CREATE TABLE IF NOT EXISTS tile_definitions(
   digest TEXT PRIMARY KEY,
-  definition BLOB NOT NULL);
+  definition BLOB NOT NULL,
+  at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS tile_types(
   name TEXT PRIMARY KEY,
   digest TEXT NOT NULL,
@@ -63,6 +65,9 @@ CREATE TABLE IF NOT EXISTS tile_type_versions(
 
 // maxBytes is MaxBytes; a test lowers it.
 var maxBytes int64 = MaxBytes
+
+// maxVersions is MaxVersions; a test lowers it.
+var maxVersions = MaxVersions
 
 // Store reads and writes the library. The zero Path is the default
 // application database.
@@ -377,7 +382,7 @@ func (s *Store) save(ctx context.Context, c Change, create bool, unchanged func(
 		if err := checkSize(ctx, conn, int64(len(encoded)+len(samples))); err != nil {
 			return err
 		}
-		if _, err := conn.ExecContext(ctx, `INSERT INTO tile_definitions(digest, definition) VALUES (?, ?) ON CONFLICT(digest) DO NOTHING`, def.Digest, encoded); err != nil {
+		if _, err := conn.ExecContext(ctx, `INSERT OR IGNORE INTO tile_definitions(digest, definition, at) VALUES (?, ?, ?)`, def.Digest, encoded, now); err != nil {
 			return err
 		}
 		created := now
@@ -397,7 +402,7 @@ ON CONFLICT(name, digest) DO UPDATE SET at = excluded.at`, name, def.Digest, now
 		}
 		// The oldest versions go beyond the limit; the current one never does.
 		if _, err := conn.ExecContext(ctx, `DELETE FROM tile_type_versions WHERE name = ? AND digest != ? AND digest NOT IN (
-  SELECT digest FROM tile_type_versions WHERE name = ? ORDER BY at DESC, digest LIMIT ?)`, name, def.Digest, name, MaxVersions); err != nil {
+  SELECT digest FROM tile_type_versions WHERE name = ? ORDER BY at DESC, digest LIMIT ?)`, name, def.Digest, name, maxVersions); err != nil {
 			return err
 		}
 		return sweep(ctx, conn)
