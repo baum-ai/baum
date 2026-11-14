@@ -67,6 +67,8 @@ func NewValidator() *Validator {
 	}
 }
 
+var defaultValidator = NewValidator()
+
 // DocumentError reports a document-level failure.
 type DocumentError struct {
 	Problems []string

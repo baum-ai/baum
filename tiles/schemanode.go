@@ -549,7 +549,7 @@ func (v *validation) validate(n *schemaNode, value any, at *dataPath) error {
 		}
 	}
 	kind := typeOf(value)
-	if n.types != 0 && n.types&kind == 0 && !(kind&typeInteger != 0 && n.types&typeNumber != 0) {
+	if n.types != 0 && n.types&kind == 0 && (kind&typeInteger == 0 || n.types&typeNumber == 0) {
 		return failure(at, "is %s; the schema allows %s", article(typeNames(primaryType(kind))), typeNames(n.types))
 	}
 	if n.enum != nil {

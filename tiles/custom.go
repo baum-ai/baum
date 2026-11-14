@@ -252,12 +252,6 @@ func (v *Validator) verdict(checked *checkedDefinition, data json.RawMessage, li
 	return verdict, val.steps
 }
 
-// checkData validates data against a compiled data schema and returns its
-// citations.
-func checkData(schema *compiledSchema, data json.RawMessage) ([]citation, []string) {
-	return checkDataWith(&validation{}, schema, data)
-}
-
 func checkDataWith(v *validation, schema *compiledSchema, data json.RawMessage) ([]citation, []string) {
 	if encodedSize(data, MaxDataBytes) > MaxDataBytes {
 		return nil, []string{fmt.Sprintf("the data is larger than %d KiB", MaxDataBytes>>10)}

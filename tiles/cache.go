@@ -48,9 +48,3 @@ func (c *lru[K, V]) put(key K, value V) {
 		delete(c.items, oldest.Value.(*lruEntry[K, V]).key)
 	}
 }
-
-func (c *lru[K, V]) len() int {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.order.Len()
-}
