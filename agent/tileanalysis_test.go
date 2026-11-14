@@ -608,13 +608,14 @@ func TestTileAnalysisReuse(t *testing.T) {
 	}
 }
 
-// An exhibit's file citations name files of the checkout only: a path that
-// leaves it, an absolute one, a directory and a symbolic link are dropped.
+// An exhibit's file citations name files of the diff only: a path that
+// leaves the checkout, an absolute one, a directory, a symbolic link and a
+// checkout file the diff does not touch are dropped.
 func TestTileAnalysisExhibitFiles(t *testing.T) {
 	file := func(path string) string {
 		return fmt.Sprintf(`{"type":"file","id":null,"lines":null,"path":%q}`, path)
 	}
-	cites := strings.Join([]string{file("../bundle.json"), file("/etc/passwd"), file("dir"), file("link.go"), file("main.go"),
+	cites := strings.Join([]string{file("../bundle.json"), file("/etc/passwd"), file("dir"), file("link.go"), file("other.go"), file("main.go"),
 		`{"type":"hunk","id":"` + testHunk + `","lines":null,"path":null}`}, ",")
 	exhibit := `{"id":"prose_files","title":"Files","adds":"x","table":null,"code":null,"prose":{"text":"The store opens first.","anchors":[` + cites + `]}}`
 	generator, run, _ := tileFixture(t, withCandidate(), func(_ context.Context, kind string, _ Request, _ int) (Result, error, bool) {
@@ -624,6 +625,9 @@ func TestTileAnalysisExhibitFiles(t *testing.T) {
 		return stagedResult(`{"exhibits":[`+exhibit+`]}`, "s"), nil, true
 	})
 	head := filepath.Join(run.Directory, "head")
+	if err := os.WriteFile(filepath.Join(head, "other.go"), []byte("package main\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.Mkdir(filepath.Join(head, "dir"), 0700); err != nil {
 		t.Fatal(err)
 	}
@@ -639,7 +643,7 @@ func TestTileAnalysisExhibitFiles(t *testing.T) {
 		t.Fatalf("exhibits: %+v", x)
 	}
 	data := string(x.Tiles[0].Data)
-	for _, bad := range []string{"bundle.json", "/etc/passwd", `"dir"`, "link.go"} {
+	for _, bad := range []string{"bundle.json", "/etc/passwd", `"dir"`, "link.go", "other.go"} {
 		if strings.Contains(data, bad) {
 			t.Errorf("a citation of %s was kept: %s", bad, data)
 		}

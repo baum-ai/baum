@@ -387,22 +387,27 @@ func (s *stagedReview) exhibitAnchors(cites []exCite) ([]map[string]any, []strin
 	return anchors, hunks, len(hunks) > 0
 }
 
-// knownPath reports whether a path is a file of the diff or of the head
-// checkout.
+// knownPath reports whether a path is a file of the diff, which the review
+// can resolve (a checkout file the diff does not touch is not one), and, when
+// the head checkout has it, a regular file not reached through a symbolic
+// link.
 func (s *stagedReview) knownPath(path string) bool {
+	inDiff := false
 	for _, h := range s.tiles.diff {
 		if h.Path == path {
-			return true
+			inDiff = true
+			break
 		}
 	}
-	if !filepath.IsLocal(path) {
+	if !inDiff || !filepath.IsLocal(path) {
 		return false
 	}
-	// A file reached through a symbolic link, the file's own or a
-	// directory's, is not a file of the checkout to cite.
 	root := filepath.Join(s.run.Directory, "head")
 	full := filepath.Join(root, path)
 	info, err := os.Lstat(full)
+	if os.IsNotExist(err) {
+		return true // removed by the pull request
+	}
 	if err != nil || !info.Mode().IsRegular() {
 		return false
 	}

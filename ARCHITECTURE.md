@@ -2284,9 +2284,9 @@ stage is told the selected types' checks.
   200-character cells, 60 lines of code, 40-character language,
   200-character caption, 800 characters of prose, 12 citations); every hunk
   it cites is in the diff, with at least one hunk (lines outside the hunk are
-  dropped, citing the whole hunk); a file it cites is a regular file of the
-  head checkout not reached through a symbolic link (else the citation is
-  dropped); a code excerpt's lines are the cited hunks' or the head
+  dropped, citing the whole hunk); a file it cites is a file of the diff and, in
+  the head checkout, a regular file not reached through a symbolic link
+  (else the citation is dropped); a code excerpt's lines are the cited hunks' or the head
   checkout's (one line in ten may differ, elisions aside); and it does not
   restate a kept tile (`review.NearDuplicate`).
 - **Time and budgets.** With a backend that may run calls at once, the
