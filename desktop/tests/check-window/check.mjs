@@ -27,8 +27,10 @@ setInterval(() => post("/s/ns/beat?win=main").catch(() => {}), 100);
     let action;
     try { action = await (await fetch("/s/ns/next")).text(); } catch { await new Promise((r) => setTimeout(r, 200)); continue; }
     if (action === "none") continue;
-    const command = action === "close" ? "close_check_window" : "open_check_window";
-    const result = await window.__TAURI_INTERNALS__.invoke(command).then(() => "ok", (e) => "error " + e);
+    const call = (command) => window.__TAURI_INTERNALS__.invoke(command).then(() => "ok", (e) => "error " + e);
+    const result = action === "close-open"
+      ? (await call("close_check_window")) + " " + (await call("open_check_window"))
+      : await call(action === "close" ? "close_check_window" : "open_check_window");
     await post("/s/ns/done", { action, result }).catch(() => {});
   }
 })();`;
@@ -260,8 +262,16 @@ try {
     numbers[`checkPage${r.gen}`] = { visibility: r.visibility, open: r.open_check_window.slice(0, 120) };
   }
   expect(reports.filter((r) => "declaration" in r).length === 2, "a check page did not report");
+
+  // Close and open at once: the open builds a new window.
+  const swapped = await act("close-open");
+  expect(swapped.result === "ok ok", `close_check_window then open_check_window: ${swapped.result}`);
+  const thirdBeat = await waitFor("the check window opened right after close", 15000, () => beatsOf("check3")[0]);
+  numbers.closeThenOpenToFirstBeatMs = thirdBeat - swapped.received;
+  expect(checkLoads === 3, `the check page loaded ${checkLoads} times, not 3`);
   const last = await act("close");
   expect(last.result === "ok", `final close_check_window: ${last.result}`);
+  expect(attackerHits === 0, `${attackerHits} request(s) from the check window reached another server`);
   numbers.mainMaxBeatGapOverallMs = maxGap(beatsOf("main"), beatsOf("main")[5], Date.now());
 } catch (e) {
   problems.push(String(e.message ?? e));

@@ -847,9 +847,10 @@ slowed to about once a second and no animation frames.
 - The main window's daemon page opens it with `open_check_window` (no
   arguments; it does nothing when the window is open) and closes it with
   `close_check_window` (no arguments), when a check hangs or after the window
-  has been idle. Only the main window can call them. The shell also closes it
-  when the main window starts loading another page and when the app detaches
-  from the daemon.
+  has been idle. Only the main window can call them; a close returns once the
+  window is gone, so an open right after it builds a new one. The shell also
+  closes it when the main window starts loading another page and when the app
+  detaches from the daemon, including a window still being built then.
 - It loads `/s/<namespace>/?page=tile-check` at the origin of the daemon page
   the main window shows, under the main window's navigation rules
   (`navigation::decide`, without the setup screen). It never opens the
@@ -877,7 +878,8 @@ process other than the main window's, the main window's 100 ms heartbeat
 never stops for a second while the frame spins, the spinning process's CPU
 use drops within a second of `close_check_window` and the process is gone a
 second later, a second open while the window is open loads nothing, a window
-opened again after closing works, and the check page can call neither
+opened again after closing works, an open right after a close builds a new
+window, and the check page can call neither
 command, sees the same declaration, and cannot navigate to another site. It
 takes a few minutes and is not part of CI.
 

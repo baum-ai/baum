@@ -11,7 +11,9 @@
 //! rules, opens no browser, and its own capability (`tile-check`) grants its
 //! page no command.
 
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use tauri::{AppHandle, Manager, Runtime, WebviewUrl, WebviewWindowBuilder};
 use url::{Origin, Url};
@@ -26,6 +28,11 @@ const HEIGHT: f64 = 900.0;
 
 /// Serialises opening and closing, so two calls never build two windows.
 static LOCK: Mutex<()> = Mutex::new(());
+/// Counts the shell's own closes (`close_soon`), so a window that was being
+/// built when one came is closed once it exists.
+static GENERATION: AtomicU64 = AtomicU64::new(0);
+/// How long a close waits for the window to be gone.
+const GONE_TIMEOUT: Duration = Duration::from_secs(1);
 
 /// The check page for a main window showing `main`: the root of the person's
 /// own namespace on the daemon's origin (`/s/<namespace>/`, outside the sample
@@ -59,11 +66,12 @@ pub fn open<R: Runtime>(
     url: Url,
     daemon: Arc<dyn Fn() -> Option<Origin> + Send + Sync>,
 ) -> tauri::Result<()> {
+    let generation = GENERATION.load(Ordering::SeqCst);
     let _guard = LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     if app.get_webview_window(LABEL).is_some() {
         return Ok(());
     }
-    WebviewWindowBuilder::new(app, LABEL, WebviewUrl::External(url))
+    let window = WebviewWindowBuilder::new(app, LABEL, WebviewUrl::External(url))
         .title("baum tile check")
         .inner_size(WIDTH, HEIGHT)
         // Never shown: WebKitGTK keeps running a hidden window's page, with
@@ -83,12 +91,19 @@ pub fn open<R: Runtime>(
         // Nothing in a window the person cannot see opens the browser.
         .on_new_window(|_, _| tauri::webview::NewWindowResponse::Deny)
         .build()?;
+    // The main window loaded another page or the app left the daemon while
+    // the window was being built.
+    if GENERATION.load(Ordering::SeqCst) != generation {
+        destroy(app, &window);
+    }
     Ok(())
 }
 
 /// Closes the check window from another thread, for callers on the main
 /// thread: `open` holds the lock while the main thread builds the window.
 pub fn close_soon<R: Runtime>(app: &AppHandle<R>) {
+    // Before the check below: a window still being built closes itself.
+    GENERATION.fetch_add(1, Ordering::SeqCst);
     if app.get_webview_window(LABEL).is_none() {
         return;
     }
@@ -102,9 +117,15 @@ pub fn close_soon<R: Runtime>(app: &AppHandle<R>) {
 /// (see `close_soon`).
 pub fn close<R: Runtime>(app: &AppHandle<R>) {
     let _guard = LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-    let Some(window) = app.get_webview_window(LABEL) else {
-        return;
-    };
+    if let Some(window) = app.get_webview_window(LABEL) {
+        destroy(app, &window);
+    }
+}
+
+/// Ends the window's web process, destroys the window and waits until it is
+/// gone, so an `open` right after builds a new one. Holding `LOCK`, and not
+/// on the main thread.
+fn destroy<R: Runtime>(app: &AppHandle<R>, window: &tauri::WebviewWindow<R>) {
     // Both calls run on the main thread, in this order.
     #[cfg(target_os = "linux")]
     if let Err(e) = window.with_webview(|webview| {
@@ -115,6 +136,12 @@ pub fn close<R: Runtime>(app: &AppHandle<R>) {
     }
     if let Err(e) = window.destroy() {
         eprintln!("baum desktop: cannot close the check window: {e}");
+        return;
+    }
+    // `destroy` only asks; the window stays registered until it is destroyed.
+    let start = Instant::now();
+    while app.get_webview_window(LABEL).is_some() && start.elapsed() < GONE_TIMEOUT {
+        std::thread::sleep(Duration::from_millis(5));
     }
 }
 

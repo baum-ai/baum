@@ -1879,9 +1879,9 @@ your daemon. Turn it off in the tray or the window's Background menu, which
 removes the entry.
 
 On Linux the daemon's page checks a custom tile in a hidden second window,
-the tile check window, which runs in a web process of its own. It loads only
-the attached daemon's check page, under the main window's navigation rules,
-opens no browser, and its page can call no app command. A tile that never
+the tile check window, which runs in a web process of its own. It starts at
+the attached daemon's check page and can load only pages of that daemon's
+origin, under the main window's navigation rules, opens no browser, and its page can call no app command. A tile that never
 yields there stalls only that window, and closing it ends its web process. On
 macOS and Windows there is no check window.
 
