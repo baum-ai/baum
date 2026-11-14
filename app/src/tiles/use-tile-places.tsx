@@ -33,9 +33,10 @@ export const LANDING_LABEL = "Summary";
 const LANDING: Selection = { kind: "summary" };
 
 /** A tile's name in the rail: its title, but the Overview by its kind, as its
- *  title is the pull request's own. */
+ *  title is the pull request's own, and a custom tile marked as one. */
 function railLabel(tile: Tile) {
-  return tile.type === "overview" ? "Overview" : tile.title;
+  if (tile.type === "overview") return "Overview";
+  return tile.type === "custom" ? `Custom · ${tile.title}` : tile.title;
 }
 
 function railKey(place: TilePlace) {

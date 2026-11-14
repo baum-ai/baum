@@ -11,11 +11,12 @@ import { KIT_SUPPORTED } from "./protocol";
  *  the card, its title and headline, and the detail's heading itself; only
  *  the body is the tile's own. */
 
-/** The definition's title, which names the tile's kind as a built-in's label
- *  does; "Custom" when it has none. */
-function kindOf(tile: Tile): string {
+/** The tile's kind as its kicker names it: "Custom ·" and its definition's
+ *  title, always, so a custom tile never reads as a built-in one, whatever
+ *  its author called it. */
+export function kindOf(tile: Tile): string {
   const title = (tile.definition as { title?: unknown } | null)?.title;
-  return typeof title === "string" && title.trim() ? title.trim() : "Custom";
+  return typeof title === "string" && title.trim() ? `Custom · ${title.trim()}` : "Custom";
 }
 
 function CustomGlance({ tile, ctx }: TileFaceProps) {

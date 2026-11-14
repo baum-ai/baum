@@ -8,10 +8,10 @@ import { TileHostContext, type TileHost } from "../host";
 import { tileFace } from "../registry";
 import type { Tile, TileDocument } from "../tile-document";
 import type { TileContext } from "../types";
-import { framesAllowedHere } from "./environment";
+import { framesAllowedHere, NOT_IN_THIS_SHELL } from "./environment";
 import { HELLO_TIMEOUT, PROTOCOL, READY_TIMEOUT } from "./protocol";
 import { listenedFrames } from "./router";
-import { TileFrame, type Face } from "./tile-frame";
+import { forgetInput, TileFrame, type Face } from "./tile-frame";
 
 declare global {
   var IS_REACT_ACT_ENVIRONMENT: boolean;
@@ -44,9 +44,21 @@ beforeAll(() => {
 
 beforeEach(() => {
   vi.useFakeTimers();
+  forgetInput();
 });
 
+/** What the browser says of user activation: absent, inactive or active. */
+function activation(state: "absent" | boolean) {
+  if (state === "absent") Reflect.deleteProperty(navigator, "userActivation");
+  else
+    Object.defineProperty(navigator, "userActivation", {
+      configurable: true,
+      value: { isActive: state, hasBeenActive: state },
+    });
+}
+
 afterEach(() => {
+  activation("absent");
   act(() => root?.unmount());
   root = null;
   document.body.replaceChildren();
@@ -134,7 +146,11 @@ function mount(face: Face, tile = freshTile()) {
   return { container, frame, sent, post, start, ctx, host, files, tile, spyOn };
 }
 
-/** The reader tabs into a frame: the page's window loses focus to it. */
+/** Lets a frame's coalesced height be applied. */
+const nextFrame = () => act(() => vi.advanceTimersByTime(20));
+
+/** The reader tabs into a frame: the Tab lands on its element, and the
+ *  page's window loses focus to it. */
 function giveFocus(frame: HTMLIFrameElement) {
   act(() => {
     window.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab" }));
@@ -215,11 +231,46 @@ describe("a custom tile's frame", () => {
     start();
     expect(box().style.height).toBe("420px");
     post({ protocol: PROTOCOL, kind: "resize", height: 1e9 });
+    nextFrame();
     expect(box().style.height).toBe("20000px");
     post({ protocol: PROTOCOL, kind: "resize", height: 3 });
+    nextFrame();
     expect(box().style.height).toBe("120px");
     post({ protocol: PROTOCOL, kind: "resize", height: "999" });
+    nextFrame();
     expect(box().style.height).toBe("120px");
+  });
+
+  it("holds the height a ready reports to the bounds, and takes ready once", () => {
+    const { container, post } = mount("detail");
+    const box = () => container.querySelector<HTMLElement>("[data-frame-state]")!;
+    post({ protocol: PROTOCOL, kind: "hello", kit: 1, registered: true });
+    post({ protocol: PROTOCOL, kind: "ready", metrics: { height: 1e9 } });
+    expect(box().style.height).toBe("20000px");
+    // An unasked ready is a resize under the same guard, never a new start.
+    post({ protocol: PROTOCOL, kind: "ready", metrics: { height: 300 } });
+    nextFrame();
+    expect(box().style.height).toBe("300px");
+    for (let i = 0; i < 12; i++) {
+      post({ protocol: PROTOCOL, kind: "ready", metrics: { height: i % 2 ? 400 : 900 } });
+      nextFrame();
+    }
+    // It bounced: the height stopped following.
+    const frozen = box().style.height;
+    post({ protocol: PROTOCOL, kind: "resize", height: 5000 });
+    nextFrame();
+    expect(box().style.height).toBe(frozen);
+  });
+
+  it("applies at most one height an animation frame", () => {
+    const { container, post, start } = mount("detail");
+    const box = () => container.querySelector<HTMLElement>("[data-frame-state]")!;
+    start();
+    post({ protocol: PROTOCOL, kind: "resize", height: 500 });
+    post({ protocol: PROTOCOL, kind: "resize", height: 520 });
+    expect(box().style.height).toBe("420px");
+    nextFrame();
+    expect(box().style.height).toBe("520px");
   });
 
   it("keeps a glance's box whatever the frame asks", () => {
@@ -230,6 +281,7 @@ describe("a custom tile's frame", () => {
   });
 
   it("jumps only to a citation it resolved, only while the reader is in the frame", () => {
+    activation(true);
     const { frame, post, start, files, ctx } = mount("detail");
     start();
     const cited = '["hunk","h_000000000003",[21,25]]';
@@ -242,8 +294,28 @@ describe("a custom tile's frame", () => {
     expect(files.open).not.toHaveBeenCalled();
     post({ protocol: PROTOCOL, kind: "jump", key: cited });
     expect(files.open).toHaveBeenCalledWith(expect.any(String), 21);
+    // One a second at most.
+    post({ protocol: PROTOCOL, kind: "jump", key: '["tile","overview"]' });
+    expect(ctx.open).not.toHaveBeenCalled();
+    act(() => vi.advanceTimersByTime(1000));
     post({ protocol: PROTOCOL, kind: "jump", key: '["tile","overview"]' });
     expect(ctx.open).toHaveBeenCalledWith("overview");
+  });
+
+  it("takes no jump or question without a user activation, failing closed", () => {
+    for (const state of ["absent", false] as const) {
+      activation(state);
+      const { frame, post, start, files, host } = mount("detail");
+      start();
+      giveFocus(frame()!);
+      expect(document.activeElement).toBe(frame());
+      post({ protocol: PROTOCOL, kind: "jump", key: '["hunk","h_000000000003",[21,25]]' });
+      post({ protocol: PROTOCOL, kind: "ask" });
+      expect(files.open).not.toHaveBeenCalled();
+      expect(host.ask).not.toHaveBeenCalled();
+      act(() => root?.unmount());
+      root = null;
+    }
   });
 
   it("takes no jump, ask or key from a glance", () => {
@@ -262,6 +334,7 @@ describe("a custom tile's frame", () => {
   });
 
   it("hands the page a whitelisted key from a focused detail", () => {
+    activation(true);
     const { frame, post, start, host } = mount("detail");
     start();
     const keys: string[] = [];
@@ -294,6 +367,42 @@ describe("a custom tile's frame", () => {
     expect(host.ask).toHaveBeenCalledTimes(1);
   });
 
+  it("does not take the pointer resting on a detail while the reader types elsewhere as a click", () => {
+    activation(true);
+    const { frame, post, start } = mount("detail");
+    start();
+    const composer = document.createElement("textarea");
+    document.body.append(composer);
+    composer.focus();
+    act(() => {
+      frame()!.dispatchEvent(new Event("pointerenter"));
+      composer.dispatchEvent(new KeyboardEvent("keydown", { key: "a", bubbles: true }));
+      frame()!.focus();
+      window.dispatchEvent(new Event("blur"));
+      vi.advanceTimersByTime(1);
+    });
+    expect(document.activeElement).toBe(composer);
+    post({ protocol: PROTOCOL, kind: "key", key: "Escape", shift: false });
+    // A click in it with nothing typed just before is the reader's.
+    act(() => vi.advanceTimersByTime(1000));
+    act(() => {
+      frame()!.focus();
+      window.dispatchEvent(new Event("blur"));
+      vi.advanceTimersByTime(1);
+    });
+    expect(document.activeElement).toBe(frame());
+    // Without an activation, the pointer over it is not a click.
+    composer.focus();
+    activation(false);
+    act(() => vi.advanceTimersByTime(1000));
+    act(() => {
+      frame()!.focus();
+      window.dispatchEvent(new Event("blur"));
+      vi.advanceTimersByTime(1);
+    });
+    expect(document.activeElement).not.toBe(frame());
+  });
+
   it("takes the keyboard back from a frame the reader did not give it to", () => {
     const { frame, post, start, container } = mount("detail");
     start();
@@ -323,11 +432,23 @@ describe("a custom tile's frame", () => {
     expect(container.textContent).toContain("It tried to leave its frame.");
   });
 
-  it("takes an error before the tile drew as its failure, shown as text", () => {
+  it("takes an error before the tile drew as its failure, its words quoted apart", () => {
     const { container, post } = mount("detail");
     post({ protocol: PROTOCOL, kind: "hello", kit: 1, registered: true });
-    post({ protocol: PROTOCOL, kind: "error", code: "script_error", message: "<b>bad</b>" });
-    expect(container.textContent).toContain("<b>bad</b>");
+    post({
+      protocol: PROTOCOL,
+      kind: "error",
+      code: "script_error",
+      message: "<b>Your session expired: sign in again</b>",
+    });
+    // The host's own reason; the tile's words only behind Details, quoted.
+    expect(container.querySelector("[role=alert] > div > p")?.textContent).toBe(
+      "This tile couldn't load.",
+    );
+    expect(container.textContent).toContain("It failed while drawing.");
+    const quoted = container.querySelector("details blockquote");
+    expect(quoted?.textContent).toBe("<b>Your session expired: sign in again</b>");
+    expect(container.querySelector("details")?.open).toBe(false);
     expect(container.querySelector("b")).toBeNull();
   });
 
@@ -361,6 +482,33 @@ describe("a custom tile's frame", () => {
     spyOn();
     start();
     expect(state(container)).toBe("ready");
+  });
+
+  it("reads the tile routes once for frames silent together", async () => {
+    const reread = vi.fn(
+      () => new Promise<undefined>((resolve) => setTimeout(() => resolve(undefined), 100)),
+    );
+    const host: TileHost = { draft: false, commentCounts: new Map(), reread };
+    const container = document.createElement("div");
+    document.body.append(container);
+    root = createRoot(container);
+    act(() =>
+      root!.render(
+        <TileHostContext.Provider value={host}>
+          <TileFrame tile={freshTile()} ctx={contextFor()} face="glance" />
+          <TileFrame tile={freshTile()} ctx={contextFor()} face="glance" />
+          <TileFrame tile={freshTile()} ctx={contextFor()} face="detail" />
+        </TileHostContext.Provider>,
+      ),
+    );
+    await act(async () => {
+      vi.advanceTimersByTime(HELLO_TIMEOUT + 10);
+    });
+    await act(async () => {
+      vi.advanceTimersByTime(200);
+    });
+    expect(reread).toHaveBeenCalledTimes(1);
+    expect(container.querySelectorAll("iframe")).toHaveLength(3);
   });
 
   it("fails alone: another tile of the same type still loads", () => {
@@ -406,18 +554,50 @@ describe("custom tiles on the page", () => {
     expect(tileFace(noDigest).kind).toBe("unavailable");
   });
 
-  it("mount no frame in the desktop app on Windows", () => {
-    const fake = (userAgent: string, desktop: boolean) =>
-      ({
-        navigator: { userAgent, platform: "" },
-        ...(desktop ? { __TAURI_INTERNALS__: {} } : {}),
-      }) as unknown as Window;
-    const windows = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Edg/130.0";
-    expect(framesAllowedHere(fake(windows, true))).toBe(false);
-    expect(framesAllowedHere(fake(windows, false))).toBe(true);
-    expect(framesAllowedHere(fake("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)", true))).toBe(
+  it("mount frames in a browser, and in a desktop shell only when it says it is safe", () => {
+    const fake = (fields: Record<string, unknown>) =>
+      ({ navigator: { userAgent: "", platform: "" }, ...fields }) as unknown as Window;
+    const shell = { __TAURI_INTERNALS__: {} };
+    // A browser, declaration or not (a page cannot be made a shell).
+    expect(framesAllowedHere(fake({}))).toBe(true);
+    expect(framesAllowedHere(fake({ __BAUM_DESKTOP__: { tileFrames: false } }))).toBe(true);
+    // A shell that declares it.
+    expect(framesAllowedHere(fake({ ...shell, __BAUM_DESKTOP__: { tileFrames: true } }))).toBe(
       true,
     );
-    expect(framesAllowedHere(fake("Mozilla/5.0 (X11; Linux x86_64)", true))).toBe(true);
+    // A shell that declares nothing, or anything else.
+    for (const declared of [
+      undefined,
+      null,
+      true,
+      "tileFrames",
+      {},
+      { tileFrames: false },
+      { tileFrames: "true" },
+      { tileFrames: 1 },
+      Object.create({ tileFrames: true }),
+    ])
+      expect(
+        framesAllowedHere(fake({ ...shell, __BAUM_DESKTOP__: declared })),
+        String(declared),
+      ).toBe(false);
+  });
+
+  it("say so in a shell that has not declared it", () => {
+    const win = window as Window & { __TAURI_INTERNALS__?: unknown };
+    win.__TAURI_INTERNALS__ = {};
+    try {
+      const { container } = (() => {
+        const container = document.createElement("div");
+        document.body.append(container);
+        root = createRoot(container);
+        act(() => root!.render(<TileFrame tile={freshTile()} ctx={contextFor()} face="glance" />));
+        return { container };
+      })();
+      expect(container.textContent).toBe(NOT_IN_THIS_SHELL);
+      expect(container.querySelector("iframe")).toBeNull();
+    } finally {
+      delete win.__TAURI_INTERNALS__;
+    }
   });
 });

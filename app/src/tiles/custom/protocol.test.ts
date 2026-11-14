@@ -121,6 +121,15 @@ describe("readMessage", () => {
     });
   });
 
+  it("clamps the height a ready reports, as a resize's", () => {
+    expect(readMessage(m({ kind: "ready", metrics: { height: 1e9 } }))).toMatchObject({
+      metrics: { height: HEIGHT_MAX },
+    });
+    expect(readMessage(m({ kind: "ready", metrics: { height: 0 } }))).toMatchObject({
+      metrics: { height: HEIGHT_MIN },
+    });
+  });
+
   it("clamps a detail's height to its bounds", () => {
     expect(readMessage(m({ kind: "resize", height: 1e9 }))).toEqual({
       kind: "resize",
@@ -153,16 +162,30 @@ describe("RateGuard", () => {
   it("finds a flood sustained over seconds", () => {
     const guard = new RateGuard();
     const results: string[] = [];
-    for (let second = 0; second < RATE.SUSTAINED; second++)
+    for (let second = 0; second <= RATE.OVER_SECONDS; second++)
       for (let i = 0; i < 40; i++) results.push(guard.admit(10_000 + second * 1000 + i * 20));
     expect(results.at(-1)).toBe("flood");
-    expect(guard.admit(20_000)).toBe("flood");
+    expect(guard.admit(30_000)).toBe("flood");
   });
 
-  it("does not count seconds over the rate that are not consecutive", () => {
+  it("finds a flood over the rate now and then, in a sliding window", () => {
+    // Over the rate every third second: never twice in a row, but four
+    // times within ten seconds.
     const guard = new RateGuard();
-    for (const second of [0, 2, 4, 6])
-      for (let i = 0; i < 40; i++) expect(guard.admit(second * 1000 + i)).not.toBe("flood");
+    let last = "";
+    for (const second of [0, 3, 6, 9])
+      for (let i = 0; i < 40; i++) last = guard.admit(second * 1000 + i);
+    expect(last).toBe("flood");
+  });
+
+  it("lets a frame over the rate rarely, and one just under it always", () => {
+    const rare = new RateGuard();
+    for (const second of [0, 5, 10, 15, 20, 25])
+      for (let i = 0; i < 40; i++) expect(rare.admit(second * 1000 + i)).not.toBe("flood");
+    const steady = new RateGuard();
+    for (let second = 0; second < 60; second++)
+      for (let i = 0; i < RATE.PER_SECOND; i++)
+        expect(steady.admit(second * 1000 + i * 30)).toBe("ok");
   });
 
   it("finds a burst in one second", () => {
@@ -179,6 +202,17 @@ describe("HeightGuard", () => {
     expect(guard.next(300, 0)).toBe(300);
     expect(guard.next(280, 10)).toBe(280);
     expect(guard.next(600, 20)).toBe(600);
+  });
+
+  it("stops following a height that bounces", () => {
+    const guard = new HeightGuard();
+    let applied: number | null = 0;
+    for (let i = 0; i < 12; i++) applied = guard.next(i % 2 ? 400 : 600, i * 50);
+    expect(applied).toBeNull();
+    expect(guard.frozen).toBe(true);
+    // Changes of direction spread out are an ordinary tile reflowing.
+    const calm = new HeightGuard();
+    for (let i = 0; i < 12; i++) expect(calm.next(i % 2 ? 400 : 600, i * 1000)).not.toBeNull();
   });
 
   it("stops following a height that grows with the frame", () => {

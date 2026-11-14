@@ -105,7 +105,8 @@ export function readMessage(data: unknown): FrameMessage | null {
     case "ready": {
       const metrics = data.metrics;
       if (!isPlainRecord(metrics)) return null;
-      const height = count(metrics.height);
+      // Held to a detail's bounds here, as a resize is.
+      const height = count(metrics.height) === null ? null : clampHeight(metrics.height);
       if (height === null) return null;
       return {
         kind: "ready",
@@ -181,21 +182,22 @@ export function themeMessage(theme: "light" | "dark") {
 }
 
 /** How many messages a frame may send. Past `PER_SECOND` in a second the
- *  rest of that second's messages are dropped unread; a frame over it for
- *  `SUSTAINED` seconds in a row, or past `BURST` in any one second, is
- *  flooding and is unmounted. An honest frame sends a handful: `hello`,
- *  `ready`, a resize per animation frame while it settles, and an error or
- *  two. */
-export const RATE = { PER_SECOND: 30, SUSTAINED: 3, BURST: 300 } as const;
+ *  rest of that second's messages are dropped unread; a frame over it in
+ *  more than `OVER_SECONDS` of the last `WINDOW` seconds, or past `BURST` in
+ *  any one second, is flooding and is unmounted. An honest frame sends a
+ *  handful: `hello`, `ready`, a resize per animation frame while it settles,
+ *  and an error or two. */
+export const RATE = { PER_SECOND: 30, WINDOW: 10, OVER_SECONDS: 3, BURST: 300 } as const;
 
 export type Admission = "ok" | "drop" | "flood";
 
-/** Counts one frame's messages by the second, as `RATE` says. */
+/** Counts one frame's messages by the second, as `RATE` says. The router
+ *  counts a message before anything reads it. */
 export class RateGuard {
   private second = Number.NaN;
   private seen = 0;
-  private overStreak = 0;
-  private lastOver = Number.NaN;
+  /** The seconds that went over the rate, newest last. */
+  private over: number[] = [];
   private flooded = false;
 
   admit(now: number): Admission {
@@ -212,11 +214,9 @@ export class RateGuard {
     }
     if (this.seen <= RATE.PER_SECOND) return "ok";
     if (this.seen === RATE.PER_SECOND + 1) {
-      // The first message over the limit in this second extends the streak
-      // when the second before was over too.
-      this.overStreak = this.lastOver === second - 1 ? this.overStreak + 1 : 1;
-      this.lastOver = second;
-      if (this.overStreak >= RATE.SUSTAINED) {
+      this.over = this.over.filter((at) => at > second - RATE.WINDOW);
+      this.over.push(second);
+      if (this.over.length > RATE.OVER_SECONDS) {
         this.flooded = true;
         return "flood";
       }
@@ -225,19 +225,37 @@ export class RateGuard {
   }
 }
 
-/** Ten height increases by the same amount within a second are a feedback
- *  loop with the frame's own height (`vh` units, say): the height stops
- *  following, as the kit's own guard would stop reporting. */
+/** What a detail's height may do. Ten increases by the same amount within a
+ *  second are a feedback loop with the frame's own height (`vh` units, say),
+ *  and so are `FLIPS` changes of direction within `FLIP_WINDOW` ms (a height
+ *  that bounces between two values): either way the height stops following,
+ *  as the kit's own guard would stop reporting. */
+export const HEIGHT_LOOP = { GROWS: 10, FLIPS: 6, FLIP_WINDOW: 2000 } as const;
+
 export class HeightGuard {
   private last = -1;
   private delta = 0;
   private since = 0;
   private grows = 0;
+  private direction = 0;
+  private flips: number[] = [];
   frozen = false;
 
   /** The height to apply, or null to keep the current one. */
   next(height: number, now: number): number | null {
     if (this.frozen) return null;
+    if (this.last >= 0 && height !== this.last) {
+      const direction = Math.sign(height - this.last);
+      if (this.direction !== 0 && direction !== this.direction) {
+        this.flips = this.flips.filter((at) => now - at <= HEIGHT_LOOP.FLIP_WINDOW);
+        this.flips.push(now);
+        if (this.flips.length >= HEIGHT_LOOP.FLIPS) {
+          this.frozen = true;
+          return null;
+        }
+      }
+      this.direction = direction;
+    }
     if (this.last >= 0 && height > this.last) {
       const delta = height - this.last;
       if (delta === this.delta && now - this.since <= 1000) this.grows++;
@@ -246,7 +264,7 @@ export class HeightGuard {
         this.since = now;
         this.grows = 1;
       }
-      if (this.grows >= 10) {
+      if (this.grows >= HEIGHT_LOOP.GROWS) {
         this.frozen = true;
         return null;
       }

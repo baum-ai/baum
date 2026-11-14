@@ -4,18 +4,34 @@ import { useEffect, useState, useSyncExternalStore, type RefObject } from "react
  *  may mount frames here, the app's theme, and when a frame is near enough
  *  to the reader to be worth mounting. */
 
-/** False only inside the desktop app on Windows. There, a sandboxed frame may
- *  be able to reach the desktop shell's commands, and until that is checked
- *  the page mounts no tile frame and says so. The desktop shell's bridge
- *  (`__TAURI_INTERNALS__`) marks the desktop app, as Settings reads it, and
- *  WebView2's user agent names Windows. Everywhere else frames mount. */
+/** What a desktop shell declares about itself, by init script in the main
+ *  frame before the page's scripts run. `tileFrames: true` says the shell
+ *  refuses a frame's navigations to anything but the daemon's own pages (so
+ *  a tile cannot open the person's browser at an address of its choosing)
+ *  and that its commands are out of a sandboxed frame's reach. A frame cannot
+ *  set it: it cannot write the page's globals. */
+type DesktopDeclaration = { tileFrames?: unknown };
+
+/** Whether the page may mount tile frames here: always in a browser; in a
+ *  desktop shell (its bridge, `__TAURI_INTERNALS__`, is on the page) only
+ *  when the shell declares `window.__BAUM_DESKTOP__ = { tileFrames: true }`.
+ *  A shell that declares nothing, or anything else, is an older or
+ *  unchecked one (the Windows shell, until its separate check is done), and
+ *  the page mounts no frame there. */
 export function framesAllowedHere(
-  win: Window & { __TAURI_INTERNALS__?: unknown } = window,
+  win: Window & { __TAURI_INTERNALS__?: unknown; __BAUM_DESKTOP__?: unknown } = window,
 ): boolean {
-  const desktop = Boolean(win.__TAURI_INTERNALS__);
-  const windows = /Windows/i.test(win.navigator.userAgent || win.navigator.platform || "");
-  return !(desktop && windows);
+  if (!win.__TAURI_INTERNALS__) return true;
+  const declared = win.__BAUM_DESKTOP__;
+  if (typeof declared !== "object" || declared === null) return false;
+  return (
+    Object.hasOwn(declared, "tileFrames") && (declared as DesktopDeclaration).tileFrames === true
+  );
 }
+
+/** What a tile says where frames are not mounted. */
+export const NOT_IN_THIS_SHELL =
+  "Custom tiles aren't available in this version of the desktop app yet.";
 
 export type Theme = "light" | "dark";
 
