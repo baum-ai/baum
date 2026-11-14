@@ -581,3 +581,38 @@ func TestListSkipsATypeThatCannotBeLoaded(t *testing.T) {
 		t.Error("a broken type was read")
 	}
 }
+
+// A purge keeps a definition a stored layout fill names by its digest column.
+func TestPurgeKeepsDefinitionsNamedByStoredFills(t *testing.T) {
+	s, c := newStore(t)
+	ctx := context.Background()
+	kept := mustCreate(t, s, change(t, "migrations", ""))
+	gone := mustCreate(t, s, change(t, "other", ""))
+	db, err := appdb.Open(s.Path, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = db.Close() }()
+	if _, err := db.Exec(`CREATE TABLE tile_fills(pr TEXT, tile TEXT, version INTEGER, digest TEXT, data BLOB, at TEXT, origin TEXT)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO tile_fills VALUES ('acme/web#1', 't', 1, ?, '{}', 'now', 'chat')`, kept.Entry.Definition.Digest); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"migrations", "other"} {
+		if err := s.Delete(ctx, name); err != nil {
+			t.Fatal(err)
+		}
+	}
+	c.now = c.now.Add(31 * 24 * time.Hour)
+	if err := s.Purge(ctx); err != nil {
+		t.Fatal(err)
+	}
+	has := func(digest string) bool {
+		var n int
+		return db.QueryRow(`SELECT 1 FROM tile_definitions WHERE digest = ?`, digest).Scan(&n) == nil
+	}
+	if !has(kept.Entry.Definition.Digest) || has(gone.Entry.Definition.Digest) {
+		t.Errorf("kept %v, gone %v", has(kept.Entry.Definition.Digest), has(gone.Entry.Definition.Digest))
+	}
+}
