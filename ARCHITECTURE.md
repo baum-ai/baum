@@ -746,8 +746,8 @@ the schema, what is wrong and how to fix it:
 | `properties`, `required` | Every required property is defined. Objects only. |
 | `additionalProperties` | Must be `false` on every object. |
 | `items`, `minItems`, `maxItems` | Every array has one `items` schema and `maxItems`, at most 500. |
-| `minLength`, `maxLength` | Every string has `maxLength`, at most 20000, unless it has `enum`, `const` or `pattern`. |
-| `pattern` | At most 256 characters, Go RE2 syntax (no lookaround or backreferences), compiling to at most 400 instructions. |
+| `minLength`, `maxLength` | Every string has `maxLength`, at most 20000, unless it has `enum` or `const`, pattern or not. Lengths count code points, as JSON Schema says; JavaScript's `length` counts UTF-16 units, so text outside the Basic Multilingual Plane counts twice there. |
+| `pattern` | At most 256 characters, in the syntax Go's RE2 and JavaScript share, compiling to at most 400 instructions. Refused: lookaround and backreferences (RE2 has none), flag groups such as `(?i)`, `(?P<name>…)`, `\A`, `\z`, `\Q…\E`, `\C`, `\p`, `\P`, `\x{…}` and POSIX classes such as `[[:alpha:]]`. The engines still differ on some classes: `.` matches `\r`, U+2028 and U+2029 in Go and not in JavaScript, and `\s` matches more in JavaScript, so a pattern should spell out such characters with an explicit class. |
 | `minimum`, `maximum`, `exclusiveMinimum`, `exclusiveMaximum` | Numbers only. |
 | `enum`, `const` | At most 64 values; strings, numbers, booleans and null only. |
 | `anyOf`, `oneOf`, `allOf` | At most 8, 8 and 4 options, nested at most 2 deep counting through properties, items and `$ref`. |
@@ -766,34 +766,60 @@ nests them at most 12 deep counting through `$ref`. The definitions
 from `tiles-1.json` and may not be redefined. A schema that passes the
 dialect also resolves with the JSON Schema library the rest of baum uses.
 
+Problems are shown to people and read by the agents that write tiles, and
+definitions may later come from other people, so a problem never quotes
+text from a definition or from data beyond a name that is a plain
+identifier of at most 64 characters (anything else becomes `…` in a path,
+or "a property"), never repeats a pattern or a decoding error, and is at
+most 400 characters; a schema reports at most 20 problems.
+
 The package validates a custom tile's data with its own validator for the
 dialect rather than the general library, so a failure names the data's JSON
 path and never quotes the data, and every check counts its work against a
 budget of 2^18 steps: a keyword applied to a value is a step, and a pattern
 match costs its text's length times its program's size over 16. The data is
-at most 64 KiB, measured before it is decoded, and the definition at most
-2 MiB. On the costliest schemas the dialect allows (patterns in 64 nested
-options, objects in 64 options, arrays nested twelve deep, every citation
-kind, 64 long enum values, wide objects) and the costliest data that fits, a
-check takes at most about 15 ms, or stops at the budget and reports that the
-data takes too much work; a test holds it under 50 ms. A test also holds the
-validator to the library's verdict on varied data. A saved review embeds the
-definition in every tile of its type, so a `tiles.Validator` caches checked
-definitions by their encoded bytes and compiled data schemas by digest, in
-bounded caches safe for concurrent use.
+at most 64 KiB, measured before it is decoded. A definition is at most
+2 MiB; its data schema (32 KiB) and everything but its component and data
+schema (128 KiB) are measured before it is decoded, and it is decoded once,
+so even a definition just under the limit is checked in tens of
+milliseconds. On the costliest schemas the dialect allows (patterns in 64
+nested options, objects in 64 options, arrays nested twelve deep, every
+citation kind, 64 long enum values, wide objects) and the costliest data
+that fits, a check takes at most about 30 ms, or stops at the budget and
+reports that the data takes too much work; a test holds it under 50 ms. A
+test also holds the validator to the library's verdict on varied data.
+
+A document's custom tiles together are bounded too, far above any page
+people read: at most 64 custom tiles, 32 MiB of definitions (counted once
+per tile) and 1 MiB of data, counted in document order, and 2^21 validation
+steps (eight tiles' budgets) shared by all of them. A tile past a limit is
+unavailable and says which. A saved review embeds the definition in every
+tile of its type and is read again and again, so a `tiles.Validator` caches
+checked definitions by their encoded bytes, compiled data schemas by
+digest, and what each tile's data checks to by digest and the data's
+SHA-256, in bounded caches safe for concurrent use: checking a document
+again costs no validation, only resolving its citations. A document of 66
+custom tiles of the costliest kind takes about 100 ms to check the first
+time.
 
 A citation is any object in a custom tile's data that has the shape of
 `$defs/citation`: a `baum.review/1` anchor, or a risk, evidence item, change
 or tile of the document (`{"type": "risk", "id": "rsk_…"}`). A data schema
 declares one with `{"$ref": "#/$defs/citation"}`. The data is searched in a
 fixed order (object members by name, array items in order), and a citation's
-own members are not searched. A cited hunk must be in the index (with
-`lines`, if any, not reversed), a cited check and review thread in the
-index, a cited prompt or session event's session in the index and not
-restricted, and a cited risk, evidence item, change or tile in the document.
-A file may be any file of the repository and the document lists no commits,
-so those and the other anchor kinds are left to the page. A custom tile's
-`covers` are the hunks it cites, sorted and without repeats.
+own members are not searched; `oss/tiles/testdata/citations.json` holds
+the shapes that are and are not citations, for every implementation of the
+walk. A cited hunk must be in the index, with `lines`, if any, within the
+lines its right side holds (`new_range`); a cited file must be a path or old
+path of the index's hunks; a cited check and review thread must be in the
+index; a cited prompt or session event's session must be in the index and
+not restricted (a session the index lists twice is restricted when either
+entry is); and a cited risk, evidence item, change or tile must be in the
+document. The document lists no commits, and the other kinds carry what
+they name (a URL, a number, a key), so the page resolves those, and commits,
+from the document it has loaded, and only from it: it never fetches a URL,
+reads a file or calls the code host for a citation. A custom tile's `covers`
+are the hunks it cites, sorted and without repeats.
 
 A custom tile is ready when its definition and data are valid, and
 unavailable, with a problem that names the cause without quoting the data,
@@ -807,7 +833,10 @@ only when:
 4. its component holds a NUL character;
 5. its data schema is not in the dialect;
 6. its data is larger than 64 KiB or fails its schema;
-7. its data has more than 256 citations, or a citation does not resolve.
+7. its data has more than 256 citations, or a citation does not resolve;
+8. its ID is a built-in single tile's, which names that tile's type, even
+   one the document does not have;
+9. it is past one of the document's limits above.
 
 A draft's pending custom tile may have empty data until it is written.
 `tiles.Validator.CheckDefinition` and `CheckData` check a definition, and
@@ -820,10 +849,13 @@ value, the smallest numbers) and `maximal` (every property, arrays at
 unbroken token, right-to-left text, combining characters and CJK, shrunk
 until it fits 64 KiB). Citations are filled from a list of the review's own,
 or with a hunk no review has. Generation is deterministic, and a sample that
-does not pass its schema is dropped with a warning.
+does not pass its schema is dropped with a warning. A call, generation and
+validation together, has a budget of 2^21 steps; when it runs out, the
+samples not yet made are dropped with a warning, so even the costliest
+schemas take a few hundred milliseconds at most.
 
 `baum.review/1` has no place for custom tiles, so `tiles.ToReview` leaves
-them out, whatever their ID; a host serving the review view of a tile
+them out; a host serving the review view of a tile
 document with custom tiles serves it without them. Converted documents have
 none.
 
