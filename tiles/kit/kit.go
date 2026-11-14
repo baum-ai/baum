@@ -46,7 +46,7 @@ const CSP = "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-i
 const (
 	MaxAuthorHTML = 256 << 10
 	MaxDocument   = 512 << 10
-	MaxKit        = 48 << 10
+	MaxKit        = 64 << 10
 )
 
 var majors = []int{1}
@@ -145,7 +145,9 @@ type prelude struct {
 	// kit is the size of the major's own scripts and styles as inlined:
 	// v<n>/, without the generated tokens and fonts every major shares.
 	kit int
-	err error
+	// script is the major's script as inlined, before AUTHOR_LINE is set.
+	script string
+	err    error
 }
 
 var (
@@ -160,8 +162,7 @@ func preludeOf(n int) prelude {
 	preludesOnce.Do(func() {
 		preludes = make(map[int]prelude, len(majors))
 		for _, major := range majors {
-			text, size, err := buildPrelude(major)
-			preludes[major] = prelude{text, size, err}
+			preludes[major] = buildPrelude(major)
 		}
 	})
 	if p, ok := preludes[n]; ok {
@@ -170,10 +171,15 @@ func preludeOf(n int) prelude {
 	return prelude{err: fmt.Errorf("%w: %d", ErrUnsupported, n)}
 }
 
-func buildPrelude(n int) ([]byte, int, error) {
+func buildPrelude(n int) prelude {
+	text, size, script, err := assemble(n)
+	return prelude{text: text, kit: size, script: script, err: err}
+}
+
+func assemble(n int) ([]byte, int, string, error) {
 	manifest, err := LoadManifest(n)
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, "", err
 	}
 	dir := fmt.Sprintf("v%d", n)
 	read := func(name string) (string, error) {
@@ -182,11 +188,11 @@ func buildPrelude(n int) ([]byte, int, error) {
 	}
 	tokens, err := files.ReadFile("tokens.css")
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, "", err
 	}
 	fonts, err := files.ReadFile("fonts.css")
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, "", err
 	}
 	var style strings.Builder
 	style.WriteString(compactCSS(string(tokens)))
@@ -194,7 +200,7 @@ func buildPrelude(n int) ([]byte, int, error) {
 	for _, name := range manifest.Runtime.Styles {
 		css, err := read(name)
 		if err != nil {
-			return nil, 0, err
+			return nil, 0, "", err
 		}
 		css = compactCSS(css)
 		own += len(css)
@@ -206,18 +212,18 @@ func buildPrelude(n int) ([]byte, int, error) {
 	for _, name := range manifest.Runtime.Scripts {
 		js, err := read(name)
 		if err != nil {
-			return nil, 0, err
+			return nil, 0, "", err
 		}
 		js, err = compactJS(js)
 		if err != nil {
-			return nil, 0, fmt.Errorf("kit: v%d/%s: %w", n, name, err)
+			return nil, 0, "", fmt.Errorf("kit: v%d/%s: %w", n, name, err)
 		}
 		script.WriteString(js)
 		script.WriteString("\n")
 	}
 	script.WriteString("})();")
 	if strings.Count(script.String(), authorLine) != 1 {
-		return nil, 0, fmt.Errorf("kit: v%d's scripts must hold %s exactly once", n, authorLine)
+		return nil, 0, "", fmt.Errorf("kit: v%d's scripts must hold %s exactly once", n, authorLine)
 	}
 	head := "<!doctype html>\n" +
 		"<html lang=\"en\" data-theme=\"light\" data-face=\"\">\n" +
@@ -231,7 +237,7 @@ func buildPrelude(n int) ([]byte, int, error) {
 	// The author's first line is the line after the prelude's last newline.
 	lines := strings.Count(head, "\n")
 	head = strings.Replace(head, authorLine, strconv.Itoa(lines), 1)
-	return []byte(head), own + script.Len(), nil
+	return []byte(head), own + script.Len(), script.String(), nil
 }
 
 // compactJS drops a kit script's comment lines, indentation and blank

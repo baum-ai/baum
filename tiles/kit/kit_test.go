@@ -1,6 +1,8 @@
 package kit
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -336,6 +338,25 @@ func TestLint(t *testing.T) {
 		{"own token is fine", "<style>.x { --gap: 4px; margin: var(--gap); }</style>", "", "", 0},
 		{"innerHTML", script("root.innerHTML = x"), "inner_html", Warning, 2},
 		{"static markup", "<style></style>\n<h1>Title</h1>", "static_markup", Warning, 2},
+		{"window.open", script("window.open('x')"), "network", Error, 2},
+		{"window.fetch", script("window.fetch('/api')"), "network", Error, 2},
+		{"parent.postMessage", script("parent.postMessage({}, '*')"), "parent", Error, 2},
+		{"window.location assignment", script("window.location = '/x'"), "navigation", Error, 2},
+		{"document.location.href", script("document.location.href = '/x'"), "navigation", Error, 2},
+		{"location.replace", script("location.replace('/x')"), "navigation", Error, 2},
+		{"handler after other attributes", "<template><p class=\"a\" data-x=${y} onclick='x()'>x</p></template>", "event_handler", Error, 1},
+		// Ordinary code that only looks like a mistake.
+		{"a variable named top", script("const top = rows.slice(0, 3);\nreturn top.map((r) => r.name);"), "", "", 0},
+		{"a variable named parent", script("const parent = node.parentNode;\nparent.append(x);"), "", "", 0},
+		{"a javascript key", script(`const LANGS = { javascript: "JS", typescript: "TS" };`), "", "", 0},
+		{"a loop with one", script("for (let i = 0; i<rows.length; i++) { const one = rows[i]; }"), "", "", 0},
+		{"a variable named location", script("const location = item.path;"), "", "", 0},
+		{"a member named location", script("item.location.href = x;"), "", "", 0},
+		{"words in strings", script(`const KINDS = { ws: "WebSocket endpoint", sse: "EventSource stream", f: 'fetch (read)' };`), "", "", 0},
+		{"words in a template", script("const t = `uses fetch( and localStorage`;"), "", "", 0},
+		{"words in comments", script("// never fetch( here\n/* or eval( */\nconst x = 1;"), "", "", 0},
+		{"a method named fetch", script("const rows = api.fetch(1);"), "", "", 0},
+		{"a function named open", script("function open(x) { return x; }\nopen(1);"), "", "", 0},
 		{"own document shell is fine", "<!doctype html><html><head><meta charset=utf-8><title>x</title></head><body>" + sampleTile + "</body></html>", "", "", 0},
 	}
 	for _, tc := range cases {
@@ -444,7 +465,7 @@ func TestManifestMatchesSources(t *testing.T) {
 		if !strings.Contains(bootstrap, fmt.Sprintf("defineElement(%q, %q)", entry.Name, factory)) {
 			t.Errorf("%s is not defined for baum.%s", entry.Name, factory)
 		}
-		if !strings.Contains(elements+read("v1/markdown.js"), fmt.Sprintf("document.createElement(%q)", entry.Name)) {
+		if !strings.Contains(elements+read("v1/markdown.js"), fmt.Sprintf("create(%q)", entry.Name)) {
 			t.Errorf("no factory makes %s", entry.Name)
 		}
 	}
@@ -600,5 +621,54 @@ func TestCompactCSS(t *testing.T) {
 	want := ".a,.b{color:var(--x);margin:0 auto;font-family:\"A B\",serif;}.c{box-shadow:\n0 0 1px red,0 0 2px blue;}"
 	if got != want {
 		t.Errorf("compactCSS = %q, want %q", got, want)
+	}
+}
+
+// The kit's script as Compose inlines it, compacted. The app's unit tests
+// run against this text as well as the sources (KIT_SCRIPT=inlined), which
+// shows the compaction keeps what the code does.
+func TestInlinedScriptGolden(t *testing.T) {
+	p := preludeOf(1)
+	if p.err != nil {
+		t.Fatal(p.err)
+	}
+	goldentest.Text(t, "testdata/v1.inlined.js", p.script+"\n")
+}
+
+// v1 is frozen: every file of it is pinned by its digest.
+func TestV1IsFrozen(t *testing.T) {
+	manifest, err := LoadManifest(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	names := append(append([]string{"manifest.json"}, manifest.Runtime.Scripts...), manifest.Runtime.Styles...)
+	slices.Sort(names)
+	var b strings.Builder
+	for _, name := range names {
+		data, err := files.ReadFile("v1/" + name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		sum := sha256.Sum256(data)
+		fmt.Fprintf(&b, "%s  v1/%s\n", hex.EncodeToString(sum[:]), name)
+	}
+	got := b.String()
+	if os.Getenv("BAUM_KIT_REPIN") == "1" {
+		if err := os.WriteFile("testdata/v1.sha256", []byte(got), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return
+	}
+	want, err := os.ReadFile("testdata/v1.sha256")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != string(want) {
+		t.Errorf("kit v1 changed. v1 is frozen: saved tiles are drawn with it for good, so it "+
+			"changes only by addition (a new function, element, class or token), never by "+
+			"removing, renaming or changing what a documented name does. If this change only "+
+			"adds, update testdata/v1.sha256 in the same commit (BAUM_KIT_REPIN=1 go test "+
+			"./tiles/kit -run TestV1IsFrozen) and say in the commit message what was added.\n"+
+			"got:\n%s\nwant:\n%s", got, want)
 	}
 }

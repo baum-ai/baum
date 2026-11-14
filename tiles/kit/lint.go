@@ -34,10 +34,15 @@ type lintRule struct {
 	rule     string
 	pattern  *regexp.Regexp
 	// in limits the rule to "script" or "style" contents; empty is the whole
-	// HTML.
+	// HTML. "code" is script contents with string and template text and
+	// comments blanked, so words in them are not read as code.
 	in      string
 	message func(match string) string
 }
+
+// bareRules skip a match that continues a name or a member access
+// (`api.fetch(`, `item.location`).
+var bareRules = map[string]bool{"network": true, "eval": true, "storage": true, "navigation": true}
 
 func fixed(text string) func(string) string { return func(string) string { return text } }
 
@@ -60,25 +65,25 @@ var lintRules = []lintRule{
 		fixed("A script must be inline: <script src> can't load in a tile.")},
 	{Error, "css_import", regexp.MustCompile(`(?i)@import\b`), "style",
 		fixed("@import can't load in a tile; put the styles in the tile's own <style>.")},
-	{Error, "event_handler", regexp.MustCompile(`(?i)<[a-z][^<>]*?\son[a-z]+\s*=`), "",
+	{Error, "event_handler", regexp.MustCompile(`(?i)<[a-z][\w:-]*(?:\s+[a-z_:][\w:.-]*(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s"'<>=` + "`" + `]+))?)*\s+on[a-z]+\s*=`), "",
 		fixed("Inline event handler attributes are refused by baum.html; add listeners with addEventListener.")},
-	{Error, "javascript_url", regexp.MustCompile(`(?i)\bjavascript\s*:`), "",
+	{Error, "javascript_url", regexp.MustCompile(`(?i)[\w:-]+\s*=\s*["'` + "`" + `]?\s*javascript\s*:`), "",
 		fixed("javascript: URLs are refused; add listeners with addEventListener.")},
-	{Error, "network", regexp.MustCompile(`\b(?:fetch\s*\(|XMLHttpRequest\b|WebSocket\b|EventSource\b|sendBeacon\b|RTCPeerConnection\b|new\s+(?:Shared)?Worker\b|importScripts\b|window\.open\s*\()`), "script",
+	{Error, "network", regexp.MustCompile(`\b(?:(?:window|self|globalThis)\s*\.\s*)?(?:fetch\s*\(|XMLHttpRequest\b|WebSocket\b|EventSource\b|RTCPeerConnection\b|new\s+(?:Shared)?Worker\b|importScripts\b)|\bwindow\s*\.\s*open\s*\(|\bnavigator\s*\.\s*sendBeacon\b`), "code",
 		func(match string) string {
 			return fmt.Sprintf("%s: a tile has no network, workers or windows; everything it shows comes in its data.", strings.TrimSpace(strings.TrimRight(match, "( ")))
 		}},
-	{Error, "eval", regexp.MustCompile(`\b(?:eval\s*\(|new\s+Function\b|import\s*\()`), "script",
+	{Error, "eval", regexp.MustCompile(`\b(?:(?:window|self|globalThis)\s*\.\s*)?(?:eval\s*\(|new\s+Function\b)|\bimport\s*\(`), "code",
 		fixed("eval, new Function and import() are blocked in a tile.")},
-	{Error, "storage", regexp.MustCompile(`\b(?:localStorage|sessionStorage|indexedDB|document\.cookie|caches\s*\.)`), "script",
+	{Error, "storage", regexp.MustCompile(`\b(?:(?:window|self|globalThis)\s*\.\s*)?(?:localStorage|sessionStorage|indexedDB|caches\s*\.)|\bdocument\s*\.\s*cookie\b`), "code",
 		fixed("A tile has no storage or cookies: it draws only from its data.")},
-	{Error, "navigation", regexp.MustCompile(`\b(?:location\s*(?:\.\s*(?:href|assign|replace|reload)\b|=[^=])|history\s*\.\s*(?:pushState|replaceState|back|go)\b)`), "script",
+	{Error, "navigation", regexp.MustCompile(`\b(?:(?:window|document|self)\s*\.\s*location\s*(?:=[^=]|\.\s*(?:href\s*=[^=]|assign\b|replace\b|reload\b))|location\s*\.\s*(?:href\s*=[^=]|assign\s*\(|replace\s*\(|reload\s*\()|history\s*\.\s*(?:pushState|replaceState|back|go)\b)`), "code",
 		fixed("A tile can't navigate; use baum.jump(citation) to take the reader to cited code.")},
 	{Warning, "viewport_height", regexp.MustCompile(`(?i)\d(?:[dsl]?vh|[dsl]?vb|[dsl]?vmin|[dsl]?vmax)\b`), "",
 		fixed("Viewport units follow the frame's height, which follows the tile's: a detail grows without end. Size by content instead.")},
 	{Warning, "color_scheme", regexp.MustCompile(`(?i)prefers-color-scheme`), "",
 		fixed("prefers-color-scheme follows the system, not the app's theme; colour with the kit's tokens, which follow the app.")},
-	{Warning, "inner_html", regexp.MustCompile(`\b(?:innerHTML|outerHTML|insertAdjacentHTML|document\.write(?:ln)?)\b`), "script",
+	{Warning, "inner_html", regexp.MustCompile(`\b(?:innerHTML|outerHTML|insertAdjacentHTML|document\.write(?:ln)?)\b`), "code",
 		fixed("Build markup with baum.html, which escapes data; innerHTML parses it.")},
 }
 
@@ -96,7 +101,7 @@ var (
 	classPattern  = regexp.MustCompile(`kit-[a-z0-9-]+`)
 	varPattern    = regexp.MustCompile(`var\(\s*(--[\w-]+)`)
 	definePattern = regexp.MustCompile(`(--[\w-]+)\s*:|setProperty\(\s*["'](--[\w-]+)`)
-	parentPattern = regexp.MustCompile(`\b(?:window\s*\.\s*)?(?:parent|top|opener)\s*\.\s*[A-Za-z_$]`)
+	parentPattern = regexp.MustCompile(`\b(?:(?:window|self|globalThis)\s*\.\s*(?:parent|top|opener|frameElement)\b|(?:parent|top|opener)\s*\.\s*(?:postMessage|location|document|frames|window|baum)\b)`)
 )
 
 type span struct{ start, end int }
@@ -132,11 +137,23 @@ func Lint(n int, html string) []Finding {
 			}
 		}
 	}
+	code := []byte(html)
+	for _, s := range l.scripts {
+		blankLiterals(code[s.start:s.end])
+	}
+	l.code = string(code)
 	for _, rule := range lintRules {
+		text := html
+		if rule.in == "code" {
+			text = l.code
+		}
 		for _, s := range l.spans(rule.in) {
-			for _, match := range rule.pattern.FindAllStringIndex(html[s.start:s.end], -1) {
+			for _, match := range rule.pattern.FindAllStringIndex(text[s.start:s.end], -1) {
 				at := s.start + match[0]
-				l.add(rule.severity, rule.rule, rule.message(html[at:s.start+match[1]]), at)
+				if bareRules[rule.rule] && l.identifierBefore(at, ".") {
+					continue
+				}
+				l.add(rule.severity, rule.rule, rule.message(text[at:s.start+match[1]]), at)
 			}
 		}
 	}
@@ -157,7 +174,9 @@ func Lint(n int, html string) []Finding {
 }
 
 type linter struct {
-	html     string
+	html string
+	// code is html with its scripts' literals and comments blanked.
+	code     string
 	lines    []int
 	blocks   []span
 	scripts  []span
@@ -178,7 +197,7 @@ func (l *linter) index() {
 
 func (l *linter) spans(in string) []span {
 	switch in {
-	case "script":
+	case "script", "code":
 		return l.scripts
 	case "style":
 		return l.styles
@@ -205,13 +224,13 @@ func (l *linter) identifierBefore(offset int, extra string) bool {
 	if offset == 0 {
 		return false
 	}
-	c := l.html[offset-1]
+	c := l.code[offset-1]
 	return c == '_' || c == '$' || c >= '0' && c <= '9' || c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || strings.IndexByte(extra, c) >= 0
 }
 
 func (l *linter) parentAccess() {
 	for _, s := range l.scripts {
-		for _, match := range parentPattern.FindAllStringIndex(l.html[s.start:s.end], -1) {
+		for _, match := range parentPattern.FindAllStringIndex(l.code[s.start:s.end], -1) {
 			at := s.start + match[0]
 			if l.identifierBefore(at, ".") {
 				continue
@@ -231,15 +250,15 @@ func (l *linter) names(manifest *Manifest) {
 		}
 	}
 	for _, s := range l.scripts {
-		for _, match := range baumPattern.FindAllStringSubmatchIndex(l.html[s.start:s.end], -1) {
+		for _, match := range baumPattern.FindAllStringSubmatchIndex(l.code[s.start:s.end], -1) {
 			at := s.start + match[0]
 			if l.identifierBefore(at, ".") {
 				continue
 			}
-			first := "baum." + l.html[s.start+match[2]:s.start+match[3]]
+			first := "baum." + l.code[s.start+match[2]:s.start+match[3]]
 			name := first
 			if prefixes[first] && match[4] >= 0 {
-				name = first + "." + l.html[s.start+match[4]:s.start+match[5]]
+				name = first + "." + l.code[s.start+match[4]:s.start+match[5]]
 			}
 			if !api[name] && !(prefixes[first] && match[4] < 0) {
 				l.add(Error, "unknown_api", fmt.Sprintf("%s isn't part of kit %d.", name, manifest.Kit), at)
@@ -293,5 +312,91 @@ func (l *linter) staticMarkup() {
 	}
 	if match := tagPattern.FindIndex(rest); match != nil {
 		l.add(Warning, "static_markup", "Draw what the tile shows from its render functions; markup outside <script>, <style> and <template> shows before the data arrives.", match[0])
+	}
+}
+
+// blankLiterals replaces, in place, the text of a script's string and
+// template literals and its comments with spaces (newlines stay), keeping
+// the quotes and a template's ${...} expressions, so rules about code do not
+// read words. Regular expression literals are not recognised: one holding a
+// quote can blank code after it, which only hides a finding.
+func blankLiterals(b []byte) {
+	blank := func(from, to int) {
+		for i := from; i < to && i < len(b); i++ {
+			if b[i] != '\n' {
+				b[i] = ' '
+			}
+		}
+	}
+	// depths holds, for each template expression being read, its open braces.
+	var depths []int
+	i := 0
+	// template reads template text from i to its end or its next ${.
+	template := func() {
+		start := i
+		for i < len(b) {
+			switch {
+			case b[i] == '\\':
+				i += 2
+				continue
+			case b[i] == '`':
+				blank(start, i)
+				i++
+				return
+			case b[i] == '$' && i+1 < len(b) && b[i+1] == '{':
+				blank(start, i)
+				depths = append(depths, 0)
+				i += 2
+				return
+			}
+			i++
+		}
+		blank(start, len(b))
+	}
+	for i < len(b) {
+		c := b[i]
+		switch {
+		case c == '/' && i+1 < len(b) && b[i+1] == '/':
+			end := i
+			for end < len(b) && b[end] != '\n' {
+				end++
+			}
+			blank(i, end)
+			i = end
+		case c == '/' && i+1 < len(b) && b[i+1] == '*':
+			end := i + 2
+			for end+1 < len(b) && !(b[end] == '*' && b[end+1] == '/') {
+				end++
+			}
+			blank(i, end+2)
+			i = end + 2
+		case c == '"' || c == '\'':
+			end := i + 1
+			for end < len(b) && b[end] != c && b[end] != '\n' {
+				if b[end] == '\\' {
+					end++
+				}
+				end++
+			}
+			blank(i+1, end)
+			i = end + 1
+		case c == '`':
+			i++
+			template()
+		case c == '{' && len(depths) > 0:
+			depths[len(depths)-1]++
+			i++
+		case c == '}' && len(depths) > 0:
+			if depths[len(depths)-1] == 0 {
+				depths = depths[:len(depths)-1]
+				i++
+				template()
+			} else {
+				depths[len(depths)-1]--
+				i++
+			}
+		default:
+			i++
+		}
 	}
 }

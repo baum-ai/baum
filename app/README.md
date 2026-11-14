@@ -2199,7 +2199,9 @@ fixture uses the `state/inboxes` document in its shared `app.sqlite`.
 only with `INBOX_SCREENSHOTS=1`.
 
 Custom tile kit: `src/tile-kit/*.test.ts` load the kit's sources from
-`../tiles/kit/v1/` and run them in jsdom frames the way a tile's frame does.
+`../tiles/kit/v1/` and run them in jsdom frames the way a tile's frame does;
+`pnpm test:unit` runs them again against the compacted script the daemon inlines
+(`KIT_SCRIPT=inlined`, `../tiles/kit/testdata/v1.inlined.js`).
 `just local_app::tile-kit-screens` composes the demo tiles in `e2e/tile-kit/`
 (synthetic data) with the Go kit and takes pictures of them in sandboxed
 frames under the frame route's headers, glance at each card size and detail at
