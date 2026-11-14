@@ -30,6 +30,7 @@ import {
   type TileChange,
   type TileDocument,
 } from "../tile-document";
+import { tileName } from "../custom/library";
 import { isRecord, type TileContext, type TileFaceProps, type TileType } from "../types";
 
 const valid = (data: unknown) =>
@@ -336,7 +337,7 @@ function gatheredElsewhere(ctx: TileContext, change: string) {
     if (!GATHERING.has(tile.type) || places.some((place) => place.tile === tile.id)) continue;
     const origin = isRecord(tile.data) && isRecord(tile.data.origin) ? tile.data.origin : null;
     const cites = (tile.covers ?? []).some((hunk) => own.has(hunk));
-    if (origin?.change === change || cites) places.push({ tile: tile.id, label: tile.title });
+    if (origin?.change === change || cites) places.push({ tile: tile.id, label: tileName(tile) });
   }
   return places;
 }

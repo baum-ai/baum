@@ -46,7 +46,6 @@ import {
   documentRequest,
   tiledDocument,
   tilesRequest,
-  withTileLibrary,
   type TilesAnswer,
   type ChatFocus,
   type Entry,
@@ -527,13 +526,11 @@ export function LocalReview({
       return;
     }
     const abort = new AbortController();
-    withTileLibrary(
-      request<Partial<TilesAnswer>>(
-        `api/jobs/${encodeURIComponent(job.id)}/draft${tilesPage ? "?tiles=1" : ""}`,
-        undefined,
-        "GET",
-        abort.signal,
-      ),
+    request<Partial<TilesAnswer>>(
+      `api/jobs/${encodeURIComponent(job.id)}/draft${tilesPage ? "?tiles=1" : ""}`,
+      undefined,
+      "GET",
+      abort.signal,
     )
       .then((body) => {
         if (abort.signal.aborted || !Array.isArray(body.document?.sections)) return;

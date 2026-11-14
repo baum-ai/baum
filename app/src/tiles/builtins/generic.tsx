@@ -1,4 +1,5 @@
-import { Markdown } from "@baum/viewer/components/markdown";
+import ReactMarkdown, { type Components } from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { AnchorChips, PROSE } from "@baum/viewer/components/review-parts";
 import { type Column, Table } from "@baum/viewer/components/table";
 import { CodeIcon, DiagramIcon, QuoteIcon, TableIcon } from "../icons";
@@ -22,11 +23,39 @@ function ProseGlance({ tile, ctx }: TileFaceProps) {
   );
 }
 
+/** What a prose tile's Markdown may draw: paragraphs, emphasis, code spans
+ *  and lists. Links read as their text, and raw HTML stays text (no HTML
+ *  plugin), as the text is model-written. */
+const PROSE_ELEMENTS = ["p", "strong", "em", "code", "ul", "ol", "li", "br", "a"];
+const PROSE_COMPONENTS: Components = {
+  a: ({ children }) => <>{children}</>,
+  code: ({ children }) => (
+    <code className="rounded-xs bg-code-fill px-1 py-px font-mono text-base text-primary">
+      {children}
+    </code>
+  ),
+};
+
+export function ProseText({ text }: { text: string }) {
+  return (
+    <div className={`space-y-2 ${PROSE}`}>
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        allowedElements={PROSE_ELEMENTS}
+        unwrapDisallowed
+        components={PROSE_COMPONENTS}
+      >
+        {text}
+      </ReactMarkdown>
+    </div>
+  );
+}
+
 function ProseDetail({ tile, ctx }: TileFaceProps) {
   const data = tile.data as ProseData;
   return (
     <div className="space-y-3">
-      <Markdown className={PROSE}>{data.text}</Markdown>
+      <ProseText text={data.text} />
       <AnchorChips document={ctx.review} anchors={data.anchors} />
     </div>
   );

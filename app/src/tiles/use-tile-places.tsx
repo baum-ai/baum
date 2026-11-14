@@ -17,7 +17,7 @@ import { GridIcon } from "./icons";
 import { itemTarget, placeOf, readingOrder, tileSelection, type TilePlace } from "./place";
 import { TilePane } from "./pane";
 import { tileType } from "./registry";
-import { isBuiltinType } from "./custom/library";
+import { tileName } from "./custom/library";
 import {
   changeById,
   mustShowRisks,
@@ -38,7 +38,7 @@ const LANDING: Selection = { kind: "summary" };
  *  is of a built-in library type. */
 function railLabel(tile: Tile) {
   if (tile.type === "overview") return "Overview";
-  return tile.type === "custom" && !isBuiltinType(tile) ? `Custom · ${tile.title}` : tile.title;
+  return tileName(tile);
 }
 
 function railKey(place: TilePlace) {

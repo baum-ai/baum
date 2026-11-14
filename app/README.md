@@ -2598,8 +2598,8 @@ full review's own.
   is reserved before it loads and lies under the card's link; a detail is as
   tall as the tile draws, inside a faint edge under a "Custom tile" caption,
 and Tab reaches it. The kicker reads "Custom ·" and the type's title. A tile
-  of a built-in library type, whose definition digest `GET /api/tile-library`
-  lists, is baum's own: its kicker and rail entry are its title alone and its
+  of a built-in library type, whose served definition the daemon marks
+  `builtin: true`, is baum's own: its kicker and rail entry are its title alone and its
   detail has no caption or edge, though it draws in the same frame. A citation the tile's reader
   clicks opens the cited code, item or tile on the page. Frames mount near
   the visible area, at most 16 glances at once, and follow the app's theme.
