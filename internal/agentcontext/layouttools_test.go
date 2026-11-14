@@ -147,6 +147,60 @@ func TestLayoutToolsArePageBoundAndChatOnly(t *testing.T) {
 	}
 }
 
+// An edit needs the turn to have been sent from the pull request the page
+// shows now: a conversation's page follows the person, so a turn begun about
+// one pull request cannot change another's layout. Reading is not bound, and
+// a turn from the open pull request edits as before.
+func TestLayoutEditsAreBoundToTheTurnsPullRequest(t *testing.T) {
+	s, f, token, id := layoutServer(t)
+	setPage(t, s, id, pullPage)
+	if err := s.Registry.SetTurnPage(id, pullPage); err != nil {
+		t.Fatal(err)
+	}
+	hide := map[string]any{"ops": []any{map[string]any{"op": "hide", "tile": "context"}}}
+	if text, failed := data(t, s, token, "edit_tiles", hide); failed {
+		t.Fatalf("an edit from the turn's own pull request: %s", text)
+	}
+	other := pullPage
+	other.PullRequest = 14
+	setPage(t, s, id, other)
+	writes := f.edits
+	for _, tool := range []string{"edit_tiles", "add_tile", "undo_tiles", "reset_tiles"} {
+		args := map[string]any{"edit_tiles": hide, "add_tile": map[string]any{"type": "context"}}[tool]
+		if text, failed := data(t, s, token, tool, args); !failed || !strings.Contains(text, "started about another page; ask from the pull request you want to change") {
+			t.Errorf("%s from another pull request: %v %s", tool, failed, text)
+		}
+	}
+	if f.edits != writes {
+		t.Errorf("%d writes from another pull request", f.edits-writes)
+	}
+	if text, _ := data(t, s, token, "tile_layout", nil); strings.Contains(text, "another page") {
+		t.Errorf("reading the layout is bound to the turn: %s", text)
+	}
+	// The same number in another repository, and a turn from another kind of
+	// page, are not the pull request either.
+	elsewhere := pullPage
+	elsewhere.Repository = "acme/api"
+	setPage(t, s, id, elsewhere)
+	if _, failed := data(t, s, token, "edit_tiles", hide); !failed {
+		t.Error("an edit on the same number of another repository")
+	}
+	setPage(t, s, id, pullPage)
+	if err := s.Registry.SetTurnPage(id, PageContext{Page: PageInbox}); err != nil {
+		t.Fatal(err)
+	}
+	if _, failed := data(t, s, token, "edit_tiles", hide); !failed {
+		t.Error("an edit from a turn begun on the Inbox")
+	}
+	// The next turn, sent from the pull request, edits.
+	if err := s.Registry.SetTurnPage(id, pullPage); err != nil {
+		t.Fatal(err)
+	}
+	if text, failed := data(t, s, token, "undo_tiles", nil); failed {
+		t.Errorf("an undo from the turn's own pull request: %s", text)
+	}
+}
+
 // tile_layout lists the rows and tiles the page shows and the tile the
 // person pointed at, by an Ask or by the tile they have open.
 func TestTileLayoutListsTheRowsAndTheFocus(t *testing.T) {

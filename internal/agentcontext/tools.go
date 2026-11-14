@@ -80,6 +80,10 @@ type CallContext struct {
 	// Page is the consumer's page; HasPage is false until one is set.
 	Page    PageContext
 	HasPage bool
+	// Turn is the page the consumer's current turn was sent from; HasTurn is
+	// false when the host recorded none.
+	Turn    PageContext
+	HasTurn bool
 	// Reader reads the routes the tool declared (Tool.Reads); an action's
 	// reads only its repository's, through actionRoutes.
 	Reader *Reader

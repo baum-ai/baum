@@ -155,6 +155,9 @@ type holder struct {
 	hash     [sha256.Size]byte
 	consumer Consumer
 	page     *PageContext
+	// turn is the page the consumer's current turn was sent from, when the
+	// host records it (SetTurnPage).
+	turn *PageContext
 }
 
 func NewRegistry() *Registry {
@@ -336,6 +339,40 @@ func (r *Registry) SetPage(id string, p PageContext) error {
 	p = p.clone()
 	h.page = &p
 	return nil
+}
+
+// SetTurnPage records the page the consumer's current turn was sent from.
+// A tool that edits at once compares it with the page open now (see the
+// layout tools), so a turn begun about one page cannot edit another.
+func (r *Registry) SetTurnPage(id string, p PageContext) error {
+	p.Repository = strings.TrimSpace(p.Repository)
+	if err := p.validate(); err != nil {
+		return err
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	h, ok := r.byID[id]
+	switch {
+	case !ok:
+		return ErrUnknownConsumer
+	case h.consumer.Kind == Action:
+		return errActionPage
+	}
+	p = p.clone()
+	h.turn = &p
+	return nil
+}
+
+// TurnPage returns the page the consumer's current turn was sent from, if
+// the host recorded one.
+func (r *Registry) TurnPage(id string) (PageContext, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	h, ok := r.byID[id]
+	if !ok || h.turn == nil {
+		return PageContext{}, false
+	}
+	return h.turn.clone(), true
 }
 
 func (p PageContext) clone() PageContext {

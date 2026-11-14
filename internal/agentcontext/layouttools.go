@@ -72,17 +72,28 @@ var layoutPageTools = []string{"tile_layout", "edit_tiles", "add_tile", "undo_ti
 // errNoLayouts is a daemon without a layout editor.
 var errNoLayouts = errors.New("tile layouts are not available in this baum")
 
+// errOtherTurnPage is an edit from a turn begun on another page.
+var errOtherTurnPage = errors.New("This conversation was started about another page; ask from the pull request you want to change")
+
 // maxLayoutResult bounds what tile_layout answers.
 const maxLayoutResult = 32 << 10
 
 // layoutPull is the pull request the page shows, for a layout tool: only a
 // chat on the pull request's page may change its layout.
-func (s *Server) layoutPull(c CallContext) (string, int, error) {
+//
+// An edit also needs the turn to have been sent from that same pull
+// request: a conversation's page follows the person around the app, so a
+// long turn begun about one pull request must not edit another they opened
+// meanwhile. Reading a layout has no such rule.
+func (s *Server) layoutPull(c CallContext, edits bool) (string, int, error) {
 	if s.layouts == nil {
 		return "", 0, errNoLayouts
 	}
 	if c.Consumer.Kind == Action || !c.HasPage || c.Page.Page != PagePullRequest || c.Page.Repository == "" || c.Page.PullRequest < 1 {
 		return "", 0, errors.New("the layout tools change the tiles of the pull request page the person has open: open a pull request's page first")
+	}
+	if edits && c.HasTurn && !(c.Turn.Page == PagePullRequest && strings.EqualFold(c.Turn.Repository, c.Page.Repository) && c.Turn.PullRequest == c.Page.PullRequest) {
+		return "", 0, errOtherTurnPage
 	}
 	return c.Page.Repository, c.Page.PullRequest, nil
 }
@@ -293,7 +304,7 @@ func (s *Server) layoutTools() []Tool {
 		Description: "The tiles of the review on the pull request page the person has open, as the tiles page lays them out: rows from the top (each tile as id:size; the first 2 rows are the first screen, the first 3 the landing page), and each tile's id, type, title, size, allowed sizes, group, whether it is pinned, hidden (removed, kept in the Hidden tiles group at the end) or on the landing page, and whether it can be removed. " +
 			"focus is the tile the person pointed at (Ask about this tile, or the tile they have open): \"this\", \"it\" or \"that tile\" mean it; with no focus, ask which tile they mean. Read this before edit_tiles.",
 		Call: func(ctx context.Context, c CallContext, _ json.RawMessage) (string, error) {
-			repository, number, err := s.layoutPull(c)
+			repository, number, err := s.layoutPull(c, false)
 			if err != nil {
 				return "", err
 			}
@@ -315,7 +326,7 @@ func (s *Server) layoutTools() []Tool {
 			`"required":["op"],"additionalProperties":false}}},"required":["ops"],"additionalProperties":false}`),
 		Edits: true,
 		Call: func(ctx context.Context, c CallContext, args json.RawMessage) (string, error) {
-			repository, number, err := s.layoutPull(c)
+			repository, number, err := s.layoutPull(c, true)
 			if err != nil {
 				return "", err
 			}
@@ -339,7 +350,7 @@ func (s *Server) layoutTools() []Tool {
 			size + `,` + place + `},"required":["type"],"additionalProperties":false}`),
 		Edits: true,
 		Call: func(ctx context.Context, c CallContext, args json.RawMessage) (string, error) {
-			repository, number, err := s.layoutPull(c)
+			repository, number, err := s.layoutPull(c, true)
 			if err != nil {
 				return "", err
 			}
@@ -376,7 +387,7 @@ func (s *Server) layoutTools() []Tool {
 		Description: "Undoes the last change to the layout of the review on the pull request page the person has open, whoever made it (you or the person on the page), at once. The result says what was undone. There is no redo: make the edit again instead." + layoutRule,
 		Edits:       true,
 		Call: func(ctx context.Context, c CallContext, _ json.RawMessage) (string, error) {
-			repository, number, err := s.layoutPull(c)
+			repository, number, err := s.layoutPull(c, true)
 			if err != nil {
 				return "", err
 			}
@@ -391,7 +402,7 @@ func (s *Server) layoutTools() []Tool {
 		Description: "Returns the review on the pull request page the person has open to its generated layout, at once, dropping the person's layout edits; it is one undo step, so undo_tiles brings the edits back." + layoutRule,
 		Edits:       true,
 		Call: func(ctx context.Context, c CallContext, _ json.RawMessage) (string, error) {
-			repository, number, err := s.layoutPull(c)
+			repository, number, err := s.layoutPull(c, true)
 			if err != nil {
 				return "", err
 			}

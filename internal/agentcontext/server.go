@@ -564,6 +564,7 @@ func (s *Server) call(ctx context.Context, consumer Consumer, t Tool, args json.
 	}
 	c := CallContext{Consumer: consumer, Reader: s.reader.forTool(t, bound, consumer.PullRequest), proposals: s.Proposals}
 	c.Page, c.HasPage = s.Registry.Page(consumer.ID)
+	c.Turn, c.HasTurn = s.Registry.TurnPage(consumer.ID)
 	out, callErr := t.Call(ctx, c, args)
 	if callErr != nil {
 		text, err = s.envelope.wrap(ctx, consumer.ID, callErr.Error())
