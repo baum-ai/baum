@@ -7,6 +7,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -260,9 +261,11 @@ func TestLabelSetAndAgreement(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(dir, "full", "P04-B-390.png")); err != nil {
 		t.Error(err)
 	}
-	// The page names no layout.
-	for _, word := range []string{"composed", "run-a", "sonnet"} {
-		if strings.Contains(string(page), word) {
+	// The page names no layout, outside its style sheet and embedded
+	// pictures.
+	text := regexp.MustCompile(`(?s)<style>.*?</style>|data:image/png;base64,[A-Za-z0-9+/=]*`).ReplaceAllString(string(page), "")
+	for _, word := range []string{"composed", "template", "run-a", "sonnet"} {
+		if strings.Contains(text, word) {
 			t.Errorf("the page says %q", word)
 		}
 	}
