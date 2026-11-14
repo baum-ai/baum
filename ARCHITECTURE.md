@@ -2424,7 +2424,7 @@ after its last member each start a row (the page draws each group as a grid of
 its own across the row, ended by a rule). `tiles.Landing` takes the first three
 rows, and one more entry when a single one would be left behind "Show more";
 a group that shows some members never folds a single one (`tiles.Hidden`, which
-the page mirrors). Every row another follows is filled when growing its tiles
+the page mirrors). Every row, the last too, is filled when growing its tiles
 to allowed sizes can (`tiles.RowFills`: the last tile to the size that fills
 it, else every tile to equal parts): in converted documents, in templates as
 part of the template, and in a composer's layout as a `row_fill` fix, the
