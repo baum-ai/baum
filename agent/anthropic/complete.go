@@ -30,6 +30,9 @@ func (b *Backend) Complete(ctx context.Context, request agent.CompleteRequest) (
 	if key == "" {
 		return completion, &Error{Category: CategoryAuthentication, Detail: "no API key; set ANTHROPIC_API_KEY"}
 	}
+	if len(request.Images) > 0 {
+		return completion, errors.New("anthropic: a completion cannot pass images")
+	}
 	defer func() {
 		if err != nil {
 			var named *Error

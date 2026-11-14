@@ -21,6 +21,15 @@ type CompleteRequest struct {
 	Schema []byte
 	// MaxOutputTokens caps the reply; zero is the backend's default.
 	MaxOutputTokens int
+	// Images are files (PNG, JPEG, GIF or WebP) the model sees after User, in
+	// order. A backend that cannot pass images fails the call.
+	Images []CompleteImage
+}
+
+// CompleteImage is an image a completion reads.
+type CompleteImage struct {
+	// Path is the image's file; MediaType its type, such as image/png.
+	Path, MediaType string
 }
 
 // Completion is a Completer's reply.

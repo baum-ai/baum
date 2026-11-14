@@ -64,3 +64,27 @@ printf '%s\n' '{"type":"turn.completed","usage":{"input_tokens":100,"cached_inpu
 		t.Fatalf("prompt = %q", prompt)
 	}
 }
+
+func TestCompleteAttachesImages(t *testing.T) {
+	out := t.TempDir()
+	script := filepath.Join(t.TempDir(), "codex")
+	body := `#!/bin/sh
+printf '%s\n' "$@" > ` + out + `/arguments.txt
+cat > /dev/null
+printf '%s\n' '{"type":"item.completed","item":{"type":"agent_message","text":"{\"verdict\":\"B\"}"}}'
+printf '%s\n' '{"type":"turn.completed","usage":{"input_tokens":10,"output_tokens":2}}'
+`
+	if err := os.WriteFile(script, []byte(body), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	backend := &Backend{Binary: script, checked: true}
+	completion, err := backend.Complete(context.Background(), agent.CompleteRequest{System: "Judge.", User: "Compare.", Schema: []byte(`{"type":"object"}`),
+		Images: []agent.CompleteImage{{Path: "/pictures/a.png", MediaType: "image/png"}, {Path: "/pictures/b.png", MediaType: "image/png"}}})
+	if err != nil || string(completion.Document) != `{"verdict":"B"}` {
+		t.Fatalf("%+v %v", completion, err)
+	}
+	arguments, _ := os.ReadFile(filepath.Join(out, "arguments.txt"))
+	if !bytes.Contains(arguments, []byte("--image=/pictures/a.png\n--image=/pictures/b.png\n")) || !bytes.HasSuffix(arguments, []byte("\n-\n")) {
+		t.Fatalf("images not attached one per flag before the stdin marker: %s", arguments)
+	}
+}
