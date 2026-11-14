@@ -42,6 +42,13 @@ func Publish(ctx context.Context, versions Versions, key store.Key, o Options, c
 		if err != nil {
 			return result, err
 		}
+		// The composer is offered the previous layout, so its IDs and moves
+		// carry over.
+		if o.Tiles != nil {
+			t := *o.Tiles
+			t.Previous = store.ParseComposition(latest.Composition)
+			o.Tiles = &t
+		}
 	}
 	runID, err := versions.BeginRun(ctx, key, time.Now().Add(2*time.Minute))
 	if err != nil {
@@ -102,7 +109,9 @@ func Publish(ctx context.Context, versions Versions, key store.Key, o Options, c
 			result.Metadata.CostReason = "cost_not_calculated"
 		}
 	}
-	if err = versions.Put(ctx, key, latest, store.Version{Metadata: result.Metadata, Document: result.Document, Attachments: result.Attachments}); err != nil {
+	next := store.Version{Metadata: result.Metadata, Document: result.Document, Attachments: result.Attachments,
+		Composition: result.Composition, CompositionGenerator: result.CompositionGenerator}
+	if err = versions.Put(ctx, key, latest, next); err != nil {
 		return result, fmt.Errorf("store generated version: %w", err)
 	}
 	published = true

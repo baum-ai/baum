@@ -344,10 +344,11 @@ func (l *Local) Execute(ctx context.Context, p Prepared, progress func(Progress)
 	if e != nil {
 		return nil, e
 	}
-	cfg, e := l.resolve(ctx)
+	prefs, e := l.Registry.Preferences(ctx)
 	if e != nil {
 		return nil, e
 	}
+	cfg := prefs.Resolve(l.Config)
 	repository, e := github.ParseRepository(c.Repository)
 	if e != nil {
 		return nil, e
@@ -427,6 +428,11 @@ func (l *Local) Execute(ctx context.Context, p Prepared, progress func(Progress)
 	}
 	options := generate.Options{Group: group, Staged: group == nil, PriceList: list, Assembler: guarded, Request: assemble.Request{Repository: repository, Number: key.Number, Limits: assemble.LimitsFrom(caps)}, Backend: backend, BackendVersion: selected.Version, Model: selected.Model, Budgets: agent.Budgets{WallClock: limit, MaxCalls: cfg.Budgets.MaxCalls, MaxTokens: cfg.Budgets.MaxTokens, MaxProviderAttempts: 3, MaxRepairAttempts: 2},
 		OnRepairs: backend.repaired, PassTimeout: max(time.Duration(cfg.Budgets.PassTimeout), limit)}
+	// With tile reviews on, a new review of one pull request is arranged as
+	// tiles once it is written; a details retry keeps its version's layout.
+	if group == nil && p.Kind != KindDetails && prefs.Labs.TileReviewsOn() {
+		options.Tiles = &generate.Tiles{}
+	}
 	if e := l.applyPrompts(ctx, p.Repository, &options); e != nil {
 		return nil, e
 	}
@@ -663,10 +669,64 @@ func (b *trackedBackend) repaired(repairs int) {
 }
 
 // draft is generate.Options.OnDraft: the draft goes with the counts so far.
-func (b *trackedBackend) draft(document []byte) {
+func (b *trackedBackend) draft(d generate.Draft) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	b.report(b.phase, document)
+	b.reportDraft(b.phase, d)
+}
+
+// CanComplete reports whether the backend can make a single structured call
+// (generate.CompleteChecker).
+func (b *trackedBackend) CanComplete() bool { return generate.CompleterOf(b.Backend) != nil }
+
+// Complete forwards a single structured call (agent.Completer), such as the
+// one that arranges a review's tiles, and reports it as the other calls are:
+// its calls, tokens and usage, and a "Composition" call in the transcript.
+// The job's phase is "arranging" while it runs.
+func (b *trackedBackend) Complete(ctx context.Context, r agent.CompleteRequest) (agent.Completion, error) {
+	completer := generate.CompleterOf(b.Backend)
+	if completer == nil {
+		return agent.Completion{}, generate.ErrCannotComplete
+	}
+	b.mu.Lock()
+	b.report("arranging", nil)
+	id, keep := "", b.transcript
+	if keep != nil {
+		b.marked++
+		id = fmt.Sprintf("call-%d", b.marked)
+	}
+	b.mu.Unlock()
+	if id != "" {
+		keep(agent.TranscriptEntry{Time: time.Now().UTC(), Kind: "call", ID: id, Title: "Composition", Status: "running"})
+	}
+	completion, e := completer.Complete(ctx, r)
+	if id != "" {
+		status := "completed"
+		if e != nil {
+			status = "failed"
+		}
+		keep(agent.TranscriptEntry{Time: time.Now().UTC(), Kind: "call", ID: id, Status: status})
+	}
+	usage := completion.Usage
+	if usage.IsZero() {
+		usage.Unreported = true
+	}
+	tokens := agent.ChargedTokens(int(usage.Input), int(usage.Output), int(usage.CacheCreate))
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.calls++
+	b.tokens += tokens
+	next := &agent.Accounting{}
+	if b.accounting != nil {
+		*next = *b.accounting
+		next.Attempts = append([]agent.UsageAttempt(nil), b.accounting.Attempts...)
+	}
+	next.Usage.Add(usage)
+	next.ChargedTokens += tokens
+	next.Attempts = append(next.Attempts, agent.UsageAttempt{Model: completion.Model, Usage: usage, Calls: 1, ChargedTokens: tokens, Failed: e != nil})
+	b.accounting = next
+	b.report("arranging", nil)
+	return completion, e
 }
 
 // finish reports the run's redacted outcome, and what a staged review was
@@ -690,6 +750,11 @@ func (b *trackedBackend) finish(result generate.Result, staged bool) {
 // report sends the counts so far, and a draft when one is given. The
 // caller holds mu.
 func (b *trackedBackend) report(phase string, draft []byte) {
+	b.reportDraft(phase, generate.Draft{Document: draft})
+}
+
+// reportDraft is report with the draft's layout. The caller holds mu.
+func (b *trackedBackend) reportDraft(phase string, d generate.Draft) {
 	if phase == "" {
 		phase = "generating"
 	}
@@ -706,7 +771,11 @@ func (b *trackedBackend) report(phase string, draft []byte) {
 			calls, tokens = calls+attempt.Calls, tokens+attempt.ChargedTokens
 		}
 	}
-	b.progress(Progress{Phase: phase, Calls: calls, Tokens: tokens, Repairs: b.repairs, Accounting: safe, CostUSD: cost, CostReason: reason, Draft: draft, HasTranscript: b.transcript != nil})
+	p := Progress{Phase: phase, Calls: calls, Tokens: tokens, Repairs: b.repairs, Accounting: safe, CostUSD: cost, CostReason: reason, Draft: d.Document, HasTranscript: b.transcript != nil}
+	if d.Document != nil {
+		p.DraftComposition = d.Composition
+	}
+	b.progress(p)
 }
 
 // liveUsageInterval is how often a run in progress reports its usage.
@@ -845,7 +914,12 @@ func (l *Local) applyPrompts(ctx context.Context, repository string, o *generate
 	if o.Group != nil {
 		o.Prompts = prompt.GroupPrompts{Overrides: overrides}
 	}
-	o.PromptSource = promptSourceOf(prompt.ReviewIDs(o.Group != nil, o.Staged && o.Group == nil), overrides, sources)
+	ids := prompt.ReviewIDs(o.Group != nil, o.Staged && o.Group == nil)
+	if o.Tiles != nil {
+		o.Tiles.Prompts = prompt.TilesPrompts{Overrides: overrides}
+		ids = append(ids, prompt.IDReviewTilesCompose)
+	}
+	o.PromptSource = promptSourceOf(ids, overrides, sources)
 	return nil
 }
 

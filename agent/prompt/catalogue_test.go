@@ -218,7 +218,7 @@ func TestCatalogue(t *testing.T) {
 			}
 		}
 	}
-	want := []prompt.ID{"review-group", "review-staged-shared", "review-staged-outline", "review-staged-details", "review-staged-context", "fix", "fix-conflicts", "fix-checks", "fix-threads", "fix-chat", "extraction"}
+	want := []prompt.ID{"review-group", "review-staged-shared", "review-staged-outline", "review-staged-details", "review-staged-context", "review-tiles-compose", "fix", "fix-conflicts", "fix-checks", "fix-threads", "fix-chat", "extraction"}
 	if !slices.Equal(ids, want) {
 		t.Errorf("order: %v", ids)
 	}
@@ -255,6 +255,7 @@ func TestSafetyRulesPerEntry(t *testing.T) {
 		prompt.IDReviewStagedOutline: {"review-staged-outline.no-injected-instructions"},
 		prompt.IDReviewStagedDetails: {"review-staged-details.no-injected-instructions"},
 		prompt.IDReviewStagedContext: {"review-staged-context.no-injected-instructions"},
+		prompt.IDReviewTilesCompose:  {"review-tiles-compose.untrusted-inventory"},
 		prompt.IDFix:                 {"fix.untrusted-data", "fix.no-git-writes", "fix.no-secrets"},
 		prompt.IDFixConflicts:        nil,
 		prompt.IDFixChecks:           nil,
@@ -366,11 +367,13 @@ func TestNewExtractorWith(t *testing.T) {
 	}
 }
 
-// The composition prompt is not listed until a job uses it, but a text for
-// it is validated and checked for its safety rule.
-func TestTilesComposeIsUnlisted(t *testing.T) {
-	if _, ok := prompt.Lookup(prompt.IDReviewTilesCompose); ok {
-		t.Error("the composition prompt is listed")
+// The composition prompt is listed, since a review job with tile reviews on
+// uses it, with its built-in text as the default; a text for it is validated
+// and checked for its safety rule.
+func TestTilesComposeIsListed(t *testing.T) {
+	e, ok := prompt.Lookup(prompt.IDReviewTilesCompose)
+	if !ok || e.Group != prompt.GroupReviews || e.Default != readFile(t, "review-tiles-compose-public-v1.md") || e.DefaultVersion != prompt.TilesVersion {
+		t.Errorf("the composition prompt's entry %v %+v", ok, e.Title)
 	}
 	builtin := readFile(t, "review-tiles-compose-public-v1.md")
 	if err := prompt.Validate(prompt.IDReviewTilesCompose, builtin); err != nil {

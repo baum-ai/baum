@@ -213,7 +213,7 @@ func (q *Queue) Handler() http.Handler {
 	// polls it while a review generates.
 	mux.HandleFunc("GET /api/jobs/{id}/draft", func(w http.ResponseWriter, r *http.Request) {
 		id := r.PathValue("id")
-		draft, revision, ok := q.Draft(id)
+		draft, composition, revision, ok := q.DraftLayout(id)
 		if !ok {
 			drafts.drop(id)
 			http.Error(w, http.StatusText(404), 404)
@@ -221,8 +221,10 @@ func (q *Queue) Handler() http.Handler {
 		}
 		if r.URL.Query().Get("tiles") == "1" {
 			// The draft's tile view: a missing context is still being
-			// written, so it is a pending context tile.
-			body, err := drafts.get(id, revision, draft, nil)
+			// written, so it is a pending context tile. A review whose tiles
+			// are arranged is laid out by the template until the
+			// composition lands, then by the composition.
+			body, err := drafts.get(id, revision, draft, composition)
 			if err != nil {
 				http.Error(w, http.StatusText(500), 500)
 				return
@@ -288,8 +290,7 @@ type draftTileView struct {
 }
 
 // get returns the encoded tile view of the draft, composed with composition
-// when given (no draft has one yet). The kept view is that of the same draft
-// count and composition.
+// when given. The kept view is that of the same draft count and composition.
 func (d *draftTiles) get(id string, revision int, draft, composition []byte) ([]byte, error) {
 	key := tileview.Key(composition)
 	d.mu.Lock()

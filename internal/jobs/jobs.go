@@ -305,8 +305,11 @@ type Progress struct {
 	// with the current settings, which replace the job's prepared ones.
 	Backend, Model string
 	// Draft, when set, is a staged review's latest draft (generate.Options.
-	// OnDraft), which the queue holds in memory until the job ends.
-	Draft []byte
+	// OnDraft), which the queue holds in memory until the job ends, and
+	// DraftComposition its layout (generate.Draft.Composition), nil for
+	// none.
+	Draft            []byte
+	DraftComposition []byte
 	// FailedSections and ContextFailed, once Gaps is set, are what the
 	// published review lacks (see Job).
 	Gaps           bool
@@ -329,7 +332,7 @@ type Queue struct {
 	// replaced: their cancellation ends them as superseded.
 	superseded map[string]bool
 	// drafts holds the latest draft of each running staged review, by job.
-	drafts  map[string][]byte
+	drafts  map[string]heldDraft
 	cancels map[string]context.CancelFunc
 	wake    chan struct{}
 	// chat lists the stored conversations; nil lists none.
@@ -452,7 +455,7 @@ func open(path string, executor Executor, concurrency int, changed func(Job), he
 		return nil, err
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	q := &Queue{path: path, transcripts: filepath.Join(filepath.Dir(path), "transcripts"), executor: executor, estimates: map[string]Estimate{}, drafts: map[string][]byte{}, superseded: map[string]bool{}, cancels: map[string]context.CancelFunc{}, dirty: map[string]bool{}, wake: make(chan struct{}, 1), ctx: ctx, cancel: cancel, changed: changed, lock: lock, limit: concurrency, held: held}
+	q := &Queue{path: path, transcripts: filepath.Join(filepath.Dir(path), "transcripts"), executor: executor, estimates: map[string]Estimate{}, drafts: map[string]heldDraft{}, superseded: map[string]bool{}, cancels: map[string]context.CancelFunc{}, dirty: map[string]bool{}, wake: make(chan struct{}, 1), ctx: ctx, cancel: cancel, changed: changed, lock: lock, limit: concurrency, held: held}
 	opened := false
 	defer func() {
 		if !opened {
@@ -815,21 +818,33 @@ func (q *Queue) ActiveFixes() []Job {
 	return out
 }
 
+// heldDraft is a running staged review's latest draft and its layout.
+type heldDraft struct {
+	document, composition []byte
+}
+
 // Draft is the latest draft of a running staged review and the count it is
 // (Job.Draft), or false when the job has none now.
 func (q *Queue) Draft(jobID string) ([]byte, int, bool) {
+	draft, _, revision, ok := q.DraftLayout(jobID)
+	return draft, revision, ok
+}
+
+// DraftLayout is Draft with the draft's layout (Progress.DraftComposition),
+// nil for none.
+func (q *Queue) DraftLayout(jobID string) (draft, composition []byte, revision int, ok bool) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
-	draft, ok := q.drafts[jobID]
+	held, ok := q.drafts[jobID]
 	if !ok {
-		return nil, 0, false
+		return nil, nil, 0, false
 	}
 	for _, j := range q.jobs {
 		if j.ID == jobID {
-			return draft, j.Draft, true
+			return held.document, held.composition, j.Draft, true
 		}
 	}
-	return nil, 0, false
+	return nil, nil, 0, false
 }
 func (q *Queue) Estimate(ctx context.Context, items []Item, mode string) (Estimate, error) {
 	return q.estimate(ctx, items, mode, false)
@@ -1501,7 +1516,7 @@ func (q *Queue) worker() {
 					job.Backend, job.Model = p.Backend, p.Model
 				}
 				if p.Draft != nil {
-					q.drafts[j.ID] = p.Draft
+					q.drafts[j.ID] = heldDraft{p.Draft, p.DraftComposition}
 					job.Draft++
 				}
 				if p.Gaps {
