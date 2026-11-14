@@ -34,7 +34,7 @@ func TestFlagsAreChecked(t *testing.T) {
 		"seed":              {[]string{"--dataset", dir, "--shuffle-seed", "x"}, "--shuffle-seed"},
 		"empty selection":   {[]string{"--dataset", dir, "--dry-run", "--case", "a", "--split", "calibration"}, "cannot be combined"},
 		"positional value":  {[]string{"--dataset", dir, "--with-images", "false", "--limit", "3", "--dry-run"}, `unexpected argument "false"`},
-		"unknown generator": {[]string{"--dataset", dir, "--generator", "tiles"}, "unknown generator"},
+		"unknown generator": {[]string{"--dataset", dir, "--generator", "layouts"}, "unknown generator"},
 		"generator option":  {[]string{"--dataset", dir, "--generator-option", "x"}, "KEY=VALUE"},
 		"review option":     {[]string{"--dataset", dir, "--generator-option", "x=y"}, "takes no --generator-option"},
 		"tri-state":         {[]string{"--dataset", dir, "--with-images=maybe"}, "use true or false"},

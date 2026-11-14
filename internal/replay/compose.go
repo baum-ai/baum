@@ -182,6 +182,13 @@ type ComposeRecord struct {
 	InventoryCut     []string `json:"inventory_cut,omitempty"`
 	// Seconds is how long the stage took, its calls included.
 	Seconds float64 `json:"seconds"`
+	// CostUSD is what the stage cost, and Jump how many landing entries
+	// moved from the provisional layout drafts showed, for a run of the
+	// whole pipeline (TileGenerator); Problem says why such a run stored no
+	// composition at all.
+	CostUSD *float64 `json:"cost_usd,omitempty"`
+	Jump    *int     `json:"jump,omitempty"`
+	Problem string   `json:"problem,omitempty"`
 }
 
 // ComposedReview identifies the composed review.
@@ -233,10 +240,7 @@ func (g *ComposeGenerator) Generate(ctx context.Context, base generate.Options, 
 	}
 	// A backend that cannot complete gets no completer, so the fallback
 	// says so rather than that a call failed.
-	completer, _ := base.Backend.(agent.Completer)
-	if c, ok := base.Backend.(interface{ canComplete() bool }); ok && !c.canComplete() {
-		completer = nil
-	}
+	completer := generate.CompleterOf(base.Backend)
 	started := time.Now()
 	result, err := agent.ComposeRun(ctx, agent.ComposeRequest{Completer: completer, Backend: base.Backend.Name(), Prompts: g.prompts(), Document: doc,
 		Redactor: g.redactor, CallTimeout: base.PassTimeout})
@@ -399,15 +403,21 @@ func (g *ComposeGenerator) Validate(document []byte, c Case) []string {
 	if err := json.Unmarshal(document, &record); err != nil || record.Schema != ComposeRecordName {
 		return []string{"the document is not a compose record"}
 	}
-	composition, err := tiles.ParseComposition(record.Composition)
-	if err != nil {
-		return []string{err.Error()}
-	}
 	raw, _, err := g.review(c)
 	if err != nil {
 		return []string{err.Error()}
 	}
-	normalized, doc, err := converted(raw)
+	return checkComposition(raw, record.Composition)
+}
+
+// checkComposition checks a composition of a review document as a host
+// would before storing it (see ComposeGenerator.Validate).
+func checkComposition(document, raw []byte) []string {
+	composition, err := tiles.ParseComposition(raw)
+	if err != nil {
+		return []string{err.Error()}
+	}
+	normalized, doc, err := converted(document)
 	if err != nil {
 		return []string{err.Error()}
 	}

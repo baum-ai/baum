@@ -29,6 +29,9 @@ type completing struct {
 	calls atomic.Int32
 }
 
+// CanComplete overrides the stub's, which completes only with a CompleteFunc.
+func (c *completing) CanComplete() bool { return true }
+
 func (c *completing) Complete(_ context.Context, r agent.CompleteRequest) (agent.Completion, error) {
 	c.calls.Add(1)
 	var inv compose.Inventory
