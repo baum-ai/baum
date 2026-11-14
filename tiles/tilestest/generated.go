@@ -193,7 +193,7 @@ func CheckGenerated(normalized []byte, c *tiles.Composition, doc *tiles.Document
 			if !hiddenByHost[tile.ID] {
 				fail(11, "tile %s is hidden but the composition does not hide it", tile.ID)
 			}
-			if tile.ID == tiles.TypeOverview || tile.ID == tiles.TypeRisks && severeRanked(doc) {
+			if tile.ID == tiles.TypeOverview || tile.ID == tiles.TypeRisks && severeRanked(doc) || slices.Contains(tiles.RecommendedChanges(doc), tile.ID) {
 				fail(6, "tile %s is hidden but must be shown", tile.ID)
 			}
 		default:
@@ -222,7 +222,7 @@ func CheckGenerated(normalized []byte, c *tiles.Composition, doc *tiles.Document
 	if c != nil && len(c.Layout.Hidden) > 0 {
 		for _, id := range c.Layout.Hidden {
 			obsolete := slices.ContainsFunc(doc.Layout.Entries, func(e tiles.Entry) bool { return e.Tile == id && e.Group == tiles.GroupObsolete })
-			if byID[id] == nil || obsolete || id == tiles.TypeOverview || id == tiles.TypeRisks && severeRanked(doc) {
+			if byID[id] == nil || obsolete || id == tiles.TypeOverview || id == tiles.TypeRisks && severeRanked(doc) || slices.Contains(tiles.RecommendedChanges(doc), id) {
 				continue
 			}
 			if !slices.ContainsFunc(doc.Layout.Entries, func(e tiles.Entry) bool { return e.Tile == id && e.Group == tiles.GroupHidden }) {

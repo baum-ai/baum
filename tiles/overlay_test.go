@@ -450,3 +450,52 @@ func TestNormalizeDropsEdits(t *testing.T) {
 		t.Errorf("fixes %v", report.Counts())
 	}
 }
+
+// A change the recommendation names cannot be hidden or moved off the page:
+// CheckOp refuses it in the host's words, and a replay drops such an op.
+func TestOverlayKeepsRecommendedChange(t *testing.T) {
+	_, plain := convert(t, withManyBlocks())
+	var members []string
+	for _, entry := range plain.Layout.Entries {
+		if entry.Group == tiles.GroupChanges {
+			members = append(members, entry.Tile)
+		}
+	}
+	named := members[4]
+	many := withManyBlocks()
+	f := fixture{name: "recommended-kept", mutate: func(doc map[string]any) {
+		many.mutate(doc)
+		object(doc, "summary")["recommendation"] = map[string]any{"decision": "look_first", "text": "Read the last part first.", "refs": []any{named}}
+	}}
+	normalized, doc := convert(t, f)
+	const reason = "baum's recommendation points at this change, so it stays on the page"
+	for _, op := range []tiles.Op{{Op: tiles.OpHide, Tile: named}, move(named, tiles.Place{Edge: tiles.EdgeLast})} {
+		if got := tiles.CheckOp(doc, op); got != reason {
+			t.Errorf("CheckOp(%+v) = %q, want %q", op, got, reason)
+		}
+	}
+	if got := tiles.CheckOp(doc, tiles.Op{Op: tiles.OpHide, Tile: members[0]}); got != "" {
+		t.Errorf("hiding an unnamed change: %q", got)
+	}
+	ops := []tiles.Op{{Op: tiles.OpHide, Tile: named}, move(named, tiles.Place{Edge: tiles.EdgeLast}), {Op: tiles.OpHide, Tile: members[0]}}
+	_, report, composed := applyChecked(t, normalized, doc, nil, overlayOf(t, ops))
+	if report.Dropped[tiles.DropKept] != 2 || report.Applied != 1 {
+		t.Errorf("report %+v, want 2 kept drops and 1 applied", report)
+	}
+	for _, entry := range composed.Layout.Entries {
+		if entry.Tile == named && entry.Group == tiles.GroupHidden {
+			t.Error("the recommended change is hidden")
+		}
+	}
+	// A stored composition that hides it is served with it shown.
+	c := &tiles.Composition{Layout: tiles.CompositionLayout{Hidden: []string{named}}}
+	shown, err := tiles.Compose(doc, c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range shown.Layout.Entries {
+		if entry.Tile == named && entry.Group == tiles.GroupHidden {
+			t.Error("a composition hid the recommended change")
+		}
+	}
+}

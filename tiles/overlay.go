@@ -529,10 +529,12 @@ type replay struct {
 	tiles     map[string]*Tile
 	obsolete  map[string]bool
 	groupable map[string]bool
+	// named are the changes the recommendation names, which stay shown.
+	named []string
 }
 
 func newReplay(doc *Document, c *Composition) *replay {
-	r := &replay{doc: doc, resized: map[string]bool{}, tiles: map[string]*Tile{}, obsolete: map[string]bool{}, groupable: map[string]bool{}}
+	r := &replay{doc: doc, named: RecommendedChanges(doc), resized: map[string]bool{}, tiles: map[string]*Tile{}, obsolete: map[string]bool{}, groupable: map[string]bool{}}
 	for i := range doc.Tiles {
 		r.tiles[doc.Tiles[i].ID] = &doc.Tiles[i]
 	}
@@ -595,7 +597,7 @@ func (r *replay) missing(id string) DropReason {
 
 // mustShow reports whether a tile may never be hidden.
 func (r *replay) mustShow(id string) bool {
-	return id == TypeOverview || id == TypeRisks && mustShowRisks(r.doc)
+	return id == TypeOverview || id == TypeRisks && mustShowRisks(r.doc) || slices.Contains(r.named, id)
 }
 
 func (r *replay) apply(op Op, added []LibraryTile) DropReason {
@@ -661,6 +663,9 @@ func (r *replay) move(id string, to Place) DropReason {
 			return DropObsolete
 		}
 		return DropAnchorGone
+	}
+	if to.Edge == EdgeLast && slices.Contains(r.named, id) {
+		return DropKept
 	}
 	entry := r.entries[at]
 	rest := slices.Delete(slices.Clone(r.entries), at, at+1)
@@ -781,12 +786,15 @@ func CheckOp(doc *Document, op Op) string {
 		return fmt.Sprintf("No tile %s on this review; tile_layout lists them", id)
 	}
 	severe := mustShowRisks(doc)
+	named := RecommendedChanges(doc)
 	keeps := func(id string) string {
 		switch {
 		case id == TypeOverview:
 			return "The overview always stays on the landing page"
 		case id == TypeRisks && severe:
 			return "The risks tile stays on the landing page while it lists a critical or high risk"
+		case slices.Contains(named, id):
+			return "baum's recommendation points at this change, so it stays on the page"
 		}
 		return ""
 	}
