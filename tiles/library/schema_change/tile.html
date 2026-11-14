@@ -4,6 +4,12 @@
   .kit-list > li.kit-stack {
     align-items: stretch;
   }
+  /* A row's text keeps a readable width; its citations wrap below it when
+     they do not fit beside it. */
+  .row-text {
+    flex: 1 1 16rem;
+    min-width: 0;
+  }
   .delta {
     flex: none;
     white-space: nowrap;
@@ -371,7 +377,7 @@
         ? section(
             "Data changes",
             baum.html`<ul class="kit-list" data-divided>
-              ${data.data_changes.map((change) => baum.html`<li class="kit-row"><span class="kit-grow">${baum.md(change.text, { inline: true })}</span>${cites(change.cites)}</li>`)}
+              ${data.data_changes.map((change) => baum.html`<li class="kit-row"><span class="row-text">${baum.md(change.text, { inline: true })}</span>${cites(change.cites)}</li>`)}
             </ul>`,
           )
         : null}

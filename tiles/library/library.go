@@ -157,8 +157,11 @@ func All() []Entry { return all() }
 // older built-in type is still baum's own (IsBuiltin). When a type's
 // definition changes, its old digest is appended here.
 var PastDigests = map[string][]string{
-	"schema_change": {"sha256:1adc2e4348ccd7a6ec5d400b5f18a7f9654d18a5450af64b574b34770619e505"},
-	"api_change":    {"sha256:0ed8c133a81084fdc1810a08872afefe4dbb67613d52cacf1be95666979307f3"},
+	"schema_change": {
+		"sha256:1adc2e4348ccd7a6ec5d400b5f18a7f9654d18a5450af64b574b34770619e505",
+		"sha256:8fe2098a21c18859c66c31bb9fca0018ca1bce20bce364de40e27b04710cb8da",
+	},
+	"api_change": {"sha256:0ed8c133a81084fdc1810a08872afefe4dbb67613d52cacf1be95666979307f3"},
 }
 
 // IsBuiltin reports whether a definition, as a custom tile embeds it, is a
