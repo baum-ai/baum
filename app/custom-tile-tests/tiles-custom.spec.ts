@@ -167,13 +167,29 @@ test("a tile made with a newer kit says so, without a frame", async ({ page }) =
   await expect(page.locator("iframe")).toHaveCount(0);
 });
 
-test("frames mount near the visible area only", async ({ page }) => {
-  await page.setViewportSize({ width: 1440, height: 700 });
+test("frames mount near the visible area and unmount far from it", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 600 });
   await open(page, everyTile);
-  await frameReady(page, "widget_health").catch(() => undefined);
-  const boxes = page.locator("[data-custom-tile]");
-  expect(await boxes.count()).toBeGreaterThan(1);
-  // Every frame on screen, or near it, is mounted; the page reports how many.
-  const mounted = await page.locator("[data-custom-tile] iframe").count();
-  expect(mounted).toBeLessThanOrEqual(16);
+  await expect(page.locator('article[data-tile="overview"]')).toBeVisible();
+  const last = frameBox(page, "escape_busy");
+  /** How far the box is below the bottom of its scrolling area's view. */
+  const below = () =>
+    last.evaluate((box) => {
+      let root: HTMLElement | null = box.parentElement;
+      while (root && !/(auto|scroll)/.test(getComputedStyle(root).overflowY))
+        root = root.parentElement;
+      const bottom = root ? root.getBoundingClientRect().bottom : innerHeight;
+      return box.getBoundingClientRect().top - bottom;
+    });
+  expect(await below()).toBeGreaterThan(2400);
+  await expect(last).toHaveAttribute("data-frame-state", "waiting");
+  await expect(last.locator("iframe")).toHaveCount(0);
+  // Scrolled to, it mounts and draws; scrolled far away again, it goes.
+  await last.scrollIntoViewIfNeeded();
+  await frameReady(page, "escape_busy");
+  await page.locator('article[data-tile="overview"]').scrollIntoViewIfNeeded();
+  await expect(last).toHaveAttribute("data-frame-state", "waiting");
+  await expect(last.locator("iframe")).toHaveCount(0);
+  // Never more than the cap at once.
+  expect(await page.locator("[data-custom-tile] iframe").count()).toBeLessThanOrEqual(16);
 });

@@ -99,6 +99,9 @@ export function TileFrame({ tile, ctx, face }: { tile: Tile; ctx: TileContext; f
   const kit = definitionKit(tile.definition);
   const newer = kit !== null && kit > KIT_SUPPORTED;
   const slot = useFrameSlot(box, face === "detail");
+  // A frame mounted again (scrolled back to, or remounted after silence)
+  // is hidden until it draws again.
+  useEffect(() => setReady(false), [slot, attempt]);
   const host = useTileHost();
   const files = useReviewFiles();
   const theme = useAppTheme();
