@@ -1117,24 +1117,25 @@ dropped: hiding tiles is a personal edit that does not belong in the shared
 version row. The generator comes apart from the body, in
 `Version.CompositionGenerator`, and is set with `SetGenerator` (refused if the
 schema would not accept it). `store.ParseComposition` reads a stored one for a
-reader, nil for none or an unusable one. One that is not `baum.composition/1` is refused
-(`store.ErrComposition`); one that chooses nothing, and one the document
-cannot take (it does not convert to tiles), is not stored, so a layout never
-costs a review its place in the history, and the second is counted
-(`store.compositions_dropped`). A writable open adds the column with an
+reader, nil for none or an unusable one. A composition problem never costs
+the review its place in the history: one that is over 256 KiB (`tiles.MaxStoredComposition`), is not
+`baum.composition/1` or that the document cannot take (it does not convert to
+tiles) is not stored, and a generator the schema refuses is left off (the
+composition is kept); a composition that chooses nothing, a hidden list alone
+included, is stored as none. Each is counted
+(`store.compositions_dropped`, `store.composition_generators_dropped`) and
+logged at debug level without content. A writable open adds the column with an
 `ALTER TABLE` when it is missing, which is additive and copies nothing. A
 store that cannot be altered (opened read-only, or held by another writer)
 keeps working: each read asks whether the column exists and selects `NULL` in
-its place when it does not, and a write leaves the composition out (counted
-likewise). A version with no composition, a store without the
+its place when it does not, and a write that carries a composition tries the
+migration once more, leaving the composition out (counted likewise) only if
+that fails too. A version with no composition, a store without the
 column and a composition no reader can use all mean the default converted
 layout. An older build ignores the column, since its statements name their
 columns: it reads every document, writes `NULL` compositions for the versions
 it generates and refreshes the document in place, and a build that knows the
-column reads what it wrote as the default layout. `Metadata` gains `tiles`,
-`tiles_prompt_version` and `tiles_prompt_digest`, written only for a version
-generated with a tiles stage, so the metadata of other versions is stored as
-before.
+column reads what it wrote as the default layout.
 
 **Serving.** The desktop daemon converts a review each time it answers for
 one, composed with the version's stored composition when it has one; the
@@ -1144,8 +1145,8 @@ tile document itself is not stored. All three routes answer
 `tiles.Compose(tiles.FromReview(document), composition)` with the stored
 composition (`tileview.Build(document, composition, options)`). With none, or
 an empty one, the answer is the converted document's, byte for byte as before
-compositions existed. A composition that does not parse, or that `Compose`
-refuses, is ignored: the converted layout is served with no problem for the
+compositions existed. A composition over 256 KiB, one that does not parse, one
+that `Compose` refuses and one that makes it panic are ignored: the converted layout is served with no problem for the
 reader, and the ignored composition is counted (`tileview.compositions_ignored`
 in the daemon's work statistics). `document` is the
 normalised review when normalisation succeeds (the stored-document rules,
