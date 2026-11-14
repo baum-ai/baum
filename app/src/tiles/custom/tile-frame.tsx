@@ -170,10 +170,13 @@ export function TileFrame({ tile, ctx, face }: { tile: Tile; ctx: TileContext; f
   if (!allowed) return quiet("Custom tiles aren't available in the desktop app on Windows yet.");
   if (failure)
     return face === "glance" ? (
-      <Quiet>This tile couldn't load.</Quiet>
+      <div data-frame-failure={failure.why}>
+        <Quiet>This tile couldn't load.</Quiet>
+      </div>
     ) : (
       <div
         role="alert"
+        data-frame-failure={failure.why}
         className="space-y-3 rounded-md border border-dashed border-default px-4 py-3"
       >
         <div className="space-y-1">
@@ -332,9 +335,10 @@ type FrameViewProps = {
 };
 
 /** When the reader last pressed Tab in the page, which moves the keyboard
- *  into a detail's frame. */
+ *  into a detail's frame, and the page's own element that last had it. */
 let lastTab = Number.NEGATIVE_INFINITY;
-if (typeof window !== "undefined")
+let lastFocused: WeakRef<HTMLElement> | null = null;
+if (typeof window !== "undefined") {
   window.addEventListener(
     "keydown",
     (event) => {
@@ -342,6 +346,31 @@ if (typeof window !== "undefined")
     },
     true,
   );
+  document.addEventListener(
+    "focusin",
+    (event) => {
+      if (event.target instanceof HTMLElement && !(event.target instanceof HTMLIFrameElement))
+        lastFocused = new WeakRef(event.target);
+    },
+    true,
+  );
+}
+
+/** Gives the page back the keyboard a frame holds. `blur()` does in
+ *  Chromium; WebKit keeps the focus in the frame, so the page's element that
+ *  last had it, or else the body, takes it. */
+function release(iframe: HTMLIFrameElement) {
+  iframe.blur();
+  if (document.activeElement !== iframe) return;
+  const previous = lastFocused?.deref();
+  if (previous?.isConnected) previous.focus({ preventScroll: true });
+  if (document.activeElement !== iframe) return;
+  const body = document.body;
+  const had = body.hasAttribute("tabindex");
+  if (!had) body.tabIndex = -1;
+  body.focus({ preventScroll: true });
+  if (!had) body.removeAttribute("tabindex");
+}
 
 /** Whether the reader is acting in the page now: a click or key press in the
  *  frame activates the page too. Where the browser cannot say, focus alone
@@ -369,6 +398,7 @@ function FrameView(props: FrameViewProps) {
     let hello = false;
     let inited = false;
     let ready = false;
+    let takeBack = () => {};
     const rate = new RateGuard();
     const sizes = new HeightGuard();
     let helloTimer = 0;
@@ -380,6 +410,7 @@ function FrameView(props: FrameViewProps) {
       unlisten();
       iframe.removeEventListener("load", loaded);
       window.removeEventListener("blur", left);
+      window.removeEventListener("focus", back);
       iframe.removeEventListener("pointerenter", over);
       iframe.removeEventListener("pointerleave", out);
       window.clearTimeout(focusCheck);
@@ -404,6 +435,8 @@ function FrameView(props: FrameViewProps) {
     const gated = () =>
       face === "detail" && document.activeElement === iframe && document.hasFocus();
     const heard = (data: unknown) => {
+      if (done) return;
+      takeBack();
       if (done) return;
       const admission = rate.admit(performance.now());
       if (admission === "flood") return fail({ why: "flood" });
@@ -501,16 +534,39 @@ function FrameView(props: FrameViewProps) {
     };
     iframe.addEventListener("pointerenter", over);
     iframe.addEventListener("pointerleave", out);
+    let consented = false;
+    // Each time it takes the keyboard counts once, however often the page
+    // looks before it is given back.
+    let holding = false;
+    takeBack = () => {
+      if (done) return;
+      if (document.activeElement !== iframe) {
+        consented = false;
+        holding = false;
+        return;
+      }
+      if (consented || (face === "detail" && pointed)) return;
+      release(iframe);
+      if (holding) return;
+      holding = document.activeElement === iframe;
+      if (++stolen > 3) fail({ why: "focus" });
+    };
     const left = () => {
       const given = face === "detail" && (performance.now() - lastTab < 1000 || pointed);
       window.clearTimeout(focusCheck);
       focusCheck = window.setTimeout(() => {
-        if (done || given || document.activeElement !== iframe) return;
-        iframe.blur();
-        if (++stolen > 3) fail({ why: "focus" });
+        if (given && document.activeElement === iframe) consented = true;
+        takeBack();
       }, 0);
     };
+    // A window without focus loses none as the frame takes it: the page also
+    // looks when it gets focus back and whenever the frame speaks.
+    const back = () => {
+      window.clearTimeout(focusCheck);
+      focusCheck = window.setTimeout(takeBack, 0);
+    };
     window.addEventListener("blur", left);
+    window.addEventListener("focus", back);
     const unlisten = listenToFrame(target, heard);
     iframe.addEventListener("load", loaded);
     // Its window is heard before it has an address, so its hello is not missed.

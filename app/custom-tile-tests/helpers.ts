@@ -28,9 +28,22 @@ export const frameBox = (page: Page, tile: string) => page.locator(`[data-custom
 
 /** Waits for a custom tile's frame to have drawn. */
 export async function frameReady(page: Page, tile: string) {
-  await expect(frameBox(page, tile)).toHaveAttribute("data-frame-state", "ready", {
-    timeout: 20000,
-  });
+  // A frame that failed says why, rather than the wait running out.
+  await expect
+    .poll(
+      () =>
+        page.evaluate((tile) => {
+          const card = document.querySelector(`[data-tile="${tile}"]`) ?? document;
+          const failed = card.querySelector<HTMLElement>("[data-frame-failure]");
+          if (failed) return `failed: ${failed.dataset.frameFailure}`;
+          return (
+            document.querySelector<HTMLElement>(`[data-custom-tile="${tile}"]`)?.dataset
+              .frameState ?? "absent"
+          );
+        }, tile),
+      { timeout: 20000 },
+    )
+    .toBe("ready");
 }
 
 /** Page errors and console errors, but the resource loads a frame's own policy

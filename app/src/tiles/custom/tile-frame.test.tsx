@@ -134,6 +134,16 @@ function mount(face: Face, tile = freshTile()) {
   return { container, frame, sent, post, start, ctx, host, files, tile, spyOn };
 }
 
+/** The reader tabs into a frame: the page's window loses focus to it. */
+function giveFocus(frame: HTMLIFrameElement) {
+  act(() => {
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab" }));
+    frame.focus();
+    window.dispatchEvent(new Event("blur"));
+    vi.advanceTimersByTime(1);
+  });
+}
+
 const state = (container: HTMLElement) =>
   container.querySelector<HTMLElement>("[data-frame-state]")?.dataset.frameState;
 
@@ -225,7 +235,7 @@ describe("a custom tile's frame", () => {
     const cited = '["hunk","h_000000000003",[21,25]]';
     post({ protocol: PROTOCOL, kind: "jump", key: cited });
     expect(files.open).not.toHaveBeenCalled();
-    act(() => frame()!.focus());
+    giveFocus(frame()!);
     expect(document.activeElement).toBe(frame());
     post({ protocol: PROTOCOL, kind: "jump", key: '["hunk","h_0000000000ff",null]' });
     post({ protocol: PROTOCOL, kind: "jump", key: '["external_url","https://example.com/spec"]' });
@@ -239,7 +249,7 @@ describe("a custom tile's frame", () => {
   it("takes no jump, ask or key from a glance", () => {
     const { frame, post, start, files, host } = mount("glance");
     start();
-    act(() => frame()!.focus());
+    giveFocus(frame()!);
     const keys = vi.fn();
     window.addEventListener("keydown", keys);
     post({ protocol: PROTOCOL, kind: "jump", key: '["hunk","h_000000000003",[21,25]]' });
@@ -258,13 +268,26 @@ describe("a custom tile's frame", () => {
     const listen = (event: KeyboardEvent) => keys.push(event.key);
     window.addEventListener("keydown", listen);
     post({ protocol: PROTOCOL, kind: "key", key: "Escape", shift: false });
-    act(() => frame()!.focus());
+    giveFocus(frame()!);
     post({ protocol: PROTOCOL, kind: "key", key: "Escape", shift: false });
     post({ protocol: PROTOCOL, kind: "key", key: "Enter", shift: false });
     post({ protocol: PROTOCOL, kind: "ask" });
     window.removeEventListener("keydown", listen);
-    expect(keys).toEqual(["Escape"]);
+    expect(keys.filter((key) => key !== "Tab")).toEqual(["Escape"]);
     expect(host.ask).toHaveBeenCalledTimes(1);
+  });
+
+  it("takes the keyboard back from a frame the reader did not give it to", () => {
+    const { frame, post, start, container } = mount("detail");
+    start();
+    act(() => frame()!.focus());
+    post({ protocol: PROTOCOL, kind: "jump", key: '["tile","overview"]' });
+    expect(document.activeElement).not.toBe(frame());
+    for (let i = 0; i < 4; i++) {
+      act(() => frame()?.focus());
+      post({ protocol: PROTOCOL, kind: "ask" });
+    }
+    expect(container.textContent).toContain("It kept taking the keyboard from the page.");
   });
 
   it("unmounts a frame that floods the page", () => {

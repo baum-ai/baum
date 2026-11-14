@@ -112,6 +112,12 @@ async function pageState(page: Page) {
   }));
 }
 
+/** The title of the frame that has the keyboard, if one has. */
+const focusedFrame = (page: Page) =>
+  page.evaluate(() =>
+    document.activeElement instanceof HTMLIFrameElement ? document.activeElement.title : null,
+  );
+
 const describeRequests = (requests: Request[]) =>
   requests.map((request) => `${request.method()} ${request.url()} (${request.resourceType()})`);
 
@@ -194,7 +200,7 @@ test("a probing frame reaches neither the page, the daemon nor the network", asy
   console.log(`probe: ${requests.length} requests refused (${refusals(requests).join(", ")})`);
   // The page is as it was, and has the keys: the frame took no focus.
   expect(await pageState(page)).toEqual(before);
-  expect(await page.evaluate(() => document.activeElement?.tagName)).not.toBe("IFRAME");
+  expect(await focusedFrame(page), "a frame that took the keyboard").toBeNull();
 
   // The detail tries the same, with buttons a reader could focus.
   await open(page, detail("escape_probe"));
@@ -205,7 +211,7 @@ test("a probing frame reaches neither the page, the daemon nor the network", asy
   await page.waitForTimeout(1000);
   expect(hits).toEqual([]);
   expect(answered(requests)).toEqual([]);
-  expect(await page.evaluate(() => document.activeElement?.tagName)).not.toBe("IFRAME");
+  expect(await focusedFrame(page), "a frame that took the keyboard").toBeNull();
   await expect(page).toHaveURL(/tile=escape_probe/);
 });
 
