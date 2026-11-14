@@ -369,6 +369,8 @@ func (a LocalAPI) Handler() *LocalHandler {
 	mux.HandleFunc("PUT /api/settings/plan-usage", a.putPlanUsageSettings)
 	mux.HandleFunc("GET /api/settings/decisions", a.getDecisionSettings)
 	mux.HandleFunc("PUT /api/settings/decisions", a.putDecisionSettings)
+	mux.HandleFunc("GET /api/settings/labs", a.getLabs)
+	mux.HandleFunc("PUT /api/settings/labs", a.putLabs)
 	// Custom prompts; a run resolves them when it starts, so no change
 	// notification is needed.
 	mux.HandleFunc("GET /api/settings/prompts", func(w http.ResponseWriter, r *http.Request) {
