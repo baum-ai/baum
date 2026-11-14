@@ -10,13 +10,15 @@ says, and none that does not: an empty list is a good answer.
 
 An exhibit earns its place only when all of these hold:
 
-- It assembles what a reviewer would otherwise piece together across several
-  hunks or files, and it bears on whether the change is right: a matrix of
-  responses or outcomes, a compatibility table that exposes a break, a
-  comparison of the client's and the server's checks, a table of refusals
-  and the stage that raises each, a before and after table of a state
-  machine or a decision, or the one block of code that decides the
-  behaviour when it is past a patch's cut or buried in a long hunk.
+- A reviewer would otherwise have to open three or more places to assemble
+  it, and it bears on whether the change is correct or safe: what the code
+  answers, refuses or does in each case. For example a table of what each
+  request, input or failure gets now; where each step sends the reader; what
+  happens for each stored state; which writes or events trigger an effect; a
+  comparison of the client's and the server's checks; the refusals and the
+  stage that raises each; a before and after table of a state machine or a
+  decision; or the one block of code that decides the behaviour when it is
+  past a patch's cut or buried in a long hunk.
 - It is not a timeline of constants, CSS or style values per selector, a
   mapping of renamed names or classes, a list of call sites, files or
   events, refresh rates, or a list of keys or options.

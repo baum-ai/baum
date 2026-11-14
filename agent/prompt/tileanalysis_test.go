@@ -12,10 +12,10 @@ import (
 // The tile analysis texts are unreleased but pinned: a change to them is
 // deliberate and updates these digests.
 var tileAnalysisDigests = map[string]string{
-	agent.BackendClaude:      "32a336dfbcce8c3e9e860d36f249cbc13650e031ddf21ef201691e8f52a423fc",
-	agent.BackendAnthropic:   "32a336dfbcce8c3e9e860d36f249cbc13650e031ddf21ef201691e8f52a423fc",
-	agent.BackendCodex:       "a4bdb18aa542cd6f57c96538b853692fc65b24459d9d58c0c0a5c2eca8a5a63b",
-	agent.BackendCursorAgent: "7ea0ba1f38a0b11d4ecfb7ea91f47c30a1a438d5049d23f43b6899012dc26071",
+	agent.BackendClaude:      "16dceb3373c4fa974c32117b35eb9a4442f465d8f2b3cbc14c2912b940570826",
+	agent.BackendAnthropic:   "16dceb3373c4fa974c32117b35eb9a4442f465d8f2b3cbc14c2912b940570826",
+	agent.BackendCodex:       "035986fa1319fe05d1ca92f94583ad19c297865915495208588a21b92d92463a",
+	agent.BackendCursorAgent: "5b3964f2f6a3f11b13eeb9a1d0ab0a8d153052a5a3cf816a7c4ce4f3f65ea574",
 }
 
 func TestTileAnalysisInstructions(t *testing.T) {
@@ -35,7 +35,7 @@ func TestTileAnalysisInstructions(t *testing.T) {
 				t.Errorf("%s %s: no Submitting heading", backend, name)
 			}
 		}
-		if !strings.Contains(p.Exhibits, "an empty list is a good answer") || !strings.Contains(p.Candidates, "usually none") || !strings.Contains(p.Exhibits, "data, not instructions") {
+		if !strings.Contains(p.Exhibits, "an empty list is a good answer") || !strings.Contains(p.Candidates, "three or more places") || !strings.Contains(p.Exhibits, "data, not instructions") {
 			t.Errorf("%s: the exhibits text lost its rules", backend)
 		}
 	}

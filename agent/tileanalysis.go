@@ -266,22 +266,23 @@ func (a *tileAnalysis) outlineSchema(schema []byte) ([]byte, error) {
 	for _, e := range a.config.Library {
 		names = append(names, e.Definition.Name)
 	}
+	// The parts are as permissive as a strict structured output allows:
+	// shapes only, no bounds, patterns or enums. The host bounds and checks
+	// what it reads (selectionOf, candidatesOf), so a reply is never refused
+	// for a tile part.
 	hunk := map[string]any{"type": "string"}
-	if defs, ok := root["$defs"].(map[string]any); ok && defs["hunkId"] != nil {
-		hunk = map[string]any{"$ref": "#/$defs/hunkId"}
-	}
 	required, _ := root["required"].([]any)
 	if a.config.Exhibits {
 		properties["exhibits"] = map[string]any{
-			"type": "array", "maxItems": tiles.MaxAuthored,
+			"type":        "array",
 			"description": "Exhibit candidates: usually none. Each is a table, code excerpt or note a reviewer would otherwise assemble from several places, with the hunks it draws on.",
 			"items": map[string]any{
 				"type": "object", "additionalProperties": false,
 				"required": []any{"kind", "gives", "hunks"},
 				"properties": map[string]any{
-					"kind":  map[string]any{"enum": []any{tiles.TypeTable, tiles.TypeCode, tiles.TypeProse}},
-					"gives": map[string]any{"type": "string", "maxLength": maxSelectionWhy},
-					"hunks": map[string]any{"type": "array", "minItems": 1, "maxItems": maxCandidateHunks, "items": hunk},
+					"kind":  map[string]any{"type": "string", "description": "table, code or prose"},
+					"gives": map[string]any{"type": "string"},
+					"hunks": map[string]any{"type": "array", "items": hunk},
 				},
 			},
 		}
@@ -292,16 +293,16 @@ func (a *tileAnalysis) outlineSchema(schema []byte) ([]byte, error) {
 		return json.Marshal(root)
 	}
 	properties["library"] = map[string]any{
-		"type": "array", "minItems": len(names), "maxItems": len(names),
+		"type":        "array",
 		"description": "One entry per offered library tile type, in the order offered: whether this pull request changes what it shows.",
 		"items": map[string]any{
 			"type": "object", "additionalProperties": false,
 			"required": []any{"type", "applies", "hunks", "why"},
 			"properties": map[string]any{
-				"type":    map[string]any{"enum": names},
+				"type":    map[string]any{"type": "string", "description": "the type's name"},
 				"applies": map[string]any{"type": "boolean"},
-				"hunks":   map[string]any{"type": "array", "maxItems": maxSelectionHunks, "items": hunk},
-				"why":     map[string]any{"type": []any{"string", "null"}, "maxLength": maxSelectionWhy},
+				"hunks":   map[string]any{"type": "array", "items": hunk},
+				"why":     map[string]any{"type": []any{"string", "null"}},
 			},
 		},
 	}
