@@ -154,8 +154,9 @@ type LocalAPI struct {
 	// no data for; nil leaves them pending.
 	Fills TileFiller
 	// TileTypes is the person's tile library, which GET
-	// /api/tile-types/{name}/preview draws a type from. Without it only
-	// baum's own types preview.
+	// /api/tile-types/{name}/preview draws a type from and the Tile library
+	// page's routes (tilelibrarypage.go) list and change. Without it only baum's
+	// own types preview and the library is empty.
 	TileTypes *tilelibrary.Store
 
 	// diagnosticsWaiting is a test hook, called once a request is waiting on
@@ -574,6 +575,7 @@ func (a LocalAPI) Handler() *LocalHandler {
 	mux.HandleFunc("GET /api/tiles", a.tilesHandler(cache.requests, new(tileview.Cache)))
 	mux.HandleFunc("GET /api/tile-library", tileLibrary)
 	mux.HandleFunc("GET /api/tile-types/{name}/preview", a.tileTypePreview)
+	a.tileLibraryRoutes(mux)
 	a.layoutRoutes(mux)
 	mux.HandleFunc("GET /api/sessions", document)
 	mux.HandleFunc("GET /api/sessions/{id}", document)

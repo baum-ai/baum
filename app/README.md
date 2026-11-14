@@ -1896,6 +1896,40 @@ with" line adds "Custom prompt (global)" or "Custom prompt (this repository)"
 when the saved version's `prompt_source` (from `api/versions`) says so.
 Analytics counts the decisions captured under baum's work.
 
+**Settings › Tile library** (`TileLibrarySection`, `src/settings-tiles.tsx`;
+`?page=settings&section=tiles`, with `&type=<name>` while a type is open) lists
+the person's saved tile types (`GET api/tile-types`) as list rows: the title
+(which opens the type), a **Custom** pill, the use-when line, where it came
+from (Made in chat or Imported), where it is pinned, and when a review last
+used it and in how many repositories (`used_at`, `used_in`; nothing records
+use yet, so every row reads "Not used in a review yet" until generation offers
+saved types). A row's menu has Open, Edit in chat and Delete. An empty library
+says how to make a type: ask the session panel on a review for a tile, then to
+save it. The section list's line counts the saved types. A type's pane (`GET
+api/tile-types/{name}`, which never carries the HTML) shows its title with
+**Rename** in place (`PUT api/tile-types/{name}/title`; Enter saves, Escape
+puts it back; a rename is a new version), **Edit in chat**, **Delete**, the
+use-when, glance and paths, the fill instructions and review checks behind a
+disclosure, a preview of each sample (a segmented switch between samples): a
+glance in a card at each declared size (third 344px, half 522px and full width,
+as the tiles page's cards) and the detail, each in its sandboxed frame
+(`PreviewFrame`, `src/tiles/custom/tile-frame.tsx`, fed by `GET
+api/tile-types/{name}/preview?sample=`, which registers the frame document;
+nothing in a preview jumps or asks), switches to pin the type to each picked
+repository (`PUT api/tile-types/{name}/pins {repositories}`, written into each
+repository's `settings.tiles.types`, at most 8 a repository; a repository
+settings `PUT` without a `tiles` member keeps them), and its versions, newest
+first, each earlier one with **Restore** (`POST
+api/tile-types/{name}/restore {digest}`). Delete (`DELETE api/tile-types/{name}`)
+goes back to the list with a toast whose **Undo** brings the type back pinned
+where it was (`POST api/tile-types/{name}/undelete`). Edit in chat opens the
+type's pane and the session panel: the page context is `{page: "settings",
+section: "tiles", focus: {type}}`, its bar reads "Settings · Tile library ·
+<name>", and the agent reads the type with `tile_type` and proposes a change
+with `propose_tile_type`. A desktop shell that mounts no tile frames (Windows)
+shows "Custom tiles aren't available in this version of the desktop app yet"
+in place of the previews; everything else works.
+
 Every list page draws its list one way: Pull requests, the Inbox's queue, Sessions,
 Jobs, Repositories and Manage inboxes. The page lies on the panel's warm paper
 (`--surface-card`), its sections are `ListSection`s (`src/list.tsx`: a heading with a dot

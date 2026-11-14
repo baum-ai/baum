@@ -561,10 +561,7 @@ func TestSettingsSectionsMatchTheApp(t *testing.T) {
 		}
 		found = append(found, sections)
 	}
-	// The Tile library section is the MCP server's before the app's: its page
-	// comes with its own section in the app.
-	known := slices.DeleteFunc(slices.Clone(settingsSections), func(s string) bool { return s == SectionTiles })
-	if !slices.Equal(found[0], known) || !slices.Equal(found[1], repositorySections) {
+	if !slices.Equal(found[0], settingsSections) || !slices.Equal(found[1], repositorySections) {
 		t.Errorf("settings sections %v and %v, link knows %v and %v", found[0], found[1], settingsSections, repositorySections)
 	}
 }

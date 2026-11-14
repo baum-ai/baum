@@ -521,7 +521,7 @@ func TestEverySettingsSectionHasItsTools(t *testing.T) {
 			}
 		}
 		for section := range tt.tools {
-			if section != SectionTiles && !slices.Contains(sections[name], section) {
+			if !slices.Contains(sections[name], section) {
 				t.Errorf("the %s page has no section %q", tt.page, section)
 			}
 		}

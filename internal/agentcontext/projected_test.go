@@ -198,7 +198,9 @@ func TestEveryAppPageHasItsOwnTools(t *testing.T) {
 	opensPage := map[string]string{"pr": PagePullRequest, "group": PageGroup, "session": PageSession, "job": PageJob, "feature": PageFeature, "repository": PageRepositories}
 	// Parameters that narrow or open part of a page, not a page: the page
 	// itself, its filters and sections, the saved-inbox and tour state.
-	notPages := map[string]bool{"page": true, "clone": true, "filter": true, "inbox": true, "open": true, "peek": true, "repo": true, "section": true, "tour": true}
+	notPages := map[string]bool{"page": true, "clone": true, "filter": true, "inbox": true, "open": true, "peek": true, "repo": true, "section": true, "tour": true,
+		// Settings › Tile library's open type, which its section's tools read through the focus.
+		"type": true}
 	read := map[string]bool{}
 	for _, m := range regexp.MustCompile(`\b(\w+)\.(?:get|has|getAll|delete|set)\("([A-Za-z_]+)"\)`).FindAllSubmatch(sources, -1) {
 		// app.tsx's `want` is the set of daemon reads an event asks for,

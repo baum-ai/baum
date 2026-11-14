@@ -54,6 +54,10 @@ it("names the page as the panel's bar does, and links back to it", () => {
   expect(pageLabel(pr)).toBe("acme/demo #7");
   expect(pageLabel(pr, "Fix it")).toBe("Fix it · acme/demo #7");
   expect(pageLabel({ page: "settings", section: "fixes" })).toBe("Settings · Fixes");
+  expect(pageLabel({ page: "settings", section: "tiles" })).toBe("Settings · Tile library");
+  expect(
+    pageLabel({ page: "settings", section: "tiles", focus: { type: "migration_steps" } }),
+  ).toBe("Settings · Tile library · migration_steps");
   expect(pageLabel({ page: "pulls" })).toBe("Pull requests");
   expect(pageLabel({ page: "session", session: "codex:s1" })).toBe("Codex session");
   for (const query of [
@@ -63,6 +67,7 @@ it("names the page as the panel's bar does, and links back to it", () => {
     "page=jobs&job=j1",
     "page=timeline&feature=f1",
     "page=settings&section=fixes",
+    "page=settings&section=tiles&type=migration_steps",
     "page=repositories&repository=acme%2Fdemo&section=prompts",
     "page=pulls&filter=all",
   ]) {

@@ -57,6 +57,13 @@ var (
 	ErrNoVersion = errors.New("The type has no such version")
 )
 
+// RefusedError is a save refused because the change did not pass its
+// checks (Prepare); its message names places, never content.
+type RefusedError struct{ Err error }
+
+func (e *RefusedError) Error() string { return e.Err.Error() }
+func (e *RefusedError) Unwrap() error { return e.Err }
+
 // CheckName refuses a name a library type may not have: not the format, a
 // built-in tile type's or custom, a built-in library type's, nor a prefix
 // that changes a tile's ID. Whether it is taken is the store's to say.

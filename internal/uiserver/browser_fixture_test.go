@@ -54,12 +54,14 @@ import (
 	"github.com/baum-ai/baum/internal/store"
 	"github.com/baum-ai/baum/internal/tilechecks"
 	"github.com/baum-ai/baum/internal/tilelayout"
+	"github.com/baum-ai/baum/internal/tilelibrary"
 	"github.com/baum-ai/baum/internal/tileview"
 	"github.com/baum-ai/baum/internal/tileview/tileviewtest"
 	"github.com/baum-ai/baum/internal/transcript"
 	"github.com/baum-ai/baum/internal/uiserver"
 	"github.com/baum-ai/baum/internal/uistate"
 	"github.com/baum-ai/baum/tiles"
+	"github.com/baum-ai/baum/tiles/library"
 )
 
 // browserDiscovery serves fixed pull requests. Once pushed reports true (the
@@ -336,6 +338,7 @@ func TestLocalAppBrowserFixture(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(os.Getenv("BAUM_APP_STATE_DIR"), "renamed-folder"), []byte(renamed.Dir), 0600); err != nil {
 		t.Fatal(err)
 	}
+	tileLibrary := seedTileLibrary(t, filepath.Join(home, "app.sqlite"), registry)
 	timeline := browserTimeline(t, home, registry)
 	versions, err := store.Open(clone.CommonDir, "", true)
 	if err != nil {
@@ -757,7 +760,7 @@ func TestLocalAppBrowserFixture(t *testing.T) {
 			_ = server.Publish("layout", map[string]any{"pr": pr, "revision": revision})
 		}}
 		runner.SetLayouts(layouts.Layout)
-		local := uiserver.LocalAPI{TileChecks: tileChecks.Handler(), Layouts: layouts, Fills: fixtureFiller{versions: versions, layouts: layouts}, Console: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { consoleRoutes.ServeHTTP(w, r) }), Clones: finder.Handler(), GitHubRepositories: repositoryService.Handler(), GitHubAuth: auth.Handler(), Registry: registry, Config: cfg, PRs: uiserver.DiscoveryHandler(registry, disc, nil), Merge: uiserver.MergeHandler(registry, actions.RecordMerges(client), func(ctx context.Context, repo github.Repository, _ int, _ string) { _, _ = disc.Poll(ctx, repo) }, changed), Update: uiserver.UpdateHandler(registry, actions.RecordUpdates(prupdate.Service{Client: client}), func(ctx context.Context, repo github.Repository) { _, _ = disc.Poll(ctx, repo) }, changed), Index: index.Handler(), Jobs: runner.Handler(), Chat: uiserver.ChatHandler(registry, runner), Automatic: scheduler.Handler(), Live: transcripts.Handler(), Changed: scheduler.Wake, Diagnostics: browserDiagnostics, CurrentName: func(_ context.Context, repository string) (string, error) {
+		local := uiserver.LocalAPI{TileTypes: tileLibrary, TileChecks: tileChecks.Handler(), Layouts: layouts, Fills: fixtureFiller{versions: versions, layouts: layouts}, Console: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { consoleRoutes.ServeHTTP(w, r) }), Clones: finder.Handler(), GitHubRepositories: repositoryService.Handler(), GitHubAuth: auth.Handler(), Registry: registry, Config: cfg, PRs: uiserver.DiscoveryHandler(registry, disc, nil), Merge: uiserver.MergeHandler(registry, actions.RecordMerges(client), func(ctx context.Context, repo github.Repository, _ int, _ string) { _, _ = disc.Poll(ctx, repo) }, changed), Update: uiserver.UpdateHandler(registry, actions.RecordUpdates(prupdate.Service{Client: client}), func(ctx context.Context, repo github.Repository) { _, _ = disc.Poll(ctx, repo) }, changed), Index: index.Handler(), Jobs: runner.Handler(), Chat: uiserver.ChatHandler(registry, runner), Automatic: scheduler.Handler(), Live: transcripts.Handler(), Changed: scheduler.Wake, Diagnostics: browserDiagnostics, CurrentName: func(_ context.Context, repository string) (string, error) {
 			if repository == "acme/old-renamed" {
 				return "acme/renamed", nil
 			}
@@ -778,7 +781,7 @@ func TestLocalAppBrowserFixture(t *testing.T) {
 		// conversation gets an empty directory, as without a clone.
 		// A pull request page takes the comments the agent proposes for the
 		// pending review, saved as the page saves one.
-		mcp := agentcontext.New(agentcontext.Options{API: api, Version: "fixture", Proposers: (&uiserver.Proposers{UIState: uiState}).Pages(), Layouts: uiserver.LayoutEditor{API: local}})
+		mcp := agentcontext.New(agentcontext.Options{API: api, Version: "fixture", Proposers: (&uiserver.Proposers{UIState: uiState, TileTypes: tileLibrary}).Pages(), Layouts: uiserver.LayoutEditor{API: local}, TileTypes: uiserver.TileTypes{Store: tileLibrary}})
 		panel := &panelAgent{events: events, home: home, mcp: mcp}
 		conversations, err := console.New(console.Options{Database: filepath.Join(home, "app.sqlite"), Root: filepath.Join(home, "console"),
 			Registry: mcp.Registry, Proposals: mcp.Proposals, MCPURL: func() string { return server.Origin() + "/api/mcp" },
@@ -969,4 +972,46 @@ func writeTileRows(t *testing.T, served map[string]tileview.Response) {
 	if err := os.WriteFile(filepath.Join(os.Getenv("BAUM_APP_STATE_DIR"), "tile-rows.json"), raw, 0o600); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// seedTileLibrary saves two tile types into the fixture's library, as a
+// person's saved ones: "Migration steps", made in chat from baum's
+// schema_change and pinned to acme/demo, and "Interface changes", imported,
+// from api_change, each with its synthetic samples. The Tile library
+// page's browser tests list, preview, rename, pin, restore and delete them.
+func seedTileLibrary(t *testing.T, path string, registry *repos.Registry) *tilelibrary.Store {
+	t.Helper()
+	lib := &tilelibrary.Store{Path: path}
+	for _, seed := range []struct{ from, name, title, origin string }{
+		{"schema_change", "migration_steps", "Migration steps", tilelibrary.OriginChat},
+		{"api_change", "interface_changes", "Interface changes", tilelibrary.OriginImport},
+	} {
+		entry, ok := library.Get(seed.from)
+		if !ok {
+			t.Fatalf("no built-in type %s", seed.from)
+		}
+		def := entry.Definition
+		def.Name, def.Title = seed.name, seed.title
+		encoded, err := library.Seal(&def)
+		if err != nil {
+			t.Fatal(err)
+		}
+		c := tilelibrary.Change{Definition: encoded, Glance: entry.Glance, ReviewChecks: entry.ReviewChecks, AppliesWith: entry.AppliesWith,
+			Paths: []string{"**/migrations/**", "**/*.sql"}, Origin: seed.origin}
+		if seed.from == "api_change" {
+			c.Paths = []string{"**/api/**"}
+		}
+		for _, sample := range entry.Samples {
+			if tilelibrary.IsSynthetic(sample) && len(c.Samples) < tilelibrary.MaxSamples {
+				c.Samples = append(c.Samples, sample)
+			}
+		}
+		if _, err := lib.Create(context.Background(), c, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := registry.SetTileTypePins(context.Background(), "migration_steps", []string{"acme/demo"}); err != nil {
+		t.Fatal(err)
+	}
+	return lib
 }

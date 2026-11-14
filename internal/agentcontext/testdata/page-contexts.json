@@ -42,6 +42,13 @@
     { "query": "page=settings", "context": { "page": "settings", "section": "general" } },
     { "query": "page=settings&section=fixes", "context": { "page": "settings", "section": "fixes" } },
     { "query": "page=settings&section=unknown", "context": { "page": "settings", "section": "general" } },
+    { "query": "page=settings&section=tiles", "context": { "page": "settings", "section": "tiles" } },
+    {
+      "query": "page=settings&section=tiles&type=migration_steps",
+      "context": { "page": "settings", "section": "tiles", "focus": { "type": "migration_steps" } }
+    },
+    { "query": "page=settings&section=tiles&type=Not%20a%20name", "context": { "page": "settings", "section": "tiles" } },
+    { "query": "page=settings&section=fixes&type=migration_steps", "context": { "page": "settings", "section": "fixes" } },
     { "query": "page=diagnostics", "context": { "page": "settings", "section": "computer" } },
     { "query": "page=repositories", "context": { "page": "repositories" } },
     {

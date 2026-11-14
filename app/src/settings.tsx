@@ -114,6 +114,8 @@ import { CommandText, useCopy } from "./desktop/terminal-setup";
 import { useModal } from "./modal";
 import { LoadingStatus } from "./nine-dots";
 import { isCustom, PromptList, promptsNeedAttention } from "./prompt-editor";
+import { TileLibrarySection } from "./settings-tiles";
+import { tileLibrary } from "./tile-library";
 
 /** The harness and model reviews use, and the ones fixes use: an empty
  *  `fix_backend` follows the review's. */
@@ -166,6 +168,7 @@ export const settingsSections = [
   "connections",
   "computer",
   "prompts",
+  "tiles",
 ] as const;
 export type SettingsSection = (typeof settingsSections)[number];
 const sectionTitles: Record<SettingsSection, string> = {
@@ -175,6 +178,7 @@ const sectionTitles: Record<SettingsSection, string> = {
   connections: "Connections",
   computer: "This computer",
   prompts: "Prompts",
+  tiles: "Tile library",
 };
 
 /** The controls the keyboard steps through in the shown section, in reading
@@ -190,7 +194,7 @@ const SECTION_CONTROLS = [
 
 /** Settings' keys (`SETTINGS_SHORTCUTS`), beside Tab (`useTabStops`), as a
  *  review page's are: Shift+J/Shift+↓ and Shift+K/Shift+↑ move to the next or
- *  previous section from anywhere, and 1 to 6 jump to one. j/↓ and k/↑ step
+ *  previous section from anywhere, and 1 to 7 jump to one. j/↓ and k/↑ step
  *  through the shown section's controls; from the section list j goes to its
  *  first control and k to its last, as Enter, l or → go to the first. Enter or
  *  Space changes the focused control, and Esc, h or ← go back to the list. Esc
@@ -455,6 +459,31 @@ function useAutoSave(changed: () => Promise<void>, path = "api/automatic") {
     </p>
   );
   return { save, error, status, failures };
+}
+
+/** How many tile types the library holds, for the section list's line:
+ *  read when Settings opens and again whenever the Tile library's open type
+ *  changes (a change there goes back to the list or another type); null
+ *  until read or when it cannot be. */
+function useTileTypeCount(open: string | null | undefined) {
+  const [count, setCount] = useState<number | null>(null);
+  const [reads, setReads] = useState(0);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `open` and `reads` ask for a new read
+  useEffect(() => {
+    let live = true;
+    tileLibrary.list().then(
+      (list) => {
+        if (live) setCount(list.length);
+      },
+      () => {
+        if (live) setCount(null);
+      },
+    );
+    return () => {
+      live = false;
+    };
+  }, [open, reads]);
+  return { count, reload: () => setReads((n) => n + 1) };
 }
 
 /** The prompts baum uses, read once and kept in step with each save so the
@@ -1682,12 +1711,18 @@ export function SettingsPage({
   codexTrust,
   commandLine,
   updates,
+  tileType = null,
+  openTileType = () => {},
 }: {
   automatic: Automatic | null;
   defaults: ReviewDefaults | null;
   github: GitHubConnection | null;
   section: SettingsSection;
   setSection: (section: SettingsSection) => void;
+  /** The tile type open in Settings › Tile library (`type` in the
+   *  address), and how to open another or go back to the list. */
+  tileType?: string | null;
+  openTileType?: (type: string | null) => void;
   changed: () => Promise<void>;
   problems: number;
   diagnosticsOpen: boolean;
@@ -1707,6 +1742,7 @@ export function SettingsPage({
   const noHooks = setup.desktop && hooksMissing(setup.view);
   const update = pendingUpdate(updates?.view ?? null);
   const prompts = usePrompts();
+  const tileTypes = useTileTypeCount(section === "tiles" ? tileType : undefined);
   // Only the desktop app can ask the agent CLIs whether they are signed in.
   const signedOut = setup.desktop && setup.view ? signedOutHarnesses(setup.view.hooks.agents) : [];
   const gh = githubHealth(github);
@@ -1771,6 +1807,15 @@ export function SettingsPage({
           ? "Unavailable"
           : "Reading…",
       tone: prompts.entries && promptsNeedAttention(prompts.entries) ? "caution" : undefined,
+    },
+    {
+      id: "tiles",
+      sub:
+        tileTypes.count === null
+          ? "Your saved tile types"
+          : tileTypes.count === 0
+            ? "No saved tile types"
+            : `${tileTypes.count} saved ${tileTypes.count === 1 ? "type" : "types"}`,
     },
   ];
   const keys = useSettingsKeys(
@@ -1926,6 +1971,20 @@ export function SettingsPage({
             )
           ) : section === "prompts" ? (
             <PromptsSection prompts={prompts} />
+          ) : section === "tiles" ? (
+            <TileLibrarySection
+              type={tileType}
+              open={openTileType}
+              onChanged={tileTypes.reload}
+              head={(status) => (
+                <SectionHead
+                  id="settings-tiles-heading"
+                  title="Tile library"
+                  detail="Your own tile types, made in the session panel and saved. A saved type is offered to later reviews where it applies; its code and instructions stay on this computer."
+                  status={status}
+                />
+              )}
+            />
           ) : section === "connections" ? (
             <section aria-labelledby="settings-connections-heading" className="settings-section">
               <SectionHead

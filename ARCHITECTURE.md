@@ -2019,6 +2019,16 @@ computer by `internal/tilelibrary`, in the private application database
   and the detail. It registers the definition's digest in the frame registry,
   as the tile routes do, and has the same authentication as every other
   `/api` route.
+- The Tile library page's routes (`internal/uiserver/tilelibrarypage.go`) list
+  the saved types (`GET /api/tile-types`) and read one (`GET
+  /api/tile-types/{name}`), both without the HTML, and take the page's own
+  clicks: rename (`PUT …/title`), restore (`POST …/restore`), delete and
+  undelete, and pins (`PUT …/pins`), which write the type's name into each
+  picked repository's `repos.Settings.Tiles.Types` (at most 8 a repository,
+  `Registry.SetTileTypePins`, one transaction). A repository settings `PUT`
+  without a `tiles` member keeps the stored pins. Pins outlive a deletion, so
+  Undo brings a type back pinned; a purged type's name may stay pinned until
+  the repository's pins change, and names no type.
 
 ### Tiles
 

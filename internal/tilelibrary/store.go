@@ -351,7 +351,7 @@ type querierExec interface {
 func (s *Store) save(ctx context.Context, c Change, create bool, unchanged func(State) error) (Type, error) {
 	p, err := Prepare(c)
 	if err != nil {
-		return Type{}, err
+		return Type{}, &RefusedError{Err: err}
 	}
 	name, def := p.Name(), p.Entry.Definition
 	encoded := []byte(p.Entry.Encoded)

@@ -1702,8 +1702,19 @@ function Workspace({ url }: { url: UrlState }) {
               setSection={(section) =>
                 url.update((current) => {
                   current.set("page", "settings");
+                  current.delete("type");
                   if (section === "general") current.delete("section");
                   else current.set("section", section);
+                  return current;
+                })
+              }
+              tileType={url.search.get("type")}
+              openTileType={(type) =>
+                url.update((current) => {
+                  current.set("page", "settings");
+                  current.set("section", "tiles");
+                  if (type) current.set("type", type);
+                  else current.delete("type");
                   return current;
                 })
               }
