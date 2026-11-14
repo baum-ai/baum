@@ -218,6 +218,18 @@ func CheckGenerated(normalized []byte, c *tiles.Composition, doc *tiles.Document
 		}
 	}
 
+	// An edited layout keeps a change the recommendation names, outside the
+	// changes group, on the landing page; an unedited one does through the
+	// guards and invariants above.
+	if !c.Empty() && c.Layout.Edited {
+		for i, entry := range doc.Layout.Entries {
+			if entry.Group != tiles.GroupChanges && entry.Group != tiles.GroupHidden && entry.Group != tiles.GroupObsolete &&
+				slices.Contains(tiles.RecommendedChanges(doc), entry.Tile) && !tiles.Visible(doc.Layout)[i] {
+				fail(11, "change %s, which the recommendation names, is off the landing page of an edited layout", entry.Tile)
+			}
+		}
+	}
+
 	// Hidden tiles stay reachable, in the last collapsed group.
 	if c != nil && len(c.Layout.Hidden) > 0 {
 		for _, id := range c.Layout.Hidden {

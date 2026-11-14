@@ -501,6 +501,45 @@ func TestOverlayKeepsRecommendedChange(t *testing.T) {
 	}
 }
 
+// A person's edited layout that pins enough full-width tiles to fill the
+// landing page still shows a change the recommendation names, which sits
+// outside the changes group.
+func TestOverlayPinsKeepRecommendedChangeOnLanding(t *testing.T) {
+	_, plain := convert(t, withManyBlocks())
+	var members []string
+	for _, entry := range plain.Layout.Entries {
+		if entry.Group == tiles.GroupChanges {
+			members = append(members, entry.Tile)
+		}
+	}
+	named := members[4]
+	many := withManyBlocks()
+	f := fixture{name: "recommended-pinned", mutate: func(doc map[string]any) {
+		many.mutate(doc)
+		object(doc, "summary")["recommendation"] = map[string]any{"decision": "look_first", "text": "Read the last part first.", "refs": []any{named}}
+	}}
+	normalized, doc := convert(t, f)
+	ops := []tiles.Op{move(named, tiles.Place{Edge: tiles.EdgeFirst})}
+	pinned := 0
+	for _, entry := range doc.Layout.Entries {
+		if entry.Group != "" || entry.Tile == named {
+			continue
+		}
+		if slices.Contains(tiles.SizesIn(doc, *tileOf(doc, entry.Tile)), tiles.SizeFull) {
+			ops = append(ops, tiles.Op{Op: tiles.OpResize, Tile: entry.Tile, Size: tiles.SizeFull}, tiles.Op{Op: tiles.OpPin, Tile: entry.Tile})
+			pinned++
+		}
+	}
+	if pinned < tiles.LandingRows+tiles.MaxExtraRows+1 {
+		t.Fatalf("only %d full-width tiles to pin", pinned)
+	}
+	_, _, composed := applyChecked(t, normalized, doc, nil, overlayOf(t, ops))
+	at := slices.IndexFunc(composed.Layout.Entries, func(e tiles.Entry) bool { return e.Tile == named })
+	if at < 0 || composed.Layout.Entries[at].Group != "" || !tiles.Visible(composed.Layout)[at] {
+		t.Errorf("the recommended change is off the landing page: %v (landing %d)", entryLines(composed.Layout), composed.Layout.Landing)
+	}
+}
+
 // An undo keeps the batch it took off for Redo, which a new edit or a reset
 // clears; the redo list counts in the overlay's byte bound.
 func TestOverlayRedo(t *testing.T) {

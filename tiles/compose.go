@@ -1368,17 +1368,42 @@ func (cm *composer) build(n *Composition) (*Document, error) {
 	if showRecommended(doc) {
 		Arrange(doc)
 	}
-	if n.Layout.Edited && keepRecommendedOnLanding(doc, must) {
-		Arrange(doc)
+	if n.Layout.Edited {
+		keepRecommendedOnLanding(doc, must)
 	}
 	return doc, nil
 }
 
 // keepRecommendedOnLanding brings a change the recommendation names, left
 // off the landing page by a person's edit (moved past it, outside the
-// changes group), back to its front. It reports whether it moved any.
-func keepRecommendedOnLanding(doc *Document, must mustBeSeen) bool {
+// changes group), back to its front, and arranges the layout again. Should
+// the pinned entries alone fill the landing page, it puts such a change
+// before them, as Arrange does for the overview and risks tiles.
+func keepRecommendedOnLanding(doc *Document, must mustBeSeen) {
+	stray := strayNamed(doc.Layout, must)
+	if len(stray) == 0 {
+		return
+	}
+	doc.Layout.Entries = frontFirst(doc.Layout.Entries, func(e Entry) bool {
+		return e.Pin || slices.Contains(stray, e.Tile) || must.kept(e.Tile) && !slices.Contains(must.named, e.Tile)
+	})
+	Arrange(doc)
+	stray = strayNamed(doc.Layout, must)
+	if len(stray) == 0 {
+		return
+	}
 	layout := doc.Layout
+	layout.Entries = frontFirst(layout.Entries, func(e Entry) bool {
+		return slices.Contains(stray, e.Tile) || e.Tile == TypeOverview || e.Tile == TypeRisks && mustShowRisks(doc)
+	})
+	layout.ExtraRows = ExtraRows(doc, layout)
+	layout.Landing = Landing(layout)
+	doc.Layout = layout
+}
+
+// strayNamed returns the changes the recommendation names that sit outside
+// the changes group and off the landing page.
+func strayNamed(layout Layout, must mustBeSeen) []string {
 	var stray []string
 	for _, id := range must.named {
 		at := slices.IndexFunc(layout.Entries, func(e Entry) bool { return e.Tile == id })
@@ -1386,14 +1411,7 @@ func keepRecommendedOnLanding(doc *Document, must mustBeSeen) bool {
 			stray = append(stray, id)
 		}
 	}
-	if len(stray) == 0 {
-		return false
-	}
-	doc.Layout.Entries = frontFirst(layout.Entries, func(e Entry) bool {
-		return e.Pin || slices.Contains(stray, e.Tile) || must.kept(e.Tile) && !slices.Contains(must.named, e.Tile)
-	})
-	doc.Layout.Landing = Landing(doc.Layout)
-	return true
+	return stray
 }
 
 // RecommendedChanges returns the changes a document's recommendation names
