@@ -333,3 +333,29 @@ func TestLabelSetAndAgreement(t *testing.T) {
 		t.Error("a verdict that is not A, B or tie was read")
 	}
 }
+
+// A composition the host replaced with the template when it stored it
+// serves the template's page: its pair does not differ, whatever the compose
+// record says.
+func TestPairsWhosePagesMeasureTheSameDoNotDiffer(t *testing.T) {
+	dir := fakeRun(t, t.TempDir(), "run-a", "sonnet", 3)
+	path := filepath.Join(dir, screens.Dir, "case-a", "first-screen.json")
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var c map[string]any
+	if err := json.Unmarshal(raw, &c); err != nil {
+		t.Fatal(err)
+	}
+	c["variants"].(map[string]any)[screens.Composed] = c["variants"].(map[string]any)[screens.Template]
+	c["phone"].(map[string]any)[screens.Composed] = c["phone"].(map[string]any)[screens.Template]
+	raw, _ = json.Marshal(c)
+	if err := os.WriteFile(path, raw, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	p := screens.Pairs(load(t, dir), nil)
+	if p.Differ("case-a") || !p.Differ("case-b") {
+		t.Errorf("case-a differs %v, case-b %v", p.Differ("case-a"), p.Differ("case-b"))
+	}
+}

@@ -12,6 +12,7 @@ import (
 	"math/rand/v2"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 
@@ -184,8 +185,17 @@ func sizeRank(size string) int {
 }
 
 // Differ reports whether a case's two layouts differ: a run's composition
-// from its template, as its compose record says, or two runs' compositions.
+// from its template, as its compose record says, or two runs' compositions;
+// and, either way, whether the pages measured differ (the host may have kept
+// the template's layout when it stored the composition).
 func (p Pairing) Differ(id string) bool {
+	x, _ := p.X.Facts(id, false)
+	y, _ := p.Y.Facts(id, false)
+	xPhone, _ := p.X.Facts(id, true)
+	yPhone, _ := p.Y.Facts(id, true)
+	if reflect.DeepEqual(x, y) && reflect.DeepEqual(xPhone, yPhone) {
+		return false
+	}
 	if p.X.Run == p.Y.Run {
 		return differs(p.X.Run, id)
 	}
